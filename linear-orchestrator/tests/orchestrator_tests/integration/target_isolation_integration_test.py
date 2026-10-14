@@ -49,7 +49,7 @@ class TargetCheckout(Case):
         self.git_file(f"gitdir: {admin}\n")
         return admin
 
-    def run_(self, clones, *, writable=(), run=config.sh_run):
+    def run_(self, clones, *, writable=(), run=None):
         return target.with_clone(
             self.T,
             "TASK-26",

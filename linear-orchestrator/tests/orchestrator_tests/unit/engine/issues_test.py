@@ -1,11 +1,9 @@
-"""orchestrator issues.py, ported from the old issues_test, plus head: a description's part before
-its comments.
-"""
+"""Issue reading and handoff grammar boundary behavior."""
 
 import unittest
 
-from agent_pm.linear_orchestrator.linear import issues
-from agent_pm.linear_orchestrator.linear.types import Handoff
+from agent_pm.linear_orchestrator.engine import issues
+from agent_pm.linear_orchestrator.engine.issues import Handoff
 from orchestrator_tests.case import Case
 
 SID = "0b6f2c1e-6d0a-4c1b-9a51-3f1f6b0e2a7d"

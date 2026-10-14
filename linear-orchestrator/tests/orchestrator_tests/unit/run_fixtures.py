@@ -9,8 +9,14 @@ import tempfile
 from datetime import datetime
 from unittest import mock
 
+from agent_pm.linear_orchestrator.engine import (
+    issues,
+    log,
+    ops,
+    run_comments,
+    writeback,
+)
 from agent_pm.linear_orchestrator.engine.types import LinearError
-from agent_pm.linear_orchestrator.linear import issues, linear, sessions, writeback
 from orchestrator_tests.case import Case
 from orchestrator_tests.unit.board_ids import HEADER, STATES, role
 
@@ -26,7 +32,7 @@ ENGINEER, RESEARCHER = "engineer@agents.test", "researcher@agents.test"
 
 HARNESS, KEY = "linear-api-key", "linear-api-key-engineer"
 
-SESSION = linear.client_id(SID, "session")
+SESSION = ops.client_id(SID, "session")
 
 NOT_FOUND = LinearError("linear api error: [{'message': 'Entity not found: Comment'}]")
 
@@ -66,9 +72,7 @@ def local(work):
 
 def logged(logs=None):
     try:
-        with open(
-            os.path.join(logs or linear.LOGS_DIR, "orchestrator.jsonl"), encoding="utf-8"
-        ) as f:
+        with open(os.path.join(logs or log.LOGS_DIR, "orchestrator.jsonl"), encoding="utf-8") as f:
             lines = [json.loads(line) for line in f]
     except FileNotFoundError:
         return []
@@ -107,14 +111,14 @@ def node(title="ENG: Session registry", description="Add a session registry.", c
 
 NAMES = {
     issues.Q_ISSUE: "issue",
-    linear.M_COMMENT: "post",
-    sessions.M_UPDATE: "update",
-    linear.M_COMMENT_ID: "comment",
-    linear.Q_COMMENT: "find",
+    ops.M_COMMENT: "post",
+    run_comments.M_UPDATE: "update",
+    ops.M_COMMENT_ID: "comment",
+    ops.Q_COMMENT: "find",
     writeback.Q_ATTACHED: "read",
-    linear.Q_ISSUE_STATE: "reread",
-    linear.M_STATE: "state",
-    linear.M_SUBSCRIBE: "subscribe",
+    ops.Q_ISSUE_STATE: "reread",
+    ops.M_STATE: "state",
+    ops.M_SUBSCRIBE: "subscribe",
     writeback.M_ATTACH: "attach",
     writeback.M_TITLE: "title",
 }
@@ -180,7 +184,7 @@ class Base(Case):
         self.rd = os.path.join(self.work, "work", ID)
         self.logs = os.path.join(self.work, "logs")
         self.runs = os.path.join(self.logs, "runs.jsonl")
-        linear.use_logs(None)
+        log.use_logs(None)
         for p in (mock.patch.dict(os.environ),):
             p.start()
             self.addCleanup(p.stop)

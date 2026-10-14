@@ -9,8 +9,7 @@ import re
 import unittest
 from urllib.parse import unquote
 
-from agent_pm.linear_orchestrator.engine import promote
-from agent_pm.linear_orchestrator.linear import issues
+from agent_pm.linear_orchestrator.engine import issues, ops
 from orchestrator_tests.integration import fake_linear
 from orchestrator_tests.integration.flow_fixtures import HARNESS_EMAIL
 from orchestrator_tests.integration.segments import BUILD, REPORT, Segment
@@ -90,7 +89,7 @@ class PmToEngineer(Segment):
                 ]
                 cutoff = max(at for to, at in moves if to == "in_review")
                 first = min(at for to, at in moves if to == "handoff" and at > cutoff)
-                key = promote.child_id(src["id"], "engineer", first)
+                key = ops.client_id(src["id"], "engineer", first)
                 made, relations = self.fake.find(key), list(self.fake.relations)
             self.assertIsNotNone(made, f"no issue {key}")
             self.assertEqual(relations, [])

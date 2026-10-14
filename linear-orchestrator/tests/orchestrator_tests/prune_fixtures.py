@@ -8,9 +8,8 @@ import tempfile
 from contextlib import redirect_stderr, redirect_stdout
 from datetime import timedelta
 
-from agent_pm.linear_orchestrator.engine import promote, prune
+from agent_pm.linear_orchestrator.engine import log, ops, promote, prune
 from agent_pm.linear_orchestrator.engine.types import LinearError
-from agent_pm.linear_orchestrator.linear import linear
 from orchestrator_tests.case import Case
 from orchestrator_tests.unit import promote_fixtures as tp
 from orchestrator_tests.unit.board_ids import STATES as IDS_BY_KEY
@@ -37,7 +36,7 @@ ROLES = {
 }
 
 
-TEAM_OBJ = linear.Team(TEAM, "Team", dict(IDS_BY_KEY))
+TEAM_OBJ = ops.Team(TEAM, "Team", dict(IDS_BY_KEY))
 
 
 def gql_for(issues, owners=None, page=50, fail=(), refuse=()):
@@ -53,7 +52,7 @@ def gql_for(issues, owners=None, page=50, fail=(), refuse=()):
 
     def gql(query, **v):
         gql.calls.append(query)
-        if query == linear.Q_TEAM:
+        if query == ops.Q_TEAM:
             return {"teams": {"nodes": [team_node()]}}
         if query == prune.Q_FINISHED:
             gql.finished.append(v)
@@ -116,7 +115,7 @@ class PruneScenario(Case):
         write(os.path.join(self.outside, "keep"), "x")
         self.logs = os.path.join(self.root, "logs")
         self.api = FakeApi()
-        linear.use_logs(self.logs)
+        log.use_logs(self.logs)
 
     def closed(self):
         return [c[1] for c in self.api.order if c[0] == "close"]
@@ -185,7 +184,7 @@ class PruneScenario(Case):
         fake.moved("DR-1", 30, "Handoff", frm=tp.STATES["In Review"])
 
         def gql(query, **v):
-            self.user_queries += query == linear.Q_USER
+            self.user_queries += query == ops.Q_USER
             return (
                 prune_gql if query in (prune.Q_ISSUE, prune.Q_FINISHED, prune.M_ARCHIVE) else fake
             )(query, **v)

@@ -126,14 +126,6 @@ class PackageClimbs(Sample):
             ): "TASK-393",
             ("delegate/src/agent_pm/delegate/engine/config.py", "DELEGATE"): "TASK-367",
             ("delegate/src/agent_pm/delegate/engine/config.py", "import_roots()"): "TASK-367",
-            (
-                "linear-orchestrator/src/agent_pm/linear_orchestrator/engine/config.py",
-                "ROOT",
-            ): "TASK-372",
-            (
-                "linear-orchestrator/src/agent_pm/linear_orchestrator/engine/config.py",
-                "import_roots()",
-            ): "TASK-372",
             ("manager/src/agent_pm/manager/engine/crew.py", "BIN"): "TASK-373",
         }
         self.assertLessEqual(guards.PACKAGE_CLIMB_ALLOWED.keys(), expected.keys())
@@ -682,12 +674,15 @@ class SourceSuppressions(Sample):
         )
 
     def test_pylint_disable_requires_a_matching_enable(self):
-        path = "linear-orchestrator/src/agent_pm/linear_orchestrator/engine/router.py"
-        reason = guards.NOQA_ALLOWED[path, "BLE001", "start_run"]
-        self.assertEqual(
-            self.found({path: self.scoped("start_run", [f"# pylint: disable=BLE001  # {reason}"])}),
-            [f"{path}: suppression BLE001 in start_run has no matching enable"],
-        )
+        path = "tests/example.py"
+        reason = "Fixture approval."
+        with mock.patch.dict(guards.NOQA_ALLOWED, {(path, "duplicate-code", "outer"): reason}):
+            self.assertEqual(
+                self.found(
+                    {path: self.scoped("outer", [f"# pylint: disable=duplicate-code  # {reason}"])}
+                ),
+                [f"{path}: suppression duplicate-code in outer has no matching enable"],
+            )
 
     def test_unlisted_pylint_blocks_and_unmatched_enables_are_rejected(self):
         path = "tests/other.py"
@@ -710,20 +705,23 @@ class SourceSuppressions(Sample):
         )
 
     def test_pylint_enable_cannot_close_another_scope(self):
-        path = "linear-orchestrator/src/agent_pm/linear_orchestrator/engine/router.py"
-        reason = guards.NOQA_ALLOWED[path, "BLE001", "start_run"]
-        self.assertEqual(
-            self.found(
-                {
-                    path: self.scoped("start_run", [f"# pylint: disable=BLE001  # {reason}"])
-                    + self.scoped("other", ["# pylint: enable=BLE001"])
-                }
-            ),
-            [
-                f"{path}:4: suppression BLE001 in other has no matching disable",
-                f"{path}: suppression BLE001 in start_run has no matching enable",
-            ],
-        )
+        path = "tests/example.py"
+        reason = "Fixture approval."
+        with mock.patch.dict(guards.NOQA_ALLOWED, {(path, "duplicate-code", "outer"): reason}):
+            self.assertEqual(
+                self.found(
+                    {
+                        path: self.scoped(
+                            "outer", [f"# pylint: disable=duplicate-code  # {reason}"]
+                        )
+                        + self.scoped("other", ["# pylint: enable=duplicate-code"])
+                    }
+                ),
+                [
+                    f"{path}:4: suppression duplicate-code in other has no matching disable",
+                    f"{path}: suppression duplicate-code in outer has no matching enable",
+                ],
+            )
 
     def test_strings_docstrings_and_unrelated_comments_are_ignored(self):
         self.assertEqual(
@@ -2020,7 +2018,7 @@ class ExplicitKeys(Sample):
         self.assertEqual(
             guards.explicit_keys(root),
             [
-                f"{guards.ORCH_PROJECT}/config.toml: `# local:` key linear_orchestrator.typo has no real line",
+                f"{guards.ORCH_PROJECT}/{OPKG}/config.toml: `# local:` key linear_orchestrator.typo has no real line",
             ],
         )
 

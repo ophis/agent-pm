@@ -1,14 +1,12 @@
-"""orchestrator prune.py, ported from the old prune_test onto a fake Driver api (FR-50); its tick
-through promote.main."""
+"""Orchestrator prune behavior at its dependency boundaries."""
 
 import os
 import shutil
 from functools import partial
 from unittest import mock
 
-from agent_pm.linear_orchestrator.engine import config, prune
+from agent_pm.linear_orchestrator.engine import config, ops, prune
 from agent_pm.linear_orchestrator.engine.types import LinearError
-from agent_pm.linear_orchestrator.linear import linear
 from agent_pm.session import ConfigError, DriverError
 from agent_pm.utils import temp_dirs
 from orchestrator_tests.case import Case
@@ -136,7 +134,7 @@ class RepositoryCleanup(PruneScenario):
         self.assertTrue(os.path.isdir(os.path.join(self.work, "TASK-49")))
         self.assertTrue(os.path.isdir(busy))
         self.assertOutsideKept()
-        self.assertNotIn(linear.Q_TEAM, gql.calls)
+        self.assertNotIn(ops.Q_TEAM, gql.calls)
         self.assertIn("state { id }", prune.Q_ISSUE)
 
     def test_dry_run_plans_clone_and_worktree_deletion_and_touches_nothing(self):

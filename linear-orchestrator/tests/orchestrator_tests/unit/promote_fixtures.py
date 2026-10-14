@@ -1,6 +1,4 @@
-"""orchestrator promote.py, ported from the old promote_test onto config.load(): every Linear call
-goes as the harness account.
-"""
+"""Promotion fixtures with explicit role accounts and logs."""
 
 import io
 import json
@@ -9,9 +7,8 @@ import tempfile
 from contextlib import redirect_stderr, redirect_stdout
 from datetime import UTC, datetime, timedelta
 
-from agent_pm.linear_orchestrator.engine import promote
+from agent_pm.linear_orchestrator.engine import ops, promote
 from agent_pm.linear_orchestrator.engine.types import LinearError
-from agent_pm.linear_orchestrator.linear import linear
 from orchestrator_tests.unit import run_fixtures
 from orchestrator_tests.unit.board_ids import ACCOUNTS, HEADER, team_node
 from orchestrator_tests.unit.board_ids import STATES as IDS_BY_KEY
@@ -103,7 +100,7 @@ class FakeLinear:
         )
 
     def writes(self):
-        return [q for q, _ in self.calls if q == linear.Q_ISSUE_STATE or q.startswith("mutation")]
+        return [q for q, _ in self.calls if q == ops.Q_ISSUE_STATE or q.startswith("mutation")]
 
     def __call__(self, query, *, service, **v):
         self.calls.append((query, v))
@@ -118,9 +115,9 @@ class FakeLinear:
         return self._mutate(query, v)
 
     def _identity(self, query, v):
-        if query == linear.Q_TEAM:
+        if query == ops.Q_TEAM:
             return {"teams": {"nodes": [team_node(self.state_ids)]}}
-        if query == linear.Q_USER:
+        if query == ops.Q_USER:
             users = {a.lower(): f"u-{r}" for r, a in ROLE.items()}
             return {
                 "users": {
@@ -157,7 +154,7 @@ class FakeLinear:
             }
         if query == promote.Q_CHILD:
             return {"issues": {"nodes": [self.children[v["c"]]] if v["c"] in self.children else []}}
-        if query == linear.Q_ISSUE_STATE:
+        if query == ops.Q_ISSUE_STATE:
             return {"issue": {"state": {"id": STATES[self.issues[v["i"]]["state"]]}}}
         return None
 
@@ -175,13 +172,13 @@ class FakeLinear:
         if query == promote.M_RELATE:
             self.issues[v["in"]["issueId"]]["relations"].append(v["in"]["relatedIssueId"])
             return {"issueRelationCreate": {"success": True}}
-        if query == linear.M_COMMENT:
+        if query == ops.M_COMMENT:
             self.issues[v["i"]].setdefault("posted", []).append(v["b"])
             return {"commentCreate": {"success": True}}
-        if query == linear.M_SUBSCRIBE:
+        if query == ops.M_SUBSCRIBE:
             self.issues[v["i"]].setdefault("subscribers", []).append(v["e"])
             return {"issueSubscribe": {"success": True}}
-        if query == linear.M_STATE:
+        if query == ops.M_STATE:
             self.issues[v["i"]]["state"] = next((n for n, i in STATES.items() if i == v["s"]))
             return {"issueUpdate": {"success": True}}
         raise AssertionError(query)

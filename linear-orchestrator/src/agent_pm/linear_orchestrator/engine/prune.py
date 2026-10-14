@@ -11,7 +11,7 @@ skipped):
   filters or hooks, never runs outside auto mode's review);
 - archives every finished issue of the team assigned to the pm or engineer role account.
 
-TUI sessions unknown: an error, and no issue is pruned. Each step is logged (linear.log, src prune);
+TUI sessions unknown: an error, and no issue is pruned. Each step is logged (event_log.log, src prune);
 a failure is logged and the rest goes on (run returns 3), but Unavailable is raised.
 """
 
@@ -23,19 +23,13 @@ import shutil
 import subprocess
 from datetime import timedelta
 
-from agent_pm.linear_orchestrator.engine import config
+from agent_pm.linear_orchestrator.engine import config, run_comments
 from agent_pm.linear_orchestrator.engine.config import CLONES
-from agent_pm.linear_orchestrator.engine.types import LinearError, Unavailable
-from agent_pm.linear_orchestrator.linear.linear import (
-    HISTORY,
-    ISSUE_ID,
-    call,
-    last_move,
-    log,
-    one_line,
-)
-from agent_pm.session import ConfigError, DriverError
-from agent_pm.utils import GUARD, SHORT, GitError, common_dir, under
+from agent_pm.linear_orchestrator.engine.log import log
+from agent_pm.linear_orchestrator.engine.ops import HISTORY, call, last_move
+from agent_pm.linear_orchestrator.engine.types import ISSUE_ID, LinearError, Unavailable
+from agent_pm.session import DriverError
+from agent_pm.utils import GUARD, SHORT, GitError, common_dir, one_line, sh, under
 from agent_pm.utils import run_git as git
 
 QUARANTINE = timedelta(hours=24)
@@ -61,11 +55,10 @@ class Skip(Exception):
 
 
 class Pruner:
-    def __init__(
-        self, gql, now, *, dry, run=config.sh_run, work, team, roles, driver, writable=None
-    ):
+    def __init__(self, gql, now, *, dry, run=None, work, team, roles, driver, writable=None):
         self.gql, self.now, self.dry, self.work = gql, now, dry, work
-        self.team, self.roles, self.run_git = team, roles, run
+        self.team, self.roles = team, roles
+        self.run_git = run or functools.partial(sh, env={**os.environ, "PATH": config.path()})
         self.driver = driver
         self.writable = config.writable(work) if writable is None else writable
         self.errors, self.tuis = 0, {}
@@ -214,14 +207,14 @@ class Pruner:
         return found
 
     def close_sessions(self, ident):
-        for name in sorted(self.tuis.get(ident, ())):
-            if self.dry:
+        names = sorted(self.tuis.get(ident, ()))
+        if self.dry:
+            for name in names:
                 self.say("prune-plan", ident, session=name, what="close the tui session")
-                continue
-            try:
-                self.driver.close(name)
-            except (ConfigError, DriverError) as e:
-                self.error(ident, session=name, error=one_line(e))
+            return
+        for name, error in run_comments.close_tuis(self.driver, names):
+            if error:
+                self.error(ident, session=name, error=error)
             else:
                 self.say("prune-closed", ident, session=name)
 

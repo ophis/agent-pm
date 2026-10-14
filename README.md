@@ -60,7 +60,7 @@ flowchart TB
   R -.->|detached session| RU
   RU -->|agent_pm.delegate| D
   LC -->|agent_pm.delegate| C
-  LO -->|"agent_pm.session, until TASK-372"| DR
+  LO -->|"legacy agent_pm.session imports"| DR
   W -.-> CC
   D --> C
   D -->|agent_pm.session| SE
@@ -164,7 +164,7 @@ flowchart LR
     L -->|every 5 min| P[promote.py] --> X[prune.py]
 ```
 
-The router's and promote's commands: `PYTHONPATH=<the five src dirs> python3 -P -m agent_pm.linear_orchestrator.engine.router|promote …`; the router's options: `linear-orchestrator/src/agent_pm/linear_orchestrator/engine/router.py`'s docstring.
+From a source checkout, set `PYTHONPATH` to its five absolute `src` paths; an installed package needs none. Run `python3 -P -m agent_pm.linear_orchestrator.cli router …` or `python3 -P -m agent_pm.linear_orchestrator.cli promote …`; the router's options: `linear-orchestrator/src/agent_pm/linear_orchestrator/engine/router.py`'s docstring.
 
 ```bash
 tmux ls                                                      # running sessions, agent-pm-<role>-<ID>
@@ -197,14 +197,14 @@ delegate/             the Delegate (one role's run), the Composer, the built-in 
 session/              the session: an Adapter per runtime, Modes, Hosts (tmux)
 utils/                shared utilities
 manager/              cli.py, engine/crew.py, roster.py and events.py: commands and bookkeeping
-linear-orchestrator/  runs roles from a Linear board: router, run, promote, prune
+linear-orchestrator/  cli.py: router, run, promote; engine/: scheduling, client, log, ops, issues, run_comments, writeback
 tests/                repo-wide checks: guards.py (rules), checks.py (runner), case.py and suites
 .github/              CI workflows and their helpers
 ```
 
 The Delegate's `Driver`, `AgentDriver` and `InstructionDriver` live in `delegate/src/agent_pm/delegate/engine/drivers.py`; definitions: `CONTEXT.md` › Driver.
 
-Each project holds `src/agent_pm/<its package>/` (one PEP 420 namespace package `agent_pm` over the five `src/` roots) and `tests/`. Session defaults live in `session/src/agent_pm/session/config.toml`; other configured projects keep `config.toml` at their project roots. Each module's docstring states its behaviour.
+Each project holds `src/agent_pm/<its package>/` (one PEP 420 namespace package `agent_pm` over the five `src/` roots) and `tests/`. Packaged configs live in `session/src/agent_pm/session/config.toml` and `linear-orchestrator/src/agent_pm/linear_orchestrator/config.toml`; other configured projects keep `config.toml` at their project roots. Each module's docstring states its behaviour.
 
 ## Runtime policy
 

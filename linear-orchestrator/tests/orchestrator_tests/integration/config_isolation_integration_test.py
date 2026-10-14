@@ -2,8 +2,12 @@
 
 import json
 import os
+import shlex
+import shutil
 import subprocess
+import sys
 import tempfile
+from pathlib import Path
 from unittest import mock
 
 from agent_pm import delegate
@@ -23,7 +27,7 @@ from orchestrator_tests.config_fixtures import (
     write,
 )
 
-from utils.tests.sandbox import git
+from utils.tests.sandbox import clean_env, git
 
 
 class Clones(ConfigFile, Case):
@@ -144,10 +148,14 @@ class RunnableClones(Clones):
                     PIPELINE + f'[local_clones]\n"{SLUG}" = {json.dumps(path)}\n',
                 )
 
-    def test_no_entries_runs_no_git(self):
-        with mock.patch.object(subprocess, "run") as clone_error:
+    def test_no_entries_runs_no_clone_checks(self):
+        with mock.patch.object(subprocess, "run", wraps=subprocess.run) as git_calls:
             self.assertEqual(list(self.load(PIPELINE).roles), ["researcher", "pm", "engineer"])
-        clone_error.assert_not_called()
+        self.assertTrue(git_calls.call_args_list)
+        self.assertTrue(
+            all("remote" not in call.args[0] for call in git_calls.call_args_list),
+            git_calls.call_args_list,
+        )
 
 
 class ConfigurationLoading(ConfigFile, Case):
@@ -279,3 +287,159 @@ class ExecutablePath(Case):
                 },
             )
             self.assertEqual(os.listdir(home), [])
+
+
+class PackagedDeployments(ConfigFile, Case):
+    def setUp(self):
+        super().setUp()
+        self.dir = os.path.realpath(self.dir)
+        self.deployment = Path(self.dir).resolve() / "deployment"
+        self.copy_packages(self.deployment)
+
+    def copy_packages(self, deployment):
+        for project in ("linear-orchestrator", "delegate", "session", "utils"):
+            package = project.replace("-", "_")
+            target = deployment / project / "src" / "agent_pm" / package
+            shutil.copytree(
+                Path(REPO) / project / "src" / "agent_pm" / package,
+                target,
+                ignore=shutil.ignore_patterns("__pycache__"),
+            )
+            source = Path(REPO) / project / "config.toml"
+            if source.exists():
+                shutil.copyfile(source, deployment / project / "config.toml")
+
+    def environment(self):
+        roots = [
+            str(self.deployment / project / "src")
+            for project in ("linear-orchestrator", "delegate", "session", "utils")
+        ]
+        return clean_env(os.environ, *roots)
+
+    def child(self, code, *arguments):
+        result = subprocess.run(
+            [*PY, "-c", code, *map(str, arguments)],
+            cwd=self.dir,
+            env=self.environment(),
+            capture_output=True,
+            text=True,
+            timeout=60,
+            stdin=subprocess.DEVNULL,
+        )
+        self.assertEqual((result.returncode, result.stderr), (0, ""), result.stdout)
+        return json.loads(result.stdout)
+
+    def discovery(self, work):
+        return self.child(
+            "import json, sys\n"
+            "from agent_pm.linear_orchestrator.engine import config\n"
+            "protected = ()\n"
+            "try:\n"
+            "    protected = config.deployment_dirs()\n"
+            "    work = config._work_dir({'work_dir': sys.argv[1]}, protected)\n"
+            "except config.ConfigError as error:\n"
+            "    print(json.dumps({'error': str(error), 'protected': protected}))\n"
+            "else:\n"
+            "    print(json.dumps({'work': work, 'protected': protected}))\n",
+            work,
+        )
+
+    def package(self):
+        return self.deployment / "linear-orchestrator" / "src" / "agent_pm" / "linear_orchestrator"
+
+    def test_package_equal_containment_missing_sibling_and_symlink(self):
+        package = self.package()
+        alias = Path(self.dir) / "package-alias"
+        alias.symlink_to(package, target_is_directory=True)
+        for work in (package, package / "missing" / "state", package.parent, alias):
+            with self.subTest(work=work):
+                found = self.discovery(work)
+                self.assertIn(str(package), found["protected"])
+                self.assertIn("work_dir must neither", found["error"])
+        sibling = self.deployment / "unrelated-state" / "missing"
+        self.assertEqual(self.discovery(sibling)["work"], str(sibling))
+        self.assertFalse(sibling.exists())
+
+    def test_deployment_checkout_and_nested_outer_checkout(self):
+        git("init", "-q", str(self.deployment))
+        inner = self.deployment / "linear-orchestrator"
+        git("init", "-q", str(inner))
+        found = self.discovery(inner / "state")
+        self.assertIn(str(inner), found["protected"])
+        self.assertIn(str(self.deployment), found["protected"])
+        self.assertIn("work_dir must neither", found["error"])
+        self.assertIn("work_dir must neither", self.discovery(self.deployment / "state")["error"])
+
+    def test_linked_worktree_checkout_is_protected(self):
+        main = Path(self.dir) / "main"
+        git("init", "-q", str(main))
+        git("-C", str(main), "commit", "--allow-empty", "-qm", "fixture")
+        linked = Path(self.dir) / "linked"
+        git("-C", str(main), "worktree", "add", "-qb", "linked", str(linked))
+        self.copy_packages(linked)
+        self.deployment = linked
+        found = self.discovery(linked / "state")
+        self.assertIn(str(linked), found["protected"])
+        self.assertIn("work_dir must neither", found["error"])
+
+    def test_symlinked_editable_package_finds_source_checkout(self):
+        editable = Path(self.dir) / "editable"
+        git("init", "-q", str(editable))
+        source = editable / "src" / "agent_pm" / "linear_orchestrator"
+        source.parent.mkdir(parents=True)
+        package = self.package()
+        shutil.move(str(package), str(source))
+        package.symlink_to(source, target_is_directory=True)
+        found = self.discovery(editable / "state")
+        self.assertIn(str(source), found["protected"])
+        self.assertIn(str(editable), found["protected"])
+        self.assertIn("work_dir must neither", found["error"])
+
+    def test_discovery_error_rejects_unrelated_work_dir(self):
+        (self.deployment / "linear-orchestrator" / ".git").write_text("invalid metadata\n")
+        found = self.discovery(Path(self.dir) / "unrelated")
+        self.assertIn("deployment checkout", found["error"])
+
+    def test_load_preserves_deployment_protection_without_local_clone(self):
+        clone = Path(self.dir) / "clone"
+        git("init", "-q", str(clone))
+        git("-C", str(clone), "remote", "add", "origin", HTTPS)
+        self.local(PIPELINE + f'[local_clones]\n"{SLUG}" = {json.dumps(str(clone))}\n')
+        found = self.child(
+            "import json\nfrom agent_pm.linear_orchestrator.engine import config\n"
+            "cfg = config.load()\n"
+            "print(json.dumps({'protect': cfg.protect, 'clones': dict(cfg.local_clones)}))\n"
+        )
+        self.assertIn(str(self.package()), found["protect"])
+        self.assertNotIn(str(clone), found["protect"])
+        self.assertEqual(found["clones"], {SLUG: str(clone)})
+
+    def test_default_gate_runs_outside_checkout_cwd(self):
+        self.local(PIPELINE)
+        gate = self.child(
+            "import json\nfrom agent_pm.linear_orchestrator.engine import config\n"
+            "print(json.dumps(config.load().roles['researcher'].run.gate))\n"
+        )
+        fake_bin = Path(self.dir) / "bin"
+        fake_bin.mkdir()
+        marker = Path(self.dir) / "usage-probe-ran"
+        fake = fake_bin / "claude"
+        fake.write_text(
+            f"#!{sys.executable}\nfrom pathlib import Path\n"
+            f"Path({str(marker)!r}).touch()\n"
+            'print(\'{"type":"rate_limit_event","rate_limit_info":{"unifiedWindows":{}}}\')\n'
+        )
+        fake.chmod(0o700)
+        result = subprocess.run(
+            shlex.split(gate),
+            cwd=self.dir,
+            env={**self.environment(), "AGENT_PM_PATH": str(fake_bin)},
+            capture_output=True,
+            text=True,
+            timeout=60,
+            stdin=subprocess.DEVNULL,
+        )
+        self.assertIn(result.returncode, (0, 1), result.stderr)
+        self.assertEqual(result.stderr, "")
+        self.assertTrue(marker.exists(), result.stdout)
+        self.assertTrue(result.stdout.strip())

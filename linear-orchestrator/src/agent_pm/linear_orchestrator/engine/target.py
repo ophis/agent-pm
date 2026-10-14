@@ -6,12 +6,13 @@ import json
 import os
 import re
 from dataclasses import replace
+from functools import partial
 
-from agent_pm.linear_orchestrator.engine import config
-from agent_pm.linear_orchestrator.engine.config import CLONES, REF, TASKS, repo_slug, sh_run
+from agent_pm.linear_orchestrator.engine import config, issues
+from agent_pm.linear_orchestrator.engine.config import CLONES, REF, TASKS
 from agent_pm.linear_orchestrator.engine.types import Invalid, Target, Transient
-from agent_pm.linear_orchestrator.linear import issues
-from agent_pm.utils import GUARD, NAME, OWNER, SHORT, common_dir, err_text, under
+from agent_pm.utils import GUARD, SHORT, Repo, common_dir, err_text, repo_slug, sh, under
+from agent_pm.utils import Invalid as RepoInvalid
 from agent_pm.utils import checkout as clone_checkout
 
 MAPPED = "project mapping "
@@ -22,14 +23,15 @@ def _one(value):
     m = re.fullmatch(r"\[[^\]]*\]\(<?([^)>]+)>?\)", v)
     if m:
         v = m.group(1).strip()
-    for pat in (
-        rf"https://github\.com/({OWNER})/({NAME}?)(?:\.git)?/?",
-        rf"git@github\.com:({OWNER})/({NAME}?)(?:\.git)?",
-    ):
-        m = re.fullmatch(pat, v)
-        if m and m.group(2) not in (".", ".."):
-            return m.group(1), m.group(2)
-    return repo_slug(v)
+    if v.startswith("git@github.com:") and not v.endswith("/"):
+        v = "https://github.com/" + v.removeprefix("git@github.com:")
+    if not v.startswith("https://github.com/"):
+        return repo_slug(v)
+    try:
+        repo = Repo.parse(v)
+    except RepoInvalid:
+        return None
+    return repo.owner, repo.name
 
 
 def parse_repo(description) -> tuple[str, str] | Invalid:
@@ -151,27 +153,29 @@ def _branches(ident, o, n, *, run, work, roles):
     ]
 
 
-def check(issue, repos, *, run=sh_run, work, roles) -> Target | Invalid | Transient:
+def check(issue, repos, *, run=None, work, roles) -> Target | Invalid | Transient:
+    if run is None:
+        run = partial(sh, env={**os.environ, "PATH": config.path()})
     repo = parse_repo(issue.description)
     mapped = repo == NO_LINE and issue.project_id in repos
     tag = MAPPED if mapped else ""
     if mapped:
         repo = repo_slug(repos[issue.project_id]) or Invalid(
-            f"{MAPPED}{str(repos[issue.project_id])[:80]!r}: not <owner>/<name>"
+            f"{MAPPED}{str(repos[issue.project_id])[:80]!r}: not <owner>/<name>", mapped=True
         )
     if isinstance(repo, Invalid):
         return repo
     asked = f"{tag}{repo[0]}/{repo[1]}"
     info = _repo_info(*repo, run)
     if isinstance(info, Invalid):
-        return Invalid(tag + info.reason)
+        return Invalid(tag + info.reason, mapped=mapped)
     if isinstance(info, Transient):
         return info
     (o, n), can_push, default = info
     if not can_push:
-        return Invalid(f"{asked}: no push permission")
+        return Invalid(f"{asked}: no push permission", mapped=mapped)
     if not isinstance(default, str) or not REF.fullmatch(default):
-        return Invalid(f"{asked}: unsafe default branch name")
+        return Invalid(f"{asked}: unsafe default branch name", mapped=mapped)
     ident = issue.identifier
     names = _branches(ident, o, n, run=run, work=work, roles=roles)
     if isinstance(names, Transient):
@@ -183,7 +187,9 @@ def check(issue, repos, *, run=sh_run, work, roles) -> Target | Invalid | Transi
     return Target(o, n, names[0] if names else f"{ident}-{slug(issue.title)}")
 
 
-def with_clone(t, ident, *, run=sh_run, work, clones, writable=None) -> Target:
+def with_clone(t, ident, *, run=None, work, clones, writable=None) -> Target:
+    if run is None:
+        run = partial(sh, env={**os.environ, "PATH": config.path()})
     # the checkout is agent-writable, so a clone its `.git` file names counts only outside
     # `writable` and with the right origin
     path = checkout(ident, t.owner, t.name, work=work)

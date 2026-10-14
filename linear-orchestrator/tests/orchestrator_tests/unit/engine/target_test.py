@@ -1,14 +1,14 @@
-"""orchestrator target.py, ported from the old target_test."""
+"""Repository descriptions, target validation and branch selection."""
 
 import json
 import os
 import shutil
 import tempfile
 from types import SimpleNamespace
+from unittest import mock
 
 from agent_pm import delegate
-from agent_pm.linear_orchestrator.engine import config, target
-from agent_pm.linear_orchestrator.linear import issues
+from agent_pm.linear_orchestrator.engine import config, issues, target
 from agent_pm.utils import SHORT
 from orchestrator_tests.case import Case
 from orchestrator_tests.target_fixtures import LOCAL
@@ -71,6 +71,9 @@ class RepositoryDescription(Case):
             ("Repo: ophis/.github", ("ophis", ".github")),
             ("Repo: https://github.com/ophis/.github.git", ("ophis", ".github")),
             ("Repo: ophis/..x", ("ophis", "..x")),
+            ("Repo: ophis/a.git", ("ophis", "a.git")),
+            ("Repo: git@github.com:ophis/a", ("ophis", "a")),
+            ("Repo: https://github.com/ophis/a/", ("ophis", "a")),
         ):
             with self.subTest(d=d):
                 self.assertEqual(target.parse_repo(d), want)
@@ -94,6 +97,13 @@ class RepositoryDescription(Case):
                     "a b/c",
                     "ophis/a;rm",
                     "https://gitlab.com/ophis/a",
+                    "http://github.com/ophis/a",
+                    "ssh://git@github.com/ophis/a",
+                    "git@github.com:ophis/a/",
+                    "github.com/ophis/a",
+                    "ophis/a/",
+                    "https://github.com/ophis/a/tree/main",
+                    "https://github.com/ophis/a?x=1",
                 )
             ),
             "Repo: ophis/a\nRepo: ophis/b",
@@ -245,6 +255,28 @@ class TargetValidation(Case):
             ],
         )
 
+    def test_default_runner_uses_the_current_path_and_environment(self):
+        seen = []
+
+        def subprocess_run(argv, **kwargs):
+            seen.append((argv, kwargs))
+            return api() if argv[0] == "gh" else ok("")
+
+        with (
+            mock.patch.dict(os.environ, {"AGENT_PM_PATH": "/target-tools", "TARGET_ENV": "kept"}),
+            mock.patch("subprocess.run", side_effect=subprocess_run),
+        ):
+            expected_path = config.path()
+            self.assertEqual(
+                target.check(issue("Repo: ophis/agent-pm"), {}, work=self.work, roles=roles()),
+                target.Target("ophis", "agent-pm", "TASK-26-session-registry"),
+            )
+        self.assertEqual(len(seen), 2)
+        for _, kwargs in seen:
+            self.assertEqual(kwargs["env"]["PATH"], expected_path)
+            self.assertEqual(kwargs["env"]["TARGET_ENV"], "kept")
+            self.assertEqual(kwargs["timeout"], SHORT)
+
     def test_where_the_branches_are_read(self):
         elsewhere = os.path.join(self.work, "elsewhere")
         os.makedirs(os.path.join(elsewhere, ".git"))
@@ -387,13 +419,13 @@ class TargetValidation(Case):
                 "no repo here",
                 {PROJ: "nope"},
                 PROJ,
-                target.Invalid("project mapping 'nope': not <owner>/<name>"),
+                target.Invalid("project mapping 'nope': not <owner>/<name>", mapped=True),
             ),
             (
                 "no repo here",
                 {PROJ: 42},
                 PROJ,
-                target.Invalid("project mapping '42': not <owner>/<name>"),
+                target.Invalid("project mapping '42': not <owner>/<name>", mapped=True),
             ),
         ):
             with self.subTest(desc=desc, repos=repos, project=project):
@@ -460,7 +492,9 @@ class TargetValidation(Case):
                 with self.subTest(label, issue=issue_label):
                     self.assertEqual(
                         self.check(api=res, **extra),
-                        target.Invalid(prefix + want.reason) if tagged else want,
+                        target.Invalid(prefix + want.reason, mapped=bool(prefix))
+                        if tagged
+                        else want,
                     )
                     self.assertEqual(self.argvs(), [("gh", "api", "repos/ophis/agent-pm")])
 

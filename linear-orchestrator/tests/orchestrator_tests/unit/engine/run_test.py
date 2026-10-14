@@ -1,6 +1,4 @@
-"""orchestrator run.py, ported from the old run_test onto a fake delegate.run driving on_event, plus
-FR-43's TUI close and --tui's show on a fake Driver api, each Linear call's identity and the usage-
-limit path (FR-59)."""
+"""Orchestrator run behavior at its dependency boundaries."""
 
 import io
 import json
@@ -13,9 +11,10 @@ from unittest import mock
 
 from agent_pm import delegate
 from agent_pm.delegate import Begun, Finished, Limit, Outcome, Progress, Result, Spec
-from agent_pm.linear_orchestrator.engine import config, run
+from agent_pm.linear_orchestrator.engine import config, ops, run, run_comments, writeback
+from agent_pm.linear_orchestrator.engine import log as event_log
+from agent_pm.linear_orchestrator.engine.types import Spec as RunSpec
 from agent_pm.linear_orchestrator.engine.types import Stopped
-from agent_pm.linear_orchestrator.linear import linear, sessions, writeback
 from agent_pm.session import SIGNALS, DriverError
 from orchestrator_tests.unit.board_ids import STATES
 from orchestrator_tests.unit.config_fixtures import GATE
@@ -82,7 +81,7 @@ def updated(line):
 
 
 def cid(step):
-    return linear.client_id(SID, step)
+    return ops.client_id(SID, step)
 
 
 class FakeRun:
@@ -242,6 +241,7 @@ class RunExecution(Case):
                     sid=SID,
                     out=os.path.join(self.rd, "out.md"),
                     cwd=self.rd,
+                    protect=config.load().protect,
                 ),
             ),
         )
@@ -579,7 +579,7 @@ class RunIdentity(Case):
         by = {}
         for (_, service, v), timeout in zip(self.gql.calls, self.gql.timeouts, strict=True):
             by.setdefault(v.get("c") == SESSION, set()).add((service, timeout))
-        self.assertEqual(by, {True: {(HARNESS, sessions.LIMIT)}, False: {(KEY, 30)}})
+        self.assertEqual(by, {True: {(HARNESS, run_comments.LIMIT)}, False: {(KEY, 30)}})
         for step in ("start", "comment"):
             self.assertIn(("find", KEY, {"c": cid(step)}), self.gql.calls)
 
@@ -660,6 +660,39 @@ class RunUsageLimits(Case):
 
 
 class RunArguments(Case):
+    def test_launch_arguments_preserve_input_and_display_values(self):
+        values = self.argv() + [
+            "--task=light-build",
+            "--target=ophis/agent-pm",
+            "--tui",
+            "--split=below",
+            "--split-from=dev",
+            "--opener=w0t0p0:ABC",
+            "--events=/tmp/events.log",
+        ]
+        parsed = RunSpec.from_argv(values)
+        self.assertEqual(
+            (
+                parsed.task,
+                parsed.target,
+                parsed.tui,
+                parsed.split,
+                parsed.split_from,
+                parsed.opener,
+                parsed.events,
+            ),
+            (
+                "light-build",
+                "ophis/agent-pm",
+                True,
+                "below",
+                "dev",
+                "w0t0p0:ABC",
+                "/tmp/events.log",
+            ),
+        )
+        self.assertEqual((parsed.issue, parsed.uuid, parsed.sid), (ID, UUID, SID))
+
     def test_tui_is_off_by_default_and_main_hands_delegate_the_config_and_driver(self):
         self.done()
         self.assertEqual(self.main(), 0)
@@ -667,7 +700,7 @@ class RunArguments(Case):
         self.assertEqual((spec.mode, spec.runtime), ("headless", RUNTIME))
         self.assertEqual(role, config.load().roles["engineer"].run)
         self.assertIs(self.delegate.driver, self.api)
-        self.assertEqual(linear.LOGS_DIR, self.logs)
+        self.assertEqual(event_log.LOGS_DIR, self.logs)
         self.assertEqual(self.err, "")
 
     def test_tui_options_need_tui(self):

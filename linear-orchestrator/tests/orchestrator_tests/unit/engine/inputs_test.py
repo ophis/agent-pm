@@ -1,5 +1,4 @@
-"""orchestrator inputs.py, ported from the old inputs_test (its Checkout case on the composer), plus
-FR-57: a Handoff whose Instructions hold a `## Comments` line."""
+"""Orchestrator inputs behavior at its dependency boundaries."""
 
 import json
 import os
@@ -7,8 +6,7 @@ import re
 from types import SimpleNamespace
 
 from agent_pm import delegate
-from agent_pm.linear_orchestrator.engine import config, inputs, target
-from agent_pm.linear_orchestrator.linear import issues
+from agent_pm.linear_orchestrator.engine import config, inputs, issues, target
 from agent_pm.utils import SHORT
 from orchestrator_tests.case import Case
 
