@@ -42,10 +42,6 @@ UNIT_ISOLATION_ALLOWED = {
     "session/tests/unit/modes/tui_hook_test.py": "TASK-385 migration",
     "session/tests/unit/modes/tui_test.py": "TASK-385 migration",
     "tests/unit/guards_test.py": "TASK-385 migration",
-    "utils/tests/unit/fakes/ctl_test.py": "TASK-385 migration",
-    "utils/tests/unit/git_test.py": "TASK-385 migration",
-    "utils/tests/unit/paths_test.py": "TASK-385 migration",
-    "utils/tests/unit/shell_test.py": "TASK-385 migration",
 }
 
 

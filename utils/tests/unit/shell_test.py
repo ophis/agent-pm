@@ -1,7 +1,7 @@
 """utils/src/agent_pm/utils/shell.py: err_text and redact."""
 
-import subprocess
 import unittest
+from types import SimpleNamespace
 
 from agent_pm.utils import resume_command, shell
 
@@ -10,11 +10,10 @@ from utils.tests.case import Case
 
 class ErrText(Case):
     def test_userinfo_is_redacted(self):
-        res = subprocess.CompletedProcess(
-            [],
-            1,
-            "",
-            "fatal: could not read Password for 'https://SECRETTOK@github.com': no\n"
+        res = SimpleNamespace(
+            returncode=1,
+            stdout="",
+            stderr="fatal: could not read Password for 'https://SECRETTOK@github.com': no\n"
             "fatal: unable to access 'https://u:SECRET2@ghe.io/o/n/'",
         )
         text = shell.err_text(res)
@@ -30,9 +29,7 @@ class ErrText(Case):
             ("x" * 300, "x" * 200),
         ):
             with self.subTest(stderr=stderr):
-                self.assertEqual(
-                    shell.err_text(subprocess.CompletedProcess([], 1, stderr=stderr)), want
-                )
+                self.assertEqual(shell.err_text(SimpleNamespace(returncode=1, stderr=stderr)), want)
 
 
 class ResumeCommand(Case):

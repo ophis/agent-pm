@@ -11,6 +11,7 @@ from agent_pm.utils.record import Record, Status
 
 from utils.tests.case import Case
 from utils.tests.fakes import ctl
+from utils.tests.sandbox import clean_env
 
 
 def record(name, display=None, *, sid=None):
@@ -27,7 +28,7 @@ class FakeCtl(Case):
         self.bin = os.path.join(self.home, "bin")
         self.state = os.path.join(self.home, "ctl state")
         self.ctl = ctl.install(self.bin, self.state)
-        self.env = {k: v for k, v in os.environ.items() if not k.startswith("PYTHON")}
+        self.env = clean_env()
         self.env.pop("AGENT_PM_SID", None)
         self.env["PATH"] = os.pathsep.join((self.bin, os.environ.get("PATH", os.defpath)))
 

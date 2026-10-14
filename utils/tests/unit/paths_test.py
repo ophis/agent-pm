@@ -3,11 +3,10 @@ utils/src/agent_pm/utils/paths.py: real_dirs, under, temp_dirs, printable_abs an
 """
 
 import os
-import subprocess
 import tempfile
 import unittest
 from pathlib import Path
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
 from unittest import mock
 
 from agent_pm.utils.paths import (
@@ -22,6 +21,7 @@ from agent_pm.utils.paths import (
 )
 
 from utils.tests.case import REPO, Case
+from utils.tests.process_fixtures import TimeoutExpired
 
 
 class PathsTest(Case):
@@ -49,10 +49,16 @@ class PathsTest(Case):
             (str(self.home),),
             [1],
             ["relative"],
-            ["~unknown-task318-user/project"],
         ):
             with self.subTest(paths=paths), self.assertRaisesRegex(ValueError, "^roots:"):
                 real_dirs(paths, "roots")
+
+    def test_real_dirs_rejects_an_unknown_user(self):
+        with (
+            mock.patch("pwd.getpwnam", side_effect=KeyError("unknown-task318-user")),
+            self.assertRaisesRegex(ValueError, "^roots:"),
+        ):
+            real_dirs(["~unknown-task318-user/project"], "roots")
 
     def test_under_returns_first_real_root_and_respects_path_boundaries(self):
         path = str(self.home / "project")
@@ -65,7 +71,7 @@ class PathsTest(Case):
         self.assertIsNone(under(str(self.home), []))
 
     def test_temp_dirs_collects_environment_python_system_and_darwin_roots(self):
-        value = subprocess.CompletedProcess([], 0, str(self.root / "darwin") + "\n", "")
+        value = SimpleNamespace(returncode=0, stdout=str(self.root / "darwin") + "\n", stderr="")
         with (
             mock.patch.dict(os.environ, {"TMPDIR": str(self.alias)}),
             mock.patch("tempfile.gettempdir", return_value=str(self.home)),
@@ -86,11 +92,11 @@ class PathsTest(Case):
             capture_output=True,
             text=True,
             timeout=60,
-            stdin=subprocess.DEVNULL,
+            stdin=-3,
         )
 
     def test_temp_dirs_keeps_roots_when_getconf_is_unavailable_or_times_out(self):
-        for error in (OSError("no getconf"), subprocess.TimeoutExpired("getconf", 60)):
+        for error in (OSError("no getconf"), TimeoutExpired("getconf", 60)):
             with self.subTest(error=error), mock.patch("subprocess.run", side_effect=error):
                 self.assertIn(os.path.realpath("/var/tmp"), temp_dirs())
 
