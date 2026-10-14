@@ -4,7 +4,8 @@ import json
 import subprocess
 import unittest
 
-from session.tests.case import PY, Case, child_env
+from session.tests import live_tmux
+from session.tests.case import PY, Case
 
 UNCONFIGURED = "session not configured: call Session.configure first"
 CALLED = ("start", "attach", "usage", "layout", "writable_dirs", "display", "host")
@@ -44,9 +45,11 @@ print(json.dumps({"unconfigured": unconfigured, "configured": configured, "read_
 class SessionClassMethods(Case):
     def test_on_session_itself_each_is_hosted_sessions_configured_by_session_configure(self):
         """In a child process, so no test configures the shared classes in-process."""
+        server = live_tmux.Server(self, self.home)
+        server.start("unrelated")
         res = subprocess.run(
             [*PY, "-c", DISPATCH],
-            env={k: v for k, v in child_env().items() if not k.startswith("TMUX")},
+            env=server.child_env(),
             capture_output=True,
             text=True,
             stdin=subprocess.DEVNULL,
