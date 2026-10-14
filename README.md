@@ -202,6 +202,8 @@ tests/                repo-wide checks: guards.py (rules), checks.py (runner), c
 .github/              CI workflows and their helpers
 ```
 
+The Delegate's `Driver`, `AgentDriver` and `InstructionDriver` live in `delegate/src/agent_pm/delegate/engine/drivers.py`; definitions: `CONTEXT.md` › Driver.
+
 Each project holds `src/agent_pm/<its package>/` (one PEP 420 namespace package `agent_pm` over the five `src/` roots), `tests/` and `config.toml`. Each module's docstring states its behaviour.
 
 ## Runtime policy
