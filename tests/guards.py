@@ -1581,14 +1581,15 @@ def explicit_keys(repo: str) -> list[str]:
     empty = {k for k, is_empty in real if is_empty}
     shapes = {(k[0], len(k), k[-1]) for k in keys}
     for rel, leaves in examples.items():
-        for k, _ in leaves:
+        for key, _ in leaves:
+            k = key[1:] if key[0] in PROJECTS.values() else key
             if not (
                 k in keys
                 or (k[0], len(k), k[-1]) in shapes
                 or any(k[i:] in keys for i in range(1, len(k)))
                 or k[:-1] in empty
             ):
-                found.add(f"{rel}: `# local:` key {'.'.join(k)} has no real line")
+                found.add(f"{rel}: `# local:` key {'.'.join(key)} has no real line")
     return sorted(found)
 
 

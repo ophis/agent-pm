@@ -1,4 +1,4 @@
-# DO NOT MODIFY this file. This deployment's settings go in ~/.agent-pm/config.local.toml, the one local file over every
+# DO NOT MODIFY this file. This deployment's settings go in ~/.agent-pm/config.local.toml, whose per-layer sections overlay each
 # project's config.toml (layers and merge rules: utils/src/agent_pm/utils/config_file.py's docstring). Every key this
 # file owns is a real line below: a required one you set locally has the placeholder "" (router, run and promote stop
 # while one is still "" or missing), a local-only one its empty default; a `# local:` line shows a value to copy there,
@@ -18,6 +18,7 @@ human_members = []
 harness_key = ""
 task_label_group = ""
 work_dir = "~/.agent-pm"
+# local: [linear_orchestrator]
 # local: team = "00000000-0000-0000-0000-000000000000"
 # local: human_members = ["you@example.com"]
 # local: harness_key = "linear-harness"
@@ -34,7 +35,7 @@ handoff = ""
 done = ""
 canceled = ""
 
-# local: [states]
+# local: [linear_orchestrator.states]
 # local: todo        = "00000000-0000-0000-0000-000000000000"
 # local: in_progress = "00000000-0000-0000-0000-000000000000"
 # local: in_review   = "00000000-0000-0000-0000-000000000000"
@@ -46,7 +47,7 @@ canceled = ""
 #   <task>  local: the task's Linear label id, a child of the Tasks group; empty table → none
 [task_labels]
 
-# local: [task_labels]
+# local: [linear_orchestrator.task_labels]
 # local: deep-research = "00000000-0000-0000-0000-000000000000"
 # local: light-research = "00000000-0000-0000-0000-000000000000"
 # local: build = "00000000-0000-0000-0000-000000000000"
@@ -80,13 +81,13 @@ next = ""
 require_instructions = true
 max_runs = 3
 
-# local: [roles.researcher]
+# local: [linear_orchestrator.roles.researcher]
 # local: account = "you+researcher@example.com"
 # local: key = "linear-researcher"
-# local: [roles.pm]
+# local: [linear_orchestrator.roles.pm]
 # local: account = "you+pm@example.com"
 # local: key = "linear-pm"
-# local: [roles.engineer]
+# local: [linear_orchestrator.roles.engineer]
 # local: account = "you+engineer@example.com"
 # local: key = "linear-engineer"
 # local: max_runs = 1
@@ -96,7 +97,7 @@ max_runs = 3
 #                   product-design issues with no Repo: line; a Repo: line wins; empty table → none
 [project_repos]
 
-# local: [project_repos]
+# local: [linear_orchestrator.project_repos]
 # local: "00000000-0000-0000-0000-000000000000" = "<owner>/<name>"
 
 # Local clones; optional, an unlisted repo gets a fresh clone.
@@ -105,7 +106,7 @@ max_runs = 3
 #                     repo; empty table → none
 [local_clones]
 
-# local: [local_clones]
+# local: [linear_orchestrator.local_clones]
 # local: "<owner>/<name>" = "~/src/<name>"
 
 # The overlay; optional: core run keys for the Linear orchestrator's agent runs, in delegate/config.toml's layout under
@@ -117,5 +118,5 @@ max_runs = 3
 [core.roles.researcher]
 # the gate sets the import roots itself; why `env`: delegate/skills/act-as/SKILL.md
 gate = "env PYTHONPATH={{pythonpath}} python3 -P -m agent_pm.linear_orchestrator.engine.router --brake researcher"
-# local: [core.roles.researcher]
+# local: [linear_orchestrator.core.roles.researcher]
 # local: cwd = "~/src/<name>"

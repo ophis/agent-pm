@@ -728,8 +728,9 @@ class CommittedConfiguration(Case):
             local = "".join(
                 line.removeprefix("# local: ") for line in f if line.startswith("# local: ")
             )
+        write(self.local, CORE_LOCAL + "\n" + local)
         with self.assertRaises(config.ConfigError) as cm:
-            self.load(local)
+            self.load()
         zero = "00000000-0000-0000-0000-000000000000"
         self.assertEqual(
             str(cm.exception),

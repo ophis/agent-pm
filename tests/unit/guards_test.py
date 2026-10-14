@@ -1630,6 +1630,23 @@ class ExplicitKeys(Sample):
         )
         self.assertEqual(guards.explicit_keys(root), [])
 
+    def test_sectioned_examples_keep_dynamic_empty_tables_and_reject_missing_keys(self):
+        root = self.tree(
+            {
+                f"{guards.ORCH_PROJECT}/config.toml": (
+                    '[labels]\n# local: [linear_orchestrator.labels]\n# local: x = "1"\n'
+                    '[roles.a]\nkey = ""\n# local: [linear_orchestrator.roles.b]\n# local: key = "k"\n'
+                    "# local: [linear_orchestrator]\n# local: typo = 1\n"
+                )
+            }
+        )
+        self.assertEqual(
+            guards.explicit_keys(root),
+            [
+                f"{guards.ORCH_PROJECT}/config.toml: `# local:` key linear_orchestrator.typo has no real line",
+            ],
+        )
+
     def test_a_commented_only_key_is_refused(self):
         root = self.tree(
             {

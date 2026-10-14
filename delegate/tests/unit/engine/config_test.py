@@ -148,7 +148,7 @@ class Shipped(Case):
                 "".join(
                     line.removeprefix("# local: ") for line in f if line.startswith("# local: ")
                 )
-            )
+            )["delegate"]
         self.assertLessEqual({"language", "cwd", "users", "trusted_dirs", "team_dirs"}, set(local))
         self.assertLessEqual({"researcher", "pm"}, set(local["roles"]))
         for role, table in local["roles"].items():

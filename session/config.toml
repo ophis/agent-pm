@@ -1,9 +1,9 @@
-# DO NOT MODIFY this file. This machine's settings go in ~/.agent-pm/config.local.toml, the one local file over every
+# DO NOT MODIFY this file. This machine's settings go in ~/.agent-pm/config.local.toml, whose per-layer sections overlay each
 # project's config.toml (layers and merge rules: utils/src/agent_pm/utils/config_file.py's docstring). Every key this
 # file owns is a real line below; a `# local:` line shows a value to copy there, uncommented.
 #
 # The session's keys: [adapters.<name>] and [hosts]. The session reads no config file: each entry reads this file
-# through agent_pm.utils.config_file.read_project("session"), parses [hosts] once (Host.parse_hosts) and hands both to
+# through agent_pm.session.read_config(), parses [hosts] once (Host.parse_hosts) and hands both to
 # Session.configure(adapters=, hosts=) (today the deprecated Driver configures its own Session class with them).
 
 # ── Adapters ────────────────────────────────────────────
@@ -24,7 +24,7 @@
 implementation = "agent_pm.session.adapters.claude:ClaudeAdapter"
 flags = []
 allow = []
-# local: [adapters.claude]
+# local: [session.adapters.claude]
 # local: allow = ["<rule>"]
 
 [adapters.claude.env]
@@ -84,7 +84,7 @@ implementation = "agent_pm.session.hosts.tmux:TmuxHost"
 status_line = false
 workers_per_column = 3
 grid_retile = "open-close"
-# local: [hosts.tmux]
+# local: [session.hosts.tmux]
 # local: status_line = true
 # local: workers_per_column = 2
 # local: grid_retile = "all"
