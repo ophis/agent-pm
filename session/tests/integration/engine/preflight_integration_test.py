@@ -23,7 +23,7 @@ class Preflight(Case):
         self.session = HostedSession.configured(
             adapters=read_config(local=os.devnull)["adapters"],
             hosts=Host.parse_hosts({"tmux": HOSTS["tmux"], "default": "tmux"}),
-            tmux=self.tmux,
+            host_factory=self._host_factory,
         )
         for name in (None, "named-worker"):
             spec = Spec(
@@ -85,8 +85,11 @@ class Preflight(Case):
             hosts=Host.parse_hosts(
                 {"tmux": {**HOSTS["tmux"], **(tmux_settings or {})}, "default": "tmux"}
             ),
-            tmux=self.tmux,
+            host_factory=self._host_factory,
         )
+
+    def _host_factory(self, kind, name, settings):
+        return kind(name, settings, tmux=self.tmux)
 
     def spec(self, mode=Mode.HEADLESS, **changes):
         return Spec(
