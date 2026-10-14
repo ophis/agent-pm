@@ -33,7 +33,10 @@ flowchart TB
     LC["engine/config.py<br>[core] overlay"]
   end
   subgraph DL[agent_pm.delegate]
-    D["API · CLI · run"]
+    D["cli.py<br>agent-pm-delegate"]
+    HD["engine/harness_delegate.py<br>HarnessDelegate · state.py RunState"]
+    H["engine/harness.py<br>detached run"]
+    E["engine/: base · plan · drivers · runner · callback · types"]
     C["composer/<br>prompt · run spec"]
     EV["event/<br>reply · outcome check · callback line"]
     CF["config.py<br>package settings"]
@@ -44,7 +47,7 @@ flowchart TB
   end
   subgraph SE[agent_pm.session]
     SC["cli.py<br>agent-pm-session"]
-    DR["engine/: base · hosted_session · worker · forwarding · types · records<br>modes/: headless · tui · in_process<br>hosts/tmux/: host · transport · placement · grid"]
+    DR["engine/: base · hosted_session · worker · types · records<br>modes/: headless · tui · in_process<br>hosts/tmux/: host · transport · placement · grid"]
     subgraph AD[adapters/]
       CL[claude]
       CX[codex]
@@ -62,14 +65,16 @@ flowchart TB
   HU -.-> SC
   SC --> DR
   R -.->|detached session| RU
-  RU -->|agent_pm.delegate| D
-  R --> LR
-  LR -->|agent_pm.delegate| D
-  LC -->|"Delegate class methods"| D
+  R & RU --> LR
+  RU & LR -->|agent_pm.delegate| E
+  LC -->|"Delegate class methods"| HD
   R & RU -->|"legacy launch until TASK-374"| DR
   W -.-> CC
-  D --> C
-  D -->|agent_pm.session| SE
+  D & H --> HD
+  HD -.->|"detach on the harness Host"| H
+  HD --> E & C
+  E --> C
+  DL -->|agent_pm.session| SE
   C -->|reads| T
   DR --> AD
   CL -.-> P1
@@ -187,7 +192,7 @@ tmux attach -t '=agent-pm-<role>-<ID>'                       # watch one agent r
 | `<work_dir>/logs/orchestrator.jsonl` | Every router, promote, prune, run and write-back event, one JSON object a line: `ts`, `src`, `kind`, then `issue` when it has one. An idle tick writes none; the same skip, config-load error or Linear outage (`linear-error`: a 5xx, rate limit, timeout or network error; the run stops, the next retries), once a day |
 | `<work_dir>/logs/runs.jsonl` | Start/resume rows from the last 7 days, every issue's latest session rows regardless of age, and unexpired usage limits. Rows record Delegate kind and client; legacy rows use the fixed `harness` registration. Keep it: resume and Recover read it |
 
-An agent run's workdir `<work_dir>/work/<ID>/` holds `run.jsonl` (its record: input, sessions, progress, outcome; headless, the client's stderr), `writeback.json` (the write-back steps done) and, for a `local` or `orchestrator` destination, `out.md` (the deliverable); `src/`, `publish/` and `tmp/` are workspaces (Finish). Documents are published from the agent run's clone in `publish/`: `git pull` your own docs clone to see them. Each session gets a `Run <sid>` comment on its issue, holding `cd <cwd> && claude --resume <sid>`: to open the session, first move the issue out of In Progress, or the router may resume it once idle 30 minutes. Moving `<work_dir>` or a run's cwd breaks resuming its in-progress agent runs.
+An agent run's workdir `<work_dir>/work/<ID>/` holds `run.jsonl` (its record: input, sessions, progress, outcome; headless, the client's stderr), `delegate.json` (the Delegate's state, published from the State dir `~/.agent-pm/delegates/`), `writeback.json` (the write-back steps done) and, for a `local` or `orchestrator` destination, `out.md` (the deliverable); `src/`, `publish/` and `tmp/` are workspaces (Finish). Documents are published from the agent run's clone in `publish/`: `git pull` your own docs clone to see them. Each session gets a `Run <sid>` comment on its issue, holding `cd <cwd> && claude --resume <sid>`: to open the session, first move the issue out of In Progress, or the router may resume it once idle 30 minutes. Moving `<work_dir>` or a run's cwd breaks resuming its in-progress agent runs.
 
 **Upgrade** to `orchestrator.jsonl` and `runs.jsonl`: deploy with no issue In Progress (nothing reads the old `runs.log`, so Recover would send such an issue back to Todo for a new session); delete the old logs, no archive (another `<work_dir>`: its `logs/`):
 

@@ -8,7 +8,6 @@ from agent_pm.session import (
     Activity,
     ActivityState,
     Blocked,
-    Driver,
     Effort,
     Exited,
     Hosts,
@@ -59,7 +58,6 @@ NAMES = (
 EVENTS = {Activity, Blocked, Exited, IdleTimeout, LimitHit, Reply, Stderr, TurnEnd, TurnFailed}
 
 ALLOWED_CONCRETE = {
-    Driver,
     SessionStatusLog,
     Usage,
     Window,

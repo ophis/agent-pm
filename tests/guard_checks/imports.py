@@ -9,7 +9,6 @@ import tomllib
 from tests.guard_checks.common import (
     _at_import,
     _bindings,
-    _boundary_bindings,
     _boundary_name,
     _dotted,
     _files,
@@ -18,7 +17,6 @@ from tests.guard_checks.common import (
     _within,
 )
 from tests.guard_data import (
-    DELEGATE_SESSION_FORWARDING_ALLOWED,
     IMPORT_BOOTSTRAPS,
     ORCH_SESSION_IMPORTS,
     STANDALONE,
@@ -75,39 +73,6 @@ def _changes(node, spellings):
             )
         )
     )
-
-
-def delegate_session_forwarding(repo: str) -> list[str]:
-    """FR-34: Delegate uses Session and RunLog, never deprecated session wrappers."""
-    base = "delegate/src/agent_pm/delegate/"
-    wrappers = {"Driver", "Handle", "close", "note", "session_record", "sessions"}
-    found, seen = set(), set()
-    for rel, text in _files(os.path.join(repo, base), ".py"):
-        tree = ast.parse(text, rel)
-        bound = _boundary_bindings(tree)
-        for node in ast.walk(tree):
-            names = (
-                [f"{node.module}.{alias.name}" for alias in node.names]
-                if isinstance(node, ast.ImportFrom) and node.module and not node.level
-                else [_boundary_name(node, bound)]
-                if isinstance(node, ast.Name | ast.Attribute) and isinstance(node.ctx, ast.Load)
-                else []
-            )
-            for name in names:
-                for prefix in ("agent_pm.session.", "agent_pm.session.engine.forwarding."):
-                    if name.startswith(prefix) and name[len(prefix) :].split(".")[0] in wrappers:
-                        key = base + rel, prefix + name[len(prefix) :].split(".")[0]
-                        if key in DELEGATE_SESSION_FORWARDING_ALLOWED:
-                            seen.add(key)
-                        else:
-                            found.add(
-                                f"{base}{rel}:{node.lineno}: session forwarding {name} (FR-34)"
-                            )
-    found.update(
-        f"{rel}: {name}: allowlisted but no forwarding reference (FR-34)"
-        for rel, name in DELEGATE_SESSION_FORWARDING_ALLOWED.keys() - seen
-    )
-    return sorted(found)
 
 
 def orchestrator_session_imports(repo: str) -> list[str]:

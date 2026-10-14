@@ -494,7 +494,15 @@ class DisplayTest(HostedTuiBase):
     def test_a_display_not_printable_or_ending_in_a_semicolon_is_refused(self):
         transport = fake_tmux(self)
         selected = TmuxHost("tmux", tmux=transport)
-        self.session = self.session._rebound(host_factory=lambda *_args: selected)
+        given = self.session._config()
+        self.session = HostedSession.configured(
+            adapters=given.registry.settings.adapters,
+            hosts=given.hosts,
+            class_loader=given.class_loader,
+            probe=given.probe,
+            clock=given.clock,
+            host_factory=lambda *_args: selected,
+        )
         for bad in ("a\tb", "a\nb", "x;"):
             for name, call in (
                 ("display", lambda bad=bad: self.session.display(bad)),

@@ -181,11 +181,9 @@ class ConfigureTest(Base):
         first = configured(
             {"fake": {"implementation": FAKE_CLASS, "log": log}}, class_loader=loader
         )
-        given = registry_of(first).settings
+        given = first._config()
         again = HostedSession.configured(
-            adapters=given.adapters,
-            hosts=Host.parse_hosts({**given.hosts, "default": given.default_host}),
-            class_loader=loader,
+            adapters=given.registry.settings.adapters, hosts=given.hosts, class_loader=loader
         )
         for cls in (first, again):
             with self.subTest(cls=cls):
@@ -245,9 +243,7 @@ class ConfigureTest(Base):
         source["x"]["per_column"].append(2)
         source["y"] = {}
         self.assertIs(found.settings.hosts, hosts.tables)
-        self.assertEqual(
-            (found.settings.hosts, found.settings.default_host), ({"x": {"per_column": (1,)}}, "x")
-        )
+        self.assertEqual(found.settings.hosts, {"x": {"per_column": (1,)}})
 
 
 class SettingsTest(Base):

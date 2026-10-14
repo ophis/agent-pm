@@ -286,45 +286,9 @@ class EventObjectExports(Sample):
 
 
 class DelegateObjectExports(Sample):
-    LEGACY = {
-        "agent_pm.delegate": [
-            "resolve_run",
-            "task_index",
-            "trusted_dirs",
-            "configure",
-            "plan",
-            "run",
-            "harness_host",
-            "read_config",
-            "module_roots",
-        ],
-        "agent_pm.delegate.composer": [
-            "team",
-            "team_dirs",
-            "index",
-            "lookup",
-            "path_for",
-            "check_all",
-            "catalog",
-            "check_team_dirs",
-            "check_overlap",
-            "team_paths",
-            "resolve",
-            "trusted_dirs",
-            "access",
-            "render",
-        ],
-    }
-    VALUES = {
-        "agent_pm.delegate": {
-            "CONFIG": "CONFIG: str = os.path.join('a', 'config.toml')\n",
-            "PYTHONPATH": "PYTHONPATH: str = os.pathsep.join(('a', 'b'))\n",
-            "STATUSES": "STATUSES = tuple(('done', 'failed'))\n",
-        },
-        "agent_pm.delegate.composer": {
-            "DELIVERABLE": "DELIVERABLE = os.path.join('tmp', 'deliverable.md')\n",
-            "TEAM": "TEAM = os.path.join(os.path.dirname(__file__), 'team')\n",
-        },
+    PINNED = {
+        "agent_pm.delegate": ["read_config", "module_roots"],
+        "agent_pm.delegate.composer": [],
     }
     UNRECOGNISED = {
         "PATH": "PATH: str = os.path.join('a', 'b')\n",
@@ -337,11 +301,10 @@ class DelegateObjectExports(Sample):
 
     def exports(self, package, extra="", names=()):
         rel = "delegate/src/" + package.replace(".", "/") + "/__init__.py"
-        functions, values = self.LEGACY[package], self.VALUES[package]
+        functions = self.PINNED[package]
         sample = "import os\nfrom enum import StrEnum\n"
         sample += "".join(f"def {name}(): pass\n" for name in functions)
-        sample += "".join(values.values())
-        sample += extra + f"__all__ = {[*functions, *values, *names]!r}\n"
+        sample += extra + f"__all__ = {[*functions, *names]!r}\n"
         root = self.tree({rel: sample})
         return [
             item
@@ -349,31 +312,25 @@ class DelegateObjectExports(Sample):
             if item.startswith(rel + ":") or item.startswith(package + ":")
         ]
 
-    def test_legacy_inventory_can_only_shrink(self):
-        expected = {
-            (package, name)
-            for inventory in (self.LEGACY, self.VALUES)
-            for package, names in inventory.items()
-            for name in names
-        }
-        actual = {
-            key
-            for key in OBJECT_EXPORTS_ALLOWED
-            if key[0] in ("agent_pm.delegate", "agent_pm.delegate.composer")
-        }
+    def test_pinned_inventory_can_only_shrink(self):
+        expected = {(package, name) for package, names in self.PINNED.items() for name in names}
+        actual = {key for key in OBJECT_EXPORTS_ALLOWED if key[0] in self.PINNED}
         self.assertLessEqual(actual, expected)
         for key in actual:
             self.assertTrue(OBJECT_EXPORTS_ALLOWED[key].strip())
 
     def test_only_pinned_functions_and_objects_are_allowed(self):
-        for package in self.LEGACY:
+        for package in self.PINNED:
             with self.subTest(package=package):
                 self.assertEqual(self.exports(package, "class Public: pass\n", ["Public"]), [])
                 self.assertEqual(
                     len(self.exports(package, "def new_function(): pass\n", ["new_function"])),
                     1,
                 )
-                self.assertEqual(len(self.exports(package, "Alias = render\n", ["Alias"])), 1)
+                self.assertEqual(
+                    len(self.exports(package, "def helper(): pass\nAlias = helper\n", ["Alias"])),
+                    1,
+                )
 
     def test_runtime_resource_helpers_are_authorized_only_on_delegate(self):
         self.assertEqual(
@@ -398,12 +355,12 @@ class DelegateObjectExports(Sample):
 
     def test_missing_all_is_rejected_for_both_packages(self):
         root = self.tree({})
-        for package in self.LEGACY:
+        for package in self.PINNED:
             rel = "delegate/src/" + package.replace(".", "/") + "/__init__.py"
             self.assertIn(f"{rel}: no literal __all__", exports.object_exports(root))
 
     def test_annotated_values_and_constructor_calls_are_unrecognised_values(self):
-        for package in self.LEGACY:
+        for package in self.PINNED:
             rel = "delegate/src/" + package.replace(".", "/") + "/__init__.py"
             for name, source in self.UNRECOGNISED.items():
                 with self.subTest(package=package, name=name):
@@ -412,27 +369,17 @@ class DelegateObjectExports(Sample):
                         [f"{rel}: __all__ exports unrecognised value {name} (FR-44)"],
                     )
 
-    def test_legacy_values_pass_only_in_their_allowlisted_package(self):
-        for package, values in self.VALUES.items():
-            (other,) = self.VALUES.keys() - {package}
-            rel = "delegate/src/" + other.replace(".", "/") + "/__init__.py"
-            self.assertEqual(self.exports(package), [])
-            for name, source in values.items():
-                with self.subTest(package=package, name=name):
-                    self.assertEqual(
-                        self.exports(other, source, [name]),
-                        [f"{rel}: __all__ exports unrecognised value {name} (FR-44)"],
-                    )
-
-    def test_an_allowlisted_value_that_became_a_constant_is_stale(self):
+    def test_an_allowlisted_function_that_became_a_constant_is_stale(self):
         stale = "allowlisted but not an exported function or value (FR-44)"
-        for package, values in self.VALUES.items():
-            for name in values:
-                with self.subTest(package=package, name=name):
-                    self.assertEqual(
-                        self.exports(package, f"{name} = 'literal'\n"),
-                        [f"{package}: {name}: {stale}"],
-                    )
+        rel = "delegate/src/agent_pm/delegate/__init__.py"
+        sample = "read_config = 'literal'\ndef module_roots(): pass\n"
+        sample += "__all__ = ['read_config', 'module_roots']\n"
+        found = [
+            item
+            for item in exports.object_exports(self.tree({rel: sample}))
+            if item.startswith((rel + ":", "agent_pm.delegate:"))
+        ]
+        self.assertEqual(found, [f"agent_pm.delegate: read_config: {stale}"])
 
     def test_literals_constant_names_and_their_arithmetic_pass_but_typed_callables_fail(self):
         source = (
@@ -445,7 +392,7 @@ class DelegateObjectExports(Sample):
             "SEPARATORS = (os.sep, '/')\n"
         )
         names = ["NAME", "LABEL", "TIMEOUT", "TOTAL", "COPY", "SEPARATORS"]
-        for package in self.LEGACY:
+        for package in self.PINNED:
             rel = "delegate/src/" + package.replace(".", "/") + "/__init__.py"
             with self.subTest(package=package):
                 self.assertEqual(self.exports(package, source, names), [])
@@ -463,12 +410,11 @@ class ObjectExports(Sample):
     SESSION = f"session/{PKG}/session/"
     INIT = SESSION + "__init__.py"
     EXTENSION = SESSION + "extension.py"
-    WRAPPERS = ("close", "note", "session_record", "sessions")
-    ENTRY_FUNCTIONS = (*WRAPPERS, "read_config")
+    ENTRY_FUNCTIONS = ("read_config",)
     BAD = ("OS", "Shut", "modes", "f", "g", "LAMBDA", "Ghost")
     BAD_SOURCE = (
         "import os as OS\n"
-        "from agent_pm.session.engine.forwarding import close as Shut\n"
+        "from agent_pm.session.engine.config import read_config as Shut\n"
         "from agent_pm.session import modes\n"
         "def f(): pass\n"
         "g = f\n"
@@ -476,17 +422,13 @@ class ObjectExports(Sample):
     )
 
     def init(self, source="", names=()):
-        """A session __init__ exporting the allowlisted wrappers (forwarding.py's), then `names`."""
-        imported = f"from agent_pm.session.engine.forwarding import {', '.join(self.WRAPPERS)}\n"
-        imported += "from agent_pm.session.engine.config import read_config\n"
+        """A session __init__ exporting the allowlisted entry function read_config, then `names`."""
+        imported = "from agent_pm.session.engine.config import read_config\n"
         return f"{imported}{source}__all__ = {[*self.ENTRY_FUNCTIONS, *names]!r}\n"
 
     def found(self, files=None):
         tree = {
             "delegate/src/agent_pm/delegate/event/__init__.py": "__all__ = []\n",
-            self.SESSION + "engine/forwarding.py": "".join(
-                f"def {name}(): pass\n" for name in self.WRAPPERS
-            ),
             self.SESSION + "engine/config.py": "def read_config(): pass\n",
             self.SESSION + "modes/__init__.py": "",
             self.INIT: self.init(),
@@ -502,7 +444,7 @@ class ObjectExports(Sample):
     def test_the_real_tree_is_clean(self):
         self.assertEqual(exports.object_exports(REPO), [])
 
-    def test_the_allowlisted_wrappers_pass_each_with_a_one_line_reason(self):
+    def test_the_allowlisted_entry_functions_pass_each_with_a_one_line_reason(self):
         self.assertEqual(self.found(), [])
         self.assertEqual(
             {key for key in OBJECT_EXPORTS_ALLOWED if key[0] == "agent_pm.session"},
@@ -543,11 +485,11 @@ class ObjectExports(Sample):
             "from pathlib import Path\n"
             "from agent_pm.session.engine.types import Error, Event, Mode, Spec\n"
             "from agent_pm.utils import Display\n"
-            "Handle = Spec\n"
+            "Alias = Spec\n"
             "SIGNALS = (signal.SIGHUP, signal.SIGTERM)\n"
             'NAME = "x"\n'
         )
-        names = ["Spec", "Mode", "Error", "Event", "Display", "Handle", "SIGNALS", "NAME", "Path"]
+        names = ["Spec", "Mode", "Error", "Event", "Display", "Alias", "SIGNALS", "NAME", "Path"]
         types = (
             "from enum import StrEnum\n"
             "class Spec: pass\n"
@@ -578,7 +520,7 @@ class ObjectExports(Sample):
 
     def test_an_allowlisted_name_no_longer_exported_as_a_function_is_stale(self):
         stale = "allowlisted but not an exported function or value (FR-44)"
-        init = 'class close: pass\n__all__ = ["close"]\n'
+        init = 'class read_config: pass\n__all__ = ["read_config"]\n'
         self.assertEqual(
             self.found({self.INIT: init}),
             sorted(f"agent_pm.session: {name}: {stale}" for name in self.ENTRY_FUNCTIONS),

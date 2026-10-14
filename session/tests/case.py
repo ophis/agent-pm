@@ -1,4 +1,4 @@
-"""Case, every session test's base; session settings (HOSTS, settings, configured); child helpers
+"""Case, every session test's base; session settings (HOSTS, configured); child helpers
 (PY, child_env); this tree's import roots (REPO, SRC, ROOTS); SPAWNS, the calls that start a process.
 """
 
@@ -23,12 +23,6 @@ RUN_WITH = os.pathsep.join(os.path.relpath(root, REPO) for root in ROOTS)
 PY = (sys.executable, "-P", "-S")
 SPAWNS = ("subprocess.Popen", "os.fork", "os.posix_spawn", "os.posix_spawnp")
 HOSTS = {"tmux": {"implementation": "agent_pm.session.hosts.tmux:TmuxHost"}}
-
-
-def settings(adapters, tmux=None) -> dict:
-    """`adapters`, HOSTS with `tmux` in [hosts.tmux] and default_host tmux."""
-    hosts = {"tmux": {**HOSTS["tmux"], **(tmux or {})}}
-    return {"adapters": adapters, "hosts": hosts, "default_host": "tmux"}
 
 
 def configured(adapters, tmux=None, *, host=None, **dependencies) -> type[HostedSession]:

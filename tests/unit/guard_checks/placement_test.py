@@ -211,13 +211,13 @@ class OrchestratorLayout(Sample):
             {
                 f"{ORCH_PROJECT}/{OPKG}/engine/router.py": "from agent_pm.session import DriverError, RunLog\n",
                 f"{ORCH_PROJECT}/{OPKG}/engine/ops.py": "from agent_pm.session import DriverError\n",
-                f"{ORCH_PROJECT}/{OPKG}/engine/new.py": "import agent_pm.session as session\nsession.Driver()\n",
+                f"{ORCH_PROJECT}/{OPKG}/engine/new.py": "import agent_pm.session as session\nsession.RunLog()\n",
             }
         )
         self.assertEqual(
             imports.orchestrator_session_imports(root),
             [
-                f"{ORCH_PROJECT}/{OPKG}/engine/new.py: {ORCH_PKG}.engine.new imports Driver from agent_pm.session; go through agent_pm.delegate",
+                f"{ORCH_PROJECT}/{OPKG}/engine/new.py: {ORCH_PKG}.engine.new imports RunLog from agent_pm.session; go through agent_pm.delegate",
                 f"{ORCH_PROJECT}/{OPKG}/engine/ops.py: {ORCH_PKG}.engine.ops imports DriverError from agent_pm.session; go through agent_pm.delegate",
                 f"{ORCH_PROJECT}/{OPKG}/engine/router.py: {ORCH_PKG}.engine.router imports RunLog from agent_pm.session; go through agent_pm.delegate",
             ],

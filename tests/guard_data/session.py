@@ -50,10 +50,6 @@ OBJECT_EXPORT_MODULES = (
 
 OBJECT_EXPORTS_ALLOWED = {
     (f"{PKG}.{SESSION}", "read_config"): "TASK-389 layer-owned configuration entry point",
-    (f"{PKG}.{SESSION}", "close"): "FR-4 forwarding wrapper; 356-14 (FR-27) deletes",
-    (f"{PKG}.{SESSION}", "sessions"): "FR-4 forwarding wrapper; 356-14 (FR-27) deletes",
-    (f"{PKG}.{SESSION}", "note"): "FR-4 forwarding wrapper; 356-14 (FR-27) deletes",
-    (f"{PKG}.{SESSION}", "session_record"): "FR-4 forwarding wrapper; 356-14 (FR-27) deletes",
 }
 
 
@@ -94,15 +90,6 @@ OPTION_TUPLES_ALLOWED = {
         f"{SESSION_SRC}hosts/tmux/grid.py",
         "GRID_HOOKS",
     ): "tmux hook names the grid sets and unsets together",
-}
-
-
-LEGACY_HOST_NAMES = {
-    (f"{SESSION_SRC}engine/forwarding.py", "TmuxHost"): (6, "TASK-375"),
-    (f"{SESSION_SRC}engine/forwarding.py", "tmux"): (4, "TASK-375"),
-    (f"{SESSION_SRC}engine/forwarding.py", "_opener"): (2, "TASK-375"),
-    (f"{SESSION_SRC}engine/forwarding.py", "opener"): (4, "TASK-375"),
-    (f"{SESSION_SRC}engine/forwarding.py", "split_from"): (4, "TASK-375"),
 }
 
 

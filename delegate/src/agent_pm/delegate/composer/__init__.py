@@ -1,5 +1,4 @@
 """Composer owns a config snapshot and Team, resolves run settings and access, and renders prompts.
-Legacy module functions remain available during the object API migration.
 
 Formats of roles/, tasks/ and templates/ files, the team root's and a team dir's:
 - roles/<role>.md, a charter: a `# ` title, an intro, then `## Tasks`, the role's task index and the
@@ -16,24 +15,8 @@ A role's index is checked whenever it is read, a team dir file whenever it is lo
 raises ConfigError naming the file.
 """
 
-from agent_pm.delegate.composer.base import TEAM
 from agent_pm.delegate.composer.composer import Composer
-from agent_pm.delegate.composer.prompt import render
-from agent_pm.delegate.composer.run import access, resolve, trusted_dirs
-from agent_pm.delegate.composer.teams import (
-    catalog,
-    check_all,
-    check_overlap,
-    check_team_dirs,
-    index,
-    lookup,
-    path_for,
-    team,
-    team_dirs,
-    team_paths,
-)
 from agent_pm.delegate.composer.types import (
-    DELIVERABLE,
     ConfigError,
     DelegateConfig,
     RunConfig,
@@ -45,23 +28,7 @@ __all__ = [
     "ConfigError",
     "Composer",
     "DelegateConfig",
-    "TEAM",
-    "DELIVERABLE",
     "RunConfig",
     "RunParams",
     "Team",
-    "team",
-    "team_dirs",
-    "index",
-    "lookup",
-    "path_for",
-    "check_all",
-    "catalog",
-    "check_team_dirs",
-    "check_overlap",
-    "team_paths",
-    "resolve",
-    "trusted_dirs",
-    "access",
-    "render",
 ]
