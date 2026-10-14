@@ -6,29 +6,38 @@ itself); a display given to start stored, read back and listed (FR-48).
 
 import json
 import os
+import subprocess
 import unittest
-from unittest import mock
 
-from agent_pm.session import ConfigError, Host, Mode, Session, Spec
+from agent_pm.session import Host, Mode, Session, Spec
 from agent_pm.session.engine.hosted_session import UNCONFIGURED, HostedSession
 from agent_pm.session.modes import tui
 
 from session.tests import fake_adapter
-from session.tests.case import HOSTS
+from session.tests.case import HOSTS, PY
 from session.tests.modules import adapter_loader
 from session.tests.tui_support import MANAGER, Live
 
 DISPLAYS = {"w4": f"{MANAGER}/right", "w5": "elsewhere:1.2"}
+UNCONFIGURED_CALLS = """import json
+from agent_pm.session import ConfigError, Session
+from agent_pm.session.engine.hosted_session import HostedSession
+found = []
+for call in (
+    lambda: HostedSession.list("w.*"), lambda: Session.list("w.*"), lambda: Session.retire("w3")
+):
+    try:
+        call()
+        found.append(None)
+    except ConfigError as error:
+        found.append(str(error))
+print(json.dumps(found))
+"""
 
 
 class CloseTest(Live):
-    """Each test starts with HostedSession unconfigured, whatever ran before it."""
-
-    def setUp(self):
-        super().setUp()
-        self.enterContext(mock.patch.object(HostedSession, "_setup", None))
-
     def configure_hosted(self) -> None:
+        self.addCleanup(setattr, HostedSession, "_setup", None)
         HostedSession.configure(
             adapters=self.adapters,
             hosts=Host.parse_hosts({**HOSTS, "default": "tmux"}),
@@ -53,16 +62,18 @@ class CloseTest(Live):
         self.assertEqual([row.name for row in self.session_cls.list()], [MANAGER])
 
     def test_list_and_retire_need_a_configured_class(self):
+        """Unconfigured in a child process: another test may have configured HostedSession here."""
         self.start("w3", {"read": True})
-        self.assertIsNone(HostedSession._setup)
-        for call in (
-            lambda: HostedSession.list("w.*"),
-            lambda: Session.list("w.*"),
-            lambda: Session.retire("w3"),
-        ):
-            with self.subTest(call=call), self.assertRaises(ConfigError) as caught:
-                call()
-            self.assertEqual(str(caught.exception), UNCONFIGURED)
+        res = subprocess.run(
+            [*PY, "-c", UNCONFIGURED_CALLS],
+            env=self.server.child_env(),
+            capture_output=True,
+            text=True,
+            stdin=subprocess.DEVNULL,
+            timeout=60,
+        )
+        self.assertEqual(res.returncode, 0, res.stderr)
+        self.assertEqual(json.loads(res.stdout), [UNCONFIGURED] * 3)
         self.assertEqual([row.name for row in self.session_cls.list("w.*")], ["w3"])
         self.configure_hosted()
         self.assertEqual([row.name for row in HostedSession.list("w.*")], ["w3"])
