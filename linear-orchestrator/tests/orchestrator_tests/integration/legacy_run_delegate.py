@@ -5,15 +5,17 @@ attach's view reads the run from runs.jsonl and its liveness from the legacy ses
 import os
 
 from agent_pm import delegate
-from agent_pm.delegate import NotDisplayable
+from agent_pm.delegate import Delegate, NotDisplayable
 from agent_pm.linear_orchestrator.engine import runs
 from agent_pm.session import NoRecordedSession, RunLog, Session, SessionStatus
 from agent_pm.session import Spec as SessionSpec
-from agent_pm.utils import Record, Status
-from orchestrator_tests.config_fixtures import HARNESS_DELEGATE
+from agent_pm.utils import Record, Status, load_class
+
+# run.py loads this class in its own process, whose import roots hold no utils.tests.
+HARNESS = load_class("agent_pm.delegate.engine.harness_delegate:HarnessDelegate", Delegate)
 
 
-class LegacyRunDelegate(HARNESS_DELEGATE):
+class LegacyRunDelegate(HARNESS):
     @classmethod
     def attach(cls, record_or_workdir):
         return LegacyRunView(record_or_workdir)
