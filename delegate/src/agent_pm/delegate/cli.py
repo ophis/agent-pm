@@ -159,12 +159,9 @@ def _prompt(a: argparse.Namespace, *, application=None) -> int:
             team=team,
         )
         result = application.run(config, spec, on_event=None)
-    except ConfigError as error:
+    except (ConfigError, OSError) as error:
         say(f"delegate: {error}")
         return 2
-    if result.instruction is None:
-        say(f"delegate: {result.error}")
-        return 1
     say(f"delegate: instruction delivered: {result.instruction}")
     return 0
 

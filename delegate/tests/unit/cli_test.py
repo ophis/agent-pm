@@ -481,6 +481,19 @@ class Usage(Base):
 
 
 class Prompt(Case):
+    def test_write_failures_are_clean_cli_errors(self):
+        os.makedirs(self.out)
+        code, out, err = self.prompt()
+        self.assertEqual((code, out), (2, ""))
+        self.assertTrue(err.startswith("delegate: "), err)
+        self.assertIn(self.out, err)
+        self.assertNotIn("Traceback", err)
+
+    def test_an_unwritable_workdir_is_a_clean_cli_error(self):
+        with mock.patch("pathlib.Path.mkdir", side_effect=PermissionError("write denied")):
+            code, out, err = self.prompt()
+        self.assertEqual((code, out, err), (2, "", "delegate: write denied\n"))
+
     def setUp(self):
         self.work = os.path.join(self.home, "work")
         self.out = os.path.join(self.work, "prompt.md")
