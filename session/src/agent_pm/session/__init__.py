@@ -1,7 +1,7 @@
 """The session layer: Session (engine/base.py), whose one concrete class is HostedSession
-(engine/hosted_session.py, modes/), runs agent sessions through each client's Adapter (adapters/) on a Host
-(hosts/); `__all__` is its API for Session users. Driver, Handle, close, sessions, note and
-session_record are deprecated forwarding wrappers (engine/forwarding.py).
+(engine/hosted_session.py, modes/), runs agent sessions through each client's Adapter (adapters/)
+on a Host (hosts/); `__all__` is its API for Session users. Driver, Handle, close, sessions, note
+and session_record are deprecated forwarding wrappers (engine/forwarding.py).
 """
 
 from agent_pm.session.engine.base import Session
@@ -43,6 +43,7 @@ from agent_pm.session.engine.types import (
     Spec,
     Stderr,
     TurnEnd,
+    TurnFailed,
     Usage,
     Window,
 )
@@ -96,6 +97,7 @@ __all__ = [
     "Reply",
     "Stderr",
     "TurnEnd",
+    "TurnFailed",
     "DriverError",
     "ConfigError",
 ]

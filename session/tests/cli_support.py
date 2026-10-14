@@ -24,7 +24,14 @@ COMMAND = os.path.join(REPO, "bin", "agent-pm-session")
 MANAGER = "mgr"
 TIMEOUT = 60
 FAKE_HOST = "session.tests.fakes.host:FakeHost"
-CLAUDE_HOOKS = {"Stop", "PermissionRequest", "Notification", "PostToolUse", "UserPromptSubmit"}
+CLAUDE_HOOKS = {
+    "Stop",
+    "StopFailure",
+    "PermissionRequest",
+    "Notification",
+    "PostToolUse",
+    "UserPromptSubmit",
+}
 POLICY = ("--permission-mode", "--allowedTools", "--add-dir", "--dangerously-skip-permissions")
 
 

@@ -33,6 +33,7 @@ from agent_pm.session.engine.types import (
     Spec,
     Stderr,
     TurnEnd,
+    TurnFailed,
     Usage,
 )
 from agent_pm.utils import json_records, thaw
@@ -124,7 +125,7 @@ class Tui(ABC):
         return None
 
     def restore(self, spec: Spec, state: Mapping) -> None:
-        """On attach, before hook_events; state: hook_callback()'s state."""
+        """On attach, before replay; state: hook_callback()'s state."""
         return None
 
     @abstractmethod
@@ -143,6 +144,22 @@ class Tui(ABC):
         native = payload.get("session_id")
         return native if isinstance(native, str) else ""
 
+    def observe(self) -> list[SessionEvent]:  # its client's own record, since the last call
+        return []
+
+    def replay(self, records: Iterable[tuple[str, dict]]) -> list[SessionEvent | ClientBound]:
+        """On attach: observe(), then the hook log `records`' events."""
+        found: list[SessionEvent | ClientBound] = [*self.observe()]
+        return found + [
+            event for label, payload in records for event in self.hook_events(label, payload)
+        ]
+
+    def failure(self, payload: dict) -> list[TurnFailed | LimitHit]:
+        return [TurnFailed("unknown")]
+
+    def shows(self, dialog: str, screen: str) -> bool:
+        return " ".join(dialog.split()) in " ".join(screen.split())
+
     def limit(self, screen: str) -> LimitHit | None:
         """The client's usage-limit message on the visible terminal `screen`; None: none shown."""
         return None
@@ -159,6 +176,8 @@ class Tui(ABC):
         kind = self.hooks.get(label)
         if kind == HookKind.TURN_END:
             found.append(TurnEnd(self.reply(payload), self.pending(payload)))
+        elif kind == HookKind.TURN_FAILED:
+            found.extend(self.failure(payload))
         elif kind == HookKind.BLOCKED:
             found.append(Blocked(self.blocked_reason(payload)))
         elif kind == HookKind.ACTIVITY:
