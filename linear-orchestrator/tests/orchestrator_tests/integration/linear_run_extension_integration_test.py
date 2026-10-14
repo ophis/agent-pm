@@ -99,6 +99,15 @@ class Extension(ConfigFile, Case):
         self.assertEqual(Record.parse(output), record)
         state = Path(record.workdir) / "delegate.json"
         self.assertEqual(json.loads(state.read_text(encoding="utf-8"))["starts"], 1)
+        for transition, starts in (("finish", 1), ("end", 2)):
+            output = self.child(
+                "from external_delegate import ExtensionDelegate\n"
+                "from agent_pm.linear_orchestrator import cli\n"
+                f"ExtensionDelegate.{transition}({record.workdir!r})\n"
+                "raise SystemExit(cli.main(['resume', 'TASK-1']))\n"
+            )
+            self.assertEqual(Record.parse(output), record)
+            self.assertEqual(json.loads(state.read_text(encoding="utf-8"))["starts"], starts)
 
     def test_cli_batch_status_and_resume_run_in_another_process(self):
         first, second = self.start("TASK-1"), self.start("TASK-2")

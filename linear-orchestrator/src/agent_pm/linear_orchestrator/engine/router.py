@@ -433,18 +433,18 @@ class Board:
         return taken, task, role, runtime
 
 
-def begin(path, spec: Spec, *, role, delegate_kind, now=datetime.now):
+def begin(cfg, spec: Spec, *, role, now=datetime.now):
+    entries = parse_log(cfg.runs_log)
+    if spec.mode == "new" and spec.issue in latest(entries):
+        try:
+            LinearRun.attach(spec.issue, cfg=cfg).close()
+        except (ConfigError, delegate.ConfigError, delegate.DriverError) as error:
+            log("router", "tui-error", spec.issue, msg=one_line(error))
+        else:
+            log("router", "tui-closed", spec.issue)
     kind = "resume" if spec.mode == "resume" else "start"
-    note(
-        path,
-        kind,
-        issue=spec.issue,
-        sid=spec.sid,
-        role=role,
-        runtime=spec.runtime,
-        delegate_kind=delegate_kind,
-        now=now,
-    )
+    delegate_kind = cfg.delegate_kind if spec.mode == "new" else delegate_of(entries, spec.sid)
+    note(cfg.runs_log, kind, issue=spec.issue, sid=spec.sid, role=role, runtime=spec.runtime, delegate_kind=delegate_kind, now=now)
     return spec
 
 
@@ -659,15 +659,7 @@ def tick(opts, cfg, gql, *, start, clock=datetime.now, hour=None):
             if run is None or dry:
                 return 0
             spec, role = run
-            a = begin(
-                runs,
-                spec,
-                role=role,
-                delegate_kind=cfg.delegate_kind
-                if spec.mode == "new"
-                else delegate_of(entries, spec.sid),
-                now=clock,
-            )
+            a = begin(cfg, spec, role=role, now=clock)
             walk.write()  # the outer logs past the walk
             return start_run(start, a, walk)
 
@@ -713,15 +705,7 @@ def run_issue(opts, cfg, gql, start, *, clock=datetime.now):
         if dry:
             return 0
         return start(
-            begin(
-                runs,
-                spec,
-                role=role,
-                delegate_kind=cfg.delegate_kind
-                if spec.mode == "new"
-                else delegate_of(entries, spec.sid),
-                now=clock,
-            )
+            begin(cfg, spec, role=role, now=clock)
         )
 
 

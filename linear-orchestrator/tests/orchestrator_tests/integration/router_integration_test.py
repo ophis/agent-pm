@@ -134,7 +134,16 @@ class Router(TmuxFlow):
         self.assert_built(sid)
         self.assertEqual(
             self.runs(),
-            [{"kind": "start", "issue": ID, "sid": sid, "role": "engineer", "runtime": "claude"}],
+            [
+                {
+                    "kind": "start",
+                    "issue": ID,
+                    "sid": sid,
+                    "role": "engineer",
+                    "runtime": "claude",
+                    "delegate_kind": "harness",
+                }
+            ],
         )
         lines = self.input(sid).splitlines()
         self.assertIn(f"Repo: {REPO}", lines)

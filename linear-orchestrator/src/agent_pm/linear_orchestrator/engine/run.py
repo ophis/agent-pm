@@ -12,7 +12,6 @@ from traceback import format_exception
 from agent_pm import delegate
 from agent_pm.linear_orchestrator.engine import client, config, run_comments, runs, writeback
 from agent_pm.linear_orchestrator.engine import log as event_log
-from agent_pm.linear_orchestrator.engine.linear_run import LinearRun
 from agent_pm.linear_orchestrator.engine.log import log
 from agent_pm.linear_orchestrator.engine.types import (
     ConfigError,
@@ -26,17 +25,6 @@ from agent_pm.utils import one_line, printable, repo_slug, timestamp
 
 def _stop(signum, _frame):
     raise Stopped(128 + signum)  # the Delegate then stops its session
-
-
-def _close_tuis(a, cfg):
-    try:
-        if not any(entry.issue == a.issue for entry in runs.parse_log(cfg.runs_log)):
-            return
-        LinearRun.attach(a.issue, cfg=cfg).close()
-    except (OSError, ConfigError, delegate.ConfigError, delegate.DriverError) as error:
-        log("run", "tui-error", a.issue, msg=one_line(error))
-    else:
-        log("run", "tui-closed", a.issue)
 
 
 def _run_role(a, cfg):
@@ -78,7 +66,6 @@ def inner(a, cfg, *, gql, driver, run=delegate.run, now=timestamp):
     if role is None:
         return 1
     log("run", "launch", a.issue, mode=a.mode, sid=a.sid)
-    _close_tuis(a, cfg)
     rd = cfg.run_dir(a.issue)
     harness = functools.partial(gql, service=cfg.harness_key, timeout=run_comments.LIMIT)
     rec = run_comments.base(

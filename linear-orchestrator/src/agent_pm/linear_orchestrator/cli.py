@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 
 from agent_pm.delegate import ConfigError as DelegateConfigError
 from agent_pm.delegate import DriverError
+from agent_pm.linear_orchestrator.engine import log as event_log
 from agent_pm.linear_orchestrator.engine import promote, router, run, runs
 from agent_pm.linear_orchestrator.engine.config import load
 from agent_pm.linear_orchestrator.engine.gate import Gate
@@ -33,6 +34,7 @@ def main(argv=None, *, cfg=None):
     except (ConfigError, DelegateConfigError, ValueError, OSError) as error:
         print(f"agent-pm-linear: {error}", file=sys.stderr)
         return 2
+    event_log.use_logs(cfg.logs_dir)
 
     gate = None
 

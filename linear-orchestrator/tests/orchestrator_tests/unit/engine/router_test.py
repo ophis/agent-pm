@@ -9,6 +9,7 @@ import re
 import sys
 from contextlib import redirect_stderr, redirect_stdout
 from datetime import UTC, datetime, timedelta
+from dataclasses import replace
 from unittest import mock
 
 from agent_pm.linear_orchestrator.engine import config, gate, inputs, issues, ops, router, runs
@@ -2053,10 +2054,9 @@ class RunStartRecords(Base):
         stamp = datetime.fromisoformat("2026-10-09T00:26:33-04:00").astimezone().isoformat()
         got = [
             router.begin(
-                path,
+                replace(self.cfg(), work_dir=self.tmp),
                 Spec.from_issue(found, mode=mode, sid="s1", task=task, runtime="a"),
                 role="researcher",
-                delegate_kind="harness",
                 now=lambda: datetime.fromisoformat(stamp),
             )
             for mode, task in (("new", "light-research"), ("resume", None))
@@ -3102,10 +3102,9 @@ class ClaimRechecks(Base):
         self.assertEqual(self.said(), ["pick TASK-1 queue=1", "claim TASK-1 role=pm runtime=b"])
         self.assertEqual(self.api.usage_calls, ["b"])
         a = router.begin(
-            self.runs,
+            self.cfg(),
             Spec.from_issue(taken, mode="new", sid="s1", task=task, runtime=runtime),
             role=role,
-            delegate_kind="harness",
         )
         self.assertEqual((a.assignee, a.runtime), (ROLE["pm"], "b"))
 
@@ -3155,10 +3154,9 @@ class ClaimRechecks(Base):
         )
         self.assertEqual(self.claim(fake), f"TASK-1 https://linear.app/x/TASK-1 {PD}")
         a = router.begin(
-            self.runs,
+            self.cfg(),
             Spec.from_issue(self.taken[0], mode="new", sid="s1", task=None, runtime="a"),
             role="researcher",
-            delegate_kind="harness",
         )
         self.assertEqual(a.project, IDS[PD])
 
@@ -3353,7 +3351,7 @@ class ScheduledRuns(TickScenario):
             with self.subTest(argv=argv):
                 fake = FakeLinear([issue("TASK-1", "Todo", "researcher")])
                 self.assertEqual(self.tick(fake, *argv, live=None), 0)
-                self.assertEqual(self.said(), ["skip reason=agent runs unknown"])
+                self.assertEqual(self.said(), ["recover-skip TASK-8 sid=old reason=ConfigError: agent runs unknown", "skip reason=agent runs unknown"])
                 self.assertEqual(
                     (fake.queries, self.start.launches, self.api.usage_calls, self.state),
                     ([], [], [], before),

@@ -3,12 +3,16 @@
 import io
 import json
 from contextlib import redirect_stderr, redirect_stdout
+from dataclasses import replace
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from unittest import mock
 
 from agent_pm.linear_orchestrator import cli
+from agent_pm.linear_orchestrator.engine import runs
 from agent_pm.utils import Record, Status
 from orchestrator_tests.case import Case
-from orchestrator_tests.linear_run_case import RunCase
+from orchestrator_tests.linear_run_case import ReadyDelegate, RunCase
 
 from delegate.tests.fakes.delegate import FakeDelegate
 
@@ -74,6 +78,59 @@ class Queries(RunCase):
                 self.assertEqual(
                     json.load(file)["starts"], 2 if state in ("interrupted", "live-again") else 1
                 )
+        self.assertEqual(ReadyDelegate.usage_calls, ["dummy"])
+
+    def test_interrupted_batch_probes_a_shared_recorded_key_once(self):
+        self.start("TASK-1")
+        self.start("TASK-2")
+        FakeDelegate.end(self.cfg.run_dir("TASK-1"))
+        FakeDelegate.end(self.cfg.run_dir("TASK-2"))
+        result, output, errors = self.call(["resume", "TASK-1", "TASK-2"])
+        self.assertEqual((result, errors), (0, ""))
+        self.assertEqual(
+            [Record.parse(line).name for line in output.splitlines()], ["TASK-1", "TASK-2"]
+        )
+        self.assertEqual(ReadyDelegate.usage_calls, ["dummy"])
+
+    def test_config_drift_never_probes_and_recorded_limits_still_block(self):
+        self.start()
+        FakeDelegate.end(self.cfg.run_dir("TASK-1"))
+        self.cfg = replace(
+            self.cfg,
+            delegate_kind="other",
+            delegates={**self.cfg.delegates, "other": ReadyDelegate},
+        )
+        runs.note_limit(
+            self.cfg.runs_log,
+            issue="TASK-1",
+            sid="1234abcd-0000-4000-8000-000000000000",
+            runtime="fake",
+            delegate_kind="fake",
+            resets_at=(datetime.now(UTC) + timedelta(hours=1)).isoformat(),
+        )
+        result, output, errors = self.call(["resume", "TASK-1"])
+        self.assertEqual((result, output), (1, ""))
+        self.assertEqual(errors, "TASK-1: resume blocked by usage gate\n")
+        self.assertEqual(ReadyDelegate.usage_calls, [])
+        self.assertFalse(FakeDelegate.attach(self.cfg.run_dir("TASK-1")).alive())
+
+    def test_config_drift_without_a_limit_resumes_and_logs_without_probe(self):
+        self.start()
+        FakeDelegate.end(self.cfg.run_dir("TASK-1"))
+        self.cfg = replace(
+            self.cfg,
+            delegate_kind="other",
+            delegates={**self.cfg.delegates, "other": ReadyDelegate},
+        )
+        result, output, errors = self.call(["resume", "TASK-1"])
+        self.assertEqual((result, errors), (0, ""))
+        self.assertEqual(Record.parse(output).name, "TASK-1")
+        self.assertEqual(ReadyDelegate.usage_calls, [])
+        records = [
+            json.loads(line)
+            for line in (Path(self.cfg.logs_dir) / "orchestrator.jsonl").read_text().splitlines()
+        ]
+        self.assertEqual([record["kind"] for record in records], ["usage-drift"])
 
     def test_close_controls_only_selected_issue_and_show_failure_names_it(self):
         one, _ = self.start("TASK-1")
