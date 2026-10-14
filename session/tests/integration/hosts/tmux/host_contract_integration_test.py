@@ -1,6 +1,7 @@
 """HostContract (FR-5) against TmuxHost on a private tmux server (session/tests/live_tmux.py),
 os.environ that server's env; the terminal cases wait for TmuxHost.terminal (TASK-368), so their
-detach halves run here. Also: a forged @record, a display completed once and stored.
+detach halves run here. Also: a forged @record, a display completed once and stored, and a
+session the user split and refocused, read through its launched pane.
 """
 
 import os
@@ -10,13 +11,29 @@ from pathlib import Path
 from unittest import mock
 
 from agent_pm.session import SessionError
+from agent_pm.session.engine.types import ActivityState
 from agent_pm.session.hosts.tmux import TmuxHost
 
 from session.tests import live_tmux
 from session.tests.case import Case
-from session.tests.contracts.host import DEADLINE, EXIT_7, SLEEP, HostContract, gone, read
+from session.tests.contracts.host import (
+    DEADLINE,
+    EXIT_7,
+    SLEEP,
+    HostContract,
+    gone,
+    program,
+    read,
+)
 
 MANAGER = "mgr"
+USER = "print('user pane', flush=True); import time; time.sleep(60)"
+GATED = (
+    "import os, sys, time\n"
+    "print('agent pane', flush=True)\n"
+    "while not os.path.exists(sys.argv[1]): time.sleep(0.01)\n"
+    "sys.exit(7)\n"
+)
 
 
 class TmuxHostContractTest(HostContract, Case):
@@ -51,6 +68,41 @@ class TmuxHostContractTest(HostContract, Case):
         self.assertEqual(env["TERM"], terminal.stdout.strip())
         self.assertEqual(env["TMUX"].split(",")[0], self.server.socket)
         self.assertRegex(env["TMUX_PANE"], r"\A%[0-9]+\Z")
+
+    def split(self, name: str) -> str:
+        """A pane of the user's split into name's window, focused once it prints: its id."""
+        added = self.server.tmux(
+            "split-window", "-P", "-F", "#{pane_id}", "-t", f"={name}:", *program(USER)
+        )
+        self.assertEqual(added.returncode, 0, added.stderr)
+        other = added.stdout.strip()
+        active = self.server.tmux("display-message", "-p", "-t", f"={name}:", "#{pane_id}")
+        self.assertEqual(active.stdout.strip(), other)
+        self.poll(
+            lambda: "user pane" in self.server.tmux("capture-pane", "-p", "-t", other).stdout,
+            "the user's pane printing",
+        )
+        return other
+
+    def row(self, name: str):
+        return next(row for row in self.host.rows() if row.name == name)
+
+    def test_a_split_refocused_terminal_is_listed_through_its_launched_pane(self):
+        name, gate = self.fresh(), self.file("gate")
+        self.start("terminal", name, GATED, gate)
+        self.poll(
+            lambda: (
+                "agent pane" in self.server.tmux("capture-pane", "-p", "-t", f"={name}:").stdout
+            ),
+            "the launched pane printing",
+        )
+        self.split(name)
+        self.assertEqual(self.row(name).state, ActivityState.WORKING)
+        Path(gate).touch()
+        self.poll(lambda: self.row(name).state == ActivityState.DEAD, "the launched pane dead")
+        last = self.row(name).last_lines
+        self.assertIn("agent pane", last)
+        self.assertNotIn("user pane", last)
 
     def test_list_without_a_display_names_every_detached_session_sorted(self):
         first, second = self.fresh(), self.fresh()

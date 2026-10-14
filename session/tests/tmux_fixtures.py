@@ -391,10 +391,10 @@ LISTING = [
     "-u",
     "list-sessions",
     "-F",
-    "#{session_name}\t#{pane_dead}\t#{@sid}\t#{@client}\t#{@state}\t#{@pane}\t#{@opener}\t#{@display}",
+    "#{session_name}\t#{pane_dead}\t#{@sid}\t#{@client}\t#{@state}\t#{@pane}\t#{@opener}\t#{@display}\t#{@process}",
 ]
 
-COLUMNS = ("name", "dead", "sid", "client", "state", "pane", "opener", "display")
+COLUMNS = ("name", "dead", "sid", "client", "state", "pane", "opener", "display", "process")
 
 ALL_CLIENTS = [
     "tmux",
@@ -404,7 +404,14 @@ ALL_CLIENTS = [
     "#{client_activity}\t#{client_tty}\t#{session_name}",
 ]
 
-HOST_PANES = ["tmux", "-u", "list-panes", "-a", "-F", "#{pane_dead}\t#{pane_tty}\t#{session_name}"]
+HOST_PANES = [
+    "tmux",
+    "-u",
+    "list-panes",
+    "-a",
+    "-F",
+    "#{pane_dead}\t#{pane_tty}\t#{session_name}\t#{pane_id}",
+]
 
 
 def tabbed(*rows, width=3):
@@ -416,8 +423,13 @@ def listed(*rows):
     return tabbed(*rows, width=len(COLUMNS))
 
 
-def captured(name):
-    return ["tmux", "capture-pane", "-p", "-J", "-t", f"={name}:", "-S", "-2000"]
+def panes(*rows):
+    return tabbed(*rows, width=4)
+
+
+def captured(target):
+    target = target if target.startswith("%") else f"={target}:"
+    return ["tmux", "capture-pane", "-p", "-J", "-t", target, "-S", "-2000"]
 
 
 def expected_row(name, **fields):
