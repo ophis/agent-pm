@@ -18,7 +18,7 @@ allowed-tools:
 
 Starting sessions adds no authority: you have only what you were given, nothing inherited from the session that started you; the user's commander guidelines (`/agent-pm:manage`) apply only where the user invoked them. A sandboxed commander that can reach the tmux socket still starts sessions outside its sandbox: the tmux server runs them.
 
-You, the commander, launch every worker, role run and pipeline run through `agent-pm-crew run`, which records it as an entry of your Roster (`~/.agent-pm/managers/<manager>/`), and reach them through this plugin's four `bin/` commands: `agent-pm-crew`, `agent-pm-session`, `agent-pm-delegate` and `agent-pm-linear`. `<command> --help` and `<command> <subcommand> --help` list their options. Write them out as below: the pre-approved rules match that text. A client without this plugin's `bin/` on its PATH (Codex) writes `${CLAUDE_SKILL_DIR}/../../../bin/<command>` instead, `${CLAUDE_SKILL_DIR}` (this file's directory) as an absolute path.
+You, the commander, launch every worker, role run and pipeline run through `agent-pm-crew run`, which records it as an entry of your Roster (`~/.agent-pm/managers/<manager>/`), and reach them through this plugin's four `bin/` commands: `agent-pm-crew`, `agent-pm-session`, `agent-pm-delegate` and `agent-pm-linear`. `<command> --help` and `<command> <subcommand> --help` list their options. Write them out as below: the pre-approved rules match that text. A client without this plugin's `bin/` on its PATH (Codex) writes `${CLAUDE_SKILL_DIR}/../../../bin/<command>` instead, and every `${CLAUDE_SKILL_DIR}` in this file as this file's directory, an absolute path.
 
 ## Start
 

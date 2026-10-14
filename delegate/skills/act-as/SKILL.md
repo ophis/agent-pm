@@ -10,7 +10,7 @@ allowed-tools:
 
 Arguments: $ARGUMENTS
 
-`agent-pm-delegate` is this plugin's `bin/` command, on the PATH in Claude Code. A client without it on its PATH (Codex) writes `${CLAUDE_SKILL_DIR}/../../../bin/agent-pm-delegate` instead, `${CLAUDE_SKILL_DIR}` (this file's directory) as an absolute path.
+`agent-pm-delegate` is this plugin's `bin/` command, on the PATH in Claude Code. A client without it on its PATH (Codex) writes `${CLAUDE_SKILL_DIR}/../../../bin/agent-pm-delegate` instead, and every `${CLAUDE_SKILL_DIR}` in this file (step 4's too) as this file's directory, an absolute path.
 
 1. The first argument is `<role>` or `<role>:<task>`, each one word of `[a-z0-9-]`; the rest is the Input. Otherwise, or when the Input is missing, ask the user: `agent-pm-delegate run --list`, written out exactly so (pre-approved), lists each role and its tasks; its exit 2 names a config error.
 2. The workdir `<workdir>` is `~/.agent-pm/adhoc/<date>-<role>-<name>`: `<date>` today as `YYYY-MM-DD`, `<name>` 2–4 lowercase words for the Input matching `[a-z0-9]+(-[a-z0-9]+)*`. Every part is then `[a-z0-9-]` and needs no quoting.
