@@ -4,8 +4,6 @@ paste, keys, read, options and pane targets.
 
 import os
 import tempfile
-import unittest
-import unittest.mock
 
 from agent_pm.session.hosts.tmux import transport, types
 
@@ -202,60 +200,6 @@ class KillTest(Case):
             )
 
 
-class SendTest(Case):
-    def send(self, fake, text):
-        transport.send(
-            "s", text, proc=fake, sleep=lambda seconds: fake.calls.append(("sleep", seconds))
-        )
-        buffer = fake.calls[0][3]
-        self.assertRegex(buffer, r"^tui-s-[0-9a-f]{32}$")
-        return buffer
-
-    def test_pastes_the_text_then_presses_enter(self):
-        fake = FakeTmux()
-        buffer = self.send(fake, "-x hi")
-        self.assertEqual(
-            fake.calls,
-            [
-                ["tmux", "load-buffer", "-b", buffer, "-"],
-                ["tmux", "paste-buffer", "-p", "-r", "-d", "-b", buffer, "-t", "=s:"],
-                ("sleep", 0.5),
-                ["tmux", "send-keys", "-t", "=s:", "Enter"],
-            ],
-        )
-        self.assertEqual(
-            fake.kwargs,
-            [{"capture_output": True, "text": True, "input": "-x hi"}, TMUX_KW, TMUX_KW],
-        )
-
-    def test_text_goes_through_stdin_verbatim(self):
-        long_lines = "\n".join(f"line {i:02d} " + "x" * 50 for i in range(28))
-        for text in ("ls;", ";", "a\\;", "a;b", long_lines, "one\ntwo;\n"):
-            with self.subTest(text=text[:20]):
-                fake = FakeTmux()
-                self.send(fake, text)
-                self.assertEqual(fake.kwargs[0]["input"], text)
-                self.assertNotIn(text, [a for call in fake.calls for a in call])
-
-    def test_a_buffer_per_call(self):
-        fake = FakeTmux()
-        first = self.send(fake, "a")
-        fake.calls = []
-        self.assertNotEqual(self.send(fake, "a"), first)
-
-    def test_failure(self):
-        for step, commands in (
-            ("load-buffer", ["load-buffer"]),
-            ("paste-buffer", ["load-buffer", "paste-buffer", "delete-buffer"]),
-        ):
-            with self.subTest(step=step):
-                fake, sleep = FakeTmux(fail={step}), unittest.mock.Mock()
-                with self.assertRaisesRegex(types.TuiError, r"^tmux: boom$"):
-                    transport.send("s", "hi", proc=fake, sleep=sleep)
-                self.assertEqual(fake.commands(), commands)
-                sleep.assert_not_called()
-
-
 class PasteTest(Case):
     def test_loads_the_buffer_then_pastes_it_bracketed_deleting_it(self):
         fake = FakeTmux()
@@ -293,6 +237,21 @@ class PasteTest(Case):
         with self.assertRaisesRegex(types.TuiError, r"^tmux: boom$"):
             transport.paste("s", "hi", proc=fake)
         self.assertEqual(fake.commands(), ["load-buffer"])
+
+    def test_text_goes_through_stdin_verbatim(self):
+        long_lines = "\n".join(f"line {i:02d} " + "x" * 50 for i in range(28))
+        for text in ("ls;", ";", "a\\;", "a;b", long_lines, "one\ntwo;\n"):
+            with self.subTest(text=text[:20]):
+                fake = FakeTmux()
+                transport.paste("s", text, proc=fake)
+                self.assertEqual(fake.kwargs[0]["input"], text)
+                self.assertNotIn(text, [a for call in fake.calls for a in call])
+
+    def test_a_buffer_per_call(self):
+        fake = FakeTmux()
+        transport.paste("s", "a", proc=fake)
+        transport.paste("s", "a", proc=fake)
+        self.assertNotEqual(fake.calls[0][3], fake.calls[2][3])
 
 
 class KeysTest(Case):
@@ -394,33 +353,6 @@ class OptionTest(Case):
                 with self.assertRaisesRegex(types.TuiError, "^option "):
                     transport.option("s", name, proc=fake)
                 self.assertEqual(fake.calls, [])
-
-
-class PaneIdTest(Case):
-    def test_its_pane(self):
-        fake = FakeTmux(pane="%5")
-        self.assertEqual(transport.pane("s", proc=fake), "%5")
-        self.assertEqual(fake.calls, [["tmux", "display-message", "-p", "-t", "=s:", "#{pane_id}"]])
-        self.assertEqual(fake.kwargs, [TMUX_KW])
-
-    def test_none_when_absent(self):
-        # tmux (3.7) exits 0 printing nothing for a missing session
-        for result in (*((1, "", err + "\n") for err in ABSENT), (0, "\n"), (0, "")):
-            with self.subTest(result=result):
-                self.assertIsNone(
-                    transport.pane("s", proc=FakeTmux(results={"display-message": result}))
-                )
-
-    def test_a_failure_or_junk_raises(self):
-        for result, error in (
-            ((1, "", "boom\n"), "^tmux: boom$"),
-            ((1, "", FAILED[0] + "\n"), "^tmux: "),
-            ((0, "%5;\n"), "^bad tmux pane '%5;'$"),
-            ((0, "5\n"), "^bad tmux pane '5'$"),
-            ((0, "%5\n%6\n"), "^bad tmux pane"),
-        ):
-            with self.subTest(result=result), self.assertRaisesRegex(types.TuiError, error):
-                transport.pane("s", proc=FakeTmux(results={"display-message": result}))
 
 
 class PaneTargetTest(Case):

@@ -1744,14 +1744,10 @@ class StartTest(StartFixture):
                         name, Launch(("tool",), {"PATH": self.bin}, cwd=self.cwd)
                     ),
                     lambda *, fake=fake, name=name: transport.kill(name, proc=fake),
-                    lambda *, fake=fake, name=name: transport.send(
-                        name, "x", proc=fake, sleep=self.sleep
-                    ),
                     lambda *, fake=fake, name=name: transport.paste(name, "x", proc=fake),
                     lambda *, fake=fake, name=name: transport.keys(name, "Enter", proc=fake),
                     lambda *, fake=fake, name=name: transport.read(name, proc=fake),
                     lambda *, fake=fake, name=name: transport.option(name, "@sid", proc=fake),
-                    lambda *, fake=fake, name=name: transport.pane(name, proc=fake),
                 ):
                     with self.assertRaises(types.TuiError):
                         call()

@@ -525,9 +525,6 @@ class Tmux:
     def set_option(self, target: str, name: str, value: str) -> None:
         transport.set_option(target, name, value, proc=self.proc)
 
-    def send(self, session: str, text: str) -> None:
-        transport.send(session, text, proc=self.proc, sleep=self.sleep)
-
     def read(self, target: str, lines: int | None = None) -> str:
         return transport.read(target, lines, proc=self.proc)
 
