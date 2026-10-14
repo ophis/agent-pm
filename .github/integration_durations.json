@@ -375,6 +375,7 @@
   "session.tests.integration.tui_integration_test.TuiTest.test_a_session_over_hooks_send_idle_attach_and_stop": 4.125705,
   "session.tests.integration.tui_integration_test.TuiTest.test_an_unreachable_server_is_unknown_and_no_end": 1.463853,
   "session.tests.integration.tui_integration_test.TuiTest.test_inspect_an_ended_tui_session_after_its_pane_and_store_are_removed": 0.316065,
+  "utils.tests.integration.process_control_integration_test.ProcessControlTest.test_a_missing_caller_expires_without_starting_the_program": 10.047379,
   "utils.tests.integration.process_control_integration_test.ProcessControlTest.test_cancel_a_started_controller_ends_its_group_and_removes_its_directory": 0.219968,
   "utils.tests.integration.process_control_integration_test.ProcessControlTest.test_cancel_before_controller_start_prevents_a_late_program_launch": 0.051821,
   "utils.tests.integration.process_control_integration_test.ProcessControlTest.test_exec_failure_is_reported_without_a_startup_timeout": 0.129563,

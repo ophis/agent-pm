@@ -15,6 +15,40 @@ from utils.tests.case import Case
 
 
 class ProcessControlTest(Case):
+    def test_a_missing_caller_expires_without_starting_the_program(self):
+        with tempfile.TemporaryDirectory() as folder:
+            marker = Path(folder, "must-not-start")
+            control = ProcessControl.prepare(
+                [
+                    sys.executable,
+                    "-I",
+                    "-c",
+                    "import pathlib, sys; pathlib.Path(sys.argv[1]).touch()",
+                    str(marker),
+                ],
+                os.getcwd(),
+            )
+            started = time.monotonic()
+            process = subprocess.Popen(
+                control.command(), stdout=subprocess.PIPE, stderr=subprocess.PIPE
+            )
+            self.addCleanup(control.remove)
+            self.addCleanup(process.communicate, timeout=15)
+            self.addCleanup(control.cancel)
+            ready = time.monotonic() + 5
+            while not os.path.exists(os.path.join(control.path, "control")):
+                self.assertIsNone(process.poll())
+                self.assertLess(time.monotonic(), ready)
+                time.sleep(0.02)
+            self.assertIsNone(process.poll())
+            self.assertFalse(marker.exists())
+            output = process.communicate(timeout=15)
+            self.assertEqual(process.returncode, 1, output)
+            self.assertLess(time.monotonic() - started, 15)
+            self.assertGreaterEqual(time.monotonic() - started, 10)
+            self.assertFalse(marker.exists())
+            self.assertFalse(os.path.exists(control.path))
+
     def test_cancel_before_controller_start_prevents_a_late_program_launch(self):
         with tempfile.TemporaryDirectory() as folder:
             marker = Path(folder, "must-not-start")

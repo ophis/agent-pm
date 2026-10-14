@@ -151,6 +151,7 @@ class ProcessControl:
         self.path = path
         self.ended = False
         self.accepted = False
+        self.requested = False
         self.cancelled = False
 
     @classmethod
@@ -239,6 +240,8 @@ class ProcessControl:
         while (message := _read(os.path.join(self.path, "started.json"))) is None:
             if time.monotonic() >= deadline:
                 raise TimeoutError("process controller did not start")
+            if os.path.exists(os.path.join(self.path, "control")):
+                self._request("start")
             time.sleep(POLL)
         self._request("started")
         if "error" in message:
@@ -327,41 +330,62 @@ class ProcessControl:
     def serve(
         self, *, on_exit: Callable[[int], None] | None = None, detached: bool = False, **options
     ) -> int:
+        group = None
         with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as listener:
-            with open(os.path.join(self.path, "lock"), encoding="utf-8") as lock:
-                fcntl.flock(lock, fcntl.LOCK_EX)
-                launch = _read(os.path.join(self.path, "launch.json"))
-                if launch is None:
-                    raise FileNotFoundError("missing process launch")
-                os.unlink(os.path.join(self.path, "launch.json"))
-                listener.bind(os.path.join(self.path, "control"))
-                listener.listen()
-                signal.signal(signal.SIGCHLD, signal.SIG_DFL)
-                if "env" in launch:
-                    inherited = launch.get("inherit_env", ())
-                    options["env"] = {
-                        **{
-                            key: value
-                            for key, value in launch["env"].items()
-                            if key not in inherited
-                        },
-                        **{key: os.environ[key] for key in inherited if key in os.environ},
-                    }
-                group = _Group.launch(launch["argv"], launch["cwd"], **options)
-                fcntl.flock(lock, fcntl.LOCK_UN)
-            if detached:
-                os.setsid()
-                signal.signal(signal.SIGHUP, signal.SIG_IGN)
-                with open(os.devnull, "r+b") as null:
-                    for fd in (0, 1, 2):
-                        os.dup2(null.fileno(), fd)
             try:
+                with open(os.path.join(self.path, "lock"), encoding="utf-8") as lock:
+                    fcntl.flock(lock, fcntl.LOCK_EX)
+                    if _read(os.path.join(self.path, "launch.json")) is None:
+                        raise FileNotFoundError("missing process launch")
+                    listener.bind(os.path.join(self.path, "control"))
+                    listener.listen()
+                    fcntl.flock(lock, fcntl.LOCK_UN)
+                if not self._await_start(listener):
+                    if on_exit is not None:
+                        on_exit(1)
+                    return 1
+                with open(os.path.join(self.path, "lock"), encoding="utf-8") as lock:
+                    fcntl.flock(lock, fcntl.LOCK_EX)
+                    launch = _read(os.path.join(self.path, "launch.json"))
+                    if launch is None:
+                        raise FileNotFoundError("cancelled process launch")
+                    os.unlink(os.path.join(self.path, "launch.json"))
+                    signal.signal(signal.SIGCHLD, signal.SIG_DFL)
+                    if "env" in launch:
+                        inherited = launch.get("inherit_env", ())
+                        options["env"] = {
+                            **{
+                                key: value
+                                for key, value in launch["env"].items()
+                                if key not in inherited
+                            },
+                            **{key: os.environ[key] for key in inherited if key in os.environ},
+                        }
+                    group = _Group.launch(launch["argv"], launch["cwd"], **options)
+                    fcntl.flock(lock, fcntl.LOCK_UN)
+                if detached:
+                    os.setsid()
+                    signal.signal(signal.SIGHUP, signal.SIG_IGN)
+                    with open(os.devnull, "r+b") as null:
+                        for fd in (0, 1, 2):
+                            os.dup2(null.fileno(), fd)
                 return self._serve(listener, group, on_exit, detached=detached)
             finally:
-                os.close(group.channel)
-                with contextlib.suppress(FileNotFoundError):
-                    os.unlink(os.path.join(self.path, "control"))
+                if group is not None:
+                    os.close(group.channel)
                 self.remove()
+
+    def _await_start(self, listener) -> bool:
+        deadline = time.monotonic() + TIMEOUT
+        while not self.requested and not self.cancelled:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                self.cancelled = True
+                break
+            ready, _, _ = select.select([listener], [], [], min(POLL, remaining))
+            if ready:
+                self._answer(listener, None, reported=False)
+        return self.requested and not self.cancelled
 
     def _serve(self, listener, group, on_exit, *, detached=False) -> int:
         stopping: int | None = None
@@ -423,21 +447,31 @@ class ProcessControl:
             try:
                 with connection.makefile("rb") as stream:
                     command = stream.readline(32)
-                if command == b"started\n":
+                if command == b"start\n":
+                    self.requested = True
+                elif command == b"started\n":
                     self.accepted = True
                 elif command == b"cancel\n":
                     self.accepted = self.cancelled = True
-                    group.kill()
+                    if group is not None:
+                        group.kill()
                 elif command == b"kill\n":
-                    group.kill()
+                    if group is None:
+                        self.accepted = self.cancelled = True
+                    else:
+                        group.kill()
                 elif command.startswith(b"signal "):
                     signum = int(command.removeprefix(b"signal "))
                     if signum not in (signal.SIGHUP, signal.SIGTERM, signal.SIGINT):
                         raise ValueError("unsupported process control signal")
-                    group.send(signum)
+                    if group is None:
+                        self.accepted = self.cancelled = True
+                    else:
+                        group.send(signum)
                 elif command != b"live\n":
                     raise ValueError("unknown process control command")
-                response = {"live": group.live() if reported else True}
+                live = not self.cancelled if group is None else group.live() if reported else True
+                response = {"live": live}
             except OSError as error:
                 response = {"error": str(error), "errno": error.errno or errno.EIO}
             except ValueError as error:
