@@ -10,9 +10,9 @@ import sys
 import tempfile
 from dataclasses import dataclass
 
-from agent_pm.delegate import config
 import agent_pm.session as session_package
 import agent_pm.utils as utils_package
+from agent_pm.delegate import config
 from agent_pm.delegate.engine.drivers import Driver
 from agent_pm.delegate.engine.runner import say
 from agent_pm.delegate.engine.types import ConfigError, Plan
@@ -104,8 +104,11 @@ def detach(
             harness,
             argv,
             cwd=os.getcwd(),
-            env={**{k: v for k, v in os.environ.items() if k != "PYTHONPATH"},
-                 **import_env(config, session_package, utils_package), **authentication},
+            env={
+                **{k: v for k, v in os.environ.items() if k != "PYTHONPATH"},
+                **import_env(config, session_package, utils_package),
+                **authentication,
+            },
             opener=opener,
         )
     except SessionConfigError as e:

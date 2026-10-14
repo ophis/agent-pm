@@ -12,7 +12,7 @@ from collections.abc import Iterator, Mapping
 from dataclasses import replace
 
 from agent_pm.delegate import composer
-from agent_pm.delegate.composer import DELIVERABLE, RunConfig, RunParams, Team
+from agent_pm.delegate.composer import DELIVERABLE, Composer, RunConfig, RunParams, Team
 from agent_pm.delegate.engine import config
 from agent_pm.delegate.engine.drivers import AgentDriver, Driver
 from agent_pm.delegate.engine.types import ConfigError, Plan, Spec
@@ -60,7 +60,12 @@ def _own(f):
 
 @_own
 def place(
-    run: RunConfig, workdir: str, *, resume_sid: str | None, cwd: str | None, trusted: frozenset[str] | None = None
+    run: RunConfig,
+    workdir: str,
+    *,
+    resume_sid: str | None,
+    cwd: str | None,
+    trusted: frozenset[str] | None = None,
 ) -> tuple[str, bool]:
     """(cwd, whether its project settings load); a resume's from its session record."""
     workdir = os.path.abspath(workdir)
@@ -86,7 +91,11 @@ def place(
 
 @_own
 def plan(
-    run: RunConfig, spec: Spec, *, driver: Driver | SessionDriver, composition=None
+    run: RunConfig,
+    spec: Spec,
+    *,
+    driver: Driver | SessionDriver,
+    composition: Composer | None = None,
 ) -> Plan:
     """With the built-in team the configured team dirs are checked for overlap only."""
     if isinstance(driver, SessionDriver):
@@ -125,7 +134,10 @@ def plan(
     )
     resume = spec.sid if spec.resume else None
     here, project = place(
-        run, workdir, resume_sid=resume, cwd=spec.cwd,
+        run,
+        workdir,
+        resume_sid=resume,
+        cwd=spec.cwd,
         trusted=None if composition is None else composition.trusted_dirs(),
     )
     if driver.session_based and not project and os.path.realpath(here) != os.path.realpath(workdir):
@@ -173,7 +185,11 @@ def plan(
         workdir=workdir,
         resume=spec.resume,
     )
-    prompt = composer.render(run, params, team=team) if composition is None else composition.render(run, params)
+    prompt = (
+        composer.render(run, params, team=team)
+        if composition is None
+        else composition.render(run, params)
+    )
     return Plan(spec, replace(session, prompt=prompt), run)
 
 

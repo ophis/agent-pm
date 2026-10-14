@@ -111,7 +111,8 @@ class Tui(Headless):
         name = handle.name
         if name is None:
             raise DriverError("tui session has no name")
-        say(f"delegate: tui session {name}: {handle.attach_command()}")
+        if handle.displayable:
+            say(f"delegate: tui session {name}: {handle.attach_command()}")
         return handle
 
     def fix(self, handle: Session, p: Plan, text: str) -> Session:
@@ -243,39 +244,35 @@ class _Attempts:
             self.drop_stale_out()
             self.note("input", text=p.params.input)
             return Result(1, None, f"{p.spec.mode}: {e}")
-        try:
-            stale = self.drop_stale_out()
-            self.note("input", text=p.params.input)
-            if stale:
-                self.stop(handle)
-                return Result(1, None, stale)
-            self.on_event(Begun(p.sid))
-            fixed = False
-            while True:
-                rc, last, limit = self.attempt(handle)
-                diagnostic = f"the client exited {rc}" if rc else ""
-                if limit:
-                    return Result(rc, None, f"usage limit; {_resets(limit.resets_at)}", limit)
-                if (block := outcome_block(last or "")) is None:
-                    return Result(rc, None, diagnostic or "the agent run returned no outcome")
-                try:
-                    outcome = read_outcome(block, p.run.output, p.spec.workdir)
-                except InvalidOutcome as e:
-                    if rc or fixed:
-                        return Result(rc, None, diagnostic or f"invalid outcome: {e}")
-                    self.note("invalid", error=str(e))
-                    say(f"delegate: invalid outcome: {e}; resuming once")
-                    try:
-                        handle = self.policy.fix(handle, p, FIX.format(error=e))
-                        self.handle = handle
-                    except (SessionConfigError, DriverError) as failed:
-                        return Result(1, None, f"invalid outcome: {e}; resume failed: {failed}")
-                    fixed = True
-                    continue
-                return self.finish(outcome, rc)
-        except BaseException:
+        stale = self.drop_stale_out()
+        self.note("input", text=p.params.input)
+        if stale:
             self.stop(handle)
-            raise
+            return Result(1, None, stale)
+        self.on_event(Begun(p.sid))
+        fixed = False
+        while True:
+            rc, last, limit = self.attempt(handle)
+            diagnostic = f"the client exited {rc}" if rc else ""
+            if limit:
+                return Result(rc, None, f"usage limit; {_resets(limit.resets_at)}", limit)
+            if (block := outcome_block(last or "")) is None:
+                return Result(rc, None, diagnostic or "the agent run returned no outcome")
+            try:
+                outcome = read_outcome(block, p.run.output, p.spec.workdir)
+            except InvalidOutcome as e:
+                if rc or fixed:
+                    return Result(rc, None, diagnostic or f"invalid outcome: {e}")
+                self.note("invalid", error=str(e))
+                say(f"delegate: invalid outcome: {e}; resuming once")
+                try:
+                    handle = self.policy.fix(handle, p, FIX.format(error=e))
+                    self.handle = handle
+                except (SessionConfigError, DriverError) as failed:
+                    return Result(1, None, f"invalid outcome: {e}; resume failed: {failed}")
+                fixed = True
+                continue
+            return self.finish(outcome, rc)
 
     def stop(self, handle: Session) -> bool:
         """A DriverError is printed, not raised; False then, the session maybe running."""
@@ -335,9 +332,8 @@ class _Attempts:
                 name = handle.name
                 if name is None:
                     raise DriverError("tui session has no name")
-                say(
-                    f"delegate: {answer.reason}; session {name} left open: {handle.attach_command()}"
-                )
+                command = f": {handle.attach_command()}" if handle.displayable else ""
+                say(f"delegate: {answer.reason}; session {name} left open{command}")
                 return 0, None, None
             if answer == END:
                 break

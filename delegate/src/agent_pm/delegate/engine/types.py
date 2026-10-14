@@ -1,8 +1,9 @@
 """The Delegate's shared types."""
 
-from dataclasses import dataclass
-
 import os
+from collections.abc import Sequence
+from dataclasses import dataclass
+from typing import TypedDict
 
 from agent_pm.delegate.composer import DELIVERABLE, ConfigError, RunConfig, RunParams, Team
 from agent_pm.delegate.event.types import Outcome
@@ -21,6 +22,12 @@ __all__ = [
     "Finished",
     "Event",
 ]
+
+
+class Outer(TypedDict, total=False):
+    kind: str
+    ctl: Sequence[str]
+    resume: Sequence[str]
 
 
 @dataclass(frozen=True)

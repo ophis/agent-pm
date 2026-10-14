@@ -1,6 +1,5 @@
 """HarnessDelegate plans before writing and persists its identity for durable views."""
 
-import json
 import os
 import stat
 import subprocess
@@ -9,66 +8,27 @@ import time
 from dataclasses import replace
 
 import agent_pm.delegate
-from agent_pm.delegate import Begun, ConfigError, Finished, Limit, Spec
+from agent_pm.delegate import Begun, ConfigError, Finished, Limit, Outcome, Spec
 from agent_pm.delegate.engine.harness_delegate import HarnessDelegate
 from agent_pm.session import Exited, LimitHit, Reply
 from agent_pm.utils import Record, package_dirs
 
-from delegate.tests.case import Case, child_env
+from delegate.tests.case import REPO, child_env
 from delegate.tests.fakes.harness_session import (
     FailingSession,
     HarnessSession,
     PersistentSession,
     RecordingHost,
 )
+from delegate.tests.harness import SID, HarnessCase
 from delegate.tests.replies import block
 from delegate.tests.unit.runs import DONE
-
-SID = "0f8fad5b-d9cb-469f-a165-70867728950e"
 
 
 def _close_child(child):
     if child.poll() is None:
         child.kill()
     child.communicate(timeout=10)
-
-
-class HarnessCase(Case):
-    def setUp(self):
-        HarnessSession.reset()
-        HarnessSession.script = (Reply(block(DONE)), Exited(0))
-        self.work = os.path.join(self.home, "run")
-        self.local = os.path.join(self.agent_pm, "config.local.toml")
-        self.settings()
-
-    def settings(self, *, language="English", runtime="fake", default="agent"):
-        with open(self.local, "w", encoding="utf-8") as file:
-            file.write(
-                f'[delegate]\nlanguage = "{language}"\n'
-                f'[delegate.roles.dummy-tester]\nruntime = "{runtime}"\n'
-                f'[session.hosts]\ndefault = "{default}"\n'
-                "[session.hosts.agent]\n"
-                'implementation = "delegate.tests.fakes.harness_session:RecordingHost"\n'
-                "[session.hosts.harness]\n"
-                'implementation = "delegate.tests.fakes.harness_session:RecordingHost"\n'
-                "[session.hosts.changed]\n"
-                'implementation = "delegate.tests.fakes.harness_session:RecordingHost"\n'
-            )
-
-    def make(self, *, role="dummy-tester", spec=None, **kw):
-        spec = spec or Spec(
-            "Hello.\nLiteral input.", self.work, task="echo", sid=SID, cwd=self.work, runtime="fake"
-        )
-        return HarnessDelegate(role, spec, session_cls=HarnessSession, **kw)
-
-    def metadata(self):
-        with open(os.path.join(self.work, "delegate.json"), encoding="utf-8") as file:
-            return json.load(file)
-
-    def stop(self, record):
-        for (_host, name), process in RecordingHost.processes.items():
-            if name in record.sessions:
-                process.close()
 
 
 class Planning(HarnessCase):
@@ -204,7 +164,7 @@ class Views(HarnessCase):
                 HarnessSession.script = (Reply(block(data)), Exited(0))
                 delegate = self.make()
                 result = delegate.run()
-                self.assertEqual(result.outcome.status, status)
+                self.assertEqual(result.outcome, Outcome(**data))
                 view = HarnessDelegate.attach(self.work)
                 starts = len(HarnessSession.started)
                 launches = len(RecordingHost.launches)
@@ -330,7 +290,7 @@ class ConcurrentResume(HarnessCase):
             subprocess.Popen(
                 [sys.executable, "-P", "-S", "-c", code, self.work, ready, gate],
                 cwd=self.home,
-                env=child_env(),
+                env=child_env(None, REPO),
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 encoding="utf-8",

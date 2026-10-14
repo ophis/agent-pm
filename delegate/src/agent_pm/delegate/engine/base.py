@@ -6,7 +6,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable, Mapping, Sequence
 
 from agent_pm.delegate.composer import RunConfig
-from agent_pm.delegate.engine.types import Event, Result
+from agent_pm.delegate.engine.types import Event, Outer, Result
 from agent_pm.delegate.event.outcome import Outcome
 from agent_pm.session import SessionStatus, Usage
 from agent_pm.utils import Record, Status
@@ -38,7 +38,7 @@ class Delegate(ABC):
     def trusted_dirs(cls) -> frozenset[str]: ...
 
     @abstractmethod
-    def detach(self, *, outer: Mapping | None = None) -> Record: ...
+    def detach(self, *, outer: Outer | None = None) -> Record: ...
 
     @abstractmethod
     def run(self, on_event: Callable[[Event], None] | None = None) -> Result: ...

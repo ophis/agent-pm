@@ -4,7 +4,7 @@ import os
 import unittest
 from dataclasses import fields
 
-from agent_pm.delegate import ConfigError, Spec, composer, plan, run
+from agent_pm.delegate import ConfigError, Finished, Spec, composer, plan, run
 from agent_pm.delegate.engine.drivers import AgentDriver, Driver, InstructionDriver
 from agent_pm.delegate.engine.types import DriverSpec, Instruction
 from agent_pm.session import Session
@@ -36,7 +36,7 @@ class Drivers(Case):
                 on_event=events.append,
             )
         self.assertEqual((result.returncode, result.instruction, result.outcome), (0, out, None))
-        self.assertEqual(events, [])
+        self.assertEqual(events, [Finished(result)])
         self.assertFalse(os.path.exists(os.path.join(work, "run.jsonl")))
 
     def test_driver_is_abstract_and_has_no_abstract_constructor(self):
@@ -131,7 +131,7 @@ class Drivers(Case):
                 self.assertEqual(str(caught.exception), message)
                 self.assertFalse(os.path.exists(os.path.dirname(out)))
 
-    def test_instruction_run_bypasses_attempts_replies_and_callbacks(self):
+    def test_instruction_run_bypasses_attempts_and_replies_but_finishes(self):
         work = os.path.join(self.home, "work")
         out = os.path.join(work, "prompt.md")
         spec = Spec("[agent-pm-progress:start] source text", work, out=out, cwd=work)
@@ -142,7 +142,7 @@ class Drivers(Case):
         with no_child():
             result = run(config, spec, driver=driver, on_event=events.append)
         self.assertEqual((result.returncode, result.outcome, result.instruction), (0, None, out))
-        self.assertEqual(events, [])
+        self.assertEqual(events, [Finished(result)])
         with open(out, "rb") as stream:
             self.assertEqual(stream.read(), expected.encode("utf-8"))
         self.assertFalse(os.path.exists(os.path.join(work, "run.jsonl")))

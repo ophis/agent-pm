@@ -7,7 +7,7 @@ from agent_pm.session import Spec as SessionSpec
 
 from delegate.tests.contracts.delegate import DelegateContract
 from delegate.tests.fakes.harness_session import HarnessSession, RecordingHost, ShowingHost
-from delegate.tests.integration.harness_integration_test import SID, HarnessCase
+from delegate.tests.harness import SID, HarnessCase
 
 
 class HarnessContract(DelegateContract, HarnessCase):
