@@ -9,7 +9,7 @@ file and sid a launcher gives in $AGENT_PM_EVENTS and $AGENT_PM_SID, a needs_inp
 tests/integration/core/drive_tui_integration_test.py
 test_detach_from_the_manager. Its test_detach_events_default and main's
 manager/tests/integration/crew_integration_test.py role-run cases run through agent-pm-crew in
-manager/tests/integration/crew_delegate_integration_test.py.
+manager/tests/integration/crew_*_integration_test.py.
 """
 
 import json
