@@ -110,6 +110,10 @@ class Gate:
             self.command(executable, argv, None, os.environ if env is None else env)
         elif event == "os.system":
             self.fail("shell launch cannot verify private tool arguments")
+        elif event == "tempfile.mkdtemp":
+            path = os.fsdecode(args[0])
+            if os.path.basename(path).startswith("apm-group-") and not self.inside(path):
+                self.fail(f"process controller outside test sandbox: {path}")
         elif event == "open" and self.unit:
             path, mode, flags = args
             writes = flags & (os.O_WRONLY | os.O_RDWR | os.O_CREAT | os.O_TRUNC | os.O_APPEND)

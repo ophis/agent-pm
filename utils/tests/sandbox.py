@@ -1,15 +1,19 @@
 """Standard-library test isolation, child environments and owned process cleanup."""
 
 import atexit
+import contextlib
 import os
 import shlex
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
 import threading
+import time
 from pathlib import Path
 
+CONTROL_GRACE = 15
 _TMUX_DIRECTORIES: dict[int, str] = {}
 _TMUX_LOCK = threading.Lock()
 
@@ -61,15 +65,18 @@ def clean_env(base=None, *import_roots):
         )
     )
     env["PYTHONDONTWRITEBYTECODE"] = "1"
+    if os.environ.get("AGENT_PM_CONTROL_ROOT") and "AGENT_PM_CONTROL_ROOT" not in env:
+        env["AGENT_PM_CONTROL_ROOT"] = os.environ["AGENT_PM_CONTROL_ROOT"]
     if import_roots:
         env["PYTHONPATH"] = os.pathsep.join(map(str, import_roots))
     return env
 
 
 def stop_tmux_servers(root, env):
+    """Kill the tmux servers on sockets under root; the sockets whose server answered."""
     if Path(root).is_symlink():
-        return
-    failures = []
+        return []
+    failures, stopped = [], []
     for path, directories, files in os.walk(root):
         directory = Path(path)
         directories[:] = [name for name in directories if not (directory / name).is_symlink()]
@@ -80,7 +87,7 @@ def stop_tmux_servers(root, env):
             if socket.is_symlink() or not socket.is_socket():
                 continue
             try:
-                subprocess.run(
+                result = subprocess.run(
                     ["tmux", "-S", str(socket), "kill-server"],
                     env=env,
                     stdout=subprocess.DEVNULL,
@@ -90,8 +97,61 @@ def stop_tmux_servers(root, env):
                 )
             except (OSError, subprocess.TimeoutExpired) as error:
                 failures.append(error)
+            else:
+                if result.returncode == 0:
+                    stopped.append(str(socket))
     if failures:
         raise ExceptionGroup(f"{root}: tmux kill-server failed", failures)
+    return stopped
+
+
+def _processes():
+    listing = subprocess.run(
+        ["ps", "-A", "-ww", "-o", "pid=,ppid=,pgid=,uid=,stat=,args="],
+        capture_output=True,
+        text=True,
+        check=True,
+        env={"PATH": os.defpath, "LC_ALL": "C"},
+    )
+    rows = []
+    for line in listing.stdout.splitlines():
+        fields = line.split(None, 5)
+        if len(fields) == 6 and int(fields[3]) == os.getuid() and not fields[4].startswith("Z"):
+            rows.append((int(fields[0]), int(fields[1]), int(fields[2]), fields[5]))
+    return rows
+
+
+def leaked_processes(paths, grace=CONTROL_GRACE):
+    """(pid, ppid, pgid, args) of this user's processes, other than this one and its ancestors,
+    whose command line names one of paths and that outlive grace seconds.
+    """
+    deadline = time.monotonic() + grace
+    while True:
+        rows = _processes()
+        parents = {pid: ppid for pid, ppid, _, _ in rows}
+        own, pid = set(), os.getpid()
+        while pid and pid not in own:
+            own.add(pid)
+            pid = parents.get(pid, 0)
+        leaked = [row for row in rows if row[0] not in own and any(p in row[3] for p in paths)]
+        if not leaked or time.monotonic() >= deadline:
+            return leaked
+        time.sleep(0.2)
+
+
+def kill_processes(leaked):
+    """SIGKILL each leaked process (its whole group when it leads one) and the groups its children
+    lead, such as a controller's anchored program.
+    """
+    pids = {pid for pid, _, _, _ in leaked}
+    groups = {pgid for pid, _, pgid, _ in leaked if pgid == pid}
+    groups |= {pgid for pid, ppid, pgid, _ in _processes() if ppid in pids and pgid == pid}
+    for group in sorted(groups):
+        with contextlib.suppress(ProcessLookupError, PermissionError):
+            os.killpg(group, signal.SIGKILL)
+    for pid in sorted(pids - groups):
+        with contextlib.suppress(ProcessLookupError, PermissionError):
+            os.kill(pid, signal.SIGKILL)
 
 
 def git_run(*argv, cwd=None, env=None, **kwargs):

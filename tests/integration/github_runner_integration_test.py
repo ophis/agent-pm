@@ -1,8 +1,12 @@
 """Test supervision in isolated child interpreters."""
 
+import re
+import shutil
 import subprocess
 import sys
 import tempfile
+import time
+import unittest
 from pathlib import Path
 
 from runner_fixtures import HERE, SCRIPT
@@ -56,6 +60,36 @@ class Supervise(Case):
                 self.assertEqual(proc.returncode, code)
                 self.assertEqual(proc.stdout.count("::error"), annotations)
                 self.assertNotIn("crashed", proc.stdout)
+
+    def test_a_process_outliving_the_run_fails_it_and_is_killed(self):
+        proc, summary = self.supervise("leak")
+        self.assertEqual(proc.returncode, 1, proc.stderr)
+        pid = re.search(r"^started (\d+)$", proc.stdout, re.MULTILINE).group(1)
+        self.assertIn(f"::error title=Unit x::leaked after the run: pid {pid}: ", proc.stdout)
+        self.assertIn(f"### Unit x: leaked processes\n\n- pid {pid}: ", summary)
+        deadline = time.monotonic() + 3
+        while True:
+            state = subprocess.run(["ps", "-p", pid, "-o", "stat="], capture_output=True, text=True)
+            if state.returncode == 1 or state.stdout.strip().startswith("Z"):
+                break
+            self.assertLess(time.monotonic(), deadline, f"leaked process {pid} remains")
+            time.sleep(0.05)
+
+    @unittest.skipUnless(shutil.which("tmux"), "tmux is unavailable")
+    def test_a_tmux_server_outliving_the_run_fails_it(self):
+        proc, summary = self.supervise("tmux")
+        self.assertEqual(proc.returncode, 1, proc.stderr)
+        self.assertRegex(
+            proc.stdout,
+            r"::error title=Unit x::leaked after the run: tmux server \S+/tmux-\d+/default\n",
+        )
+        self.assertIn("### Unit x: leaked processes\n\n- tmux server ", summary)
+
+    def test_a_process_ending_inside_the_grace_is_not_a_leak(self):
+        proc, summary = self.supervise("brief")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertNotIn("::error", proc.stdout)
+        self.assertNotIn("leaked", summary)
 
     def test_main_discovers_from_the_cwd(self):
         tmp = Path(self.enterContext(tempfile.TemporaryDirectory()))

@@ -14,7 +14,7 @@ from pathlib import Path
 
 import isolation
 
-from utils.tests.sandbox import clean_env, stop_tmux_servers
+from utils.tests.sandbox import clean_env, kill_processes, leaked_processes, stop_tmux_servers
 
 STATE = "RUN_TESTS_STATE"
 TAIL = 40
@@ -133,7 +133,9 @@ def stack(lines):
 
 
 def supervise(title):
-    """None in the child; in the parent, the child's exit code (128 + signal for a signal)."""
+    """None in the child; in the parent, the child's exit code (128 + signal for a signal), or 1 when
+    it passed but left processes or tmux servers behind.
+    """
     if STATE in os.environ:
         return None
     tail = collections.deque(maxlen=5 * TAIL)
@@ -163,6 +165,7 @@ def supervise(title):
             TMUX_TMPDIR=tmp,
             TUI_ATTACH_PREFIX="",
             AGENT_PM_TEST_SANDBOX=tmp,
+            AGENT_PM_CONTROL_ROOT=tmp,
             AGENT_PM_TEST_TMP=workspace,
             AGENT_PM_TEST_WORKSPACE=workspace,
         )
@@ -179,7 +182,9 @@ def supervise(title):
                     sys.stderr.write(line)
                     tail.append(line)
         finally:
-            stop_tmux_servers(tmp, env)
+            servers = stop_tmux_servers(tmp, env)
+        processes = leaked_processes((tmp, workspace))
+        kill_processes(processes)
         with open(state, encoding="utf-8") as file:
             lines = file.read().splitlines()
     code = 128 - child.returncode if child.returncode < 0 else child.returncode
@@ -187,6 +192,13 @@ def supervise(title):
         message = crash(code, lines)
         annotate(title, message + "\n" + "".join(stack(list(tail))))
         append("GITHUB_STEP_SUMMARY", f"### {title}\n\n{message}\n\n")
+    leaks = [f"tmux server {socket}" for socket in servers]
+    leaks += [f"pid {pid}: {args[:200]}" for pid, _, _, args in processes]
+    if leaks:
+        annotate(title, "leaked after the run: " + "; ".join(leaks))
+        items = "".join(f"- {leak}\n" for leak in leaks)
+        append("GITHUB_STEP_SUMMARY", f"### {title}: leaked processes\n\n{items}\n")
+        code = code or 1
     return code
 
 

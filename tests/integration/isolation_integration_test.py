@@ -14,7 +14,7 @@ from session.tests import live_tmux
 from tests.case import REPO, Case
 from utils.tests.sandbox import clean_env
 
-SCRIPT = """import json, os, subprocess, sys
+SCRIPT = """import json, os, subprocess, sys, tempfile
 from pathlib import Path
 from unittest import mock
 import isolation
@@ -108,6 +108,14 @@ except RuntimeError as error:
 else:
     raise AssertionError("exec inherited unsafe Git environment")
 del os.environ["GIT_DIR"]
+for owned in (sandbox, workspace):
+    tempfile.mkdtemp(prefix="apm-group-", dir=owned)
+try:
+    tempfile.mkdtemp(prefix="apm-group-", dir=marker.parent)
+except RuntimeError as error:
+    assert "process controller outside test sandbox: " + str(marker.parent) in str(error)
+else:
+    raise AssertionError("process controller directory escaped the sandbox")
 print(json.dumps(sorted(blocked)))
 """
 
@@ -487,6 +495,7 @@ print(json.dumps({"code": code, "state": state.read_text()}))
         env = clean_env(None, REPO, str(Path(REPO, ".github")))
         env["TMPDIR"] = os.environ["AGENT_PM_TEST_SANDBOX"]
         env.pop("RUN_TESTS_STATE", None)
+        env.pop("GITHUB_STEP_SUMMARY", None)
         proc = subprocess.run(
             [
                 sys.executable,
@@ -502,7 +511,10 @@ print(json.dumps({"code": code, "state": state.read_text()}))
             text=True,
             timeout=15,
         )
-        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(proc.returncode, 1, proc.stderr)
+        leaks = [line for line in proc.stdout.splitlines() if "leaked after the run: " in line]
+        self.assertEqual(len(leaks), 1, proc.stdout)
+        self.assertEqual(leaks[0].count("tmux server "), 4, leaks[0])
         pids = json.loads(marker.read_text())
         self.assertEqual(set(pids), {"default", "named", "other", "clean_env"})
         for pid in pids.values():
@@ -741,6 +753,7 @@ os.close(dir_fd)
             f"        self.assertNotIn({str(ambient)!r}, sys.path)\n"
             "        self.assertTrue(os.environ['PATH'].split(os.pathsep)[0].endswith('blocked-bin'))\n"
             "        self.assertNotEqual(os.environ['HOME'], os.environ['TMPDIR'])\n"
+            "        self.assertEqual(os.environ['AGENT_PM_CONTROL_ROOT'], os.environ['AGENT_PM_TEST_SANDBOX'])\n"
         )
         env = clean_env(None, REPO, str(Path(REPO, ".github")), str(ambient))
         env.pop("RUN_TESTS_STATE", None)
