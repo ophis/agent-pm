@@ -2,8 +2,9 @@
 a control-mode client on the manager, the session config's ClaudeAdapter running
 session/tests/integration/adapters/claude/fake_claude.py: the one Record line whose sessions are live
 on return, the harness session, the TUI beside the caller or in no pane, the harness's outcome and
-exited lines, a kill-session of the harness session, an events path tmux would misread, a needs_input
-run answered by `run --resume --sid --input --detach` (refused while the run lives) whose outcome a
+exited lines, a kill-session of the harness session, an events path tmux would misread, the events
+file and sid a launcher gives in $AGENT_PM_EVENTS and $AGENT_PM_SID, a needs_input run answered by
+`run --resume --sid --input --detach` (refused while the run lives) whose outcome a
 `resume WORKDIR` then leaves alone. Ports main's
 tests/integration/core/drive_tui_integration_test.py
 test_detach_from_the_manager. Not ported, as role entries are TASK-356: its
@@ -61,21 +62,35 @@ class Detach(Case):
         )
 
     def detach(
-        self, *extra: str, steps, turns=(), inside=None, events=None, text="Hello.", **scenario
+        self,
+        *extra: str,
+        steps,
+        turns=(),
+        inside=None,
+        events=None,
+        launcher=False,
+        text="Hello.",
+        **scenario,
     ):
+        """launcher: the events file and sid come as $AGENT_PM_EVENTS and $AGENT_PM_SID, as
+        agent-pm-crew run gives them.
+        """
         with open(self.scenario, "w") as f:
             json.dump({"steps": steps, "turns": list(turns), **scenario}, f)
-        argv = [*RUN, "--role", ROLE, "--input", text, "--out", self.out, "--workdir"]
-        argv += [self.work, "--sid", SID, "--detach", "--events", events or self.events, *extra]
         self.events_used = events or self.events
-        return self.cli(argv, inside=inside)
+        given = {"AGENT_PM_EVENTS": self.events_used, "AGENT_PM_SID": SID}
+        argv = [*RUN, "--role", ROLE, "--input", text, "--out", self.out, "--workdir"]
+        argv += [self.work, "--detach", *extra]
+        argv += [] if launcher else ["--sid", SID, "--events", self.events_used]
+        return self.cli(argv, inside=inside, given=given if launcher else {})
 
-    def cli(self, argv, *, inside=None) -> subprocess.CompletedProcess:
+    def cli(self, argv, *, inside=None, given=None) -> subprocess.CompletedProcess:
         env = self.server.env(
             PYTHONPATH=PYTHONPATH,
             CLAUDE_CONFIG_DIR=os.path.join(self.dir, "config"),
             **{fake_claude.ENV: self.scenario},
             **(self.server.inside(inside) if inside else {}),
+            **(given or {}),
         )
         return subprocess.run(
             argv,
@@ -217,6 +232,13 @@ class Tui(Detach):
             (f"stopped: Stopped: {rc}", rc),
         )
 
+    def test_the_launchers_events_file_gets_the_turn_ends_and_one_outcome(self):
+        res = self.detach("--mode", "tui", steps=[START], turns=[[block(DONE)]], launcher=True)
+        self.said(res, tui=True)
+        shaped = self.ended(turn_ends=2)
+        self.assertEqual(shaped.count("turn end"), 2)
+        self.assertEqual(self.harness_lines(shaped), ["outcome done", "exited 0"])
+
     def test_an_events_path_tmux_would_misread_exits_2_starting_nothing(self):
         events = os.path.join(self.dir, "ev#1")
         res = self.detach("--mode", "tui", steps=[START], events=events)
@@ -241,6 +263,11 @@ class Headless(Detach):
         self.assertEqual(self.ended(), ["outcome done", "exited 0"])
         self.assertEqual(self.read(self.out), DONE["deliverable"])
         self.assertEqual(self.last("result")["outcome"]["status"], "done")
+
+    def test_the_launchers_events_file_gets_one_outcome_line(self):
+        res = self.detach(steps=[START, block(DONE)], launcher=True)
+        self.said(res, tui=False)
+        self.assertEqual(self.ended(), ["outcome done", "exited 0"])
 
     def test_needs_input_one_outcome_line_the_harness_session_gone(self):
         res = self.detach(steps=[block(ASKING)])
