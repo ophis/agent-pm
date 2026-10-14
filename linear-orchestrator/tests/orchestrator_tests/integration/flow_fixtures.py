@@ -84,6 +84,11 @@ GUARD = (
 )
 
 
+def usage(five_hour):
+    """fake_claude's rate_limit_info at five_hour utilization."""
+    return {"status": "allowed", "unifiedWindows": {"five_hour": {"utilization": five_hour}}}
+
+
 def steps(*names, end=0, found=(), more=()):
     """orchestrator.jsonl's lines of the run ID, SID's write-back: its steps, `more`, its end."""
     return [

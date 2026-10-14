@@ -25,6 +25,7 @@ from orchestrator_tests.integration.flow_fixtures import (
     TIMEOUT,
     Flow,
     TmuxFlow,
+    usage,
 )
 from orchestrator_tests.integration.segments import FIRST_WRITE, agent_calls, lookup
 
@@ -97,10 +98,6 @@ def gone(pid):
         ["ps", "-o", "stat=", "-p", str(pid)], capture_output=True, text=True, timeout=TIMEOUT
     )
     return res.stdout.strip() == "" or res.stdout.strip().startswith("Z")
-
-
-def usage(five_hour):
-    return {"status": "allowed", "unifiedWindows": {"five_hour": {"utilization": five_hour}}}
 
 
 class Router(TmuxFlow):
