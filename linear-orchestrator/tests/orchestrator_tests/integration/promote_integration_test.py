@@ -249,7 +249,7 @@ class Prune(Tick, TmuxFlow):
         with open(local, "w") as stream:
             stream.write(
                 text.replace(
-                    "orchestrator_tests.integration.legacy_run_delegate:LegacyRunDelegate",
+                    "agent_pm.delegate.engine.harness_delegate:HarnessDelegate",
                     "orchestrator_tests.integration.promote_integration_test:PruneSessionDelegate",
                 )
             )

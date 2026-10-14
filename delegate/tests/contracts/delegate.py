@@ -78,6 +78,12 @@ class DelegateContract:
                 self.assertIsInstance(status, Status)
                 self.assertEqual((status.name, status.alive), (record.name, True))
 
+    def test_attach_with_another_sessions_sid_raises_config_error(self):
+        record, workdir = self.detached()
+        self.assertTrue(self.delegate_cls.attach(workdir, sid=record.sid).alive())
+        with self.assertRaises(ConfigError):
+            self.delegate_cls.attach(workdir, sid="00000000-0000-4000-8000-0000000000ff")
+
     def test_attach_of_a_dir_without_a_run_raises_config_error(self):
         with self.assertRaises(ConfigError):
             self.delegate_cls.attach(self.workdir())
@@ -89,6 +95,17 @@ class DelegateContract:
         view.close()
         self.assertFalse(view.alive())
         self.assertFalse(self.delegate_cls.attach(record).alive())
+
+    def test_forget_after_close_deletes_the_run_keeps_its_workdir_and_is_idempotent(self):
+        workdir = self.workdir()
+        record = self.make(workdir).detach()
+        view = self.delegate_cls.attach(record)
+        view.close()
+        view.forget()
+        view.forget()
+        with self.assertRaises(ConfigError):
+            self.delegate_cls.attach(workdir)
+        self.assertTrue(os.path.isdir(workdir))
 
     def test_resume_after_its_sessions_ended_starts_them_once_with_the_same_sid(self):
         record, _ = self.detached()

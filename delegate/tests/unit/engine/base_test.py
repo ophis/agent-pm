@@ -41,6 +41,7 @@ ABSTRACT = {
     "show",
     "attach_command",
     "close",
+    "forget",
     "session_info",
     "resume",
 }

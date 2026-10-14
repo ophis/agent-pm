@@ -7,6 +7,12 @@ DELEGATE_SRC = f"delegate/src/{PKG}/delegate/"
 CONFIG_FILE = f"delegate/src/{PKG}/delegate/engine/config.py"
 
 
+DELEGATE_INTERFACE = "tests/delegate_interface.json"
+
+
+DELEGATE_INTERFACE_MODULES = ("agent_pm.delegate",)
+
+
 SUBPACKAGES = {
     "delegate": {"composer", "event", "team"},
 }

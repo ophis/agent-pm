@@ -112,8 +112,8 @@ class PruneDelegate(FakeDelegate):
     owners = {}
 
     @classmethod
-    def attach(cls, record_or_workdir):
-        view = super().attach(record_or_workdir)
+    def attach(cls, record_or_workdir, *, sid=None):
+        view = super().attach(record_or_workdir, sid=sid)
         view.owner = cls.owners[view.workdir]
         return view
 

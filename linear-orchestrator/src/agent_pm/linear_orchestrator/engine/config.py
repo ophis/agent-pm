@@ -100,10 +100,6 @@ def load(*, path: str | None = None) -> Config:
         raise
 
 
-def driver_name(role, issue):
-    return f"agent-pm-{role}-{issue}"
-
-
 def tui_prefix(role, issue):
     name = f"{role}-{issue}"
     if not re.fullmatch(_ROLE_ISSUE, name):
@@ -116,12 +112,14 @@ def tui_name(role, issue, sid):
 
 
 def path():
-    """The PATH run, promote and their tools get, read at call: AGENT_PM_PATH (if set) before the
+    """The PATH the router, promote and their tools and runs get, read at call: AGENT_PM_PATH (if
+    set), this installation's bin/ (agent-pm-linear, the harness's write-back callback), then the
     default dirs.
     """
+    [root] = utils.module_roots(types)
     default = f"/opt/homebrew/bin:{os.path.expanduser('~/.local/bin')}:/usr/local/bin:/usr/bin:/bin"
-    front = os.environ.get("AGENT_PM_PATH")
-    return f"{front}:{default}" if front else default
+    found = os.path.join(os.path.dirname(os.path.dirname(root)), "bin")
+    return ":".join(p for p in (os.environ.get("AGENT_PM_PATH"), found, default) if p)
 
 
 def shell(argv: list[str], timeout: int) -> subprocess.CompletedProcess:

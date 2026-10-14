@@ -34,7 +34,9 @@ from agent_pm.session import (
     LimitHit,
     Liveness,
     Mode,
+    NoRecordedSession,
     Reply,
+    SessionStatus,
     Usage,
     Window,
 )
@@ -386,6 +388,16 @@ class Views(HarnessCase):
             delegate.detach()
         self.assertEqual(str(caught.exception), f"{self.work}: delegate run already completed")
         self.assertEqual(RecordingHost.launches, launched)
+
+    def test_a_run_whose_session_was_never_recorded_is_not_resumable(self):
+        delegate = self.make()
+        with mock.patch.object(
+            HarnessSession, "inspect", side_effect=NoRecordedSession("no recorded session")
+        ):
+            self.assertEqual(
+                HarnessDelegate.attach(self.work).session_info(), SessionStatus("no", None, "")
+            )
+        self.assertFalse(delegate.alive())
 
     def test_completed_session_info_uses_public_history_without_starting(self):
         delegate = self.make()
