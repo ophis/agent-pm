@@ -4,6 +4,7 @@ import io
 import json
 import os
 import re
+import sys
 import types
 import uuid
 from contextlib import redirect_stderr, redirect_stdout
@@ -242,18 +243,18 @@ class Harnessed(HarnessCase):
         os.chdir(self.home)
         self.events = os.path.join(self.home, "events")
 
-    def cli(self, *extra, stdin=""):
+    def cli(self, *extra, input="Hello.", stdin=None):
         class Bound(HarnessDelegate):
             def __init__(self, role, spec, **placement):
                 super().__init__(role, spec, session_cls=Shown, **placement)
 
-        argv = ["run", "--role", "dummy-tester", "--task", "echo", "--input", "Hello."]
+        argv = ["run", "--role", "dummy-tester", "--task", "echo", "--input", input]
         argv += ["--out", os.path.join(self.work, "out.md"), "--workdir", self.work]
         out, err = io.StringIO(), io.StringIO()
         with (
             redirect_stdout(out),
             redirect_stderr(err),
-            mock.patch("sys.stdin", io.StringIO(stdin)),
+            mock.patch("sys.stdin", stdin or io.StringIO()),
         ):
             try:
                 code = cli.main([*argv, "--client", "fake", *extra], delegate_cls=Bound)
@@ -295,6 +296,46 @@ class DetachEvents(Harnessed):
                 self.assertEqual(code, 0, err)
                 self.assertEqual(self.metadata()["events"], want)
                 self.assertEqual(RecordingHost.launches[0]["events"], want)
+
+
+class ReadOnce(io.StringIO):
+    def read(self, size=-1):
+        if self.tell():
+            raise AssertionError("stdin read twice")
+        return super().read(size)
+
+
+class DetachInput(Harnessed):
+    def test_input_dash_is_read_once_by_the_caller_and_stored_and_prompted_verbatim(self):
+        with open(os.path.join(self.home, "notes.md"), "w", encoding="utf-8") as file:
+            file.write("not the input\n")
+        for name, text in (
+            ("file", "notes.md"),
+            ("lines", "first line\n\nthird line\n"),
+            ("dash", "-x --detach\n"),
+            ("unicode", "Résumé ✓ 中文\n"),
+        ):
+            with self.subTest(name):
+                HarnessSession.reset()
+                self.work = os.path.join(self.home, name)
+                code, _, err = self.cli(
+                    "--sid",
+                    HARNESS_SID,
+                    "--detach",
+                    "--events",
+                    self.events,
+                    input="-",
+                    stdin=ReadOnce(text),
+                )
+                self.assertEqual(code, 0, err)
+                state = self.metadata()
+                self.assertEqual(state["spec"]["input"], text)
+                self.assertIn(f"# Input\n\n{text}", state["plan"]["session"]["prompt"])
+                harness = "agent_pm.delegate.engine.harness"
+                self.assertEqual(
+                    RecordingHost.launches[0]["argv"],
+                    [sys.executable, "-P", "-s", "-m", harness, self.work],
+                )
 
 
 class DetachSid(Harnessed):
