@@ -12,6 +12,8 @@ import sys
 import time
 from collections.abc import Mapping
 
+ANSWER_MAX = 64 << 20
+
 
 class StartError(Exception):
     pass
@@ -30,6 +32,7 @@ def _decode_launch_data(argv):
 
 
 def _import_roots(value):
+    # This runs before bootstrap, when only the standard library is available.
     if (
         not isinstance(value, list)
         or not value
@@ -52,8 +55,6 @@ def _bootstrap(argv):
     sys.path[:] = [*roots, *(path for path in sys.path if path not in roots)]
     return data
 
-
-ANSWER_MAX = 64 << 20
 
 if __name__ == "__main__":
     try:
