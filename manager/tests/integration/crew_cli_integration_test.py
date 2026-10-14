@@ -5,7 +5,6 @@ import os
 import shlex
 import shutil
 import subprocess
-from dataclasses import replace
 from pathlib import Path
 from unittest import mock
 
@@ -13,7 +12,7 @@ from agent_pm.manager import Crew, Roster, Spec, State
 from agent_pm.utils import Record, Status
 
 from manager.tests import fake_session
-from manager.tests.case import REPO, Case, child_env
+from manager.tests.case import REPO, Case, child_env, with_ctl
 from utils.tests.fakes import ctl
 
 
@@ -201,7 +200,7 @@ class Commands(Case):
 
     def test_resume_continues_after_client_failure_and_exits_one(self):
         roster = Roster(self.directory)
-        first = replace(self.fake_record("a"), resume=("missing-resume-command", "resume", "a"))
+        first = with_ctl(self.fake_record("a"), "agent-pm-delegate")  # not on PATH
         ctl.set_session(self.ctl_dir, "a", alive=False, sid=first.sid)
         roster.adopt(first)
         roster.mark("a", State.GONE)
@@ -211,7 +210,7 @@ class Commands(Case):
         with mock.patch.dict(os.environ, _without_manager_identity(), clear=True):
             result = self.invoke("resume", "a", "b", "--manager", "mgr")
         self.assertEqual(result.returncode, 1, result.stderr)
-        self.assertIn("missing-resume-command", result.stderr)
+        self.assertIn("agent-pm-delegate", result.stderr)
         self.assertEqual([Record.parse(line) for line in result.stdout.splitlines()], [second])
         entries = roster.entries()
         self.assertEqual((entries["a"].state, entries["a"].record), (State.GONE, first))
@@ -317,7 +316,7 @@ class Commands(Case):
         output = self.succeeded("attach", "--manager", "mgr")
         resume = shlex.join(("agent-pm-crew", "resume", "--manager", "mgr", "needs resume"))
         self.assertEqual(output.count(resume), 1)
-        self.assertNotIn("fake-ctl resume", output)
+        self.assertNotIn("agent-pm-linear resume", output)
         self.assertIn("2 12:00:00 actual dead\n", output)
         self.assertNotIn("noise", output)
         self.assertIn(f"monitor: tail -n +1 -F {shlex.quote(crew.roster.events)}\n", output)

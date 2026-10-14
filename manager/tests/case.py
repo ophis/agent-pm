@@ -1,5 +1,5 @@
-"""Case, every manager test's base; child helpers (PY, child_env); this tree's import roots (REPO,
-SRC, ROOTS, PYTHONPATH).
+"""Case, every manager test's base; child helpers (PY, child_env); with_ctl; this tree's import
+roots (REPO, SRC, ROOTS, PYTHONPATH).
 """
 
 import contextlib
@@ -9,6 +9,7 @@ import sys
 import tempfile
 import unittest
 import uuid
+from dataclasses import replace
 from unittest import mock
 
 import agent_pm
@@ -119,6 +120,11 @@ def _foreign(modules=None) -> str | None:
                     f"run with PYTHONPATH={RUN_WITH}"
                 )
     return None
+
+
+def with_ctl(record: Record, command: str) -> Record:
+    """record controlled and resumed by layer command `command`."""
+    return replace(record, ctl=(command,), resume=(command, "resume", record.name))
 
 
 def child_env(base=None, *extra: str) -> dict[str, str]:

@@ -23,18 +23,30 @@ FULL = Record(
     detail="engineer: 修复",
 )
 MINIMAL = Record(
-    1, "fake", "n", (), None, None, ("fake-ctl",), ("fake-ctl", "resume", "n"), None, None
+    1,
+    "fake",
+    "n",
+    (),
+    None,
+    None,
+    ("agent-pm-session",),
+    ("agent-pm-session", "resume", "n"),
+    None,
+    None,
 )
 MINIMAL_LINE = (
     '{"v":1,"kind":"fake","name":"n","sessions":[],"sid":null,"workdir":null,'
-    '"ctl":["fake-ctl"],"resume":["fake-ctl","resume","n"],"display":null,"detail":null}'
+    '"ctl":["agent-pm-session"],"resume":["agent-pm-session","resume","n"],"display":null,'
+    '"detail":null}'
 )
+CTL = "ctl: want [C], C one of agent-pm-delegate, agent-pm-linear, agent-pm-session"
+RESUME = "resume: want [ctl[0], resume, KEY], KEY printable and not starting with -"
 CROSS = "/x/bin/agent-pm-crew"
 TEXT = "want a non-empty printable str"
 NULL_TEXT = "want null or a non-empty printable str"
 ARGV = "want a non-empty list of str"
 SESSIONS = "sessions: want a list of non-empty printable str"
-STATUS = Status(name="n", alive=True, state="working", outcome="done", attach="fake-ctl attach n")
+STATUS = Status(name="n", alive=True, state="working", outcome="done", attach="tmux attach -t n")
 
 
 def line(base, **changes) -> str:
@@ -84,16 +96,49 @@ class RecordLine(Case):
     def test_an_extra_key_is_named(self):
         self.refused(line(FULL, extra=1), "extra: unknown field")
 
-    def test_ctl_and_resume_start_with_a_command_name(self):
+    def test_ctl_and_resume_are_lists_of_str(self):
         for field in ("ctl", "resume"):
-            for value in ([CROSS], [CROSS, "resume", "x"], ["", "x"], ["bin/x"]):
-                with self.subTest(field=field, value=value):
-                    self.refused(
-                        line(FULL, **{field: value}), f"{field}[0] must be a command name without /"
-                    )
-            for value in ([], "fake-ctl", ["fake-ctl", 1], None):
+            for value in ([], "agent-pm-session", ["agent-pm-session", 1], None):
                 with self.subTest(field=field, value=value):
                     self.refused(line(FULL, **{field: value}), f"{field}: {ARGV}")
+
+    def test_each_layer_commands_exact_forms_are_accepted(self):
+        for command in ("agent-pm-delegate", "agent-pm-linear", "agent-pm-session"):
+            with self.subTest(command=command):
+                record = Record.parse(
+                    line(FULL, ctl=[command], resume=[command, "resume", "TASK-1 /w"])
+                )
+                self.assertEqual(record.ctl, (command,))
+
+    def test_ctl_is_only_a_layer_command_alone(self):
+        for value in (
+            [CROSS],
+            ["sh", "-c", "touch /tmp/pwned"],
+            ["agent-pm-crew"],
+            ["fake-ctl"],
+            ["/usr/bin/agent-pm-session"],
+            ["agent-pm-session", "status"],
+            ["agent-pm-delegate", "--config", "/x"],
+            [""],
+        ):
+            with self.subTest(value=value):
+                self.refused(line(FULL, ctl=value), CTL)
+
+    def test_resume_is_its_ctl_command_resume_and_one_key(self):
+        for value in (
+            ["sh", "-c", "touch /tmp/pwned"],
+            ["agent-pm-session", "resume", "/w/run 1"],
+            ["agent-pm-delegate", "resume"],
+            ["agent-pm-delegate", "resume", "/w", "--x"],
+            ["agent-pm-delegate", "start", "/w"],
+            ["agent-pm-delegate", "resume", "--help"],
+            ["agent-pm-delegate", "resume", "-"],
+            ["agent-pm-delegate", "resume", ""],
+            ["agent-pm-delegate", "resume", "a\nb"],
+            [CROSS, "resume", "x"],
+        ):
+            with self.subTest(value=value):
+                self.refused(line(FULL, resume=value), RESUME)
 
     def test_each_text_field_rule(self):
         for field, values, want in (
@@ -129,7 +174,7 @@ class RecordLine(Case):
 
     def test_the_constructor_validates_too(self):
         with self.assertRaises(RecordError) as caught:
-            Record(**{**asdict(MINIMAL), "ctl": ["fake-ctl"]})
+            Record(**{**asdict(MINIMAL), "ctl": ["agent-pm-session"]})
         self.assertEqual(str(caught.exception), f"ctl: {ARGV}")
         self.assertIsInstance(caught.exception, ValueError)
 

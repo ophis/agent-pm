@@ -1,4 +1,4 @@
-"""Crew starts and controls Records through real fake-ctl processes, never lower-layer APIs."""
+"""Crew starts and controls Records through real fake ctl processes, never lower-layer APIs."""
 
 import contextlib
 import io
@@ -27,8 +27,10 @@ from agent_pm.manager.engine.roster import LOCK_TIMEOUT, Roster
 from agent_pm.manager.engine.types import Held, RosterError, Spec, Stale, State
 from agent_pm.utils import Status
 
-from manager.tests.case import Case
+from manager.tests.case import Case, with_ctl
 from utils.tests.fakes import ctl
+
+MISSING = "agent-pm-delegate"  # a layer command off setup_ctl's PATH
 
 
 class CrewTest(Case):
@@ -477,7 +479,7 @@ class CrewTest(Case):
         ctl.set_session(self.ctl_dir, "role", alive=False)
         with self.listed():
             table = self.crew.attach()
-        self.assertNotIn("resume role: fake-ctl resume role", table)
+        self.assertNotIn("resume role: agent-pm-linear resume role", table)
         self.assertIn(f"role\tfake\t{original.sid}\tgone\t", table)
         record = self.crew.resume("role")
         self.assertEqual(record.display, "opaque")
@@ -599,12 +601,12 @@ class CrewTest(Case):
     def test_attach_keeps_failed_ctl_unknown_and_processes_healthy_group(self):
         healthy = self.start("healthy", display="view")
         ctl.set_session(self.ctl_dir, "healthy", displayable=True)
-        bad = replace(self.fake_record("broken"), ctl=("missing-ctl-task371",))
+        bad = with_ctl(self.fake_record("broken"), MISSING)
         self.roster.adopt(bad)
         stderr = io.StringIO()
         with self.listed((healthy, bad)), contextlib.redirect_stderr(stderr):
             table = self.crew.attach()
-        self.assertIn("missing-ctl-task371", stderr.getvalue())
+        self.assertIn(MISSING, stderr.getvalue())
         self.assertIn("broken\tfake\t" + bad.sid + "\tunknown\t", table)
         self.assertEqual(self.roster.entries()["broken"].state, State.LIVE)
         self.assertEqual(self.calls("show"), [{"argv": ["show"], "names": ["healthy"]}])
@@ -612,7 +614,7 @@ class CrewTest(Case):
     def test_attach_reports_nonzero_status_and_show_without_aborting_other_groups(self):
         self.start("healthy", display="view")
         ctl.set_session(self.ctl_dir, "healthy", displayable=True)
-        bad = replace(self.fake_record("broken"), ctl=("failing-ctl-task371",))
+        bad = with_ctl(self.fake_record("broken"), "agent-pm-session")
         command = os.path.join(self.bin_dir, bad.ctl[0])
         with open(command, "w", encoding="utf-8") as stream:
             stream.write("#!/bin/sh\necho broken-controller >&2\nexit 7\n")
@@ -685,24 +687,24 @@ class CrewTest(Case):
         self.assertEqual(self.calls("close"), [{"argv": ["close"], "names": ["owned", "orphan"]}])
 
     def test_stop_all_closes_healthy_groups_and_retains_failed_groups(self):
-        bad = replace(self.fake_record("broken"), ctl=("missing-ctl-task371",))
+        bad = with_ctl(self.fake_record("broken"), MISSING)
         self.roster.adopt(bad)
         self.start("healthy")
-        with self.listed(), self.assertRaisesRegex(RuntimeError, "missing-ctl-task371"):
+        with self.listed(), self.assertRaisesRegex(RuntimeError, MISSING):
             self.crew.stop_all()
         self.assertEqual(set(self.roster.entries()), {"broken"})
         self.assertEqual(self.calls("close"), [{"argv": ["close"], "names": ["healthy"]}])
 
     def test_each_ctl_is_queried_once_and_answers_are_mapped_to_their_names(self):
         self.start("one")
-        second = "other-ctl"
+        second = "agent-pm-delegate"
         shutil.copyfile(
             os.path.join(self.bin_dir, self.command), os.path.join(self.bin_dir, second)
         )
         os.chmod(os.path.join(self.bin_dir, second), 0o700)
         record = self.fake_record("two")
         self.roster.begin(Spec("two", (second, "start", "two")), sid=record.sid)
-        self.roster.commit("two", replace(record, ctl=(second,)))
+        self.roster.commit("two", with_ctl(record, second))
         ctl.set_session(self.ctl_dir, "two", alive=True)
         statuses = self.crew.status()
         self.assertEqual([status.name for status in statuses], ["one", "two"])

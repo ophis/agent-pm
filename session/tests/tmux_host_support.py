@@ -12,7 +12,18 @@ from agent_pm.utils import ProcessControl, Record
 
 from session.tests.case import Case
 
-LINE = Record(1, "role", "r1", ("r1",), None, None, ("ctl",), ("ctl", "resume"), None, None)
+LINE = Record(
+    1,
+    "role",
+    "r1",
+    ("r1",),
+    None,
+    "/w",
+    ("agent-pm-delegate",),
+    ("agent-pm-delegate", "resume", "/w"),
+    None,
+    None,
+)
 PROCESS = "4242 $3 %7 4343"
 
 

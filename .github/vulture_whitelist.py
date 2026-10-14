@@ -10,6 +10,7 @@ from agent_pm.session.adapters.codex import CodexAdapter
 from agent_pm.session.engine.base import Session
 from agent_pm.session.engine.types import Effort, NamedKey, SessionRow, Tier
 from agent_pm.session.hosts.tmux.types import Split
+from agent_pm.utils.record import LayerCommand
 
 # Enum members reached only by iteration or by value:
 # teams.py reads each TeamKind dir.
@@ -18,6 +19,8 @@ _ = TeamKind.ROLES, TeamKind.TEMPLATES
 _ = OutcomeStatus.NEEDS_INPUT, OutcomeStatus.FAILED
 # engine/config.py and ops.py iterate State for the [states] keys.
 _ = State.TODO, State.IN_PROGRESS, State.IN_REVIEW, State.CANCELED
+# Record checks ctl[0] against LayerCommand's values.
+_ = LayerCommand.DELEGATE, LayerCommand.LINEAR, LayerCommand.SESSION
 # Effort(value) parses a run's effort; adapters/common.py lists the values.
 _ = Effort.LOW, Effort.MEDIUM, Effort.HIGH, Effort.XHIGH, Effort.MAX
 # Spec checks its tier, and adapters/common.py a tiers table's keys, against Tier's values.

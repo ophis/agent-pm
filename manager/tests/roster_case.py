@@ -23,8 +23,8 @@ class RosterCase(Case):
             ("s1", "s2"),
             str(uuid4()),
             self.home,
-            ("fake-ctl",),
-            ("fake-ctl", "resume", "x"),
+            ("agent-pm-session",),
+            ("agent-pm-session", "resume", "x"),
             "opaque",
             "detail",
         )

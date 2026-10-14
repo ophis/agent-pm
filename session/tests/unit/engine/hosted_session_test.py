@@ -1215,7 +1215,16 @@ class ListTest(HostedTuiBase):
             self.host.create(
                 name,
                 receipt=Record(
-                    1, "fake", name, (name,), None, None, ("ctl",), ("resume",), display, None
+                    1,
+                    "fake",
+                    name,
+                    (name,),
+                    None,
+                    None,
+                    ("agent-pm-session",),
+                    ("agent-pm-session", "resume", name),
+                    display,
+                    None,
                 ),
             )
         self.assertEqual([r.name for r in self.session.list(display="mgr/below")], ["w1"])
@@ -1706,7 +1715,16 @@ class MultipleHostsTest(HostedTuiBase):
             host.create(
                 name,
                 receipt=Record(
-                    1, "fake", name, (name,), None, None, ("ctl",), ("resume",), display, None
+                    1,
+                    "fake",
+                    name,
+                    (name,),
+                    None,
+                    None,
+                    ("agent-pm-session",),
+                    ("agent-pm-session", "resume", name),
+                    display,
+                    None,
                 ),
             )
         self.assertEqual([row.name for row in self.session.list()], ["a1", "b1", "z1"])

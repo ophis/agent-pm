@@ -17,6 +17,7 @@ from agent_pm.manager.engine.roster import Roster
 from agent_pm.manager.engine.types import Held, Lease, RosterError, Spec, Stale, State
 from agent_pm.utils import append_line
 
+from manager.tests.case import with_ctl
 from manager.tests.roster_case import RosterCase
 
 
@@ -1155,8 +1156,8 @@ class RosterTest(RosterCase):
     def test_control_names_are_scoped_to_the_exact_ctl_command(self):
         self.live("owner")
         sid = str(uuid4())
-        self.roster.begin(Spec("other ctl", ("another-ctl", "start")), sid=sid)
-        other = replace(self.record, sid=sid, ctl=("another-ctl",))
+        self.roster.begin(Spec("other ctl", ("agent-pm-delegate", "start")), sid=sid)
+        other = with_ctl(replace(self.record, sid=sid), "agent-pm-delegate")
         self.roster.commit("other ctl", other)
         self.assertEqual(self.roster.adopt(other), "other ctl")
         distinct_name = replace(self.record, sid=str(uuid4()), name="different")
@@ -1179,7 +1180,7 @@ class RosterTest(RosterCase):
         self.roster.remove("duplicate")
         self.roster.adopt(self.record)
         with self.assertRaisesRegex(RosterError, "already owned"):
-            self.roster.adopt(replace(self.record, ctl=("another-ctl",)))
+            self.roster.adopt(with_ctl(self.record, "agent-pm-delegate"))
 
     def test_adopted_record_retires_empty_or_mismatching_receipt(self):
         for contents in (

@@ -13,7 +13,11 @@ from agent_pm.session import NotDisplayable, Usage
 from agent_pm.utils import Record, Status
 
 NO_ROLE = "no-such-role"
-OUTER = {"kind": "crew", "ctl": ("agent-pm-crew",), "resume": ("agent-pm-crew", "resume", "r1")}
+OUTER = {
+    "kind": "pipeline",
+    "ctl": ("agent-pm-linear",),
+    "resume": ("agent-pm-linear", "resume", "TASK-1"),
+}
 
 
 class DelegateContract:

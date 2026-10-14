@@ -60,7 +60,10 @@ class OutsideTest(Case):
         host = self.session.host()
         self.assertIsInstance(host, outside.OutsideHost)
         self.assertIs(self.session.host("outside"), host)
-        record = Record(1, "job", "j1", ("j1",), None, None, ("ctl",), ("ctl", "j1"), "d", None)
+        resume = ("agent-pm-session", "resume", "j1")
+        record = Record(
+            1, "job", "j1", ("j1",), None, None, ("agent-pm-session",), resume, "d", None
+        )
         process = host.detach(
             "j1",
             Launch((sys.executable, "-c", "import time; time.sleep(60)"), cwd=self.home),
