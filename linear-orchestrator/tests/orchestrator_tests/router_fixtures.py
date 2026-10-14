@@ -217,6 +217,7 @@ class FakeLinear:
         self.todo_error = False
         self.unreadable = set()
         self.refuse = set()
+        self.ids = {}  # an issue's uuid → its identifier, for write-back's calls
         self.group = {
             "isGroup": True,
             "children": {"nodes": [{"id": i} for i in (LIGHT, DEEP, ORPHAN_LABEL)]},
@@ -254,10 +255,13 @@ class FakeLinear:
         return None
 
     def _issue_read(self, query, v):
+        if "attachments" in query:
+            return {"issue": {"attachments": {"nodes": []}}}
         if "history" in query:
             return {"issue": {"history": {"nodes": self.history.get(v["i"], [])}}}
         if query == ops.Q_ISSUE_STATE:
-            return {"issue": {"state": {"id": STATES[self.issues[v["i"]]["state"]]}}}
+            issue = self.issues[self.ids.get(v["i"], v["i"])]
+            return {"issue": {"state": {"id": STATES[issue["state"]]}}}
         if "issue(id:" in query and "inverseRelations" in query:
             if v["i"] in self.unreadable:
                 raise LinearError(f"linear api error: {[{'message': 'Entity not found'}]}")
@@ -276,7 +280,7 @@ class FakeLinear:
 
     def _mutate(self, query, v):
         self.mutations.append((query, v))
-        issue = self.issues[v["i"]]
+        issue = self.issues[self.ids.get(v["i"], v["i"])]
         if "issueSubscribe" in query:
             issue.setdefault("subscribers", []).append(v["e"])
         elif "commentCreate" in query:

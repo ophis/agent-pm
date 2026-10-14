@@ -14,6 +14,7 @@ from datetime import UTC, datetime, timedelta
 from unittest import mock
 
 from agent_pm.delegate import ConfigError as DelegateConfigError
+from agent_pm.delegate import Outcome, OutcomeStatus
 from agent_pm.linear_orchestrator.engine import config, inputs, issues, ops, router, runs
 from agent_pm.linear_orchestrator.engine import gate as quota
 from agent_pm.linear_orchestrator.engine.types import LinearError, Spec, Unavailable
@@ -3855,3 +3856,84 @@ class ScheduledRuns(TickScenario):
             self.assertEqual(len(fake.reads()), 1, argv)
             self.assertEqual("plan mode=new queue=2" in self.said(), not argv, argv)
             self.assertEqual(self.said().count('blocked TASK-1 by=["TASK-7"]'), 1, argv)
+
+
+class RecoverWriteBack(TickBase):
+    """FR-41: Recover writes back an ended run's outcome its ledger has not completed, in process,
+    instead of resuming the run; a run without an outcome resumes as before.
+    """
+
+    ISSUE = "11111111-1111-4111-8111-111111111111"
+
+    def setUp(self):
+        super().setUp()
+        self.moved("TASK-1", 61)
+        start = json.loads(self.row("start", "TASK-1", "a", "researcher", minutes=60))
+        key = self.cfg().roles["researcher"].key
+        self.lines.append(
+            json.dumps(start | {"uuid": self.ISSUE, "project": IDS[DR], "target": None, "key": key})
+        )
+        self.workdir = self.cfg().run_dir("TASK-1")
+        os.makedirs(self.workdir)
+        self.write(
+            os.path.join(self.workdir, "writeback.json"),
+            json.dumps({self.sid("a"): {"steps": ["comment"]}}),
+        )
+        self.linear = self.fake(issue("TASK-1", "In Progress", "researcher", updated=ago(hours=3)))
+        self.linear.ids[self.ISSUE] = "TASK-1"
+
+    def ended(self):
+        self.api.outcomes["TASK-1"] = Outcome(
+            OutcomeStatus.DONE, "Report", "Found it.", [], "", [], ""
+        )
+
+    def steps(self):
+        with open(os.path.join(self.workdir, "writeback.json")) as f:
+            return json.load(f)[self.sid("a")]["steps"]
+
+    def test_an_outcome_is_written_back_without_an_agent_or_a_second_comment(self):
+        self.ended()
+        self.assertEqual(self.tick(self.linear, "--now"), 0)
+        self.assertEqual(self.start.launches, [])
+        self.assertEqual(self.linear.issues["TASK-1"]["state"], "In Review")
+        self.assertIsNone(self.linear.issues["TASK-1"].get("comments"))
+        self.assertEqual(self.steps(), ["comment", "move:in_review", "outcome"])
+        recovered = [show(e) for e in logged(self.logs) if e["kind"] == "recover"]
+        self.assertEqual(self.unmap("\n".join(recovered)), "recover TASK-1 to=writeback sid=a")
+        mutations = list(self.linear.mutations)
+        self.assertEqual(self.tick(self.linear, "--now", again=True), 0)
+        self.assertEqual((self.start.launches, self.linear.mutations), ([], mutations))
+        self.assertEqual(self.steps(), ["comment", "move:in_review", "outcome"])
+
+    def test_a_failed_write_back_is_left_for_the_next_tick(self):
+        self.ended()
+        self.linear.refuse.add(self.ISSUE)
+        self.assertEqual(self.tick(self.linear, "--now"), 0)
+        self.assertEqual(self.start.launches, [])
+        self.assertEqual(self.linear.issues["TASK-1"]["state"], "In Progress")
+        self.assertEqual(self.steps(), ["comment"])
+        self.linear.refuse.clear()
+        self.assertEqual(self.tick(self.linear, "--now", again=True), 0)
+        self.assertEqual(self.start.launches, [])
+        self.assertEqual(self.linear.issues["TASK-1"]["state"], "In Review")
+        self.assertEqual(self.steps(), ["comment", "move:in_review", "outcome"])
+
+    def test_a_dry_run_writes_nothing(self):
+        self.ended()
+        self.assertEqual(self.tick(self.linear, "--now", "--dry-run"), 0)
+        self.assertEqual(self.linear.mutations, [])
+        self.assertEqual(self.steps(), ["comment"])
+        self.assertEqual(sorted(os.listdir(self.workdir)), ["writeback.json"])
+
+    def test_explicit_issue_writes_back_and_exits_0(self):
+        self.ended()
+        self.assertEqual(self.tick(self.linear, "--issue", "TASK-1"), 0)
+        self.assertEqual(self.start.launches, [])
+        self.assertEqual(self.linear.issues["TASK-1"]["state"], "In Review")
+
+    def test_without_an_outcome_the_run_resumes(self):
+        self.touch("a", 40)
+        self.assertEqual(self.tick(self.linear, "--now"), 0)
+        self.assertEqual(self.launched_runs(), [("TASK-1", "resume")])
+        self.assertEqual(self.steps(), ["comment"])
+        self.assertEqual(self.linear.mutations, [])

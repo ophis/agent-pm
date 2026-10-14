@@ -186,6 +186,8 @@ tmux ls                                                      # running sessions:
 bin/agent-pm-linear attach-command <ID>                      # the command that shows one agent run
 ```
 
+Recover never resumes an ended agent run whose outcome is not yet all written back (a failed write-back callback): it writes the outcome back itself, in the router's process, each step once (no comment twice, a missing move made), and starts no agent; a failure there waits for the next tick.
+
 `--issue` skips the hours, `max_runs` and usage gates and Recover's waits (`tmux ls` is the truth): a ready Todo issue is claimed as in a tick; an In Progress one resumes its session in `runs.jsonl`, or, with none to resume, goes where Recover sends it; an issue with a live agent run gets its attach command instead (exit 1). While another router runs, nothing happens (exit 1).
 
 | Log | Contents |

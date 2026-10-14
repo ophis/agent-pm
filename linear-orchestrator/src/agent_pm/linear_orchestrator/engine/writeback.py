@@ -1,6 +1,7 @@
 """Write-back: an agent run's progress, outcome and usage limit as Linear comments, attachments and
 moves, each step once per session id (the ledger; comment steps by client id, found again on
-resume); `deliver`, one DelegateEvent's write-back; bounce, the router's repo-check report.
+resume); `deliver`, one DelegateEvent's write-back; `replay`, Recover's of an ended run's outcome;
+bounce, the router's repo-check report.
 """
 
 import contextlib
@@ -529,6 +530,28 @@ def _outcome(data) -> Outcome:
     )
 
 
+def _claim(cfg, issue, sid) -> Claim:
+    claim = runs.claim(cfg.runs_log, issue, sid)
+    if claim.role not in TASKS:
+        raise ConfigError(f"{issue}: role {claim.role!r} has no write-back")
+    return claim
+
+
+def replay(cfg, issue: str, sid: str, outcome: Outcome, *, gql, dry=False) -> bool | None:
+    """Recover's write-back of the ended (issue, sid) run's outcome, in process and each step once,
+    as its callback's: None when its ledger has it complete; else whether it now is (dry: True,
+    nothing written). Raises ConfigError or ValueError on a start row it cannot write back as.
+    """
+    attempts = [e for e in runs.parse_log(cfg.runs_log) if (e.issue, e.sid) == (issue, sid)]
+    ctx = for_claim(cfg, _claim(cfg, issue, sid), gql, attempt=len(attempts))
+    if "outcome" in _done(ctx):
+        return None
+    if dry:
+        return True
+    with _exclusive(ctx) as held:
+        return held and ("outcome" in _done(ctx) or finish(ctx, outcome))
+
+
 def deliver(cfg, issue: str, workdir: str, event: DelegateEvent, *, gql, now=timestamp) -> bool:
     """Writes the (issue, event.sid) run's event back as its start row's claim, each step once
     however often the event arrives; False when a write failed. Raises ConfigError or ValueError,
@@ -541,9 +564,7 @@ def deliver(cfg, issue: str, workdir: str, event: DelegateEvent, *, gql, now=tim
     attempt = event.attempt
     if attempt is None:  # DelegateEvent requires one
         raise ValueError("attempt: missing")
-    claim = runs.claim(cfg.runs_log, issue, event.sid)
-    if claim.role not in TASKS:
-        raise ConfigError(f"{issue}: role {claim.role!r} has no write-back")
+    claim = _claim(cfg, issue, event.sid)
     outcome = None if event.outcome is None else _outcome(event.outcome)
     ctx = for_claim(cfg, claim, gql, attempt=attempt)
     with _exclusive(ctx) as held:

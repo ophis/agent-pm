@@ -1,7 +1,7 @@
 """router.py as a subprocess: it detaches the run's LinearRun, whose harness runs on a private tmux
 server and calls back agent-pm-linear writeback; fake_claude as client claude, FakeLinear over HTTP.
-A claim runs to In Review; a crash or a Linear failure mid write-back resumes the same session; a
-Linear outage stops a tick and --issue; a tick's usage gate; a long description reaches the run; a
+A claim runs to In Review; a crash resumes the same session; a Linear failure mid write-back fails
+its callback, and Recover then writes the outcome back in process, without an agent; a Linear outage stops a tick and --issue; a tick's usage gate; a long description reaches the run; a
 SIGTERM'd harness ends its run and its agent; the researcher's gate runs on a session's PYTHONPATH.
 """
 
@@ -235,7 +235,7 @@ class Router(TmuxFlow):
         self.assertEqual(len(started), 1)
         self.assertEqual(self.problems(), [FIRST_WRITE, *LOOKUPS])
 
-    def test_a_linear_failure_mid_write_back_resumes_the_session(self):
+    def test_a_linear_failure_mid_write_back_is_written_back_by_recover(self):
         self.fake.fail("linear.M_STATE", "503", account=ENGINEER)
         self.scene([START, DONE])
         sid = self.claim()
@@ -250,11 +250,18 @@ class Router(TmuxFlow):
             ("writeback", ID, sid, "move:in_review"),
         )
         self.assertIn("503", error["error"])
-
-        self.assertEqual(self.claim("resume"), sid)
-        self.wait_end(sid, ID, ends=2)
         self.assertEqual(
-            [(r["kind"], r["sid"]) for r in self.runs()], [("start", sid), ("resume", sid)]
+            [r["kind"] for r in self.records(ID) if r["kind"] == "callback_error"],
+            ["callback_error"],
+        )
+
+        res = self.router("--issue", ID)
+        self.assertEqual((res.returncode, res.stdout), (0, ""), res.stderr)
+        self.assertEqual([(r["kind"], r["sid"]) for r in self.runs()], [("start", sid)])
+        self.assertEqual(len(agent_calls(self.calls())), 1)
+        self.assertEqual(
+            [e["kind"] for e in self.logged() if e["src"] == "router" and e.get("issue") == ID][-1],
+            "recover",
         )
         self.assert_built(sid)
         ready = [
