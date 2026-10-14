@@ -1127,7 +1127,7 @@ class TmuxHost(Host, Displayable):
         return sorted(found)
 
     def reclaim(self, token: str) -> TmuxGroup | None:
-        """A group-only handle on token's controller (a private /tmp/apm-group-* directory and
+        """A group-only handle on token's controller (a private apm-group-* directory and
         socket of this user's) while its group lives; else None; DriverError if it cannot tell.
         """
         if not isinstance(token, str):

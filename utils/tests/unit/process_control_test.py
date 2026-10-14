@@ -6,7 +6,7 @@ import os
 import signal
 from unittest import mock
 
-from agent_pm.utils.process_control import ProcessControl, _Group
+from agent_pm.utils.process_control import ROOT_ENV, ProcessControl, _Group
 
 from utils.tests.case import Case
 
@@ -91,6 +91,36 @@ class ControlTest(Case):
         path = os.path.join(self.home, "controller")
         os.mkdir(path, 0o700)
         return ProcessControl(path)
+
+    def test_the_root_is_the_callers_else_the_environments_else_tmp(self):
+        caller, environment = (os.path.realpath(self.owned(name)) for name in ("caller", "env"))
+        with mock.patch.dict(os.environ, {ROOT_ENV: environment}):
+            for root, expected in ((caller, caller), (None, environment)):
+                with self.subTest(root=root):
+                    control = ProcessControl.prepare(["program"], "/", root=root)
+                    self.addCleanup(control.remove)
+                    self.assertEqual(os.path.dirname(control.path), expected)
+                    self.assertTrue(os.path.basename(control.path).startswith("apm-group-"))
+                    self.assertEqual(
+                        ProcessControl.attach(control.path, root=root).path, control.path
+                    )
+            control = ProcessControl.prepare(["program"], "/", root=caller)
+            self.addCleanup(control.remove)
+            with self.assertRaisesRegex(PermissionError, "untrusted process controller path"):
+                ProcessControl.attach(control.path)
+        with (
+            mock.patch.dict(os.environ, clear=True),
+            mock.patch("tempfile.mkdtemp", return_value=control.path) as allocate,
+        ):
+            ProcessControl.prepare(["program"], "/")
+            allocate.assert_called_once_with(prefix="apm-group-", dir="/tmp")
+            with self.assertRaisesRegex(PermissionError, "untrusted process controller path"):
+                ProcessControl.attach(control.path)
+
+    def owned(self, name):
+        path = os.path.join(self.home, name)
+        os.mkdir(path, 0o700)
+        return path
 
     def test_terminate_requests_term_from_the_owned_controller(self):
         control = self.control()

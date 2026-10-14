@@ -1,6 +1,7 @@
 """Generation-scoped process control over a private Unix socket. A controller never reaps its
 anchor until that process group has no live members, so its numeric identity cannot be reused.
 The standalone entry point runs prepare()'s command with inherited terminal, environment and mask.
+Control directories live under the caller's root, else $AGENT_PM_CONTROL_ROOT, else /tmp.
 """
 
 from __future__ import annotations
@@ -23,6 +24,7 @@ from collections.abc import Callable, Mapping, Sequence
 
 POLL = 0.05
 TIMEOUT = 10
+ROOT_ENV = "AGENT_PM_CONTROL_ROOT"
 
 
 def _write(path, value):
@@ -30,6 +32,10 @@ def _write(path, value):
     with os.fdopen(os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "w") as stream:
         json.dump(value, stream)
     os.replace(temporary, path)
+
+
+def _root(root):
+    return root or os.environ.get(ROOT_ENV) or "/tmp"
 
 
 def _read(path):
@@ -156,9 +162,9 @@ class ProcessControl:
         self.cancelled = False
 
     @classmethod
-    def attach(cls, path: str) -> ProcessControl:
+    def attach(cls, path: str, root: str | None = None) -> ProcessControl:
         real = os.path.realpath(path)
-        if os.path.dirname(real) != os.path.realpath("/tmp") or not os.path.basename(
+        if os.path.dirname(real) != os.path.realpath(_root(root)) or not os.path.basename(
             real
         ).startswith("apm-group-"):
             raise PermissionError("untrusted process controller path")
@@ -192,9 +198,10 @@ class ProcessControl:
         env: Mapping[str, str] | None = None,
         inherit_env: Sequence[str] = (),
         blocked_signals: Sequence[int] = (),
+        root: str | None = None,
     ) -> ProcessControl:
         """Persist the launch; inherit_env replaces explicit entries with controller values."""
-        path = tempfile.mkdtemp(prefix="apm-group-", dir="/tmp")
+        path = tempfile.mkdtemp(prefix="apm-group-", dir=_root(root))
         try:
             launch = {"argv": list(argv), "cwd": cwd}
             if env is not None:
