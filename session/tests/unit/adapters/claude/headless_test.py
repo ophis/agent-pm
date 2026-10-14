@@ -283,14 +283,17 @@ class ParseTest(Base):
 
 
 class LimitTest(Case):
-    def limit(self, screen, now=NOW):
+    """A rate_limit StopFailure's reset, read from its rendered notice; never from the screen."""
+
+    def limit(self, message, now=NOW):
+        payload = {"error": "rate_limit", "last_assistant_message": message}
         with mock.patch("time.time", return_value=now):
-            return ClaudeAdapter({}).tui().limit(screen)
+            return ClaudeAdapter({}).tui().hook_events("StopFailure", payload)
 
     def check(self, rows):
-        for screen, resets in rows:
-            with self.subTest(screen=screen):
-                self.assertEqual(self.limit(screen), LimitHit(resets))
+        for message, resets in rows:
+            with self.subTest(message=message):
+                self.assertEqual(self.limit(message), [LimitHit(resets)])
 
     def test_the_limit_messages_and_their_reset(self):
         self.check(
@@ -361,7 +364,9 @@ class LimitTest(Case):
             ("2026-12-30 10:00", "Jan 2, 2026, 9am", "2026-01-02 09:00"),
         ):
             with self.subTest(now=now, when=when):
-                self.assertEqual(self.limit(week.format(when), epoch(now)), LimitHit(epoch(resets)))
+                self.assertEqual(
+                    self.limit(week.format(when), epoch(now)), [LimitHit(epoch(resets))]
+                )
 
     def test_no_known_zone_is_local_time(self):
         self.addCleanup(time.tzset)
@@ -416,8 +421,8 @@ class LimitTest(Case):
             )
         )
 
-    def test_no_limit_message_is_none(self):
-        for screen in (
+    def test_no_limit_notice_has_no_reset(self):
+        for message in (
             "",
             "Welcome back",
             "You've hit your fast limit · resets in 5m",
@@ -426,8 +431,19 @@ class LimitTest(Case):
             "Your usage limit has reset",
             "usage limit reached",
         ):
+            with self.subTest(message=message):
+                self.assertEqual(self.limit(message), [LimitHit(None)])
+
+    def test_no_screen_is_a_limit(self):
+        for screen in (
+            "You've hit your session limit · resets 3pm (America/Los_Angeles)",
+            "> go on\n\n  ⎿  You've hit your\n   session  limit ·\n resets 3pm\n",
+            "Usage limit reached · continuing automatically in 2h · esc to cancel",
+            "> Documentation example: You've hit your weekly limit",
+            "  12 + You've hit your session limit · resets 3pm (UTC)",
+        ):
             with self.subTest(screen=screen):
-                self.assertIsNone(self.limit(screen))
+                self.assertIsNone(ClaudeAdapter({}).tui().limit(screen))
 
 
 class SuppliedPolicy(Base):

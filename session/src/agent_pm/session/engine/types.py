@@ -56,6 +56,7 @@ __all__ = [
     "Stderr",
     "Tier",
     "TurnEnd",
+    "TurnFailed",
     "Usage",
     "Window",
     "Word",
@@ -98,6 +99,7 @@ class Resumable(StrEnum):
 
 class HookKind(StrEnum):
     TURN_END = "turn_end"
+    TURN_FAILED = "turn_failed"
     BLOCKED = "blocked"
     ACTIVITY = "activity"
 
@@ -416,6 +418,14 @@ class TurnEnd:
 
 
 @dataclass(frozen=True)
+class TurnFailed:
+    """A turn the runtime ended on an error: its error type and any detail it gave."""
+
+    error: str
+    detail: str = ""
+
+
+@dataclass(frozen=True)
 class Blocked:
     reason: str = ""
 
@@ -430,7 +440,7 @@ class Exited:
     returncode: int
 
 
-SessionEvent = Activity | Reply | TurnEnd | Blocked | LimitHit | Exited
+SessionEvent = Activity | Reply | TurnEnd | TurnFailed | Blocked | LimitHit | Exited
 
 
 @dataclass(frozen=True)

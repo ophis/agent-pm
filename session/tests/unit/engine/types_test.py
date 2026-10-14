@@ -235,7 +235,7 @@ class OptionSets(Case):
 
     def test_hook_kinds_tiers_and_hook_words_are_session_internal_str_enums(self):
         for enum, values in (
-            (HookKind, ["turn_end", "blocked", "activity"]),
+            (HookKind, ["turn_end", "turn_failed", "blocked", "activity"]),
             (Tier, ["1", "2", "3", "4"]),
             (Word, ["done", "blocked", "working"]),
         ):

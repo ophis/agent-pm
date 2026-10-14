@@ -9,8 +9,8 @@ Scenario: the JSON object in $FAKE_CLAUDE_SCENARIO's file (bad: exit 1):
 PostToolUse). In print, {"kind": "limit", "resets_at": T} is a rejected rate_limit_event, then LIMIT
 with error "rate_limit". {"kind": "write", "path": P, "text": T} writes T to P (relative to cwd).
 {"kind": "git"} replies with git rev-parse --show-toplevel's stdout and exit code.
-Interactive {"kind": "limit"|"dialog", "text": S} prints S, then ends the turn without Stop or reads
-another line. Other steps: {"kind": "hook", "event": E, ...}; {"kind": "sleep", "seconds": X}.
+Interactive {"kind": "limit", "text": S} prints S, keeps it as a rate_limit API error and ends the
+turn with StopFailure; {"kind": "dialog", "text": S} prints S and reads another line. Other steps: {"kind": "hook", "event": E, ...}; {"kind": "sleep", "seconds": X}.
 - turns: interactive steps of turn 2 on.
 - background: interactive background_tasks per Stop.
 - resume: print steps run instead of `steps` on --resume.
@@ -295,6 +295,14 @@ class InteractiveSession:
             else:
                 print(step["text"], flush=True)
                 if kind == "limit":
+                    error = {"isApiErrorMessage": True, "error": "rate_limit"}
+                    self.request.keep(
+                        "assistant", [{"type": "text", "text": step["text"]}], **error
+                    )
+                    self.hook(
+                        "StopFailure",
+                        {"error": "rate_limit", "last_assistant_message": step["text"]},
+                    )
                     return
                 self.request.stdin.line()
         self.hook(
@@ -340,7 +348,7 @@ class Transcript:
     def say(self, record: dict) -> None:
         print(json.dumps({**record, "session_id": self.sid}), flush=True)
 
-    def keep(self, role: str, content) -> None:
+    def keep(self, role: str, content, **extra) -> None:
         with open(self.path, "a", encoding="utf-8") as f:
             f.write(
                 json.dumps(
@@ -349,6 +357,7 @@ class Transcript:
                         "sessionId": self.sid,
                         "cwd": self.cwd,
                         "message": {"role": role, "content": content},
+                        **extra,
                     }
                 )
                 + "\n"

@@ -1,5 +1,5 @@
-"""The tui Mode: an Adapter command on a Host terminal; events from the hook records
-appended to its session directory and from its terminal.
+"""The tui Mode: an Adapter command on a Host terminal; events from its runtime's own record, then
+the hook records appended to its session directory, and from its terminal.
 """
 
 import contextlib
@@ -49,6 +49,7 @@ from agent_pm.utils import STATE, Display, json_records, module_roots, read_regu
 TUI_DIR = f"{STATE}/tui"
 WORDS = {
     HookKind.TURN_END: Word.DONE,
+    HookKind.TURN_FAILED: Word.DONE,
     HookKind.BLOCKED: Word.BLOCKED,
     HookKind.ACTIVITY: Word.WORKING,
 }
@@ -430,7 +431,7 @@ class TuiMode(RunningMode):
     @classmethod
     def attach(cls, name: str, state: Mapping, adapter: Adapter, *, host: Host) -> Self:
         """Tui session `name` from its snapshot() if its terminal is tagged with its sid; a fresh Tui
-        restored, replays its hook log; events from the next record.
+        restored replays its runtime's record, then its hook log; events from the next record.
         """
         store = _Store(name, host=host)
         info = SessionInfo.from_fields(state)
@@ -462,7 +463,7 @@ class TuiMode(RunningMode):
         except ConfigError as e:
             raise DriverError(f"no tui session {name}: {e}") from None
         records, offset = store.records(0)
-        replayed = _translated(run, records)
+        replayed = run.replay(records)
         return cls(
             Prepared(spec, info),
             run,
@@ -480,7 +481,7 @@ class TuiMode(RunningMode):
 
     @property
     def replayed(self) -> tuple[SessionEvent | Stderr | ClientBound, ...]:
-        """Attached: its hook log's events so far."""
+        """Attached: its runtime record's, then its hook log's events so far."""
         return self._replayed
 
     def marked_blocked(self) -> bool:
@@ -520,14 +521,17 @@ class TuiMode(RunningMode):
         self._code = -signal.SIGHUP if self._code is None else self._code
 
     def _read(self) -> list[SessionEvent | Stderr | ClientBound]:
-        """New records' events, checked against the terminal and session.json only once found."""
+        """New records' events, the runtime's own first (read last, so a text written before its
+        hook record precedes it), checked against the terminal and session.json only once found.
+        """
         if self._gone:
             return []
         records, end = self._store.records(self._offset)
-        if end == self._offset or self._replaced(self._terminal.state()):
+        observed = self.run.observe()
+        if end == self._offset and not observed or self._replaced(self._terminal.state()):
             return []
         self._offset = end
-        return _translated(self.run, records)
+        return [*observed, *_translated(self.run, records)]
 
     def _replaced(self, state: Liveness) -> bool:
         """Ended once another terminal holds its name or session.json is another generation's."""
@@ -550,8 +554,8 @@ class TuiMode(RunningMode):
         """Since the last scan: Activity("") once a dialog went, Blocked per new dialog, LimitHit
         per appearance.
         """
+        shown = frozenset(d for d in self.run.dialogs if self.run.shows(d, screen))
         screen = " ".join(screen.split())
-        shown = frozenset(d for d in self.run.dialogs if " ".join(d.split()) in screen)
         found: list[SessionEvent | Stderr | ClientBound] = (
             [Activity("")] if self._dialogs - shown else []
         )  # first: a later Blocked keeps the idle pause

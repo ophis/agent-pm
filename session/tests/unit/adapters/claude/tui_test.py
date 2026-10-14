@@ -4,6 +4,7 @@ import json
 import os
 import re
 import shlex
+from unittest import mock
 
 from agent_pm.session.adapters.claude import ClaudeAdapter
 from agent_pm.session.adapters.claude.tui import ClaudeTui
@@ -12,10 +13,15 @@ from agent_pm.session.engine.types import (
     Activity,
     Blocked,
     ClientBound,
+    ConfigError,
+    HookCallback,
     HookKind,
     Launch,
+    LimitHit,
+    Reply,
     Spec,
     TurnEnd,
+    TurnFailed,
 )
 
 from session.tests.source_roots import PACKAGE_ROOTS
@@ -27,6 +33,7 @@ from session.tests.unit.adapters.claude.support import (
     MATCHER,
     NAME,
     NOT_WAITING,
+    NOW,
     SID,
     TUI_HOOKS,
     TUI_SETTINGS,
@@ -35,6 +42,7 @@ from session.tests.unit.adapters.claude.support import (
     WANT_SETTINGS,
     Base,
     ClaudeCommon,
+    epoch,
     said,
     text,
     tool,
@@ -340,12 +348,28 @@ class SessionTuiTest(Base):
                 )
 
 
+NATIVE_TRUST = """\
+╭──────────────────────────────────────────────────────────────────────────╮
+│ Accessing workspace:                                                     │
+│                                                                          │
+│ /tmp/w                                                                   │
+│                                                                          │
+│ Quick safety check: Is this a project you created or one you trust?     │
+│ (Like your own code, a well-known open source project, or work from     │
+│ your team). If not, take a moment to review what's in this folder first. │
+│                                                                          │
+│ ❯ 1. Yes, I trust this folder                                            │
+│   2. No, exit                                                            │
+╰──────────────────────────────────────────────────────────────────────────╯
+"""
+
+
 class TuiPayloadTest(Base):
     def setUp(self):
         super().setUp()
         self.run = ClaudeAdapter({}).tui()
-        self.run.restore(Spec(workdir=self.work, sid=SID), {})
         self.path = os.path.join(self.tmp, "t.jsonl")
+        self.run.restore(Spec(workdir=self.work, sid=SID), {"transcript": self.path, "start": 0})
 
     def transcript(self, *records):
         with open(self.path, "w", encoding="utf-8") as f:
@@ -486,3 +510,319 @@ class TuiPayloadTest(Base):
 
     def test_the_trust_dialog(self):
         self.assertEqual(ClaudeTui.dialogs, ("Quick safety check",))
+
+    def test_the_trust_dialog_needs_its_native_rendering(self):
+        run, dialog = ClaudeAdapter({}).tui(), "Quick safety check"
+        option = "│ ❯ 1. Yes, I trust this folder\n│   2. No, exit\n"
+        for screen, shown in (
+            (NATIVE_TRUST, True),
+            (NATIVE_TRUST.replace("Is this", "is this"), True),
+            ("Quick safety check: trust? 1. Yes, I trust this folder 2. No, exit\n", True),
+            (
+                '  55 TRUST = "Quick safety check: … 1. Yes, I trust this folder 2. No, exit"\n',
+                False,
+            ),
+            ("> see Quick safety check docs\n" + option, False),
+            ("│ Quick safety check: Is this a project you trust?\n│ ❯ 1. Yes\n", False),
+            ("Quick safety checks pass\n" + option, False),
+            ("", False),
+        ):
+            with self.subTest(screen=screen):
+                self.assertIs(run.shows(dialog, screen), shown)
+        self.assertTrue(run.shows("Other  dialog", "an Other\n dialog here"))
+
+
+class StopFailureTest(Base):
+    def launched(self):
+        run = ClaudeAdapter({}).tui()
+        run.launch(Spec(workdir=self.work, sid=SID), HOOK, source_roots=PACKAGE_ROOTS)
+        return run
+
+    def test_typed_errors(self):
+        limit = "You've hit your session limit · resets 3pm (America/Los_Angeles)"
+        rows = (
+            (
+                {"error": "overloaded", "error_details": "529", "last_assistant_message": "x"},
+                [TurnFailed("overloaded", "529")],
+            ),
+            (
+                {"error": "authentication_failed", "last_assistant_message": "Please run /login"},
+                [TurnFailed("authentication_failed", "Please run /login")],
+            ),
+            (
+                {"error": "billing_error", "error_details": "Credit balance is too low"},
+                [TurnFailed("billing_error", "Credit balance is too low")],
+            ),
+            ({"error": "server_error", "error_details": 5}, [TurnFailed("server_error")]),
+            (
+                {"error": "rate_limit", "last_assistant_message": limit},
+                [LimitHit(epoch("2026-10-11 15:00"))],
+            ),
+            (
+                {"error": "rate_limit", "last_assistant_message": "API Error: Rate limit reached"},
+                [LimitHit(None)],
+            ),
+            ({"error": "rate_limit"}, [LimitHit(None)]),
+            ({}, [TurnFailed("unknown")]),
+            ({"error": 3, "error_details": ""}, [TurnFailed("unknown")]),
+            (
+                {"error": "", "last_assistant_message": "API Error"},
+                [TurnFailed("unknown", "API Error")],
+            ),
+        )
+        for payload, events in rows:
+            with self.subTest(payload=payload), mock.patch("time.time", return_value=NOW):
+                self.assertEqual(self.launched().hook_events("StopFailure", payload), events)
+
+    def test_a_failure_is_not_sticky(self):
+        run = self.launched()
+        self.assertEqual(
+            run.hook_events("StopFailure", {"error": "overloaded"}), [TurnFailed("overloaded")]
+        )
+        self.assertEqual(
+            run.hook_events("Stop", {"last_assistant_message": "done"}), [TurnEnd("done", 0)]
+        )
+
+
+PROMPT = {"type": "user", "message": {"content": "go on"}}
+
+RESULT = {"type": "user", "message": {"content": [{"type": "tool_result", "content": "ok"}]}}
+
+
+def limited(notice: str, quota=None) -> dict:
+    """Claude Code's transcript record of a usage-limit API error."""
+    record = {**said(None, text(notice)), "isApiErrorMessage": True, "error": "rate_limit"}
+    return record if quota is None else {**record, "quotaLimits": quota}
+
+
+class TranscriptTest(Base):
+    def setUp(self):
+        super().setUp()
+        patch = mock.patch.dict(os.environ, {"CLAUDE_CONFIG_DIR": os.path.join(self.tmp, "c")})
+        patch.start()
+        self.addCleanup(patch.stop)
+        self.run = ClaudeAdapter({}).tui()
+        spec = Spec(workdir=self.work, sid=SID)
+        self.path = self.run.launch(spec, HOOK, source_roots=PACKAGE_ROOTS).transcript
+
+    def launched(self, **spec):
+        run = ClaudeAdapter({}).tui()
+        run.launch(Spec(workdir=self.work, sid=SID, **spec), HOOK, source_roots=PACKAGE_ROOTS)
+        return run
+
+    def append(self, *records, end="\n"):
+        os.makedirs(os.path.dirname(self.path), exist_ok=True)
+        with open(self.path, "a", encoding="utf-8") as f:
+            f.write(end.join(r if isinstance(r, str) else json.dumps(r) for r in records) + end)
+
+    def test_pre_tool_text_is_a_reply_once(self):
+        self.append(PROMPT, said("m1", text("start: go")), said("m1", tool("Bash")))
+        self.assertEqual(self.run.observe(), [Reply("start: go")])
+        self.assertEqual(
+            self.run.hook_events("PostToolUse", {"tool_name": "Bash"}), [Activity("Bash")]
+        )
+        self.append(RESULT)
+        self.assertEqual(self.run.observe(), [])
+
+    def test_each_message_once_then_the_turn_end(self):
+        self.append(
+            PROMPT,
+            said("m1", text("A")),
+            said("m1", tool("Bash")),
+            RESULT,
+            said("m2", text("B")),
+            said("m2", tool("Read")),
+            RESULT,
+        )
+        self.assertEqual(self.run.observe(), [Reply("A"), Reply("B")])
+        self.append(said("m3", text("C")))
+        self.assertEqual(self.run.observe(), [Reply("C")])
+        self.assertEqual(
+            self.run.hook_events("Stop", {"last_assistant_message": "C"}), [TurnEnd("C", 0)]
+        )
+        self.assertEqual(self.run.observe(), [])
+
+    def test_a_late_final_text_is_not_repeated(self):
+        self.append(PROMPT, said("m1", text("A")), said("m1", tool("Bash")), RESULT)
+        self.assertEqual(self.run.observe(), [Reply("A")])
+        self.assertEqual(
+            self.run.hook_events("Stop", {"last_assistant_message": "C"}), [TurnEnd("C", 0)]
+        )
+        self.append(said("m2", text("B")), said("m2", tool("Read")), RESULT)
+        self.assertEqual(self.run.observe(), [Reply("B")])
+        self.append(said("m3", text("C")))
+        self.assertEqual(self.run.observe(), [])
+        self.append(PROMPT, said("m4", text("C")), said("m5", text("D")))
+        self.assertEqual(self.run.observe(), [Reply("C"), Reply("D")])
+
+    def test_a_turn_end_already_delivered_leaves_nothing_unseen(self):
+        self.append(PROMPT, said("m1", text("C")))
+        self.assertEqual(self.run.observe(), [Reply("C")])
+        self.assertEqual(
+            self.run.hook_events("Stop", {"last_assistant_message": "C"}), [TurnEnd("C", 0)]
+        )
+        self.append(said("m2", text("C")))
+        self.assertEqual(self.run.observe(), [Reply("C")])
+
+    def test_a_resumed_transcript_starts_at_launch(self):
+        self.append(PROMPT, said("m1", text("X")), said("m2", text("Y")))
+        size = os.path.getsize(self.path)
+        run = self.launched(resume=True)
+        self.assertEqual(
+            run.hook_callback(),
+            HookCallback(ClaudeTui.__module__, {"transcript": self.path, "start": size}),
+        )
+        self.assertEqual(run.observe(), [])
+        self.append(PROMPT, said("m3", text("Z")))
+        self.assertEqual(run.observe(), [Reply("Z")])
+
+    def test_a_restored_cursor_reads_from_its_start(self):
+        self.append(PROMPT, said("m1", text("X")))
+        size = os.path.getsize(self.path)
+        self.append(said("m2", text("Y")))
+        run = ClaudeAdapter({}).tui()
+        run.restore(Spec(workdir=self.work, sid=SID), {"transcript": self.path, "start": size})
+        self.assertEqual(run.observe(), [Reply("Y")])
+        self.assertEqual(
+            run.hook_callback(),
+            HookCallback(ClaudeTui.__module__, {"transcript": self.path, "start": size}),
+        )
+
+    def test_a_bad_cursor_is_refused(self):
+        for state in (
+            {},
+            {"transcript": self.path},
+            {"start": 0},
+            {"transcript": "t.jsonl", "start": 0},
+            {"transcript": 1, "start": 0},
+            {"transcript": self.path, "start": -1},
+            {"transcript": self.path, "start": True},
+            {"transcript": self.path, "start": "0"},
+        ):
+            with (
+                self.subTest(state=state),
+                self.assertRaisesRegex(ConfigError, "transcript cursor"),
+            ):
+                ClaudeAdapter({}).tui().restore(Spec(workdir=self.work, sid=SID), state)
+
+    def test_a_partial_line_waits_for_its_newline(self):
+        self.append(PROMPT)
+        line = json.dumps(said("m1", text("A")))
+        self.append(line[:10], end="")
+        self.assertEqual(self.run.observe(), [])
+        self.append(line[10:])
+        self.assertEqual(self.run.observe(), [Reply("A")])
+        self.assertEqual(self.run.observe(), [])
+
+    def test_a_shorter_transcript_moves_the_cursor_to_its_end(self):
+        self.append(PROMPT, said("m1", text("A")))
+        self.assertEqual(self.run.observe(), [Reply("A")])
+        with open(self.path, "w", encoding="utf-8") as f:
+            f.write(json.dumps(PROMPT) + "\n")
+        self.assertEqual(self.run.observe(), [])
+        self.append(said("m2", text("B")))
+        self.assertEqual(self.run.observe(), [Reply("B")])
+
+    def test_no_transcript_is_nothing(self):
+        self.assertEqual(self.run.observe(), [])
+        os.makedirs(self.path)
+        self.assertEqual(self.run.observe(), [])
+
+    def test_only_main_assistant_text_is_a_reply(self):
+        self.append(
+            PROMPT,
+            {**said("s1", text("side")), "isSidechain": True},
+            {
+                **said("e1", text("API Error: 500")),
+                "isApiErrorMessage": True,
+                "error": "server_error",
+            },
+            said("m1", {"type": "thinking", "thinking": "hm"}),
+            said("m1", tool("Bash")),
+            said("m2", text("  \n ")),
+            said("m3", text(1), {"type": "text"}),
+            {"type": "assistant", "message": "x"},
+            {"type": "assistant", "message": {"content": "x"}},
+            {"type": "user", "message": said("m4", text("u"))},
+            "not json",
+            "[1]",
+            said("m5", text("one"), tool("Read"), text("two")),
+        )
+        self.assertEqual(self.run.observe(), [Reply("one\ntwo")])
+
+    def test_a_limit_record_uses_its_reset(self):
+        notice = "You've hit your session limit · resets 3pm (America/Los_Angeles)"
+        for quota, resets in (
+            ({"status": "rejected", "resetsAt": 1790589600}, 1790589600.0),
+            ({"status": "rejected", "resetsAt": 1.5e9}, 1.5e9),
+            ({"status": "allowed", "resetsAt": 1790589600}, epoch("2026-10-11 15:00")),
+            ({"status": "rejected", "resetsAt": True}, epoch("2026-10-11 15:00")),
+            ({"status": "rejected", "resetsAt": 1e999}, epoch("2026-10-11 15:00")),
+            ({"status": "rejected"}, epoch("2026-10-11 15:00")),
+            ("rejected", epoch("2026-10-11 15:00")),
+            (None, epoch("2026-10-11 15:00")),
+        ):
+            with self.subTest(quota=quota), mock.patch("time.time", return_value=NOW):
+                self.append(PROMPT, limited(notice, quota))
+                self.assertEqual(self.run.observe(), [LimitHit(resets)])
+
+    def test_one_limit_per_turn_from_the_hook_or_the_record(self):
+        notice = "You've hit your weekly limit · resets Oct 15, 2027, 9am (UTC)"
+        rate_limit = {"error": "rate_limit", "last_assistant_message": notice}
+        resets = epoch("2027-10-15 09:00", "UTC")
+        self.append(PROMPT, limited(notice))
+        self.assertEqual(self.run.observe(), [LimitHit(resets)])
+        self.assertEqual(self.run.hook_events("StopFailure", rate_limit), [])
+        self.append(PROMPT)
+        self.assertEqual(self.run.observe(), [])
+        self.assertEqual(self.run.hook_events("StopFailure", rate_limit), [LimitHit(resets)])
+        self.append(limited(notice), {**limited(notice), "isSidechain": True})
+        self.assertEqual(self.run.observe(), [])
+        self.append(PROMPT, {**limited(notice), "isSidechain": True}, limited(notice))
+        self.assertEqual(self.run.observe(), [LimitHit(resets)])
+
+    def restored(self):
+        run = ClaudeAdapter({}).tui()
+        run.restore(Spec(workdir=self.work, sid=SID), {"transcript": self.path, "start": 0})
+        return run
+
+    def test_a_replay_keeps_a_late_final_text_unrepeated(self):
+        self.append(PROMPT, said("m1", text("A")))
+        run = self.restored()
+        replayed = run.replay([("UserPromptSubmit", {}), ("Stop", {"last_assistant_message": "C"})])
+        self.assertEqual(replayed, [Reply("A"), Activity(""), TurnEnd("C", 0)])
+        self.append(said("m2", text("C")))
+        self.assertEqual(run.observe(), [])
+
+    def test_a_replay_leaves_no_earlier_turns_text_unseen(self):
+        self.append(PROMPT, said("m1", text("C")), PROMPT)
+        run = self.restored()
+        stop = ("Stop", {"last_assistant_message": "C"})
+        run.replay([("UserPromptSubmit", {}), stop, ("UserPromptSubmit", {})])
+        self.append(said("m2", text("C")))
+        self.assertEqual(run.observe(), [Reply("C")])
+
+    def test_a_replay_of_an_open_turn_leaves_its_newest_text_seen(self):
+        self.append(PROMPT, said("m1", text("C")))
+        run = self.restored()
+        run.replay([("UserPromptSubmit", {})])
+        self.assertEqual(
+            run.hook_events("Stop", {"last_assistant_message": "C"}), [TurnEnd("C", 0)]
+        )
+        self.append(said("m2", text("C")))
+        self.assertEqual(run.observe(), [Reply("C")])
+
+    def test_after_a_replay_the_latest_turns_limit_is_given_live_once(self):
+        notice = "You've hit your weekly limit · resets Oct 15, 2027, 9am (UTC)"
+        rate_limit = ("StopFailure", {"error": "rate_limit", "last_assistant_message": notice})
+        resets = epoch("2027-10-15 09:00", "UTC")
+        self.append(PROMPT, limited(notice), PROMPT)
+        run = self.restored()
+        run.replay([("UserPromptSubmit", {}), rate_limit, ("UserPromptSubmit", {})])
+        self.append(limited(notice))
+        self.assertEqual(run.observe(), [LimitHit(resets)])
+        self.assertEqual(run.hook_events(*rate_limit), [])
+        run = self.restored()
+        run.replay([("UserPromptSubmit", {}), rate_limit, ("UserPromptSubmit", {})])
+        self.assertEqual(run.hook_events(*rate_limit), [LimitHit(resets)])
+        self.assertEqual(run.observe(), [])

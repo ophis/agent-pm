@@ -32,6 +32,7 @@ from agent_pm.session.engine.types import (
     Spec,
     Stderr,
     TurnEnd,
+    TurnFailed,
     Usage,
     Window,
 )
@@ -120,7 +121,7 @@ class EventsTest(Case):
     def test_the_frozen_set_is_the_six_events(self):
         self.assertEqual(
             typing.get_args(engine_types.SessionEvent),
-            (Activity, Reply, TurnEnd, Blocked, LimitHit, Exited),
+            (Activity, Reply, TurnEnd, TurnFailed, Blocked, LimitHit, Exited),
         )
         for other in (Stderr, ClientBound):
             self.assertNotIn(other, typing.get_args(engine_types.SessionEvent))

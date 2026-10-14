@@ -213,6 +213,7 @@ HOOK = ("/py thon", "-I", "/core/tui_hook.py", "/tui/w 1")
 
 HOOKS = {
     "Stop": HookKind.TURN_END,
+    "StopFailure": HookKind.TURN_FAILED,
     "PermissionRequest": HookKind.BLOCKED,
     "Notification": HookKind.BLOCKED,
     "PostToolUse": HookKind.ACTIVITY,
@@ -249,6 +250,7 @@ def entry(label) -> dict:
 
 TUI_HOOKS = {
     "Stop": [entry("Stop")],
+    "StopFailure": [entry("StopFailure")],
     "PermissionRequest": [entry("PermissionRequest")],
     "Notification": [{"matcher": MATCHER, **entry("Notification")}],
     "PostToolUse": [entry("PostToolUse")],
