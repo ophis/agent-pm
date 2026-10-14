@@ -11,12 +11,12 @@ import os
 import sys
 from dataclasses import replace
 
-from agent_pm.delegate import composer
+from agent_pm.delegate import composer, run
 from agent_pm.delegate.composer import RunParams, Team
 from agent_pm.delegate.engine import detach
 from agent_pm.delegate.engine.drivers import InstructionDriver
 from agent_pm.delegate.engine.plan import configure, plan
-from agent_pm.delegate.engine.runner import run, say
+from agent_pm.delegate.engine.runner import say
 from agent_pm.delegate.engine.types import Begun, ConfigError, Plan, Spec
 from agent_pm.session import ConfigError as SessionConfigError
 from agent_pm.session import DriverError

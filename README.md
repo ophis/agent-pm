@@ -35,7 +35,7 @@ flowchart TB
     D["API · CLI · run"]
     C["composer/<br>prompt · run spec"]
     EV["event/<br>reply · outcome check · callback line"]
-    CF["engine/config.py<br>config paths"]
+    CF["config.py<br>package settings"]
     subgraph TM[team/]
       T["roles · tasks · templates"]
       AT[tools/]
@@ -79,12 +79,12 @@ Solid arrow: an import, the only direction allowed, or a file read (`reads`); it
 
 Before upgrading, close running detached agent-pm sessions: without controllers, kill acts only on their panes.
 
-`/plugin marketplace add ophis/agent-pm`, then `/plugin install agent-pm@agent-pm` (a private repo: your git credentials). Requires the `claude` CLI, Python 3.11+ (stdlib only), tmux 3.3+ (tui runs), `git` and `gh` logged in (checkouts, the `github` and `pull-request` destinations), the `autopilot` plugin (plus `superpowers` for `build`), GitHub and the web; `osascript`, `pgrep` and a running iTerm2 only for the default iTerm2 split. Nothing checks them: a missing one fails the agent run. Agent runs load your user settings (`~/.claude/CLAUDE.md`, skills, permissions, plugins but `agent-pm`) and no MCP servers; a trusted cwd adds its project settings, `CLAUDE.md`, skills and `.mcp.json` (`delegate/config.toml`'s `cwd` and `trusted_dirs`).
+`/plugin marketplace add ophis/agent-pm`, then `/plugin install agent-pm@agent-pm` (a private repo: your git credentials). Requires the `claude` CLI, Python 3.11+ (stdlib only), tmux 3.3+ (tui runs), `git` and `gh` logged in (checkouts, the `github` and `pull-request` destinations), the `autopilot` plugin (plus `superpowers` for `build`), GitHub and the web; `osascript`, `pgrep` and a running iTerm2 only for the default iTerm2 split. Nothing checks them: a missing one fails the agent run. Agent runs load your user settings (`~/.claude/CLAUDE.md`, skills, permissions, plugins but `agent-pm`) and no MCP servers; a trusted cwd adds its project settings, `CLAUDE.md`, skills and `.mcp.json` (`delegate/src/agent_pm/delegate/config.toml`'s `cwd` and `trusted_dirs`).
 
 - `/agent-pm:tmux` and `ctmux`: removed, rebuilt by [TASK-356](https://linear.app/ophis-workgroup/issue/TASK-356).
 - `/agent-pm:manage`: coordinate the commander session through Crew; command guidance: `manager/skills/manage/SKILL.md`.
 - `/agent-pm:act-as <role>[:<task>] <input>`: run a core role in this conversation, on that task or one it picks: `delegate/skills/act-as/SKILL.md`.
-- Your own roles, tasks and templates, outside the plugin: `delegate/config.toml`'s `team_dirs` comment; the Delegate CLI's `--list` (`delegate/src/agent_pm/delegate/cli.py`) lists every role and task.
+- Your own roles, tasks and templates, outside the plugin: `delegate/src/agent_pm/delegate/config.toml`'s `team_dirs` comment; the Delegate CLI's `--list` (`delegate/src/agent_pm/delegate/cli.py`) lists every role and task.
 
 ## Setup
 
@@ -193,7 +193,7 @@ The old router's `--tui` is gone; the new router gains it in [TASK-332](https://
 ## Layout
 
 ```text
-delegate/             the Delegate (one role's run), the Composer, the built-in team; shared event/ and engine/config.py
+delegate/             the Delegate (one role's run), the Composer, the built-in team; shared event/ and config.py
 session/              the session: an Adapter per runtime, Modes, Hosts (tmux)
 utils/                shared utilities
 manager/              cli.py, engine/crew.py, roster.py and events.py: commands and bookkeeping
@@ -204,7 +204,7 @@ tests/                repo-wide checks: guards.py (rules), checks.py (runner), c
 
 The Delegate's `Driver`, `AgentDriver` and `InstructionDriver` live in `delegate/src/agent_pm/delegate/engine/drivers.py`; definitions: `CONTEXT.md` › Driver.
 
-Each project holds `src/agent_pm/<its package>/` (one PEP 420 namespace package `agent_pm` over the five `src/` roots) and `tests/`. Packaged configs live in `session/src/agent_pm/session/config.toml` and `linear-orchestrator/src/agent_pm/linear_orchestrator/config.toml`; other configured projects keep `config.toml` at their project roots. Each module's docstring states its behaviour.
+Each project holds `src/agent_pm/<its package>/` (one PEP 420 namespace package `agent_pm` over the five `src/` roots) and `tests/`. Session, Delegate and orchestration configuration ships inside their packages. Each module's docstring states its behaviour.
 
 ## Runtime policy
 
@@ -218,7 +218,7 @@ Codex snapshots save flags and the merged Adapter, Access and Spec environment. 
 
 ## Access
 
-A run's `read` dirs and its role's tasks dir are never `--add-dir`: no runtime is granted write to them. Codex has no read-only-dir mechanism usable here, so it adds nothing for them: under `workspace-write` its sandbox reads the whole disk and writes only its roots; under the default `danger-full-access` (Runtime policy, above) it can write them too. Each runtime's grant and its limits: `delegate/config.toml`'s `read` comment.
+A run's `read` dirs and its role's tasks dir are never `--add-dir`: no runtime is granted write to them. Codex has no read-only-dir mechanism usable here, so it adds nothing for them: under `workspace-write` its sandbox reads the whole disk and writes only its roots; under the default `danger-full-access` (Runtime policy, above) it can write them too. Each runtime's grant and its limits: `delegate/src/agent_pm/delegate/config.toml`'s `read` comment.
 
 ## Tests
 

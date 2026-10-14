@@ -52,6 +52,7 @@ class SessionClassMethods(Case):
         key, either = inspect.Parameter.KEYWORD_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD
         for method, parameters in (
             (Session.configure, [("adapters", key), ("hosts", key)]),
+            (Session.configure_from, [("config", either), ("hosts", key)]),
             (
                 Session.start,
                 [("spec", either), ("display", key), ("host", key), ("idle_timeout", key)],
@@ -84,6 +85,11 @@ class SessionClassMethods(Case):
                     ProcessOptions(flags=flags, env=env)
                 self.assertEqual(str(options_error.exception), message)
 
+    def test_public_config_boundary_rejects_missing_hosts_without_a_session(self):
+        with self.assertRaises(ConfigError) as caught:
+            Session.configure_from({})
+        self.assertEqual(str(caught.exception), "[hosts]: missing")
+
     def test_on_a_subclass_each_is_its_own(self):
         self.assertIsInstance(FakeSession.host(), FakeHost)
         self.assertEqual(FakeSession.display("d"), "d")
@@ -91,6 +97,7 @@ class SessionClassMethods(Case):
         spec = Spec(workdir=self.home, runtime="fake", mode=Mode.HEADLESS, prompt="hi")
         calls = {
             "configure": ((), {"adapters": {}, "hosts": Hosts("tmux", {})}),
+            "configure_from": (({},), {}),
             "start": ((spec,), {}),
             "attach": (("w1",), {}),
             "inspect": ((spec,), {}),

@@ -28,6 +28,7 @@ class Harness(Base):
 
     def setUp(self):
         super().setUp()
+        self.configure_fake(tui=True)
         self.events = os.path.join(self.tmp, "events")
         self.calls, self.handler = [], None
         self.show = self.enterContext(mock.patch.object(self.driver, "show", return_value=None))

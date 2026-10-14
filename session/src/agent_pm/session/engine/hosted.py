@@ -17,7 +17,7 @@ from dataclasses import dataclass, field, replace
 from typing import Any, ClassVar, cast
 
 from agent_pm.session.adapters.base import Adapter
-from agent_pm.session.adapters.registry import Registry
+from agent_pm.session.adapters.registry import Registry, settings
 from agent_pm.session.engine.base import Session
 from agent_pm.session.engine.records import RunLog
 from agent_pm.session.engine.types import (
@@ -60,6 +60,33 @@ from agent_pm.utils import (
     sid_error,
     thaw,
 )
+
+
+def _request(spec: Spec, display: Display, idle_timeout: float | None) -> tuple[str, Mode]:
+    _idle(idle_timeout)
+    _displayed(display)
+    if not isinstance(spec, Spec):
+        raise ConfigError(f"spec: want a Spec, got {type(spec).__name__}")
+    runtime, mode = spec.runtime, spec.mode
+    if runtime is None or mode is None:
+        raise ConfigError(f"spec.{'runtime' if runtime is None else 'mode'}: required to start")
+    return runtime, mode
+
+
+def _protect(spec: Spec, adapter: Adapter) -> None:
+    try:
+        writable = (
+            spec.access.cwd or spec.workdir,
+            *spec.access.dirs,
+            *adapter.writable_dirs(spec),
+        )
+        for path in writable:
+            for protected in spec.protect:
+                if overlaps(path, protected):
+                    raise ConfigError(f"writable path {path} overlaps protected path {protected}")
+    except OSError as error:
+        raise ConfigError(f"{spec.runtime}'s writable dirs: {error}") from error
+
 
 POLL = 0.5
 PROBE_DIR = f"{STATE}/probe"
@@ -208,6 +235,10 @@ class HostedSession(Session):
         )
 
     @classmethod
+    def configure_from(cls, config: Mapping, *, hosts: Hosts | None = None) -> None:
+        cls.configure(**settings(config, hosts=hosts))
+
+    @classmethod
     def configured(cls, **setup) -> type[HostedSession]:
         own = cast("type[HostedSession]", type(cls.__name__, (cls,), {"__module__": __name__}))
         own.configure(**setup)
@@ -230,6 +261,29 @@ class HostedSession(Session):
         return tmux_host if cls._setup is None else cls._setup.tmux
 
     @classmethod
+    def preflight(
+        cls,
+        spec: Spec,
+        *,
+        display: Display = None,
+        host: str | None = None,
+        idle_timeout: float | None = None,
+    ) -> None:
+        setup = cls._config()
+        runtime, mode = _request(spec, display, idle_timeout)
+        adapter = setup.registry.adapter(runtime)
+        spec = replace(spec, sid=spec.sid or str(uuid.uuid4()))
+        _protect(spec, adapter)
+        cls.host(host)
+        MODES[mode].preflight(
+            spec,
+            adapter,
+            registry=setup.registry,
+            host=setup.tmux,
+            display=display,
+        )
+
+    @classmethod
     def start(
         cls,
         spec: Spec,
@@ -240,29 +294,10 @@ class HostedSession(Session):
     ) -> HostedSession:
         """spec.sid: its id, else a new one; display: kept by its Host."""
         setup = cls._config()
-        _idle(idle_timeout)
-        _displayed(display)
-        if not isinstance(spec, Spec):
-            raise ConfigError(f"spec: want a Spec, got {type(spec).__name__}")
-        runtime, mode = spec.runtime, spec.mode
-        if runtime is None or mode is None:
-            raise ConfigError(f"spec.{'runtime' if runtime is None else 'mode'}: required to start")
+        runtime, mode = _request(spec, display, idle_timeout)
         adapter = setup.registry.adapter(runtime)
         spec = replace(spec, sid=spec.sid or str(uuid.uuid4()))
-        try:
-            writable = (
-                spec.access.cwd or spec.workdir,
-                *spec.access.dirs,
-                *adapter.writable_dirs(spec),
-            )
-            for path in writable:
-                for protected in spec.protect:
-                    if overlaps(path, protected):
-                        raise ConfigError(
-                            f"writable path {path} overlaps protected path {protected}"
-                        )
-        except OSError as error:
-            raise ConfigError(f"{runtime}'s writable dirs: {error}") from error
+        _protect(spec, adapter)
         on = cls.host(host)
         running = MODES[mode].start(
             spec,

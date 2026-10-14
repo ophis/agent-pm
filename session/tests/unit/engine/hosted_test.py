@@ -78,6 +78,35 @@ def parsed(tables, default) -> Hosts:
 
 
 class ConfiguredTest(Case):
+    def test_raw_configuration_parses_hosts_and_copies_adapter_and_host_tables(self):
+        own = type("Own", (HostedSession,), {})
+        config = {
+            "hosts": {"default": "fake", **FAKE_HOSTS},
+            "adapters": {"fake": {"implementation": "session.tests.fake_adapter:FakeAdapter"}},
+        }
+        own.configure_from(config)
+        config["hosts"]["default"] = "missing"
+        config["adapters"]["fake"]["implementation"] = "missing.module:Missing"
+        self.assertIsInstance(own.host(), FakeHost)
+        self.assertIsNone(own.usage("fake"))
+
+    def test_raw_configuration_accepts_preparsed_hosts(self):
+        own = type("Own", (HostedSession,), {})
+        hosts = parsed(FAKE_HOSTS, "fake")
+        own.configure_from({"hosts": None}, hosts=hosts)
+        self.assertIsInstance(own.host(), FakeHost)
+
+    def test_raw_configuration_keeps_parser_and_adapter_errors(self):
+        own = type("Own", (HostedSession,), {})
+        with self.assertRaises(ConfigError) as caught:
+            own.configure_from({})
+        self.assertEqual(str(caught.exception), "[hosts]: missing")
+        with self.assertRaises(ConfigError) as caught:
+            own.configure_from({"adapters": []}, hosts=parsed(FAKE_HOSTS, "fake"))
+        self.assertEqual(
+            str(caught.exception), "adapters: want a mapping of [adapters.<name>] tables"
+        )
+
     def test_each_configured_class_has_its_own_setup_and_none_changes_hosted_session(self):
         first = HostedSession.configured(adapters={}, hosts=parsed(HOSTS, "tmux"))
         second = HostedSession.configured(adapters={}, hosts=parsed(FAKE_HOSTS, "fake"))
@@ -1196,7 +1225,15 @@ class TuiStartTest(TuiBase):
         self.assertEqual(order, [("status", False), ("start", ["session"])])
         self.assertEqual(
             [c[0] for c in self.host.mock_calls],
-            ["events_file", "tmux_path", "status", "start", "pane"],
+            [
+                "validate_events",
+                "tmux_path",
+                "validate_start",
+                "events_file",
+                "status",
+                "start",
+                "pane",
+            ],
         )
         self.assertEqual(
             (session.name, session.sid, session.runtime, session.mode), ("w1", SID, "fake", "tui")

@@ -1,6 +1,5 @@
-"""The Composer: reads the team root (TEAM) and the team dirs (the core config's team_dirs) in place,
-resolves a role's run config (resolve) and access intent (access), and assembles its prompt
-(render); the agent run reads its task's file itself. Callers use this package's names.
+"""Composer owns a config snapshot and Team, resolves run settings and access, and renders prompts.
+Legacy module functions remain available during the object API migration.
 
 Formats of roles/, tasks/ and templates/ files, the team root's and a team dir's:
 - roles/<role>.md, a charter: a `# ` title, an intro, then `## Tasks`, the role's task index and the
@@ -18,6 +17,7 @@ raises ConfigError naming the file.
 """
 
 from agent_pm.delegate.composer.base import TEAM
+from agent_pm.delegate.composer.composer import Composer
 from agent_pm.delegate.composer.prompt import render
 from agent_pm.delegate.composer.run import access, resolve, trusted_dirs
 from agent_pm.delegate.composer.teams import (
@@ -32,10 +32,19 @@ from agent_pm.delegate.composer.teams import (
     team_dirs,
     team_paths,
 )
-from agent_pm.delegate.composer.types import DELIVERABLE, ConfigError, RunConfig, RunParams, Team
+from agent_pm.delegate.composer.types import (
+    DELIVERABLE,
+    ConfigError,
+    DelegateConfig,
+    RunConfig,
+    RunParams,
+    Team,
+)
 
 __all__ = [
     "ConfigError",
+    "Composer",
+    "DelegateConfig",
     "TEAM",
     "DELIVERABLE",
     "RunConfig",

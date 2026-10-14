@@ -12,10 +12,9 @@ from pathlib import Path
 from unittest import mock
 
 import agent_pm
-from agent_pm.delegate import IMPORT_ROOTS
 
 from tests import guards
-from tests.case import REPO, Case
+from tests.case import REPO, ROOTS, Case
 from utils.tests.sandbox import clean_env, owned_directory
 
 CASES = (
@@ -187,7 +186,7 @@ class Checks:
         self.assertEqual({os.path.realpath(p) for p in agent_pm.__path__}, own)
         self.assertEqual(len(own), 5)
         self.assertEqual(self.case.SRC, guards_src())
-        self.assertEqual(self.case.ROOTS, IMPORT_ROOTS)
+        self.assertEqual(self.case.ROOTS, ROOTS)
         self.assertFalse(hasattr(agent_pm, "__file__") and agent_pm.__file__)
 
     def test_child_env_drops_python_variables_and_sets_pythonpath_where_kept(self):

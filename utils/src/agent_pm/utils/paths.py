@@ -6,6 +6,7 @@ import contextlib
 import os
 import subprocess
 import sys
+import sysconfig
 import tempfile
 from types import ModuleType
 
@@ -14,17 +15,31 @@ STATE = "~/.agent-pm"
 
 
 def module_roots(*packages: ModuleType) -> tuple[str, ...]:
-    """Source roots of already-imported packages, retaining their order."""
+    """Source roots of already-imported modules or packages, retaining their order."""
     roots = []
     for package in packages:
         path = package.__file__
         if path is None:
             raise ValueError(f"{package.__name__}: package has no source file")
         root = os.path.dirname(os.path.abspath(path))
-        for _part in package.__name__.split("."):
+        parts = package.__name__.split(".")
+        if package.__spec__ is not None and package.__spec__.submodule_search_locations is None:
+            parts = parts[:-1]
+        for _part in parts:
             root = os.path.dirname(root)
         roots.append(root)
     return tuple(dict.fromkeys(roots))
+
+
+def import_env(*packages: ModuleType) -> dict[str, str]:
+    """Installed packages use the interpreter's paths; source runs supply only their roots."""
+    roots = module_roots(*packages)
+    paths = sysconfig.get_paths()
+    installed = {os.path.realpath(paths[name]) for name in ("purelib", "platlib")}
+    available = {os.path.realpath(path) for path in sys.path if path}
+    if all(os.path.realpath(root) in installed & available for root in roots):
+        return {}
+    return {"PYTHONPATH": os.pathsep.join(roots)}
 
 
 def package_dirs(*packages: ModuleType) -> tuple[str, ...]:

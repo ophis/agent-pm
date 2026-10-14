@@ -11,7 +11,7 @@ the defaults as their validation schema. Missing optional repository files contr
 import copy
 import os
 import tomllib
-from collections.abc import Iterable, Iterator, Mapping
+from collections.abc import Callable, Iterable, Iterator, Mapping
 from importlib.resources import files
 from types import MappingProxyType
 from typing import Any
@@ -70,8 +70,9 @@ def read_resources(
     *,
     local: str = LOCAL,
     paths: Mapping[str, str] | None = None,
+    validate: Callable[[str, str, Mapping], None] | None = None,
 ) -> dict:
-    """Read (package name, resource filename) pairs, lower first; paths replace named packages."""
+    """Read ordered resources; validate each raw layer before its local section overlays it."""
     resources = tuple(resources)
     configs, known = {}, {}
     for package, filename in resources:
@@ -83,6 +84,8 @@ def read_resources(
             default = tomllib.load(stream)
         override = paths.get(package) if paths is not None else None
         configs[section] = load(override) if override is not None else default
+        if validate is not None:
+            validate(package, override if override is not None else str(resource), configs[section])
         known[section] = (default, configs[section])
     if paths and (extra := paths.keys() - {p for p, _ in resources}):
         raise ConfigFileError(f"config path override has no resource: {min(extra)!r}")

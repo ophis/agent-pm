@@ -21,11 +21,10 @@ from agent_pm.delegate.composer.run import (
 )
 from agent_pm.delegate.composer.teams import role_tables, team
 from agent_pm.delegate.composer.types import Intent
-from agent_pm.delegate.engine.config import PYTHONPATH
 from agent_pm.session import Effort
 from agent_pm.utils import LOCAL, read_project
 
-from delegate.tests.case import Case
+from delegate.tests.case import SRC, Case
 from delegate.tests.unit.composer.prompts import (
     composed,
     task_text,
@@ -215,7 +214,9 @@ class Access(Fake):
 
     def test_dirs_reads_writes_commands_filled_the_gate_apart_verbatim_and_the_session_env(self):
         gate, home = "python3 /u/usage.py {{workdir}} *", os.path.expanduser("~/w")
-        env = {"PYTHONPATH": PYTHONPATH}
+        env = {
+            "PYTHONPATH": os.pathsep.join(SRC[name] for name in ("delegate", "session", "utils"))
+        }
         out = os.path.join(self.root, "out")
         for name, cfg, repo_dir, dirs, reads, writes, commands, want, session in (
             (

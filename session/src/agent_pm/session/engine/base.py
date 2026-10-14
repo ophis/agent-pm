@@ -92,6 +92,22 @@ class Session(ABC):
         cls._hosted("configure")(adapters=adapters, hosts=hosts)
 
     @classmethod
+    def configure_from(cls, config: Mapping, *, hosts: Hosts | None = None) -> None:
+        cls._hosted("configure_from")(config, hosts=hosts)
+
+    @classmethod
+    def preflight(
+        cls,
+        spec: Spec,
+        *,
+        display: Display = None,
+        host: str | None = None,
+        idle_timeout: float | None = None,
+    ) -> None:
+        """Validate a start without writing state or running the runtime."""
+        cls._hosted("preflight")(spec, display=display, host=host, idle_timeout=idle_timeout)
+
+    @classmethod
     def start(
         cls,
         spec: Spec,

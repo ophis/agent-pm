@@ -12,7 +12,7 @@ from datetime import datetime
 from pathlib import Path
 
 from agent_pm.delegate.composer import RunConfig
-from agent_pm.delegate.engine.drivers import AgentDriver, Driver
+from agent_pm.delegate.engine.drivers import Driver
 from agent_pm.delegate.engine.plan import plan
 from agent_pm.delegate.engine.types import (
     Begun,
@@ -32,7 +32,6 @@ from agent_pm.delegate.event.outcome import read as read_outcome
 from agent_pm.delegate.event.reply import OUTCOME, marks, outcome_block
 from agent_pm.delegate.event.types import InvalidOutcome, Outcome
 from agent_pm.session import ConfigError as SessionConfigError
-from agent_pm.session import Driver as SessionDriver
 from agent_pm.session import (
     DriverError,
     Exited,
@@ -40,10 +39,10 @@ from agent_pm.session import (
     LimitHit,
     Mode,
     Reply,
+    RunLog,
     Session,
     Stderr,
     TurnEnd,
-    note,
 )
 from agent_pm.utils import holds, printable, save
 
@@ -112,7 +111,8 @@ class Tui(Headless):
         name = handle.name
         if name is None:
             raise DriverError("tui session has no name")
-        say(f"delegate: tui session {name}: {handle.attach_command()}")
+        if handle.displayable:
+            say(f"delegate: tui session {name}: {handle.attach_command()}")
         return handle
 
     def fix(self, handle: Session, p: Plan, text: str) -> Session:
@@ -156,23 +156,33 @@ def run(
     spec: Spec,
     *,
     on_event: Callable[[Event], None] | None = None,
-    driver: Driver | SessionDriver,
+    driver: Driver,
 ) -> Result:
-    """on_event gets Begun once, a Progress per mark line and Finished only with a valid outcome;
-    its exception stops the session and propagates.
-    """
-    if isinstance(driver, SessionDriver):
-        driver = AgentDriver(driver.session_cls)
-    p = plan(run, spec, driver=driver)
+    return execute(plan(run, spec, driver=driver), driver=driver, on_event=on_event)
+
+
+def execute(
+    p: Plan,
+    *,
+    driver: Driver,
+    on_event: Callable[[Event], None] | None = None,
+) -> Result:
+    """Run an accepted plan; every returned Result has one final Finished event."""
+    emit = on_event or (lambda _event: None)
     if not driver.session_based:
         instruction = driver.start(p.driver_spec)
         if isinstance(instruction, Instruction):
-            return Result(0, None, instruction=instruction.path)
+            result = Result(0, None, instruction=instruction.path)
+            emit(Finished(result))
+            return result
         raise ConfigError("instruction driver returned a Session")
-    attempts = _Attempts(p, on_event or (lambda _event: None), driver)
+    attempts = _Attempts(p, emit, driver)
     try:
         result = attempts.result()
+        attempts.on_event(Finished(result))
     except BaseException as e:
+        if attempts.handle is not None:
+            attempts.stop(attempts.handle)
         if not attempts.refused:
             text = " ".join(str(e).split())
             attempts.close(
@@ -208,10 +218,12 @@ class _Attempts:
         )
         self.workdir = p.spec.workdir
         self.seen: set[str] = set()
+        self.handle: Session | None = None
         self.refused = False  # the Driver refused the start: nothing to close
 
     def note(self, kind: str, **fields) -> None:
-        note(self.workdir, kind, **fields)
+        os.makedirs(self.workdir, exist_ok=True)
+        RunLog(self.workdir).note(kind, **fields)
 
     def close(self, result: dict, rc: int) -> None:
         """Best effort: an OSError is printed."""
@@ -225,6 +237,7 @@ class _Attempts:
         p = self.plan
         try:
             handle = self.policy.start(p)
+            self.handle = handle
         except SessionConfigError as e:
             self.refused = True
             raise ConfigError(str(e)) from None
@@ -232,38 +245,35 @@ class _Attempts:
             self.drop_stale_out()
             self.note("input", text=p.params.input)
             return Result(1, None, f"{p.spec.mode}: {e}")
-        try:
-            stale = self.drop_stale_out()
-            self.note("input", text=p.params.input)
-            if stale:
-                self.stop(handle)
-                return Result(1, None, stale)
-            self.on_event(Begun(p.sid))
-            fixed = False
-            while True:
-                rc, last, limit = self.attempt(handle)
-                diagnostic = f"the client exited {rc}" if rc else ""
-                if limit:
-                    return Result(rc, None, f"usage limit; {_resets(limit.resets_at)}", limit)
-                if (block := outcome_block(last or "")) is None:
-                    return Result(rc, None, diagnostic or "the agent run returned no outcome")
-                try:
-                    outcome = read_outcome(block, p.run.output, p.spec.workdir)
-                except InvalidOutcome as e:
-                    if rc or fixed:
-                        return Result(rc, None, diagnostic or f"invalid outcome: {e}")
-                    self.note("invalid", error=str(e))
-                    say(f"delegate: invalid outcome: {e}; resuming once")
-                    try:
-                        handle = self.policy.fix(handle, p, FIX.format(error=e))
-                    except (SessionConfigError, DriverError) as failed:
-                        return Result(1, None, f"invalid outcome: {e}; resume failed: {failed}")
-                    fixed = True
-                    continue
-                return self.finish(outcome, rc)
-        except BaseException:
+        stale = self.drop_stale_out()
+        self.note("input", text=p.params.input)
+        if stale:
             self.stop(handle)
-            raise
+            return Result(1, None, stale)
+        self.on_event(Begun(p.sid))
+        fixed = False
+        while True:
+            rc, last, limit = self.attempt(handle)
+            diagnostic = f"the client exited {rc}" if rc else ""
+            if limit:
+                return Result(rc, None, f"usage limit; {_resets(limit.resets_at)}", limit)
+            if (block := outcome_block(last or "")) is None:
+                return Result(rc, None, diagnostic or "the agent run returned no outcome")
+            try:
+                outcome = read_outcome(block, p.run.output, p.spec.workdir)
+            except InvalidOutcome as e:
+                if rc or fixed:
+                    return Result(rc, None, diagnostic or f"invalid outcome: {e}")
+                self.note("invalid", error=str(e))
+                say(f"delegate: invalid outcome: {e}; resuming once")
+                try:
+                    handle = self.policy.fix(handle, p, FIX.format(error=e))
+                    self.handle = handle
+                except (SessionConfigError, DriverError) as failed:
+                    return Result(1, None, f"invalid outcome: {e}; resume failed: {failed}")
+                fixed = True
+                continue
+            return self.finish(outcome, rc)
 
     def stop(self, handle: Session) -> bool:
         """A DriverError is printed, not raised; False then, the session maybe running."""
@@ -323,9 +333,8 @@ class _Attempts:
                 name = handle.name
                 if name is None:
                     raise DriverError("tui session has no name")
-                say(
-                    f"delegate: {answer.reason}; session {name} left open: {handle.attach_command()}"
-                )
+                command = f": {handle.attach_command()}" if handle.displayable else ""
+                say(f"delegate: {answer.reason}; session {name} left open{command}")
                 return 0, None, None
             if answer == END:
                 break
@@ -360,5 +369,4 @@ class _Attempts:
             print("delegate: missing progress mark: start", file=sys.stderr, flush=True)
             self.note("missing", name="start")
         result = Result(rc, outcome, f"the client exited {rc}" if rc else "")
-        self.on_event(Finished(result))
         return result

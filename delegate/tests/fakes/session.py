@@ -1,14 +1,36 @@
 """A caller-owned fake Session class for Delegate driver contract tests."""
 
-from agent_pm.session import Session, Spec
+from agent_pm.session import Host, Session, Spec
 
 from session.tests.fakes.session import FakeSession
 
 
 class SessionClass(FakeSession):
+    preflights: list[dict] = []
+    preflight_error: Exception | None = None
+
+    def __init_subclass__(cls, **keywords):
+        super().__init_subclass__(**keywords)
+        cls.preflights, cls.preflight_error = [], None
+
     @classmethod
     def fresh(cls):
         return cls.scripted()
+
+    @classmethod
+    def configure_from(cls, config, *, hosts=None):
+        cls.configure(
+            adapters=config.get("adapters", {}),
+            hosts=Host.parse_hosts(config.get("hosts")) if hosts is None else hosts,
+        )
+
+    @classmethod
+    def preflight(cls, spec, *, display=None, host=None, idle_timeout=None):
+        cls.preflights.append(
+            {"spec": spec, "display": display, "host": host, "idle_timeout": idle_timeout}
+        )
+        if cls.preflight_error is not None:
+            raise cls.preflight_error
 
     @classmethod
     def start(cls, spec: Spec, *, display=None, host=None, idle_timeout=None) -> Session:

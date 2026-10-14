@@ -140,6 +140,15 @@ def _string_tuple(value) -> bool:
     return isinstance(value, tuple) and all(isinstance(s, str) for s in value)
 
 
+@dataclass(frozen=True)
+class TuiSettings:
+    """tmux's status line, a grid's panes per column, when it re-tiles."""
+
+    status_line: bool = False
+    per_column: int | None = None
+    retile: str | None = None
+
+
 @dataclass(frozen=True, kw_only=True)
 class Access:
     dirs: tuple[str, ...] = ()

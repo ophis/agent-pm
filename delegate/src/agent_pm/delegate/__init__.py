@@ -2,25 +2,22 @@
 session from the Driver, read from its replies' progress marks and outcome block.
 """
 
-import sys
+import os
 
-import agent_pm.session as session
-import agent_pm.utils as utils
 from agent_pm.delegate.composer import ConfigError as ComposerConfigError
 from agent_pm.delegate.composer import RunConfig, trusted_dirs
 from agent_pm.delegate.composer import index as task_index
 from agent_pm.delegate.composer import resolve as resolve_run
-from agent_pm.delegate.engine.base import Delegate
-from agent_pm.delegate.engine.config import (
+from agent_pm.delegate.config import (
     CONFIG,
-    IMPORT_ROOTS,
-    PYTHONPATH,
     harness_host,
     read_config,
 )
-from agent_pm.delegate.engine.drivers import Driver
+from agent_pm.delegate.engine.base import Delegate
+from agent_pm.delegate.engine.config import module_roots, package_dirs
+from agent_pm.delegate.engine.drivers import AgentDriver, Driver
 from agent_pm.delegate.engine.plan import configure, plan
-from agent_pm.delegate.engine.runner import IDLE_TIMEOUT, run
+from agent_pm.delegate.engine.runner import IDLE_TIMEOUT, execute
 from agent_pm.delegate.engine.types import (
     Begun,
     ConfigError,
@@ -36,14 +33,14 @@ from agent_pm.delegate.engine.types import (
 )
 from agent_pm.delegate.event import DelegateEvent
 from agent_pm.delegate.event.types import STATUSES, InvalidOutcome, Outcome, OutcomeStatus
+from agent_pm.session import Driver as SessionDriver
+
+PYTHONPATH: str = os.pathsep.join(module_roots())
 
 
-def module_roots() -> tuple[str, ...]:
-    return utils.module_roots(sys.modules[__name__], session, utils)
-
-
-def package_dirs() -> tuple[str, ...]:
-    return utils.package_dirs(sys.modules[__name__], session, utils)
+def run(run: RunConfig, spec: Spec, *, on_event=None, driver: Driver | SessionDriver) -> Result:
+    owner_driver = AgentDriver(driver.session_cls) if isinstance(driver, SessionDriver) else driver
+    return execute(plan(run, spec, driver=owner_driver), driver=owner_driver, on_event=on_event)
 
 
 __all__ = [
@@ -75,7 +72,6 @@ __all__ = [
     "RunConfig",
     "DelegateEvent",
     "CONFIG",
-    "IMPORT_ROOTS",
     "PYTHONPATH",
     "harness_host",
     "module_roots",

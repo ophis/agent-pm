@@ -8,12 +8,21 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from agent_pm.session import Effort
+from agent_pm.utils import freeze
 
 DELIVERABLE = os.path.join("tmp", "deliverable.md")  # under the workdir, without `out`
 
 
 class ConfigError(Exception):
     pass
+
+
+@dataclass(frozen=True)
+class DelegateConfig:
+    values: Mapping
+
+    def __post_init__(self):
+        object.__setattr__(self, "values", freeze(self.values))
 
 
 @dataclass(frozen=True, kw_only=True)

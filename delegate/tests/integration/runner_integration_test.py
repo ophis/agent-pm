@@ -114,7 +114,7 @@ class Fix(Base):
         r = self.go(said(START, block(INVALID)), fixes=[said(block(INVALID))])
         self.assertEqual(r, Result(0, None, f"invalid outcome: {INVALID_ERROR}"))
         self.assertEqual(
-            (len(self.launches()), [type(e) for e in self.events]), (2, [Begun, Progress])
+            (len(self.launches()), [type(e) for e in self.events]), (2, [Begun, Progress, Finished])
         )
         self.assertEqual(
             self.kinds(), ["session", "input", "progress", "invalid", "session", "result", "end"]
@@ -170,9 +170,7 @@ class Idle(Base):
 
 
 class UsageLimit(Base):
-    """FR-58: a usage limit stops the session and ends the run: no outcome read, no fix resume, no
-    Finished.
-    """
+    """A usage limit stops the session and returns a Finished result without outcome or repair."""
 
     def test_a_limit_stops_the_session_and_is_the_result(self):
         at = 1767225600.0
@@ -187,7 +185,7 @@ class UsageLimit(Base):
         self.assertEqual(r.limit.resets_at, at)
         self.assertEqual(self.kinds(), ["session", "input", "progress", "limit", "result", "end"])
         self.assertEqual((self.last("limit")["resets_at"], len(self.launches())), (at, 1))
-        self.assertEqual([type(e) for e in self.events], [Begun, Progress])
+        self.assertEqual([type(e) for e in self.events], [Begun, Progress, Finished])
 
     def test_an_unknown_reset_time(self):
         r = self.go(said(START, block(INVALID)), limit(None))
@@ -260,7 +258,7 @@ class Stops(Base):
             "subprocess.Popen", side_effect=FileNotFoundError(2, "No such file or directory", "x")
         ):
             r = self.go(said(START, block(DONE)))
-        self.assertEqual((r.returncode, r.outcome, self.events), (1, None, []))
+        self.assertEqual((r.returncode, r.outcome, self.events), (1, None, [Finished(r)]))
         self.assertTrue(r.error.startswith("headless: cannot start "), r.error)
         self.assertEqual(self.kinds(), ["session", "input", "result", "end"])
         self.assertEqual((self.last("result")["error"], self.last("end")["rc"]), (r.error, 1))
@@ -294,7 +292,7 @@ class Stops(Base):
             r = self.go(said(START, block(DONE)))
         popen.assert_called_once()
         error = f"headless: cannot start {sys.executable}: no stream"
-        self.assertEqual((r, self.events), (Result(1, None, error), []))
+        self.assertEqual((r, self.events), (Result(1, None, error), [Finished(r)]))
         self.assertEqual(self.kinds(), ["session", "input", "result", "end"])
         self.assertEqual((self.last("result")["error"], self.last("end")["rc"]), (error, 1))
 
@@ -364,7 +362,10 @@ class Start(Base):
         self.assertEqual(
             (records[0]["sid"], kept["url"], r.outcome.deliverable), (sid, self.out, "# Doc\n")
         )
-        self.assertEqual(sorted(os.listdir(self.work)), ["out.md", "run.jsonl"])
+        self.assertEqual(
+            sorted(os.listdir(self.work)),
+            ["out.md", "run.jsonl"],
+        )
 
     def test_a_destination_decides_the_url_and_each_saves_a_deliverable(self):
         url, pr_url = "https://github.com/o/docs/blob/main/x.md", "https://github.com/o/n/pull/7"
@@ -389,10 +390,17 @@ class Start(Base):
 
     def test_a_failed_save_raises_where_out_is_the_deliverables_home_else_is_noted(self):
         denied = PermissionError(13, "Permission denied")
+        replace = os.replace
+
+        def replace_out(source, destination):
+            if os.fspath(destination) == self.out:
+                raise denied
+            return replace(source, destination)
+
         for output in ({"type": "local"}, {"type": "orchestrator"}):
             with self.subTest(output=output):
                 self.fresh()
-                with mock.patch("os.replace", side_effect=denied), self.assertRaises(OSError):
+                with mock.patch("os.replace", side_effect=replace_out), self.assertRaises(OSError):
                     self.go(said(START, block(DONE)), output=output)
                 self.assertEqual(
                     (self.last("result")["error"], os.path.lexists(self.out)),
@@ -404,7 +412,7 @@ class Start(Base):
         ):
             with self.subTest(output=output):
                 self.fresh()
-                with mock.patch("os.replace", side_effect=denied):
+                with mock.patch("os.replace", side_effect=replace_out):
                     r = self.go(said(START, block({**DONE, "url": url})), output=output)
                 self.assertEqual(
                     (r.returncode, r.outcome.status, r.outcome.url, r.error), (0, "done", url, "")
@@ -426,7 +434,7 @@ class Start(Base):
         self.assertEqual(
             (r.outcome.status, r.outcome.url, r.outcome.deliverable), ("done", "", "# Doc\n")
         )
-        self.assertEqual(os.listdir(self.work), ["run.jsonl"])
+        self.assertEqual(sorted(os.listdir(self.work)), ["run.jsonl"])
 
     def test_a_stale_out_never_stands_for_the_deliverable(self):
         save_spy = self.spy_save()
@@ -470,7 +478,7 @@ class Start(Base):
             r = self.go(
                 {"sleep": 30}, said(START, block(DONE)), out=os.path.join(blocker, "out.md")
             )
-        self.assertEqual((r.returncode, r.outcome, self.events), (1, None, []))
+        self.assertEqual((r.returncode, r.outcome, self.events), (1, None, [Finished(r)]))
         self.assertRegex(r.error, r"^cannot remove the stale out: .*Not a directory")
         self.assertEqual(
             (procs[0].returncode, self.kinds()),
@@ -572,7 +580,7 @@ class Start(Base):
             (self.out, r.error, 7),
         )
 
-    def test_a_run_without_a_valid_outcome_records_its_error_and_gets_no_finished(self):
+    def test_a_run_without_a_valid_outcome_records_its_error_and_finishes(self):
         for steps, rc, error in (
             ([said("bye")], 0, "the agent run returned no outcome"),
             ([said("bye"), {"exit": 143}], 143, "the client exited 143"),
@@ -582,7 +590,8 @@ class Start(Base):
                 self.fresh()
                 r = self.go(*steps)
                 self.assertEqual(
-                    (r, [type(e) for e in self.events]), (Result(rc, None, error), [Begun])
+                    (r, [type(e) for e in self.events]),
+                    (Result(rc, None, error), [Begun, Finished]),
                 )
                 result, end = self.records()[-2:]
                 self.assertEqual(

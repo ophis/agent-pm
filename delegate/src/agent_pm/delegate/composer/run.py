@@ -8,6 +8,9 @@ import os
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import replace
 
+import agent_pm.session as session
+import agent_pm.utils as utils
+from agent_pm.delegate import config as delegate_config
 from agent_pm.delegate.composer.base import fill, title_of
 from agent_pm.delegate.composer.teams import (
     charter,
@@ -20,8 +23,7 @@ from agent_pm.delegate.composer.teams import (
     team_or_default,
 )
 from agent_pm.delegate.composer.types import ConfigError, Intent, RunConfig, Team
-from agent_pm.delegate.engine import config as delegate_config
-from agent_pm.delegate.engine.config import CONFIG, PYTHONPATH
+from agent_pm.delegate.config import CONFIG
 from agent_pm.utils import LOCAL
 
 RUN_KEYS = frozenset(
@@ -150,7 +152,7 @@ def access(
         writes=tuple(paths["write"]),
         commands=commands,
         gate=run.gate,
-        env={"PYTHONPATH": PYTHONPATH} if commands or run.gate else {},
+        env=utils.import_env(delegate_config, session, utils) if commands or run.gate else {},
         cwd=cwd,
         project=project,
     )

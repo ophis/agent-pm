@@ -20,4 +20,6 @@ class Package(Case):
         self.assertIsInstance(composer.teams, types.ModuleType)
         self.assertIs(composer.team, composer.teams.team)
         self.assertIs(composer.team_paths, composer.teams.team_paths)
-        self.assertEqual(CONFIG, os.path.join(REPO, "delegate", "config.toml"))
+        self.assertEqual(
+            CONFIG, os.path.join(REPO, "delegate", "src", "agent_pm", "delegate", "config.toml")
+        )

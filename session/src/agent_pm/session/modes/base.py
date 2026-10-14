@@ -57,6 +57,18 @@ class RunningMode(ABC):
         return self._prepared
 
     @classmethod
+    def preflight(
+        cls,
+        spec: Spec,
+        adapter: Adapter,
+        *,
+        registry: Registry,
+        host=tmux_host,
+        display: Display = None,
+    ) -> Prepared:
+        raise NotImplementedError
+
+    @classmethod
     @abstractmethod
     def start(
         cls,

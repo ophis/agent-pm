@@ -10,13 +10,15 @@ import sys
 import tempfile
 from dataclasses import dataclass
 
-from agent_pm.delegate.engine.config import PYTHONPATH
+import agent_pm.session as session_package
+import agent_pm.utils as utils_package
+from agent_pm.delegate import config
 from agent_pm.delegate.engine.drivers import Driver
 from agent_pm.delegate.engine.runner import say
 from agent_pm.delegate.engine.types import ConfigError, Plan
 from agent_pm.session import ConfigError as SessionConfigError
 from agent_pm.session import DriverError, Mode, SessionStatusLog
-from agent_pm.utils import append_line
+from agent_pm.utils import append_line, import_env
 
 MODES = frozenset({Mode.HEADLESS, Mode.TUI})
 
@@ -102,7 +104,11 @@ def detach(
             harness,
             argv,
             cwd=os.getcwd(),
-            env={**os.environ, "PYTHONPATH": PYTHONPATH, **authentication},
+            env={
+                **{k: v for k, v in os.environ.items() if k != "PYTHONPATH"},
+                **import_env(config, session_package, utils_package),
+                **authentication,
+            },
             opener=opener,
         )
     except SessionConfigError as e:

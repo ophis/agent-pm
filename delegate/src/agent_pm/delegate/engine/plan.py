@@ -12,16 +12,16 @@ from collections.abc import Iterator, Mapping
 from dataclasses import replace
 
 from agent_pm.delegate import composer
-from agent_pm.delegate.composer import DELIVERABLE, RunConfig, RunParams, Team
+from agent_pm.delegate.composer import DELIVERABLE, Composer, RunConfig, RunParams, Team
 from agent_pm.delegate.engine import config
 from agent_pm.delegate.engine.drivers import AgentDriver, Driver
 from agent_pm.delegate.engine.types import ConfigError, Plan, Spec
 from agent_pm.delegate.event.reply import OUTCOME, PROGRESS
-from agent_pm.session import Access, Host, Mode, read_config, session_record
+from agent_pm.session import Access, Host, Mode, RunLog, read_config
 from agent_pm.session import ConfigError as SessionConfigError
 from agent_pm.session import Driver as SessionDriver
 from agent_pm.session import Spec as SessionSpec
-from agent_pm.utils import LOCAL, read_project, under
+from agent_pm.utils import LOCAL, under
 
 
 def configure(*, local: str = LOCAL, cfg: Mapping | None = None) -> SessionDriver:
@@ -33,7 +33,7 @@ def configure(*, local: str = LOCAL, cfg: Mapping | None = None) -> SessionDrive
         hosts = Host.parse_hosts(table.get("hosts"))
     with _config("delegate"):
         harness = config.harness_host(
-            read_project("delegate", local=local) if cfg is None else cfg, hosts.tables
+            config.read_config(local=local) if cfg is None else cfg, hosts.tables
         )
     with _config("session"):
         return SessionDriver.from_config(table, hosts=hosts, harness_host=harness)
@@ -60,14 +60,20 @@ def _own(f):
 
 @_own
 def place(
-    run: RunConfig, workdir: str, *, resume_sid: str | None, cwd: str | None
+    run: RunConfig,
+    workdir: str,
+    *,
+    resume_sid: str | None,
+    cwd: str | None,
+    trusted: frozenset[str] | None = None,
 ) -> tuple[str, bool]:
     """(cwd, whether its project settings load); a resume's from its session record."""
-    workdir, trusted = os.path.abspath(workdir), composer.trusted_dirs()
+    workdir = os.path.abspath(workdir)
+    trusted = composer.trusted_dirs() if trusted is None else trusted
     if resume_sid is not None:
         # The agent run can append to run.jsonl: this re-check limits a forged record.
-        entry = session_record(workdir, resume_sid)
-        here, project = (entry["cwd"], entry["project"]) if entry else (workdir, False)
+        entry = RunLog(workdir).session(resume_sid)
+        here, project = (entry.cwd, entry.project) if entry else (workdir, False)
         if project and not under(os.path.realpath(here), trusted):
             raise ConfigError(f"cwd {here} is no longer in trusted_dirs")
     else:
@@ -84,7 +90,13 @@ def place(
 
 
 @_own
-def plan(run: RunConfig, spec: Spec, *, driver: Driver | SessionDriver) -> Plan:
+def plan(
+    run: RunConfig,
+    spec: Spec,
+    *,
+    driver: Driver | SessionDriver,
+    composition: Composer | None = None,
+) -> Plan:
     """With the built-in team the configured team dirs are checked for overlap only."""
     if isinstance(driver, SessionDriver):
         driver = AgentDriver(driver.session_cls)
@@ -103,7 +115,7 @@ def plan(run: RunConfig, spec: Spec, *, driver: Driver | SessionDriver) -> Plan:
         team = composer.team()
         with contextlib.suppress(ConfigError, OSError, ValueError):
             guarded = composer.team_dirs()
-    tasks = composer.index(run.role, team)
+    tasks = composer.index(run.role, team) if composition is None else composition.index(run.role)
     if spec.task:
         if spec.task not in tasks:
             raise ConfigError(
@@ -121,7 +133,13 @@ def plan(run: RunConfig, spec: Spec, *, driver: Driver | SessionDriver) -> Plan:
         team=team,
     )
     resume = spec.sid if spec.resume else None
-    here, project = place(run, workdir, resume_sid=resume, cwd=spec.cwd)
+    here, project = place(
+        run,
+        workdir,
+        resume_sid=resume,
+        cwd=spec.cwd,
+        trusted=None if composition is None else composition.trusted_dirs(),
+    )
     if driver.session_based and not project and os.path.realpath(here) != os.path.realpath(workdir):
         print(
             f"delegate: cwd {here} is not in trusted_dirs: its project settings are off",
@@ -167,8 +185,12 @@ def plan(run: RunConfig, spec: Spec, *, driver: Driver | SessionDriver) -> Plan:
         workdir=workdir,
         resume=spec.resume,
     )
-    prompt = composer.render(run, params, team=team)
-    return Plan(spec, replace(session, prompt=prompt), prompt, run, params)
+    prompt = (
+        composer.render(run, params, team=team)
+        if composition is None
+        else composition.render(run, params)
+    )
+    return Plan(spec, replace(session, prompt=prompt), run)
 
 
 def _check_team_dirs(

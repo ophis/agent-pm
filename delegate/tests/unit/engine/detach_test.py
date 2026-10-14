@@ -15,9 +15,8 @@ from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest import mock
 
-from agent_pm.delegate import ConfigError, Spec, composer, plan
+from agent_pm.delegate import PYTHONPATH, ConfigError, Spec, composer, plan
 from agent_pm.delegate.engine import detach
-from agent_pm.delegate.engine.config import PYTHONPATH
 from agent_pm.delegate.engine.drivers import InstructionDriver
 from agent_pm.session import ConfigError as SessionConfigError
 from agent_pm.session import DriverError

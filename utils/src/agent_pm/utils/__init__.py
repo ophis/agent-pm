@@ -44,6 +44,7 @@ from agent_pm.utils.git import git as run_git
 from agent_pm.utils.markdown import fenced, unfenced
 from agent_pm.utils.paths import (
     STATE,
+    import_env,
     import_roots,
     module_roots,
     overlaps,
@@ -104,6 +105,7 @@ __all__ = [
     "module_roots",
     "one_line",
     "parse_time",
+    "import_env",
     "origin",
     "overlaps",
     "package_dirs",

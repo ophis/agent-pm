@@ -74,7 +74,7 @@ class NewRun(Integration):
                 {"kind": "end", "sid": SID, "rc": 0},
             ],
         )
-        self.assertEqual(sorted(os.listdir(self.work)), ["out.md", "run.jsonl"])
+        self.assertEqual(set(os.listdir(self.work)), {"out.md", "run.jsonl"})
         self.assertTrue(os.path.isfile(self.transcript))
         (call,) = self.calls()
         self.assertEqual(

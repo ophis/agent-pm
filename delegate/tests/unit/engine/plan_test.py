@@ -12,10 +12,9 @@ from dataclasses import replace
 from types import SimpleNamespace
 from unittest import mock
 
-from agent_pm.delegate import ConfigError, composer, configure, plan
+from agent_pm.delegate import PYTHONPATH, ConfigError, composer, configure, plan
 from agent_pm.delegate.composer import RunConfig, RunParams
 from agent_pm.delegate.composer.prompt import RESUME
-from agent_pm.delegate.engine.config import PYTHONPATH
 from agent_pm.delegate.engine.drivers import AgentDriver
 from agent_pm.delegate.engine.plan import place
 from agent_pm.delegate.event.reply import OUTCOME, PROGRESS

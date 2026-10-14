@@ -36,6 +36,8 @@ dir = "Product Design/"
 
 API = [
     "ConfigError",
+    "Composer",
+    "DelegateConfig",
     "TEAM",
     "DELIVERABLE",
     "RunConfig",

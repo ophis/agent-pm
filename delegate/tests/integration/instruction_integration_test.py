@@ -77,7 +77,7 @@ class Instruction(Case):
         self.assertEqual(res.stderr, f"delegate: instruction delivered: {out}\n")
         with open(out, "rb") as f:
             self.assertEqual(f.read(), want)
-        self.assertEqual(os.listdir(self.work(role)), ["prompt.md"])
+        self.assertEqual(set(os.listdir(self.work(role))), {"prompt.md"})
 
     def test_each_role_receives_the_composers_original_prompt(self):
         for role in ROLES:

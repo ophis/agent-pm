@@ -128,7 +128,7 @@ class UsageLimit(Base):
         )
         self.assertEqual((result.outcome, result.limit), (None, Limit(RESETS)))
         self.assertTrue(result.error.startswith("usage limit; resets at "), result.error)
-        self.assertEqual(self.events, [Begun(SID)])
+        self.assertEqual(self.events, [Begun(SID), Finished(result)])
         (call,) = self.calls()
         self.assertFalse(running(call["pid"]))
         self.assertEqual(

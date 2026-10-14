@@ -6,17 +6,14 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable, Mapping, Sequence
 
 from agent_pm.delegate.composer import RunConfig
-from agent_pm.delegate.engine.types import Event, Result
+from agent_pm.delegate.engine.types import Event, Outer, Result
 from agent_pm.delegate.event.outcome import Outcome
 from agent_pm.session import SessionStatus, Usage
 from agent_pm.utils import Record, Status
 
 
 class Delegate(ABC):
-    """An implementation's constructor: (role, Spec, *, optional dependencies and placement),
-    refusing with ConfigError, writing nothing. run, detach run it; attach(record or workdir) views
-    a started one. show, attach_command: displayable sessions only, else NotDisplayable.
-    """
+    """One role run and its durable view; implementations own construction and placement."""
 
     @classmethod
     @abstractmethod
@@ -41,7 +38,7 @@ class Delegate(ABC):
     def trusted_dirs(cls) -> frozenset[str]: ...
 
     @abstractmethod
-    def detach(self, *, outer: Mapping | None = None) -> Record: ...
+    def detach(self, *, outer: Outer | None = None) -> Record: ...
 
     @abstractmethod
     def run(self, on_event: Callable[[Event], None] | None = None) -> Result: ...
@@ -59,7 +56,7 @@ class Delegate(ABC):
     def show(self) -> str | None: ...
 
     @abstractmethod
-    def attach_command(self) -> str: ...
+    def attach_command(self) -> str | None: ...
 
     @abstractmethod
     def close(self) -> None: ...

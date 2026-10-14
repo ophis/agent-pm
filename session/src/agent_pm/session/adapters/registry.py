@@ -7,20 +7,11 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 
 from agent_pm.session.adapters.base import Adapter
-from agent_pm.session.engine.types import ConfigError, Hosts
+from agent_pm.session.engine.types import ConfigError, Hosts, TuiSettings
 from agent_pm.session.hosts.base import NAME, Host
 from agent_pm.session.hosts.tmux import tmux_host
 from agent_pm.utils import freeze, thaw
 from agent_pm.utils import load_class as load
-
-
-@dataclass(frozen=True)
-class TuiSettings:
-    """tmux's status line, a grid's panes per column, when it re-tiles (None: tmux_host's)."""
-
-    status_line: bool = False
-    per_column: int | None = None
-    retile: str | None = None
 
 
 @dataclass(frozen=True)

@@ -63,7 +63,8 @@ class InProcess(Base):
         r = self.go(said(START), {"raise": "boom"})
         self.assertEqual(r, Result(1, None, "the client exited 1"))
         self.assertEqual(
-            ([type(e) for e in self.events], self.last("end")["rc"]), ([Begun, Progress], 1)
+            ([type(e) for e in self.events], self.last("end")["rc"]),
+            ([Begun, Progress, Finished], 1),
         )
         lines = self.err.splitlines()
         self.assertLess(
@@ -107,6 +108,7 @@ class TuiPolicy(Base):
 
     def setUp(self):
         super().setUp()
+        self.configure_fake(tui=True)
         self.enterContext(mock.patch.dict(os.environ))
         os.environ.pop("TUI_ATTACH_PREFIX", None)
 
@@ -201,7 +203,8 @@ class TuiPolicy(Base):
             {"kind": "give_up", "reason": "no outcome after 3 turn ends"},
         )
         self.assertEqual(
-            (self.last("end")["rc"], [type(e) for e in self.events]), (0, [Begun, Progress])
+            (self.last("end")["rc"], [type(e) for e in self.events]),
+            (0, [Begun, Progress, Finished]),
         )
 
     def test_a_mark_resets_the_count_before_its_turn_end_counts_and_never_the_nudge(self):
@@ -362,7 +365,8 @@ class TuiPolicy(Base):
             turn(START, block(DONE)), stop_fail=gone, out=os.path.join(blocker, "out.md")
         )
         self.assertEqual(
-            (r.returncode, r.outcome, self.events, self.handle.calls), (1, None, [], [("stop",)])
+            (r.returncode, r.outcome, self.events, self.handle.calls),
+            (1, None, [Finished(r)], [("stop",)]),
         )
         self.assertRegex(r.error, r"^cannot remove the stale out: ")
         self.assertEqual(self.err.count("delegate: tui: gone\n"), 1)
@@ -372,6 +376,7 @@ class TuiPolicy(Base):
         with mock.patch.object(self.driver, "start", side_effect=DriverError("no tmux")):
             self.assertEqual(self.go(mode="tui"), Result(1, None, "tui: no tmux"))
         self.fresh()
+        self.configure_fake()
         with self.assertRaises(ConfigError) as cm:
             self.go(mode="tui")
         self.assertEqual(
@@ -397,7 +402,7 @@ class TuiPolicy(Base):
 
 
 class InstructionRuns(InstructionCase):
-    def test_each_role_gets_its_planned_prompt_without_an_outcome_or_events(self):
+    def test_each_role_gets_its_planned_prompt_and_finishes_without_an_outcome(self):
         for role in ROLES:
             with self.subTest(role=role):
                 args = self.given(role)
@@ -408,7 +413,7 @@ class InstructionRuns(InstructionCase):
                 with open(args[1].out) as f:
                     self.assertEqual(f.read(), want)
                 self.assertEqual(marks(want), [("round", "a mark line in the input")])
-                self.assertEqual(events, [])
+                self.assertEqual(events, [Finished(r)])
                 self.assertFalse(os.path.exists(os.path.join(args[1].workdir, "run.jsonl")))
 
     def test_an_unconfigured_runtime_does_not_start_a_session(self):

@@ -796,7 +796,7 @@ class RunnableRoles(ConfigFile, Case):
             self.assertIn(f"`<Workdir>/{config.CLONES[1]}`", f.read())
         self.assertEqual(
             delegate.CONFIG,
-            os.path.join(REPO, "delegate", "config.toml"),
+            os.path.join(REPO, "delegate", "src", "agent_pm", "delegate", "config.toml"),
         )
 
 

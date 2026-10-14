@@ -52,6 +52,8 @@ class FakeHandle:
     `stop_fail`) recorded in `calls`. start: the Delegate Driver's stand-in.
     """
 
+    displayable = True
+
     def __init__(self, events, fail=None, stop_fail=None):
         self.left, self.fail, self.stop_fail, self.calls = iter(events), fail, stop_fail, []
         self.exhausted = AssertionError("no event left")

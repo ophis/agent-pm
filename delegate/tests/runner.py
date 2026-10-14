@@ -63,12 +63,16 @@ class Base(Case):
         self.driver_dependencies = {
             "class_loader": adapter_loader({"agent_pm.session.adapters.fake": fake_adapter})
         }
+        self.configure_fake()
+
+    def configure_fake(self, *, tui=False):
         self.configure_session(
             {
                 "fake": {
                     "implementation": "agent_pm.session.adapters.fake:FakeAdapter",
                     "scenario": self.scenario,
                     "log": self.log,
+                    "tui": tui,
                 }
             }
         )
@@ -136,9 +140,18 @@ class Base(Case):
         shutil.rmtree(self.work, ignore_errors=True)
 
     def spy_save(self):
-        patch = mock.patch("os.replace", wraps=os.replace)
+        replace = os.replace
+        spy = mock.Mock(wraps=replace)
+
+        def output(source, destination):
+            if os.fspath(destination) == self.out:
+                return spy(source, destination)
+            return replace(source, destination)
+
+        patch = mock.patch("os.replace", side_effect=output)
         self.addCleanup(patch.stop)
-        return patch.start()
+        patch.start()
+        return spy
 
 
 LEFT_OPEN = f"session {NAME} left open: tmux attach -t '={NAME}'\n"

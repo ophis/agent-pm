@@ -77,8 +77,9 @@ SUBPACKAGES = {
 
 ENTRY_MODULES = {
     SESSION: {"extension.py"},
+    "delegate": {"config.py"},
     ORCH_PROJECT: {"config.toml"},
-}  # public modules besides __init__.py
+}
 
 
 LOWER = tuple(p for p in PROJECTS if p != ORCH_PROJECT)
@@ -100,6 +101,8 @@ SESSION_SRC = f"session/src/{PKG}/{SESSION}/"
 
 
 OBJECT_EXPORT_MODULES = (
+    "delegate/src/agent_pm/delegate/__init__.py",
+    "delegate/src/agent_pm/delegate/composer/__init__.py",
     "delegate/src/agent_pm/delegate/event/__init__.py",
     f"{SESSION_SRC}__init__.py",
     *(f"{SESSION_SRC}{module}" for module in sorted(ENTRY_MODULES[SESSION])),
@@ -107,6 +110,42 @@ OBJECT_EXPORT_MODULES = (
 
 
 OBJECT_EXPORTS_ALLOWED = {
+    ("agent_pm.delegate", "read_config"): "TASK-389 layer-owned configuration entry point",
+    ("agent_pm.delegate", "module_roots"): "TASK-372 layer-owned import-root entry point",
+    ("agent_pm.delegate", "package_dirs"): "TASK-372 layer-owned resource-directory entry point",
+    ("agent_pm.delegate", "resolve_run"): "Legacy Composer forwarding; 356-14 (FR-27) deletes",
+    ("agent_pm.delegate", "task_index"): "Legacy Composer forwarding; 356-14 (FR-27) deletes",
+    ("agent_pm.delegate", "trusted_dirs"): "Legacy Composer forwarding; 356-14 (FR-27) deletes",
+    ("agent_pm.delegate", "configure"): "Legacy configuration forwarding; 356-14 (FR-27) deletes",
+    ("agent_pm.delegate", "plan"): "Legacy plan forwarding; 356-14 (FR-27) deletes",
+    ("agent_pm.delegate", "run"): "FR-13 forwarding wrapper; 356-14 (FR-27) deletes",
+    ("agent_pm.delegate", "harness_host"): "Legacy Host configuration; 356-14 (FR-27) deletes",
+    ("agent_pm.delegate.composer", "team"): "FR-46 forwarding wrapper; 356-14 (FR-27) deletes",
+    ("agent_pm.delegate.composer", "team_dirs"): "FR-46 forwarding wrapper; 356-14 (FR-27) deletes",
+    ("agent_pm.delegate.composer", "index"): "FR-46 forwarding wrapper; 356-14 (FR-27) deletes",
+    ("agent_pm.delegate.composer", "lookup"): "FR-46 forwarding wrapper; 356-14 (FR-27) deletes",
+    ("agent_pm.delegate.composer", "path_for"): "FR-46 forwarding wrapper; 356-14 (FR-27) deletes",
+    ("agent_pm.delegate.composer", "check_all"): "FR-46 forwarding wrapper; 356-14 (FR-27) deletes",
+    ("agent_pm.delegate.composer", "catalog"): "FR-46 forwarding wrapper; 356-14 (FR-27) deletes",
+    (
+        "agent_pm.delegate.composer",
+        "check_team_dirs",
+    ): "FR-46 forwarding wrapper; 356-14 (FR-27) deletes",
+    (
+        "agent_pm.delegate.composer",
+        "check_overlap",
+    ): "FR-46 forwarding wrapper; 356-14 (FR-27) deletes",
+    (
+        "agent_pm.delegate.composer",
+        "team_paths",
+    ): "FR-46 forwarding wrapper; 356-14 (FR-27) deletes",
+    ("agent_pm.delegate.composer", "resolve"): "FR-46 forwarding wrapper; 356-14 (FR-27) deletes",
+    (
+        "agent_pm.delegate.composer",
+        "trusted_dirs",
+    ): "FR-46 forwarding wrapper; 356-14 (FR-27) deletes",
+    ("agent_pm.delegate.composer", "access"): "FR-46 forwarding wrapper; 356-14 (FR-27) deletes",
+    ("agent_pm.delegate.composer", "render"): "FR-46 forwarding wrapper; 356-14 (FR-27) deletes",
     (f"{PKG}.{SESSION}", "read_config"): "TASK-389 layer-owned configuration entry point",
     (f"{PKG}.{SESSION}", "close"): "FR-4 forwarding wrapper; 356-14 (FR-27) deletes",
     (f"{PKG}.{SESSION}", "sessions"): "FR-4 forwarding wrapper; 356-14 (FR-27) deletes",
@@ -135,9 +174,19 @@ PACKAGE_CLIMB_ALLOWED = {
     ("utils/src/agent_pm/utils/paths.py", "import_roots"): "TASK-393",
     ("utils/src/agent_pm/utils/config_file.py", "read_project"): "TASK-393",
     (f"{SESSION_SRC}adapters/codex/tui/__init__.py", "import_roots()"): "TASK-393",
-    ("delegate/src/agent_pm/delegate/engine/config.py", "DELEGATE"): "TASK-367",
-    ("delegate/src/agent_pm/delegate/engine/config.py", "import_roots()"): "TASK-367",
     ("manager/src/agent_pm/manager/engine/crew.py", "BIN"): "TASK-373",
+}
+
+
+DELEGATE_SESSION_FORWARDING_ALLOWED = {
+    (
+        "delegate/src/agent_pm/delegate/__init__.py",
+        "agent_pm.session.Driver",
+    ): "FR-13 public run() forwarding compatibility; 356-14 (FR-27) deletes",
+    (
+        "delegate/src/agent_pm/delegate/engine/plan.py",
+        "agent_pm.session.Driver",
+    ): "Legacy configure() compatibility; TASK-370 converts its callers",
 }
 
 
@@ -297,7 +346,10 @@ HANDOFF = re.compile(r"Handoff from|## (?:Source|Instructions|Comments)")
 HANDOFF_HOME = f"{ORCH_SRC}engine/issues.py"
 
 
-COMMAND_FILES = ("delegate/config.toml", f"{ORCH_PROJECT}/{ORCH_SRC}config.toml")
+COMMAND_FILES = (
+    "delegate/src/agent_pm/delegate/config.toml",
+    f"{ORCH_PROJECT}/{ORCH_SRC}config.toml",
+)
 
 
 COMMAND_DOCS = ("delegate/skills/", "manager/skills/", f"delegate/src/{PKG}/delegate/team/")
@@ -558,6 +610,60 @@ def session_names(repo: str) -> list[str]:
     )
 
 
+def delegate_session_forwarding(repo: str) -> list[str]:
+    """FR-34: Delegate uses Session and RunLog, never deprecated session wrappers."""
+    base = "delegate/src/agent_pm/delegate/"
+    wrappers = {"Driver", "Handle", "close", "note", "session_record", "sessions"}
+    found, seen = set(), set()
+    for rel, text in _files(os.path.join(repo, base), ".py"):
+        tree = ast.parse(text, rel)
+        bound = _boundary_bindings(tree)
+        for node in ast.walk(tree):
+            names = (
+                [f"{node.module}.{alias.name}" for alias in node.names]
+                if isinstance(node, ast.ImportFrom) and node.module and not node.level
+                else [_boundary_name(node, bound)]
+                if isinstance(node, ast.Name | ast.Attribute) and isinstance(node.ctx, ast.Load)
+                else []
+            )
+            for name in names:
+                for prefix in ("agent_pm.session.", "agent_pm.session.engine.forwarding."):
+                    if name.startswith(prefix) and name[len(prefix) :].split(".")[0] in wrappers:
+                        key = base + rel, prefix + name[len(prefix) :].split(".")[0]
+                        if key in DELEGATE_SESSION_FORWARDING_ALLOWED:
+                            seen.add(key)
+                        else:
+                            found.add(
+                                f"{base}{rel}:{node.lineno}: session forwarding {name} (FR-34)"
+                            )
+    found.update(
+        f"{rel}: {name}: allowlisted but no forwarding reference (FR-34)"
+        for rel, name in DELEGATE_SESSION_FORWARDING_ALLOWED.keys() - seen
+    )
+    return sorted(found)
+
+
+def delegate_package_names(repo: str) -> list[str]:
+    """TASK-389: Delegate owns package resources and never discovers sibling projects."""
+    base = "delegate/src/agent_pm/delegate/"
+    forbidden = {"read_project", "import_roots", "DELEGATE", "IMPORT_ROOTS"}
+    found = set()
+    for rel, text in _files(os.path.join(repo, base), ".py"):
+        for node in ast.walk(ast.parse(text, rel)):
+            name = (
+                node.id
+                if isinstance(node, ast.Name)
+                else node.attr
+                if isinstance(node, ast.Attribute)
+                else node.name
+                if isinstance(node, ast.alias | ast.FunctionDef | ast.AsyncFunctionDef)
+                else ""
+            )
+            if name in forbidden:
+                found.add(f"{base}{rel}:{node.lineno}: legacy package name {name} (TASK-389)")
+    return sorted(found)
+
+
 def manager_commands(repo: str) -> list[str]:
     found = []
     rel = "manager/src/agent_pm/manager/engine/crew.py"
@@ -691,7 +797,10 @@ def object_exports(repo: str) -> list[str]:
         if names is None or not all(isinstance(name, str) for name in names):
             found.add(f"{rel}: no literal __all__")
             continue
-        for name, (_, kind) in _export_kinds(repo, package, names, project).items():
+        for name, (target, kind) in _export_kinds(repo, package, names, project).items():
+            if package == "agent_pm.delegate" and target.endswith(".HarnessDelegate"):
+                found.add(f"{rel}: __all__ exports concrete Delegate {name} (FR-47)")
+                continue
             if kind in ("class", "constant", "alias"):
                 continue
             if (package, name) in OBJECT_EXPORTS_ALLOWED:
@@ -768,7 +877,7 @@ def _export_kinds(repo, package, names, project):
     """Each name `package` exports: what it resolves to through re-exports and aliases, and that
     target's kind (function, class, constant, alias, value, module or None: unresolved).
     """
-    modules, definitions = {}, {}
+    modules, definitions, origins = {}, {}, {}
     for name, value in vars(builtins).items():
         definitions[f"builtins.{name}"] = (
             "class" if isinstance(value, type) else "function" if callable(value) else "constant"
@@ -777,7 +886,12 @@ def _export_kinds(repo, package, names, project):
         for rel, text in _files(os.path.join(repo, owner, "src"), ".py"):
             module = rel.removesuffix(".py").replace("/", ".").removesuffix(".__init__")
             _definitions(
-                module, ast.parse(text), modules, definitions, package=rel.endswith("/__init__.py")
+                module,
+                ast.parse(text),
+                modules,
+                definitions,
+                origins,
+                package=rel.endswith("/__init__.py"),
             )
     kinds = {}
     for name in names:
@@ -802,6 +916,7 @@ def _export_kinds(repo, package, names, project):
                             ast.parse(source.read()),
                             modules,
                             definitions,
+                            origins,
                             package=is_package,
                         )
                     break
@@ -811,11 +926,11 @@ def _export_kinds(repo, package, names, project):
         kind = definitions.get(original) or definitions.get(resolved)
         if resolved in modules or resolved in sys.stdlib_module_names:
             kind = "module"
-        kinds[name] = (resolved, kind)
+        kinds[name] = (origins.get(resolved, resolved), kind)
     return kinds
 
 
-def _definitions(module, tree, modules, definitions, *, package):
+def _definitions(module, tree, modules, definitions, origins, *, package):
     bound = {name: f"builtins.{name}" for name in vars(builtins)}
     parent = (module if package else module.rpartition(".")[0]).split(".")
     for node in [
@@ -830,6 +945,7 @@ def _definitions(module, tree, modules, definitions, *, package):
             key = f"{module}.{node.name}"
             bound[node.name] = key
             definitions[key] = "class" if isinstance(node, ast.ClassDef) else "function"
+            origins[key] = key
             if isinstance(node, ast.ClassDef):
                 for method in node.body:
                     if isinstance(method, ast.FunctionDef | ast.AsyncFunctionDef):
@@ -870,6 +986,7 @@ def _definitions(module, tree, modules, definitions, *, package):
                 if not isinstance(target, ast.Name):
                     continue
                 key = f"{module}.{target.id}"
+                origins[key] = origins.get(reference, reference) if reference else key
                 if reference and reference not in definitions:
                     bound[target.id] = reference
                     definitions.pop(key, None)
@@ -878,15 +995,31 @@ def _definitions(module, tree, modules, definitions, *, package):
                         definitions[reference]
                         if reference
                         else "constant"
-                        if isinstance(node.value, ast.BinOp)
-                        and all(
-                            _is_literal(part) or definitions.get(_dotted(part, bound)) == "constant"
-                            for part in (node.value.left, node.value.right)
-                        )
+                        if _constant_value(node.value, bound, definitions)
                         else _assigned_kind(node, target.id)
                     )
                     bound[target.id] = key
     modules[module] = bound
+
+
+def _constant_value(node, bound, definitions):
+    if _is_literal(node) or definitions.get(_dotted(node, bound)) == "constant":
+        return True
+    if isinstance(node, ast.BinOp):
+        return all(_constant_value(part, bound, definitions) for part in (node.left, node.right))
+    if not isinstance(node, ast.Call):
+        return False
+    return _dotted(node.func, bound) in {
+        "builtins.tuple",
+        "builtins.frozenset",
+        "os.path.join",
+        "os.path.dirname",
+        "os.path.abspath",
+        "os.path.realpath",
+        "os.path.normpath",
+        "os.path.expanduser",
+        "os.pathsep.join",
+    }
 
 
 GENERICS = frozenset(
@@ -902,6 +1035,12 @@ def _assigned_kind(node, name):
     value = node.value
     if isinstance(value, ast.Lambda):
         return "function"
+    if (
+        isinstance(node, ast.AnnAssign)
+        and isinstance(node.annotation, ast.Name)
+        and node.annotation.id in {"str", "int", "float", "bool", "bytes"}
+    ):
+        return "constant"
     if _is_literal(value) or name.isupper() and _references(value):
         return "constant"
     if _name(getattr(node, "annotation", None)).endswith("TypeAlias") or _typing(value):

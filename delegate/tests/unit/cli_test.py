@@ -293,6 +293,10 @@ class InProcess(Base):
 
 
 class Tui(Base):
+    def setUp(self):
+        super().setUp()
+        self.configure_fake(tui=True)
+
     def test_tui_mode_runs_the_tui_policy_in_the_drivers_default_session_a_give_up_exiting_1(self):
         for events, want, last in (
             ([turn(START, block(DONE))], 0, "delegate: status done"),
@@ -310,6 +314,7 @@ class Tui(Base):
                 )
 
     def test_a_runtime_without_tui_exits_2_and_a_dry_run_plans_it(self):
+        self.configure_fake()
         code, out, err = self.runs("--mode", "tui")
         self.assertEqual((code, out), (2, ""))
         self.assertEqual(err.splitlines()[-1], "delegate: runtime 'fake' does not support tui mode")

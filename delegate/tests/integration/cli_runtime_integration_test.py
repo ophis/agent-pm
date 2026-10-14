@@ -124,7 +124,7 @@ class Deliverable(Base):
         self.assertEqual((code, out), (0, DONE["deliverable"]), err)
         self.assertNotIn("delegate: deliverable", err)
         self.assertTrue(err.endswith("delegate: status done\n"), err)
-        self.assertEqual(os.listdir(self.work), ["run.jsonl"])
+        self.assertEqual(set(os.listdir(self.work)), {"run.jsonl"})
 
     def test_out_dash_drops_control_characters_but_newlines_and_tabs(self):
         text = "a\x1b]0;x\x07b\n\tc\x1b[2Jd\x9be\n"

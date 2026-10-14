@@ -416,6 +416,38 @@ class Resources(Case):
         with self.assertRaisesRegex(ConfigFileError, "no resource"):
             read_resources(self.resources[:1], paths={"absent": str(override)})
 
+    def test_owner_validates_each_raw_resource_once_before_local_overlay(self):
+        override = Path(self.root, "override.toml")
+        override.write_text('runtime = "own-file"\n')
+        self.local('[delegate]\nruntime = "local"\n')
+        seen = []
+
+        def validate(package, source, table):
+            seen.append((package, source, copy.deepcopy(table)))
+
+        found = read_resources(
+            self.resources[:2],
+            paths={self.resources[1][0]: str(override)},
+            validate=validate,
+        )
+        self.assertEqual(found["runtime"], "local")
+        self.assertEqual(len(seen), 2)
+        self.assertEqual(seen[0][0], self.resources[0][0])
+        self.assertEqual(seen[0][2], tomllib.loads(SESSION))
+        self.assertEqual(seen[1], (self.resources[1][0], str(override), {"runtime": "own-file"}))
+
+    def test_owner_validation_failure_propagates_without_local_replacing_it(self):
+        self.local('[delegate]\nruntime = "local"\n')
+        error = ValueError("owner rejected raw configuration")
+
+        def validate(package, _source, table):
+            if package == self.resources[1][0] and table["runtime"] == "a":
+                raise error
+
+        with self.assertRaises(ValueError) as caught:
+            read_resources(self.resources[:2], validate=validate)
+        self.assertIs(caught.exception, error)
+
     def test_flat_local_keys_name_the_required_section(self):
         for text, section in (
             ('runtime = "x"\n', "delegate"),
