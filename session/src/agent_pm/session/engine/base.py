@@ -5,12 +5,13 @@ HostedSession's (loaded when called); a subclass's are its own.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from typing import Any
 
 from agent_pm.session.engine.types import (
     Hosts,
     IdleTimeout,
+    KeyPress,
     Liveness,
     Mode,
     ProcessOptions,
@@ -43,6 +44,10 @@ class Session(ABC):
     def send(self, text: str) -> None: ...
 
     @abstractmethod
+    def press(self, keys: Sequence[KeyPress]) -> None:
+        """DriverError without a terminal; ConfigError, nothing sent, if one is untranslatable."""
+
+    @abstractmethod
     def state(self) -> Liveness: ...
 
     @abstractmethod
@@ -69,7 +74,7 @@ class Session(ABC):
     def displayable(self) -> bool: ...
 
     @abstractmethod
-    def show(self, *, display: Display = None) -> str | None: ...
+    def show(self, *, display: Display = None, command: str | None = None) -> str | None: ...
 
     @abstractmethod
     def attach_command(self) -> str: ...
@@ -123,6 +128,11 @@ class Session(ABC):
         cls, name: str, *, host: str | None = None, idle_timeout: float | None = None
     ) -> Session:
         return cls._hosted("attach")(name, host=host, idle_timeout=idle_timeout)
+
+    @classmethod
+    def retire(cls, name: str, *, host: str | None = None) -> None:
+        """Close session `name` on `host` whatever its state (absent fine); drop its tui state."""
+        cls._hosted("retire")(name, host=host)
 
     @classmethod
     def inspect(cls, spec: Spec) -> SessionStatus:

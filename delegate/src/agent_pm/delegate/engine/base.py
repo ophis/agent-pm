@@ -21,7 +21,7 @@ class Delegate(ABC):
 
     @classmethod
     @abstractmethod
-    def usage(cls, role: str) -> Usage | None: ...
+    def usage(cls, role: str, *, overlays: Sequence[Mapping] = ()) -> Usage | None: ...
 
     @classmethod
     @abstractmethod

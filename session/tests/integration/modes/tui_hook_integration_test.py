@@ -6,144 +6,34 @@ import os
 import stat
 import subprocess
 import sys
-import tempfile
 import unittest
 import unittest.mock
 from contextlib import redirect_stderr
 
 from agent_pm.session.modes import tui_hook
 
-from session.tests.case import SRC, Case
+from session.tests.case import SRC
 from session.tests.source_roots import source_roots_cases
 from session.tests.tui_hook_support import (
     HOOK,
+    LINE,
+    LOOKUP,
+    PANE,
+    PROCESS,
     SOURCE_ROOTS,
-    WORDS,
-    identity,
-    install,
-    state,
+    TMUX,
+    HookBase,
+    MarkingCases,
+    PayloadCases,
+    RecordCases,
+    descriptor,
     write_state,
 )
 
-PANE = "%3"
-LINE = r"\A[0-9]{2}:[0-9]{2}:[0-9]{2} w1 %s\n\Z"  # one event line
-TS = r"\A\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}[+-]\d\d:\d\d\Z"
 MISSING = object()
-LOOKUP = ["display-message", "-p", "-t", "=w1:", "#{pane_id}\t#{@sid}\t#{@generation}"]
-TMUX = """#!{python} -I
-import json, os, sys
-with open(os.environ["TMUX_LOG"], "a") as f:
-    f.write(json.dumps(sys.argv[1:]) + "\\n")
-if os.environ.get("TMUX_FAIL"):
-    sys.exit("boom\\nagain")
-if sys.argv[1] == "display-message":
-    if "pane_id" in sys.argv[-1]:
-        print("" if os.environ.get("TMUX_TARGET_ABSENT") else "%3\\t" + os.environ["TMUX_TARGET_IDENTITY"])
-    else:
-        print("w1")
-"""
-DECOY = """#!{python} -I
-open({log!r}, "a").close()
-"""
 
 
-class HookBase(Case):
-    def setUp(self):
-        tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(tmp.cleanup)
-        self.root = os.path.realpath(tmp.name)
-        self.dir = os.path.join(self.root, "s1")
-        os.mkdir(self.dir, 0o700)
-        self.hooks = os.path.join(self.dir, "hooks.jsonl")
-        self.events = os.path.join(self.root, "events")
-        os.close(os.open(self.events, os.O_WRONLY | os.O_CREAT, 0o600))
-        self.tmux = install(os.path.join(self.root, "bin"), TMUX.format(python=sys.executable))
-        self.decoy = os.path.join(self.root, "decoy.log")
-        install(
-            os.path.join(self.root, "path"), DECOY.format(python=sys.executable, log=self.decoy)
-        )
-        self.log = os.path.join(self.root, "tmux.log")
-        self.env = {
-            "PATH": os.path.join(self.root, "path"),
-            "TMUX_PANE": PANE,
-            "TMUX_LOG": self.log,
-            "TMUX_TMPDIR": self.root,
-            "HOME": self.root,
-        }
-        self.state = state(self.root, self.events)
-        self.env["TMUX_TARGET_IDENTITY"] = identity(self.state)
-        write_state(self.dir, self.state)
-
-    def hook(self, label, payload=None, args=None, **env):
-        """Runs the hook (env: changes to self.env, None drops a key); checks it exits 0 printing
-        nothing on stdout; returns its stderr.
-        """
-        data = (
-            payload
-            if isinstance(payload, bytes)
-            else json.dumps({} if payload is None else payload).encode()
-        )
-        environ = {k: v for k, v in {**self.env, **env}.items() if v is not None}
-        res = subprocess.run(
-            [
-                sys.executable,
-                "-I",
-                HOOK,
-                *(
-                    [self.dir, json.dumps([self.root, *json.loads(SOURCE_ROOTS)]), label]
-                    if args is None
-                    else args
-                ),
-            ],
-            input=data,
-            capture_output=True,
-            env=environ,
-            timeout=60,
-        )
-        self.assertEqual((res.returncode, res.stdout), (0, b""), res.stderr)
-        return res.stderr.decode()
-
-    def assertError(self, err, text):
-        """err is one stderr line holding text."""
-        self.assertRegex(err, r"\Atui_hook: [^\n]*\n\Z")
-        self.assertIn(text, err)
-
-    def assertNothingWritten(self):
-        self.assertFalse(os.path.lexists(self.hooks))
-        self.assertEqual(self.calls(), [])
-        self.assertEqual(self.lines(), "")
-
-    def records(self):
-        with open(self.hooks, "rb") as f:
-            lines = f.read().split(b"\n")
-        self.assertEqual(lines[-1], b"")
-        return [json.loads(line) for line in lines[:-1]]
-
-    def calls(self):
-        try:
-            with open(self.log) as f:
-                return [json.loads(line) for line in f]
-        except FileNotFoundError:
-            return []
-
-    def lines(self):
-        with open(self.events) as f:
-            return f.read()
-
-    def reset(self):
-        open(self.events, "w").close()
-        if os.path.exists(self.log):
-            os.unlink(self.log)
-
-
-class MarkingTest(HookBase):
-    def test_a_failed_mark_is_one_stderr_line_after_the_record(self):
-        self.assertError(self.hook("stop", TMUX_FAIL="1"), "tmux: boom again")
-        os.unlink(self.events)
-        self.assertError(self.hook("ask"), "events file")
-        self.assertFalse(os.path.exists(self.events))
-        self.assertEqual([r["label"] for r in self.records()], ["stop", "ask"])
-
+class MarkingTest(MarkingCases, HookBase):
     def test_disabled_logging_reports_exactly_one_error_line_and_exits_zero(self):
         script = """import logging, runpy, sys
 logging.disable(logging.CRITICAL)
@@ -177,10 +67,8 @@ runpy.run_path(path, run_name="__main__")
     def test_adapter_error_is_one_stderr_line_without_a_record_or_mark(self):
         callback = os.path.join(self.root, "adapter.py")
         with open(callback, "w") as file:
-            file.write(
-                'def on_hook(label, payload, state):\n    raise RuntimeError("first\\nsecond")\n'
-            )
-        self.state["adapter_hook"] = "adapter"
+            file.write('def on_hook(call):\n    raise RuntimeError("first\\nsecond")\n')
+        self.state["adapter_hook"] = descriptor("adapter")
         write_state(self.dir, self.state)
         self.assertEqual(
             self.hook("stop", {"text": "payload"}), "tui_hook: RuntimeError: first second\n"
@@ -197,7 +85,7 @@ class ErrorLoggingTest(HookBase):
             file.write('raise RuntimeError("first\\nsecond")\n')
         with open(os.path.join(package, "callback.py"), "w") as file:
             file.write("def on_hook(*args): pass\n")
-        write_state(self.dir, {**self.state, "adapter_hook": "broken_package.callback"})
+        write_state(self.dir, {**self.state, "adapter_hook": descriptor("broken_package.callback")})
         self.assertEqual(self.hook("stop"), "tui_hook: RuntimeError: first second\n")
         with open(os.path.join(self.dir, "hook.log")) as file:
             trace = file.read()
@@ -209,10 +97,8 @@ class ErrorLoggingTest(HookBase):
     def test_adapter_failures_append_full_tracebacks_without_a_record_or_mark(self):
         callback = os.path.join(self.root, "adapter.py")
         with open(callback, "w") as file:
-            file.write(
-                'def on_hook(label, payload, state):\n    raise RuntimeError("first\\nsecond")\n'
-            )
-        self.state["adapter_hook"] = "adapter"
+            file.write('def on_hook(call):\n    raise RuntimeError("first\\nsecond")\n')
+        self.state["adapter_hook"] = descriptor("adapter")
         write_state(self.dir, self.state)
         error_log = os.path.join(self.dir, "hook.log")
         for count in (1, 2):
@@ -278,39 +164,16 @@ with mock.patch("builtins.open", side_effect=open_file):
         self.assertRegex(self.lines(), LINE % "done")
 
 
-class PayloadTest(HookBase):
-    def test_strs_over_4096_chars_are_cut_unless_the_word_is_done(self):
-        long = "\u00e9" * 5000
-        key = "k" * 5000
-        payload = {"a": long, "b": [{"c": "y" * 4097}, "z" * 4096], "n": 5, key: "v"}
-        cut = {"a": long[:4096], "b": [{"c": "y" * 4096}, "z" * 4096], "n": 5, key: "v"}
-        for label in ("tool", "ask", "other", "stop"):
-            self.assertEqual(self.hook(label, payload), "")
-        self.assertEqual([r["payload"] for r in self.records()], [cut, cut, cut, payload])
-
-    def test_bad_stdin_is_an_empty_payload_and_a_stderr_line(self):
-        cases = (
-            b"",
-            b"not json",
-            b"[1]",
-            b'"text"',
-            b"\xff\xfe\xfd",
-            b"[" * 100000,
-        )
-        for data in cases:
-            with self.subTest(data[:20]):
-                self.assertError(self.hook("tool", data), "payload")
-        self.assertEqual([r["payload"] for r in self.records()], [{}] * len(cases))
-
+class PayloadTest(PayloadCases, HookBase):
     def test_a_payload_of_64_mib_is_read(self):
         data = b'{"a": "' + b"x" * ((64 << 20) - 9) + b'"}'
         self.assertEqual(len(data), 64 << 20)
         callback = os.path.join(self.root, "adapter.py")
         with open(callback, "w") as file:
             file.write(
-                'def on_hook(label, payload, state):\n    payload["length"] = len(payload["a"])\n'
+                'def on_hook(call):\n    return {**call.payload, "length": len(call.payload["a"])}\n'
             )
-        self.state["adapter_hook"] = "adapter"
+        self.state["adapter_hook"] = descriptor("adapter")
         write_state(self.dir, self.state)
         self.assertEqual(self.hook("tool", data), "")
         self.assertEqual(
@@ -336,12 +199,13 @@ class PayloadTest(HookBase):
         callback = os.path.join(self.root, "adapter.py")
         with open(callback, "w") as file:
             file.write(
-                """def on_hook(label, payload, state):
-    payload["original_length"] = len(payload.get("text", ""))
-    return label != "ask"
+                """def on_hook(call):
+    if call.label == "ask":
+        return None
+    return {**call.payload, "original_length": len(call.payload.get("text", ""))}
 """
             )
-        self.state["adapter_hook"] = "adapter"
+        self.state["adapter_hook"] = descriptor("adapter")
         write_state(self.dir, self.state)
         self.assertEqual(self.hook("tool", {"text": "x" * 5000}), "")
         record = self.records()[0]
@@ -368,27 +232,25 @@ class PayloadTest(HookBase):
                 "adapter",
             ):
                 with self.subTest(kind=kind, module=name):
-                    write_state(self.dir, {**self.state, kind: name})
+                    write_state(self.dir, {**self.state, kind: descriptor(name)})
                     self.assertError(self.hook("stop"), kind.split("_")[0])
         self.assertNothingWritten()
 
 
-class RecordsTest(HookBase):
+class RecordsTest(RecordCases, HookBase):
     def test_host_callback_observes_the_journal_and_receives_the_mode_payload(self):
         callback = os.path.join(self.root, "host_callback.py")
         seen = os.path.join(self.root, "seen.jsonl")
         with open(callback, "w") as file:
             file.write(f"""import json
-def on_hook(word, payload, state):
+def on_hook(word, call):
     with open({self.hooks!r}) as journal:
         record = json.loads(journal.readlines()[-1])
-    assert record["payload"] == payload
+    assert record["payload"] == call.payload
     with open({seen!r}, "a") as output:
-        output.write(json.dumps([word, payload, state["host_state"]]) + "\\n")
+        output.write(json.dumps([word, call.payload, dict(call.state)]) + "\\n")
 """)
-        write_state(
-            self.dir, {**self.state, "host_hook": "host_callback", "host_state": {"key": 3}}
-        )
+        write_state(self.dir, {**self.state, "host_hook": descriptor("host_callback", {"key": 3})})
         payload = {"text": "x" * 5000}
         for label in ("tool", "stop", "other"):
             self.assertEqual(self.hook(label, payload), "")
@@ -442,95 +304,19 @@ for number in range(20):
         )
         self.assertEqual(self.calls(), [])
 
-    def test_each_call_appends_one_record_line_ts_label_payload(self):
-        payload = {"session_id": "s1", "text": "a\nb\u2028c\U0001f600", "n": [1, None, True, 2.5]}
-        self.assertEqual(self.hook("stop", payload), "")
-        self.assertEqual(self.hook("tool", {"tool_name": "Bash"}), "")
-        records = self.records()
-        self.assertEqual([list(r) for r in records], [["ts", "label", "payload"]] * 2)
-        self.assertEqual(
-            [(r["label"], r["payload"]) for r in records],
-            [("stop", payload), ("tool", {"tool_name": "Bash"})],
-        )
-        for record in records:
-            self.assertRegex(record["ts"], TS)
-        self.assertEqual(stat.S_IMODE(os.stat(self.hooks).st_mode), 0o600)
-
-    def test_each_word_marks_the_pane_done_and_blocked_with_an_event_line(self):
-        for label, word in WORDS.items():
-            with self.subTest(label):
-                self.reset()
-                self.assertEqual(self.hook(label), "")
-                calls = [LOOKUP, ["set-option", "-t", PANE, "@state", word]]
-                if word == "working":
-                    self.assertEqual(self.lines(), "")
-                else:
-                    calls.append(["display-message", "-p", "-t", PANE, "#S"])
-                    self.assertRegex(self.lines(), LINE % word)
-                self.assertEqual(self.calls(), calls)
-        self.assertEqual([r["label"] for r in self.records()], list(WORDS))
-
-    def test_the_tmux_session_json_names_runs_never_one_on_path(self):
-        self.assertEqual(self.hook("ask"), "")
-        self.assertEqual(
-            self.calls(),
-            [
-                LOOKUP,
-                ["set-option", "-t", PANE, "@state", "blocked"],
-                ["display-message", "-p", "-t", PANE, "#S"],
-            ],
-        )
-        self.assertRegex(self.lines(), LINE % "blocked")
-        self.assertFalse(os.path.exists(self.decoy))
-
     def test_a_tmux_that_is_no_regular_executable_file_is_one_stderr_line_after_the_record(self):
         plain = os.path.join(self.root, "plain")
         with open(plain, "w") as f:
-            f.write(TMUX.format(python=sys.executable))
+            f.write(TMUX.format(python=sys.executable, process=PROCESS))
         os.chmod(plain, 0o644)
         for tmux in (plain, os.path.join(self.root, "bin"), os.path.join(self.root, "missing")):
             with self.subTest(tmux):
-                write_state(self.dir, {**self.state, "host_state": {"executable": tmux}})
+                host = {**self.state["host_hook"], "state": {"executable": tmux}}
+                write_state(self.dir, {**self.state, "host_hook": host})
                 self.assertError(self.hook("stop"), tmux)
         self.assertEqual([r["label"] for r in self.records()], ["stop"] * 3)
         self.assertEqual((self.calls(), self.lines()), ([], ""))
         self.assertFalse(os.path.exists(self.decoy))
-
-    def test_a_label_without_a_word_is_recorded_and_marks_nothing(self):
-        self.assertEqual(self.hook("other", {"x": 1}), "")
-        self.assertEqual(
-            [(r["label"], r["payload"]) for r in self.records()], [("other", {"x": 1})]
-        )
-        self.assertEqual(self.calls(), [])
-
-    def test_no_events_file_marks_the_state_with_no_line(self):
-        write_state(self.dir, {**self.state, "events": None})
-        for label, word in WORDS.items():
-            with self.subTest(label):
-                self.reset()
-                self.assertEqual(self.hook(label), "")
-                self.assertEqual(self.calls(), [LOOKUP, ["set-option", "-t", PANE, "@state", word]])
-        self.assertEqual(self.lines(), "")
-        self.assertEqual(len(self.records()), 3)
-
-    def test_target_lookup_works_without_runtime_pane_environment(self):
-        for pane in (None, ""):
-            self.assertEqual(self.hook("stop", TMUX_PANE=pane), "")
-        self.assertEqual(len(self.records()), 2)
-        self.assertEqual(
-            self.calls(),
-            [
-                LOOKUP,
-                ["set-option", "-t", PANE, "@state", "done"],
-                ["display-message", "-p", "-t", PANE, "#S"],
-            ]
-            * 2,
-        )
-
-    def test_missing_target_journals_without_marking(self):
-        self.assertEqual(self.hook("stop", TMUX_TARGET_ABSENT="1"), "")
-        self.assertEqual(len(self.records()), 1)
-        self.assertEqual((self.calls(), self.lines()), ([LOOKUP], ""))
 
     def test_valid_edge_states_are_accepted(self):
         write_state(
@@ -594,7 +380,7 @@ with unittest.mock.patch("os.lstat", foreign_owner):
 """
         for kind in ("adapter_hook", "host_hook"):
             with self.subTest(kind=kind):
-                write_state(self.dir, {**self.state, kind: "agent_pm.callback"})
+                write_state(self.dir, {**self.state, kind: descriptor("agent_pm.callback")})
                 result = subprocess.run(
                     [
                         sys.executable,
@@ -631,9 +417,9 @@ with unittest.mock.patch("os.lstat", foreign_owner):
             with open(path, "w") as file:
                 file.write(f"with open({imported!r}, 'a') as marker: marker.write('imported\\n')\n")
                 file.write(
-                    "def on_hook(label, payload, state):\n    payload['callback_imported'] = True\n"
+                    "def on_hook(call):\n    return {**call.payload, 'callback_imported': True}\n"
                 )
-        self.state.update(adapter_hook="callback_package.nested.callback", words={})
+        self.state.update(adapter_hook=descriptor("callback_package.nested.callback"), words={})
         write_state(self.dir, self.state)
         return files, imported
 
@@ -752,9 +538,9 @@ with unittest.mock.patch("os.lstat", root_owner):
         callback = os.path.join(sources[1], "namespace", "nested", "callback.py")
         with open(callback, "w") as file:
             file.write(
-                "def on_hook(label, payload, state):\n    payload['callback_imported'] = True\n"
+                "def on_hook(call):\n    return {**call.payload, 'callback_imported': True}\n"
             )
-        self.state.update(adapter_hook="namespace.nested.callback", words={})
+        self.state.update(adapter_hook=descriptor("namespace.nested.callback"), words={})
         write_state(self.dir, self.state)
         roots = [*sources, *json.loads(SOURCE_ROOTS)]
         self.assertEqual(self.hook("stop", args=[self.dir, json.dumps(roots), "stop"]), "")
@@ -819,7 +605,7 @@ assert "callback_package" not in sys.modules
         )
         with open(callback, "w") as file:
             file.write(f"open({imported!r}, 'w').close()\n")
-        self.state["adapter_hook"] = "adapter"
+        self.state["adapter_hook"] = descriptor("adapter")
         write_state(self.dir, self.state)
         cases = {
             "malformed JSON": "not-json",
@@ -839,9 +625,9 @@ assert "callback_package" not in sys.modules
         callback = os.path.join(self.root, "adapter.py")
         with open(callback, "w") as file:
             file.write(
-                "def on_hook(label, payload, state):\n    payload['callback_imported'] = True\n"
+                "def on_hook(call):\n    return {**call.payload, 'callback_imported': True}\n"
             )
-        self.state.update(adapter_hook="adapter", words={})
+        self.state.update(adapter_hook=descriptor("adapter"), words={})
         write_state(self.dir, self.state)
         for name, roots in valid.items():
             with self.subTest(roots=name):
@@ -863,15 +649,17 @@ assert "callback_package" not in sys.modules
             file.write(
                 f"""import sys
 from source_marker import VALUE
-def on_hook(label, payload, state):
+def on_hook(call):
+    payload = dict(call.payload)
     payload["source"] = VALUE
     payload["roots"] = sys.path[:2]
     payload["counts"] = [sys.path.count(path) for path in sys.path[:2]]
     payload["import_roots"] = sys.path[:{len(roots)}]
     payload["tail"] = sys.path[{len(roots)}:]
+    return payload
 """
             )
-        self.state.update(adapter_hook="adapter", words={})
+        self.state.update(adapter_hook=descriptor("adapter"), words={})
         write_state(self.dir, self.state)
         script = """import io, json, runpy, sys
 path, folder, encoded = sys.argv[1:]

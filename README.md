@@ -28,6 +28,7 @@ flowchart TB
   subgraph LO[agent_pm.linear_orchestrator]
     R["engine/router.py<br>pick · usage gate"]
     RU["engine/run.py<br>one run · write-back"]
+    LR["engine/linear_run.py<br>Delegate ownership · queries"]
     PP["engine/promote.py → prune.py"]
     LC["engine/config.py<br>[core] overlay"]
   end
@@ -42,7 +43,8 @@ flowchart TB
     end
   end
   subgraph SE[agent_pm.session]
-    DR["engine/: base · hosted · forwarding · types · records<br>modes/: headless · tui · in_process<br>hosts/tmux/: host · tmux_host"]
+    SC["cli.py<br>agent-pm-session"]
+    DR["engine/: base · hosted · worker · forwarding · types · records<br>modes/: headless · tui · in_process<br>hosts/tmux/: host · transport · placement · grid"]
     subgraph AD[adapters/]
       CL[claude]
       CX[codex]
@@ -57,10 +59,14 @@ flowchart TB
   HU -.->|"--issue"| R
   HU -.->|"act-as · CLI"| D
   HU -.-> W
+  HU -.-> SC
+  SC --> DR
   R -.->|detached session| RU
   RU -->|agent_pm.delegate| D
-  LC -->|agent_pm.delegate| C
-  LO -->|"legacy agent_pm.session imports"| DR
+  R --> LR
+  LR -->|agent_pm.delegate| D
+  LC -->|"Delegate class methods"| D
+  R & RU -->|"legacy launch until TASK-374"| DR
   W -.-> CC
   D --> C
   D -->|agent_pm.session| SE
@@ -81,7 +87,8 @@ Before upgrading, close running agent-pm sessions: earlier sessions lack generat
 
 `/plugin marketplace add ophis/agent-pm`, then `/plugin install agent-pm@agent-pm` (a private repo: your git credentials). Requires the `claude` CLI, Python 3.11+ (stdlib only), tmux 3.3+ (tui runs), `git` and `gh` logged in (checkouts, the `github` and `pull-request` destinations), the `autopilot` plugin (plus `superpowers` for `build`), GitHub and the web; `osascript`, `pgrep` and a running iTerm2 only for the default iTerm2 split. Nothing checks them: a missing one fails the agent run. Agent runs load your user settings (`~/.claude/CLAUDE.md`, skills, permissions, plugins but `agent-pm`) and no MCP servers; a trusted cwd adds its project settings, `CLAUDE.md`, skills and `.mcp.json` (`delegate/src/agent_pm/delegate/config.toml`'s `cwd` and `trusted_dirs`).
 
-- `/agent-pm:tmux` and `ctmux`: removed, rebuilt by [TASK-356](https://linear.app/ophis-workgroup/issue/TASK-356).
+- `/agent-pm:tmux`: removed, rebuilt by [TASK-356](https://linear.app/ophis-workgroup/issue/TASK-356).
+- `ctmux <name>` (`manager/skills/tmux/scripts/ctmux`): the commander's tmux session `<name>`, attached through iTerm2's tmux integration (`-CC`). A new session's shell runs under `agent-pm-crew hold --manager=<name>`, which holds that manager's lease while the shell lives: start the commander's client in it. `agent-pm-crew` must be on the tmux server's PATH. `ctmux --install` copies the script to `~/.agent-pm/bin/ctmux` and prints that path.
 - `/agent-pm:manage`: coordinate the commander session through Crew; command guidance: `manager/skills/manage/SKILL.md`.
 - `/agent-pm:act-as <role>[:<task>] <input>`: run a core role in this conversation, on that task or one it picks: `delegate/skills/act-as/SKILL.md`.
 - Your own roles, tasks and templates, outside the plugin: `delegate/src/agent_pm/delegate/config.toml`'s `team_dirs` comment; `agent-pm-delegate run --list` (`delegate/src/agent_pm/delegate/cli.py`) lists every role and task.
@@ -106,7 +113,7 @@ launchd scheduling of router and promote returns with [TASK-379](https://linear.
 
 ### Local configuration migration
 
-Flat local files now fail validation. Move their top-level values into `[session]`, `[delegate]`, `[linear_orchestrator]` or `[manager]`, according to the project's `config.toml`. Prefix every table with that section: `[roles.engineer]` becomes `[delegate.roles.engineer]` for run settings, and `[linear_orchestrator.roles.engineer]` for board settings. Keep values and list contents unchanged. For a key defined by several layers, set it in every layer whose standalone reader needs the override; an upper packaged value takes precedence over a lower local value. Remove obsolete `show` keys. Old `core-new.local.toml` and `linear-new.local.toml` fragments belong under `delegate` and `linear_orchestrator` respectively. Migration is manual; no local file is rewritten.
+Flat local files now fail validation. Move their top-level values into `[session]`, `[delegate]`, `[linear_orchestrator]` or `[manager]`, according to the project's `config.toml`. Prefix every table with that section: `[roles.engineer]` becomes `[delegate.roles.engineer]` for run settings, and `[linear_orchestrator.roles.engineer]` for board settings. Keep values and list contents unchanged. For a key defined by several layers, set it in every layer whose standalone reader needs the override; an upper packaged value takes precedence over a lower local value. A `show` key belongs under `[delegate]` or `[delegate.roles.<role>]`. Old `core-new.local.toml` and `linear-new.local.toml` fragments belong under `delegate` and `linear_orchestrator` respectively. Migration is manual; no local file is rewritten.
 
 ```toml
 [session.hosts.tmux]
@@ -150,7 +157,7 @@ flowchart LR
 
 ### Task labels
 
-The issue's label in the `Tasks` label group names one of the assignee role's tasks by its id, through `[task_labels]`, so renaming a label keeps working: the agent run does exactly that task. No such label → the agent run picks one from its role's task index (`delegate/src/agent_pm/delegate/team/roles/<role>.md` › Tasks: what each task does, when to use it, how heavy; unsure → the default it names), and its start comment names the pick and why. A label not in `[task_labels]`, a task not the role's, or several task labels → no agent run, no attempt counted: the router subscribes you, moves the issue to In Review and comments why; fix the label, move it back to Todo. To upgrade a Light Research issue, swap in the Deep Research label, comment the claims to verify and move it back to Todo: the next agent run is `deep-research`, with the earlier report in its input. A resumed agent run keeps its session's task whatever the labels say (`<work_dir>/logs/runs.jsonl` keeps only the role); an interrupted agent run whose logged role is not the assignee's goes to In Review with a comment.
+The issue's label in the `Tasks` label group names one of the assignee role's tasks by its id, through `[task_labels]`, so renaming a label keeps working: the agent run does exactly that task. No such label → the agent run picks one from its role's task index (`delegate/src/agent_pm/delegate/team/roles/<role>.md` › Tasks: what each task does, when to use it, how heavy; unsure → the default it names), and its start comment names the pick and why. A label not in `[task_labels]`, a task not the role's, or several task labels → no agent run, no attempt counted: the router subscribes you, moves the issue to In Review and comments why; fix the label, move it back to Todo. To upgrade a Light Research issue, swap in the Deep Research label, comment the claims to verify and move it back to Todo: the next agent run is `deep-research`, with the earlier report in its input. A resumed agent run keeps its session's task whatever the labels say; an interrupted agent run whose logged role is not the assignee's goes to In Review with a comment.
 
 **Upgrade** from task-level config: a role table holding `default_task` or `tasks` stops agent runs with a config error naming its new table. Drop `default_task`; move the keys of `config.local.toml`'s `[delegate.roles.<role>.tasks.<task>]` to `[delegate.roles.<role>]` and of its `[delegate.clients.<name>.roles.<role>.tasks.<task>]` to `[delegate.clients.<name>.roles.<role>]` (e.g. `[delegate.clients.skill.roles.<role>.output]`), of its `[linear_orchestrator.core.roles.<role>.tasks.<task>]` to `[linear_orchestrator.core.roles.<role>]`. Then do Operating's Upgrade too.
 
@@ -176,7 +183,7 @@ tmux attach -t '=agent-pm-<role>-<ID>'                       # watch one agent r
 | Log | Contents |
 |---|---|
 | `<work_dir>/logs/orchestrator.jsonl` | Every router, promote, prune, run and write-back event, one JSON object a line: `ts`, `src`, `kind`, then `issue` when it has one. An idle tick writes none; the same skip, config-load error or Linear outage (`linear-error`: a 5xx, rate limit, timeout or network error; the run stops, the next retries), once a day |
-| `<work_dir>/logs/runs.jsonl` | Agent run start/resume lines of the last 7 days: keep it, resume and Recover read it |
+| `<work_dir>/logs/runs.jsonl` | Start/resume rows from the last 7 days, every issue's latest session rows regardless of age, and unexpired usage limits. Rows record Delegate kind and runtime; legacy rows use the fixed `harness` registration. Keep it: resume and Recover read it |
 
 An agent run's workdir `<work_dir>/work/<ID>/` holds `run.jsonl` (its record: input, sessions, progress, outcome; headless, the client's stderr), `writeback.json` (the write-back steps done) and, for a `local` or `orchestrator` destination, `out.md` (the deliverable); `src/`, `publish/` and `tmp/` are workspaces (Finish). Documents are published from the agent run's clone in `publish/`: `git pull` your own docs clone to see them. Each session gets a `Run <sid>` comment on its issue, holding `cd <cwd> && claude --resume <sid>`: to open the session, first move the issue out of In Progress, or the router may resume it once idle 30 minutes. Moving `<work_dir>` or a run's cwd breaks resuming its in-progress agent runs.
 
@@ -188,7 +195,7 @@ rm -rf ~/.agent-pm/logs/runs.log ~/.agent-pm/logs/router.log ~/.agent-pm/logs/pr
 
 ### Attended runs
 
-A `tui` run's give-up timeout, its default and where to set it: `delegate/src/agent_pm/delegate/config.toml`'s `idle_timeout` comment.
+A `tui` run's give-up timeout, its default and where to set it: `delegate/src/agent_pm/delegate/config.toml`'s `idle_timeout` comment. How a started `tui` session with a display is shown (a pane, only its attach command, or a command of yours): the same file's `show` comment.
 
 The old router's `--tui` is gone; the new router gains it in [TASK-332](https://linear.app/ophis-workgroup/issue/TASK-332).
 
@@ -196,17 +203,35 @@ The old router's `--tui` is gone; the new router gains it in [TASK-332](https://
 
 ```text
 delegate/             the Delegate (one role's run), the Composer, the built-in team; shared event/ and config.py
-session/              the session: an Adapter per runtime, Modes, Hosts (tmux)
+session/              the session: an Adapter per runtime, Modes, Hosts (tmux); cli.py: agent-pm-session
 utils/                shared utilities
 manager/              cli.py, engine/crew.py, roster.py and events.py: commands and bookkeeping
 linear-orchestrator/  cli.py: router, run, promote; engine/: scheduling, client, log, ops, issues, run_comments, writeback
-tests/                repo-wide checks: guards.py (rules), checks.py (runner), case.py and suites
+tests/                repo-wide checks: guard_checks/ (rules), guard_data/ (each layer's exceptions), checks.py (runner), case.py and suites
 .github/              CI workflows and their helpers
 ```
 
 The Delegate's `Driver`, `AgentDriver` and `InstructionDriver` live in `delegate/src/agent_pm/delegate/engine/drivers.py`; definitions: `CONTEXT.md` › Driver.
 
 Each project holds `src/agent_pm/<its package>/` (one PEP 420 namespace package `agent_pm` over the five `src/` roots) and `tests/`. Session, Delegate and orchestration configuration ships inside their packages. Each module's docstring states its behaviour.
+
+## agent-pm-session
+
+`bin/agent-pm-session` is the session layer's command (`--help` lists its subcommands and each Host's
+`--display` format). `start NAME --runtime R [--cwd D] [--resume SID] [--prompt T] [--env K=V]…
+[--display D] [-- FLAGS…]` starts a worker, a plain tui session of runtime R with its state in
+`~/.agent-pm/workers/<sid>/worker.json`; it prints the worker's Record once the runtime has run 5 s
+without exiting. Its session id is `--resume SID`, else `$AGENT_PM_SID`, else a new one; the two
+must agree. There is no default runtime. `resume NAME` prints a live worker's Record and starts
+nothing, else resumes it; `restart NAME` restarts it in place; both wait for the old runtime's
+process group to exit first (10 s, then a kill). `send NAME --key K…` takes keys as one character
+or `Enter`, `Escape`, `Tab`, `BTab`, `BSpace`, `Up`, `Down`, `Left`, `Right`, `Home`, `End`,
+`PageUp`, `PageDown`, `F1`–`F12`, after any of `C-`, `M-`, `S-`.
+
+Plain `ls` prints a header line, then one tab-separated row per session: `name`, `state`
+(`working`, `done`, `blocked` or `dead`), `runtime`, `sid` and `display`, `-` for none. `ls
+--records` prints only the Records sessions hold, one JSON line each; `--here` lists the sessions
+the caller opened (`--descendants`: and those they opened, transitively).
 
 ## Runtime policy
 
@@ -216,11 +241,13 @@ The default policy sets Claude `--permission-mode auto`, `--strict-mcp-config` a
 
 For existing `~/.agent-pm/config.local.toml` overrides, remove `[session.adapters.codex]` `sandbox` and `shell_network`: those keys now fail validation. Express them in `[delegate.policy.codex].flags` using the options above. Move Claude `--permission-mode` and `--strict-mcp-config` from `[session.adapters.claude].flags` into `[delegate.policy.claude].flags`; keep there only flags every session, workers included, should get. Policy flag lists replace the defaults wholesale, so repeat every option you intend to keep.
 
-Codex snapshots save flags and the merged Adapter, Access and Spec environment. Resume replays them, ignoring current policy and new Spec flags/env; grants are also saved. Snapshots from before this contract fail with `unsupported legacy Codex recovery snapshot: start a new session`; they are not migrated. Access write directories are always emitted as `--add-dir`, including full-access runs.
+Codex snapshots save flags and the merged Adapter, Access and Spec environment. Resume replays them, ignoring current policy and new Spec flags/env; grants are also saved. The public resume command (run.jsonl, session comments) holds no environment values: it runs `session/src/agent_pm/session/adapters/codex/common/resume.py`, which reads them from the snapshot. Snapshots from before this contract fail with `unsupported legacy Codex recovery snapshot: start a new session`; they are not migrated. Access write directories are always emitted as `--add-dir`, including full-access runs.
 
 ## Access
 
 A run's `read` dirs and its role's tasks dir are never `--add-dir`: no runtime is granted write to them. Codex has no read-only-dir mechanism usable here, so it adds nothing for them: under `workspace-write` its sandbox reads the whole disk and writes only its roots; under the default `danger-full-access` (Runtime policy, above) it can write them too. Each runtime's grant and its limits: `delegate/src/agent_pm/delegate/config.toml`'s `read` comment.
+
+A `tui` run fails with a `ConfigError` before launch when its cwd, a write dir or a dir its runtime can write overlaps a TUI hook path: the tmux executable, the events file or `~/.agent-pm/tui` (`session/src/agent_pm/session/modes/base.py` `check_protection`).
 
 ## Tests
 
@@ -237,6 +264,7 @@ ruff format --check --no-cache
 pyright
 lint-imports --no-cache
 pylint --disable=all --enable=cyclic-import,duplicate-code manager/src linear-orchestrator/src delegate/src session/src utils/src
+vulture
 python3 -m tests.checks
 python3 .github/run_tests.py "Repository integration" tests/integration
 python3 .github/integration_jobs.py --check
@@ -260,5 +288,5 @@ Fake and real implementations share contract assertions.
 `.github/run_tests.py` resets HOME, temporary roots and Git configuration before supervision.
 `.github/isolation.py` installs interpreter audit hooks and unit PATH blockers for git, tmux,
 claude and codex. `tests/integration/unit_imports_integration_test.py` applies Ruff TID251 to unit
-imports. `tests/guards.py` requires the migration allowlist to remain empty; interpreter gates
+imports. The migration allowlist in `tests/guards.py` must remain empty; interpreter gates
 permit no unit exemptions. Run tests through these supervised entries.

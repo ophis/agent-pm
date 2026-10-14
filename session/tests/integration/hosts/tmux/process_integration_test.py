@@ -6,8 +6,8 @@ from pathlib import Path
 from unittest import mock
 
 from agent_pm.session import DriverError
-from agent_pm.session.hosts.tmux import tmux_host
-from agent_pm.session.hosts.tmux.tmux_host import TuiError
+from agent_pm.session.hosts.tmux.host import TmuxProcess, TmuxTerminal
+from agent_pm.session.hosts.tmux.types import PaneStatus, TuiError
 from agent_pm.utils import ProcessControl
 
 from session.tests.tmux_host_support import LINE, PROCESS, Base
@@ -27,6 +27,21 @@ class AttachmentBase(Base):
 
 
 class AttachListTest(AttachmentBase):
+    def test_a_launched_session_is_the_pane_it_recorded_not_its_active_one(self):
+        self.tmux.process.side_effect = lambda target: (
+            "4242 $3 %9 5555" if target == "w1" else PROCESS if target == "%7" else None
+        )
+        self.connection.connect.side_effect = ConnectionRefusedError
+        for kind, cls in (("detach", TmuxProcess), ("terminal", TmuxTerminal)):
+            with self.subTest(kind=kind):
+                self.kind = kind
+                self.tmux.kill.reset_mock()
+                handle = self.host.attach("w1")
+                self.assertIs(type(handle), cls)
+                self.assertEqual(handle.identity, PROCESS)
+                handle.close()
+                self.tmux.kill.assert_called_once_with("%7")
+
     def test_a_terminal_without_a_controller_is_refused(self):
         self.kind, self.controlled = "terminal", False
         with self.assertRaisesRegex(DriverError, "tmux session tui: missing @control"):
@@ -80,15 +95,16 @@ class AttachListTest(AttachmentBase):
         self.assertEqual(self.host.attach("d1").name, "d1")
         for name, state, message in (
             ("d1", None, "no tmux session d1"),
-            ("d1", tmux_host.PaneStatus.UNKNOWN, "tmux session d1: tmux failed"),
-            ("a b", tmux_host.PaneStatus.RUNNING, "no tmux session 'a b'"),
+            ("d1", PaneStatus.UNKNOWN, "tmux session d1: tmux failed"),
+            ("a b", PaneStatus.RUNNING, "no tmux session 'a b'"),
         ):
             with self.subTest(name=name, state=state):
                 self.tmux.status.return_value = state
                 with self.assertRaises(DriverError) as caught:
                     self.host.attach(name)
                 self.assertEqual(str(caught.exception), message)
-        self.tmux.status.return_value = tmux_host.PaneStatus.RUNNING
+        self.tmux.status.return_value = PaneStatus.RUNNING
+        self.kind, self.controlled = None, False
         for found, message in (
             (None, "no tmux session d1"),
             (TuiError("tmux: boom"), "tmux session d1: tmux: boom"),
@@ -164,8 +180,8 @@ class ProcessTest(AttachmentBase):
         self.active({"live": False})
         process = self.host.attach("d1")
         self.tmux.status.side_effect = [
-            tmux_host.PaneStatus.RUNNING,
-            tmux_host.PaneStatus.RUNNING,
+            PaneStatus.RUNNING,
+            PaneStatus.RUNNING,
             0,
             None,
         ]
@@ -173,10 +189,10 @@ class ProcessTest(AttachmentBase):
         self.assertTrue(process.wait_exit(5))
         self.assertFalse(process.alive())
         self.tmux.status.side_effect = None
-        self.tmux.status.return_value = tmux_host.PaneStatus.RUNNING
+        self.tmux.status.return_value = PaneStatus.RUNNING
         process = self.host.attach("d1")
         self.assertFalse(process.wait_exit(0))
-        self.tmux.status.return_value = tmux_host.PaneStatus.UNKNOWN
+        self.tmux.status.return_value = PaneStatus.UNKNOWN
         with self.assertRaisesRegex(DriverError, "^tmux session d1: tmux failed$"):
             process.alive()
 
@@ -250,7 +266,9 @@ class ProcessTest(AttachmentBase):
                     (process.alive(), process.record(), process.display()), (False, None, None)
                 )
                 process.close()
-                self.tmux.status.assert_not_called()
+                self.assertEqual(
+                    {c.args for c in self.tmux.process_status.call_args_list}, {("%7",)}
+                )
                 self.tmux.option.assert_not_called()
                 self.tmux.kill.assert_not_called()
                 self.tmux.process.assert_called_with("%7")

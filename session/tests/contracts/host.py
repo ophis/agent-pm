@@ -16,7 +16,7 @@ from unittest import mock
 
 from agent_pm.session import Displayable, DriverError, Host, Mode, NotDisplayable, Spec
 from agent_pm.session.engine.hosted import HostedSession
-from agent_pm.session.engine.types import Key, Launch, Paste
+from agent_pm.session.engine.types import Key, KeyPress, Launch, Paste
 from agent_pm.utils import Record
 
 from session.tests import fake_adapter
@@ -52,6 +52,18 @@ LEAVE = (
     "    time.sleep(0.01)\n"
     "put(f'{os.getpid()} {child.pid}')\n"
 )
+RAW = (
+    PUT + "import tty\n"
+    "if os.isatty(0):\n"
+    "    tty.setraw(0)\n"
+    "seen = b''\n"
+    "put(seen.hex())\n"
+    "while not seen.endswith(b'q'):\n"
+    "    seen += os.read(0, 64)\n"
+    "    put(seen.hex())\n"
+)
+PRESSED = ("Escape", "3", "Up", "BTab", "C-c", "q")
+RECEIVED = b"\x1b3\x1b[A\x1b[Z\x03q"
 CHILD = """import json, sys
 from agent_pm.session import Host, Launch
 from agent_pm.utils import load_class
@@ -85,9 +97,6 @@ def gone(pid: int) -> bool:
 class HostContract:
     def make_host(self) -> Host:
         raise NotImplementedError
-
-    def terminal_env(self, name: str) -> dict[str, str]:
-        return {}
 
     def setUp(self):
         super().setUp()
@@ -160,6 +169,13 @@ class HostContract:
         terminal.send(Paste("hello host"))
         terminal.send(Key("Enter"))
         self.poll(lambda: (read(out) or "").rstrip("\r\n") == "hello host", f"line in {out}")
+
+    def test_keys_in_the_session_notation_reach_the_terminal_program_translated(self):
+        name, out = self.fresh(), self.file("keys")
+        terminal = self.start("terminal", name, RAW, out)
+        self.poll(lambda: read(out) == "", f"raw input in {out}")
+        terminal.press(tuple(map(KeyPress.parse, PRESSED)))
+        self.poll(lambda: read(out) == RECEIVED.hex(), f"{RECEIVED!r} in {out}")
 
     def test_the_program_gets_the_supplied_environment_verbatim(self):
         for kind in ("detach", "terminal"):
@@ -294,6 +310,17 @@ class HostContract:
         with self.assertRaises(DriverError):
             self.host.attach(name)
 
+    def test_publish_stores_the_record_attach_returns_and_needs_a_live_session(self):
+        name = self.fresh()
+        terminal = self.start("terminal", name, SLEEP)
+        self.assertIsNone(self.host.attach(name).record())
+        published = self.a_record(name)
+        terminal.publish(published)
+        self.assertEqual(self.host.attach(name).record(), published)
+        terminal.close()
+        with self.assertRaises(DriverError):
+            terminal.publish(published)
+
     def test_attach_of_an_unknown_name_raises_driver_error(self):
         with self.assertRaises(DriverError):
             self.host.attach(f"nope-{uuid.uuid4().hex[:12]}")
@@ -336,14 +363,14 @@ class HostContract:
 
     def test_a_host_that_cannot_display_returns_each_display_as_given(self):
         if isinstance(self.host, Displayable):
-            self.skipTest("a Displayable Host's display cases: TASK-368 (356-8)")
+            self.skipTest("applies only to a Host that cannot display")
         for value in (None, "", OTHER_DISPLAY):
             with self.subTest(value=value):
                 self.assertEqual(self.host.display(value), value)
 
     def test_a_session_on_a_host_that_cannot_display_refuses_show_attach_command_and_screen(self):
         if isinstance(self.host, Displayable):
-            self.skipTest("a Displayable Host's display cases: TASK-368 (356-8)")
+            self.skipTest("applies only to a Host that cannot display")
         scenario, kind = self.file("scenario"), type(self.host)
         with open(scenario, "w", encoding="utf-8") as f:
             json.dump([{"out": {"type": "message", "text": "hi"}}], f)

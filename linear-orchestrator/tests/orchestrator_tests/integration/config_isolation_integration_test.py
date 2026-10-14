@@ -153,7 +153,7 @@ class RunnableClones(Clones):
             self.assertEqual(list(self.load(PIPELINE).roles), ["researcher", "pm", "engineer"])
         self.assertTrue(git_calls.call_args_list)
         self.assertTrue(
-            all("remote" not in call.args[0] for call in git_calls.call_args_list),
+            all("rev-parse" in call.args[0] for call in git_calls.call_args_list),
             git_calls.call_args_list,
         )
 
@@ -211,7 +211,7 @@ class TeamDirectoryIsolation(ConfigFile, Case):
                 out=os.path.join(self.work, "out.md"),
                 cwd=self.work,
             ),
-            driver=cfg.driver,
+            driver=delegate.configure(),
         )
 
     def test_team_dirs_change_no_orchestrator_run(self):

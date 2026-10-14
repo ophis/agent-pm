@@ -54,6 +54,12 @@ class MemoryTerminal(Terminal):
             raise DriverError(f"terminal {self.name} is not running")
         self.calls.send(action)
 
+    def press(self, keys):
+        keys = tuple(keys)
+        if not self.alive():
+            raise DriverError(f"terminal {self.name} is not running")
+        self.calls.press(keys)
+
     def close(self):
         self.calls.close()
         if self._own():
@@ -86,8 +92,7 @@ class MemoryTerminal(Terminal):
             self.metadata.get("sid") if receipt is None else receipt.sid,
             self.metadata.get("runtime") if receipt is None else receipt.kind,
             ActivityState.WORKING if self.alive() else ActivityState.DEAD,
-            None,
-            None,
+            self.display(),
             None,
             None,
             own=receipt is not None or self.metadata.get("sid") is not None,
@@ -100,7 +105,7 @@ class MemoryHost(Host):
         self.calls = mock.Mock()
         self.processes = {}
         self.serial = 0
-        self.protected, self.hook = protected, {} if hook is None else hook
+        self.protected, self.hook = protected, hook
         self.calls.list.return_value = None
         self.calls.display.return_value = None
 
@@ -123,8 +128,8 @@ class MemoryHost(Host):
         self.calls.protected_paths()
         return self.protected
 
-    def hook_state(self, name, metadata):
-        self.calls.hook_state(name, metadata)
+    def hook_callback(self, name, metadata):
+        self.calls.hook_callback(name, metadata)
         return self.hook
 
     def display(self, value):
@@ -173,8 +178,8 @@ class ScreenHost(MemoryHost, Displayable):
             raise DriverError(f"terminal {name.name} is not running")
         return self.calls.screen(name, lines)
 
-    def show(self, name, *, display=None):
-        return self.calls.show(name, display=display)
+    def show(self, name, *, display=None, command=None):
+        return self.calls.show(name, display=display, command=command)
 
     def attach_command(self, name):
         return self.calls.attach_command(name)

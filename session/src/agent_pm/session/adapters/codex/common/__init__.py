@@ -22,6 +22,7 @@ from types import MappingProxyType
 from typing import Literal, overload
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+import agent_pm.utils
 from agent_pm.session.adapters.codex.common import app_server
 from agent_pm.session.adapters.codex.common.types import (
     NativeMetadata,
@@ -40,7 +41,7 @@ from agent_pm.session.engine.types import (
     Usage,
     Window,
 )
-from agent_pm.utils import LOCAL_ENV_VARS, environment_ok, number, resume_command
+from agent_pm.utils import LOCAL_ENV_VARS, environment_ok, module_roots, number, resume_command
 
 TABLE = "[adapters.codex]"
 LIMIT_PREFIXES = (
@@ -77,6 +78,8 @@ _SESSION_VERSION = 1
 _SESSION_KEYS = frozenset({"version", "workdir", "sid", "snapshot", "native_id", "writable_roots"})
 
 _MAX_SESSION_BYTES = 64 * 1024
+
+RESUME = os.path.join(os.path.dirname(os.path.abspath(__file__)), "resume.py")
 
 
 class RecoveryError(Exception):
@@ -677,6 +680,12 @@ def refuse(flags) -> None:
             raise ConfigError(f"{flag.text}: the Codex adapter sets hooks, session and cwd")
 
 
+def _native_id(state: SessionState) -> str:
+    if state.native_id is None:
+        raise ConfigError(f"missing Codex native ID for run ID {state.sid!r}")
+    return state.native_id
+
+
 def _recover(method):
     @wraps(method)
     def translated(*args, **kwargs):
@@ -957,19 +966,24 @@ class CodexCommon:
         snapshot = limits.get("codex") if isinstance(limits, dict) else None
         return _usage(snapshot if isinstance(snapshot, dict) else result.get("rateLimits"))
 
-    def resume_command(self, state: SessionState) -> str:
+    def resume_launch(self, state: SessionState) -> Launch:
         snapshot = state.snapshot
-        selection = self.selector(state.native_id, resume=True)
+        selection = self.selector(_native_id(state), resume=True)
         _, literal = split_flags(snapshot.flags)
-        argv = [
+        argv = (
             "codex",
             *selection[:-1],
             *launch_flags(snapshot, interactive=True),
             *selection[-1:],
             *literal,
-        ]
-        env = self.environment(snapshot, interactive=True)
-        return resume_command(snapshot.cwd, env, argv)
+        )
+        return Launch(argv, env=self.environment(snapshot, interactive=True), cwd=snapshot.cwd)
+
+    def resume_command(self, state: SessionState) -> str:
+        """A reference to the stored launch, which resume.py execs; it never holds env values."""
+        roots = json.dumps(module_roots(sys.modules[__name__], agent_pm.utils))
+        argv = (sys.executable, "-I", RESUME, roots, self.store.root, state.workdir, state.sid)
+        return resume_command(state.snapshot.cwd, {}, (*argv, _native_id(state)))
 
     @_recover
     def lookup(self, sid: str, cwd: str) -> SessionState | None:

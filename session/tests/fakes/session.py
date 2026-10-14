@@ -61,6 +61,9 @@ class FakeSession(Session):
     def send(self, text: str) -> None:
         self.sent.append(text)
 
+    def press(self, keys) -> None:
+        self.sent.append(tuple(keys))
+
     def state(self) -> Liveness:
         return self._state
 
@@ -95,7 +98,7 @@ class FakeSession(Session):
     def displayable(self) -> bool:
         return False
 
-    def show(self, *, display=None):
+    def show(self, *, display=None, command=None):
         raise NotDisplayable("host none cannot display")
 
     def attach_command(self):
@@ -137,8 +140,7 @@ class FakeSession(Session):
                 sid=s.sid,
                 runtime=s.runtime,
                 state="working",
-                pane=None,
-                opener=None,
+                display=None,
                 shown=None,
                 last_lines=None,
                 own=False,

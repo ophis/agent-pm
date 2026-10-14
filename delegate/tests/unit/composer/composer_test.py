@@ -25,6 +25,7 @@ CONFIG = {
     "tier": 2,
     "effort": "high",
     "idle_timeout": 60,
+    "show": "",
     "runtime": "runtime-a",
     "language": "English",
     "output": {"type": "local"},
@@ -43,12 +44,6 @@ PARAMS = RunParams(input="  # Literal\n\n```\n{{role}}\n```  ", out="/work/out.m
 
 
 class OwnedComposer(Case):
-    def test_plain_input_uses_the_current_workdir_default_deliverable(self):
-        with mock.patch("os.getcwd", return_value="/work"):
-            prompt = self.composer.compose("writer", None, "  Plain text.  ")
-        self.assertIn("Save <Workdir>/tmp/deliverable.md.", prompt)
-        self.assertTrue(prompt.endswith("\n# Input\n\nPlain text.\n"))
-
     def setUp(self):
         self.enterContext(
             mock.patch("builtins.open", side_effect=lambda path: io.StringIO(TEXTS[path]))
@@ -61,6 +56,7 @@ class OwnedComposer(Case):
             "tier": 2,
             "effort": "high",
             "idle_timeout": 60,
+            "show": "",
             "runtime": "runtime-a",
             "roles": {"writer": {"read": ["/read/a"]}},
             "output": {"type": "local"},
@@ -103,8 +99,8 @@ class OwnedComposer(Case):
         self.assertEqual(self.composer.index("writer"), expected["writer"])
         self.assertEqual(self.composer.trusted_dirs(), frozenset({"/operator/trusted"}))
 
-    def test_compose_and_render_keep_placement_resume_and_literal_input(self):
-        prompt = self.composer.compose("writer", "note", PARAMS)
+    def test_render_keeps_placement_resume_and_literal_input(self):
+        prompt = self.composer.render(self.composer.resolve("writer", "note"), PARAMS)
         self.assertTrue(
             prompt.startswith("# Guide\n\nYou are Writer. Task: `note` (`<tasks>/note.md`).")
         )

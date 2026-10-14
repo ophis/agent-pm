@@ -13,6 +13,7 @@ def sid_error(sid) -> str | None:
 
 
 def one_line(value):
+    # Other exception attributes may contain credentials.
     text = f"{type(value).__name__}: {value}" if isinstance(value, BaseException) else str(value)
     return " ".join(text.split())
 

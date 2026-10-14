@@ -26,6 +26,7 @@ from agent_pm.session.engine.types import (
 from agent_pm.session.modes.in_process import InProcessMode
 
 from session.tests.case import Case
+from session.tests.fakes.terminal import MemoryHost
 
 WAIT = 10  # upper bound on any wait, in seconds
 SHORT = 0.2  # a timeout that must lapse, in seconds
@@ -92,6 +93,7 @@ class Base(Case):
             adapter,
             registry=self.driver.registry,
             record=record or self.recorded.append,
+            host=MemoryHost(),
             display=display,
         )
         return self.mode.prepared
@@ -379,7 +381,11 @@ class Start(Base):
     def test_start_returns_its_session_running_at_once_with_its_prepared(self):
         script, reached, release, _ = self.held()
         mode = InProcessMode.start(
-            SPEC, StubAdapter(script), registry=self.driver.registry, record=self.recorded.append
+            SPEC,
+            StubAdapter(script),
+            registry=self.driver.registry,
+            record=self.recorded.append,
+            host=MemoryHost(),
         )
         self.addCleanup(mode.stop)
         self.assertIsInstance(mode, InProcessMode)

@@ -16,8 +16,9 @@ from types import SimpleNamespace
 
 from agent_pm.session.engine.types import Launch
 from agent_pm.session.hosts.tmux import grid as grids
-from agent_pm.session.hosts.tmux import iterm, placement, tmux_host, types
+from agent_pm.session.hosts.tmux import iterm, placement, types
 from agent_pm.session.hosts.tmux import layout as layouts
+from agent_pm.session.hosts.tmux.host import EXEC, Tmux
 
 from session.tests.case import Case
 from utils.tests.process_fixtures import DEVNULL
@@ -301,6 +302,11 @@ def chained(calls):
     return [arg for call in calls for arg in (";", *call[1:])]
 
 
+def recorded(session):
+    """The creating call's last command: its new pane's identity (NEW's format) as @process."""
+    return [";", "set-option", "-F", "-t", f"={session}:", "@process", NEW[2]]
+
+
 def expected_panes(*rows):
     """Print (pane_dead, pane_tty, pane_id) rows in the list-panes call's -F format."""
 
@@ -316,7 +322,7 @@ def expected_panes(*rows):
     return result
 
 
-class Tmux:
+class FakeTmux:
     """Plays tmux, and sh and osascript: records each call. `results` maps a tmux command (after any
     -u) or another program to its (rc, stdout, stderr), an exception to raise, or a function of the
     argv giving either. `pane` is what display-message prints (None: no server). On new-session it
@@ -361,7 +367,7 @@ class Tmux:
         return done(argv)
 
     def take_launch(self, argv):
-        at = argv.index(tmux_host.EXEC)
+        at = argv.index(EXEC)
         self.path, self.fifo = argv[at + 1 : at + 3]
         self.mode = stat.S_IMODE(os.stat(self.path).st_mode)
         self.dir_mode = stat.S_IMODE(os.stat(os.path.dirname(self.path)).st_mode)
@@ -434,7 +440,7 @@ def expected_row(name, **fields):
 
 
 def seq(*results):
-    """A Tmux result giving each of results in turn."""
+    """A FakeTmux result giving each of results in turn."""
     it = iter(results)
     return lambda _argv: next(it)
 
@@ -497,8 +503,8 @@ class StartFixture(Case):
     def start(self, fake, session="s", argv=("tool", "-x", "a b"), env=None, **kw):
         env = {"PATH": self.bin, "HOME": "/h"} if env is None else env
         with redirect_stderr(self.stderr):
-            tmux_host.start(
-                session, Launch(tuple(argv), env, cwd=self.cwd), **kw, proc=fake, sleep=self.sleep
+            return Tmux(fake, self.sleep).start(
+                session, Launch(tuple(argv), env, cwd=self.cwd), **kw
             )
 
 
@@ -657,7 +663,7 @@ class TileFixture(Case):
                 "\t".join((*map(str, size), zoomed, layout, manager, n, recorded, tiles)) + "\n",
             ),
         }
-        return Tmux(
+        return FakeTmux(
             fail=fail,
             results={
                 "display-message": lambda argv: printed.get(argv[-1], message),

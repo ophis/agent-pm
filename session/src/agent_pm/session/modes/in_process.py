@@ -26,6 +26,7 @@ from agent_pm.session.engine.types import (
     Spec,
     Stderr,
 )
+from agent_pm.session.hosts.base import Host
 from agent_pm.session.modes.base import RunningMode
 from agent_pm.utils import Display
 
@@ -47,7 +48,7 @@ class InProcessMode(RunningMode):
         adapter: Adapter,
         *,
         registry: Registry,
-        host=None,
+        host: Host,
         display: Display = None,
     ) -> Prepared:
         return cls._prepare(spec, adapter, display=display)[0]
@@ -81,7 +82,7 @@ class InProcessMode(RunningMode):
         *,
         registry: Registry,
         record: Callable[[SessionInfo], None],
-        host=None,
+        host: Host,
         display: Display = None,
         check_name: Callable[[str], None] | None = None,
     ) -> Self:

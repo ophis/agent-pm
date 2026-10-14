@@ -10,6 +10,7 @@ import uuid
 from agent_pm.utils.record import Record, Status
 
 from utils.tests.case import Case
+from utils.tests.contracts.ctl import CtlContract
 from utils.tests.fakes import ctl
 from utils.tests.sandbox import clean_env
 
@@ -23,7 +24,7 @@ def lines(*records):
     return "".join(r.to_line() + "\n" for r in records)
 
 
-class FakeCtl(Case):
+class Installed(Case):
     def setUp(self):
         self.bin = os.path.join(self.home, "bin")
         self.state = os.path.join(self.home, "ctl state")
@@ -32,6 +33,26 @@ class FakeCtl(Case):
         self.env.pop("AGENT_PM_SID", None)
         self.env["PATH"] = os.pathsep.join((self.bin, os.environ.get("PATH", os.defpath)))
 
+
+class FakeCtlContract(CtlContract, Installed):
+    command = ctl.COMMAND
+
+    def call(self, *argv, stdin="", sid=None):
+        env = {**self.env, **({} if sid is None else {"AGENT_PM_SID": sid})}
+        return subprocess.run(
+            [self.ctl, *argv], input=stdin, env=env, capture_output=True, text=True, timeout=30
+        )
+
+    def start(self, name, sid=None):
+        done = self.call("start", name, sid=sid)
+        self.assertEqual((done.returncode, done.stderr), (0, ""))
+        return Record.parse(done.stdout)
+
+    def end(self, name):
+        ctl.set_session(self.state, name, alive=False, state="gone")
+
+
+class FakeCtl(Installed):
     def call(self, *argv, stdin=""):
         return subprocess.run(
             argv, input=stdin, env=self.env, capture_output=True, text=True, timeout=30

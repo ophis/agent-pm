@@ -90,6 +90,7 @@ class _State:
     harness_name: str
     attempt: int
     outer: Outer
+    overlays: tuple[Mapping, ...]
     detached: bool = False
     completed: bool = False
     result: Result | None = None
@@ -149,6 +150,7 @@ class HarnessDelegate(Delegate):
         display: Display = None,
         harness_host: str | Host | None = None,
         callback: Sequence[str] | None = None,
+        overlays: Sequence[Mapping] = (),
         session_cls: type[Session] = Session,
         composer: Composer | None = None,
         driver: Driver | None = None,
@@ -182,7 +184,7 @@ class HarnessDelegate(Delegate):
             session_cls, settings=self._settings, display=display, host=agent_host.name
         )
         tui = spec.mode == Mode.TUI
-        run = self.composer.resolve(role, spec.task)
+        run = self.composer.resolve(role, spec.task, overlays=overlays)
         accepted = plan(
             run,
             replace(
@@ -220,6 +222,7 @@ class HarnessDelegate(Delegate):
             f"{name}-drive",
             1,
             {},
+            tuple(thaw(overlay) for overlay in overlays),
             events=events,
         )
         try:
@@ -339,11 +342,13 @@ class HarnessDelegate(Delegate):
                     result["limit"] = Limit(**from_limit)
                 result = Result(**result)
             callback = data.pop("callback")
+            overlays = tuple(data.pop("overlays"))
             state = _State(
                 **data,
                 plan=accepted,
                 callback=None if callback is None else tuple(callback),
                 result=result,
+                overlays=overlays,
             )
             if type(state.attempt) is not int or state.attempt < 1:
                 raise ValueError("invalid attempt")
@@ -413,11 +418,17 @@ class HarnessDelegate(Delegate):
         return Composer().trusted_dirs()
 
     @classmethod
-    def usage(cls, role: str, *, session_cls: type[Session] = Session) -> Usage | None:
+    def usage(
+        cls,
+        role: str,
+        *,
+        overlays: Sequence[Mapping] = (),
+        session_cls: type[Session] = Session,
+    ) -> Usage | None:
         composition = Composer()
         try:
             session_cls.configure_from(thaw(composition.config.values))
-            return session_cls.usage(composition.resolve(role).runtime)
+            return session_cls.usage(composition.resolve(role, overlays=overlays).runtime)
         except SessionConfigError as error:
             raise ConfigError(str(error)) from None
 
@@ -676,9 +687,8 @@ class HarnessDelegate(Delegate):
         return record
 
     def _started(self, state: _State) -> None:
-        """Tui: waits, outside the mutex, until the harness has the agent session live, then shows
-        it at the run's display; DriverError, both closed, when the harness ends first or
-        TUI_START_TIMEOUT passes.
+        """Tui: waits, outside the mutex, until the harness has the agent session live; DriverError,
+        both closed, when the harness ends first or TUI_START_TIMEOUT passes.
         """
         if state.plan.spec.mode != Mode.TUI:
             return
@@ -692,12 +702,6 @@ class HarnessDelegate(Delegate):
                             session.close()
                 raise DriverError(f"tui session {state.agent_name} did not start")
             time.sleep(TUI_POLL)
-        if agent.displayable:
-            try:
-                if command := agent.show(display=state.display):
-                    say(command)
-            except (SessionConfigError, DriverError) as error:
-                say(f"delegate: show {state.agent_name}: {error}")
 
     def resume(self) -> Record:
         with self.store.mutex():
@@ -715,7 +719,7 @@ class HarnessDelegate(Delegate):
                 raise ConfigError(f"cwd {original.cwd} is no longer in trusted_dirs")
             spec = replace(state.plan.spec, resume=True, cwd=original.cwd, team=self.composer.team)
             accepted = plan(
-                self.composer.resolve(state.role, spec.task),
+                self.composer.resolve(state.role, spec.task, overlays=state.overlays),
                 spec,
                 driver=self.driver,
                 composition=self.composer,

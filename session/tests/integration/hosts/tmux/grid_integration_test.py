@@ -12,9 +12,9 @@ import time
 from unittest import mock
 
 from agent_pm.session.engine.types import DriverError, Launch
-from agent_pm.session.hosts.tmux import TmuxHost, layout, tmux_host
-from agent_pm.session.hosts.tmux import grid as grids
+from agent_pm.session.hosts.tmux import TmuxHost, layout
 from agent_pm.session.hosts.tmux import grid as tmux_model
+from agent_pm.session.hosts.tmux.host import Tmux
 
 from session.tests import live_tmux
 from session.tests.case import Case
@@ -24,7 +24,7 @@ MANAGER = "mgr"
 
 TIMEOUT = 60
 
-TUI = grids.ENTRY
+TUI = tmux_model.ENTRY
 
 IGNORED = "tui: show: grid: --split/--split-from ignored"
 
@@ -86,9 +86,9 @@ class Live(Case):
         return res.stdout.removesuffix("\n")
 
     def tui(self, *args: str) -> None:
-        """tmux_host.py's CLI, run from inside the manager's pane."""
+        """The tmux command line (entry.py), run from inside the manager's pane."""
         res = subprocess.run(
-            [sys.executable, "-I", TUI, grids.entry_roots(), *args],
+            [sys.executable, "-I", TUI, tmux_model.entry_roots(), *args],
             env=self.server.env(**self.server.inside(MANAGER)),
             cwd=self.cwd,
             capture_output=True,
@@ -232,7 +232,7 @@ class SplitsTest(Live):
 class StartTest(Live):
     def test_a_command_ending_at_once_gets_its_dead_line_and_state(self):
         events = os.path.join(self.cwd, "events")
-        tmux_host.start(
+        Tmux().start(
             "s1",
             Launch(tuple(["/bin/sh", "-c", "exit 3"]), self.server.env(), cwd=self.cwd),
             events=events,
@@ -246,7 +246,7 @@ class StartTest(Live):
             return True
 
         live_tmux.wait(dead, what="s1's dead line")
-        self.assertEqual((tmux_host.status("s1"), self.server.option("s1", "@state")), (3, "dead"))
+        self.assertEqual((Tmux().status("s1"), self.server.option("s1", "@state")), (3, "dead"))
 
 
 class RetileTest(Live):
@@ -361,7 +361,7 @@ class RetileTest(Live):
         options = (tmux_model.GRID_MANAGER, tmux_model.GRID_PER_COLUMN)
         self.assertEqual(
             [self.window_option(MANAGER, k) for k in options],
-            [self.manager, str(tmux_host.PER_COLUMN)],
+            [self.manager, str(tmux_model.PER_COLUMN)],
         )
         self.tui("tile", self.window_of(MANAGER))
         self.grid([[("w1", ["z1"]), "w2"]], self.server.size[0] // 2)
@@ -508,13 +508,13 @@ class SettleTest(Live):
     def grid_up(self) -> None:
         with self.inside(MANAGER):
             self.assertIsNone(
-                grids.configure(
+                tmux_model.configure(
                     self.window,
                     self.manager,
                     per_column=1,
                     retile="all",
                     proc=subprocess.run,
-                    script=grids.ENTRY,
+                    script=tmux_model.ENTRY,
                 )
             )
 
@@ -563,7 +563,7 @@ class SettleTest(Live):
         env = self.server.env(**self.server.inside(MANAGER))
         tiles = [
             subprocess.Popen(
-                [sys.executable, "-I", TUI, grids.entry_roots(), "tile", *flag, self.window],
+                [sys.executable, "-I", TUI, tmux_model.entry_roots(), "tile", *flag, self.window],
                 env=env,
                 cwd=self.cwd,
                 stdin=subprocess.DEVNULL,
@@ -593,6 +593,39 @@ class SettleTest(Live):
         self.tmux("set-option", "-u", "-w", "-t", self.window, tmux_model.GRID_BUSY)
         self.tmux("select-layout", "-t", self.window, "even-vertical")
         self.settled()
+
+    def busy(self) -> str:
+        return self.window_option(MANAGER, tmux_model.GRID_BUSY)
+
+    def test_a_tile_holding_the_lock_clears_a_stale_busy_on_each_early_return(self):
+        self.grid_up()
+        grid = self.settled()
+        panes = self.pane_set(MANAGER)
+        for case, unset, flags in (
+            ("laid out, pane set recorded", (), ()),
+            ("laid out, pane set unrecorded", (tmux_model.GRID_PANES_SET,), ()),
+            ("pane set unchanged", (), ("--if-panes-changed",)),
+        ):
+            with self.subTest(case):
+                for option in unset:
+                    self.tmux("set-option", "-u", "-w", "-t", self.window, option)
+                self.tmux("set-option", "-w", "-t", self.window, tmux_model.GRID_BUSY, self.window)
+                self.tui("tile", *flags, self.window)
+                self.assertEqual(self.busy(), "")
+                self.assertEqual(self.window_option(MANAGER, tmux_model.GRID_PANES_SET), panes)
+                self.assertEqual(self.steady(self.layout()), grid)
+
+    def test_a_tile_without_the_lock_leaves_busy_alone(self):
+        self.grid_up()
+        self.settled()
+        self.tmux("set-option", "-w", "-t", self.window, tmux_model.GRID_BUSY, self.window)
+        socket = self.tmux("display-message", "-p", "-t", self.window, "#{socket_path}")
+        with tmux_model._grid_lock(socket, self.window, wait=False) as held:
+            self.assertTrue(held)
+            self.tui("tile", "--no-wait", self.window)
+            self.assertEqual(self.busy(), self.window)
+        self.tui("tile", "--no-wait", self.window)
+        self.assertEqual(self.busy(), "")
 
     def test_fiftieth_retile_keeps_grid_and_fifty_first_hook_trips_breaker(self):
         self.grid_up()

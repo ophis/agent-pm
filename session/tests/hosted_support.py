@@ -15,7 +15,8 @@ from agent_pm.session.engine import types as engine_types
 from agent_pm.session.engine.hosted import HostedSession
 from agent_pm.session.engine.records import RunLog
 from agent_pm.session.engine.types import Access, ConfigError, Exited, Launch, Spec
-from agent_pm.session.hosts.tmux import tmux_host
+from agent_pm.session.hosts.tmux import transport
+from agent_pm.session.hosts.tmux.host import Tmux, events_file, validate_events, validate_start
 
 from session.tests import fake_adapter
 from session.tests.case import Case
@@ -289,33 +290,31 @@ def drive(case, runtime="fake", mode="headless", prompt="hello", spec=None, **kw
 
 
 def fake_tmux(case=None) -> mock.Mock:
-    """Recorded tmux responses; defaults: status None, listing [], pane %1, PAUSE 0."""
-    host = mock.create_autospec(tmux_host)
-    for name in ("PaneStatus", "NAME", "OPENER", "Split", "TuiError"):
-        setattr(host, name, getattr(tmux_host, name))
+    """Recorded tmux responses; defaults: status None, listing [], PAUSE 0."""
+    host = mock.create_autospec(Tmux, instance=True)
     host.PAUSE = 0
-    host.attach_command.side_effect = tmux_host.attach_command
-    host.events_file.side_effect = tmux_host.events_file
-    host.validate_events.side_effect = tmux_host.validate_events
-    host.validate_start.side_effect = tmux_host.validate_start
-    host.display_error.side_effect = tmux_host.display_error
+    host.attach_command.side_effect = transport.attach_command
+    host.events_file.side_effect = events_file
+    host.validate_events.side_effect = validate_events
+    host.validate_start.side_effect = validate_start
     host.status.return_value = None
+    host.process_status.side_effect = lambda target: (host.process(target), host.status(target))
     host.listing.return_value = []
     host.own_session.return_value = None
     tags = {}
     host.option.side_effect = lambda _target, key: tags.get(key)
-    host.pane.return_value = "%1"
     host.detach.return_value = host.process.return_value = "1 $1 %1 4242"
     host.tmux_path.return_value = TMUX
 
     def started(_name, _launch, **kw):
-        tags.update(kw["tags"])
+        tags.update(kw["tags"], **{"@process": host.process.return_value})
         if case is not None:
             case.addCleanup(shutil.rmtree, tags["@control"], ignore_errors=True)
         host.listing.return_value.append(listed(_name))
         host.status.return_value = 0
         for file, payload in (("started.json", {"started": True}), ("done.json", {"rc": 0})):
             Path(tags["@control"], file).write_text(json.dumps(payload))
+        return host.process.return_value
 
     def killed(_target):
         host.listing.return_value = []
@@ -408,7 +407,7 @@ class HostedEnvBase(EnvBase, HostedTuiBase):
 
 
 def listed(name, **fields) -> dict:
-    """A tmux_host.listing row of a live session with no tags, but `fields`."""
+    """A tmux listing row of a live session with no tags, but `fields`."""
     return {
         "name": name,
         "sid": None,

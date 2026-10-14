@@ -1,6 +1,6 @@
 """run.py --tui as a subprocess through the Delegate's tui mode, on a private tmux server
 (live_tmux) whose manager session a client shows, fake_claude interactive as runtime `claude`: FR-43
-closes only this role and issue's old TUI; the TUI `<role>-<ID>-<sid8>` shows beside the
+leaves unrecorded sessions untouched; the TUI `<role>-<ID>-<sid8>` shows beside the
 --split-from session, or in the --opener's grid; the run writes back and leaves its TUI open.
 """
 
@@ -65,13 +65,13 @@ class Tui(Flow):
         self.assertTrue(self.live(TUI), res.stderr)
         self.assertEqual((self.state(ID), self.ledger(ID)), ("in_review", {SID: LEDGER}))
 
-    def test_old_tuis_of_this_role_and_issue_close_and_the_tui_shows_beside_split_from(self):
+    def test_unrecorded_tuis_stay_and_the_new_tui_shows_beside_split_from(self):
         for name in (OLD, *KEPT):
             made = self.server.tmux("new-session", "-d", "-s", name, *live_tmux.IDLE)
             self.assertEqual(made.returncode, 0, made.stderr)
         self.run_tui("--split-from", MANAGER)
-        self.assertEqual([self.live(n) for n in (OLD, *KEPT)], [False, True, True])
-        self.assertEqual(self.said(), steps(*LEDGER, tuis=[f"run tui-closed {ID} session={OLD}"]))
+        self.assertEqual([self.live(n) for n in (OLD, *KEPT)], [True, True, True])
+        self.assertEqual(self.said(), steps(*LEDGER))
         panes, pane = self.server.panes(f"={MANAGER}:"), self.server.pane_of(TUI)
         self.assertEqual(set(panes), {self.manager, pane})
         self.assertGreater(panes[pane][0], panes[self.manager][0])

@@ -10,7 +10,13 @@ from delegate.tests.case import Case
 
 def run_config(effort) -> RunConfig:
     return RunConfig(
-        role="writer", tier=2, effort=effort, runtime="a", output={"type": "local"}, idle_timeout=60
+        role="writer",
+        tier=2,
+        effort=effort,
+        runtime="a",
+        output={"type": "local"},
+        idle_timeout=60,
+        show="",
     )
 
 

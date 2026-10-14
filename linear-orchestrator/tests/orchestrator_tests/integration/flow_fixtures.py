@@ -115,7 +115,13 @@ class Flow(Case):
         self.runs_dir, self.logs = os.path.join(state, "work"), os.path.join(state, "logs")
         with open(os.path.join(self.agent_pm, "config.local.toml"), "w") as f:
             f.write(
-                local_section(run_fixtures.local(state) + TASK_LABELS, "linear_orchestrator")
+                local_section(
+                    (run_fixtures.local(state) + TASK_LABELS).replace(
+                        "agent_pm.delegate.engine.harness_delegate:HarnessDelegate",
+                        "orchestrator_tests.integration.legacy_run_delegate:LegacyRunDelegate",
+                    ),
+                    "linear_orchestrator",
+                )
                 + "\n"
                 + run_fixtures.CORE_LOCAL
             )

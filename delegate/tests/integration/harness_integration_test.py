@@ -46,7 +46,6 @@ from delegate.tests.fakes.harness_session import (
     HarnessSession,
     PersistentSession,
     RecordingHost,
-    ShowingHost,
     harness_launches,
 )
 from delegate.tests.fakes.session import SessionClass
@@ -710,11 +709,6 @@ class DeadOnArrival(RecordingHost):
         return process
 
 
-class ShowRefused(ShowingHost):
-    def show(self, name, *, display=None):
-        raise SessionConfigError("no pane to split")
-
-
 class TuiStart(HarnessCase):
     def tui(self, **placement):
         spec = Spec("input", self.work, mode="tui", runtime="fake", sid=SID, cwd=self.work)
@@ -752,21 +746,6 @@ class TuiStart(HarnessCase):
         self.assertEqual(slept.call_count, 1)
         harness = RecordingHost.processes["harness", f"dummy-tester-{SID[:8]}-drive"]
         self.assertFalse(harness.alive())
-
-    def test_the_live_agent_is_shown_at_the_runs_display(self):
-        HarnessSession.reset(displayable=True)
-        record = self.tui(harness_host="harness", display="target").detach()
-        self.assertIn((record.sessions[1], "target"), ShowingHost.shown)
-        self.assertNotIn((record.sessions[0], "target"), ShowingHost.shown)
-
-    def test_a_show_error_is_printed_and_the_detach_succeeds(self):
-        HarnessSession.reset()
-        HarnessSession.hosts["agent"] = ShowRefused("agent")
-        err = io.StringIO()
-        with redirect_stderr(err):
-            record = self.tui(harness_host="harness").detach()
-        self.assertEqual(record.sid, SID)
-        self.assertIn(f"delegate: show {record.sessions[1]}: no pane to split\n", err.getvalue())
 
     def test_a_headless_detach_waits_for_nothing(self):
         RecordingHost.harness_starts_agent = False
