@@ -301,7 +301,7 @@ class HostedSession(Session):
         cls, name: str, *, host: str | None = None, idle_timeout: float | None = None
     ) -> HostedSession:
         """Tui session `name`, from any process; its runtime record and hook log replayed into its
-        reply (see reply) and blocked, blocked too while its terminal is marked so.
+        reply and blocked, blocked too while its terminal is marked so.
         """
         setup = cls._config()
         tui.checked_name(name)
