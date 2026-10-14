@@ -95,7 +95,9 @@ class TuiTest(Base):
                 mock.patch("shutil.which", return_value="/protected/codex"),
             ):
                 committed_tui(self.adapter, spec, HOOK, source_roots=PACKAGE_ROOTS)
-            self.assertIn(path, self.common.load(str(self.work), spec.sid).snapshot.dirs)
+            self.assertIn(
+                os.path.realpath(path), self.common.load(str(self.work), spec.sid).snapshot.dirs
+            )
 
     def test_resume_with_a_saved_library_grant_launches(self):
         library = sysconfig.get_path("stdlib")
@@ -114,7 +116,9 @@ class TuiTest(Base):
                 source_roots=PACKAGE_ROOTS,
             )
         self.assertEqual(json.loads(launch.argv[-1])["selection"], ["resume", NATIVE])
-        self.assertIn(library, self.common.load(str(self.work), spec.sid).snapshot.dirs)
+        self.assertIn(
+            os.path.realpath(library), self.common.load(str(self.work), spec.sid).snapshot.dirs
+        )
 
     def test_launch_preserves_opaque_hook_words_and_separate_roots(self):
         roots = tuple(reversed(PACKAGE_ROOTS))

@@ -10,10 +10,6 @@ def module_roots() -> tuple[str, ...]:
     return utils.module_roots(config, session, utils)
 
 
-def package_dirs() -> tuple[str, ...]:
-    return utils.package_dirs(config, session, utils)
-
-
 __all__ = [
     "CONFIG",
     "harness_host",
@@ -21,5 +17,4 @@ __all__ = [
     "read_config",
     "trusted_dirs",
     "module_roots",
-    "package_dirs",
 ]

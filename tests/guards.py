@@ -122,7 +122,6 @@ OBJECT_EXPORT_MODULES = (
 OBJECT_EXPORTS_ALLOWED = {
     ("agent_pm.delegate", "read_config"): "TASK-389 layer-owned configuration entry point",
     ("agent_pm.delegate", "module_roots"): "TASK-372 layer-owned import-root entry point",
-    ("agent_pm.delegate", "package_dirs"): "TASK-372 layer-owned resource-directory entry point",
     ("agent_pm.delegate", "resolve_run"): "Legacy Composer forwarding; 356-14 (FR-27) deletes",
     ("agent_pm.delegate", "task_index"): "Legacy Composer forwarding; 356-14 (FR-27) deletes",
     ("agent_pm.delegate", "trusted_dirs"): "Legacy Composer forwarding; 356-14 (FR-27) deletes",

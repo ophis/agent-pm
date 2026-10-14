@@ -466,7 +466,6 @@ class DelegateObjectExports(Sample):
             "harness_host",
             "read_config",
             "module_roots",
-            "package_dirs",
         ],
         "agent_pm.delegate.composer": [
             "team",
@@ -546,14 +545,14 @@ class DelegateObjectExports(Sample):
                 self.assertEqual(len(self.exports(package, "Alias = render\n", ["Alias"])), 1)
 
     def test_runtime_resource_helpers_are_authorized_only_on_delegate(self):
-        for name in ("module_roots", "package_dirs"):
-            with self.subTest(name=name):
-                self.assertEqual(
-                    len(
-                        self.exports("agent_pm.delegate.composer", f"def {name}(): pass\n", [name])
-                    ),
-                    1,
+        self.assertEqual(
+            len(
+                self.exports(
+                    "agent_pm.delegate.composer", "def module_roots(): pass\n", ["module_roots"]
                 )
+            ),
+            1,
+        )
 
     def test_concrete_delegate_cannot_be_exported_under_an_alias(self):
         for name in ("HarnessDelegate", "Renamed"):
