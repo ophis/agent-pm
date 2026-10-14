@@ -17,13 +17,16 @@ HOST = "github.com"
 PR_LIST = ("--repo", "--head", "--state", "--json", "--limit")
 KEYS = {"repos", "contents", "login", "pulls", "threads"}
 TAIL = "/usr/bin:/bin"
+# the repo root, for utils.tests.sandbox: an agent run's PYTHONPATH holds only the src roots
+ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), *[os.pardir] * 4))
 
 
 def install(bin_dir: str) -> str:
     path = os.path.join(bin_dir, "gh")
     with open(path, "w") as f:
         f.write(
-            f'#!/bin/sh\nexec {shlex.quote(sys.executable)} -P -S {shlex.quote(os.path.abspath(__file__))} "$@"\n'
+            f"#!/bin/sh\nPYTHONPATH={shlex.quote(ROOT)} exec {shlex.quote(sys.executable)} -P -S "
+            f'{shlex.quote(os.path.abspath(__file__))} "$@"\n'
         )
     os.chmod(path, 0o755)
     return path
