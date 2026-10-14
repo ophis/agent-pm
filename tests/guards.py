@@ -16,11 +16,6 @@ from agent_pm.utils.config_file import LEVELS
 from tests.import_policy import violation
 
 UNIT_ISOLATION_ALLOWED = {
-    "manager/tests/unit/cli_test.py": "TASK-385 migration",
-    "manager/tests/unit/engine/crew_test.py": "TASK-385 migration",
-    "manager/tests/unit/engine/events_test.py": "TASK-385 migration",
-    "manager/tests/unit/engine/holder_test.py": "TASK-385 migration",
-    "manager/tests/unit/engine/roster_test.py": "TASK-385 migration",
     "session/tests/unit/adapters/codex/tui_hook_test.py": "TASK-385 migration",
     "session/tests/unit/adapters/codex/tui_start_test.py": "TASK-385 migration",
     "session/tests/unit/engine/api_test.py": "TASK-385 migration",

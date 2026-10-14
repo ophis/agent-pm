@@ -13,6 +13,7 @@ from agent_pm.manager.engine.roster import Roster
 from agent_pm.manager.engine.types import State
 
 from manager.tests.case import Case, child_env
+from utils.tests.sandbox import reap
 
 STARTER = """
 import os, pathlib, subprocess, sys, time
@@ -48,14 +49,16 @@ class Receipt(Case):
         emitted, gate, finished = [
             Path(self.home, name) for name in ("emitted", "gate", "finished")
         ]
-        argv = (sys.executable, "-P", "-c", STARTER, str(emitted), str(gate), str(finished))
+        argv = (sys.executable, "-P", "-S", "-c", STARTER, str(emitted), str(gate), str(finished))
         child = subprocess.Popen(
-            (sys.executable, "-P", "-c", RUNNER, directory, *argv),
+            (sys.executable, "-P", "-S", "-c", RUNNER, directory, *argv),
             env=child_env(),
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
         )
+        self.addCleanup(reap, child, timeout=5)
+        self.addCleanup(gate.touch)
         try:
             self.wait_for(emitted)
             roster = Roster(directory)
@@ -90,6 +93,5 @@ class Receipt(Case):
             self.assertFalse(Path(directory, entry.receipt).exists())
         finally:
             gate.touch()
-            if child.poll() is None:
-                child.kill()
+            reap(child, timeout=5)
             child.communicate(timeout=5)

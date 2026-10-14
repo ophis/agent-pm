@@ -88,14 +88,14 @@ class CrewTest(Case):
                 "print(json.dumps(record))",
             )
         )
-        started = self.crew.run(Spec("worker", (sys.executable, "-c", code)))
+        started = self.crew.run(Spec("worker", (sys.executable, "-I", "-S", "-c", code)))
         self.assertEqual(started, replace(record, sid=self.roster.entries()["worker"].sid))
 
     def test_bad_empty_nonzero_and_missing_command_runs_become_lost(self):
         cases = {
-            "empty": (sys.executable, "-c", "pass"),
-            "invalid": (sys.executable, "-c", "print('{}')"),
-            "failed": (sys.executable, "-c", "import sys;sys.exit(7)"),
+            "empty": (sys.executable, "-I", "-S", "-c", "pass"),
+            "invalid": (sys.executable, "-I", "-S", "-c", "print('{}')"),
+            "failed": (sys.executable, "-I", "-S", "-c", "import sys;sys.exit(7)"),
             "missing": ("missing-starter-task371",),
         }
         for name, argv in cases.items():
@@ -191,7 +191,7 @@ class CrewTest(Case):
             "mismatch": self.fake_record("mismatch").to_line() + "\n",
         }
         for name, text in cases.items():
-            command = (sys.executable, "-c", f"import sys;sys.stdout.write({text!r})")
+            command = (sys.executable, "-I", "-S", "-c", f"import sys;sys.stdout.write({text!r})")
             with self.subTest(name=name), self.assertRaises(RosterError):
                 self.crew.run(Spec(name, command))
             entry = self.roster.entries()[name]
@@ -213,10 +213,10 @@ class CrewTest(Case):
             )
             if suffix:
                 with self.assertRaises(RosterError):
-                    self.crew.run(Spec(name, (sys.executable, "-c", code)))
+                    self.crew.run(Spec(name, (sys.executable, "-I", "-S", "-c", code)))
                 self.assertEqual(self.roster.entries()[name].state, State.LOST)
             else:
-                started = self.crew.run(Spec(name, (sys.executable, "-c", code)))
+                started = self.crew.run(Spec(name, (sys.executable, "-I", "-S", "-c", code)))
                 self.assertEqual(started, replace(record, sid=self.roster.entries()[name].sid))
                 self.assertEqual(self.roster.entries()[name].state, State.LIVE)
 
