@@ -1,28 +1,26 @@
 """Pure logic over fake objects and in-process adapters."""
 
 import errno
+import io
 import json
 import os
-import signal
 import types
 import uuid
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest import mock
 
-from agent_pm.delegate import Begun, Outcome, Result, composer
+from agent_pm.delegate import cli, composer
+from agent_pm.delegate.composer import RunParams
 from agent_pm.delegate.composer.prompt import RESUME
 from agent_pm.delegate.engine.runner import STOP_LIMIT
-from agent_pm.session import SIGNALS, ConfigError, DriverError
+from agent_pm.session import DriverError
 
-from delegate.tests.case import committed
-from delegate.tests.cli import (
-    DONE_RESULT,
-    DRIVER,
+from delegate.tests.application_case import DRIVER, SID, SPLIT, TUI
+from delegate.tests.case import PY, Case, committed
+from delegate.tests.cli_case import (
     HEADS,
     KEYS,
-    SID,
-    SPLIT,
-    TUI,
     Base,
     RefusingAdapter,
 )
@@ -30,6 +28,7 @@ from delegate.tests.replies import block
 from delegate.tests.unit.runs import DONE, START, STOP, FakeHandle, no_child, turn
 from session.tests import fake_adapter
 from session.tests.modules import adapter_loader
+from utils.tests.case import local_section
 
 
 class Detach(Base):
@@ -45,6 +44,10 @@ class Detach(Base):
 
     def detaches(self, *extra, events=None, **kw):
         return self.runs("--sid", SID, "--detach", "--events", events or self.events, *extra, **kw)
+
+    def invocation(self):
+        name = self.started.call_args.kwargs["env"]["AGENT_PM_HARNESS_STATE"]
+        return json.loads(Path(self.work, name).read_bytes())
 
     def assert_nothing_started(self):
         self.started.assert_not_called()
@@ -113,21 +116,29 @@ class Detach(Base):
             f"delegate: tui session {TUI}: {self.driver.attach_command(TUI)}",
         ]
         for mode, extra, shown, tail in (
-            ("headless", (), lines[:2], [f"--events={self.events}", "--task=echo"]),
+            ("headless", (), lines[:2], {"events": self.events, "task": "echo"}),
             (
                 "tui",
                 ("--split", "below", "--split-from", "mgr"),
                 lines,
-                ["--split=below", "--split-from=mgr", "--opener=mgr"],
+                {"split": "below", "split_from": "mgr", "opener": "mgr"},
             ),
         ):
             with self.subTest(mode=mode):
                 code, out, err = self.detaches("--mode", mode, *extra)
                 self.assertEqual((code, out, err.splitlines()[1:]), (0, "", shown), err)
                 name, argv = self.started.call_args.args
-                self.assertEqual((name, argv[-len(tail) :]), (DRIVER, tail))
+                self.assertEqual(
+                    (name, argv),
+                    (DRIVER, [PY[0], "-P", "-m", "agent_pm.delegate.engine.harness", self.work]),
+                )
+                invocation = self.invocation()
+                self.assertEqual({key: invocation[key] for key in tail}, tail)
         self.layout.assert_called_once_with("below", "mgr")
-        self.assertEqual((self.launches(), os.path.exists(self.work)), ([], False))
+        self.assertEqual(self.launches(), [])
+        states = list(Path(self.work).glob("harness-*.json"))
+        self.assertEqual(len(states), 2)
+        self.assertEqual(set(os.listdir(self.work)), {path.name for path in states})
 
     def test_detach_configures_the_session_before_reaching_it(self):
         seen = []
@@ -139,7 +150,7 @@ class Detach(Base):
     def test_input_dash_is_read_by_the_caller(self):
         code, _, err = self.detaches(input="-", stdin="-x\nUse B.\n")
         self.assertEqual(code, 0, err)
-        self.assertIn("--input=-x\nUse B.\n", self.started.call_args.args[1])
+        self.assertEqual(self.invocation()["input"], "-x\nUse B.\n")
 
     def test_a_driver_failure_exits_3(self):
         self.started.side_effect = DriverError(f"detach {DRIVER}: duplicate session")
@@ -148,187 +159,6 @@ class Detach(Base):
             (code, out, err.splitlines()[1:]),
             (3, "", [f"delegate: detach {DRIVER}: duplicate session"]),
         )
-
-
-class DriverForm(Base):
-    """The driver form (--driver) with events file `events` and show patched; signal.signal and
-    signal.pthread_sigmask record their calls in self.calls, the handler in self.handler.
-    """
-
-    def setUp(self):
-        super().setUp()
-        self.events = os.path.join(self.tmp, "events")
-        self.calls, self.handler = [], None
-        self.show = self.enterContext(mock.patch.object(self.driver, "show", return_value=None))
-        self.enterContext(mock.patch.object(signal, "signal", side_effect=self.installed))
-        self.enterContext(mock.patch.object(signal, "pthread_sigmask", side_effect=self.masked))
-
-    def installed(self, signum, handler):
-        self.calls.append(("signal", signum))
-        self.handler = handler
-
-    def masked(self, how, signals):
-        self.calls.append((how, tuple(signals), self.written()))
-
-    def written(self) -> str:
-        if not os.path.exists(self.events):
-            return ""
-        with open(self.events) as f:
-            return f.read()
-
-    def drives(self, *extra, mode="headless", **kw):
-        Path(self.events).unlink(missing_ok=True)
-        return self.runs(
-            "--driver", DRIVER, "--events", self.events, "--sid", SID, "--mode", mode, *extra, **kw
-        )
-
-    def assert_outcome(self, status):
-        self.assertRegex(self.written(), rf"\A\d\d:\d\d:\d\d {DRIVER} outcome {status}\n\Z")
-
-    def ran(self, result=DONE_RESULT, effect=None):
-        """the fake application: Begun, then `effect` (raised when an exception, else called) and
-        `result`; noted in self.calls.
-        """
-
-        def run(*_args, on_event, **_kwargs):
-            self.calls.append(("run",))
-            on_event(Begun(SID))
-            if isinstance(effect, BaseException):
-                raise effect
-            if effect:
-                effect()
-            return result
-
-        return mock.patch.object(self.application, "run", side_effect=run)
-
-    def test_the_driver_form_configures_the_session_before_its_run(self):
-        seen = []
-        with self.ran(effect=lambda: seen.append(self.driver)):
-            code, _, err = self.drives()
-        self.assertEqual((code, len(seen)), (0, 1), err)
-        self.assertIs(seen[0], self.driver)
-
-    def test_the_handler_on_each_signal_unblocked_for_the_run_blocked_for_the_outcome_line(self):
-        with self.ran():
-            code, out, err = self.drives()
-        self.assertEqual((code, out), (0, ""), err)
-        self.assertEqual(
-            self.calls,
-            [
-                ("signal", signal.SIGHUP),
-                ("signal", signal.SIGTERM),
-                ("signal", signal.SIGINT),
-                (signal.SIG_UNBLOCK, SIGNALS, ""),
-                ("run",),
-                (signal.SIG_BLOCK, SIGNALS, ""),
-            ],
-        )
-        self.assert_outcome("done")
-
-    def test_exit_codes_and_the_one_outcome_line(self):
-        for name, result, want, status in (
-            ("done", DONE_RESULT, 0, "done"),
-            ("needs_input", Result(0, Outcome("needs_input", "t", "s", ["Q?"])), 0, "needs_input"),
-            ("failed", Result(0, Outcome("failed", "t", "s")), 0, "failed"),
-            ("no outcome", Result(0, None, "the agent run returned no outcome"), 1, "error"),
-            ("the client exited 5", Result(5, None, "the client exited 5"), 3, "error"),
-            ("no start", Result(1, None, "headless: cannot start x"), 3, "error"),
-        ):
-            with self.subTest(name), self.ran(result) as run:
-                code, out, err = self.drives()
-                self.assertEqual((code, out), (want, ""), err)
-                self.assert_outcome(status)
-                spec = run.call_args.args[1]
-                self.assertEqual((spec.sid, spec.name, spec.events), (SID, None, None))
-
-    def test_an_exception_writes_error_and_propagates(self):
-        with self.ran(effect=RuntimeError("boom")), self.assertRaisesRegex(RuntimeError, "boom"):
-            self.drives()
-        self.assert_outcome("error")
-
-    def test_a_signal_blocks_them_all_writes_error_and_exits_128_plus_signum(self):
-        with self.ran(effect=lambda: self.handler(signal.SIGTERM, None)):
-            code, out, _ = self.drives()
-        self.assertEqual((code, out), (128 + signal.SIGTERM, ""))
-        block = (signal.SIG_BLOCK, SIGNALS, "")
-        self.assertEqual(self.calls[-3:], [("run",), block, block])
-        self.assert_outcome("error")
-
-    def test_a_config_error_exits_2_and_writes_error(self):
-        for kw, extra, want in (
-            ({"role": "ghost", "task": None}, (), "unknown role 'ghost'"),
-            ({}, ("--split", "right"), SPLIT),
-        ):
-            with self.subTest(want=want), self.ran() as run:
-                code, out, err = self.drives(*extra, **kw)
-                self.assertEqual((code, out, err.splitlines()[-1]), (2, "", f"delegate: {want}"))
-                run.assert_not_called()
-                self.assert_outcome("error")
-
-    def test_a_tui_run_in_its_named_session_given_up_and_left_open_writes_error_exits_1(self):
-        handle = FakeHandle([STOP] * (1 + STOP_LIMIT))
-        with mock.patch.object(self.driver, "start", side_effect=handle.start) as start:
-            code, out, err = self.drives(mode="tui")
-        self.assertEqual(
-            (code, out, err.splitlines()[-1]),
-            (1, "", "delegate: the agent run returned no outcome"),
-        )
-        spec, kw = start.call_args.args[3], start.call_args.kwargs
-        self.assertEqual((spec.name, kw["events"], spec.sid), (TUI, self.events, SID))
-        self.assertIn(f"delegate: tui session {TUI}: {self.driver.attach_command(TUI)}", err)
-        self.show.assert_not_called()
-        self.assert_outcome("error")
-
-    def test_input_dash_is_the_literal_text_stdin_unread(self):
-        with self.ran() as run:
-            code, _, err = self.drives(input="-", stdin="SECRET")
-        self.assertEqual((code, run.call_args.args[1].input), (0, "-"), err)
-
-    def test_begun_shows_the_tui_beside_its_opener_its_errors_printed_the_run_going_on(self):
-        command = "tmux attach -t '=x'"
-        for name, returned, raised, printed in (
-            ("a pane", None, None, []),
-            ("an attach command", command, None, [command]),
-            (
-                "a DriverError",
-                None,
-                DriverError("no tmux session x"),
-                [f"delegate: show {TUI}: no tmux session x"],
-            ),
-            (
-                "a ConfigError",
-                None,
-                ConfigError("bad opener"),
-                [f"delegate: show {TUI}: bad opener"],
-            ),
-        ):
-            with self.subTest(name), self.ran():
-                self.show.reset_mock(return_value=True, side_effect=True)
-                self.show.return_value, self.show.side_effect = returned, raised
-                code, out, err = self.drives(
-                    "--split", "below", "--split-from", "mgr", "--opener", "mgr", mode="tui"
-                )
-                self.assertEqual((code, out), (0, ""), err)
-                self.show.assert_called_once_with(TUI, "below", "mgr", "mgr")
-                lines = err.splitlines()
-                at = lines.index(f"delegate: session {SID}")
-                self.assertEqual(lines[at + 1 :], [*printed, "delegate: status done"])
-                self.assert_outcome("done")
-
-    def test_no_pane_without_an_opener_or_outside_tui(self):
-        for mode, extra in (("tui", ()), ("headless", ("--opener", "mgr"))):
-            with self.subTest(mode=mode), self.ran():
-                code, _, err = self.drives(*extra, mode=mode)
-                self.assertEqual(code, 0, err)
-        self.show.assert_not_called()
-
-    def test_the_driver_form_needs_events_and_sid(self):
-        for extra in (("--events", self.events), ("--sid", SID)):
-            with self.subTest(extra=extra):
-                code, out, err = self.runs("--driver", DRIVER, *extra)
-                self.assertEqual((code, out), (2, ""))
-                self.assertIn("--driver needs --events and --sid\n", err)
-        self.assertEqual((self.calls, self.written()), ([], ""))
 
 
 class DryRun(Base):
@@ -473,9 +303,9 @@ class Tui(Base):
                 with mock.patch.object(self.driver, "start", side_effect=handle.start) as start:
                     code, out, err = self.runs("--mode", "tui")
                 self.assertEqual((code, out, err.splitlines()[-1]), (want, "", last))
-                kw = start.call_args.kwargs
+                spec = start.call_args.args[0].session
                 self.assertEqual(
-                    (start.call_args.args[:2], start.call_args.args[3].name, kw["events"]),
+                    ((spec.runtime, spec.mode), spec.name, spec.events),
                     (("fake", "tui"), None, None),
                 )
 
@@ -649,3 +479,99 @@ class Usage(Base):
                     self.assertTrue(err.splitlines()[-1].startswith(f"delegate: {want}"), err)
                     self.assertFalse(os.path.exists(self.work))
         self.assertEqual(self.launches(), [])
+
+
+class Prompt(Case):
+    def test_write_failures_are_clean_cli_errors(self):
+        os.makedirs(self.out)
+        code, out, err = self.prompt()
+        self.assertEqual((code, out), (2, ""))
+        self.assertTrue(err.startswith("delegate: "), err)
+        self.assertIn(self.out, err)
+        self.assertNotIn("Traceback", err)
+
+    def test_an_unwritable_workdir_is_a_clean_cli_error(self):
+        with mock.patch("pathlib.Path.mkdir", side_effect=PermissionError("write denied")):
+            code, out, err = self.prompt()
+        self.assertEqual((code, out, err), (2, "", "delegate: write denied\n"))
+
+    def setUp(self):
+        self.work = os.path.join(self.home, "work")
+        self.out = os.path.join(self.work, "prompt.md")
+        self.addCleanup(os.chdir, os.getcwd())
+        os.chdir(self.home)
+
+    def prompt(self, *extra, role="dummy-tester", input="Hello.\n"):
+        out, err = io.StringIO(), io.StringIO()
+        with redirect_stdout(out), redirect_stderr(err):
+            try:
+                code = cli.main(
+                    [
+                        "prompt",
+                        "--role",
+                        role,
+                        "--task",
+                        "echo",
+                        "--input",
+                        input,
+                        "--workdir",
+                        self.work,
+                        "--out",
+                        self.out,
+                        *extra,
+                    ]
+                )
+            except SystemExit as error:
+                code = error.code
+        return code, out.getvalue(), err.getvalue()
+
+    def test_instruction_matches_composer_bytes_no_client_or_session_configuration(self):
+        Path(self.agent_pm, "config.local.toml").write_text(
+            local_section('[hosts]\ndefault = "missing"\n', "session"), encoding="utf-8"
+        )
+        config = composer.resolve("dummy-tester", "echo")
+        expected = composer.render(
+            config, RunParams(input="Hello.\n", out=self.out, workdir=self.work)
+        )
+        with mock.patch("subprocess.Popen", side_effect=AssertionError("session started")):
+            self.assertEqual(
+                self.prompt(), (0, "", f"delegate: instruction delivered: {self.out}\n")
+            )
+        self.assertEqual(Path(self.out).read_bytes(), expected.encode("utf-8"))
+        log = Path(self.work, "run.jsonl")
+        self.assertFalse(log.exists())
+
+    def test_runtime_execution_options_are_usage_errors_before_writes(self):
+        for argv in (
+            ("--runtime", "claude"),
+            ("--mode", "tui"),
+            ("--detach",),
+            ("--sid", "11111111-2222-3333-4444-555555555555"),
+            ("--resume",),
+        ):
+            with self.subTest(argv=argv):
+                code, out, err = self.prompt(*argv)
+                self.assertEqual((code, out), (2, ""))
+                self.assertIn("unrecognized arguments:", err)
+                self.assertFalse(os.path.exists(self.work))
+
+    def test_list_is_rejected_and_absent_from_prompt_help(self):
+        code, out, err = self.prompt("--list")
+        self.assertEqual((code, out), (2, ""))
+        self.assertIn("unrecognized arguments: --list", err)
+        code, out, err = self.prompt("--help")
+        self.assertEqual((code, err), (0, ""))
+        self.assertNotIn("--list", out)
+        self.assertFalse(os.path.exists(self.work))
+
+    def test_hidden_driver_option_is_removed(self):
+        code, out, err = self.prompt("--driver", "obsolete")
+        self.assertEqual((code, out), (2, ""))
+        self.assertIn("unrecognized arguments:", err)
+        self.assertFalse(os.path.exists(self.work))
+
+    def test_unknown_role_is_a_config_error_before_writes(self):
+        code, out, err = self.prompt(role="ghost")
+        self.assertEqual((code, out), (2, ""))
+        self.assertIn("unknown role 'ghost'", err)
+        self.assertFalse(os.path.exists(self.work))

@@ -9,7 +9,11 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from types import MappingProxyType
 
-from agent_pm.utils import freeze, printable_abs, sid_error
+from agent_pm.utils import (
+    freeze,
+    printable_abs,
+    sid_error,
+)
 
 __all__ = [
     "Access",
@@ -31,8 +35,10 @@ __all__ = [
     "Liveness",
     "Mode",
     "NotDisplayable",
+    "NoRecordedSession",
     "Paste",
     "Prepared",
+    "ProcessOptions",
     "Reply",
     "Resumable",
     "SessionEvent",
@@ -47,6 +53,17 @@ __all__ = [
     "Window",
     "Word",
 ]
+
+
+def _clean_string(value) -> bool:
+    return isinstance(value, str) and "\0" not in value
+
+
+def _environment_ok(env) -> bool:
+    return isinstance(env, Mapping) and all(
+        isinstance(k, str) and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", k) and _clean_string(v)
+        for k, v in env.items()
+    )
 
 
 class ConfigError(Exception):
@@ -129,17 +146,6 @@ def _string_tuple(value) -> bool:
     return isinstance(value, tuple) and all(isinstance(s, str) for s in value)
 
 
-def _clean_string(value) -> bool:
-    return isinstance(value, str) and "\0" not in value
-
-
-def _env_ok(env) -> bool:
-    return isinstance(env, Mapping) and all(
-        isinstance(k, str) and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", k) and _clean_string(v)
-        for k, v in env.items()
-    )
-
-
 @dataclass(frozen=True, kw_only=True)
 class Access:
     dirs: tuple[str, ...] = ()
@@ -153,7 +159,7 @@ class Access:
         for name in ("dirs", "commands", "reads"):
             if not _string_tuple(getattr(self, name)):
                 raise ConfigError(f"{name} must be a tuple of strings")
-        if not _env_ok(self.env):
+        if not _environment_ok(self.env):
             raise ConfigError(
                 "access env must map names ([A-Za-z_][A-Za-z0-9_]*) to strings without NUL"
             )
@@ -161,19 +167,28 @@ class Access:
 
 
 @dataclass(frozen=True, kw_only=True)
-class Spec:
+class ProcessOptions:
+    flags: tuple[str, ...] = ()
+    env: Mapping[str, str] = field(default_factory=dict)
+
+    def __post_init__(self):
+        if not (isinstance(self.flags, tuple) and all(map(_clean_string, self.flags))):
+            raise ConfigError("flags must be a tuple of strings without NUL")
+        if not _environment_ok(self.env):
+            raise ConfigError("env must map variable names to strings without NUL")
+        object.__setattr__(self, "env", MappingProxyType(dict(self.env)))
+
+
+@dataclass(frozen=True, kw_only=True)
+class Spec(ProcessOptions):
     workdir: str
     access: Access = field(default_factory=Access)
     tier: int | None = None
     effort: Effort | None = None
     sid: str | None = None
-    flags: tuple[str, ...] = ()
-    env: Mapping[str, str] = field(default_factory=dict)
     name: str | None = None
     protect: tuple[str, ...] = ()  # paths no writable dir may overlap (a sandboxing Adapter only)
-    reply_tags: tuple[str, str] | None = (
-        None  # the caller's (progress, outcome) tags (the prompt-printing Adapter only)
-    )
+    reply_tags: tuple[str, str] | None = None  # caller's (progress, outcome) tags for in_process
     runtime: str | None = None
     mode: Mode | None = None
     prompt: str = ""
@@ -197,11 +212,7 @@ class Spec:
             raise ConfigError(f"cwd must be a printable absolute path, got {self.access.cwd!r:.80}")
         if self.sid is not None and (error := sid_error(self.sid)):
             raise ConfigError(error)
-        if not (isinstance(self.flags, tuple) and all(map(_clean_string, self.flags))):
-            raise ConfigError("flags must be a tuple of strings without NUL")
-        if not _env_ok(self.env):
-            raise ConfigError("env must map variable names to strings without NUL")
-        object.__setattr__(self, "env", MappingProxyType(dict(self.env)))
+        super().__post_init__()
         if self.name is not None and not isinstance(self.name, str):
             raise ConfigError("name must be None or a string")
         if not (isinstance(self.protect, tuple) and all(map(printable_abs, self.protect))):
@@ -404,6 +415,10 @@ class Key:
 
 class DriverError(Exception):
     """A failed start, or a call its Mode lacks."""
+
+
+class NoRecordedSession(DriverError):
+    """The requested sid has no durable session record in its workdir."""
 
 
 class NotDisplayable(DriverError):

@@ -1,10 +1,9 @@
 """The Delegate's shared types."""
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from agent_pm.delegate.composer import ConfigError, RunConfig, RunParams, Team
 from agent_pm.delegate.event.types import Outcome
-from agent_pm.session import Driver
 from agent_pm.session import Spec as SessionSpec
 from agent_pm.utils import Stopped as Stopped
 
@@ -14,6 +13,7 @@ __all__ = [
     "Plan",
     "Limit",
     "Result",
+    "Instruction",
     "Begun",
     "Progress",
     "Finished",
@@ -44,6 +44,12 @@ class Spec:
 
 
 @dataclass(frozen=True)
+class DriverSpec:
+    session: SessionSpec
+    out: str
+
+
+@dataclass(frozen=True)
 class Plan:
     """`spec` resolved: its runtime, sid and team set, its paths absolute; `session` the session's
     Spec.
@@ -54,7 +60,10 @@ class Plan:
     prompt: str
     run: RunConfig
     params: RunParams
-    driver: Driver = field(compare=False, repr=False)
+
+    @property
+    def driver_spec(self) -> DriverSpec:
+        return DriverSpec(self.session, self.params.out)
 
     @property
     def runtime(self) -> str:
@@ -81,6 +90,12 @@ class Result:
     outcome: Outcome | None
     error: str = ""
     limit: Limit | None = None
+    instruction: str | None = None
+
+
+@dataclass(frozen=True)
+class Instruction:
+    path: str
 
 
 @dataclass(frozen=True)

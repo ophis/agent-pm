@@ -1,4 +1,4 @@
-"""argparse helpers: Once, an option given twice is a usage error."""
+"""Once rejects repeated command-line options."""
 
 import argparse
 

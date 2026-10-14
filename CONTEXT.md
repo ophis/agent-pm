@@ -37,12 +37,15 @@ _Avoid_: core skill
 **Delegate**:
 The component that turns a role, an optional task and free-text input into an agent run: it has the composer build the prompt, runs it through the session layer, reads the agent run's replies (progress, outcome) and decides nudges and give-ups. In code: `delegate/src/agent_pm/delegate/`.
 
+**Driver**:
+The Delegate interface for starting a prompt: `AgentDriver` starts a Session through its configured class; `InstructionDriver` returns an Instruction file directly. In code: `delegate/src/agent_pm/delegate/engine/drivers.py`. The session package's `Driver` is a deprecated forwarding wrapper.
+
 **Composer**:
 The component that assembles principles, role and input into a prompt (no task text: the agent run reads its task file) and resolves the role's run config.
 
 **Session layer**:
 The component that runs a prompt on the agent runtime and mode its caller names, through that runtime's adapter: it starts or resumes the session, sends messages (tui only), times inactivity, and passes events and replies up without interpreting them; the same for every runtime. In code: `session/src/agent_pm/session/`; its users import `agent_pm.session`, Adapters and Hosts written outside it `agent_pm.session.extension`.
-_Avoid_: driver (the session package's `Driver` is a deprecated wrapper), facade, runtime, harness
+_Avoid_: facade, runtime, harness
 
 **Adapter**:
 The code that wraps one agent runtime (Claude Code, Codex) for the session layer: its launch per mode, hooks, reply reading and message sending; everything runtime-specific lives in it. In code: `session/src/agent_pm/session/adapters/`.

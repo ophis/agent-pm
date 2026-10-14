@@ -6,10 +6,12 @@ Handle, sessions, close, note and session_record, and the session package export
 import dataclasses
 import inspect
 import itertools
+import json
 import os
 import signal
 import tempfile
 import uuid
+from pathlib import Path
 from unittest import mock
 
 import agent_pm.session as session_pkg
@@ -39,6 +41,7 @@ from agent_pm.session.engine.types import (
 from agent_pm.session.hosts.base import SIGNALS
 from agent_pm.session.hosts.tmux import TmuxHost, tmux_host
 from agent_pm.session.modes import headless, tui
+from agent_pm.utils import ProcessControl
 
 from session.tests.case import HOSTS, Case
 from session.tests.hosted_support import (
@@ -107,6 +110,7 @@ SIGNATURES = {
         ("runtime", POSITIONAL, EMPTY),
         ("sid", POSITIONAL, EMPTY),
         ("cwd", POSITIONAL, EMPTY),
+        ("workdir", KEYWORD, EMPTY),
     ],
     "writable_dirs": [
         ("self", POSITIONAL, EMPTY),
@@ -185,7 +189,7 @@ class WrappersTest(TuiBase):
                     lambda: self.session.writable_dirs(dataclasses.replace(spec, runtime="fake")),
                 ),
                 (
-                    lambda: self.driver.session_status("probe", SID, d),
+                    lambda: self.driver.session_status("probe", SID, d, workdir=d),
                     lambda: SessionStatus("yes", 1.5, f"probe {SID} {d}"),
                 ),
                 (lambda: session_record(d, SID), lambda: log.session(SID).persisted()),
@@ -379,15 +383,48 @@ class WritableDirsTest(Base):
 
 
 class SessionStatusTest(Base):
+    def setUp(self):
+        super().setUp()
+        os.makedirs(self.workdir)
+        RunLog(self.workdir).note(
+            "session", sid="s1", cwd=self.dir, project=False, transcript="", resume=""
+        )
+
+    def test_an_unrecorded_sid_is_not_resumable_for_the_deprecated_wrapper(self):
+        absent = os.path.join(self.dir, "no-record")
+        for workdir in (self.workdir, absent):
+            with self.subTest(workdir=workdir):
+                self.assertEqual(
+                    self.driver.session_status("probe", "missing", self.dir, workdir=workdir),
+                    SessionStatus("no", None, ""),
+                )
+        self.assertFalse(os.path.exists(absent))
+
+    def test_an_adapter_driver_error_is_not_mapped_to_missing_record(self):
+        error = DriverError("inspection refused")
+        with (
+            mock.patch.object(ProbeAdapter, "session_status", side_effect=error),
+            self.assertRaises(DriverError) as caught,
+        ):
+            self.driver.session_status("probe", "s1", self.dir, workdir=self.workdir)
+        self.assertIs(caught.exception, error)
+
     def test_the_adapters_session_status(self):
         self.assertEqual(
-            self.driver.session_status("probe", "s1", self.dir),
+            self.driver.session_status("probe", "s1", self.dir, workdir=self.workdir),
+            SessionStatus("yes", 1.5, f"probe s1 {self.dir}"),
+        )
+
+    def test_the_public_query_resolves_cwd_from_the_required_workdir(self):
+        self.assertEqual(
+            self.driver.session_status("probe", "s1", self.home, workdir=self.workdir),
             SessionStatus("yes", 1.5, f"probe s1 {self.dir}"),
         )
 
     def test_unknown_by_default(self):
         self.assertEqual(
-            self.driver.session_status("fake", "s1", "/c"), SessionStatus("unknown", None, "")
+            self.driver.session_status("fake", "s1", "/c", workdir=self.workdir),
+            SessionStatus("unknown", None, ""),
         )
 
     def test_an_os_error_from_the_adapter_is_unknown(self):
@@ -395,26 +432,26 @@ class SessionStatusTest(Base):
             ProbeAdapter, "session_status", side_effect=PermissionError(13, "denied")
         ):
             self.assertEqual(
-                self.driver.session_status("probe", "s1", self.dir),
+                self.driver.session_status("probe", "s1", self.dir, workdir=self.workdir),
                 SessionStatus("unknown", None, ""),
             )
 
     def test_refuses_a_bad_sid_or_cwd_and_passes_registry_errors(self):
         for sid, shown in (("", "''"), ("a/b", "'a/b'"), (5, "5")):
             with self.subTest(sid=sid), self.assertRaises(ConfigError) as caught:
-                self.driver.session_status("probe", sid, self.dir)
+                self.driver.session_status("probe", sid, self.dir, workdir=self.workdir)
             self.assertEqual(
                 str(caught.exception),
                 f'sid must be a non-empty printable string without "/", got {shown}',
             )
         for cwd, shown in (("rel", "'rel'"), ("", "''"), ("/c\n", r"'/c\n'"), (None, "None")):
             with self.subTest(cwd=cwd), self.assertRaises(ConfigError) as caught:
-                self.driver.session_status("probe", "s1", cwd)
+                self.driver.session_status("probe", "s1", cwd, workdir=self.workdir)
             self.assertEqual(
                 str(caught.exception), f"cwd must be a printable absolute path, got {shown}"
             )
         with self.assertRaises(ConfigError) as caught:
-            self.driver.session_status("nope", "s1", self.dir)
+            self.driver.session_status("nope", "s1", self.dir, workdir=self.workdir)
         self.assertEqual(
             str(caught.exception),
             "no [adapters.nope] table in the configured adapters",
@@ -629,15 +666,45 @@ class AttachCommandTest(TuiBase):
 
 
 class DetachTest(TuiBase):
+    def setUp(self):
+        super().setUp()
+        allocate = tempfile.mkdtemp
+
+        def private(**kw):
+            self.assertEqual(kw, {"prefix": "apm-group-", "dir": "/tmp"})
+            return allocate(prefix=kw["prefix"], dir=self.dir)
+
+        self.enterContext(mock.patch("tempfile.mkdtemp", side_effect=private))
+
     def test_the_default_host_runs_argv_with_the_signals_blocked_the_opener_its_display(self):
+        def detached(_name, _argv, **kw):
+            control = ProcessControl(kw["control"])
+            self.addCleanup(control.remove)
+            Path(control.path, "started.json").write_text('{"started": true}')
+            Path(control.path, "done.json").write_text('{"rc": 0}')
+            return "4242 $3 %7 4343"
+
+        self.host.detach.side_effect = detached
+        self.host.process.return_value = "4242 $3 %7 4343"
+        self.host.option.return_value = None
         env = {"PATH": "/bin", "TMUX": "x"}
         self.assertIsNone(self.driver.detach("d1", ["tool", "a b"], self.dir, env, opener="mgr"))
+        control = ProcessControl(self.host.detach.call_args.kwargs["control"])
+        self.assertEqual(
+            json.loads(Path(control.path, "launch.json").read_text()),
+            {
+                "argv": ["tool", "a b"],
+                "cwd": self.dir,
+                "env": env,
+                "inherit_env": [*tmux_host.TERMINAL_KEYS, "PWD"],
+            },
+        )
         self.assertEqual(
             self.host.mock_calls,
             [
                 mock.call.detach(
                     "d1",
-                    ["tool", "a b"],
+                    control.command(),
                     cwd=self.dir,
                     env=env,
                     block=SIGNALS,
@@ -645,7 +712,8 @@ class DetachTest(TuiBase):
                     display="mgr",
                     events=None,
                     record=None,
-                )
+                    control=control.path,
+                ),
             ],
         )
         self.driver.detach("d2", ("tool",), self.dir, env)

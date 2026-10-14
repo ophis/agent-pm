@@ -1,0 +1,152 @@
+"""Driver start takes one spec; instruction delivery creates no runtime or event stream."""
+
+import os
+import unittest
+from dataclasses import fields
+
+from agent_pm.delegate import ConfigError, Spec, composer, plan, run
+from agent_pm.delegate.engine.drivers import AgentDriver, Driver, InstructionDriver
+from agent_pm.delegate.engine.types import DriverSpec, Instruction
+from agent_pm.session import Session
+from agent_pm.session import Spec as StartSpec
+
+from delegate.tests.case import Case
+from delegate.tests.fakes.session import SessionClass
+from delegate.tests.unit.runs import no_child
+
+
+class Drivers(Case):
+    def test_a_driver_capability_selects_instruction_delivery_without_concrete_type_checks(self):
+        class FileDriver(Driver):
+            session_based = False
+
+            def start(self, spec, *, display=None, host=None, idle_timeout=None):
+                return InstructionDriver().start(
+                    spec, display=display, host=host, idle_timeout=idle_timeout
+                )
+
+        work = os.path.join(self.home, "work")
+        out = os.path.join(work, "instruction.md")
+        events = []
+        with no_child():
+            result = run(
+                composer.resolve("dummy-tester"),
+                Spec("input", work, out=out, cwd=work),
+                driver=FileDriver(),
+                on_event=events.append,
+            )
+        self.assertEqual((result.returncode, result.instruction, result.outcome), (0, out, None))
+        self.assertEqual(events, [])
+        self.assertFalse(os.path.exists(os.path.join(work, "run.jsonl")))
+
+    def test_driver_is_abstract_and_has_no_abstract_constructor(self):
+        self.assertEqual(Driver.__abstractmethods__, frozenset({"start"}))
+        with self.assertRaises(TypeError):
+            Driver()
+
+    def test_agent_start_forwards_the_exact_spec_and_placement_to_its_session_class(self):
+        session_cls = SessionClass.fresh()
+        driver = AgentDriver(session_cls)
+        spec = StartSpec(
+            workdir=self.home,
+            runtime="fake",
+            mode="headless",
+            prompt="the prompt",
+            sid="11111111-2222-3333-4444-555555555555",
+            resume=True,
+            name="mine",
+            events=os.path.join(self.home, "events"),
+            flags=("--caller-flag",),
+            env={"CALLER": "kept"},
+        )
+        self.assertNotIn("idle_timeout", {field.name for field in fields(spec)})
+        for timeout in (None, 30):
+            with self.subTest(idle_timeout=timeout):
+                session = driver.start(
+                    DriverSpec(spec, os.path.join(self.home, "out")),
+                    host="other",
+                    display="opaque",
+                    idle_timeout=timeout,
+                )
+                self.assertIsInstance(session, Session)
+                self.assertEqual(
+                    session_cls.started[-1],
+                    {"spec": spec, "host": "other", "display": "opaque", "idle_timeout": timeout},
+                )
+                self.assertIs(session_cls.started[-1]["spec"], spec)
+                session.close()
+                self.assertEqual(
+                    (session.runtime, session.mode, session.sid, session.name),
+                    ("fake", "headless", spec.sid, "mine"),
+                )
+
+    def test_instruction_start_saves_exact_utf8_bytes_without_process_or_thread(self):
+        out = os.path.join(self.home, "work", "prompt.md")
+        prompt = "héllo\r\n[agent-pm-progress:start] input, not an event\n\x1b"
+        spec = StartSpec(workdir=self.home, runtime="fake", mode="headless", prompt=prompt)
+        with no_child():
+            instruction = InstructionDriver().start(DriverSpec(spec, out))
+        self.assertEqual(instruction, Instruction(out))
+        with open(out, "rb") as stream:
+            self.assertEqual(stream.read(), prompt.encode("utf-8"))
+        self.assertFalse(os.path.exists(os.path.join(self.home, "run.jsonl")))
+
+    def test_one_instruction_driver_uses_each_specs_output_destination(self):
+        driver = InstructionDriver()
+        session = StartSpec(workdir=self.home, prompt="exact instruction")
+        for filename in ("first.md", "second.md"):
+            out = os.path.join(self.home, filename)
+            self.assertEqual(driver.start(DriverSpec(session, out)), Instruction(out))
+            with open(out, encoding="utf-8") as stream:
+                self.assertEqual(stream.read(), session.prompt)
+
+    def test_instruction_resume_is_refused_before_any_write(self):
+        out = os.path.join(self.home, "work", "prompt.md")
+        driver = InstructionDriver()
+        spec = StartSpec(
+            workdir=self.home,
+            runtime="fake",
+            mode="headless",
+            prompt="the prompt",
+            sid="11111111-2222-3333-4444-555555555555",
+            resume=True,
+        )
+        with self.assertRaisesRegex(ConfigError, "instruction has no session to resume"):
+            driver.start(DriverSpec(spec, out))
+        self.assertFalse(driver.session_based)
+        self.assertFalse(os.path.exists(os.path.dirname(out)))
+
+    def test_instruction_rejects_session_controls_before_any_write(self):
+        out = os.path.join(self.home, "work", "prompt.md")
+        driver = InstructionDriver()
+        spec = StartSpec(workdir=self.home, runtime="fake", mode="headless", prompt="the prompt")
+        for keywords, message in (
+            ({"host": "other"}, "instruction has no host or display"),
+            ({"display": "opaque"}, "instruction has no host or display"),
+            ({"idle_timeout": 30}, "instruction has no idle timeout"),
+        ):
+            with self.subTest(keywords=keywords), no_child():
+                with self.assertRaises(ConfigError) as caught:
+                    driver.start(DriverSpec(spec, out), **keywords)
+                self.assertEqual(str(caught.exception), message)
+                self.assertFalse(os.path.exists(os.path.dirname(out)))
+
+    def test_instruction_run_bypasses_attempts_replies_and_callbacks(self):
+        work = os.path.join(self.home, "work")
+        out = os.path.join(work, "prompt.md")
+        spec = Spec("[agent-pm-progress:start] source text", work, out=out, cwd=work)
+        config = composer.resolve("dummy-tester")
+        driver = InstructionDriver()
+        expected = plan(config, spec, driver=driver).prompt
+        events = []
+        with no_child():
+            result = run(config, spec, driver=driver, on_event=events.append)
+        self.assertEqual((result.returncode, result.outcome, result.instruction), (0, None, out))
+        self.assertEqual(events, [])
+        with open(out, "rb") as stream:
+            self.assertEqual(stream.read(), expected.encode("utf-8"))
+        self.assertFalse(os.path.exists(os.path.join(work, "run.jsonl")))
+
+
+if __name__ == "__main__":
+    unittest.main()

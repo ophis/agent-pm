@@ -1,6 +1,7 @@
 import ast
 import importlib
 import os
+import sys
 from pathlib import Path
 from unittest import mock
 
@@ -186,6 +187,282 @@ class EveryTest(Sample):
                 "b/c.py:2: tearDownModule",
             ],
         )
+
+
+class EventObjectExports(Sample):
+    EVENT = "delegate/src/agent_pm/delegate/event/"
+
+    def exports(self, root):
+        return [entry for entry in guards.object_exports(root) if entry.startswith(self.EVENT)]
+
+    def test_seven_callable_or_mutated_export_bypasses_fail(self):
+        for sample in (
+            "import functools\ndef f(): pass\naction = functools.partial(f)\n__all__ = ['action']\n",
+            "action = staticmethod(lambda: None)\n__all__ = ['action']\n",
+            "def f(): pass\naction = f if True else f\n__all__ = ['action']\n",
+            "import os\naction = getattr(os, 'getcwd')\n__all__ = ['action']\n",
+            "def f(): pass\n__all__ = []\n__all__ += ['f']\n",
+            "def f(): pass\n__all__ = []\n__all__.append('f')\n",
+            "def f(): pass\n__all__ = []\nif True:\n    __all__ = ['f']\n",
+        ):
+            with self.subTest(sample=sample):
+                self.assertTrue(self.exports(self.tree({self.EVENT + "__init__.py": sample})))
+
+    def test_indexed_export_mutations_are_rejected(self):
+        for mutation in (
+            "__all__[0] = 'f'",
+            "__all__[:] = ['f']",
+            "__all__[0] += 'f'",
+            "del __all__[0]",
+        ):
+            with self.subTest(mutation=mutation):
+                source = "def f(): pass\nCONSTANT = 1\n__all__ = ['CONSTANT']\n" + mutation
+                root = self.tree({self.EVENT + "__init__.py": source})
+                self.assertEqual(
+                    self.exports(root), [self.EVENT + "__init__.py: no literal __all__"]
+                )
+
+    def test_runtime_export_writes_are_rejected(self):
+        for mutation in (
+            "globals()['__all__'] = ['f']",
+            "globals()['__all__'] += ['f']",
+            "globals()['__all__'].append('f')",
+            "del globals()['__all__']",
+            "setattr(sys.modules[__name__], '__all__', ['f'])",
+            "builtins.setattr(sys.modules[__name__], '__all__', ['f'])",
+            "write(sys.modules[__name__], '__all__', ['f'])",
+            "delattr(sys.modules[__name__], '__all__')",
+            "sys.modules[__name__].__all__ = ['f']",
+            "sys.modules[__name__].__all__ += ['f']",
+            "sys.modules[__name__].__all__.append('f')",
+            "del sys.modules[__name__].__all__",
+        ):
+            for source in (mutation, "def mutate():\n    " + mutation):
+                with self.subTest(source=source):
+                    root = self.tree(
+                        {
+                            self.EVENT + "__init__.py": (
+                                "import sys, builtins\nfrom builtins import setattr as write\n"
+                                "def f(): pass\nCONSTANT = 1\n__all__ = ['CONSTANT']\n" + source
+                            )
+                        }
+                    )
+                    self.assertEqual(
+                        self.exports(root), [self.EVENT + "__init__.py: no literal __all__"]
+                    )
+
+    def test_runtime_export_reads_are_allowed(self):
+        root = self.tree(
+            {
+                self.EVENT + "__init__.py": (
+                    "import sys\nCONSTANT = 1\n__all__ = ['CONSTANT']\n"
+                    "copy = globals()['__all__']\n"
+                    "same = sys.modules[__name__].__all__\n"
+                    "name = getattr(sys.modules[__name__], '__all__')\n"
+                )
+            }
+        )
+        self.assertEqual(self.exports(root), [])
+
+    def test_package_must_define_all(self):
+        root = self.tree({self.EVENT + "__init__.py": "class Event: pass\n"})
+        self.assertEqual(
+            self.exports(root),
+            [self.EVENT + "__init__.py: no literal __all__"],
+        )
+
+    def test_missing_package_is_rejected(self):
+        self.assertEqual(
+            self.exports(self.tree({})),
+            [self.EVENT + "__init__.py: no literal __all__"],
+        )
+
+    def test_all_must_name_literal_exports(self):
+        for sample in ("__all__ = names\n", "__all__ = [123]\n"):
+            with self.subTest(sample=sample):
+                root = self.tree({self.EVENT + "__init__.py": sample})
+                self.assertEqual(
+                    self.exports(root),
+                    [self.EVENT + "__init__.py: no literal __all__"],
+                )
+
+    def test_direct_functions_and_lambdas_are_rejected(self):
+        for definition in (
+            "def action(): pass\n",
+            "async def action(): pass\n",
+            "action = lambda: None\n",
+            "action = 'constant'\ndef action(): pass\n",
+            "action = ValueError\ndef action(): pass\n",
+        ):
+            with self.subTest(definition=definition):
+                root = self.tree(
+                    {self.EVENT + "__init__.py": definition + "__all__ = ['action']\n"}
+                )
+                self.assertEqual(
+                    self.exports(root),
+                    [self.EVENT + "__init__.py: __all__ exports function action (FR-44)"],
+                )
+
+    def test_import_and_assignment_aliases_cannot_hide_reexported_functions(self):
+        root = self.tree(
+            {
+                self.EVENT + "__init__.py": (
+                    "from .bridge import action as public\n"
+                    "renamed = public\n__all__ = ['renamed']\n"
+                ),
+                self.EVENT + "bridge.py": "from .reply import parse as action\n",
+                self.EVENT + "reply.py": "def parse(): pass\n",
+            }
+        )
+        self.assertEqual(
+            self.exports(root),
+            [self.EVENT + "__init__.py: __all__ exports function renamed (FR-44)"],
+        )
+
+    def test_module_attribute_aliases_cannot_hide_functions(self):
+        root = self.tree(
+            {
+                self.EVENT + "__init__.py": (
+                    "import agent_pm.delegate.event.reply as replies\n"
+                    "public = replies.parse\n__all__ = ['public']\n"
+                ),
+                self.EVENT + "reply.py": "def parse(): pass\n",
+            }
+        )
+        self.assertEqual(
+            self.exports(root),
+            [self.EVENT + "__init__.py: __all__ exports function public (FR-44)"],
+        )
+
+    def test_exported_class_methods_are_rejected(self):
+        root = self.tree(
+            {
+                self.EVENT + "__init__.py": (
+                    "class Event:\n    @classmethod\n    def parse(cls): pass\n"
+                    "public = Event.parse\n__all__ = ['public']\n"
+                )
+            }
+        )
+        self.assertEqual(
+            self.exports(root),
+            [self.EVENT + "__init__.py: __all__ exports function public (FR-44)"],
+        )
+
+    def test_classes_exceptions_constants_and_unexported_functions_are_allowed(self):
+        root = self.tree(
+            {
+                self.EVENT + "__init__.py": (
+                    "from .reply import Event, EventError, TAG\n"
+                    "def helper(): pass\n__all__: list[str] = ['Event', 'EventError', 'TAG']\n"
+                ),
+                self.EVENT + "reply.py": (
+                    "class Event:\n    def parse(self): pass\n"
+                    "class EventError(ValueError): pass\nTAG = 'event'\n"
+                ),
+            }
+        )
+        self.assertEqual(self.exports(root), [])
+
+    def test_standard_library_functions_and_uppercase_aliases_are_rejected(self):
+        for source in ("json.loads", "os.getcwd", "builtins.len"):
+            with self.subTest(source=source):
+                module, _, name = source.rpartition(".")
+                root = self.tree(
+                    {
+                        self.EVENT
+                        + "__init__.py": f"from {module} import {name} as ACTION\n__all__ = ['ACTION']\n"
+                    }
+                )
+                found = self.exports(root)
+                self.assertEqual(len(found), 1)
+                self.assertIn("__init__.py:", found[0])
+                self.assertIn("ACTION", found[0])
+
+    def test_builtin_aliases_and_bare_builtin_functions_are_rejected(self):
+        for sample in ("ACTION = len\n__all__ = ['ACTION']\n", "__all__ = ['len']\n"):
+            with self.subTest(sample=sample):
+                found = self.exports(self.tree({self.EVENT + "__init__.py": sample}))
+                self.assertEqual(len(found), 1)
+                self.assertIn("exports function", found[0])
+
+    def test_standard_library_and_builtin_classes_and_constants_are_allowed(self):
+        root = self.tree(
+            {
+                self.EVENT + "__init__.py": (
+                    "from pathlib import Path\nfrom builtins import ValueError, Ellipsis\n"
+                    "from string import ascii_letters as LETTERS\n"
+                    "__all__ = ['Path', 'ValueError', 'Ellipsis', 'LETTERS']\n"
+                )
+            }
+        )
+        self.assertEqual(self.exports(root), [])
+
+    def test_constants_shadowing_builtin_names_are_allowed(self):
+        root = self.tree({self.EVENT + "__init__.py": "id = 'event'\n__all__ = ['id']\n"})
+        self.assertEqual(self.exports(root), [])
+
+    def test_local_alias_keeps_a_class_after_its_original_name_is_redefined(self):
+        root = self.tree(
+            {
+                self.EVENT + "__init__.py": (
+                    "class Item: pass\nAlias = Item\ndef Item(): pass\n__all__ = ['Alias']\n"
+                )
+            }
+        )
+        self.assertEqual(self.exports(root), [])
+
+    def test_local_alias_keeps_a_function_after_its_original_name_is_reassigned(self):
+        root = self.tree(
+            {
+                self.EVENT + "__init__.py": (
+                    "def action(): pass\nAlias = action\naction = 1\n__all__ = ['Alias']\n"
+                )
+            }
+        )
+        self.assertEqual(
+            self.exports(root),
+            [self.EVENT + "__init__.py: __all__ exports function Alias (FR-44)"],
+        )
+
+    def test_standard_library_source_is_read_without_importing_it(self):
+        before = sys.modules.get("antigravity")
+        root = self.tree(
+            {self.EVENT + "__init__.py": "from antigravity import geohash\n__all__ = ['geohash']\n"}
+        )
+        self.assertEqual(
+            self.exports(root),
+            [self.EVENT + "__init__.py: __all__ exports function geohash (FR-44)"],
+        )
+        self.assertIs(sys.modules.get("antigravity"), before)
+
+    def test_unresolved_external_exports_are_rejected(self):
+        root = self.tree(
+            {
+                self.EVENT
+                + "__init__.py": "from unknown_package import ACTION\n__all__ = ['ACTION']\n"
+            }
+        )
+        self.assertEqual(
+            self.exports(root),
+            [self.EVENT + "__init__.py: __all__ exports function ACTION (FR-44)"],
+        )
+
+    def test_other_packages_remain_outside_this_ticket(self):
+        files = {self.EVENT + "__init__.py": "__all__ = []\n"}
+        files.update(
+            {
+                f"{project}/src/agent_pm/{package}/__init__.py": "def run(): pass\n__all__ = ['run']\n"
+                for project, package in (
+                    ("utils", "utils"),
+                    ("session", "session"),
+                    ("delegate", "delegate"),
+                    ("delegate", "delegate/composer"),
+                    ("manager", "manager"),
+                    ("linear-orchestrator", "linear_orchestrator"),
+                )
+            }
+        )
+        self.assertEqual(self.exports(self.tree(files)), [])
 
 
 class SessionNames(Sample):
@@ -568,6 +845,14 @@ class SourceSuppressions(Sample):
 
 
 class PrivateImports(Sample):
+    def test_documented_os_exit_is_public_despite_its_underscore(self):
+        root = self.tree(
+            {
+                "a.py": "import os as system\nfrom os import _exit\nsystem._exit(0)\n_exit(0)\nsystem._secret()\n"
+            }
+        )
+        self.assertEqual(guards.private_imports(root), ["a.py:5: private system._secret"])
+
     def test_an_underscore_name_from_another_module(self):
         root = self.tree(
             {
@@ -1713,13 +1998,6 @@ class RuntimeNames(Sample):
             ],
         )
 
-    def test_print_prompt_is_a_runtime_name(self):
-        root = self.tree({f"delegate/{PKG}/delegate/x.py": 'RUNTIME = "print_prompt"\n'})
-        self.assertEqual(
-            guards.runtime_names(root),
-            [f"delegate/{PKG}/delegate/x.py:1: runtime name print_prompt"],
-        )
-
     def test_policy_runtime_tables_are_exempt(self):
         root = self.tree(
             {"delegate/config.toml": "[policy.claude]\nflags = []\n[policy.codex]\nflags = []\n"}
@@ -1737,16 +2015,6 @@ class RuntimeNames(Sample):
             }
         )
         self.assertEqual(guards.runtime_names(root), ["delegate/config.toml:4: runtime name codex"])
-
-    def test_toml_print_prompt_table_header_and_implementation_line_are_exempt(self):
-        root = self.tree(
-            {
-                "delegate/config.toml": (
-                    '# [adapters.print_prompt]  act-as\'s runtime\n[adapters.print_prompt]\nimplementation = "agent_pm.session.adapters.print_prompt:PrintPromptAdapter"\n'
-                )
-            }
-        )
-        self.assertEqual(guards.runtime_names(root), [])
 
     def test_toml_implementation_line_is_exempt_only_as_module_path_class(self):
         root = self.tree(
@@ -2096,6 +2364,7 @@ class ObjectExports(Sample):
 
     def found(self, files=None):
         tree = {
+            "delegate/src/agent_pm/delegate/event/__init__.py": "__all__ = []\n",
             self.SESSION + "engine/forwarding.py": "".join(
                 f"def {name}(): pass\n" for name in self.WRAPPERS
             ),

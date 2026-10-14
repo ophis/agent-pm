@@ -51,6 +51,7 @@ from agent_pm.utils.paths import (
     temp_dirs,
     under,
 )
+from agent_pm.utils.process_control import ProcessControl
 from agent_pm.utils.record import Display, Record, Status, json_records, number
 from agent_pm.utils.registry import PATH as CLASS_PATH
 from agent_pm.utils.registry import load as load_class
@@ -73,6 +74,7 @@ __all__ = [
     "NAME",
     "OWNER",
     "Once",
+    "ProcessControl",
     "Record",
     "Repo",
     "Runner",

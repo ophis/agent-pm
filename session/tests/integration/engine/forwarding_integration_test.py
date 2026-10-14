@@ -1,8 +1,10 @@
 """Driver's sessions of the fake runtime and its harness Host's: real child processes."""
 
 import json
+import os
 import sys
 import unittest
+from pathlib import Path
 
 from agent_pm.session import Driver
 from agent_pm.session.engine.types import Exited
@@ -45,12 +47,20 @@ class DetachTest(TuiBase):
             host=self.host,
             harness_host="fake",
         )
-        argv = [sys.executable, "-I", "-c", "pass"]
+        gate = os.path.join(self.dir, "finish")
+        argv = [
+            sys.executable,
+            "-I",
+            "-c",
+            "import os, sys, time\nwhile not os.path.exists(sys.argv[1]): time.sleep(0.01)",
+            gate,
+        ]
         self.assertIsNone(driver.detach("d1", argv, self.dir, {"PATH": "/bin"}, opener="mgr"))
         process = driver.session_cls.host("fake").attach("d1")
         self.addCleanup(process.close)
         self.assertIsInstance(driver.session_cls.host("fake"), FakeHost)
         self.assertEqual((process.display(), process.record()), ("mgr", None))
+        Path(gate).touch()
         self.assertTrue(process.wait_exit(WAIT))
         self.assertEqual(self.host.mock_calls, [])
 

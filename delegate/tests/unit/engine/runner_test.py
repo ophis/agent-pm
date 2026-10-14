@@ -14,7 +14,7 @@ from agent_pm.session import Activity, Blocked, DriverError, Exited, IdleTimeout
 
 from delegate.tests.replies import bare, block
 from delegate.tests.runner import INVALID, INVALID_ERROR, LEFT_OPEN, PENDING, SID, Base
-from delegate.tests.unit.engine.print_prompt import ROLES, STARTED, PrintPromptCase
+from delegate.tests.unit.engine.instruction import ROLES, InstructionCase
 from delegate.tests.unit.runs import (
     DONE,
     GAVE_UP,
@@ -146,13 +146,24 @@ class TuiPolicy(Base):
                 self.fresh()
                 r = self.faked(turn(START, block(DONE)), **kw)
                 args, given = self.started.call_args
-                self.assertEqual((args[:2], r.outcome.status), (("fake", "tui"), "done"))
                 self.assertEqual(
-                    (given, args[3].sid, args[3].name),
+                    ((args[0].session.runtime, args[0].session.mode), r.outcome.status),
+                    (("fake", "tui"), "done"),
+                )
+                self.assertEqual(
                     (
-                        {"idle_timeout": IDLE_TIMEOUT, **want[0]},
+                        given,
+                        args[0].session.sid,
+                        args[0].session.name,
+                        args[0].session.resume,
+                        args[0].session.events,
+                    ),
+                    (
+                        {"idle_timeout": IDLE_TIMEOUT},
                         self.events[0].sid,
                         want[1],
+                        want[0]["resume"] is not None,
+                        want[0]["events"],
                     ),
                 )
                 self.assertIn(f"delegate: tui session {name}: tmux attach -t '={name}'\n", self.err)
@@ -380,42 +391,38 @@ class TuiPolicy(Base):
         self.assertEqual(self.kinds(), ["input", "idle", "progress", "result", "end"])
         args, given = self.started.call_args
         self.assertEqual(
-            (given, args[3].sid),
-            ({"resume": None, "idle_timeout": IDLE_TIMEOUT, "events": None}, self.events[0].sid),
+            (given, args[0].session.sid, args[0].session.resume, args[0].session.events),
+            ({"idle_timeout": IDLE_TIMEOUT}, self.events[0].sid, False, None),
         )
 
 
-class PrintPromptRuns(PrintPromptCase):
-    def test_each_role_is_done_its_deliverable_the_planned_prompt_saved_to_out(self):
+class InstructionRuns(InstructionCase):
+    def test_each_role_gets_its_planned_prompt_without_an_outcome_or_events(self):
         for role in ROLES:
             with self.subTest(role=role):
                 args = self.given(role)
                 want, events = plan(*args, driver=self.driver).prompt, []
                 with no_child(), redirect_stderr(io.StringIO()):
                     r = run(*args, on_event=events.append, driver=self.driver)
-                self.assertEqual(
-                    (r.returncode, r.outcome.status, r.outcome.deliverable), (0, "done", want)
-                )
+                self.assertEqual((r.returncode, r.outcome, r.instruction), (0, None, args[1].out))
                 with open(args[1].out) as f:
                     self.assertEqual(f.read(), want)
                 self.assertEqual(marks(want), [("round", "a mark line in the input")])
-                self.assertEqual(events, [Begun(SID), STARTED, Finished(r)])
+                self.assertEqual(events, [])
+                self.assertFalse(os.path.exists(os.path.join(args[1].workdir, "run.jsonl")))
 
-    def test_headless_is_refused_and_nothing_starts(self):
-        args = self.given("dummy-tester", mode="headless")
-        with (
-            no_child(),
-            self.assertRaisesRegex(
-                ConfigError, "runtime 'print_prompt' does not support headless mode"
-            ),
-        ):
-            run(*args, driver=self.driver)
-        self.assertFalse(os.path.exists(args[1].workdir))
+    def test_an_unconfigured_runtime_does_not_start_a_session(self):
+        args = self.given("dummy-tester", runtime="unconfigured")
+        with no_child():
+            result = run(*args, driver=self.driver)
+        self.assertEqual(
+            (result.returncode, result.outcome, result.instruction), (0, None, args[1].out)
+        )
 
     def test_a_resume_is_refused(self):
         args = self.given("dummy-tester", resume=True)
         with (
             no_child(),
-            self.assertRaisesRegex(ConfigError, "print_prompt has no session to resume"),
+            self.assertRaisesRegex(ConfigError, "instruction has no session to resume"),
         ):
             run(*args, driver=self.driver)

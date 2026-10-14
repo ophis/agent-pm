@@ -76,7 +76,7 @@ class Adapter:
     def session_metadata(self, info: SessionInfo) -> SessionInfo:
         return info
 
-    def session_status(self, sid: str, cwd: str) -> SessionStatus:
+    def session_status(self, info: SessionInfo) -> SessionStatus:
         return SessionStatus(Resumable.UNKNOWN, None, "")
 
     def writable_dirs(self, spec: Spec) -> tuple[str, ...]:

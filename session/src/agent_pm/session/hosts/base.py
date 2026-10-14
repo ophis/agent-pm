@@ -50,8 +50,9 @@ class Terminal(HostProcess):
 
 
 class Host(ABC):
-    """settings: [hosts.<name>] minus implementation. detach/terminal: env verbatim; on exit, events
-    gets `exited <rc>` / `dead`. attach: a Terminal, unknown → DriverError. list: sorted display
+    """settings: [hosts.<name>] minus implementation. detach/terminal: caller env with the Host's
+    terminal keys replacing the caller's, PWD=cwd; on exit, events gets `exited <rc>` / `dead`.
+    attach: a Terminal, unknown → DriverError. list: sorted display
     matches ("" none). display: completed in the caller's process.
     """
 

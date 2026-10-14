@@ -3,11 +3,13 @@
 import inspect
 
 from agent_pm.session import (
+    ConfigError,
     Hosts,
     Mode,
     Session,
     Spec,
 )
+from agent_pm.session.engine.types import ProcessOptions
 
 from session.tests.case import Case
 from session.tests.fakes.host import FakeHost
@@ -56,12 +58,31 @@ class SessionClassMethods(Case):
             ),
             (Session.attach, [("name", either), ("host", key), ("idle_timeout", key)]),
             (Session.writable_dirs, [("spec", either)]),
+            (Session.inspect, [("spec", either)]),
             (Session.layout, [("display", key)]),
             (Session.show, [("self", either), ("display", key)]),
         ):
             with self.subTest(method=method.__name__):
                 found = inspect.signature(method).parameters.values()
                 self.assertEqual([(p.name, p.kind) for p in found], parameters)
+
+    def test_policy_validation_needs_no_session_or_workdir(self):
+        Session.validate_policy(flags=("--flag",), env={"TOKEN": "value"})
+        for flags, env, message in (
+            (("bad\0flag",), {}, "flags must be a tuple of strings without NUL"),
+            ((), {"NOT-A-NAME": "value"}, "env must map variable names to strings without NUL"),
+            ((), {"TOKEN": "bad\0value"}, "env must map variable names to strings without NUL"),
+        ):
+            with self.subTest(flags=flags, env=env):
+                with self.assertRaises(ConfigError) as caught:
+                    Session.validate_policy(flags=flags, env=env)
+                self.assertEqual(str(caught.exception), message)
+                with self.assertRaises(ConfigError) as spec_error:
+                    Spec(workdir=self.home, flags=flags, env=env)
+                self.assertEqual(str(spec_error.exception), message)
+                with self.assertRaises(ConfigError) as options_error:
+                    ProcessOptions(flags=flags, env=env)
+                self.assertEqual(str(options_error.exception), message)
 
     def test_on_a_subclass_each_is_its_own(self):
         self.assertIsInstance(FakeSession.host(), FakeHost)
@@ -72,6 +93,7 @@ class SessionClassMethods(Case):
             "configure": ((), {"adapters": {}, "hosts": Hosts("tmux", {})}),
             "start": ((spec,), {}),
             "attach": (("w1",), {}),
+            "inspect": ((spec,), {}),
             "list": ((), {}),
             "usage": (("fake",), {}),
             "layout": ((), {}),

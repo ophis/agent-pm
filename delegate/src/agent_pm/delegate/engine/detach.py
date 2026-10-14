@@ -1,14 +1,17 @@
-"""A detached run: the Delegate CLI's driver form (--driver) for a Plan, started through
-Driver.detach() in its Driver session `<role>-<sid8>-drive` (a tui run's agent session:
-`<role>-<sid8>`). Every check first: a refusal is ConfigError, nothing started. When the driver form
-ends, outcome() appends its one outcome line to the events file.
+"""A detached run: persist a session-keyed invocation, then start engine.harness in
+`<role>-<sid8>-drive` (tui agent: `<role>-<sid8>`). Refusals are ConfigError before anything starts.
+The harness appends its one outcome line when it ends.
 """
 
+import hashlib
+import json
 import os
 import sys
+import tempfile
 from dataclasses import dataclass
 
 from agent_pm.delegate.engine.config import PYTHONPATH
+from agent_pm.delegate.engine.drivers import Driver
 from agent_pm.delegate.engine.runner import say
 from agent_pm.delegate.engine.types import ConfigError, Plan
 from agent_pm.session import ConfigError as SessionConfigError
@@ -33,20 +36,24 @@ class Detached:
 def detach(
     p: Plan,
     *,
+    driver,
     events: str,
     split: str | None = None,
     split_from: str | None = None,
 ) -> Detached:
     """The events file must be one you own (created if missing); a tui run's pane opener from
-    layout, None when the caller has no pane and split_from is None. DriverError from the Plan's
-    Driver.detach propagates.
+    layout, None when the caller has no pane and split_from is None. The owner's DriverError
+    propagates.
     """
+    if isinstance(driver, Driver):
+        kind = "agent driver" if driver.session_based else "instruction"
+        raise ConfigError(f"{kind} cannot detach")
     mode = p.spec.mode
     if mode not in MODES:
         raise ConfigError(f"--detach: mode must be headless or tui, got {mode!r}")
     if mode != "tui" and (split is not None or split_from is not None):
         raise ConfigError("split and split_from: tui mode only")
-    tui, driver = names(p.run.role, p.sid, mode)
+    tui, harness = names(p.run.role, p.sid, mode)
     events = os.path.abspath(events)
     try:
         append_line(events, "", own=True)
@@ -55,51 +62,79 @@ def detach(
     opener = None
     if tui is not None:
         try:
-            opener = p.driver.layout(split, split_from)
+            opener = driver.layout(split, split_from)
         except DriverError as e:
             if split_from is not None:
                 raise ConfigError(str(e)) from None
         except SessionConfigError as e:
             raise ConfigError(str(e)) from None
-    given = {
-        "driver": driver,
+    invocation = {
+        "harness": harness,
         "role": p.run.role,
         "input": p.params.input,
-        "out": p.spec.out,
+        "out": p.params.out,
         "workdir": p.params.workdir,
-        "runtime": p.spec.runtime,
+        "runtime": p.runtime,
         "mode": mode,
-        "sid": p.spec.sid,
+        "sid": p.sid,
         "events": events,
-    }
-    optional = {
-        "task": p.run.task,
+        "task": p.run.task or None,
         "repo": p.spec.repo,
         "split": split,
-        "split-from": split_from,
+        "split_from": split_from,
         "opener": opener,
+        "resume": p.spec.resume,
+        "detach": False,
+        "dry_run": False,
+        "list": False,
     }
-    # One `--k=v` item each: a value led by `-` is never read as an option.
+    state, authentication = _write_invocation(p, invocation)
     argv = [
         sys.executable,
         "-P",
         "-m",
-        "agent_pm.delegate.cli",
-        *(f"--{k}={v}" for k, v in given.items()),
-        *(f"--{k}={v}" for k, v in optional.items() if v),
-        *(["--resume"] if p.spec.resume else []),
+        "agent_pm.delegate.engine.harness",
+        p.params.workdir,
     ]
+    started = False
     try:
-        p.driver.detach(
-            driver,
+        driver.detach(
+            harness,
             argv,
             cwd=os.getcwd(),
-            env={**os.environ, "PYTHONPATH": PYTHONPATH},
+            env={**os.environ, "PYTHONPATH": PYTHONPATH, **authentication},
             opener=opener,
         )
     except SessionConfigError as e:
         raise ConfigError(str(e)) from None
-    return Detached(driver, tui)
+    else:
+        started = True
+    finally:
+        if not started:
+            os.unlink(state)
+    return Detached(harness, tui)
+
+
+def _write_invocation(p: Plan, invocation: dict) -> tuple[str, dict[str, str]]:
+    payload = json.dumps(invocation, sort_keys=True).encode("utf-8")
+    key = hashlib.sha256(p.sid.encode("utf-8")).hexdigest()
+    try:
+        os.makedirs(p.params.workdir, exist_ok=True)
+        descriptor, path = tempfile.mkstemp(
+            prefix=f"harness-{key}-", suffix=".json", dir=p.params.workdir
+        )
+        try:
+            with os.fdopen(descriptor, "wb") as stream:
+                stream.write(payload)
+        except OSError:
+            os.unlink(path)
+            raise
+    except OSError as error:
+        raise ConfigError(f"harness state: {error}") from None
+    return path, {
+        "AGENT_PM_HARNESS_STATE": os.path.basename(path),
+        "AGENT_PM_HARNESS_DIGEST": hashlib.sha256(payload).hexdigest(),
+    }
 
 
 def outcome(events: str, driver: str, status: str | None) -> None:

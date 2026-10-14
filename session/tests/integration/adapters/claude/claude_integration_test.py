@@ -281,7 +281,10 @@ class RunTest(Base):
                 os.kill(self.logged()[0]["pid"], signal.SIGKILL)
 
         self.assertEqual(self.drain(first, on), [Reply("first"), Exited(-signal.SIGKILL)])
-        self.assertEqual(self.driver.session_status("claude", sid, self.workdir).resumable, "yes")
+        self.assertEqual(
+            self.driver.session_status("claude", sid, self.workdir, workdir=self.workdir).resumable,
+            "yes",
+        )
         self.scenario(steps=["second"])
         again = self.start("more", resume=sid)
         self.assertEqual(self.drain(again), [Reply("second"), TurnEnd("second", 0), Exited(0)])
@@ -435,14 +438,17 @@ class SessionInfoTest(Base):
         handle = self.start(sid=SID)
         self.assertEqual(self.drain(handle)[-1], Exited(0))
         self.assertEqual(
-            self.driver.session_status("claude", SID, self.workdir),
+            self.driver.session_status("claude", SID, self.workdir, workdir=self.workdir),
             SessionStatus(
                 "yes", os.lstat(handle.info().transcript).st_mtime, self.resume_command(SID)
             ),
         )
         other = str(uuid.uuid4())
+        RunLog(self.workdir).note(
+            "session", sid=other, cwd=self.workdir, project=False, transcript="", resume=""
+        )
         self.assertEqual(
-            self.driver.session_status("claude", other, self.workdir),
+            self.driver.session_status("claude", other, self.workdir, workdir=self.workdir),
             SessionStatus("no", None, self.resume_command(other)),
         )
 

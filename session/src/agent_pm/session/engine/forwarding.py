@@ -17,7 +17,9 @@ from agent_pm.session.engine.types import (
     ConfigError,
     Hosts,
     Mode,
+    NoRecordedSession,
     NotDisplayable,
+    Resumable,
     SessionRow,
     SessionStatus,
     Spec,
@@ -188,8 +190,14 @@ class Driver:
     def session_record(workdir: str, sid: str) -> dict | None:
         return session_record(workdir, sid)
 
-    def session_status(self, runtime: str, sid: str, cwd: str) -> SessionStatus:
-        return self.session_cls._status(runtime, sid, cwd)
+    def session_status(self, runtime: str, sid: str, cwd: str, *, workdir: str) -> SessionStatus:
+        """cwd retains legacy validation; a missing historical record is not resumable."""
+        if not printable_abs(cwd):
+            raise ConfigError(f"cwd must be a printable absolute path, got {cwd!r:.80}")
+        try:
+            return self.session_cls.inspect(Spec(workdir=workdir, runtime=runtime, sid=sid))
+        except NoRecordedSession:
+            return SessionStatus(Resumable.NO, None, "")
 
     def writable_dirs(self, runtime: str, spec: Spec, resume: str | None = None) -> tuple[str, ...]:
         """Resume: session `resume`'s. An OSError reading them is a ConfigError, so a caller fails

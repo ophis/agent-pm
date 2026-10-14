@@ -9,14 +9,18 @@ import itertools
 import json
 import logging
 import os
+import shlex
 import stat
 import tempfile
 import threading
+from pathlib import Path
 from unittest import mock
 
-from agent_pm.session import Host, NotDisplayable
+from agent_pm.session import Host, NoRecordedSession, NotDisplayable
 from agent_pm.session.adapters import common as selection
 from agent_pm.session.adapters.base import Adapter
+from agent_pm.session.adapters.claude import ClaudeAdapter
+from agent_pm.session.adapters.codex import CodexAdapter
 from agent_pm.session.engine import hosted
 from agent_pm.session.engine import types as engine_types
 from agent_pm.session.engine.hosted import POLL, HostedSession
@@ -47,7 +51,7 @@ from agent_pm.session.hosts.tmux import TmuxHost, tmux_host
 from agent_pm.session.modes import tui
 
 from session.tests import fake_adapter
-from session.tests.case import HOSTS, SPAWNS, Case
+from session.tests.case import HOSTS, REPO, SPAWNS, Case
 from session.tests.fakes.host import FakeHost
 from session.tests.hosted_support import (
     LAUNCHED,
@@ -62,6 +66,7 @@ from session.tests.hosted_support import (
     listed,
 )
 from session.tests.source_roots import PACKAGE_ROOTS
+from utils.tests.sandbox import owned_directory
 
 UNCONFIGURED = "session not configured: call Session.configure first"
 FAKE_HOSTS = {"fake": {"implementation": "session.tests.fakes.host:FakeHost"}}
@@ -97,6 +102,7 @@ class ConfiguredTest(Case):
         for name, call in (
             ("start", lambda: fresh.start(spec)),
             ("attach", lambda: fresh.attach("w1")),
+            ("inspect", lambda: fresh.inspect(spec)),
             ("usage", lambda: fresh.usage("fake")),
             ("layout", fresh.layout),
             ("writable_dirs", lambda: fresh.writable_dirs(spec)),
@@ -112,6 +118,142 @@ class ConfiguredTest(Case):
         with self.assertRaises(ConfigError) as caught:
             HostedSession.configured(adapters={}, hosts={**HOSTS, "default": "tmux"})
         self.assertEqual(str(caught.exception), "hosts: want parsed Hosts (Host.parse_hosts)")
+
+
+class InspectTest(Base):
+    def inspect(self, spec):
+        with contextlib.ExitStack() as stack:
+            starts = [
+                stack.enter_context(mock.patch(target, side_effect=AssertionError(target)))
+                for target in SPAWNS
+            ]
+            answer = self.session.inspect(spec)
+        for start in starts:
+            start.assert_not_called()
+        return answer
+
+    def test_historical_status_resolves_the_recorded_cwd_inside_session(self):
+        os.makedirs(self.workdir)
+        log = RunLog(self.workdir)
+        info = SessionInfo(sid=SID, cwd=self.dir, project=False, transcript="", resume="")
+        log.note("session", **info.persisted())
+        log.note(
+            "session_metadata",
+            sid=SID,
+            transcript=os.path.join(self.dir, "transcript"),
+            resume="saved hint",
+        )
+        log.note("session", **dataclasses.replace(info, sid="another", cwd=self.home).persisted())
+        spec = Spec(workdir=self.workdir, runtime="probe", sid=SID, access=Access(cwd=self.home))
+        self.assertEqual(self.inspect(spec), SessionStatus("yes", 1.5, f"probe {SID} {self.dir}"))
+        self.assertFalse(os.path.exists(self.log))
+
+    def test_inspection_passes_folded_transcript_and_resume_metadata_to_the_adapter(self):
+        self.configure(
+            tables={
+                "history": {
+                    "implementation": "agent_pm.session.adapters.fake:InspectAdapter",
+                    "scenario": self.scenario,
+                    "log": self.log,
+                }
+            }
+        )
+        os.makedirs(self.workdir)
+        log = RunLog(self.workdir)
+        info = SessionInfo(
+            sid=SID, cwd=self.dir, project=False, transcript="/old/transcript", resume="old resume"
+        )
+        log.note("session", **info.persisted())
+        log.note("session_metadata", sid=SID, transcript="/saved/transcript", resume="saved resume")
+        self.assertEqual(
+            self.inspect(Spec(workdir=self.workdir, runtime="history", sid=SID)),
+            SessionStatus("yes", 1.5, f"{SID} {self.dir} /saved/transcript saved resume"),
+        )
+
+    def test_a_sid_without_a_record_is_an_error_without_starting_a_process(self):
+        spec = Spec(workdir=self.workdir, runtime="probe", sid=SID)
+        with self.assertRaisesRegex(NoRecordedSession, "no recorded session"):
+            self.inspect(spec)
+        self.assertFalse(os.path.exists(self.workdir))
+
+    def test_inspection_requires_runtime_and_sid(self):
+        for spec, message in (
+            (Spec(workdir=self.workdir, sid=SID), "spec.runtime: required to inspect"),
+            (Spec(workdir=self.workdir, runtime="probe"), "spec.sid: required to inspect"),
+        ):
+            with self.subTest(spec=spec), self.assertRaises(ConfigError) as caught:
+                self.inspect(spec)
+            self.assertEqual(str(caught.exception), message)
+
+
+class HistoricalRecordTest(Case):
+    def setUp(self):
+        directory = owned_directory(self, os.environ.get("AGENT_PM_TEST_TMP", REPO))
+        self.root = Path(directory).resolve()
+        self.enterContext(mock.patch.dict(os.environ, {"HOME": str(self.root)}))
+        self.work = self.root / "work"
+        self.cwd = self.work / "project ' quoted"
+        self.cwd.mkdir(parents=True)
+
+    def forged(self, runtime, transcript, *, expected):
+        log = RunLog(str(self.work))
+        info = SessionInfo(sid=SID, cwd=str(self.cwd), project=True, transcript="", resume="")
+        log.note("session", **info.persisted())
+        log.note("session_metadata", sid=SID, transcript=str(transcript), resume="rm -rf ~")
+        request = Spec(workdir=str(self.work), runtime=runtime, sid=SID)
+        self.assertEqual(self.driver.session_cls.inspect(request), expected)
+        log.note("session_metadata", sid=SID, transcript="", resume="printf forged-command")
+        fresh = self.driver.session_cls.inspect(request)
+        self.assertEqual(fresh, SessionStatus("yes", 100.0, expected.resume_command))
+        self.assertNotIn("forged-command", fresh.resume_command)
+
+    def test_claude_resume_is_built_fresh_and_an_outside_recorded_transcript_is_ignored(self):
+        config = {"env": {"CLAUDE_CONFIG_DIR": str(self.root / "claude")}}
+        self.configure_session(
+            {
+                "claude": {
+                    "implementation": "agent_pm.session.adapters.claude:ClaudeAdapter",
+                    **config,
+                }
+            }
+        )
+        adapter = ClaudeAdapter(config)
+        transcript = Path(adapter.common.transcript(str(self.cwd), SID))
+        transcript.parent.mkdir(parents=True)
+        transcript.write_text("{}\n", encoding="utf-8")
+        os.utime(transcript, (100, 100))
+        outside = self.root / "outside.jsonl"
+        outside.write_text("{}\n", encoding="utf-8")
+        os.utime(outside, (9000, 9000))
+        command = f"cd {shlex.quote(str(self.cwd))} && claude --resume {SID}"
+        self.forged("claude", outside, expected=SessionStatus("yes", 100.0, command))
+
+    def test_codex_resume_is_built_fresh_and_a_forged_outside_transcript_is_refused(self):
+        home = self.root / ".codex"
+        home.mkdir()
+        config = {"env": {"CODEX_HOME": str(home)}}
+        self.configure_session(
+            {"codex": {"implementation": "agent_pm.session.adapters.codex:CodexAdapter", **config}}
+        )
+        adapter = CodexAdapter(config)
+        spec = Spec(workdir=str(self.work), sid=SID, access=Access(cwd=str(self.cwd), project=True))
+        adapter.common.prepare(spec)
+        adapter.common.bind(str(self.work), SID, SID)
+        transcript = home / "sessions" / "2026" / "10" / "11" / f"rollout-test-{SID}.jsonl"
+        transcript.parent.mkdir(parents=True)
+        transcript.write_text(
+            json.dumps({"type": "session_meta", "payload": {"id": SID, "cwd": str(self.cwd)}}),
+            encoding="utf-8",
+        )
+        os.utime(transcript, (100, 100))
+        outside = self.root / f"rollout-forged-{SID}.jsonl"
+        outside.write_text(
+            json.dumps({"type": "session_meta", "payload": {"id": SID, "cwd": str(self.root)}}),
+            encoding="utf-8",
+        )
+        os.utime(outside, (9000, 9000))
+        command = f"cd {shlex.quote(str(self.cwd))} && CODEX_HOME={shlex.quote(str(home))} codex resume {SID}"
+        self.forged("codex", outside, expected=SessionStatus("unknown", None, command))
 
 
 class HostTest(Case):

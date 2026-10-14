@@ -14,15 +14,17 @@ from dataclasses import replace
 from agent_pm.delegate import composer
 from agent_pm.delegate.composer import DELIVERABLE, RunConfig, RunParams, Team
 from agent_pm.delegate.engine import config
+from agent_pm.delegate.engine.drivers import AgentDriver, Driver
 from agent_pm.delegate.engine.types import ConfigError, Plan, Spec
 from agent_pm.delegate.event.reply import OUTCOME, PROGRESS
-from agent_pm.session import Access, Driver, Host, Mode, read_config, session_record
+from agent_pm.session import Access, Host, Mode, read_config, session_record
 from agent_pm.session import ConfigError as SessionConfigError
+from agent_pm.session import Driver as SessionDriver
 from agent_pm.session import Spec as SessionSpec
 from agent_pm.utils import LOCAL, read_project, under
 
 
-def configure(*, local: str = LOCAL, cfg: Mapping | None = None) -> Driver:
+def configure(*, local: str = LOCAL, cfg: Mapping | None = None) -> SessionDriver:
     """The session's Driver from its config, [hosts] parsed once, keeping harness_host (`cfg`, else
     read) once it names one of those hosts.
     """
@@ -34,7 +36,7 @@ def configure(*, local: str = LOCAL, cfg: Mapping | None = None) -> Driver:
             read_project("delegate", local=local) if cfg is None else cfg, hosts.tables
         )
     with _config("session"):
-        return Driver.from_config(table, hosts=hosts, harness_host=harness)
+        return SessionDriver.from_config(table, hosts=hosts, harness_host=harness)
 
 
 @contextlib.contextmanager
@@ -43,15 +45,6 @@ def _config(name: str) -> Iterator[None]:
         yield
     except (OSError, ValueError, SessionConfigError) as e:
         raise ConfigError(f"{name} config: {e}") from None
-
-
-def policy(runtime: str) -> tuple[tuple[str, ...], dict[str, str]]:
-    try:
-        flags, env = config.policy(runtime)
-        spec = SessionSpec(workdir="/", flags=tuple(flags), env=env)
-        return spec.flags, dict(spec.env)
-    except (OSError, ValueError, SessionConfigError) as exc:
-        raise ConfigError(f"policy.{runtime}: {exc}") from None
 
 
 def _own(f):
@@ -87,17 +80,16 @@ def place(
         raise ConfigError(
             f"cwd {here} is in trusted_dirs and in the workdir: project settings must not load from it"
         )
-    if not project and real != real_work:
-        print(
-            f"delegate: cwd {here} is not in trusted_dirs: its project settings are off",
-            file=sys.stderr,
-        )
     return here, project
 
 
 @_own
-def plan(run: RunConfig, spec: Spec, *, driver: Driver) -> Plan:
+def plan(run: RunConfig, spec: Spec, *, driver: Driver | SessionDriver) -> Plan:
     """With the built-in team the configured team dirs are checked for overlap only."""
+    if isinstance(driver, SessionDriver):
+        driver = AgentDriver(driver.session_cls)
+    if not driver.session_based and spec.resume:
+        raise ConfigError("instruction has no session to resume")
     if spec.mode not in tuple(Mode):
         raise ConfigError(f"mode must be one of {', '.join(Mode)}, got {spec.mode!r}")
     if spec.mode != "tui" and spec.name is not None:
@@ -130,6 +122,11 @@ def plan(run: RunConfig, spec: Spec, *, driver: Driver) -> Plan:
     )
     resume = spec.sid if spec.resume else None
     here, project = place(run, workdir, resume_sid=resume, cwd=spec.cwd)
+    if driver.session_based and not project and os.path.realpath(here) != os.path.realpath(workdir):
+        print(
+            f"delegate: cwd {here} is not in trusted_dirs: its project settings are off",
+            file=sys.stderr,
+        )
     intent = composer.access(run, workdir, cwd=here, project=project, repo_dir=spec.repo, team=team)
     access = Access(
         dirs=intent.dirs,
@@ -139,9 +136,15 @@ def plan(run: RunConfig, spec: Spec, *, driver: Driver) -> Plan:
         reads=intent.reads,
         env=intent.env,
     )
-    flags, env = policy(runtime)
+    flags, env = driver.policy(runtime)
     session = SessionSpec(
         workdir=workdir,
+        runtime=runtime,
+        mode=Mode(spec.mode),
+        sid=spec.sid,
+        resume=spec.resume,
+        name=spec.name,
+        events=spec.events,
         access=access,
         tier=run.tier,
         effort=run.effort,
@@ -156,7 +159,6 @@ def plan(run: RunConfig, spec: Spec, *, driver: Driver) -> Plan:
         intent.writes,
         runtime=runtime,
         spec=session,
-        resume=resume,
         driver=driver,
     )
     params = RunParams(
@@ -165,7 +167,8 @@ def plan(run: RunConfig, spec: Spec, *, driver: Driver) -> Plan:
         workdir=workdir,
         resume=spec.resume,
     )
-    return Plan(spec, session, composer.render(run, params, team=team), run, params, driver)
+    prompt = composer.render(run, params, team=team)
+    return Plan(spec, replace(session, prompt=prompt), prompt, run, params)
 
 
 def _check_team_dirs(
@@ -175,7 +178,6 @@ def _check_team_dirs(
     *,
     runtime: str,
     spec: SessionSpec,
-    resume: str | None,
     driver: Driver,
 ) -> None:
     """Every dir the run can write counts, those `runtime` can write itself (writable_dirs) last;
@@ -186,9 +188,7 @@ def _check_team_dirs(
     writes = [("the workdir", spec.workdir), ("the cwd", spec.access.cwd)]
     writes += [(f"write dir {p}", p) for p in write_dirs]
     writes += [("a dir the run adds", p) for p in spec.access.dirs]
-    writes += [
-        (f"a dir {runtime} can write", p) for p in driver.writable_dirs(runtime, spec, resume)
-    ]
+    writes += [(f"a dir {runtime} can write", p) for p in driver.writable_dirs(spec)]
     composer.check_team_dirs(team.dirs, writes=writes)
     for path in (p for d in guarded for p in composer.team_paths(d)):
         real = os.path.realpath(path)

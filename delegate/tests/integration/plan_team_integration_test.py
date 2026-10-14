@@ -97,9 +97,24 @@ class Configures(Base):
             f'[hosts.fake]\n{fake}[delegates]\nharness_host = "fake"\n'
         )
         driver = configure()
-        driver.detach("d1", [sys.executable, "-I", "-c", "pass"], self.tmp, {}, opener="mgr")
+        gate = os.path.join(self.tmp, "finish")
+        driver.detach(
+            "d1",
+            [
+                sys.executable,
+                "-I",
+                "-c",
+                "import os, sys, time\nwhile not os.path.exists(sys.argv[1]): time.sleep(0.01)",
+                gate,
+            ],
+            self.tmp,
+            {},
+            opener="mgr",
+        )
         process = FakeHost("fake").attach("d1")
         self.addCleanup(process.close)
         self.assertEqual(process.display(), "mgr")
+        with open(gate, "w", encoding="utf-8"):
+            pass
         self.assertTrue(process.wait_exit(10))
         self.assertEqual(FakeHost("spare", {"root": "~/spare"}).list(), [])

@@ -14,13 +14,16 @@ from agent_pm.delegate.engine.config import (
     harness_host,
     read_config,
 )
+from agent_pm.delegate.engine.drivers import Driver
 from agent_pm.delegate.engine.plan import configure, plan
 from agent_pm.delegate.engine.runner import IDLE_TIMEOUT, run
 from agent_pm.delegate.engine.types import (
     Begun,
     ConfigError,
+    DriverSpec,
     Event,
     Finished,
+    Instruction,
     Limit,
     Plan,
     Progress,
@@ -42,6 +45,9 @@ __all__ = [
     "plan",
     "run",
     "Result",
+    "Driver",
+    "DriverSpec",
+    "Instruction",
     "Limit",
     "Outcome",
     "InvalidOutcome",

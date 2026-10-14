@@ -50,7 +50,7 @@ CLASS_METHODS = {"attach", "usage", "roles", "resolve", "trusted_dirs"}
 
 class Exports(Case):
     def test_all_holds_the_new_names_each_bound(self):
-        for name in ("Delegate", "Spec", "RunConfig", "DelegateEvent"):
+        for name in ("Delegate", "Spec", "RunConfig", "DelegateEvent", "Driver", "DriverSpec"):
             with self.subTest(name=name):
                 self.assertIn(name, delegate.__all__)
         self.assertEqual([n for n in delegate.__all__ if not hasattr(delegate, n)], [])

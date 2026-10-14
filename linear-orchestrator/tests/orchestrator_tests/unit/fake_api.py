@@ -2,7 +2,13 @@
 
 import re
 
-from agent_pm.session import DriverError, SessionRow, SessionStatus, Usage, Window
+from agent_pm.session import (
+    DriverError,
+    SessionRow,
+    SessionStatus,
+    Usage,
+    Window,
+)
 
 LOW = Usage(Window(10.0, None), Window(10.0, None))
 
@@ -47,8 +53,11 @@ class FakeApi:
         self.order.append(("show", name, split, split_from, opener, calls))
         return _answer(self.shown)
 
-    def session_status(self, runtime, sid, cwd):
-        self.info.append((runtime, sid, cwd))
+    def session_status(self, runtime, sid, cwd, *, workdir):
+        entry = self.session_record(workdir, sid)
+        self.info.append((runtime, sid, entry["cwd"] if entry else cwd))
+        if entry is None:
+            return SessionStatus("no", None, "")
         return _answer(self.statuses.get(sid, SessionStatus("yes", None, f"resume {sid}")))
 
     def session_record(self, workdir, sid):

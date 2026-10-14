@@ -3,7 +3,6 @@ send's errors and the group killed until found empty.
 """
 
 import os
-import signal
 import unittest
 from unittest import mock
 
@@ -26,11 +25,13 @@ class FakeHostOnly(Case):
         self.addCleanup(lambda: [self.host.attach(n).close() for n in self.host.list()])
 
     def test_state_lives_under_the_root_setting_expanded(self):
-        self.host.detach("w1", program("pass"), self.home, {}).wait_exit(10)
+        process = self.host.detach("w1", program(SLEEP), self.home, {})
         self.assertEqual(
             sorted(os.listdir(os.path.join(self.home, "hosts", "w1"))),
-            ["env.json", "meta.json", "output", "pid", "rc"],
+            ["env.json", "meta.json", "output", "pid"],
         )
+        process.close()
+        self.assertFalse(os.path.exists(os.path.join(self.home, "hosts", "w1")))
 
     def test_a_dead_name_is_started_again(self):
         first = self.host.detach("w1", program("pass"), self.home, {})
@@ -54,7 +55,8 @@ class FakeHostOnly(Case):
             terminal.kill()
             terminal.kill()
             terminal.close()
-        self.assertEqual([c.args[1] for c in killpg.call_args_list if c.args[1]], [signal.SIGKILL])
+        killpg.assert_not_called()
+        self.assertTrue(terminal.wait_exit(0))
 
 
 if __name__ == "__main__":

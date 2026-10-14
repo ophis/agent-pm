@@ -886,7 +886,7 @@ class ConfigurationRoot(ConfigFile, Case):
             ),
         )
         cfg = self.load(PIPELINE)
-        self.assertEqual(cfg.driver.registry.configured(), ["a", "claude", "codex", "print_prompt"])
+        self.assertEqual(cfg.driver.registry.configured(), ["a", "claude", "codex"])
         self.assertEqual(cfg.driver.registry.tui().status_line, True)
 
     def test_a_later_delegate_plan_keeps_the_settings_load_configured(self):

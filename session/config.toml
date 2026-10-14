@@ -61,11 +61,6 @@ max = "max"
 # Launch/probe variables, including CODEX_HOME; empty → none; resume keeps the saved CODEX_HOME.
 [adapters.codex.env]
 
-# [adapters.print_prompt]  act-as's runtime (session/src/agent_pm/session/adapters/print_prompt/): in_process mode only; its
-#                          run hands the composed prompt back as the deliverable and starts no process; no other keys
-[adapters.print_prompt]
-implementation = "agent_pm.session.adapters.print_prompt:PrintPromptAdapter"
-
 # ── Hosts ───────────────────────────────────────────────
 # [hosts]             default: the [hosts.<name>] sessions run on
 # [hosts.<name>]      one table per Host, parsed only by Host.parse_hosts (session/src/agent_pm/session/hosts/base.py)

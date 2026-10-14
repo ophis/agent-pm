@@ -1,5 +1,6 @@
 """HostedSession's sessions of the fake runtime: real child processes."""
 
+import contextlib
 import json
 import os
 import unittest
@@ -17,10 +18,12 @@ from agent_pm.session.engine.types import (
     Mode,
     SessionInfo,
     SessionStatus,
+    Spec,
     Usage,
     Window,
 )
 
+from session.tests.case import SPAWNS
 from session.tests.hosted_support import (
     LAUNCHED,
     PYTHONPATH,
@@ -89,6 +92,24 @@ class SessionTest(Base):
             ProbeAdapter, "session_status", side_effect=PermissionError(13, "denied")
         ):
             self.assertEqual(session.session_status(), SessionStatus("unknown", None, ""))
+
+    def test_inspect_an_ended_headless_session_without_starting_or_attaching(self):
+        session = self.start(
+            runtime="probe", sid="history", spec=self.spec(access=Access(cwd=self.dir))
+        )
+        self.assertEqual(self.drain(session), [Exited(0)])
+        session.close()
+        with contextlib.ExitStack() as stack:
+            starts = [
+                stack.enter_context(mock.patch(target, side_effect=AssertionError(target)))
+                for target in SPAWNS
+            ]
+            status = self.session.inspect(
+                Spec(workdir=self.workdir, runtime="probe", sid=session.sid)
+            )
+        self.assertEqual(status, SessionStatus("yes", 1.5, f"probe history {self.dir}"))
+        for start in starts:
+            start.assert_not_called()
 
     def test_a_headless_session_cannot_display_and_has_no_record(self):
         session = self.start()

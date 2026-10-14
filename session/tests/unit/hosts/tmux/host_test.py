@@ -1,26 +1,28 @@
-"""hosts/tmux/host.py: TmuxHost over an autospecced tmux_host module (no tmux runs here): the display
-format (fold, unfold, display, display_help), detach's forwarding and refusals, attach, list, the
-Displayable forwards and TmuxProcess (its pane and process group; os.killpg faked).
+"""TmuxHost's display format, detach serialization and refusals, and Displayable forwarding over
+recorded tmux calls. Attachment and TmuxProcess cases use real controller metadata in
+session/tests/integration/hosts/tmux/process_integration_test.py.
 """
 
+import json
 import logging
 import os
 import re
 import signal
 import tempfile
+from pathlib import Path
 from unittest import mock
 
 from agent_pm.session import ConfigError, Displayable, DriverError, Host
 from agent_pm.session.hosts.base import SIGNALS
 from agent_pm.session.hosts.tmux import TmuxHost, tmux_host
 from agent_pm.session.hosts.tmux.host import TmuxProcess
-from agent_pm.utils import Record, load_class
+from agent_pm.utils import ProcessControl, load_class
 
 from session.tests.case import Case
+from session.tests.tmux_host_support import LINE, PROCESS, Base, fake_tmux
 
 TuiError = tmux_host.TuiError
 NO_PANE = "no anchor pane: not in tmux, no iTerm2 pane ($ITERM_SESSION_ID)"
-LINE = Record(1, "role", "r1", ("r1",), None, None, ("ctl",), ("ctl", "resume"), None, None)
 FOLDS = (
     (("mgr", None, None), "mgr"),
     (("mgr", "right", None), "mgr/right"),
@@ -31,39 +33,6 @@ FOLDS = (
     ((None, None, None), None),
 )
 FOREIGN = ("elsewhere:1.2", "mgr/left", "a b", "mgr/right/a b", "a/b/c/d", "x:y:z")
-PROCESS = "4242 $3 %7 4343"
-GROUP = 4343
-
-
-def fake_tmux() -> mock.Mock:
-    """tmux_host autospecced, its constants, attach_command and events_file real: status RUNNING,
-    listing [], opener "mgr", option None, detach and process PROCESS.
-    """
-    tmux = mock.create_autospec(tmux_host)
-    for name in ("PaneStatus", "TuiError"):
-        setattr(tmux, name, getattr(tmux_host, name))
-    for name in ("attach_command", "events_file"):
-        getattr(tmux, name).side_effect = getattr(tmux_host, name)
-    tmux.status.return_value = tmux_host.PaneStatus.RUNNING
-    tmux.listing.return_value = []
-    tmux.opener.return_value = "mgr"
-    tmux.option.return_value = None
-    tmux.detach.return_value = tmux.process.return_value = PROCESS
-    return tmux
-
-
-def row(name: str, display: str | None = None) -> dict:
-    return {"name": name, "display": display}
-
-
-class Base(Case):
-    def setUp(self):
-        tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(tmp.cleanup)
-        self.dir = os.path.realpath(tmp.name)
-        self.tmux = fake_tmux()
-        self.host = TmuxHost("tmux", {"workers_per_column": 2}, tmux=self.tmux)
-        self.killpg = self.enterContext(mock.patch("os.killpg", side_effect=ProcessLookupError))
 
 
 class ClassTest(Case):
@@ -154,6 +123,106 @@ class DisplayTest(Base):
 
 
 class DetachTest(Base):
+    def setUp(self):
+        super().setUp()
+        allocate = tempfile.mkdtemp
+
+        def private(**kw):
+            self.assertEqual(kw, {"prefix": "apm-group-", "dir": "/tmp"})
+            return allocate(prefix=kw["prefix"], dir=self.dir)
+
+        self.enterContext(mock.patch("tempfile.mkdtemp", side_effect=private))
+
+    def test_tmux_failure_removes_the_launch_without_killing_an_existing_name(self):
+        paths = []
+
+        def refuse(*_args, **kw):
+            paths.append(kw["control"])
+            raise TuiError("session d1 exists")
+
+        self.tmux.detach.side_effect = refuse
+        with self.assertRaisesRegex(DriverError, "session d1 exists"):
+            self.detach()
+        self.assertEqual(len(paths), 1)
+        self.assertFalse(os.path.exists(paths[0]))
+        self.tmux.kill.assert_not_called()
+
+    def test_startup_timeout_cancels_launch_and_kills_only_the_captured_pane(self):
+        paths = []
+
+        def pending(*_args, **kw):
+            paths.append(kw["control"])
+            return PROCESS
+
+        self.tmux.detach.side_effect = pending
+        with (
+            mock.patch("time.monotonic", side_effect=[0, 11]),
+            self.assertRaisesRegex(DriverError, "process controller did not start"),
+        ):
+            self.detach()
+        self.assertFalse(os.path.exists(paths[0]))
+        self.tmux.kill.assert_called_once_with("%7")
+
+    def test_a_cancellation_socket_error_is_a_driver_error(self):
+        def refuse(*_args, **kw):
+            control = ProcessControl(kw["control"])
+            self.addCleanup(control.remove)
+            Path(control.path, "control").touch()
+            raise TuiError("cannot create pane")
+
+        self.tmux.detach.side_effect = refuse
+        self.connection.connect.side_effect = TimeoutError("cancel timed out")
+        with self.assertRaisesRegex(
+            DriverError, "cannot create pane; cancel controller: cancel timed out"
+        ):
+            self.detach()
+        self.tmux.kill.assert_not_called()
+
+    def test_a_cancellation_deadline_is_a_driver_error(self):
+        def refuse(*_args, **kw):
+            control = ProcessControl(kw["control"])
+            self.addCleanup(control.remove)
+            Path(control.path, "control").touch()
+            raise TuiError("cannot create pane")
+
+        self.tmux.detach.side_effect = refuse
+        with (
+            mock.patch("time.monotonic", side_effect=[0, 11]),
+            self.assertRaisesRegex(
+                DriverError, "cancel controller: process controller did not cancel"
+            ),
+        ):
+            self.detach()
+        self.tmux.kill.assert_not_called()
+
+    def test_a_startup_cleanup_tmux_error_is_a_driver_error(self):
+        self.tmux.detach.side_effect = lambda *_args, **_kw: PROCESS
+        self.tmux.process.side_effect = TuiError("cannot inspect pane")
+        with (
+            mock.patch("time.monotonic", side_effect=[0, 11]),
+            self.assertRaisesRegex(
+                DriverError, "process controller did not start; close pane: cannot inspect pane"
+            ),
+        ):
+            self.detach()
+        self.tmux.kill.assert_not_called()
+
+    def test_failed_cancellation_still_closes_only_the_owned_pane(self):
+        def pending(*_args, **kw):
+            control = ProcessControl(kw["control"])
+            self.addCleanup(control.remove)
+            Path(control.path, "control").touch()
+            return PROCESS
+
+        self.tmux.detach.side_effect = pending
+        self.connection.connect.side_effect = PermissionError("controller denied")
+        with (
+            mock.patch("time.monotonic", side_effect=[0, 11]),
+            self.assertRaisesRegex(DriverError, "cancel controller: controller denied"),
+        ):
+            self.detach()
+        self.tmux.kill.assert_called_once_with("%7")
+
     def detach(self, **kw):
         return self.host.detach("d1", ["tool", "a b"], self.dir, {"PATH": "/bin"}, **kw)
 
@@ -162,7 +231,7 @@ class DetachTest(Base):
         process = self.detach(display="mgr/below", events=events, record=LINE)
         self.tmux.detach.assert_called_once_with(
             "d1",
-            ["tool", "a b"],
+            self.control.command(),
             cwd=self.dir,
             env={"PATH": "/bin"},
             block=SIGNALS,
@@ -170,8 +239,18 @@ class DetachTest(Base):
             display="mgr/below",
             events=events,
             record=LINE.to_line(),
+            control=self.control.path,
         )
         self.assertEqual((process.name, process.alive()), ("d1", True))
+        self.assertEqual(
+            json.loads(Path(self.control.path, "launch.json").read_text()),
+            {
+                "argv": ["tool", "a b"],
+                "cwd": self.dir,
+                "env": {"PATH": "/bin"},
+                "inherit_env": [*tmux_host.TERMINAL_KEYS, "PWD"],
+            },
+        )
         self.tmux.status.assert_called_with("%7")
         self.assertEqual(SIGNALS, (signal.SIGHUP, signal.SIGTERM, signal.SIGINT))
 
@@ -202,167 +281,6 @@ class DetachTest(Base):
         with self.assertRaises(DriverError) as caught:
             self.detach()
         self.assertEqual(str(caught.exception), "detach d1: session d1 exists")
-
-
-class AttachListTest(Base):
-    def test_attach_a_live_session_else_a_driver_error(self):
-        self.assertEqual(self.host.attach("d1").name, "d1")
-        for name, state, message in (
-            ("d1", None, "no tmux session d1"),
-            ("d1", tmux_host.PaneStatus.UNKNOWN, "tmux session d1: tmux failed"),
-            ("a b", tmux_host.PaneStatus.RUNNING, "no tmux session 'a b'"),
-        ):
-            with self.subTest(name=name, state=state):
-                self.tmux.status.return_value = state
-                with self.assertRaises(DriverError) as caught:
-                    self.host.attach(name)
-                self.assertEqual(str(caught.exception), message)
-        self.tmux.status.return_value = tmux_host.PaneStatus.RUNNING
-        for found, message in (
-            (None, "no tmux session d1"),
-            (TuiError("tmux: boom"), "tmux session d1: tmux: boom"),
-        ):
-            with self.subTest(found=found):
-                self.tmux.process.side_effect = [found]
-                with self.assertRaises(DriverError) as caught:
-                    self.host.attach("d1")
-                self.assertEqual(str(caught.exception), message)
-
-    def test_list_every_name_or_those_whose_display_equals(self):
-        self.tmux.listing.return_value = [
-            row("a", "mgr"),
-            row("b", None),
-            row("c", "elsewhere:1.2"),
-            row("d", "mgr"),
-        ]
-        for display, want in (
-            (None, ["a", "b", "c", "d"]),
-            ("mgr", ["a", "d"]),
-            ("elsewhere:1.2", ["c"]),
-            ("other", []),
-        ):
-            with self.subTest(display=display):
-                self.assertEqual(self.host.list(display), want)
-        self.tmux.listing.reset_mock()
-        self.assertEqual(self.host.list(""), [])
-        self.tmux.listing.assert_not_called()
-
-    def test_list_when_tmux_fails_is_a_driver_error(self):
-        self.tmux.listing.return_value = None
-        with self.assertRaisesRegex(DriverError, "^tmux sessions unknown: tmux failed$"):
-            self.host.list()
-
-
-class ProcessTest(Base):
-    def test_record_is_the_stored_line_parsed_else_none(self):
-        process = self.host.attach("d1")
-        for stored, want in (
-            (LINE.to_line(), LINE),
-            (None, None),
-            ("", None),
-            ("{forged", None),
-            ('{"v":1}', None),
-            (LINE.to_line().replace('"ctl"]', '"/bin/sh"]', 1), None),
-        ):
-            with self.subTest(stored=stored):
-                self.tmux.option.return_value = stored
-                self.assertEqual(process.record(), want)
-        self.tmux.option.assert_called_with("%7", "@record")
-
-    def test_display_is_the_stored_value_verbatim(self):
-        process = self.host.attach("d1")
-        for stored in (None, "mgr/right", "elsewhere:1.2"):
-            with self.subTest(stored=stored):
-                self.tmux.option.return_value = stored
-                self.assertEqual(process.display(), stored)
-        self.tmux.option.assert_called_with("%7", "@display")
-
-    def test_alive_while_running_wait_exit_until_not(self):
-        process = self.host.attach("d1")
-        self.tmux.status.side_effect = [
-            tmux_host.PaneStatus.RUNNING,
-            tmux_host.PaneStatus.RUNNING,
-            0,
-            None,
-        ]
-        self.assertTrue(process.alive())
-        self.assertTrue(process.wait_exit(5))
-        self.assertFalse(process.alive())
-        self.tmux.status.side_effect = None
-        self.tmux.status.return_value = tmux_host.PaneStatus.RUNNING
-        self.assertFalse(process.wait_exit(0))
-        self.tmux.status.return_value = tmux_host.PaneStatus.UNKNOWN
-        with self.assertRaisesRegex(DriverError, "^tmux session d1: tmux failed$"):
-            process.alive()
-
-    def test_close_kills_its_group_then_its_panes_session_absent_is_fine(self):
-        process = self.host.attach("d1")
-        self.killpg.side_effect = None
-        process.close()
-        self.assertEqual(
-            self.killpg.call_args_list, [mock.call(GROUP, 0), mock.call(GROUP, signal.SIGKILL)]
-        )
-        self.tmux.kill.assert_called_once_with("%7")
-        self.tmux.kill.side_effect = TuiError("tmux: can't find pane: %7")
-        self.tmux.process.side_effect = [PROCESS, None]
-        process.close()
-        self.tmux.process.side_effect = None
-        with self.assertRaisesRegex(DriverError, "^close d1: tmux: can't find pane: %7$"):
-            process.close()
-
-    def test_after_its_pane_ends_wait_exit_waits_for_its_group_and_kill_ends_it(self):
-        process = self.host.attach("d1")
-        self.tmux.status.return_value = None
-        self.killpg.side_effect = None
-        self.assertFalse(process.alive())
-        self.assertFalse(process.wait_exit(0))
-        self.killpg.side_effect = [None, None, None, ProcessLookupError]
-        process.kill()
-        self.assertEqual(
-            self.killpg.call_args_list[-4:],
-            [
-                mock.call(GROUP, 0),
-                mock.call(GROUP, signal.SIGKILL),
-                mock.call(GROUP, 0),
-                mock.call(GROUP, 0),
-            ],
-        )
-        self.killpg.reset_mock()
-        self.assertTrue(process.wait_exit(0))
-        process.kill()
-        process.close()
-        self.killpg.assert_not_called()
-
-    def test_a_handle_never_acts_on_a_later_pane_of_its_name(self):
-        process = self.host.attach("d1")
-        self.killpg.side_effect = None
-        for later in (None, "4242 $4 %9 5555", "9999 $3 %7 4343", "4242 $3 %7 5555"):
-            with self.subTest(later=later):
-                self.tmux.process.return_value = later
-                self.tmux.reset_mock()
-                self.tmux.process.return_value = later
-                self.assertEqual(
-                    (process.alive(), process.record(), process.display()), (False, None, None)
-                )
-                process.close()
-                self.tmux.status.assert_not_called()
-                self.tmux.option.assert_not_called()
-                self.tmux.kill.assert_not_called()
-                self.tmux.process.assert_called_with("%7")
-        self.assertEqual({c.args[0] for c in self.killpg.call_args_list}, {GROUP})
-
-    def test_a_tmux_failure_reading_metadata_is_a_driver_error(self):
-        process = self.host.attach("d1")
-        self.tmux.option.side_effect = TuiError("tmux: boom")
-        with self.assertRaisesRegex(DriverError, "^tmux session d1: tmux: boom$"):
-            process.record()
-        self.tmux.process.side_effect = TuiError("tmux: down")
-        for call in (process.alive, process.display, process.close):
-            with (
-                self.subTest(call=call),
-                self.assertRaisesRegex(DriverError, "^tmux session d1: tmux: down$"),
-            ):
-                call()
 
 
 class DisplayableTest(Base):
@@ -435,7 +353,9 @@ class DisplayableTest(Base):
         ):
             with self.subTest(call=call), self.assertRaises(TypeError):
                 call()
-        self.assertIs(TmuxProcess("w1", PROCESS, tmux=self.tmux).tmux, self.tmux)
+        self.assertIs(
+            TmuxProcess("w1", PROCESS, tmux=self.tmux, control=self.control).tmux, self.tmux
+        )
 
     def test_attach_command_screen_and_tile_forward(self):
         self.assertEqual(self.host.attach_command("w1"), "tmux attach -t '=w1'")

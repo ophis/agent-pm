@@ -304,17 +304,17 @@ class Record(Case):
 
 
 class Command(Case):
-    def test_the_drivers_resume_command_for_the_session_cwd(self):
-        for entry, cwd in (
-            (None, WORKDIR),
-            ({"kind": "session", "cwd": "/data/my repo", "resume": "rm -rf ~"}, "/data/my repo"),
+    def test_the_driver_resolves_its_resume_command_from_the_run_directory(self):
+        for entry in (
+            None,
+            {"kind": "session", "cwd": "/data/my repo", "resume": "rm -rf ~"},
         ):
             with self.subTest(entry=entry):
                 self.session.return_value = entry
                 self.info.reset_mock()
                 self.assertEqual(sessions.command(self.record()), CMD)
-                self.session.assert_called_with(WORKDIR, SID)
-                self.info.assert_called_once_with(RUNTIME, SID, cwd)
+                self.session.assert_not_called()
+                self.info.assert_called_once_with(RUNTIME, SID, WORKDIR, workdir=WORKDIR)
 
     def test_built_fresh_each_time_never_read_from_the_record(self):
         rec = self.record()
@@ -341,24 +341,22 @@ class Command(Case):
 
 
 class Status(Case):
-    def test_the_drivers_status_at_the_records_cwd_else_the_workdir(self):
+    def test_status_passes_the_run_directory_without_reading_session_records(self):
         st = SessionStatus("no", 5.0, "")
         self.info.return_value = st
-        for entry, cwd in ((None, WORKDIR), ({"kind": "session", "cwd": "/data/r"}, "/data/r")):
+        for entry in (None, {"kind": "session", "cwd": "/data/r"}):
             with self.subTest(entry=entry):
                 self.session.return_value = entry
                 self.info.reset_mock()
                 self.assertIs(sessions.status(WORKDIR, "rt", SID, driver=self.api), st)
-                self.session.assert_called_with(WORKDIR, SID)
-                self.info.assert_called_once_with("rt", SID, cwd)
+                self.session.assert_not_called()
+                self.info.assert_called_once_with("rt", SID, WORKDIR, workdir=WORKDIR)
 
     def test_errors_propagate(self):
-        for target in (self.session, self.info):
-            with self.subTest(target=target):
-                self.session.side_effect = self.info.side_effect = None
-                target.side_effect = ConfigError("bad")
-                with self.assertRaises(ConfigError):
-                    sessions.status(WORKDIR, RUNTIME, SID, driver=self.api)
+        self.info.side_effect = ConfigError("bad")
+        with self.assertRaises(ConfigError):
+            sessions.status(WORKDIR, RUNTIME, SID, driver=self.api)
+        self.session.assert_not_called()
 
 
 class Failure(Case):

@@ -21,7 +21,7 @@ def command(step: int) -> str:
 
 def head() -> str:
     """Step 3's command before its options."""
-    return command(3).partition(" --runtime ")[0]
+    return command(3).partition(" prompt ")[0]
 
 
 def prefix() -> str:

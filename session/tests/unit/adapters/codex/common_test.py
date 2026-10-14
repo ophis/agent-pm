@@ -18,7 +18,7 @@ from agent_pm.session.adapters.codex.common import (
     snapshot_data,
     validate_snapshot,
 )
-from agent_pm.session.engine.types import Access, ConfigError, SessionInfo
+from agent_pm.session.engine.types import Access, ConfigError, SessionInfo, SessionStatus
 
 from session.tests.source_roots import PACKAGE_ROOTS
 from session.tests.unit.adapters.codex.support import CHILD, NATIVE, Base
@@ -695,6 +695,40 @@ class SessionStatusTest(Base):
         self.assertEqual(
             self.common.session_status(self.spec.sid, str(self.cwd)).resumable, "unknown"
         )
+
+    def test_a_missing_recorded_transcript_is_no_without_discovery_fallback(self):
+        self.bound()
+        resume = self.common.session_status(self.spec.sid, str(self.cwd)).resume_command
+        path = self.rollout()
+        path.rename(path.with_name("rollout-other-" + NATIVE + ".jsonl"))
+        status = self.common.session_status(self.spec.sid, str(self.cwd), transcript=str(path))
+        self.assertEqual(status, SessionStatus("no", None, resume))
+
+    def test_an_unreadable_recorded_transcript_is_unknown(self):
+        self.bound()
+        path = self.rollout()
+        resume = self.common.session_status(self.spec.sid, str(self.cwd)).resume_command
+        original = os.open
+
+        def opening(location, *args, **kwargs):
+            if str(location) == str(path):
+                raise PermissionError("denied")
+            return original(location, *args, **kwargs)
+
+        with mock.patch("os.open", side_effect=opening):
+            status = self.common.session_status(self.spec.sid, str(self.cwd), transcript=str(path))
+        self.assertEqual(status, SessionStatus("unknown", None, resume))
+
+    def test_malformed_recorded_transcript_paths_are_unknown(self):
+        self.bound()
+        self.rollout()
+        resume = self.common.session_status(self.spec.sid, str(self.cwd)).resume_command
+        for path in ("relative.jsonl", "\0"):
+            with self.subTest(path=path):
+                self.assertEqual(
+                    self.common.session_status(self.spec.sid, str(self.cwd), transcript=path),
+                    SessionStatus("unknown", None, resume),
+                )
 
     def test_unreadable_store_and_session_are_unknown(self):
         self.bound()

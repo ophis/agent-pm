@@ -1,14 +1,10 @@
-"""Shared fixtures for unit and integration coverage."""
+"""Shared engine application test setup over the configured fake runtime."""
 
-import io
 import json
 import os
 import tempfile
-from contextlib import redirect_stderr, redirect_stdout
-from unittest import mock
 
-from agent_pm.delegate import Outcome, Result, cli
-from agent_pm.session import ConfigError
+from agent_pm.delegate.engine.application import Application
 
 from delegate.tests.case import Case
 from delegate.tests.replies import block
@@ -18,59 +14,12 @@ from session.tests.modules import adapter_loader
 from utils.tests.case import local_section
 
 SID = "11111111-2222-3333-4444-555555555555"
-
-
-KEYS = {
-    "runtime",
-    "mode",
-    "sid",
-    "resume",
-    "cwd",
-    "project",
-    "dirs",
-    "reads",
-    "commands",
-    "tier",
-    "effort",
-    "prompt",
-}
-
-
 TUI = "dummy-tester-11111111"
-
-
 DRIVER = f"{TUI}-drive"
-
-
 SPLIT = "--split and --split-from need --detach --mode tui"
 
 
-DONE_RESULT = Result(0, Outcome("done", "t", "s"))
-
-
-HEADS = [
-    "researcher  local  built-in",
-    "pm  local  built-in",
-    "engineer  pull-request  built-in",
-    "dummy-tester  local  built-in",
-]
-
-
-class RefusingAdapter(fake_adapter.InProcessFakeAdapter):
-    def in_process(self):
-        return RefusingRun(self)
-
-
-class RefusingRun(fake_adapter.FakeInProcess):
-    def __init__(self, adapter):
-        super().__init__(adapter)
-        self.refusal = ConfigError("refused by check")
-
-    def check(self, spec):
-        raise self.refusal
-
-
-class FakeApplication:
+class FakeApplication(Application):
     def __init__(self, case):
         self.case = case
 
@@ -79,10 +28,10 @@ class FakeApplication:
         return self.case.driver
 
     def plan(self, config, spec):
-        return cli.Application(self.driver).plan(config, spec)
+        return Application(self.driver).plan(config, spec)
 
     def run(self, config, spec, *, on_event):
-        return cli.Application(self.driver).run(config, spec, on_event=on_event)
+        return Application(self.driver).run(config, spec, on_event=on_event)
 
 
 class Base(Case):
@@ -122,45 +71,6 @@ class Base(Case):
     def local(self, text):
         with open(os.path.join(self.agent_pm, "config.local.toml"), "w") as f:
             f.write(local_section(text, "delegate"))
-
-    def cli(self, *argv, stdin=""):
-        """(exit code, stdout, stderr) of cli.main(argv), an argparse exit's code included."""
-        out, err = io.StringIO(), io.StringIO()
-        with (
-            redirect_stdout(out),
-            redirect_stderr(err),
-            mock.patch("sys.stdin", io.StringIO(stdin)),
-        ):
-            try:
-                code = cli.main(list(argv), application=self.application)
-            except SystemExit as e:
-                code = e.code
-        return code, out.getvalue(), err.getvalue()
-
-    def runs(
-        self,
-        *extra,
-        role="dummy-tester",
-        task="echo",
-        input="Hello.",
-        runtime="fake",
-        stdin="",
-        out=None,
-    ):
-        return self.cli(
-            "--role",
-            role,
-            *(("--task", task) if task else ()),
-            "--input",
-            input,
-            "--out",
-            out or self.out,
-            "--workdir",
-            self.work,
-            *(("--runtime", runtime) if runtime else ()),
-            *extra,
-            stdin=stdin,
-        )
 
     def launches(self) -> list[dict]:
         if not os.path.exists(self.log):

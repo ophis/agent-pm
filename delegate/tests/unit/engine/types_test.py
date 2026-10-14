@@ -37,6 +37,22 @@ class SpecTest(Case):
             delegate.Spec("x", "/w").sid = "s"
 
 
+class ResultTest(Case):
+    def test_instruction_is_a_path_and_defaults_to_none(self):
+        result = delegate.Result(0, None, instruction="/work/prompt.md")
+        self.assertEqual(
+            dataclasses.asdict(result),
+            {
+                "returncode": 0,
+                "outcome": None,
+                "error": "",
+                "limit": None,
+                "instruction": "/work/prompt.md",
+            },
+        )
+        self.assertIsNone(delegate.Result(0, None).instruction)
+
+
 class PlanTest(Base):
     def test_a_resolved_plan_has_a_session_id(self):
         planned, _ = self.planned()

@@ -19,7 +19,7 @@ from agent_pm.session.modes import tui_hook
 from session.tests.case import SRC, Case
 from session.tests.tui_hook_support import HOOK, SOURCE_ROOTS, install, state, write_state
 
-RUNTIME = re.compile(r"claude|codex|print_prompt", re.I)
+RUNTIME = re.compile(r"claude|codex", re.I)
 
 
 class InProcess(Case):

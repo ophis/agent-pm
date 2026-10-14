@@ -8,6 +8,7 @@ import io
 import os
 import re
 import sys
+import sysconfig
 import tokenize
 import tomllib
 
@@ -18,7 +19,7 @@ from tests.import_policy import violation
 UNIT_ISOLATION_ALLOWED = {}
 
 
-RUNTIME = re.compile(r"claude|codex|print_prompt", re.I)
+RUNTIME = re.compile(r"claude|codex", re.I)
 
 
 TOML_CODE = re.compile(r"""(?:[^#"']|"(?:\\.|[^"\\])*"|'[^']*')*""")
@@ -97,6 +98,7 @@ SESSION_SRC = f"session/src/{PKG}/{SESSION}/"
 
 
 OBJECT_EXPORT_MODULES = (
+    "delegate/src/agent_pm/delegate/event/__init__.py",
     f"{SESSION_SRC}__init__.py",
     *(f"{SESSION_SRC}{module}" for module in sorted(ENTRY_MODULES[SESSION])),
 )
@@ -117,7 +119,7 @@ IMPORT_BOOTSTRAPS = {
 }
 
 
-STANDALONE = frozenset(
+STANDALONE = frozenset({"utils/src/agent_pm/utils/process_control.py"}) | frozenset(
     f"{SESSION_SRC}{path}"
     for path in (
         "hosts/tmux/tmux_host.py",
@@ -675,15 +677,16 @@ def manager_exports(repo: str) -> list[str]:
 
 
 def object_exports(repo: str) -> list[str]:
-    """FR-44: a session entry module's literal __all__ exports only classes, constants and type
-    aliases, unless allowlisted.
-    """
+    """FR-44: entry modules export only classes, constants and type aliases unless allowlisted."""
     found, seen = set(), set()
     for rel in OBJECT_EXPORT_MODULES:
         path = os.path.join(repo, rel)
+        project = rel.split("/", 1)[0]
         if not os.path.isfile(path):
+            if project == "delegate":
+                found.add(f"{rel}: no literal __all__")
             continue
-        package = rel.removeprefix("session/src/").removesuffix(".py").replace("/", ".")
+        package = rel.removeprefix(f"{project}/src/").removesuffix(".py").replace("/", ".")
         package = package.removesuffix(".__init__")
         with open(path, encoding="utf-8") as source:
             exports = _all_node(ast.parse(source.read(), rel))
@@ -692,7 +695,7 @@ def object_exports(repo: str) -> list[str]:
         if names is None or not all(isinstance(name, str) for name in names):
             found.add(f"{rel}: no literal __all__")
             continue
-        for name, (_, kind) in _export_kinds(repo, package, names, SESSION).items():
+        for name, (_, kind) in _export_kinds(repo, package, names, project).items():
             if kind in ("class", "constant", "alias"):
                 continue
             if (package, name) in OBJECT_EXPORTS_ALLOWED:
@@ -710,14 +713,50 @@ def object_exports(repo: str) -> list[str]:
 
 
 def _all_node(tree):
-    return next(
-        (
-            n.value
-            for n in tree.body
-            if isinstance(n, ast.Assign)
-            and any(isinstance(t, ast.Name) and t.id == "__all__" for t in n.targets)
-        ),
-        None,
+    bound = _bindings(tree)
+    assignments = [
+        node
+        for node in tree.body
+        if isinstance(node, ast.Assign | ast.AnnAssign)
+        and any(
+            isinstance(target, ast.Name) and target.id == "__all__"
+            for target in (node.targets if isinstance(node, ast.Assign) else [node.target])
+        )
+    ]
+    writes = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Name | ast.Attribute | ast.Subscript)
+        and isinstance(node.ctx, ast.Store | ast.Del)
+        and _all_reference(node)
+    ]
+    calls = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and (
+            isinstance(node.func, ast.Attribute)
+            and _all_reference(node.func.value)
+            or _dotted(node.func, bound)
+            in {"setattr", "delattr", "builtins.setattr", "builtins.delattr"}
+            and len(node.args) > 1
+            and isinstance(node.args[1], ast.Constant)
+            and node.args[1].value == "__all__"
+        )
+    ]
+    return assignments[0].value if len(assignments) == len(writes) == 1 and not calls else None
+
+
+def _all_reference(node):
+    return any(
+        isinstance(child, ast.Name)
+        and child.id == "__all__"
+        or isinstance(child, ast.Attribute)
+        and child.attr == "__all__"
+        or isinstance(child, ast.Subscript)
+        and isinstance(child.slice, ast.Constant)
+        and child.slice.value == "__all__"
+        for child in ast.walk(node)
     )
 
 
@@ -733,48 +772,125 @@ def _export_kinds(repo, package, names, project):
     """Each name `package` exports: what it resolves to through re-exports and aliases, and that
     target's kind (function, class, constant, alias, value, module or None: unresolved).
     """
-    projects = (project, "utils")
-    modules = _source_modules(repo, projects)
-    definitions = _definitions(repo, projects)
+    modules, definitions = {}, {}
+    for name, value in vars(builtins).items():
+        definitions[f"builtins.{name}"] = (
+            "class" if isinstance(value, type) else "function" if callable(value) else "constant"
+        )
+    for owner in (project, "utils"):
+        for rel, text in _files(os.path.join(repo, owner, "src"), ".py"):
+            module = rel.removesuffix(".py").replace("/", ".").removesuffix(".__init__")
+            _definitions(
+                module, ast.parse(text), modules, definitions, package=rel.endswith("/__init__.py")
+            )
     kinds = {}
     for name in names:
-        original = f"{package}.{name}"
-        resolved = _resolve_boundary(original, modules)
-        kind = definitions.get(original) or definitions.get(resolved)
-        if kind is None and "." not in resolved:
-            kind = definitions.get(f"{package}.{resolved}")
-        if kind is None:
+        original, resolved, seen = f"{package}.{name}", f"{package}.{name}", set()
+        while resolved not in seen:
+            seen.add(resolved)
+            resolved = _resolve_boundary(resolved, modules)
+            if resolved in definitions:
+                break
             module, _, member = resolved.rpartition(".")
-            if module.split(".")[0] in sys.stdlib_module_names:
-                value = getattr(importlib.import_module(module), member, None)
-                kind = (
-                    "class" if isinstance(value, type) else "function" if callable(value) else None
-                )
+            if module in modules or module.split(".")[0] not in sys.stdlib_module_names:
+                break
+            base = os.path.join(sysconfig.get_path("stdlib"), *module.split("."))
+            for path, is_package in (
+                (base + ".py", False),
+                (os.path.join(base, "__init__.py"), True),
+            ):
+                if os.path.isfile(path):
+                    with open(path, encoding="utf-8") as source:
+                        _definitions(
+                            module,
+                            ast.parse(source.read()),
+                            modules,
+                            definitions,
+                            package=is_package,
+                        )
+                    break
+            else:
+                break
+            seen.discard(resolved)
+        kind = definitions.get(original) or definitions.get(resolved)
         if resolved in modules or resolved in sys.stdlib_module_names:
             kind = "module"
         kinds[name] = (resolved, kind)
     return kinds
 
 
-def _definitions(repo, projects):
-    """module.name: the kind of each top-level def, class or assignment (an alias resolves later)."""
-    found = {}
-    for project in projects:
-        for rel, text in _files(os.path.join(repo, project, "src"), ".py"):
-            module = rel.removesuffix(".py").replace("/", ".").removesuffix(".__init__")
-            for node in ast.parse(text).body:
-                if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
-                    found[f"{module}.{node.name}"] = "function"
-                elif isinstance(node, ast.ClassDef):
-                    found[f"{module}.{node.name}"] = "class"
-                elif isinstance(node, ast.Assign | ast.AnnAssign) and node.value is not None:
-                    if isinstance(node.value, ast.Name | ast.Attribute):
-                        continue
-                    targets = node.targets if isinstance(node, ast.Assign) else [node.target]
-                    for target in targets:
-                        if isinstance(target, ast.Name):
-                            found[f"{module}.{target.id}"] = _assigned_kind(node, target.id)
-    return found
+def _definitions(module, tree, modules, definitions, *, package):
+    bound = {name: f"builtins.{name}" for name in vars(builtins)}
+    parent = (module if package else module.rpartition(".")[0]).split(".")
+    for node in [
+        *tree.body,
+        *(
+            node
+            for node in _at_import(tree)
+            if isinstance(node, ast.Import | ast.ImportFrom) and node not in tree.body
+        ),
+    ]:
+        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef):
+            key = f"{module}.{node.name}"
+            bound[node.name] = key
+            definitions[key] = "class" if isinstance(node, ast.ClassDef) else "function"
+            if isinstance(node, ast.ClassDef):
+                for method in node.body:
+                    if isinstance(method, ast.FunctionDef | ast.AsyncFunctionDef):
+                        definitions[f"{key}.{method.name}"] = "function"
+        elif isinstance(node, ast.Import):
+            for alias in node.names:
+                bound[alias.asname or alias.name.split(".")[0]] = (
+                    alias.name if alias.asname else alias.name.split(".")[0]
+                )
+        elif isinstance(node, ast.ImportFrom):
+            source = node.module or ""
+            if node.level:
+                source = ".".join([*parent[: len(parent) - node.level + 1], source]).rstrip(".")
+            for alias in node.names:
+                if (
+                    alias.name == "*"
+                    and source in sys.builtin_module_names
+                    and source in sys.modules
+                ):
+                    for name, value in vars(sys.modules[source]).items():
+                        bound[name] = f"{source}.{name}"
+                        definitions[f"{source}.{name}"] = (
+                            "class"
+                            if isinstance(value, type)
+                            else "function"
+                            if callable(value)
+                            else "constant"
+                        )
+                else:
+                    bound[alias.asname or alias.name] = f"{source}.{alias.name}"
+        elif isinstance(node, ast.Assign | ast.AnnAssign) and node.value is not None:
+            reference = (
+                _dotted(node.value, bound)
+                if isinstance(node.value, ast.Name | ast.Attribute)
+                else ""
+            )
+            for target in node.targets if isinstance(node, ast.Assign) else [node.target]:
+                if not isinstance(target, ast.Name):
+                    continue
+                key = f"{module}.{target.id}"
+                if reference and reference not in definitions:
+                    bound[target.id] = reference
+                    definitions.pop(key, None)
+                else:
+                    definitions[key] = (
+                        definitions[reference]
+                        if reference
+                        else "constant"
+                        if isinstance(node.value, ast.BinOp)
+                        and all(
+                            _is_literal(part) or definitions.get(_dotted(part, bound)) == "constant"
+                            for part in (node.value.left, node.value.right)
+                        )
+                        else _assigned_kind(node, target.id)
+                    )
+                    bound[target.id] = key
+    modules[module] = bound
 
 
 GENERICS = frozenset(
@@ -1127,12 +1243,16 @@ def status_log_format(repo: str) -> list[str]:
     return sorted(found)
 
 
+PUBLIC_UNDERSCORE = frozenset({"os._exit"})
+
+
 def private_imports(root: str) -> list[str]:
     """Ruff 0.16.9 PLC2701 is preview; this guard supplies stable private-import checks."""
     found = set()
     for rel, text in _files(root, ".py"):
         tree = ast.parse(text, rel)
         imported = set()
+        bound = _bindings(tree)
         for node in ast.walk(tree):
             if isinstance(node, ast.ImportFrom):
                 imported.update(a.asname or a.name for a in node.names)
@@ -1140,12 +1260,16 @@ def private_imports(root: str) -> list[str]:
                 found.update(
                     f"{rel}:{node.lineno}: private {module}{a.name}"
                     for a in node.names
-                    if _private(a.name)
+                    if _private(a.name) and f"{module}{a.name}" not in PUBLIC_UNDERSCORE
                 )
             elif isinstance(node, ast.Import):
                 imported.update(a.asname or a.name.split(".")[0] for a in node.names)
         for node in ast.walk(tree):
-            if isinstance(node, ast.Attribute) and _private(node.attr):
+            if (
+                isinstance(node, ast.Attribute)
+                and _private(node.attr)
+                and _dotted(node, bound) not in PUBLIC_UNDERSCORE
+            ):
                 chain, base = [node.attr], node.value
                 while isinstance(base, ast.Attribute):
                     chain.append(base.attr)

@@ -30,7 +30,7 @@ from agent_pm.session.hosts.tmux.tmux_host import TuiError
 from session.tests.case import Case
 from utils.tests.process_fixtures import DEVNULL, TimeoutExpired
 
-RUNTIME = re.compile(r"claude|codex|print_prompt", re.I)
+RUNTIME = re.compile(r"claude|codex", re.I)
 
 FORMAT = "#{pane_dead} #{pane_dead_status} #{pane_dead_signal}"
 
@@ -1294,6 +1294,12 @@ class DetachTest(StartFixture):
                     tmux_host.EXEC,
                     fake.path,
                     fake.fifo,
+                    ";",
+                    "set-option",
+                    "-t",
+                    "=d:",
+                    "@kind",
+                    "detach",
                 ]
             ],
         )
@@ -1386,6 +1392,12 @@ class DetachTest(StartFixture):
                             "set-option",
                             "-t",
                             "=d:",
+                            "@kind",
+                            "detach",
+                            ";",
+                            "set-option",
+                            "-t",
+                            "=d:",
                             "@opener",
                             opener,
                         ]
@@ -1423,6 +1435,12 @@ class DetachTest(StartFixture):
                 "set-option",
                 "-t",
                 "=d:",
+                "@kind",
+                "detach",
+                ";",
+                "set-option",
+                "-t",
+                "=d:",
                 "@opener",
                 "mgr",
                 ";",
@@ -1447,6 +1465,12 @@ class DetachTest(StartFixture):
         self.assertEqual(
             fake.calls[0][fake.calls[0].index(fake.fifo) + 1 :],
             [
+                ";",
+                "set-option",
+                "-t",
+                "=d:",
+                "@kind",
+                "detach",
                 ";",
                 "set-option",
                 "-t",

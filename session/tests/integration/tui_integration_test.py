@@ -6,6 +6,7 @@ unknown, an old Handle once its name is another session's, two starts of one nam
 start while another process closes the name.
 """
 
+import contextlib
 import itertools
 import json
 import os
@@ -19,11 +20,13 @@ from unittest import mock
 from agent_pm.session import Session
 from agent_pm.session.engine.records import RunLog
 from agent_pm.session.engine.types import (
+    Access,
     Activity,
     Blocked,
     DriverError,
     Exited,
     IdleTimeout,
+    SessionStatus,
     Spec,
     TurnEnd,
 )
@@ -31,7 +34,7 @@ from agent_pm.session.hosts.tmux import tmux_host
 from agent_pm.session.modes import tui
 
 from session.tests import fake_adapter, live_tmux
-from session.tests.case import PY
+from session.tests.case import PY, SPAWNS
 from session.tests.tui_support import DIALOG, IDLE, MANAGER, SID, WAIT, Live, Stream
 
 # Another process: attaches by name, sends text, prints [sid, state, reply, its first event but
@@ -126,6 +129,32 @@ class TuiTest(Live):
         self.assertEqual(stream.until_exited(), [Exited(-signal.SIGHUP)])
         self.assertEqual(self.driver.sessions("w1"), [])
         self.assertFalse(os.path.lexists(tui._Store("w1").dir))
+
+    def test_inspect_an_ended_tui_session_after_its_pane_and_store_are_removed(self):
+        self.config["adapters"]["fake"]["implementation"] = (
+            "agent_pm.session.adapters.fake:InspectAdapter"
+        )
+        self.driver = self.driven()
+        session = self.start("historical", {"exit": 3}, sid=SID)
+        stream = Stream(self, session)
+        self.assertEqual(stream.next(poke=self.poke), Exited(3))
+        info = session.info()
+        session.close()
+        self.assertEqual(self.driver.sessions("historical"), [])
+        self.assertFalse(os.path.lexists(tui._Store("historical").dir))
+        with contextlib.ExitStack() as stack:
+            starts = [
+                stack.enter_context(mock.patch(target, side_effect=AssertionError(target)))
+                for target in SPAWNS
+            ]
+            status = self.driver.session_cls.inspect(
+                Spec(workdir=self.workdir, runtime="fake", sid=SID, access=Access(cwd=self.dir))
+            )
+        self.assertEqual(
+            status, SessionStatus("yes", 1.5, f"{SID} {info.cwd} {info.transcript} {info.resume}")
+        )
+        for start in starts:
+            start.assert_not_called()
 
     def test_a_runtime_exit_ends_with_its_code_the_session_live_until_close(self):
         handle = self.start("w2", {"hook": "stop", "payload": {"last_message": "bye"}}, {"exit": 3})

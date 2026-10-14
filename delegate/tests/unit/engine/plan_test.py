@@ -16,12 +16,13 @@ from agent_pm.delegate import ConfigError, composer, configure, plan
 from agent_pm.delegate.composer import RunConfig, RunParams
 from agent_pm.delegate.composer.prompt import RESUME
 from agent_pm.delegate.engine.config import PYTHONPATH
+from agent_pm.delegate.engine.drivers import AgentDriver
 from agent_pm.delegate.engine.plan import place
 from agent_pm.delegate.event.reply import OUTCOME, PROGRESS
 from agent_pm.session import Access, note
 
 from delegate.tests.plans import SID, TASKS, Base, write_team
-from delegate.tests.unit.engine.print_prompt import GITHUB, ROLES, RUNTIMES, PrintPromptCase
+from delegate.tests.unit.engine.instruction import GITHUB, ROLES, RUNTIMES, InstructionCase
 from utils.tests.case import local_section
 
 
@@ -43,10 +44,10 @@ class ReplyTags(Base):
 
 
 class Configures(Base):
-    def test_plan_keeps_the_callers_driver(self):
+    def test_plan_keeps_resolved_data_and_not_the_session_owner(self):
         got, _ = self.planned()
         self.assertEqual(got.spec.runtime, "fake")
-        self.assertIs(got.driver, self.driver)
+        self.assertNotIn("driver", vars(got))
 
     def test_configure_hands_the_driver_the_parsed_hosts_and_the_harness_host(self):
         for text, want in (("", None), ('[delegates]\nharness_host = "tmux"\n', "tmux")):
@@ -94,7 +95,7 @@ class Cwd(Base):
 
     def test_empty_is_the_callers_current_directory(self):
         here = os.getcwd()
-        self.assertEqual(self.placed(), ((here, False), notice(here)))
+        self.assertEqual(self.placed(), ((here, False), ""))
 
     def test_the_run_key_wins_over_the_callers_cwd_and_expands_tilde(self):
         with mock.patch.dict(os.environ, {"HOME": self.tmp}):
@@ -113,9 +114,8 @@ class Cwd(Base):
                 self.assertEqual(self.placed(entry, cwd=cwd), ((cwd, True), ""))
 
     def test_an_untrusted_cwd_gets_a_notice(self):
-        self.assertEqual(
-            self.placed(self.trusted, cwd=self.other), ((self.other, False), notice(self.other))
-        )
+        self.assertEqual(self.placed(self.trusted, cwd=self.other), ((self.other, False), ""))
+        self.assertEqual(self.planned(cwd=self.other)[1], notice(self.other))
 
     def test_the_workdir_as_cwd_has_no_notice(self):
         self.assertEqual(self.placed(cwd=self.work), ((self.work, False), ""))
@@ -279,9 +279,11 @@ class Planned(Base):
         self.assertEqual(err, notice(os.getcwd()))
 
     def test_the_spec_holds_the_runs_tier_and_effort_and_the_absolute_workdir(self):
-        spec = self.planned(keys={"tier": 4, "effort": "low"})[0].session
+        planned = self.planned(keys={"tier": 4, "effort": "low"})[0]
+        spec = planned.session
+        self.assertEqual(spec.sid, planned.spec.sid)
         self.assertEqual(
-            (spec.workdir, spec.tier, spec.effort, spec.sid), (self.work, 4, "low", None)
+            (spec.workdir, spec.tier, spec.effort, spec.sid), (self.work, 4, "low", spec.sid)
         )
 
     def test_a_new_run_gets_a_new_uuid4_sid_unless_given_one_and_a_resume_its_own(self):
@@ -328,17 +330,28 @@ class Planned(Base):
         got = self.planned(mode="in_process", sid=SID)[0]
         self.assertEqual(got.spec.mode, "in_process")
         self.assertEqual(
-            replace(got, spec=replace(got.spec, mode="headless")), self.planned(sid=SID)[0]
+            replace(
+                got,
+                spec=replace(got.spec, mode="headless"),
+                session=replace(got.session, mode="headless"),
+            ),
+            self.planned(sid=SID)[0],
         )
 
     def test_tui_takes_name_and_events_unchecked_for_the_driver_to_check(self):
-        for name, events in ((None, None), ("mine", "/x/events.log"), ("a b", "rel\n")):
+        for name, events in ((None, None), ("mine", "/x/events.log"), ("a b", "relative")):
             with self.subTest(name=name, events=events):
                 got = self.planned(mode="tui", name=name, events=events)[0]
                 self.assertEqual(
                     (got.spec.mode, got.spec.name, got.spec.events), ("tui", name, events)
                 )
                 self.assertFalse(os.path.exists(self.work))
+
+    def test_tui_rejects_an_unprintable_events_path_before_any_write(self):
+        self.assertIn(
+            "events must be a printable path", self.refused(mode="tui", name="a b", events="rel\n")
+        )
+        self.assertFalse(os.path.exists(self.work))
 
     def test_plan_creates_and_writes_nothing(self):
         for kw in ({}, {"sid": SID, "resume": True}, {"out": None}):
@@ -392,7 +405,7 @@ class ConfiguredTeamDirs(Base):
     def test_the_runtimes_dirs_are_asked_with_the_runs_spec_only_when_there_are_team_dirs(self):
         with mock.patch.object(self.driver, "writable_dirs", return_value=()) as asked:
             got = self.planned(sid=SID, resume=True)[0]
-            asked.assert_called_once_with("fake", got.session, SID)
+            asked.assert_called_once_with(replace(got.session, prompt=""))
             asked.reset_mock()
             self.local("")
             self.planned(runtime="codex")
@@ -485,7 +498,7 @@ class Policy(Base):
                 start.assert_not_called()
 
 
-class PrintPromptPlans(PrintPromptCase):
+class InstructionPlans(InstructionCase):
     def test_each_roles_destination_and_prompt_are_the_same_under_any_runtime(self):
         for local in ("", GITHUB):
             with open(os.path.join(self.agent_pm, "config.local.toml"), "w") as f:
@@ -501,4 +514,52 @@ class PrintPromptPlans(PrintPromptCase):
                     )
                     for p in others:
                         self.assertEqual((p.run.output, p.prompt), (first.run.output, first.prompt))
+                    agent = AgentDriver(configure().session_cls)
+                    for runtime, mode in RUNTIMES:
+                        run, spec = self.given(role, runtime=runtime, mode=mode)
+                        got = plan(run, spec, driver=agent)
+                        self.assertEqual(
+                            (got.run.output, got.prompt), (first.run.output, first.prompt)
+                        )
+                        self.assertEqual(
+                            (got.session.flags, dict(got.session.env)),
+                            Policy.SHIPPED[runtime or run.runtime],
+                        )
         self.assertEqual(composer.resolve("researcher").output["type"], "github")
+
+    def test_agent_plans_apply_runtime_policy_and_check_its_writable_dirs(self):
+        team = os.path.join(self.tmp, "team")
+        write_team(team)
+        local = os.path.join(self.agent_pm, "config.local.toml")
+        for runtime in ("claude", "codex"):
+            flags, env = ["--add-dir", team], {"POLICY": runtime}
+            policy = (
+                f"[policy.{runtime}]\nflags = {json.dumps(flags)}\n"
+                f'env = {{ POLICY = "{runtime}" }}\n'
+            )
+            with self.subTest(runtime=runtime):
+                with open(local, "w", encoding="utf-8") as stream:
+                    stream.write(local_section(policy, "delegate"))
+                run, spec = self.given("researcher", runtime=runtime)
+                agent = AgentDriver(configure().session_cls)
+                got, instruction = (
+                    plan(run, spec, driver=agent),
+                    plan(run, spec, driver=self.driver),
+                )
+                self.assertEqual((got.session.flags, dict(got.session.env)), (tuple(flags), env))
+                self.assertEqual(
+                    (instruction.session.flags, dict(instruction.session.env)), ((), {})
+                )
+                self.assertEqual(got.prompt, instruction.prompt)
+                with open(local, "w", encoding="utf-8") as stream:
+                    stream.write(
+                        local_section(f"team_dirs = {json.dumps([team])}\n{policy}", "delegate")
+                    )
+                self.assertEqual(plan(run, spec, driver=self.driver).prompt, instruction.prompt)
+                with self.assertRaises(ConfigError) as caught:
+                    plan(run, spec, driver=agent)
+                self.assertEqual(
+                    str(caught.exception),
+                    f"team_dirs: {team} overlaps a dir {runtime} can write {team}: the agent "
+                    "run can write there",
+                )

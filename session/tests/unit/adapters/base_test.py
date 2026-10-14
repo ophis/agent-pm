@@ -221,7 +221,12 @@ class AdapterTest(Refusals):
         for output in ("", "garbage", '{"type": "rate_limit_event"}'):
             with self.subTest(output=output):
                 self.assertIsNone(adapter.usage(output))
-        self.assertEqual(adapter.session_status("s", "/c"), SessionStatus("unknown", None, ""))
+        self.assertEqual(
+            adapter.session_status(
+                engine_types.SessionInfo(sid="s", cwd="/c", project=False, transcript="", resume="")
+            ),
+            SessionStatus("unknown", None, ""),
+        )
 
     def test_session_metadata_preserves_info_by_default(self):
         info = engine_types.SessionInfo("s", "/c", project=False, transcript="/t", resume="r")
@@ -434,7 +439,9 @@ class NoProcessTest(Case):
             list(adapter.headless().events(['{"texts": ["a"]}']))
             adapter.usage_probe()
             adapter.usage("output")
-            adapter.session_status("s", "/c")
+            adapter.session_status(
+                engine_types.SessionInfo(sid="s", cwd="/c", project=False, transcript="", resume="")
+            )
             adapter.in_process()
             StubInProcess().check(Spec(workdir="/w"))
         popen.assert_not_called()

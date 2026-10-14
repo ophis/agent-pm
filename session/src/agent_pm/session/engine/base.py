@@ -13,6 +13,7 @@ from agent_pm.session.engine.types import (
     IdleTimeout,
     Liveness,
     Mode,
+    ProcessOptions,
     SessionEvent,
     SessionInfo,
     SessionRow,
@@ -82,6 +83,10 @@ class Session(ABC):
             raise NotImplementedError(f"{cls.__name__}.{method}: not implemented")
         return getattr(load_class(HOSTED, Session), method)
 
+    @staticmethod
+    def validate_policy(*, flags, env) -> None:
+        ProcessOptions(flags=flags, env=env)
+
     @classmethod
     def configure(cls, *, adapters: Mapping, hosts: Hosts) -> None:
         cls._hosted("configure")(adapters=adapters, hosts=hosts)
@@ -102,6 +107,13 @@ class Session(ABC):
         cls, name: str, *, host: str | None = None, idle_timeout: float | None = None
     ) -> Session:
         return cls._hosted("attach")(name, host=host, idle_timeout=idle_timeout)
+
+    @classmethod
+    def inspect(cls, spec: Spec) -> SessionStatus:
+        """Historical status using spec.workdir, runtime and sid, without starting or attaching.
+        A missing record raises DriverError.
+        """
+        return cls._hosted("inspect")(spec)
 
     @classmethod
     def list(cls, match: str | None = None, *, display: Display = None) -> list[SessionRow]:

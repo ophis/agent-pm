@@ -189,6 +189,8 @@ def read_metadata(path: str) -> SessionFile:
     _check_ancestors(path)
     try:
         fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK | getattr(os, "O_NOFOLLOW", 0))
+    except FileNotFoundError:
+        raise
     except OSError as exc:
         raise RecoveryError(f"cannot read Codex session file {path}: {exc}") from exc
     try:
@@ -260,15 +262,20 @@ def session_paths(snapshot: Snapshot, identifier: str = "*") -> list[str]:
     return matches
 
 
-def session_file(snapshot: Snapshot, identifier: str) -> SessionFile | None:
+def session_file(snapshot: Snapshot, identifier: str, *, recorded: str = "") -> SessionFile | None:
     if not native_id(identifier):
         raise RecoveryError("invalid Codex recovery native ID")
-    matches = session_paths(snapshot, identifier)
+    if recorded:
+        absolute_path(recorded, "recorded transcript")
+    matches = [recorded] if recorded else session_paths(snapshot, identifier)
     if len(matches) > 1:
         raise RecoveryError(f"duplicate Codex session files for native ID {identifier}")
     if not matches:
         return None
-    found = read_metadata(matches[0])
+    try:
+        found = read_metadata(matches[0])
+    except FileNotFoundError:
+        return None
     if found.metadata.id != identifier or found.metadata.cwd != snapshot.cwd:
         raise RecoveryError(
             f"mismatched Codex session metadata for native ID {identifier}: {found.path}"
@@ -1002,14 +1009,14 @@ class CodexCommon:
         found = session_file(state.snapshot, state.native_id) if state.native_id else None
         return found.path if found is not None else ""
 
-    def session_status(self, sid: str, cwd: str) -> SessionStatus:
+    def session_status(self, sid: str, cwd: str, *, transcript: str = "") -> SessionStatus:
         resume = ""
         try:
             state = self.lookup(sid, cwd)
             if state is None or state.native_id is None:
                 return SessionStatus(Resumable.NO, None, "")
             resume = self.resume_command(state)
-            found = session_file(state.snapshot, state.native_id)
+            found = session_file(state.snapshot, state.native_id, recorded=transcript)
             if found is None:
                 return SessionStatus(Resumable.NO, None, resume)
             return SessionStatus(Resumable.YES, self.last_active(state, found), resume)

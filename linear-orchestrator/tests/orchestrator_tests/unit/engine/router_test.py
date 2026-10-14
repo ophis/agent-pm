@@ -733,6 +733,7 @@ class RouterEntry(OuterBase):
         sid = self.last_run()[2]
         with open(self.runs) as f:
             self.lines = f.read().splitlines()
+        self.api.records[sid] = {"cwd": self.rd}
         self.api.statuses[sid] = SessionStatus("yes", (NOW - timedelta(minutes=40)).timestamp(), "")
         self.write_config(OUTER.replace(OVERLAY, '[core]\nruntime = "b"\n'))
         self.assertEqual(self.entry(), 0)
@@ -1266,6 +1267,7 @@ class ScheduledUsageGates(TickBase):
         self.assertEqual(self.last_run(), ("start", "TASK-1", claimed.sid, "researcher", "a"))
         with open(self.runs) as f:
             self.lines = f.read().splitlines()
+        self.api.records[claimed.sid] = {"cwd": os.path.join(self.work, "work", "TASK-1")}
         self.api.statuses[claimed.sid] = SessionStatus(
             "yes", (NOW - timedelta(minutes=40)).timestamp(), ""
         )
@@ -2085,6 +2087,17 @@ class RunStartRecords(Base):
 
 
 class ExplicitIssueRuns(TickBase):
+    def test_explicit_issue_with_an_unrecorded_sid_returns_to_todo(self):
+        fake = self.fake(issue("TASK-1", "In Progress", "researcher"))
+        self.moved("TASK-1", 41)
+        self.add(kind="start", ident="TASK-1", sid="unrecorded", minutes_ago=40)
+        self.assertEqual(self.tick(fake, "--issue", "TASK-1"), 1)
+        self.assertEqual(fake.issues["TASK-1"]["state"], "Todo")
+        self.assertEqual(self.start.launches, [])
+        self.assertEqual(
+            self.said(), ["recover TASK-1 to=todo reason=not resumable sid=unrecorded"]
+        )
+
     def nothing_resumable(self):
         def capped():
             for m in (390, 380, 370, 360):
@@ -2926,6 +2939,23 @@ class StaleRunRecovery(Base):
     """FR-47: liveness and resumability are the Driver's session status; what it cannot say changes
     nothing.
     """
+
+    def test_an_unrecorded_sid_returns_to_todo_only_after_live(self):
+        for minutes, state in ((20, "In Progress"), (40, "Todo")):
+            with self.subTest(minutes=minutes):
+                self.lines, self.hist = [], {}
+                fake = self.fake(issue("TASK-1", "In Progress", "researcher"))
+                self.moved("TASK-1", minutes + 1)
+                self.add(kind="start", ident="TASK-1", sid="unrecorded", minutes_ago=minutes)
+                self.assertEqual(self.plan(fake), "new" if state == "Todo" else "")
+                self.assertEqual(fake.issues["TASK-1"]["state"], state)
+                self.assertNotIn(self.sid("unrecorded"), self.api.records)
+                self.assertEqual(
+                    self.said(),
+                    ["recover TASK-1 to=todo reason=not resumable sid=unrecorded"]
+                    if state == "Todo"
+                    else [],
+                )
 
     def test_a_session_active_within_live_is_not_resumed(self):
         for minutes, out in (

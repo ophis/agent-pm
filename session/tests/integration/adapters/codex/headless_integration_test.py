@@ -356,17 +356,25 @@ class HeadlessEventsIntegrationTest(HeadlessSessions):
         )
         self.assertIn(NATIVE, info.resume)
         self.assertEqual(RunLog(str(self.work)).session(handle.sid).transcript, info.transcript)
-        status = self.driver.session_status("codex", handle.sid, str(self.cwd))
+        status = self.driver.session_status(
+            "codex", handle.sid, str(self.cwd), workdir=str(self.work)
+        )
         self.assertEqual(status.resumable, "yes")
         self.assertIsNotNone(status.last_active)
         self.assertIn(NATIVE, status.resume_command)
         fake_codex.session_path(NATIVE).unlink()
         self.assertEqual(
-            self.driver.session_status("codex", handle.sid, str(self.cwd)).resumable, "no"
+            self.driver.session_status(
+                "codex", handle.sid, str(self.cwd), workdir=str(self.work)
+            ).resumable,
+            "no",
         )
         self.record().write_text("bad json")
         self.assertEqual(
-            self.driver.session_status("codex", handle.sid, str(self.cwd)).resumable, "unknown"
+            self.driver.session_status(
+                "codex", handle.sid, str(self.cwd), workdir=str(self.work)
+            ).resumable,
+            "unknown",
         )
 
 

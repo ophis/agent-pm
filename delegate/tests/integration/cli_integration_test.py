@@ -371,7 +371,10 @@ class UsageLimit(Integration):
         self.assertEqual(len(self.calls()), 1)
         self.driver = Driver.from_config(read_project("session"))
         with mock.patch.dict(os.environ, {"CLAUDE_CONFIG_DIR": self.config}):
-            self.assertEqual(self.driver.session_status("claude", SID, self.proj).resumable, "yes")
+            self.assertEqual(
+                self.driver.session_status("claude", SID, self.proj, workdir=self.work).resumable,
+                "yes",
+            )
 
 
 class ConfigErrors(Integration):
@@ -397,9 +400,9 @@ class ConfigErrors(Integration):
                 [*cli, "--role", self.ROLE, "--input", "x", "--workdir", self.work],
                 "--input, --out and --workdir are required",
             ),
-            "a runtime without tui": (
-                self.argv("--runtime", "print_prompt", "--mode", "tui"),
-                "runtime 'print_prompt' does not support tui mode",
+            "a runtime without in_process": (
+                self.argv("--runtime", "codex", "--mode", "in_process"),
+                "runtime 'codex' does not support in_process mode",
             ),
         }
         for name, (argv, said) in cases.items():
