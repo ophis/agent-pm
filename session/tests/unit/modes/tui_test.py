@@ -276,6 +276,9 @@ class ClaudeScreens(ScanTui):
     def limit(self, screen):
         return self.claude.limit(screen)
 
+    def shows(self, dialog, screen):
+        return self.claude.shows(dialog, screen)
+
 
 class Keys(ScanTui):
     def submit(self, text):
@@ -1443,6 +1446,16 @@ class ScanTest(Base):
             "  ⎿  You've hit your session limit · resets 3pm (America/Los_Angeles)",
         )
         self.assertEqual(self.scans(mode, *screens), [[], [], []])
+
+    def test_a_quoted_claude_dialog_is_no_block_and_the_native_one_is(self):
+        mode = self.start(run=ClaudeScreens(self.adapter))
+        self.host.calls.reset_mock()
+        screens = (
+            '  55 TRUST = "Quick safety check: … 1. Yes, I trust this folder 2. No, exit"',
+            "> see Quick safety check docs",
+            "│ Quick safety check: Is this a project you trust?\n│ ❯ 1. Yes, I trust this folder",
+        )
+        self.assertEqual(self.scans(mode, *screens), [[], [], [Blocked("Quick safety check")]])
 
     def test_a_failed_read_is_no_event(self):
         mode = self.started()

@@ -37,6 +37,7 @@ WHEN = re.compile(
     ),
     re.I,
 )
+TRUST = re.compile(r"^\W*Quick safety check\b", re.M)  # the dialog's title starts its line
 ZONE = re.compile(r"[A-Za-z0-9_+-]+(/[A-Za-z0-9_+-]+){0,2}")
 MONTHS = (
     "january",
@@ -184,6 +185,11 @@ class ClaudeTui(Tui):
         if error == "rate_limit":
             return self._limit(_resets_in(_first(payload, "last_assistant_message")))
         return [TurnFailed(error, _first(payload, "error_details", "last_assistant_message"))]
+
+    def shows(self, dialog, screen):
+        if dialog != "Quick safety check":
+            return super().shows(dialog, screen)
+        return bool(TRUST.search(screen)) and super().shows("Yes, I trust this folder", screen)
 
     def _limit(self, resets: float | None) -> list[LimitHit]:
         if self.limited:

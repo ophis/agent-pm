@@ -381,6 +381,7 @@
  "agent_pm.session.extension.Tui.reply": "def(self:POSITIONAL_OR_KEYWORD, payload:POSITIONAL_OR_KEYWORD)",
  "agent_pm.session.extension.Tui.restore": "def(self:POSITIONAL_OR_KEYWORD, spec:POSITIONAL_OR_KEYWORD, state:POSITIONAL_OR_KEYWORD)",
  "agent_pm.session.extension.Tui.session_id": "def(self:POSITIONAL_OR_KEYWORD, payload:POSITIONAL_OR_KEYWORD)",
+ "agent_pm.session.extension.Tui.shows": "def(self:POSITIONAL_OR_KEYWORD, dialog:POSITIONAL_OR_KEYWORD, screen:POSITIONAL_OR_KEYWORD)",
  "agent_pm.session.extension.Tui.submit": "def(self:POSITIONAL_OR_KEYWORD, text:POSITIONAL_OR_KEYWORD)",
  "agent_pm.session.extension.TuiSettings": "class(builtins.object)(status_line:POSITIONAL_OR_KEYWORD=False, per_column:POSITIONAL_OR_KEYWORD=None, retile:POSITIONAL_OR_KEYWORD=None)",
  "agent_pm.session.extension.TuiSettings.per_column": "attribute",

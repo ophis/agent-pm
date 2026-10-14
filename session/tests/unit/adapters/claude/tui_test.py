@@ -348,6 +348,22 @@ class SessionTuiTest(Base):
                 )
 
 
+NATIVE_TRUST = """\
+╭──────────────────────────────────────────────────────────────────────────╮
+│ Accessing workspace:                                                     │
+│                                                                          │
+│ /tmp/w                                                                   │
+│                                                                          │
+│ Quick safety check: Is this a project you created or one you trust?     │
+│ (Like your own code, a well-known open source project, or work from     │
+│ your team). If not, take a moment to review what's in this folder first. │
+│                                                                          │
+│ ❯ 1. Yes, I trust this folder                                            │
+│   2. No, exit                                                            │
+╰──────────────────────────────────────────────────────────────────────────╯
+"""
+
+
 class TuiPayloadTest(Base):
     def setUp(self):
         super().setUp()
@@ -494,6 +510,26 @@ class TuiPayloadTest(Base):
 
     def test_the_trust_dialog(self):
         self.assertEqual(ClaudeTui.dialogs, ("Quick safety check",))
+
+    def test_the_trust_dialog_needs_its_native_rendering(self):
+        run, dialog = ClaudeAdapter({}).tui(), "Quick safety check"
+        option = "│ ❯ 1. Yes, I trust this folder\n│   2. No, exit\n"
+        for screen, shown in (
+            (NATIVE_TRUST, True),
+            (NATIVE_TRUST.replace("Is this", "is this"), True),
+            ("Quick safety check: trust? 1. Yes, I trust this folder 2. No, exit\n", True),
+            (
+                '  55 TRUST = "Quick safety check: … 1. Yes, I trust this folder 2. No, exit"\n',
+                False,
+            ),
+            ("> see Quick safety check docs\n" + option, False),
+            ("│ Quick safety check: Is this a project you trust?\n│ ❯ 1. Yes\n", False),
+            ("Quick safety checks pass\n" + option, False),
+            ("", False),
+        ):
+            with self.subTest(screen=screen):
+                self.assertIs(run.shows(dialog, screen), shown)
+        self.assertTrue(run.shows("Other  dialog", "an Other\n dialog here"))
 
 
 class StopFailureTest(Base):

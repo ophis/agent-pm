@@ -150,6 +150,9 @@ class Tui(ABC):
     def failure(self, payload: dict) -> list[TurnFailed | LimitHit]:
         return [TurnFailed("unknown")]
 
+    def shows(self, dialog: str, screen: str) -> bool:
+        return " ".join(dialog.split()) in " ".join(screen.split())
+
     def limit(self, screen: str) -> LimitHit | None:
         """The runtime's usage-limit message on the visible terminal `screen`; None: none shown."""
         return None

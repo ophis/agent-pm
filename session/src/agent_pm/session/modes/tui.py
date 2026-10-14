@@ -567,8 +567,8 @@ class TuiMode(RunningMode):
         """Since the last scan: Activity("") once a dialog went, Blocked per new dialog, LimitHit
         per appearance.
         """
+        shown = frozenset(d for d in self.run.dialogs if self.run.shows(d, screen))
         screen = " ".join(screen.split())
-        shown = frozenset(d for d in self.run.dialogs if " ".join(d.split()) in screen)
         found: list[SessionEvent | Stderr | ClientBound] = (
             [Activity("")] if self._dialogs - shown else []
         )  # first: a later Blocked keeps the idle pause
