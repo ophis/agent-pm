@@ -3,8 +3,9 @@ bin/agent-pm-session on a private tmux server (session/tests/cli_support.py): a 
 prints its Record and starts nothing; a gone worker's resume, from another caller, and a live
 worker's restart replay its saved sid, cwd, flags, env and display without its prompt; concurrent
 resumes start it once; a start killed right after its launch resumes by name; bad saved state or a
-saved Host no longer configured starts and closes nothing. A client that ignores SIGHUP and SIGTERM and has a child: a restart, and a resume after
-its session is killed, start the new generation only once the old one and its child are gone.
+saved Host no longer configured starts and closes nothing. A client that ignores SIGHUP and SIGTERM
+and has a child: a restart, and a resume after its session is killed, start the new generation only
+once the old one and its child are gone.
 """
 
 import contextlib
@@ -64,12 +65,21 @@ subprocess.call([sys.executable, "-I", fake, *args])
 time.sleep(max(0, start + CAP - time.time()))
 """
 
-# A tmux that runs the fixture's, then SIGKILLs its caller once new-session has run: a start killed
-# after its client's launch, before it saves anything after it
+# A tmux for one start: it runs the fixture's, and that start's first call after new-session (its
+# client let run, nothing saved since) SIGKILLs the start instead; other callers pass through
 KILLER = """import os, signal, subprocess, sys
+try:
+    with open(LAUNCHED) as f:
+        starter = int(f.read())
+except FileNotFoundError:
+    starter = None
+if os.getppid() == starter:
+    os.kill(starter, signal.SIGKILL)
+    sys.exit(1)
 code = subprocess.call([REAL, *sys.argv[1:]])
-if "new-session" in sys.argv[1:]:
-    os.kill(os.getppid(), signal.SIGKILL)
+if "new-session" in sys.argv[1:] and starter is None:
+    with open(LAUNCHED, "w") as f:
+        f.write(str(os.getppid()))
 sys.exit(code)
 """
 
@@ -172,8 +182,9 @@ class ResumeTest(Base):
         directory = os.path.join(self.root, "killer")
         os.mkdir(directory)
         tmux = os.path.join(directory, "tmux")
+        names = f"REAL, LAUNCHED = {self.server.program!r}, {os.path.join(directory, 'launched')!r}"
         with open(tmux, "w", encoding="utf-8") as f:
-            f.write(f"#!{sys.executable} -I\nREAL = {self.server.program!r}\n{KILLER}")
+            f.write(f"#!{sys.executable} -I\n{names}\n{KILLER}")
         os.chmod(tmux, 0o700)
         killed = self.start("w1", PATH=os.pathsep.join((directory, self.env()["PATH"])))
         self.assertEqual((killed.returncode, killed.stdout), (-signal.SIGKILL, ""), killed.stderr)
