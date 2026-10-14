@@ -7,8 +7,8 @@ prompt.
 import os
 import re
 
-from delegate.tests.case import SRC, Case
-from delegate.tests.skills.act_as import argv, command, head, prefix, text
+from delegate.tests.case import REPO, SRC, Case
+from delegate.tests.skills.act_as import SKILL_DIR, argv, command, head, prefix, text
 
 RULE = re.compile(r"^allowed-tools:\n  - Bash\((.+)\)$", re.M)
 
@@ -32,3 +32,10 @@ class ActAs(Case):
         self.assertIn("agent-pm-delegate prompt --role", command(3))
         for option in ("--client", "--mode", "--detach", "--sid", "--resume"):
             self.assertNotIn(option, command(3))
+
+    def test_a_client_without_bin_on_its_path_runs_this_plugins_command_by_its_path(self):
+        fallback = "${CLAUDE_SKILL_DIR}/../../../bin/agent-pm-delegate"
+        self.assertIn(f"`{fallback}`", text())
+        own = fallback.replace("${CLAUDE_SKILL_DIR}", SKILL_DIR)
+        self.assertEqual(os.path.realpath(own), os.path.join(os.path.realpath(REPO), "bin", head()))
+        self.assertTrue(os.access(own, os.X_OK))

@@ -157,6 +157,7 @@ class KeyTest(Base):
         for keys, want in (
             (["Escape"], b"\x1b"),
             (["3", "Up", "BTab", "C-c"], b"3\x1b[A\x1b[Z\x03"),
+            (["C- ", "C-/", "C-[", "C-]", "C-\\", "C-?"], b"\x00\x1f\x1b\x1d\x1c\x7f"),
         ):
             with self.subTest(keys=keys):
                 res, data = self.delivered("w1", self.keys, "--key", *keys)
