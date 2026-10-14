@@ -168,19 +168,6 @@ class CommonDir(Case):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         self.tmp = os.path.realpath(tmp.name)
-        env = unittest.mock.patch.dict(
-            os.environ,
-            {
-                "GIT_CONFIG_GLOBAL": os.devnull,
-                "GIT_CONFIG_NOSYSTEM": "1",
-                "GIT_AUTHOR_NAME": "t",
-                "GIT_AUTHOR_EMAIL": "t@t",
-                "GIT_COMMITTER_NAME": "t",
-                "GIT_COMMITTER_EMAIL": "t@t",
-            },
-        )
-        env.start()
-        self.addCleanup(env.stop)
         self.clone, self.bare = (
             os.path.join(self.tmp, "clone"),
             os.path.join(self.tmp, "origin.git"),
