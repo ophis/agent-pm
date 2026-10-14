@@ -21,6 +21,7 @@ from orchestrator_tests.integration.flow_fixtures import (
     HUMAN,
     PROJECT,
     REPO,
+    RUN,
     TIMEOUT,
     Flow,
     TmuxFlow,
@@ -156,11 +157,27 @@ class Router(TmuxFlow):
             lambda: "start" in self.ledger(ID).get(sid, []), TIMEOUT, "write-back's start step"
         )
         driver = self.driver("engineer", ID)
-        pane = self.server.tmux("list-panes", "-t", f"={driver}", "-F", "#{pane_pid}")
-        self.assertEqual(pane.returncode, 0, pane.stderr)
-        os.kill(int(pane.stdout), signal.SIGKILL)
+        [agent] = self.started()
+        parent = subprocess.run(
+            ["ps", "-o", "ppid=", "-p", str(agent["pid"])],
+            capture_output=True,
+            text=True,
+            timeout=TIMEOUT,
+            check=True,
+        )
+        run_pid = int(parent.stdout)
+        command = subprocess.run(
+            ["ps", "-o", "command=", "-p", str(run_pid)],
+            capture_output=True,
+            text=True,
+            timeout=TIMEOUT,
+            check=True,
+        )
+        self.assertIn(f"{RUN[0]} {RUN[1]} ", command.stdout)
+        self.assertIn(f"--sid={sid} ", command.stdout)
+        os.kill(run_pid, signal.SIGKILL)
         with contextlib.suppress(ProcessLookupError):
-            os.kill(self.started()[0]["pid"], signal.SIGKILL)
+            os.kill(agent["pid"], signal.SIGKILL)
         live_tmux.wait(lambda: not self.live(driver), TIMEOUT, f"{driver} to end")
         self.assertEqual(self.state(ID), "in_progress")
         [(author, session)] = [c for c in self.comments(ID) if c[1].startswith(f"Run {sid} · ")]
