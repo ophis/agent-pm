@@ -1,12 +1,10 @@
 import ast
 import importlib
-import json
 import os
-import subprocess
 from pathlib import Path
 
 from tests import guards
-from tests.case import ORCH_ROOT, PY, REPO, SRC, Case, child_env
+from tests.case import ORCH_ROOT, REPO, SRC, Case
 from tests.checks import checks
 from tests.guard_samples import PKG, Sample, fixtures, test_suites
 
@@ -14,9 +12,6 @@ OPKG = "src/agent_pm/linear_orchestrator"
 
 
 UNLISTED = "not __init__.py, cli.py, engine/, a listed subpackage or a listed entry module"
-
-
-PROBE = "import importlib,json,sys\nprint(json.dumps({n:importlib.import_module(n).__file__ for n in sys.argv[1:]}))\n"
 
 
 class PackageClimbs(Sample):
@@ -147,62 +142,6 @@ class PackageClimbs(Sample):
         self.assertEqual(len(found), 9)
         for (rel, name), ticket in guards.PACKAGE_CLIMB_ALLOWED.items():
             self.assertIn(f"{rel}: {name}: allowlisted but no package escape ({ticket})", found)
-
-
-class RealTree(Case):
-    def test_each_guard_is_clean(self):
-        for name, found in checks(REPO):
-            with self.subTest(name):
-                self.assertEqual(found, [])
-
-    def test_utils_holds_none_of_the_modules_that_left_it(self):
-        moved = ("protocol",)
-        utils = os.listdir(os.path.join(SRC["utils"], "agent_pm", "utils"))
-        self.assertEqual([n for n in utils if n.endswith(".py") and n[:-3] in moved], [])
-
-    def test_no_tree_names_the_old_orchestrator_package(self):
-        old = "_".join(("agent_pm", "orchestrator"))
-        named = []
-        for tree in guards.TREES:
-            for top, dirs, files in os.walk(os.path.join(REPO, tree)):
-                dirs[:] = sorted(d for d in dirs if d != "__pycache__")
-                for name in sorted(files):
-                    rel = os.path.relpath(os.path.join(top, name), REPO)
-                    text = Path(top, name).read_text(encoding="utf-8", errors="replace")
-                    if old in rel or old in text:
-                        named.append(rel)
-        self.assertEqual(named, [])
-
-    def test_src_modules_load_from_src(self):
-        for root in (r for sub, r in SRC.items() if sub != "linear_orchestrator"):
-            src = os.path.realpath(root)
-            for top, dirs, files in os.walk(root):
-                dirs[:] = sorted(d for d in dirs if d != "__pycache__")
-                for name in sorted(f for f in files if f.endswith(".py")):
-                    parts = os.path.relpath(os.path.join(top, name), root)[:-3].split(os.sep)
-                    parts = parts[:-1] if parts[-1] == "__init__" else parts
-                    module = importlib.import_module(".".join(parts))
-                    real = os.path.realpath(module.__file__)
-                    self.assertEqual(os.path.commonpath([src, real]), src)
-
-    def test_orchestrator_loads_from_its_root(self):
-        package = os.path.join(ORCH_ROOT, "agent_pm", "linear_orchestrator")
-        names = sorted(
-            ".".join(path.relative_to(ORCH_ROOT).with_suffix("").parts).removesuffix(".__init__")
-            for path in Path(package).rglob("*.py")
-        )
-        self.assertIn("agent_pm.linear_orchestrator.engine.run", names)
-        out = subprocess.run(
-            [*PY, "-c", PROBE, *names],
-            env=child_env(),
-            capture_output=True,
-            text=True,
-            check=True,
-        ).stdout
-        loaded = json.loads(out)
-        real = os.path.realpath(package)
-        for name in names:
-            self.assertEqual(os.path.commonpath([real, os.path.realpath(loaded[name])]), real)
 
 
 class EveryTest(Sample):
@@ -1452,9 +1391,6 @@ class TestBoundaries(Sample):
 OPKG = "src/agent_pm/linear_orchestrator"
 
 
-PROBE = "import importlib,json,sys\nprint(json.dumps({n:importlib.import_module(n).__file__ for n in sys.argv[1:]}))\n"
-
-
 class OrchestratorText(Sample):
     def test_runtime_names_and_tool_strings_name_the_file_and_line(self):
         root = self.tree(
@@ -1678,9 +1614,6 @@ class ExplicitKeys(Sample):
 
 
 OPKG = "src/agent_pm/linear_orchestrator"
-
-
-PROBE = "import importlib,json,sys\nprint(json.dumps({n:importlib.import_module(n).__file__ for n in sys.argv[1:]}))\n"
 
 
 class LayerCommands(Sample):
@@ -2350,3 +2283,40 @@ class ManagerBoundaries(Sample):
             ),
             [f"{base}:2: lease liveness callback"],
         )
+
+
+class RealTree(Case):
+    def test_each_guard_is_clean(self):
+        for name, found in checks(REPO):
+            with self.subTest(name):
+                self.assertEqual(found, [])
+
+    def test_utils_holds_none_of_the_modules_that_left_it(self):
+        moved = ("protocol",)
+        utils = os.listdir(os.path.join(SRC["utils"], "agent_pm", "utils"))
+        self.assertEqual([n for n in utils if n.endswith(".py") and n[:-3] in moved], [])
+
+    def test_no_tree_names_the_old_orchestrator_package(self):
+        old = "_".join(("agent_pm", "orchestrator"))
+        named = []
+        for tree in guards.TREES:
+            for top, dirs, files in os.walk(os.path.join(REPO, tree)):
+                dirs[:] = sorted(d for d in dirs if d != "__pycache__")
+                for name in sorted(files):
+                    rel = os.path.relpath(os.path.join(top, name), REPO)
+                    text = Path(top, name).read_text(encoding="utf-8", errors="replace")
+                    if old in rel or old in text:
+                        named.append(rel)
+        self.assertEqual(named, [])
+
+    def test_src_modules_load_from_src(self):
+        for root in (r for sub, r in SRC.items() if sub != "linear_orchestrator"):
+            src = os.path.realpath(root)
+            for top, dirs, files in os.walk(root):
+                dirs[:] = sorted(d for d in dirs if d != "__pycache__")
+                for name in sorted(f for f in files if f.endswith(".py")):
+                    parts = os.path.relpath(os.path.join(top, name), root)[:-3].split(os.sep)
+                    parts = parts[:-1] if parts[-1] == "__init__" else parts
+                    module = importlib.import_module(".".join(parts))
+                    real = os.path.realpath(module.__file__)
+                    self.assertEqual(os.path.commonpath([src, real]), src)

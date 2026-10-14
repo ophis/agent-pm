@@ -16,15 +16,14 @@ from agent_pm.utils.config_file import LEVELS
 from tests.import_policy import violation
 
 UNIT_ISOLATION_ALLOWED = {
-    "session/tests/unit/adapters/codex/tui_hook_test.py": "TASK-385 migration",
-    "session/tests/unit/adapters/codex/tui_start_test.py": "TASK-385 migration",
-    "session/tests/unit/engine/api_test.py": "TASK-385 migration",
-    "session/tests/unit/fakes/host_test.py": "TASK-385 migration",
-    "session/tests/unit/hosts/tmux/tmux_host_test.py": "TASK-385 migration",
-    "session/tests/unit/modes/headless_test.py": "TASK-385 migration",
-    "session/tests/unit/modes/tui_hook_test.py": "TASK-385 migration",
-    "session/tests/unit/modes/tui_test.py": "TASK-385 migration",
-    "tests/unit/guards_test.py": "TASK-385 migration",
+    "session/tests/unit/adapters/codex/tui_hook_test.py": "TASK-385 Phase B",
+    "session/tests/unit/adapters/codex/tui_start_test.py": "TASK-385 Phase B",
+    "session/tests/unit/engine/api_test.py": "TASK-385 Phase B",
+    "session/tests/unit/fakes/host_test.py": "TASK-385 Phase B",
+    "session/tests/unit/hosts/tmux/tmux_host_test.py": "TASK-385 Phase B",
+    "session/tests/unit/modes/headless_test.py": "TASK-385 Phase B",
+    "session/tests/unit/modes/tui_hook_test.py": "TASK-385 Phase B",
+    "session/tests/unit/modes/tui_test.py": "TASK-385 Phase B",
 }
 
 

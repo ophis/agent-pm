@@ -19,8 +19,9 @@ from agent_pm.delegate.engine.types import Stopped
 from agent_pm.utils import printable
 
 from delegate.tests.replies import bare, block, running
-from delegate.tests.runner import FAILED, GH, INVALID, INVALID_ERROR, NEEDS, PR, SID, Base, ended
+from delegate.tests.runner import FAILED, GH, INVALID, INVALID_ERROR, NEEDS, PR, SID, Base, UnstreamedAdapter, ended
 from delegate.tests.unit.runs import DONE, START, limit, said
+from session.tests.modules import adapter_loader
 
 
 class Configures(Base):

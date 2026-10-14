@@ -9,6 +9,8 @@ import tempfile
 import unittest
 from unittest import mock
 
+from utils.tests.sandbox import clean_env
+
 try:
     import agent_pm
     from agent_pm.utils.paths import import_roots
@@ -19,7 +21,7 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ROOTS = import_roots(REPO) if agent_pm else tuple(sorted(glob.glob(os.path.join(REPO, "*", "src"))))
 SRC = {os.path.basename(os.path.dirname(r)).replace("-", "_"): r for r in ROOTS}
 RUN_WITH = os.pathsep.join(os.path.relpath(root, REPO) for root in ROOTS)
-PY = (sys.executable, "-P", "-s")
+PY = (sys.executable, "-P", "-S")
 ORCH_ROOT = os.path.join(REPO, "linear-orchestrator", "src")
 
 
@@ -74,12 +76,5 @@ def _foreign(modules=None) -> str | None:
     return None
 
 
-KEEP = ("PYTHONDONTWRITEBYTECODE",)
-
-
 def child_env(base=None, *extra: str) -> dict[str, str]:
-    env = os.environ if base is None else base
-    return {
-        **{k: v for k, v in env.items() if not k.startswith("PYTHON") or k in KEEP},
-        "PYTHONPATH": os.pathsep.join((*ROOTS, *extra)),
-    }
+    return clean_env(base, *ROOTS, *extra)

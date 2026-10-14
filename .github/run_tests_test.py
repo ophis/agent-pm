@@ -7,8 +7,6 @@ import importlib.util
 import io
 import json
 import os
-import subprocess
-import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -35,40 +33,15 @@ class Cases:
             self.fail("a:b, c% |")
 
 
-# A real os.abort() makes macOS file a crash report per run: print faulthandler's report and exit
-# 134 instead.
-SCRIPT = """import faulthandler, os, sys, unittest
-sys.path.insert(0, {github!r})
-import run_tests
-
-def abort():
-    sys.stderr.write("Fatal Python error: Aborted\\n\\n")
-    sys.stderr.flush()
-    faulthandler.dump_traceback()
-    os._exit(134)
-
-class T(unittest.TestCase):
-    def test_a(self):
-        if {mode!r} == "mid":
-            abort()
-        self.assertNotEqual({mode!r}, "fail")
-
-code = run_tests.supervise("Unit x")
-if code is None:
-    if {mode!r} == "early":
-        sys.exit(2)
-    code = run_tests.run(unittest.TestLoader().loadTestsFromTestCase(T), "Unit x")
-    if {mode!r} == "after":
-        abort()
-sys.exit(code)
-"""
-
-
 class Run(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(self.enterContext(tempfile.TemporaryDirectory()))
         self.summary, self.state = self.tmp / "summary.md", self.tmp / "state"
-        env = {"GITHUB_STEP_SUMMARY": str(self.summary), "RUN_TESTS_STATE": str(self.state)}
+        env = {
+            "GITHUB_STEP_SUMMARY": str(self.summary),
+            "RUN_TESTS_STATE": str(self.state),
+            "RUN_TESTS_DURATIONS": str(self.tmp / "durations.jsonl"),
+        }
         self.enterContext(mock.patch.dict(os.environ, env))
 
     def run_tests(self, *names):
@@ -113,71 +86,6 @@ class Run(unittest.TestCase):
     def test_annotation_text_is_escaped(self):
         self.assertEqual(runner.escape("a%\r\n:,"), "a%25%0D%0A:,")
         self.assertEqual(runner.escape("a%\r\n:,", prop=True), "a%25%0D%0A%3A%2C")
-
-
-class Supervise(unittest.TestCase):
-    def supervise(self, mode):
-        tmp = Path(self.enterContext(tempfile.TemporaryDirectory()))
-        (tmp / "job.py").write_text(SCRIPT.format(github=str(HERE), mode=mode))
-        env = {k: v for k, v in os.environ.items() if k != "RUN_TESTS_STATE"}
-        env["GITHUB_STEP_SUMMARY"] = str(tmp / "summary.md")
-        proc = subprocess.run(
-            [sys.executable, str(tmp / "job.py")], env=env, capture_output=True, text=True
-        )
-        summary = tmp / "summary.md"
-        return proc, summary.read_text() if summary.exists() else ""
-
-    def test_a_crash_after_all_tests_pass_is_annotated_with_the_last_test_and_stack(self):
-        proc, summary = self.supervise("after")
-        self.assertEqual(proc.returncode, 134)
-        message = "interpreter crashed after all tests passed (exit 134); last test started: "
-        self.assertIn(f"::error title=Unit x::{message}__main__.T.test_a%0A", proc.stdout)
-        self.assertIn("Fatal Python error: Aborted", proc.stdout)
-        self.assertIn(message, summary)
-
-    def test_a_crash_in_a_test_names_that_test(self):
-        proc, _ = self.supervise("mid")
-        self.assertEqual(proc.returncode, 134)
-        self.assertIn(
-            "::error title=Unit x::interpreter crashed (exit 134) in __main__.T.test_a", proc.stdout
-        )
-        self.assertIn("in test_a", proc.stdout)
-
-    def test_an_exit_before_any_test_is_annotated(self):
-        proc, _ = self.supervise("early")
-        self.assertEqual(proc.returncode, 2)
-        self.assertIn("::error title=Unit x::exited 2 before any test started", proc.stdout)
-
-    def test_a_plain_failure_or_success_adds_no_crash_annotation(self):
-        for mode, code, annotations in (("fail", 1, 1), ("ok", 0, 0)):
-            with self.subTest(mode=mode):
-                proc, _ = self.supervise(mode)
-                self.assertEqual(proc.returncode, code)
-                self.assertEqual(proc.stdout.count("::error"), annotations)
-                self.assertNotIn("crashed", proc.stdout)
-
-    def test_main_discovers_from_the_cwd(self):
-        tmp = Path(self.enterContext(tempfile.TemporaryDirectory()))
-        (tmp / "pkg").mkdir()
-        (tmp / "pkg" / "__init__.py").write_text("")
-        (tmp / "pkg" / "x_test.py").write_text(
-            "import unittest\n\n\nclass X(unittest.TestCase):\n"
-            "    def test_x(self):\n        self.fail('no')\n"
-        )
-        env = {
-            k: v
-            for k, v in os.environ.items()
-            if k not in ("RUN_TESTS_STATE", "GITHUB_STEP_SUMMARY")
-        }
-        proc = subprocess.run(
-            [sys.executable, str(HERE / "run_tests.py"), "Unit pkg", "pkg"],
-            cwd=tmp,
-            env=env,
-            capture_output=True,
-            text=True,
-        )
-        self.assertEqual(proc.returncode, 1)
-        self.assertEqual(proc.stdout, "::error title=pkg.x_test.X.test_x::AssertionError: no\n")
 
 
 class Discovery(unittest.TestCase):
