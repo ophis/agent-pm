@@ -154,11 +154,18 @@ class _Store:
         return None if process is None else process.identity
 
     def start(
-        self, state: dict, commit: Callable[[], None], launch: Callable[[], Terminal]
+        self,
+        state: dict,
+        commit: Callable[[], None],
+        launch: Callable[[], Terminal],
+        *,
+        check_name: Callable[[str], None] | None = None,
     ) -> Terminal:
         if field := _bad(state):
             raise DriverError(f"tui session {self.name}: bad {field} {state.get(field)!r:.80}")
         with self._locked():
+            if check_name is not None:
+                check_name(self.name)
             made = self._make(state)
             try:
                 commit()
@@ -288,6 +295,12 @@ class TuiMode(RunningMode):
 
     kind = Mode.TUI
 
+    @staticmethod
+    def resolve_name(spec: Spec) -> str:
+        if spec.sid is None:
+            raise ConfigError("sid: missing")
+        return checked_name(f"{spec.runtime}-{spec.sid[:8]}" if spec.name is None else spec.name)
+
     def __init__(
         self,
         prepared: Prepared,
@@ -317,7 +330,10 @@ class TuiMode(RunningMode):
         display: Display = None,
     ) -> Prepared:
         pending = cls._prepare(spec, adapter, registry=registry, host=host, display=display)
-        pending.validate(display)
+        try:
+            pending.validate(display)
+        except DriverError as error:
+            raise ConfigError(str(error)) from error
         return pending.prepared
 
     @classmethod
@@ -333,9 +349,7 @@ class TuiMode(RunningMode):
         run = adapter.tui()
         if run is None:
             raise cls._unsupported(spec)
-        if spec.sid is None:
-            raise ConfigError("sid: missing")
-        name = checked_name(f"{spec.runtime}-{spec.sid[:8]}" if spec.name is None else spec.name)
+        name = cls.resolve_name(spec)
         events = host.events_path(spec.events)
         cls._selected(spec, adapter)
         drop = identity_drop(registry)
@@ -374,11 +388,16 @@ class TuiMode(RunningMode):
         record: Callable[[SessionInfo], None],
         host: Host,
         display: Display = None,
+        check_name: Callable[[str], None] | None = None,
     ) -> Self:
         """Start the Adapter's terminal with its hook journal committed before execution."""
         pending = cls._prepare(spec, adapter, registry=registry, host=host, display=display)
         prepared, run, store = pending.prepared, pending.run, pending.store
-        pending.validate(display)
+        try:
+            pending.validate(display)
+            host.prepare_events(prepared.spec.events)
+        except DriverError as error:
+            raise DriverError(f"cannot start tui session {store.name}: {error}") from error
 
         def launch() -> Terminal:
             return host.terminal(
@@ -393,7 +412,7 @@ class TuiMode(RunningMode):
             run.commit()
             record(prepared.info)
 
-        terminal = store.start(pending.state, commit, launch)
+        terminal = store.start(pending.state, commit, launch, check_name=check_name)
         return cls(prepared, run, terminal, store, pending.state["generation"])
 
     @classmethod
@@ -476,7 +495,10 @@ class TuiMode(RunningMode):
                     return final, True
                 if self._terminal.alive() and isinstance(self.host, Displayable):
                     with contextlib.suppress(DriverError):
-                        found = self._scan(self.host.screen(self._terminal))
+                        screen = self.host.screen(self._terminal)
+                        found = self._read()
+                        if not found and not self._gone:
+                            found = self._scan(screen)
         deadline = time.monotonic() + timeout
         while not found and not self._gone and (left := deadline - time.monotonic()) > 0:
             time.sleep(min(SLICE, left))

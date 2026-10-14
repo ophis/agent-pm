@@ -16,9 +16,7 @@ PROCESS = "4242 $3 %7 4343"
 
 
 def fake_tmux() -> mock.Mock:
-    """tmux_host autospecced, its constants, attach_command and events_file real: status RUNNING,
-    listing [], opener "mgr", option None, detach and process PROCESS.
-    """
+    """Recorded transport with real validation and command formatting."""
     tmux = mock.create_autospec(tmux_host)
     for name in ("PaneStatus", "TuiError", "Retile"):
         setattr(tmux, name, getattr(tmux_host, name))

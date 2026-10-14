@@ -83,6 +83,7 @@ class InProcessMode(RunningMode):
         record: Callable[[SessionInfo], None],
         host=None,
         display: Display = None,
+        check_name: Callable[[str], None] | None = None,
     ) -> Self:
         prepared, run = cls._prepare(spec, adapter, display=display)
         record(prepared.info)

@@ -78,6 +78,7 @@ class RunningMode(ABC):
         record: Callable[[SessionInfo], None],
         host=None,
         display: Display = None,
+        check_name: Callable[[str], None] | None = None,
     ) -> Self:
         """The session started; spec.sid set; registry: tui settings and identity_drop; host: the
         selected execution Host; display: a tui session's, kept as given (other Modes refuse one).

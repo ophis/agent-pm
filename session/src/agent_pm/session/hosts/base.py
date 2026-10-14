@@ -12,6 +12,7 @@ from collections.abc import Mapping
 from agent_pm.session.engine.types import (
     ActivityState,
     ConfigError,
+    DriverError,
     Hosts,
     Key,
     Launch,
@@ -21,9 +22,17 @@ from agent_pm.session.engine.types import (
     TuiSettings,
     Word,
 )
-from agent_pm.utils import CLASS_PATH, CONFIG_NAME, Display, Record, printable_abs, thaw
+from agent_pm.utils import (
+    CLASS_PATH,
+    CONFIG_NAME,
+    Display,
+    Record,
+    append_line,
+    printable_abs,
+    thaw,
+)
 
-SIGNALS = (signal.SIGHUP, signal.SIGTERM, signal.SIGINT)  # detach blocks them until argv unblocks
+SIGNALS = (signal.SIGHUP, signal.SIGTERM, signal.SIGINT)
 
 
 class HostProcess(ABC):
@@ -161,6 +170,14 @@ class Host(ABC):
 
     def events_path(self, events: str | None) -> str | None:
         return None if events is None else os.path.abspath(events)
+
+    def prepare_events(self, events: str | None) -> str | None:
+        if events is not None:
+            try:
+                append_line(events, "", own=True)
+            except OSError as error:
+                raise DriverError(f"events file {events}: {error.strerror}") from error
+        return events
 
     def hook_state(self, record: Record) -> dict:
         return {}

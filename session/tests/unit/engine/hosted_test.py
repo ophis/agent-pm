@@ -1559,6 +1559,54 @@ class MultipleHostsTest(HostedTuiBase):
         self.host.calls.terminal.assert_not_called()
         self.assertFalse(os.path.exists(RunLog(self.workdir).path))
 
+    def test_an_automatic_name_cannot_replace_another_hosts_session(self):
+        incumbent = self.other.create("fake-0f8fad5b", SID)
+        with self.assertRaisesRegex(DriverError, "^session fake-0f8fad5b exists$"):
+            self.tui(sid=SID, events=self.events)
+        self.host.calls.terminal.assert_not_called()
+        self.assertIs(self.other.attach("fake-0f8fad5b"), incumbent)
+        self.assertFalse(os.path.exists(self.workdir))
+        self.assertFalse(os.path.exists(self.events))
+        self.assertFalse(os.path.exists(self.root))
+
+    def test_dead_names_on_another_host_remain_reserved(self):
+        for name, resolved in (("w1", "w1"), (None, "fake-0f8fad5b")):
+            incumbent = self.other.create(resolved, SID)
+            incumbent.calls.alive.return_value = False
+            incumbent.calls.returncode.return_value = 7
+            with (
+                self.subTest(name=name),
+                self.assertRaisesRegex(DriverError, f"^session {resolved} exists$"),
+            ):
+                self.tui(name=name, sid=SID)
+            self.assertIs(self.other.attach(resolved), incumbent)
+        self.host.calls.terminal.assert_not_called()
+        self.assertFalse(os.path.exists(self.workdir))
+        self.assertFalse(os.path.exists(self.root))
+
+    def test_a_dead_name_on_the_selected_host_can_be_replaced(self):
+        self.tui(name="w1", sid=SID)
+        incumbent = self.host.attach("w1")
+        incumbent.calls.alive.return_value = False
+        incumbent.calls.returncode.return_value = 7
+        replacement = self.tui(name="w1", sid=SID)
+        current = self.host.attach("w1")
+        self.assertIsNot(current, incumbent)
+        self.assertNotEqual(incumbent.identity, current.identity)
+        incumbent.calls.close.assert_called_once_with()
+        self.assertEqual(self.session.attach("w1").record(), replacement.record())
+
+    def test_another_hosts_listing_failure_propagates_before_launch(self):
+        failure = DriverError("second Host listing unavailable")
+        self.other.calls.list.side_effect = failure
+        for name in (None, "w1"):
+            with self.subTest(name=name), self.assertRaises(DriverError) as caught:
+                self.tui(name=name, sid=SID)
+            self.assertIs(caught.exception, failure)
+        self.host.calls.terminal.assert_not_called()
+        self.assertFalse(os.path.exists(self.workdir))
+        self.assertFalse(os.path.exists(self.root))
+
     def test_list_still_scans_other_hosts_after_the_default_changes(self):
         self.host.create("w1")
         self.other.create("w2")

@@ -1,9 +1,4 @@
-"""A runtime and a Host written outside the session package, from its public modules alone
-(agent_pm.session.extension, agent_pm.session). OutsideAdapter: headless runs this Python printing
-`<prompt>` then `done`, one line each, read by its own events (no record parsing); in_process
-replies the prompt. OutsideHost: each process a child of this process, its Record and Display kept
-in memory; no terminal.
-"""
+"""External Adapter and Host implementations using only public extension imports."""
 
 import subprocess
 import sys

@@ -253,12 +253,18 @@ class HostedSession(Session):
         spec = replace(spec, sid=spec.sid or str(uuid.uuid4()))
         RunningMode.check_protection(spec, adapter)
         on = cls.host(host)
-        if spec.name is not None and any(
-            spec.name in cls.host(name).list()
-            for name in setup.hosts.tables
-            if cls.host(name) is not on
-        ):
-            raise DriverError(f"session {spec.name} exists")
+        name = tui.TuiMode.resolve_name(spec) if mode == Mode.TUI else spec.name
+
+        def check_name(name: str) -> None:
+            if any(
+                name in cls.host(configured).list()
+                for configured in setup.hosts.tables
+                if cls.host(configured) is not on
+            ):
+                raise DriverError(f"session {name} exists")
+
+        if name is not None:
+            check_name(name)
         running = MODES[mode].start(
             spec,
             adapter,
@@ -266,6 +272,7 @@ class HostedSession(Session):
             record=_session_line(spec.workdir),
             host=on,
             display=display,
+            check_name=check_name,
         )
         return cls(
             runtime,

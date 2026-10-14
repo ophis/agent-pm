@@ -4,6 +4,7 @@ HostedSession class, session_cls.
 
 from __future__ import annotations
 
+import errno
 import os
 import time
 from collections.abc import Callable, Mapping, Sequence
@@ -16,6 +17,7 @@ from agent_pm.session.engine.hosted import HostedSession
 from agent_pm.session.engine.records import RunLog
 from agent_pm.session.engine.types import (
     ConfigError,
+    DriverError,
     Hosts,
     Launch,
     Mode,
@@ -247,9 +249,13 @@ class Driver:
         if not os.path.isdir(cwd):
             raise ConfigError(f"cwd must be an existing directory, got {cwd!r:.80}")
         display = TmuxHost.fold(opener, None, None)
-        self.session_cls.host(self.harness_host).detach(
-            name, Launch(tuple(argv), cwd=cwd, env=env), display=display
-        )
+        try:
+            launch = Launch(tuple(argv), cwd=cwd, env=env)
+        except ConfigError as error:
+            raise DriverError(
+                f"detach {name}: cannot run {argv[0]}: {os.strerror(errno.EINVAL)}"
+            ) from error
+        self.session_cls.host(self.harness_host).detach(name, launch, display=display)
 
     def _shown(self) -> Displayable:
         host = self.session_cls.host()

@@ -978,7 +978,8 @@ class SwapTest(Base):
             return "Sign in"
 
         self.host.calls.screen.side_effect = replace
-        self.assertEqual((mode.poll(0), mode.poll(0)), (([Blocked("Sign in")], False), ([], True)))
+        self.assertEqual((mode.poll(0), mode.poll(0)), (([], True), ([], True)))
+        self.assertEqual(self.run.screens, [])
         original.calls.mark.assert_not_called()
         self.host.processes[NAME].calls.mark.assert_not_called()
 
@@ -1258,6 +1259,20 @@ class PollTest(Base):
 
 
 class ScanTest(Base):
+    def test_a_hook_arriving_during_capture_precedes_the_limit_seen_on_screen(self):
+        mode = self.started()
+
+        def capture(_terminal, _lines):
+            self.append(record("tool", tool="submitted"))
+            self.host.calls.screen.side_effect = None
+            self.host.calls.screen.return_value = "LIMIT 100"
+            return "LIMIT 100"
+
+        self.host.calls.screen.side_effect = capture
+        self.assertEqual(mode.poll(0), ([Activity("submitted")], False))
+        self.assertEqual(mode.poll(0), ([LimitHit(100.0)], False))
+        self.assertEqual(mode.poll(0), ([], False))
+
     def scans(self, mode, *screens) -> list:
         """mode.poll's events for each screen in turn."""
         found = []
