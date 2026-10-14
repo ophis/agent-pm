@@ -332,7 +332,8 @@ class Crew:
         self.roster.check_lease()
         entries = self.roster.entries()
         records = [entry.record for entry in entries.values() if entry.record is not None]
-        records.extend(self._here() or ())
+        here = self._here()
+        records.extend(here or ())
         names = sorted(set(entries) | {record.name for record in records})
         if not dry_run:
             failures = self._control("close", records)
@@ -341,6 +342,8 @@ class Crew:
                     self.roster.remove(name)
             if failures:
                 raise RuntimeError("\n".join(failures.values()))
+        if here is None:
+            raise RuntimeError("stop-all partial: unlisted work may still be running")
         return names
 
     def forget(self, name: str, *, force: bool = False) -> None:

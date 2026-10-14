@@ -1017,8 +1017,12 @@ class StopAllTest(Case):
         self.crew.run(Spec("owned", (self.command, "start", "owned")))
         ctl.set_session(self.ctl_dir, "unknown", alive=True)
         stderr = io.StringIO()
-        with self.unavailable_listing(), contextlib.redirect_stderr(stderr):
-            self.assertEqual(self.crew.stop_all(), ["owned"])
+        with (
+            self.unavailable_listing(),
+            contextlib.redirect_stderr(stderr),
+            self.assertRaisesRegex(RuntimeError, "stop-all partial"),
+        ):
+            self.crew.stop_all()
         self.assertIn("listing unavailable", stderr.getvalue())
         self.assertEqual(self.roster.entries(), {})
         with Path(self.ctl_dir, ctl.SESSIONS).open(encoding="utf-8") as stream:
@@ -1034,8 +1038,12 @@ class StopAllTest(Case):
         self.crew.run(Spec("owned", (self.command, "start", "owned")))
         before = Path(self.roster.path).read_bytes()
         stderr = io.StringIO()
-        with self.unavailable_listing(), contextlib.redirect_stderr(stderr):
-            self.assertEqual(self.crew.stop_all(dry_run=True), ["owned"])
+        with (
+            self.unavailable_listing(),
+            contextlib.redirect_stderr(stderr),
+            self.assertRaisesRegex(RuntimeError, "stop-all partial"),
+        ):
+            self.crew.stop_all(dry_run=True)
         self.assertIn("listing unavailable", stderr.getvalue())
         self.assertEqual(Path(self.roster.path).read_bytes(), before)
         self.assertEqual(
@@ -1047,8 +1055,10 @@ class StopAllTest(Case):
     def test_failed_listing_empty_roster_reports_failure_without_creating_state(self):
         stderr = io.StringIO()
         with self.unavailable_listing(), contextlib.redirect_stderr(stderr):
-            self.assertEqual(self.crew.stop_all(), [])
-            self.assertEqual(self.crew.stop_all(dry_run=True), [])
+            with self.assertRaisesRegex(RuntimeError, "stop-all partial"):
+                self.crew.stop_all()
+            with self.assertRaisesRegex(RuntimeError, "stop-all partial"):
+                self.crew.stop_all(dry_run=True)
         self.assertEqual(stderr.getvalue().count("listing unavailable"), 2)
         self.assertFalse(Path(self.roster.directory).exists())
         self.assertEqual(ctl.calls(self.ctl_dir), [])

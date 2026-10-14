@@ -2,13 +2,16 @@
 
 import contextlib
 import io
+import json
 import os
 import subprocess
 import uuid
+from pathlib import Path
 from unittest import mock
 
 from agent_pm.manager import Crew, Spec, State
 from agent_pm.manager.cli import main
+from agent_pm.manager.engine.crew import HERE
 from agent_pm.manager.engine.roster import Roster
 
 from manager.tests.case import Case
@@ -208,3 +211,42 @@ class CliTest(Case):
             self.assertIn("original starter failure", stderr)
             self.assertIn("stale holder generation", stderr)
             self.assertIs(self.roster.entries()["worker"].state, State.RESUMING)
+
+    def _partial_stop_all(self, *, dry_run):
+        command = self.setup_ctl()
+        Crew(self.roster).run(Spec("owned", (command, "start", "owned")))
+        ctl.set_session(self.ctl_dir, "unknown", alive=True)
+        before = Path(self.roster.path).read_bytes()
+        native_run = subprocess.run
+
+        def run(argv, **options):
+            if tuple(argv) == HERE:
+                return subprocess.CompletedProcess(argv, 1, "", "listing unavailable")
+            return native_run(argv, **options)
+
+        with mock.patch("subprocess.run", side_effect=run):
+            result, stdout, stderr = self.invoke(
+                "stop-all", "--manager", "mgr", *(("--dry-run",) if dry_run else ())
+            )
+        self.assertEqual(result, 1, stderr)
+        self.assertEqual(stdout, "")
+        self.assertIn("listing unavailable", stderr)
+        self.assertIn("stop-all partial", stderr)
+        with Path(self.ctl_dir, ctl.SESSIONS).open(encoding="utf-8") as stream:
+            sessions = json.load(stream)
+        self.assertTrue(sessions["unknown"]["alive"])
+        closes = [call for call in ctl.calls(self.ctl_dir) if call["argv"] == ["close"]]
+        if dry_run:
+            self.assertEqual(Path(self.roster.path).read_bytes(), before)
+            self.assertTrue(sessions["owned"]["alive"])
+            self.assertEqual(closes, [])
+        else:
+            self.assertEqual(self.roster.entries(), {})
+            self.assertFalse(sessions["owned"]["alive"])
+            self.assertEqual(closes, [{"argv": ["close"], "names": ["owned"]}])
+
+    def test_partial_stop_all_exits_one_after_closing_known_work(self):
+        self._partial_stop_all(dry_run=False)
+
+    def test_partial_stop_all_dry_run_exits_one_without_closing_work(self):
+        self._partial_stop_all(dry_run=True)
