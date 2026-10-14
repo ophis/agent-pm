@@ -1,5 +1,5 @@
-"""HarnessDelegate names its harness session in a Host's close failure; preview and instruct write
-no state; owner overlays shape its run.
+"""HarnessDelegate names its harness session in a Host's close failure; its harness environment
+holds no launcher variable; preview and instruct write no state; owner overlays shape its run.
 """
 
 import json
@@ -90,6 +90,17 @@ class InstructTest(HarnessCase):
         self.assertIn("**Your task**: `echo`", want)
         self.assertEqual(os.listdir(self.work), ["prompt.md"])
         self.assertEqual((HarnessSession.started, RecordingHost.launches), ([], []))
+
+
+class LaunchTest(HarnessCase):
+    def test_the_launchers_variables_stay_out_of_the_harness_environment(self):
+        launcher = {"AGENT_PM_SID": SID, "AGENT_PM_EVENTS": "/manager/events", "KEPT": "kept"}
+        with mock.patch.dict(os.environ, launcher):
+            self.make().detach()
+        environment = RecordingHost.launches[0]["env"]
+        self.assertNotIn("AGENT_PM_SID", environment)
+        self.assertNotIn("AGENT_PM_EVENTS", environment)
+        self.assertEqual(environment["KEPT"], "kept")
 
 
 class UsageSession(HarnessSession):

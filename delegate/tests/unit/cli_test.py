@@ -4,6 +4,7 @@ import io
 import json
 import os
 import re
+import sys
 import types
 import uuid
 from contextlib import redirect_stderr, redirect_stdout
@@ -30,6 +31,9 @@ from delegate.tests.cli_case import (
     Base,
     RefusingAdapter,
 )
+from delegate.tests.fakes.harness_session import HarnessSession, RecordingHost
+from delegate.tests.harness import SID as HARNESS_SID
+from delegate.tests.harness import HarnessCase
 from delegate.tests.replies import block
 from delegate.tests.unit.runs import DONE, START, STOP, FakeHandle, no_child, turn
 from session.tests import fake_adapter
@@ -38,15 +42,17 @@ from utils.tests.case import local_section
 
 
 class Detaching:
-    """A delegate class for `run --detach`: records each construction's role and Spec; its detach
-    returns RECORD or raises `failure`.
+    """A delegate class for `run --detach`: records each construction's role, Spec and placement,
+    and its environment; its detach returns RECORD or raises `failure`.
     """
 
     made: list = []
+    environments: list = []
     failure: Exception | None = None
 
     def __init__(self, role, spec, **placement):
         Detaching.made.append((role, spec, placement))
+        Detaching.environments.append(dict(os.environ))
         if isinstance(Detaching.failure, ConfigError):
             raise Detaching.failure
 
@@ -76,7 +82,7 @@ class Detach(Base):
     def setUp(self):
         super().setUp()
         self.events = os.path.join(self.tmp, "events")
-        Detaching.made, Detaching.failure = [], None
+        Detaching.made, Detaching.environments, Detaching.failure = [], [], None
         self.detaching = True
 
     def delegate_cls(self):
@@ -93,6 +99,11 @@ class Detach(Base):
             (("--events", e, "--mode", "tui"), None, "--events needs --detach"),
             (("--detach", "--events", e), "-", "--detach needs --out PATH"),
             (("--detach", "--events", e, "--dry-run"), "-", "--detach needs --out PATH"),
+            (
+                ("--detach", "--events", e, "--mode", "in_process"),
+                None,
+                "--detach needs --mode headless or tui",
+            ),
         ):
             with self.subTest(argv=argv, out=out):
                 self.assertEqual(self.runs(*argv, out=out), (2, "", f"delegate: {want}\n"))
@@ -115,11 +126,60 @@ class Detach(Base):
                     (code, out, err), (0, RECORD.to_line() + "\n", f"delegate: session {SID}\n")
                 )
                 ((role, spec, placement),) = Detaching.made
-                self.assertEqual((role, placement), ("dummy-tester", {}))
+                self.assertEqual((role, placement), ("dummy-tester", {"display": None}))
                 self.assertEqual(
                     (spec.mode, spec.sid, spec.events, spec.workdir, spec.out),
                     (mode, SID, self.events, self.work, self.out),
                 )
+
+    def test_detach_events_are_the_given_file_else_the_launchers(self):
+        for extra, want in (((), "launcher/events"), (("--events", self.events), self.events)):
+            with self.subTest(extra=extra):
+                Detaching.made, Detaching.environments = [], []
+                os.environ["AGENT_PM_EVENTS"] = "launcher/events"
+                code, _, err = self.runs("--sid", SID, "--detach", *extra)
+                self.assertEqual(code, 0, err)
+                self.assertEqual(Detaching.made[0][1].events, want)
+                self.assertNotIn("AGENT_PM_EVENTS", Detaching.environments[0])
+                self.assertNotIn("AGENT_PM_EVENTS", os.environ)
+
+    def test_the_launchers_sid_is_the_runs_and_a_different_sid_exits_2(self):
+        other = "99999999-8888-7777-6666-555555555555"
+        for extra in ((), ("--sid", SID), ("--resume",), ("--sid", other)):
+            with self.subTest(extra=extra):
+                Detaching.made, Detaching.environments = [], []
+                os.environ["AGENT_PM_SID"] = SID
+                code, out, err = self.runs("--detach", "--events", self.events, *extra)
+                self.assertNotIn("AGENT_PM_SID", os.environ)
+                if other in extra:
+                    want = f"delegate: $AGENT_PM_SID {SID} differs from --sid {other}\n"
+                    self.assertEqual((code, out, err, Detaching.made), (2, "", want, []))
+                    continue
+                self.assertEqual(code, 0, err)
+                ((_, spec, _),) = Detaching.made
+                self.assertEqual((spec.sid, spec.resume), (SID, extra == ("--resume",)))
+                self.assertNotIn("AGENT_PM_SID", Detaching.environments[0])
+
+    def test_an_unusable_events_file_given_or_inherited_exits_2_writing_nothing(self):
+        self.detaching = False
+        os.mkdir(self.events)
+        misread = os.path.join(self.tmp, "ev#1")
+        for given, why in (
+            (self.events, f"events file {self.events}: Is a directory"),
+            (misread, f"events file {misread}: tmux would misread it"),
+        ):
+            for extra, launcher in ((("--events", given), {}), ((), {"AGENT_PM_EVENTS": given})):
+                with self.subTest(extra=extra, launcher=launcher):
+                    os.environ.update(launcher)
+                    code, out, err = self.runs("--sid", SID, "--detach", *extra)
+                    self.assertEqual((code, out, err), (2, "", f"delegate: {why}\n"))
+        self.assertEqual((self.launches(), os.path.exists(self.work)), ([], False))
+        self.assertEqual(os.listdir(self.agent_pm), [])
+
+    def test_a_display_is_given_to_the_delegate_unread(self):
+        code, _, err = self.detaches("--mode", "tui", "--display", "mgr:%1 right")
+        self.assertEqual(code, 0, err)
+        self.assertEqual(Detaching.made[0][2], {"display": "mgr:%1 right"})
 
     def test_input_dash_is_read_by_the_caller(self):
         code, _, err = self.detaches(input="-", stdin="-x\nUse B.\n")
@@ -156,6 +216,142 @@ class Detach(Base):
                 )
         self.assertEqual((self.launches(), os.path.exists(self.work)), ([], False))
         self.assertFalse(os.path.exists(self.events))
+
+
+class Shown(HarnessSession):
+    """Completes a display as `shown:<value>`, recording each (value, host) it is asked."""
+
+    asked: list = []
+
+    @classmethod
+    def display(cls, value=None, *, host=None):
+        cls.asked.append((value, host))
+        return f"shown:{value}"
+
+
+class Harnessed(HarnessCase):
+    """cli.main `run` on HarnessDelegate over Shown sessions on RecordingHosts (default `agent`),
+    cwd the test's HOME: no process starts.
+    """
+
+    def setUp(self):
+        super().setUp()
+        Shown.asked = []
+        for key in ("AGENT_PM_SID", "AGENT_PM_EVENTS"):
+            os.environ.pop(key, None)
+        self.addCleanup(os.chdir, os.getcwd())
+        os.chdir(self.home)
+        self.events = os.path.join(self.home, "events")
+
+    def cli(self, *extra, input="Hello.", stdin=None):
+        class Bound(HarnessDelegate):
+            def __init__(self, role, spec, **placement):
+                super().__init__(role, spec, session_cls=Shown, **placement)
+
+        argv = ["run", "--role", "dummy-tester", "--task", "echo", "--input", input]
+        argv += ["--out", os.path.join(self.work, "out.md"), "--workdir", self.work]
+        out, err = io.StringIO(), io.StringIO()
+        with (
+            redirect_stdout(out),
+            redirect_stderr(err),
+            mock.patch("sys.stdin", stdin or io.StringIO()),
+        ):
+            try:
+                code = cli.main([*argv, "--client", "fake", *extra], delegate_cls=Bound)
+            except SystemExit as exit:
+                code = exit.code
+        return code, out.getvalue(), err.getvalue()
+
+
+class DetachDisplay(Harnessed):
+    def test_a_given_or_absent_display_is_completed_once_on_the_agent_host_and_kept(self):
+        for given, extra in (("mgr:%1 right", ("--display", "mgr:%1 right")), (None, ())):
+            with self.subTest(given=given):
+                HarnessSession.reset()
+                Shown.asked = []
+                self.work = os.path.join(self.home, "given" if given else "absent")
+                code, out, err = self.cli(
+                    "--sid", HARNESS_SID, "--detach", "--events", self.events, *extra
+                )
+                self.assertEqual(code, 0, err)
+                self.assertEqual(Shown.asked, [(given, "agent")])
+                shown = f"shown:{given}"
+                self.assertEqual(Record.parse(out).display, shown)
+                self.assertEqual(self.metadata()["display"], shown)
+                self.assertEqual(RecordingHost.launches[0]["display"], shown)
+
+
+class DetachEvents(Harnessed):
+    def test_a_relative_events_file_given_or_inherited_is_stored_absolute(self):
+        want = os.path.join(os.getcwd(), "events")
+        for name, extra, launcher in (
+            ("given", ("--events", "events"), {}),
+            ("inherited", (), {"AGENT_PM_EVENTS": "events"}),
+        ):
+            with self.subTest(name):
+                HarnessSession.reset()
+                self.work = os.path.join(self.home, name)
+                os.environ.update(launcher)
+                code, _, err = self.cli("--sid", HARNESS_SID, "--detach", *extra)
+                self.assertEqual(code, 0, err)
+                self.assertEqual(self.metadata()["events"], want)
+                self.assertEqual(RecordingHost.launches[0]["events"], want)
+
+
+class ReadOnce(io.StringIO):
+    def read(self, size=-1):
+        if self.tell():
+            raise AssertionError("stdin read twice")
+        return super().read(size)
+
+
+class DetachInput(Harnessed):
+    def test_input_dash_is_read_once_by_the_caller_and_stored_and_prompted_verbatim(self):
+        with open(os.path.join(self.home, "notes.md"), "w", encoding="utf-8") as file:
+            file.write("not the input\n")
+        for name, text in (
+            ("file", "notes.md"),
+            ("lines", "first line\n\nthird line\n"),
+            ("dash", "-x --detach\n"),
+            ("unicode", "Résumé ✓ 中文\n"),
+        ):
+            with self.subTest(name):
+                HarnessSession.reset()
+                self.work = os.path.join(self.home, name)
+                code, _, err = self.cli(
+                    "--sid",
+                    HARNESS_SID,
+                    "--detach",
+                    "--events",
+                    self.events,
+                    input="-",
+                    stdin=ReadOnce(text),
+                )
+                self.assertEqual(code, 0, err)
+                state = self.metadata()
+                self.assertEqual(state["spec"]["input"], text)
+                self.assertIn(f"# Input\n\n{text}", state["plan"]["session"]["prompt"])
+                harness = "agent_pm.delegate.engine.harness"
+                self.assertEqual(
+                    RecordingHost.launches[0]["argv"],
+                    [sys.executable, "-P", "-s", "-m", harness, self.work],
+                )
+
+
+class DetachSid(Harnessed):
+    def test_the_launchers_sid_is_stored_and_printed(self):
+        os.environ["AGENT_PM_SID"] = HARNESS_SID
+        code, out, err = self.cli("--detach", "--events", self.events)
+        self.assertEqual(code, 0, err)
+        self.assertEqual(Record.parse(out).sid, HARNESS_SID)
+        self.assertEqual(self.metadata()["spec"]["sid"], HARNESS_SID)
+        self.assertNotIn("AGENT_PM_SID", RecordingHost.launches[0]["env"])
+
+    def test_a_different_sid_starts_and_writes_nothing(self):
+        os.environ["AGENT_PM_SID"] = HARNESS_SID
+        code, out, _ = self.cli("--sid", SID, "--detach", "--events", self.events)
+        self.assertEqual((code, out), (2, ""))
+        self.assertEqual((RecordingHost.launches, os.path.exists(self.work)), ([], False))
 
 
 class DryRun(Base):
@@ -241,6 +437,19 @@ class InProcess(Base):
     def runs(self, *extra, **kw):
         with no_child():
             return super().runs(*extra, **kw)
+
+    def test_a_run_without_sid_takes_the_launchers(self):
+        os.environ["AGENT_PM_SID"] = SID
+        code, _, err = self.runs("--mode", "in_process")
+        self.assertEqual(code, 0, err)
+        self.assertIn(f"delegate: session {SID}\n", err)
+
+    def test_the_launchers_events_are_ignored_without_detach(self):
+        os.environ["AGENT_PM_EVENTS"] = os.path.join(self.tmp, "events")
+        code, _, err = self.runs("--mode", "in_process", "--sid", SID)
+        self.assertEqual(code, 0, err)
+        self.assertNotIn("AGENT_PM_EVENTS", os.environ)
+        self.assertFalse(os.path.exists(os.path.join(self.tmp, "events")))
 
     def test_a_done_run_exits_0_naming_its_session_and_status(self):
         code, out, err = self.runs("--mode", "in_process", "--sid", SID)
