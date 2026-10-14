@@ -190,7 +190,6 @@ class ErrorLoggingTest(HookBase):
         self.assertIn("RuntimeError: first\nsecond\n", trace)
         self.assertNothingWritten()
 
-
     def test_adapter_failures_append_full_tracebacks_without_a_record_or_mark(self):
         callback = os.path.join(self.root, "adapter.py")
         with open(callback, "w") as file:
@@ -572,7 +571,6 @@ with unittest.mock.patch("os.lstat", root_owner):
         self.assertEqual(self.records()[0]["payload"], {"callback_imported": True})
         with open(imported) as file:
             self.assertEqual(file.read(), "imported\n" * 3)
-
 
     def test_nested_namespace_callback_imports_from_supplied_roots(self):
         sources = [os.path.join(self.root, name) for name in ("left", "right")]
