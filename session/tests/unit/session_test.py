@@ -13,6 +13,7 @@ from agent_pm.session import (
     Exited,
     Hosts,
     IdleTimeout,
+    Launch,
     LimitHit,
     Liveness,
     Mode,
@@ -50,6 +51,7 @@ NAMES = (
     "SessionInfo",
     "SessionEvent",
     "Hosts",
+    "Launch",
 )
 
 EVENTS = {Activity, Blocked, Exited, IdleTimeout, LimitHit, Reply, Stderr, TurnEnd}
@@ -65,6 +67,7 @@ ALLOWED_CONCRETE = {
     SessionStatus,
     Mode,
     Liveness,
+    Launch,
     Effort,
     Resumable,
     ActivityState,

@@ -7,6 +7,7 @@ from agent_pm.session.adapters.base import Adapter, Headless, InProcess, JsonHea
 from agent_pm.session.engine.types import (
     Access,
     Activity,
+    ActivityState,
     Blocked,
     ClientBound,
     ConfigError,
@@ -60,6 +61,7 @@ __all__ = [
     "ClientBound",
     "SessionEvent",
     "Activity",
+    "ActivityState",
     "Blocked",
     "Exited",
     "LimitHit",

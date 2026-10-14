@@ -128,7 +128,9 @@ class Live(tui_live.Live):
 
     def closed(self, handle: Session) -> None:
         self.assertEqual((handle.state(), self.driver.sessions(handle.name)), ("absent", []))
-        self.assertFalse(os.path.lexists(tui._Store(handle.name, host=self.driver.session_cls.host()).dir))
+        self.assertFalse(
+            os.path.lexists(tui._Store(handle.name, host=self.driver.session_cls.host()).dir)
+        )
 
 
 class TurnsTest(Live):

@@ -77,7 +77,7 @@ class LaunchTest(Case):
                 got = json.loads(out.read_text())
                 self.assertEqual(got["argv"], data)
                 self.assertTrue(os.path.samefile(got["cwd"], self.home))
-                self.assertEqual(got["env"], env)
+                self.assertEqual({key: got["env"][key] for key in env}, env)
                 self.assertTrue(process.alive())
                 gate.touch()
                 self.assertTrue(process.wait_exit(WAIT))

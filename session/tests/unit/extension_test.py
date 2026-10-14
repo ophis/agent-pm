@@ -39,6 +39,7 @@ TYPES = {
             "ClientBound",
             "SessionEvent",
             "Activity",
+            "ActivityState",
             "Blocked",
             "Exited",
             "LimitHit",

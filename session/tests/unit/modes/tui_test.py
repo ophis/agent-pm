@@ -558,7 +558,9 @@ class StartTest(Base):
         self.assertEqual(self.host.calls.terminal.call_args.args[0], "fake-0f8fad5b")
 
     def test_added_hook_paths_reject_overlapping_cwd_and_grants_before_launch(self):
-        for protected, field in itertools.product(("/host/tool", self.events, self.root), ("cwd", "dirs")):
+        for protected, field in itertools.product(
+            ("/host/tool", self.events, self.root), ("cwd", "dirs")
+        ):
             for path in (protected, os.path.dirname(protected), os.path.join(protected, "child")):
                 access = Access(cwd=path) if field == "cwd" else Access(dirs=(path,))
                 with (

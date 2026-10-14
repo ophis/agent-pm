@@ -141,7 +141,9 @@ class TuiTest(Live):
         info = session.info()
         session.close()
         self.assertEqual(self.driver.sessions("historical"), [])
-        self.assertFalse(os.path.lexists(tui._Store("historical", host=self.driver.session_cls.host()).dir))
+        self.assertFalse(
+            os.path.lexists(tui._Store("historical", host=self.driver.session_cls.host()).dir)
+        )
         with contextlib.ExitStack() as stack:
             starts = [
                 stack.enter_context(mock.patch(target, side_effect=AssertionError(target)))
@@ -272,7 +274,8 @@ class SameNameTest(Live):
         self.assertEqual(tui.TuiMode.snapshot("w6")["sid"], handle.sid)
         self.assertEqual(str(error), "tui session w6 is running; tmux attach -t '=w6'")
         self.assertEqual(
-            (handle.state(), os.listdir(tui._Store("w6", host=self.driver.session_cls.host()).dir)), ("live", ["session.json"])
+            (handle.state(), os.listdir(tui._Store("w6", host=self.driver.session_cls.host()).dir)),
+            ("live", ["session.json"]),
         )
 
     def test_a_restart_after_a_close_from_another_process(self):
