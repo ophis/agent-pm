@@ -240,8 +240,9 @@ class HarnessDelegate(Delegate):
             raise ConfigError(str(error)) from None
 
     def _replacing(self, payload: bytes) -> int:
-        """The attempt replacing the run `payload` records, refused while that run is alive; the
-        agent session it left open (a tui run's, after its outcome) is closed.
+        """The attempt replacing the run `payload` records (its session's next, else 1), refused
+        while that run is alive; the agent session it left open (a tui run's, after its outcome) is
+        closed.
         """
         try:
             previous = self._parse(payload)
@@ -255,7 +256,7 @@ class HarnessDelegate(Delegate):
                 agent.close()
             except DriverError as error:
                 raise ConfigError(str(error)) from None
-        return previous.attempt + 1
+        return previous.attempt + 1 if previous.plan.sid == self._state.plan.sid else 1
 
     def _salvaged(self, payload: bytes) -> int:
         """A corrupt record's run counts as alive while its run lock is held or the harness it

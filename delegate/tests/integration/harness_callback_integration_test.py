@@ -116,6 +116,14 @@ class Callbacks(CallbackCase):
         replacing.run()
         self.assertEqual({(event.sid, event.attempt) for event in self.events()}, {(SID, 2)})
 
+    def test_a_new_session_replacing_an_ended_run_is_attempt_1(self):
+        self.make().run()
+        other = "1f8fad5b-d9cb-469f-a165-70867728950e"
+        spec = Spec("Hello.", self.work, task="echo", sid=other, cwd=self.work, client="fake")
+        self.make(spec=spec, callback=self.callback()).run()
+        self.assertEqual(self.metadata()["attempt"], 1)
+        self.assertEqual({(event.sid, event.attempt) for event in self.events()}, {(other, 1)})
+
     def test_no_callback_invokes_no_command(self):
         with mock.patch("subprocess.Popen") as popen:
             result = self.make().run()
