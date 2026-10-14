@@ -177,11 +177,13 @@ def supervise(title):
                     sys.stderr.write(line)
                     tail.append(line)
         finally:
-            socket = Path(tmp) / f"tmux-{os.getuid()}" / "default"
-            if socket.exists():
+            directory = Path(tmp) / f"tmux-{os.getuid()}"
+            for socket in sorted(directory.glob("*")) if not directory.is_symlink() else []:
+                if socket.is_symlink() or not socket.is_socket():
+                    continue
                 subprocess.run(
                     ["tmux", "-S", str(socket), "kill-server"],
-                    env=env,
+                    env=clean_env(env),
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,
                     timeout=10,

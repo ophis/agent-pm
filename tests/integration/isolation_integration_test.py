@@ -163,19 +163,22 @@ print(json.dumps({"code": code, "state": state.read_text()}))
                 self.assertIn(origin, proc.stdout)
 
     @unittest.skipUnless(shutil.which("tmux"), "tmux is unavailable")
-    def test_supervisor_stops_its_private_default_tmux_server(self):
+    def test_supervisor_stops_all_of_its_private_tmux_servers(self):
         root = Path(self.home)
         package = root / "integration"
         package.mkdir()
         (package / "__init__.py").touch()
-        marker = root / "server-pid"
+        marker = root / "server-pids"
         (package / "server_test.py").write_text(
-            "import os, subprocess, unittest\nfrom pathlib import Path\n"
+            "import json, os, subprocess, unittest\nfrom pathlib import Path\n"
             "class Server(unittest.TestCase):\n"
             "    def test_private(self):\n"
-            "        subprocess.run(['tmux', '-f', os.devnull, 'new-session', '-d', 'sleep 300'], check=True)\n"
-            "        pid = subprocess.check_output(['tmux', 'display-message', '-p', '#{pid}'], text=True)\n"
-            f"        Path({str(marker)!r}).write_text(pid)\n"
+            "        pids = {}\n"
+            "        for label in ('default', 'named', 'other'):\n"
+            "            command = ['tmux'] + ([] if label == 'default' else ['-L', label])\n"
+            "            subprocess.run([*command, '-f', os.devnull, 'new-session', '-d', 'sleep 300'], check=True)\n"
+            "            pids[label] = subprocess.check_output([*command, 'display-message', '-p', '#{pid}'], text=True).strip()\n"
+            f"        Path({str(marker)!r}).write_text(json.dumps(pids))\n"
         )
         env = clean_env(None, REPO, str(Path(REPO, ".github")))
         env.pop("RUN_TESTS_STATE", None)
@@ -195,17 +198,19 @@ print(json.dumps({"code": code, "state": state.read_text()}))
             timeout=15,
         )
         self.assertEqual(proc.returncode, 0, proc.stderr)
-        pid = marker.read_text().strip()
-        deadline = time.monotonic() + 3
-        while True:
-            state = subprocess.run(
-                ["ps", "-p", pid, "-o", "stat="], capture_output=True, text=True, timeout=5
-            )
-            if state.returncode == 1 or state.stdout.strip().startswith("Z"):
-                break
-            if time.monotonic() >= deadline:
-                self.fail(f"private tmux server {pid} remains live: {state.stdout}")
-            time.sleep(0.01)
+        pids = json.loads(marker.read_text())
+        self.assertEqual(set(pids), {"default", "named", "other"})
+        for pid in pids.values():
+            deadline = time.monotonic() + 3
+            while True:
+                state = subprocess.run(
+                    ["ps", "-p", pid, "-o", "stat="], capture_output=True, text=True, timeout=5
+                )
+                if state.returncode == 1 or state.stdout.strip().startswith("Z"):
+                    break
+                if time.monotonic() >= deadline:
+                    self.fail(f"private tmux server {pid} remains live: {state.stdout}")
+                time.sleep(0.01)
 
     def test_caught_and_background_violations_still_fail_at_stop_test(self):
         script = """import json, os, sys, threading, unittest
