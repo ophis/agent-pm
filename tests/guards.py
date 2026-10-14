@@ -37,7 +37,7 @@ TOML_IMPLEMENTATION = re.compile(
 TOML_RUNTIME = re.compile(r'\s*runtime\s*=\s*"[a-z][a-z0-9_]*"\s*\Z')
 
 
-TMUX_HOST = "session/src/agent_pm/session/hosts/tmux/tmux_host.py"
+TMUX_HOST = "session/src/agent_pm/session/hosts/tmux/host.py"
 
 
 PKG = "agent_pm"
@@ -316,7 +316,6 @@ DISPLAY_NAMES = re.compile(
 LEGACY_HOST_NAMES = {
     (f"{SESSION_SRC}engine/forwarding.py", "TmuxHost"): (6, "TASK-375"),
     (f"{SESSION_SRC}engine/forwarding.py", "tmux"): (4, "TASK-375"),
-    (f"{SESSION_SRC}engine/forwarding.py", "tmux_host"): (3, "TASK-375"),
     (f"{SESSION_SRC}engine/forwarding.py", "_opener"): (2, "TASK-375"),
     (f"{SESSION_SRC}engine/forwarding.py", "opener"): (4, "TASK-375"),
     (f"{SESSION_SRC}engine/forwarding.py", "split_from"): (4, "TASK-375"),

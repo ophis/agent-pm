@@ -1,11 +1,17 @@
-"""Host callback for tui activity, using the launch's trusted executable."""
+"""The tmux activity marker (mark) and the Host callback that runs it for tui hooks, using the
+launch's trusted executable.
+"""
 
 import os
 import stat
 import subprocess
 
+from agent_pm.session.engine.status_log import SessionStatusLog
 from agent_pm.session.engine.types import HookError
-from agent_pm.session.hosts.tmux import tmux_host, transport
+from agent_pm.session.hosts.tmux import transport
+from agent_pm.session.hosts.tmux.types import TuiError
+
+MARK_TIMEOUT = 5
 
 
 def on_hook(word, _payload, state):
@@ -55,7 +61,7 @@ def on_hook(word, _payload, state):
             capture_output=True,
             text=True,
             stdin=subprocess.DEVNULL,
-            timeout=tmux_host.MARK_TIMEOUT,
+            timeout=MARK_TIMEOUT,
         )
         if result.returncode:
             if transport.absent(result):
@@ -69,10 +75,64 @@ def on_hook(word, _payload, state):
             return
         if sid != state["sid"] or actual_generation != generation:
             return
-        tmux_host.mark(word, state["events"], pane=pane, tmux=executable, proc=run)
+        mark(word, state["events"], pane=pane, tmux=executable, proc=run)
     except subprocess.TimeoutExpired:
-        raise HookError(f"tmux: timed out after {tmux_host.MARK_TIMEOUT} s") from None
+        raise HookError(f"tmux: timed out after {MARK_TIMEOUT} s") from None
     except OSError as error:
         raise HookError(f"tmux: {error}") from error
-    except tmux_host.TuiError as error:
+    except TuiError as error:
         raise HookError(str(error)) from None
+
+
+def mark(
+    word: str,
+    events: str | None,
+    *,
+    pane: str | None = None,
+    tmux: str = "tmux",
+    proc=subprocess.run,
+) -> None:
+    """Hook protocol: sets the pane ($TMUX_PANE when None) @state to word; done and blocked also
+    append `HH:MM:SS <session> <word>` to events, an existing regular file (None: no line).
+    """
+    pane = os.environ.get("TMUX_PANE", "") if pane is None else pane
+    if not pane:
+        return
+    if not transport.PANE.fullmatch(pane):
+        raise TuiError(f"bad tmux pane {pane!r}")
+    _mark_tmux([tmux, "set-option", "-t", pane, "@state", word], proc)
+    if word not in ("done", "blocked") or events is None:
+        return
+    session = _mark_tmux([tmux, "display-message", "-p", "-t", pane, "#S"], proc).strip()
+    if not transport.NAME.fullmatch(session):
+        raise TuiError(f"tmux session {session!r}: want [A-Za-z0-9_-]+")
+    try:
+        # O_NONBLOCK: a FIFO without a reader fails instead of hanging the hook
+        fd = os.open(events, os.O_WRONLY | os.O_APPEND | os.O_NOFOLLOW | os.O_NONBLOCK)
+        try:
+            st = os.fstat(fd)
+            if not stat.S_ISREG(st.st_mode) or st.st_uid != os.getuid():
+                raise TuiError(f"events file {events}: not a regular file owned by you")
+            os.write(fd, (SessionStatusLog.line(session, word) + "\n").encode())
+        finally:
+            os.close(fd)
+    except OSError as e:
+        raise TuiError(f"events file {events}: {e.strerror}") from e
+
+
+def _mark_tmux(argv: list[str], proc) -> str:
+    try:
+        res = proc(
+            argv,
+            capture_output=True,
+            text=True,
+            stdin=subprocess.DEVNULL,
+            timeout=MARK_TIMEOUT,
+        )
+    except subprocess.TimeoutExpired:
+        raise TuiError(f"tmux: timed out after {MARK_TIMEOUT} s") from None
+    except OSError as e:
+        raise TuiError(f"tmux: {e}") from e
+    if res.returncode:
+        raise TuiError(f"tmux: {transport.error(res)}")
+    return res.stdout

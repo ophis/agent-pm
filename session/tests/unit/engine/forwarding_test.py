@@ -37,7 +37,8 @@ from agent_pm.session.engine.types import (
     Window,
 )
 from agent_pm.session.hosts.base import SIGNALS
-from agent_pm.session.hosts.tmux import TmuxHost, tmux_host
+from agent_pm.session.hosts.tmux import TmuxHost
+from agent_pm.session.hosts.tmux.types import PaneStatus, TuiError
 from agent_pm.session.modes import tui
 from agent_pm.utils import ProcessControl, probe
 
@@ -63,7 +64,7 @@ SIGNATURES = {
         ("adapters", KEYWORD, EMPTY),
         ("hosts", KEYWORD, EMPTY),
         ("default_host", KEYWORD, None),
-        ("host", KEYWORD, tmux_host),
+        ("host", KEYWORD, None),
         ("probe", KEYWORD, probe),
         ("clock", KEYWORD, None),
         ("class_loader", KEYWORD, forwarding.load_class),
@@ -72,7 +73,7 @@ SIGNATURES = {
     "from_config": [
         ("config", POSITIONAL, EMPTY),
         ("hosts", KEYWORD, None),
-        ("host", KEYWORD, tmux_host),
+        ("host", KEYWORD, None),
         ("probe", KEYWORD, probe),
         ("clock", KEYWORD, None),
         ("class_loader", KEYWORD, forwarding.load_class),
@@ -227,7 +228,7 @@ class DriverConfigurationTest(Case):
         self.assertIsNot(other.session_cls, driver.session_cls)
         self.assertIsNone(HostedSession._setup)
 
-    def test_host_is_the_tmux_module_of_its_tmux_host_probe_and_clock_its_setups(self):
+    def test_host_is_the_tmux_of_its_tmux_host_probe_and_clock_its_setups(self):
         tmux, probe = fake_tmux(), mock.Mock()
         driver = Driver(
             adapters={}, hosts=HOSTS, default_host="tmux", host=tmux, probe=probe, clock=clock
@@ -453,7 +454,7 @@ class CloseTest(TuiBase):
 class ShowTest(TuiBase):
     def setUp(self):
         super().setUp()
-        self.host.status.return_value = tmux_host.PaneStatus.RUNNING
+        self.host.status.return_value = PaneStatus.RUNNING
         self.host.open_pane.return_value = None
 
     def test_none_once_a_pane_shows_it_placed_with_the_tui_settings(self):
@@ -466,12 +467,7 @@ class ShowTest(TuiBase):
             [
                 mock.call.status("w1"),
                 mock.call.open_pane(
-                    "w1",
-                    split="below",
-                    split_from="m1",
-                    opener="w0t0p0:AB-12",
-                    per_column=2,
-                    retile="off",
+                    "w1", ("w0t0p0:AB-12", "below", "m1"), per_column=2, retile="off"
                 ),
             ],
         )
@@ -489,7 +485,7 @@ class ShowTest(TuiBase):
             [f"WARNING:session:show w1: {NO_PANE}; watch it with tmux attach -t '=w1'"],
         )
         self.host.open_pane.assert_called_once_with(
-            "w1", split=None, split_from=None, opener=None, per_column=None, retile=None
+            "w1", (None, None, None), per_column=None, retile=None
         )
 
     def test_an_absent_session_is_a_driver_error(self):
@@ -519,8 +515,8 @@ class LayoutTest(TuiBase):
         self.assertEqual(self.host.mock_calls, [mock.call.anchor(None), mock.call.opener()])
 
     def test_beside_a_live_split_from_the_opener_may_be_none(self):
-        self.host.status.return_value = tmux_host.PaneStatus.RUNNING
-        self.host.opener.side_effect = tmux_host.TuiError(NO_PANE)
+        self.host.status.return_value = PaneStatus.RUNNING
+        self.host.opener.side_effect = TuiError(NO_PANE)
         self.assertIsNone(self.driver.layout("below", "m1"))
         self.assertEqual(
             self.host.mock_calls,
@@ -529,7 +525,7 @@ class LayoutTest(TuiBase):
 
     def test_no_pane_or_no_opener_is_a_driver_error_with_a_hint_without_split_from(self):
         hint = ": run from tmux or iTerm2, or pass split_from"
-        self.host.status.return_value = tmux_host.PaneStatus.RUNNING
+        self.host.status.return_value = PaneStatus.RUNNING
         for split_from, anchor, opener, message in (
             (None, NO_PANE, None, f"({NO_PANE}){hint}"),
             (None, None, "bad $ITERM_SESSION_ID 'x'", f"(bad $ITERM_SESSION_ID 'x'){hint}"),
@@ -541,8 +537,8 @@ class LayoutTest(TuiBase):
             ),
         ):
             with self.subTest(split_from=split_from, anchor=anchor):
-                self.host.anchor.side_effect = anchor and tmux_host.TuiError(anchor)
-                self.host.opener.side_effect = opener and tmux_host.TuiError(opener)
+                self.host.anchor.side_effect = anchor and TuiError(anchor)
+                self.host.opener.side_effect = opener and TuiError(opener)
                 with self.assertRaises(DriverError) as caught:
                     self.driver.layout(split_from=split_from)
                 self.assertEqual(str(caught.exception), f"no pane to show the TUI beside {message}")
@@ -651,7 +647,7 @@ class DetachTest(TuiBase):
         self.nothing_hosted()
 
     def test_a_tmux_failure_is_a_driver_error(self):
-        self.host.detach.side_effect = tmux_host.TuiError("session d1 exists")
+        self.host.detach.side_effect = TuiError("session d1 exists")
         with self.assertRaises(DriverError) as caught:
             self.driver.detach("d1", [self.tool], self.dir, {})
         self.assertEqual(str(caught.exception), "detach d1: session d1 exists")

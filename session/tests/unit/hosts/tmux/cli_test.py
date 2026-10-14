@@ -1,4 +1,4 @@
-"""Tmux command parsing and injected operation dispatch."""
+"""FakeTmux command parsing and injected operation dispatch."""
 
 import io
 import os
@@ -13,7 +13,7 @@ from agent_pm.session.hosts.tmux import grid as grids
 from session.tests.case import Case
 from session.tests.tmux_fixtures import (
     RUNTIME,
-    Tmux,
+    FakeTmux,
 )
 
 
@@ -175,7 +175,7 @@ class CliTest(Case):
         show.assert_not_called()
 
     def test_tile(self):
-        real, fake = grids.tile, Tmux()
+        real, fake = grids.tile, FakeTmux()
         tile = self.patch("tile", return_value=None)
         self.assertEqual(self.main("tile", "@3"), (0, "", ""))
         self.assertEqual(self.main("tile", "--no-wait", "@3"), (0, "", ""))

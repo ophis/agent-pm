@@ -215,8 +215,8 @@ class Host(ABC):
 
 
 class Displayable(ABC):
-    """show: None once shown, else an attach command; command: a shell command run instead of
-    opening a pane, `{{session}}` the session name; layout: display completed once its display
+    """show: None once shown, else an attach command; command: a shell command the Host runs to
+    show it instead, `{{session}}` the session name; layout: display completed once its display
     destination is found.
     """
 

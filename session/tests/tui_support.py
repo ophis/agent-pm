@@ -15,7 +15,8 @@ from agent_pm.session.engine.types import (
     IdleTimeout,
     Spec,
 )
-from agent_pm.session.hosts.tmux import tmux_host
+from agent_pm.session.hosts.tmux import transport
+from agent_pm.session.hosts.tmux.host import Tmux, events_file, validate_events, validate_start
 
 from session.tests import fake_adapter, live_tmux
 from session.tests.case import Case, settings
@@ -42,22 +43,20 @@ def _validate_start(name, argv, env, tags):
         return command if command == "/bin/run" else which(command, path=path)
 
     with mock.patch("shutil.which", side_effect=resolved):
-        tmux_host.validate_start(name, argv, env, tags)
+        validate_start(name, argv, env, tags)
 
 
 def fake_host() -> mock.Mock:
-    host = mock.create_autospec(tmux_host)
-    for name in ("PaneStatus", "PAUSE", "TuiError"):
-        setattr(host, name, getattr(tmux_host, name))
-    host.attach_command.side_effect = tmux_host.attach_command
-    host.events_file.side_effect = tmux_host.events_file
-    host.validate_events.side_effect = tmux_host.validate_events
+    host = mock.create_autospec(Tmux, instance=True)
+    host.PAUSE = Tmux.PAUSE
+    host.attach_command.side_effect = transport.attach_command
+    host.events_file.side_effect = events_file
+    host.validate_events.side_effect = validate_events
     host.validate_start.side_effect = _validate_start
     host.tmux_path.return_value = TMUX
     host.status.return_value = None
     host.read.return_value = ""
     host.option.return_value = None
-    host.pane.return_value = "%1"
     return host
 
 

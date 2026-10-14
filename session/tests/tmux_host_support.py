@@ -6,7 +6,8 @@ import tempfile
 from pathlib import Path
 from unittest import mock
 
-from agent_pm.session.hosts.tmux import TmuxHost, tmux_host
+from agent_pm.session.hosts.tmux import TmuxHost, transport, types
+from agent_pm.session.hosts.tmux.host import Tmux, events_file, validate_events, validate_start
 from agent_pm.utils import ProcessControl, Record
 
 from session.tests.case import Case
@@ -17,12 +18,13 @@ PROCESS = "4242 $3 %7 4343"
 
 def fake_tmux() -> mock.Mock:
     """Recorded transport with real validation and command formatting."""
-    tmux = mock.create_autospec(tmux_host)
-    for name in ("PaneStatus", "TuiError", "Retile"):
-        setattr(tmux, name, getattr(tmux_host, name))
-    for name in ("attach_command", "events_file", "validate_events", "validate_start"):
-        getattr(tmux, name).side_effect = getattr(tmux_host, name)
-    tmux.status.return_value = tmux_host.PaneStatus.RUNNING
+    tmux = mock.create_autospec(Tmux, instance=True)
+    tmux.PAUSE = Tmux.PAUSE
+    tmux.attach_command.side_effect = transport.attach_command
+    tmux.events_file.side_effect = events_file
+    tmux.validate_events.side_effect = validate_events
+    tmux.validate_start.side_effect = validate_start
+    tmux.status.return_value = types.PaneStatus.RUNNING
     tmux.listing.return_value = []
     tmux.opener.return_value = "mgr"
     tmux.option.return_value = None

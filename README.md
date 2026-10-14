@@ -42,7 +42,7 @@ flowchart TB
     end
   end
   subgraph SE[agent_pm.session]
-    DR["engine/: base · hosted · forwarding · types · records<br>modes/: headless · tui · in_process<br>hosts/tmux/: host · tmux_host"]
+    DR["engine/: base · hosted · forwarding · types · records<br>modes/: headless · tui · in_process<br>hosts/tmux/: host · transport · placement · grid"]
     subgraph AD[adapters/]
       CL[claude]
       CX[codex]

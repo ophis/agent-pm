@@ -37,7 +37,7 @@ from agent_pm.session.engine.types import (
     Word,
 )
 from agent_pm.session.hosts.base import HostProcess
-from agent_pm.session.hosts.tmux import tmux_host
+from agent_pm.session.hosts.tmux.types import TuiError
 from agent_pm.session.modes import tui, tui_hook
 
 from session.tests import fake_adapter
@@ -1715,7 +1715,7 @@ class StoreTest(Base):
 class TransportErrorTest(TmuxBase):
     def test_real_host_launch_keeps_the_modes_exact_error_prefix(self):
         self.tmux.tmux_path.return_value = self.tool
-        self.tmux.start.side_effect = tmux_host.TuiError("tmux: boom")
+        self.tmux.start.side_effect = TuiError("tmux: boom")
         workdir = os.path.join(self.dir, "work")
         os.mkdir(workdir)
 
@@ -1738,7 +1738,7 @@ class TransportErrorTest(TmuxBase):
     def test_real_host_close_keeps_the_modes_exact_error_prefix(self):
         self.controlled, self.kind = False, None
         self.tmux.listing.return_value = [{"name": NAME, "display": None}]
-        self.tmux.kill.side_effect = tmux_host.TuiError("tmux: boom")
+        self.tmux.kill.side_effect = TuiError("tmux: boom")
         with self.assertRaises(DriverError) as caught:
             tui.TuiMode.close(NAME, host=self.host)
         self.assertEqual(str(caught.exception), "cannot close tui session w1: tmux: boom")

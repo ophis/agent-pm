@@ -14,7 +14,7 @@ from contextlib import redirect_stderr, suppress
 
 from agent_pm.session.hosts.tmux import grid as grids
 from agent_pm.session.hosts.tmux import layout as layouts
-from agent_pm.session.hosts.tmux import placement, tmux_host, types
+from agent_pm.session.hosts.tmux import placement, types
 
 from session.tests.case import Case
 from session.tests.tmux_fixtures import (
@@ -30,8 +30,8 @@ from session.tests.tmux_fixtures import (
     SESSIONS,
     SOCK,
     WATCH,
+    FakeTmux,
     TileFixture,
-    Tmux,
     clients_of,
     clock,
     deadline,
@@ -85,7 +85,7 @@ class GridOpenTest(Case):
                 return 1, "", f"can't find pane: {argv[3]}\n"
             return 0, "".join("\t".join((*r, SOCK)) + "\n" for r in windows[argv[3]])
 
-        return Tmux(
+        return FakeTmux(
             results={
                 "display-message": (0, own + "\n"),
                 "list-sessions": (0, "".join("\t".join((*r, SOCK)) + "\n" for r in rows)),
@@ -424,7 +424,7 @@ class GridOpenTest(Case):
                 for call in (
                     lambda *, bad=bad, fake=fake: self.show(fake, retile=bad),
                     lambda *, bad=bad, fake=fake: placement.open_pane(
-                        "s", retile=bad, proc=fake, script=tmux_host.__file__
+                        "s", retile=bad, proc=fake, script=placement.__file__
                     ),
                 ):
                     with self.assertRaisesRegex(
@@ -457,7 +457,7 @@ class GridOpenTest(Case):
                 for call in (
                     lambda *, bad=bad, fake=fake: self.show(fake, per_column=bad),
                     lambda *, bad=bad, fake=fake: placement.open_pane(
-                        "s", per_column=bad, proc=fake, script=tmux_host.__file__
+                        "s", per_column=bad, proc=fake, script=placement.__file__
                     ),
                 ):
                     with self.assertRaisesRegex(
@@ -1110,7 +1110,7 @@ class TileCoordinationTest(TileFixture):
         ]
         for window, kw, error in cases:
             with self.subTest(window=window, **kw):
-                fake = Tmux()
+                fake = FakeTmux()
                 with self.assertRaisesRegex(types.TuiError, "^" + re.escape(error)):
                     grids.tile(window, proc=fake, **kw)
                 self.assertEqual(fake.calls, [])
@@ -1128,4 +1128,4 @@ class TileCoordinationTest(TileFixture):
         with self.assertRaisesRegex(types.TuiError, "^tmux: boom$"):
             self.tile(dump("160x48,0,0,0"), ["%0"], fail=("set-hook",))
         with self.assertRaisesRegex(types.TuiError, "^tmux: boom$"):
-            grids.tile("@3", proc=Tmux(fail=("display-message",)))
+            grids.tile("@3", proc=FakeTmux(fail=("display-message",)))

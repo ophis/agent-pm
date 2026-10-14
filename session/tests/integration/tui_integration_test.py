@@ -30,7 +30,7 @@ from agent_pm.session.engine.types import (
     Spec,
     TurnEnd,
 )
-from agent_pm.session.hosts.tmux import tmux_host
+from agent_pm.session.hosts.tmux.host import Tmux
 from agent_pm.session.modes import tui
 
 from session.tests import fake_adapter, live_tmux
@@ -233,8 +233,9 @@ class SameNameTest(Live):
     def test_two_starts_of_one_name_at_once_make_one_session_its_dir_kept(self):
         with open(self.config["adapters"]["fake"]["scenario"], "w") as f:
             json.dump([{"read": True}], f)
+        tmux = Tmux()
         real, order, second, first_done = (
-            tmux_host.start,
+            tmux.start,
             itertools.count(),
             threading.Event(),
             threading.Event(),
@@ -265,7 +266,7 @@ class SameNameTest(Live):
         self.driver.host = type(
             "HostProxy",
             (),
-            {"__getattr__": lambda _, key: start if key == "start" else getattr(tmux_host, key)},
+            {"__getattr__": lambda _, key: start if key == "start" else getattr(tmux, key)},
         )()
         run()
         threads[0].join(WAIT)

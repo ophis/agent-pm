@@ -30,8 +30,9 @@ from agent_pm.session.engine.types import (
     Spec,
     TurnEnd,
 )
-from agent_pm.session.hosts.tmux import tmux_host
-from agent_pm.session.hosts.tmux import tmux_host as tmux_model
+from agent_pm.session.hosts.tmux import host as tmux_model
+from agent_pm.session.hosts.tmux.host import Tmux
+from agent_pm.session.hosts.tmux.transport import attach_command
 from agent_pm.session.modes import tui
 
 from session.tests import detach_support as detach_live
@@ -211,7 +212,7 @@ class BlockedTest(Live):
         )
         self.lines("w1 blocked")
         self.assertEqual(self.server.option("w1", "@state"), "blocked")
-        tmux_host.keys("w1", "Enter")
+        Tmux().keys("w1", "Enter")
         self.assertEqual(stream.next(), TurnEnd("Trusted.", 0))
         self.lines("w1 blocked", "w1 done")
 
@@ -367,7 +368,7 @@ class ShowTest(Live):
                 mock.patch.dict(os.environ, env),
                 self.assertLogs("session", "WARNING") as logs,
             ):
-                self.assertEqual(self.driver.show("w1"), tmux_host.attach_command("w1"))
+                self.assertEqual(self.driver.show("w1"), attach_command("w1"))
             self.assertIn(why, logs.output[0])
         self.assertEqual((self.panes(), self.server.pane_of("w1")), (1, ""))
         self.driver.close("w1")

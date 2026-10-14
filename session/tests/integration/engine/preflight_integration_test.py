@@ -11,7 +11,8 @@ from unittest import mock
 
 from agent_pm.session import Access, ConfigError, DriverError, Effort, Host, Mode, Spec, read_config
 from agent_pm.session.engine.hosted import HostedSession
-from agent_pm.session.hosts.tmux import tmux_host
+from agent_pm.session.hosts.tmux.host import validate_events, validate_start
+from agent_pm.session.hosts.tmux.types import PaneStatus, TuiError
 
 from session.tests.case import HOSTS, PY, REPO, SPAWNS, Case, child_env
 from session.tests.fakes.preflight import PreflightAdapter, SandboxedPreflightAdapter
@@ -23,8 +24,8 @@ class Preflight(Case):
         self.work = os.path.join(self.home, "absent-work")
         self.events = os.path.join(self.home, "absent-events")
         self.tmux = fake_tmux()
-        self.tmux.validate_events.side_effect = tmux_host.validate_events
-        self.tmux.validate_start.side_effect = tmux_host.validate_start
+        self.tmux.validate_events.side_effect = validate_events
+        self.tmux.validate_start.side_effect = validate_start
         self.configure()
 
     def configure(self, *, adapter=PreflightAdapter, tmux_settings=None, **settings):
@@ -119,7 +120,7 @@ class Preflight(Case):
 
     def test_events_file_creation_failure_is_a_driver_error_before_any_session_state(self):
         message = f"events file {self.events}: Permission denied"
-        self.tmux.events_file.side_effect = tmux_host.TuiError(message)
+        self.tmux.events_file.side_effect = TuiError(message)
         spec = self.spec(Mode.TUI, name="event-worker", events=self.events)
         before = self.tree()
         with self.no_runtime():
@@ -297,7 +298,7 @@ print(json.dumps([result, PreflightAdapter.prepared[-1].sid, PreflightAdapter.co
 
     def test_tui_preflight_refuses_a_live_same_named_session_and_passes_a_dead_one(self):
         self.tmux.listing.return_value = [listed("worker")]
-        self.tmux.status.return_value = tmux_host.PaneStatus.RUNNING
+        self.tmux.status.return_value = PaneStatus.RUNNING
         spec = self.spec(Mode.TUI, name="worker", events=self.events)
         message = "tui session worker is running; tmux attach -t '=worker'"
         before = self.tree()
@@ -310,7 +311,7 @@ print(json.dumps([result, PreflightAdapter.prepared[-1].sid, PreflightAdapter.co
             self.assertIsNone(self.session.preflight(spec))
         self.unchanged(before)
         self.tmux.kill.assert_not_called()
-        self.tmux.status.return_value = tmux_host.PaneStatus.RUNNING
+        self.tmux.status.return_value = PaneStatus.RUNNING
         with self.no_runtime(), self.assertRaises(DriverError) as failure:
             self.session.start(spec)
         self.assertEqual(str(failure.exception), message)

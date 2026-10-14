@@ -1,4 +1,4 @@
-"""hosts/tmux/tmux_host.py's child processes, no tmux: the pane wrapper (EXEC) as tmux runs it and
+"""hosts/tmux/host.py's launch handoff child processes, no tmux: the pane wrapper (EXEC) as tmux runs it and
 the file standing alone.
 """
 
@@ -17,7 +17,7 @@ from contextlib import suppress
 
 import agent_pm.session
 import agent_pm.utils
-from agent_pm.session.hosts.tmux import tmux_host
+from agent_pm.session.hosts.tmux.host import EXEC
 
 from session.tests.case import Case
 
@@ -77,7 +77,7 @@ class ExecTest(Case):
         )
 
     def wrapper(self, prelude=""):
-        return [sys.executable, "-I", "-c", prelude + tmux_host.EXEC, self.path, self.fifo]
+        return [sys.executable, "-I", "-c", prelude + EXEC, self.path, self.fifo]
 
     def piped(self):
         """What the wrapper wrote to the errpipe, read to EOF; BlockingIOError while a writer holds
