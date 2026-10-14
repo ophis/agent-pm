@@ -7,6 +7,7 @@ from agent_pm.session.hosts.tmux.transport import (
     NAME,
     OPENER,
     PANE,
+    PROCESS_ID,
     absent,
     display_error,
     read,
@@ -14,13 +15,13 @@ from agent_pm.session.hosts.tmux.transport import (
 )
 from agent_pm.session.hosts.tmux.types import TuiError
 
-LISTING = "#{session_name}\t#{pane_dead}\t#{@sid}\t#{@client}\t#{@state}\t#{@pane}\t#{@opener}\t#{@display}"
+LISTING = "#{session_name}\t#{pane_dead}\t#{@sid}\t#{@client}\t#{@state}\t#{@pane}\t#{@opener}\t#{@display}\t#{@process}"
 
 
 SHOWN = "#{client_activity}\t#{client_tty}\t#{session_name}"
 
 
-HOSTS = "#{pane_dead}\t#{pane_tty}\t#{session_name}"
+PANES = "#{pane_dead}\t#{pane_tty}\t#{session_name}\t#{pane_id}"
 
 
 LAST_LINES = 2000
@@ -30,9 +31,11 @@ def listing(match=None, *, proc=subprocess.run) -> list[dict] | None:
     """Sessions named NAME that match (compiled; None: all) fullmatches, by name: tags, pane state,
     `shown` (no client: None; else the newest client's host session, "" if none or not NAME), a dead
     pane's last LAST_LINES lines; a bad or empty field None, a row of the wrong width dropped. []
-    when no server runs, None when tmux fails.
+    when no server runs, None when tmux fails. A session with @process is read through the pane
+    its launch recorded, whichever pane is active: dead once that pane is gone, and dead None
+    for a bad @process; any other session through its active pane.
     """
-    found = _table(["list-sessions", "-F", LISTING], 8, proc)
+    found = _table(["list-sessions", "-F", LISTING], 9, proc)
     if found is None:
         return None
     rows = sorted(
@@ -48,14 +51,16 @@ def listing(match=None, *, proc=subprocess.run) -> list[dict] | None:
         (c for c in clients if c[0].isdigit() and c[1]), key=lambda c: int(c[0])
     ):
         recent[session] = tty
-    hosts = {}
-    if any(f[0] in recent for f in rows):
-        panes = _table(["list-panes", "-a", "-F", HOSTS], 3, proc)
+    hosts, launched = {}, {}
+    if any(f[0] in recent or f[8] for f in rows):
+        panes = _table(["list-panes", "-a", "-F", PANES], 4, proc)
         if panes is None:
             return None
-        hosts = {tty: session for dead, tty, session in panes if dead != "1"}
+        hosts = {tty: session for dead, tty, session, _ in panes if dead != "1"}
+        launched = {pane_id: dead for dead, _, _, pane_id in panes}
     out = []
-    for name, dead, sid, client, state, pane, parent, display in rows:
+    for name, dead, sid, client, state, pane, parent, display, process in rows:
+        target, dead = _own_pane(name, dead, process, launched)
         tty = recent.get(name)
         host = "" if tty is None else hosts.get(tty, "")
         out.append(
@@ -69,10 +74,20 @@ def listing(match=None, *, proc=subprocess.run) -> list[dict] | None:
                 "display": display if display and not display_error(display) else None,
                 "dead": {"1": True, "0": False}.get(dead),
                 "shown": None if name not in recent else host if NAME.fullmatch(host) else "",
-                "last_lines": _last_lines(name, proc) if dead == "1" else None,
+                "last_lines": _last_lines(target, proc) if dead == "1" and target else None,
             }
         )
     return out
+
+
+def _own_pane(name: str, dead: str, process: str, panes: dict[str, str]) -> tuple[str | None, str]:
+    """The pane to read a session's last lines from, and its pane_dead."""
+    if not process:
+        return name, dead
+    if not PROCESS_ID.fullmatch(process):
+        return None, ""
+    pane = process.split(" ")[2]
+    return (pane, panes[pane]) if pane in panes else (None, "1")
 
 
 def _table(args: list[str], width: int, proc) -> list[list[str]] | None:
@@ -90,8 +105,8 @@ def _printable(value: str) -> str | None:
     return value if value and value.isprintable() else None
 
 
-def _last_lines(name: str, proc) -> str | None:
+def _last_lines(target: str, proc) -> str | None:
     try:
-        return read(name, LAST_LINES, proc=proc) or None
+        return read(target, LAST_LINES, proc=proc) or None
     except TuiError:
         return None
