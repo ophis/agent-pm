@@ -262,18 +262,6 @@ def _start(plan: tui.LaunchPlan, termination, trust):
         for key, value in {**os.environ, "CODEX_HOME": state.snapshot.codex_home}.items()
         if key not in common.LOCAL_ENV_VARS
     }
-    tui.protect(
-        state,
-        [
-            sys.executable,
-            plan.executable,
-            plan.store,
-            *(word for word in plan.hook.argv if os.path.isabs(word)),
-            *plan.protect,
-        ],
-        env,
-        common.added_dirs(state.snapshot.flags, state.snapshot.cwd),
-    )
     cwd = state.snapshot.cwd
     termination.check()
     trusted_state = trust(

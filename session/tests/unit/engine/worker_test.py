@@ -121,7 +121,7 @@ class StateTest(Case):
         )
         self.assertEqual(Record.parse(record.to_line()), record)
 
-    def test_its_spec_is_an_interactive_tui_in_its_cwd_protecting_the_workers_dir(self):
+    def test_its_spec_is_an_interactive_tui_in_its_cwd(self):
         spec = state().spec(prompt="hi", resume=True)
         self.assertEqual(
             (spec.mode, spec.sid, spec.name, spec.runtime, spec.prompt, spec.resume, spec.events),
@@ -129,9 +129,6 @@ class StateTest(Case):
         )
         self.assertEqual((spec.access.cwd, spec.access.project), ("/work", True))
         self.assertEqual((spec.flags, dict(spec.env)), (("-m", "x"), {"K": ""}))
-        self.assertEqual(
-            spec.protect, (os.path.realpath(os.path.join(self.home, ".agent-pm", "workers")),)
-        )
         self.assertEqual(spec.workdir, state().workdir())
 
 

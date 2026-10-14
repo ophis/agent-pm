@@ -247,8 +247,6 @@ Codex snapshots save flags and the merged Adapter, Access and Spec environment. 
 
 A run's `read` dirs and its role's tasks dir are never `--add-dir`: no runtime is granted write to them. Codex has no read-only-dir mechanism usable here, so it adds nothing for them: under `workspace-write` its sandbox reads the whole disk and writes only its roots; under the default `danger-full-access` (Runtime policy, above) it can write them too. Each runtime's grant and its limits: `delegate/src/agent_pm/delegate/config.toml`'s `read` comment.
 
-A `tui` run fails with a `ConfigError` before launch when its cwd, a write dir or a dir its runtime can write overlaps a TUI hook path: the tmux executable, the events file or `~/.agent-pm/tui` (`session/src/agent_pm/session/modes/base.py` `check_protection`).
-
 ## Tests
 
 ```bash

@@ -15,7 +15,6 @@ import unittest
 
 from session.tests import fake_adapter
 from session.tests.case import PY, REPO, Case, child_env
-from session.tests.codex_tui import INTERPRETER_PATHS, INTERPRETER_ROOTS, SITE_PACKAGES
 
 TIMEOUT = 60  # seconds
 SKIP = shutil.ignore_patterns("__pycache__")
@@ -35,16 +34,12 @@ events = [[type(e).__name__, dataclasses.asdict(e)] for e in handle.events()]
 print(json.dumps({"sid": handle.sid, "events": events,
                   "files": [hosted.__file__, sys.modules["extension_runtime"].__file__]}))
 """
-PROTECTED_CHILD = f"""import sys
+INSTALLED_CHILD = """import sys
 from unittest import mock
 from agent_pm.session import Access, Driver, Spec, read_config
 adapter = Driver.from_config(read_config()).registry.adapter("codex")
 spec = Spec(workdir=sys.argv[1], sid="installed-layout", access=Access(cwd=sys.argv[1], project=True))
-with (
-    mock.patch("shutil.which", return_value="/protected/codex"),
-    mock.patch("sysconfig.get_path", side_effect={INTERPRETER_PATHS!r}.__getitem__),
-    mock.patch("site.getsitepackages", return_value={list(SITE_PACKAGES)!r}),
-):
+with mock.patch("shutil.which", return_value="/protected/codex"):
     launch = adapter.tui().launch(spec, (sys.executable, "-I", "/protected/hook.py"),
                                   source_roots=(sys.argv[3],))
 print(launch.argv[-1])
@@ -142,22 +137,12 @@ class ExtensionAdapterIntegration(Case):
             [("session", data["sid"]), ("client_session", data["sid"])],
         )
 
-    def test_installed_codex_protects_packages_and_hook_namespace_without_site(self):
-        child = self.child("codex", PROTECTED_CHILD)
+    def test_installed_codex_launches_with_its_site_as_the_only_import_root(self):
+        child = self.child("codex", INSTALLED_CHILD)
         self.assertEqual(child.returncode, 0, child.stderr)
         plan = json.loads(child.stdout)
-        namespace = os.path.join(self.site, "agent_pm")
-        self.assertEqual(
-            plan["protect"],
-            [
-                os.path.join(namespace, "session"),
-                os.path.join(namespace, "utils"),
-                namespace,
-                *INTERPRETER_ROOTS,
-            ],
-        )
-        self.assertNotIn(self.site, plan["protect"])
         self.assertEqual(plan["import_roots"], [self.site])
+        self.assertNotIn("protect", plan)
 
     def test_a_table_without_its_module_fails_before_launch(self):
         self.table('[adapters.absent]\nimplementation = "absent_runtime:AbsentAdapter"\n')

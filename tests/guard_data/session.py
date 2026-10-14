@@ -68,11 +68,6 @@ IMPORT_BOOTSTRAPS = {
 STANDALONE = frozenset(f"{SESSION_SRC}{path}" for path in ("adapters/codex/common/app_server.py",))
 
 
-PACKAGE_CLIMB_ALLOWED = {
-    (f"{SESSION_SRC}adapters/codex/tui/__init__.py", "import_roots()"): "TASK-393",
-}
-
-
 NOQA_ALLOWED = {
     (
         f"{SESSION_SRC}modes/headless.py",

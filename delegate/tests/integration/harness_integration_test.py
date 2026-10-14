@@ -154,19 +154,12 @@ class Planning(HarnessCase):
         with open(os.path.join(self.work, "delegate.json"), "rb") as file:
             self.assertEqual(file.read(), before)
 
-    def test_protect_reaches_session_spec_with_delegate_package_dirs(self):
-        team = self.team_dir()
-        self.settings(team_dirs=(team,))
-        custom = os.path.join(self.home, "protected")
-        spec = Spec("input", self.work, cwd=self.work, runtime="fake", protect=(custom,))
-        self.make(spec=spec).run()
-        session = HarnessSession.started[0]["spec"]
-        self.assertEqual(self.metadata()["spec"]["protect"], [custom])
-        self.assertIn(custom, session.protect)
-        self.assertIn(os.path.realpath(team), session.protect)
-        for name in ("delegate", "session", "utils"):
-            path = os.path.realpath(os.path.join(REPO, name, "src", "agent_pm", name))
-            self.assertIn(path, session.protect)
+    def test_a_run_whose_cwd_is_the_agent_pm_checkout_starts(self):
+        self.make(spec=Spec("input", self.work, cwd=REPO, runtime="fake")).run()
+        self.assertEqual(HarnessSession.started[0]["spec"].access.cwd, REPO)
+        metadata = self.metadata()
+        self.assertNotIn("protect", metadata["spec"])
+        self.assertNotIn("protect", metadata["plan"]["session"])
 
     def test_constructor_keeps_its_config_snapshot_when_local_file_changes(self):
         delegate = self.make(spec=Spec("input", self.work, task="echo", cwd=self.work, sid=SID))
@@ -316,20 +309,11 @@ class Views(HarnessCase):
         self.assertEqual(view.resume(), record)
         self.assertEqual(self.metadata()["attempt"], 2)
 
-    def test_resume_uses_attach_config_snapshot_and_preserves_protect(self):
+    def test_resume_uses_attach_config_snapshot(self):
         team = self.team_dir()
         self.settings(team_dirs=(team,))
-        custom = os.path.join(self.home, "protected")
         self.make(
-            spec=Spec(
-                "input",
-                self.work,
-                task="echo",
-                cwd=self.work,
-                runtime="fake",
-                sid=SID,
-                protect=(custom,),
-            )
+            spec=Spec("input", self.work, task="echo", cwd=self.work, runtime="fake", sid=SID)
         )
         self.settings(language="French", team_dirs=(team,))
         view = HarnessDelegate.attach(self.work)
@@ -343,12 +327,6 @@ class Views(HarnessCase):
         self.assertEqual((launched.sid, launched.runtime), (SID, "fake"))
         self.assertIn("French", launched.prompt)
         self.assertNotIn("German", launched.prompt)
-        self.assertIn(custom, launched.protect)
-        self.assertIn(os.path.realpath(team), launched.protect)
-        for name in ("delegate", "session", "utils"):
-            path = os.path.realpath(os.path.join(REPO, name, "src", "agent_pm", name))
-            self.assertIn(path, launched.protect)
-        self.assertEqual(self.metadata()["spec"]["protect"], [custom])
 
 
 class UsageQueries(HarnessCase):

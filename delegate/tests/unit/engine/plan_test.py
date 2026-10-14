@@ -30,13 +30,6 @@ def notice(cwd):
 
 
 class ReplyTags(Base):
-    def test_protect_is_passed_to_the_session_spec_unchanged(self):
-        protected = (self.tmp, os.path.join(self.tmp, "missing"))
-        got, _ = self.planned(protect=protected)
-        self.assertIs(got.spec.protect, protected)
-        self.assertIs(got.session.protect, protected)
-        self.assertEqual(self.planned()[0].session.protect, ())
-
     def test_the_spec_carries_the_delegates_reply_protocol(self):
         got, _ = self.planned()
         self.assertEqual(got.session.reply_tags, (PROGRESS, OUTCOME))

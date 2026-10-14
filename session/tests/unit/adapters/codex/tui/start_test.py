@@ -16,7 +16,7 @@ from agent_pm.session.adapters.codex.tui import start as tui_start
 from agent_pm.utils import LOCAL_ENV_VARS
 
 from session.tests.case import Case
-from session.tests.codex_tui import HOOK, ROOTS_JSON, ProtectCase
+from session.tests.codex_tui import HOOK, ROOTS_JSON, LaunchCase
 from session.tests.source_roots import PACKAGE_ROOTS
 from session.tests.unit.adapters.codex.support import Base, committed_tui
 
@@ -287,7 +287,7 @@ class StartTest(Base):
                 execute.assert_not_called()
                 self.assertEqual(tui_start.signal.getsignal(signum), original)
 
-    def test_wrapper_checks_effective_tmpdir_before_spawning(self):
+    def test_wrapper_starts_under_a_tmpdir_over_its_dependencies(self):
         with mock.patch("shutil.which", return_value="/protected/codex"):
             launch = committed_tui(
                 self.adapter,
@@ -297,28 +297,24 @@ class StartTest(Base):
             )
         with (
             mock.patch.dict("os.environ", {"TMPDIR": "/protected"}),
-            mock.patch("subprocess.Popen") as proc,
+            mock.patch("os.chdir"),
             mock.patch("os.execve") as execute,
-            self.assertRaisesRegex(tui_start.common.RecoveryError, "rewrite|writable"),
         ):
-            tui_start.launch(json.loads(launch.argv[-1]))
-        proc.assert_not_called()
-        execute.assert_not_called()
+            tui_start.launch(
+                json.loads(launch.argv[-1]), trust=mock.Mock(return_value="hooks.state={x}")
+            )
+        self.assertEqual(execute.call_args.args[1][0], "/protected/codex")
+        self.assertEqual(execute.call_args.args[2]["TMPDIR"], "/protected")
 
 
-class ProtectTest(ProtectCase):
-    def test_bad_protect_launch_data_does_not_spawn(self):
+class LaunchDataTest(LaunchCase):
+    def test_launch_data_with_a_protect_key_does_not_spawn(self):
         data = json.loads(self.launch(self.spec))
-        with mock.patch("subprocess.Popen") as proc:
-            for key in ("protect",):
-                for paths in ("/protected", ["relative"], [1], ["/a\0b"], None):
-                    with (
-                        self.subTest(key=key, paths=paths),
-                        self.assertRaises(ValueError),
-                    ):
-                        tui_start.launch({**data, key: paths})
-                with self.assertRaisesRegex(ValueError, "fields"):
-                    tui_start.launch({k: v for k, v in data.items() if k != key})
+        with (
+            mock.patch("subprocess.Popen") as proc,
+            self.assertRaisesRegex(ValueError, "launch fields"),
+        ):
+            tui_start.launch({**data, "protect": []})
         proc.assert_not_called()
 
     def test_a_plain_start_lists_hooks_with_the_users_config_and_execs_the_flags(self):

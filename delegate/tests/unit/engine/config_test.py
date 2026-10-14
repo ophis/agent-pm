@@ -51,12 +51,7 @@ class PathsTest(Case):
         roots = tuple(
             os.path.join(case.REPO, name, "src") for name in ("delegate", "session", "utils")
         )
-        dirs = tuple(
-            os.path.realpath(os.path.join(root, "agent_pm", name))
-            for root, name in zip(roots, ("delegate", "session", "utils"), strict=True)
-        )
         self.assertEqual(delegate.module_roots(), roots)
-        self.assertEqual(delegate.package_dirs(), dirs)
 
     def test_config_is_a_resource_inside_the_delegate_package(self):
         self.assertEqual(

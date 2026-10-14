@@ -65,7 +65,6 @@ class BootstrapTest(Case):
             "sid": "bootstrap",
             "store": "/uncreated-agent-pm-state/recovery/codex",
             "import_roots": roots or [case.SRC["session"], case.SRC["utils"]],
-            "protect": [],
         }
 
     def isolated(self, data, *, code=None, cwd=None, env=None):
