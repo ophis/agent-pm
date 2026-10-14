@@ -11,8 +11,7 @@
 #   task_label_group  local, required: Linear id of the `Tasks` label group; its labels pick an issue's task through
 #                     [task_labels]
 #   work_dir          local: runtime state: agent runs' workdirs in <work_dir>/work/<ID>/, router state and logs in
-#                     <work_dir>/logs/; absolute or ~, neither in nor containing installed packages, deployment checkouts or a
-#                     [local_clones] clone
+#                     <work_dir>/logs/; absolute or ~, neither in nor containing a [local_clones] clone
 team = ""
 human_members = []
 harness_key = ""

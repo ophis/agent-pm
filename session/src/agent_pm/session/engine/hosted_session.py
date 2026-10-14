@@ -239,7 +239,6 @@ class HostedSession(Session):
         client, mode = _request(spec, idle_timeout)
         adapter = setup.registry.adapter(client)
         spec = replace(spec, sid=spec.sid or str(uuid.uuid4()))
-        Runtime.check_protection(spec, adapter)
         on = cls.host(host)
         on.validate_display(display)
         MODES[mode].preflight(
@@ -264,7 +263,6 @@ class HostedSession(Session):
         client, mode = _request(spec, idle_timeout)
         adapter = setup.registry.adapter(client)
         spec = replace(spec, sid=spec.sid or str(uuid.uuid4()))
-        Runtime.check_protection(spec, adapter)
         on = cls.host(host)
         on.validate_display(display)
         name = tui.TuiRuntime.resolve_name(spec) if mode == Mode.TUI else spec.name
@@ -304,7 +302,7 @@ class HostedSession(Session):
         cls, name: str, *, host: str | None = None, idle_timeout: float | None = None
     ) -> HostedSession:
         """Tui session `name`, from any process; its client record and hook log replayed into its
-        reply (see reply) and blocked, blocked too while its terminal is marked so.
+        reply and blocked, blocked too while its terminal is marked so.
         """
         setup = cls._config()
         tui.checked_name(name)

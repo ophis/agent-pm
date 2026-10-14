@@ -151,11 +151,7 @@ class RunnableClones(Clones):
     def test_no_entries_runs_no_clone_checks(self):
         with mock.patch.object(subprocess, "run", wraps=subprocess.run) as git_calls:
             self.assertEqual(list(self.load(PIPELINE).roles), ["researcher", "pm", "engineer"])
-        self.assertTrue(git_calls.call_args_list)
-        self.assertTrue(
-            all("rev-parse" in call.args[0] for call in git_calls.call_args_list),
-            git_calls.call_args_list,
-        )
+        self.assertEqual(git_calls.call_args_list, [])
 
 
 class ConfigurationLoading(ConfigFile, Case):
@@ -296,18 +292,14 @@ class PackagedDeployments(ConfigFile, Case):
         self.deployment = Path(self.dir).resolve() / "deployment"
         self.copy_packages(self.deployment)
 
-    def copy_packages(self, deployment, *, editable=None):
+    def copy_packages(self, deployment):
         for project in ("linear-orchestrator", "delegate", "session", "utils"):
             package = project.replace("-", "_")
-            target = deployment / project / "src" / "agent_pm" / package
             shutil.copytree(
                 Path(REPO) / project / "src" / "agent_pm" / package,
-                editable if project == "linear-orchestrator" and editable is not None else target,
+                deployment / project / "src" / "agent_pm" / package,
                 ignore=shutil.ignore_patterns("__pycache__"),
             )
-            if project == "linear-orchestrator" and editable is not None:
-                target.parent.mkdir(parents=True)
-                target.symlink_to(editable, target_is_directory=True)
             source = Path(REPO) / project / "config.toml"
             if source.exists():
                 shutil.copyfile(source, deployment / project / "config.toml")
@@ -332,120 +324,23 @@ class PackagedDeployments(ConfigFile, Case):
         self.assertEqual((result.returncode, result.stderr), (0, ""), result.stdout)
         return json.loads(result.stdout)
 
-    def discovery(self, work):
-        return self.child(
-            "import json, sys\n"
-            "from agent_pm.linear_orchestrator.engine import config\n"
-            "protected = ()\n"
-            "try:\n"
-            "    protected, protect = config.deployment_dirs()\n"
-            "    work = config._work_dir({'work_dir': sys.argv[1]}, protected)\n"
-            "except config.ConfigError as error:\n"
-            "    print(json.dumps({'error': str(error), 'protected': protected}))\n"
-            "else:\n"
-            "    print(json.dumps({'work': work, 'protected': protected}))\n",
-            work,
-        )
-
     def package(self):
         return self.deployment / "linear-orchestrator" / "src" / "agent_pm" / "linear_orchestrator"
 
-    def test_package_equal_containment_missing_sibling_and_symlink(self):
-        package = self.package()
-        alias = Path(self.dir) / "package-alias"
-        alias.symlink_to(package, target_is_directory=True)
-        for work in (package, package / "missing" / "state", package.parent, alias):
-            with self.subTest(work=work):
-                found = self.discovery(work)
-                self.assertIn(str(package), found["protected"])
-                self.assertIn("work_dir must neither", found["error"])
-        sibling = self.deployment / "unrelated-state" / "missing"
-        self.assertEqual(self.discovery(sibling)["work"], str(sibling))
-        self.assertFalse(sibling.exists())
-
-    def test_lower_package_dirs_are_rejected_as_work_dir(self):
-        for project in ("delegate", "session", "utils"):
-            package = self.deployment / project / "src" / "agent_pm" / project
-            for work in (package, package / "missing", package.parent):
-                with self.subTest(work=work):
-                    found = self.discovery(work)
-                    self.assertIn(str(package), found["protected"])
-                    self.assertIn("work_dir must neither", found["error"])
-
-    def test_lower_package_checkout_is_protected(self):
-        checkout = self.deployment / "delegate"
-        git("init", "-q", str(checkout))
-        found = self.discovery(checkout / "state")
-        self.assertIn(str(checkout), found["protected"])
-        self.assertIn("work_dir must neither", found["error"])
-        self.local(PIPELINE)
-        protect = self.child(
-            "import json\nfrom agent_pm.linear_orchestrator.engine import config\n"
-            "print(json.dumps(config.load().protect))\n"
-        )
-        self.assertIn(str(checkout), protect)
-        self.assertIn(str(self.package()), protect)
-        for project in ("delegate", "session", "utils"):
-            self.assertNotIn(str(self.deployment / project / "src" / "agent_pm" / project), protect)
-
-    def test_deployment_checkout_and_nested_outer_checkout(self):
+    def test_load_accepts_work_dir_and_local_clone_in_the_deployment_checkout(self):
         git("init", "-q", str(self.deployment))
-        inner = self.deployment / "linear-orchestrator"
-        git("init", "-q", str(inner))
-        found = self.discovery(inner / "state")
-        self.assertIn(str(inner), found["protected"])
-        self.assertIn(str(self.deployment), found["protected"])
-        self.assertIn("work_dir must neither", found["error"])
-        self.assertIn("work_dir must neither", self.discovery(self.deployment / "state")["error"])
-
-    def test_linked_worktree_checkout_is_protected(self):
-        main = Path(self.dir) / "main"
-        git("init", "-q", str(main))
-        git("-C", str(main), "commit", "--allow-empty", "-qm", "fixture")
-        linked = Path(self.dir) / "linked"
-        git("-C", str(main), "worktree", "add", "-qb", "linked", str(linked))
-        self.copy_packages(linked)
-        self.deployment = linked
-        found = self.discovery(linked / "state")
-        self.assertIn(str(linked), found["protected"])
-        self.assertIn("work_dir must neither", found["error"])
-
-    def test_symlinked_editable_package_finds_source_checkout(self):
-        editable = Path(self.dir) / "editable"
-        git("init", "-q", str(editable))
-        source = editable / "src" / "agent_pm" / "linear_orchestrator"
-        source.parent.mkdir(parents=True)
-        self.deployment = Path(self.dir) / "editable-deployment"
-        self.copy_packages(self.deployment, editable=source)
-        found = self.discovery(editable / "state")
-        self.assertIn(str(source), found["protected"])
-        self.assertIn(str(editable), found["protected"])
-        self.assertIn("work_dir must neither", found["error"])
-
-    def test_discovery_error_rejects_unrelated_work_dir(self):
+        git("-C", str(self.deployment), "remote", "add", "origin", HTTPS)
         (self.deployment / "linear-orchestrator" / ".git").write_text("invalid metadata\n")
-        found = self.discovery(Path(self.dir) / "unrelated")
-        self.assertIn("deployment checkout", found["error"])
-
-    def test_load_preserves_deployment_protection_without_local_clone(self):
-        git("init", "-q", str(self.deployment))
-        clone = Path(self.dir) / "clone"
-        git("init", "-q", str(clone))
-        git("-C", str(clone), "remote", "add", "origin", HTTPS)
-        self.local(PIPELINE + f'[local_clones]\n"{SLUG}" = {json.dumps(str(clone))}\n')
-        found = self.child(
+        load = (
             "import json\nfrom agent_pm.linear_orchestrator.engine import config\n"
             "cfg = config.load()\n"
-            "print(json.dumps({'protect': cfg.protect, 'clones': dict(cfg.local_clones)}))\n"
+            "print(json.dumps({'work': cfg.work_dir, 'clones': dict(cfg.local_clones)}))\n"
         )
-        self.assertIn(str(self.package()), found["protect"])
-        self.assertIn(str(self.deployment), found["protect"])
-        self.assertNotIn(str(clone), found["protect"])
-        for project in ("delegate", "session", "utils"):
-            self.assertNotIn(
-                str(self.deployment / project / "src" / "agent_pm" / project), found["protect"]
-            )
-        self.assertEqual(found["clones"], {SLUG: str(clone)})
+        work = self.package() / "state"
+        self.local(f"work_dir = {json.dumps(str(work))}\n" + PIPELINE)
+        self.assertEqual(self.child(load), {"work": str(work), "clones": {}})
+        self.local(PIPELINE + f'[local_clones]\n"{SLUG}" = {json.dumps(str(self.deployment))}\n')
+        self.assertEqual(self.child(load)["clones"], {SLUG: str(self.deployment)})
 
     def test_default_gate_runs_outside_checkout_cwd(self):
         self.local(PIPELINE)

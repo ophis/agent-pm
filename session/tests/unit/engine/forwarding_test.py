@@ -586,7 +586,10 @@ class DetachTest(TuiBase):
         allocate = tempfile.mkdtemp
 
         def private(**kw):
-            self.assertEqual(kw, {"prefix": "apm-group-", "dir": "/tmp"})
+            self.assertEqual(
+                kw,
+                {"prefix": "apm-group-", "dir": os.environ.get("AGENT_PM_CONTROL_ROOT") or "/tmp"},
+            )
             return allocate(prefix=kw["prefix"], dir=self.dir)
 
         self.enterContext(mock.patch("tempfile.mkdtemp", side_effect=private))

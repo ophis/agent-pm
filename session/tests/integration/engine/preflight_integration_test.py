@@ -15,7 +15,7 @@ from agent_pm.session.hosts.tmux.host import validate_events, validate_start
 from agent_pm.session.hosts.tmux.types import PaneStatus, TuiError
 
 from session.tests.case import HOSTS, PY, REPO, SPAWNS, Case, child_env
-from session.tests.fakes.preflight import PreflightAdapter, SandboxedPreflightAdapter
+from session.tests.fakes.preflight import PreflightAdapter
 from session.tests.hosted_support import SID, fake_tmux, listed
 
 
@@ -225,12 +225,14 @@ print(json.dumps([result, PreflightAdapter.prepared[-1].sid, PreflightAdapter.co
         self.configure()
         self.refusal(self.spec(Mode.IN_PROCESS, tier=4), "tier 4 is unmapped")
 
-    def test_protection_checks_cwd_grants_and_client_dirs_for_all_modes(self):
-        protected = os.path.join(self.home, "protected")
+    def test_cwd_grants_and_client_dirs_over_state_and_hook_paths_preflight_in_all_modes(self):
+        hook_root = os.path.join(self.agent_pm, "tui")
+        alias = os.path.join(self.home, "alias")
+        os.symlink(self.work, alias)
         for mode, resume, path, field in itertools.product(
             Mode,
             (False, True),
-            (protected, os.path.join(protected, "child"), self.home),
+            (self.work, alias, hook_root, self.home),
             ("cwd", "dirs", "client"),
         ):
             with self.subTest(mode=mode, resume=resume, path=path, field=field):
@@ -240,27 +242,12 @@ print(json.dumps([result, PreflightAdapter.prepared[-1].sid, PreflightAdapter.co
                     if field == "cwd"
                     else Access(cwd=self.work, dirs=(path,) if field == "dirs" else ())
                 )
-                self.refusal(
-                    self.spec(mode, resume=resume, access=access, protect=(protected,)),
-                    "overlaps protected path",
-                )
+                before = self.tree()
+                with self.no_client():
+                    self.session.preflight(self.spec(mode, resume=resume, access=access))
+                self.unchanged(before)
 
-    def test_protection_uses_realpaths_and_effective_default_cwd(self):
-        protected = os.path.join(self.home, "protected")
-        os.mkdir(protected)
-        alias = os.path.join(self.home, "alias")
-        os.symlink(protected, alias)
-        for access, protection in (
-            (Access(), self.work),
-            (Access(cwd=alias), protected),
-            (Access(cwd=self.work, dirs=(alias,)), protected),
-        ):
-            with self.subTest(access=access):
-                self.refusal(
-                    self.spec(access=access, protect=(protection,)), "overlaps protected path"
-                )
-
-    def test_read_only_protected_grants_and_both_environment_sources_are_preserved(self):
+    def test_read_only_grants_and_both_environment_sources_are_preserved(self):
         protected = os.path.join(self.home, "read-only")
         access = Access(
             cwd=self.work, reads=(protected,), env={"FROM_ACCESS": "kept", "SHARED": "access"}
@@ -271,7 +258,6 @@ print(json.dumps([result, PreflightAdapter.prepared[-1].sid, PreflightAdapter.co
                     mode,
                     access=access,
                     env={"FROM_SPEC": "kept", "SHARED": "spec"},
-                    protect=(protected,),
                 )
                 before = self.tree()
                 with self.no_client():
@@ -314,15 +300,9 @@ print(json.dumps([result, PreflightAdapter.prepared[-1].sid, PreflightAdapter.co
             self.session.start(spec)
         self.assertEqual(str(failure.exception), message)
 
-    def test_tui_settings_and_adapter_hook_protection_are_validated_before_state(self):
+    def test_tui_settings_are_validated_before_state(self):
         self.configure(tmux_settings={"status_line": "invalid"})
         self.refusal(self.spec(Mode.TUI), "status_line: want true or false")
-        self.configure(adapter=SandboxedPreflightAdapter)
-        hook_root = os.path.join(self.agent_pm, "tui")
-        self.refusal(
-            self.spec(Mode.TUI, access=Access(cwd=self.work, dirs=(hook_root,))),
-            "overlaps protected path",
-        )
 
     def test_codex_oversized_recovery_state_is_refused_before_any_directory_is_created(self):
         root = tempfile.TemporaryDirectory(dir=os.environ.get("AGENT_PM_TEST_TMP", REPO))

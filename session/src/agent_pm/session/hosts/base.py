@@ -208,9 +208,6 @@ class Host(ABC):
     def hook_callback(self, name: str, metadata: Mapping[str, str]) -> HookCallback | None:
         return None
 
-    def protected_paths(self) -> tuple[str, ...]:
-        return ()
-
     def tui_settings(self) -> TuiSettings:
         return TuiSettings()
 

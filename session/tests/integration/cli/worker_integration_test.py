@@ -128,8 +128,8 @@ class DialogTest(WorkerCase):
         self.assertEqual(self.ok(self.session("reply", "w1")).stdout, "Edited.\n")
 
     def test_the_codex_trust_dialog_ends_the_early_watch_and_start_prints_the_record(self):
-        # Codex may write /tmp and $TMPDIR, where the fixture's HOME and tmux lie; what a session
-        # protects (its state, events, tmux) must lie elsewhere
+        # Codex may write /tmp and $TMPDIR, where the fixture's HOME lies; Codex's recovery state
+        # must lie elsewhere
         root = tempfile.mkdtemp(dir=os.environ.get("AGENT_PM_TEST_TMP", REPO))
         self.addCleanup(shutil.rmtree, root, ignore_errors=True)
         self.addCleanup(self.server.kill)

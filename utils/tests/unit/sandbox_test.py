@@ -1,9 +1,14 @@
-"""Owned tmux fixture cleanup, including failed shutdown and locked allocation."""
+"""Owned tmux fixture cleanup, including failed shutdown and locked allocation, and the processes
+a supervised run leaves behind.
+"""
 
 import os
+import signal
 import threading
 from pathlib import Path
 from unittest import mock
+
+from agent_pm.utils.process_control import TIMEOUT
 
 from utils.tests import sandbox
 from utils.tests.case import Case
@@ -38,7 +43,10 @@ class TmuxCleanup(Case):
         failure = TimeoutExpired("tmux", 10)
         with (
             mock.patch("pathlib.Path.is_socket", return_value=True),
-            mock.patch("subprocess.run", side_effect=[failure, None, None]) as run,
+            mock.patch(
+                "subprocess.run",
+                side_effect=[failure, mock.Mock(returncode=0), mock.Mock(returncode=1)],
+            ) as run,
             self.assertRaises(ExceptionGroup) as raised,
         ):
             sandbox.stop_tmux_servers(str(root), {})
@@ -67,3 +75,95 @@ class TmuxCleanup(Case):
         self.assertFalse(blocked, "tmux cleanup waited for the allocation lock")
         self.assertEqual(run.call_args.kwargs["env"], {"PATH": os.environ["PATH"]})
         self.assertFalse(root.exists())
+
+
+class ControlRoot(Case):
+    def test_clean_env_carries_the_control_root_into_a_base_without_one(self):
+        with mock.patch.dict(os.environ, {"AGENT_PM_CONTROL_ROOT": "/sandbox"}):
+            self.assertEqual(sandbox.clean_env({})["AGENT_PM_CONTROL_ROOT"], "/sandbox")
+            own = sandbox.clean_env({"AGENT_PM_CONTROL_ROOT": "/own"})
+            self.assertEqual(own["AGENT_PM_CONTROL_ROOT"], "/own")
+            del os.environ["AGENT_PM_CONTROL_ROOT"]
+            self.assertNotIn("AGENT_PM_CONTROL_ROOT", sandbox.clean_env({}))
+
+
+PS = """\
+  100     1   100   501 Ss   /usr/bin/python3 run_tests.py Unit
+  200   100   100   501 S    /usr/bin/python3 -P -S run_tests.py Unit
+  300     1   300   501 Ss   python3 -I /x/process_control.py /sb/tmp/apm-group-1
+  301   300   301   501 S    python3 -I /x/process_control.py /sb/tmp/apm-group-1
+  302   301   301   501 S    cat -
+  400     1   400   501 S    sleep 60 /ws/marker
+  500     1   500     0 S    sleep 60 /sb/tmp/root-owned
+  600     1   600   501 Z    sleep 60 /sb/tmp/zombie
+  700     1   700   501 S    sleep 60 /elsewhere
+  800   200   100   501 S    python3 /sb/tmp/fixture.py
+"""
+
+
+class Leaks(Case):
+    def listing(self):
+        return mock.patch(
+            "subprocess.run", return_value=mock.Mock(returncode=0, stdout=PS, stderr="")
+        )
+
+    def test_leaks_are_this_users_live_processes_naming_a_sandbox_path(self):
+        with (
+            self.listing(),
+            mock.patch("os.getuid", return_value=501),
+            mock.patch("os.getpid", return_value=200),
+        ):
+            rows = sandbox.leaked_processes(["/sb/tmp", "/ws"], grace=0)
+        self.assertEqual(
+            rows,
+            [
+                (300, 1, 300, "python3 -I /x/process_control.py /sb/tmp/apm-group-1"),
+                (301, 300, 301, "python3 -I /x/process_control.py /sb/tmp/apm-group-1"),
+                (400, 1, 400, "sleep 60 /ws/marker"),
+                (800, 200, 100, "python3 /sb/tmp/fixture.py"),
+            ],
+        )
+
+    def test_the_runner_and_its_ancestors_are_never_leaks(self):
+        with (
+            self.listing(),
+            mock.patch("os.getuid", return_value=501),
+            mock.patch("os.getpid", return_value=800),
+        ):
+            rows = sandbox.leaked_processes(["/sb/tmp"], grace=0)
+        self.assertEqual([row[0] for row in rows], [300, 301])
+
+    def test_a_leak_loses_its_group_and_the_groups_its_children_lead(self):
+        leaked = [
+            (300, 1, 300, "python3 -I /x/process_control.py /sb/tmp/apm-group-1"),
+            (800, 200, 100, "python3 /sb/tmp/fixture.py"),
+        ]
+        with (
+            self.listing(),
+            mock.patch("os.getuid", return_value=501),
+            mock.patch("os.killpg") as killpg,
+            mock.patch("os.kill") as kill,
+        ):
+            sandbox.kill_processes(leaked)
+        self.assertEqual(
+            sorted(killpg.call_args_list),
+            [mock.call(300, signal.SIGKILL), mock.call(301, signal.SIGKILL)],
+        )
+        kill.assert_called_once_with(800, signal.SIGKILL)
+
+    def test_stopped_servers_are_the_ones_that_answered(self):
+        root = Path(self.home, "owned")
+        directory = root / f"tmux-{os.getuid()}"
+        directory.mkdir(parents=True)
+        for name in ("dead", "live"):
+            (directory / name).touch()
+        with (
+            mock.patch("pathlib.Path.is_socket", return_value=True),
+            mock.patch(
+                "subprocess.run", side_effect=[mock.Mock(returncode=1), mock.Mock(returncode=0)]
+            ),
+        ):
+            self.assertEqual(sandbox.stop_tmux_servers(str(root), {}), [str(directory / "live")])
+
+    def test_the_grace_outlasts_a_controller_waiting_for_its_client(self):
+        self.assertGreaterEqual(sandbox.CONTROL_GRACE, TIMEOUT + 2)

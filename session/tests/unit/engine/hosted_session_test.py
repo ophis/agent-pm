@@ -668,7 +668,7 @@ class InProcessTest(Base):
                     lambda *, client=client: self.start(client=client, mode="in_process"),
                 )
 
-    def test_empty_protection_validates_mode_before_codex_launch_configuration(self):
+    def test_mode_is_validated_before_codex_launch_configuration(self):
         self.configure_session(
             {"codex": {"implementation": "agent_pm.session.adapters.codex:CodexAdapter"}}
         )
@@ -1065,58 +1065,13 @@ class UsageTest(Base):
             self.session.usage("nope")
 
 
-class ProtectionTest(HostedTuiBase):
-    def test_every_mode_refuses_cwd_and_grants_in_both_directions_on_start_and_resume(self):
-        protected = os.path.join(self.dir, "protected")
-        paths = (protected, os.path.join(protected, "child"), self.dir)
-        for mode, resume, field, path in itertools.product(
-            Mode, (False, True), ("cwd", "dirs"), paths
-        ):
-            access = Access(cwd=path) if field == "cwd" else Access(cwd=self.workdir, dirs=(path,))
-            spec = self.spec(
-                client="fake",
-                sid=SID,
-                mode=mode,
-                resume=resume,
-                access=access,
-                protect=(protected,),
-            )
-            with (
-                self.subTest(mode=mode, resume=resume, field=field, path=path),
-                mock.patch("subprocess.Popen") as popen,
-                self.assertRaisesRegex(ConfigError, "overlaps protected path"),
-            ):
-                self.session.start(spec)
-            popen.assert_not_called()
-            self.assertFalse(os.path.exists(self.workdir))
-            self.assertFalse(os.path.exists(self.log))
-        self.nothing_hosted()
-
-    def test_the_effective_default_cwd_and_symlink_grants_are_checked(self):
-        protected = os.path.join(self.dir, "protected")
-        os.mkdir(protected)
-        alias = os.path.join(self.dir, "alias")
-        os.symlink(protected, alias)
-        for access, protect in (
-            (Access(), (self.workdir,)),
-            (Access(cwd=alias), (protected,)),
-            (Access(cwd=self.workdir, dirs=(alias,)), (protected,)),
-        ):
-            with self.subTest(access=access), self.assertRaisesRegex(ConfigError, "overlaps"):
-                self.session.start(
-                    self.spec(client="fake", mode=Mode.HEADLESS, access=access, protect=protect)
-                )
-        self.nothing_hosted()
-        self.assertFalse(os.path.exists(self.workdir))
-
-    def test_sibling_cwd_and_grants_pass_even_when_the_state_root_is_protected(self):
+class WritablePathsTest(HostedTuiBase):
+    def test_cwd_and_grants_over_the_state_root_and_hook_paths_start_in_every_mode(self):
         for mode, resume in itertools.product(Mode, (False, True)):
             self.workdir = os.path.join(self.dir, f"state-{mode}-{resume}")
-            sibling = os.path.join(self.dir, "sibling")
-            os.makedirs(sibling, exist_ok=True)
             spec = self.spec(
-                access=Access(cwd=sibling, dirs=(os.path.join(sibling, "extra"),)),
-                protect=(self.workdir,),
+                access=Access(cwd=self.dir, dirs=(self.workdir, self.agent_pm)),
+                events=os.path.join(self.dir, "events") if mode == Mode.TUI else None,
                 sid=SID,
             )
             with (
@@ -1132,7 +1087,7 @@ class ProtectionTest(HostedTuiBase):
                     spec=spec,
                     resume=resume,
                 )
-            self.assertEqual(session.info().cwd, sibling)
+            self.assertEqual(session.info().cwd, self.dir)
             session.stop()
 
 

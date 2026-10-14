@@ -324,19 +324,6 @@ class Start(Base):
                 )
                 self.assertEqual(prepared, Prepared(noted, info))
 
-    def test_protect_reaches_check_and_run_without_enforcement(self):
-        protected = (self.home, self.home + "/missing")
-        runs = []
-        adapter = StubAdapter(lambda spec: runs.append(spec) or [])
-        prepared = self.start(
-            adapter, dataclasses.replace(SPEC, workdir=self.home, protect=protected)
-        )
-        self.assertEqual(self.drain(), [])
-        self.assertIs(prepared.spec.protect, protected)
-        self.assertIs(adapter.checked[-1].protect, protected)
-        self.assertIs(runs[-1].protect, protected)
-        self.assertEqual(len(self.recorded), 1)
-
     def test_refused_before_its_session_line_or_its_run(self):
         refused = StubAdapter(ended, ConfigError("tier 4 is unmapped"))
         for adapter, fields, message in (

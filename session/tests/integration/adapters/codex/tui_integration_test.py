@@ -1074,8 +1074,17 @@ class TuiRecoveryIntegrationTest(Live):
         native.unlink(missing_ok=True)
         native.write_bytes(original)
 
-    def test_protected_paths_and_untrusted_settings_are_rejected_before_tmux_or_client(self):
-        roots = (str(self.home), self.server.bin, *ROOTS, sys.prefix)
+    def test_source_roots_interpreter_prefix_and_tmux_bin_are_grantable(self):
+        for index, root in enumerate((*ROOTS, sys.prefix, self.server.bin)):
+            with self.subTest(root=root):
+                spec = dataclasses.replace(
+                    self.spec, access=dataclasses.replace(self.spec.access, dirs=(root,))
+                )
+                self.start(f"g{index}", sid=f"granted-{index}", spec=spec)
+                self.assertEqual([r.name for r in self.driver.sessions(f"g{index}")], [f"g{index}"])
+
+    def test_store_grants_and_untrusted_settings_are_rejected_before_tmux_or_client(self):
+        roots = (str(self.home),)
         for index, root in enumerate(roots):
             with self.subTest(root=root):
                 spec = dataclasses.replace(

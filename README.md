@@ -249,8 +249,6 @@ Codex snapshots save flags and the merged Adapter, Access and Spec environment. 
 
 A run's `read` dirs and its role's tasks dir are never `--add-dir`: no client is granted write to them. Codex has no read-only-dir mechanism usable here, so it adds nothing for them: under `workspace-write` its sandbox reads the whole disk and writes only its roots; under the default `danger-full-access` (Client policy, above) it can write them too. Each client's grant and its limits: `delegate/src/agent_pm/delegate/config.toml`'s `read` comment.
 
-A `tui` run fails with a `ConfigError` before launch when its cwd, a write dir or a dir its client can write overlaps a TUI hook path: the tmux executable, the events file or `~/.agent-pm/tui` (`session/src/agent_pm/session/modes/base.py` `check_protection`).
-
 ## Tests
 
 ```bash
@@ -285,6 +283,8 @@ connect to no sockets, and write only inside the runner's temporary directory. I
 exercise real tools through `utils/tests/sandbox.py`: controlled Python import roots, clean Git
 environments and temporary repositories. Tmux uses the private servers in
 `session/tests/live_tmux.py`; its explicit socket or `TMUX_TMPDIR` must resolve inside the sandbox.
+`AGENT_PM_CONTROL_ROOT` puts ProcessControl directories in the sandbox; the gate fails one outside it.
+A supervised run fails when a process naming its sandbox, or a sandbox tmux server, outlives it.
 Fake and real implementations share contract assertions.
 
 `.github/run_tests.py` resets HOME, temporary roots and Git configuration before supervision.

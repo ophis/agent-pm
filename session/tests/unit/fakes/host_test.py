@@ -2,8 +2,10 @@
 integration test).
 """
 
+import itertools
 import json
 import os
+import signal
 import sys
 import unittest
 from pathlib import Path
@@ -48,6 +50,41 @@ class FakeHostOnly(Case):
                 ):
                     getattr(host, kind)("w1", Launch(argv, cwd=self.home))
         self.assertEqual(host.list(), [])
+
+
+class FailedStart(Case):
+    """A start that fails after its control was prepared leaves no controller or supervisor."""
+
+    def start(self, supervisor, *, pid_file):
+        def popen(argv, **_kw):
+            if pid_file:
+                Path(argv[4], "pid").write_text(str(supervisor.pid))
+            return supervisor
+
+        host = FakeHost("fake", {"root": "~/hosts"})
+        with (
+            mock.patch.dict(os.environ, {"AGENT_PM_CONTROL_ROOT": self.home}),
+            mock.patch("subprocess.Popen", side_effect=popen),
+            mock.patch("os.killpg") as killpg,
+            mock.patch("time.monotonic", side_effect=itertools.count(0, 100)),
+            mock.patch("time.sleep"),
+            self.assertRaises((DriverError, OSError)) as raised,
+        ):
+            host.detach("w1", Launch(tuple(program(SLEEP)), cwd=self.home))
+        meta = json.loads(Path(self.home, "hosts", "w1", "meta.json").read_text())
+        self.assertFalse(os.path.exists(meta["control"]))
+        return raised.exception, killpg
+
+    def test_an_exited_supervisor_is_not_signalled(self):
+        error, killpg = self.start(mock.Mock(pid=4242, returncode=1), pid_file=False)
+        self.assertIsInstance(error, DriverError)
+        self.assertRegex(str(error), "did not start")
+        killpg.assert_not_called()
+
+    def test_a_running_supervisor_is_killed_when_the_start_is_not_confirmed(self):
+        error, killpg = self.start(mock.Mock(pid=4242, returncode=None), pid_file=True)
+        self.assertIsInstance(error, TimeoutError)
+        killpg.assert_called_once_with(4242, signal.SIGKILL)
 
 
 class ControlTest(Case):

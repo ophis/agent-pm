@@ -286,7 +286,7 @@
   "session.tests.integration.adapters.codex.tui_integration_test.TuiRecoveryIntegrationTest.test_hooks_persist_binding_without_any_consumer": 1.197652,
   "session.tests.integration.adapters.codex.tui_integration_test.TuiRecoveryIntegrationTest.test_interrupt_before_stop_and_null_stop_have_empty_turn_replies": 1.986018,
   "session.tests.integration.adapters.codex.tui_integration_test.TuiRecoveryIntegrationTest.test_interrupt_completes_without_stop_and_replays_previous_reply_on_attach": 3.737704,
-  "session.tests.integration.adapters.codex.tui_integration_test.TuiRecoveryIntegrationTest.test_protected_paths_and_untrusted_settings_are_rejected_before_tmux_or_client": 0.161976,
+  "session.tests.integration.adapters.codex.tui_integration_test.TuiRecoveryIntegrationTest.test_store_grants_and_untrusted_settings_are_rejected_before_tmux_or_client": 0.161976,
   "session.tests.integration.adapters.codex.tui_integration_test.TuiRecoveryIntegrationTest.test_resume_keeps_native_id_cwd_home_model_effort_dirs_network_and_commands": 1.479663,
   "session.tests.integration.adapters.codex.tui_integration_test.TuiRecoveryIntegrationTest.test_resume_missing_binding_native_fifo_and_malformed_record_fail_before_spawn": 0.952694,
   "session.tests.integration.adapters.codex.tui_integration_test.TuiRecoveryIntegrationTest.test_root_child_cwd_and_rebinding_filters_publish_only_valid_hooks": 2.071323,

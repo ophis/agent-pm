@@ -47,7 +47,6 @@ class LinearRun:
                 name=f"{role}-{issue}-{sid[:8]}",
                 out=os.path.join(workdir, "out.md"),
                 cwd=workdir,
-                protect=cfg.protect,
             ),
             display=display,
             callback=callback,

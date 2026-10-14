@@ -7,6 +7,7 @@ import json
 import os
 import shlex
 import sys
+import sysconfig
 import time
 from datetime import datetime
 from unittest import mock
@@ -31,13 +32,7 @@ from agent_pm.session.engine.types import (
 from agent_pm.utils import LOCAL_ENV_VARS
 
 from session.tests.case import ROOTS, SRC
-from session.tests.codex_tui import (
-    INTERPRETER_PATHS,
-    INTERPRETER_ROOTS,
-    PROTECTED_ROOTS,
-    PlanCase,
-    interpreter,
-)
+from session.tests.codex_tui import PlanCase
 from session.tests.source_roots import PACKAGE_ROOTS
 from session.tests.unit.adapters.codex.support import CHILD, NATIVE, Base, committed_tui
 
@@ -51,10 +46,6 @@ HOOK = (
 
 
 class TuiTest(Base):
-    def setUp(self):
-        super().setUp()
-        self.enterContext(interpreter())
-
     def launch(self, *, resume=False, adapter=None):
         run = (adapter or self.adapter).tui()
         with (
@@ -85,46 +76,31 @@ class TuiTest(Base):
         for kind in CodexTui.hooks.values():
             self.assertIs(type(kind), HookKind)
 
-    def test_the_launch_protects_packages_and_hook_namespaces(self):
-        _, _, data = self.launch()
-        self.assertEqual(data["protect"], list(PROTECTED_ROOTS))
-
-    def test_writable_interpreter_libraries_and_site_files_are_rejected_before_commit(self):
-        for index, root in enumerate(INTERPRETER_ROOTS):
-            for path in (root, os.path.join(root, "startup.pth")):
-                spec = dataclasses.replace(
-                    self.spec,
-                    sid=f"interpreter-{index}",
-                    access=dataclasses.replace(self.spec.access, dirs=(path,)),
-                )
-                with (
-                    self.subTest(path=path),
-                    mock.patch("shutil.which", return_value="/protected/codex"),
-                    self.assertRaisesRegex(ConfigError, "could rewrite hook dependency"),
-                ):
-                    self.adapter.tui().launch(spec, HOOK, source_roots=PACKAGE_ROOTS)
-                self.assertIsNone(self.common.load(str(self.work), spec.sid))
-        self.assertFalse((self.home / ".agent-pm").exists())
-
-    def test_a_virtual_environment_inside_the_cwd_is_rejected_before_commit(self):
-        venv = self.cwd / ".venv" / "lib" / "python3.11" / "site-packages"
-        venv.mkdir(parents=True)
-        layout = {**INTERPRETER_PATHS, "purelib": str(venv), "platlib": str(venv)}
-        spec = dataclasses.replace(self.spec, sid="venv")
-        with (
-            interpreter(layout, (str(venv),)),
-            mock.patch("shutil.which", return_value="/protected/codex"),
-            self.assertRaises(ConfigError) as raised,
-        ):
-            self.adapter.tui().launch(spec, HOOK, source_roots=PACKAGE_ROOTS)
-        self.assertEqual(
-            str(raised.exception),
-            f"Codex tui writable root {self.cwd} could rewrite hook dependency {venv}",
+    def test_grants_over_interpreter_package_and_hook_dirs_launch(self):
+        dirs = (
+            sysconfig.get_path("stdlib"),
+            sysconfig.get_path("purelib"),
+            os.path.dirname(sys.executable),
+            *(os.path.join(root, "agent_pm") for root in PACKAGE_ROOTS),
+            "/protected",
         )
-        self.assertIsNone(self.common.load(str(self.work), spec.sid))
+        for index, path in enumerate(dirs):
+            spec = dataclasses.replace(
+                self.spec,
+                sid=f"granted-{index}",
+                access=dataclasses.replace(self.spec.access, dirs=(path,)),
+            )
+            with (
+                self.subTest(path=path),
+                mock.patch("shutil.which", return_value="/protected/codex"),
+            ):
+                committed_tui(self.adapter, spec, HOOK, source_roots=PACKAGE_ROOTS)
+            self.assertIn(
+                os.path.realpath(path), self.common.load(str(self.work), spec.sid).snapshot.dirs
+            )
 
-    def test_resume_rejects_saved_library_grants_without_rewriting_recovery(self):
-        library = INTERPRETER_ROOTS[0]
+    def test_resume_with_a_saved_library_grant_launches(self):
+        library = sysconfig.get_path("stdlib")
         spec = dataclasses.replace(
             self.spec,
             access=dataclasses.replace(self.spec.access, dirs=(library,)),
@@ -132,35 +108,17 @@ class TuiTest(Base):
         self.common.save(self.common.prepare(spec))
         self.common.bind(str(self.work), "caller-id", NATIVE)
         self.rollout()
-        before = self.record().read_bytes()
-        with (
-            mock.patch("shutil.which", return_value="/protected/codex"),
-            self.assertRaisesRegex(ConfigError, "could rewrite hook dependency"),
-        ):
-            self.adapter.tui().launch(
+        with mock.patch("shutil.which", return_value="/protected/codex"):
+            launch = committed_tui(
+                self.adapter,
                 dataclasses.replace(spec, resume=True, access=self.spec.access),
                 HOOK,
                 source_roots=PACKAGE_ROOTS,
             )
-        self.assertEqual(self.record().read_bytes(), before)
-        self.assertFalse((self.work / "run.jsonl").exists())
-
-    def test_other_interpreter_site_paths_are_protected_including_pth_files(self):
-        site_path = "/external/interpreter/site-packages"
-        with mock.patch("site.getsitepackages", return_value=[site_path]):
-            _, _, data = self.launch()
-            self.assertIn(site_path, data["protect"])
-            spec = dataclasses.replace(
-                self.spec,
-                sid="external-site",
-                access=dataclasses.replace(self.spec.access, dirs=(site_path + "/startup.pth",)),
-            )
-            with (
-                mock.patch("shutil.which", return_value="/protected/codex"),
-                self.assertRaisesRegex(ConfigError, "could rewrite hook dependency"),
-            ):
-                self.adapter.tui().launch(spec, HOOK, source_roots=PACKAGE_ROOTS)
-        self.assertIsNone(self.common.load(str(self.work), spec.sid))
+        self.assertEqual(json.loads(launch.argv[-1])["selection"], ["resume", NATIVE])
+        self.assertIn(
+            os.path.realpath(library), self.common.load(str(self.work), spec.sid).snapshot.dirs
+        )
 
     def test_launch_preserves_opaque_hook_words_and_separate_roots(self):
         roots = tuple(reversed(PACKAGE_ROOTS))
@@ -486,24 +444,26 @@ class TuiTest(Base):
         self.assertIsNone(run.limit("assistant: You've hit your usage limit. is a quoted example"))
         self.assertIsNone(run.limit("ordinary network error"))
 
-    def test_writable_executable_and_hook_dependency_are_rejected(self):
+    def test_writable_executable_and_hook_dependency_launch(self):
         for path in (self.cwd / "codex", self.extra / "driver.py"):
-            spec = dataclasses.replace(self.spec, sid="unsafe-" + path.name)
+            spec = dataclasses.replace(self.spec, sid="writable-" + path.name)
             hook = HOOK if path.name == "codex" else (*HOOK[:2], str(path), *HOOK[3:])
-            with (
-                mock.patch(
-                    "shutil.which",
-                    return_value=str(path if path.name == "codex" else "/protected/codex"),
-                ),
-                self.assertRaisesRegex(ConfigError, "rewrite|writable"),
+            with mock.patch(
+                "shutil.which",
+                return_value=str(path if path.name == "codex" else "/protected/codex"),
             ):
-                committed_tui(
+                launch = committed_tui(
                     self.adapter,
                     dataclasses.replace(spec, prompt="hi"),
                     hook,
                     source_roots=PACKAGE_ROOTS,
                 )
-            self.assertIsNone(self.common.load(str(self.work), spec.sid))
+            data = json.loads(launch.argv[-1])
+            self.assertEqual(
+                (data["executable"], data["hook"]),
+                (str(path) if path.name == "codex" else "/protected/codex", list(hook)),
+            )
+            self.assertIsNotNone(self.common.load(str(self.work), spec.sid))
 
     def test_narrow_screen_wrapping_keeps_limit_reset(self):
         adapter = CodexAdapter({"env": {"TZ": "UTC"}})
@@ -540,7 +500,7 @@ class TuiTest(Base):
             with self.subTest(screen=screen):
                 self.assertIsNone(run.limit(screen))
 
-    def test_configured_tmpdir_protects_dependencies_before_fresh_or_resume_launch(self):
+    def test_configured_tmpdir_over_dependencies_launches_fresh_or_resumed(self):
         self.prepare()
         self.common.bind(str(self.work), self.spec.sid, NATIVE)
         self.rollout()
@@ -552,28 +512,16 @@ class TuiTest(Base):
                     spec = (
                         self.spec if resume else dataclasses.replace(self.spec, sid=f"env-{index}")
                     )
-                    if resume:
-                        with mock.patch("shutil.which", return_value="/protected/codex"):
-                            launch = committed_tui(
-                                adapter,
-                                dataclasses.replace(spec, prompt="hi", resume=True),
-                                HOOK,
-                                source_roots=PACKAGE_ROOTS,
-                            )
-                            self.assertNotIn("TMPDIR", launch.env)
-                        continue
-                    with (
-                        mock.patch("shutil.which", return_value="/protected/codex"),
-                        self.assertRaisesRegex(ConfigError, "rewrite|writable"),
-                    ):
-                        committed_tui(
+                    with mock.patch("shutil.which", return_value="/protected/codex"):
+                        launch = committed_tui(
                             adapter,
                             dataclasses.replace(spec, prompt="hi", resume=resume),
                             (*HOOK[:2], "/driver-only/hook.py", *HOOK[3:]),
                             source_roots=PACKAGE_ROOTS,
                         )
-                    if not resume:
-                        self.assertIsNone(self.common.load(str(self.work), spec.sid))
+                    if resume:
+                        self.assertNotIn("TMPDIR", launch.env)
+                    self.assertIsNotNone(self.common.load(str(self.work), spec.sid))
         self.assertEqual(self.common.load(str(self.work), self.spec.sid).native_id, NATIVE)
 
     def test_tui_adapter_queries_fresh_saved_and_effective_temp_roots(self):
@@ -643,12 +591,12 @@ REFUSED = (
 
 
 class SuppliedFlagsTest(Base):
-    def launch(self, spec, *, resume=False):
+    def launch(self, spec, *, resume=False, hook=HOOK):
         with mock.patch("shutil.which", return_value="/protected/codex"):
             launch = committed_tui(
                 self.adapter,
                 dataclasses.replace(spec, prompt=PROMPT, resume=resume),
-                HOOK,
+                hook,
                 source_roots=PACKAGE_ROOTS,
             )
         return launch, json.loads(launch.argv[-1])
@@ -689,36 +637,31 @@ class SuppliedFlagsTest(Base):
         self.launch(spec)
         self.assertEqual(self.common.load(str(self.work), spec.sid).snapshot.flags, tuple(flags))
 
-    def test_every_grant_source_is_checked_against_protected_paths(self):
+    def test_every_grant_source_may_cover_the_hook_script(self):
         guarded = self.root / "guarded"
         cases = (
-            (("--add-dir", "../../guarded"), str(guarded / "events")),
-            (("--add-dir", str(guarded)), str(guarded / "events")),
+            (("--add-dir", "../../guarded"), str(guarded / "hook.py")),
+            (("--add-dir", str(guarded)), str(guarded / "hook.py")),
             ((f"--add-dir={guarded / 'sub'}",), str(guarded)),
-            ((), str(self.cwd / "events")),
+            ((), str(self.cwd / "hook.py")),
             (("--add-dir", str(self.work)), str(self.work)),
-            ((), str(self.extra / "events")),
+            ((), str(self.extra / "hook.py")),
         )
         for index, (flags, path) in enumerate(cases):
-            spec = dataclasses.replace(
-                self.spec, sid=f"guarded-{index}", flags=flags, protect=(path,)
-            )
-            with (
-                self.subTest(flags=flags, path=path),
-                self.assertRaisesRegex(ConfigError, "could rewrite hook dependency"),
-            ):
-                self.launch(spec)
-            self.assertIsNone(self.common.load(str(self.work), spec.sid))
+            spec = dataclasses.replace(self.spec, sid=f"guarded-{index}", flags=flags)
+            with self.subTest(flags=flags, path=path):
+                _, data = self.launch(spec, hook=(*HOOK[:2], path, *HOOK[3:]))
+            self.assertEqual(data["hook"][2], path)
+            self.assertIsNotNone(self.common.load(str(self.work), spec.sid))
 
-    def test_resume_checks_saved_grants_and_ignores_new_grants(self):
+    def test_resume_keeps_saved_grants_and_ignores_new_grants(self):
         guarded = self.root / "guarded"
         spec = dataclasses.replace(self.spec, flags=("--add-dir", str(guarded)))
         self.launch(spec)
         self.common.bind(str(self.work), spec.sid, NATIVE)
         self.rollout()
-        changed = dataclasses.replace(spec, flags=(), protect=(str(guarded / "events"),))
-        with self.assertRaisesRegex(ConfigError, "could rewrite hook dependency"):
-            self.launch(changed, resume=True)
+        changed = dataclasses.replace(spec, flags=())
+        self.launch(changed, resume=True, hook=(*HOOK[:2], str(guarded / "hook.py"), *HOOK[3:]))
         changed = dataclasses.replace(spec, flags=("--add-dir", "/unrecorded"))
         _, data = self.launch(changed, resume=True)
         self.assertEqual(
@@ -819,7 +762,6 @@ class PlanTest(PlanCase):
                 "workdir",
                 "sid",
                 "store",
-                "protect",
                 "import_roots",
             },
         )
@@ -835,7 +777,7 @@ class PlanTest(PlanCase):
         encoded = tui.encode(self.plan)
         data = json.loads(encoded)
         decoded = tui.decode(data)
-        for key in ("selection", "hook", "protect", "import_roots"):
+        for key in ("selection", "hook", "import_roots"):
             data[key].append("changed")
         data["prompt"] = "changed"
         self.assertEqual(decoded, self.plan)

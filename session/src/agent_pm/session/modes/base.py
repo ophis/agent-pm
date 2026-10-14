@@ -27,7 +27,7 @@ from agent_pm.session.engine.types import (
     Stderr,
 )
 from agent_pm.session.hosts.base import Host
-from agent_pm.utils import Display, overlaps
+from agent_pm.utils import Display
 
 START_SID = "AGENT_PM_SID"
 
@@ -131,25 +131,6 @@ class Runtime(ABC):
         if spec.access.commands and adapter.client_note:
             return replace(spec, prompt=spec.prompt + "\n\n" + adapter.client_note)
         return spec
-
-    @staticmethod
-    def check_protection(spec: Spec, adapter: Adapter) -> None:
-        if not spec.protect:
-            return
-        try:
-            writable = (
-                spec.access.cwd or spec.workdir,
-                *spec.access.dirs,
-                *adapter.writable_dirs(spec),
-            )
-            for path in writable:
-                for protected in spec.protect:
-                    if overlaps(path, protected):
-                        raise ConfigError(
-                            f"writable path {path} overlaps protected path {protected}"
-                        )
-        except OSError as error:
-            raise ConfigError(f"{spec.client}'s writable dirs: {error}") from error
 
     @staticmethod
     def _launched(spec: Spec, launch: Callable[[Spec], Launch], drop: Collection[str]) -> Prepared:

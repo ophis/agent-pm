@@ -366,10 +366,7 @@ class TuiRuntime(Runtime):
         cls._selected(spec, adapter)
         drop = identity_drop(registry)
         store = _Store(name, host=host)
-        hooks = (*host.protected_paths(), *([events] if events else []), store.root)
-        spec = replace(spec, name=name, events=events, protect=(*spec.protect, *hooks))
-        cls.check_protection(spec, adapter)
-        protected = spec
+        spec = replace(spec, name=name, events=events)
         spec = cls._noted(spec, adapter)
         roots = module_roots(agent_pm.session, agent_pm.utils)
         hook = store.hook_argv(roots)
@@ -382,16 +379,6 @@ class TuiRuntime(Runtime):
         state = _state(prepared, run, host, metadata)
         if field := _bad(state):
             raise DriverError(f"tui session {name}: bad {field} {state.get(field)!r:.80}")
-        trusted = tuple(
-            root
-            for key in ("adapter_hook", "host_hook")
-            if key in state
-            for root in state[key]["roots"]
-        )
-        if trusted:
-            cls.check_protection(
-                replace(protected, protect=(*protected.protect, *trusted)), adapter
-            )
         return _Start(prepared, run, store, state, metadata)
 
     @classmethod

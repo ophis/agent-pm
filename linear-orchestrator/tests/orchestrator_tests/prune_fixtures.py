@@ -152,7 +152,6 @@ class PruneScenario(Case):
             project_repos={},
             local_clones={},
             work_dir=self.root,
-            protect=(),
             docs=config.Docs("", "", {}),
             stages={},
             delegate_kind="harness",

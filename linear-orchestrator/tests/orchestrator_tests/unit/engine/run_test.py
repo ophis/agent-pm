@@ -291,7 +291,6 @@ class RunExecution(Case):
                     sid=SID,
                     out=os.path.join(self.rd, "out.md"),
                     cwd=self.rd,
-                    protect=config.load().protect,
                 ),
             ),
         )

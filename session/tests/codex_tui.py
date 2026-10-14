@@ -1,6 +1,5 @@
-"""Shared Codex launch plans and protection fixtures."""
+"""Shared Codex launch plans and launch fixtures."""
 
-import contextlib
 import dataclasses
 import json
 import os
@@ -10,53 +9,15 @@ from unittest import mock
 from agent_pm.session.adapters.codex.common.types import Snapshot
 from agent_pm.session.adapters.codex.tui import HookPlan, LaunchPlan
 
-from session.tests.case import ROOTS, SRC, Case
+from session.tests.case import SRC, Case
 from session.tests.source_roots import PACKAGE_ROOTS
 from session.tests.unit.adapters.codex.support import Base, committed_tui
 
 ROOTS_JSON = json.dumps([SRC["session"], SRC["utils"]])
 HOOK = (sys.executable, "-I", "/protected/driver_hook.py", "/protected/session", ROOTS_JSON)
-INTERPRETER_PATHS = {
-    "stdlib": "/interpreter/lib",
-    "platstdlib": "/interpreter/lib",
-    "purelib": "/interpreter/site-packages",
-    "platlib": "/interpreter/plat-site-packages",
-}
-SITE_PACKAGES = ("/interpreter/site-packages", "/interpreter/extra-site-packages")
-INTERPRETER_ROOTS = (
-    "/interpreter/lib",
-    "/interpreter/site-packages",
-    "/interpreter/plat-site-packages",
-    "/interpreter/extra-site-packages",
-)
-PROTECTED_ROOTS = tuple(
-    dict.fromkeys(
-        [
-            *(
-                os.path.realpath(os.path.join(SRC[package], "agent_pm", package))
-                for package in ("session", "utils")
-            ),
-            *(os.path.join(root, "agent_pm") for root in ROOTS),
-            *INTERPRETER_ROOTS,
-        ]
-    )
-)
 
 
-@contextlib.contextmanager
-def interpreter(paths=INTERPRETER_PATHS, site_packages=SITE_PACKAGES):
-    with (
-        mock.patch("sysconfig.get_path", side_effect=paths.__getitem__),
-        mock.patch("site.getsitepackages", return_value=list(site_packages)),
-    ):
-        yield
-
-
-class ProtectCase(Base):
-    def setUp(self):
-        super().setUp()
-        self.enterContext(interpreter())
-
+class LaunchCase(Base):
     def launch(self, spec, *, resume=False):
         with mock.patch("shutil.which", return_value="/protected/codex"):
             return committed_tui(
@@ -102,7 +63,6 @@ class PlanCase(Case):
             workdir="/work",
             sid="caller-id",
             store="/private-state/recovery/codex",
-            protect=("/protected/events",),
         )
         self.frontend = (
             "/protected/codex",
