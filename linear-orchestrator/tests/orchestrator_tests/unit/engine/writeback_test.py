@@ -2060,6 +2060,41 @@ class LimitEvents(Events):
             self.said(),
         )
 
+    def test_a_linear_failure_in_the_limit_is_a_step_error_never_raised(self):
+        self.cfg = replace(self.cfg, human_members=HUMANS)
+        for index, (op, step) in enumerate(
+            (("reread", "limit-move:1"), ("state", "limit-move:1"), ("subscribe", "limit-row:1"))
+        ):
+            with self.subTest(op=op):
+                sid = f"0b6f2c1e-6d0a-4c1b-9a51-3f1f6b0e2b{index:02d}"
+                self.claim(sid)
+                self.now = iter((STARTED, RESTARTED))
+                self.linear.state = self.cfg.states["in_progress"]
+                self.linear.fail = lambda o, _v, op=op: (
+                    LinearError("linear api error: down") if o == op else None
+                )
+                event = delegate_event("finished", sid=sid, returncode=-9, outcome=None)
+                ok = self.deliver(replace(event, limit={"resets_at": T}))
+                session = ops.client_id(sid, "session")
+                self.assertIn("· limit · ", self.linear.comments[session]["body"])
+                if op == "subscribe":
+                    self.assertTrue(ok)
+                    self.assertIn(
+                        "Could not subscribe",
+                        self.linear.comments[ops.client_id(sid, "limit")]["body"],
+                    )
+                else:
+                    self.assertFalse(ok)
+                    self.assertTrue(
+                        any(
+                            line.startswith(
+                                f"writeback step-error {RUN_ISSUE} sid={sid} step={step} "
+                            )
+                            for line in self.said()
+                        ),
+                        self.said(),
+                    )
+
     def test_the_same_limit_twice_moves_once_and_records_one_row(self):
         self.assertTrue(self.deliver(self.limited()))
         n = len(self.linear.calls)
