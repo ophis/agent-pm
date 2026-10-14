@@ -229,7 +229,6 @@ class CommonDir(Case):
             with self.subTest(path=path):
                 self.assertIsNone(common_dir(path))
 
-
     def test_a_commondir_symlink_is_followed(self):
         wt = self.add()
         admin = git("-C", wt, "rev-parse", "--path-format=absolute", "--git-dir")
