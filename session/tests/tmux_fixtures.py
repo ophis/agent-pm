@@ -302,6 +302,11 @@ def chained(calls):
     return [arg for call in calls for arg in (";", *call[1:])]
 
 
+def recorded(session):
+    """The creating call's last command: its new pane's identity (NEW's format) as @process."""
+    return [";", "set-option", "-F", "-t", f"={session}:", "@process", NEW[2]]
+
+
 def expected_panes(*rows):
     """Print (pane_dead, pane_tty, pane_id) rows in the list-panes call's -F format."""
 
@@ -498,7 +503,9 @@ class StartFixture(Case):
     def start(self, fake, session="s", argv=("tool", "-x", "a b"), env=None, **kw):
         env = {"PATH": self.bin, "HOME": "/h"} if env is None else env
         with redirect_stderr(self.stderr):
-            Tmux(fake, self.sleep).start(session, Launch(tuple(argv), env, cwd=self.cwd), **kw)
+            return Tmux(fake, self.sleep).start(
+                session, Launch(tuple(argv), env, cwd=self.cwd), **kw
+            )
 
 
 class PaneFixture(Case):

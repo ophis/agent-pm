@@ -4,8 +4,6 @@ paste, keys, read, options and pane targets.
 
 import os
 import tempfile
-import unittest
-import unittest.mock
 
 from agent_pm.session.hosts.tmux import transport, types
 
@@ -191,59 +189,15 @@ class KillTest(Case):
         with self.assertRaisesRegex(types.TuiError, r"^tmux: boom$"):
             transport.kill("s", proc=FakeTmux(fail={"kill-session"}))
 
-
-class SendTest(Case):
-    def send(self, fake, text):
-        transport.send(
-            "s", text, proc=fake, sleep=lambda seconds: fake.calls.append(("sleep", seconds))
-        )
-        buffer = fake.calls[0][3]
-        self.assertRegex(buffer, r"^tui-s-[0-9a-f]{32}$")
-        return buffer
-
-    def test_pastes_the_text_then_presses_enter(self):
+    def test_a_pane_id_kills_that_pane_only(self):
         fake = FakeTmux()
-        buffer = self.send(fake, "-x hi")
-        self.assertEqual(
-            fake.calls,
-            [
-                ["tmux", "load-buffer", "-b", buffer, "-"],
-                ["tmux", "paste-buffer", "-p", "-r", "-d", "-b", buffer, "-t", "=s:"],
-                ("sleep", 0.5),
-                ["tmux", "send-keys", "-t", "=s:", "Enter"],
-            ],
-        )
-        self.assertEqual(
-            fake.kwargs,
-            [{"capture_output": True, "text": True, "input": "-x hi"}, TMUX_KW, TMUX_KW],
-        )
-
-    def test_text_goes_through_stdin_verbatim(self):
-        long_lines = "\n".join(f"line {i:02d} " + "x" * 50 for i in range(28))
-        for text in ("ls;", ";", "a\\;", "a;b", long_lines, "one\ntwo;\n"):
-            with self.subTest(text=text[:20]):
-                fake = FakeTmux()
-                self.send(fake, text)
-                self.assertEqual(fake.kwargs[0]["input"], text)
-                self.assertNotIn(text, [a for call in fake.calls for a in call])
-
-    def test_a_buffer_per_call(self):
-        fake = FakeTmux()
-        first = self.send(fake, "a")
-        fake.calls = []
-        self.assertNotEqual(self.send(fake, "a"), first)
-
-    def test_failure(self):
-        for step, commands in (
-            ("load-buffer", ["load-buffer"]),
-            ("paste-buffer", ["load-buffer", "paste-buffer", "delete-buffer"]),
-        ):
-            with self.subTest(step=step):
-                fake, sleep = FakeTmux(fail={step}), unittest.mock.Mock()
-                with self.assertRaisesRegex(types.TuiError, r"^tmux: boom$"):
-                    transport.send("s", "hi", proc=fake, sleep=sleep)
-                self.assertEqual(fake.commands(), commands)
-                sleep.assert_not_called()
+        transport.kill("%12", proc=fake)
+        self.assertEqual(fake.calls, [["tmux", "kill-pane", "-t", "%12"]])
+        self.assertEqual(fake.kwargs, [TMUX_KW])
+        with self.assertRaisesRegex(types.TuiError, r"^tmux: can't find pane: %12$"):
+            transport.kill(
+                "%12", proc=FakeTmux(results={"kill-pane": (1, "", "can't find pane: %12\n")})
+            )
 
 
 class PasteTest(Case):
@@ -283,6 +237,21 @@ class PasteTest(Case):
         with self.assertRaisesRegex(types.TuiError, r"^tmux: boom$"):
             transport.paste("s", "hi", proc=fake)
         self.assertEqual(fake.commands(), ["load-buffer"])
+
+    def test_text_goes_through_stdin_verbatim(self):
+        long_lines = "\n".join(f"line {i:02d} " + "x" * 50 for i in range(28))
+        for text in ("ls;", ";", "a\\;", "a;b", long_lines, "one\ntwo;\n"):
+            with self.subTest(text=text[:20]):
+                fake = FakeTmux()
+                transport.paste("s", text, proc=fake)
+                self.assertEqual(fake.kwargs[0]["input"], text)
+                self.assertNotIn(text, [a for call in fake.calls for a in call])
+
+    def test_a_buffer_per_call(self):
+        fake = FakeTmux()
+        transport.paste("s", "a", proc=fake)
+        transport.paste("s", "a", proc=fake)
+        self.assertNotEqual(fake.calls[0][3], fake.calls[2][3])
 
 
 class KeysTest(Case):
@@ -386,33 +355,6 @@ class OptionTest(Case):
                 self.assertEqual(fake.calls, [])
 
 
-class PaneIdTest(Case):
-    def test_its_pane(self):
-        fake = FakeTmux(pane="%5")
-        self.assertEqual(transport.pane("s", proc=fake), "%5")
-        self.assertEqual(fake.calls, [["tmux", "display-message", "-p", "-t", "=s:", "#{pane_id}"]])
-        self.assertEqual(fake.kwargs, [TMUX_KW])
-
-    def test_none_when_absent(self):
-        # tmux (3.7) exits 0 printing nothing for a missing session
-        for result in (*((1, "", err + "\n") for err in ABSENT), (0, "\n"), (0, "")):
-            with self.subTest(result=result):
-                self.assertIsNone(
-                    transport.pane("s", proc=FakeTmux(results={"display-message": result}))
-                )
-
-    def test_a_failure_or_junk_raises(self):
-        for result, error in (
-            ((1, "", "boom\n"), "^tmux: boom$"),
-            ((1, "", FAILED[0] + "\n"), "^tmux: "),
-            ((0, "%5;\n"), "^bad tmux pane '%5;'$"),
-            ((0, "5\n"), "^bad tmux pane '5'$"),
-            ((0, "%5\n%6\n"), "^bad tmux pane"),
-        ):
-            with self.subTest(result=result), self.assertRaisesRegex(types.TuiError, error):
-                transport.pane("s", proc=FakeTmux(results={"display-message": result}))
-
-
 class PaneTargetTest(Case):
     """status, kill, paste, keys, option and read take a pane id (%N) as their target."""
 
@@ -435,7 +377,7 @@ class PaneTargetTest(Case):
             fake.calls,
             [
                 ["tmux", "display-message", "-p", "-t", "%12", FORMAT],
-                ["tmux", "kill-session", "-t", "%12"],
+                ["tmux", "kill-pane", "-t", "%12"],
                 ["tmux", "load-buffer", "-b", buffer, "-"],
                 ["tmux", "paste-buffer", "-p", "-r", "-d", "-b", buffer, "-t", "%12"],
                 ["tmux", "send-keys", "-t", "%12", "Enter"],
@@ -450,8 +392,6 @@ class PaneTargetTest(Case):
         self.assertIsNone(
             transport.option("%12", "@sid", proc=FakeTmux(results={"show-options": gone}))
         )
-        with self.assertRaisesRegex(types.TuiError, r"^tmux: can't find pane: %12$"):
-            transport.kill("%12", proc=FakeTmux(results={"kill-session": gone}))
 
     def test_a_bad_target_is_refused_before_tmux(self):
         for target in ("%", "%x", "%1;", "%1 ", "%1:", "%1.0", "=%1", "%-1", "a b"):

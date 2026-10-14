@@ -50,11 +50,14 @@ class Base(Case):
         self.completed(self.control.path)
         self.controlled = True
         self.kind = "detach"
+        self.recorded = PROCESS
         self.tmux.option.side_effect = lambda _pane, key: (
             self.control.path
             if key == "@control" and self.controlled
             else self.kind
             if key == "@kind"
+            else self.recorded
+            if key == "@process"
             else self.tmux.option.return_value
         )
         self.tmux.detach.side_effect = self.detached
@@ -92,7 +95,7 @@ class Base(Case):
 
     def terminal_started(self, *_args, **kw):
         self.kind = "terminal"
-        self.detached(control=kw["tags"]["@control"])
+        return self.detached(control=kw["tags"]["@control"])
 
     def active(self, *responses):
         self.controlled = True
