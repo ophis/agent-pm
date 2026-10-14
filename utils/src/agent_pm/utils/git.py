@@ -4,6 +4,7 @@ worktree's clone. Repository specs, origin URLs and checkout paths identify and 
 
 import os
 import re
+import stat
 import time
 from dataclasses import dataclass
 
@@ -32,15 +33,20 @@ def git(run: Runner, wt: str, *args: str, timeout: int = SHORT, pre: tuple[str, 
 
 def common_dir(wt: str) -> str | None:
     # never runs git: reads the files as git does (whole file, trailing CR/LF dropped)
-    def read(path):
-        if not os.path.isfile(path):  # a FIFO would block open()
-            return None
-        with open(path, "rb") as f:
-            return f.read(4096).decode().rstrip("\r\n")
+    def read(path, *, follow=True):
+        flags = os.O_RDONLY | os.O_NONBLOCK | (0 if follow else os.O_NOFOLLOW)
+        fd = os.open(path, flags)
+        try:
+            if not stat.S_ISREG(os.fstat(fd).st_mode):
+                return None
+            with os.fdopen(fd, "rb", closefd=False) as f:
+                return f.read(4096).decode().rstrip("\r\n")
+        finally:
+            os.close(fd)
 
     try:
         dotgit = os.path.join(wt, ".git")
-        text = None if os.path.islink(dotgit) else read(dotgit)
+        text = read(dotgit, follow=False)
         if not text or not text.startswith("gitdir: "):
             return None
         gitdir = os.path.realpath(os.path.join(wt, text[len("gitdir: ") :]))
