@@ -24,7 +24,7 @@ class Commands(Case):
             cli.main(["--help"])
         self.assertEqual(raised.exception.code, 0)
         self.assertIn(
-            "{router,promote,prune,run,status,show,close,attach-command,resume,writeback}",
+            "{router,promote,prune,status,show,close,attach-command,resume,writeback}",
             output.getvalue(),
         )
 

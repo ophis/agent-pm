@@ -602,7 +602,6 @@ class OuterBase(TickBase):
             runs.note(self.runs, "start", issue=ident, sid=sid, role=role, client=client)
         a = Spec(
             uuid=UUID,
-            input="",
             issue=ident,
             project=PROJECT,
             assignee=assignee,

@@ -15,7 +15,6 @@ COMMANDS = [
     "router",
     "promote",
     "prune",
-    "run",
     "status",
     "show",
     "close",

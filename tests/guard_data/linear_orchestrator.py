@@ -19,10 +19,6 @@ ORCH_FILES = f"{ORCH_PROJECT}/{ORCH_SRC}"
 
 ORCH_SESSION_CONTRACT = "linear_orchestrator reaches session only through delegate"
 
-ORCH_SESSION_IMPORTS = {
-    f"{ORCH_PKG}.engine.run": {"SIGNALS"},  # until TASK-374
-}
-
 
 NOQA_ALLOWED = {
     (
@@ -51,11 +47,6 @@ NOQA_ALLOWED = {
         "start_run",
     ): "A recorded launch may fail.",
     (
-        f"{ORCH_PROJECT}/{ORCH_SRC}engine/run.py",
-        "BLE001",
-        "inner",
-    ): "Finish reporting a failed run.",
-    (
         f"{ORCH_PROJECT}/{ORCH_SRC}engine/writeback.py",
         "BLE001",
         "progress",
@@ -65,11 +56,6 @@ NOQA_ALLOWED = {
         "BLE001",
         "finish",
     ): "Report the session after failed steps.",
-    (
-        f"{ORCH_PROJECT}/{ORCH_SRC}engine/writeback.py",
-        "BLE001",
-        "limit",
-    ): "Report the session after a failed limit.",
 }
 
 
@@ -85,7 +71,7 @@ CONFIG_PY = f"{ORCH_SRC}engine/config.py"
 
 ENTRIES = (
     f"{ORCH_SRC}cli.py",
-    *(f"{ORCH_SRC}engine/{name}.py" for name in ("run", "promote", "prune", "router")),
+    *(f"{ORCH_SRC}engine/{name}.py" for name in ("promote", "prune", "router")),
 )
 
 

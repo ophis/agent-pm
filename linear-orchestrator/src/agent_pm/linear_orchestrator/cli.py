@@ -7,7 +7,7 @@ from functools import partial
 
 from agent_pm.delegate import ConfigError as DelegateConfigError
 from agent_pm.delegate import DelegateEvent, DriverError
-from agent_pm.linear_orchestrator.engine import client, promote, prune, router, run, runs, writeback
+from agent_pm.linear_orchestrator.engine import client, promote, prune, router, runs, writeback
 from agent_pm.linear_orchestrator.engine import log as event_log
 from agent_pm.linear_orchestrator.engine.config import load
 from agent_pm.linear_orchestrator.engine.gate import Gate
@@ -23,7 +23,6 @@ def main(argv=None):
         "router": (router.main, "claim or resume an issue's agent run: a tick, --issue or --brake"),
         "promote": (promote.main, "promote Handoff issues to the next role, then prune"),
         "prune": (prune.main, "clean up finished issues' runs and checkouts, then archive"),
-        "run": (run.main, "legacy entry, removed by TASK-374"),
     }
     if arguments and arguments[0] in entries:
         return entries[arguments[0]][0](arguments[1:])

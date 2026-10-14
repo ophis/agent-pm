@@ -2228,7 +2228,6 @@ class ExplicitIssueRuns(TickBase):
             launch,
             Spec(
                 uuid="TASK-4",
-                input="",
                 issue="TASK-4",
                 project=IDS[PD],
                 assignee=ROLE["engineer"],
@@ -2303,7 +2302,6 @@ class ExplicitIssueRuns(TickBase):
             launch,
             Spec(
                 uuid="TASK-1",
-                input="",
                 issue="TASK-1",
                 project=IDS[DR],
                 assignee=ROLE["researcher"],
@@ -3389,7 +3387,6 @@ class ScheduledRuns(TickScenario):
             launch,
             Spec(
                 uuid="TASK-1",
-                input="",
                 issue="TASK-1",
                 project=IDS[DR],
                 assignee=ROLE["researcher"],

@@ -44,7 +44,6 @@ from agent_pm.utils import (
     ConfinedReason,
     one_line,
     read_confined,
-    repo_slug,
     save,
     timestamp,
 )
@@ -118,7 +117,7 @@ def for_run(cfg, role, gql, spec: Spec):
         sid=spec.sid,
         resume=spec.mode == "resume",
         project=spec.project,
-        target=repo_slug(spec.target) if spec.target else None,
+        target=None,
     )
 
 
@@ -252,7 +251,7 @@ def _post(ctx, step, body):
 
 
 def progress(ctx, event: Progress) -> bool:
-    # raises only Stopped: an on_event exception stops the Delegate's session
+    # raises only Stopped
     try:
         if not isinstance(event, Progress):
             return True
@@ -301,8 +300,8 @@ def _url(ctx, url):
 
 
 def finish(ctx, outcome: Outcome) -> bool:
-    # never raises: Stopped stops the steps and returns False, so run.py still posts the session
-    # comment's end
+    # never raises: Stopped stops the steps and returns False, so the session comment's end is
+    # still written
     try:
         return _finish(ctx, outcome)
     except (Exception, Stopped) as e:  # noqa: BLE001  # Report the session after failed steps.
@@ -537,28 +536,6 @@ def deliver(cfg, issue: str, workdir: str, event: DelegateEvent, *, gql, now=tim
     ended = session(end=(event.returncode, outcome, event.limit is not None))
     log("writeback", "end", ctx.ident, sid=ctx.sid, exit=event.returncode)
     return ended and ok
-
-
-def limit(ctx, resets_at: float | None) -> bool:
-    try:
-        return _limit(ctx, resets_at)
-    except (Exception, Stopped) as e:  # noqa: BLE001  # Report the session after a failed limit.
-        _error(ctx, "limit", e)
-        return False
-
-
-def _limit(ctx, resets_at):
-    at = local_time(resets_at)
-    body = say(LIMIT, f"resets at {at}." if at else "reset time unknown.")
-    if _post(ctx, "limit", body + subscribe(ctx.gql, ctx.issue_id, ctx.humans)):
-        return False
-    # not ledgered: a resumed sid that hits the limit again moves again
-    try:
-        _guarded_move(ctx, ctx.issue_id, ctx.ident, "in_review", "in_progress")
-    except (LinearError, Unavailable, OSError, subprocess.SubprocessError) as e:
-        _error(ctx, "move:in_review", e)
-        return False
-    return True
 
 
 def bounce(ctx, issue: Issue, invalid: Invalid) -> None:

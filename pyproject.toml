@@ -87,9 +87,6 @@ type = "forbidden"
 source_modules = ["agent_pm.linear_orchestrator"]
 forbidden_modules = ["agent_pm.session"]
 allow_indirect_imports = true
-ignore_imports = [
-    "agent_pm.linear_orchestrator.engine.run -> agent_pm.session", # until TASK-374
-]
 
 [[tool.importlinter.contracts]]
 name = "Linear transport, operations and reporting have one direction"
@@ -99,7 +96,6 @@ units = ["agent_pm.linear_orchestrator", "agent_pm.linear_orchestrator.cli", "ag
 dependencies = [
     "agent_pm.linear_orchestrator -> agent_pm.linear_orchestrator.engine",
     "agent_pm.linear_orchestrator.engine -> agent_pm.linear_orchestrator.engine.client agent_pm.linear_orchestrator.engine.log agent_pm.linear_orchestrator.engine.ops agent_pm.linear_orchestrator.engine.issues agent_pm.linear_orchestrator.engine.run_comments agent_pm.linear_orchestrator.engine.types agent_pm.delegate agent_pm.utils",
-    "agent_pm.linear_orchestrator.engine.run -> agent_pm.session", # until TASK-374
     "agent_pm.linear_orchestrator.engine.client -> agent_pm.linear_orchestrator.engine.types agent_pm.utils",
     "agent_pm.linear_orchestrator.engine.log -> agent_pm.linear_orchestrator.engine.types agent_pm.utils",
     "agent_pm.linear_orchestrator.engine.ops -> agent_pm.linear_orchestrator.engine.types agent_pm.utils",

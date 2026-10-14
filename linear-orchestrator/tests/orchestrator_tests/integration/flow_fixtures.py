@@ -1,7 +1,7 @@
 """The orchestrator's integration flows: the test's HOME with both local files ([task_labels]
 included), FakeLinear over HTTP through test-only transport with the harness, role and human
-accounts and the task label group, fake_claude as `claude`, run, promote and router as `python3 -P
--m` subprocesses, and readers of Linear, the logs and a run's files. TmuxFlow adds a private tmux
+accounts and the task label group, fake_claude as `claude`, a launch (router.outer), promote and
+router as `python3 -P` subprocesses, and readers of Linear, the logs and a run's files. TmuxFlow adds a private tmux
 server for the runs' harness and agent sessions, fake_gh as `gh` with REPO a bare repo, and
 `agent-pm-linear` as entry.py under the fake transport, the harness's write-back callback.
 """
@@ -29,7 +29,7 @@ from utils.tests.case import local_section
 
 ENTRY = os.path.join(os.path.dirname(__file__), "entry.py")
 
-RUN, PROMOTE, ROUTER = ((ENTRY, n) for n in ("run", "promote", "router"))
+LAUNCH, PROMOTE, ROUTER = ((ENTRY, n) for n in ("launch", "promote", "router"))
 
 LIGHT_RESEARCH = "00000000-0000-4000-8000-000000000021"
 
@@ -77,18 +77,15 @@ GUARD = (
 )
 
 
-def steps(*names, mode="new", end=0, found=(), tuis=()):
-    """orchestrator.jsonl's lines of run.py's run ID, SID: launch, its tui lines, write-back steps,
-    end.
-    """
+def steps(*names, end=0, found=(), more=()):
+    """orchestrator.jsonl's lines of the run ID, SID's write-back: its steps, `more`, its end."""
     return [
-        f"run launch {ID} mode={mode} sid={SID}",
-        *tuis,
         *(
             f"writeback step {ID} sid={SID} step={s}" + (" found=true" if s in found else "")
             for s in names
         ),
-        f"run end {ID} sid={SID} exit={end}",
+        *more,
+        f"writeback end {ID} sid={SID} exit={end}",
     ]
 
 

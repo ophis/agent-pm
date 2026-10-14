@@ -1,10 +1,9 @@
 """The Linear orchestrator's data types used by two or more of its modules."""
 
-import argparse
 import os
 import re
 from collections.abc import Mapping
-from dataclasses import MISSING, dataclass, field, fields
+from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Literal
 
@@ -202,21 +201,16 @@ class Claim:
 
 @dataclass(frozen=True, kw_only=True)
 class Spec:
+    """A run the router claimed or resumes: its issue's identity, its session and client."""
+
     uuid: str
-    target: str | None = None
     issue: str
     project: str
     assignee: str
     sid: str
     task: str | None = None
-    mode: str = field(metadata={"choices": ("new", "resume")})
+    mode: str
     client: str
-    input: str
-    tui: bool = field(default=False, metadata={"action": "store_true"})
-    split: str | None = None
-    split_from: str | None = None
-    opener: str | None = None
-    events: str | None = None
 
     @classmethod
     def from_issue(cls, issue, *, mode, sid, task, client):
@@ -229,19 +223,7 @@ class Spec:
             task=task,
             mode=mode,
             client=client,
-            input="",
         )
-
-    @classmethod
-    def from_argv(cls, argv):
-        parser = argparse.ArgumentParser(prog="run.py")
-        for item in fields(cls):
-            parser.add_argument(
-                "--" + item.name.replace("_", "-"),
-                required=item.default is MISSING,
-                **item.metadata,
-            )
-        return cls(**vars(parser.parse_args(argv)))
 
     def identity_error(self) -> str | None:
         if not re.fullmatch(ISSUE_ID, self.issue) or not UUID_RE.fullmatch(self.sid):
