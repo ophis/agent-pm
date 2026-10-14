@@ -223,6 +223,48 @@ class EventObjectExports(Sample):
                     self.exports(root), [self.EVENT + "__init__.py: no literal __all__"]
                 )
 
+    def test_runtime_export_writes_are_rejected(self):
+        for mutation in (
+            "globals()['__all__'] = ['f']",
+            "globals()['__all__'] += ['f']",
+            "globals()['__all__'].append('f')",
+            "del globals()['__all__']",
+            "setattr(sys.modules[__name__], '__all__', ['f'])",
+            "builtins.setattr(sys.modules[__name__], '__all__', ['f'])",
+            "write(sys.modules[__name__], '__all__', ['f'])",
+            "delattr(sys.modules[__name__], '__all__')",
+            "sys.modules[__name__].__all__ = ['f']",
+            "sys.modules[__name__].__all__ += ['f']",
+            "sys.modules[__name__].__all__.append('f')",
+            "del sys.modules[__name__].__all__",
+        ):
+            for source in (mutation, "def mutate():\n    " + mutation):
+                with self.subTest(source=source):
+                    root = self.tree(
+                        {
+                            self.EVENT + "__init__.py": (
+                                "import sys, builtins\nfrom builtins import setattr as write\n"
+                                "def f(): pass\nCONSTANT = 1\n__all__ = ['CONSTANT']\n" + source
+                            )
+                        }
+                    )
+                    self.assertEqual(
+                        self.exports(root), [self.EVENT + "__init__.py: no literal __all__"]
+                    )
+
+    def test_runtime_export_reads_are_allowed(self):
+        root = self.tree(
+            {
+                self.EVENT + "__init__.py": (
+                    "import sys\nCONSTANT = 1\n__all__ = ['CONSTANT']\n"
+                    "copy = globals()['__all__']\n"
+                    "same = sys.modules[__name__].__all__\n"
+                    "name = getattr(sys.modules[__name__], '__all__')\n"
+                )
+            }
+        )
+        self.assertEqual(self.exports(root), [])
+
     def test_package_must_define_all(self):
         root = self.tree({self.EVENT + "__init__.py": "class Event: pass\n"})
         self.assertEqual(

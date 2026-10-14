@@ -713,6 +713,7 @@ def object_exports(repo: str) -> list[str]:
 
 
 def _all_node(tree):
+    bound = _bindings(tree)
     assignments = [
         node
         for node in tree.body
@@ -725,25 +726,38 @@ def _all_node(tree):
     writes = [
         node
         for node in ast.walk(tree)
-        if isinstance(node, ast.Name | ast.Subscript)
+        if isinstance(node, ast.Name | ast.Attribute | ast.Subscript)
         and isinstance(node.ctx, ast.Store | ast.Del)
-        and (
-            isinstance(node, ast.Name)
-            and node.id == "__all__"
-            or isinstance(node, ast.Subscript)
-            and any(
-                isinstance(base, ast.Name) and base.id == "__all__" for base in ast.walk(node.value)
-            )
-        )
+        and _all_reference(node)
     ]
     calls = [
         node
         for node in ast.walk(tree)
         if isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Attribute)
-        and _name(node.func).startswith("__all__.")
+        and (
+            isinstance(node.func, ast.Attribute)
+            and _all_reference(node.func.value)
+            or _dotted(node.func, bound)
+            in {"setattr", "delattr", "builtins.setattr", "builtins.delattr"}
+            and len(node.args) > 1
+            and isinstance(node.args[1], ast.Constant)
+            and node.args[1].value == "__all__"
+        )
     ]
     return assignments[0].value if len(assignments) == len(writes) == 1 and not calls else None
+
+
+def _all_reference(node):
+    return any(
+        isinstance(child, ast.Name)
+        and child.id == "__all__"
+        or isinstance(child, ast.Attribute)
+        and child.attr == "__all__"
+        or isinstance(child, ast.Subscript)
+        and isinstance(child.slice, ast.Constant)
+        and child.slice.value == "__all__"
+        for child in ast.walk(node)
+    )
 
 
 def _is_literal(node):
