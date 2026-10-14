@@ -1404,10 +1404,7 @@ class LocalOverlay(ConfigFile, Case):
 
     def test_old_task_keys_in_the_local_overlay_stop_runnable(self):
         self.local('[core.roles.researcher.tasks.deep-research]\ngate = "x"\n')
-        self.fails(
-            "linear-orchestrator/config.toml: ~/.agent-pm/config.local.toml: unknown key 'gate' in [linear_orchestrator.core.roles.researcher.tasks.deep-research]",
-            PIPELINE,
-        )
+        self.fails(old_key("tasks"), PIPELINE)
 
     def test_a_bad_local_value_is_rejected(self):
         self.local(f'team = "{TEAM}"\nstates = {{ done = "Done" }}\n')

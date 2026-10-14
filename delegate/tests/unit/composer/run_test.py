@@ -521,14 +521,8 @@ class OldKeys(Fake):
                 with self.subTest(local=local, role=role):
                     self.local(local)
                     msg = self.refused(role)
-                    key, section = (
-                        ("default_task", "delegate.roles.writer")
-                        if "default_task" in local
-                        else ("tier", "delegate.roles.writer.tasks.short-note")
-                    )
-                    self.assertEqual(
-                        msg, f"config: {self.local_file}: unknown key {key!r} in [{section}]"
-                    )
+                    self.assertIn("[roles.writer]", msg)
+                    self.assertNotIn("unknown key", msg)
 
     def test_the_check_names_its_layers_table(self):
         for table in ({"default_task": "x"}, {"tasks": {}}, {"tier": 1, "tasks": {"t": {}}}):
