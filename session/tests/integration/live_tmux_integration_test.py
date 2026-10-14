@@ -55,6 +55,7 @@ class Env(Live):
                 "HOME": self.home,
                 "PYTHONUTF8": "1",
                 "TMUX_TMPDIR": root,
+                "AGENT_PM_CONTROL_ROOT": os.environ["AGENT_PM_CONTROL_ROOT"],
                 "EXTRA": "x",
             },
         )

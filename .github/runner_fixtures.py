@@ -24,7 +24,13 @@ class T(unittest.TestCase):
             seconds = "60" if {mode!r} == "leak" else "1"
             marker = os.path.join(os.environ["AGENT_PM_TEST_SANDBOX"], "marker")
             sleeper = [sys.executable, "-c", "import sys, time; time.sleep(float(sys.argv[1]))"]
-            child = subprocess.Popen([*sleeper, seconds, marker], start_new_session=True)
+            child = subprocess.Popen(
+                [*sleeper, seconds, marker],
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True,
+            )
             print("started", child.pid, flush=True)
         if {mode!r} == "tmux":
             subprocess.run(["tmux", "-f", os.devnull, "new-session", "-d", "sleep 60"], check=True)

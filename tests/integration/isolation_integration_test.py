@@ -14,7 +14,7 @@ from session.tests import live_tmux
 from tests.case import REPO, Case
 from utils.tests.sandbox import clean_env
 
-SCRIPT = """import json, os, subprocess, sys
+SCRIPT = """import json, os, subprocess, sys, tempfile
 from pathlib import Path
 from unittest import mock
 import isolation
@@ -108,6 +108,14 @@ except RuntimeError as error:
 else:
     raise AssertionError("exec inherited unsafe Git environment")
 del os.environ["GIT_DIR"]
+for owned in (sandbox, workspace):
+    tempfile.mkdtemp(prefix="apm-group-", dir=owned)
+try:
+    tempfile.mkdtemp(prefix="apm-group-", dir=marker.parent)
+except RuntimeError as error:
+    assert "process controller outside test sandbox: " + str(marker.parent) in str(error)
+else:
+    raise AssertionError("process controller directory escaped the sandbox")
 print(json.dumps(sorted(blocked)))
 """
 
