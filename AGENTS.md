@@ -25,6 +25,8 @@ Repository design rules live in `tests/guards.py`: namespace and subsystem place
 
 Python suppressions require a matching entry in `tests/guards.py`'s `NOQA_ALLOWED`; Pylint disables are paired with block-scoped enables.
 
+Vulture scans only the five `src` trees, so code only tests use is dead: delete it. A name it cannot see used goes in `.github/vulture_whitelist.py` (rules: its docstring).
+
 ## Domain docs
 
 Single-context: root `CONTEXT.md`. `docs/` (ADRs, agent notes) is gitignored: local only.
