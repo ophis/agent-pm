@@ -83,7 +83,6 @@ SUBPACKAGES = {
 ENTRY_MODULES = {
     SESSION: {"extension.py"},
     "delegate": {"config.py"},
-    ORCH_PROJECT: {"config.toml"},
 }
 
 
@@ -202,13 +201,9 @@ DELEGATE_SESSION_FORWARDING_ALLOWED = {
 
 ORCH_SESSION_CONTRACT = "linear_orchestrator reaches session only through delegate"
 
-
 ORCH_SESSION_IMPORTS = {
-    f"{ORCH_PKG}.engine.config": {"Driver"},
-    f"{ORCH_PKG}.engine.prune": {"ConfigError", "DriverError"},
-    f"{ORCH_PKG}.engine.router": {"ConfigError", "DriverError"},
-    f"{ORCH_PKG}.engine.run": {"ConfigError", "DriverError", "SIGNALS"},
-    f"{ORCH_PKG}.engine.run_comments": {"ConfigError", "DriverError"},
+    f"{ORCH_PKG}.engine.router": {"ConfigError", "DriverError"},  # until TASK-374
+    f"{ORCH_PKG}.engine.run": {"ConfigError", "DriverError", "SIGNALS"},  # until TASK-374
 }
 
 
@@ -271,7 +266,7 @@ NOQA_ALLOWED = {
     (
         f"{SESSION_SRC}modes/tui_hook.py",
         "BLE001",
-        "__main__",
+        "run",
     ): "the hook must never fail the client runtime",
 }
 
@@ -329,8 +324,6 @@ LEGACY_HOST_NAMES = {
     (f"{SESSION_SRC}engine/forwarding.py", "_opener"): (2, "TASK-375"),
     (f"{SESSION_SRC}engine/forwarding.py", "opener"): (4, "TASK-375"),
     (f"{SESSION_SRC}engine/forwarding.py", "split_from"): (4, "TASK-375"),
-    (f"{SESSION_SRC}engine/types.py", "pane"): (1, "TASK-369"),
-    (f"{SESSION_SRC}engine/types.py", "opener"): (1, "TASK-369"),
 }
 
 
@@ -362,7 +355,10 @@ TOOL_STRINGS = ("tmux", "adapters")
 TOML_STRING = re.compile(r""""((?:\\.|[^"\\])*)"|'([^']*)'""")
 
 
-ENTRIES = tuple(f"{ORCH_SRC}engine/{name}.py" for name in ("run", "promote", "router"))
+ENTRIES = (
+    f"{ORCH_SRC}cli.py",
+    *(f"{ORCH_SRC}engine/{name}.py" for name in ("run", "promote", "router")),
+)
 
 
 ONCE = (f"{ORCH_PKG}.engine.config.load", f"{ORCH_PKG}.engine.log.use_logs")
@@ -821,7 +817,7 @@ def manager_exports(repo: str) -> list[str]:
     if not isinstance(names, list | tuple) or not all(isinstance(name, str) for name in names):
         return [f"{base}:{exports.lineno}: __all__ must be a literal sequence of names"]
     found = []
-    for name, (_, kind) in _export_kinds(repo, "agent_pm.manager", names, "manager").items():
+    for name, (_, kind) in _export_kinds(repo, "agent_pm.manager", names).items():
         if kind == "function":
             found.append(f"{base}:{exports.lineno}: exports function {name}")
         elif kind not in ("class", "constant") and (not name.isupper() or kind == "module"):
@@ -848,7 +844,7 @@ def object_exports(repo: str) -> list[str]:
         if names is None or not all(isinstance(name, str) for name in names):
             found.add(f"{rel}: no literal __all__")
             continue
-        for name, (target, kind) in _export_kinds(repo, package, names, project).items():
+        for name, (target, kind) in _export_kinds(repo, package, names).items():
             if package == "agent_pm.delegate" and target.endswith(".HarnessDelegate"):
                 found.add(f"{rel}: __all__ exports concrete Delegate {name} (FR-47)")
                 continue
@@ -924,7 +920,7 @@ def _is_literal(node):
     return True
 
 
-def _export_kinds(repo, package, names, project):
+def _export_kinds(repo, package, names):
     """Each name `package` exports: what it resolves to through re-exports and aliases, and that
     target's kind (function, class, constant, alias, value, module or None: unresolved).
     """
@@ -933,7 +929,7 @@ def _export_kinds(repo, package, names, project):
         definitions[f"builtins.{name}"] = (
             "class" if isinstance(value, type) else "function" if callable(value) else "constant"
         )
-    for owner in (project, "utils"):
+    for owner in PROJECTS:
         for rel, text in _files(os.path.join(repo, owner, "src"), ".py"):
             module = rel.removesuffix(".py").replace("/", ".").removesuffix(".__init__")
             _definitions(
@@ -1105,9 +1101,7 @@ def _typing(node, *, operand=False):
 
 
 def orchestrator_session_imports(repo: str) -> list[str]:
-    """Orchestration imports from session only ORCH_SESSION_IMPORTS's names, its contract's
-    ignore_imports in pyproject.toml.
-    """
+    """Orchestration reaches session only through Delegate."""
     found = []
     config = os.path.join(repo, "pyproject.toml")
     if os.path.isfile(config):
@@ -1136,7 +1130,7 @@ def orchestrator_session_imports(repo: str) -> list[str]:
         }
         found += [
             f"{ORCH_PROJECT}/{ORCH_SRC}{rel}: {module} imports {name} from {PKG}.{SESSION}; "
-            "go through agent_pm.delegate (TASK-394 removes this list)"
+            "go through agent_pm.delegate"
             for name in sorted(names - ORCH_SESSION_IMPORTS.get(module, set()))
         ]
     return found
@@ -1831,7 +1825,7 @@ def _type_methods(project, rel, node, kind, bound):
             project == ORCH_PROJECT
             and rel == ORCH_SRC.removeprefix("src/") + "engine/types.py"
             and node.name == "Spec"
-            and method.name in {"to_argv", "from_argv"}
+            and method.name == "to_argv"
             and kind == "dataclass"
         ):
             continue

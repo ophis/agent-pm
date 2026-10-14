@@ -12,7 +12,7 @@ import sys
 import tempfile
 import time
 import uuid
-from collections.abc import Callable, Iterable, Iterator, Mapping
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, replace
 from typing import Self
 
@@ -29,6 +29,7 @@ from agent_pm.session.engine.types import (
     DriverError,
     HookError,
     HookKind,
+    KeyPress,
     Launch,
     Liveness,
     Mode,
@@ -600,6 +601,10 @@ class TuiMode(RunningMode):
         self._running()
         for action in self.run.submit(text):
             self._terminal.send(action)
+
+    def press(self, keys: Sequence[KeyPress]) -> None:
+        self._running()
+        self._terminal.press(keys)
 
     def screen(self, lines: int | None = None) -> str:
         self._running()

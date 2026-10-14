@@ -27,7 +27,9 @@ from agent_pm.session.engine.types import (
     ClientBound,
     HookError,
     HookKind,
+    KeyPress,
     Launch,
+    NamedKey,
     Prepared,
     ProcessOptions,
     Tier,
@@ -273,7 +275,7 @@ class CarriedEnums(Case):
     def test_a_row_carries_an_activity_state_given_it_or_its_plain_value(self):
         for state in (ActivityState.DEAD, "dead"):
             with self.subTest(state=state):
-                row = SessionRow("w1", None, None, state, None, None, None, None, own=False)
+                row = SessionRow("w1", None, None, state, None, None, None, own=False)
                 self.assertIs(row.state, ActivityState.DEAD)
 
     def test_an_unknown_value_names_the_allowed_ones(self):
@@ -287,7 +289,7 @@ class CarriedEnums(Case):
                 "resumable must be one of yes, no, unknown, got None",
             ),
             (
-                lambda: SessionRow("w1", None, None, "idle", None, None, None, None, own=False),
+                lambda: SessionRow("w1", None, None, "idle", None, None, None, own=False),
                 "state must be one of working, done, blocked, dead, got 'idle'",
             ),
         ):
@@ -395,6 +397,47 @@ class Binding(Case):
         self.assertNotIn(ClientBound, typing.get_args(engine_types.SessionEvent))
         self.assertFalse(hasattr(engine_types, "SessionBound"))
         self.assertNotIn("ClientBound", session.__all__)
+
+
+class KeyNotation(Case):
+    def test_a_character_or_a_named_key_after_any_modifiers_parses(self):
+        cases = {
+            "y": KeyPress("y"),
+            "3": KeyPress("3"),
+            "/": KeyPress("/"),
+            "-": KeyPress("-"),
+            ";": KeyPress(";"),
+            " ": KeyPress(" "),
+            "é": KeyPress("é"),
+            "Escape": KeyPress("Escape"),
+            "BTab": KeyPress("BTab"),
+            "PageDown": KeyPress("PageDown"),
+            "F12": KeyPress("F12"),
+            "C-c": KeyPress("c", ctrl=True),
+            "S-Up": KeyPress("Up", shift=True),
+            "M-C-x": KeyPress("x", ctrl=True, meta=True),
+            "C--": KeyPress("-", ctrl=True),
+            "C-M-S-Tab": KeyPress("Tab", ctrl=True, meta=True, shift=True),
+        }
+        for text, press in cases.items():
+            with self.subTest(text=text):
+                self.assertEqual(KeyPress.parse(text), press)
+        self.assertEqual(str(KeyPress.parse("M-C-x")), "C-M-x")
+
+    def test_anything_else_is_a_config_error_naming_it(self):
+        for text in ("", "C-", "S-", "C-C-c", "Esc", "escape", "F13", "c-c", "ab", "\n", "C-\t"):
+            with self.subTest(text=text), self.assertRaises(ConfigError) as caught:
+                KeyPress.parse(text)
+            self.assertIn(repr(text)[:80], str(caught.exception))
+        for value in (None, 3, b"y"):
+            with self.subTest(value=value), self.assertRaises(ConfigError):
+                KeyPress.parse(value)
+
+    def test_every_named_key_is_its_own_notation(self):
+        for named in NamedKey:
+            with self.subTest(named=named):
+                self.assertEqual(KeyPress.parse(named.value), KeyPress(named.value))
+        self.assertIn("KeyPress", session.__all__)
 
 
 class HookCallbackTest(Case):

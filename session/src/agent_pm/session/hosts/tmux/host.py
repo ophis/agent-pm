@@ -27,8 +27,10 @@ from agent_pm.session.engine.types import (
     DriverError,
     HookCallback,
     Key,
+    KeyPress,
     Launch,
     Liveness,
+    NamedKey,
     Paste,
     SessionRow,
     TuiSettings,
@@ -62,6 +64,7 @@ KILL_WAIT = 5
 LOG = logging.getLogger("session")
 
 Parts = tuple[str | None, str | None, str | None]
+TMUX_KEYS = {NamedKey.PAGE_UP: "PPage", NamedKey.PAGE_DOWN: "NPage", " ": "Space", ";": "\\;"}
 
 
 HANDOVER_TIMEOUT = 10
@@ -495,6 +498,12 @@ class Tmux:
     def keys(self, target: str, *names: str) -> None:
         transport.keys(target, *names, proc=self.proc)
 
+    def press(self, target: str, *names: str) -> None:
+        transport.press(target, *names, proc=self.proc)
+
+    def set_option(self, target: str, name: str, value: str) -> None:
+        transport.set_option(target, name, value, proc=self.proc)
+
     def send(self, session: str, text: str) -> None:
         transport.send(session, text, proc=self.proc, sleep=self.sleep)
 
@@ -594,6 +603,20 @@ class TmuxProcess(HostProcess):
     @property
     def identity(self) -> str:
         return self._process
+
+    @property
+    def token(self) -> str | None:
+        return None if self._control is None else self._control.path
+
+    def publish(self, record: Record) -> None:
+        if not isinstance(record, Record):
+            raise ConfigError(f"record: want a Record, got {type(record).__name__}")
+        if not self._own():
+            raise DriverError(f"tmux session {self.name} is gone")
+        try:
+            self.tmux.set_option(self._pane, "@record", record.to_line())
+        except TuiError as error:
+            raise DriverError(f"tmux session {self.name}: {error}") from error
 
     def state(self) -> Liveness:
         try:
@@ -740,6 +763,54 @@ class TmuxProcess(HostProcess):
             raise DriverError(f"tmux session {self.name}: {e}") from None
 
 
+class TmuxGroup(HostProcess):
+    """A reclaimed process group whose tmux session may be gone: wait for it, kill it, close it."""
+
+    def __init__(self, control: ProcessControl) -> None:
+        self.name = os.path.basename(control.path)
+        self._control = control
+
+    @property
+    def token(self) -> str | None:
+        return self._control.path
+
+    def alive(self) -> bool:
+        try:
+            return self._control.live()
+        except OSError as error:
+            raise DriverError(f"process group {self.name}: {error}") from error
+
+    def wait_exit(self, timeout: float) -> bool:
+        deadline = time.monotonic() + timeout
+        while self.alive():
+            if time.monotonic() >= deadline:
+                return False
+            time.sleep(POLL)
+        return True
+
+    def kill(self) -> None:
+        try:
+            self._control.kill()
+        except OSError as error:
+            raise DriverError(f"process group {self.name}: {error}") from error
+        if not self.wait_exit(KILL_WAIT):
+            raise DriverError(f"process group {self.name}: did not exit")
+
+    def close(self) -> None:
+        try:
+            self._control.terminate()
+        except OSError as error:
+            raise DriverError(f"process group {self.name}: {error}") from error
+        if not self.wait_exit(KILL_WAIT):
+            self.kill()
+
+    def record(self) -> Record | None:
+        return None
+
+    def display(self) -> Display:
+        return None
+
+
 class TmuxTerminal(TmuxProcess, Terminal):
     _pasted = False
 
@@ -757,6 +828,30 @@ class TmuxTerminal(TmuxProcess, Terminal):
                 self._pasted = False
         except TuiError as error:
             raise DriverError(f"send to tui session {self.name}: {error}") from error
+
+    def press(self, keys) -> None:
+        names = [_tmux_key(key) for key in keys]
+        if not self.alive():
+            raise DriverError(f"tui session {self.name} is not running")
+        try:
+            if self._pasted:
+                time.sleep(self.tmux.PAUSE)
+            self.tmux.press(self._pane, *names)
+            self._pasted = False
+        except TuiError as error:
+            raise DriverError(f"send to tui session {self.name}: {error}") from error
+
+
+def _tmux_key(key) -> str:
+    """KeyPress → tmux's key name: modifiers as C-, M-, S-; PageUp, PageDown, space and ; renamed."""
+    if not isinstance(key, KeyPress):
+        raise ConfigError(f"key {key!r:.80}: want a KeyPress")
+    if len(key.key) == 1 and (
+        key.shift or key.ctrl and not (key.key.isascii() and key.key.isalpha())
+    ):
+        raise ConfigError(f"key {key}: tmux cannot send it")  # it would send the bare character
+    prefixes = ("C-" * key.ctrl, "M-" * key.meta, "S-" * key.shift)
+    return "".join(prefixes) + TMUX_KEYS.get(key.key, key.key)
 
 
 class TmuxHost(Host, Displayable):
@@ -1019,6 +1114,31 @@ class TmuxHost(Host, Displayable):
 
         return sorted(row["name"] for row in found if display is None or matches(row["display"]))
 
+    def descendants(self, display: Display = None) -> list[str]:
+        """list(display)'s sessions, then each session whose @opener is one of those, transitively."""
+        found = set(self.list(display))
+        rows = self.tmux.listing() if found else []
+        if rows is None:
+            raise DriverError("tmux sessions unknown: tmux failed")
+        while grown := {
+            row["name"] for row in rows if row["name"] not in found and row["opener"] in found
+        }:
+            found |= grown
+        return sorted(found)
+
+    def reclaim(self, token: str) -> TmuxGroup | None:
+        """A group-only handle on token's controller (a private /tmp/apm-group-* directory and
+        socket of this user's) while its group lives; else None; DriverError if it cannot tell.
+        """
+        if not isinstance(token, str):
+            return None
+        try:
+            control = ProcessControl.attach(token)
+        except (OSError, ValueError):
+            return None
+        group = TmuxGroup(control)
+        return group if group.alive() else None
+
     def rows(self, display: Display = None) -> list[SessionRow]:
         names = set(self.list(display))
         found = self.tmux.listing()
@@ -1040,8 +1160,7 @@ class TmuxHost(Host, Displayable):
                 else ActivityState(row["state"])
                 if row["state"] in (Word.DONE, Word.BLOCKED)
                 else ActivityState.WORKING,
-                pane=row["pane"],
-                opener=row["opener"],
+                display=row["display"],
                 shown=row["shown"],
                 last_lines=row["last_lines"],
                 own=row["name"] == own,

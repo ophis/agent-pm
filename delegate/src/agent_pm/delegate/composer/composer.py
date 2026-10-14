@@ -1,12 +1,10 @@
 """One team's catalog, access policy and prompt composition from an owned config snapshot."""
 
-import os
 from collections.abc import Mapping, Sequence
 from typing import overload
 
 from agent_pm.delegate.composer import prompt, run, teams
 from agent_pm.delegate.composer.types import (
-    DELIVERABLE,
     ConfigError,
     DelegateConfig,
     Intent,
@@ -80,21 +78,6 @@ class Composer:
 
     def render(self, config: RunConfig, params: RunParams) -> str:
         return prompt.render(config, params, team=self.team)
-
-    def compose(
-        self,
-        role: str,
-        task: str | None,
-        input: str | RunParams,
-        *,
-        overlays: Sequence[Mapping] = (),
-    ) -> str:
-        if isinstance(input, RunParams):
-            params = input
-        else:
-            workdir = os.getcwd()
-            params = RunParams(input=input, out=os.path.join(workdir, DELIVERABLE), workdir=workdir)
-        return self.render(self.resolve(role, task, overlays=overlays), params)
 
     def access(
         self,

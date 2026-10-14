@@ -81,7 +81,9 @@ class Parse(Case):
             ],
         )
         self.assertEqual({e.ts.utcoffset() for e in entries}, {timedelta(0)})
-        self.assertEqual(entries[1]._fields, ("ts", "kind", "issue", "sid", "role", "runtime"))
+        self.assertEqual(
+            entries[1]._fields, ("ts", "kind", "issue", "sid", "role", "runtime", "delegate_kind")
+        )
 
     def test_parse_log_skips_what_is_not_a_complete_start_or_resume_line(self):
         good = json.loads(row("start", "TASK-1", "a", minutes=60))
@@ -114,8 +116,26 @@ class Parse(Case):
         self.write([*bad, json.dumps(good), *bad, row("resume", "TASK-9", "z", "pm", minutes=30)])
         self.assertEqual(
             [e[1:] for e in runs.parse_log(self.log)],
-            [("start", "TASK-1", "a", "researcher", "a"), ("resume", "TASK-9", "z", "pm", "a")],
+            [
+                ("start", "TASK-1", "a", "researcher", "a", "harness"),
+                ("resume", "TASK-9", "z", "pm", "a", "harness"),
+            ],
         )
+
+    def test_saved_delegate_survives_round_trip_and_old_rows_use_harness(self):
+        legacy = row("start", "TASK-1", "old")
+        saved = json.loads(row("start", "TASK-2", "new")) | {"delegate_kind": "external"}
+        self.write([legacy, json.dumps(saved)])
+        self.assertEqual(
+            [e.delegate_kind for e in runs.parse_log(self.log)], ["harness", "external"]
+        )
+        self.assertEqual(self.read(), legacy + "\n" + json.dumps(saved) + "\n")
+
+    def test_invalid_delegate_kind_is_no_entry(self):
+        good = json.loads(row("start", "TASK-1", "s"))
+        for kind in (None, "", 4):
+            with self.subTest(kind=kind):
+                self.assertIsNone(runs.parse_line(json.dumps(good | {"delegate_kind": kind})))
 
     def test_a_line_without_runtime_and_a_limit_row_are_no_entries(self):
         legacy = json.loads(row("start", "TASK-1", "a", minutes=5))
@@ -133,13 +153,13 @@ class Limits(Case):
     def test_a_live_row_names_its_runtime_and_reset_time(self):
         at = NOW + timedelta(hours=1)
         got = self.limits(row("start", "TASK-1", "s", minutes=5), limit(stamp(at, EAST)))
-        self.assertEqual(got, {"a": at})
-        self.assertEqual(got["a"].utcoffset(), timedelta(hours=8))
+        self.assertEqual(got, {("harness", "a"): at})
+        self.assertEqual(got["harness", "a"].utcoffset(), timedelta(hours=8))
 
     def test_the_latest_reset_per_runtime(self):
         early, late = NOW + timedelta(hours=1), NOW + timedelta(hours=3)
         got = self.limits(limit(stamp(late)), limit(stamp(early)), limit(stamp(early), runtime="b"))
-        self.assertEqual(got, {"a": late, "b": early})
+        self.assertEqual(got, {("harness", "a"): late, ("harness", "b"): early})
 
     def test_what_is_not_live_is_left_out_and_never_raises(self):
         for at in (
@@ -160,7 +180,7 @@ class Limits(Case):
 
     def test_at_most_keep_ahead_is_live(self):
         at = NOW + runs.KEEP
-        self.assertEqual(self.limits(limit(stamp(at))), {"a": at})
+        self.assertEqual(self.limits(limit(stamp(at))), {("harness", "a"): at})
 
     def test_a_row_without_a_usable_runtime_or_of_another_kind_is_left_out(self):
         at = stamp(NOW + timedelta(hours=1))
@@ -177,6 +197,13 @@ class Limits(Case):
                 "not json",
             ),
             {},
+        )
+
+    def test_limits_are_separate_for_each_delegate_runtime_key(self):
+        early, late = NOW + timedelta(hours=1), NOW + timedelta(hours=2)
+        self.assertEqual(
+            self.limits(limit(stamp(early)), limit(stamp(late), delegate_kind="external")),
+            {("harness", "a"): early, ("external", "a"): late},
         )
 
     def test_a_missing_log_has_none(self):
@@ -254,6 +281,34 @@ class Trim(Case):
         self.assertEqual(os.stat(self.log).st_ino, before.st_ino)
         self.assertEqual(self.read(), "".join(line + "\n" for line in lines))
 
+    def test_trim_preserves_retained_rows_exact_bytes_and_file_order(self):
+        live = limit(stamp(NOW + timedelta(hours=2)), ts=stamp(NOW - timedelta(days=9)))
+        recent = row("resume", "TASK-1", "s", minutes=5)
+        retained = ("  " + live + "  \n\n" + recent).encode()
+        with open(self.log, "wb") as stream:
+            stream.write((row("start", "TASK-1", "old", days=8) + "\n").encode())
+            stream.write(retained)
+        runs.trim(self.log, NOW)
+        with open(self.log, "rb") as stream:
+            self.assertEqual(stream.read(), retained.replace(b"\n\n", b"\n"))
+
+    def test_latest_sid_older_than_eight_days_survives_repeated_trim(self):
+        latest = row("start", "TASK-1", "latest", days=8)
+        resumed = row("resume", "TASK-1", "latest", days=8, seconds=-1)
+        old = row("start", "TASK-1", "old", days=9)
+        self.write([latest, old, resumed])
+        runs.trim(self.log, NOW)
+        runs.trim(self.log, NOW + timedelta(minutes=1))
+        self.assertEqual(self.read(), latest + "\n" + resumed + "\n")
+
+    def test_retained_crlf_bytes_survive_rewrite(self):
+        kept = ("  " + row("start", "TASK-1", "latest", days=8) + "  \r\n").encode()
+        with open(self.log, "wb") as stream:
+            stream.write((row("start", "TASK-1", "old", days=9) + "\n").encode() + kept)
+        runs.trim(self.log, NOW)
+        with open(self.log, "rb") as stream:
+            self.assertEqual(stream.read(), kept)
+
     def test_rewrites_through_the_atomic_save(self):
         self.assertIs(runs.save, save)
 
@@ -281,27 +336,66 @@ class RuntimeOf(case.Case):
         self.assertEqual(runs.runtime_of(entries, "s"), "early")
 
 
+class Latest(case.Case):
+    def test_timestamp_wins_and_last_append_breaks_ties(self):
+        old = entry("start", "TASK-1", "old", "pm", minutes=2)
+        first = entry("resume", "TASK-1", "first", "pm", minutes=1)
+        last = entry("start", "TASK-1", "last", "pm", minutes=1)
+        other = entry("start", "TASK-2", "other", "engineer", minutes=4)
+        self.assertEqual(runs.latest([first, other, last, old]), {"TASK-1": last, "TASK-2": other})
+
+
+class DelegateOf(case.Case):
+    def test_start_kind_wins_and_without_start_earliest_kind_wins(self):
+        entries = [
+            entry("resume", "TASK-1", "s", "pm", minutes=50)._replace(delegate_kind="old"),
+            entry("start", "TASK-1", "s", "pm", minutes=40)._replace(delegate_kind="start"),
+            entry("resume", "TASK-1", "s", "pm", minutes=30)._replace(delegate_kind="recent"),
+        ]
+        self.assertEqual(runs.delegate_of(entries, "s"), "start")
+        self.assertEqual(runs.delegate_of([entries[2], entries[0]], "s"), "old")
+
+
 class NoteLimit(Case):
     def test_writes_the_limit_row_durably_and_limits_reads_it(self):
         at = stamp(NOW + timedelta(hours=1), EAST)
         path = os.path.join(self.tmp, "logs", "runs.jsonl")
         with mock.patch.object(os, "fsync", wraps=os.fsync) as spy:
-            runs.note_limit(path, issue="TASK-1", sid="s", runtime="a", resets_at=at)
-            runs.note_limit(path, issue="TASK-2", sid="t", runtime="b", resets_at=None)
+            runs.note_limit(
+                path, issue="TASK-1", sid="s", runtime="a", resets_at=at, delegate_kind="harness"
+            )
+            runs.note_limit(
+                path, issue="TASK-2", sid="t", runtime="b", resets_at=None, delegate_kind="harness"
+            )
         self.assertEqual(spy.call_count, 4)
         with open(path, encoding="utf-8") as f:
             rows = [json.loads(line) for line in f]
         self.assertEqual(
-            [list(r) for r in rows], [["ts", "kind", "issue", "sid", "runtime", "resets_at"]] * 2
+            [list(r) for r in rows],
+            [["ts", "kind", "issue", "sid", "runtime", "resets_at", "delegate_kind"]] * 2,
         )
         self.assertEqual(
             [{k: v for k, v in r.items() if k != "ts"} for r in rows],
             [
-                {"kind": "limit", "issue": "TASK-1", "sid": "s", "runtime": "a", "resets_at": at},
-                {"kind": "limit", "issue": "TASK-2", "sid": "t", "runtime": "b", "resets_at": None},
+                {
+                    "kind": "limit",
+                    "issue": "TASK-1",
+                    "sid": "s",
+                    "runtime": "a",
+                    "resets_at": at,
+                    "delegate_kind": "harness",
+                },
+                {
+                    "kind": "limit",
+                    "issue": "TASK-2",
+                    "sid": "t",
+                    "runtime": "b",
+                    "resets_at": None,
+                    "delegate_kind": "harness",
+                },
             ],
         )
-        self.assertEqual(runs.limits(path, NOW), {"a": datetime.fromisoformat(at)})
+        self.assertEqual(runs.limits(path, NOW), {("harness", "a"): datetime.fromisoformat(at)})
 
 
 if __name__ == "__main__":

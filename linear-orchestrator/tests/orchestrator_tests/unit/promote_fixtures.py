@@ -187,8 +187,8 @@ class FakeLinear:
 class FakePruner:
     calls = []
 
-    def __init__(self, gql, now, *, dry, work, team, roles, driver):
-        self.driver = driver
+    def __init__(self, gql, now, *, dry, work, team, roles, cfg):
+        self.cfg = cfg
         FakePruner.calls.append((gql, now, dry, work, team, roles))
 
     def run(self):

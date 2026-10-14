@@ -290,21 +290,26 @@ def append(path: str, record: dict) -> None:
         raise HookError(f"{path}: short write")
 
 
-if __name__ == "__main__":
+def run(argv: list[str], stdin) -> None:
+    """One hook call, as `tui_hook.py <dir> <roots JSON> <label>` or `agent-pm-session hook` runs
+    it, its payload stdin's bytes (stdin may be None): never raises, never writes stdout; a failure
+    keeps its traceback in <dir>/hook.log and one stderr line.
+    """
+    global HookCall, HookError, Word  # standalone: bound only once the source roots are checked
     types_loaded = False
     try:
-        payload = read_payload(sys.stdin.buffer)
-        folder, label, state = _prepare(sys.argv[1:])
+        payload = read_payload(stdin.buffer)
+        folder, label, state = _prepare(argv)
         from agent_pm.session.engine.types import HookCall, HookError, Word
 
         types_loaded = True
         _dispatch(folder, label, payload, state)
     except Exception as e:  # noqa: BLE001  # the hook must never fail the client runtime
-        if len(sys.argv) > 1 and _abs(sys.argv[1]):
+        if argv and _abs(argv[0]):
             with (
                 suppress(OSError),
                 open(
-                    os.path.join(sys.argv[1], "hook.log"),
+                    os.path.join(argv[0], "hook.log"),
                     "a",
                     encoding="utf-8",
                     errors="backslashreplace",
@@ -319,4 +324,8 @@ if __name__ == "__main__":
             and isinstance(e, HookError)
             else f"{type(e).__name__}: {e}"
         )
+
+
+if __name__ == "__main__":
+    run(sys.argv[1:], sys.stdin)
     sys.exit(0)

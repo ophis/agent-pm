@@ -13,14 +13,13 @@ import sys
 import time
 import uuid
 from collections import deque
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from typing import Any, ClassVar, cast
 
 from agent_pm.session.adapters.base import Adapter
 from agent_pm.session.adapters.registry import Registry, settings
 from agent_pm.session.engine.base import Session
-from agent_pm.session.engine.config import read_config
 from agent_pm.session.engine.records import RunLog
 from agent_pm.session.engine.types import (
     Blocked,
@@ -30,6 +29,7 @@ from agent_pm.session.engine.types import (
     Exited,
     Hosts,
     IdleTimeout,
+    KeyPress,
     Liveness,
     Mode,
     NoRecordedSession,
@@ -333,6 +333,10 @@ class HostedSession(Session):
         return session
 
     @classmethod
+    def retire(cls, name: str, *, host: str | None = None) -> None:
+        tui.TuiMode.close(tui.checked_name(name), host=cls.host(host))
+
+    @classmethod
     def list(
         cls, match: str | None = None, *, display: Display = None
     ) -> builtins.list[SessionRow]:
@@ -343,11 +347,9 @@ class HostedSession(Session):
             pattern = None if match is None else re.compile(match)
         except re.error as error:
             raise ConfigError(f"match {match!r:.80}: {error}") from None
+        setup = cls._config()
         if display == "":
             return []
-        if cls._setup is None:
-            return cls.configured(**settings(read_config())).list(match, display=display)
-        setup = cls._config()
         return sorted(
             (
                 row
@@ -507,6 +509,9 @@ class HostedSession(Session):
 
     def send(self, text: str) -> None:
         self._running.send(text)
+
+    def press(self, keys: Sequence[KeyPress]) -> None:
+        self._running.press(tuple(keys))
 
     def state(self) -> Liveness:
         return self._running.state()

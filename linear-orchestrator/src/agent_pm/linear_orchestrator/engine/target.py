@@ -6,12 +6,11 @@ import json
 import os
 import re
 from dataclasses import replace
-from functools import partial
 
 from agent_pm.linear_orchestrator.engine import config, issues
 from agent_pm.linear_orchestrator.engine.config import CLONES, REF, TASKS
 from agent_pm.linear_orchestrator.engine.types import Invalid, Target, Transient
-from agent_pm.utils import GUARD, SHORT, Repo, common_dir, err_text, repo_slug, sh, under
+from agent_pm.utils import GUARD, SHORT, Repo, common_dir, err_text, repo_slug, under
 from agent_pm.utils import Invalid as RepoInvalid
 from agent_pm.utils import checkout as clone_checkout
 
@@ -155,7 +154,7 @@ def _branches(ident, o, n, *, run, work, roles):
 
 def check(issue, repos, *, run=None, work, roles) -> Target | Invalid | Transient:
     if run is None:
-        run = partial(sh, env={**os.environ, "PATH": config.path()})
+        run = config.shell
     repo = parse_repo(issue.description)
     mapped = repo == NO_LINE and issue.project_id in repos
     tag = MAPPED if mapped else ""
@@ -189,7 +188,7 @@ def check(issue, repos, *, run=None, work, roles) -> Target | Invalid | Transien
 
 def with_clone(t, ident, *, run=None, work, clones, writable=None) -> Target:
     if run is None:
-        run = partial(sh, env={**os.environ, "PATH": config.path()})
+        run = config.shell
     # the checkout is agent-writable, so a clone its `.git` file names counts only outside
     # `writable` and with the right origin
     path = checkout(ident, t.owner, t.name, work=work)
