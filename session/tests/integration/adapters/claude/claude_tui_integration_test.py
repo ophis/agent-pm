@@ -268,10 +268,8 @@ class LimitTest(Live):
             "w1", scenario={"steps": [{"kind": "limit", "text": LIMIT}], "turns": [["Back."]]}
         )
         stream = self.stream(handle)
-        self.assertEqual(
-            [stream.next() for _ in range(2)],
-            [Activity(""), LimitHit(RESETS)],
-        )
+        # the limit record can be read with the prompt's hook record, and is put first
+        self.assertCountEqual([stream.next() for _ in range(2)], [Activity(""), LimitHit(RESETS)])
         stream.quiet(1.0)
         self.lines("w1 done")
         self.assertEqual((handle.state(), self.server.option("w1", "@state")), ("live", "done"))
