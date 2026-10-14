@@ -25,6 +25,7 @@ DENIED = {
     "socket.getaddrinfo",
 }
 GIT_ALLOWED = {
+    "GIT_CEILING_DIRECTORIES",
     "GIT_CONFIG_GLOBAL",
     "GIT_CONFIG_NOSYSTEM",
     "GIT_AUTHOR_NAME",

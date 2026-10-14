@@ -147,7 +147,9 @@ def supervise(title):
             sysconfig.get_path("purelib"),
             sysconfig.get_path("platlib"),
         ]
-        env = clean_env(os.environ, *roots)
+        env = clean_env(
+            {**os.environ, "HOME": workspace, "AGENT_PM_TEST_WORKSPACE": workspace}, *roots
+        )
         env.update(
             HOME=workspace,
             TMPDIR=tmp,

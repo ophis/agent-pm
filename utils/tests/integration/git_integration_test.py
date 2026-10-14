@@ -144,6 +144,26 @@ class CheckoutDiscovery(Case):
 
 
 class CommonDir(Case):
+    def test_git_cannot_discover_a_repository_above_test_home_or_workspace(self):
+        home, workspace = (os.path.join(self.clone, name) for name in ("home", "workspace"))
+        for path in (home, workspace):
+            os.mkdir(path)
+        env = clean_env({**os.environ, "HOME": home, "AGENT_PM_TEST_WORKSPACE": workspace})
+        self.assertEqual(env["GIT_CEILING_DIRECTORIES"], self.clone)
+        for directory in (home, workspace):
+            with self.subTest(directory=directory):
+                proc = subprocess.run(
+                    ["git", "rev-parse", "--show-toplevel"],
+                    cwd=directory,
+                    env=env,
+                    capture_output=True,
+                    text=True,
+                    timeout=10,
+                )
+                self.assertEqual(proc.returncode, 128, proc.stderr)
+                self.assertEqual(proc.stdout, "")
+                self.assertIn("not a git repository", proc.stderr)
+
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)

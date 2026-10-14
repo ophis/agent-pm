@@ -16,6 +16,13 @@ def clean_env(base=None, *import_roots):
         and key not in {"TMUX", "TMUX_PANE", "PYTHONUSERBASE"}
     }
     env.update(GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM="1")
+    env["GIT_CEILING_DIRECTORIES"] = os.pathsep.join(
+        dict.fromkeys(
+            os.path.dirname(os.path.abspath(source[key]))
+            for key in ("HOME", "AGENT_PM_TEST_WORKSPACE")
+            if source.get(key)
+        )
+    )
     env["PYTHONDONTWRITEBYTECODE"] = "1"
     if import_roots:
         env["PYTHONPATH"] = os.pathsep.join(map(str, import_roots))

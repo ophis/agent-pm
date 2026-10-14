@@ -141,6 +141,7 @@ class Main(Case):
             with (
                 contextlib.redirect_stdout(out),
                 contextlib.redirect_stderr(err),
+                mock.patch.dict(os.environ, {"GIT_CEILING_DIRECTORIES": os.path.dirname(folder)}),
             ):
                 code = budget.main(Path(folder))
         self.assertEqual((code, out.getvalue()), (2, ""))
