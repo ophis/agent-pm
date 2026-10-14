@@ -17,7 +17,7 @@ SPEC = {
     "workdir": None,
     "task": None,
     "mode": "headless",
-    "runtime": None,
+    "client": None,
     "sid": None,
     "resume": False,
     "name": None,

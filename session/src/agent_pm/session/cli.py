@@ -2,7 +2,7 @@
 
 start, restart and resume a worker (engine/worker.py) and print its Record; reply, send (text, or
 keys in KeyPress notation) and read a session; status, show, close and attach-command for session
-names, or Records one per stdin line; ls; tile; hook, a tui runtime's hook call (tui_hook.run).
+names, or Records one per stdin line; ls; tile; hook, a tui client's hook call (tui_hook.run).
 Every subcommand but hook reads the session config once: read_config, Host.parse_hosts,
 Session.configure. AGENT_PM_SID, read once here, is a start's or resume's session id.
 
@@ -44,7 +44,7 @@ from agent_pm.utils import Record, Status, module_roots
 PROG = "agent-pm-session"
 EVENTS = "AGENT_PM_EVENTS"
 GONE = "gone"
-HEADER = "name\tstate\truntime\tsid\tdisplay"
+HEADER = "name\tstate\tclient\tsid\tdisplay"
 
 
 class UsageError(ConfigError):
@@ -97,13 +97,13 @@ def _parser(hosts: Hosts | None) -> argparse.ArgumentParser:
     p = sub.add_parser(
         "start",
         help="start worker NAME; print its Record",
-        description="Start worker NAME, a plain tui session of RUNTIME; everything after -- is "
-        "its runtime's flags, verbatim. Its session id: --resume SID (resumes that "
+        description="Start worker NAME, a plain tui session of CLIENT; everything after -- is "
+        "its client's flags, verbatim. Its session id: --resume SID (resumes that "
         "conversation), else $AGENT_PM_SID, else a new one; the two must agree. Prints its "
         "Record once it has run 5 s without exiting.",
     )
     p.add_argument("name", type=_name)
-    p.add_argument("--runtime", required=True, help="its runtime, an [adapters.<name>]")
+    p.add_argument("--client", required=True, help="its client, an [adapters.<name>]")
     p.add_argument("--cwd", help="its directory (default: this one)")
     p.add_argument("--resume", metavar="SID", help="resume conversation SID")
     p.add_argument("--prompt", default="", help="its first prompt")
@@ -163,7 +163,7 @@ def _parser(hosts: Hosts | None) -> argparse.ArgumentParser:
     p.add_argument("window", help="the window, as its Host names it")
     sub.add_parser(
         "hook",
-        help="a tui runtime's hook call (its hook config runs it)",
+        help="a tui client's hook call (its hook config runs it)",
         description="DIR LABEL, the hook's payload on stdin; never fails, never prints stdout.",
     )
     return ap
@@ -294,7 +294,7 @@ def _listed(args, hosts: Hosts) -> Iterator[tuple[Host, str]]:
 
 
 def _row(row: SessionRow) -> str:
-    values = (row.name, row.state, row.runtime, row.sid, row.display)
+    values = (row.name, row.state, row.client, row.sid, row.display)
     return "\t".join("-" if value is None else str(value) for value in values)
 
 
@@ -333,7 +333,7 @@ def _start(args, flags: list[str], hosts: Hosts, start_sid: str | None) -> int:
     worker = Worker.new(
         name=args.name,
         sid=args.resume or start_sid or str(uuid.uuid4()),
-        runtime=args.runtime,
+        client=args.client,
         cwd=cwd,
         host=hosts.default,
         flags=tuple(flags),

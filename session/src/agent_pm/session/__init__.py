@@ -1,5 +1,5 @@
 """The session layer: Session (engine/base.py), whose one concrete class is HostedSession
-(engine/hosted_session.py, modes/), runs agent sessions through each runtime's Adapter (adapters/) on a Host
+(engine/hosted_session.py, modes/), runs agent sessions through each client's Adapter (adapters/) on a Host
 (hosts/); `__all__` is its API for Session users. Driver, Handle, close, sessions, note and
 session_record are deprecated forwarding wrappers (engine/forwarding.py).
 """

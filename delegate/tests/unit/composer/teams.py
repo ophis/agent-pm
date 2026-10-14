@@ -45,7 +45,7 @@ VERSE = "# Verse\n" + STEPS
 RUN_CONFIG = """\
 tier = 2
 effort = "high"
-runtime = "a"
+client = "a"
 idle_timeout = 60
 show = ""
 

@@ -1,4 +1,4 @@
-"""Driver start takes one spec; instruction delivery creates no runtime or event stream."""
+"""Driver start takes one spec; instruction delivery creates no client or event stream."""
 
 import os
 import unittest
@@ -85,7 +85,7 @@ class Drivers(Case):
     def test_agent_preflight_forwards_spec_and_owned_placement_without_launching(self):
         session_cls = SessionClass.fresh()
         driver = AgentDriver(session_cls, display="opaque", host="other")
-        spec = StartSpec(workdir=self.home, runtime="fake", mode="tui", prompt="accepted prompt")
+        spec = StartSpec(workdir=self.home, client="fake", mode="tui", prompt="accepted prompt")
         with no_child():
             driver.preflight(spec)
         self.assertEqual(
@@ -99,7 +99,7 @@ class Drivers(Case):
     def test_headless_preflight_and_start_keep_owned_host_without_owned_display(self):
         session_cls = SessionClass.fresh()
         driver = AgentDriver(session_cls, display="opaque", host="other")
-        spec = StartSpec(workdir=self.home, runtime="fake", mode="headless", prompt="input")
+        spec = StartSpec(workdir=self.home, client="fake", mode="headless", prompt="input")
         with no_child():
             driver.preflight(spec)
             session = driver.start(
@@ -122,7 +122,7 @@ class Drivers(Case):
         error = SessionConfigError("unsupported mode")
         session_cls.preflight_error = error
         driver = AgentDriver(session_cls)
-        spec = StartSpec(workdir=self.home, runtime="fake", mode="tui")
+        spec = StartSpec(workdir=self.home, client="fake", mode="tui")
         with self.assertRaises(SessionConfigError) as caught:
             driver.preflight(spec)
         self.assertIs(caught.exception, error)
@@ -167,7 +167,7 @@ class Drivers(Case):
         driver = AgentDriver(session_cls)
         spec = StartSpec(
             workdir=self.home,
-            runtime="fake",
+            client="fake",
             mode="headless",
             prompt="the prompt",
             sid="11111111-2222-3333-4444-555555555555",
@@ -194,14 +194,14 @@ class Drivers(Case):
                 self.assertIs(session_cls.started[-1]["spec"], spec)
                 session.close()
                 self.assertEqual(
-                    (session.runtime, session.mode, session.sid, session.name),
+                    (session.client, session.mode, session.sid, session.name),
                     ("fake", "headless", spec.sid, "mine"),
                 )
 
     def test_instruction_start_saves_exact_utf8_bytes_without_process_or_thread(self):
         out = os.path.join(self.home, "work", "prompt.md")
         prompt = "héllo\r\n[agent-pm-progress:start] input, not an event\n\x1b"
-        spec = StartSpec(workdir=self.home, runtime="fake", mode="headless", prompt=prompt)
+        spec = StartSpec(workdir=self.home, client="fake", mode="headless", prompt=prompt)
         with no_child():
             instruction = InstructionDriver().start(DriverSpec(spec, out))
         self.assertEqual(instruction, Instruction(out))
@@ -223,7 +223,7 @@ class Drivers(Case):
         driver = InstructionDriver()
         spec = StartSpec(
             workdir=self.home,
-            runtime="fake",
+            client="fake",
             mode="headless",
             prompt="the prompt",
             sid="11111111-2222-3333-4444-555555555555",
@@ -237,7 +237,7 @@ class Drivers(Case):
     def test_instruction_rejects_session_controls_before_any_write(self):
         out = os.path.join(self.home, "work", "prompt.md")
         driver = InstructionDriver()
-        spec = StartSpec(workdir=self.home, runtime="fake", mode="headless", prompt="the prompt")
+        spec = StartSpec(workdir=self.home, client="fake", mode="headless", prompt="the prompt")
         for keywords, message in (
             ({"host": "other"}, "instruction has no host or display"),
             ({"display": "opaque"}, "instruction has no host or display"),

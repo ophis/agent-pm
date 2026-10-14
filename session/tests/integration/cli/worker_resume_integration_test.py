@@ -3,7 +3,7 @@ bin/agent-pm-session on a private tmux server (session/tests/cli_support.py): a 
 prints its Record and starts nothing; a gone worker's resume, from another caller, and a live
 worker's restart replay its saved sid, cwd, flags, env and display without its prompt; concurrent
 resumes start it once; bad saved state or a saved Host no longer configured starts and closes
-nothing. A runtime that ignores SIGHUP and SIGTERM and has a child: a restart, and a resume after
+nothing. A client that ignores SIGHUP and SIGTERM and has a child: a restart, and a resume after
 its session is killed, start the new generation only once the old one and its child are gone.
 """
 
@@ -24,7 +24,7 @@ ENV_DUMP = (
     "import json, os, sys; open(sys.argv[1], 'a')"
     ".write(json.dumps({'argv': sys.argv[2:], 'env': dict(os.environ)}) + '\\n')"
 )
-# Each generation: checks which earlier generation's runtime or child still runs, logs itself, runs
+# Each generation: checks which earlier generation's client or child still runs, logs itself, runs
 # the fake claude, then outlives it; it and its child ignore SIGHUP and SIGTERM, for at most CAP s.
 GENERATION = """import json, os, signal, subprocess, sys, time
 
@@ -83,7 +83,7 @@ def has_pair(argv: list[str], flag: str, value: str) -> bool:
 
 class Base(CliCase):
     def again(self, cmd: str, name: str, **kw) -> subprocess.CompletedProcess:
-        """`CMD NAME` with the fake claude's scenario for it, so a runtime it starts logs."""
+        """`CMD NAME` with the fake claude's scenario for it, so a client it starts logs."""
         return self.session(cmd, name, **self.scene(name), **kw)
 
     def first_on_path(self, script: str) -> str:
@@ -113,7 +113,7 @@ class Base(CliCase):
         self.ok(self.server.tmux("kill-session", "-t", f"={name}"))
 
     def dead(self, name: str) -> None:
-        """Kill worker `name`'s runtime and wait for its pane to show it dead."""
+        """Kill worker `name`'s client and wait for its pane to show it dead."""
         os.kill(self.calls(name)[-1]["pid"], signal.SIGTERM)
         self.wait_event(name, "dead")
 
@@ -159,7 +159,7 @@ class ResumeTest(Base):
         self.assertEqual(self.server.option("w1", "@record"), record.to_line())
         self.assertIn(self.server.pane_of("w1"), self.server.panes(f"={MANAGER}:"))
 
-    def test_restart_of_a_live_worker_resumes_its_sid_in_a_new_runtime_without_its_prompt(self):
+    def test_restart_of_a_live_worker_resumes_its_sid_in_a_new_client_without_its_prompt(self):
         record = self.record(self.start("w1", "--", *FLAGS))
         self.wait_event("w1", "done")
         pane = self.pane("w1")
@@ -178,7 +178,7 @@ class ResumeTest(Base):
         self.assertNotEqual(self.pane("w1"), pane)
         self.assertEqual(self.server.option("w1", "@record"), record.to_line())
 
-    def test_two_concurrent_resumes_of_a_gone_worker_start_one_runtime(self):
+    def test_two_concurrent_resumes_of_a_gone_worker_start_one_client(self):
         record = self.record(self.start("w1"))
         self.wait_event("w1", "done")
         self.dead("w1")
@@ -245,7 +245,7 @@ class ResumeTest(Base):
 
 
 class OldGenerationTest(Base):
-    """FR-36: the new runtime starts only once the old one's process group is gone."""
+    """FR-36: the new client starts only once the old one's process group is gone."""
 
     def setUp(self):
         super().setUp()
@@ -272,7 +272,7 @@ class OldGenerationTest(Base):
         self.assertTrue(running(new["pid"]) and running(new["child"]), new)
         self.assertTrue(has_pair(new["argv"], "--resume", sid), new["argv"])
 
-    def test_a_restart_starts_the_new_runtime_after_the_old_one_and_its_child_exit(self):
+    def test_a_restart_starts_the_new_client_after_the_old_one_and_its_child_exit(self):
         record = self.record(self.start("w1", PATH=self.path))
         self.wait_event("w1", "done")
         (old,) = logged(self.generations)

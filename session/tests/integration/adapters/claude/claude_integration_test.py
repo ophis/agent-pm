@@ -1,4 +1,4 @@
-"""HostedSession, through the Driver wrapper, with runtime claude end to end: the real ClaudeAdapter, its [adapters.claude]
+"""HostedSession, through the Driver wrapper, with client claude end to end: the real ClaudeAdapter, its [adapters.claude]
 table given to Driver construction, runs session/tests/integration/adapters/claude/fake_claude.py
 (on PATH as `claude`) through Driver.start, Driver.usage and Driver.session_status; one case runs
 the Driver in a caller process of its own (CALLER) to interrupt it. HOME and CLAUDE_CONFIG_DIR are

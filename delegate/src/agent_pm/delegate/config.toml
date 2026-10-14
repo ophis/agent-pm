@@ -7,7 +7,7 @@
 # Each layer reads only its own keys (paths from the repo root): the Composer (delegate/src/agent_pm/delegate/composer/)
 # the run keys, [output], [roles.<role>], trusted_dirs and team_dirs; delegate/src/agent_pm/delegate/team/tools/repo.py
 # users and trusted_dirs; delegate/src/agent_pm/delegate/config.py [delegates]; the Delegate
-# (delegate/src/agent_pm/delegate/engine/plan.py) [policy.<runtime>]. [adapters] and [hosts]: session/src/agent_pm/session/config.toml.
+# (delegate/src/agent_pm/delegate/engine/plan.py) [policy.<client>]. [adapters] and [hosts]: session/src/agent_pm/session/config.toml.
 #
 # A run key's value resolves in order, each step replacing what the earlier ones set:
 #   layers  this file (config.local.toml on top) → each overlay the caller passes, in order (the orchestrator's among
@@ -15,9 +15,9 @@
 #   levels  within a layer: global → role ([roles.<role>])
 
 # ── Global ──────────────────────────────────────────────
-#   tier            required: model tier 1–4 (1 = strongest); the runtime's Adapter maps it to a model
-#   effort          required: low | medium | high | xhigh | max; the runtime's Adapter maps it to its own effort value
-#   runtime         required: the Adapter that runs the agent run (an [adapters.<name>] name); the orchestrator's
+#   tier            required: model tier 1–4 (1 = strongest); the client's Adapter maps it to a model
+#   effort          required: low | medium | high | xhigh | max; the client's Adapter maps it to its own effort value
+#   client          required: the Adapter that runs the agent run (an [adapters.<name>] name); the orchestrator's
 #                   overlay may set it per role. The Composer passes it through unchecked
 #   language        the language reports and PRDs are written in (one line); "" → no rule: the model's default
 #   cwd             the dir the agent run starts in (absolute or ~ path); "" → the caller's current directory
@@ -41,7 +41,7 @@
 #                   defines stops the run, naming both files, so no team dir file changes or extends a core role. A team
 #                   dir's role needs no [roles.<role>] (unset: the global run keys); any role's templates may name any
 #                   template. A team dir is refused when it, its subdirs or files (by real path) lie in a temp dir,
-#                   overlap the workdir, the cwd, a write dir, another dir the run adds to write or a dir the runtime
+#                   overlap the workdir, the cwd, a write dir, another dir the run adds to write or a dir the client
 #                   can write (Codex: its CODEX_HOME), are writable by group or others, or are not yours; or a parent
 #                   dir of it is writable by group or others (not sticky) or owned by neither you nor root
 #                   (delegate/src/agent_pm/delegate/engine/plan.py). The orchestrator's runs ignore it, but refuse a team dir
@@ -49,7 +49,7 @@
 #   templates, read, write, commands, gate  as in Roles below, for a role that does not set its own; [] or "" → none
 tier = 2
 effort = "high"
-runtime = "claude"
+client = "claude"
 language = "English"
 templates = []
 read = []
@@ -95,15 +95,15 @@ host = ""
 #                 tui mode, but under the shipped --permission-mode auto goes to Claude's classifier; a broad dir such
 #                 as ~ pre-approves reads of its whole tree; a path with any of *?[]{}()\, refuses the run. Codex adds
 #                 nothing (no read-only grant usable with -s): its workspace-write sandbox reads the whole disk; the
-#                 default danger-full-access can write there too (README.md › Runtime policy). A dir also in write,
+#                 default danger-full-access can write there too (README.md › Client policy). A dir also in write,
 #                 or inside the cwd, the workdir or a write dir, stays writable; shell commands can write there
 #                 regardless
 #   write         extra dirs the agent run needs to write; the workdir is always reachable; [] → none
-#   commands      requested shell commands (a trailing ` *` matches any arguments); the runtime's Adapter decides how
+#   commands      requested shell commands (a trailing ` *` matches any arguments); the client's Adapter decides how
 #                 they are approved. {{workdir}} is the agent run's workdir, {{team}} core's team/ dir; [] → none
 #   gate          a usage-gate command the researcher runs before a costly step (deep research: before a second
-#                 round); its approval follows the runtime's Adapter; "" → none (the orchestrator's overlay sets it)
-#   <run key>     tier, effort, runtime, language, cwd, idle_timeout, show or [output], for that role
+#                 round); its approval follows the client's Adapter; "" → none (the orchestrator's overlay sets it)
+#   <run key>     tier, effort, client, language, cwd, idle_timeout, show or [output], for that role
 
 # ── Researcher ──────────────────────────────────────────
 [roles.researcher]
@@ -146,7 +146,7 @@ effort = "low"
 [delegates]
 harness_host = ""
 
-# [policy.<runtime>]  a role run's flags and env, the Delegate's (README.md › Runtime policy); in claude's
+# [policy.<client>]   a role run's flags and env, the Delegate's (README.md › Client policy); in claude's
 #                     --settings, this core's own plugin (<plugin>@<marketplace>) stays off, the user's others load
 [policy.claude]
 flags = [

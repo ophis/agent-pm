@@ -1072,17 +1072,17 @@ class HookTest(Base):
             self.assertFalse(tui.bind("Interrupt", self.payload(), str(self.work), self.spec.sid))
         self.assertIsNone(self.common.load(str(self.work), self.spec.sid).native_id)
 
-    def test_explicit_caller_store_survives_configured_runtime_home(self):
+    def test_explicit_caller_store_survives_configured_client_home(self):
         self.prepare()
         store = common.SessionStore().root
-        runtime_home = self.root / "runtime-home"
-        runtime_home.mkdir()
-        with mock.patch.dict(os.environ, {"HOME": str(runtime_home)}):
+        client_home = self.root / "client-home"
+        client_home.mkdir()
+        with mock.patch.dict(os.environ, {"HOME": str(client_home)}):
             self.assertTrue(
                 tui.bind("Stop", self.payload(), str(self.work), self.spec.sid, root=store)
             )
         self.assertEqual(self.common.load(str(self.work), self.spec.sid).native_id, NATIVE)
-        self.assertFalse((runtime_home / ".agent-pm").exists())
+        self.assertFalse((client_home / ".agent-pm").exists())
 
     def test_explicit_store_keeps_symlink_mode_and_implicit_root_guards(self):
         self.prepare()
@@ -1107,13 +1107,13 @@ class HookTest(Base):
             )
         self.assertIsNone(self.common.load(str(self.work), self.spec.sid).native_id)
 
-    def test_authoritative_store_validates_every_recovery_path_with_writable_runtime_home(self):
+    def test_authoritative_store_validates_every_recovery_path_with_writable_client_home(self):
         state = self.prepare()
         record = self.record()
         store = str(record.parent)
-        runtime_home = self.cwd / "runtime-home"
-        runtime_home.mkdir()
-        with mock.patch.dict(os.environ, {"HOME": str(runtime_home)}):
+        client_home = self.cwd / "client-home"
+        client_home.mkdir()
+        with mock.patch.dict(os.environ, {"HOME": str(client_home)}):
             self.assertEqual(
                 common.SessionStore(store).lookup(self.spec.sid, state.snapshot.cwd), state
             )
@@ -1132,7 +1132,7 @@ class HookTest(Base):
             self.assertEqual(common.SessionStore(store).save(fresh), fresh)
             self.assertEqual(common.SessionStore(store).load(str(self.work), fresh.sid), fresh)
         self.assertEqual(self.common.load(str(self.work), self.spec.sid).native_id, NATIVE)
-        self.assertFalse((runtime_home / ".agent-pm").exists())
+        self.assertFalse((client_home / ".agent-pm").exists())
 
     def test_authoritative_store_still_rejects_actual_writable_store(self):
         state = self.prepare()

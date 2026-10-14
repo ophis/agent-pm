@@ -24,7 +24,7 @@ class ExtensionDelegate(FakeDelegate):
     def resolve(cls, role, task=None, *, overlays=()):
         cls._known(role)
         return RunConfig(
-            role=role, task=task or "", tier=2, effort="high", runtime="fake",
+            role=role, task=task or "", tier=2, effort="high", client="fake",
             output={"type": "github", "repo": "acme/notes", "branch": "main", "dir": role + "/"},
             idle_timeout=60,
             show="",
@@ -81,7 +81,7 @@ class Extension(ConfigFile, Case):
                 "from agent_pm.linear_orchestrator import LinearRun\n"
                 "cfg = config.load()\n"
                 f"owner = LinearRun({issue!r}, 'Echo.', cfg.run_dir({issue!r}), cfg=cfg, role='engineer', sid={SID!r}, display='opaque display')\n"
-                f"runs.note(cfg.runs_log, 'start', issue={issue!r}, sid={SID!r}, role='engineer', runtime='fake', delegate_kind=cfg.delegate_kind)\n"
+                f"runs.note(cfg.runs_log, 'start', issue={issue!r}, sid={SID!r}, role='engineer', client='fake', delegate_kind=cfg.delegate_kind)\n"
                 "print(owner.detach().to_line())\n"
             )
         )

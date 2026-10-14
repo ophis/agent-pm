@@ -1,7 +1,7 @@
 """HostedSession's tui mode, through the Driver wrapper, end to end on a private tmux server (session/tests/live_tmux.py),
 os.environ that server's env: the fake adapter's Tui (session/tests/fake_adapter/) started with no
 pane, its hook steps as events and events-file lines, send, the idle timer and its Blocked pause,
-attach from another process, stop, a runtime's own exit, close, sessions while tmux's state is
+attach from another process, stop, a client's own exit, close, sessions while tmux's state is
 unknown, an old Handle once its name is another session's, two starts of one name at once, and a
 start while another process closes the name.
 """
@@ -150,7 +150,7 @@ class TuiTest(Live):
                 for target in SPAWNS
             ]
             status = self.driver.session_cls.inspect(
-                Spec(workdir=self.workdir, runtime="fake", sid=SID, access=Access(cwd=self.dir))
+                Spec(workdir=self.workdir, client="fake", sid=SID, access=Access(cwd=self.dir))
             )
         self.assertEqual(
             status, SessionStatus("yes", 1.5, f"{SID} {info.cwd} {info.transcript} {info.resume}")
@@ -158,7 +158,7 @@ class TuiTest(Live):
         for start in starts:
             start.assert_not_called()
 
-    def test_a_runtime_exit_ends_with_its_code_the_session_live_until_close(self):
+    def test_a_client_exit_ends_with_its_code_the_session_live_until_close(self):
         handle = self.start("w2", {"hook": "stop", "payload": {"last_message": "bye"}}, {"exit": 3})
         stream = Stream(self, handle)
         self.assertEqual(stream.next(), TurnEnd("bye", 0))

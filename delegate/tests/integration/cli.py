@@ -174,7 +174,7 @@ def codex_said(*texts) -> list[dict]:
 
 
 class CodexIntegration(Runs):
-    """ROLE's TASK, --runtime codex over fake_codex; HOME outside the temp dirs."""
+    """ROLE's TASK, --client codex over fake_codex; HOME outside the temp dirs."""
 
     ROLE, TASK = "dummy-tester", "echo"
 
@@ -213,7 +213,7 @@ class CodexIntegration(Runs):
             json.dump({"steps": steps, **scenario}, f)
         argv = [
             *RUN,
-            "--runtime",
+            "--client",
             "codex",
             "--role",
             self.ROLE,

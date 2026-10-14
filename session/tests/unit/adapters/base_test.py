@@ -61,7 +61,7 @@ class StubHeadless(JsonHeadless):
 
 
 class StreamHeadless(Headless):
-    """Reads its runtime's lines itself: no parse."""
+    """Reads its client's lines itself: no parse."""
 
     def launch(self, spec: Spec):
         return Launch(("stub", spec.prompt))
@@ -212,7 +212,7 @@ class AdapterTest(Refusals):
                 operator.setitem(mapping, "X", "1")
 
     def test_defaults(self):
-        self.assertEqual((Adapter.keys, Adapter.runtime_note, Tui.dialogs), (frozenset(), "", ()))
+        self.assertEqual((Adapter.keys, Adapter.client_note, Tui.dialogs), (frozenset(), "", ()))
         self.assertEqual(
             (Adapter.session_env, Adapter.identity_env, Adapter.child_defaults), ("", (), {})
         )
@@ -399,7 +399,7 @@ class TuiTest(Case):
             with self.subTest(label=label):
                 self.assertEqual(run.hook_events(label, payload), [])
 
-    def test_base_names_no_runtime_hook(self):
+    def test_base_names_no_client_hook(self):
         source = inspect.getsource(base)
         for name in (
             "Stop",
@@ -694,7 +694,7 @@ class SpecTest(Refusals):
                         workdir="/w",
                         access=Access(cwd="/x/deploy/work", dirs=(bad,)),
                         protect=("/x/other/agent-pm",),
-                        runtime="claude",
+                        client="claude",
                     ),
                     "dirs must contain only printable absolute paths",
                 )

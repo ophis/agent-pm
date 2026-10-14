@@ -114,7 +114,7 @@ class Runner(ABC):
 
     @classmethod
     def _unsupported(cls, spec: Spec) -> ConfigError:
-        return ConfigError(f"runtime {spec.runtime!r} does not support {cls.kind.value} mode")
+        return ConfigError(f"client {spec.client!r} does not support {cls.kind.value} mode")
 
     @staticmethod
     def _no_tui_keys(spec: Spec, display: Display = None) -> None:
@@ -128,8 +128,8 @@ class Runner(ABC):
 
     @staticmethod
     def _noted(spec: Spec, adapter: Adapter) -> Spec:
-        if spec.access.commands and adapter.runtime_note:
-            return replace(spec, prompt=spec.prompt + "\n\n" + adapter.runtime_note)
+        if spec.access.commands and adapter.client_note:
+            return replace(spec, prompt=spec.prompt + "\n\n" + adapter.client_note)
         return spec
 
     @staticmethod
@@ -149,7 +149,7 @@ class Runner(ABC):
                             f"writable path {path} overlaps protected path {protected}"
                         )
         except OSError as error:
-            raise ConfigError(f"{spec.runtime}'s writable dirs: {error}") from error
+            raise ConfigError(f"{spec.client}'s writable dirs: {error}") from error
 
     @staticmethod
     def _launched(spec: Spec, launch: Callable[[Spec], Launch], drop: Collection[str]) -> Prepared:
@@ -157,7 +157,7 @@ class Runner(ABC):
             raise ConfigError("sid: missing")
         command = launch(spec)
         if not command.argv:
-            raise ConfigError(f"runtime {spec.runtime!r} gave no command")
+            raise ConfigError(f"client {spec.client!r} gave no command")
         cwd = command.cwd or spec.access.cwd or spec.workdir
         project = spec.access.project if command.project is None else command.project
         info = SessionInfo(spec.sid, cwd, project, command.transcript, command.resume)

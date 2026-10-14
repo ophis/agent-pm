@@ -23,7 +23,7 @@ from agent_pm.session.hosts.tmux.host import EXEC, Tmux
 from session.tests.case import Case
 from utils.tests.process_fixtures import DEVNULL
 
-RUNTIME = re.compile(r"claude|codex", re.I)
+CLIENT = re.compile(r"claude|codex", re.I)
 
 FORMAT = "#{pane_dead} #{pane_dead_status} #{pane_dead_signal}"
 
@@ -389,10 +389,10 @@ LISTING = [
     "-u",
     "list-sessions",
     "-F",
-    "#{session_name}\t#{pane_dead}\t#{@sid}\t#{@runtime}\t#{@state}\t#{@pane}\t#{@opener}\t#{@display}",
+    "#{session_name}\t#{pane_dead}\t#{@sid}\t#{@client}\t#{@state}\t#{@pane}\t#{@opener}\t#{@display}",
 ]
 
-COLUMNS = ("name", "dead", "sid", "runtime", "state", "pane", "opener", "display")
+COLUMNS = ("name", "dead", "sid", "client", "state", "pane", "opener", "display")
 
 ALL_CLIENTS = [
     "tmux",
@@ -422,7 +422,7 @@ def expected_row(name, **fields):
     return {
         "name": name,
         "sid": None,
-        "runtime": None,
+        "client": None,
         "state": None,
         "pane": None,
         "opener": None,

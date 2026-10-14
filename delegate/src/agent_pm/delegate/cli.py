@@ -82,7 +82,7 @@ def _run_options(ap: argparse.ArgumentParser) -> None:
         action="store_true",
         help="list each role, its destination type and tasks, with their sources",
     )
-    ap.add_argument("--runtime", action=Once, help="default: the role's runtime in the core config")
+    ap.add_argument("--client", action=Once, help="default: the role's client in the core config")
     ap.add_argument("--sid")
     ap.add_argument("--resume", action="store_true")
     ap.add_argument("--mode", choices=[m.value for m in Mode], default=Mode.HEADLESS.value)
@@ -141,7 +141,7 @@ def spec_of(a, text: str) -> Spec:
         a.workdir,
         task=a.task,
         mode=a.mode,
-        runtime=a.runtime,
+        client=a.client,
         sid=a.sid,
         resume=a.resume,
         events=a.events if a.mode == "tui" else None,
@@ -173,7 +173,7 @@ def _begun(event) -> None:
 def _shown(preview: Preview, a: argparse.Namespace) -> dict:
     access, s = preview.plan.session.access, preview.plan.spec
     shown = {
-        "runtime": s.runtime,
+        "client": s.client,
         "mode": s.mode,
         "sid": s.sid,
         "resume": s.resume,

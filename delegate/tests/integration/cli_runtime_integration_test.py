@@ -176,13 +176,13 @@ class Input(Base):
 
 
 class DryRun(Base):
-    def test_the_runtime_defaults_to_the_roles_in_the_config(self):
-        code, out, _ = self.runs("--dry-run", runtime=None)
+    def test_the_client_defaults_to_the_roles_in_the_config(self):
+        code, out, _ = self.runs("--dry-run", client=None)
         self.assertEqual(
-            (code, json.loads(out)["runtime"]), (0, composer.resolve("dummy-tester").runtime)
+            (code, json.loads(out)["client"]), (0, composer.resolve("dummy-tester").client)
         )
-        self.local('runtime = "fake"\n')
-        code, _, err = self.runs(runtime=None)
+        self.local('client = "fake"\n')
+        code, _, err = self.runs(client=None)
         self.assertEqual((code, len(self.launches())), (0, 1), err)
 
 

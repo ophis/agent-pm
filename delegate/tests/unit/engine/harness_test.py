@@ -68,7 +68,7 @@ class Harness(Base):
             "input": "Hello.",
             "out": self.out,
             "workdir": self.work,
-            "runtime": "fake",
+            "client": "fake",
             "mode": "headless",
             "sid": SID,
             "events": self.events,
@@ -305,10 +305,10 @@ class Harness(Base):
         self.assertEqual((code, out, seen), (0, "", [(False, set())]), err)
         self.assert_outcome("done")
 
-    def test_tampered_role_runtime_events_and_output_are_refused_even_as_valid_json(self):
+    def test_tampered_role_client_events_and_output_are_refused_even_as_valid_json(self):
         for changes in (
             {"role": "engineer"},
-            {"runtime": "claude"},
+            {"client": "claude"},
             {"events": os.path.join(self.tmp, "forged-events")},
             {"out": os.path.join(self.tmp, "forged-output")},
         ):
@@ -327,7 +327,7 @@ class Harness(Base):
             b"{",
             b"\xff",
             b"[]",
-            json.dumps({key: value for key, value in given.items() if key != "runtime"}).encode(),
+            json.dumps({key: value for key, value in given.items() if key != "client"}).encode(),
         ]
         for changes in (
             {"extra": True},
@@ -338,7 +338,7 @@ class Harness(Base):
             {"sid": "bad/name"},
             {"sid": "other-session"},
             {"role": "ghost\n"},
-            {"runtime": ""},
+            {"client": ""},
             {"mode": []},
             {"input": None},
             {"input": "unsafe\0input"},

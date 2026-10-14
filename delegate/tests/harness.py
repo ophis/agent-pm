@@ -28,7 +28,7 @@ class HarnessCase(Case):
         self,
         *,
         language="English",
-        runtime="fake",
+        client="fake",
         default="agent",
         team_dirs=(),
         trusted_dirs=(),
@@ -40,7 +40,7 @@ class HarnessCase(Case):
                 f'[delegate]\nlanguage = "{language}"\n'
                 f"team_dirs = {json.dumps(list(team_dirs))}\n"
                 f"trusted_dirs = {json.dumps(list(trusted_dirs))}\n"
-                f'[delegate.roles.dummy-tester]\nruntime = "{runtime}"\n'
+                f'[delegate.roles.dummy-tester]\nclient = "{client}"\n'
                 f'[session.hosts]\ndefault = "{default}"\n'
                 "[session.adapters.fake]\n"
                 'implementation = "session.tests.fake_adapter:FakeAdapter"\n'
@@ -64,7 +64,7 @@ class HarnessCase(Case):
 
     def make(self, *, role="dummy-tester", spec=None, session_cls=HarnessSession, **kw):
         spec = spec or Spec(
-            "Hello.\nLiteral input.", self.work, task="echo", sid=SID, cwd=self.work, runtime="fake"
+            "Hello.\nLiteral input.", self.work, task="echo", sid=SID, cwd=self.work, client="fake"
         )
         return HarnessDelegate(role, spec, session_cls=session_cls, **kw)
 

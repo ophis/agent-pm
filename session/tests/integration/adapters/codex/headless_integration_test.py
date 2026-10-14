@@ -171,7 +171,7 @@ class HeadlessSessions(Case):
             *args,
             *(["resume", NATIVE] if resume else []),
             "--",
-            prompt + "\n\n" + self.adapter.runtime_note,
+            prompt + "\n\n" + self.adapter.client_note,
         ]
 
     def direct_launch(self, prompt, *, resume=False):

@@ -300,7 +300,7 @@ class Start(Base):
     def test_start_returns_its_session_running_at_once_with_its_prepared(self):
         with self.spied() as calls:
             mode = HeadlessRunner.start(
-                Spec(workdir=self.dir, sid=SID, runtime="stub"),
+                Spec(workdir=self.dir, sid=SID, client="stub"),
                 StubAdapter(Launch(python(SLEEPER))),
                 registry=self.driver.registry,
                 record=self.recorded.append,

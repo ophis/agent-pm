@@ -22,7 +22,7 @@ class ActAs(Case):
     def test_step_4s_prefix_is_step_1s(self):
         self.assertEqual(prefix(), command(1).partition(" python3 ")[0])
 
-    def test_step_3_requests_instruction_without_runtime_options(self):
+    def test_step_3_requests_instruction_without_client_options(self):
         self.assertIn("agent_pm.delegate.cli prompt --role", command(3))
-        for option in ("--runtime", "--mode", "--detach", "--sid", "--resume"):
+        for option in ("--client", "--mode", "--detach", "--sid", "--resume"):
             self.assertNotIn(option, command(3))

@@ -97,7 +97,7 @@ class TuiRun(tui_live.Live):
                         self.workdir,
                         task="echo",
                         mode="tui",
-                        runtime="claude",
+                        client="claude",
                         sid=SID,
                         events=self.events,
                         out=self.out,

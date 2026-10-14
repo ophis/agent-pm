@@ -168,7 +168,7 @@ class Base(Case):
 
     def start(self, run=None, record=None, **fields) -> tui.TuiRunner:
         """A TuiRunner started with self.adapter (its tui `run` if given) on Spec(workdir self.tmp,
-        name NAME, runtime fake, sid SID, events self.events, **fields), its Prepared in
+        name NAME, client fake, sid SID, events self.events, **fields), its Prepared in
         self.prepared; its session line given to record, else kept in self.recorded.
         """
         if run is not None:
@@ -177,7 +177,7 @@ class Base(Case):
             **{
                 "workdir": self.tmp,
                 "name": NAME,
-                "runtime": "fake",
+                "client": "fake",
                 "sid": SID,
                 "events": self.events,
                 **fields,
@@ -212,7 +212,7 @@ class Base(Case):
             None if process is None else process.session_identity()[1]
         ) or "fixture-generation"
         return {
-            "runtime": "fake",
+            "client": "fake",
             "sid": SID,
             "workdir": self.tmp,
             "cwd": self.tmp,
@@ -318,7 +318,7 @@ class AttachTest(Base):
             Prepared(
                 Spec(
                     workdir=self.tmp,
-                    runtime="fake",
+                    client="fake",
                     mode=Mode.TUI,
                     sid=SID,
                     name=NAME,
@@ -422,7 +422,7 @@ class AttachTest(Base):
         self.adapter.run = None
         with self.assertRaises(DriverError) as caught:
             self.attach()
-        self.assertEqual(str(caught.exception), "no tui session w1: runtime 'fake' has no tui mode")
+        self.assertEqual(str(caught.exception), "no tui session w1: client 'fake' has no tui mode")
         self.assertEqual(self.host.calls.mock_calls, [])
 
     def test_marked_blocked_is_its_terminals_activity(self):
@@ -492,7 +492,7 @@ class StartTest(Base):
 
     def test_display_and_private_identity_are_separate_from_the_host_receipt(self):
         mode = tui.TuiRunner.start(
-            Spec(workdir=self.tmp, name=NAME, runtime="fake", sid=SID),
+            Spec(workdir=self.tmp, name=NAME, client="fake", sid=SID),
             self.adapter,
             registry=self.driver.registry,
             record=self.recorded.append,
@@ -503,7 +503,7 @@ class StartTest(Base):
         self.assertEqual(call.kwargs["display"], "opaque-location")
         self.assertIsNone(call.kwargs["record"])
         self.assertEqual(call.kwargs["metadata"]["sid"], SID)
-        self.assertEqual(call.kwargs["metadata"]["runtime"], "fake")
+        self.assertEqual(call.kwargs["metadata"]["client"], "fake")
         self.assertEqual(mode._terminal.display(), "opaque-location")
 
     def test_the_selected_host_receives_the_launch_and_identity_receipt(self):
@@ -522,7 +522,7 @@ class StartTest(Base):
         )
         self.assertEqual(call.kwargs["events"], self.events)
         self.assertEqual(call.kwargs["metadata"]["sid"], SID)
-        self.assertEqual(call.kwargs["metadata"]["runtime"], "fake")
+        self.assertEqual(call.kwargs["metadata"]["client"], "fake")
         self.assertEqual(self.run.roots, PACKAGE_ROOTS)
         self.assertEqual(
             (mode.name, mode.prepared.info.sid, mode._store.dir), (NAME, SID, self.dir)
@@ -658,7 +658,7 @@ class StartTest(Base):
 
     def test_an_unsupported_tui_mode_is_refused_before_anything(self):
         self.adapter.run = None
-        with self.assertRaisesRegex(ConfigError, "runtime 'fake' does not support tui mode"):
+        with self.assertRaisesRegex(ConfigError, "client 'fake' does not support tui mode"):
             self.start()
         self.assertEqual(self.host.calls.mock_calls, [])
         self.nothing_hosted()
@@ -758,8 +758,8 @@ class SnapshotTest(Base):
         )
         self.assertEqual(tui.TuiRunner.snapshot(NAME)["later"], 1)
 
-    def test_a_runtime_is_lowercase_word_characters_led_by_a_letter(self):
-        for runtime, ok in (
+    def test_a_client_is_lowercase_word_characters_led_by_a_letter(self):
+        for client, ok in (
             ("a", True),
             ("a_1", True),
             ("z9_", True),
@@ -771,16 +771,16 @@ class SnapshotTest(Base):
             ("a\n", False),
             (1, False),
         ):
-            with self.subTest(runtime=runtime):
-                self.write_state(self.state(runtime=runtime))
+            with self.subTest(client=client):
+                self.write_state(self.state(client=client))
                 if ok:
-                    self.assertEqual(tui.TuiRunner.snapshot(NAME)["runtime"], runtime)
+                    self.assertEqual(tui.TuiRunner.snapshot(NAME)["client"], client)
                 else:
                     with self.assertRaises(DriverError) as caught:
                         tui.TuiRunner.snapshot(NAME)
                     path = os.path.join(self.dir, "session.json")
                     self.assertEqual(
-                        str(caught.exception), f"no tui session w1: {path}: bad runtime"
+                        str(caught.exception), f"no tui session w1: {path}: bad client"
                     )
 
     def test_missing_or_invalid_is_a_driver_error(self):
@@ -790,7 +790,7 @@ class SnapshotTest(Base):
             "words": {"stop": "dead"},
             "events": "rel",
             "sid": "a/b",
-            "runtime": "Fake",
+            "client": "Fake",
             "workdir": "rel",
             "generation": "",
         }
@@ -1560,7 +1560,7 @@ class PrepareTest(Base):
             (ScanTui, {"transcript": "rel.jsonl"}, {}, "transcript 'rel.jsonl'\\Z"),
             (ScanTui, {"cwd": "rel"}, {}, "cwd 'rel'\\Z"),
             (BadLabel, {}, {}, "words "),
-            (ScanTui, {}, {"runtime": None}, "runtime None"),
+            (ScanTui, {}, {"client": None}, "client None"),
         ):
             with (
                 self.subTest(bad),
@@ -1763,7 +1763,7 @@ class TransportErrorTest(TmuxBase):
         adapter.run = Launchable(adapter)
         with self.assertRaises(DriverError) as caught:
             tui.TuiRunner.start(
-                Spec(workdir=workdir, name=NAME, runtime="fake", sid=SID),
+                Spec(workdir=workdir, name=NAME, client="fake", sid=SID),
                 adapter,
                 registry=self.driver.registry,
                 record=lambda _info: None,

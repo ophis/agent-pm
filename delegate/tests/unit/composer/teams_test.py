@@ -606,8 +606,8 @@ class TeamDirChecks(Fake):
                 f"{self.top} overlaps write dir {inside} {inside}",
             ),
             (
-                [("a dir the runtime adds", home)],
-                f"{self.top} overlaps a dir the runtime adds {home}",
+                [("a dir the client adds", home)],
+                f"{self.top} overlaps a dir the client adds {home}",
             ),
         ):
             with self.subTest(want=want):

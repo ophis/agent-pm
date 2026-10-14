@@ -125,10 +125,10 @@ class SessionPolicy(Case):
 
     def test_recovery_helpers_use_driver_selection_without_literal_builders(self):
         root = Path(REPO) / "session" / "src" / "agent_pm" / "session" / "adapters"
-        for runtime in ("claude", "codex"):
-            common = root / runtime / "common.py"
-            paths = [common] if common.is_file() else (root / runtime / "common").rglob("*.py")
+        for client in ("claude", "codex"):
+            common = root / client / "common.py"
+            paths = [common] if common.is_file() else (root / client / "common").rglob("*.py")
             source = "\n".join(path.read_text() for path in paths)
-            with self.subTest(runtime=runtime):
+            with self.subTest(client=client):
                 self.assertNotIn("--resume", source)
                 self.assertNotIn('"resume"', source)

@@ -20,7 +20,7 @@ def stamp(t, tz=WEST):
     return t.astimezone(tz).isoformat(timespec="seconds")
 
 
-def row(kind, issue, sid, role="researcher", runtime="a", **ago):
+def row(kind, issue, sid, role="researcher", client="a", **ago):
     return json.dumps(
         {
             "ts": stamp(NOW - timedelta(**ago)),
@@ -28,21 +28,21 @@ def row(kind, issue, sid, role="researcher", runtime="a", **ago):
             "issue": issue,
             "sid": sid,
             "role": role,
-            "runtime": runtime,
+            "client": client,
         }
     )
 
 
-def limit(resets_at, runtime="a", **extra):
+def limit(resets_at, client="a", **extra):
     return json.dumps(
-        {"ts": stamp(NOW), "kind": "limit", "issue": "TASK-1", "sid": "s", "runtime": runtime}
+        {"ts": stamp(NOW), "kind": "limit", "issue": "TASK-1", "sid": "s", "client": client}
         | {"resets_at": resets_at}
         | extra
     )
 
 
-def entry(kind, issue, sid, role, runtime="a", **ago):
-    return runs.Entry(NOW - timedelta(**ago), kind, issue, sid, role, runtime)
+def entry(kind, issue, sid, role, client="a", **ago):
+    return runs.Entry(NOW - timedelta(**ago), kind, issue, sid, role, client)
 
 
 class Case(case.Case):
@@ -82,7 +82,7 @@ class Parse(Case):
         )
         self.assertEqual({e.ts.utcoffset() for e in entries}, {timedelta(0)})
         self.assertEqual(
-            entries[1]._fields, ("ts", "kind", "issue", "sid", "role", "runtime", "delegate_kind")
+            entries[1]._fields, ("ts", "kind", "issue", "sid", "role", "client", "delegate_kind")
         )
 
     def test_parse_log_skips_what_is_not_a_complete_start_or_resume_line(self):
@@ -109,9 +109,9 @@ class Parse(Case):
             json.dumps({**good, "ts": 5}),
             json.dumps({**good, "ts": None}),
             json.dumps({**good, "ts": "9999-12-31T23:59:59-05:00"}),
-            json.dumps({**good, "runtime": None}),
-            json.dumps({**good, "runtime": ""}),
-            json.dumps({**good, "runtime": 3}),
+            json.dumps({**good, "client": None}),
+            json.dumps({**good, "client": ""}),
+            json.dumps({**good, "client": 3}),
         ]
         self.write([*bad, json.dumps(good), *bad, row("resume", "TASK-9", "z", "pm", minutes=30)])
         self.assertEqual(
@@ -137,9 +137,9 @@ class Parse(Case):
             with self.subTest(kind=kind):
                 self.assertIsNone(runs.parse_line(json.dumps(good | {"delegate_kind": kind})))
 
-    def test_a_line_without_runtime_and_a_limit_row_are_no_entries(self):
+    def test_a_line_without_client_and_a_limit_row_are_no_entries(self):
         legacy = json.loads(row("start", "TASK-1", "a", minutes=5))
-        del legacy["runtime"]
+        del legacy["client"]
         for line in (json.dumps(legacy), limit(stamp(NOW + timedelta(hours=1)))):
             with self.subTest(line=line):
                 self.assertIsNone(runs.parse_line(line))
@@ -150,15 +150,15 @@ class Limits(Case):
         self.write(lines)
         return runs.limits(self.log, NOW)
 
-    def test_a_live_row_names_its_runtime_and_reset_time(self):
+    def test_a_live_row_names_its_client_and_reset_time(self):
         at = NOW + timedelta(hours=1)
         got = self.limits(row("start", "TASK-1", "s", minutes=5), limit(stamp(at, EAST)))
         self.assertEqual(got, {("harness", "a"): at})
         self.assertEqual(got["harness", "a"].utcoffset(), timedelta(hours=8))
 
-    def test_the_latest_reset_per_runtime(self):
+    def test_the_latest_reset_per_client(self):
         early, late = NOW + timedelta(hours=1), NOW + timedelta(hours=3)
-        got = self.limits(limit(stamp(late)), limit(stamp(early)), limit(stamp(early), runtime="b"))
+        got = self.limits(limit(stamp(late)), limit(stamp(early)), limit(stamp(early), client="b"))
         self.assertEqual(got, {("harness", "a"): late, ("harness", "b"): early})
 
     def test_what_is_not_live_is_left_out_and_never_raises(self):
@@ -182,15 +182,15 @@ class Limits(Case):
         at = NOW + runs.KEEP
         self.assertEqual(self.limits(limit(stamp(at))), {("harness", "a"): at})
 
-    def test_a_row_without_a_usable_runtime_or_of_another_kind_is_left_out(self):
+    def test_a_row_without_a_usable_client_or_of_another_kind_is_left_out(self):
         at = stamp(NOW + timedelta(hours=1))
         good = json.loads(limit(at))
         self.assertEqual(
             self.limits(
-                limit(at, runtime=""),
-                limit(at, runtime=None),
-                limit(at, runtime=3),
-                json.dumps({k: v for k, v in good.items() if k != "runtime"}),
+                limit(at, client=""),
+                limit(at, client=None),
+                limit(at, client=3),
+                json.dumps({k: v for k, v in good.items() if k != "client"}),
                 json.dumps({**good, "kind": "end"}),
                 "[]",
                 "null",
@@ -199,7 +199,7 @@ class Limits(Case):
             {},
         )
 
-    def test_limits_are_separate_for_each_delegate_runtime_key(self):
+    def test_limits_are_separate_for_each_delegate_client_key(self):
         early, late = NOW + timedelta(hours=1), NOW + timedelta(hours=2)
         self.assertEqual(
             self.limits(limit(stamp(early)), limit(stamp(late), delegate_kind="external")),
@@ -317,15 +317,15 @@ class Trim(Case):
         self.assertFalse(os.path.exists(self.log))
 
 
-class RuntimeOf(case.Case):
-    def test_the_start_entries_runtime_first(self):
+class ClientOf(case.Case):
+    def test_the_start_entries_client_first(self):
         entries = [
             entry("resume", "TASK-1", "s", "pm", "r", minutes=50),
             entry("start", "TASK-2", "t", "pm", "other", minutes=45),
             entry("start", "TASK-1", "s", "pm", "x", minutes=40),
             entry("resume", "TASK-1", "s", "pm", "y", minutes=30),
         ]
-        self.assertEqual(runs.runtime_of(entries, "s"), "x")
+        self.assertEqual(runs.client_of(entries, "s"), "x")
 
     def test_else_the_earliest_entries(self):
         entries = [
@@ -333,7 +333,7 @@ class RuntimeOf(case.Case):
             entry("resume", "TASK-1", "s", "pm", "early", minutes=30),
             entry("start", "TASK-1", "t", "pm", "other", minutes=60),
         ]
-        self.assertEqual(runs.runtime_of(entries, "s"), "early")
+        self.assertEqual(runs.client_of(entries, "s"), "early")
 
 
 class Latest(case.Case):
@@ -362,17 +362,17 @@ class NoteLimit(Case):
         path = os.path.join(self.tmp, "logs", "runs.jsonl")
         with mock.patch.object(os, "fsync", wraps=os.fsync) as spy:
             runs.note_limit(
-                path, issue="TASK-1", sid="s", runtime="a", resets_at=at, delegate_kind="harness"
+                path, issue="TASK-1", sid="s", client="a", resets_at=at, delegate_kind="harness"
             )
             runs.note_limit(
-                path, issue="TASK-2", sid="t", runtime="b", resets_at=None, delegate_kind="harness"
+                path, issue="TASK-2", sid="t", client="b", resets_at=None, delegate_kind="harness"
             )
         self.assertEqual(spy.call_count, 4)
         with open(path, encoding="utf-8") as f:
             rows = [json.loads(line) for line in f]
         self.assertEqual(
             [list(r) for r in rows],
-            [["ts", "kind", "issue", "sid", "runtime", "resets_at", "delegate_kind"]] * 2,
+            [["ts", "kind", "issue", "sid", "client", "resets_at", "delegate_kind"]] * 2,
         )
         self.assertEqual(
             [{k: v for k, v in r.items() if k != "ts"} for r in rows],
@@ -381,7 +381,7 @@ class NoteLimit(Case):
                     "kind": "limit",
                     "issue": "TASK-1",
                     "sid": "s",
-                    "runtime": "a",
+                    "client": "a",
                     "resets_at": at,
                     "delegate_kind": "harness",
                 },
@@ -389,7 +389,7 @@ class NoteLimit(Case):
                     "kind": "limit",
                     "issue": "TASK-2",
                     "sid": "t",
-                    "runtime": "b",
+                    "client": "b",
                     "resets_at": None,
                     "delegate_kind": "harness",
                 },

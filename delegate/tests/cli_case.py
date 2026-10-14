@@ -13,7 +13,7 @@ from delegate.tests.application_case import Base as ApplicationCase
 from session.tests import fake_adapter
 
 KEYS = {
-    "runtime",
+    "client",
     "mode",
     "sid",
     "resume",
@@ -104,7 +104,7 @@ class Base(ApplicationCase):
         role="dummy-tester",
         task="echo",
         input="Hello.",
-        runtime="fake",
+        client="fake",
         stdin="",
         out=None,
     ):
@@ -119,7 +119,7 @@ class Base(ApplicationCase):
             out or self.out,
             "--workdir",
             self.work,
-            *(("--runtime", runtime) if runtime else ()),
+            *(("--client", client) if client else ()),
             *extra,
             stdin=stdin,
         )

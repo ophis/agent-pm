@@ -37,7 +37,7 @@ class NoModeAdapter(Adapter):
 
 
 class InnerAdapter(NoModeAdapter):
-    """A runtime whose sessions set INNER_SESSION in their children."""
+    """A client whose sessions set INNER_SESSION in their children."""
 
     session_env = "INNER_SESSION"
     identity_env = ("INNER_SESSION", "INNER_ID")
@@ -51,7 +51,7 @@ class OtherAdapter(NoModeAdapter):
 
 
 def registry(**adapters) -> Registry:
-    """A Registry of `adapters` (runtime → Adapter class, None: one failing to load)."""
+    """A Registry of `adapters` (client → Adapter class, None: one failing to load)."""
 
     def load(path, _base):
         found = classes[path]
@@ -94,7 +94,7 @@ class RunnerTest(Case):
                 mode()
 
     def test_a_failed_start_returns_no_session_and_records_nothing(self):
-        spec = Spec(workdir="/w", runtime="none", sid="s1")
+        spec = Spec(workdir="/w", client="none", sid="s1")
         for mode, kind in KINDS.items():
             recorded = []
             with self.subTest(mode=kind.value), self.assertRaises(ConfigError) as caught:
@@ -106,7 +106,7 @@ class RunnerTest(Case):
                     host=MemoryHost(),
                 )
             self.assertEqual(
-                str(caught.exception), f"runtime 'none' does not support {kind.value} mode"
+                str(caught.exception), f"client 'none' does not support {kind.value} mode"
             )
             self.assertEqual(recorded, [])
 
@@ -144,12 +144,12 @@ class IdentityDropTest(ChildEnvTest):
         )
         self.assertEqual(identity_drop(registry()), frozenset({"AGENT_PM_SID"}))
 
-    def test_a_callers_start_token_never_reaches_a_runtime(self):
+    def test_a_callers_start_token_never_reaches_a_client(self):
         self.environ(AGENT_PM_SID="0f8fad5b-d9cb-469f-a165-70867728950e", KEEP="k")
         env = child_env(Launch(("x",)), "/cwd", identity_drop(registry()))
         self.assertEqual((env.get("AGENT_PM_SID"), env["KEEP"]), (None, "k"))
 
-    def test_a_child_default_only_inside_its_runtime_and_at_its_value(self):
+    def test_a_child_default_only_inside_its_client_and_at_its_value(self):
         both = registry(inner=InnerAdapter, other=OtherAdapter)
         for environ, defaults in (
             ({"PAGER": "cat", "NO_COLOR": "1", "OTHER_MODE": "on"}, set()),

@@ -20,7 +20,7 @@ from session.tests.cli_support import MANAGER, CliCase
 from session.tests.contracts.host import program
 from session.tests.fakes.host import FakeHost
 
-HEADER = "name\tstate\truntime\tsid\tdisplay"
+HEADER = "name\tstate\tclient\tsid\tdisplay"
 PROG = "agent-pm-session"
 OTHER = "other"
 SLEEP = "import time; time.sleep(120)"
@@ -51,7 +51,7 @@ class ListingCase(CliCase):
         own = HostedSession.configured(**settings(config, hosts=hosts))
         with mock.patch.dict(os.environ, self.server.env()):
             rows = own.list(match)
-        values = ((r.name, r.state, r.runtime, r.sid, r.display) for r in rows)
+        values = ((r.name, r.state, r.client, r.sid, r.display) for r in rows)
         return table(*("\t".join("-" if v is None else str(v) for v in each) for each in values))
 
     def done(self, name: str, *args: str, **kw) -> Record:

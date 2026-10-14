@@ -564,11 +564,11 @@ class RowsTest(Base):
     def test_a_row_per_listed_session_in_its_order(self):
         self.tmux.listing.return_value = [
             listed("mgr"),
-            listed("w1", sid=SID, runtime="fake", state="done", display="mgr/below", shown="m"),
-            listed("w2", sid="a/b", runtime="Fake", state="blocked", shown=""),
-            listed("w3", runtime="x-y", state="dead"),
-            listed("w4", runtime="fake", state="done", dead=True, last_lines="bye"),
-            listed("w5", runtime="fake9_", state="other", dead=None),
+            listed("w1", sid=SID, client="fake", state="done", display="mgr/below", shown="m"),
+            listed("w2", sid="a/b", client="Fake", state="blocked", shown=""),
+            listed("w3", client="x-y", state="dead"),
+            listed("w4", client="fake", state="done", dead=True, last_lines="bye"),
+            listed("w5", client="fake9_", state="other", dead=None),
         ]
         self.tmux.own_session.return_value = "mgr"
         rows = self.host.rows()
@@ -580,7 +580,7 @@ class RowsTest(Base):
                 row(
                     name="mgr",
                     sid=None,
-                    runtime=None,
+                    client=None,
                     state="working",
                     display=None,
                     shown=None,
@@ -590,7 +590,7 @@ class RowsTest(Base):
                 row(
                     name="w1",
                     sid=SID,
-                    runtime="fake",
+                    client="fake",
                     state="done",
                     display="mgr/below",
                     shown="m",
@@ -600,7 +600,7 @@ class RowsTest(Base):
                 row(
                     name="w2",
                     sid=None,
-                    runtime=None,
+                    client=None,
                     state="blocked",
                     display=None,
                     shown="",
@@ -610,7 +610,7 @@ class RowsTest(Base):
                 row(
                     name="w3",
                     sid=None,
-                    runtime=None,
+                    client=None,
                     state="working",
                     display=None,
                     shown=None,
@@ -620,7 +620,7 @@ class RowsTest(Base):
                 row(
                     name="w4",
                     sid=None,
-                    runtime="fake",
+                    client="fake",
                     state="dead",
                     display=None,
                     shown=None,
@@ -630,7 +630,7 @@ class RowsTest(Base):
                 row(
                     name="w5",
                     sid=None,
-                    runtime="fake9_",
+                    client="fake9_",
                     state="working",
                     display=None,
                     shown=None,

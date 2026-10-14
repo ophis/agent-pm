@@ -19,7 +19,7 @@ class Entry(NamedTuple):
     issue: str
     sid: str
     role: str
-    runtime: str
+    client: str
     delegate_kind: str = "harness"
 
 
@@ -29,20 +29,20 @@ def note(path, kind, *, now=datetime.now, **fields):
     append_line(path, line + "\n", durable=True)
 
 
-def note_limit(path, *, issue, sid, runtime, resets_at, delegate_kind):
+def note_limit(path, *, issue, sid, client, resets_at, delegate_kind):
     note(
         path,
         "limit",
         issue=issue,
         sid=sid,
-        runtime=runtime,
+        client=client,
         resets_at=resets_at,
         delegate_kind=delegate_kind,
     )
 
 
-def _runtime(d):
-    return isinstance(d["runtime"], str) and d["runtime"] != ""
+def _client(d):
+    return isinstance(d["client"], str) and d["client"] != ""
 
 
 def _delegate(d):
@@ -58,7 +58,7 @@ def parse_line(line):
         if (
             d["kind"] in ("start", "resume")
             and all(isinstance(d[k], str) for k in ("issue", "sid", "role"))
-            and _runtime(d)
+            and _client(d)
             and _delegate(d)
         ):
             ts = datetime.fromisoformat(d["ts"]).astimezone(UTC)
@@ -68,7 +68,7 @@ def parse_line(line):
                 d["issue"],
                 d["sid"],
                 d["role"],
-                d["runtime"],
+                d["client"],
                 d.get("delegate_kind", "harness"),
             )
     except ERRORS:
@@ -79,15 +79,10 @@ def parse_line(line):
 def _limit(line, now):
     try:
         d = json.loads(line)
-        if (
-            d["kind"] == "limit"
-            and _runtime(d)
-            and _delegate(d)
-            and isinstance(d["resets_at"], str)
-        ):
+        if d["kind"] == "limit" and _client(d) and _delegate(d) and isinstance(d["resets_at"], str):
             at = datetime.fromisoformat(d["resets_at"])
             if at.utcoffset() is not None and now < at <= now + KEEP:
-                return (d.get("delegate_kind", "harness"), d["runtime"]), at
+                return (d.get("delegate_kind", "harness"), d["client"]), at
     except ERRORS:
         pass
     return None
@@ -136,9 +131,9 @@ def trim(path, now):
         save(path, "".join(keep))
 
 
-def runtime_of(entries, sid):
+def client_of(entries, sid):
     mine = [e for e in entries if e.sid == sid]
-    return next((e for e in mine if e.kind == "start"), min(mine, key=lambda e: e.ts)).runtime
+    return next((e for e in mine if e.kind == "start"), min(mine, key=lambda e: e.ts)).client
 
 
 def delegate_of(entries, sid):

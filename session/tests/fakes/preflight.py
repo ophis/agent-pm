@@ -90,4 +90,4 @@ class PreflightInProcess(InProcess):
 
     def run(self, spec):
         self.adapter.ran.append(spec)
-        raise AssertionError("preflight executed an in_process runtime")
+        raise AssertionError("preflight executed an in_process client")

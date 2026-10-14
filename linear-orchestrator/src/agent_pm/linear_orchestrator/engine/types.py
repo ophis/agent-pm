@@ -194,7 +194,7 @@ class Spec:
     sid: str
     task: str | None = None
     mode: str = field(metadata={"choices": ("new", "resume")})
-    runtime: str
+    client: str
     input: str
     tui: bool = field(default=False, metadata={"action": "store_true"})
     split: str | None = None
@@ -203,7 +203,7 @@ class Spec:
     events: str | None = None
 
     @classmethod
-    def from_issue(cls, issue, *, mode, sid, task, runtime):
+    def from_issue(cls, issue, *, mode, sid, task, client):
         return cls(
             uuid=issue["id"],
             issue=issue["identifier"],
@@ -212,7 +212,7 @@ class Spec:
             sid=sid,
             task=task,
             mode=mode,
-            runtime=runtime,
+            client=client,
             input="",
         )
 

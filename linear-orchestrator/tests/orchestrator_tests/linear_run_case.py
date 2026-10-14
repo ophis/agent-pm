@@ -76,7 +76,7 @@ class RunCase(ConfigFile, Case):
             role="researcher",
             sid=sid,
             task="light-research",
-            runtime="fake",
+            client="fake",
             display=display,
             delegate_cls=delegate_cls,
         )
@@ -86,7 +86,7 @@ class RunCase(ConfigFile, Case):
             issue=issue,
             sid=sid,
             role="researcher",
-            runtime="fake",
+            client="fake",
             delegate_kind="fake",
         )
         return owner, owner.detach()

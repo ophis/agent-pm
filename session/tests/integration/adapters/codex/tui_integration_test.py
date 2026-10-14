@@ -123,7 +123,7 @@ class Live(Case):
         self.server.start("mgr")
         fake_tui.install(self.server.bin)
         self.log, self.scenario, self.events = (
-            self.root / n for n in ("runtime.jsonl", "scenario.json", "events")
+            self.root / n for n in ("client.jsonl", "scenario.json", "events")
         )
         self.scene()
         self.env = self.server.env(CODEX_HOME=str(self.codex_home), TZ="UTC")
@@ -556,7 +556,7 @@ class TuiLaunchIntegrationTest(Live):
             call["argv"][-2:],
             [
                 "--",
-                "quoted ' prompt\nnext\n\n" + self.driver.registry.adapter("codex").runtime_note,
+                "quoted ' prompt\nnext\n\n" + self.driver.registry.adapter("codex").client_note,
             ],
         )
         self.assertEqual(
@@ -764,9 +764,9 @@ class TuiLaunchIntegrationTest(Live):
         stream.quiet()
 
     def test_configured_home_keeps_caller_store_for_stop_binding_and_resume(self):
-        runtime_home = self.root / "runtime-home"
-        runtime_home.mkdir()
-        self.config["adapters"]["codex"]["env"]["HOME"] = str(runtime_home)
+        client_home = self.root / "client-home"
+        client_home.mkdir()
+        self.config["adapters"]["codex"]["env"]["HOME"] = str(client_home)
         self.driver = Driver(**self.config)
         self.scene([["configured home"]])
         first = self.start()
@@ -777,16 +777,16 @@ class TuiLaunchIntegrationTest(Live):
         self.assertEqual(Stream(self, second).until(TurnEnd)[-1], TurnEnd("configured home"))
         self.assertEqual(self.bound().native_id, native)
         self.assertEqual(len(list(self.record().parent.glob("*.json"))), 1)
-        self.assertFalse((runtime_home / ".agent-pm").exists())
-        self.assertTrue(all(call["env"]["HOME"] == str(runtime_home) for call in self.calls()))
+        self.assertFalse((client_home / ".agent-pm").exists())
+        self.assertTrue(all(call["env"]["HOME"] == str(client_home) for call in self.calls()))
 
     def test_configured_home_in_writable_roots_keeps_caller_store_fresh_and_resumed(self):
-        self.scene([["writable runtime home"]])
+        self.scene([["writable client home"]])
         for index, grant in enumerate((self.work, self.extra)):
             with self.subTest(grant=grant):
-                runtime_home = grant / "runtime-home"
-                runtime_home.mkdir()
-                self.config["adapters"]["codex"]["env"]["HOME"] = str(runtime_home)
+                client_home = grant / "client-home"
+                client_home.mkdir()
+                self.config["adapters"]["codex"]["env"]["HOME"] = str(client_home)
                 self.driver = Driver(**self.config)
                 name, sid = f"configured{index}", f"configured-{index}"
                 before = len(self.calls())
@@ -796,18 +796,18 @@ class TuiLaunchIntegrationTest(Live):
                 while not isinstance(found[-1], TurnEnd):
                     self.assertNotIsInstance(found[-1], Exited)
                     found.append(first_stream.next())
-                self.assertEqual(found[-1], TurnEnd("writable runtime home"))
+                self.assertEqual(found[-1], TurnEnd("writable client home"))
                 native = self.bound(sid).native_id
                 first.stop()
                 second = self.start(name, sid=sid, resume=sid)
                 self.assertEqual(
-                    Stream(self, second).until(TurnEnd)[-1], TurnEnd("writable runtime home")
+                    Stream(self, second).until(TurnEnd)[-1], TurnEnd("writable client home")
                 )
                 second.stop()
                 self.assertEqual(self.bound(sid).native_id, native)
-                self.assertFalse((runtime_home / ".agent-pm").exists())
+                self.assertFalse((client_home / ".agent-pm").exists())
                 self.assertTrue(
-                    all(call["env"]["HOME"] == str(runtime_home) for call in self.calls()[before:])
+                    all(call["env"]["HOME"] == str(client_home) for call in self.calls()[before:])
                 )
         self.assertEqual(len(list(self.record().parent.glob("*.json"))), 2)
 
@@ -1074,7 +1074,7 @@ class TuiRecoveryIntegrationTest(Live):
         native.unlink(missing_ok=True)
         native.write_bytes(original)
 
-    def test_protected_paths_and_untrusted_settings_are_rejected_before_tmux_or_runtime(self):
+    def test_protected_paths_and_untrusted_settings_are_rejected_before_tmux_or_client(self):
         roots = (str(self.home), self.server.bin, *ROOTS, sys.prefix)
         for index, root in enumerate(roots):
             with self.subTest(root=root):
@@ -1107,7 +1107,7 @@ class HookTest(Base):
 
         roots_json = json.dumps([SRC["session"], SRC["utils"]])
         state = {
-            "runtime": "codex",
+            "client": "codex",
             "sid": self.spec.sid,
             "workdir": str(self.work),
             "cwd": str(self.cwd),

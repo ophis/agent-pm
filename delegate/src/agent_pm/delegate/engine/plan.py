@@ -94,12 +94,12 @@ def plan(
             )
         run = replace(run, task=spec.task)
     workdir = os.path.abspath(spec.workdir)
-    runtime = spec.runtime or run.runtime
+    client = spec.client or run.client
     spec = replace(
         spec,
         workdir=workdir,
         out=os.path.abspath(spec.out) if spec.out else None,
-        runtime=runtime,
+        client=client,
         sid=spec.sid if spec.sid is not None else str(uuid.uuid4()),
         team=team,
     )
@@ -125,10 +125,10 @@ def plan(
         reads=intent.reads,
         env=intent.env,
     )
-    flags, env = driver.policy(runtime)
+    flags, env = driver.policy(client)
     session = SessionSpec(
         workdir=workdir,
-        runtime=runtime,
+        client=client,
         mode=Mode(spec.mode),
         sid=spec.sid,
         resume=spec.resume,
@@ -146,7 +146,7 @@ def plan(
         team,
         guarded,
         intent.writes,
-        runtime=runtime,
+        client=client,
         spec=session,
         driver=driver,
     )
@@ -169,11 +169,11 @@ def _check_team_dirs(
     guarded: tuple[str, ...],
     write_dirs: tuple[str, ...],
     *,
-    runtime: str,
+    client: str,
     spec: SessionSpec,
     driver: Driver,
 ) -> None:
-    """Every dir the run can write counts, those `runtime` can write itself (writable_dirs) last;
+    """Every dir the run can write counts, those `client` can write itself (writable_dirs) last;
     spec.access.reads, read only, do not.
     """
     if not team.dirs and not guarded:
@@ -181,7 +181,7 @@ def _check_team_dirs(
     writes = [("the workdir", spec.workdir), ("the cwd", spec.access.cwd)]
     writes += [(f"write dir {p}", p) for p in write_dirs]
     writes += [("a dir the run adds", p) for p in spec.access.dirs]
-    writes += [(f"a dir {runtime} can write", p) for p in driver.writable_dirs(spec)]
+    writes += [(f"a dir {client} can write", p) for p in driver.writable_dirs(spec)]
     composer.check_team_dirs(team.dirs, writes=writes)
     for path in (p for d in guarded for p in composer.team_paths(d)):
         real = os.path.realpath(path)

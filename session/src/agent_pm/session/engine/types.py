@@ -239,7 +239,7 @@ class Spec(ProcessOptions):
     name: str | None = None
     protect: tuple[str, ...] = ()
     reply_tags: tuple[str, str] | None = None  # caller's (progress, outcome) tags for in_process
-    runtime: str | None = None
+    client: str | None = None
     mode: Mode | None = None
     prompt: str = ""
     resume: bool = False  # resume session sid
@@ -277,8 +277,8 @@ class Spec(ProcessOptions):
             raise ConfigError(
                 "reply_tags must be None or (progress tag, outcome tag), each [A-Za-z0-9_-]+"
             )
-        if self.runtime is not None and not isinstance(self.runtime, str):
-            raise ConfigError("runtime must be None or a string")
+        if self.client is not None and not isinstance(self.client, str):
+            raise ConfigError("client must be None or a string")
         if self.mode is not None:
             object.__setattr__(self, "mode", _member(Mode, "mode", self.mode))
         if not isinstance(self.prompt, str):
@@ -395,7 +395,7 @@ class Prepared:
 
 @dataclass(frozen=True)
 class ClientBound:
-    """An adapter's notice that its runtime bound client_id: a run.jsonl client_session line,
+    """An adapter's notice that its client bound client_id: a run.jsonl client_session line,
     never a SessionEvent.
     """
 
@@ -571,13 +571,13 @@ class IdleTimeout:
 
 @dataclass(frozen=True)
 class SessionRow:
-    """runtime: a tui session's (HostedSession's), else None; display: its Host's, opaque; shown: the
+    """client: a tui session's (HostedSession's), else None; display: its Host's, opaque; shown: the
     session showing it, "" unnamed, None none; state: given its plain value too.
     """
 
     name: str
     sid: str | None
-    runtime: str | None
+    client: str | None
     state: ActivityState
     display: str | None
     shown: str | None

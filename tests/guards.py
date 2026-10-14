@@ -24,7 +24,7 @@ from tests.import_policy import violation
 UNIT_ISOLATION_ALLOWED = {}
 
 
-RUNTIME = re.compile(r"claude|codex", re.I)
+CLIENT = re.compile(r"claude|codex", re.I)
 
 
 TOML_CODE = re.compile(r"""(?:[^#"']|"(?:\\.|[^"\\])*"|'[^']*')*""")
@@ -38,7 +38,7 @@ TOML_IMPLEMENTATION = re.compile(
 )
 
 
-TOML_RUNTIME = re.compile(r'\s*runtime\s*=\s*"[a-z][a-z0-9_]*"\s*\Z')
+TOML_CLIENT = re.compile(r'\s*client\s*=\s*"[a-z][a-z0-9_]*"\s*\Z')
 
 
 TMUX_HOST = "session/src/agent_pm/session/hosts/tmux/host.py"
@@ -266,7 +266,7 @@ NOQA_ALLOWED = {
         f"{SESSION_SRC}modes/tui_hook.py",
         "BLE001",
         "run",
-    ): "the hook must never fail the client runtime",
+    ): "the hook must never fail the client",
 }
 
 
@@ -1393,7 +1393,7 @@ def package_top(repo: str) -> list[str]:
     return sorted(found)
 
 
-def runtime_names(repo: str) -> list[str]:
+def client_names(repo: str) -> list[str]:
     found = set()
     for rel, text in _lower_files(repo, (".py", ".toml"), skip=f"{SESSION_SRC}adapters/"):
         for number, line in enumerate(text.splitlines(), 1):
@@ -1403,10 +1403,10 @@ def runtime_names(repo: str) -> list[str]:
                 if (
                     TOML_HEADER.match(line)
                     or TOML_IMPLEMENTATION.match(line)
-                    or TOML_RUNTIME.match(line)
+                    or TOML_CLIENT.match(line)
                 ):
                     continue
-            found.update(f"{rel}:{number}: runtime name {word}" for word in RUNTIME.findall(line))
+            found.update(f"{rel}:{number}: client name {word}" for word in CLIENT.findall(line))
     return sorted(found)
 
 
@@ -1925,8 +1925,8 @@ def orchestrator_text(repo: str) -> list[str]:
         grammar = rel.startswith("src/") and rel.endswith(".py") and rel != HANDOFF_HOME
         for number, line in enumerate(lines, 1):
             found.update(
-                f"{rel}:{number}: runtime name {w}"
-                for w in RUNTIME.findall(line.replace("AGENTS.md", " "))
+                f"{rel}:{number}: client name {w}"
+                for w in CLIENT.findall(line.replace("AGENTS.md", " "))
             )
             if grammar:
                 found.update(f"{rel}:{number}: Handoff literal {w}" for w in HANDOFF.findall(line))

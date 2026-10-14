@@ -26,7 +26,7 @@ CONFIG = {
     "effort": "high",
     "idle_timeout": 60,
     "show": "",
-    "runtime": "runtime-a",
+    "client": "client-a",
     "language": "English",
     "output": {"type": "local"},
     "roles": {"writer": {"tier": 1, "read": ["/operator/read"]}},
@@ -63,7 +63,7 @@ class OwnedComposer(Case):
             "effort": "high",
             "idle_timeout": 60,
             "show": "",
-            "runtime": "runtime-a",
+            "client": "client-a",
             "roles": {"writer": {"read": ["/read/a"]}},
             "output": {"type": "local"},
         }

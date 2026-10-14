@@ -16,7 +16,7 @@ class Driver(ABC):
     session: Session | None = None
     display: Display = None
 
-    def policy(self, runtime: str) -> tuple[tuple[str, ...], dict[str, str]]:
+    def policy(self, client: str) -> tuple[tuple[str, ...], dict[str, str]]:
         return (), {}
 
     def writable_dirs(self, spec: Spec) -> tuple[str, ...]:
@@ -49,13 +49,13 @@ class AgentDriver(Driver):
         self.settings = settings
         self.display, self.host = display, host
 
-    def policy(self, runtime: str) -> tuple[tuple[str, ...], dict[str, str]]:
+    def policy(self, client: str) -> tuple[tuple[str, ...], dict[str, str]]:
         try:
-            flags, env = config.policy(runtime, self.settings)
+            flags, env = config.policy(client, self.settings)
             self.session_cls.validate_policy(flags=tuple(flags), env=env)
             return tuple(flags), dict(env)
         except (OSError, ValueError, SessionConfigError) as error:
-            raise ConfigError(f"policy.{runtime}: {error}") from None
+            raise ConfigError(f"policy.{client}: {error}") from None
 
     def preflight(self, spec: Spec) -> None:
         self.session_cls.preflight(

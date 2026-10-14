@@ -20,7 +20,7 @@ from session.tests.case import SRC, Case
 from session.tests.tui_hook_support import HOOK, SOURCE_ROOTS, identity, install, state, write_state
 from utils.tests.process_fixtures import DEVNULL
 
-RUNTIME = re.compile(r"claude|codex", re.I)
+CLIENT = re.compile(r"claude|codex", re.I)
 
 
 class InProcess(Case):
@@ -189,8 +189,8 @@ class Standalone(Case):
         self.assertLessEqual(names, set(sys.stdlib_module_names))
         self.assertEqual(shared, [["HookCall", "HookError", "Word"]] * 2)
 
-    def test_no_runtime_name(self):
-        self.assertEqual(RUNTIME.findall(self.source), [])
+    def test_no_client_name(self):
+        self.assertEqual(CLIENT.findall(self.source), [])
 
 
 class WordTest(Case):

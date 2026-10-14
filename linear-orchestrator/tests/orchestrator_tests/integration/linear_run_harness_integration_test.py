@@ -56,7 +56,7 @@ class HarnessRun(HarnessCase):
             role="dummy-tester",
             sid=SID,
             task="echo",
-            runtime="fake",
+            client="fake",
             mode="tui",
             delegate_cls=HarnessProvider,
         )
@@ -66,14 +66,14 @@ class HarnessRun(HarnessCase):
             issue=issue,
             sid=SID,
             role="dummy-tester",
-            runtime="fake",
+            client="fake",
             delegate_kind="harness",
         )
         record = owner.detach()
         HarnessSession.start(
             SessionSpec(
                 workdir=self.work,
-                runtime="fake",
+                client="fake",
                 mode=Mode.TUI,
                 sid=SID,
                 name=self.metadata()["agent_name"],

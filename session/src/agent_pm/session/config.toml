@@ -7,8 +7,8 @@
 # Session.configure(adapters=, hosts=); bin/agent-pm-session (session/src/agent_pm/session/cli.py) is one such entry.
 
 # ── Adapters ────────────────────────────────────────────
-# [adapters.<name>]  one table per runtime, loaded only by session/src/agent_pm/session/adapters/registry.py; <name> is the
-#                    runtime name a Spec's runtime names, independent of the module and class
+# [adapters.<name>]  one table per client, loaded only by session/src/agent_pm/session/adapters/registry.py; <name> is the
+#                    client name a Spec's client names, independent of the module and class
 #   implementation   required: "module.path:Class", the Adapter subclass that runs it
 #   any other key    the adapter's own (its class's `keys`); a key it does not list is a config error
 

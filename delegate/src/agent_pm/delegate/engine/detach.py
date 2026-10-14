@@ -76,7 +76,7 @@ def detach(
         "input": p.params.input,
         "out": p.params.out,
         "workdir": p.params.workdir,
-        "runtime": p.runtime,
+        "client": p.client,
         "mode": mode,
         "sid": p.sid,
         "events": events,

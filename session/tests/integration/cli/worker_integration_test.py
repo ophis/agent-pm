@@ -1,5 +1,5 @@
 """agent-pm-session's worker lifecycle through bin/agent-pm-session on a private tmux server: the
-runtime's exact cwd, argv and env from start (Q03), reply from another process (Q09), a runtime
+client's exact cwd, argv and env from start (Q03), reply from another process (Q09), a client
 that exits at once (Q10, D3), and a start whose early watch ends on a dialog (a Claude hook, the
 Codex trust screen).
 """
@@ -17,7 +17,7 @@ PERMISSION = {"kind": "hook", "event": "PermissionRequest", "tool_name": "Edit"}
 
 
 class StartArgvTest(WorkerCase):
-    def test_start_runs_the_runtime_with_the_given_cwd_prompt_flags_and_env(self):
+    def test_start_runs_the_client_with_the_given_cwd_prompt_flags_and_env(self):
         dump = self.dumping()
         sub = os.path.join(self.cwd, "sub")
         os.mkdir(sub)
@@ -25,7 +25,7 @@ class StartArgvTest(WorkerCase):
         res = self.session(
             "start",
             "w1",
-            "--runtime",
+            "--client",
             "claude",
             "--cwd",
             "sub",
@@ -61,7 +61,7 @@ class StartArgvTest(WorkerCase):
         here = os.path.join(self.cwd, "caller")
         os.mkdir(here)
         res = self.session(
-            "start", "w1", "--runtime", "claude", cwd=here, **self.scene("w1", turns=[])
+            "start", "w1", "--client", "claude", cwd=here, **self.scene("w1", turns=[])
         )
         record = self.record(res)
         (call,) = self.calls("w1")
@@ -96,7 +96,7 @@ class ReplyTest(WorkerCase):
 
 
 class EarlyDeathTest(WorkerCase):
-    def test_a_runtime_that_exits_at_once_exits_1_with_its_last_lines_and_keeps_its_pane(self):
+    def test_a_client_that_exits_at_once_exits_1_with_its_last_lines_and_keeps_its_pane(self):
         res = self.start("w2", "--", "--bogus")
         self.assertEqual((res.returncode, res.stdout), (1, ""), res.stderr)
         lines = res.stderr.splitlines()
@@ -147,7 +147,7 @@ class DialogTest(WorkerCase):
         res = self.session(
             "start",
             "w1",
-            "--runtime",
+            "--client",
             "codex",
             "--cwd",
             self.cwd,

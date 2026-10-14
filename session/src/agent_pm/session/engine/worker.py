@@ -65,13 +65,13 @@ def _text(value) -> bool:
 
 @dataclass(frozen=True)
 class WorkerState:
-    """What a worker's resume replays: its runtime, cwd, flags, env, events, Host and display, and
+    """What a worker's resume replays: its client, cwd, flags, env, events, Host and display, and
     its last launch's Host token (HostProcess.token).
     """
 
     name: str
     sid: str
-    runtime: str
+    client: str
     cwd: str
     host: str
     flags: tuple[str, ...] = ()
@@ -84,7 +84,7 @@ class WorkerState:
         checks = {
             "name": isinstance(self.name, str) and TAG.fullmatch(self.name) is not None,
             "sid": isinstance(self.sid, str) and SID.fullmatch(self.sid) is not None,
-            "runtime": isinstance(self.runtime, str) and CONFIG_NAME.fullmatch(self.runtime),
+            "client": isinstance(self.client, str) and CONFIG_NAME.fullmatch(self.client),
             "cwd": printable_abs(self.cwd),
             "host": isinstance(self.host, str) and CONFIG_NAME.fullmatch(self.host),
             "flags": isinstance(self.flags, tuple)
@@ -136,7 +136,7 @@ class WorkerState:
             ctl=(COMMAND,),
             resume=(COMMAND, "resume", self.name),
             display=self.display,
-            detail=self.runtime,
+            detail=self.client,
         )
 
     def spec(self, *, prompt: str, resume: bool) -> Spec:
@@ -146,7 +146,7 @@ class WorkerState:
             sid=self.sid,
             name=self.name,
             protect=(os.path.realpath(os.path.expanduser(WORKERS)),),
-            runtime=self.runtime,
+            client=self.client,
             mode=Mode.TUI,
             prompt=prompt,
             resume=resume,
@@ -246,8 +246,8 @@ class Worker:
         )
 
     def start(self, *, prompt: str, resume: bool) -> Record:
-        """Start its runtime, save its state, show it, watch it; then publish its Record and return
-        it. Its runtime exiting in the watch: DriverError with its last lines, its terminal kept,
+        """Start its client, save its state, show it, watch it; then publish its Record and return
+        it. Its client exiting in the watch: DriverError with its last lines, its terminal kept,
         no Record.
         """
         name = self.state.name
@@ -316,7 +316,7 @@ class Worker:
             return
         handle.kill()
         if not handle.wait_exit(WAIT):
-            raise DriverError(f"{name}: its old runtime did not exit; nothing started")
+            raise DriverError(f"{name}: its old client did not exit; nothing started")
 
     def _session(self) -> HostProcess | None:
         """Its Host's session of its name, refused if another's; None when absent."""
@@ -362,7 +362,7 @@ class Worker:
                 return
 
     def _died(self, code: int) -> str:
-        head = f"{self.state.name}: {self.state.runtime} exited {code} at once"
+        head = f"{self.state.name}: {self.state.client} exited {code} at once"
         host = self.session_cls.host(self.state.host)
         if not isinstance(host, Displayable):
             return head

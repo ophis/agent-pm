@@ -100,7 +100,7 @@ class Queries(RunCase):
             self.cfg.runs_log,
             issue="TASK-1",
             sid="1234abcd-0000-4000-8000-000000000000",
-            runtime="fake",
+            client="fake",
             delegate_kind="fake",
             resets_at=(datetime.now(UTC) + timedelta(hours=1)).isoformat(),
         )

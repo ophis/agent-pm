@@ -1,6 +1,6 @@
-"""A new runtime is one importable module plus one [adapters.<name>] table naming it as
+"""A new client is one importable module plus one [adapters.<name>] table naming it as
 module.path:Class: a temp copy of the session and utils packages, the fake adapter's package copied in outside
-them as module extension_runtime (a name unrelated to the runtime's) and its table appended to the
+them as module extension_client (a name unrelated to the client's) and its table appended to the
 copy's agent_pm/session/config.toml, nothing else changed, runs a headless session through Driver.start in a
 child Python whose PYTHONPATH is only the copy's site directory and that module's dir. A table without its
 module, or a module without its table, fails there before anything starts.
@@ -20,8 +20,8 @@ from session.tests.codex_tui import INTERPRETER_PATHS, INTERPRETER_ROOTS, SITE_P
 TIMEOUT = 60  # seconds
 SKIP = shutil.ignore_patterns("__pycache__")
 PROJECTS = ("session", "utils")
-MODULE = "extension_runtime"
-# The child: configures the session from the copy's session config, starts runtime argv[2] headless
+MODULE = "extension_client"
+# The child: configures the session from the copy's session config, starts client argv[2] headless
 # in workdir argv[1] and prints its events; a ConfigError exits 1, its text on stderr.
 CHILD = """import dataclasses, json, sys
 from agent_pm.session import Driver, ConfigError, Spec, read_config
@@ -33,7 +33,7 @@ except ConfigError as e:
     sys.exit(f"ConfigError: {e}")
 events = [[type(e).__name__, dataclasses.asdict(e)] for e in handle.events()]
 print(json.dumps({"sid": handle.sid, "events": events,
-                  "files": [hosted_session.__file__, sys.modules["extension_runtime"].__file__]}))
+                  "files": [hosted_session.__file__, sys.modules["extension_client"].__file__]}))
 """
 PROTECTED_CHILD = f"""import sys
 from unittest import mock
@@ -103,9 +103,9 @@ class ExtensionAdapterIntegration(Case):
         with open(self.config, "a", encoding="utf-8") as f:
             f.write("\n" + text)
 
-    def child(self, runtime: str, script: str = CHILD) -> subprocess.CompletedProcess:
+    def child(self, client: str, script: str = CHILD) -> subprocess.CompletedProcess:
         return subprocess.run(
-            [*PY, "-c", script, self.work, runtime, self.site],
+            [*PY, "-c", script, self.work, client, self.site],
             cwd=self.root,
             env={
                 **child_env({**os.environ, "HOME": self.home, "TMPDIR": self.temp}),
@@ -117,11 +117,11 @@ class ExtensionAdapterIntegration(Case):
             timeout=TIMEOUT,
         )
 
-    def refused(self, runtime: str, error: str) -> None:
-        """The child starting `runtime` exits 1 on ConfigError `error`, before any run record or
+    def refused(self, client: str, error: str) -> None:
+        """The child starting `client` exits 1 on ConfigError `error`, before any run record or
         process.
         """
-        child = self.child(runtime)
+        child = self.child(client)
         self.assertEqual((child.returncode, child.stdout), (1, ""), child.stderr)
         self.assertIn(f"ConfigError: {error}", child.stderr)
         self.assertFalse(os.path.exists(self.work))
@@ -160,11 +160,11 @@ class ExtensionAdapterIntegration(Case):
         self.assertEqual(plan["import_roots"], [self.site])
 
     def test_a_table_without_its_module_fails_before_launch(self):
-        self.table('[adapters.absent]\nimplementation = "absent_runtime:AbsentAdapter"\n')
+        self.table('[adapters.absent]\nimplementation = "absent_client:AbsentAdapter"\n')
         self.refused(
             "absent",
-            "[adapters.absent].implementation: absent_runtime:AbsentAdapter: cannot import "
-            "absent_runtime: No module named 'absent_runtime'",
+            "[adapters.absent].implementation: absent_client:AbsentAdapter: cannot import "
+            "absent_client: No module named 'absent_client'",
         )
 
     def test_a_module_without_its_table_fails_before_launch(self):

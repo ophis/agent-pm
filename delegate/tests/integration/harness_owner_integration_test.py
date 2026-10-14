@@ -21,7 +21,7 @@ from delegate.tests.unit.runs import DONE
 from agent_pm.session import Exited, Reply
 HarnessSession.reset()
 HarnessSession.script = (Reply(block(DONE)), Exited(0))
-owner = HarnessDelegate("dummy-tester", Spec("input", sys.argv[1], task="echo", sid=sys.argv[2], cwd=sys.argv[1], runtime="fake"), session_cls=HarnessSession)
+owner = HarnessDelegate("dummy-tester", Spec("input", sys.argv[1], task="echo", sid=sys.argv[2], cwd=sys.argv[1], client="fake"), session_cls=HarnessSession)
 def observe(event):
     if isinstance(event, Begun):
         with open(os.path.join(sys.argv[1], "running"), "w") as marker:

@@ -1,4 +1,4 @@
-"""HostedSession's sessions of the fake runtime: real child processes."""
+"""HostedSession's sessions of the fake client: real child processes."""
 
 import contextlib
 import json
@@ -58,7 +58,7 @@ class SessionTest(Base):
         os.mkdir(cwd)
         session = self.start(spec=self.spec(access=Access(cwd=cwd, project=True)), sid="s1")
         self.assertIsInstance(session, HostedSession)
-        self.assertEqual((session.sid, session.runtime, session.mode), ("s1", "fake", "headless"))
+        self.assertEqual((session.sid, session.client, session.mode), ("s1", "fake", "headless"))
         self.assertIs(session.mode, Mode.HEADLESS)
         info = SessionInfo(
             sid="s1",
@@ -83,8 +83,8 @@ class SessionTest(Base):
             },
         )
 
-    def test_its_session_status_is_its_runtimes_for_its_sid_and_cwd(self):
-        session = self.start(runtime="probe", sid="s1")
+    def test_its_session_status_is_its_clients_for_its_sid_and_cwd(self):
+        session = self.start(client="probe", sid="s1")
         self.assertEqual(
             session.session_status(), SessionStatus("yes", 1.5, f"probe s1 {self.workdir}")
         )
@@ -95,7 +95,7 @@ class SessionTest(Base):
 
     def test_inspect_an_ended_headless_session_without_starting_or_attaching(self):
         session = self.start(
-            runtime="probe", sid="history", spec=self.spec(access=Access(cwd=self.dir))
+            client="probe", sid="history", spec=self.spec(access=Access(cwd=self.dir))
         )
         self.assertEqual(self.drain(session), [Exited(0)])
         session.close()
@@ -105,7 +105,7 @@ class SessionTest(Base):
                 for target in SPAWNS
             ]
             status = self.session.inspect(
-                Spec(workdir=self.workdir, runtime="probe", sid=session.sid)
+                Spec(workdir=self.workdir, client="probe", sid=session.sid)
             )
         self.assertEqual(status, SessionStatus("yes", 1.5, f"probe history {self.dir}"))
         for start in starts:
@@ -128,7 +128,7 @@ class SessionTest(Base):
 
 
 class TuiStartTest(TuiBase):
-    def test_a_start_builds_only_its_runtimes_adapter_once(self):
+    def test_a_start_builds_only_its_clients_adapter_once(self):
         built, load = [], self.driver_dependencies["class_loader"]
 
         def counted(path, base):
@@ -154,7 +154,7 @@ class TuiStartTest(TuiBase):
 
 class SessionEnvTest(EnvBase):
     def test_a_headless_session_gets_it_and_its_usage_probe_does_not(self):
-        self.run_once(runtime="env", spec=self.spec(access=self.access))
+        self.run_once(client="env", spec=self.spec(access=self.access))
         with open(self.log, encoding="utf-8") as f:
             (entry,) = [json.loads(line) for line in f]
         self.assertEqual(entry["env"]["PYTHONPATH"], PYTHONPATH)
@@ -171,7 +171,7 @@ class ChecksTest(Base):
     def test_headless_flags_and_env_reach_the_adapter_and_child(self):
         LAUNCHED.clear()
         spec = self.spec(flags=("--custom", "value"), env={"FAKE_ENV": "spec"})
-        session, _ = self.run_once(runtime="env", spec=spec)
+        session, _ = self.run_once(client="env", spec=spec)
         self.assertEqual(
             (LAUNCHED[0].flags, dict(LAUNCHED[0].env), LAUNCHED[0].sid),
             (spec.flags, dict(spec.env), session.sid),
@@ -203,7 +203,7 @@ class SidTest(Base):
         self.assertEqual(self.written()[0]["sid"], session.sid)
 
 
-class RuntimeNoteTest(Base):
+class ClientNoteTest(Base):
     def test_with_commands_the_note_follows_the_prompt(self):
         _, argv = self.run_once(spec=self.spec(access=Access(commands=("git",))))
         self.assertEqual(argv[-1], "hello\n\nFAKE NOTE")
@@ -213,7 +213,7 @@ class RuntimeNoteTest(Base):
         self.assertEqual(argv[-1], "hello")
 
     def test_an_empty_note_leaves_the_prompt_unchanged(self):
-        _, argv = self.run_once(runtime="quiet", spec=self.spec(access=Access(commands=("git",))))
+        _, argv = self.run_once(client="quiet", spec=self.spec(access=Access(commands=("git",))))
         self.assertEqual(argv[-1], "hello")
 
 

@@ -389,7 +389,7 @@ class HostContract:
             host_factory=lambda *_: self.host,
         )
         session = configured.start(
-            Spec(workdir=self.file("work"), runtime="fake", mode=Mode.IN_PROCESS, prompt="hi")
+            Spec(workdir=self.file("work"), client="fake", mode=Mode.IN_PROCESS, prompt="hi")
         )
         self.addCleanup(session.stop)
         self.assertIs(configured.host(), self.host)

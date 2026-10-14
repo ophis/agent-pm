@@ -1,4 +1,4 @@
-"""The fake runtime: runtime.py --scenario FILE --log FILE --sid SID [--resume] -- PROMPT [HOOK...].
+"""The fake client: client.py --scenario FILE --log FILE --sid SID [--resume] -- PROMPT [HOOK...].
 
 Logs its argv, pid, cwd and env (PWD, FAKE_ENV, PYTHONPATH) as a JSON line, then runs the scenario,
 a JSON list of steps (or {"steps": [...], "resume": [...]}: resume's run on --resume): {"out": obj}
@@ -16,7 +16,7 @@ import time
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(prog="runtime.py")
+    parser = argparse.ArgumentParser(prog="client.py")
     for flag in ("--scenario", "--log", "--sid"):
         parser.add_argument(flag, required=True)
     parser.add_argument("--resume", action="store_true")

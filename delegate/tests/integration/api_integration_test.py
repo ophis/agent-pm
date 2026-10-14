@@ -60,7 +60,7 @@ class Base(Case):
                     "Hello.",
                     self.work,
                     task="echo",
-                    runtime="claude",
+                    client="claude",
                     sid=SID,
                     out=self.out,
                     cwd=self.work,

@@ -29,7 +29,7 @@ INVOCATION_KEYS = frozenset(
         "input",
         "out",
         "workdir",
-        "runtime",
+        "client",
         "mode",
         "sid",
         "events",
@@ -107,7 +107,7 @@ def _validate(given, workdir: str, sid_hash: str) -> None:
         raise ValueError(error)
     if hashlib.sha256(sid.encode("utf-8")).hexdigest() != sid_hash:
         raise ValueError("invocation sid does not match its filename")
-    for key in ("role", "runtime"):
+    for key in ("role", "client"):
         if not _text(given[key]):
             raise ValueError(f"invalid {key}")
     if given["mode"] not in ("headless", "tui"):

@@ -158,7 +158,7 @@ class Planning(HarnessCase):
         team = self.team_dir()
         self.settings(team_dirs=(team,))
         custom = os.path.join(self.home, "protected")
-        spec = Spec("input", self.work, cwd=self.work, runtime="fake", protect=(custom,))
+        spec = Spec("input", self.work, cwd=self.work, client="fake", protect=(custom,))
         self.make(spec=spec).run()
         session = HarnessSession.started[0]["spec"]
         self.assertEqual(self.metadata()["spec"]["protect"], [custom])
@@ -170,22 +170,22 @@ class Planning(HarnessCase):
 
     def test_constructor_keeps_its_config_snapshot_when_local_file_changes(self):
         delegate = self.make(spec=Spec("input", self.work, task="echo", cwd=self.work, sid=SID))
-        self.settings(language="French", runtime="another-runtime")
+        self.settings(language="French", client="another-client")
         delegate.run()
         launched = HarnessSession.started[-1]["spec"]
-        self.assertEqual(launched.runtime, "fake")
+        self.assertEqual(launched.client, "fake")
         self.assertIn("English", launched.prompt)
         self.assertNotIn("French", launched.prompt)
 
 
 class Views(HarnessCase):
-    def test_attach_keeps_identity_after_default_runtime_and_rules_change(self):
+    def test_attach_keeps_identity_after_default_client_and_rules_change(self):
         delegate = self.make(host="agent", harness_host="harness", display="original")
         record = delegate.detach(
             outer={"kind": "outer", "ctl": ["owner"], "resume": ["owner", "resume", "id"]}
         )
         before = self.metadata()
-        self.settings(language="French", runtime="changed-runtime", default="changed")
+        self.settings(language="French", client="changed-client", default="changed")
         view = HarnessDelegate.attach(record)
         self.assertTrue(view.alive())
         self.assertEqual(view.resume(), record)
@@ -226,7 +226,7 @@ class Views(HarnessCase):
         project = os.path.join(self.home, "project")
         os.mkdir(project)
         self.settings(trusted_dirs=(project,))
-        spec = Spec("input", self.work, task="echo", sid=SID, cwd=project, runtime="fake")
+        spec = Spec("input", self.work, task="echo", sid=SID, cwd=project, client="fake")
         record = self.make(spec=spec).detach()
         self.assertTrue(self.metadata()["plan"]["session"]["access"]["project"])
         self.stop(record)
@@ -242,7 +242,7 @@ class Views(HarnessCase):
 
     def test_a_completed_foreground_tui_left_open_is_not_alive(self):
         spec = Spec(
-            "input", self.work, task="echo", sid=SID, cwd=self.work, runtime="fake", mode="tui"
+            "input", self.work, task="echo", sid=SID, cwd=self.work, client="fake", mode="tui"
         )
         delegate = self.make(spec=spec)
         self.assertEqual(delegate.run().outcome.status, "done")
@@ -326,7 +326,7 @@ class Views(HarnessCase):
                 self.work,
                 task="echo",
                 cwd=self.work,
-                runtime="fake",
+                client="fake",
                 sid=SID,
                 protect=(custom,),
             )
@@ -334,13 +334,13 @@ class Views(HarnessCase):
         self.settings(language="French", team_dirs=(team,))
         view = HarnessDelegate.attach(self.work)
         self.settings(
-            language="German", runtime="changed-runtime", default="changed", team_dirs=(team,)
+            language="German", client="changed-client", default="changed", team_dirs=(team,)
         )
         view.resume()
         view.close()
         view.run()
         launched = HarnessSession.started[-1]["spec"]
-        self.assertEqual((launched.sid, launched.runtime), (SID, "fake"))
+        self.assertEqual((launched.sid, launched.client), (SID, "fake"))
         self.assertIn("French", launched.prompt)
         self.assertNotIn("German", launched.prompt)
         self.assertIn(custom, launched.protect)
@@ -352,8 +352,8 @@ class Views(HarnessCase):
 
 
 class UsageQueries(HarnessCase):
-    def test_role_runtime_usage_preserves_sentinel_identity_and_none_without_starting(self):
-        self.settings(runtime="role_usage")
+    def test_role_client_usage_preserves_sentinel_identity_and_none_without_starting(self):
+        self.settings(client="role_usage")
         with open(self.local, "a", encoding="utf-8") as file:
             file.write(
                 "[session.adapters.role_usage]\n"
@@ -388,8 +388,8 @@ class UsageQueries(HarnessCase):
 
         class Probe(SessionClass):
             @classmethod
-            def usage(cls, runtime):
-                asked.append(runtime)
+            def usage(cls, client):
+                asked.append(client)
                 return sentinel
 
         self.assertIs(HarnessDelegate.usage("dummy-tester", session_cls=Probe), sentinel)
@@ -401,8 +401,8 @@ class UsageQueries(HarnessCase):
     def test_session_config_errors_are_the_delegates(self):
         class Refusing(SessionClass):
             @classmethod
-            def usage(cls, runtime):
-                raise SessionConfigError(f"[adapters.{runtime}]: no usage probe")
+            def usage(cls, client):
+                raise SessionConfigError(f"[adapters.{client}]: no usage probe")
 
         with self.assertRaises(ConfigError) as caught:
             HarnessDelegate.usage("dummy-tester", session_cls=Refusing)
@@ -491,7 +491,7 @@ class Completion(HarnessCase):
         FailingSession.reset()
         delegate = HarnessDelegate(
             "dummy-tester",
-            Spec("input", self.work, cwd=self.work, runtime="fake"),
+            Spec("input", self.work, cwd=self.work, client="fake"),
             session_cls=FailingSession,
         )
         seen = []
@@ -521,7 +521,7 @@ class ConcurrentResume(HarnessCase):
     def test_two_processes_resume_once_and_return_the_same_record(self):
         delegate = HarnessDelegate(
             "dummy-tester",
-            Spec("input", self.work, cwd=self.work, runtime="fake", sid=SID),
+            Spec("input", self.work, cwd=self.work, client="fake", sid=SID),
             session_cls=PersistentSession,
             host="agent",
             harness_host="harness",

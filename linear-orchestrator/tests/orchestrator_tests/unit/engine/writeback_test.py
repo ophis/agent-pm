@@ -612,15 +612,15 @@ class DurableRunNotes(Case):
         path = os.path.join(tmp, "logs", "runs.jsonl")
         at = "2026-10-11T18:00:00+08:00"
         with mock.patch.object(os, "fsync", wraps=os.fsync) as spy:
-            runs.note(path, "limit", issue=ID, sid=SID, runtime="claude", resets_at=None)
-            runs.note(path, "limit", issue=ID, sid=OTHER_SID, runtime="claude", resets_at=at)
+            runs.note(path, "limit", issue=ID, sid=SID, client="claude", resets_at=None)
+            runs.note(path, "limit", issue=ID, sid=OTHER_SID, client="claude", resets_at=at)
         self.assertEqual(spy.call_count, 4)
         with open(path, encoding="utf-8") as f:
             text = f.read()
         self.assertTrue(text.endswith("\n"))
         rows = [json.loads(line) for line in text.splitlines()]
         self.assertEqual(
-            [list(r) for r in rows], [["ts", "kind", "issue", "sid", "runtime", "resets_at"]] * 2
+            [list(r) for r in rows], [["ts", "kind", "issue", "sid", "client", "resets_at"]] * 2
         )
         for r in rows:
             ts = datetime.fromisoformat(r["ts"])
@@ -629,12 +629,12 @@ class DurableRunNotes(Case):
         self.assertEqual(
             [{k: v for k, v in r.items() if k != "ts"} for r in rows],
             [
-                {"kind": "limit", "issue": ID, "sid": SID, "runtime": "claude", "resets_at": None},
+                {"kind": "limit", "issue": ID, "sid": SID, "client": "claude", "resets_at": None},
                 {
                     "kind": "limit",
                     "issue": ID,
                     "sid": OTHER_SID,
-                    "runtime": "claude",
+                    "client": "claude",
                     "resets_at": at,
                 },
             ],

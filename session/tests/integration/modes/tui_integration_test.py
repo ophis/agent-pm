@@ -31,7 +31,7 @@ class CloseTest(Case):
             Spec(
                 workdir=tmp.name,
                 name=NAME,
-                runtime="fake",
+                client="fake",
                 sid=SID,
                 events=os.path.join(self.home, "events"),
             ),
@@ -94,7 +94,7 @@ class PollCostTest(Live):
             Spec(
                 workdir=self.workdir,
                 name=NAME,
-                runtime="fake",
+                client="fake",
                 sid=SID,
                 prompt="hello",
                 events=self.events,

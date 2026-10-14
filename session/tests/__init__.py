@@ -1,1 +1,1 @@
-"""Session unit and integration tests, with fake runtimes and tmux helpers."""
+"""Session unit and integration tests, with fake clients and tmux helpers."""

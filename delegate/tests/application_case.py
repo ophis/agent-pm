@@ -1,4 +1,4 @@
-"""Shared engine application test setup over the configured fake runtime."""
+"""Shared engine application test setup over the configured fake client."""
 
 import json
 import os
@@ -35,7 +35,7 @@ class FakeApplication(Application):
 
 
 class Base(Case):
-    """A HOME of the test's own, the fake runtime registered, the cwd a temp dir, workdir `work`
+    """A HOME of the test's own, the fake client registered, the cwd a temp dir, workdir `work`
     (not made).
     """
 

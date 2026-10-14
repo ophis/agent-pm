@@ -21,7 +21,7 @@ def _answer(value):
 
 class FakeApi:
     """`live` None: the sessions unknown (sessions raises DriverError); `statuses` (per sid, default
-    resumable yes), `usages` (per runtime, default LOW) and `shown`: a value or an exception to
+    resumable yes), `usages` (per client, default LOW) and `shown`: a value or an exception to
     raise; `records`: session_record's per sid; detach raises `detach_error`, else its name goes
     live. `order` logs the sessions, close, show and detach calls.
     """
@@ -53,9 +53,9 @@ class FakeApi:
         self.order.append(("show", name, split, split_from, opener, command, calls))
         return _answer(self.shown)
 
-    def session_status(self, runtime, sid, cwd, *, workdir):
+    def session_status(self, client, sid, cwd, *, workdir):
         entry = self.session_record(workdir, sid)
-        self.info.append((runtime, sid, entry["cwd"] if entry else cwd))
+        self.info.append((client, sid, entry["cwd"] if entry else cwd))
         if entry is None:
             return SessionStatus("no", None, "")
         return _answer(self.statuses.get(sid, SessionStatus("yes", None, f"resume {sid}")))
@@ -63,9 +63,9 @@ class FakeApi:
     def session_record(self, workdir, sid):
         return self.records.get(sid)
 
-    def usage(self, runtime):
-        self.usage_calls.append(runtime)
-        return _answer(self.usages.get(runtime, LOW))
+    def usage(self, client):
+        self.usage_calls.append(client)
+        return _answer(self.usages.get(client, LOW))
 
     def detach(self, name, argv, cwd, env, *, opener=None):
         self.order.append(("detach", name))

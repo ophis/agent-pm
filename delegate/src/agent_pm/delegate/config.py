@@ -40,17 +40,17 @@ def harness_host(config: Mapping, hosts: Collection[str]) -> str | None:
     return harness
 
 
-def policy(runtime: str, cfg: Mapping | None = None) -> tuple[list, dict]:
-    """[policy.<runtime>]'s flags and env, unchecked; `cfg` None: read."""
+def policy(client: str, cfg: Mapping | None = None) -> tuple[list, dict]:
+    """[policy.<client>]'s flags and env, unchecked; `cfg` None: read."""
     tables = (read_config() if cfg is None else cfg).get("policy", {})
     if not isinstance(tables, Mapping):
         raise ValueError("policy must be a table")
-    value = tables.get(runtime, {})
+    value = tables.get(client, {})
     if not isinstance(value, Mapping) or set(value) - {"flags", "env"}:
-        raise ValueError(f"policy.{runtime} must contain only flags/env")
+        raise ValueError(f"policy.{client} must contain only flags/env")
     flags, env = value.get("flags", []), value.get("env", {})
     if not isinstance(flags, list):
-        raise ValueError(f"policy.{runtime}.flags must be a list of strings without NUL")
+        raise ValueError(f"policy.{client}.flags must be a list of strings without NUL")
     return flags, env
 
 

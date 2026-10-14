@@ -120,7 +120,7 @@ class HarnessHostTest(Case):
 
 
 class PolicyTest(Case):
-    def test_a_runtimes_flags_and_env_else_none(self):
+    def test_a_clients_flags_and_env_else_none(self):
         cfg = parsed('[policy.codex]\nflags = ["-s"]\nenv = { K = "v" }\n')
         self.assertEqual(policy("codex", cfg), (["-s"], {"K": "v"}))
         self.assertEqual(policy("fake", cfg), ([], {}))

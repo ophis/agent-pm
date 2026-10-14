@@ -201,5 +201,5 @@ ignore-hidden = false
 [tool.typos.default.extend-words]
 # Escaped café filenames test Unicode handling.
 caf = "caf"
-# English ordinal suffix in 2nd, parsed by the runtime's reset-time protocol.
+# English ordinal suffix in 2nd, parsed by the client's reset-time protocol.
 nd = "nd"

@@ -27,7 +27,7 @@ A dir listed in core config's `team_dirs`, outside the plugin, adding roles (eac
 _Avoid_: custom pack
 
 **Agent run**:
-One role run once, on a task given or picked from its index: a fresh agent runtime session (e.g. Claude Code's) run by the session layer in a mode, or inline in the caller's session through a skill.
+One role run once, on a task given or picked from its index: a fresh client session (e.g. Claude Code's) run by the session layer in a mode, or inline in the caller's session through a skill.
 _Avoid_: job, subagent
 
 **Core pack**:
@@ -44,19 +44,19 @@ The Delegate interface for starting a prompt: `AgentDriver` starts a Session thr
 The component that assembles principles, role and input into a prompt (no task text: the agent run reads its task file) and resolves the role's run config.
 
 **Session layer**:
-The component that runs a prompt on the agent runtime and mode its caller names, through that runtime's adapter: it starts or resumes the session, sends messages (tui only), times inactivity, and passes events and replies up without interpreting them; the same for every runtime. In code: `session/src/agent_pm/session/`; its users import `agent_pm.session`, Adapters and Hosts written outside it `agent_pm.session.extension`.
+The component that runs a prompt on the client and mode its caller names, through that client's adapter: it starts or resumes the session, sends messages (tui only), times inactivity, and passes events and replies up without interpreting them; the same for every client. In code: `session/src/agent_pm/session/`; its users import `agent_pm.session`, Adapters and Hosts written outside it `agent_pm.session.extension`.
 _Avoid_: facade, runtime, harness
 
 **Adapter**:
-The code that wraps one agent runtime (Claude Code, Codex) for the session layer: its launch per mode, hooks, reply reading and message sending; everything runtime-specific lives in it. In code: `session/src/agent_pm/session/adapters/`.
+The code that wraps one client (Claude Code, Codex) for the session layer: its launch per mode, hooks, reply reading and message sending; everything client-specific lives in it. In code: `session/src/agent_pm/session/adapters/`.
 _Avoid_: client, backend, vehicle
 
 **Mode**:
-How the session layer hosts an agent runtime: headless (e.g. `claude -p`, on a pipe, ends when it exits), tui (its interactive command in a tmux session, ends when its caller stops it) or in_process (the Adapter's run inside the caller's process, no process started, ends when the run returns). In code: the Delegate CLI's `--mode`.
+How the session layer hosts a client: headless (e.g. `claude -p`, on a pipe, ends when it exits), tui (its interactive command in a tmux session, ends when its caller stops it) or in_process (the Adapter's run inside the caller's process, no process started, ends when the run returns). In code: the Delegate CLI's `--mode`.
 _Avoid_: runner
 
 **Session**:
-One agent runtime session the session layer runs from a Spec, in a Mode, on a Host, known by its sid. In code: the ABC `Session` (`session/src/agent_pm/session/engine/base.py`) and its one concrete class, `HostedSession` (`engine/hosted_session.py`).
+One client session the session layer runs from a Spec, in a Mode, on a Host, known by its sid. In code: the ABC `Session` (`session/src/agent_pm/session/engine/base.py`) and its one concrete class, `HostedSession` (`engine/hosted_session.py`).
 _Avoid_: agent run (a role's run, in a session)
 
 **Spec**:

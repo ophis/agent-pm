@@ -15,7 +15,7 @@ Options: `agent-pm-crew --help` and `agent-pm-crew <command> --help`. A `ctmux <
 | Command | Use |
 |---|---|
 | `agent-pm-crew hold --manager NAME -- <manager argv>` | Start the commander under a lifetime lease. Keep the wrapper running until the manager command exits. The user's forced takeover fences a hung holder's authority while its command may keep running; see `hold --help`. |
-| `agent-pm-crew run NAME -- <argv>` | Launch the chosen command and record its returned Record. Configure its layer's options; runtime policy: `README.md` › Runtime policy. |
+| `agent-pm-crew run NAME -- <argv>` | Launch the chosen command and record its returned Record. Configure its layer's options; client policy: `README.md` › Client policy. |
 | `agent-pm-crew attach` | Reconcile entries, read events and show available work. It checks the holder lease. |
 | `agent-pm-crew resume NAME` | Recover one `gone` entry through its recorded resume command. |
 | `agent-pm-crew release` | Hand over: stop listening and release authority. The successor starts a new holder, then attaches. |

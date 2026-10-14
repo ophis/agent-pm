@@ -41,7 +41,7 @@ class Configures(Base):
         r = self.go(said(START, block(DONE)))
         self.assertEqual((r.outcome.status, len(self.launches())), ("done", 1))
 
-    def test_a_fresh_driver_without_the_runtime_starts_nothing(self):
+    def test_a_fresh_driver_without_the_client_starts_nothing(self):
         self.configure_session({})
         with self.assertRaisesRegex(ConfigError, r"\[adapters.fake\]"):
             self.go(said(START, block(DONE)))
@@ -261,7 +261,7 @@ class Stops(Base):
 
     def test_a_driver_refusal_is_a_config_error_and_nothing_is_recorded(self):
         with self.assertRaises(ConfigError) as cm:
-            self.go(said(START, block(DONE)), runtime="nope")
+            self.go(said(START, block(DONE)), client="nope")
         self.assertIn("nope", str(cm.exception))
         self.assertEqual(
             (os.path.lexists(self.channel), os.path.lexists(self.log), self.events),
@@ -453,7 +453,7 @@ class Start(Base):
 
     def test_a_driver_refusal_leaves_out_as_it_was(self):
         for name, kw in (
-            ("an unknown runtime", {"runtime": "nope"}),
+            ("an unknown client", {"client": "nope"}),
             ("a bad sid", {"sid": "a/b"}),
         ):
             with self.subTest(name):

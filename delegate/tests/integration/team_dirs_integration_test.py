@@ -200,7 +200,7 @@ class TeamDirs(Integration):
 
 @unittest.skipIf(IN_TEMP, f"{TEAMS} is in a temp dir, where check_team_dirs refuses a team dir")
 class CodexTeamDirs(CodexIntegration):
-    """--runtime codex over fake_codex, role `writer` of a team dir (TEAM) as the local config's
+    """--client codex over fake_codex, role `writer` of a team dir (TEAM) as the local config's
     `team_dirs`.
     """
 

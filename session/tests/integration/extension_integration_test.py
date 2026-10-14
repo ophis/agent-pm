@@ -29,7 +29,7 @@ class OutsideTest(Case):
         self.workdir = os.path.join(self.home, "work")
 
     def started(self, mode: Mode):
-        spec = Spec(workdir=self.workdir, runtime="outside", mode=mode, prompt="hello")
+        spec = Spec(workdir=self.workdir, client="outside", mode=mode, prompt="hello")
         return self.session.start(spec)
 
     def test_the_outside_module_imports_only_the_public_session_modules(self):
@@ -54,7 +54,7 @@ class OutsideTest(Case):
     def test_a_mode_the_adapter_does_not_offer_is_refused(self):
         with self.assertRaises(ConfigError) as caught:
             self.started(Mode.TUI)
-        self.assertEqual(str(caught.exception), "runtime 'outside' does not support tui mode")
+        self.assertEqual(str(caught.exception), "client 'outside' does not support tui mode")
 
     def test_the_configured_host_keeps_lists_and_ends_its_processes(self):
         host = self.session.host()

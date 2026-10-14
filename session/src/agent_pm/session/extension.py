@@ -1,4 +1,4 @@
-"""The session layer's extension surface: the ABCs a runtime Adapter or a Host written outside this
+"""The session layer's extension surface: the ABCs a client Adapter or a Host written outside this
 package subclasses, and every type their signatures name. Configure one as module.path:Class in
 [adapters.<name>] or [hosts.<name>]. Session users import agent_pm.session instead.
 """

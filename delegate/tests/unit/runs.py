@@ -1,4 +1,4 @@
-"""The runner's unit fakes: fake runtime steps (said, limit), session events (turn, STOP),
+"""The runner's unit fakes: fake client steps (said, limit), session events (turn, STOP),
 FakeHandle and no_child.
 """
 

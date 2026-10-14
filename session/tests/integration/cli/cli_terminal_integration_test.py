@@ -1,6 +1,6 @@
 """agent-pm-session send, read and tile (FR-31; Q15) through bin/agent-pm-session on a private tmux
 server (session/tests/cli_support.py): send's text reaches the fake claude once, then one submission;
-send --key's keys reach a raw-mode runtime as exactly their bytes, a bad key list sends nothing, a
+send --key's keys reach a raw-mode client as exactly their bytes, a bad key list sends nothing, a
 session with no terminal takes neither; read prints the screen or its last N lines; tile lays out
 the window it names and no other; bad operands exit 2 before anything is done, an absent session 1.
 """
@@ -133,7 +133,7 @@ class KeyTest(Base):
         self.path = os.pathsep.join((shim, self.env()["PATH"]))
 
     def raw_worker(self) -> None:
-        """Worker w1, its runtime the raw-mode key logger, once its tty is raw."""
+        """Worker w1, its client the raw-mode key logger, once its tty is raw."""
         self.record(self.start("w1", prompt="", PATH=self.path))
         live_tmux.wait(lambda: os.path.exists(self.keys), what="w1's key log")
 
@@ -152,7 +152,7 @@ class KeyTest(Base):
         data = live_tmux.wait(found, what=f"{SENTINEL!r} on {name}'s tty")
         return result, data[: -len(SENTINEL)]
 
-    def test_keys_reach_the_runtime_as_exactly_their_bytes(self):
+    def test_keys_reach_the_client_as_exactly_their_bytes(self):
         self.raw_worker()
         for keys, want in (
             (["Escape"], b"\x1b"),

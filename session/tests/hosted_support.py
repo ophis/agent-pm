@@ -1,4 +1,4 @@
-"""Shared fake-runtime fixtures for hosted and forwarding tests."""
+"""Shared fake-client fixtures for hosted and forwarding tests."""
 
 import dataclasses
 import json
@@ -54,7 +54,7 @@ LAUNCHED: list[Spec] = []
 
 
 class QuietAdapter(fake_adapter.FakeAdapter):
-    runtime_note = ""
+    client_note = ""
 
 
 class CheckedAdapter(fake_adapter.InProcessFakeAdapter):
@@ -94,7 +94,7 @@ class CheckedRun(fake_adapter.FakeInProcess):
 
 
 class ProbeAdapter(fake_adapter.FakeAdapter):
-    """Fake runtime with recorded usage output."""
+    """Fake client with recorded usage output."""
 
     keys = fake_adapter.FakeAdapter.keys | {"probe"}
 
@@ -182,7 +182,7 @@ class Base(Case):
         self.dir = os.path.realpath(tmp.name)
         self.workdir = os.path.join(self.dir, "work")
         self.scenario = os.path.join(self.dir, "scenario.json")
-        self.log = os.path.join(self.dir, "runtime.log")
+        self.log = os.path.join(self.dir, "client.log")
         self.steps()
         self.driver_dependencies = {
             "class_loader": adapter_loader(
@@ -199,7 +199,7 @@ class Base(Case):
         with open(self.scenario, "w", encoding="utf-8") as f:
             json.dump(list(steps), f)
 
-    def configure(self, runtime="fake", settings=None, tables=None, **extra):
+    def configure(self, client="fake", settings=None, tables=None, **extra):
         """Configure fake adapters from this fixture's files."""
         tables = {
             **{
@@ -212,7 +212,7 @@ class Base(Case):
             },
             **(tables or {}),
         }
-        tables[runtime].update(extra)
+        tables[client].update(extra)
         self.configure_session(tables, settings or {})
 
     def spec(self, **fields) -> Spec:
@@ -220,7 +220,7 @@ class Base(Case):
 
     def start(
         self,
-        runtime="fake",
+        client="fake",
         mode="headless",
         prompt="hello",
         spec=None,
@@ -230,9 +230,9 @@ class Base(Case):
         host=None,
         **fields,
     ) -> Session:
-        """self.session.start of `spec` (else self.spec()) with runtime, mode, prompt and `fields`."""
+        """self.session.start of `spec` (else self.spec()) with client, mode, prompt and `fields`."""
         spec = dataclasses.replace(
-            spec or self.spec(), runtime=runtime, mode=mode, prompt=prompt, **fields
+            spec or self.spec(), client=client, mode=mode, prompt=prompt, **fields
         )
         session = self.session.start(spec, idle_timeout=idle_timeout, display=display, host=host)
         self.addCleanup(session.stop)
@@ -257,7 +257,7 @@ class Base(Case):
         return found
 
     def run_once(self, **kwargs) -> tuple[Session, list[str]]:
-        """A started session run to its end, and the argv its runtime logged."""
+        """A started session run to its end, and the argv its client logged."""
         session = self.start(**kwargs)
         self.assertEqual(self.drain(session), [Exited(0)])
         with open(self.log, encoding="utf-8") as f:
@@ -280,11 +280,11 @@ class Base(Case):
         self.assertFalse(os.path.exists(self.log))
 
 
-def drive(case, runtime="fake", mode="headless", prompt="hello", spec=None, **kwargs):
+def drive(case, client="fake", mode="headless", prompt="hello", spec=None, **kwargs):
     """case.driver.start, `sid` and `name` going into the spec as Driver callers pass them."""
     given = {k: kwargs.pop(k) for k in ("sid", "name") if k in kwargs}
     spec = dataclasses.replace(spec or case.spec(), **given)
-    session = case.driver.start(runtime, mode, prompt, spec, **kwargs)
+    session = case.driver.start(client, mode, prompt, spec, **kwargs)
     case.addCleanup(session.stop)
     return session
 
@@ -410,7 +410,7 @@ def listed(name, **fields) -> dict:
     return {
         "name": name,
         "sid": None,
-        "runtime": None,
+        "client": None,
         "state": None,
         "pane": None,
         "opener": None,

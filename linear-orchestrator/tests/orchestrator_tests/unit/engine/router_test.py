@@ -124,7 +124,7 @@ def other_router(path):
         yield
 
 
-def forwarded(assignee=ENGINEER, task=None, mode="new", sid=SID, runtime="a"):
+def forwarded(assignee=ENGINEER, task=None, mode="new", sid=SID, client="a"):
     return [
         f"--issue={ID}",
         f"--project={PROJECT}",
@@ -132,7 +132,7 @@ def forwarded(assignee=ENGINEER, task=None, mode="new", sid=SID, runtime="a"):
         f"--sid={sid}",
         *([f"--task={task}"] if task else []),
         f"--mode={mode}",
-        f"--runtime={runtime}",
+        f"--client={client}",
     ]
 
 
@@ -375,7 +375,7 @@ class IssueClaims(Base):
             "TASK-2 https://linear.app/x/TASK-2 Deep Research",
         )
         self.assertEqual(
-            self.said(), ["pick TASK-2 queue=1", "claim TASK-2 role=researcher runtime=a"]
+            self.said(), ["pick TASK-2 queue=1", "claim TASK-2 role=researcher client=a"]
         )
         self.assertEqual(
             (fake.issues["TASK-1"]["state"], "comments" in fake.issues["TASK-1"]), ("Todo", False)
@@ -434,7 +434,7 @@ class IssueClaims(Base):
                 "pick TASK-1 queue=2",
                 "claim-skip TASK-1 reason=no longer Todo",
                 "pick TASK-2 queue=2",
-                "claim TASK-2 role=researcher runtime=a",
+                "claim TASK-2 role=researcher client=a",
             ],
         )
         self.assertEqual([v["i"] for _, v in fake.mutations], ["TASK-2"])
@@ -492,7 +492,7 @@ class IssueBlockers(Base):
             [
                 'blocked TASK-1 by=["TASK-7", "TASK-9"]',
                 "pick TASK-2 queue=2",
-                "claim TASK-2 role=researcher runtime=a",
+                "claim TASK-2 role=researcher client=a",
             ],
         )
         self.assertEqual(fake.issues["TASK-1"]["state"], "Todo")
@@ -564,7 +564,7 @@ class IssueBlockers(Base):
             [
                 'blocked TASK-2 by=["TASK-1"]',
                 "pick TASK-1 queue=1",
-                "claim TASK-1 role=researcher runtime=a",
+                "claim TASK-1 role=researcher client=a",
             ],
         )
         self.assertFalse(any(re.search(r"\brelations\b", q) for q, _ in fake.queries))
@@ -615,7 +615,7 @@ class IssueBlockers(Base):
                 'blocked TASK-1 by=["(unreadable)"]',
                 'blocked TASK-2 by=["TASK-7"]',
                 "pick TASK-3 queue=1",
-                "claim TASK-3 role=researcher runtime=a",
+                "claim TASK-3 role=researcher client=a",
             ],
         )
         self.assertEqual(fake.reads(), [router.q_issues(router.RELATIONS), router.q_issues()])
@@ -702,15 +702,15 @@ class RouterEntry(OuterBase):
 
                 with mock.patch.object(self.api, "detach", at_detach):
                     self.assertEqual(self.entry(*argv), 0)
-                kind, ident, sid, role, runtime = self.last_run()
-                self.assertEqual((kind, ident, role, runtime), ("start", ID, "engineer", "a"))
+                kind, ident, sid, role, client = self.last_run()
+                self.assertEqual((kind, ident, role, client), ("start", ID, "engineer", "a"))
                 self.assertEqual(lines, [self.state])
                 self.assertEqual(
                     self.detached(), inner("--target", "Ophis/Agent-PM", *forwarded(sid=sid))
                 )
                 self.assertEqual(
                     self.said()[-2 - len(said) :],
-                    ["pick TASK-7 queue=1", "claim TASK-7 role=engineer runtime=a", *said],
+                    ["pick TASK-7 queue=1", "claim TASK-7 role=engineer client=a", *said],
                 )
                 self.assertEqual(
                     self.fake.mutations,
@@ -727,16 +727,16 @@ class RouterEntry(OuterBase):
             self.detached(),
             inner("--target", "Ophis/Agent-PM", *forwarded(task="light-build", sid=sid)),
         )
-        self.assertIn("claim TASK-7 role=engineer task=light-build runtime=a", self.said())
+        self.assertIn("claim TASK-7 role=engineer task=light-build client=a", self.said())
 
-    def test_a_resume_keeps_the_runtime_of_its_claim(self):
+    def test_a_resume_keeps_the_client_of_its_claim(self):
         self.assertEqual(self.entry(now=NOW - timedelta(minutes=60)), 0)
         sid = self.last_run()[2]
         with open(self.runs) as f:
             self.lines = f.read().splitlines()
         self.api.records[sid] = {"cwd": self.rd}
         self.api.statuses[sid] = SessionStatus("yes", (NOW - timedelta(minutes=40)).timestamp(), "")
-        self.write_config(OUTER.replace(OVERLAY, '[core]\nruntime = "b"\n'))
+        self.write_config(OUTER.replace(OVERLAY, '[core]\nclient = "b"\n'))
         self.assertEqual(self.entry(), 0)
         self.assertEqual(self.last_run(), ("resume", ID, sid, "engineer", "a"))
         self.assertEqual(
@@ -903,8 +903,8 @@ class RouterArguments(Base):
             ["--issue"],
             ["--now", "--issue", "--dry-run"],
             *([f, "x"] for f in ("--uuid", "--target", "--project", "--assignee", "--sid")),
-            *([f, "x"] for f in ("--task", "--mode", "--runtime", "--input", "--runner")),
-            ["--issue", "TASK-1", "--runtime", "a"],
+            *([f, "x"] for f in ("--task", "--mode", "--client", "--input", "--runner")),
+            ["--issue", "TASK-1", "--client", "a"],
         ):
             with self.subTest(argv=argv):
                 self.assertEqual(self.main(argv), (2, router.USAGE + "\n"))
@@ -960,7 +960,7 @@ class RouterLocking(TickBase):
         with other_router(self.runs):
             self.assertEqual(self.tick(fake, "--dry-run"), 0)
             self.assertEqual(self.said()[:-1], ["plan mode=new queue=1", "pick TASK-1 queue=1"])
-            self.assertRegex(self.said()[-1], "^usage runtime=a ")
+            self.assertRegex(self.said()[-1], "^usage client=a ")
             self.assertEqual(self.tick(fake, "--dry-run", "--issue", "TASK-1"), 0)
             self.assertEqual(self.said(), ["pick TASK-1 queue=1"])
             out = io.StringIO()
@@ -1016,7 +1016,7 @@ class RouterOutages(TickBase):
                     plan
                     + [
                         "pick TASK-1 queue=1",
-                        "claim TASK-1 role=researcher runtime=a",
+                        "claim TASK-1 role=researcher client=a",
                         "linear-error op=issueUpdate reason=TimeoutError: timed out",
                     ],
                 )
@@ -1038,14 +1038,14 @@ class RouterOutages(TickBase):
                         f"recover TASK-1 to=todo reason=no session updated={ago(minutes=0)}",
                         "plan mode=new queue=1",
                         "pick TASK-1 queue=1",
-                        "claim TASK-1 role=researcher runtime=a",
+                        "claim TASK-1 role=researcher client=a",
                         "launch TASK-1 exit=0",
                     ],
                 )
                 self.assertEqual(fake.issues["TASK-1"]["comments"], [router.INTERRUPTED])
 
 
-class RuntimeUsage(Base):
+class ClientUsage(Base):
     """The usage gate's thresholds over the Driver's Usage (the old rate_limit_event rows)."""
 
     def gate(self):
@@ -1070,7 +1070,7 @@ class RuntimeUsage(Base):
             (reading(89, None), None),
             (reading(None, None), None),
             (None, "reason=usage unknown"),
-            (ConfigError("no runtime a"), "reason=usage unknown"),
+            (ConfigError("no client a"), "reason=usage unknown"),
             (DriverError("boom"), "reason=usage unknown"),
         )
         for value, why in rows:
@@ -1079,9 +1079,9 @@ class RuntimeUsage(Base):
                 with redirect_stderr(io.StringIO()), self.log_dir(again=False):
                     self.assertEqual(self.gate().blocked("researcher", "TASK-1"), why is not None)
                 self.raw = ""
-                self.assertEqual(self.said(), [f"usage-skip TASK-1 runtime=a {why}"] if why else [])
+                self.assertEqual(self.said(), [f"usage-skip TASK-1 client=a {why}"] if why else [])
 
-    def test_one_probe_per_runtime(self):
+    def test_one_probe_per_client(self):
         self.api.usages = {"a": reading(95), "b": reading(50)}
         with redirect_stderr(io.StringIO()), self.log_dir(again=False):
             gate = self.gate()
@@ -1111,14 +1111,14 @@ class RuntimeUsage(Base):
 
 
 class ClaimUsageGates(Base):
-    """FR-48: each candidate gates on its own runtime's usage."""
+    """FR-48: each candidate gates on its own client's usage."""
 
-    def test_a_blocked_head_runtime_lets_the_next_runtime_claim(self):
+    def test_a_blocked_head_client_lets_the_next_client_claim(self):
         rows = (
             (reading(95, 10), "reason=usage usage=five_hour=95% weekly=10%"),
             (reading(10, 100), "reason=usage usage=five_hour=10% weekly=100%"),
             (None, "reason=usage unknown"),
-            (ConfigError("no runtime a"), "reason=usage unknown"),
+            (ConfigError("no client a"), "reason=usage unknown"),
         )
         for value, why in rows:
             with self.subTest(why=why):
@@ -1132,9 +1132,9 @@ class ClaimUsageGates(Base):
                     self.said(),
                     [
                         "pick TASK-1 queue=2",
-                        f"usage-skip TASK-1 runtime=a {why}",
+                        f"usage-skip TASK-1 client=a {why}",
                         "pick TASK-2 queue=2",
-                        "claim TASK-2 role=pm runtime=b",
+                        "claim TASK-2 role=pm client=b",
                     ],
                 )
                 self.assertEqual([v["i"] for _, v in fake.mutations], ["TASK-2"])
@@ -1147,7 +1147,7 @@ class ClaimUsageGates(Base):
             "TASK-1 https://linear.app/x/TASK-1 Deep Research",
         )
 
-    def test_two_candidates_of_a_runtime_probe_it_once(self):
+    def test_two_candidates_of_a_client_probe_it_once(self):
         self.api.usages = {"a": reading(95)}
         fake = FakeLinear(
             [
@@ -1160,7 +1160,7 @@ class ClaimUsageGates(Base):
             self.claim(fake, gate=True),
             f"TASK-2 https://linear.app/x/TASK-2 {PD}",
         )
-        why = "runtime=a reason=usage usage=five_hour=95% weekly=10%"
+        why = "client=a reason=usage usage=five_hour=95% weekly=10%"
         self.assertEqual(
             self.said(),
             [
@@ -1169,7 +1169,7 @@ class ClaimUsageGates(Base):
                 "pick TASK-3 queue=3",
                 f"usage-skip TASK-3 {why}",
                 "pick TASK-2 queue=3",
-                "claim TASK-2 role=pm runtime=b",
+                "claim TASK-2 role=pm client=b",
             ],
         )
         self.assertEqual(self.api.usage_calls, ["a", "b"])
@@ -1181,7 +1181,7 @@ class ClaimUsageGates(Base):
         self.assertEqual(fake.mutations, [])
         self.assertEqual(self.said()[-1], "pick-none reason=nothing claimable")
 
-    def test_the_claim_gates_on_the_rechecked_roles_runtime(self):
+    def test_the_claim_gates_on_the_rechecked_roles_client(self):
         self.api.usages = {"a": reading(95), "b": reading(50)}
         rows = (
             ("researcher", "pm", f"TASK-1 https://linear.app/x/TASK-1 {DR}", ["b"]),
@@ -1200,7 +1200,7 @@ class ClaimUsageGates(Base):
     def test_a_usage_skip_is_said_once_a_day(self):
         self.api.usages = {"a": reading(95)}
         fake = FakeLinear([issue("TASK-1", "Todo", "researcher")])
-        skip = "usage-skip TASK-1 runtime=a reason=usage usage=five_hour=95% weekly=10%"
+        skip = "usage-skip TASK-1 client=a reason=usage usage=five_hour=95% weekly=10%"
         for again, said in ((False, [skip]), (True, [])):
             self.assertEqual(self.claim(fake, gate=True, again=again), "")
             self.assertEqual(
@@ -1208,7 +1208,7 @@ class ClaimUsageGates(Base):
             )
         self.assertEqual(self.api.usage_calls, ["a", "a"])
 
-    def test_dry_run_prints_the_usage_of_each_runtime(self):
+    def test_dry_run_prints_the_usage_of_each_client(self):
         at = (NOW + timedelta(hours=1)).astimezone(EAST).isoformat()
         self.limit("a", at)
         fake = two()
@@ -1220,10 +1220,10 @@ class ClaimUsageGates(Base):
             self.said(),
             [
                 "pick TASK-1 queue=2",
-                f"usage runtime=a until={at} allowed=false",
-                f"usage-skip TASK-1 runtime=a reason=limit until={at}",
+                f"usage client=a until={at} allowed=false",
+                f"usage-skip TASK-1 client=a reason=limit until={at}",
                 "pick TASK-2 queue=2",
-                "usage runtime=b usage=five_hour=10% weekly=10% allowed=true",
+                "usage client=b usage=five_hour=10% weekly=10% allowed=true",
             ],
         )
         self.assertEqual(self.taken[1:], (None, "pm", "b"))
@@ -1232,7 +1232,7 @@ class ClaimUsageGates(Base):
 
 
 class RunBrake(Base):
-    """`--brake ROLE`: ROLE's runtime usage against BRAKE_5H and MAX_WEEK; no lock, no limit row."""
+    """`--brake ROLE`: ROLE's client usage against BRAKE_5H and MAX_WEEK; no lock, no limit row."""
 
     def brake(self, role):
         out, err = io.StringIO(), io.StringIO()
@@ -1260,7 +1260,7 @@ class RunBrake(Base):
             (reading(10, 100), 1, "five_hour=10% weekly=100%"),
             (reading(None, None), 0, "five_hour=none weekly=none"),
             (None, 1, "unknown"),
-            (ConfigError("no runtime a"), 1, "unknown"),
+            (ConfigError("no client a"), 1, "unknown"),
             (DriverError("boom"), 1, "unknown"),
         )
         for value, rc, out in rows:
@@ -1270,7 +1270,7 @@ class RunBrake(Base):
                 self.assertEqual((self.api.usage_calls, self.err), (["a"], ""))
         self.assertEqual(self.path, config.path())
 
-    def test_the_roles_own_runtime(self):
+    def test_the_roles_own_client(self):
         self.api.usages = {"a": reading(95), "b": reading(50)}
         self.assertEqual(self.brake("pm"), (0, "five_hour=50% weekly=10%\n"))
         self.assertEqual(self.api.usage_calls, ["b"])
@@ -1288,11 +1288,11 @@ class RunBrake(Base):
 
 
 class ScheduledUsageGates(TickBase):
-    """FR-46, FR-48, FR-60 over a tick: each candidate gates on its runtime; a resume keeps its
-    recorded runtime.
+    """FR-46, FR-48, FR-60 over a tick: each candidate gates on its client; a resume keeps its
+    recorded client.
     """
 
-    def test_a_resume_keeps_the_runtime_of_its_claim(self):
+    def test_a_resume_keeps_the_client_of_its_claim(self):
         fake = FakeLinear([issue("TASK-1", "Todo", "researcher")])
         self.tick(fake, now=NOW - timedelta(minutes=60))
         (claimed,) = self.start.launches
@@ -1303,10 +1303,10 @@ class ScheduledUsageGates(TickBase):
         self.api.statuses[claimed.sid] = SessionStatus(
             "yes", (NOW - timedelta(minutes=40)).timestamp(), ""
         )
-        self.write_config(CONFIG.replace(OVERLAY, '[core]\nruntime = "b"\n'))
+        self.write_config(CONFIG.replace(OVERLAY, '[core]\nclient = "b"\n'))
         self.tick(fake)
         (resumed,) = self.start.launches
-        self.assertEqual((resumed.sid, resumed.mode, resumed.runtime), (claimed.sid, "resume", "a"))
+        self.assertEqual((resumed.sid, resumed.mode, resumed.client), (claimed.sid, "resume", "a"))
         self.assertEqual(self.last_run(), ("resume", "TASK-1", claimed.sid, "researcher", "a"))
         self.assertEqual(
             (self.api.info, self.api.usage_calls),
@@ -1324,20 +1324,20 @@ class ScheduledUsageGates(TickBase):
         self.assertEqual(
             self.said(),
             [
-                "usage-skip TASK-1 runtime=a reason=usage usage=five_hour=95% weekly=10%",
+                "usage-skip TASK-1 client=a reason=usage usage=five_hour=95% weekly=10%",
                 "plan mode=new queue=1",
                 "pick TASK-2 queue=1",
-                "claim TASK-2 role=pm runtime=b",
+                "claim TASK-2 role=pm client=b",
                 "launch TASK-2 exit=0",
             ],
         )
         (launch,) = self.start.launches
-        self.assertEqual((launch.issue, launch.runtime), ("TASK-2", "b"))
+        self.assertEqual((launch.issue, launch.client), ("TASK-2", "b"))
         self.assertEqual(self.last_run(), ("start", "TASK-2", launch.sid, "pm", "b"))
         self.assertEqual(self.api.usage_calls, ["a", "b"])
         self.assertEqual(fake.issues["TASK-1"]["state"], "In Progress")
 
-    def test_all_blocked_starts_nothing_and_probes_a_runtime_once(self):
+    def test_all_blocked_starts_nothing_and_probes_a_client_once(self):
         self.api.usages = {"a": reading(95)}
         fake = self.fake(
             issue("TASK-1", "In Progress", "researcher", priority=1),
@@ -1347,7 +1347,7 @@ class ScheduledUsageGates(TickBase):
         self.resumable("TASK-1", "a", 60)
         self.resumable("TASK-3", "c", 50, "engineer")
         before = self.before()
-        why = "runtime=a reason=usage usage=five_hour=95% weekly=10%"
+        why = "client=a reason=usage usage=five_hour=95% weekly=10%"
         for again, said in ((False, [f"usage-skip TASK-{n} {why}" for n in (1, 3, 2)]), (True, [])):
             with self.subTest(again=again):
                 self.assertEqual(self.tick(fake, again=again), 0)
@@ -1357,7 +1357,7 @@ class ScheduledUsageGates(TickBase):
                     ([], [], before, ["a"]),
                 )
 
-    def test_a_live_limit_row_lets_the_other_runtime_start(self):
+    def test_a_live_limit_row_lets_the_other_client_start(self):
         at = (NOW + timedelta(hours=1)).astimezone(EAST).isoformat()
         self.limit("a", at)
         self.tick(two())
@@ -1366,9 +1366,9 @@ class ScheduledUsageGates(TickBase):
             [
                 "plan mode=new queue=2",
                 "pick TASK-1 queue=2",
-                f"usage-skip TASK-1 runtime=a reason=limit until={at}",
+                f"usage-skip TASK-1 client=a reason=limit until={at}",
                 "pick TASK-2 queue=2",
-                "claim TASK-2 role=pm runtime=b",
+                "claim TASK-2 role=pm client=b",
                 "launch TASK-2 exit=0",
             ],
         )
@@ -1379,13 +1379,13 @@ class ScheduledUsageGates(TickBase):
 
     def test_a_dry_run_walks_the_same_and_changes_nothing(self):
         at = (NOW + timedelta(hours=1)).astimezone(EAST).isoformat()
-        b = "usage runtime=b usage=five_hour=10% weekly=10% allowed=true"
+        b = "usage client=b usage=five_hour=10% weekly=10% allowed=true"
         rows = (
             (
                 True,
                 [
-                    f"usage runtime=a until={at} allowed=false",
-                    f"usage-skip TASK-1 runtime=a reason=limit until={at}",
+                    f"usage client=a until={at} allowed=false",
+                    f"usage-skip TASK-1 client=a reason=limit until={at}",
                     "plan mode=new queue=1",
                     "pick TASK-2 queue=1",
                     b,
@@ -1395,7 +1395,7 @@ class ScheduledUsageGates(TickBase):
             (
                 False,
                 [
-                    "usage runtime=a usage=five_hour=10% weekly=10% allowed=true",
+                    "usage client=a usage=five_hour=10% weekly=10% allowed=true",
                     "plan TASK-1 mode=resume sid=a",
                 ],
                 ["a"],
@@ -1526,7 +1526,7 @@ class TaskSelection(TaskLabelsScenario):
                 "pick TASK-2 queue=4",
                 "claim-skip TASK-2 to=in_review reason=bad task label",
                 "pick TASK-3 queue=4",
-                "claim TASK-3 role=pm runtime=b",
+                "claim TASK-3 role=pm client=b",
             ],
         )
         self.assertEqual(
@@ -1580,7 +1580,7 @@ class TaskSelection(TaskLabelsScenario):
 
         fake = Relabel([issue("TASK-1", "Todo", "researcher")])
         self.claim(fake)
-        self.assertIn("claim TASK-1 role=researcher task=light-research runtime=a", self.said())
+        self.assertIn("claim TASK-1 role=researcher task=light-research client=a", self.said())
         self.assertEqual(self.taken[1:], ("light-research", "researcher", "a"))
         self.assertNotIn("labels", fake.reads()[0])
 
@@ -1785,7 +1785,7 @@ class ScheduledTaskSelection(TickBase):
         self.add(kind="start", ident="TASK-1", sid="a", minutes_ago=60)
         self.tick(fake)
         self.assertEqual(fake.issues["TASK-1"]["comments"], [router.INTERRUPTED])
-        self.assertIn("claim TASK-1 role=researcher task=light-research runtime=a", self.said())
+        self.assertIn("claim TASK-1 role=researcher task=light-research client=a", self.said())
         (launch,) = self.start.launches
         self.assertEqual((launch.task, launch.mode), ("light-research", "new"))
         self.assertEqual(self.last_run(), ("start", "TASK-1", launch.sid, "researcher", "a"))
@@ -1825,7 +1825,7 @@ class RunLaunching(OuterBase):
                 found.sid,
                 found.task,
                 found.mode,
-                found.runtime,
+                found.client,
             ),
             (UUID, "Ophis/Agent-PM", ID, PROJECT, ENGINEER, SID, "light-build", "new", "a"),
         )
@@ -1878,11 +1878,11 @@ class RunLaunching(OuterBase):
                 )
                 self.assertEqual(self.run_.calls, [(listing, SHORT)])
 
-    def test_a_resume_reads_its_session_at_its_runtime_and_rebuilds_the_input(self):
-        self.assertEqual(self.outer(mode="resume", runtime="b"), 0)
+    def test_a_resume_reads_its_session_at_its_client_and_rebuilds_the_input(self):
+        self.assertEqual(self.outer(mode="resume", client="b"), 0)
         self.assertEqual(
             self.detached(),
-            inner("--target", "Ophis/Agent-PM", *forwarded(mode="resume", runtime="b")),
+            inner("--target", "Ophis/Agent-PM", *forwarded(mode="resume", client="b")),
         )
         self.assertEqual(self.api.info, [("b", SID, self.rd)])
 
@@ -2070,7 +2070,7 @@ class RunLaunching(OuterBase):
 
 
 class RunStartRecords(Base):
-    """FR-46: the start or resume line records the runtime; the launch Spec carries it."""
+    """FR-46: the start or resume line records the client; the launch Spec carries it."""
 
     def test_one_json_line_and_the_launch_namespace(self):
         path = os.path.join(self.tmp, "logs", "runs.jsonl")
@@ -2079,7 +2079,7 @@ class RunStartRecords(Base):
         got = [
             router.begin(
                 replace(self.cfg(), work_dir=self.tmp),
-                Spec.from_issue(found, mode=mode, sid="s1", task=task, runtime="a"),
+                Spec.from_issue(found, mode=mode, sid="s1", task=task, client="a"),
                 role="researcher",
                 now=lambda: datetime.fromisoformat(stamp),
             )
@@ -2090,7 +2090,7 @@ class RunStartRecords(Base):
                 f.read(),
                 "".join(
                     f'{{"ts": "{stamp}", "kind": "{kind}", "issue": "TASK-1", '
-                    '"sid": "s1", "role": "researcher", "runtime": "a", "delegate_kind": "harness"}\n'
+                    '"sid": "s1", "role": "researcher", "client": "a", "delegate_kind": "harness"}\n'
                     for kind in ("start", "resume")
                 ),
             )
@@ -2106,7 +2106,7 @@ class RunStartRecords(Base):
                     sid="s1",
                     task=task,
                     mode=mode,
-                    runtime="a",
+                    client="a",
                 )
                 for mode, task in (("new", "light-research"), ("resume", None))
             ],
@@ -2183,7 +2183,7 @@ class ExplicitIssueRuns(TickBase):
         self.resumable("TASK-2", "b", 60)
         self.assertEqual(self.tick(fake, "--issue", "TASK-4", hour=12, live=FULL), 0)
         self.assertEqual(
-            self.said(), ["pick TASK-4 queue=1", "claim TASK-4 role=engineer runtime=a"]
+            self.said(), ["pick TASK-4 queue=1", "claim TASK-4 role=engineer client=a"]
         )
         (launch,) = self.start.launches
         self.assertEqual(
@@ -2197,7 +2197,7 @@ class ExplicitIssueRuns(TickBase):
                 sid=launch.sid,
                 task=None,
                 mode="new",
-                runtime="a",
+                client="a",
             ),
         )
         self.assertRegex(launch.sid, config.UUID_RE)
@@ -2272,7 +2272,7 @@ class ExplicitIssueRuns(TickBase):
                 sid=self.sid("a"),
                 task=None,
                 mode="resume",
-                runtime="a",
+                client="a",
             ),
         )
         self.assertEqual(self.last_run(), ("resume", "TASK-1", "a", "researcher", "a"))
@@ -2414,7 +2414,7 @@ class TickRecords(TickScenario):
                 False,
                 95,
                 [
-                    f"usage-skip TASK-{n} runtime=a reason=usage usage=five_hour=95% weekly=10%"
+                    f"usage-skip TASK-{n} client=a reason=usage usage=five_hour=95% weekly=10%"
                     for n in (1, 2)
                 ],
             ),
@@ -2434,9 +2434,9 @@ class TickRecords(TickScenario):
             [
                 "plan mode=new queue=2",
                 "pick TASK-1 queue=2",
-                "usage-skip TASK-1 runtime=a reason=usage usage=five_hour=95% weekly=10%",
+                "usage-skip TASK-1 client=a reason=usage usage=five_hour=95% weekly=10%",
                 "pick TASK-2 queue=2",
-                "claim TASK-2 role=pm runtime=b",
+                "claim TASK-2 role=pm client=b",
                 "launch TASK-2 exit=0",
             ],
         )
@@ -2457,7 +2457,7 @@ class TickRecords(TickScenario):
             [
                 "plan mode=new queue=2",
                 "claim-skip TASK-1 to=in_review reason=reached 4 attempts",
-                "usage-skip TASK-2 runtime=a reason=usage usage=five_hour=95% weekly=10%",
+                "usage-skip TASK-2 client=a reason=usage usage=five_hour=95% weekly=10%",
             ],
         )
 
@@ -3036,7 +3036,7 @@ class StaleRunRecovery(Base):
         statuses = (
             SessionStatus("unknown", None, ""),
             DriverError("boom"),
-            ConfigError("no runtime a"),
+            ConfigError("no client a"),
         )
         for st in statuses:
             with self.subTest(st=st):
@@ -3076,10 +3076,10 @@ class StaleRunRecovery(Base):
         self.assertEqual(self.said(), ["recover-skip TASK-1 sid=a reason=session unknown"])
         self.assertEqual((fake.issues["TASK-1"]["state"], fake.mutations), ("In Progress", []))
 
-    def test_one_status_read_per_sid_with_its_recorded_runtime_at_the_workdir(self):
+    def test_one_status_read_per_sid_with_its_recorded_client_at_the_workdir(self):
         fake = self.fake(issue("TASK-1", "In Progress", "researcher"))
         self.resumable("TASK-1", "a", 60)
-        self.write_config(CONFIG.replace(OVERLAY, '[core]\nruntime = "b"\n'))
+        self.write_config(CONFIG.replace(OVERLAY, '[core]\nclient = "b"\n'))
         self.assertEqual(
             self.plan(fake), "resume TASK-1 a https://linear.app/x/TASK-1 Deep Research"
         )
@@ -3110,7 +3110,7 @@ class ClaimRechecks(Base):
                         "pick TASK-1 queue=2",
                         "claim-skip TASK-1 reason=not assigned to a role",
                         "pick TASK-2 queue=2",
-                        "claim TASK-2 role=researcher runtime=a",
+                        "claim TASK-2 role=researcher client=a",
                     ],
                 )
                 self.assertEqual([v["i"] for _, v in fake.mutations], ["TASK-2"])
@@ -3121,16 +3121,16 @@ class ClaimRechecks(Base):
             self.claim(fake, gate=True),
             "TASK-1 https://linear.app/x/TASK-1 Deep Research",
         )
-        taken, task, role, runtime = self.taken
-        self.assertEqual((taken["assignee"], task, role, runtime), (who("pm"), None, "pm", "b"))
-        self.assertEqual(self.said(), ["pick TASK-1 queue=1", "claim TASK-1 role=pm runtime=b"])
+        taken, task, role, client = self.taken
+        self.assertEqual((taken["assignee"], task, role, client), (who("pm"), None, "pm", "b"))
+        self.assertEqual(self.said(), ["pick TASK-1 queue=1", "claim TASK-1 role=pm client=b"])
         self.assertEqual(self.api.usage_calls, ["b"])
         a = router.begin(
             self.cfg(),
-            Spec.from_issue(taken, mode="new", sid="s1", task=task, runtime=runtime),
+            Spec.from_issue(taken, mode="new", sid="s1", task=task, client=client),
             role=role,
         )
-        self.assertEqual((a.assignee, a.runtime), (ROLE["pm"], "b"))
+        self.assertEqual((a.assignee, a.client), (ROLE["pm"], "b"))
 
     def test_the_task_label_is_checked_against_the_new_role(self):
         self.write_config(HUMANS + CONFIG + TASK_LABELS)
@@ -3179,7 +3179,7 @@ class ClaimRechecks(Base):
         self.assertEqual(self.claim(fake), f"TASK-1 https://linear.app/x/TASK-1 {PD}")
         a = router.begin(
             self.cfg(),
-            Spec.from_issue(self.taken[0], mode="new", sid="s1", task=None, runtime="a"),
+            Spec.from_issue(self.taken[0], mode="new", sid="s1", task=None, client="a"),
             role="researcher",
         )
         self.assertEqual(a.project, IDS[PD])
@@ -3199,11 +3199,11 @@ class ClaimRechecks(Base):
 
 
 class LiveLimits(Base):
-    """FR-60: a live limit row blocks its runtime with no probe; any other limit row changes
+    """FR-60: a live limit row blocks its client with no probe; any other limit row changes
     nothing.
     """
 
-    def test_a_live_limit_row_skips_its_runtime_without_a_probe(self):
+    def test_a_live_limit_row_skips_its_client_without_a_probe(self):
         at = (NOW + timedelta(hours=1)).astimezone(EAST).isoformat()
         self.limit("a", at)
         fake = two()
@@ -3215,9 +3215,9 @@ class LiveLimits(Base):
             self.said(),
             [
                 "pick TASK-1 queue=2",
-                f"usage-skip TASK-1 runtime=a reason=limit until={at}",
+                f"usage-skip TASK-1 client=a reason=limit until={at}",
                 "pick TASK-2 queue=2",
-                "claim TASK-2 role=pm runtime=b",
+                "claim TASK-2 role=pm client=b",
             ],
         )
         self.assertEqual(self.api.usage_calls, ["b"])
@@ -3360,7 +3360,7 @@ class ScheduledRuns(TickScenario):
                 sid=launch.sid,
                 task=None,
                 mode="new",
-                runtime="a",
+                client="a",
             ),
         )
         self.assertRegex(launch.sid, config.UUID_RE)
@@ -3375,7 +3375,7 @@ class ScheduledRuns(TickScenario):
         self.assertEqual(
             self.state,
             f'{{"ts": "{stamp}", "kind": "start", "issue": "TASK-1", '
-            f'"sid": "{launch.sid}", "role": "researcher", "runtime": "a", "delegate_kind": "harness"}}\n',
+            f'"sid": "{launch.sid}", "role": "researcher", "client": "a", "delegate_kind": "harness"}}\n',
         )
         self.assertEqual(
             sorted(os.listdir(os.path.dirname(self.runs))),
@@ -3465,7 +3465,7 @@ class ScheduledRuns(TickScenario):
             [
                 'plan mode=new queue=2 live={"engineer": "1/2"}',
                 "pick TASK-2 queue=2",
-                "claim TASK-2 role=engineer runtime=a",
+                "claim TASK-2 role=engineer client=a",
                 "launch TASK-2 exit=0",
             ],
         )
@@ -3493,7 +3493,7 @@ class ScheduledRuns(TickScenario):
             [
                 'plan mode=new queue=1 live={"engineer": "1/2"}',
                 "pick TASK-2 queue=1",
-                "claim TASK-2 role=engineer runtime=a",
+                "claim TASK-2 role=engineer client=a",
                 "launch TASK-2 exit=0",
             ],
         )
@@ -3530,7 +3530,7 @@ class ScheduledRuns(TickScenario):
                 f"recover TASK-2 to=todo reason=no session updated={ago(hours=3)}",
                 'plan mode=new queue=1 live={"engineer": "1/1"}',
                 "pick TASK-5 queue=1",
-                "claim TASK-5 role=pm runtime=b",
+                "claim TASK-5 role=pm client=b",
                 "launch TASK-5 exit=0",
             ],
         )
@@ -3632,7 +3632,7 @@ class ScheduledRuns(TickScenario):
             [
                 "plan mode=new queue=3",
                 "pick TASK-1 queue=3",
-                "claim TASK-1 role=researcher runtime=a",
+                "claim TASK-1 role=researcher client=a",
                 "launch TASK-1 exit=0",
             ],
         )
@@ -3660,7 +3660,7 @@ class ScheduledRuns(TickScenario):
                 "plan mode=new queue=4",
                 "claim-skip TASK-3 to=in_review reason=reached 4 attempts",
                 "pick TASK-5 queue=4",
-                "usage runtime=a usage=five_hour=10% weekly=10% allowed=true",
+                "usage client=a usage=five_hour=10% weekly=10% allowed=true",
             ],
         )
         self.assertEqual((self.api.order, self.api.usage_calls), (SESSIONS, ["a"]))
@@ -3677,8 +3677,8 @@ class ScheduledRuns(TickScenario):
             [
                 "plan mode=new queue=1",
                 "pick TASK-1 queue=1",
-                f"usage runtime=a {why} allowed=false",
-                f"usage-skip TASK-1 runtime=a reason=usage {why}",
+                f"usage client=a {why} allowed=false",
+                f"usage-skip TASK-1 client=a reason=usage {why}",
                 "pick-none reason=nothing claimable",
                 "skip reason=nothing claimed",
             ],
@@ -3702,7 +3702,7 @@ class ScheduledRuns(TickScenario):
                 "skip reason=outside hours",
                 'plan mode=new queue=1 live={"engineer": "1/1", "pm": "1/1"}',
                 "pick TASK-2 queue=1",
-                "usage runtime=a usage=five_hour=10% weekly=10% allowed=true",
+                "usage client=a usage=five_hour=10% weekly=10% allowed=true",
             ],
         )
         self.assertEqual(self.api.usage_calls, ["a"])

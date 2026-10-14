@@ -60,7 +60,7 @@ class SessionClassMethods(Case):
             ),
             (Session.attach, [("name", either), ("host", key), ("idle_timeout", key)]),
             (Session.writable_dirs, [("spec", either)]),
-            (Session.class_roots, [("runtime", either)]),
+            (Session.class_roots, [("client", either)]),
             (Session.inspect, [("spec", either)]),
             (Session.layout, [("display", key)]),
             (Session.show, [("self", either), ("display", key), ("command", key)]),
@@ -96,7 +96,7 @@ class SessionClassMethods(Case):
         self.assertIsInstance(FakeSession.host(), FakeHost)
         self.assertEqual(FakeSession.display("d"), "d")
         own = type("Own", (Session,), {})
-        spec = Spec(workdir=self.home, runtime="fake", mode=Mode.HEADLESS, prompt="hi")
+        spec = Spec(workdir=self.home, client="fake", mode=Mode.HEADLESS, prompt="hi")
         calls = {
             "configure": ((), {"adapters": {}, "hosts": Hosts("tmux", {})}),
             "configure_from": (({},), {}),

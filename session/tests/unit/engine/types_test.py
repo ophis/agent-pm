@@ -168,7 +168,7 @@ class WhatToStart(Case):
     def test_the_start_fields_default_so_an_adapters_partial_spec_stays_valid(self):
         spec = Spec(workdir="/w")
         self.assertEqual(
-            (spec.runtime, spec.mode, spec.prompt, spec.resume, spec.events),
+            (spec.client, spec.mode, spec.prompt, spec.resume, spec.events),
             (None, None, "", False, None),
         )
 
@@ -180,7 +180,7 @@ class WhatToStart(Case):
         spec = Spec(
             workdir="/w",
             sid="s1",
-            runtime="fake",
+            client="fake",
             mode="tui",
             prompt="hi",
             resume=True,
@@ -188,7 +188,7 @@ class WhatToStart(Case):
         )
         self.assertIs(spec.mode, Mode.TUI)
         self.assertEqual(
-            (spec.runtime, spec.prompt, spec.resume, spec.events),
+            (spec.client, spec.prompt, spec.resume, spec.events),
             ("fake", "hi", True, "/w/events"),
         )
 
@@ -200,7 +200,7 @@ class WhatToStart(Case):
             ({"mode": "pane"}, f"mode must be one of {modes}, got 'pane'"),
             ({"mode": ""}, f"mode must be one of {modes}, got ''"),
             ({"mode": 5}, f"mode must be one of {modes}, got 5"),
-            ({"runtime": 5}, "runtime must be None or a string"),
+            ({"client": 5}, "client must be None or a string"),
             ({"prompt": None}, "prompt must be a string"),
             ({"events": 5}, "events must be a printable path, got 5"),
             ({"events": "/a\nb"}, r"events must be a printable path, got '/a\nb'"),
@@ -333,7 +333,7 @@ class Identity(Case):
     def test_from_fields_round_trips_and_ignores_other_keys(self):
         info = SessionInfo(**FIELDS)
         self.assertEqual(SessionInfo.from_fields(info.persisted()), info)
-        extra = {"ts": "t", "kind": "session", "runtime": "fake", "native_id": "n1", **FIELDS}
+        extra = {"ts": "t", "kind": "session", "client": "fake", "native_id": "n1", **FIELDS}
         self.assertEqual(SessionInfo.from_fields(extra), info)
 
     def test_missing_transcript_or_resume_is_empty(self):

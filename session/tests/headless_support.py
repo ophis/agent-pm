@@ -14,7 +14,7 @@ NOTHING = (sys.executable, "-I", "-c", "")
 
 class StubAdapter(Adapter):
     forbidden_selection = ("--resume",)
-    runtime_note = "STUB NOTE"
+    client_note = "STUB NOTE"
 
     def __init__(self, launched=None, run=None):
         super().__init__({})
@@ -55,7 +55,7 @@ class HeadlessCase(Case):
         StubRun.specs = []
 
     def start(self, adapter=None, display=None, **fields) -> Prepared:
-        spec = Spec(**{"workdir": self.dir, "sid": SID, "runtime": "stub", **fields})
+        spec = Spec(**{"workdir": self.dir, "sid": SID, "client": "stub", **fields})
         self.mode = HeadlessRunner.start(
             spec,
             adapter or StubAdapter(),

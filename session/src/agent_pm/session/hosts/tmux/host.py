@@ -955,14 +955,14 @@ class TmuxHost(Host, Displayable):
                         "@kind": "terminal",
                         "@control": control.path,
                         **(
-                            {"@sid": record.sid, "@runtime": record.kind}
+                            {"@sid": record.sid, "@client": record.kind}
                             if record is not None and record.sid is not None
                             else {}
                         ),
                         **{
                             f"@{key}": value
                             for key, value in (metadata or {}).items()
-                            if key in ("sid", "runtime", "generation")
+                            if key in ("sid", "client", "generation")
                         },
                         **({"@display": display} if display is not None else {}),
                         **({"@opener": parts[0]} if parts is not None and parts[0] else {}),
@@ -1152,8 +1152,8 @@ class TmuxHost(Host, Displayable):
             SessionRow(
                 name=row["name"],
                 sid=None if sid_error(row["sid"]) else row["sid"],
-                runtime=row["runtime"]
-                if isinstance(row["runtime"], str) and CONFIG_NAME.fullmatch(row["runtime"])
+                client=row["client"]
+                if isinstance(row["client"], str) and CONFIG_NAME.fullmatch(row["client"])
                 else None,
                 state=ActivityState.DEAD
                 if row["dead"]

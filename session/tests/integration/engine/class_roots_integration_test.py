@@ -10,7 +10,7 @@ import tempfile
 from session.tests.case import PY, REPO, SRC, Case, child_env
 
 MODULES = {
-    "pth_runtime": "from session.tests.fake_adapter import FakeAdapter\n\n\n"
+    "pth_client": "from session.tests.fake_adapter import FakeAdapter\n\n\n"
     "class PthAdapter(FakeAdapter):\n    pass\n",
     "pth_host": "from session.tests.fakes.host import FakeHost\n\n\n"
     "class PthHost(FakeHost):\n    pass\n",
@@ -19,7 +19,7 @@ CHILD = """import json, site, sys
 site.addsitedir(sys.argv[1])
 from agent_pm.session import Host, Session
 Session.configure(
-    adapters={"pth": {"implementation": "pth_runtime:PthAdapter"}},
+    adapters={"pth": {"implementation": "pth_client:PthAdapter"}},
     hosts=Host.parse_hosts({
         "tmux": {"implementation": "agent_pm.session.hosts.tmux:TmuxHost"},
         "fake": {"implementation": "session.tests.fakes.host:FakeHost"},

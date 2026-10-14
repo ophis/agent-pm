@@ -121,7 +121,7 @@ class AdapterTest(Base):
         self.assertEqual(
             ClaudeAdapter.keys, frozenset({"flags", "allow", "tiers", "efforts", "env"})
         )
-        self.assertEqual((ClaudeAdapter.runtime_note, ClaudeCommon.NOTE), (NOTE, NOTE))
+        self.assertEqual((ClaudeAdapter.client_note, ClaudeCommon.NOTE), (NOTE, NOTE))
         self.assertIsInstance(adapter.common, UnconfiguredCommon)
         for mode, kind in ((adapter.headless, ClaudeHeadless), (adapter.tui, ClaudeTui)):
             with self.subTest(kind=kind):

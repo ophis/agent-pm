@@ -64,7 +64,7 @@ class HarnessContract(DelegateContract, HarnessCase):
 
     def make(self, workdir, **kw):
         role = kw.pop("role", self.ROLE)
-        spec = Spec("Hello.", workdir, runtime="fake", mode="tui", cwd=workdir, **kw)
+        spec = Spec("Hello.", workdir, client="fake", mode="tui", cwd=workdir, **kw)
         return HarnessDelegate(
             role, spec, session_cls=HarnessSession, host="agent", harness_host="harness"
         )
@@ -84,7 +84,7 @@ class HarnessContract(DelegateContract, HarnessCase):
         HarnessSession.script = (Reply(block(needed)), Exited(0))
         first = HarnessDelegate(
             self.ROLE,
-            Spec("Hello.", workdir, sid=SID, runtime="fake", cwd=workdir),
+            Spec("Hello.", workdir, sid=SID, client="fake", cwd=workdir),
             session_cls=HarnessSession,
             host="agent",
             harness_host="harness",
@@ -97,7 +97,7 @@ class HarnessContract(DelegateContract, HarnessCase):
         answer = "Continue with option B."
         continued = HarnessDelegate(
             self.ROLE,
-            Spec(answer, workdir, sid=SID, resume=True, runtime="fake", cwd=workdir),
+            Spec(answer, workdir, sid=SID, resume=True, client="fake", cwd=workdir),
             session_cls=HarnessSession,
             host="agent",
             harness_host="harness",
@@ -137,7 +137,7 @@ class Ownership(HarnessCase):
                 "input",
                 self.work,
                 mode="tui",
-                runtime="fake",
+                client="fake",
                 sid=SID,
                 name="agent-window",
                 cwd=self.work,
@@ -150,7 +150,7 @@ class Ownership(HarnessCase):
         HarnessSession.start(
             SessionSpec(
                 workdir=self.work,
-                runtime="fake",
+                client="fake",
                 mode=Mode.TUI,
                 sid=SID,
                 name=self.metadata()["agent_name"],

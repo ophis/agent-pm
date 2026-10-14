@@ -46,7 +46,7 @@ PENDING = turn("Waiting for the build.", pending=1)
 
 
 class Base(Case):
-    """dummy-tester's echo over the fake runtime in workdir `work` (not made), out `out`, the cwd
+    """dummy-tester's echo over the fake client in workdir `work` (not made), out `out`, the cwd
     the workdir.
     """
 
@@ -58,7 +58,7 @@ class Base(Case):
         self.out = os.path.join(self.work, "out.md")
         self.channel = os.path.join(self.work, "run.jsonl")
         self.scenario, self.log = (
-            os.path.join(self.tmp, name) for name in ("scenario.json", "runtime.log")
+            os.path.join(self.tmp, name) for name in ("scenario.json", "client.log")
         )
         self.driver_dependencies = {
             "class_loader": adapter_loader({"agent_pm.session.adapters.fake": fake_adapter})
@@ -95,7 +95,7 @@ class Base(Case):
                 on_event(event)
 
         kw = {
-            "runtime": "fake",
+            "client": "fake",
             "mode": "headless",
             "out": self.out,
             "cwd": self.work,

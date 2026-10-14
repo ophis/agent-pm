@@ -50,7 +50,7 @@ class LaunchLifecycleTest(Base):
         for mode in (Mode.HEADLESS, Mode.TUI):
             spec = replace(
                 self.spec,
-                runtime="codex",
+                client="codex",
                 mode=mode,
                 flags=("--add-dir", str(added)),
                 protect=(str(added / "child"),),
@@ -74,7 +74,7 @@ class LaunchLifecycleTest(Base):
         for mode in (Mode.HEADLESS, Mode.TUI):
             spec = replace(
                 self.spec,
-                runtime="codex",
+                client="codex",
                 mode=mode,
                 resume=True,
                 access=Access(cwd=str(self.work / "clean")),
@@ -325,7 +325,7 @@ class CommonTest(Base):
         resume = self.adapter.session_metadata(info).resume
         self.assertEqual(shlex.split(resume)[3], "PYTHONPATH=/a b;c")
 
-    def test_omitted_mapping_preserves_runtime_defaults(self):
+    def test_omitted_mapping_preserves_client_defaults(self):
         spec = dataclasses.replace(self.spec, tier=None, effort=None)
         launch = committed_headless(self.adapter, dataclasses.replace(spec, prompt="hi"))
         self.assertNotIn("-m", launch.argv)

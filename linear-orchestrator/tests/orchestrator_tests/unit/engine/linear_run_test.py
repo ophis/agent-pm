@@ -32,7 +32,7 @@ class Runs(RunCase):
         self.assertEqual(role, "researcher")
         self.assertEqual(spec.input, "Echo input.")
         self.assertEqual(spec.workdir, self.cfg.run_dir("TASK-1"))
-        self.assertEqual((spec.task, spec.runtime, spec.sid), ("light-research", "fake", SID))
+        self.assertEqual((spec.task, spec.client, spec.sid), ("light-research", "fake", SID))
         self.assertEqual(spec.name, "researcher-TASK-1-1234abcd")
         self.assertEqual(spec.cwd, spec.workdir)
         self.assertEqual(spec.out, os.path.join(spec.workdir, "out.md"))
@@ -101,7 +101,7 @@ class Runs(RunCase):
             "TASK-1", "Input", self.cfg.run_dir("TASK-1"), cfg=self.cfg, role="dummy", sid=SID
         )
         owner.detach()
-        runs.note(self.cfg.runs_log, "start", issue="TASK-1", sid=SID, role="dummy", runtime="fake")
+        runs.note(self.cfg.runs_log, "start", issue="TASK-1", sid=SID, role="dummy", client="fake")
         changed = replace(
             self.cfg,
             delegate_kind="other",

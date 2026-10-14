@@ -120,7 +120,7 @@ max_runs = 3
 # [core], the last of delegate/config.toml's layers. {{pythonpath}} supplies the loaded packages' source import roots,
 # shell-quoted; installed import roots need no PYTHONPATH. Use explicit paths for external files.
 #   <run key>  as in delegate/config.toml, local keys included (e.g. a trusted cwd); users, trusted_dirs,
-#              and clients are refused; a role table holding the old
+#              and [clients] tables are refused; a role table holding the old
 #              task-level keys is an error
 [core.roles.researcher]
 # the gate sets the import roots itself; why `env`: delegate/skills/act-as/SKILL.md

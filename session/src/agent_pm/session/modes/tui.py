@@ -64,7 +64,7 @@ def checked_name(name) -> str:
 def _state(prepared: Prepared, run: Tui, host: Host, metadata: Mapping[str, str]) -> dict:
     spec = prepared.spec
     return {
-        "runtime": spec.runtime,
+        "client": spec.client,
         "workdir": spec.workdir,
         **prepared.info.persisted(),
         "events": spec.events,
@@ -90,9 +90,9 @@ def _bad(state: Mapping) -> str | None:
     generation = state.get("generation")
     if not isinstance(generation, str) or not generation.isprintable() or not generation:
         return "generation"
-    runtime = state.get("runtime")
-    if not isinstance(runtime, str) or not NAME.match(runtime):
-        return "runtime"
+    client = state.get("client")
+    if not isinstance(client, str) or not NAME.match(client):
+        return "client"
     try:
         SessionInfo.from_fields(state, strict=True)
     except ValueError as e:
@@ -309,7 +309,7 @@ class TuiRunner(Runner):
     def resolve_name(spec: Spec) -> str:
         if spec.sid is None:
             raise ConfigError("sid: missing")
-        return checked_name(f"{spec.runtime}-{spec.sid[:8]}" if spec.name is None else spec.name)
+        return checked_name(f"{spec.client}-{spec.sid[:8]}" if spec.name is None else spec.name)
 
     def __init__(
         self,
@@ -375,7 +375,7 @@ class TuiRunner(Runner):
         prepared = cls._launched(spec, lambda s: run.launch(s, hook, source_roots=roots), drop)
         metadata = {
             "sid": prepared.info.sid,
-            "runtime": spec.runtime or "session",
+            "client": spec.client or "session",
             "generation": uuid.uuid4().hex,
         }
         state = _state(prepared, run, host, metadata)
@@ -454,9 +454,7 @@ class TuiRunner(Runner):
         except ConfigError as e:
             raise DriverError(f"no tui session {name}: {e}") from None
         if run is None:
-            raise DriverError(
-                f"no tui session {name}: runtime {state['runtime']!r} has no tui mode"
-            )
+            raise DriverError(f"no tui session {name}: client {state['client']!r} has no tui mode")
         terminal = store.process()
         if terminal is not None and not isinstance(terminal, Terminal):
             raise DriverError(f"session {name} has no terminal")
@@ -464,7 +462,7 @@ class TuiRunner(Runner):
             raise DriverError(f"no tui session {name}")
         spec = Spec(
             workdir=state["workdir"],
-            runtime=state["runtime"],
+            client=state["client"],
             mode=Mode.TUI,
             sid=info.sid,
             name=name,

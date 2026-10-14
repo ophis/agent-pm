@@ -90,7 +90,7 @@ class MemoryTerminal(Terminal):
         return SessionRow(
             self.name,
             self.metadata.get("sid") if receipt is None else receipt.sid,
-            self.metadata.get("runtime") if receipt is None else receipt.kind,
+            self.metadata.get("client") if receipt is None else receipt.kind,
             ActivityState.WORKING if self.alive() else ActivityState.DEAD,
             self.display(),
             None,
