@@ -147,10 +147,12 @@ def load(
         )
     except (OSError, ValueError) as e:
         raise ConfigError(f"linear-orchestrator/config.toml: {e}") from None
-    protected = deployment_dirs()
+    protected, protect = deployment_dirs()
     work = _work_dir(cfg, protected)
     try:
-        return _load(_fill_paths(cfg), protected, work, local, core)
+        cfg = _fill_paths(cfg)
+        _load_config(cfg, protected, local)
+        return _load(cfg, protect, work, local, core)
     except ConfigError as e:
         e.logs_dir = os.path.join(work, "logs")
         raise
@@ -228,15 +230,16 @@ def pythonpath() -> str:
             *site.getsitepackages(),
         )
     }
-    roots = (*utils.module_roots(orchestrator), *delegate.PYTHONPATH.split(os.pathsep))
+    roots = (*utils.module_roots(orchestrator), *delegate.module_roots())
     return os.pathsep.join(
         dict.fromkeys(root for root in roots if root and os.path.realpath(root) not in installed)
     )
 
 
-def deployment_dirs() -> tuple[str, ...]:
-    packages = utils.package_dirs(orchestrator)
-    protected = []
+def deployment_dirs() -> tuple[tuple[str, ...], tuple[str, ...]]:
+    own = utils.package_dirs(orchestrator)
+    packages = tuple(dict.fromkeys((*own, *delegate.package_dirs())))
+    deployments = []
     for directory in packages:
         checkouts = utils.find_checkouts(
             directory,
@@ -247,8 +250,11 @@ def deployment_dirs() -> tuple[str, ...]:
             raise ConfigError(
                 f"linear-orchestrator/config.toml: deployment checkout: {checkouts.error}"
             )
-        protected.extend(checkouts.roots)
-    return tuple(dict.fromkeys((*protected, *packages)))
+        deployments.extend(checkouts.roots)
+    return (
+        tuple(dict.fromkeys((*deployments, *packages))),
+        tuple(dict.fromkeys((*deployments, *own))),
+    )
 
 
 def _work_dir(cfg, protected, clones=None):
@@ -275,8 +281,7 @@ def _work_dir(cfg, protected, clones=None):
     return path
 
 
-def _load(cfg, protected, work, local, core):
-    _load_config(cfg, protected, local)
+def _load(cfg, protect, work, local, core):
     try:
         core_cfg = delegate.read_config(path=core, local=local)
     except (OSError, ValueError) as e:
@@ -298,7 +303,7 @@ def _load(cfg, protected, work, local, core):
         task_label_group=cfg["task_label_group"],
         roles=MappingProxyType(roles),
         work_dir=work,
-        protect=protected,
+        protect=protect,
         docs=docs,
         stages=MappingProxyType(_stage_order(cfg["roles"])),
         states=frozen["states"],

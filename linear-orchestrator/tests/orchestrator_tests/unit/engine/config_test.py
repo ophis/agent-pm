@@ -12,7 +12,6 @@ from importlib.resources import files
 from pathlib import Path
 from unittest import mock
 
-import agent_pm.linear_orchestrator as orchestrator
 from agent_pm import delegate, utils
 from agent_pm.linear_orchestrator.engine import config
 from agent_pm.linear_orchestrator.engine.types import State
@@ -546,9 +545,13 @@ class WorkDirectories(ConfigFile, Case):
 
 class DeploymentDirectories(Case):
     def test_own_package_and_deployment_checkout_are_protected(self):
-        packages = utils.package_dirs(orchestrator)
-        protected = config.deployment_dirs()
+        packages = tuple(
+            os.path.join(REPO, project, "src", "agent_pm", project.replace("-", "_"))
+            for project in ("linear-orchestrator", "delegate", "session", "utils")
+        )
+        protected, protect = config.deployment_dirs()
         self.assertEqual(protected, (os.path.realpath(REPO), *packages))
+        self.assertEqual(protect, (os.path.realpath(REPO), packages[0]))
         for directory in packages:
             with self.subTest(directory=directory):
                 self.assertIn(directory, protected)
@@ -581,10 +584,11 @@ class DeploymentDirectories(Case):
             config.deployment_dirs()
 
     def test_pythonpath_skips_standard_installation_locations(self):
-        roots = tuple(
-            dict.fromkeys(
-                (*utils.module_roots(orchestrator), *delegate.PYTHONPATH.split(os.pathsep))
-            )
+        roots = (
+            f"{REPO}/linear-orchestrator/src",
+            f"{REPO}/delegate/src",
+            f"{REPO}/session/src",
+            f"{REPO}/utils/src",
         )
         self.assertEqual(config.pythonpath(), os.pathsep.join(roots))
         with (

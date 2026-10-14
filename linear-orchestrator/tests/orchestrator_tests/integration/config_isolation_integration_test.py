@@ -338,7 +338,7 @@ class PackagedDeployments(ConfigFile, Case):
             "from agent_pm.linear_orchestrator.engine import config\n"
             "protected = ()\n"
             "try:\n"
-            "    protected = config.deployment_dirs()\n"
+            "    protected, protect = config.deployment_dirs()\n"
             "    work = config._work_dir({'work_dir': sys.argv[1]}, protected)\n"
             "except config.ConfigError as error:\n"
             "    print(json.dumps({'error': str(error), 'protected': protected}))\n"
@@ -362,6 +362,31 @@ class PackagedDeployments(ConfigFile, Case):
         sibling = self.deployment / "unrelated-state" / "missing"
         self.assertEqual(self.discovery(sibling)["work"], str(sibling))
         self.assertFalse(sibling.exists())
+
+    def test_lower_package_dirs_are_rejected_as_work_dir(self):
+        for project in ("delegate", "session", "utils"):
+            package = self.deployment / project / "src" / "agent_pm" / project
+            for work in (package, package / "missing", package.parent):
+                with self.subTest(work=work):
+                    found = self.discovery(work)
+                    self.assertIn(str(package), found["protected"])
+                    self.assertIn("work_dir must neither", found["error"])
+
+    def test_lower_package_checkout_is_protected(self):
+        checkout = self.deployment / "delegate"
+        git("init", "-q", str(checkout))
+        found = self.discovery(checkout / "state")
+        self.assertIn(str(checkout), found["protected"])
+        self.assertIn("work_dir must neither", found["error"])
+        self.local(PIPELINE)
+        protect = self.child(
+            "import json\nfrom agent_pm.linear_orchestrator.engine import config\n"
+            "print(json.dumps(config.load().protect))\n"
+        )
+        self.assertIn(str(checkout), protect)
+        self.assertIn(str(self.package()), protect)
+        for project in ("delegate", "session", "utils"):
+            self.assertNotIn(str(self.deployment / project / "src" / "agent_pm" / project), protect)
 
     def test_deployment_checkout_and_nested_outer_checkout(self):
         git("init", "-q", str(self.deployment))
@@ -416,6 +441,10 @@ class PackagedDeployments(ConfigFile, Case):
         self.assertIn(str(self.package()), found["protect"])
         self.assertIn(str(self.deployment), found["protect"])
         self.assertNotIn(str(clone), found["protect"])
+        for project in ("delegate", "session", "utils"):
+            self.assertNotIn(
+                str(self.deployment / project / "src" / "agent_pm" / project), found["protect"]
+            )
         self.assertEqual(found["clones"], {SLUG: str(clone)})
 
     def test_default_gate_runs_outside_checkout_cwd(self):
