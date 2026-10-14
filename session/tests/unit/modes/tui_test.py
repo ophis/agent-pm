@@ -152,9 +152,7 @@ class Base(Case):
         self.addCleanup(tmp.cleanup)
         self.tmp = os.path.realpath(tmp.name)
         self.events = os.path.join(self.home, "events")
-        self.host = ScreenHost(
-            protected=("/host/tool",), hook=HookCallback("fake_host_hook", {"selected": True})
-        )
+        self.host = ScreenHost(hook=HookCallback("fake_host_hook", {"selected": True}))
         self.log = []
         self.clock = Clock(self.log)
         for patch in (
@@ -561,44 +559,25 @@ class StartTest(Base):
             self.start()
         self.assertEqual((held, self.locked()), ([True, True, True], False))
 
-    def test_the_spec_as_started_names_the_session_and_protects_the_hook_paths(self):
-        self.start(protect=("/c",))
-        self.assertEqual(
-            (self.prepared.spec.name, self.prepared.spec.protect),
-            (NAME, ("/c", "/host/tool", self.events, self.root)),
-        )
+    def test_the_spec_as_started_names_the_session(self):
+        self.start()
+        self.assertEqual(self.prepared.spec.name, NAME)
         mode = self.start(name=None, events=None)
-        self.assertEqual(
-            (mode.name, self.prepared.spec.name, self.prepared.spec.protect),
-            ("fake-0f8fad5b", "fake-0f8fad5b", ("/host/tool", self.root)),
-        )
+        self.assertEqual((mode.name, self.prepared.spec.name), ("fake-0f8fad5b", "fake-0f8fad5b"))
         self.assertEqual(self.host.calls.terminal.call_args.args[0], "fake-0f8fad5b")
 
-    def test_added_hook_paths_reject_overlapping_cwd_and_grants_before_launch(self):
-        for protected, field in itertools.product(
-            ("/host/tool", self.events, self.root), ("cwd", "dirs")
-        ):
-            for path in (protected, os.path.dirname(protected), os.path.join(protected, "child")):
+    def test_cwd_and_grants_over_the_hook_paths_launch(self):
+        for hook_path, field in itertools.product((self.events, self.root), ("cwd", "dirs")):
+            for path in (hook_path, os.path.dirname(hook_path), os.path.join(hook_path, "child")):
                 access = Access(cwd=path) if field == "cwd" else Access(dirs=(path,))
-                with (
-                    self.subTest(path=path, field=field),
-                    self.assertRaisesRegex(ConfigError, "overlaps protected path"),
-                ):
+                with self.subTest(path=path, field=field):
+                    self.host.processes.clear()
                     self.start(access=access)
-                self.assertEqual(self.recorded, [])
-                self.assertNoSessionDir()
-        self.host.calls.terminal.assert_not_called()
+                    self.assertEqual(self.prepared.spec.access, access)
+        self.assertEqual(self.host.calls.terminal.call_count, 12)
 
-    def test_a_declared_hook_callback_root_rejects_an_overlapping_cwd_before_launch(self):
+    def test_a_cwd_inside_a_declared_hook_callback_root_launches(self):
         self.host.hook = HookCallback("fake_host_hook", {}, roots=("/declared/root",))
-        with self.assertRaisesRegex(
-            ConfigError, "writable path /declared/root/child overlaps protected path /declared/root"
-        ):
-            self.start(access=Access(cwd="/declared/root/child"))
-        self.assertEqual(self.recorded, [])
-        self.assertNoSessionDir()
-        self.host.calls.terminal.assert_not_called()
-        self.host.hook = HookCallback("fake_host_hook", {}, roots=("/elsewhere",))
         self.start(access=Access(cwd="/declared/root/child"))
         self.host.calls.terminal.assert_called_once()
 
@@ -1568,11 +1547,7 @@ class PrepareTest(Base):
                 self.adapter.run.launched = launched
                 self.start(**fields)
         self.assertEqual(
-            [
-                c
-                for c in self.host.calls.mock_calls
-                if c[0] not in ("protected_paths", "hook_callback", "validate")
-            ],
+            [c for c in self.host.calls.mock_calls if c[0] not in ("hook_callback", "validate")],
             [],
         )
         self.assertFalse(os.path.lexists(self.root))

@@ -237,7 +237,6 @@ class Spec(ProcessOptions):
     effort: Effort | None = None
     sid: str | None = None
     name: str | None = None
-    protect: tuple[str, ...] = ()
     reply_tags: tuple[str, str] | None = None  # caller's (progress, outcome) tags for in_process
     runtime: str | None = None
     mode: Mode | None = None
@@ -267,8 +266,6 @@ class Spec(ProcessOptions):
         super().__post_init__()
         if self.name is not None and not isinstance(self.name, str):
             raise ConfigError("name must be None or a string")
-        if not (isinstance(self.protect, tuple) and all(map(printable_abs, self.protect))):
-            raise ConfigError("protect must be a tuple of printable absolute paths")
         if self.reply_tags is not None and not (
             isinstance(self.reply_tags, tuple)
             and len(self.reply_tags) == 2

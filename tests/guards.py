@@ -2320,8 +2320,8 @@ def _path_steps(node, bound):
 
 
 def session_interface_snapshot(repo: str) -> list[str]:
-    """The session's public interface (_session_interface()) equals SESSION_INTERFACE. Only TASK-369
-    and TASK-387 change it on purpose, rewriting the file from _session_interface().
+    """The session's public interface (_session_interface()) equals SESSION_INTERFACE. Only TASK-369,
+    TASK-387 and TASK-414 change it on purpose, rewriting the file from _session_interface().
     """
     try:
         with open(os.path.join(repo, SESSION_INTERFACE), encoding="utf-8") as f:

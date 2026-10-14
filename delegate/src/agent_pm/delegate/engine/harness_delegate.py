@@ -275,7 +275,6 @@ class HarnessDelegate(Delegate):
             for key in ("dirs", "reads", "commands"):
                 access[key] = tuple(access[key])
             session["access"] = Access(**access)
-            session["protect"] = tuple(session["protect"])
             session["flags"] = tuple(session["flags"])
             session["reply_tags"] = tuple(session["reply_tags"])
             accepted = Plan(spec, SessionSpec(**session), RunConfig(**planned["run"]))

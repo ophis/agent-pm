@@ -238,7 +238,6 @@ class HostedSession(Session):
         runtime, mode = _request(spec, idle_timeout)
         adapter = setup.registry.adapter(runtime)
         spec = replace(spec, sid=spec.sid or str(uuid.uuid4()))
-        RunningMode.check_protection(spec, adapter)
         on = cls.host(host)
         on.validate_display(display)
         MODES[mode].preflight(
@@ -263,7 +262,6 @@ class HostedSession(Session):
         runtime, mode = _request(spec, idle_timeout)
         adapter = setup.registry.adapter(runtime)
         spec = replace(spec, sid=spec.sid or str(uuid.uuid4()))
-        RunningMode.check_protection(spec, adapter)
         on = cls.host(host)
         on.validate_display(display)
         name = tui.TuiMode.resolve_name(spec) if mode == Mode.TUI else spec.name

@@ -100,12 +100,12 @@ class MemoryTerminal(Terminal):
 
 
 class MemoryHost(Host):
-    def __init__(self, name="memory", *, protected=(), hook=None):
+    def __init__(self, name="memory", *, hook=None):
         super().__init__(name)
         self.calls = mock.Mock()
         self.processes = {}
         self.serial = 0
-        self.protected, self.hook = protected, hook
+        self.hook = hook
         self.calls.list.return_value = None
         self.calls.display.return_value = None
 
@@ -123,10 +123,6 @@ class MemoryHost(Host):
     def validate(self, name, launch: Launch, *, display=None):
         self.calls.validate(name, launch, display=display)
         super().validate(name, launch, display=display)
-
-    def protected_paths(self):
-        self.calls.protected_paths()
-        return self.protected
 
     def hook_callback(self, name, metadata):
         self.calls.hook_callback(name, metadata)

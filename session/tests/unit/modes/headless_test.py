@@ -158,15 +158,6 @@ class Start(Base):
                 prepared = self.start(adapter, access=Access(commands=commands), prompt="hi")
                 self.assertEqual((prepared.spec.prompt, StubRun.specs[-1].prompt), (prompt, prompt))
 
-    def test_protect_reaches_the_adapter_without_enforcement(self):
-        protected = (self.dir, os.path.join(self.dir, "missing"))
-        with self.faked() as calls:
-            prepared = self.start(protect=protected)
-        self.assertIs(prepared.spec.protect, protected)
-        self.assertIs(StubRun.specs[-1].protect, protected)
-        self.assertEqual(len(calls), 1)
-        self.assertEqual(len(self.recorded), 1)
-
     def test_refused_before_its_session_line_or_a_process(self):
         for adapter, fields, error, message in (
             (NoHeadless(), {}, ConfigError, "runtime 'stub' does not support headless mode"),
@@ -193,17 +184,13 @@ class Start(Base):
                 popen.assert_not_called()
         self.assertEqual((self.recorded, self.mode), ([], None))
 
-    def test_its_checks_in_order_tui_keys_selection_adapters_then_protect(self):
+    def test_its_checks_in_order_tui_keys_selection_then_adapters(self):
         self.configure_session(
             {"broken": {"implementation": "agent_pm.session.adapters.broken:BrokenAdapter"}}
         )
         for fields, message in (
             ({"name": "w1", "flags": ("--resume",)}, "name: tui mode only"),
-            (
-                {"flags": ("--resume",), "protect": ("/p",)},
-                "--resume: picks the session; use sid= or resume=",
-            ),
-            ({"protect": ("/p",)}, "[adapters.broken].implementation: "),
+            ({"flags": ("--resume",)}, "--resume: picks the session; use sid= or resume="),
             ({}, "[adapters.broken].implementation: "),
         ):
             with (

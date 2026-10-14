@@ -19,77 +19,13 @@ from agent_pm.session.adapters.codex.common import (
     snapshot_data,
     validate_snapshot,
 )
-from agent_pm.session.engine.hosted import HostedSession
-from agent_pm.session.engine.types import Access, ConfigError, Mode, SessionInfo, SessionStatus
-from agent_pm.session.hosts.base import Host
+from agent_pm.session.engine.types import Access, ConfigError, SessionInfo, SessionStatus
 
 from session.tests.source_roots import PACKAGE_ROOTS
 from session.tests.unit.adapters.codex.support import CHILD, NATIVE, Base, committed_headless
 
 
 class LaunchLifecycleTest(Base):
-    def configured(self):
-        return HostedSession.configured(
-            adapters={
-                "codex": {
-                    "implementation": "agent_pm.session.adapters.codex:CodexAdapter",
-                    **self.adapter.config,
-                }
-            },
-            hosts=Host.parse_hosts(
-                {
-                    "default": "tmux",
-                    "tmux": {"implementation": "agent_pm.session.hosts.tmux:TmuxHost"},
-                }
-            ),
-        )
-
-    def test_added_dirs_are_protected_before_preparation_in_both_codex_modes(self):
-        session = self.configured()
-        added = self.root / "added"
-        for mode in (Mode.HEADLESS, Mode.TUI):
-            spec = replace(
-                self.spec,
-                runtime="codex",
-                mode=mode,
-                flags=("--add-dir", str(added)),
-                protect=(str(added / "child"),),
-            )
-            with (
-                self.subTest(mode=mode),
-                mock.patch("subprocess.Popen") as popen,
-                self.assertRaisesRegex(ConfigError, "overlaps protected path"),
-            ):
-                session.start(spec)
-            popen.assert_not_called()
-            self.assertFalse((self.home / ".agent-pm").exists())
-            self.assertFalse((self.work / "run.jsonl").exists())
-
-    def test_resume_checks_saved_grants_without_rewriting_recovery(self):
-        self.prepare()
-        self.common.bind(str(self.work), self.spec.sid, NATIVE)
-        self.rollout()
-        before = self.record().read_bytes()
-        session = self.configured()
-        for mode in (Mode.HEADLESS, Mode.TUI):
-            spec = replace(
-                self.spec,
-                runtime="codex",
-                mode=mode,
-                resume=True,
-                access=Access(cwd=str(self.work / "clean")),
-                protect=(str(self.extra / "child"),),
-            )
-            with (
-                self.subTest(mode=mode),
-                mock.patch("subprocess.Popen") as popen,
-                self.assertRaisesRegex(ConfigError, "overlaps protected path"),
-            ):
-                session.start(spec)
-            popen.assert_not_called()
-            self.assertEqual(self.record().read_bytes(), before)
-            self.assertFalse((self.work / "run.jsonl").exists())
-
     def test_preparation_and_commands_are_pure_until_commit_in_both_modes(self):
         for mode in ("headless", "tui"):
             spec = replace(self.spec, sid=mode, prompt="hello")

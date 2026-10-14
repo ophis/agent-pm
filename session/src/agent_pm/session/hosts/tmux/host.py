@@ -1037,9 +1037,6 @@ class TmuxHost(Host, Displayable):
             raise DriverError("tmux not found")
         return path
 
-    def protected_paths(self) -> tuple[str, ...]:
-        return (self._executable(),)
-
     def tui_settings(self) -> TuiSettings:
         line = self.settings.get("status_line", False)
         per = self.settings.get("workers_per_column")

@@ -157,7 +157,9 @@ class Planning(HarnessCase):
     def test_a_run_whose_cwd_is_the_agent_pm_checkout_starts(self):
         self.make(spec=Spec("input", self.work, cwd=REPO, runtime="fake")).run()
         self.assertEqual(HarnessSession.started[0]["spec"].access.cwd, REPO)
-        self.assertNotIn("protect", self.metadata()["spec"])
+        metadata = self.metadata()
+        self.assertNotIn("protect", metadata["spec"])
+        self.assertNotIn("protect", metadata["plan"]["session"])
 
     def test_constructor_keeps_its_config_snapshot_when_local_file_changes(self):
         delegate = self.make(spec=Spec("input", self.work, task="echo", cwd=self.work, sid=SID))
