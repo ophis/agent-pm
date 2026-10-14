@@ -97,6 +97,7 @@ class ConfiguredTest(Case):
         for name, call in (
             ("start", lambda: fresh.start(spec)),
             ("attach", lambda: fresh.attach("w1")),
+            ("inspect", lambda: fresh.inspect(spec)),
             ("usage", lambda: fresh.usage("fake")),
             ("layout", fresh.layout),
             ("writable_dirs", lambda: fresh.writable_dirs(spec)),
@@ -112,6 +113,50 @@ class ConfiguredTest(Case):
         with self.assertRaises(ConfigError) as caught:
             HostedSession.configured(adapters={}, hosts={**HOSTS, "default": "tmux"})
         self.assertEqual(str(caught.exception), "hosts: want parsed Hosts (Host.parse_hosts)")
+
+
+class InspectTest(Base):
+    def inspect(self, spec):
+        with contextlib.ExitStack() as stack:
+            starts = [
+                stack.enter_context(mock.patch(target, side_effect=AssertionError(target)))
+                for target in SPAWNS
+            ]
+            answer = self.session.inspect(spec)
+        for start in starts:
+            start.assert_not_called()
+        return answer
+
+    def test_historical_status_resolves_the_recorded_cwd_inside_session(self):
+        os.makedirs(self.workdir)
+        log = RunLog(self.workdir)
+        info = SessionInfo(sid=SID, cwd=self.dir, project=False, transcript="", resume="")
+        log.note("session", **info.persisted())
+        log.note(
+            "session_metadata",
+            sid=SID,
+            transcript=os.path.join(self.dir, "transcript"),
+            resume="saved hint",
+        )
+        log.note("session", **dataclasses.replace(info, sid="another", cwd=self.home).persisted())
+        spec = Spec(workdir=self.workdir, runtime="probe", sid=SID, access=Access(cwd=self.home))
+        self.assertEqual(self.inspect(spec), SessionStatus("yes", 1.5, f"probe {SID} {self.dir}"))
+        self.assertFalse(os.path.exists(self.log))
+
+    def test_a_sid_without_a_record_is_an_error_without_starting_a_process(self):
+        spec = Spec(workdir=self.workdir, runtime="probe", sid=SID)
+        with self.assertRaisesRegex(DriverError, "no recorded session"):
+            self.inspect(spec)
+        self.assertFalse(os.path.exists(self.workdir))
+
+    def test_inspection_requires_runtime_and_sid(self):
+        for spec, message in (
+            (Spec(workdir=self.workdir, sid=SID), "spec.runtime: required to inspect"),
+            (Spec(workdir=self.workdir, runtime="probe"), "spec.sid: required to inspect"),
+        ):
+            with self.subTest(spec=spec), self.assertRaises(ConfigError) as caught:
+                self.inspect(spec)
+            self.assertEqual(str(caught.exception), message)
 
 
 class HostTest(Case):

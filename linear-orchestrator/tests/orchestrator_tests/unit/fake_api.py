@@ -47,8 +47,9 @@ class FakeApi:
         self.order.append(("show", name, split, split_from, opener, calls))
         return _answer(self.shown)
 
-    def session_status(self, runtime, sid, cwd):
-        self.info.append((runtime, sid, cwd))
+    def session_status(self, runtime, sid, cwd, *, workdir):
+        entry = self.session_record(workdir, sid)
+        self.info.append((runtime, sid, entry["cwd"] if entry else cwd))
         return _answer(self.statuses.get(sid, SessionStatus("yes", None, f"resume {sid}")))
 
     def session_record(self, workdir, sid):

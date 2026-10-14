@@ -48,9 +48,7 @@ def base(*, sid, workdir, runtime, started_at, driver):
 
 
 def status(workdir, runtime, sid, *, driver):
-    # only cwd is read from the session entry: the agent run can write run.jsonl
-    entry = driver.session_record(workdir, sid)
-    return driver.session_status(runtime, sid, entry["cwd"] if entry else workdir)
+    return driver.session_status(runtime, sid, workdir, workdir=workdir)
 
 
 def command(rec):

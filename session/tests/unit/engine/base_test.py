@@ -57,6 +57,7 @@ class SessionClassMethods(Case):
             ),
             (Session.attach, [("name", either), ("host", key), ("idle_timeout", key)]),
             (Session.writable_dirs, [("spec", either)]),
+            (Session.inspect, [("spec", either)]),
             (Session.layout, [("display", key)]),
             (Session.show, [("self", either), ("display", key)]),
         ):
@@ -88,6 +89,7 @@ class SessionClassMethods(Case):
             "configure": ((), {"adapters": {}, "hosts": Hosts("tmux", {})}),
             "start": ((spec,), {}),
             "attach": (("w1",), {}),
+            "inspect": ((spec,), {}),
             "list": ((), {}),
             "usage": (("fake",), {}),
             "layout": ((), {}),

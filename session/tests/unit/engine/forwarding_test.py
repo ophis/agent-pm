@@ -110,6 +110,7 @@ SIGNATURES = {
         ("runtime", POSITIONAL, EMPTY),
         ("sid", POSITIONAL, EMPTY),
         ("cwd", POSITIONAL, EMPTY),
+        ("workdir", KEYWORD, EMPTY),
     ],
     "writable_dirs": [
         ("self", POSITIONAL, EMPTY),
@@ -188,7 +189,7 @@ class WrappersTest(TuiBase):
                     lambda: self.session.writable_dirs(dataclasses.replace(spec, runtime="fake")),
                 ),
                 (
-                    lambda: self.driver.session_status("probe", SID, d),
+                    lambda: self.driver.session_status("probe", SID, d, workdir=d),
                     lambda: SessionStatus("yes", 1.5, f"probe {SID} {d}"),
                 ),
                 (lambda: session_record(d, SID), lambda: log.session(SID).persisted()),
@@ -382,15 +383,29 @@ class WritableDirsTest(Base):
 
 
 class SessionStatusTest(Base):
+    def setUp(self):
+        super().setUp()
+        os.makedirs(self.workdir)
+        RunLog(self.workdir).note(
+            "session", sid="s1", cwd=self.dir, project=False, transcript="", resume=""
+        )
+
     def test_the_adapters_session_status(self):
         self.assertEqual(
-            self.driver.session_status("probe", "s1", self.dir),
+            self.driver.session_status("probe", "s1", self.dir, workdir=self.workdir),
+            SessionStatus("yes", 1.5, f"probe s1 {self.dir}"),
+        )
+
+    def test_the_public_query_resolves_cwd_from_the_required_workdir(self):
+        self.assertEqual(
+            self.driver.session_status("probe", "s1", self.home, workdir=self.workdir),
             SessionStatus("yes", 1.5, f"probe s1 {self.dir}"),
         )
 
     def test_unknown_by_default(self):
         self.assertEqual(
-            self.driver.session_status("fake", "s1", "/c"), SessionStatus("unknown", None, "")
+            self.driver.session_status("fake", "s1", "/c", workdir=self.workdir),
+            SessionStatus("unknown", None, ""),
         )
 
     def test_an_os_error_from_the_adapter_is_unknown(self):
@@ -398,26 +413,26 @@ class SessionStatusTest(Base):
             ProbeAdapter, "session_status", side_effect=PermissionError(13, "denied")
         ):
             self.assertEqual(
-                self.driver.session_status("probe", "s1", self.dir),
+                self.driver.session_status("probe", "s1", self.dir, workdir=self.workdir),
                 SessionStatus("unknown", None, ""),
             )
 
     def test_refuses_a_bad_sid_or_cwd_and_passes_registry_errors(self):
         for sid, shown in (("", "''"), ("a/b", "'a/b'"), (5, "5")):
             with self.subTest(sid=sid), self.assertRaises(ConfigError) as caught:
-                self.driver.session_status("probe", sid, self.dir)
+                self.driver.session_status("probe", sid, self.dir, workdir=self.workdir)
             self.assertEqual(
                 str(caught.exception),
                 f'sid must be a non-empty printable string without "/", got {shown}',
             )
         for cwd, shown in (("rel", "'rel'"), ("", "''"), ("/c\n", r"'/c\n'"), (None, "None")):
             with self.subTest(cwd=cwd), self.assertRaises(ConfigError) as caught:
-                self.driver.session_status("probe", "s1", cwd)
+                self.driver.session_status("probe", "s1", cwd, workdir=self.workdir)
             self.assertEqual(
                 str(caught.exception), f"cwd must be a printable absolute path, got {shown}"
             )
         with self.assertRaises(ConfigError) as caught:
-            self.driver.session_status("nope", "s1", self.dir)
+            self.driver.session_status("nope", "s1", self.dir, workdir=self.workdir)
         self.assertEqual(
             str(caught.exception),
             "no [adapters.nope] table in the configured adapters",

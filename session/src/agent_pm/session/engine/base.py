@@ -110,6 +110,13 @@ class Session(ABC):
         return cls._hosted("attach")(name, host=host, idle_timeout=idle_timeout)
 
     @classmethod
+    def inspect(cls, spec: Spec) -> SessionStatus:
+        """Historical status using spec.workdir, runtime and sid, without starting or attaching.
+        A missing record raises DriverError.
+        """
+        return cls._hosted("inspect")(spec)
+
+    @classmethod
     def list(cls, match: str | None = None, *, display: Display = None) -> list[SessionRow]:
         return cls._hosted("list")(match, display=display)
 

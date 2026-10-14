@@ -1002,7 +1002,10 @@ class TuiRecoveryIntegrationTest(Live):
             starts[0]["payload"]["transcript_path"], starts[1]["payload"]["transcript_path"]
         )
         self.assertEqual(
-            self.driver.session_status("codex", self.sid, str(self.cwd)).resumable, "yes"
+            self.driver.session_status(
+                "codex", self.sid, str(self.cwd), workdir=str(self.work)
+            ).resumable,
+            "yes",
         )
 
     def test_headless_to_tui_to_headless_resume_uses_one_store(self):

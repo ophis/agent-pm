@@ -371,7 +371,10 @@ class UsageLimit(Integration):
         self.assertEqual(len(self.calls()), 1)
         self.driver = Driver.from_config(read_project("session"))
         with mock.patch.dict(os.environ, {"CLAUDE_CONFIG_DIR": self.config}):
-            self.assertEqual(self.driver.session_status("claude", SID, self.proj).resumable, "yes")
+            self.assertEqual(
+                self.driver.session_status("claude", SID, self.proj, workdir=self.work).resumable,
+                "yes",
+            )
 
 
 class ConfigErrors(Integration):

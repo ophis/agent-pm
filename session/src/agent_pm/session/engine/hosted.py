@@ -384,9 +384,21 @@ class HostedSession(Session):
         return found
 
     @classmethod
-    def _status(cls, runtime: str, sid: str, cwd: str) -> SessionStatus:
+    def inspect(cls, spec: Spec) -> SessionStatus:
         setup = cls._config()
-        return _resumable(lambda: setup.registry.adapter(runtime), sid, cwd)
+        if not isinstance(spec, Spec):
+            raise ConfigError(f"spec: want a Spec, got {type(spec).__name__}")
+        runtime, sid = spec.runtime, spec.sid
+        if runtime is None or sid is None:
+            field = "runtime" if runtime is None else "sid"
+            raise ConfigError(f"spec.{field}: required to inspect")
+        try:
+            info = RunLog(spec.workdir).session(sid)
+        except OSError as error:
+            raise DriverError(f"inspect session {sid}: {error}") from error
+        if info is None:
+            raise DriverError(f"no recorded session {sid} in {spec.workdir}")
+        return _resumable(lambda: setup.registry.adapter(runtime), sid, info.cwd)
 
     def events(self) -> Iterator[SessionEvent | Stderr | IdleTimeout]:
         last = self._clock()
