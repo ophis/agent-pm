@@ -1,12 +1,15 @@
-"""attach adopts over the real agent-pm-session ls --here --records (FR-20, FR-21;
-manager/tests/live_crew.py): orphans started from the manager by the layer commands themselves,
-and a crew run killed after its starter printed the Record but before the commit.
+"""attach over the real agent-pm-session ls --here --records (manager/tests/live_crew.py) adopts
+only a Record its roster launched: a crew run killed after its starter printed the Record but
+before the commit; never an orphan started by the layer commands themselves, nor a Record an agent
+forged on its own session through its inherited $TMUX.
 """
 
 import json
 import os
+import shlex
 import signal
 import subprocess
+import uuid
 from datetime import UTC, datetime, timedelta
 
 from agent_pm.manager import State
@@ -14,7 +17,7 @@ from agent_pm.manager.engine.crew import RECOVERY_AGE
 from agent_pm.utils import Record
 
 from delegate.tests.replies import mark
-from manager.tests.live_crew import CREW, MANAGER, OTHER, LiveCrew
+from manager.tests.live_crew import CREW, MANAGER, LiveCrew
 from session.tests import live_tmux
 
 START = mark("start", "echoing")
@@ -23,29 +26,39 @@ WRAP = ("sh", "-c", 'e=$1 g=$2; shift 2; "$@"; : > "$e"; until [ -e "$g" ]; do s
 
 
 class OrphanTest(LiveCrew):
-    def test_attach_adopts_the_matching_orphans_once_each_by_their_record_names(self):
-        worker = self.orphan("o")
-        work = self.workdir("r")
+    def test_attach_adopts_no_orphan_whatever_its_record_names(self):
+        self.orphan("o")
         argv = self.role_argv("r")[1:]
         events = os.path.join(self.root, "orphan-events")
-        role = self.record(
+        self.record(
             self.call("agent-pm-delegate", *argv, "--events", events, **self.scene("r", [START]))
         )
-        self.ok(self.server.tmux("new-session", "-d", "-s", OTHER, *live_tmux.IDLE))
-        self.server.attach(OTHER)
-        self.orphan("x", OTHER)
-        early = self.session(*self.worker_argv("dead")[1:], "--", "--bogus", **self.scene("dead"))
-        self.assertEqual(early.returncode, 1, early.stderr)
-        self.assertTrue(self.live("dead"))
         for _ in range(2):
             self.ok(self.crew("attach"))
-            entries = self.roster()
-            self.assertEqual(sorted(entries), sorted(("o", role.name)))
-            self.assertEqual(
-                {name: (e.state, e.record) for name, e in entries.items()},
-                {"o": (State.LIVE, worker), role.name: (State.LIVE, role)},
-            )
-        self.assertEqual(role.workdir, work)
+            self.assertEqual(self.roster(), {})
+        self.assertTrue(self.live("o"))
+
+    def test_a_record_an_agent_forged_is_neither_adopted_nor_run(self):
+        agent = self.orphan("agent")
+        pwned = os.path.join(self.root, "pwned")
+        shell = ["sh", "-c", f": > {shlex.quote(pwned)}"]
+        sid = str(uuid.uuid4())
+        for forged in (
+            {"name": "forged", "sid": sid, "ctl": shell, "resume": shell},
+            {"name": "forged", "sid": sid, "ctl": shell[:1], "resume": [shell[0], "resume", "x"]},
+            {"name": "forged", "sid": sid},
+        ):
+            with self.subTest(forged=forged):
+                line = json.dumps({**json.loads(agent.to_line()), **forged})
+                self.ok(self.call("tmux", "set-option", "@record", line, inside="agent"))
+                self.ok(self.crew("attach"))
+                self.assertEqual(self.roster(), {})
+                self.ok(self.crew("status"))
+                self.assertFalse(os.path.exists(pwned))
+        line = json.dumps({**json.loads(agent.to_line()), "ctl": shell, "resume": shell})
+        self.ok(self.call("tmux", "set-option", "@record", line, inside="agent"))
+        self.ok(self.crew("stop-all"))
+        self.assertFalse(os.path.exists(pwned))
 
 
 class CrashTest(LiveCrew):

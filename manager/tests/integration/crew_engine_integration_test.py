@@ -48,6 +48,11 @@ class CrewTest(Case):
             argv += ("--display", display)
         return self.crew.run(Spec(name, argv, note))
 
+    def own(self, record):
+        """record committed under its name, as if this roster launched it."""
+        self.roster.begin(Spec(record.name, (record.ctl[0], "start")), sid=record.sid)
+        self.roster.commit(record.name, record)
+
     def gone(self, name):
         record = self.start(name)
         ctl.set_session(self.ctl_dir, name, alive=False)
@@ -458,7 +463,7 @@ class CrewTest(Case):
         self.assertEqual(self.roster.entries()["young"].state, State.STARTING)
         self.assertEqual(self.roster.entries()["resuming"].state, State.GONE)
 
-    def test_attach_adopts_sid_matched_orphan_under_original_alias_and_note(self):
+    def test_attach_adopts_only_the_sid_matched_orphan_under_its_alias_and_note(self):
         sid = str(uuid.uuid4())
         self.roster.begin(Spec("alias", (self.command, "start", "actual-name"), "keep"), sid=sid)
         self.age("alias")
@@ -468,7 +473,7 @@ class CrewTest(Case):
         ctl.set_session(self.ctl_dir, "extra", alive=True, sid=extra.sid)
         with self.listed((orphan, orphan, extra)):
             self.crew.attach()
-        self.assertEqual(set(self.roster.entries()), {"alias", "extra"})
+        self.assertEqual(set(self.roster.entries()), {"alias"})
         self.assertEqual(self.roster.entries()["alias"].note, "keep")
         self.assertEqual(self.roster.entries()["alias"].record, orphan)
         self.assertEqual(self.roster.entries()["alias"].state, State.LIVE)
@@ -602,7 +607,7 @@ class CrewTest(Case):
         healthy = self.start("healthy", display="view")
         ctl.set_session(self.ctl_dir, "healthy", displayable=True)
         bad = with_ctl(self.fake_record("broken"), MISSING)
-        self.roster.adopt(bad)
+        self.own(bad)
         stderr = io.StringIO()
         with self.listed((healthy, bad)), contextlib.redirect_stderr(stderr):
             table = self.crew.attach()
@@ -619,7 +624,7 @@ class CrewTest(Case):
         with open(command, "w", encoding="utf-8") as stream:
             stream.write("#!/bin/sh\necho broken-controller >&2\nexit 7\n")
         os.chmod(command, 0o700)
-        self.roster.adopt(bad)
+        self.own(bad)
         real_run = subprocess.run
 
         def run(argv, **options):
@@ -688,7 +693,7 @@ class CrewTest(Case):
 
     def test_stop_all_closes_healthy_groups_and_retains_failed_groups(self):
         bad = with_ctl(self.fake_record("broken"), MISSING)
-        self.roster.adopt(bad)
+        self.own(bad)
         self.start("healthy")
         with self.listed(), self.assertRaisesRegex(RuntimeError, MISSING):
             self.crew.stop_all()

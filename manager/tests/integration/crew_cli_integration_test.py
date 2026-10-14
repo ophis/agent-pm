@@ -202,7 +202,8 @@ class Commands(Case):
         roster = Roster(self.directory)
         first = with_ctl(self.fake_record("a"), "agent-pm-delegate")  # not on PATH
         ctl.set_session(self.ctl_dir, "a", alive=False, sid=first.sid)
-        roster.adopt(first)
+        roster.begin(Spec("a", (self.command, "start", "a")), sid=first.sid)
+        roster.commit("a", first)
         roster.mark("a", State.GONE)
         second = Crew(roster).run(Spec("b", (self.command, "start", "b")))
         ctl.set_session(self.ctl_dir, "b", alive=False)
@@ -243,11 +244,13 @@ class Commands(Case):
         self.assertEqual(closed, [["a", "orphan"]])
         self.assertEqual(crew.roster.entries(), {})
 
-    def test_orphans_are_adopted_once_and_release_supports_handoff(self):
+    def test_a_lost_launch_is_adopted_once_and_release_supports_handoff(self):
         orphan = self.fake_record("orphan")
         ctl.set_session(self.ctl_dir, "orphan", alive=True)
         fake_session.set_records(self.sessions, [orphan])
         original = Roster(self.directory)
+        original.begin(Spec("orphan", (self.command, "start", "orphan")), sid=orphan.sid)
+        original.mark("orphan", State.LOST)
         with original.hold("first") as first:
             result = self.invoke("attach", "--manager", "mgr")
             self.assertEqual(result.returncode, 1)

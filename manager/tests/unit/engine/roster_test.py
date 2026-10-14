@@ -151,7 +151,7 @@ class RosterTest(RosterCase):
             self.assertFalse(Path(self.directory).exists())
 
     def test_persisted_invalid_sid_is_skipped_for_every_state(self):
-        self.roster.adopt(self.record)
+        self.live()
         valid = self.content()
         for state in State:
             for sid in (None, "not-a-uuid"):
@@ -174,7 +174,7 @@ class RosterTest(RosterCase):
                     self.assertEqual(list(Path(self.directory).glob("receipt-*.stdout")), [])
 
     def test_resume_preflight_rejects_invalid_sid_without_receipt_or_write(self):
-        self.roster.adopt(self.record)
+        self.live()
         self.roster.mark("x", State.GONE)
         data = self.content()
         data["entries"]["x"]["sid"] = None
@@ -211,6 +211,7 @@ class RosterTest(RosterCase):
         for name in ("external.run", "external run", "external/run", "../external", "外部"):
             with self.subTest(name=name):
                 record = replace(self.record, name=name, sessions=(name,), sid=str(uuid4()))
+                self.live(name, record=record)
                 self.assertEqual(self.roster.adopt(record), name)
                 self.assertEqual(Roster(self.directory).entries()[name].record, record)
         self.assertFalse((Path(self.directory).parent / "external").exists())
@@ -222,15 +223,27 @@ class RosterTest(RosterCase):
             with self.subTest(name=name), self.assertRaises(RosterError):
                 self.begin(name)
 
-    def test_adopt_new_orphan_and_existing_alias_are_idempotent(self):
-        self.assertEqual(self.roster.adopt(self.record), "x")
-        before = Path(self.roster.path).read_bytes()
-        self.assertEqual(self.roster.adopt(self.record), "x")
-        self.assertEqual(Path(self.roster.path).read_bytes(), before)
-        self.roster.remove("x")
+    def test_adopt_takes_no_record_whose_sid_no_launch_holds(self):
+        self.assertIsNone(self.roster.adopt(self.record))
+        self.assertFalse(Path(self.directory).exists())
         self.live("alias")
-        self.assertEqual(self.roster.adopt(self.record), "alias")
+        before = Path(self.roster.path).read_bytes()
+        for record in (
+            replace(self.record, sid=str(uuid4()), name="forged", sessions=("forged",)),
+            replace(self.record, sid=str(uuid4()), name="alias", sessions=("alias",)),
+            replace(self.record, sid=str(uuid4())),
+        ):
+            with self.subTest(record=record):
+                self.assertIsNone(self.roster.adopt(record))
+                self.assertEqual(Path(self.roster.path).read_bytes(), before)
         self.assertEqual(list(self.roster.entries()), ["alias"])
+
+    def test_adopting_a_launched_record_is_idempotent(self):
+        self.live("alias")
+        before = Path(self.roster.path).read_bytes()
+        self.assertEqual(self.roster.adopt(self.record), "alias")
+        self.assertEqual(self.roster.adopt(self.record), "alias")
+        self.assertEqual(Path(self.roster.path).read_bytes(), before)
 
     def test_note_can_be_replaced_or_cleared(self):
         self.live(note="first")
@@ -267,7 +280,7 @@ class RosterTest(RosterCase):
         self.assertEqual(Path(self.roster.path).read_bytes(), before)
         self.roster.remove("x")
         replacement = replace(self.record, sid=str(uuid4()))
-        self.roster.adopt(replacement)
+        self.live(record=replacement)
         before = Path(self.roster.path).read_bytes()
         self.assertFalse(self.roster.mark_if("x", expected, State.GONE))
         self.assertEqual(Path(self.roster.path).read_bytes(), before)
@@ -499,9 +512,8 @@ class RosterTest(RosterCase):
                         self.roster.entries()
 
     def test_invalid_entry_read_keeps_healthy_entry_and_original_ledger(self):
-        self.roster.adopt(self.record)
-        bad = replace(self.record, name="bad", sid=str(uuid4()))
-        self.roster.adopt(bad)
+        self.live()
+        self.live("bad", record=replace(self.record, name="bad", sid=str(uuid4())))
         data = self.content()
         data["entries"]["bad"]["note"] = "bad\nnote"
         Path(self.roster.path).write_text(json.dumps(data))
@@ -516,7 +528,7 @@ class RosterTest(RosterCase):
         self.assertIn("entry 'bad'", warning.getvalue())
 
     def test_next_write_drops_invalid_entry_and_updates_healthy_entry(self):
-        self.roster.adopt(self.record)
+        self.live()
         data = self.content()
         data["entries"]["bad"] = {"record": "invalid"}
         Path(self.roster.path).write_text(json.dumps(data))
@@ -719,7 +731,7 @@ class RosterTest(RosterCase):
         self.assertEqual((self.content()["cursor"], self.content()["gen"]), (0, 1))
 
     def test_hostile_entry_diagnostic_is_one_escaped_line_with_healthy_entry_kept(self):
-        self.roster.adopt(self.record)
+        self.live()
         data = self.content()
         hostile = "invalid\n\x1b[31mforged\u2028"
         data["entries"]["bad"] = {**data["entries"]["x"], "state": hostile}
@@ -737,7 +749,7 @@ class RosterTest(RosterCase):
         self.assertEqual(Path(self.roster.path).read_bytes(), before)
 
     def test_top_level_faults_refuse_reads_and_writes_without_changing_bytes(self):
-        self.roster.adopt(self.record)
+        self.live()
         valid = self.content()
         cases = []
         for field in valid:
@@ -798,7 +810,7 @@ class RosterTest(RosterCase):
         self.assertFalse(Path(self.directory).exists())
 
     def test_roster_json_directory_is_refused_and_left_unchanged(self):
-        self.roster.adopt(self.record)
+        self.live()
         path = Path(self.roster.path)
         path.unlink()
         path.mkdir()
@@ -808,7 +820,7 @@ class RosterTest(RosterCase):
         self.assertEqual(list(path.iterdir()), [])
 
     def test_foreign_managers_parent_is_refused_without_mutation(self):
-        self.roster.adopt(self.record)
+        self.live()
         before = Path(self.roster.path).read_bytes()
         parent = str(Path(self.directory).parent)
         original = os.lstat
@@ -829,7 +841,7 @@ class RosterTest(RosterCase):
         self.assertEqual(Path(self.roster.path).read_bytes(), before)
 
     def test_valid_roster_at_exact_size_cap_is_read_without_rewrite(self):
-        self.roster.adopt(self.record)
+        self.live()
         raw = Path(self.roster.path).read_bytes()
         padded = raw + b" " * ((1 << 20) - len(raw))
         Path(self.roster.path).write_bytes(padded)
@@ -1101,12 +1113,11 @@ class RosterTest(RosterCase):
         self.assertIsNone(self.roster.adopt(replace(self.record, sid=str(uuid4()))))
         self.assertEqual(Path(self.roster.path).read_bytes(), before)
 
-    def test_adoption_refuses_another_sid_owning_the_same_control_name(self):
+    def test_adoption_ignores_another_sid_naming_a_live_control_name(self):
         self.live("alias", "keep")
         before = Path(self.roster.path).read_bytes()
         entries = self.roster.entries()
-        with self.assertRaisesRegex(RosterError, "already owned by alias"):
-            self.roster.adopt(replace(self.record, sid=str(uuid4())))
+        self.assertIsNone(self.roster.adopt(replace(self.record, sid=str(uuid4()))))
         self.assertEqual(Path(self.roster.path).read_bytes(), before)
         self.assertEqual(self.roster.entries(), entries)
         self.assertEqual(self.roster.adopt(self.record), "alias")
@@ -1161,6 +1172,7 @@ class RosterTest(RosterCase):
         self.roster.commit("other ctl", other)
         self.assertEqual(self.roster.adopt(other), "other ctl")
         distinct_name = replace(self.record, sid=str(uuid4()), name="different")
+        self.live("different", record=distinct_name)
         self.assertEqual(self.roster.adopt(distinct_name), "different")
         self.assertEqual(
             {name: entry.record for name, entry in self.roster.entries().items()},
@@ -1263,7 +1275,7 @@ class RosterTest(RosterCase):
                 self.assertEqual(self.roster.entries(), {})
 
     def test_unsafe_orphan_receipts_warn_without_blocking_ledger_operations(self):
-        self.roster.adopt(self.record)
+        self.live()
         target = Path(self.home, "outside")
         target.write_text("keep")
         for kind in ("symlink", "fifo", "hardlink"):

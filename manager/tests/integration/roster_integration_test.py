@@ -23,13 +23,15 @@ class RosterTest(RosterCase):
         ]
         script = """import sys
 from agent_pm.manager.engine.roster import Roster
+from agent_pm.manager.engine.types import Spec
 from agent_pm.utils import Record
 roster = Roster(sys.argv[1])
 record = Record.parse(sys.argv[2])
 print('ready', flush=True)
 sys.stdin.readline()
 print('writing', flush=True)
-roster.adopt(record)
+roster.begin(Spec(record.name, ("start",)), sid=record.sid)
+roster.commit(record.name, record)
 print('done', flush=True)
 """
         lock = os.open(Path(self.directory, "roster.lock"), os.O_RDWR)
