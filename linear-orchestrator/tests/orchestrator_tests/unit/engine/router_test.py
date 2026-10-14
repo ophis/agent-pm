@@ -1992,24 +1992,17 @@ class RunLaunching(OuterBase):
             ([], [], [], []),
         )
 
-    def test_no_keychain_item_is_a_config_error_after_the_runs_row(self):
+    def test_no_keychain_item(self):
         self.missing.add(KEY)
-        for mode, kinds, read in (
-            ("resume", ["start", "resume"], []),
-            ("new", ["start"], [("issue", HARNESS, {"i": ID})]),
-        ):
+        for mode, kinds in (("new", []), ("resume", ["start", "resume"])):
             with self.subTest(mode=mode):
-                self.gql.calls.clear()
-                with contextlib.suppress(FileNotFoundError):
-                    os.unlink(self.runs)
                 self.assertEqual(self.outer(mode=mode), 2)
                 self.assertEqual(
                     self.said(),
                     [f"config-error TASK-7 reason=no Keychain item for role key {KEY}"],
                 )
                 self.assertEqual(self.kinds(), kinds)
-                self.assertEqual(self.gql.calls, read)
-        self.assertEqual((self.api.detached, self.api.info), ([], []))
+        self.assertEqual((self.api.detached, self.api.info, self.gql.calls), ([], [], []))
 
     def kinds(self):
         if not os.path.exists(self.runs):
@@ -2021,19 +2014,18 @@ class RunLaunching(OuterBase):
         self.assertEqual(self.outer(mode="resume"), 3)
         self.assertEqual(self.kinds(), ["start", "resume"])
 
-    def test_a_new_runs_row_comes_once_its_target_is_known(self):
-        self.run_.table = [(("gh", "api"), ok(code=1, stderr="HTTP 502: Bad Gateway"))]
-        self.assertEqual(self.outer(), 3)
-        self.assertEqual(self.kinds(), [])
-        self.run_.table = [(LISTING, ok(code=1, stderr="HTTP 500"))]
-        self.gql.issue = node(title="Compare queues", description="Which queue fits?")
-        self.assertEqual(self.outer(assignee=RESEARCHER), 3)
-        self.assertEqual(
-            self.said(),
-            ["transient TASK-7 reason=docs: InputError: gh api contents Research: HTTP 500"],
-        )
-        self.assertEqual(self.kinds(), ["start"])
-        self.assertEqual(self.api.detached, [])
+    def test_a_new_runs_row_comes_once_its_delegate_state_is_built_before_its_detach(self):
+        for attr, error, kinds in (
+            ("construct_error", DelegateConfigError("role engineer: refused"), []),
+            ("detach_error", DriverError("detach: duplicate"), ["start"]),
+        ):
+            with self.subTest(attr=attr):
+                with contextlib.suppress(FileNotFoundError):
+                    os.unlink(self.runs)
+                self.api.construct_error = self.api.detach_error = None
+                setattr(self.api, attr, error)
+                self.assertEqual(self.outer(), 1)
+                self.assertEqual(self.kinds(), kinds)
 
     def test_linear_errors_are_transient(self):
         for gql, reason in (

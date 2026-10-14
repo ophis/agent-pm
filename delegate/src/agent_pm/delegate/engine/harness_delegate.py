@@ -43,7 +43,9 @@ from agent_pm.session import (
     Launch,
     Liveness,
     Mode,
+    NoRecordedSession,
     NotDisplayable,
+    Resumable,
     RunLog,
     Session,
     SessionStatus,
@@ -567,14 +569,17 @@ class HarnessDelegate(Delegate):
                 raise DriverError(f"close {state.harness_name}: {error}") from error
 
     def session_info(self) -> SessionStatus:
-        """Its own live agent session's status, else the plan's: an attached one lacks its env."""
+        """Its own live agent session's status, else the plan's: an attached one lacks its env;
+        never recorded (its launch failed): not resumable.
+        """
         state = self._read()
         agent = None if state.completed else self._own(state)
-        return (
-            agent.session_status()
-            if agent is not None
-            else self.session_cls.inspect(state.plan.session)
-        )
+        if agent is not None:
+            return agent.session_status()
+        try:
+            return self.session_cls.inspect(state.plan.session)
+        except NoRecordedSession:
+            return SessionStatus(Resumable.NO, None, "")
 
     def run(self, on_event: Callable[[Event], None] | None = None) -> Result:
         """Each event goes to the callback, then `on_event`; a Finished is stored first. A run that
