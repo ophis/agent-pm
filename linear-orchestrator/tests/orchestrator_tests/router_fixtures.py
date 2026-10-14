@@ -538,7 +538,7 @@ class TickBase(Base):
                 config_path=self.config_path,
                 hour=hour,
                 gql=fake,
-                driver=self.api,
+                session=self.api,
                 delegate_cls=delegate_cls,
                 start=self.start,
                 **outer or {},
@@ -601,7 +601,8 @@ class OuterBase(TickBase):
                 gql=functools.partial(self.gql, service=HARNESS),
                 run=self.run_,
                 keychain=self.keychain,
-                driver=self.api,
+                session=self.api,
+                harness=None,
             )
         self.err = err.getvalue()
         return rc

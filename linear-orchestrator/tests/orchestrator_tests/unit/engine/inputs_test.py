@@ -10,6 +10,7 @@ from agent_pm.linear_orchestrator.engine import config, inputs, issues, target
 from agent_pm.linear_orchestrator.engine.types import Issue, Link, Linked, Note
 from agent_pm.utils import SHORT
 from orchestrator_tests.case import Case
+from orchestrator_tests.config_fixtures import HARNESS_DELEGATE
 
 DOCS = config.Docs(
     "ophis/private_docs", "main", {"researcher": "Research/", "pm": "Product Design/"}
@@ -407,14 +408,12 @@ class InputCheckout(Case):
             os.path.basename(target.checkout("ENG-7", "ophis", "agent-pm", work="/w")),
             f"agent-pm-{name}",
         )
-        driver = delegate.configure()
         for task in ("build", "light-build"):
             with self.subTest(task=task):
-                run = delegate.resolve_run("engineer", task)
                 spec = delegate.Spec(
                     text, self.home, task=task, out=os.path.join(self.home, "out.md")
                 )
-                prompt = delegate.plan(run, spec, driver=driver).prompt
+                prompt = HARNESS_DELEGATE.preview("engineer", spec).plan.prompt
                 self.assertIn(f"\nCheckout: {name}\n", prompt)
                 self.assertIn(
                     (

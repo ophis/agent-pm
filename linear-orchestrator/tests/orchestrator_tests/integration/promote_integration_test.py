@@ -11,6 +11,8 @@ from datetime import UTC, datetime, timedelta
 
 from agent_pm import delegate
 from agent_pm.linear_orchestrator.engine import ops, runs
+from agent_pm.session import Session
+from orchestrator_tests.config_fixtures import HARNESS_DELEGATE
 from orchestrator_tests.integration import fake_linear
 from orchestrator_tests.integration.flow_fixtures import (
     ACCOUNTS,
@@ -178,12 +180,13 @@ class PruneSessionDelegate(FakeDelegate):
 
     @classmethod
     def resolve(cls, role, task=None, *, overlays=()):
-        return delegate.resolve_run(role, task, overlays=overlays)
+        return HARNESS_DELEGATE.resolve(role, task, overlays=overlays)
 
     def close(self):
         with open(os.path.join(self.workdir, "delegate.json")) as stream:
             state = json.load(stream)
-        delegate.configure().session_cls.host().attach(state["name"]).close()
+        Session.configure_from(delegate.read_config())
+        Session.host().attach(state["name"]).close()
         super().close()
 
 

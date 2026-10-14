@@ -10,7 +10,7 @@ from dataclasses import replace
 from datetime import UTC, datetime
 from unittest import mock
 
-from agent_pm.delegate import STATUSES, Begun, Finished, Outcome, Progress, Result
+from agent_pm.delegate import Begun, Finished, Outcome, OutcomeStatus, Progress, Result
 from agent_pm.linear_orchestrator.engine import (
     config,
     issues,
@@ -1199,7 +1199,7 @@ class CompletionMessages(Base):
     def test_every_role_status_and_mode(self):
         self.assertEqual(set(config.TASKS), {"researcher", "pm", "engineer"})
         for role in config.TASKS:
-            for status in STATUSES:
+            for status in OutcomeStatus:
                 for resume in (False, True):
                     with self.subTest(role=role, status=status, resume=resume):
                         gql = Gql()
