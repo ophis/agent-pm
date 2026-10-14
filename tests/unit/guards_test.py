@@ -190,19 +190,19 @@ class EveryTest(Sample):
         )
 
 
-class ObjectExports(Sample):
+class EventObjectExports(Sample):
     EVENT = "delegate/src/agent_pm/delegate/event/"
 
     def test_package_must_define_all(self):
         root = self.tree({self.EVENT + "__init__.py": "class Event: pass\n"})
         self.assertEqual(
-            guards.object_exports(root),
+            guards._event_exports(root),
             [self.EVENT + "__init__.py: want one __all__ assignment"],
         )
 
     def test_missing_package_is_rejected(self):
         self.assertEqual(
-            guards.object_exports(self.tree({})),
+            guards._event_exports(self.tree({})),
             [self.EVENT + "__init__.py: want one __all__ assignment"],
         )
 
@@ -211,7 +211,7 @@ class ObjectExports(Sample):
             with self.subTest(sample=sample):
                 root = self.tree({self.EVENT + "__init__.py": sample})
                 self.assertEqual(
-                    guards.object_exports(root),
+                    guards._event_exports(root),
                     [self.EVENT + "__init__.py:1: __all__ must be a literal list of names"],
                 )
 
@@ -228,7 +228,7 @@ class ObjectExports(Sample):
                     {self.EVENT + "__init__.py": definition + "__all__ = ['action']\n"}
                 )
                 self.assertEqual(
-                    guards.object_exports(root),
+                    guards._event_exports(root),
                     [
                         self.EVENT
                         + f"__init__.py:{len(definition.splitlines()) + 1}: exported function action"
@@ -247,7 +247,7 @@ class ObjectExports(Sample):
             }
         )
         self.assertEqual(
-            guards.object_exports(root),
+            guards._event_exports(root),
             [self.EVENT + "__init__.py:3: exported function renamed"],
         )
 
@@ -262,7 +262,7 @@ class ObjectExports(Sample):
             }
         )
         self.assertEqual(
-            guards.object_exports(root),
+            guards._event_exports(root),
             [self.EVENT + "__init__.py:3: exported function public"],
         )
 
@@ -276,7 +276,7 @@ class ObjectExports(Sample):
             }
         )
         self.assertEqual(
-            guards.object_exports(root),
+            guards._event_exports(root),
             [self.EVENT + "__init__.py:5: exported function public"],
         )
 
@@ -293,7 +293,7 @@ class ObjectExports(Sample):
                 ),
             }
         )
-        self.assertEqual(guards.object_exports(root), [])
+        self.assertEqual(guards._event_exports(root), [])
 
     def test_standard_library_functions_and_uppercase_aliases_are_rejected(self):
         for source in ("json.loads", "os.getcwd", "builtins.len"):
@@ -305,7 +305,7 @@ class ObjectExports(Sample):
                         + "__init__.py": f"from {module} import {name} as ACTION\n__all__ = ['ACTION']\n"
                     }
                 )
-                found = guards.object_exports(root)
+                found = guards._event_exports(root)
                 self.assertEqual(len(found), 1)
                 self.assertIn("__init__.py:2:", found[0])
                 self.assertIn("ACTION", found[0])
@@ -313,7 +313,7 @@ class ObjectExports(Sample):
     def test_builtin_aliases_and_bare_builtin_functions_are_rejected(self):
         for sample in ("ACTION = len\n__all__ = ['ACTION']\n", "__all__ = ['len']\n"):
             with self.subTest(sample=sample):
-                found = guards.object_exports(self.tree({self.EVENT + "__init__.py": sample}))
+                found = guards._event_exports(self.tree({self.EVENT + "__init__.py": sample}))
                 self.assertEqual(len(found), 1)
                 self.assertIn("exported function", found[0])
 
@@ -327,11 +327,11 @@ class ObjectExports(Sample):
                 )
             }
         )
-        self.assertEqual(guards.object_exports(root), [])
+        self.assertEqual(guards._event_exports(root), [])
 
     def test_constants_shadowing_builtin_names_are_allowed(self):
         root = self.tree({self.EVENT + "__init__.py": "id = 'event'\n__all__ = ['id']\n"})
-        self.assertEqual(guards.object_exports(root), [])
+        self.assertEqual(guards._event_exports(root), [])
 
     def test_local_alias_keeps_a_class_after_its_original_name_is_redefined(self):
         root = self.tree(
@@ -341,7 +341,7 @@ class ObjectExports(Sample):
                 )
             }
         )
-        self.assertEqual(guards.object_exports(root), [])
+        self.assertEqual(guards._event_exports(root), [])
 
     def test_local_alias_keeps_a_function_after_its_original_name_is_reassigned(self):
         root = self.tree(
@@ -352,7 +352,7 @@ class ObjectExports(Sample):
             }
         )
         self.assertEqual(
-            guards.object_exports(root),
+            guards._event_exports(root),
             [self.EVENT + "__init__.py:4: exported function Alias"],
         )
 
@@ -362,7 +362,7 @@ class ObjectExports(Sample):
             {self.EVENT + "__init__.py": "from antigravity import geohash\n__all__ = ['geohash']\n"}
         )
         self.assertEqual(
-            guards.object_exports(root),
+            guards._event_exports(root),
             [self.EVENT + "__init__.py:2: exported function geohash"],
         )
         self.assertIs(sys.modules.get("antigravity"), before)
@@ -375,7 +375,7 @@ class ObjectExports(Sample):
             }
         )
         self.assertEqual(
-            guards.object_exports(root),
+            guards._event_exports(root),
             [self.EVENT + "__init__.py:2: unresolved export ACTION: unknown_package.ACTION"],
         )
 
@@ -394,7 +394,7 @@ class ObjectExports(Sample):
                 )
             }
         )
-        self.assertEqual(guards.object_exports(self.tree(files)), [])
+        self.assertEqual(guards._event_exports(self.tree(files)), [])
 
 
 class SessionNames(Sample):
@@ -2305,6 +2305,7 @@ class ObjectExports(Sample):
 
     def found(self, files=None):
         tree = {
+            "delegate/src/agent_pm/delegate/event/__init__.py": "__all__ = []\n",
             self.SESSION + "engine/forwarding.py": "".join(
                 f"def {name}(): pass\n" for name in self.WRAPPERS
             ),

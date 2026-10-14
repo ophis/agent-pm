@@ -708,6 +708,7 @@ def object_exports(repo: str) -> list[str]:
             for pkg, name in OBJECT_EXPORTS_ALLOWED.keys() - seen
             if pkg == package
         )
+    found.update(_event_exports(repo))
     return sorted(found)
 
 
@@ -1313,7 +1314,7 @@ def shared_types(repo: str) -> list[str]:
     return sorted(found)
 
 
-def object_exports(repo: str) -> list[str]:
+def _event_exports(repo: str) -> list[str]:
     packages = {"agent_pm.delegate.event": "delegate/src/agent_pm/delegate/event/__init__.py"}
     trees = {
         rel.removesuffix(".py").replace("/", ".").removesuffix(".__init__"): (rel, ast.parse(text))
