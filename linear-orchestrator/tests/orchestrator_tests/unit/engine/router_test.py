@@ -757,7 +757,7 @@ class RouterEntry(OuterBase):
     def test_an_unloadable_recorded_run_is_a_tui_error_and_the_run_starts(self):
         self.add(kind="start", ident=ID, sid="old", minutes_ago=600, role="engineer")
         self.lines[-1] = self.lines[-1].replace(
-            '"client": "a"', '"client": "a", "delegate_kind": "gone"'
+            '"delegate_kind": "harness"', '"delegate_kind": "gone"'
         )
         self.assertEqual(self.entry("--issue", ID), 0)
         self.assertIn(
@@ -1377,7 +1377,13 @@ class ScheduledUsageGates(TickBase):
         (claimed,) = self.start.launches
         self.assertEqual(self.launched_run(), ("start", "TASK-1", claimed.sid, "researcher", "a"))
         runs.note(
-            self.runs, "start", issue="TASK-1", sid=claimed.sid, role="researcher", client="a"
+            self.runs,
+            "start",
+            issue="TASK-1",
+            sid=claimed.sid,
+            role="researcher",
+            client="a",
+            delegate_kind="harness",
         )
         with open(self.runs) as f:
             self.lines = f.read().splitlines()
@@ -3173,6 +3179,22 @@ class StaleRunRecovery(Base):
 
         self.assertFalse(self.board(fake, use))
         self.assertEqual(self.said(), ["recover-skip TASK-1 sid=a reason=session unknown"])
+        self.assertEqual((fake.issues["TASK-1"]["state"], fake.mutations), ("In Progress", []))
+
+    def test_a_kindless_row_is_a_bad_row_skipped_without_an_agent(self):
+        fake = self.fake(issue("TASK-1", "In Progress", "researcher", updated=ago(hours=3)))
+        self.resumable("TASK-1", "a", 300)
+        kindless = json.loads(self.lines[-1])
+        del kindless["delegate_kind"]
+        self.lines[-1] = json.dumps(kindless)
+        self.assertEqual(self.plan(fake), "")
+        self.assertEqual(
+            self.said(),
+            [
+                "recover-skip TASK-1 sid=a reason=ConfigError: TASK-1: "
+                "session a's runs.jsonl row has no delegate kind"
+            ],
+        )
         self.assertEqual((fake.issues["TASK-1"]["state"], fake.mutations), ("In Progress", []))
 
     def test_one_status_read_per_sid_with_its_recorded_client_at_the_workdir(self):

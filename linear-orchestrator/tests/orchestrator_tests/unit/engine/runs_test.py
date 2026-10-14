@@ -30,6 +30,7 @@ def row(kind, issue, sid, role="researcher", client="a", **ago):
             "sid": sid,
             "role": role,
             "client": client,
+            "delegate_kind": "harness",
         }
     )
 
@@ -37,13 +38,13 @@ def row(kind, issue, sid, role="researcher", client="a", **ago):
 def limit(resets_at, client="a", **extra):
     return json.dumps(
         {"ts": stamp(NOW), "kind": "limit", "issue": "TASK-1", "sid": "s", "client": client}
-        | {"resets_at": resets_at}
+        | {"resets_at": resets_at, "delegate_kind": "harness"}
         | extra
     )
 
 
 def entry(kind, issue, sid, role, client="a", **ago):
-    return runs.Entry(NOW - timedelta(**ago), kind, issue, sid, role, client)
+    return runs.Entry(NOW - timedelta(**ago), kind, issue, sid, role, client, "harness")
 
 
 class Case(case.Case):
@@ -123,14 +124,13 @@ class Parse(Case):
             ],
         )
 
-    def test_saved_delegate_survives_round_trip_and_old_rows_use_harness(self):
-        legacy = row("start", "TASK-1", "old")
+    def test_saved_delegate_survives_round_trip_and_a_kindless_row_has_none(self):
+        kindless = json.loads(row("start", "TASK-1", "old"))
+        del kindless["delegate_kind"]
         saved = json.loads(row("start", "TASK-2", "new")) | {"delegate_kind": "external"}
-        self.write([legacy, json.dumps(saved)])
-        self.assertEqual(
-            [e.delegate_kind for e in runs.parse_log(self.log)], ["harness", "external"]
-        )
-        self.assertEqual(self.read(), legacy + "\n" + json.dumps(saved) + "\n")
+        self.write([json.dumps(kindless), json.dumps(saved)])
+        self.assertEqual([e.delegate_kind for e in runs.parse_log(self.log)], [None, "external"])
+        self.assertEqual(self.read(), json.dumps(kindless) + "\n" + json.dumps(saved) + "\n")
 
     def test_invalid_delegate_kind_is_no_entry(self):
         good = json.loads(row("start", "TASK-1", "s"))
@@ -199,6 +199,11 @@ class Limits(Case):
             ),
             {},
         )
+
+    def test_a_kindless_row_is_left_out(self):
+        kindless = json.loads(limit(stamp(NOW + timedelta(hours=1))))
+        del kindless["delegate_kind"]
+        self.assertEqual(self.limits(json.dumps(kindless)), {})
 
     def test_limits_are_separate_for_each_delegate_client_key(self):
         early, late = NOW + timedelta(hours=1), NOW + timedelta(hours=2)

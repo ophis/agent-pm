@@ -367,6 +367,7 @@ class Base(run_fixtures.Base):
                 "sid": self.sid(sid),
                 "role": role,
                 "client": client or CLIENTS.get(role, "a"),
+                "delegate_kind": "harness",
             }
         )
 
@@ -392,6 +393,7 @@ class Base(run_fixtures.Base):
                     "sid": self.sid("limited"),
                     "client": client,
                     "resets_at": resets_at,
+                    "delegate_kind": "harness",
                 }
             )
         )
@@ -599,7 +601,15 @@ class OuterBase(TickBase):
         """router.outer on a Spec; a resume's run is recorded first, as Recover finds it."""
         if mode == "resume" and not os.path.exists(self.runs):
             role = config.role_for(self.cfg().roles, assignee) or "engineer"
-            runs.note(self.runs, "start", issue=ident, sid=sid, role=role, client=client)
+            runs.note(
+                self.runs,
+                "start",
+                issue=ident,
+                sid=sid,
+                role=role,
+                client=client,
+                delegate_kind="harness",
+            )
         a = Spec(
             uuid=UUID,
             issue=ident,
