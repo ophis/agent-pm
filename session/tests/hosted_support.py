@@ -1,7 +1,4 @@
-"""hosted_test.py and forwarding_test.py's shared setup, and their integration mirrors': fake
-runtimes (PACKAGES), the tmux module autospecced (fake_tmux), Base/TuiBase/EnvBase, each test's
-Driver (self.driver) and its configured HostedSession class (self.session) on them, and drive.
-"""
+"""Shared fake-runtime fixtures for hosted and forwarding tests."""
 
 import dataclasses
 import json
@@ -92,9 +89,7 @@ class CheckedRun(fake_adapter.FakeInProcess):
 
 
 class ProbeAdapter(fake_adapter.FakeAdapter):
-    """The fake adapter with a usage probe, its config's `probe` (Launch's fields), whose stdout is
-    the 5-hour window's percent (anything else raises), and a session status naming its sid and cwd.
-    """
+    """Fake runtime with recorded usage output."""
 
     keys = fake_adapter.FakeAdapter.keys | {"probe"}
 
@@ -109,9 +104,7 @@ class ProbeAdapter(fake_adapter.FakeAdapter):
 
 
 class InnerAdapter(fake_adapter.FakeAdapter):
-    """A tui runtime whose sessions set INNER_SESSION in their children; its launch records its spec
-    in LAUNCHED, unsets LAUNCH_DROP and sets spec.env, then LAUNCH_SET.
-    """
+    """Records requests and injects INNER_SESSION into tui children."""
 
     session_env = "INNER_SESSION"
     identity_env = ("INNER_SESSION", "INNER_ID")
@@ -130,9 +123,7 @@ class InnerTui(fake_adapter.FakeTui):
 
 
 class EnvAdapter(ProbeAdapter):
-    """The probe adapter whose session launches carry spec.access.env and spec.env, as claude's and
-    codex's do.
-    """
+    """Launches carry the caller environment."""
 
     def headless(self):
         return EnvRun(self)
@@ -177,9 +168,7 @@ PACKAGES = {
 
 
 class Base(Case):
-    """self.driver configured per test (driver_dependencies: its keywords), self.session its
-    HostedSession class.
-    """
+    """Caller-owned Driver and HostedSession fixtures."""
 
     def setUp(self):
         self.probe_dir = os.path.join(self.agent_pm, "probe")
@@ -206,9 +195,7 @@ class Base(Case):
             json.dump(list(steps), f)
 
     def configure(self, runtime="fake", settings=None, tables=None, **extra):
-        """A table per PACKAGES name, each with this test's scenario and log, plus `tables`; `extra`
-        keys go into runtime's; settings: the config's global keys.
-        """
+        """Configure fake adapters from this fixture's files."""
         tables = {
             **{
                 name: {
@@ -298,10 +285,7 @@ def drive(case, runtime="fake", mode="headless", prompt="hello", spec=None, **kw
 
 
 def fake_tmux() -> mock.Mock:
-    """tmux_host autospecced, its constants, NAME, TuiError, attach_command, events_file and
-    display_error real, PAUSE 0: status None (absent), listing [], own_session None, option None,
-    pane %1 (detach and process name it), tmux_path TMUX.
-    """
+    """Autospecced tmux decisions with recorded command responses."""
     host = mock.create_autospec(tmux_host)
     for name in ("PaneStatus", "NAME", "OPENER", "Split", "TuiError"):
         setattr(host, name, getattr(tmux_host, name))
@@ -320,7 +304,7 @@ def fake_tmux() -> mock.Mock:
 
 
 class TuiBase(Base):
-    """self.host: the tmux module (fake_tmux) of self.driver and its Modes and TmuxHost."""
+    """Tui fixtures with injected tmux responses."""
 
     def setUp(self):
         super().setUp()
@@ -349,9 +333,7 @@ class TuiBase(Base):
 
 
 class EnvBase(TuiBase):
-    """The env runtime configured with a usage probe (self.probe) under PYTHONPATH /parent;
-    self.access gives commands and PYTHONPATH.
-    """
+    """Recorded probe and isolated caller environment."""
 
     def setUp(self):
         super().setUp()
