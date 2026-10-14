@@ -6,6 +6,7 @@
   "author": {
     "name": "Frank Wang"
   },
+  "license": "MIT",
   "skills": [
     "./delegate/skills/",
     "./manager/skills/"
