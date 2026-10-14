@@ -1,6 +1,7 @@
 """Process-free Delegate quota providers shared by Gate boundary tests."""
 
 from dataclasses import replace
+from types import SimpleNamespace
 
 from agent_pm.session import Usage, Window
 
@@ -24,3 +25,21 @@ def quota_provider(runtime, percent):
             return Usage(Window(percent, None), None)
 
     return QuotaDelegate
+
+
+def quota_config(provider, kind, *, core=None, runtimes=None):
+    """A Gate's config: each provider role run as config.load resolves it, or with `runtimes`."""
+    overlays = (core or {},)
+    roles = {
+        role: SimpleNamespace(run=provider.resolve(role, overlays=overlays))
+        for role in provider.ROLES
+    }
+    for role, runtime in (runtimes or {}).items():
+        roles[role] = SimpleNamespace(run=SimpleNamespace(runtime=runtime))
+    return SimpleNamespace(
+        delegate_kind=kind,
+        delegate_cls=provider,
+        delegates={kind: provider},
+        roles=roles,
+        core=core or {},
+    )

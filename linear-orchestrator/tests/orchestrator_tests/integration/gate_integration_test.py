@@ -2,12 +2,11 @@
 
 import os
 from datetime import UTC, datetime, timedelta
-from types import SimpleNamespace
 
 from agent_pm.linear_orchestrator.engine import runs
 from agent_pm.linear_orchestrator.engine.gate import Gate
 from orchestrator_tests.case import Case
-from orchestrator_tests.gate_fixtures import quota_provider
+from orchestrator_tests.gate_fixtures import quota_config, quota_provider
 
 NOW = datetime(2026, 10, 14, 12, tzinfo=UTC)
 
@@ -15,11 +14,7 @@ NOW = datetime(2026, 10, 14, 12, tzinfo=UTC)
 class RecordedQuotaKeys(Case):
     def test_saved_kind_and_runtime_limit_blocks_drifted_resume_without_probing(self):
         provider = quota_provider("current-runtime", 10)
-        cfg = SimpleNamespace(
-            delegate_kind="current-kind",
-            delegate_cls=provider,
-            delegates={"current-kind": provider},
-        )
+        cfg = quota_config(provider, "current-kind")
         path = os.path.join(self.home, "runs.jsonl")
         runs.note_limit(
             path,
@@ -59,11 +54,7 @@ class RecordedQuotaKeys(Case):
 
     def test_limit_in_one_kind_does_not_block_another_kind_with_the_same_runtime(self):
         provider = quota_provider("shared-runtime", 10)
-        cfg = SimpleNamespace(
-            delegate_kind="current-kind",
-            delegate_cls=provider,
-            delegates={"current-kind": provider},
-        )
+        cfg = quota_config(provider, "current-kind")
         path = os.path.join(self.home, "runs.jsonl")
         runs.note_limit(
             path,
@@ -79,11 +70,7 @@ class RecordedQuotaKeys(Case):
 
     def test_expired_saved_limit_releases_drift_without_caching_usage(self):
         provider = quota_provider("current-runtime", 95)
-        cfg = SimpleNamespace(
-            delegate_kind="current-kind",
-            delegate_cls=provider,
-            delegates={"current-kind": provider},
-        )
+        cfg = quota_config(provider, "current-kind")
         path = os.path.join(self.home, "runs.jsonl")
         runs.note_limit(
             path,

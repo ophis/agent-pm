@@ -2,30 +2,19 @@
 
 import os
 from datetime import UTC, datetime, timedelta
-from types import SimpleNamespace
 
 from agent_pm.linear_orchestrator.engine import runs
 from agent_pm.linear_orchestrator.engine.gate import Gate
 from orchestrator_tests.case import Case
-from orchestrator_tests.gate_fixtures import quota_provider
+from orchestrator_tests.gate_fixtures import quota_config, quota_provider
 
 NOW = datetime(2026, 10, 14, 12, tzinfo=UTC)
 
 
 class DelegateQuotaKeys(Case):
     def gate(self, provider, *, kind="first", say=None, runtime=None, core=None, log=None):
-        roles = {
-            role: SimpleNamespace(run=provider.resolve(role, overlays=(core or {},)))
-            for role in provider.ROLES
-        }
-        if runtime is not None:
-            roles["engineer"] = SimpleNamespace(run=SimpleNamespace(runtime=runtime))
-        cfg = SimpleNamespace(
-            delegate_kind=kind,
-            delegate_cls=provider,
-            delegates={kind: provider},
-            roles=roles,
-            core=core or {},
+        cfg = quota_config(
+            provider, kind, core=core, runtimes=None if runtime is None else {"engineer": runtime}
         )
         path = log or os.path.join(self.home, "missing-runs.jsonl")
         return Gate(path, NOW, say, cfg=cfg, dry=False)
