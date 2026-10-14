@@ -229,15 +229,7 @@ class Worker:
             raise SessionError(f"{self.state.name}: {workdir}: {error.strerror or error}") from None
 
     def check(self, *, prompt: str, resume: bool) -> None:
-        """Its sid not another worker's, then Session.preflight; no effects."""
-        data = read_regular(os.path.join(self.state.workdir(), STATE_FILE), limit=STATE_MAX)
-        try:
-            saved = json.loads(data) if data else None
-        except (ValueError, RecursionError):
-            saved = None
-        owner = saved.get("name") if isinstance(saved, dict) else None
-        if owner not in (None, self.state.name):
-            raise ConfigError(f"sid {self.state.sid} is worker {owner}'s")
+        """Session.preflight of its start; no effects."""
         self.session_cls.preflight(
             self.state.spec(prompt=prompt, resume=resume),
             display=self.state.display,
@@ -245,11 +237,12 @@ class Worker:
         )
 
     def start(self, *, prompt: str, resume: bool) -> Record:
-        """Start its client, save its state, show it, watch it; then publish its Record and return
-        it. Its client exiting in the watch: SessionError with its last lines, its terminal kept,
-        no Record.
+        """Claim its sid, start its client, save its state, show it, watch it; then publish its
+        Record and return it. Its client exiting in the watch: SessionError with its last lines,
+        its terminal kept, no Record.
         """
         name = self.state.name
+        self._claim()
         session = self.session_cls.start(
             self.state.spec(prompt=prompt, resume=resume),
             display=self.state.display,
@@ -334,6 +327,16 @@ class Worker:
         if self.state.token is None:
             return None
         return self.session_cls.host(self.state.host).reclaim(self.state.token)
+
+    def _claim(self) -> None:
+        data = read_regular(os.path.join(self.state.workdir(), STATE_FILE), limit=STATE_MAX)
+        try:
+            saved = json.loads(data) if data else None
+        except (ValueError, RecursionError):
+            saved = None
+        owner = saved.get("name") if isinstance(saved, dict) else None
+        if owner not in (None, self.state.name):
+            raise ConfigError(f"sid {self.state.sid} is worker {owner}'s")
 
     def _save(self) -> None:
         root = os.path.dirname(self.state.workdir())

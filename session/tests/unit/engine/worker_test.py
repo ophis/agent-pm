@@ -4,6 +4,8 @@ FR-36 replace ladder (no process, no tmux; files only under the test's HOME).
 
 import json
 import os
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from unittest import mock
 
 from agent_pm.session import ConfigError, Host, HostProcess, Mode, SessionError
@@ -195,12 +197,38 @@ class LoadTest(Base):
 
     def test_a_start_with_another_workers_sid_is_refused_before_anything(self):
         self.worker().start(prompt="", resume=False)
-        other = Worker(state(name="w2"), session_cls=self.session_cls)
         with self.assertRaisesRegex(ConfigError, f"^sid {SID} is worker w1's$"):
-            other.check(prompt="", resume=True)
-        self.session_cls.preflight.assert_not_called()
-        Worker(state(), session_cls=self.session_cls).check(prompt="", resume=True)
-        self.session_cls.preflight.assert_called_once()
+            self.worker(name="w2").start(prompt="", resume=True)
+        self.session_cls.start.assert_called_once()
+        self.assertEqual(Worker.load("w1").state, state(token="/tmp/apm-group-1"))
+        with self.assertRaisesRegex(SessionError, "^w2: not a worker"):
+            Worker.load("w2")
+
+    def test_of_two_starts_claiming_one_sid_at_once_only_the_first_starts(self):
+        launching, go = threading.Event(), threading.Event()
+
+        def launch(*_, **__):
+            launching.set()
+            go.wait(10)
+            return self.session
+
+        def run(each: Worker) -> Record:
+            with each.locked():
+                return each.start(prompt="", resume=False)
+
+        self.session_cls.start.side_effect = launch
+        first, second = self.worker(), self.worker(name="w2")
+        first.check(prompt="", resume=False)
+        with ThreadPoolExecutor(2) as pool:
+            started = pool.submit(run, first)
+            self.assertTrue(launching.wait(10))
+            second.check(prompt="", resume=False)
+            refused = pool.submit(run, second)
+            go.set()
+            self.assertEqual(started.result(10).name, "w1")
+            with self.assertRaisesRegex(ConfigError, f"^sid {SID} is worker w1's$"):
+                refused.result(10)
+        self.session_cls.start.assert_called_once()
 
     def test_no_or_unreadable_state_is_not_a_worker(self):
         with self.assertRaisesRegex(SessionError, "^w1: not a worker"):
