@@ -6,6 +6,7 @@
  "agent_pm.delegate.Delegate.alive": "def(self:POSITIONAL_OR_KEYWORD)",
  "agent_pm.delegate.Delegate.attach": "classmethod(cls:POSITIONAL_OR_KEYWORD, record_or_workdir:POSITIONAL_OR_KEYWORD, sid:KEYWORD_ONLY=None)",
  "agent_pm.delegate.Delegate.attach_command": "def(self:POSITIONAL_OR_KEYWORD)",
+ "agent_pm.delegate.Delegate.check_tui": "classmethod(cls:POSITIONAL_OR_KEYWORD, display:KEYWORD_ONLY=None, events:KEYWORD_ONLY=None)",
  "agent_pm.delegate.Delegate.close": "def(self:POSITIONAL_OR_KEYWORD)",
  "agent_pm.delegate.Delegate.detach": "def(self:POSITIONAL_OR_KEYWORD, outer:KEYWORD_ONLY=None)",
  "agent_pm.delegate.Delegate.forget": "def(self:POSITIONAL_OR_KEYWORD)",

@@ -3,7 +3,7 @@ the team's issues assigned to role accounts, then only triggers it: outer prepar
 its runs.jsonl row and detaches its LinearRun, whose Delegate's harness calls `agent-pm-linear
 writeback` on each event; the router exits while the run goes on.
 
-agent-pm-linear router [--now] [--dry-run] [--issue ID] | --brake ROLE
+agent-pm-linear router [--now] [--dry-run] [--issue ID] [--tui [--display D] [--events FILE]] | --brake ROLE
 
 (no mode)     One scheduled tick: the hours check, then at most one agent run. Exits 1 a config error or Linear
               unavailable (config-error, linear-error: once a day), else 0.
@@ -13,6 +13,12 @@ agent-pm-linear router [--now] [--dry-run] [--issue ID] | --brake ROLE
               run's outcome written back instead, else the outer's code: 0 detached or bounced, 1 the launch
               failed, 2 a config error of the issue, 3 transient.
 --dry-run     With either: print the plan (a tick's with its usage checks); change nothing, start nothing; exit 0.
+--tui         With either: each run it starts or resumes is attended (tui mode), shown at D (opaque, its format:
+              agent-pm-session --help; none: the caller's place), its events written to FILE, else
+              $AGENT_PM_EVENTS. Exits 2 before any Linear call without either, or when the Delegate refuses D or
+              FILE (no place to show the TUI, a D its Host cannot use, FILE not writable). A run it starts or
+              resumes prints its Record line on stdout, its sessions and attach command on stderr. launchd
+              never passes it: a tick resumes a run headless.
 --brake ROLE  Print ROLE's client usage; exit 0 if a deep-research round may start, 1 if not or unknown, 2 no such
               role.
 --help        Print this; exit 0. Bad arguments exit 2.
@@ -29,7 +35,7 @@ import subprocess
 import sys
 import uuid
 from collections.abc import Callable
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from traceback import format_exception
 
@@ -77,8 +83,13 @@ SKEW = timedelta(minutes=5)
 CAP_COMMENT = "Tried 4 times without finishing; needs a look."
 INTERRUPTED = "The previous agent run was interrupted. Moving this issue back to the Todo queue."
 BUSY = "another router is running"
-USAGE = "usage: agent-pm-linear router [--now] [--dry-run] [--issue ID] | --brake ROLE"
-FLAGS = {"--dry-run": "dry", "--now": "now"}
+USAGE = (
+    "usage: agent-pm-linear router [--now] [--dry-run] [--issue ID] "
+    "[--tui [--display D] [--events FILE]] | --brake ROLE"
+)
+FLAGS = {"--dry-run": "dry", "--now": "now", "--tui": "tui"}
+VALUED = {"--issue": "issue", "--display": "display", "--events": "events"}
+EVENTS_ENV = "AGENT_PM_EVENTS"
 DONE = {"completed", "canceled", "duplicate"}
 UNREADABLE = "(unreadable)"
 RELATIONS = "inverseRelations(first: 50) { nodes { type issue { identifier state { type } } } }"
@@ -88,6 +99,14 @@ Q_RECHECK = (
     "labels { nodes { id name parent { id } } } } }"
 )
 Q_HISTORY = "query($i: String!) { issue(id: $i) { " + ops.HISTORY + " } }"
+
+
+@dataclass(frozen=True)
+class Attended:
+    """A --tui router's runs: shown at display (passed on as given), events (an absolute path)."""
+
+    display: str | None
+    events: str
 
 
 def latest_sid(entries, issue):
@@ -510,22 +529,22 @@ def fail(ident, kind, reason, rc):
     return rc
 
 
-def outer(a, cfg, *, gql, run, keychain, now=datetime.now):
-    """Prepares the issue's input, then detaches its LinearRun. Its runs.jsonl row, an attempt
-    toward CAP, comes once Recover can read the run back: a resume's first, a new run's once its
-    LinearRun (its Delegate's state) is built, before its detach; a new run failing before then
-    leaves a `failed` row, an attempt that Recover cannot read back.
+def outer(a, cfg, *, gql, run, keychain, now=datetime.now, attended: Attended | None = None):
+    """Prepares the issue's input, then detaches its LinearRun, attended (tui mode) when given.
+    Its runs.jsonl row, an attempt toward CAP, comes once Recover can read the run back: a resume's
+    first, a new run's once its LinearRun (its Delegate's state) is built, before its detach; a new
+    run failing before then leaves a `failed` row, an attempt that Recover cannot read back.
     """
     rc = None
     try:
-        rc = _outer(a, cfg, gql=gql, run=run, keychain=keychain, now=now)
+        rc = _outer(a, cfg, gql=gql, run=run, keychain=keychain, now=now, attended=attended)
         return rc
     finally:
         if a.mode == "new" and rc != 0 and a.sid not in {e.sid for e in parse_log(cfg.runs_log)}:
             note(cfg.runs_log, "failed", issue=a.issue, sid=a.sid, now=now)
 
 
-def _outer(a, cfg, *, gql, run, keychain, now):
+def _outer(a, cfg, *, gql, run, keychain, now, attended):
     os.environ["PATH"] = config.path()
     if reason := a.identity_error():
         print(f"router.py: {reason}", file=sys.stderr)
@@ -613,14 +632,33 @@ def _outer(a, cfg, *, gql, run, keychain, now):
             client=a.client,
             resume=a.mode == "resume",
             delegate_kind=kind,
+            **(
+                {"mode": "tui", "display": attended.display, "events": attended.events}
+                if attended
+                else {}
+            ),
         )
         if a.mode == "new":
             record(cfg, a, role=role, target=slug, now=now)
-        linear_run.detach()
+        detached = linear_run.detach()
     except (ConfigError, delegate.ConfigError, delegate.SessionError) as e:
         log("router", "launch-error", a.issue, error=one_line(e))
         return 1
+    if attended:
+        announce(a.issue, linear_run, detached)
     return 0
+
+
+def announce(ident, linear_run, detached):
+    """An attended run's Record line on stdout, its sessions and attach command on stderr."""
+    print(detached.to_line(), flush=True)
+    print(f"router.py: {ident}: sessions {' '.join(detached.sessions)}", file=sys.stderr)
+    try:
+        command = linear_run.attach_command()
+    except delegate.SessionError as e:
+        command = f"unknown ({one_line(e)})"
+    if command:
+        print(f"router.py: {ident}: attach: {command}", file=sys.stderr)
 
 
 @contextlib.contextmanager
@@ -782,22 +820,44 @@ def brake(role, cfg):
 
 
 def options(argv):
+    opts = {"brake": None, "dry": False, "now": False, "tui": False}
+    opts.update(dict.fromkeys(VALUED.values()))
     if "--brake" in argv:
         ok = len(argv) == 2 and argv[0] == "--brake" and not argv[1].startswith("-")
-        return {"brake": argv[1], "dry": False, "now": False, "issue": None} if ok else None
-    opts = {"brake": None, "dry": False, "now": False, "issue": None}
+        return {**opts, "brake": argv[1]} if ok else None
     i = 0
     while i < len(argv):
         a, value = argv[i], argv[i + 1] if i + 1 < len(argv) else None
         if a in FLAGS:
             opts[FLAGS[a]] = True
-        elif a == "--issue" and opts["issue"] is None and value not in (None, "--issue", *FLAGS):
-            opts["issue"] = value
+        elif a in VALUED and opts[VALUED[a]] is None and value not in (None, *VALUED, *FLAGS):
+            opts[VALUED[a]] = value
             i += 1
         else:
             return None
         i += 1
-    return None if opts["issue"] is not None and opts["now"] else opts
+    if opts["issue"] is not None and opts["now"]:
+        return None
+    if not opts["tui"] and (opts["display"] is not None or opts["events"] is not None):
+        return None
+    return opts
+
+
+def attended_runs(opts, cfg):
+    """A --tui router's Attended, its display and events checked up front; None without --tui.
+    ConfigError: no events file, or the Delegate refuses them.
+    """
+    if not opts["tui"]:
+        return None
+    events = opts["events"] or os.environ.get(EVENTS_ENV) or None
+    if events is None:
+        raise ConfigError(f"--tui needs --events FILE or ${EVENTS_ENV}")
+    attended = Attended(opts["display"], os.path.abspath(events))
+    try:
+        LinearRun.check_tui(cfg=cfg, display=attended.display, events=attended.events)
+    except delegate.ConfigError as error:
+        raise ConfigError(str(error)) from None
+    return attended
 
 
 def main(
@@ -840,9 +900,16 @@ def main(
             print(f"router.py: no role {role}", file=sys.stderr)
             return 2
         return brake(role, cfg)
+    try:
+        attended = attended_runs(opts, cfg)
+    except ConfigError as error:
+        print(f"router.py: {error}", file=sys.stderr)
+        return 2
     gql = functools.partial(gql, service=cfg.harness_key)
     if start is None:
-        start = functools.partial(outer, cfg=cfg, gql=gql, run=run, keychain=keychain, now=now)
+        start = functools.partial(
+            outer, cfg=cfg, gql=gql, run=run, keychain=keychain, now=now, attended=attended
+        )
     try:
         if opts["issue"]:
             return run_issue(opts, cfg, gql, start, clock=now)

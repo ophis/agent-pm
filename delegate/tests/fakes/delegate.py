@@ -111,6 +111,10 @@ class FakeDelegate(Delegate):
         return frozenset()
 
     @classmethod
+    def check_tui(cls, *, display=None, events=None):
+        return None
+
+    @classmethod
     def end(cls, workdir: str) -> None:
         _update(workdir, alive=False, outcome=None)
 

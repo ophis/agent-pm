@@ -9,7 +9,7 @@ from agent_pm.delegate.composer import RunConfig
 from agent_pm.delegate.engine.types import Event, Outer, Result
 from agent_pm.delegate.event.outcome import Outcome
 from agent_pm.session import SessionStatus, Usage
-from agent_pm.utils import Record, Status
+from agent_pm.utils import Display, Record, Status
 
 
 class Delegate(ABC):
@@ -37,6 +37,14 @@ class Delegate(ABC):
     @classmethod
     @abstractmethod
     def trusted_dirs(cls) -> frozenset[str]: ...
+
+    @classmethod
+    @abstractmethod
+    def check_tui(cls, *, display: Display = None, events: str | None = None) -> None:
+        """ConfigError unless a tui run could show at `display` and write `events`: a value its
+        agent's Host refuses or cannot place a TUI by, or an events file its harness's Host cannot
+        write. Creates nothing.
+        """
 
     @abstractmethod
     def detach(self, *, outer: Outer | None = None) -> Record: ...

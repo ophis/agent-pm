@@ -429,6 +429,26 @@ class HarnessDelegate(Delegate):
         return Composer().trusted_dirs()
 
     @classmethod
+    def check_tui(
+        cls,
+        *,
+        display: Display = None,
+        events: str | None = None,
+        session_cls: type[Session] = Session,
+    ) -> None:
+        """The display on the agent's Host, the events file on the harness's."""
+        settings = thaw(Composer().config.values)
+        try:
+            session_cls.configure_from(settings)
+            hosts = Host.parse_hosts(settings.get("hosts")).tables
+            agent = session_cls.host()
+            session_cls.layout(display=display)
+            harness = session_cls.host(config.harness_host(settings, hosts) or agent.name)
+            harness.events_path(events)
+        except (OSError, ValueError, SessionConfigError, SessionError) as error:
+            raise ConfigError(str(error)) from None
+
+    @classmethod
     def usage(
         cls,
         role: str,

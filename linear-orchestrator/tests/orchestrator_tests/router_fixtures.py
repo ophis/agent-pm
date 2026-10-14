@@ -7,7 +7,7 @@ import os
 import re
 import tempfile
 import uuid
-from contextlib import redirect_stderr
+from contextlib import redirect_stderr, redirect_stdout
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta, timezone
 from unittest import mock
@@ -518,8 +518,10 @@ class TickBase(Base):
         tty=False,
         outer=None,
         clock=None,
+        env=None,
     ):
         # outer: main's run and keychain; main then starts through its own outer
+        # env: the caller's variables over PATH; $AGENT_PM_EVENTS only when env gives it
         self.api.live = None if live is None else list(live)
         recorded = {json.loads(line)["issue"] for line in self.lines}
         for name in live or ():
@@ -539,12 +541,15 @@ class TickBase(Base):
         self.api.order, self.api.usage_calls, self.api.info = [], [], []
         self.start = None if outer else start or Start()
         self.write_runs()
-        err = Stderr(tty=tty)
+        err, out = Stderr(tty=tty), io.StringIO()
         with (
             redirect_stderr(err),
+            redirect_stdout(out),
             mock.patch.dict(os.environ, {"PATH": "/usr/bin:/bin"}),
             self.log_dir(again=again),
         ):
+            os.environ.pop(router.EVENTS_ENV, None)
+            os.environ.update(env or {})
             rc = router.main(
                 list(argv),
                 now=clock or (lambda: now),
@@ -557,6 +562,7 @@ class TickBase(Base):
             )
             self.path = os.environ["PATH"]
         self.raw, self.err = err.getvalue(), self.unmap(err.getvalue())
+        self.out = out.getvalue()
         with open(self.runs) as f:
             self.state = self.unmap(f.read())
         return rc
