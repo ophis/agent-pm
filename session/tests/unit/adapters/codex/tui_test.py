@@ -36,6 +36,16 @@ HOOK = (
 
 
 class TuiTest(Base):
+    def test_invalid_launch_plan_is_reported_as_configuration_error(self):
+        with (
+            mock.patch("shutil.which", return_value="/protected/codex"),
+            mock.patch("subprocess.Popen") as proc,
+            self.assertRaisesRegex(ConfigError, "launch plan.*strings") as caught,
+        ):
+            self.adapter.tui().launch(None, self.spec, HOOK, source_roots=PACKAGE_ROOTS)
+        self.assertIsInstance(caught.exception.__cause__, ValueError)
+        proc.assert_not_called()
+
     def launch(self, *, resume=False, adapter=None):
         run = (adapter or self.adapter).tui()
         with (
