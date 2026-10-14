@@ -10,14 +10,13 @@ from unittest import mock
 
 import agent_pm
 from agent_pm.delegate.engine.drivers import AgentDriver
-from agent_pm.session import Session
-from agent_pm.utils import import_roots, read_project
+from agent_pm.session import Session, read_config
 
 from session.tests.case import configured
-from utils.tests.sandbox import clean_env
+from utils.tests.sandbox import clean_env, project_roots
 
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-ROOTS = import_roots(REPO)
+ROOTS = project_roots(REPO)
 SRC = {os.path.basename(os.path.dirname(r)).replace("-", "_"): r for r in ROOTS}
 PYTHONPATH = os.pathsep.join(ROOTS)
 RUN_WITH = os.pathsep.join(os.path.relpath(root, REPO) for root in ROOTS)
@@ -28,12 +27,12 @@ def committed(local: str = os.devnull) -> dict:
     """The session config's [adapters], `local` merged (default none), even under
     Case.configure_session.
     """
-    return read_project("session", local=local)["adapters"]
+    return read_config(local=local)["adapters"]
 
 
 def packaged(**dependencies) -> type[Session]:
     """The session config's session class."""
-    config = read_project("session")
+    config = read_config()
     return configured(config["adapters"], config["hosts"]["tmux"], **dependencies)
 
 

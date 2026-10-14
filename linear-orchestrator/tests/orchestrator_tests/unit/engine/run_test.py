@@ -267,6 +267,7 @@ class RunExecution(Case):
                 f"writeback step TASK-7 sid={SID} step=comment",
                 f"writeback step TASK-7 sid={SID} step=attach:{PR}",
                 f"writeback step TASK-7 sid={SID} step=move:in_review",
+                f"writeback step TASK-7 sid={SID} step=outcome",
                 f"run end TASK-7 sid={SID} exit=0",
             ],
         )
@@ -330,6 +331,7 @@ class RunExecution(Case):
                 f"writeback step TASK-7 sid={SID} step=comment",
                 f"writeback step TASK-7 sid={SID} step=attach:{PR}",
                 f"writeback step TASK-7 sid={SID} step=move:in_review",
+                f"writeback step TASK-7 sid={SID} step=outcome",
                 f"run end TASK-7 sid={SID} exit=1",
             ],
         )

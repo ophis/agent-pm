@@ -29,7 +29,7 @@ from agent_pm.delegate.composer.teams import (
     team_paths,
     used,
 )
-from agent_pm.utils import read_project
+from agent_pm.delegate.config import read_config
 
 from delegate.tests.case import Case
 from delegate.tests.unit.composer.teams import FILES, INTRO, POET, STEPS, VERSE, WRITER
@@ -93,7 +93,7 @@ class Fake(Case):
             f.write(local_section(text, "delegate"))
 
     def cfg(self):
-        return read_project("delegate", path=self.config, local=self.local_file)
+        return read_config(path=self.config, local=self.local_file)
 
     def tasks_of(self, role, found=None):
         """

@@ -13,7 +13,6 @@ from tests.guard_data.linear_orchestrator import (
     ONCE,
     ORCH_PROJECT,
 )
-from tests.guard_data.utils import CONFIG_LEVELS
 from tests.guards import PKG, PROJECTS
 
 LOCAL_EXAMPLE = re.compile(r"\s*# local: ?(.*)")
@@ -40,35 +39,6 @@ def config_once(repo: str) -> list[str]:
                 elif called.rpartition(".")[2] in LOAD_HELPERS and rel != CONFIG_PY:
                     found.add(f"{rel}:{node.lineno}: calls {called}")
     return sorted(found)
-
-
-def config_levels(repo: str) -> list[str]:
-    with open(os.path.join(repo, CONFIG_LEVELS), encoding="utf-8") as f:
-        tree = ast.parse(f.read(), CONFIG_LEVELS)
-    found = [
-        n.value
-        for n in tree.body
-        if isinstance(n, ast.Assign)
-        and any(isinstance(t, ast.Name) and t.id == "LEVELS" for t in n.targets)
-    ]
-    if len(found) != 1:
-        return [f"{CONFIG_LEVELS}: want one LEVELS assignment"]
-    try:
-        named = [p for level in ast.literal_eval(found[0]) for p in level]
-    except (ValueError, TypeError):
-        return [f"{CONFIG_LEVELS}: LEVELS is not a literal tuple of tuples"]
-    return sorted(
-        {
-            f"{CONFIG_LEVELS}: LEVELS holds {p!r} {named.count(p)} times"
-            for p in {*PROJECTS, *named}
-            if named.count(p) != 1
-        }
-        | {
-            f"{CONFIG_LEVELS}: LEVELS holds {p!r}, not a project"
-            for p in named
-            if p not in PROJECTS
-        }
-    )
 
 
 def explicit_keys(repo: str) -> list[str]:

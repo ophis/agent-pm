@@ -1,12 +1,10 @@
 import ast
 import os
 
-from tests import guards
 from tests.case import ORCH_ROOT, REPO
 from tests.guard_checks import configuration, ownership
 from tests.guard_data.linear_orchestrator import CONFIG_PY, LOAD_HELPERS, ORCH_PROJECT
 from tests.guard_data.session import SESSION_SRC
-from tests.guard_data.utils import CONFIG_LEVELS
 from tests.guard_samples import Sample
 
 OPKG = "src/agent_pm/linear_orchestrator"
@@ -89,36 +87,6 @@ class OrchestratorAbsent(Sample):
             for guard in (ownership.orchestrator_text, configuration.config_once):
                 with self.subTest(guard.__name__, root=root):
                     self.assertEqual(guard(root), [])
-
-
-class ConfigLevels(Sample):
-    def levels(self, text):
-        return configuration.config_levels(self.tree({CONFIG_LEVELS: text}))
-
-    def test_the_layer_order_and_the_config_levels(self):
-        self.assertEqual(guards.LAYERS, ("utils", "session", "delegate", ORCH_PROJECT, "manager"))
-        self.assertEqual(
-            self.levels(
-                'LEVELS = (("utils", "session"), ("delegate",), ("linear-orchestrator",), ("manager",))\n'
-            ),
-            [],
-        )
-
-    def test_each_project_once_and_only_projects(self):
-        at = CONFIG_LEVELS
-        self.assertEqual(
-            self.levels('LEVELS = (("utils", "session"), ("delegate", "x"), ("delegate",))\n'),
-            [
-                f"{at}: LEVELS holds 'delegate' 2 times",
-                f"{at}: LEVELS holds 'linear-orchestrator' 0 times",
-                f"{at}: LEVELS holds 'manager' 0 times",
-                f"{at}: LEVELS holds 'x', not a project",
-            ],
-        )
-        self.assertEqual(self.levels("X = 1\n"), [f"{at}: want one LEVELS assignment"])
-        self.assertEqual(
-            self.levels("LEVELS = tuple(x)\n"), [f"{at}: LEVELS is not a literal tuple of tuples"]
-        )
 
 
 class ExplicitKeys(Sample):

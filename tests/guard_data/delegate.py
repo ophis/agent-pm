@@ -2,6 +2,8 @@
 
 from tests.guards import PKG
 
+DELEGATE_SRC = f"delegate/src/{PKG}/delegate/"
+
 CONFIG_FILE = f"delegate/src/{PKG}/delegate/engine/config.py"
 
 

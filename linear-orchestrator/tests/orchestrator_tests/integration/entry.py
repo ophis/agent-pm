@@ -5,6 +5,7 @@ import sys
 from dataclasses import replace
 
 from agent_pm import delegate
+from agent_pm.linear_orchestrator import cli
 from agent_pm.linear_orchestrator.engine import promote, router, run
 from agent_pm.session import Session
 from orchestrator_tests.integration.fake_transport import install
@@ -49,6 +50,8 @@ def main(argv):
         if entry == "router":
             Session.configure_from(delegate.read_config())
             return router.main(arguments, session=DetachedSession)
+        if entry == "writeback":
+            return cli.main([entry, *arguments])
         return {"run": run.main, "promote": promote.main}[entry](arguments)
 
 

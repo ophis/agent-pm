@@ -198,7 +198,9 @@ def paste(target: str, text: str, *, proc=subprocess.run) -> None:
     # trailing ';'
     checked(["load-buffer", "-b", buffer, "-"], proc, text)
     try:
-        checked(["paste-buffer", "-p", "-r", "-d", "-b", buffer, "-t", target], proc)
+        checked(
+            _out_of_mode(target, "paste-buffer", "-p", "-r", "-d", "-b", buffer, "-t", target), proc
+        )
     except TuiError:
         with contextlib.suppress(TuiError):
             run(["delete-buffer", "-b", buffer], proc)
@@ -211,7 +213,7 @@ def keys(target: str, *names: str, proc=subprocess.run) -> None:
     for name in names:
         if name.startswith("-") or name.endswith(";"):
             raise TuiError(f"tmux would misread {name!r}")
-    checked(["send-keys", "-t", target, *names], proc)
+    checked(_out_of_mode(target, "send-keys", "-t", target, *names), proc)
 
 
 def press(target: str, *names: str, proc=subprocess.run) -> None:
@@ -220,7 +222,14 @@ def press(target: str, *names: str, proc=subprocess.run) -> None:
     for name in names:
         if not name or name.endswith(";") and not name.endswith("\\;"):
             raise TuiError(f"tmux would misread {name!r}")
-    checked(["send-keys", "-t", target, "--", *names], proc)
+    checked(_out_of_mode(target, "send-keys", "-t", target, "--", *names), proc)
+
+
+def _out_of_mode(target: str, *command: str) -> list[str]:
+    """command after `copy-mode -q` in one tmux call: a pane in copy-mode (scrolled back) or another
+    mode would swallow its keys.
+    """
+    return ["copy-mode", "-q", "-t", target, ";", *command]
 
 
 def set_option(target: str, name: str, value: str, *, proc=subprocess.run) -> None:

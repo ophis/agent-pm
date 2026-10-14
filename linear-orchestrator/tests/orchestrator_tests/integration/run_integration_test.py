@@ -160,7 +160,7 @@ class Done(Run):
                 REREAD,
                 TO_REVIEW,
             ],
-            ["start", "comment", f"attach:{DOC}", "move:in_review"],
+            ["start", "comment", f"attach:{DOC}", "move:in_review", "outcome"],
         )
 
     def test_a_pm_run(self):
@@ -182,7 +182,7 @@ class Done(Run):
                 REREAD,
                 TO_REVIEW,
             ],
-            ["start", "retitle", "comment", f"attach:{PRD}", "move:in_review"],
+            ["start", "retitle", "comment", f"attach:{PRD}", "move:in_review", "outcome"],
         )
         self.assertEqual(self.issue(ID)["title"], "PRD: Session Registry")
 
@@ -205,7 +205,7 @@ class Done(Run):
                 REREAD,
                 TO_REVIEW,
             ],
-            ["start", "comment", f"attach:{PR}", "move:in_review"],
+            ["start", "comment", f"attach:{PR}", "move:in_review", "outcome"],
         )
 
 

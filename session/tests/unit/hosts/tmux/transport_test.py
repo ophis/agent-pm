@@ -18,6 +18,11 @@ from session.tests.tmux_fixtures import (
 )
 
 
+def out_of_mode(target):
+    """The copy-mode -q a paste or keys call chains first."""
+    return ["tmux", "copy-mode", "-q", "-t", target, ";"]
+
+
 class DisplayErrorTest(Case):
     def test_none_or_printable_text_not_ending_in_a_semicolon(self):
         for value in (None, "", "mgr", "mgr/right/m1", "elsewhere:1.2", "a b#{x}", "\u00e9"):
@@ -210,7 +215,7 @@ class PasteTest(Case):
             fake.calls,
             [
                 ["tmux", "load-buffer", "-b", buffer, "-"],
-                ["tmux", "paste-buffer", "-p", "-r", "-d", "-b", buffer, "-t", "=s:"],
+                [*out_of_mode("=s:"), "paste-buffer", "-p", "-r", "-d", "-b", buffer, "-t", "=s:"],
             ],
         )
         self.assertEqual(
@@ -220,18 +225,14 @@ class PasteTest(Case):
     def test_a_failed_paste_deletes_its_buffer(self):
         for delete in ((0,), (1, "", "no buffer\n"), OSError("gone")):
             with self.subTest(delete=delete):
-                fake = FakeTmux(
-                    results={"paste-buffer": (1, "", "boom\n"), "delete-buffer": delete}
-                )
+                fake = FakeTmux(results={"copy-mode": (1, "", "boom\n"), "delete-buffer": delete})
                 with self.assertRaisesRegex(types.TuiError, r"^tmux: boom$"):
                     transport.paste("s", "hi", proc=fake)
                 buffer = fake.calls[0][3]
+                pasted = ["paste-buffer", "-p", "-r", "-d", "-b", buffer, "-t", "=s:"]
                 self.assertEqual(
                     fake.calls[1:],
-                    [
-                        ["tmux", "paste-buffer", "-p", "-r", "-d", "-b", buffer, "-t", "=s:"],
-                        ["tmux", "delete-buffer", "-b", buffer],
-                    ],
+                    [[*out_of_mode("=s:"), *pasted], ["tmux", "delete-buffer", "-b", buffer]],
                 )
         fake = FakeTmux(fail={"load-buffer"})
         with self.assertRaisesRegex(types.TuiError, r"^tmux: boom$"):
@@ -245,7 +246,9 @@ class PasteTest(Case):
                 fake = FakeTmux()
                 transport.paste("s", text, proc=fake)
                 self.assertEqual(fake.kwargs[0]["input"], text)
-                self.assertNotIn(text, [a for call in fake.calls for a in call])
+                buffer = fake.calls[0][3]
+                pasted = ["paste-buffer", "-p", "-r", "-d", "-b", buffer, "-t", "=s:"]
+                self.assertEqual(fake.calls[1], [*out_of_mode("=s:"), *pasted])
 
     def test_a_buffer_per_call(self):
         fake = FakeTmux()
@@ -258,7 +261,9 @@ class KeysTest(Case):
     def test_send_keys_names_the_keys(self):
         fake = FakeTmux()
         self.assertIsNone(transport.keys("s", "Escape", "C-c", "Enter", proc=fake))
-        self.assertEqual(fake.calls, [["tmux", "send-keys", "-t", "=s:", "Escape", "C-c", "Enter"]])
+        self.assertEqual(
+            fake.calls, [[*out_of_mode("=s:"), "send-keys", "-t", "=s:", "Escape", "C-c", "Enter"]]
+        )
         self.assertEqual(fake.kwargs, [TMUX_KW])
 
     def test_a_name_tmux_would_misread_is_refused_before_tmux(self):
@@ -271,7 +276,7 @@ class KeysTest(Case):
 
     def test_failure(self):
         with self.assertRaisesRegex(types.TuiError, r"^tmux: boom$"):
-            transport.keys("s", "Enter", proc=FakeTmux(fail={"send-keys"}))
+            transport.keys("s", "Enter", proc=FakeTmux(fail={"copy-mode"}))
 
     def test_set_option_sets_a_user_option_of_the_targets_session(self):
         fake = FakeTmux()
@@ -285,7 +290,9 @@ class KeysTest(Case):
     def test_press_names_the_keys_after_a_double_dash(self):
         fake = FakeTmux()
         self.assertIsNone(transport.press("s", "-", "\\;", "C-c", proc=fake))
-        self.assertEqual(fake.calls, [["tmux", "send-keys", "-t", "=s:", "--", "-", "\\;", "C-c"]])
+        self.assertEqual(
+            fake.calls, [[*out_of_mode("=s:"), "send-keys", "-t", "=s:", "--", "-", "\\;", "C-c"]]
+        )
 
     def test_press_refuses_an_empty_name_or_an_unescaped_semicolon(self):
         for name in ("", ";", "C-;"):
@@ -379,8 +386,8 @@ class PaneTargetTest(Case):
                 ["tmux", "display-message", "-p", "-t", "%12", FORMAT],
                 ["tmux", "kill-pane", "-t", "%12"],
                 ["tmux", "load-buffer", "-b", buffer, "-"],
-                ["tmux", "paste-buffer", "-p", "-r", "-d", "-b", buffer, "-t", "%12"],
-                ["tmux", "send-keys", "-t", "%12", "Enter"],
+                [*out_of_mode("%12"), "paste-buffer", "-p", "-r", "-d", "-b", buffer, "-t", "%12"],
+                [*out_of_mode("%12"), "send-keys", "-t", "%12", "Enter"],
                 ["tmux", "show-options", "-v", "-t", "%12", "@sid"],
                 ["tmux", "capture-pane", "-p", "-J", "-t", "%12"],
             ],

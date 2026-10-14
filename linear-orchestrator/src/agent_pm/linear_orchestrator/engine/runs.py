@@ -1,5 +1,5 @@
 """The runs log (runs.jsonl): one durable JSON line per run event; its readers: start and resume
-lines as Entries, live limit rows (`limits`), `trim` to KEEP.
+lines as Entries, a sid's start row as its Claim, live limit rows (`limits`), `trim` to KEEP.
 """
 
 import json
@@ -7,7 +7,8 @@ import os
 from datetime import UTC, datetime, timedelta
 from typing import NamedTuple
 
-from agent_pm.utils import append_line, save, timestamp
+from agent_pm.linear_orchestrator.engine.types import UUID_RE, Claim
+from agent_pm.utils import append_line, repo_slug, save, timestamp
 
 KEEP = timedelta(days=7)
 ERRORS = (ValueError, TypeError, KeyError, OverflowError)
@@ -74,6 +75,50 @@ def parse_line(line):
     except ERRORS:
         pass
     return None
+
+
+def _text(value):
+    return isinstance(value, str) and value != ""
+
+
+CLAIMED = {
+    "role": _text,
+    "uuid": lambda v: isinstance(v, str) and UUID_RE.fullmatch(v) is not None,
+    "project": lambda v: v is None or isinstance(v, str),
+    "target": lambda v: v is None or repo_slug(v) is not None,
+    "key": _text,
+    "client": _text,
+    "delegate_kind": _text,
+}
+
+
+def claim(path, issue, sid) -> Claim:
+    """The (issue, sid) start row's Claim, never another sid's; raises ValueError."""
+    for line in _lines(path):
+        try:
+            d = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(d, dict) and (d.get("kind"), d.get("issue"), d.get("sid")) == (
+            "start",
+            issue,
+            sid,
+        ):
+            for name, valid in CLAIMED.items():
+                if name not in d or not valid(d[name]):
+                    raise ValueError(f"{issue}: session {sid}'s start row {name}: {d.get(name)!r}")
+            return Claim(
+                issue,
+                sid,
+                d["role"],
+                d["uuid"],
+                d["project"],
+                d["target"] and repo_slug(d["target"]),
+                d["key"],
+                d["client"],
+                d["delegate_kind"],
+            )
+    raise ValueError(f"{issue}: no start row for session {sid}")
 
 
 def _limit(line, now):

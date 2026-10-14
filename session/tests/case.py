@@ -12,12 +12,11 @@ import agent_pm
 from agent_pm.session import Host
 from agent_pm.session.engine.hosted_session import HostedSession
 from agent_pm.session.hosts.tmux import TmuxHost
-from agent_pm.utils import import_roots
 
-from utils.tests.sandbox import clean_env
+from utils.tests.sandbox import clean_env, project_roots
 
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-ROOTS = import_roots(REPO)
+ROOTS = project_roots(REPO)
 SRC = {os.path.basename(os.path.dirname(r)).replace("-", "_"): r for r in ROOTS}
 RUN_WITH = os.pathsep.join(os.path.relpath(root, REPO) for root in ROOTS)
 PY = (sys.executable, "-P", "-S")

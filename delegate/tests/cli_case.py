@@ -63,7 +63,7 @@ class RefusingRun(fake_adapter.FakeInProcess):
 
 class Base(Case):
     """A HOME of the test's own, the fake client registered, the cwd a temp dir, workdir `work`
-    (not made), TMUX unset.
+    (not made), TMUX and the launcher's AGENT_PM_SID and AGENT_PM_EVENTS unset.
     """
 
     def setUp(self):
@@ -82,7 +82,7 @@ class Base(Case):
         self.configure_fake()
         self.steps(said(START, block(DONE)))
         self.enterContext(mock.patch.dict(os.environ))
-        for key in ("TMUX", "TMUX_PANE"):
+        for key in ("TMUX", "TMUX_PANE", "AGENT_PM_SID", "AGENT_PM_EVENTS"):
             os.environ.pop(key, None)
 
     def configure_fake(self, *, tui=False):

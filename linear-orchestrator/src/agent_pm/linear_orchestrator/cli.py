@@ -6,9 +6,9 @@ from datetime import UTC, datetime
 from functools import partial
 
 from agent_pm.delegate import ConfigError as DelegateConfigError
-from agent_pm.delegate import DriverError
+from agent_pm.delegate import DelegateEvent, DriverError
+from agent_pm.linear_orchestrator.engine import client, promote, router, run, runs, writeback
 from agent_pm.linear_orchestrator.engine import log as event_log
-from agent_pm.linear_orchestrator.engine import promote, router, run, runs
 from agent_pm.linear_orchestrator.engine.config import load
 from agent_pm.linear_orchestrator.engine.gate import Gate
 from agent_pm.linear_orchestrator.engine.linear_run import LinearRun
@@ -28,6 +28,9 @@ def main(argv=None):
     for command in ("status", "show", "close", "attach-command", "resume"):
         query = commands.add_parser(command)
         query.add_argument("keys", nargs="*", metavar="ISSUE", help="omit: Records on stdin")
+    back = commands.add_parser("writeback", help="write back one DelegateEvent line from stdin")
+    back.add_argument("--issue", required=True)
+    back.add_argument("--workdir", required=True)
     args = parser.parse_args(arguments)
     try:
         cfg = load()
@@ -35,6 +38,8 @@ def main(argv=None):
         print(f"agent-pm-linear: {error}", file=sys.stderr)
         return 2
     event_log.use_logs(cfg.logs_dir)
+    if args.command == "writeback":
+        return _writeback(cfg, args.issue, args.workdir)
 
     gate = None
 
@@ -87,6 +92,18 @@ def main(argv=None):
         out=sys.stdout,
         err=sys.stderr,
     )
+
+
+def _writeback(cfg, issue, workdir):
+    lines = sys.stdin.read().splitlines()
+    try:
+        if len(lines) != 1:
+            raise ValueError(f"want one DelegateEvent line on stdin, got {len(lines)}")
+        event = DelegateEvent.parse(lines[0])
+        return 0 if writeback.deliver(cfg, issue, workdir, event, gql=client.linear_gql) else 1
+    except (ValueError, ConfigError) as error:
+        print(f"agent-pm-linear writeback: {error}", file=sys.stderr)
+        return 2
 
 
 if __name__ == "__main__":

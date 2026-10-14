@@ -2,7 +2,6 @@ import os
 
 from tests import guards
 from tests.guard_checks import imports, placement
-from tests.guard_data import PACKAGE_CLIMB_ALLOWED
 from tests.guard_data.linear_orchestrator import ORCH_PKG, ORCH_PROJECT
 from tests.guard_data.session import SESSION_SRC
 from tests.guard_samples import PKG, Sample
@@ -112,22 +111,17 @@ class PackageClimbs(Sample):
             [],
         )
 
-    def test_exemption_inventory_allows_only_ticket_removals(self):
-        expected = {
-            ("utils/src/agent_pm/utils/paths.py", "ROOT"): "TASK-393",
-            ("utils/src/agent_pm/utils/paths.py", "import_roots"): "TASK-393",
-            ("utils/src/agent_pm/utils/config_file.py", "read_project"): "TASK-393",
-        }
-        self.assertLessEqual(PACKAGE_CLIMB_ALLOWED.keys(), expected.keys())
-        for key, owner in PACKAGE_CLIMB_ALLOWED.items():
-            self.assertEqual(owner, expected[key])
-
-    def test_every_exemption_must_still_have_an_escape(self):
-        root = self.tree({})
-        found = placement.package_climbs(root)
-        self.assertEqual(len(found), len(PACKAGE_CLIMB_ALLOWED))
-        for (rel, name), ticket in PACKAGE_CLIMB_ALLOWED.items():
-            self.assertIn(f"{rel}: {name}: allowlisted but no package escape ({ticket})", found)
+    def test_no_file_is_exempt(self):
+        rel = "utils/src/agent_pm/utils/paths.py"
+        root = self.tree(
+            {
+                rel: "import os\nROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), *[os.pardir] * 4))\n"
+            }
+        )
+        self.assertEqual(
+            placement.package_climbs(root), [f"{rel}:2: ROOT: path escapes its package"]
+        )
+        self.assertEqual(placement.package_climbs(self.tree({})), [])
 
 
 class NamespacePackage(Sample):

@@ -2,7 +2,8 @@
 inventory. Each layer's own data: tests/guard_data/; the checks: tests/guard_checks/.
 """
 
-from agent_pm.utils.config_file import LEVELS
+LEVELS = (("utils", "session"), ("delegate",), ("linear-orchestrator",), ("manager",))
+
 
 UNIT_ISOLATION_ALLOWED = {}
 

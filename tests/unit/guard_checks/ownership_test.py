@@ -1,8 +1,7 @@
 from tests.case import REPO
 from tests.guard_checks import commands, exports, ownership
-from tests.guard_data.delegate import CONFIG_FILE
+from tests.guard_data.delegate import CONFIG_FILE, DELEGATE_SRC
 from tests.guard_data.session import ADAPTERS_HOME, SESSION_SRC
-from tests.guard_data.utils import CONFIG_LEVELS
 from tests.guard_samples import PKG, Sample
 
 OPKG = "src/agent_pm/linear_orchestrator"
@@ -147,7 +146,6 @@ class Standalone(Sample):
                 "session/tests/a_test.py": "import agent_pm.linear_orchestrator\n",
                 "linear-orchestrator/b.py": "import agent_pm.linear_orchestrator\n",
                 "tests/c.py": "import agent_pm.linear_orchestrator\n",
-                CONFIG_LEVELS: ('LEVELS = (("linear-orchestrator",),)\n# linear-orchestrator\n'),
             }
         )
         self.assertEqual(
@@ -158,7 +156,6 @@ class Standalone(Sample):
                 f"{team}/roles/r.md:2: names linear_orchestrator",
                 f"manager/{PKG}/manager/z.py:1: names linear-orchestrator",
                 f"session/{PKG}/session/x.py:1: names linear_orchestrator",
-                f"{CONFIG_LEVELS}:2: names linear-orchestrator",
                 f"utils/{PKG}/utils/y.py:1: names linear_orchestrator",
             ],
         )
@@ -368,6 +365,68 @@ class SessionDisplay(Sample):
         )
         root = self.tree({f"session/{PKG}/session/engine/sample.py": source})
         self.assertEqual(ownership.session_display(root), [])
+
+
+class DelegateDisplay(Sample):
+    def test_display_names_are_rejected_anywhere_in_delegate_source(self):
+        for base in (DELEGATE_SRC + "cli.py", DELEGATE_SRC + "engine/sample.py"):
+            for source, name in (
+                ("def f(pane): return pane\n", "pane"),
+                ("def f(pane_id): return pane_id\n", "pane_id"),
+                ("def opener(): pass\n", "opener"),
+                ("class split_from: pass\n", "split_from"),
+                ("x = value.opener\n", "opener"),
+                ('x = "--split"\n', "--split"),
+                ('x = "--split-from"\n', "--split-from"),
+                ('x = "@opener"\n', "@opener"),
+                ('x = "@record"\n', "@record"),
+                ('x = "@pane"\n', "@pane"),
+            ):
+                with self.subTest(base=base, source=source):
+                    self.assertEqual(
+                        ownership.delegate_display(self.tree({base: source})),
+                        [f"{base}:1: interprets display {name!r}"],
+                    )
+
+    def test_string_split_decorators_unrelated_words_and_other_trees_are_clean(self):
+        clean = '@record\ndef f(display): return display.split("/")\nscreenplay = "reopener"\n'
+        named = 'def f(pane): return "@opener"\n'
+        root = self.tree(
+            {
+                DELEGATE_SRC + "engine/sample.py": clean,
+                "delegate/tests/unit/sample_test.py": named,
+                f"session/{PKG}/session/hosts/tmux/sample.py": named,
+            }
+        )
+        self.assertEqual(ownership.delegate_display(root), [])
+
+
+class DelegateTmux(Sample):
+    def test_tmux_in_any_case_in_code_strings_comments_or_docstrings_is_rejected(self):
+        base = DELEGATE_SRC + "engine/sample.py"
+        for source in (
+            "from agent_pm.session import TmuxHost\n",
+            "def _tmux(): pass\n",
+            'HOST = "tmux"\n',
+            'LINE = f"run {name} in TMUX"\n',
+            "x = 1  # a Tmux pane\n",
+            '"""Runs under tmux."""\n',
+        ):
+            with self.subTest(source=source):
+                self.assertEqual(
+                    ownership.delegate_tmux(self.tree({base: source})), [f"{base}:1: names tmux"]
+                )
+
+    def test_other_words_trees_and_files_are_clean(self):
+        root = self.tree(
+            {
+                DELEGATE_SRC + "engine/sample.py": "MULTIPLEXER = 'tm-ux'\n",
+                DELEGATE_SRC + "team/guide.md": "tmux\n",
+                "delegate/tests/unit/sample_test.py": 'HOST = "tmux"\n',
+                f"session/{PKG}/session/cli.py": "# tmux\n",
+            }
+        )
+        self.assertEqual(ownership.delegate_tmux(root), [])
 
 
 class StatusLogFormat(Sample):

@@ -4,7 +4,7 @@ import ast
 import os
 
 from tests.guard_checks.common import _bindings, _dotted, _files
-from tests.guard_data import ENTRY_MODULES, PACKAGE_CLIMB_ALLOWED, SUBPACKAGES
+from tests.guard_data import ENTRY_MODULES, SUBPACKAGES
 from tests.guard_data.linear_orchestrator import ORCH_PROJECT, ORCH_SRC
 from tests.guards import PKG, PROJECTS
 
@@ -72,8 +72,8 @@ def namespace_package(repo: str) -> list[str]:
 
 
 def package_climbs(repo: str) -> list[str]:
-    """Runtime paths stay inside their own package; exemptions expire with their last use."""
-    found, seen = [], set()
+    """Runtime paths stay inside their own package."""
+    found = []
     for project, package in PROJECTS.items():
         base = f"{project}/src/agent_pm/{package}"
         for sub, text in _files(os.path.join(repo, base), (".py",)):
@@ -101,16 +101,7 @@ def package_climbs(repo: str) -> list[str]:
                         if alias.name in ("ROOT", "import_roots") and not used:
                             found.append(f"{rel}:{node.lineno}: {name}: path escapes its package")
             for name, line in _package_paths(tree, bound, paths, depth, project):
-                key = rel, name
-                if key in PACKAGE_CLIMB_ALLOWED:
-                    seen.add(key)
-                else:
-                    found.append(f"{rel}:{line}: {name}: path escapes its package")
-    found.extend(
-        f"{rel}: {name}: allowlisted but no package escape ({ticket})"
-        for (rel, name), ticket in PACKAGE_CLIMB_ALLOWED.items()
-        if (rel, name) not in seen
-    )
+                found.append(f"{rel}:{line}: {name}: path escapes its package")
     return sorted(set(found))
 
 

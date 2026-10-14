@@ -12,6 +12,7 @@ from agent_pm.linear_orchestrator.engine.types import (
     UUID_RE,
     LinearError,
 )
+from agent_pm.linear_orchestrator.engine.types import ConfigError as RunConfigError
 from agent_pm.utils import one_line, timestamp
 
 URL = "https://agent-pm.invalid/run/"
@@ -35,13 +36,14 @@ def is_comment(comment):
     )
 
 
-def base(*, sid, workdir, client, started_at, info):
+def base(*, sid, workdir, client, started_at, info, seq=0):
+    """`seq`: the comment's last written number."""
     return {
         "sid": sid,
         "workdir": workdir,
         "client": client,
         "started_at": started_at,
-        "seq": 0,
+        "seq": seq,
         "info": info,
     }
 
@@ -49,7 +51,7 @@ def base(*, sid, workdir, client, started_at, info):
 def command(rec):
     try:
         st = rec["info"]()
-    except (ConfigError, DriverError):
+    except (ConfigError, RunConfigError, DriverError):
         return None
     return st.resume_command if st.resumable != "unknown" and st.resume_command else None
 

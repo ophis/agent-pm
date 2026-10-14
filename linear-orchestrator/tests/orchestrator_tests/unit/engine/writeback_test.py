@@ -10,17 +10,37 @@ from dataclasses import replace
 from datetime import UTC, datetime
 from unittest import mock
 
-from agent_pm.delegate import Begun, Finished, Outcome, OutcomeStatus, Progress, Result
+from agent_pm.delegate import (
+    Begun,
+    DelegateEvent,
+    Finished,
+    Outcome,
+    OutcomeStatus,
+    Progress,
+    Result,
+)
 from agent_pm.linear_orchestrator.engine import (
     config,
     issues,
     log,
     ops,
+    run_comments,
     runs,
     writeback,
 )
-from agent_pm.linear_orchestrator.engine.types import Invalid, Issue, LinearError, Stopped
+from agent_pm.linear_orchestrator.engine.linear_run import LinearRun
+from agent_pm.linear_orchestrator.engine.types import (
+    Claim,
+    ConfigError,
+    Invalid,
+    Issue,
+    LinearError,
+    Stopped,
+)
+from agent_pm.session import SessionStatus
 from orchestrator_tests.case import Case
+from orchestrator_tests.linear_run_case import SID as RUN_SID
+from orchestrator_tests.linear_run_case import ReadyDelegate, RunCase
 from orchestrator_tests.unit import board_ids, run_fixtures
 from orchestrator_tests.unit.clock import logs_at
 from orchestrator_tests.unit.run_fixtures import logged, show
@@ -277,6 +297,9 @@ class Base(Case):
         with open(os.path.join(ctx.workdir, "writeback.json")) as f:
             return json.load(f)
 
+    def steps(self, ctx):
+        return {sid: entry["steps"] for sid, entry in self.ledger(ctx).items()}
+
     def no_ledger(self, ctx):
         self.assertFalse(os.path.exists(os.path.join(ctx.workdir, "writeback.json")))
 
@@ -289,7 +312,7 @@ class ProgressReporting(Base):
         writeback.progress(ctx, start)
         writeback.progress(ctx, start)
         self.assertEqual(gql.calls, [post("start", "Build started: first build of the PRD")])
-        self.assertEqual(self.ledger(ctx), {SID: ["start"]})
+        self.assertEqual(self.steps(ctx), {SID: ["start"]})
         self.assertEqual(self.lines(), [f"step {ID} step=start"])
         writeback.progress(replace(ctx, sid=OTHER_SID), start)
         self.assertEqual(
@@ -333,7 +356,7 @@ class ProgressReporting(Base):
                 post(steps[1], "Progress (tests): 13 passing"),
             ],
         )
-        self.assertEqual(self.ledger(ctx), {SID: steps})
+        self.assertEqual(self.steps(ctx), {SID: steps})
 
     def test_swallows_system_exit_and_retries_later(self):
         gql = Gql(fail=lambda _name, _v: LinearError("linear api error: down"))
@@ -578,6 +601,7 @@ class WritebackContext(run_fixtures.Base):
                     cfg,
                     "engineer",
                     gql,
+                    key=cfg.roles["engineer"].key,
                     ident=ID,
                     issue_id=UUID,
                     sid=SID,
@@ -671,7 +695,7 @@ class UsageLimitReporting(Base):
                         move("in_review"),
                     ],
                 )
-                self.assertEqual(self.ledger(ctx), {SID: ["limit"]})
+                self.assertEqual(self.steps(ctx), {SID: ["limit"]})
 
     def test_local_time(self):
         self.assertEqual(writeback.local_time(T), "2026-10-11T18:00:00+08:00")
@@ -723,7 +747,7 @@ class UsageLimitReporting(Base):
         again = Gql()
         self.assertTrue(writeback.limit(replace(ctx, gql=again, resume=True), None))
         self.assertEqual(again.calls, [sub(HUMANS[0]), sub(HUMANS[1]), reread(), move("in_review")])
-        self.assertEqual(self.ledger(ctx), {SID: ["limit"]})
+        self.assertEqual(self.steps(ctx), {SID: ["limit"]})
         self.assertEqual(self.lines(), [f"step {ID} step=limit"])
 
     def test_a_failed_comment_stops_before_the_move(self):
@@ -768,7 +792,7 @@ class CompletionSteps(Base):
             )
         )
         self.assertEqual(gql.calls, expect(body="Build ready: Ready.", state="in_review"))
-        self.assertIn(f"attach:{PR}", self.ledger(ctx)[SID])
+        self.assertIn(f"attach:{PR}", self.steps(ctx)[SID])
 
     def test_already_linked_errors_count_as_attached(self):
         for text in (
@@ -786,7 +810,7 @@ class CompletionSteps(Base):
                     )
                 )
                 self.assertEqual(gql.calls[-1], move("in_review"))
-                self.assertIn(f"attach:{PR}", self.ledger(ctx)[SID])
+                self.assertIn(f"attach:{PR}", self.steps(ctx)[SID])
 
     def test_other_attach_error_stops(self):
         gql = Gql(
@@ -825,8 +849,10 @@ class CompletionSteps(Base):
                     [line for line in self.lines() if line.startswith("skip")],
                     [skip] if skip else [],
                 )
-                self.assertEqual(self.lines()[-1], f"step {ID} step=move:in_review")
-                self.assertIn("move:in_review", self.ledger(ctx)[SID])
+                self.assertEqual(
+                    self.lines()[-2:], [f"step {ID} step=move:in_review", f"step {ID} step=outcome"]
+                )
+                self.assertEqual(self.steps(ctx)[SID][-2:], ["move:in_review", "outcome"])
 
     def test_subscribe_failures_noted_and_finish_continues(self):
         def fail(name, v):
@@ -1223,10 +1249,11 @@ class CompletionMessages(Base):
             "comment",
             f"attach:{PR}",
             "move:in_review",
+            "outcome",
         ]
         self.assertEqual(self.lines(), [f"step {ID} step={s}" for s in steps])
         self.assertEqual([e["sid"] for e in logged()], [SID] * len(steps))
-        self.assertEqual(self.ledger(ctx), {SID: steps})
+        self.assertEqual(self.ledger(ctx), {SID: {"steps": steps}})
 
     def test_design_retitle_and_mapped_approve_line(self):
         gql = Gql()
@@ -1248,8 +1275,35 @@ class CompletionMessages(Base):
             ),
         )
         self.assertEqual(
-            self.ledger(ctx), {SID: ["retitle", "comment", f"attach:{PRD}", "move:in_review"]}
+            self.steps(ctx),
+            {SID: ["retitle", "comment", f"attach:{PRD}", "move:in_review", "outcome"]},
         )
+
+
+class CompletionMarker(Base):
+    DONE = Outcome(status="failed", title="ENG-7: x", summary="push not permitted")
+
+    def test_outcome_follows_the_move(self):
+        ctx = self.ctx()
+        self.assertTrue(writeback.finish(ctx, self.DONE))
+        self.assertEqual(self.steps(ctx), {SID: ["comment", "move:in_review", "outcome"]})
+
+    def test_no_outcome_after_a_failed_move_until_a_retry_moves(self):
+        broken = Gql(
+            fail=lambda name, _v: LinearError("linear api error: down") if name == "state" else None
+        )
+        ctx = self.ctx(gql=broken)
+        self.assertFalse(writeback.finish(ctx, self.DONE))
+        self.assertEqual(self.steps(ctx), {SID: ["comment"]})
+        again = Gql()
+        self.assertTrue(writeback.finish(replace(ctx, gql=again), self.DONE))
+        self.assertEqual(again.calls[-2:], [reread(), move("in_review")])
+        self.assertEqual(self.steps(ctx), {SID: ["comment", "move:in_review", "outcome"]})
+
+    def test_no_outcome_after_an_earlier_failed_step(self):
+        ctx = self.ctx(gql=Gql(fail=lambda name, _v: False if name == "comment" else None))
+        self.assertFalse(writeback.finish(ctx, self.DONE))
+        self.no_ledger(ctx)
 
 
 class CompletionLedger(Base):
@@ -1307,7 +1361,11 @@ class CompletionLedger(Base):
 
     def test_other_sid_does_not_skip(self):
         ctx = self.ctx()
-        self.write(ctx, "writeback.json", json.dumps({OTHER_SID: ["comment", "move:in_review"]}))
+        self.write(
+            ctx,
+            "writeback.json",
+            json.dumps({OTHER_SID: {"steps": ["comment", "move:in_review"]}}),
+        )
         gql = Gql()
         writeback.finish(
             replace(ctx, gql=gql),
@@ -1318,8 +1376,11 @@ class CompletionLedger(Base):
             expect(body="Build failed: push not permitted", state="in_review"),
         )
         self.assertEqual(
-            self.ledger(ctx),
-            {OTHER_SID: ["comment", "move:in_review"], SID: ["comment", "move:in_review"]},
+            self.steps(ctx),
+            {
+                OTHER_SID: ["comment", "move:in_review"],
+                SID: ["comment", "move:in_review", "outcome"],
+            },
         )
 
     def test_unreadable_ledger_is_empty(self):
@@ -1328,6 +1389,10 @@ class CompletionLedger(Base):
             json.dumps([1]),
             json.dumps({SID: "comment move:in_review"}),
             json.dumps({SID: [1]}),
+            json.dumps({SID: ["comment", "move:in_review"]}),
+            json.dumps({SID: {"steps": "comment move:in_review"}}),
+            json.dumps({SID: {"steps": [1]}}),
+            json.dumps({SID: {"steps": ["comment", "move:in_review"], "done": True}}),
         ):
             with self.subTest(text=text):
                 gql = Gql()
@@ -1350,14 +1415,14 @@ class CompletionLedger(Base):
                 ctx, Outcome(status="failed", title="ENG-7: x", summary="push not permitted")
             )
         )
-        self.assertEqual(self.ledger(ctx), {SID: ["comment", "move:in_review"]})
+        self.assertEqual(self.steps(ctx), {SID: ["comment", "move:in_review", "outcome"]})
 
     def test_symlinked_ledger_is_empty_and_replaced(self):
         gql = Gql()
         ctx = self.ctx(gql=gql)
         elsewhere = os.path.join(self.tmp, "elsewhere.json")
         with open(elsewhere, "w") as f:
-            f.write(json.dumps({SID: ["comment", "move:in_review"]}))
+            f.write(json.dumps({SID: {"steps": ["comment", "move:in_review"]}}))
         os.symlink(elsewhere, os.path.join(ctx.workdir, "writeback.json"))
         writeback.finish(
             ctx, Outcome(status="failed", title="ENG-7: x", summary="push not permitted")
@@ -1368,7 +1433,7 @@ class CompletionLedger(Base):
         )
         self.assertFalse(os.path.islink(os.path.join(ctx.workdir, "writeback.json")))
         with open(elsewhere) as f:
-            self.assertEqual(json.load(f), {SID: ["comment", "move:in_review"]})
+            self.assertEqual(json.load(f), {SID: {"steps": ["comment", "move:in_review"]}})
 
     def test_ledger_write_failure_leaves_no_temp(self):
         ctx = self.ctx()
@@ -1422,7 +1487,7 @@ class ResumedComments(Base):
         gql.calls.clear()
         writeback.progress(replace(ctx, resume=True), START)
         self.assertEqual(gql.calls, [find("start")])
-        self.assertEqual(self.ledger(ctx), {SID: ["start"]})
+        self.assertEqual(self.steps(ctx), {SID: ["start"]})
         self.assertEqual(self.lines()[-1], f"step {ID} step=start found=true")
 
     def test_a_resumed_finish_counts_a_found_comment_as_posted(self):
@@ -1438,9 +1503,14 @@ class ResumedComments(Base):
             gql.calls,
             [READ, sub(HUMANS[0]), sub(HUMANS[1]), find("comment"), reread(), move("in_review")],
         )
-        self.assertEqual(self.ledger(ctx), {SID: ["comment", "move:in_review"]})
+        self.assertEqual(self.steps(ctx), {SID: ["comment", "move:in_review", "outcome"]})
         self.assertEqual(
-            self.lines(), [f"step {ID} step=comment found=true", f"step {ID} step=move:in_review"]
+            self.lines(),
+            [
+                f"step {ID} step=comment found=true",
+                f"step {ID} step=move:in_review",
+                f"step {ID} step=outcome",
+            ],
         )
 
     def test_a_resume_after_a_failed_post_finds_then_posts_once(self):
@@ -1488,3 +1558,606 @@ class ResumedComments(Base):
                 self.assertEqual(gql.calls, [READ, sub(HUMANS[0]), sub(HUMANS[1]), find("comment")])
                 self.assertEqual(self.lines()[-1], f"step-error {ID} step=comment error={error}")
                 self.no_ledger(ctx)
+
+
+RUN_ISSUE = "TASK-1"
+
+CLAIM_KEY = "agent-pm-engineer-at-claim"
+
+STARTED, RESTARTED = "2026-10-14T09:00:00+08:00", "2026-10-14T10:00:00+08:00"
+
+LATER, LATEST = "2026-10-14T11:00:00+08:00", "2026-10-14T12:00:00+08:00"
+
+RESUME_COMMAND = f"cd /run && fake --resume {RUN_SID}"
+
+RUN_SESSION = ops.client_id(RUN_SID, "session")
+
+CLAIM = Claim(
+    issue=RUN_ISSUE,
+    sid=RUN_SID,
+    role="engineer",
+    uuid=UUID,
+    project="p1",
+    target=("ophis", "agent-pm"),
+    key=CLAIM_KEY,
+    client="fake",
+    delegate_kind="fake",
+)
+
+EVENT_OPS = {
+    run_comments.M_UPDATE: "update",
+    ops.M_COMMENT_ID: "comment",
+    ops.Q_COMMENT: "find",
+    ops.Q_ISSUE_STATE: "reread",
+    ops.M_STATE: "state",
+    ops.M_SUBSCRIBE: "subscribe",
+    writeback.Q_ATTACHED: "read",
+    writeback.M_TITLE: "title",
+    writeback.M_ATTACH: "attach",
+}
+
+EVENT_FIELDS = {
+    "comment": "commentCreate",
+    "update": "commentUpdate",
+    "state": "issueUpdate",
+    "subscribe": "issueSubscribe",
+    "title": "issueUpdate",
+    "attach": "attachmentLinkURL",
+}
+
+
+class Linear:
+    """Linear for one issue: its comments by client id, its state; each call as (service, op,
+    variables).
+    """
+
+    def __init__(self, state, fail=lambda _op, _v: None):
+        self.calls, self.comments, self.state, self.fail = [], {}, state, fail
+
+    def __call__(self, query, *, service, timeout=None, **v):
+        op = EVENT_OPS[query]
+        self.calls.append((service, op, v))
+        if (error := self.fail(op, v)) is not None:
+            raise error
+        found = self.comments.get(v.get("c"))
+        if op == "update":
+            if found is None:
+                raise NOT_FOUND
+            found["body"] = v["b"]
+        elif op == "comment":
+            self.comments[v["c"]] = {"body": v["b"], "service": service}
+        elif op == "find":
+            if found is None:
+                raise NOT_FOUND
+            mine = {"isMe": found["service"] == service}
+            return {"comment": {"body": found["body"], "issue": {"id": UUID}, "user": mine}}
+        elif op == "reread":
+            return {"issue": {"state": {"id": self.state}}}
+        elif op == "state":
+            self.state = v["s"]
+        elif op == "read":
+            return {"issue": {"attachments": {"nodes": []}}}
+        return {EVENT_FIELDS[op]: {"success": True}}
+
+    def writes(self, op):
+        return [(service, v) for service, o, v in self.calls if o == op]
+
+
+def delegate_event(kind, attempt=1, sid=RUN_SID, **fields):
+    return DelegateEvent(kind, sid=sid, attempt=attempt, **fields)
+
+
+class Events(RunCase):
+    def setUp(self):
+        super().setUp()
+        log.use_logs(self.cfg.logs_dir)
+        self.workdir = self.cfg.run_dir(RUN_ISSUE)
+        LinearRun(
+            RUN_ISSUE,
+            "Echo input.",
+            self.workdir,
+            cfg=self.cfg,
+            role="engineer",
+            sid=RUN_SID,
+            client="fake",
+            delegate_kind="fake",
+        ).detach()
+        self.claim()
+        self.linear = Linear(self.cfg.states["in_progress"])
+        info = mock.patch.object(
+            ReadyDelegate, "session_info", return_value=SessionStatus("yes", None, RESUME_COMMAND)
+        )
+        info.start()
+        self.addCleanup(info.stop)
+        self.now = iter((STARTED, RESTARTED, LATER, LATEST))
+
+    def claim(self, sid=RUN_SID, **fields):
+        runs.note(
+            self.cfg.runs_log,
+            "start",
+            issue=RUN_ISSUE,
+            sid=sid,
+            role="engineer",
+            client="fake",
+            delegate_kind="fake",
+            uuid=UUID,
+            project="p1",
+            target="ophis/agent-pm",
+            key=CLAIM_KEY,
+            **fields,
+        )
+
+    def deliver(self, e, *, workdir=None, issue=RUN_ISSUE):
+        return writeback.deliver(
+            self.cfg,
+            issue,
+            workdir or self.workdir,
+            e,
+            gql=self.linear,
+            now=lambda: next(self.now),
+        )
+
+    def ledger(self):
+        with open(os.path.join(self.workdir, writeback.LEDGER)) as f:
+            return json.load(f)
+
+    def said(self):
+        return [f"{e['src']} {show(e)}" for e in logged()]
+
+    @staticmethod
+    def finished(rc=0, *, outcome=None, error="", limit=None, attempt=1):
+        return delegate_event(
+            "finished", attempt, returncode=rc, outcome=outcome, error=error, limit=limit
+        )
+
+
+class ForClaim(RunCase):
+    def test_writes_as_the_claims_key_not_the_configured_one(self):
+        calls = []
+
+        def services(query, *, service, **variables):
+            calls.append((service, query, variables))
+            return {}
+
+        self.assertNotEqual(self.cfg.roles["engineer"].key, CLAIM_KEY)
+        ctx = writeback.for_claim(self.cfg, CLAIM, services, attempt=1)
+        ctx.gql("query", i=UUID)
+        self.assertEqual(calls, [(CLAIM_KEY, "query", {"i": UUID})])
+        self.assertEqual(
+            (ctx.ident, ctx.issue_id, ctx.sid, ctx.role, ctx.project, ctx.target, ctx.workdir),
+            (
+                RUN_ISSUE,
+                UUID,
+                RUN_SID,
+                "engineer",
+                "p1",
+                ("ophis", "agent-pm"),
+                self.cfg.run_dir(RUN_ISSUE),
+            ),
+        )
+
+    def test_a_later_attempt_is_a_resume(self):
+        for attempt, resume in ((1, False), (2, True), (3, True)):
+            with self.subTest(attempt=attempt):
+                ctx = writeback.for_claim(self.cfg, CLAIM, Linear(""), attempt=attempt)
+                self.assertIs(ctx.resume, resume)
+
+
+class BegunEvents(Events):
+    def test_posts_the_running_session_comment_as_the_harness_and_records_its_start(self):
+        self.assertTrue(self.deliver(delegate_event("begun")))
+        body = f"Run {RUN_SID} · running · #1 · {STARTED}\n\n```\n{RESUME_COMMAND}\n```"
+        harness = self.cfg.harness_key
+        self.assertEqual(
+            self.linear.calls,
+            [
+                (harness, "update", {"c": RUN_SESSION, "b": body}),
+                (harness, "comment", {"c": RUN_SESSION, "i": RUN_ISSUE, "b": body}),
+            ],
+        )
+        self.assertEqual(
+            self.ledger(), {RUN_SID: {"attempts": {"1": {"started_at": STARTED, "seq": 1}}}}
+        )
+
+    def test_the_same_begun_twice_writes_once(self):
+        self.assertTrue(self.deliver(delegate_event("begun")))
+        n = len(self.linear.calls)
+        self.assertTrue(self.deliver(delegate_event("begun")))
+        self.assertEqual(self.linear.calls[n:], [])
+        self.assertEqual(
+            self.ledger()[RUN_SID]["attempts"], {"1": {"started_at": STARTED, "seq": 1}}
+        )
+
+    def test_a_later_attempt_has_its_own_start(self):
+        self.assertTrue(self.deliver(delegate_event("begun")))
+        self.assertTrue(self.deliver(delegate_event("begun", attempt=2)))
+        body = f"Run {RUN_SID} · running · #1 · {RESTARTED}\n\n```\n{RESUME_COMMAND}\n```"
+        self.assertEqual(
+            self.linear.writes("update")[-1], (self.cfg.harness_key, {"c": RUN_SESSION, "b": body})
+        )
+        self.assertEqual(
+            self.ledger()[RUN_SID]["attempts"],
+            {"1": {"started_at": STARTED, "seq": 1}, "2": {"started_at": RESTARTED, "seq": 1}},
+        )
+
+    def test_a_failed_write_keeps_the_start_and_a_retry_posts(self):
+        self.linear.fail = lambda _op, _v: LinearError("linear api error: down")
+        self.assertFalse(self.deliver(delegate_event("begun")))
+        self.assertEqual(
+            self.ledger()[RUN_SID]["attempts"], {"1": {"started_at": STARTED, "seq": 0}}
+        )
+        self.assertIn(
+            f"writeback registry-error {RUN_ISSUE} sid={RUN_SID} error=LinearError: linear api error: down",
+            self.said(),
+        )
+        self.linear.fail = lambda _op, _v: None
+        self.assertTrue(self.deliver(delegate_event("begun")))
+        self.assertEqual(
+            self.linear.comments[RUN_SESSION]["body"],
+            f"Run {RUN_SID} · running · #1 · {STARTED}\n\n```\n{RESUME_COMMAND}\n```",
+        )
+        self.assertEqual(
+            self.ledger()[RUN_SID]["attempts"], {"1": {"started_at": STARTED, "seq": 1}}
+        )
+
+
+class ProgressEvents(Events):
+    def test_start_and_marks_post_once_as_the_claims_account(self):
+        self.assertTrue(
+            self.deliver(delegate_event("progress", name="start", text="light-build: a tweak"))
+        )
+        self.assertTrue(
+            self.deliver(delegate_event("progress", name="start", text="light-build: a tweak"))
+        )
+        self.assertTrue(self.deliver(delegate_event("progress", name="tests", text="12 passing")))
+        self.assertTrue(self.deliver(delegate_event("progress", name="tests", text="12 passing")))
+        digest = "progress:tests:" + hashlib.sha256(b"12 passing").hexdigest()[:12]
+        self.assertEqual(
+            self.linear.calls,
+            [
+                (CLAIM_KEY, "find", {"c": ops.client_id(RUN_SID, "start")}),
+                (
+                    CLAIM_KEY,
+                    "comment",
+                    {
+                        "c": ops.client_id(RUN_SID, "start"),
+                        "i": UUID,
+                        "b": "Build started: light-build: a tweak",
+                    },
+                ),
+                (CLAIM_KEY, "find", {"c": ops.client_id(RUN_SID, digest)}),
+                (
+                    CLAIM_KEY,
+                    "comment",
+                    {
+                        "c": ops.client_id(RUN_SID, digest),
+                        "i": UUID,
+                        "b": "Progress (tests): 12 passing",
+                    },
+                ),
+            ],
+        )
+        self.assertEqual(self.ledger(), {RUN_SID: {"steps": ["start", digest]}})
+
+    def test_a_redelivered_start_whose_ledger_write_was_lost_is_found_not_reposted(self):
+        start = delegate_event("progress", name="start", text="x")
+        with mock.patch.object(os, "replace", side_effect=OSError("disk full")):
+            self.assertFalse(self.deliver(start))
+        self.assertTrue(self.deliver(start))
+        posts = [v["c"] for _, op, v in self.linear.calls if op == "comment"]
+        self.assertEqual(posts, [ops.client_id(RUN_SID, "start")])
+        self.assertEqual(self.ledger()[RUN_SID]["steps"], ["start"])
+
+    def test_a_resumed_attempt_finds_a_start_whose_ledger_write_was_lost(self):
+        self.linear.comments[ops.client_id(RUN_SID, "start")] = {"body": "x", "service": CLAIM_KEY}
+        self.assertTrue(self.deliver(delegate_event("progress", attempt=2, name="start", text="x")))
+        self.assertEqual(
+            self.linear.calls, [(CLAIM_KEY, "find", {"c": ops.client_id(RUN_SID, "start")})]
+        )
+
+    def test_a_failed_post_is_false(self):
+        self.linear.fail = lambda op, _v: (
+            LinearError("linear api error: down") if op == "comment" else None
+        )
+        self.assertFalse(self.deliver(delegate_event("progress", name="start", text="x")))
+        self.assertFalse(os.path.exists(os.path.join(self.workdir, writeback.LEDGER)))
+
+
+class RefusedEvents(Events):
+    def test_what_cannot_be_written_raises_before_any_write(self):
+        other = "9c1d2e3f-4a5b-4c6d-8e7f-a0b1c2d3e4f5"
+        for name, kwargs, e, error in (
+            (
+                "another workdir",
+                {"workdir": self.cfg.run_dir("TASK-2")},
+                delegate_event("begun"),
+                ConfigError,
+            ),
+            ("a bad issue id", {"issue": "../x"}, delegate_event("begun"), ConfigError),
+            ("no start row", {}, delegate_event("begun", sid=other), ValueError),
+        ):
+            with self.subTest(name), self.assertRaises(error):
+                self.deliver(e, **kwargs)
+        self.assertEqual(self.linear.calls, [])
+        self.assertFalse(os.path.exists(os.path.join(self.workdir, writeback.LEDGER)))
+
+    def test_a_claimed_role_without_write_back_raises(self):
+        other = "9c1d2e3f-4a5b-4c6d-8e7f-a0b1c2d3e4f5"
+        runs.note(
+            self.cfg.runs_log,
+            "start",
+            **{**vars(replace(CLAIM, sid=other, role="dummy")), "target": None, "uuid": UUID},
+        )
+        with self.assertRaisesRegex(ConfigError, "dummy"):
+            self.deliver(delegate_event("begun", sid=other))
+        self.assertEqual(self.linear.calls, [])
+
+
+def outcome_data(**fields):
+    return {
+        "status": "done",
+        "title": "TASK-1: x",
+        "summary": "Ready.",
+        "questions": [],
+        "url": PR,
+        "files": [],
+        "deliverable": "",
+    } | fields
+
+
+def session_body(line):
+    return f"Run {RUN_SID} · {line}\n\n```\n{RESUME_COMMAND}\n```"
+
+
+class FinishedEvents(Events):
+    def test_an_outcome_is_written_back_then_the_session_ends(self):
+        self.assertTrue(self.deliver(delegate_event("begun")))
+        n = len(self.linear.calls)
+        self.assertTrue(self.deliver(self.finished(outcome=outcome_data())))
+        harness, states = self.cfg.harness_key, self.cfg.states
+        ended = session_body(f"done · #2 · {STARTED} → {RESTARTED} · exit 0")
+        self.assertEqual(
+            self.linear.calls[n:],
+            [
+                (CLAIM_KEY, "read", {"i": UUID}),
+                (CLAIM_KEY, "find", {"c": ops.client_id(RUN_SID, "comment")}),
+                (
+                    CLAIM_KEY,
+                    "comment",
+                    {"c": ops.client_id(RUN_SID, "comment"), "i": UUID, "b": "Build ready: Ready."},
+                ),
+                (CLAIM_KEY, "attach", {"i": UUID, "u": PR, "t": "TASK-1: x"}),
+                (CLAIM_KEY, "reread", {"i": UUID}),
+                (CLAIM_KEY, "state", {"i": UUID, "s": states["in_review"]}),
+                (harness, "update", {"c": RUN_SESSION, "b": ended}),
+                (harness, "find", {"c": RUN_SESSION}),
+            ],
+        )
+        self.assertEqual(
+            self.ledger(),
+            {
+                RUN_SID: {
+                    "steps": ["comment", f"attach:{PR}", "move:in_review", "outcome"],
+                    "attempts": {"1": {"started_at": STARTED, "seq": 2, "ended_at": RESTARTED}},
+                }
+            },
+        )
+
+    def test_the_same_finished_twice_writes_once(self):
+        self.assertTrue(self.deliver(delegate_event("begun")))
+        self.assertTrue(self.deliver(self.finished(outcome=outcome_data())))
+        n = len(self.linear.calls)
+        self.assertTrue(self.deliver(self.finished(outcome=outcome_data())))
+        self.assertEqual(self.linear.calls[n:], [])
+        comments = [v for _, op, v in self.linear.calls if op == "comment" and v.get("i") == UUID]
+        self.assertEqual(len(comments), 1)
+        self.assertEqual(len(self.linear.writes("state")), 1)
+
+    def test_a_redelivered_outcome_whose_ledger_write_was_lost_completes_without_a_repost(self):
+        with mock.patch.object(os, "replace", side_effect=OSError("disk full")):
+            self.assertFalse(self.deliver(self.finished(outcome=outcome_data())))
+        self.assertEqual(self.linear.writes("state"), [])
+        self.assertTrue(self.deliver(self.finished(outcome=outcome_data())))
+        posts = [
+            v["c"]
+            for _, op, v in self.linear.calls
+            if op == "comment" and "i" in v and v["i"] == UUID
+        ]
+        self.assertEqual(posts, [ops.client_id(RUN_SID, "comment")])
+        self.assertEqual(len(self.linear.writes("state")), 1)
+        self.assertEqual(self.ledger()[RUN_SID]["steps"][-2:], ["move:in_review", "outcome"])
+
+    def test_a_valid_outcome_is_honored_on_a_nonzero_exit(self):
+        self.assertTrue(self.deliver(self.finished(1, outcome=outcome_data())))
+        self.assertEqual(self.linear.state, self.cfg.states["in_review"])
+        self.assertEqual(self.ledger()[RUN_SID]["steps"][-1], "outcome")
+        self.assertEqual(
+            self.linear.comments[RUN_SESSION]["body"],
+            session_body(f"done · #1 · {STARTED} → {RESTARTED} · exit 1"),
+        )
+
+    def test_no_outcome_ends_the_session_and_leaves_the_issue_in_progress(self):
+        self.assertTrue(self.deliver(delegate_event("begun")))
+        n = len(self.linear.calls)
+        self.assertTrue(self.deliver(self.finished(1, error="the client exited 1")))
+        ended = session_body(f"interrupted · #2 · {STARTED} → {RESTARTED} · exit 1")
+        harness = self.cfg.harness_key
+        self.assertEqual(
+            self.linear.calls[n:],
+            [
+                (harness, "update", {"c": RUN_SESSION, "b": ended}),
+                (harness, "find", {"c": RUN_SESSION}),
+            ],
+        )
+        self.assertEqual(self.linear.state, self.cfg.states["in_progress"])
+        self.assertIn(
+            f"writeback no-outcome {RUN_ISSUE} sid={RUN_SID} error=the client exited 1",
+            self.said(),
+        )
+        self.assertNotIn("steps", self.ledger()[RUN_SID])
+
+    def test_a_finished_without_begun_starts_its_session_then(self):
+        self.assertTrue(self.deliver(self.finished(1, error="launch failed")))
+        body = session_body(f"interrupted · #1 · {STARTED} → {RESTARTED} · exit 1")
+        self.assertEqual(self.linear.comments[RUN_SESSION]["body"], body)
+        self.assertEqual(
+            self.ledger()[RUN_SID]["attempts"],
+            {"1": {"started_at": STARTED, "seq": 1, "ended_at": RESTARTED}},
+        )
+
+    def test_a_failed_move_leaves_no_outcome_and_a_replay_moves(self):
+        self.linear.fail = lambda op, _v: (
+            LinearError("linear api error: down") if op == "state" else None
+        )
+        self.assertFalse(self.deliver(self.finished(outcome=outcome_data())))
+        self.assertEqual(self.ledger()[RUN_SID]["steps"], ["comment", f"attach:{PR}"])
+        self.linear.fail = lambda _op, _v: None
+        n = len(self.linear.calls)
+        self.assertTrue(self.deliver(self.finished(outcome=outcome_data())))
+        self.assertEqual([op for _, op, _ in self.linear.calls[n:]], ["read", "reread", "state"])
+        self.assertEqual(
+            self.ledger()[RUN_SID]["steps"],
+            ["comment", f"attach:{PR}", "move:in_review", "outcome"],
+        )
+
+    def test_an_invalid_outcome_raises_before_any_write(self):
+        for name, data in (
+            ("a missing field", {"status": "done", "title": "x", "summary": "y"}),
+            ("an unknown status", outcome_data(status="maybe")),
+            ("an unknown field", outcome_data(extra="x")),
+            ("questions not a list of str", outcome_data(questions="why?")),
+            ("a non-str title", outcome_data(title=1)),
+        ):
+            with self.subTest(name), self.assertRaises(ValueError):
+                self.deliver(self.finished(outcome=data))
+        self.assertEqual(self.linear.calls, [])
+        self.assertFalse(os.path.exists(os.path.join(self.workdir, writeback.LEDGER)))
+
+
+class LimitEvents(Events):
+    def setUp(self):
+        super().setUp()
+        # POSIX TZ: CST-8 is UTC+8
+        tz = mock.patch.dict(os.environ, {"TZ": "CST-8"})
+        tz.start()
+        self.addCleanup(time.tzset)
+        self.addCleanup(tz.stop)
+        time.tzset()
+
+    def limited(self, attempt=1, resets_at=T):
+        return self.finished(-9, limit={"resets_at": resets_at}, attempt=attempt)
+
+    def rows(self):
+        return [
+            {k: v for k, v in row.items() if k != "ts"}
+            for row in map(json.loads, open(self.cfg.runs_log, encoding="utf-8"))
+            if row["kind"] == "limit"
+        ]
+
+    def row(self, resets_at="2026-10-11T18:00:00+08:00"):
+        return {
+            "kind": "limit",
+            "issue": RUN_ISSUE,
+            "sid": RUN_SID,
+            "client": "fake",
+            "resets_at": resets_at,
+            "delegate_kind": "fake",
+        }
+
+    def test_a_limit_comments_moves_and_records_its_row_then_ends_the_session(self):
+        self.assertTrue(self.deliver(delegate_event("begun")))
+        n = len(self.linear.calls)
+        self.assertTrue(self.deliver(self.limited()))
+        harness, states = self.cfg.harness_key, self.cfg.states
+        ended = session_body(f"limit · #2 · {STARTED} → {RESTARTED} · exit -9")
+        self.assertEqual(
+            self.linear.calls[n:],
+            [
+                (CLAIM_KEY, "find", {"c": ops.client_id(RUN_SID, "limit")}),
+                (
+                    CLAIM_KEY,
+                    "comment",
+                    {
+                        "c": ops.client_id(RUN_SID, "limit"),
+                        "i": UUID,
+                        "b": "Usage limit, resets at 2026-10-11T18:00:00+08:00.",
+                    },
+                ),
+                (CLAIM_KEY, "reread", {"i": UUID}),
+                (CLAIM_KEY, "state", {"i": UUID, "s": states["in_review"]}),
+                (harness, "update", {"c": RUN_SESSION, "b": ended}),
+                (harness, "find", {"c": RUN_SESSION}),
+            ],
+        )
+        self.assertEqual(self.rows(), [self.row()])
+        self.assertEqual(self.ledger()[RUN_SID]["steps"], ["limit", "limit-move:1", "limit-row:1"])
+
+    def test_an_outcome_with_a_limit_writes_both_and_moves_once(self):
+        both = self.finished(-9, outcome=outcome_data(), limit={"resets_at": None})
+        self.assertTrue(self.deliver(both))
+        self.assertEqual(
+            self.ledger()[RUN_SID]["steps"],
+            [
+                "comment",
+                f"attach:{PR}",
+                "move:in_review",
+                "outcome",
+                "limit",
+                "limit-move:1",
+                "limit-row:1",
+            ],
+        )
+        self.assertEqual(len(self.linear.writes("state")), 1)
+        self.assertEqual(self.rows(), [self.row(None)])
+        self.assertEqual(
+            self.linear.comments[RUN_SESSION]["body"],
+            session_body(f"done · #1 · {STARTED} → {RESTARTED} · exit -9"),
+        )
+
+    def test_an_unknown_reset_time_says_so(self):
+        self.assertTrue(self.deliver(self.limited(resets_at=None)))
+        body = self.linear.comments[ops.client_id(RUN_SID, "limit")]["body"]
+        self.assertEqual(body, "Usage limit, reset time unknown.")
+        self.assertEqual(self.rows(), [self.row(None)])
+
+    def test_the_same_limit_twice_moves_once_and_records_one_row(self):
+        self.assertTrue(self.deliver(self.limited()))
+        n = len(self.linear.calls)
+        self.assertTrue(self.deliver(self.limited()))
+        self.assertEqual(self.linear.calls[n:], [])
+        self.assertEqual(len(self.linear.writes("state")), 1)
+        self.assertEqual(self.rows(), [self.row()])
+
+    def test_a_later_attempts_limit_moves_again_without_a_second_comment(self):
+        self.assertTrue(self.deliver(self.limited()))
+        self.linear.state = self.cfg.states["in_progress"]
+        n = len(self.linear.calls)
+        self.assertTrue(self.deliver(self.limited(attempt=2)))
+        self.assertEqual(
+            [op for service, op, _ in self.linear.calls[n:] if service == CLAIM_KEY],
+            ["reread", "state"],
+        )
+        self.assertEqual(len([c for c in self.linear.comments if c != RUN_SESSION]), 1)
+        self.assertEqual(self.rows(), [self.row(), self.row()])
+        self.assertEqual(
+            self.ledger()[RUN_SID]["steps"],
+            ["limit", "limit-move:1", "limit-row:1", "limit-move:2", "limit-row:2"],
+        )
+
+    def test_a_failed_row_still_ends_the_session_and_a_replay_records_it(self):
+        os.chmod(self.cfg.runs_log, 0o400)
+        self.addCleanup(os.chmod, self.cfg.runs_log, 0o600)
+        self.assertFalse(self.deliver(self.limited()))
+        self.assertEqual(self.ledger()[RUN_SID]["steps"], ["limit", "limit-move:1"])
+        self.assertIn("ended_at", self.ledger()[RUN_SID]["attempts"]["1"])
+        self.assertTrue(
+            any(
+                line.startswith(f"writeback step-error {RUN_ISSUE} sid={RUN_SID} step=limit-row:1 ")
+                for line in self.said()
+            )
+        )
+        os.chmod(self.cfg.runs_log, 0o600)
+        n = len(self.linear.calls)
+        self.assertTrue(self.deliver(self.limited()))
+        self.assertEqual(self.linear.calls[n:], [])
+        self.assertEqual(self.rows(), [self.row()])

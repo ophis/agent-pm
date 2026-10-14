@@ -22,8 +22,9 @@ from agent_pm.delegate.composer.run import (
 from agent_pm.delegate.composer.teams import catalog as team_catalog
 from agent_pm.delegate.composer.teams import index, role_tables, team
 from agent_pm.delegate.composer.types import Intent
+from agent_pm.delegate.config import read_config
 from agent_pm.session import Effort
-from agent_pm.utils import LOCAL, read_project
+from agent_pm.utils import LOCAL
 
 from delegate.tests.case import SRC, Case
 from delegate.tests.unit.composer.prompts import (
@@ -734,7 +735,7 @@ class Client(Fake):
         )
 
     def test_a_read_config_given_is_used_reading_no_file(self):
-        cfg = read_project("delegate")
+        cfg = read_config()
         want = (resolve("pm"), trusted_dirs(), index("pm"))
         original = open
 

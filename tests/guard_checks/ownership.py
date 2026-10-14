@@ -7,7 +7,7 @@ import re
 import tokenize
 
 from tests.guard_checks.common import _files, _strings
-from tests.guard_data.delegate import CONFIG_FILE
+from tests.guard_data.delegate import CONFIG_FILE, DELEGATE_SRC
 from tests.guard_data.linear_orchestrator import HANDOFF_HOME, ORCH, ORCH_PROJECT
 from tests.guard_data.session import (
     ADAPTERS_HOME,
@@ -16,7 +16,6 @@ from tests.guard_data.session import (
     STATUS_LOG_HOME,
     TMUX_HOME,
 )
-from tests.guard_data.utils import CONFIG_LEVELS
 from tests.guards import PKG, PROJECTS
 
 CLIENT = re.compile(r"claude|codex", re.I)
@@ -40,7 +39,7 @@ LOWER = tuple(p for p in PROJECTS if p != ORCH_PROJECT)
 
 
 DISPLAY_NAMES = re.compile(
-    r"(?<![a-zA-Z0-9])(?:pane|opener|split_from)(?![a-zA-Z0-9])|--split|@record|@pane"
+    r"(?<![a-zA-Z0-9])(?:pane|opener|split_from)(?![a-zA-Z0-9])|--split|@record|@pane|@opener"
 )
 
 
@@ -192,8 +191,6 @@ def standalone(repo: str) -> list[str]:
                 rel = os.path.relpath(os.path.join(top, name), repo).replace(os.sep, "/")
                 with open(os.path.join(top, name), encoding="utf-8", errors="replace") as f:
                     for number, line in enumerate(f, 1):
-                        if rel == CONFIG_LEVELS and line.startswith("LEVELS = "):
-                            continue
                         found.update(f"{rel}:{number}: names {w}" for w in LINEAR.findall(line))
     return sorted(found)
 
@@ -256,6 +253,28 @@ def session_display(repo: str) -> list[str]:
             if DISPLAY_NAMES.search(value)
         )
     return sorted(found)
+
+
+def delegate_display(repo: str) -> list[str]:
+    found = set()
+    for rel, text in _lower_files(repo, ".py", projects=("delegate",)):
+        if rel.startswith(DELEGATE_SRC):
+            found.update(
+                f"{rel}:{line}: interprets display {value!r}"
+                for line, value in _code_words(text, ast.parse(text, rel))
+                if DISPLAY_NAMES.search(value)
+            )
+    return sorted(found)
+
+
+def delegate_tmux(repo: str) -> list[str]:
+    return [
+        f"{rel}:{number}: names tmux"
+        for rel, text in _lower_files(repo, ".py", projects=("delegate",))
+        if rel.startswith(DELEGATE_SRC)
+        for number, line in enumerate(text.splitlines(), 1)
+        if "tmux" in line.lower()
+    ]
 
 
 def status_log_format(repo: str) -> list[str]:

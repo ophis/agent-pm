@@ -1,5 +1,6 @@
-"""HarnessDelegate names its harness session in a Host's close failure; preview and instruct write
-no state; owner overlays shape its run.
+"""HarnessDelegate names its harness session in a Host's close failure; its harness environment
+holds no launcher variable; preview and instruct write no state; owner overlays shape its run;
+resume continues a run in the mode it records or in the one it is given.
 """
 
 import json
@@ -9,9 +10,9 @@ from unittest import mock
 from agent_pm.delegate import ConfigError, Result, Spec
 from agent_pm.delegate.composer import Composer, RunParams
 from agent_pm.delegate.engine.harness_delegate import HarnessDelegate
-from agent_pm.session import DriverError
+from agent_pm.session import DriverError, Exited, Liveness, Reply
 
-from delegate.tests.fakes.harness_session import HarnessSession, RecordingHost
+from delegate.tests.fakes.harness_session import HarnessSession, RecordingHost, harness_launches
 from delegate.tests.harness import SID, HarnessCase
 
 
@@ -92,6 +93,17 @@ class InstructTest(HarnessCase):
         self.assertEqual((HarnessSession.started, RecordingHost.launches), ([], []))
 
 
+class LaunchTest(HarnessCase):
+    def test_the_launchers_variables_stay_out_of_the_harness_environment(self):
+        launcher = {"AGENT_PM_SID": SID, "AGENT_PM_EVENTS": "/manager/events", "KEPT": "kept"}
+        with mock.patch.dict(os.environ, launcher):
+            self.make().detach()
+        environment = RecordingHost.launches[0]["env"]
+        self.assertNotIn("AGENT_PM_SID", environment)
+        self.assertNotIn("AGENT_PM_EVENTS", environment)
+        self.assertEqual(environment["KEPT"], "kept")
+
+
 class UsageSession(HarnessSession):
     clients = []
 
@@ -131,3 +143,70 @@ class OverlayTest(HarnessCase):
         self.stop(record)
         HarnessDelegate.attach(self.work, session_cls=HarnessSession).resume()
         self.assertEqual(self.metadata()["plan"]["run"]["effort"], "high")
+
+
+class ResumeModeTest(HarnessCase):
+    def gave_up(self, mode):
+        """A detached run whose harness ended without an outcome, a tui agent session left open."""
+        spec = Spec("input", self.work, mode=mode, client="fake", sid=SID, cwd=self.work)
+        self.make(spec=spec).detach()
+        view = HarnessDelegate.attach(self.work, session_cls=HarnessSession)
+        view.close()
+        HarnessSession.script = (Reply("No outcome block."), Exited(0))
+        self.assertIsNone(view.run().outcome)
+        self.assertFalse(view.alive())
+
+    def resumed(self, **mode):
+        launches = len(harness_launches())
+        view = HarnessDelegate.attach(self.work, session_cls=HarnessSession)
+        record = view.resume(**mode)
+        self.assertEqual(len(harness_launches()), launches + 1)
+        self.assertEqual(view.resume(**mode), record)
+        self.assertEqual(len(harness_launches()), launches + 1)
+        return record, self.metadata()
+
+    def modes(self, state):
+        return (state["spec"]["mode"], state["plan"]["session"]["mode"], state["attempt"])
+
+    def test_a_tui_run_that_gave_up_resumes_headless_with_its_sid_and_records_the_mode(self):
+        self.gave_up("tui")
+        agent = HarnessSession.live[self.metadata()["agent_name"]]
+        record, state = self.resumed(mode="headless")
+        self.assertEqual((record.sid, record.sessions), (SID, (state["harness_name"],)))
+        self.assertEqual(self.modes(state), ("headless", "headless", 2))
+        self.assertEqual((state["spec"]["name"], state["spec"]["events"]), (None, None))
+        self.assertEqual(agent.state(), Liveness.ABSENT)
+        self.assertEqual(HarnessSession.preflights[-1]["spec"].mode, "headless")
+
+    def test_without_a_mode_a_tui_run_resumes_in_tui(self):
+        self.gave_up("tui")
+        before = self.metadata()
+        record, state = self.resumed()
+        self.assertEqual(record.sessions, (before["harness_name"], before["agent_name"]))
+        self.assertEqual(self.modes(state), ("tui", "tui", 2))
+        self.assertEqual(
+            (state["spec"]["name"], state["spec"]["events"]),
+            (before["spec"]["name"], before["spec"]["events"]),
+        )
+
+    def test_a_headless_run_resumes_in_tui_with_its_agent_session_live(self):
+        self.gave_up("headless")
+        record, state = self.resumed(mode="tui")
+        self.assertEqual(record.sessions, (state["harness_name"], state["agent_name"]))
+        self.assertEqual(self.modes(state), ("tui", "tui", 2))
+        self.assertEqual(
+            (state["spec"]["name"], state["spec"]["events"]), (state["agent_name"], state["events"])
+        )
+        self.assertEqual(HarnessSession.live[state["agent_name"]].sid, SID)
+
+    def test_a_mode_detach_refuses_is_refused_changing_nothing(self):
+        self.gave_up("tui")
+        before = self.metadata()
+        launches = len(harness_launches())
+        view = HarnessDelegate.attach(self.work, session_cls=HarnessSession)
+        for mode in ("in_process", "remote"):
+            with self.subTest(mode=mode), self.assertRaisesRegex(ConfigError, repr(mode)):
+                view.resume(mode=mode)
+        self.assertEqual(self.metadata(), before)
+        self.assertEqual(len(harness_launches()), launches)
+        self.assertEqual(HarnessSession.live[before["agent_name"]].state(), Liveness.LIVE)

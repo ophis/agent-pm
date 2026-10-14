@@ -101,6 +101,10 @@ _Avoid_: document, result, report
 The layer that turns a Linear issue into free text, calls the delegate and maps the agent run's outcome back to Linear. In code: `linear-orchestrator/src/agent_pm/linear_orchestrator/`.
 _Avoid_: orchestration layer, runner
 
+**Issue**:
+A Linear issue: the unit of work the Linear orchestrator claims for one role, and the place its agent runs report to. Chinese text says "issue" too.
+_Avoid_: ticket, card, 票
+
 **Write-back**:
 The Linear orchestrator's mapping of an agent run's start and progress marks and its outcome to Linear. In code: `linear-orchestrator/src/agent_pm/linear_orchestrator/engine/writeback.py`.
 
