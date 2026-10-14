@@ -1087,7 +1087,7 @@ class RouterOutages(TickBase):
 
 
 class ClientUsage(Base):
-    """The usage gate's thresholds over the Driver's Usage (the old rate_limit_event rows)."""
+    """The usage gate's thresholds over the Delegate's Usage (the old rate_limit_event rows)."""
 
     def gate(self):
         self.write_runs()
@@ -3010,8 +3010,8 @@ class HistoryReads(Base):
 
 
 class StaleRunRecovery(Base):
-    """FR-47: liveness and resumability are the Driver's session status; what it cannot say changes
-    nothing.
+    """FR-47: liveness and resumability are the run view's session status; what it cannot say
+    changes nothing.
     """
 
     def test_an_unrecorded_sid_returns_to_todo_only_after_live(self):

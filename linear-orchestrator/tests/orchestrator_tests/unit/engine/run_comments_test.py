@@ -1,6 +1,6 @@
 """Run comments: one comment written by its session id,
-numbered `#<seq>`, repaired at the end after a late write; the resume command is the Driver's
-view session_info."""
+numbered `#<seq>`, repaired at the end after a late write; the resume command is the run view's
+session_info."""
 
 import threading
 import time
@@ -14,7 +14,6 @@ from agent_pm.session import SessionStatus
 from agent_pm.utils import timestamp
 from orchestrator_tests import case
 from orchestrator_tests.process_fixtures import CalledProcessError
-from orchestrator_tests.unit.fake_api import FakeApi
 
 SID = "0b6f2c1e-6d0a-4c1b-9a51-3f1f6b0e2a7d"
 
@@ -35,9 +34,9 @@ CMD = f"cd /w/TASK-12 && claude --resume {SID}"
 NOT_FOUND = LinearError("linear api error: [{'message': 'Entity not found: Comment'}]")
 
 
-def record(driver, started_at=T1):
+def record(info, started_at=T1):
     return run_comments.base(
-        sid=SID, workdir=WORKDIR, client=CLIENT, started_at=started_at, info=driver.session_status
+        sid=SID, workdir=WORKDIR, client=CLIENT, started_at=started_at, info=info
     )
 
 
@@ -125,16 +124,10 @@ class Late:
 
 class Case(case.Case):
     def setUp(self):
-        self.api = FakeApi()
-        self.session, self.info = (
-            mock.Mock(return_value=None),
-            mock.Mock(return_value=SessionStatus("yes", None, CMD)),
-        )
-        self.api.session_record = self.session
-        self.api.session_status = self.info
+        self.info = mock.Mock(return_value=SessionStatus("yes", None, CMD))
 
     def record(self, started_at=T1):
-        return record(self.api, started_at)
+        return record(self.info, started_at)
 
 
 class Record(Case):
@@ -147,7 +140,7 @@ class Record(Case):
                 "client": CLIENT,
                 "started_at": T1,
                 "seq": 0,
-                "info": self.api.session_status,
+                "info": self.info,
             },
         )
 
@@ -309,17 +302,9 @@ class Record(Case):
 
 
 class Command(Case):
-    def test_the_driver_resolves_its_resume_command_from_the_run_directory(self):
-        for entry in (
-            None,
-            {"kind": "session", "cwd": "/data/my repo", "resume": "rm -rf ~"},
-        ):
-            with self.subTest(entry=entry):
-                self.session.return_value = entry
-                self.info.reset_mock()
-                self.assertEqual(run_comments.command(self.record()), CMD)
-                self.session.assert_not_called()
-                self.info.assert_called_once_with()
+    def test_the_run_view_resolves_its_resume_command(self):
+        self.assertEqual(run_comments.command(self.record()), CMD)
+        self.info.assert_called_once_with()
 
     def test_built_fresh_each_time_never_read_from_the_record(self):
         rec = self.record()

@@ -246,7 +246,7 @@ class Flow(Case):
 
 
 class TmuxFlow(Flow):
-    """A private tmux server (live_tmux) with session MANAGER for the Driver's sessions; fake_gh as
+    """A private tmux server (live_tmux) with session MANAGER for the sessions; fake_gh as
     `gh` over self.gh (write_gh), REPO a bare repo that HOME's .gitconfig puts in place of
     github.com.
     """

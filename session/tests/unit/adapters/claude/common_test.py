@@ -10,6 +10,7 @@ from unittest import mock
 from agent_pm.session.adapters.claude import ClaudeAdapter
 from agent_pm.session.engine.types import (
     Access,
+    Mode,
     SessionStatus,
     Usage,
     Window,
@@ -148,19 +149,26 @@ class ReadRulesTest(Base):
                         "without *?[]{}()\\,",
                     )
 
-        self.driver_dependencies = {
+        self.session_dependencies = {
             "host": mock.Mock(tmux_path=mock.Mock(return_value="/protected/tmux"))
         }
         self.configure_session(
             {"claude": {"implementation": "agent_pm.session.adapters.claude:ClaudeAdapter"}}
         )
         for read in bad:
-            for mode in ("headless", "tui"):
+            for mode in (Mode.HEADLESS, Mode.TUI):
                 with self.subTest(read=read, mode=mode):
                     launched = [self.enterContext(mock.patch(target)) for target in SPAWNS]
-                    spec = Spec(workdir=self.work, sid=SID, access=Access(reads=("/ok", read)))
+                    spec = Spec(
+                        workdir=self.work,
+                        sid=SID,
+                        access=Access(reads=("/ok", read)),
+                        client="claude",
+                        mode=mode,
+                        prompt="hi",
+                    )
                     self.refused(
-                        partial(self.driver.start, "claude", mode, "hi", spec),
+                        partial(self.session_cls.start, spec),
                         f"claude: read dir {read!r:.80} must be a printable absolute path without *?[]{{}}()\\,",
                     )
                     for spawn in launched:

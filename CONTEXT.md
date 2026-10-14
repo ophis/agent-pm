@@ -38,7 +38,7 @@ _Avoid_: core skill
 The component that turns a role, an optional task and free-text input into an agent run: it has the composer build the prompt, runs it through the session layer, reads the agent run's replies (progress, outcome) and decides nudges and give-ups. In code: `delegate/src/agent_pm/delegate/`.
 
 **Driver**:
-The Delegate interface for starting a prompt: `AgentDriver` starts a Session through its configured class; `InstructionDriver` returns an Instruction file directly. In code: `delegate/src/agent_pm/delegate/engine/drivers.py`. The session package's `Driver` is a deprecated forwarding wrapper.
+The Delegate interface for starting a prompt: `AgentDriver` starts a Session through its configured class; `InstructionDriver` returns an Instruction file directly. In code: `delegate/src/agent_pm/delegate/engine/drivers.py`.
 
 **Harness**:
 The process that runs one detached Delegate run to its end as session `<name>-drive` on its harness Host, the run's authoritative state kept in the State dir. In code: `delegate/src/agent_pm/delegate/engine/harness.py`; the State dir: `engine/state.py`.
@@ -100,6 +100,10 @@ _Avoid_: document, result, report
 **Linear orchestrator**:
 The layer that turns a Linear issue into free text, calls the delegate and maps the agent run's outcome back to Linear. In code: `linear-orchestrator/src/agent_pm/linear_orchestrator/`.
 _Avoid_: orchestration layer, runner
+
+**Issue**:
+A Linear issue: the unit of work the Linear orchestrator claims for one role, and the place its agent runs report to. Chinese text says "issue" too.
+_Avoid_: ticket, card, 票
 
 **Write-back**:
 The Linear orchestrator's mapping of an agent run's start and progress marks and its outcome to Linear. In code: `linear-orchestrator/src/agent_pm/linear_orchestrator/engine/writeback.py`.

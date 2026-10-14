@@ -1,4 +1,6 @@
-"""delegate/event/types.py: OutcomeStatus and STATUSES, its members in order."""
+"""delegate/event/types.py: OutcomeStatus and STATUSES, its members in order; the Delegate exports
+OutcomeStatus.
+"""
 
 from agent_pm import delegate
 from agent_pm.delegate.event.types import STATUSES, OutcomeStatus
@@ -12,9 +14,6 @@ class Statuses(Case):
         self.assertEqual(STATUSES, tuple(OutcomeStatus))
         self.assertEqual(STATUSES, ("done", "needs_input", "failed"))
 
-    def test_delegate_exports_both(self):
-        for name in ("OutcomeStatus", "STATUSES"):
-            with self.subTest(name=name):
-                self.assertIn(name, delegate.__all__)
+    def test_delegate_exports_outcome_status(self):
+        self.assertIn("OutcomeStatus", delegate.__all__)
         self.assertIs(delegate.OutcomeStatus, OutcomeStatus)
-        self.assertIs(delegate.STATUSES, STATUSES)

@@ -3,7 +3,6 @@
 import os
 import subprocess
 
-from agent_pm.delegate import composer
 from agent_pm.delegate.cli import listing
 from agent_pm.delegate.composer import Composer, RunParams
 
@@ -56,8 +55,9 @@ class ActAs(Case):
             (result.returncode, result.stdout, result.stderr),
             (0, "", f"delegate: instruction delivered: {out}\n"),
         )
-        expected = composer.render(
-            composer.resolve("dummy-tester", "echo"),
+        composition = Composer()
+        expected = composition.render(
+            composition.resolve("dummy-tester", "echo"),
             RunParams(input="Hello.", out=out, workdir=workdir),
         )
         with open(out, "rb") as stream:

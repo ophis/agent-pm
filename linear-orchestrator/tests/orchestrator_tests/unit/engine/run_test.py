@@ -23,6 +23,8 @@ from agent_pm.linear_orchestrator.engine import log as event_log
 from agent_pm.linear_orchestrator.engine.types import Spec as RunSpec
 from agent_pm.linear_orchestrator.engine.types import Stopped
 from agent_pm.session import SIGNALS, DriverError
+from agent_pm.session import Spec as SessionSpec
+from orchestrator_tests.config_fixtures import HARNESS_DELEGATE
 from orchestrator_tests.unit.board_ids import STATES
 from orchestrator_tests.unit.config_fixtures import GATE
 from orchestrator_tests.unit.fake_api import FakeApi
@@ -38,7 +40,6 @@ from orchestrator_tests.unit.run_fixtures import (
     UUID,
     Base,
     Gql,
-    local,
     logged,
 )
 
@@ -93,19 +94,29 @@ def cid(step):
 
 
 class FakeRun:
-    """delegate.run: records its call, raises `error`, else sends Begun (unless `begun` is False),
-    then each step (an event, or a callable it calls), then Finished when the result has an outcome,
-    and returns the result.
+    """The Delegate run.py builds (its delegate_cls) and runs: records each build's (role, spec,
+    display, overlays) and each run's (the role's run its overlays resolve, spec); a run raises
+    `error`, else sends Begun (unless `begun` is False), then each step (an event, or a callable it
+    calls), then Finished when the result has an outcome, and returns the result. Its session_info
+    is `api`'s inspect of the run's session.
     """
 
-    def __init__(self, order, result=NO_OUTCOME, steps=(), error=None, *, begun=True):
-        self.order, self.result, self.steps, self.error = order, result, steps, error
-        self.begun, self.calls, self.dirs = begun, [], []
+    def __init__(self, order, api, result=NO_OUTCOME, steps=(), error=None, *, begun=True):
+        self.order, self.api, self.result, self.steps, self.error = order, api, result, steps, error
+        self.begun, self.built, self.calls, self.dirs = begun, [], [], []
 
-    def __call__(self, run, spec, *, driver, on_event):
-        self.driver = driver
+    def __call__(self, role, spec, *, display=None, callback=None, overlays=()):
+        self.built.append((role, spec, display, tuple(overlays)))
+        return self
+
+    def session_info(self):
+        spec = self.built[-1][1]
+        return self.api.inspect(SessionSpec(workdir=spec.workdir, client=spec.client, sid=spec.sid))
+
+    def run(self, on_event):
+        role, spec, _, overlays = self.built[-1]
         self.order.append("run")
-        self.calls.append((run, spec))
+        self.calls.append((HARNESS_DELEGATE.resolve(role, overlays=overlays), spec))
         self.dirs.append(os.path.isdir(spec.workdir))
         if self.error:
             raise self.error
@@ -131,7 +142,7 @@ class CleanupDelegate(FakeDelegate):
 
     @classmethod
     def resolve(cls, role, task=None, *, overlays=()):
-        return delegate.resolve_run(role, task, overlays=overlays)
+        return HARNESS_DELEGATE.resolve(role, task, overlays=overlays)
 
     def close(self):
         owner = self.owners[self.workdir]
@@ -150,8 +161,8 @@ class Case(Base):
     def setUp(self):
         super().setUp()
         self.handlers, self.order = {}, []
-        self.delegate = FakeRun(self.order)
-        self.api = FakeApi(self.order, lambda: self.gql)
+        self.api = FakeApi(self.order)
+        self.delegate = FakeRun(self.order, self.api)
         self.api.records[SID] = {"cwd": self.rd}
         for p in (
             mock.patch.object(signal, "signal", lambda s, h: self.handlers.__setitem__(s, h)),
@@ -225,8 +236,7 @@ class Case(Base):
                     client=client,
                 ),
                 gql=self.gql,
-                run=self.delegate,
-                driver=self.api,
+                delegate_cls=self.delegate,
                 now=lambda: NOW,
             )
         self.err = err.getvalue()
@@ -290,6 +300,7 @@ class RunExecution(Case):
                     self.rd,
                     client=CLIENT,
                     sid=SID,
+                    name=TUI,
                     out=os.path.join(self.rd, "out.md"),
                     cwd=self.rd,
                 ),
@@ -298,12 +309,6 @@ class RunExecution(Case):
         self.assertEqual(self.delegate.dirs, [True])
         self.assertEqual(self.api.info, [(CLIENT, SID, self.rd)] * 2)
         self.assertEqual(os.environ["PATH"], config.path())
-        self.assertEqual([o for o in self.order if o[0] == "show"], [])
-
-    def test_main_passes_the_caller_owned_driver_to_delegate(self):
-        self.done()
-        self.assertEqual(self.main(), 0)
-        self.assertIs(self.delegate.driver, self.api)
 
     def test_no_outcome_leaves_the_issue(self):
         self.assertEqual(self.main(), 0)
@@ -401,7 +406,7 @@ class RunExecution(Case):
     def test_a_run_error_records_its_original_cause_once(self):
         error = RuntimeError("failed run")
         error.__cause__ = ValueError("original cause")
-        self.gql, self.delegate = Gql(), FakeRun(self.order, error=error)
+        self.gql, self.delegate = Gql(), FakeRun(self.order, self.api, error=error)
         self.assertEqual(self.main(), 0)
         records = [e for e in logged(self.logs) if e["kind"] == "run-error"]
         self.assertEqual(len(records), 1)
@@ -412,7 +417,7 @@ class RunExecution(Case):
 
     def test_an_unrecorded_launch_failure_has_no_resume_command(self):
         self.api.records.clear()
-        self.delegate = FakeRun(self.order, error=delegate.ConfigError("launch failed"))
+        self.delegate = FakeRun(self.order, self.api, error=delegate.ConfigError("launch failed"))
         self.assertEqual(self.main(), 0)
         body = f"Run {SID} · {ended('interrupted', 1, seq=1)}"
         self.assertEqual(
@@ -427,7 +432,10 @@ class RunExecution(Case):
     def test_system_exit_preserves_its_integer_code_in_the_log_and_session_comment(self):
         for code, expected in ((7, 7), (0, 0), ("stopped", 1), (None, 1)):
             with self.subTest(code=code):
-                self.gql, self.delegate = Gql(), FakeRun(self.order, error=SystemExit(code))
+                self.gql, self.delegate = (
+                    Gql(),
+                    FakeRun(self.order, self.api, error=SystemExit(code)),
+                )
                 n = len(logged(self.logs))
                 self.assertEqual(self.main(), 0)
                 records = logged(self.logs)[n:]
@@ -467,7 +475,7 @@ class RunExecution(Case):
         ]
         for kw, lines in cases:
             with self.subTest(kw=kw):
-                self.gql, self.delegate = Gql(), FakeRun(self.order, **kw)
+                self.gql, self.delegate = Gql(), FakeRun(self.order, self.api, **kw)
                 n = len(self.said())
                 self.assertEqual(self.main(), 0)
                 self.assertEqual(self.said()[n + 1 :], [x.format(SID) for x in lines])
@@ -570,9 +578,6 @@ class RunTui(Case):
                     self.said()[before : before + 2],
                     ["router tui-closed TASK-7", f"run launch TASK-7 mode=new sid={SID}"],
                 )
-                self.assertFalse(
-                    any(o[0] == "sessions" for o in self.order if isinstance(o, tuple))
-                )
 
     def test_unrecorded_matching_sessions_remain_untouched(self):
         self.api.live = [*self.MINE, *self.OTHER]
@@ -610,8 +615,7 @@ class RunTui(Case):
         self.assertIn(f"writeback step TASK-7 sid={SID} step=move:in_review", self.said())
         self.assertEqual(self.gql.calls[-2:], [*updated(ended("done", 0)), REPAIR])
 
-    def test_tui_runs_in_the_delegates_tui_mode_and_shows_its_session_once_begun(self):
-        self.api.shown = "attach-command"
+    def test_tui_runs_in_the_delegates_tui_mode_at_its_display(self):
         self.done()
         extra = ("--tui", "--split=below", "--split-from=dev", "--opener=w0t0p0:ABC")
         self.assertEqual(self.main(*extra, "--events=/x/ev.log"), 0)
@@ -619,46 +623,9 @@ class RunTui(Case):
         self.assertEqual(
             (spec.mode, spec.name, spec.events, spec.sid), ("tui", TUI, "/x/ev.log", SID)
         )
-        self.assertEqual(
-            [o for o in self.order if o[0] == "show"],
-            [("show", TUI, "below", "dev", "w0t0p0:ABC", None, 2)],
-        )
-        self.assertEqual(self.err, "attach-command\n")
-        self.assertIn(f"writeback step TASK-7 sid={SID} step=move:in_review", self.said())
-
-    def test_a_tui_run_shows_as_its_roles_show_says(self):
-        for show, shown, printed in (
-            ("none", [], f"attach {TUI}\n"),
-            ("open {{session}}", [("show", TUI, None, None, None, "open {{session}}")], "x\n"),
-        ):
-            with self.subTest(show=show):
-                self.order.clear()
-                self.api.shown = "x"
-                with open(self.local, "a") as f:
-                    f.write(f'\n[delegate.roles.engineer]\nshow = "{show}"\n')
-                self.done()
-                self.assertEqual(self.main("--tui"), 0)
-                self.assertEqual([o[:-1] for o in self.order if o[0] == "show"], shown)
-                self.assertEqual(self.err, printed)
-                self.write_local(local(self.work))
-
-    def test_a_show_error_is_logged_never_raised(self):
-        self.api.shown = DriverError(f"no tmux session {TUI}")
-        self.done()
-        self.assertEqual(self.main("--tui"), 0)
-        said = self.said()
-        self.assertIn(
-            f"run tui-error TASK-7 session={TUI} msg=DriverError: no tmux session {TUI}", said
-        )
-        self.assertEqual(
-            said[-3:],
-            [
-                f"writeback step TASK-7 sid={SID} step=move:in_review",
-                f"writeback step TASK-7 sid={SID} step=outcome",
-                f"run end TASK-7 sid={SID} exit=0",
-            ],
-        )
+        self.assertEqual(self.delegate.built[0][2], "w0t0p0:ABC/below/dev")
         self.assertEqual(self.err, "")
+        self.assertIn(f"writeback step TASK-7 sid={SID} step=move:in_review", self.said())
 
 
 class RunIdentity(Case):
@@ -743,8 +710,7 @@ class RunUsageLimits(Case):
         self.assertEqual((last["kind"], last["delegate_kind"]), ("limit", "saved"))
 
     def test_a_failed_runs_note_is_a_run_error_and_the_session_comment_still_ends(self):
-        os.makedirs(self.runs)
-        self.done(result=Result(-9, None, "usage limit", Limit(T)))
+        self.done(lambda: os.makedirs(self.runs), result=Result(-9, None, "usage limit", Limit(T)))
         self.assertEqual(self.main(), 0)
         self.assertEqual(
             self.said()[1:],
@@ -767,20 +733,33 @@ class RunUsageLimits(Case):
 
 
 class RunArguments(Case):
-    def test_a_bad_session_config_ends_the_run_as_a_logged_config_error(self):
+    def test_a_bad_session_config_ends_the_run_as_a_logged_run_error(self):
         with open(self.local, "a") as f:
             f.write('\n[session.hosts]\ndefault = "absent"\n')
         with redirect_stderr(io.StringIO()):
-            rc = run.main(self.argv(), gql=self.gql, run=self.delegate, now=lambda: NOW)
-        self.assertEqual(rc, 1)
+            rc = run.main(self.argv(), gql=self.gql, now=lambda: NOW)
+        self.assertEqual(rc, 0)
         self.assertEqual(
             self.said(),
             [
-                "run config-error TASK-7 reason=session config: [hosts] default: want one of tmux",
+                f"run launch TASK-7 mode=new sid={SID}",
+                "run run-error TASK-7 error=ConfigError: [hosts] default: want one of tmux",
                 f"run end TASK-7 sid={SID} exit=1",
+                "run no-outcome TASK-7 error=no result",
             ],
         )
-        self.assertEqual((self.delegate.calls, self.gql.calls), ([], []))
+        body = f"Run {SID} · {ended('interrupted', 1, seq=1)}"
+        self.assertEqual(
+            (self.delegate.calls, self.gql.calls),
+            (
+                [],
+                [
+                    ("update", HARNESS, {"c": SESSION, "b": body}),
+                    ("comment", HARNESS, {"c": SESSION, "i": ID, "b": body}),
+                    REPAIR,
+                ],
+            ),
+        )
 
     def test_launch_arguments_preserve_input_and_display_values(self):
         values = self.argv() + [
@@ -815,13 +794,12 @@ class RunArguments(Case):
         )
         self.assertEqual((parsed.issue, parsed.uuid, parsed.sid), (ID, UUID, SID))
 
-    def test_tui_is_off_by_default_and_main_hands_delegate_the_config_and_driver(self):
+    def test_tui_is_off_by_default_and_main_hands_delegate_the_config(self):
         self.done()
         self.assertEqual(self.main(), 0)
         role, spec = self.call()
         self.assertEqual((spec.mode, spec.client), ("headless", CLIENT))
         self.assertEqual(role, config.load().roles["engineer"].run)
-        self.assertIs(self.delegate.driver, self.api)
         self.assertEqual(event_log.LOGS_DIR, self.logs)
         self.assertEqual(self.err, "")
 
@@ -856,7 +834,7 @@ class RunArguments(Case):
                 self.assertRaises(SystemExit) as cm,
                 redirect_stderr(io.StringIO()),
             ):
-                run.main(bad, gql=self.gql, run=self.delegate, driver=self.api, now=lambda: NOW)
+                run.main(bad, gql=self.gql, delegate_cls=self.delegate, now=lambda: NOW)
             self.assertEqual(cm.exception.code, 2)
         self.nothing_ran()
 
@@ -868,9 +846,7 @@ class RunArguments(Case):
                 err = io.StringIO()
                 with redirect_stderr(err):
                     self.assertEqual(
-                        run.main(
-                            bad, gql=self.gql, run=self.delegate, driver=self.api, now=lambda: NOW
-                        ),
+                        run.main(bad, gql=self.gql, delegate_cls=self.delegate, now=lambda: NOW),
                         2,
                     )
                 issue, sid = (value, SID) if flag == "--issue" else (ID, value)

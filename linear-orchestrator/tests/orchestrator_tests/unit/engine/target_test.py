@@ -7,11 +7,11 @@ import tempfile
 from types import SimpleNamespace
 from unittest import mock
 
-from agent_pm import delegate
 from agent_pm.linear_orchestrator.engine import config, issues, target
 from agent_pm.linear_orchestrator.engine.types import Issue
 from agent_pm.utils import SHORT
 from orchestrator_tests.case import Case
+from orchestrator_tests.config_fixtures import HARNESS_DELEGATE
 from orchestrator_tests.target_fixtures import LOCAL
 from orchestrator_tests.unit.target_fixtures import FakeRun, api, ok
 
@@ -22,12 +22,8 @@ NO_LINE = target.Invalid("no Repo: line in the description or its ## Instruction
 
 def roles():
     """Each role's tasks: the committed core config's index (no local file)."""
-    return {
-        r: SimpleNamespace(
-            tasks=tuple(delegate.task_index(r, config=delegate.CONFIG, local=os.devnull))
-        )
-        for r in config.TASKS
-    }
+    index = HARNESS_DELEGATE.roles()
+    return {r: SimpleNamespace(tasks=tuple(index[r])) for r in config.TASKS}
 
 
 def issue(description, title="ENG: Session Registry", ident="TASK-26", project=None):

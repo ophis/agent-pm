@@ -1,6 +1,6 @@
-"""One agent run of an issue's role through delegate.run: its events write back to Linear (the
-session comment as the harness account, progress and outcome as the role's), its usage limit to
-Linear and runs.jsonl. Exits 2 on bad argv, 1 on a config error, else 0.
+"""One agent run of an issue's role, its LinearRun's Delegate run in this process: its events write
+back to Linear (the session comment as the harness account, progress and outcome as the role's), its
+usage limit to Linear and runs.jsonl. Exits 2 on bad argv, 1 on a config error, else 0.
 """
 
 import functools
@@ -12,15 +12,15 @@ from traceback import format_exception
 from agent_pm import delegate
 from agent_pm.linear_orchestrator.engine import client, config, run_comments, runs, writeback
 from agent_pm.linear_orchestrator.engine import log as event_log
+from agent_pm.linear_orchestrator.engine.linear_run import LinearRun
 from agent_pm.linear_orchestrator.engine.log import log
 from agent_pm.linear_orchestrator.engine.types import (
     ConfigError,
     Spec,
     Stopped,
 )
-from agent_pm.session import SIGNALS, DriverError
-from agent_pm.session import ConfigError as SessionConfigError
-from agent_pm.utils import one_line, printable, repo_slug, timestamp
+from agent_pm.session import SIGNALS
+from agent_pm.utils import one_line, repo_slug, timestamp
 
 
 def _stop(signum, _frame):
@@ -45,6 +45,10 @@ def _kind(sid, cfg):
     return cfg.delegate_kind
 
 
+def _display(a):
+    return "/".join((a.opener or "", a.split or "", a.split_from or "")).rstrip("/") or None
+
+
 def _report_outcome(a, cfg, ctx, result):
     if result and result.limit:
         at = result.limit.resets_at
@@ -64,11 +68,11 @@ def _report_outcome(a, cfg, ctx, result):
         log("run", "no-outcome", a.issue, error=(result.error if result else "") or "no result")
 
 
-def inner(a, cfg, *, gql, driver, run=delegate.run, now=timestamp):
+def inner(a, cfg, *, gql, delegate_cls=None, now=timestamp):
     os.environ["PATH"] = config.path()
     for sig in (signal.SIGTERM, signal.SIGHUP, signal.SIGINT):
         signal.signal(sig, _stop)
-    # Driver.detach explicitly keeps these blocked through exec and imports.
+    # The router's detach keeps these blocked through exec and imports.
     signal.pthread_sigmask(signal.SIG_UNBLOCK, SIGNALS)
     role = _run_role(a, cfg)
     if role is None:
@@ -76,15 +80,15 @@ def inner(a, cfg, *, gql, driver, run=delegate.run, now=timestamp):
     log("run", "launch", a.issue, mode=a.mode, sid=a.sid)
     rd = cfg.run_dir(a.issue)
     harness = functools.partial(gql, service=cfg.harness_key, timeout=run_comments.LIMIT)
-    rec = run_comments.base(
-        sid=a.sid,
-        workdir=rd,
-        client=a.client,
-        started_at=now(),
-        info=functools.partial(driver.session_status, a.client, a.sid, rd, workdir=rd),
-    )
+    view = None
+
+    def info():
+        if view is None:
+            raise delegate.ConfigError(f"{a.issue}: its Delegate was not built")
+        return view.session_info()
+
+    rec = run_comments.base(sid=a.sid, workdir=rd, client=a.client, started_at=now(), info=info)
     ctx = writeback.for_run(cfg, role, gql, a)
-    name = config.tui_name(role, a.issue, a.sid) if a.tui else None
 
     def post(rc=None, *, outcome=None, limit=False):
         if error := run_comments.post(
@@ -101,19 +105,6 @@ def inner(a, cfg, *, gql, driver, run=delegate.run, now=timestamp):
     def on_event(event):
         if isinstance(event, delegate.Begun):
             post()  # after Begun: run.jsonl names the session's cwd, which the resume command needs
-            if name is not None:
-                show = cfg.roles[role].run.show
-                try:
-                    if show == "none":
-                        command = driver.attach_command(name)
-                    else:
-                        command = driver.show(
-                            name, a.split, a.split_from, a.opener, command=show or None
-                        )
-                    if command:
-                        print(printable(command), file=sys.stderr, flush=True)
-                except (SessionConfigError, DriverError) as e:
-                    log("run", "tui-error", a.issue, session=name, msg=one_line(e))
         elif isinstance(event, delegate.Progress):
             writeback.progress(ctx, event)
         elif isinstance(event, delegate.Finished) and event.result.outcome is not None:
@@ -122,25 +113,23 @@ def inner(a, cfg, *, gql, driver, run=delegate.run, now=timestamp):
     rc, result = 1, None
     try:
         os.makedirs(rd, exist_ok=True)
-        spec = delegate.Spec(
+        view = LinearRun(
+            a.issue,
             a.input,
             rd,
-            task=a.task,
-            mode="tui" if a.tui else "headless",
-            client=a.client,
+            cfg=cfg,
+            role=role,
             sid=a.sid,
+            task=a.task,
+            client=a.client,
+            mode="tui" if a.tui else "headless",
             resume=a.mode == "resume",
-            name=name,
             events=a.events,
-            out=os.path.join(rd, "out.md"),
-            cwd=rd,
+            display=_display(a),
+            delegate_kind=_kind(a.sid, cfg),
+            delegate_cls=delegate_cls,
         )
-        result = run(
-            cfg.roles[role].run,
-            spec,
-            driver=driver,
-            on_event=on_event,
-        )
+        result = view.delegate.run(on_event)
         rc = result.returncode
     except Stopped as e:
         rc = e.code
@@ -163,7 +152,7 @@ def inner(a, cfg, *, gql, driver, run=delegate.run, now=timestamp):
     return 0
 
 
-def main(argv, *, gql=client.linear_gql, run=delegate.run, driver=None, now=timestamp):
+def main(argv, *, gql=client.linear_gql, delegate_cls=None, now=timestamp):
     a = Spec.from_argv(argv)
     if reason := a.identity_error():
         return _usage(reason)
@@ -184,13 +173,7 @@ def main(argv, *, gql=client.linear_gql, run=delegate.run, driver=None, now=time
         log("run", "end", a.issue, sid=a.sid, exit=1)
         return 1
     event_log.use_logs(cfg.logs_dir)
-    try:
-        driver = driver or delegate.configure()
-    except delegate.ConfigError as e:
-        log("run", "config-error", a.issue, reason=str(e))
-        log("run", "end", a.issue, sid=a.sid, exit=1)
-        return 1
-    return inner(a, cfg, gql=gql, driver=driver, run=run, now=now)
+    return inner(a, cfg, gql=gql, delegate_cls=delegate_cls, now=now)
 
 
 def _usage(msg):

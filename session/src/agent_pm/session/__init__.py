@@ -1,19 +1,10 @@
 """The session layer: Session (engine/base.py), whose one concrete class is HostedSession
 (engine/hosted_session.py, modes/), runs agent sessions through each client's Adapter (adapters/)
-on a Host (hosts/); `__all__` is its API for Session users. Driver, Handle, close, sessions, note
-and session_record are deprecated forwarding wrappers (engine/forwarding.py).
+on a Host (hosts/); `__all__` is its API for Session users.
 """
 
 from agent_pm.session.engine.base import Session
 from agent_pm.session.engine.config import read_config
-from agent_pm.session.engine.forwarding import (
-    Driver,
-    Handle,
-    close,
-    note,
-    session_record,
-    sessions,
-)
 from agent_pm.session.engine.records import RunLog
 from agent_pm.session.engine.status_log import SessionStatusLog
 from agent_pm.session.engine.types import (
@@ -57,13 +48,7 @@ from agent_pm.session.hosts.base import (
 
 __all__ = [
     "read_config",
-    "Driver",
-    "Handle",
     "SIGNALS",
-    "note",
-    "session_record",
-    "sessions",
-    "close",
     "Session",
     "Spec",
     "Access",

@@ -1,4 +1,4 @@
-"""Ordered config resources with per-layer local sections; read_project is the repository wrapper.
+"""Ordered config resources with per-layer local sections.
 
 Tables merge key by key; higher values and whole lists replace lower values. Each layer's local
 section overlays its file before the next layer. Sections use the package's final name, with
@@ -6,8 +6,7 @@ hyphens replaced by underscores. Only supplied layers are read and validated aga
 and lower files; read_resources also always validates the local [utils] section, which accepts no
 keys without a utils resource. Unknown top-level keys are rejected, a renamed one naming its new
 name (RENAMED_KEYS); nested tables are validated by their owners. Flat local keys are rejected.
-Explicit paths replace files while retaining the defaults as their validation schema. Missing
-optional repository files contribute no keys.
+Explicit paths replace files while retaining the defaults as their validation schema.
 """
 
 import copy
@@ -18,11 +17,9 @@ from importlib.resources import files
 from types import MappingProxyType
 from typing import Any
 
-from agent_pm.utils.paths import ROOT, STATE
+from agent_pm.utils.paths import STATE
 
 LOCAL = f"{STATE}/config.local.toml"
-LEVELS = (("utils", "session"), ("delegate",), ("linear-orchestrator",), ("manager",))
-UNCONFIGURED = ("utils", "manager")  # no own file
 RENAMED_KEYS = MappingProxyType({"runtime": "client"})
 
 
@@ -100,41 +97,8 @@ def read_resources(
     return _layered({"utils": {}, **configs}, {"utils": ({}, {}), **known}, local=local)
 
 
-def read_project(
-    name: str, *, local: str = LOCAL, path: str | None = None, root: str = ROOT, own: bool = False
-) -> dict:
-    """Repository forwarding API; own selects the named layer; path replaces its file."""
-    rank = _rank(name)
-
-    def location(project):
-        package = project.replace("-", "_")
-        packed = os.path.join(root, project, "src", "agent_pm", package, "config.toml")
-        return packed if os.path.exists(packed) else os.path.join(root, project, "config.toml")
-
-    own_file = path or location(name)
-    if (path or name not in UNCONFIGURED) and (
-        os.path.isdir(own_file) or not os.path.exists(own_file)
-    ):
-        raise FileNotFoundError(f"{own_file}: missing")
-    configs, known = {}, {}
-    for level in LEVELS[: rank + 1]:
-        layer = {}
-        for project in level:
-            section = project.replace("-", "_")
-            default = _load(location(project))
-            value = _load(path) if project == name and path else default
-            if clash := sorted(set(layer) & set(value)):
-                raise ConfigFileError(
-                    f"{project}/config.toml: {clash[0]} is also a same-level project's"
-                )
-            layer.update(value)
-            configs[section] = value
-            known[section] = (default, value)
-    return _layered(configs, known, local=local, own=name.replace("-", "_") if own else None)
-
-
 def _layered(
-    configs: Mapping[str, dict], known: Mapping[str, tuple[dict, dict]], *, local: str, own=None
+    configs: Mapping[str, dict], known: Mapping[str, tuple[dict, dict]], *, local: str
 ) -> dict:
     found = _load(os.path.expanduser(local))
     for section in configs:
@@ -175,10 +139,7 @@ def _layered(
             for key in keys[:-1]:
                 table = table.setdefault(key, {})
             table[keys[-1]] = value
-        if own is None:
-            out = merge(out, merge(config, checked))
-        elif section == own:
-            out = merge(config, checked)
+        out = merge(out, merge(config, checked))
     return out
 
 
@@ -202,15 +163,6 @@ def unset(cfg: Mapping, keys: tuple[str, ...]) -> list[str]:
     required, unset.
     """
     return [k for key in keys for k, v in _values(cfg, key.split("."), []) if v in (None, "")]
-
-
-def _rank(name: str) -> int:
-    for i, level in enumerate(LEVELS):
-        if name in level:
-            return i
-    raise ConfigFileError(
-        f"project {name!r}: want one of {', '.join(p for level in LEVELS for p in level)}"
-    )
 
 
 def _load(path: str) -> dict:

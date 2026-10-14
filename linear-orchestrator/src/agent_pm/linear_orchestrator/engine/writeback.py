@@ -15,7 +15,7 @@ from dataclasses import dataclass, fields, replace
 from datetime import datetime
 from traceback import format_exception
 
-from agent_pm.delegate import STATUSES, DelegateEvent, Outcome, OutcomeStatus, Progress
+from agent_pm.delegate import DelegateEvent, Outcome, OutcomeStatus, Progress
 from agent_pm.linear_orchestrator.engine import run_comments, runs
 from agent_pm.linear_orchestrator.engine.config import LOCAL, TASKS
 from agent_pm.linear_orchestrator.engine.linear_run import LinearRun
@@ -492,7 +492,7 @@ def _outcome(data) -> Outcome:
         if name in ("questions", "files"):
             valid = isinstance(value, list) and all(isinstance(v, str) for v in value)
         else:
-            valid = isinstance(value, str) and (name != "status" or value in STATUSES)
+            valid = isinstance(value, str) and (name != "status" or value in tuple(OutcomeStatus))
         if not valid:
             raise ValueError(f"outcome {name}: {value!r}")
     return Outcome(

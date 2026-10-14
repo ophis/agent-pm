@@ -11,6 +11,8 @@ from dataclasses import replace
 from agent_pm.delegate import ConfigError, Delegate, DriverError
 from agent_pm.linear_orchestrator.engine import runs
 from agent_pm.session import ConfigError as SessionConfigError
+from agent_pm.session import NoRecordedSession, SessionStatus
+from agent_pm.session import Spec as SessionSpec
 from agent_pm.utils import Record, Status
 
 
@@ -85,13 +87,13 @@ def provider(api, cfg):
             return api.attach_command(harness_name(self.entry.role, self.issue))
 
         def session_info(self):
+            client = runs.client_of(runs.parse_log(cfg.runs_log), self.entry.sid)
             try:
-                return api.session_status(
-                    runs.client_of(runs.parse_log(cfg.runs_log), self.entry.sid),
-                    self.entry.sid,
-                    self.workdir,
-                    workdir=self.workdir,
+                return api.inspect(
+                    SessionSpec(workdir=self.workdir, client=client, sid=self.entry.sid)
                 )
+            except NoRecordedSession:
+                return SessionStatus("no", None, "")
             except SessionConfigError as error:
                 raise ConfigError(str(error)) from None
 

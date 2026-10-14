@@ -18,8 +18,9 @@ import uuid
 from agent_pm.session import ConfigError, DriverError, Host, HostProcess, Terminal
 from agent_pm.session.engine.status_log import SessionStatusLog
 from agent_pm.session.engine.types import Key, KeyPress, Launch, Liveness, NamedKey, Paste, Word
-from agent_pm.utils import Display, ProcessControl, Record, import_roots
+from agent_pm.utils import Display, ProcessControl, Record
 
+from session.tests.case import ROOTS
 from utils.tests.sandbox import clean_env
 
 NAME = re.compile(r"[A-Za-z0-9_-]+\Z")
@@ -281,7 +282,7 @@ class FakeHost(Host):
             with open(os.path.join(folder, file), "w", encoding="utf-8") as f:
                 json.dump(data, f)
         events = os.path.abspath(events) if events else ""
-        own = clean_env(None, *import_roots())
+        own = clean_env(None, *ROOTS)
         with open(os.path.join(folder, "output"), "ab") as output:
             supervisor = subprocess.Popen(
                 [sys.executable, "-P", "-S", SUPERVISOR, folder, events],

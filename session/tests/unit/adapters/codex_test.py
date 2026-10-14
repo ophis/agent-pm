@@ -1,4 +1,4 @@
-"""Codex account usage and Driver inspection queries."""
+"""Codex account usage and session inspection queries."""
 
 import json
 import os

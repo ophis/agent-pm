@@ -5,10 +5,8 @@ import io
 import os
 import re
 import tokenize
-from collections import Counter
 
 from tests.guard_checks.common import _files, _strings
-from tests.guard_data import LEGACY_HOST_NAMES
 from tests.guard_data.delegate import CONFIG_FILE, DELEGATE_SRC
 from tests.guard_data.linear_orchestrator import HANDOFF_HOME, ORCH, ORCH_PROJECT
 from tests.guard_data.session import (
@@ -18,7 +16,6 @@ from tests.guard_data.session import (
     STATUS_LOG_HOME,
     TMUX_HOME,
 )
-from tests.guard_data.utils import CONFIG_LEVELS
 from tests.guards import PKG, PROJECTS
 
 CLIENT = re.compile(r"claude|codex", re.I)
@@ -194,8 +191,6 @@ def standalone(repo: str) -> list[str]:
                 rel = os.path.relpath(os.path.join(top, name), repo).replace(os.sep, "/")
                 with open(os.path.join(top, name), encoding="utf-8", errors="replace") as f:
                     for number, line in enumerate(f, 1):
-                        if rel == CONFIG_LEVELS and line.startswith("LEVELS = "):
-                            continue
                         found.update(f"{rel}:{number}: names {w}" for w in LINEAR.findall(line))
     return sorted(found)
 
@@ -238,7 +233,7 @@ def tmux_calls(repo: str) -> list[str]:
             found.update(
                 f"{rel}:{line}: tmux outside session/hosts/tmux/"
                 for line, value in _code_words(text, tree)
-                if "tmux" in value.lower() and (rel, value) not in LEGACY_HOST_NAMES
+                if "tmux" in value.lower()
             )
         else:
             found.update(
@@ -255,7 +250,7 @@ def session_display(repo: str) -> list[str]:
         found.update(
             f"{rel}:{line}: interprets display {value!r}"
             for line, value in _code_words(text, ast.parse(text, rel))
-            if DISPLAY_NAMES.search(value) and (rel, value) not in LEGACY_HOST_NAMES
+            if DISPLAY_NAMES.search(value)
         )
     return sorted(found)
 
@@ -280,21 +275,6 @@ def delegate_tmux(repo: str) -> list[str]:
         for number, line in enumerate(text.splitlines(), 1)
         if "tmux" in line.lower()
     ]
-
-
-def legacy_host_names(repo: str) -> list[str]:
-    counts = Counter()
-    for rel in sorted({path for path, _ in LEGACY_HOST_NAMES}):
-        path = os.path.join(repo, rel)
-        if os.path.isfile(path):
-            with open(path, encoding="utf-8") as source:
-                text = source.read()
-            counts.update((rel, value) for _, value in _code_words(text, ast.parse(text, rel)))
-    return sorted(
-        f"{rel}: {value}: expected {count} legacy occurrences, found {counts[rel, value]} ({ticket})"
-        for (rel, value), (count, ticket) in LEGACY_HOST_NAMES.items()
-        if counts[rel, value] != count
-    )
 
 
 def status_log_format(repo: str) -> list[str]:

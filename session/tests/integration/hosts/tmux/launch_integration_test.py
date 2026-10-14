@@ -1,4 +1,6 @@
-"""TmuxHost preserves literal launch data and terminal paste bytes on a private server."""
+"""TmuxHost preserves literal launch data and terminal paste bytes on a private server, and
+submits input to a pane in copy-mode.
+"""
 
 import json
 import os
@@ -7,8 +9,8 @@ import time
 from pathlib import Path
 from unittest import mock
 
-from agent_pm.session import DriverError, Launch
-from agent_pm.session.engine.types import Paste
+from agent_pm.session import DriverError, KeyPress, Launch
+from agent_pm.session.engine.types import Key, Paste
 from agent_pm.session.hosts.tmux import TmuxHost
 
 from session.tests import live_tmux
@@ -110,6 +112,43 @@ class LaunchTest(Case):
         self.assertEqual(output.read_bytes(), payload)
         self.assertTrue(terminal.alive())
         self.assertEqual(self.server.tmux("list-buffers").stdout, before)
+
+    def test_a_pane_scrolled_into_copy_mode_still_gets_and_submits_pastes_and_keys(self):
+        ready, lines = Path(self.home, "ready"), Path(self.home, "lines")
+        code = (
+            "import sys\n"
+            "open(sys.argv[1], 'w').close()\n"
+            "for line in sys.stdin:\n"
+            "    with open(sys.argv[2], 'a') as f: f.write(line)\n"
+        )
+        terminal = self.launch(
+            "terminal",
+            "scrolled",
+            Launch((sys.executable, "-I", "-c", code, str(ready), str(lines)), cwd=self.home),
+        )
+        self.poll(ready.exists)
+        pane = terminal.identity.split(" ")[2]
+
+        def in_mode():
+            res = self.server.tmux("display-message", "-p", "-t", pane, "#{pane_in_mode}")
+            self.assertEqual(res.returncode, 0, res.stderr)
+            return res.stdout.strip()
+
+        def scroll():
+            res = self.server.tmux("copy-mode", "-u", "-t", pane)
+            self.assertEqual(res.returncode, 0, res.stderr)
+            self.assertEqual(in_mode(), "1")
+
+        scroll()
+        terminal.send(Paste("nudge"))
+        scroll()
+        terminal.send(Key("Enter"))
+        self.poll(lambda: lines.exists() and lines.read_text() == "nudge\n")
+        scroll()
+        terminal.press([KeyPress("o"), KeyPress("k"), KeyPress("Enter")])
+        self.poll(lambda: lines.read_text() == "nudge\nok\n")
+        self.assertEqual(in_mode(), "0")
+        self.assertTrue(terminal.alive())
 
     def test_a_split_and_refocused_session_is_reached_through_its_launched_pane(self):
         ready, received = Path(self.home, "ready"), Path(self.home, "received")

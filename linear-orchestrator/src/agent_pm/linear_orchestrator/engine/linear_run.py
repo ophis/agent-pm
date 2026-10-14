@@ -9,7 +9,7 @@ import re
 from dataclasses import replace
 
 from agent_pm.delegate import Delegate, Spec
-from agent_pm.linear_orchestrator.engine import runs
+from agent_pm.linear_orchestrator.engine import config, runs
 from agent_pm.linear_orchestrator.engine.types import ISSUE_ID, UUID_RE, Config, ConfigError
 from agent_pm.utils import Display, Record, Status
 
@@ -28,6 +28,7 @@ class LinearRun:
         client: str | None = None,
         mode: str = "headless",
         resume: bool = False,
+        events: str | None = None,
         display: Display = None,
         delegate_kind: str | None = None,
         delegate_cls: type | None = None,
@@ -44,9 +45,10 @@ class LinearRun:
                 task=task,
                 client=client,
                 sid=sid,
-                resume=resume,
                 mode=mode,
-                name=f"{role}-{issue}-{sid[:8]}",
+                resume=resume,
+                name=config.tui_name(role, issue, sid),
+                events=events,
                 out=os.path.join(workdir, "out.md"),
                 cwd=workdir,
             ),

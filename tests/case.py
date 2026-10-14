@@ -2,23 +2,21 @@
 roots (REPO, SRC, ROOTS).
 """
 
-import glob
 import os
 import sys
 import tempfile
 import unittest
 from unittest import mock
 
-from utils.tests.sandbox import clean_env
+from utils.tests.sandbox import clean_env, project_roots
 
 try:
     import agent_pm
-    from agent_pm.utils.paths import import_roots
 except ImportError:
     agent_pm = None
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-ROOTS = import_roots(REPO) if agent_pm else tuple(sorted(glob.glob(os.path.join(REPO, "*", "src"))))
+ROOTS = project_roots(REPO)
 SRC = {os.path.basename(os.path.dirname(r)).replace("-", "_"): r for r in ROOTS}
 RUN_WITH = os.pathsep.join(os.path.relpath(root, REPO) for root in ROOTS)
 PY = (sys.executable, "-P", "-S")

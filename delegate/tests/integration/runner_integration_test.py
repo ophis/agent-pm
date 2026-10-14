@@ -269,7 +269,7 @@ class Stops(Base):
         )
 
     def test_a_stream_setup_failure_is_the_result(self):
-        self.driver_dependencies = {
+        self.session_dependencies = {
             "class_loader": adapter_loader(
                 {"agent_pm.session.adapters.fake": SimpleNamespace(FakeAdapter=UnstreamedAdapter)}
             )

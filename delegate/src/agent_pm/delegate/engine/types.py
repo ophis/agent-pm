@@ -5,7 +5,8 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import TypedDict
 
-from agent_pm.delegate.composer import DELIVERABLE, ConfigError, RunConfig, RunParams, Team
+from agent_pm.delegate.composer import ConfigError, RunConfig, RunParams, Team
+from agent_pm.delegate.composer.types import DELIVERABLE
 from agent_pm.delegate.event.types import Outcome
 from agent_pm.session import Spec as SessionSpec
 from agent_pm.utils import Stopped as Stopped

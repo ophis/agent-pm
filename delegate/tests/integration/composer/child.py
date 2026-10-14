@@ -12,25 +12,18 @@ from delegate.tests import case
 from delegate.tests.case import PY, child_env
 
 TIMEOUT = 60
-PRELUDE = "import json, os, sys\nfrom agent_pm.delegate import composer\n"
+PRELUDE = "import json, os, sys\nfrom agent_pm.delegate.composer import Composer, ConfigError, RunParams\n"
 COMPOSE = """import dataclasses
 
 req = json.loads(sys.argv[1])
 try:
-    team = composer.team(composer.TEAM, composer.team_dirs())
-    run = composer.resolve(
-        req["role"],
-        req.get("task"),
-        overlays=req.get("overlays", ()),
-        team=team,
-    )
-    intent = composer.access(
-        run, req["workdir"], cwd=req["cwd"], project=False, team=team
-    )
+    composition = Composer()
+    run = composition.resolve(req["role"], req.get("task"), overlays=req.get("overlays", ()))
+    intent = composition.access(run, req["workdir"], cwd=req["cwd"], project=False)
     writes = [("the workdir", req["workdir"]), ("the cwd", req["cwd"])]
     writes += [("a dir the run adds", d) for d in intent.dirs]
-    composer.check_team_dirs(team.dirs, writes=writes)
-    params = composer.RunParams(
+    composition.check_team_dirs(writes=writes)
+    params = RunParams(
         input=req["input"], out=req["out"], workdir=req["workdir"], resume=req.get("resume", False)
     )
     print(
@@ -38,22 +31,22 @@ try:
             {
                 "run": dataclasses.asdict(run),
                 "intent": dataclasses.asdict(intent),
-                "prompt": composer.render(run, params, team=team),
-                "trusted": sorted(composer.trusted_dirs()),
+                "prompt": composition.render(run, params),
+                "trusted": sorted(composition.trusted_dirs()),
                 "files": [
-                    composer.__file__,
+                    sys.modules["agent_pm.delegate.composer"].__file__,
                     sys.modules["agent_pm.utils.config_file"].__file__,
                     sys.modules["agent_pm.utils.paths"].__file__,
                 ],
                 "repo_imported": any(
                     os.path.dirname(getattr(m, "__file__", None) or "")
-                    == os.path.join(composer.TEAM, "tools")
+                    == os.path.join(composition.team.root, "tools")
                     for m in list(sys.modules.values())
                 ),
             }
         )
     )
-except composer.ConfigError as e:
+except ConfigError as e:
     print(json.dumps({"error": str(e)}))
 """
 
