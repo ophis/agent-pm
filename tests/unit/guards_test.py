@@ -1532,13 +1532,15 @@ class SharedTypes(Sample):
             {
                 f"{self.UTILS}/owner/__init__.py": self.DATA,
                 f"{self.UTILS}/owner/start.py": "from agent_pm.utils.owner import A\n",
+                f"{self.UTILS}/owner/child/start.py": "from agent_pm.utils.owner import A\n",
                 f"{self.UTILS}/outside.py": "from agent_pm.utils.owner import A\n",
             }
         )
         self.assertEqual(
             guards.shared_types(root),
             [
-                f"{self.UTILS}/outside.py:1: agent_pm.utils.owner.A: a shared data type belongs in a types.py"
+                f"{self.UTILS}/outside.py:1: agent_pm.utils.owner.A: a shared data type belongs in a types.py",
+                f"{self.UTILS}/owner/child/start.py:1: agent_pm.utils.owner.A: a shared data type belongs in a types.py",
             ],
         )
 
