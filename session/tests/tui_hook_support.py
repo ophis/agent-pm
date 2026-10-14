@@ -165,8 +165,6 @@ class HookBase(Case):
 
 
 class MarkingCases:
-    """MarkingTest's cases, run by every hook entry."""
-
     def test_a_failed_mark_is_one_stderr_line_after_the_record(self):
         self.assertError(self.hook("stop", TMUX_FAIL="1"), "tmux: boom again")
         os.unlink(self.events)
@@ -176,8 +174,6 @@ class MarkingCases:
 
 
 class PayloadCases:
-    """PayloadTest's cases, run by every hook entry."""
-
     def test_strs_over_4096_chars_are_cut_unless_the_word_is_done(self):
         long = "\u00e9" * 5000
         key = "k" * 5000
@@ -203,8 +199,6 @@ class PayloadCases:
 
 
 class RecordCases:
-    """RecordsTest's cases, run by every hook entry."""
-
     def test_each_call_appends_one_record_line_ts_label_payload(self):
         payload = {"session_id": "s1", "text": "a\nb\u2028c\U0001f600", "n": [1, None, True, 2.5]}
         self.assertEqual(self.hook("stop", payload), "")

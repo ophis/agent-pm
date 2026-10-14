@@ -53,9 +53,7 @@ class CliCase(Case):
             self.server.attach(MANAGER)
 
     def env(self, *, inside: str | None = MANAGER, **extra: str | None) -> dict[str, str]:
-        """The env a caller in session `inside` (None: outside tmux) runs the command with; an
-        `extra` value None drops that key.
-        """
+        """A caller's in session `inside` (None: outside tmux); an extra None drops its key."""
         env = self.server.env(**(self.server.inside(inside) if inside else {}))
         env["PATH"] = os.pathsep.join(
             (self.server.bin, os.path.dirname(sys.executable), env["PATH"])
@@ -100,7 +98,7 @@ class CliCase(Case):
         return result
 
     def scene(self, name: str, steps=None, turns=(), **more) -> dict[str, str]:
-        """The fake claude's scenario for worker `name` (its log: self.log(name)), as env."""
+        """Worker `name`'s fake claude scenario, as env."""
         path = os.path.join(self.root, f"{name}.claude.json")
         steps = [f"Hi from {name}."] if steps is None else steps
         with open(path, "w", encoding="utf-8") as f:
@@ -111,15 +109,12 @@ class CliCase(Case):
         return os.path.join(self.root, f"{name}.claude.jsonl")
 
     def calls(self, name: str) -> list[dict]:
-        """The fake claude's starts for worker `name`: pid, argv, cwd."""
         return logged(self.log(name))
 
     def start(
         self, name: str, *args: str, steps=None, turns=(), prompt: str = "hi", **extra
     ) -> subprocess.CompletedProcess:
-        """start NAME --runtime claude --cwd self.cwd --prompt PROMPT ARGS…, its events
-        self.events.
-        """
+        """A fake claude worker, its events self.events."""
         env = {"AGENT_PM_EVENTS": self.events, **self.scene(name, steps, turns), **extra}
         return self.session(
             "start",
@@ -135,7 +130,6 @@ class CliCase(Case):
         )
 
     def record(self, result: subprocess.CompletedProcess) -> Record:
-        """The one Record line a start, restart or resume printed."""
         self.ok(result)
         lines = result.stdout.splitlines()
         self.assertEqual(len(lines), 1, result.stdout)
@@ -175,12 +169,11 @@ class CliCase(Case):
             thread.join()
 
     def local_config(self, text: str) -> None:
-        """~/.agent-pm/config.local.toml (sections per layer: [session…])."""
         with open(os.path.join(self.agent_pm, "config.local.toml"), "w", encoding="utf-8") as f:
             f.write(text)
 
     def fake_host(self, default: str = "tmux") -> str:
-        """Configures a second Host, `fake` (FakeHost, not Displayable), and `default`; its root."""
+        """Adds Host `fake` (not Displayable); its root."""
         root = os.path.join(self.root, "fake-host")
         self.local_config(
             f'[session.hosts]\ndefault = "{default}"\n[session.hosts.fake]\n'
@@ -197,7 +190,7 @@ ENV_DUMP = (
 
 class WorkerCase(CliCase):
     def dumping(self) -> str:
-        """Puts a `claude` on PATH that logs its argv and env, then runs the fake; that log."""
+        """A `claude` logging argv and env before the fake; its log."""
         path = os.path.join(self.root, "claude.env.jsonl")
         q = shlex.quote
         with open(os.path.join(self.server.bin, "claude"), "w", encoding="utf-8") as f:
@@ -208,7 +201,7 @@ class WorkerCase(CliCase):
         return path
 
     def claude_argv(self, argv: list[str], sid: str, name: str, *tail: str) -> None:
-        """argv is a worker's: its sid, name, settings sources and hooks, then `tail`."""
+        """A worker's argv, then `tail`."""
         self.assertEqual(
             argv[:7] + argv[8:],
             [
