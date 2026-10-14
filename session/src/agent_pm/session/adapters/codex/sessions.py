@@ -67,7 +67,7 @@ def absolute_path(path: object, label: str) -> str:
     return os.path.realpath(path)
 
 
-def validate_snapshot(value: dict) -> Snapshot:
+def validate_snapshot(value: object) -> Snapshot:
     if not isinstance(value, dict):
         raise RecoveryError("invalid Codex recovery snapshot fields")
     if set(value) != {
@@ -82,7 +82,15 @@ def validate_snapshot(value: dict) -> Snapshot:
         "env",
     }:
         raise RecoveryError("invalid Codex recovery snapshot fields")
-    env, flags = _snapshot_inputs(value)
+    env = value["env"]
+    if not isinstance(env, dict) or not all(
+        isinstance(k, str) and ENV_NAME.fullmatch(k) and isinstance(v, str) and "\0" not in v
+        for k, v in env.items()
+    ):
+        raise RecoveryError("invalid Codex recovery snapshot env")
+    flags = value["flags"]
+    if not isinstance(flags, list) or any(not isinstance(v, str) or "\0" in v for v in flags):
+        raise RecoveryError("invalid Codex recovery snapshot flags")
     paths = {key: absolute_path(value[key], key) for key in ("cwd", "codex_home")}
     if type(value["project"]) is not bool:
         raise RecoveryError("invalid Codex recovery snapshot project")
@@ -98,17 +106,7 @@ def validate_snapshot(value: dict) -> Snapshot:
             not isinstance(value[key], str) or not value[key] or not value[key].isprintable()
         ):
             raise RecoveryError(f"invalid Codex recovery snapshot {key}")
-    validated = {
-        **paths,
-        "project": value["project"],
-        "dirs": dirs,
-        "commands": commands.copy(),
-        "model": value["model"],
-        "effort": value["effort"],
-        "flags": list(flags),
-        "env": dict(env),
-    }
-    if validated != value:
+    if any(paths[key] != value[key] for key in paths) or dirs != value["dirs"]:
         raise RecoveryError("invalid Codex recovery snapshot path")
     return Snapshot(
         paths["cwd"],
@@ -135,19 +133,6 @@ def snapshot_data(snapshot: Snapshot) -> dict:
         "flags": list(snapshot.flags),
         "env": dict(snapshot.env),
     }
-
-
-def _snapshot_inputs(value):
-    env = value["env"]
-    if not isinstance(env, dict) or not all(
-        isinstance(k, str) and ENV_NAME.fullmatch(k) and isinstance(v, str) and "\0" not in v
-        for k, v in env.items()
-    ):
-        raise RecoveryError("invalid Codex recovery snapshot env")
-    flags = value["flags"]
-    if not isinstance(flags, list) or any(not isinstance(v, str) or "\0" in v for v in flags):
-        raise RecoveryError("invalid Codex recovery snapshot flags")
-    return env, flags
 
 
 def inside(path: str, root: str) -> bool:
@@ -276,16 +261,6 @@ _SESSION_KEYS = frozenset({"version", "workdir", "sid", "snapshot", "native_id",
 _MAX_SESSION_BYTES = 64 * 1024
 
 
-def _copy_snapshot(value: object) -> dict:
-    try:
-        copied = json.loads(json.dumps(value, allow_nan=False))
-    except (TypeError, ValueError, RecursionError) as exc:
-        raise RecoveryError("invalid recovery snapshot: expected JSON-safe state") from exc
-    if not isinstance(value, dict) or copied != value:
-        raise RecoveryError("invalid recovery snapshot: expected a JSON object")
-    return copied
-
-
 def session_identity(workdir: object, sid: object) -> tuple[str, str]:
     workdir = absolute_path(workdir, "workdir")
     if not isinstance(sid, str) or not sid or len(sid) > 1024 or "\x00" in sid:
@@ -311,9 +286,7 @@ def _state(data: object, workdir: str, sid: str) -> SessionState:
         absolute_path(path, "writable root") != path for path in roots
     ):
         raise RecoveryError("invalid recovery writable roots")
-    return SessionState(
-        workdir, sid, validate_snapshot(_copy_snapshot(data["snapshot"])), tuple(roots), native
-    )
+    return SessionState(workdir, sid, validate_snapshot(data["snapshot"]), tuple(roots), native)
 
 
 def _components(path: str):
@@ -453,8 +426,8 @@ class SessionStore:
         digest = hashlib.sha256((workdir + "\x00" + sid).encode("utf-8")).hexdigest()
         return os.path.join(root, digest + ".json")
 
-    def _validate_recovery(self, root: str, state: SessionState) -> Snapshot:
-        snapshot = validate_snapshot(snapshot_data(state.snapshot))
+    def _validate_recovery(self, root: str, state: SessionState) -> None:
+        snapshot = state.snapshot
         paths = [
             snapshot.cwd,
             snapshot.codex_home,
@@ -467,7 +440,6 @@ class SessionStore:
                 raise RecoveryError(
                     f"invalid Codex recovery writable grants: no recorded root covers {path}"
                 )
-        return snapshot
 
     def _read(
         self, root: str, path: str, workdir: str | None = None, sid: str | None = None
@@ -564,21 +536,11 @@ class SessionStore:
         persist: bool = True,
     ) -> SessionState:
         workdir, sid = session_identity(workdir, sid)
-        snapshot_value = snapshot_data(snapshot)
-        validate_snapshot(snapshot_value)
-        state = _state(
-            {
-                "version": _SESSION_VERSION,
-                "workdir": workdir,
-                "sid": sid,
-                "snapshot": snapshot_value,
-                "native_id": None,
-                "writable_roots": list(
-                    dict.fromkeys(absolute_path(path, "writable root") for path in writable_roots)
-                ),
-            },
+        state = SessionState(
             workdir,
             sid,
+            snapshot,
+            tuple(dict.fromkeys(absolute_path(path, "writable root") for path in writable_roots)),
         )
         if persist:
             return self.save(state)

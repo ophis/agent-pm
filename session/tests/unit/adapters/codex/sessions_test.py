@@ -111,6 +111,28 @@ class StoreRootTest(Base):
 
 
 class CodecTest(Base):
+    def test_malformed_snapshot_fields_are_rejected_when_loading_saved_json(self):
+        state = self.prepare()
+        original = snapshot_data(state.snapshot)
+        for fields in (
+            {"cwd": 1},
+            {"codex_home": "relative"},
+            {"dirs": "not-a-list"},
+            {"dirs": ["relative"]},
+            {"commands": "not-a-list"},
+            {"commands": [1]},
+            {"commands": [""]},
+            {"commands": ["git\nstatus"]},
+            {"model": float("nan")},
+            {"model": ""},
+            {"effort": []},
+            {"effort": "bad\nvalue"},
+        ):
+            with self.subTest(fields=fields):
+                self.edit_record(snapshot=original | fields)
+                with self.assertRaises(ConfigError):
+                    self.common.load(state.workdir, state.sid)
+
     def test_snapshot_codec_detaches_both_sides_and_keeps_the_persisted_schema(self):
         state = self.prepare()
         raw = snapshot_data(state.snapshot)
