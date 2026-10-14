@@ -21,7 +21,7 @@ from agent_pm.utils.paths import (
 )
 
 from utils.tests.case import REPO, Case
-from utils.tests.process_fixtures import TimeoutExpired
+from utils.tests.process_fixtures import DEVNULL, TimeoutExpired
 
 
 class PathsTest(Case):
@@ -92,7 +92,7 @@ class PathsTest(Case):
             capture_output=True,
             text=True,
             timeout=60,
-            stdin=-3,
+            stdin=DEVNULL,
         )
 
     def test_temp_dirs_keeps_roots_when_getconf_is_unavailable_or_times_out(self):
