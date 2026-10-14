@@ -48,7 +48,7 @@ print(launch.argv[-1])
 
 class ExtensionAdapterIntegration(Case):
     def setUp(self):
-        tmp = tempfile.TemporaryDirectory()
+        tmp = tempfile.TemporaryDirectory(dir=os.environ.get("AGENT_PM_TEST_TMP", REPO))
         self.addCleanup(tmp.cleanup)
         self.root = os.path.realpath(tmp.name)
         self.site = os.path.join(self.root, "site")
