@@ -11,7 +11,7 @@
 - Identify Linear entities by id, never name; a role's `account` (an email) is the exception.
 - Linear's lists can lag a just-made state change: re-read an issue's state before acting on it (`linear-orchestrator/src/agent_pm/linear_orchestrator/engine/ops.py:move` does).
 - Tmux implementation: `session/src/agent_pm/session/hosts/tmux/` (`TmuxHost` and the `Tmux` it holds: `host.py`). `/agent-pm:tmux`: removed, rebuilt by TASK-356.
-- The session's public interface is frozen: `tests/guard_checks/exports.py` `session_interface_snapshot` (who may change `tests/session_interface.json`: its docstring).
+- The session's and delegate's public interfaces are frozen: `tests/guard_checks/exports.py` `session_interface_snapshot` and `delegate_interface_snapshot` (who may change `tests/session_interface.json` and `tests/delegate_interface.json`: their docstrings).
 - Keep `<work_dir>/logs/runs.jsonl` (README › Operating).
 - A `[local_clones]` clone must not move: that breaks its worktrees. Run `git -C <new path> worktree repair`, then update the entry.
 

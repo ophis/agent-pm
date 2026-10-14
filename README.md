@@ -114,8 +114,29 @@ Requires macOS, Install's requirements and `gh` logged in as you. The Linear orc
    ```bash
    security add-generic-password -a frank.agent.w -s linear-api-key -w   # config.local.toml: [linear_orchestrator] harness_key
    ```
+5. Run each job once by hand; `--dry-run` prints the plan and changes nothing:
+   ```bash
+   bin/agent-pm-linear router --dry-run
+   bin/agent-pm-linear promote --dry-run
+   ```
+6. Install the launchd jobs by copying `linear-orchestrator/launchd/`'s plists. They keep the old jobs' labels, so `bootout` first unloads any old router or promote job and the copy replaces its plist: only one set runs. `enable` clears a `launchctl disable`, which would block `bootstrap`:
+   ```bash
+   mkdir -p ~/.agent-pm/logs   # the plists' log dir; launchd can't start a job without it
+   for job in router promote; do
+     launchctl bootout gui/$(id -u)/com.ophis.agent-pm.$job 2>/dev/null   # fails harmlessly if none is loaded
+     cp linear-orchestrator/launchd/com.ophis.agent-pm.$job.plist ~/Library/LaunchAgents/
+     launchctl enable gui/$(id -u)/com.ophis.agent-pm.$job
+     launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.ophis.agent-pm.$job.plist
+   done
+   launchctl list | grep com.ophis.agent-pm   # exactly the two jobs
+   ```
 
-launchd scheduling of router and promote returns with [TASK-379](https://linear.app/ophis-workgroup/issue/TASK-379).
+The plists run `/Users/francis/playground/agent-pm/bin/agent-pm-linear` and log to `/Users/francis/.agent-pm/logs/orchestrator.jsonl` (launchd doesn't expand `~`): with another checkout or `work_dir`, edit those paths. Their PATH holds `claude` (`~/.local/bin`) and tmux, `gh` and Python 3.11+ (`/opt/homebrew/bin`). The router runs at :00 and :30 with `--now`, which skips its 01:00–06:59 hours check (drop it to run only at night); promote runs every 5 minutes. To change a job, edit its plist here and rerun step 6. To uninstall one:
+
+```bash
+launchctl bootout gui/$(id -u)/com.ophis.agent-pm.<job>
+rm ~/Library/LaunchAgents/com.ophis.agent-pm.<job>.plist
+```
 
 ### Local configuration migration
 
@@ -216,7 +237,7 @@ delegate/             the Delegate (one role's run), the Composer, the built-in 
 session/              the session: an Adapter per client, Runtimes, Hosts (tmux); cli.py: agent-pm-session
 utils/                shared utilities
 manager/              cli.py, engine/crew.py, roster.py and events.py: commands and bookkeeping
-linear-orchestrator/  cli.py: router, run, promote, run queries, writeback; engine/: scheduling, client, log, ops, issues, run_comments, writeback
+linear-orchestrator/  cli.py: router, run, promote, run queries, writeback; engine/: scheduling, client, log, ops, issues, run_comments, writeback; launchd/: router and promote plists
 tests/                repo-wide checks: guard_checks/ (rules), guard_data/ (each layer's exceptions), checks.py (runner), case.py and suites
 .github/              CI workflows and their helpers
 ```
