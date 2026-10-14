@@ -19,6 +19,82 @@ UNLISTED = "not __init__.py, cli.py, engine/, a listed subpackage or a listed en
 PROBE = "import importlib,json,sys\nprint(json.dumps({n:importlib.import_module(n).__file__ for n in sys.argv[1:]}))\n"
 
 
+class PackageClimbs(Sample):
+    def violations(self, text, sub="engine/sample.py"):
+        rel = f"delegate/{PKG}/delegate/{sub}"
+        root = self.tree({rel: text})
+        return [v for v in guards.package_climbs(root) if v.startswith(f"{rel}:")]
+
+    def test_rejects_every_way_to_climb_past_the_package(self):
+        for expr in (
+            "os.path.join(os.path.dirname(__file__), *[os.pardir] * 2)",
+            "os.path.dirname(os.path.dirname(os.path.dirname(__file__)))",
+            "Path(__file__).parents[2]",
+            "Path(__file__).parent.parent.parent",
+            "Path(__file__).resolve().parent / '..' / '..'",
+        ):
+            with self.subTest(expr=expr):
+                self.assertTrue(
+                    self.violations(f"import os\nfrom pathlib import Path\nROOT = {expr}\n")
+                )
+
+    def test_tracks_aliases_and_separate_assignments(self):
+        self.assertTrue(
+            self.violations(
+                "from pathlib import Path as P\nf = P(__file__)\np = f.parent.parent\nx = p.parent\n"
+            )
+        )
+        self.assertTrue(
+            self.violations(
+                "import os as o\np = o.path.dirname(__file__)\nx = o.path.join(p, '..', '..')\n"
+            )
+        )
+
+    def test_rejects_sibling_paths_and_listing_a_root_outside_the_package(self):
+        self.assertTrue(
+            self.violations(
+                "from pathlib import Path\np = Path('/repo') / 'session' / 'config.toml'\n"
+            )
+        )
+        self.assertTrue(
+            self.violations(
+                "import os\nx = os.path.join('/repo', 'linear-orchestrator/config.toml')\n"
+            )
+        )
+        self.assertTrue(
+            self.violations(
+                "import os\nfrom agent_pm.utils.paths import ROOT\nx = os.listdir(ROOT)\n"
+            )
+        )
+
+    def test_package_resources_and_repository_tools_pass(self):
+        self.assertEqual(
+            self.violations(
+                "import os\nTEAM = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'team')\n",
+                "composer/base.py",
+            ),
+            [],
+        )
+        self.assertEqual(
+            self.violations(
+                "import os\nHOOK = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'hosts/tmux/tmux_host.py')\n",
+                "modes/tui_hook.py",
+            ),
+            [],
+        )
+        root = self.tree(
+            {"delegate/tests/test.py": "from pathlib import Path\nx = Path(__file__).parents[9]\n"}
+        )
+        self.assertFalse(any("test.py" in v for v in guards.package_climbs(root)))
+
+    def test_every_exemption_must_still_have_an_escape(self):
+        root = self.tree({})
+        found = guards.package_climbs(root)
+        self.assertEqual(len(found), 9)
+        for (rel, name), ticket in guards.PACKAGE_CLIMB_ALLOWED.items():
+            self.assertIn(f"{rel}: {name}: allowlisted but no package escape ({ticket})", found)
+
+
 class RealTree(Case):
     def test_each_guard_is_clean(self):
         for name, found in checks(REPO):

@@ -122,6 +122,19 @@ STANDALONE = frozenset(
 )
 
 
+PACKAGE_CLIMB_ALLOWED = {
+    ("utils/src/agent_pm/utils/paths.py", "ROOT"): "TASK-393",
+    ("utils/src/agent_pm/utils/paths.py", "import_roots"): "TASK-393",
+    ("utils/src/agent_pm/utils/config_file.py", "read_project"): "TASK-393",
+    (f"{SESSION_SRC}adapters/codex/tui/__init__.py", "import_roots()"): "TASK-393",
+    ("delegate/src/agent_pm/delegate/engine/config.py", "DELEGATE"): "TASK-367",
+    ("delegate/src/agent_pm/delegate/engine/config.py", "import_roots()"): "TASK-367",
+    (f"{ORCH_PROJECT}/{ORCH_SRC}engine/config.py", "ROOT"): "TASK-372",
+    (f"{ORCH_PROJECT}/{ORCH_SRC}engine/config.py", "import_roots()"): "TASK-372",
+    ("manager/src/agent_pm/manager/engine/crew.py", "BIN"): "TASK-373",
+}
+
+
 NOQA_ALLOWED = {
     (
         f"{SESSION_SRC}modes/headless.py",
@@ -1651,3 +1664,163 @@ def _option_words(value):
             for e in value.elts
         )
     )
+
+
+def package_climbs(repo: str) -> list[str]:
+    """Runtime paths stay inside their own package; exemptions expire with their last use."""
+    found, seen = [], set()
+    for project, package in PROJECTS.items():
+        base = f"{project}/src/agent_pm/{package}"
+        for sub, text in _files(os.path.join(repo, base), (".py",)):
+            rel = f"{base}/{sub}"
+            depth = len(sub.split("/"))
+            tree = ast.parse(text, rel)
+            bound = _bindings(tree)
+            paths = {
+                name: depth + 1
+                for name, target in bound.items()
+                if target in ("agent_pm.utils.ROOT", "agent_pm.utils.paths.ROOT")
+            }
+            for name, line in _package_paths(tree, bound, paths, depth, project):
+                key = rel, name
+                if key in PACKAGE_CLIMB_ALLOWED:
+                    seen.add(key)
+                else:
+                    found.append(f"{rel}:{line}: {name}: path escapes its package")
+    found.extend(
+        f"{rel}: {name}: allowlisted but no package escape ({ticket})"
+        for (rel, name), ticket in PACKAGE_CLIMB_ALLOWED.items()
+        if (rel, name) not in seen
+    )
+    return sorted(set(found))
+
+
+def _package_paths(node, bound, paths, depth, project, *, scope=""):
+    if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+        paths = dict(paths)
+        args = [*node.args.posonlyargs, *node.args.args]
+        defaults = [
+            *zip(args[len(args) - len(node.args.defaults) :], node.args.defaults, strict=True),
+            *zip(node.args.kwonlyargs, node.args.kw_defaults, strict=True),
+        ]
+        for arg, default in defaults:
+            climb = _package_climb(default, bound, paths)
+            if climb is not None:
+                paths[arg.arg] = climb
+                if climb > depth and isinstance(default, ast.Name) and default.id in bound:
+                    yield node.name, default.lineno
+        scope = node.name
+    if isinstance(node, ast.Assign | ast.AnnAssign):
+        value = node.value
+        climb = _package_climb(value, bound, paths)
+        targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+        for target in targets:
+            if isinstance(target, ast.Name) and climb is not None:
+                paths[target.id] = climb
+                if climb > depth and _adds_climb(value, bound):
+                    yield scope or target.id, node.lineno
+        scope = scope or next((t.id for t in targets if isinstance(t, ast.Name)), "")
+    if isinstance(node, ast.Call):
+        name = _dotted(node.func, bound)
+        if name in ("agent_pm.utils.import_roots", "agent_pm.utils.paths.import_roots"):
+            yield "import_roots()", node.lineno
+        if name == "os.listdir" and node.args:
+            climb = _package_climb(node.args[0], bound, paths)
+            if climb is not None and climb > depth:
+                yield scope, node.lineno
+    if isinstance(node, ast.Call | ast.BinOp):
+        parts = node.args[1:] if isinstance(node, ast.Call) else [node.right]
+        is_join = (
+            _dotted(node.func, bound) == "os.path.join"
+            if isinstance(node, ast.Call)
+            else isinstance(node.op, ast.Div)
+        )
+        if is_join and any(
+            isinstance(part, ast.Constant)
+            and isinstance(part.value, str)
+            and set(part.value.split("/")) & (PROJECTS.keys() - {project})
+            for part in parts
+        ):
+            yield scope, node.lineno
+    if _adds_climb(node, bound):
+        climb = _package_climb(node, bound, paths)
+        if climb is not None and climb > depth:
+            yield scope, node.lineno
+    for child in ast.iter_child_nodes(node):
+        yield from _package_paths(child, bound, paths, depth, project, scope=scope)
+
+
+def _adds_climb(node, bound):
+    return (
+        isinstance(node, ast.BinOp)
+        and isinstance(node.op, ast.Div)
+        and _path_steps(node.right, bound) > 0
+        or isinstance(node, ast.Attribute)
+        and node.attr == "parent"
+        or isinstance(node, ast.Subscript)
+        and isinstance(node.value, ast.Attribute)
+        and node.value.attr == "parents"
+        or isinstance(node, ast.Call)
+        and (
+            _dotted(node.func, bound) == "os.path.dirname"
+            or _dotted(node.func, bound) == "os.path.join"
+            and any(_path_steps(a, bound) > 0 for a in node.args[1:])
+        )
+    )
+
+
+def _package_climb(node, bound, paths):
+    if isinstance(node, ast.Name):
+        return 0 if node.id == "__file__" else paths.get(node.id)
+    if isinstance(node, ast.Attribute) and node.attr == "parent":
+        base = _package_climb(node.value, bound, paths)
+        return None if base is None else base + 1
+    if (
+        isinstance(node, ast.Subscript)
+        and isinstance(node.value, ast.Attribute)
+        and node.value.attr == "parents"
+        and isinstance(node.slice, ast.Constant)
+        and isinstance(node.slice.value, int)
+    ):
+        base = _package_climb(node.value.value, bound, paths)
+        return None if base is None else base + node.slice.value + 1
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Div):
+        base = _package_climb(node.left, bound, paths)
+        return None if base is None else base + _path_steps(node.right, bound)
+    if not isinstance(node, ast.Call):
+        return None
+    name = _dotted(node.func, bound)
+    if name in ("os.path.dirname", "os.path.join") and node.args:
+        base = _package_climb(node.args[0], bound, paths)
+        return (
+            None
+            if base is None
+            else base
+            + (1 if name.endswith("dirname") else sum(_path_steps(a, bound) for a in node.args[1:]))
+        )
+    if name in ("pathlib.Path", "os.path.abspath", "os.path.realpath", "str") and node.args:
+        return _package_climb(node.args[0], bound, paths)
+    if isinstance(node.func, ast.Attribute) and node.func.attr in ("resolve", "absolute"):
+        return _package_climb(node.func.value, bound, paths)
+    return None
+
+
+def _path_steps(node, bound):
+    if isinstance(node, ast.Starred):
+        return _path_steps(node.value, bound)
+    if isinstance(node, ast.List | ast.Tuple):
+        return sum(_path_steps(v, bound) for v in node.elts)
+    if (
+        isinstance(node, ast.BinOp)
+        and isinstance(node.op, ast.Mult)
+        and isinstance(node.right, ast.Constant)
+        and isinstance(node.right.value, int)
+    ):
+        return _path_steps(node.left, bound) * node.right.value
+    if _dotted(node, bound) == "os.pardir":
+        return 1
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return sum(
+            1 if part == ".." else -1 for part in node.value.split("/") if part not in ("", ".")
+        )
+    return 0
