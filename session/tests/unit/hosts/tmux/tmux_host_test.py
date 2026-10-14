@@ -580,10 +580,11 @@ class EventsFileTest(Case):
         caught = []
 
         def run():
-            try:
-                tmux_host.events_file(fifo)
-            except TuiError as e:
-                caught.append(e)
+            for check in (tmux_host.validate_events, tmux_host.events_file):
+                try:
+                    check(fifo)
+                except TuiError as e:
+                    caught.append(str(e))
 
         thread = threading.Thread(target=run)
         thread.start()
@@ -592,8 +593,20 @@ class EventsFileTest(Case):
             reader = os.open(fifo, os.O_RDONLY | os.O_NONBLOCK)  # lets the blocked open return
             thread.join()
             os.close(reader)
-            self.fail("events_file blocked on a FIFO without a reader")
-        self.assertRegex(str(caught[0]), f"^events file {re.escape(fifo)}: ")
+            self.fail("blocked on a FIFO without a reader")
+        self.assertEqual(caught, [f"events file {fifo}: not a regular file owned by you"] * 2)
+
+    def test_a_parent_that_is_a_file_is_refused_with_nothing_made(self):
+        parent = os.path.join(self.root, "file")
+        open(parent, "w").close()
+        path = os.path.join(parent, "e")
+        for check in (tmux_host.validate_events, tmux_host.events_file):
+            with self.subTest(check=check.__name__):
+                with self.assertRaises(TuiError) as caught:
+                    check(path)
+                self.assertEqual(str(caught.exception), f"events file {path}: Not a directory")
+        self.assertEqual(os.listdir(self.root), ["file"])
+        self.assertEqual(os.path.getsize(parent), 0)
 
     def test_refuses_a_path_tmux_would_misread(self):
         for name in ("a#b", "e;"):

@@ -212,16 +212,9 @@ class _Store:
 
     def _make(self, state: dict) -> os.stat_result:
         """A fresh dir with session.json, unless the session runs or is unknown; the dir's stat."""
-        process = self.process()
-        if process is not None:
-            if process.alive():
-                hint = (
-                    f"; {self.host.attach_command(self.name)}"
-                    if isinstance(self.host, Displayable)
-                    else ""
-                )
-                raise DriverError(f"tui session {self.name} is running{hint}")
-            process.close()
+        stale = _stale(self)
+        if stale is not None:
+            stale.close()
         folder = self.dir
         try:
             if os.path.lexists(folder):
@@ -272,6 +265,16 @@ class _Store:
     def _unmake(self, made: os.stat_result) -> None:
         with contextlib.suppress(OSError):
             self._remove(made)
+
+
+def _stale(store: _Store) -> HostProcess | None:
+    """Tui session `store.name`'s dead process, else None; DriverError while it runs."""
+    process = store.process()
+    if process is not None and process.alive():
+        host = store.host
+        hint = f"; {host.attach_command(store.name)}" if isinstance(host, Displayable) else ""
+        raise DriverError(f"tui session {store.name} is running{hint}")
+    return process
 
 
 @dataclass(frozen=True)
@@ -332,6 +335,7 @@ class TuiMode(RunningMode):
         pending = cls._prepare(spec, adapter, registry=registry, host=host, display=display)
         try:
             pending.validate(display)
+            _stale(pending.store)
         except DriverError as error:
             raise ConfigError(str(error)) from error
         return pending.prepared

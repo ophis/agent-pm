@@ -15,56 +15,10 @@ from agent_pm.session.hosts.tmux import tmux_host
 
 from session.tests.case import HOSTS, PY, REPO, SPAWNS, Case, child_env
 from session.tests.fakes.preflight import PreflightAdapter, SandboxedPreflightAdapter
-from session.tests.hosted_support import SID, fake_tmux
+from session.tests.hosted_support import SID, fake_tmux, listed
 
 
 class Preflight(Case):
-    def test_missing_claude_binary_is_config_error_for_preflight_and_driver_error_for_start(self):
-        self.session = HostedSession.configured(
-            adapters=read_config(local=os.devnull)["adapters"],
-            hosts=Host.parse_hosts({"tmux": HOSTS["tmux"], "default": "tmux"}),
-            host_factory=self._host_factory,
-        )
-        for name in (None, "named-worker"):
-            spec = Spec(
-                workdir=self.work,
-                runtime="claude",
-                mode=Mode.TUI,
-                sid=SID,
-                name=name,
-                events=self.events,
-                env={"PATH": os.path.join(self.home, "missing-bin")},
-            )
-            before = self.tree()
-            with self.subTest(name=name), self.no_runtime():
-                with self.assertRaises(ConfigError) as refusal:
-                    self.session.preflight(spec)
-                self.assertEqual(str(refusal.exception), "command not found: claude")
-                with self.assertRaises(DriverError) as failure:
-                    self.session.start(spec)
-                session_name = name if name is not None else f"claude-{SID[:8]}"
-                self.assertEqual(
-                    str(failure.exception),
-                    f"cannot start tui session {session_name}: command not found: claude",
-                )
-            self.unchanged(before)
-            self.tmux.events_file.assert_not_called()
-
-    def test_events_file_creation_failure_is_a_driver_error_before_any_session_state(self):
-        message = f"events file {self.events}: Permission denied"
-        self.tmux.events_file.side_effect = tmux_host.TuiError(message)
-        spec = self.spec(Mode.TUI, name="event-worker", events=self.events)
-        before = self.tree()
-        with self.no_runtime():
-            self.assertIsNone(self.session.preflight(spec))
-            with self.assertRaises(DriverError) as failure:
-                self.session.start(spec)
-        self.assertEqual(
-            str(failure.exception), f"cannot start tui session event-worker: {message}"
-        )
-        self.unchanged(before)
-        self.tmux.events_file.assert_called_once_with(self.events)
-
     def setUp(self):
         self.work = os.path.join(self.home, "absent-work")
         self.events = os.path.join(self.home, "absent-events")
@@ -131,6 +85,52 @@ class Preflight(Case):
                 self.unchanged(before)
         self.assertEqual(len(diagnostics), 2)
         self.assertEqual(diagnostics[0], diagnostics[1])
+
+    def test_missing_claude_binary_is_config_error_for_preflight_and_driver_error_for_start(self):
+        self.session = HostedSession.configured(
+            adapters=read_config(local=os.devnull)["adapters"],
+            hosts=Host.parse_hosts({"tmux": HOSTS["tmux"], "default": "tmux"}),
+            host_factory=self._host_factory,
+        )
+        for name in (None, "named-worker"):
+            spec = Spec(
+                workdir=self.work,
+                runtime="claude",
+                mode=Mode.TUI,
+                sid=SID,
+                name=name,
+                events=self.events,
+                env={"PATH": os.path.join(self.home, "missing-bin")},
+            )
+            before = self.tree()
+            with self.subTest(name=name), self.no_runtime():
+                with self.assertRaises(ConfigError) as refusal:
+                    self.session.preflight(spec)
+                self.assertEqual(str(refusal.exception), "command not found: claude")
+                with self.assertRaises(DriverError) as failure:
+                    self.session.start(spec)
+                session_name = name if name is not None else f"claude-{SID[:8]}"
+                self.assertEqual(
+                    str(failure.exception),
+                    f"cannot start tui session {session_name}: command not found: claude",
+                )
+            self.unchanged(before)
+            self.tmux.events_file.assert_not_called()
+
+    def test_events_file_creation_failure_is_a_driver_error_before_any_session_state(self):
+        message = f"events file {self.events}: Permission denied"
+        self.tmux.events_file.side_effect = tmux_host.TuiError(message)
+        spec = self.spec(Mode.TUI, name="event-worker", events=self.events)
+        before = self.tree()
+        with self.no_runtime():
+            self.assertIsNone(self.session.preflight(spec))
+            with self.assertRaises(DriverError) as failure:
+                self.session.start(spec)
+        self.assertEqual(
+            str(failure.exception), f"cannot start tui session event-worker: {message}"
+        )
+        self.unchanged(before)
+        self.tmux.events_file.assert_called_once_with(self.events)
 
     def test_all_modes_accept_fresh_and_resume_without_writing_or_committing(self):
         for mode, resume in itertools.product(Mode, (False, True)):
@@ -294,6 +294,26 @@ print(json.dumps([result, PreflightAdapter.prepared[-1].sid, PreflightAdapter.co
         self.refusal(
             self.spec(Mode.TUI, events=self.events, flags=("--resume",)), "picks the session"
         )
+
+    def test_tui_preflight_refuses_a_live_same_named_session_and_passes_a_dead_one(self):
+        self.tmux.listing.return_value = [listed("worker")]
+        self.tmux.status.return_value = tmux_host.PaneStatus.RUNNING
+        spec = self.spec(Mode.TUI, name="worker", events=self.events)
+        message = "tui session worker is running; tmux attach -t '=worker'"
+        before = self.tree()
+        with self.no_runtime(), self.assertRaises(ConfigError) as refusal:
+            self.session.preflight(spec)
+        self.assertEqual(str(refusal.exception), message)
+        self.unchanged(before)
+        self.tmux.status.return_value = 0
+        with self.no_runtime():
+            self.assertIsNone(self.session.preflight(spec))
+        self.unchanged(before)
+        self.tmux.kill.assert_not_called()
+        self.tmux.status.return_value = tmux_host.PaneStatus.RUNNING
+        with self.no_runtime(), self.assertRaises(DriverError) as failure:
+            self.session.start(spec)
+        self.assertEqual(str(failure.exception), message)
 
     def test_tui_settings_and_adapter_hook_protection_are_validated_before_state(self):
         self.configure(tmux_settings={"status_line": "invalid"})

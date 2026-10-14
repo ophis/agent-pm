@@ -1,5 +1,5 @@
 """HostedSession: its configured classes and Setup, its class methods (start, attach, list, usage,
-layout, writable_dirs, display, host) and a session's own methods, each test on a Driver's
+layout, writable_dirs, display, host, class_roots) and a session's own methods, each test on a Driver's
 configured class (self.session) with caller-owned dependencies.
 """
 
@@ -52,10 +52,10 @@ from agent_pm.session.engine.types import (
 )
 from agent_pm.session.hosts.tmux import TmuxHost
 from agent_pm.session.modes import tui
-from agent_pm.utils import Record
+from agent_pm.utils import Record, load_class
 
 from session.tests import fake_adapter
-from session.tests.case import HOSTS, REPO, SPAWNS, Case
+from session.tests.case import HOSTS, REPO, SPAWNS, SRC, Case
 from session.tests.fakes.host import FakeHost
 from session.tests.fakes.terminal import MemoryHost, ScreenHost
 from session.tests.hosted_support import (
@@ -140,6 +140,7 @@ class ConfiguredTest(Case):
             ("writable_dirs", lambda: fresh.writable_dirs(spec)),
             ("display", fresh.display),
             ("host", fresh.host),
+            ("class_roots", lambda: fresh.class_roots("fake")),
         ):
             with self.subTest(name=name), self.assertRaises(ConfigError) as caught:
                 call()
@@ -349,6 +350,83 @@ class HostTest(Case):
         )
         self.assertIsInstance(configured.host(), FakeHost)
         self.assertEqual(loaded, [("agent_pm.session.hosts.tmux:TmuxHost", Host)])
+
+
+class ClassRootsTest(Case):
+    ADAPTERS = {
+        "claude": {"implementation": "agent_pm.session.adapters.claude:ClaudeAdapter"},
+        "fake": {"implementation": "session.tests.fake_adapter:FakeAdapter"},
+        "broken": {"implementation": "session.tests.absent_module:Nothing"},
+    }
+
+    def configured(self, tables=None, **setup):
+        tables = {**HOSTS, **FAKE_HOSTS} if tables is None else tables
+        return HostedSession.configured(
+            adapters=self.ADAPTERS, hosts=parsed(tables, "tmux"), **setup
+        )
+
+    def test_the_runtimes_adapter_root_then_each_configured_hosts_deduplicated(self):
+        configured = self.configured()
+        self.assertNotIn(REPO, SRC.values())
+        self.assertEqual(configured.class_roots("claude"), (SRC["session"], REPO))
+        self.assertEqual(configured.class_roots("fake"), (REPO, SRC["session"]))
+
+    def test_classes_load_through_the_setups_loader_and_no_host_is_built(self):
+        loaded, built = [], []
+
+        def loader(path, base):
+            loaded.append((path, base))
+            return load_class(path, base)
+
+        configured = self.configured(
+            class_loader=loader, host_factory=lambda *args: built.append(args)
+        )
+        configured.class_roots("fake")
+        self.assertEqual(
+            loaded,
+            [
+                ("session.tests.fake_adapter:FakeAdapter", Adapter),
+                ("agent_pm.session.hosts.tmux:TmuxHost", Host),
+                ("session.tests.fakes.host:FakeHost", Host),
+            ],
+        )
+        self.assertEqual(built, [])
+
+    def test_an_unknown_runtime_or_a_class_it_cannot_load_is_a_config_error(self):
+        absent = "session.tests.absent_module"
+        missing = f"{absent}:Nothing: cannot import {absent}: No module named '{absent}'"
+        for runtime, tables, message in (
+            ("absent", None, "no [adapters.absent] table in the configured adapters"),
+            ("Bad", None, "unsafe runtime name 'Bad': want a lowercase identifier"),
+            ("broken", None, f"[adapters.broken].implementation: {missing}"),
+            (
+                "fake",
+                {**HOSTS, "x": {"implementation": f"{absent}:Nothing"}},
+                f"[hosts.x].implementation: {missing}",
+            ),
+            (
+                "fake",
+                {**HOSTS, "x": {"implementation": "agent_pm.session.engine.types:Spec"}},
+                "[hosts.x].implementation: agent_pm.session.engine.types:Spec must be a"
+                " concrete Host subclass",
+            ),
+        ):
+            with self.subTest(runtime=runtime, tables=tables):
+                with self.assertRaises(ConfigError) as caught:
+                    self.configured(tables).class_roots(runtime)
+                self.assertEqual(str(caught.exception), message)
+
+    def test_a_class_whose_module_has_no_source_file_is_a_config_error(self):
+        sourceless = type("Sourceless", (FakeHost,), {"__module__": "builtins"})
+
+        def loader(path, base):
+            return sourceless if base is Host else load_class(path, base)
+
+        with self.assertRaises(ConfigError) as caught:
+            self.configured(class_loader=loader).class_roots("fake")
+        self.assertEqual(
+            str(caught.exception), "[hosts.tmux].implementation: builtins has no source file"
+        )
 
 
 class DisplayTest(HostedTuiBase):

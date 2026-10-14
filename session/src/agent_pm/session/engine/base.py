@@ -154,3 +154,10 @@ class Session(ABC):
     @classmethod
     def host(cls, name: str | None = None) -> Host:
         return cls._hosted("host")(name)
+
+    @classmethod
+    def class_roots(cls, runtime: str) -> tuple[str, ...]:
+        """The import roots of the classes a `runtime` session loads by name: its Adapter's, then
+        each configured Host's, without repeats.
+        """
+        return cls._hosted("class_roots")(runtime)
