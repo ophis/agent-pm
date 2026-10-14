@@ -18,7 +18,7 @@ from agent_pm.delegate.engine.callback import EventCallback
 from agent_pm.delegate.engine.config import module_roots
 from agent_pm.delegate.engine.drivers import AgentDriver, Driver, InstructionDriver
 from agent_pm.delegate.engine.plan import plan
-from agent_pm.delegate.engine.runner import execute, say
+from agent_pm.delegate.engine.runner import execute, say, stopped
 from agent_pm.delegate.engine.state import RunState
 from agent_pm.delegate.engine.types import (
     ConfigError,
@@ -574,6 +574,10 @@ class HarnessDelegate(Delegate):
         )
 
     def run(self, on_event: Callable[[Event], None] | None = None) -> Result:
+        """Each event goes to the callback, then `on_event`; a Finished is stored first. A run that
+        raises before its Finished stores and calls back a stopped one (not to `on_event`), then
+        re-raises.
+        """
         state = self._state
         if state.events is not None and not state.detached and state.plan.spec.mode != Mode.TUI:
             raise ConfigError("events: a headless run writes them only when detached")
@@ -587,23 +591,42 @@ class HarnessDelegate(Delegate):
                 else EventCallback(
                     self._state.callback,
                     self.workdir,
+                    cwd=self.store.dir,
                     sid=self._state.plan.sid,
                     attempt=self._state.attempt,
                 )
             )
 
+            finished = False
+
             def emit(event: Event) -> None:
+                nonlocal finished
                 if isinstance(event, Finished):
-                    with self.store.mutex():
-                        state = self._current()
-                        self._state = replace(state, result=event.result, completed=True)
-                        self._save(self._state)
-                if on_event is not None:
-                    on_event(event)
+                    self._complete(event.result)
+                    finished = True
                 if callback is not None:
                     callback(event)
+                if on_event is not None:
+                    on_event(event)
 
-            return execute(self._state.plan, driver=self.driver, on_event=emit)
+            try:
+                return execute(self._state.plan, driver=self.driver, on_event=emit)
+            except BaseException as error:
+                if not finished:
+                    ended = stopped(error)
+                    try:
+                        self._complete(ended)
+                    except (ConfigError, OSError) as failure:
+                        say(f"delegate: {failure}")
+                    if callback is not None:
+                        callback(Finished(ended))
+                raise
+
+    def _complete(self, result: Result) -> None:
+        with self.store.mutex():
+            state = self._current()
+            self._state = replace(state, result=result, completed=True)
+            self._save(self._state)
 
     def announce(self, result: Result | None) -> None:
         """Appends the run's one events line, `outcome <status>` for its harness session (`error`
@@ -723,7 +746,10 @@ class HarnessDelegate(Delegate):
                     session.close()
         raise DriverError(f"tui session {state.agent_name} did not start")
 
-    def resume(self) -> Record:
+    def resume(self, *, mode: str | None = None) -> Record:
+        """Continues in `mode` (headless or tui), else the recorded one; the new mode is recorded."""
+        if mode not in (None, Mode.HEADLESS, Mode.TUI):
+            raise ConfigError(f"resume: mode must be headless or tui, got {mode!r}")
         with self.store.mutex():
             state = previous = self._state = self._read()
             if self._alive(state) or state.result is not None and state.result.outcome is not None:
@@ -737,7 +763,17 @@ class HarnessDelegate(Delegate):
                 and under(os.path.realpath(original.cwd), self.composer.trusted_dirs()) is None
             ):
                 raise ConfigError(f"cwd {original.cwd} is no longer in trusted_dirs")
-            spec = replace(state.plan.spec, resume=True, cwd=original.cwd, team=self.composer.team)
+            mode = mode or state.plan.spec.mode
+            tui = mode == Mode.TUI
+            spec = replace(
+                state.plan.spec,
+                resume=True,
+                cwd=original.cwd,
+                team=self.composer.team,
+                mode=mode,
+                name=state.agent_name if tui else None,
+                events=state.events if tui else None,
+            )
             accepted = plan(
                 self.composer.resolve(state.role, spec.task, overlays=state.overlays),
                 spec,

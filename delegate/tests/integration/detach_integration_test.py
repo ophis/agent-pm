@@ -15,14 +15,19 @@ manager/tests/integration/crew_*_integration_test.py.
 import json
 import os
 import re
+import shlex
 import signal
 import subprocess
+import sys
 import tempfile
 import unittest
 
+from agent_pm.delegate import DelegateEvent
+from agent_pm.delegate.engine.state import RunState
 from agent_pm.utils import Record
 
 from delegate.tests.case import PYTHONPATH, Case
+from delegate.tests.fakes import callback_recorder
 from delegate.tests.integration.cli import ASKING, DONE, RUN, SID
 from delegate.tests.replies import block, mark, running
 from session.tests import live_tmux
@@ -168,6 +173,19 @@ class Detach(Case):
         with open(path) as f:
             return f.read()
 
+    def on_event(self, *rules: str) -> tuple[str, str]:
+        """`--on-event` and a recorder command logging to self.callbacks."""
+        self.callbacks = os.path.join(self.dir, "callbacks.log")
+        argv = [sys.executable, "-P", "-S", callback_recorder.__file__, self.callbacks, *rules]
+        return "--on-event", shlex.join(argv)
+
+    def delivered(self) -> list[dict]:
+        try:
+            with open(self.callbacks, encoding="utf-8") as stream:
+                return [json.loads(line) for line in stream]
+        except FileNotFoundError:
+            return []
+
 
 def shape(lines: list[str]) -> list[str]:
     return [
@@ -259,6 +277,42 @@ class Headless(Detach):
         self.assertEqual(self.ended(), ["outcome done", "exited 0"])
         self.assertEqual(self.read(self.out), DONE["deliverable"])
         self.assertEqual(self.last("result")["outcome"]["status"], "done")
+
+    def test_on_event_gets_each_event_from_the_state_dir_its_stdout_off_the_record_line(self):
+        res = self.detach(*self.on_event(), steps=[START, block(DONE)])
+        self.said(res, tui=False)
+        self.assertNotIn(callback_recorder.NOISE, res.stdout + res.stderr)
+        self.assertEqual(self.ended(), ["outcome done", "exited 0"])
+        entries = self.delivered()
+        events = [DelegateEvent.parse(entry["line"]) for entry in entries]
+        self.assertEqual([event.kind for event in events], ["begun", "progress", "finished"])
+        self.assertEqual({(event.sid, event.attempt) for event in events}, {(SID, 1)})
+        self.assertEqual(events[-1].outcome["status"], "done")
+        state = os.path.realpath(RunState(self.work).dir)
+        self.assertEqual({entry["cwd"] for entry in entries}, {state})
+        self.assertEqual(self.kinds().count("callback_error"), 0)
+
+    def test_sigterm_while_the_callback_waits_kills_its_group_then_a_stopped_finished(self):
+        res = self.detach(*self.on_event("--block", "progress"), steps=[START, block(DONE)])
+        self.said(res, tui=False)
+        (blocked,) = live_tmux.wait(
+            lambda: [e for e in self.delivered() if json.loads(e["line"])["kind"] == "progress"],
+            WAIT,
+            what="the blocked progress callback",
+        )
+        self.assertTrue(all(running(blocked[pid]) for pid in ("pid", "grandchild")))
+        shown = self.server.tmux("display-message", "-p", "-t", f"={HARNESS}:", "#{pane_pid}")
+        os.kill(int(shown.stdout), signal.SIGTERM)
+        self.assertEqual(self.ended(), ["outcome error", "exited 143"])
+        for pid in ("pid", "grandchild"):
+            live_tmux.wait(lambda pid=pid: not running(blocked[pid]), WAIT, what=f"{pid} gone")
+        events = [DelegateEvent.parse(entry["line"]) for entry in self.delivered()]
+        self.assertEqual([event.kind for event in events], ["begun", "progress", "finished"])
+        finished = events[-1]
+        self.assertEqual(
+            (finished.kind, finished.returncode, finished.outcome, finished.error),
+            ("finished", 143, None, "stopped: Stopped: 143"),
+        )
 
     def test_the_launchers_events_file_gets_one_outcome_line(self):
         res = self.detach(steps=[START, block(DONE)], launcher=True)

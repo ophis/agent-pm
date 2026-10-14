@@ -257,6 +257,7 @@ class RunExecution(Case):
                 f"writeback step TASK-7 sid={SID} step=comment",
                 f"writeback step TASK-7 sid={SID} step=attach:{PR}",
                 f"writeback step TASK-7 sid={SID} step=move:in_review",
+                f"writeback step TASK-7 sid={SID} step=outcome",
                 f"run end TASK-7 sid={SID} exit=0",
             ],
         )
@@ -325,6 +326,7 @@ class RunExecution(Case):
                 f"writeback step TASK-7 sid={SID} step=comment",
                 f"writeback step TASK-7 sid={SID} step=attach:{PR}",
                 f"writeback step TASK-7 sid={SID} step=move:in_review",
+                f"writeback step TASK-7 sid={SID} step=outcome",
                 f"run end TASK-7 sid={SID} exit=1",
             ],
         )
@@ -654,9 +656,10 @@ class RunTui(Case):
             f"run tui-error TASK-7 session={TUI} msg=DriverError: no tmux session {TUI}", said
         )
         self.assertEqual(
-            said[-2:],
+            said[-3:],
             [
                 f"writeback step TASK-7 sid={SID} step=move:in_review",
+                f"writeback step TASK-7 sid={SID} step=outcome",
                 f"run end TASK-7 sid={SID} exit=0",
             ],
         )

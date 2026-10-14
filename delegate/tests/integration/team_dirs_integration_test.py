@@ -37,11 +37,11 @@ WRITER = (
 )
 TEAM = {"roles/writer.md": WRITER, "tasks/note.md": NOTE}
 TASKS_PARAM = re.compile(r"\n- `<tasks>`: `([^`]+)`\n")
-CATALOG = """from agent_pm.utils import read_project
+CATALOG = """from agent_pm.delegate.config import read_config
 
 team = composer.team(composer.TEAM, composer.team_dirs())
 composer.check_team_dirs(team.dirs, writes=[])
-composer.check_all(team, read_project("delegate"))
+composer.check_all(team, read_config())
 params = composer.RunParams(input="", out=os.path.join(sys.argv[1], "out.md"), workdir=sys.argv[1])
 rows = {}
 for role, tasks in composer.catalog(team).items():

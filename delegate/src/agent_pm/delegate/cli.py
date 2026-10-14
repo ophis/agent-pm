@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """agent-pm-delegate: run a role on HarnessDelegate, deliver its prompt, or query its runs.
-`run --detach` starts the run's harness and prints the run's Record line on stdout. main reads
+`run --detach` starts the run's harness and prints the run's Record line on stdout;
+`--on-event CMD` makes the harness deliver each event to CMD (split once, never a shell). main reads
 $AGENT_PM_SID and $AGENT_PM_EVENTS once and removes them from its environment: `run`'s sid is --sid,
 else $AGENT_PM_SID (the two must agree); `resume` refuses a run of another $AGENT_PM_SID;
 `run --detach`'s events file is --events, else $AGENT_PM_EVENTS.
@@ -11,6 +12,7 @@ Exits 0 on success, 2 on usage or config errors, 1 on other failures.
 import argparse
 import json
 import os
+import shlex
 import sys
 from collections.abc import Sequence
 from dataclasses import asdict
@@ -21,7 +23,7 @@ from agent_pm.delegate.engine.runner import report, say
 from agent_pm.delegate.engine.types import Begun, ConfigError, Preview, Spec
 from agent_pm.session import ConfigError as SessionConfigError
 from agent_pm.session import DriverError, Mode, NotDisplayable
-from agent_pm.utils import Display, Once, answer_keys
+from agent_pm.utils import Once, answer_keys
 
 LIST_PARAMS = RunParams(input="", out="/agent-pm-list/work/out.md", workdir="/agent-pm-list/work")
 
@@ -89,6 +91,13 @@ def _run_options(ap: argparse.ArgumentParser) -> None:
         "--events", metavar="FILE", help="--detach: the run's events file; default $AGENT_PM_EVENTS"
     )
     ap.add_argument(
+        "--on-event",
+        action=Once,
+        type=_command,
+        metavar="CMD",
+        help="--detach: the command each event's JSON line goes to on stdin",
+    )
+    ap.add_argument(
         "--display",
         metavar="D",
         help="where its sessions show, completed on its agent's Host: agent-pm-session --help",
@@ -129,13 +138,16 @@ def _run(
         say(f"delegate: {e}")
         return 2
     spec = spec_of(a, sys.stdin.read() if a.input == "-" else a.input)
+    placement = {"display": a.display}
+    if a.on_event is not None:
+        placement["callback"] = a.on_event
     try:
         if a.dry_run:
-            shown = _shown(delegate_cls.preview(a.role, spec, display=a.display), a)
+            shown = _shown(delegate_cls.preview(a.role, spec, **placement), a)
             print(json.dumps(shown, ensure_ascii=False, indent=1))
             return 0
         if a.detach:
-            return _detach(delegate_cls, a.role, spec, a.display)
+            return _detach(delegate_cls, a.role, spec, placement)
         result = delegate_cls(a.role, spec, display=a.display).run(_begun)
     except ConfigError as e:
         say(f"delegate: {e}")
@@ -143,10 +155,10 @@ def _run(
     return report(result, a.out)[0]
 
 
-def _detach(delegate_cls: type[HarnessDelegate], role: str, spec: Spec, display: Display) -> int:
+def _detach(delegate_cls: type[HarnessDelegate], role: str, spec: Spec, placement: dict) -> int:
     """Prints the run's Record line once its listed sessions are live."""
     try:
-        record = delegate_cls(role, spec, display=display).detach()
+        record = delegate_cls(role, spec, **placement).detach()
     except (DriverError, OSError) as e:
         say(f"delegate: {e}")
         return 1
@@ -178,12 +190,24 @@ def _check(a: argparse.Namespace) -> None:
         raise ConfigError("--resume needs --sid")
     if a.events is not None and not a.detach:
         raise ConfigError("--events needs --detach")
+    if a.on_event is not None and not a.detach:
+        raise ConfigError("--on-event needs --detach")
     if a.detach and a.events is None:
         raise ConfigError("--detach needs --events")
     if a.detach and a.out == "-":
         raise ConfigError("--detach needs --out PATH")
     if a.detach and a.mode == Mode.IN_PROCESS:
         raise ConfigError("--detach needs --mode headless or tui")
+
+
+def _command(text: str) -> tuple[str, ...]:
+    try:
+        argv = tuple(shlex.split(text))
+    except ValueError as error:
+        raise argparse.ArgumentTypeError(str(error)) from None
+    if not argv:
+        raise argparse.ArgumentTypeError("empty command")
+    return argv
 
 
 def _begun(event) -> None:

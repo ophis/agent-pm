@@ -10,10 +10,11 @@ import unittest
 from unittest import mock
 
 import agent_pm
-from agent_pm.utils.paths import import_roots
+
+from utils.tests.sandbox import project_roots
 
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-ROOTS = import_roots(REPO)
+ROOTS = project_roots(REPO)
 SRC = {os.path.basename(os.path.dirname(r)).replace("-", "_"): r for r in ROOTS}
 RUN_WITH = os.pathsep.join(os.path.relpath(root, REPO) for root in ROOTS)
 

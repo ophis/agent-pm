@@ -1,9 +1,10 @@
-"""Owned tmux fixture cleanup, including failed shutdown and locked allocation, and the processes
-a supervised run leaves behind.
+"""Owned tmux fixture cleanup, including failed shutdown and locked allocation, the processes
+a supervised run leaves behind, and a tree's project import roots.
 """
 
 import os
 import signal
+import tempfile
 import threading
 from pathlib import Path
 from unittest import mock
@@ -11,8 +12,41 @@ from unittest import mock
 from agent_pm.utils.process_control import TIMEOUT
 
 from utils.tests import sandbox
-from utils.tests.case import Case
+from utils.tests.case import REPO, Case
 from utils.tests.process_fixtures import TimeoutExpired
+
+
+class ProjectRoots(Case):
+    def test_only_each_projects_src_holding_just_its_own_subpackage(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            for rel in (
+                "utils/src/agent_pm/utils",
+                "linear-x/src/agent_pm/linear_x",
+                "tmpq1/src/agent_pm/utils",
+                "two/src/agent_pm/two",
+                "two/src/agent_pm/other",
+                "inited/src/agent_pm/inited",
+                "utils/nested/src/agent_pm/nested",
+                "bare/src/agent_pm/bare",
+            ):
+                (repo / rel).mkdir(parents=True)
+                if rel != "bare/src/agent_pm/bare":
+                    (repo / rel / "__init__.py").touch()
+            (repo / "inited/src/agent_pm/__init__.py").touch()
+            (repo / "utils/src/agent_pm/.DS_Store").touch()
+            self.assertEqual(
+                sandbox.project_roots(tmp), (f"{tmp}/linear-x/src", f"{tmp}/utils/src")
+            )
+
+    def test_this_repos_are_its_five_projects(self):
+        self.assertEqual(
+            sandbox.project_roots(REPO),
+            tuple(
+                os.path.join(REPO, project, "src")
+                for project in ("delegate", "linear-orchestrator", "manager", "session", "utils")
+            ),
+        )
 
 
 class TmuxCleanup(Case):

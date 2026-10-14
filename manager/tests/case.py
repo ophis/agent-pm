@@ -12,13 +12,13 @@ import uuid
 from unittest import mock
 
 import agent_pm
-from agent_pm.utils import Record, import_roots
+from agent_pm.utils import Record
 
 from utils.tests.fakes import ctl
-from utils.tests.sandbox import clean_env
+from utils.tests.sandbox import clean_env, project_roots
 
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-ROOTS = import_roots(REPO)
+ROOTS = project_roots(REPO)
 SRC = {os.path.basename(os.path.dirname(r)).replace("-", "_"): r for r in ROOTS}
 PYTHONPATH = os.pathsep.join(ROOTS)
 RUN_WITH = os.pathsep.join(os.path.relpath(root, REPO) for root in ROOTS)

@@ -18,7 +18,6 @@ from tests.guard_data.session import (
     STATUS_LOG_HOME,
     TMUX_HOME,
 )
-from tests.guard_data.utils import CONFIG_LEVELS
 from tests.guards import PKG, PROJECTS
 
 CLIENT = re.compile(r"claude|codex", re.I)
@@ -194,8 +193,6 @@ def standalone(repo: str) -> list[str]:
                 rel = os.path.relpath(os.path.join(top, name), repo).replace(os.sep, "/")
                 with open(os.path.join(top, name), encoding="utf-8", errors="replace") as f:
                     for number, line in enumerate(f, 1):
-                        if rel == CONFIG_LEVELS and line.startswith("LEVELS = "):
-                            continue
                         found.update(f"{rel}:{number}: names {w}" for w in LINEAR.findall(line))
     return sorted(found)
 
