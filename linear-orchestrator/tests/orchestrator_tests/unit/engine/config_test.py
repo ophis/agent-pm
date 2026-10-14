@@ -151,7 +151,7 @@ DEPLOYMENT = {
 
 ID = "TASK-12"
 
-A, B = "engineer-TASK-12-0b6f2c1e", "dummy-tester-TASK-12-7c1d9e2f"
+A = "engineer-TASK-12-0b6f2c1e"
 
 
 class ConfigurationLoading(ConfigFile, Case):
@@ -814,36 +814,8 @@ class TuiSessionNames(Case):
             r"TUI session prefix 'Engineer-TASK-12': want ([a-z][a-z0-9-]*)-([A-Z][A-Z0-9]*-\d+)",
         )
 
-    def test_the_name_round_trips(self):
-        self.assertEqual(config.TUI.pattern, r"([a-z][a-z0-9-]*)-([A-Z][A-Z0-9]*-\d+)-[0-9a-f]{8}")
+    def test_the_name_is_the_prefix_and_the_sid_head(self):
         self.assertEqual(config.tui_name("engineer", ID, SID), A)
-        self.assertEqual(
-            config.tui_issue(config.tui_name("dummy-tester", "T-1", SID)), ("dummy-tester", "T-1")
-        )
-
-    def test_found_by_name_only(self):
-        found = {
-            A: ("engineer", ID),
-            B: ("dummy-tester", ID),
-            "pm-TASK-12-cccccccc": ("pm", ID),
-            "engineer-TASK-1-aaaaaaaa": ("engineer", "TASK-1"),
-            "pm-T-1-aaaaaaaa": ("pm", "T-1"),
-        }
-        others = [
-            "Engineer-TASK-12-bbbbbbbb",
-            "agent-pm-engineer-TASK-12",
-            "agent-pm-engineer-TASK-12345678",
-            "engineer-0b6f2c1e",
-            "engineer-TASK-12-0B6F2C1E",
-            "engineer-TASK-12-0b6f2c1",
-            "engineer-task-12-0b6f2c1e",
-            "mine",
-            "pm-T-1-aaaaaaaa-drive",
-            "agent-pm-pm-T-1",
-        ]
-        for name, want in [*found.items(), *((o, None) for o in others)]:
-            with self.subTest(name):
-                self.assertEqual(config.tui_issue(name), want)
 
 
 class RunnableRoles(ConfigFile, Case):

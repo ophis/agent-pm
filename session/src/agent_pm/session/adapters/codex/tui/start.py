@@ -110,7 +110,7 @@ class _Termination(app_server.Termination):
         for signum, handler in self.previous.items():
             signal.signal(signum, handler)
 
-    def receive(self, signum, frame):
+    def receive(self, signum, _frame):
         # Popen must return an owned process before interruption can unwind.
         self.signum = self.signum or signum
 

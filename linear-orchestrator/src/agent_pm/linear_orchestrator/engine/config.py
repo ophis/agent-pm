@@ -29,7 +29,6 @@ LOCAL = utils.LOCAL
 
 REF = re.compile(r"(?!-)(?!.*\.\.)[A-Za-z0-9._/-]+")
 _ROLE_ISSUE = r"([a-z][a-z0-9-]*)-([A-Z][A-Z0-9]*-\d+)"
-TUI = re.compile(_ROLE_ISSUE + r"-[0-9a-f]{8}")
 
 TOP_KEYS = {
     "team",
@@ -114,11 +113,6 @@ def tui_prefix(role, issue):
 
 def tui_name(role, issue, sid):
     return tui_prefix(role, issue) + sid[:8]
-
-
-def tui_issue(name):
-    m = TUI.fullmatch(name)
-    return m.groups() if m else None
 
 
 def path():

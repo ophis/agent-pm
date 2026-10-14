@@ -262,6 +262,7 @@ ruff format --check --no-cache
 pyright
 lint-imports --no-cache
 pylint --disable=all --enable=cyclic-import,duplicate-code manager/src linear-orchestrator/src delegate/src session/src utils/src
+vulture
 python3 -m tests.checks
 python3 .github/run_tests.py "Repository integration" tests/integration
 python3 .github/integration_jobs.py --check
