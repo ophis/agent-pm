@@ -128,6 +128,7 @@ class Pending(NamedTuple):
     gate: str
     resumed: bool
     tui: bool
+    ended: int  # its session's write-back ends before it: a closed harness may leave none
 
 
 class Segment(TmuxFlow):
@@ -353,7 +354,9 @@ class Segment(TmuxFlow):
             [("router", "tui-closed")] if had_prior and not resumed else [],
         )
         self.texts.update(script.texts)
-        self.pending = Pending(ident, role, line["sid"], script, gate, resumed, tui)
+        end = ("writeback", "end", line["sid"])
+        ended = sum((e["src"], e["kind"], e.get("sid")) == end for e in self.logged())
+        self.pending = Pending(ident, role, line["sid"], script, gate, resumed, tui, ended)
         return line, call, logged
 
     def attended(self, ident, role, sid, res):
@@ -384,8 +387,7 @@ class Segment(TmuxFlow):
         with self.step(RUN_STEPS[p.script.outcome]):
             with open(p.gate, "w"):
                 pass
-            ends = sum(line[0] != "limit" and line[2] == p.sid for line in self.want_runs)
-            self.wait_end(p.sid, p.ident, ends, p.role)
+            self.wait_end(p.sid, p.ident, p.ended + 1, p.role)
             self.pending = None
             if p.tui:  # left open after the outcome or the give-up
                 self.assertTrue(self.live(config.tui_name(p.role, p.ident, p.sid)))
