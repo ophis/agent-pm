@@ -9,7 +9,6 @@ import os
 import re
 import signal
 import stat
-import subprocess
 import sys
 import tempfile
 import threading
@@ -80,7 +79,10 @@ class ClassTest(Case):
         host = TmuxHost("tmux", {"status_line": True})
         self.assertEqual((host.name, host.settings), ("tmux", {"status_line": True}))
         self.assertIsInstance(host.tmux, Tmux)
-        self.assertEqual((host.tmux.proc, host.tmux.sleep), (subprocess.run, time.sleep))
+        self.assertEqual(
+            (f"{host.tmux.proc.__module__}.{host.tmux.proc.__name__}", host.tmux.sleep),
+            ("subprocess.run", time.sleep),
+        )
 
 
 class FoldTest(Case):

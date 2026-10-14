@@ -1,13 +1,13 @@
 """Owned tmux fixture cleanup, including failed shutdown and locked allocation."""
 
 import os
-import subprocess
 import threading
 from pathlib import Path
 from unittest import mock
 
 from utils.tests import sandbox
 from utils.tests.case import Case
+from utils.tests.process_fixtures import TimeoutExpired
 
 
 class TmuxCleanup(Case):
@@ -20,7 +20,7 @@ class TmuxCleanup(Case):
         return root, [str(socket_directory / name) for name in names]
 
     def test_shutdown_failures_still_remove_the_owned_directory(self):
-        for error in (FileNotFoundError("tmux"), subprocess.TimeoutExpired("tmux", 10)):
+        for error in (FileNotFoundError("tmux"), TimeoutExpired("tmux", 10)):
             with self.subTest(error=type(error).__name__):
                 root, _ = self.sockets("default")
                 with (
@@ -35,7 +35,7 @@ class TmuxCleanup(Case):
 
     def test_a_failed_socket_does_not_stop_the_other_servers(self):
         root, sockets = self.sockets("first", "second", "third")
-        failure = subprocess.TimeoutExpired("tmux", 10)
+        failure = TimeoutExpired("tmux", 10)
         with (
             mock.patch("pathlib.Path.is_socket", return_value=True),
             mock.patch("subprocess.run", side_effect=[failure, None, None]) as run,
