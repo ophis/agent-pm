@@ -470,7 +470,10 @@ class HarnessDelegate(Delegate):
             agent.close()
         process = self._harness(state)
         if process is not None:
-            process.close()
+            try:
+                process.close()
+            except DriverError as error:
+                raise DriverError(f"close {state.harness_name}: {error}") from error
 
     def session_info(self) -> SessionStatus:
         state = self._read()

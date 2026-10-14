@@ -1490,7 +1490,8 @@ class AttachTest(HostedTuiBase):
             with self.subTest(found=found), self.assertRaises(DriverError) as caught:
                 terminal = self.host.processes["w1"]
                 terminal.calls.session_identity.return_value = (
-                    found, tui.TuiMode.snapshot("w1")["generation"]
+                    found,
+                    tui.TuiMode.snapshot("w1")["generation"],
                 )
                 self.session.attach("w1")
             self.assertEqual(str(caught.exception), "no tui session w1")

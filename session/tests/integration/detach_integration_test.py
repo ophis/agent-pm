@@ -58,12 +58,12 @@ class DetachTest(Case):
         self.server.tmux("run-shell", "-b", "true")
         return self.driver.sessions("d.*") == []
 
-    def test_the_child_receives_unblocked_signals_its_session_live_until_it_exits(self):
+    def test_the_child_runs_with_the_signals_blocked_its_session_live_until_it_exits(self):
         self.assertIsNone(self.detach("d1", opener=MANAGER))
         self.assertEqual([r.name for r in self.driver.sessions("d1")], ["d1"])
         tmux_host.detach("d0", Launch(tuple(self.argv("d0")), self.server.env(), cwd=self.dir))
         signals = {int(s) for s in SIGNALS}
-        self.assertEqual(signals & self.blocked("d1"), set())
+        self.assertLessEqual(signals, self.blocked("d1"))
         self.assertEqual(signals & self.blocked("d0"), set())
         self.assertEqual(
             [self.server.option("d1", key) for key in ("@opener", "@display")], [MANAGER, MANAGER]

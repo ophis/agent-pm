@@ -238,6 +238,16 @@ class DetachTest(Base):
         self.tmux.status.assert_called_with("%7")
         self.assertEqual(SIGNALS, (signal.SIGHUP, signal.SIGTERM, signal.SIGINT))
 
+    def test_only_an_explicit_launch_mask_is_applied_to_the_target(self):
+        self.host.detach(
+            "d1",
+            Launch((self.tool,), cwd=self.dir, blocked_signals=SIGNALS),
+        )
+        self.assertEqual(
+            json.loads(Path(self.control.path, "launch.json").read_text())["blocked_signals"],
+            list(SIGNALS),
+        )
+
     def test_a_foreign_or_openerless_display_is_stored_without_an_opener(self):
         for display in (None, "", "/right", "elsewhere:1.2"):
             with self.subTest(display=display):
@@ -304,13 +314,16 @@ class TerminalTest(Base):
             terminal.send(Paste("a b"))
             terminal.send(Key("Enter"))
             terminal.send(Key("Escape"))
-        self.assertEqual(order.mock_calls, [
-            mock.call.keys("%7", "Escape"),
-            mock.call.paste("%7", "a b"),
-            mock.call.sleep(self.tmux.PAUSE),
-            mock.call.keys("%7", "Enter"),
-            mock.call.keys("%7", "Escape"),
-        ])
+        self.assertEqual(
+            order.mock_calls,
+            [
+                mock.call.keys("%7", "Escape"),
+                mock.call.paste("%7", "a b"),
+                mock.call.sleep(self.tmux.PAUSE),
+                mock.call.keys("%7", "Enter"),
+                mock.call.keys("%7", "Escape"),
+            ],
+        )
 
     def test_terminal_launch_has_a_controller_identity_and_keeps_its_metadata(self):
         events = os.path.join(self.dir, "events")
@@ -529,9 +542,10 @@ class CloseTest(Base):
         self.tmux.kill.side_effect = TuiError("tmux: boom")
         with self.assertRaisesRegex(DriverError, "^tmux: boom$"):
             process.close()
-        self.assertEqual(self.connection.sendall.call_args_list, [
-            mock.call(b"signal 15\n"), mock.call(b"live\n")
-        ])
+        self.assertEqual(
+            self.connection.sendall.call_args_list,
+            [mock.call(b"signal 15\n"), mock.call(b"live\n")],
+        )
 
     def test_close_during_controller_retirement_never_sends_a_numeric_group_signal(self):
         self.active()

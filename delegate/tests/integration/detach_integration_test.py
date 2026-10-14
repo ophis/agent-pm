@@ -17,6 +17,7 @@ import os
 import re
 import signal
 import subprocess
+import sys
 import tempfile
 import unittest
 
@@ -207,6 +208,33 @@ class Tui(Detach):
 
 
 class Headless(Detach):
+    def test_harness_delegate_sigterm_immediately_after_detach_exits_stopped(self):
+        self.assertEqual(
+            self.server.tmux("set-option", "-wg", "remain-on-exit", "on").returncode, 0
+        )
+        command = (
+            "import sys\n"
+            "from agent_pm.delegate import Spec\n"
+            "from agent_pm.delegate.engine.harness_delegate import HarnessDelegate\n"
+            "owner = HarnessDelegate('dummy-tester', Spec('Hello.', sys.argv[1], "
+            "sid=sys.argv[2], runtime='claude', cwd=sys.argv[3]))\n"
+            "owner.detach()\n"
+        )
+        res = subprocess.run(
+            [sys.executable, "-P", "-c", command, self.work, SID, self.proj],
+            cwd=self.proj,
+            env=self.server.env(PYTHONPATH=PYTHONPATH),
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            timeout=WAIT,
+        )
+        self.assertEqual(res.returncode, 0, res.stderr)
+        shown = self.server.tmux("display-message", "-p", "-t", f"={DRIVER}:", "#{pane_pid}")
+        os.kill(int(shown.stdout), signal.SIGTERM)
+        dead = ("display-message", "-p", "-t", f"={DRIVER}:", "#{pane_dead} #{pane_dead_status}")
+        self.until(lambda: self.server.tmux(*dead).stdout == "1 143\n", "Stopped exit 143")
+
     def test_sigterm_immediately_after_detach_exits_stopped_with_one_outcome(self):
         self.assertEqual(
             self.server.tmux("set-option", "-wg", "remain-on-exit", "on").returncode, 0

@@ -603,6 +603,7 @@ class DetachTest(TuiBase):
                 "argv": [self.tool, "a b"],
                 "cwd": self.dir,
                 "env": env,
+                "blocked_signals": list(SIGNALS),
             },
         )
         self.assertEqual(

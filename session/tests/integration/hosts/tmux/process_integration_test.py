@@ -191,7 +191,7 @@ class ProcessTest(AttachmentBase):
         self.tmux.process.side_effect = [PROCESS, None]
         process.close()
         self.tmux.process.side_effect = None
-        with self.assertRaisesRegex(DriverError, "^close d1: tmux: can't find pane: %7$"):
+        with self.assertRaisesRegex(DriverError, "^tmux: can't find pane: %7$"):
             process.close()
 
     def test_after_its_pane_ends_wait_exit_waits_for_its_group_and_kill_ends_it(self):
