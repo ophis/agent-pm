@@ -79,6 +79,51 @@ print(json.dumps(sorted(blocked)))
 
 
 class SandboxGates(Case):
+    def test_caught_and_background_violations_still_fail_at_stop_test(self):
+        script = """import json, os, sys, threading, unittest
+from pathlib import Path
+import isolation, run_tests
+
+root = Path(sys.argv[1])
+__file__ = str(root / "fixture.py")
+sandbox = root / "sandbox"
+sandbox.mkdir()
+os.environ["AGENT_PM_TEST_SANDBOX"] = str(sandbox)
+run_tests.GATE = isolation.install(root)
+run_tests.GATE.unit_only = True
+def swallow(event):
+    try:
+        sys.audit(event)
+    except Exception:
+        pass
+class Swallowed(unittest.TestCase):
+    def test_discovery(self):
+        pass
+    def test_caught(self):
+        swallow("os.kill")
+    def test_background(self):
+        thread = threading.Thread(target=swallow, args=("socket.bind",))
+        thread.start()
+        thread.join()
+codes = []
+swallow("socket.getaddrinfo")
+for method in ("test_discovery", "test_caught", "test_background"):
+    codes.append(run_tests.run(unittest.TestSuite([Swallowed(method)]), method))
+print(json.dumps(codes))
+"""
+        proc = subprocess.run(
+            [sys.executable, "-P", "-S", "-c", script, self.home],
+            env=clean_env(None, REPO, str(Path(REPO, ".github"))),
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(json.loads(proc.stdout.splitlines()[-1]), [1, 1, 1])
+        self.assertIn("test discovery: forbidden socket.getaddrinfo", proc.stderr)
+        self.assertIn("Swallowed.test_caught: forbidden os.kill", proc.stderr)
+        self.assertIn("Swallowed.test_background: forbidden socket.bind", proc.stderr)
+
     def test_unit_selection_keeps_external_testcase_classes_under_the_unit_gate(self):
         root = Path(self.home)
         (root / ".github").mkdir()
@@ -222,7 +267,10 @@ os.close(dir_fd)
                 "os.killpg",
                 "os.posix_spawn",
                 "os.system",
+                "socket.bind",
                 "socket.connect",
+                "socket.getaddrinfo",
+                "socket.sendto",
                 "subprocess.Popen",
             ],
         )

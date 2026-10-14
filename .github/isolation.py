@@ -20,6 +20,9 @@ DENIED = {
     "os.killpg",
     "os.system",
     "socket.connect",
+    "socket.bind",
+    "socket.sendto",
+    "socket.getaddrinfo",
 }
 GIT_ALLOWED = {
     "GIT_CONFIG_GLOBAL",
@@ -65,11 +68,14 @@ class Gate:
         self.unit = True
         self.unit_only = False
         self.reporting_file = None
+        self.violations = []
 
     def fail(self, message):
-        raise RuntimeError(
+        error = RuntimeError(
             f"test isolation: {self.current}: {message}\n{''.join(traceback.format_stack())}"
         )
+        self.violations.append(error)
+        raise error
 
     def path(self, path, dir_fd=None):
         if isinstance(path, int):

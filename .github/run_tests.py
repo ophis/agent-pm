@@ -54,6 +54,10 @@ class AnnotatingResult(unittest.TextTestResult):
         super().startTest(test)
 
     def stopTest(self, test):
+        if GATE:
+            for error in GATE.violations:
+                self.addError(test, (type(error), error, error.__traceback__))
+            GATE.violations.clear()
         append(
             "RUN_TESTS_DURATIONS",
             json.dumps({"test": test.id(), "seconds": time.monotonic() - self.started}) + "\n",

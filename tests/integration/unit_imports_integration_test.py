@@ -8,7 +8,7 @@ from pathlib import Path
 from tests.case import REPO, Case
 from tests.guards import UNIT_ISOLATION_ALLOWED
 
-CONFIG = 'lint.flake8-tidy-imports.banned-api = {subprocess = {msg = "Unit tests cannot import subprocess"}, socket = {msg = "Unit tests cannot import socket"}}'
+CONFIG = 'lint.flake8-tidy-imports.banned-api = {subprocess = {msg = "Unit tests cannot import subprocess"}, socket = {msg = "Unit tests cannot import socket"}, multiprocessing = {msg = "Unit tests cannot start multiprocessing"}, "concurrent.futures.ProcessPoolExecutor" = {msg = "Unit tests cannot start process pools"}}'
 GATE_CONFIG = 'lint.flake8-tidy-imports.banned-api = {isolation = {msg = "Tests cannot access interpreter gates"}}'
 
 
@@ -134,6 +134,32 @@ class UnitImports(Case):
         )
         self.assertEqual(proc.returncode, 1, proc.stderr)
         self.assertEqual([item["code"] for item in json.loads(proc.stdout)], ["TID251", "TID251"])
+
+    def test_the_rule_rejects_multiprocessing_and_process_pool_imports_and_calls(self):
+        sample = Path(self.home, "pools.py")
+        sample.write_text(
+            "import multiprocessing\nfrom concurrent.futures import ProcessPoolExecutor\n"
+            "import concurrent.futures\nconcurrent.futures.ProcessPoolExecutor()\n"
+        )
+        proc = subprocess.run(
+            [
+                "ruff",
+                "check",
+                "--isolated",
+                "--select",
+                "TID251",
+                "--config",
+                CONFIG,
+                "--output-format",
+                "json",
+                str(sample),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        self.assertEqual(proc.returncode, 1, proc.stderr)
+        self.assertEqual([item["code"] for item in json.loads(proc.stdout)], ["TID251"] * 3)
 
 
 if __name__ == "__main__":
