@@ -104,10 +104,6 @@ TUI_POLL = 0.1  # seconds
 class HarnessDelegate(Delegate):
     def __init__(self, role: str, spec: Spec, **placement) -> None:
         self._accept(role, spec, **placement)
-        try:
-            self.driver.preflight(self._state.plan.session)
-        except (SessionConfigError, DriverError) as error:
-            raise ConfigError(str(error)) from None
         self._persist_new()
 
     @classmethod
@@ -227,11 +223,16 @@ class HarnessDelegate(Delegate):
             raise ConfigError(str(error)) from None
 
     def _persist_new(self) -> None:
+        """The session preflight follows the replaced run's refusal and cleanup."""
         try:
             with self.store.mutex():
                 payload = self.store.read()
                 if payload is not None:
                     self._state = replace(self._state, attempt=self._replacing(payload))
+                try:
+                    self.driver.preflight(self._state.plan.session)
+                except (SessionConfigError, DriverError) as error:
+                    raise ConfigError(str(error)) from None
                 self._save(self._state)
         except OSError as error:
             raise ConfigError(str(error)) from None

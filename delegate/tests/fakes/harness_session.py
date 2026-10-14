@@ -254,7 +254,7 @@ class DiskHost(RecordingHost):
         )
         append_line(
             os.path.join(self.root(), "launches.jsonl"),
-            json.dumps({"host": self.name, "name": name, "argv": list(launch.argv)}),
+            json.dumps({"host": self.name, "name": name, "argv": list(launch.argv)}) + "\n",
         )
         return DiskProcess(name, path)
 

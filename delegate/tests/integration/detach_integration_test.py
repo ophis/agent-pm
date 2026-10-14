@@ -268,7 +268,9 @@ class Answer(Detach):
         self.assertEqual(self.attempt(), 2)
         records = self.records()
         self.assertEqual([e["text"] for e in records if e["kind"] == "input"], ["Hello.", ANSWER])
-        self.assertEqual({e["sid"] for e in records if e["kind"] == "session"}, {SID})
+        self.assertEqual(
+            {(e["sid"], e["cwd"]) for e in records if e["kind"] == "session"}, {(SID, self.proj)}
+        )
         again = self.cli([*RESUME, self.work])
         self.assertEqual(again.returncode, 0, again.stderr)
         self.assertEqual(Record.parse(again.stdout), record)
@@ -296,6 +298,7 @@ class Answer(Detach):
 
     def test_an_answer_while_the_run_lives_exits_2_starting_nothing(self):
         self.said(self.detach(steps=[START], hang=True), tui=False)
+        self.until(lambda: "progress" in self.kinds(), "the client's start mark")
         res = self.answer(steps=[START, block(DONE)])
         self.assertEqual((res.returncode, res.stdout), (2, ""), res.stderr)
         self.assertIn(f"delegate: {self.work}: delegate is still alive\n", res.stderr)

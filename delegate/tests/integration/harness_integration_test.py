@@ -1120,10 +1120,21 @@ class Attempts(HarnessCase):
         self.assertEqual(stamps, {(SID, 2)})
 
 
+class LiveNameSession(HarnessSession):
+    """Refuses, as the real preflight does, a session whose name a live one holds."""
+
+    @classmethod
+    def preflight(cls, spec, **placement):
+        super().preflight(spec, **placement)
+        if spec.name in cls.live:
+            raise DriverError(f"tui session {spec.name} is running")
+
+
 class Answer(HarnessCase):
     def test_an_answer_closes_the_ended_runs_open_tui_and_detaches_its_next_attempt(self):
+        LiveNameSession.reset()
         tui = Spec("Hello.", self.work, cwd=self.work, client="fake", sid=SID, mode="tui")
-        placed = {"host": "agent", "harness_host": "harness"}
+        placed = {"host": "agent", "harness_host": "harness", "session_cls": LiveNameSession}
         record = self.make(spec=tui, **placed).detach()
         harness, agent = (
             RecordingHost.processes[host, name]
