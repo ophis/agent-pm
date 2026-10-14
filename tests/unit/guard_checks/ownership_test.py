@@ -1,6 +1,7 @@
 from tests.case import REPO
 from tests.guard_checks import commands, exports, ownership
 from tests.guard_data.delegate import CONFIG_FILE, DELEGATE_SRC
+from tests.guard_data.linear_orchestrator import ORCH_FILES
 from tests.guard_data.session import ADAPTERS_HOME, SESSION_SRC
 from tests.guard_samples import PKG, Sample
 
@@ -399,6 +400,41 @@ class DelegateDisplay(Sample):
             }
         )
         self.assertEqual(ownership.delegate_display(root), [])
+
+
+class OrchestratorDisplay(Sample):
+    def test_display_names_are_rejected_anywhere_in_linear_orchestrator_source(self):
+        for base in (ORCH_FILES + "cli.py", ORCH_FILES + "engine/sample.py"):
+            for source, name in (
+                ("def f(pane): return pane\n", "pane"),
+                ("def opener(): pass\n", "opener"),
+                ("class split_from: pass\n", "split_from"),
+                ("x = value.opener\n", "opener"),
+                ('x = "--split"\n', "--split"),
+                ('x = "@opener"\n', "@opener"),
+                ('x = "@record"\n', "@record"),
+                ('x = "@pane"\n', "@pane"),
+            ):
+                with self.subTest(base=base, source=source):
+                    self.assertEqual(
+                        ownership.orchestrator_display(self.tree({base: source})),
+                        [f"{base}:1: interprets display {name!r}"],
+                    )
+
+    def test_string_split_decorators_comments_and_other_trees_are_clean(self):
+        clean = '@record\ndef f(display): return display.split("/")  # a pane\n'
+        named = 'def f(pane): return "@opener"\n'
+        root = self.tree(
+            {
+                ORCH_FILES + "engine/sample.py": clean,
+                "linear-orchestrator/tests/orchestrator_tests/sample_test.py": named,
+                f"session/{PKG}/session/hosts/tmux/sample.py": named,
+            }
+        )
+        self.assertEqual(ownership.orchestrator_display(root), [])
+
+    def test_the_real_tree_is_clean(self):
+        self.assertEqual(ownership.orchestrator_display(REPO), [])
 
 
 class DelegateTmux(Sample):

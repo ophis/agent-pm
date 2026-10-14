@@ -278,7 +278,6 @@ class EventObjectExports(Sample):
                     ("delegate", "delegate"),
                     ("delegate", "delegate/composer"),
                     ("manager", "manager"),
-                    ("linear-orchestrator", "linear_orchestrator"),
                 )
             }
         )
@@ -404,6 +403,45 @@ class DelegateObjectExports(Sample):
                         self.exports(package, bad, ["BAD"]),
                         [f"{rel}: __all__ exports function BAD (FR-44)"],
                     )
+
+
+class OrchestratorObjectExports(Sample):
+    INIT = "linear-orchestrator/src/agent_pm/linear_orchestrator/__init__.py"
+
+    def found(self, source):
+        root = self.tree(
+            {
+                "delegate/src/agent_pm/delegate/event/__init__.py": "__all__ = []\n",
+                "linear-orchestrator/src/agent_pm/linear_orchestrator/engine/run.py": (
+                    "class LinearRun: pass\ndef launch(): pass\n"
+                ),
+                self.INIT: source,
+            }
+        )
+        return [e for e in exports.object_exports(root) if e.startswith(self.INIT)]
+
+    def test_classes_and_constants_pass(self):
+        source = (
+            "from agent_pm.linear_orchestrator.engine.run import LinearRun\n"
+            "KINDS = ('a',)\n__all__ = ['LinearRun', 'KINDS']\n"
+        )
+        self.assertEqual(self.found(source), [])
+
+    def test_an_exported_function_fails(self):
+        for source in (
+            "def launch(): pass\n__all__ = ['launch']\n",
+            "from agent_pm.linear_orchestrator.engine.run import launch\n__all__ = ['launch']\n",
+        ):
+            with self.subTest(source=source):
+                self.assertEqual(
+                    self.found(source), [f"{self.INIT}: __all__ exports function launch (FR-44)"]
+                )
+
+    def test_the_package_must_define_all(self):
+        self.assertEqual(
+            self.found("from agent_pm.linear_orchestrator.engine.run import LinearRun\n"),
+            [f"{self.INIT}: no literal __all__"],
+        )
 
 
 class ObjectExports(Sample):

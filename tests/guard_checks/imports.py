@@ -20,7 +20,9 @@ from tests.guard_data import (
     IMPORT_BOOTSTRAPS,
     STANDALONE,
 )
+from tests.guard_data.delegate import DELEGATE_SRC
 from tests.guard_data.linear_orchestrator import (
+    ORCH,
     ORCH_PKG,
     ORCH_PROJECT,
     ORCH_SESSION_CONTRACT,
@@ -102,6 +104,80 @@ def orchestrator_session_imports(repo: str) -> list[str]:
             for name in sorted(names)
         ]
     return found
+
+
+def orchestrator_imports(repo: str) -> list[str]:
+    """FR-3: linear_orchestrator imports only the standard library, itself, agent_pm.utils and the
+    names in delegate's literal __all__; no other package imports it.
+    """
+    exported = _literal_all(os.path.join(repo, DELEGATE_SRC, "__init__.py"))
+    found = set()
+    for rel, text in _files(os.path.join(repo, ORCH_PROJECT, ORCH_SRC), ".py"):
+        tree = ast.parse(text, rel)
+        bound = _bindings(tree)
+        modules, names = _imported(tree)
+        names += [_dotted(n, bound) for n in ast.walk(tree) if isinstance(n, ast.Attribute)]
+        found.update(
+            f"{ORCH_PROJECT}/{ORCH_SRC}{rel}: imports {reached} (FR-3)"
+            for reached in (
+                *map(_orchestrator_module, modules),
+                *(_orchestrator_name(name, exported) for name in names),
+            )
+            if reached
+        )
+    for project in PROJECTS:
+        if project != ORCH_PROJECT:
+            for rel, text in _files(os.path.join(repo, project, "src"), ".py"):
+                modules, names = _imported(ast.parse(text, rel))
+                if any(_within(name, ORCH_PKG) for name in (*modules, *names)):
+                    found.add(f"{project}/src/{rel}: imports {ORCH_PKG} (FR-3)")
+    return sorted(found)
+
+
+def _imported(tree):
+    """The absolute modules a tree imports and the dotted names it imports from them."""
+    modules, names = [], []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            modules += [a.name for a in node.names]
+        elif isinstance(node, ast.ImportFrom) and not node.level and node.module:
+            modules.append(node.module)
+            names += [f"{node.module}.{a.name}" for a in node.names]
+    return modules, names
+
+
+def _literal_all(path):
+    try:
+        with open(path, encoding="utf-8") as source:
+            tree = ast.parse(source.read(), path)
+    except FileNotFoundError:
+        return frozenset()
+    for node in tree.body:
+        if isinstance(node, ast.Assign) and any(
+            isinstance(target, ast.Name) and target.id == "__all__" for target in node.targets
+        ):
+            return frozenset(ast.literal_eval(node.value))
+    return frozenset()
+
+
+def _orchestrator_module(module):
+    parts = module.split(".")
+    if parts[0] != PKG:
+        return None if parts[0] in sys.stdlib_module_names | {"__future__"} else module
+    if len(parts) == 1 or parts[1] == ORCH or parts[1:] in (["utils"], ["delegate"]):
+        return None
+    if parts[1] == "utils":
+        return module
+    return ".".join(parts[:3] if parts[1] == "delegate" else parts[:2])
+
+
+def _orchestrator_name(name, exported):
+    parts = name.split(".")
+    if parts[0] != PKG or len(parts) == 1 or parts[1] in (ORCH, "utils"):
+        return None
+    if parts[1] == "delegate":
+        return None if len(parts) == 2 or parts[2] in exported else ".".join(parts[:3])
+    return ".".join(parts[:2])
 
 
 def literal_imports(repo: str) -> list[str]:
