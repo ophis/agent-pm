@@ -87,7 +87,7 @@ class TmuxHostContractTest(HostContract, Case):
     def row(self, name: str):
         return next(row for row in self.host.rows() if row.name == name)
 
-    def test_a_split_refocused_terminal_is_listed_through_its_launched_pane(self):
+    def test_a_split_refocused_terminal_is_listed_and_read_through_its_launched_pane(self):
         name, gate = self.fresh(), self.file("gate")
         self.start("terminal", name, GATED, gate)
         self.poll(
@@ -98,11 +98,15 @@ class TmuxHostContractTest(HostContract, Case):
         )
         self.split(name)
         self.assertEqual(self.row(name).state, ActivityState.WORKING)
+        for screen in (self.host.screen(name), self.host.screen(name, 50)):
+            self.assertIn("agent pane", screen)
+            self.assertNotIn("user pane", screen)
         Path(gate).touch()
         self.poll(lambda: self.row(name).state == ActivityState.DEAD, "the launched pane dead")
         last = self.row(name).last_lines
         self.assertIn("agent pane", last)
         self.assertNotIn("user pane", last)
+        self.assertNotIn("user pane", self.host.screen(name))
 
     def test_list_without_a_display_names_every_detached_session_sorted(self):
         first, second = self.fresh(), self.fresh()
