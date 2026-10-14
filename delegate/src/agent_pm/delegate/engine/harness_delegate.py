@@ -153,7 +153,8 @@ class HarnessDelegate(Delegate):
         self._persist_new()
 
     @classmethod
-    def _from_plan(cls, accepted: Plan, *, driver: Driver) -> HarnessDelegate:
+    def from_plan(cls, accepted: Plan, *, driver: Driver) -> HarnessDelegate:
+        """Legacy accepted-plan constructor; TASK-375 removes it with delegate.run."""
         owner = cls.__new__(cls)
         owner.composer = Composer(team=accepted.spec.team)
         owner._settings = thaw(owner.composer.config.values)
