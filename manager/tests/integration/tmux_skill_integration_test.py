@@ -1,5 +1,5 @@
-"""manager/skills/tmux/SKILL.md's layer command examples against the real bin/ commands: each
-subcommand's --help exits 0 and lists every flag the example writes.
+"""manager/skills/{tmux,manage}/SKILL.md's layer command examples against the real bin/ commands:
+each subcommand's --help exits 0 and lists every flag the example writes.
 """
 
 import os
@@ -29,7 +29,7 @@ class Examples(Case):
 
     def test_every_example_names_a_subcommand_and_flags_its_command_takes(self):
         helps = {}
-        for command in examples(body("tmux")):
+        for command in (*examples(body("tmux")), *examples(body("manage"))):
             key = command[0], subcommand(command)
             if key not in helps:
                 helps[key] = self.help(*key)

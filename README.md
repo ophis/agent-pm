@@ -95,7 +95,7 @@ Before upgrading, close running agent-pm sessions: earlier sessions lack generat
 
 - `/agent-pm:tmux`: launch and direct workers, role runs and pipeline runs through Crew and the four `bin/` commands: `manager/skills/tmux/SKILL.md`.
 - `ctmux <name>` (`manager/skills/tmux/scripts/ctmux`): the commander's tmux session `<name>`, attached through iTerm2's tmux integration (`-CC`). A new session's shell runs under `agent-pm-crew hold --manager=<name>`, which holds that manager's lease while the shell lives: start the commander's client in it. `agent-pm-crew` must be on the tmux server's PATH. `ctmux --install` copies the script to `~/.agent-pm/bin/ctmux` and prints that path.
-- `/agent-pm:manage`: coordinate the commander session through Crew; command guidance: `manager/skills/manage/SKILL.md`.
+- `/agent-pm:manage`: the commander's guidelines, coordinating through Crew (commands: `/agent-pm:tmux`): `manager/skills/manage/SKILL.md`.
 - `/agent-pm:act-as <role>[:<task>] <input>`: run a core role in this conversation, on that task or one it picks: `delegate/skills/act-as/SKILL.md`.
 - Your own roles, tasks, templates and tools, outside the plugin: `delegate/src/agent_pm/delegate/config.toml`'s `team_dirs` comment; `agent-pm-delegate run --list` (`delegate/src/agent_pm/delegate/cli.py`) lists every role and task.
 
