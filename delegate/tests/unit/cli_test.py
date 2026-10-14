@@ -4,23 +4,27 @@ import errno
 import io
 import json
 import os
+import re
 import types
 import uuid
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest import mock
 
-from agent_pm.delegate import cli, composer
+from agent_pm.delegate import ConfigError, Outcome, Spec, cli, composer
 from agent_pm.delegate.composer import RunParams
 from agent_pm.delegate.composer.prompt import RESUME
+from agent_pm.delegate.engine.harness_delegate import HarnessDelegate
 from agent_pm.delegate.engine.runner import STOP_LIMIT
-from agent_pm.session import DriverError
+from agent_pm.session import DriverError, NotDisplayable
+from agent_pm.utils import Record, Status, file_lock
 
 from delegate.tests.application_case import DRIVER, SID, SPLIT, TUI
 from delegate.tests.case import PY, Case, committed
 from delegate.tests.cli_case import (
     HEADS,
     KEYS,
+    PLACEMENT,
     Base,
     RefusingAdapter,
 )
@@ -101,10 +105,15 @@ class Detach(Base):
                 code, out, err = self.detaches("--mode", mode, "--dry-run", events="events")
                 self.assertEqual(code, 0, err)
                 shown = json.loads(out)
-                self.assertEqual(set(shown), KEYS | {"driver", "tui", "events"})
+                self.assertEqual(set(shown), KEYS | PLACEMENT | {"events"})
                 self.assertEqual(
-                    (shown["mode"], shown["driver"], shown["tui"], shown["events"]),
-                    (mode, DRIVER, tui, self.events),
+                    (shown["mode"], shown["sessions"], shown["hosts"], shown["events"]),
+                    (
+                        mode,
+                        {"agent": tui, "harness": DRIVER},
+                        {"agent": "tmux", "harness": "tmux"},
+                        self.events,
+                    ),
                 )
         self.layout.assert_not_called()
         self.assert_nothing_started()
@@ -152,12 +161,12 @@ class Detach(Base):
         self.assertEqual(code, 0, err)
         self.assertEqual(self.invocation()["input"], "-x\nUse B.\n")
 
-    def test_a_driver_failure_exits_3(self):
+    def test_a_driver_failure_exits_1(self):
         self.started.side_effect = DriverError(f"detach {DRIVER}: duplicate session")
         code, out, err = self.detaches()
         self.assertEqual(
             (code, out, err.splitlines()[1:]),
-            (3, "", [f"delegate: detach {DRIVER}: duplicate session"]),
+            (1, "", [f"delegate: detach {DRIVER}: duplicate session"]),
         )
 
 
@@ -166,7 +175,7 @@ class DryRun(Base):
         code, out, err = self.runs("--sid", SID, "--dry-run")
         self.assertEqual(code, 0, err)
         shown = json.loads(out)
-        self.assertEqual(set(shown), KEYS)
+        self.assertEqual(set(shown), KEYS | PLACEMENT)
         self.assertEqual(
             {k: v for k, v in shown.items() if k not in ("dirs", "reads", "commands", "prompt")},
             {
@@ -178,6 +187,9 @@ class DryRun(Base):
                 "project": False,
                 "tier": 3,
                 "effort": "low",
+                "sessions": {"agent": None, "harness": None},
+                "hosts": {"agent": "tmux", "harness": "tmux"},
+                "callback": None,
             },
         )
         self.assertEqual(
@@ -258,6 +270,36 @@ class InProcess(Base):
         )
         self.assertEqual([(e["sid"], e["pid"]) for e in self.launches()], [(SID, os.getpid())])
 
+    def test_a_run_reports_its_deliverable_and_leaves_its_delegate_json(self):
+        code, out, err = self.runs("--mode", "in_process", "--sid", SID)
+        self.assertEqual((code, out), (0, ""), err)
+        self.assertIn(f"delegate: deliverable {self.out}\n", err)
+        with open(os.path.join(self.work, "delegate.json")) as f:
+            state = json.load(f)
+        self.assertEqual(
+            (state["role"], state["attempt"], state["completed"]), ("dummy-tester", 1, True)
+        )
+        self.assertEqual(
+            sorted(os.listdir(self.work)),
+            [
+                "delegate.json",
+                "delegate.json.lock",
+                "delegate.json.run.lock",
+                "out.md",
+                "run.jsonl",
+            ],
+        )
+
+    def test_an_answer_while_the_run_is_alive_exits_2_and_starts_nothing(self):
+        spec = Spec("Hello.", self.work, task="echo", mode="in_process", runtime="fake", sid=SID)
+        self.delegate_cls()("dummy-tester", spec)
+        with file_lock(os.path.join(self.work, "delegate.json.run"), own=True):
+            code, out, err = self.runs("--mode", "in_process", "--sid", SID, "--resume")
+        self.assertEqual(
+            (code, out, err), (2, "", f"delegate: {self.work}: delegate is still alive\n")
+        )
+        self.assertEqual(self.launches(), [])
+
     def test_headless_and_tui_exit_2_and_nothing_runs(self):
         for mode, want in (
             ("headless", "runtime 'fake' does not support headless mode"),
@@ -297,20 +339,23 @@ class Tui(Base):
         super().setUp()
         self.configure_fake(tui=True)
 
-    def test_tui_mode_runs_the_tui_policy_in_the_drivers_default_session_a_give_up_exiting_1(self):
+    def test_tui_mode_runs_the_tui_policy_in_its_named_session_a_give_up_exiting_1(self):
         for events, want, last in (
             ([turn(START, block(DONE))], 0, "delegate: status done"),
             ([STOP] * (1 + STOP_LIMIT), 1, "delegate: the agent run returned no outcome"),
         ):
             with self.subTest(want=want):
                 handle = FakeHandle(events)
-                with mock.patch.object(self.driver, "start", side_effect=handle.start) as start:
+                with (
+                    mock.patch.object(self.driver, "preflight"),
+                    mock.patch.object(self.driver, "start", side_effect=handle.start) as start,
+                ):
                     code, out, err = self.runs("--mode", "tui")
                 self.assertEqual((code, out, err.splitlines()[-1]), (want, "", last))
                 spec = start.call_args.args[0].session
                 self.assertEqual(
                     ((spec.runtime, spec.mode), spec.name, spec.events),
-                    (("fake", "tui"), None, None),
+                    (("fake", "tui"), f"dummy-tester-{spec.sid[:8]}", None),
                 )
 
     def test_a_runtime_without_tui_exits_2_and_a_dry_run_plans_it(self):
@@ -325,7 +370,7 @@ class Tui(Base):
 
 class List(Base):
     def test_list_prints_each_role_and_task_with_its_source(self):
-        code, out, err = self.cli("--list")
+        code, out, err = self.cli("run", "--list")
         self.assertEqual((code, err), (0, ""))
         lines = out.splitlines()
         self.assertEqual([line for line in lines if not line.startswith("  ")], HEADS)
@@ -340,7 +385,7 @@ class List(Base):
         self.assertEqual(os.listdir(self.agent_pm), [])
 
     def test_list_abbreviated_is_list_and_takes_no_other_option(self):
-        self.assertEqual(self.cli("--li"), self.cli("--list"))
+        self.assertEqual(self.cli("run", "--li"), self.cli("run", "--list"))
         for argv, extra in (
             (["--list", "--role", "pm"], "--role"),
             (["--li", "--rol", "pm"], "--rol"),
@@ -348,10 +393,10 @@ class List(Base):
             (["--list", "--runtime=fake"], "--runtime=fake"),
         ):
             with self.subTest(argv=argv):
-                code, out, err = self.cli(*argv)
+                code, out, err = self.cli("run", *argv)
                 self.assertEqual((code, out), (2, ""))
                 self.assertIn(f"--list takes no other option, not {extra}\n", err)
-        code, out, err = self.cli()
+        code, out, err = self.cli("run")
         self.assertEqual((code, out), (2, ""))
         self.assertIn("the following arguments are required: --role", err)
 
@@ -365,7 +410,7 @@ class List(Base):
         ):
             with self.subTest(local=local):
                 self.local(local)
-                self.assertEqual(self.cli("--list"), (2, "", f"delegate: {want}\n"))
+                self.assertEqual(self.cli("run", "--list"), (2, "", f"delegate: {want}\n"))
 
 
 class Configures(Base):
@@ -381,22 +426,24 @@ class Configures(Base):
         for text, want in (
             (
                 '[delegates]\nharness_host = "nope"\n',
-                "delegate: delegate config: [delegates] harness_host: want one of tmux",
+                "delegate: [delegates] harness_host: want one of",
             ),
             (
                 "[delegates]\nkind = 1\n",
-                "delegate: delegate config: [delegates] kind: the delegate takes only harness_host",
+                "delegate: [delegates] kind: the delegate takes only harness_host",
             ),
         ):
             with self.subTest(text):
                 self.local(text)
                 code, out, err = self.runs()
-                self.assertEqual((code, out, err), (2, "", f"{want}\n"))
+                self.assertEqual((code, out), (2, ""))
+                self.assertTrue(err.startswith(want), err)
+                self.assertEqual(len(err.splitlines()), 1, err)
         self.assertEqual((self.launches(), os.path.exists(self.work)), ([], False))
 
     def test_list_works_without_a_runtime(self):
         self.configure_session({})
-        code, _, err = self.cli("--list")
+        code, _, err = self.cli("run", "--list")
         self.assertEqual((code, err), (0, ""))
 
 
@@ -409,7 +456,7 @@ class Usage(Base):
         ):
             with self.subTest(argv=argv):
                 self.assertEqual(
-                    self.cli("--role", "dummy-tester", "--runtime", "fake", *argv),
+                    self.cli("run", "--role", "dummy-tester", "--runtime", "fake", *argv),
                     (2, "", "delegate: --input, --out and --workdir are required\n"),
                 )
         self.assertEqual(self.launches(), [])
@@ -580,3 +627,199 @@ class Prompt(Case):
         self.assertEqual((code, out), (2, ""))
         self.assertIn("unknown role 'ghost'", err)
         self.assertFalse(os.path.exists(self.work))
+
+
+class Commands(Base):
+    def test_help_lists_exactly_the_eight_subcommands(self):
+        code, out, err = self.cli("--help")
+        self.assertEqual((code, err), (0, ""))
+        self.assertEqual(
+            re.search(r"\{([a-z,-]+)\}", out)[1].split(","),
+            ["run", "status", "outcome", "resume", "show", "close", "attach-command", "prompt"],
+        )
+
+    def test_an_unknown_missing_or_flat_command_exits_2(self):
+        for argv, want in (
+            (("bogus",), "invalid choice: 'bogus'"),
+            ((), "the following arguments are required: command"),
+            (("--role", "dummy-tester", "--list"), "invalid choice: 'dummy-tester'"),
+        ):
+            with self.subTest(argv=argv):
+                code, out, err = self.cli(*argv)
+                self.assertEqual((code, out), (2, ""))
+                self.assertIn(want, " ".join(err.split()))
+
+
+class View:
+    """A run's scripted view: its Status name, its outcome, attach command and errors."""
+
+    def __init__(self, name, *, outcome=None, command=None, error=None, show_error=None):
+        self.name, self.outcome_value, self.command = name, outcome, command
+        self.error, self.show_error, self.closed = error, show_error, 0
+
+    def status(self):
+        if self.error is not None:
+            raise self.error
+        return Status(self.name, alive=False, state="absent", outcome=None, attach=self.command)
+
+    def show(self):
+        if self.show_error is not None:
+            raise self.show_error
+        return self.command
+
+    def close(self):
+        self.closed += 1
+
+    def outcome(self):
+        return self.outcome_value
+
+    def attach_command(self):
+        return self.command
+
+    def resume(self):
+        return record(self.name)
+
+
+def record(name):
+    work = f"/w/{name}"
+    return Record(
+        1,
+        "role",
+        name,
+        (),
+        None,
+        work,
+        ("agent-pm-delegate",),
+        ("agent-pm-delegate", "resume", work),
+        None,
+        None,
+    )
+
+
+class Views(HarnessDelegate):
+    """attach(key): the View registered under a workdir key or a Record's name."""
+
+    views: dict = {}
+
+    @classmethod
+    def attach(cls, record_or_workdir, **_):
+        name = record_or_workdir if isinstance(record_or_workdir, str) else record_or_workdir.name
+        view = cls.views[name]
+        if isinstance(view, Exception):
+            raise view
+        return view
+
+
+class Queries(Case):
+    def query(self, *argv, stdin="", **views):
+        Views.views = views
+        out, err = io.StringIO(), io.StringIO()
+        with (
+            redirect_stdout(out),
+            redirect_stderr(err),
+            mock.patch("sys.stdin", io.StringIO(stdin)),
+        ):
+            try:
+                code = cli.main(list(argv), delegate_cls=Views)
+            except SystemExit as e:
+                code = e.code
+        return code, out.getvalue(), err.getvalue()
+
+    def test_status_prints_one_line_per_key_in_order_from_arguments_or_stdin(self):
+        a, b = View("a"), View("b", command="tmux attach -t =b")
+        lines = [
+            Status("a", alive=False, state="absent", outcome=None, attach=None).to_line(),
+            Status(
+                "b", alive=False, state="absent", outcome=None, attach="tmux attach -t =b"
+            ).to_line(),
+        ]
+        self.assertEqual(
+            self.query("status", "a", "b", a=a, b=b), (0, f"{lines[0]}\n{lines[1]}\n", "")
+        )
+        stdin = f"{record('b').to_line()}\n{record('a').to_line()}\n"
+        self.assertEqual(
+            self.query("status", stdin=stdin, a=a, b=b), (0, f"{lines[1]}\n{lines[0]}\n", "")
+        )
+
+    def test_a_failing_key_is_named_and_the_others_answered(self):
+        for error, code in (
+            (ConfigError("/w/gone: no delegate.json"), 2),
+            (DriverError("tmux: boom"), 1),
+        ):
+            with self.subTest(error=error):
+                got = self.query("status", "gone", "a", gone=error, a=View("a"))
+                self.assertEqual(
+                    got,
+                    (
+                        code,
+                        Status(
+                            "a", alive=False, state="absent", outcome=None, attach=None
+                        ).to_line()
+                        + "\n",
+                        f"delegate: gone: {error}\n",
+                    ),
+                )
+
+    def test_two_keys_with_one_name_answer_nothing(self):
+        code, out, err = self.query("close", "x", "y", x=View("same"), y=View("same"))
+        self.assertEqual((code, out, err), (2, "", "delegate: name same given more than once\n"))
+        self.assertEqual((Views.views["x"].closed, Views.views["y"].closed), (0, 0))
+
+    def test_show_prints_each_command_and_exits_1_without_a_displayable_session(self):
+        shown = View("a", command="tmux attach -t =a")
+        none = View("b", show_error=NotDisplayable("delegate has no live displayable session"))
+        self.assertEqual(
+            self.query("show", "a", "b", a=shown, b=none),
+            (1, "tmux attach -t =a\n", "delegate: b: delegate has no live displayable session\n"),
+        )
+
+    def test_close_closes_each_key_and_prints_nothing(self):
+        a, b = View("a"), View("b")
+        self.assertEqual(self.query("close", "a", "b", a=a, b=b), (0, "", ""))
+        self.assertEqual((a.closed, b.closed), (1, 1))
+
+    def test_outcome_prints_one_json_object_or_null(self):
+        done = Outcome("done", "T", "S", deliverable="# Doc\n")
+        self.assertEqual(
+            self.query("outcome", "a", a=View("a", outcome=done)),
+            (
+                0,
+                '{"status":"done","title":"T","summary":"S","questions":[],"url":"","files":[],"deliverable":"# Doc\\n"}\n',
+                "",
+            ),
+        )
+        self.assertEqual(self.query("outcome", "a", a=View("a")), (0, "null\n", ""))
+        self.assertEqual(
+            self.query("outcome", stdin=record("a").to_line() + "\n", a=View("a")),
+            (0, "null\n", ""),
+        )
+
+    def test_one_key_commands_refuse_any_other_count(self):
+        for command in ("outcome", "attach-command", "resume"):
+            with self.subTest(command=command):
+                self.assertEqual(
+                    self.query(command), (2, "", "delegate: takes exactly one key, got 0\n")
+                )
+                stdin = record("a").to_line() + "\n" + record("b").to_line() + "\n"
+                self.assertEqual(
+                    self.query(command, stdin=stdin),
+                    (2, "", "delegate: takes exactly one key, got 2\n"),
+                )
+                code, out, err = self.query(command, "a", "b", a=View("a"), b=View("b"))
+                self.assertEqual((code, out), (2, ""))
+                self.assertIn("unrecognized arguments: b", err)
+
+    def test_attach_command_prints_one_command_or_exits_1(self):
+        self.assertEqual(
+            self.query("attach-command", "a", a=View("a", command="tmux attach -t =a")),
+            (0, "tmux attach -t =a\n", ""),
+        )
+        self.assertEqual(
+            self.query("attach-command", "a", a=View("a")),
+            (1, "", "delegate: a: no displayable session\n"),
+        )
+
+    def test_resume_prints_the_record_line(self):
+        self.assertEqual(
+            self.query("resume", "a", a=View("a")), (0, record("a").to_line() + "\n", "")
+        )

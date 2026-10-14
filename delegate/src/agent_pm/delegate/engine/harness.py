@@ -12,6 +12,7 @@ import stat
 import sys
 from types import SimpleNamespace
 
+from agent_pm.delegate.cli import spec_of
 from agent_pm.delegate.engine import detach
 from agent_pm.delegate.engine.application import Application
 from agent_pm.delegate.engine.types import Stopped
@@ -59,7 +60,7 @@ def main(argv: list[str], *, application=None) -> int:
         try:
             signal.pthread_sigmask(signal.SIG_UNBLOCK, SIGNALS)
             owner = Application() if application is None else application
-            code, status = owner.run_cli(invocation)
+            code, status = owner.run_cli(invocation, spec_of(invocation, invocation.input))
             return code
         finally:
             signal.pthread_sigmask(signal.SIG_BLOCK, SIGNALS)

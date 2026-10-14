@@ -16,7 +16,7 @@ from agent_pm.delegate.composer.prompt import RESUME, RETURN
 from agent_pm.utils import temp_dirs, under
 
 from delegate.tests.case import REPO
-from delegate.tests.integration.cli import CLI, NATIVE, CodexIntegration, Integration, codex_said
+from delegate.tests.integration.cli import NATIVE, RUN, CodexIntegration, Integration, codex_said
 from delegate.tests.integration.composer import child
 from delegate.tests.replies import block, mark
 from utils.tests.sandbox import owned_directory
@@ -177,7 +177,7 @@ class TeamDirs(Integration):
         self.assertEqual(self.calls(), [])
 
     def test_list(self):
-        res = self.drive([], argv=[*CLI, "--list"])
+        res = self.drive([], argv=[*RUN, "--list"])
         self.assertEqual(res.returncode, 0, res.stderr)
         self.assertIn(
             f"\nwriter  local  {os.path.join(self.team, 'roles', 'writer.md')}\n"

@@ -247,13 +247,14 @@ class Outcome(Case):
         return err.getvalue()
 
     def test_appends_the_outcome_line_none_as_error(self):
-        for status in ("done", "needs_input", None):
+        for status in ("done", "needs_input", "failed", None):
             self.assertEqual(self.outcome(self.events, status), "")
         with open(self.events) as f:
             self.assertEqual(
                 f.read(),
                 "".join(
-                    f"12:34:56 {DRIVER} outcome {s}\n" for s in ("done", "needs_input", "error")
+                    f"12:34:56 {DRIVER} outcome {s}\n"
+                    for s in ("done", "needs_input", "failed", "error")
                 ),
             )
 

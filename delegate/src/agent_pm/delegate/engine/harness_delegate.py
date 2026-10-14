@@ -101,11 +101,15 @@ class _State:
 class HarnessDelegate(Delegate):
     def __init__(self, role: str, spec: Spec, **placement) -> None:
         self._accept(role, spec, **placement)
+        try:
+            self.driver.preflight(self._state.plan.session)
+        except (SessionConfigError, DriverError) as error:
+            raise ConfigError(str(error)) from None
         self._persist_new()
 
     @classmethod
     def preview(cls, role: str, spec: Spec, **placement) -> Preview:
-        """What the constructor would accept, writing nothing."""
+        """What the constructor would accept, without the session preflight; writes nothing."""
         view = cls.__new__(cls)
         view._accept(role, spec, **placement)
         state = view._state
@@ -192,10 +196,6 @@ class HarnessDelegate(Delegate):
                 ),
             ),
         )
-        try:
-            self.driver.preflight(accepted.session)
-        except (SessionConfigError, DriverError) as error:
-            raise ConfigError(str(error)) from None
         self.workdir = accepted.spec.workdir
         self._state = _State(
             role,
@@ -335,7 +335,11 @@ class HarnessDelegate(Delegate):
                 else _team(view._state.plan.spec.team),
             )
             view._settings = thaw(view.composer.config.values)
-            view.session_cls = session_cls or load_class(view._state.session_cls, Session)
+            view.session_cls = session_cls or (
+                Session
+                if view._state.session_cls == f"{Session.__module__}:{Session.__qualname__}"
+                else load_class(view._state.session_cls, Session)
+            )
             view._configure()
             view.session_cls.host(view._state.host)
             view.session_cls.host(view._state.harness_host)

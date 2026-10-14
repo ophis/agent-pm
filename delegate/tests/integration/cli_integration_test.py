@@ -5,6 +5,7 @@ config errors. Main's tests/integration/core/drive_integration_test.py and
 resume_integration_test.py, the Delegate's part.
 """
 
+import json
 import os
 import signal
 import unittest
@@ -18,9 +19,9 @@ from agent_pm.utils import read_project
 
 from delegate.tests.integration.cli import (
     ASKING,
-    CLI,
     DONE,
     RESETS,
+    RUN,
     SID,
     UNSAVED,
     UNSAVED_ERROR,
@@ -74,7 +75,16 @@ class NewRun(Integration):
                 {"kind": "end", "sid": SID, "rc": 0},
             ],
         )
-        self.assertEqual(set(os.listdir(self.work)), {"out.md", "run.jsonl"})
+        self.assertEqual(
+            set(os.listdir(self.work)),
+            {
+                "out.md",
+                "run.jsonl",
+                "delegate.json",
+                "delegate.json.lock",
+                "delegate.json.run.lock",
+            },
+        )
         self.assertTrue(os.path.isfile(self.transcript))
         (call,) = self.calls()
         self.assertEqual(
@@ -197,7 +207,7 @@ class Outcomes(Integration):
             with self.subTest(steps=steps):
                 before = len(self.calls())
                 res = self.drive(steps, exit=7)
-                self.assertEqual(res.returncode, 3, res.stderr)
+                self.assertEqual(res.returncode, 1, res.stderr)
                 self.assertIn("delegate: the client exited 7", res.stderr)
                 self.assertEqual(
                     (self.last("result")["error"], self.last("end")["rc"]),
@@ -214,7 +224,7 @@ class Stderr(Integration):
         self.assertEqual(res.returncode, 1, res.stderr)
         os.unlink(self.transcript)
         res = self.drive([block(DONE)], "--resume")
-        self.assertEqual(res.returncode, 3, res.stderr)
+        self.assertEqual(res.returncode, 1, res.stderr)
         said = f"No conversation found with session ID: {SID}"
         self.assertIn(said, res.stderr)
         self.assertEqual([e["text"] for e in self.records() if e["kind"] == "stderr"], [said])
@@ -257,6 +267,8 @@ class NeedsInput(Integration):
         self.assertFalse(os.path.exists(self.out), "a deliverable before the answer")
         res = self.drive([block(DONE)], "--resume", "--input", ANSWER)
         self.assertEqual(res.returncode, 0, res.stderr)
+        with open(os.path.join(self.work, "delegate.json")) as f:
+            self.assertEqual(json.load(f)["attempt"], 2)
         records = self.records()
         self.assertEqual(
             self.kinds(),
@@ -354,7 +366,7 @@ class UsageLimit(Integration):
         res = self.drive(
             [mark("start", "echoing"), {"kind": "limit", "resets_at": RESETS}, block(DONE)]
         )
-        self.assertEqual(res.returncode, 3, res.stderr)
+        self.assertEqual(res.returncode, 1, res.stderr)
         resets = datetime.fromtimestamp(RESETS, UTC).isoformat(timespec="seconds")
         self.assertIn(f"delegate: usage limit; resets at {resets}\n", res.stderr)
         self.assertNotIn("status done", res.stderr)
@@ -379,7 +391,7 @@ class UsageLimit(Integration):
 
 class ConfigErrors(Integration):
     def test_a_config_error_exits_2_and_starts_nothing(self):
-        cli = list(CLI)
+        cli = list(RUN)
         cases = {
             "unknown role": (
                 [
@@ -438,7 +450,7 @@ class Draft(Integration):
         (call,) = self.calls()
         os.kill(call["pid"], signal.SIGKILL)
         out, err = proc.communicate(timeout=WAIT)
-        self.assertEqual(proc.returncode, 3, out + err)
+        self.assertEqual(proc.returncode, 1, out + err)
         self.assertEqual(self.last("result")["error"], "the client exited -9")
         self.assertTrue(self.holds(DRAFT), "the draft after the kill")
         gate = os.path.join(self.root, "gate")

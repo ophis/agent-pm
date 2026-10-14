@@ -64,19 +64,19 @@ class Exits(Base):
             (
                 "no outcome, the client exited 5",
                 [said(START), {"exit": 5}],
-                3,
+                1,
                 "delegate: the client exited 5",
             ),
             (
                 "a usage limit",
                 [said(START), limit(at), {"sleep": 30}],
-                3,
+                1,
                 f"delegate: usage limit; resets at {when}",
             ),
             (
                 "an unknown reset time",
                 [said(START), limit(None), {"sleep": 30}],
-                3,
+                1,
                 "delegate: usage limit; reset time unknown",
             ),
         ]
@@ -88,12 +88,12 @@ class Exits(Base):
                 self.assertEqual((code, out), (want, ""), err)
                 self.assertTrue(err.endswith(f"\n{last}\n"), err)
 
-    def test_a_client_that_cannot_start_exits_3(self):
+    def test_a_client_that_cannot_start_exits_1(self):
         with mock.patch(
             "subprocess.Popen", side_effect=FileNotFoundError(2, "No such file or directory", "x")
         ):
             code, out, err = self.runs()
-        self.assertEqual((code, out), (3, ""))
+        self.assertEqual((code, out), (1, ""))
         self.assertIn("\ndelegate: headless: cannot start ", err)
 
     def test_agent_text_is_printed_printable(self):
@@ -109,11 +109,10 @@ class Exits(Base):
                 "delegate: status done",
             ),
         ):
-            with (
-                self.subTest(want=want),
-                mock.patch.object(self.application, "run", return_value=result),
-            ):
-                self.assertEqual(self.runs(), (want, "", f"{line}\n"))
+            with self.subTest(want=want):
+                self.ran = result
+                code, out, err = self.runs()
+                self.assertEqual((code, out, err.splitlines()[-1]), (want, "", line))
 
 
 class Deliverable(Base):
@@ -124,7 +123,10 @@ class Deliverable(Base):
         self.assertEqual((code, out), (0, DONE["deliverable"]), err)
         self.assertNotIn("delegate: deliverable", err)
         self.assertTrue(err.endswith("delegate: status done\n"), err)
-        self.assertEqual(set(os.listdir(self.work)), {"run.jsonl"})
+        self.assertEqual(
+            set(os.listdir(self.work)),
+            {"run.jsonl", "delegate.json", "delegate.json.lock", "delegate.json.run.lock"},
+        )
 
     def test_out_dash_drops_control_characters_but_newlines_and_tabs(self):
         text = "a\x1b]0;x\x07b\n\tc\x1b[2Jd\x9be\n"
@@ -133,10 +135,8 @@ class Deliverable(Base):
         self.assertEqual((code, out), (0, "a]0;xb\n\tc[2Jde\n"), err)
 
     def test_a_dry_run_with_out_dash_plans_no_out(self):
-        with mock.patch.object(self.application, "plan", wraps=self.application.plan) as planned:
-            code, out, err = self.runs("--dry-run", out="-")
+        code, out, err = self.runs("--dry-run", out="-")
         self.assertEqual(code, 0, err)
-        self.assertIsNone(planned.call_args.args[1].out)
         self.assertIn("`<Workdir>/tmp/deliverable.md`", json.loads(out)["prompt"])
         self.assertFalse(os.path.exists(self.work))
 
@@ -154,8 +154,10 @@ class Deliverable(Base):
         self.assertEqual((code, out), (0, ""), err)
         self.assertNotIn("delegate: deliverable", err)
         elsewhere = Result(0, Outcome("done", "t", "s", deliverable="# Doc\n"))
-        with mock.patch.object(self.application, "run", return_value=elsewhere):
-            self.assertEqual(self.runs(), (0, "", "delegate: status done\n"))
+        self.ran = elsewhere
+        code, out, err = self.runs()
+        self.assertEqual((code, out, err.splitlines()[-1]), (0, "", "delegate: status done"))
+        self.assertNotIn("delegate: deliverable", err)
 
 
 class Input(Base):
@@ -187,7 +189,7 @@ class DryRun(Base):
 class List(Base):
     def test_it_runs_as_a_module_from_the_import_root(self):
         done = subprocess.run(
-            [*PY, "-m", "agent_pm.delegate.cli", "--list"],
+            [*PY, "-m", "agent_pm.delegate.cli", "run", "--list"],
             capture_output=True,
             text=True,
             env=child_env(),
@@ -195,7 +197,7 @@ class List(Base):
             timeout=60,
         )
         self.assertEqual((done.returncode, done.stderr), (0, ""))
-        self.assertEqual(done.stdout, self.cli("--list")[1])
+        self.assertEqual(done.stdout, self.cli("run", "--list")[1])
 
 
 class Configures(Base):

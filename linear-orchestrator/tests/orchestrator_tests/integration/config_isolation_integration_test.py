@@ -224,7 +224,7 @@ class TeamDirectoryIsolation(ConfigFile, Case):
             + "[delegate.roles.writer]\ntier = 3\n",
         )
         listed = subprocess.run(
-            [*PY, "-m", "agent_pm.delegate.cli", "--list"],
+            [*PY, "-m", "agent_pm.delegate.cli", "run", "--list"],
             env=child_env(),
             capture_output=True,
             text=True,

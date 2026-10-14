@@ -4,8 +4,8 @@ import os
 import subprocess
 
 from agent_pm.delegate import composer
-from agent_pm.delegate.composer import RunParams
-from agent_pm.delegate.engine.application import listing
+from agent_pm.delegate.cli import listing
+from agent_pm.delegate.composer import Composer, RunParams
 
 from delegate.tests.case import Case
 from delegate.tests.skills.act_as import argv, command
@@ -27,7 +27,7 @@ class ActAs(Case):
             encoding="utf-8",
             timeout=60,
         )
-        want = listing(composer.team(composer.TEAM, composer.team_dirs()))
+        want = listing(Composer())
         self.assertEqual((res.returncode, res.stdout), (0, want), res.stderr)
         self.assertEqual([r.split()[0] for r in want.splitlines() if r[:1] != " "], ROLES)
 

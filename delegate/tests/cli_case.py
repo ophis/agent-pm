@@ -5,6 +5,7 @@ from contextlib import redirect_stderr, redirect_stdout
 from unittest import mock
 
 from agent_pm.delegate import cli
+from agent_pm.delegate.engine.harness_delegate import HarnessDelegate
 from agent_pm.session import ConfigError
 
 from delegate.tests.application_case import Base as ApplicationCase
@@ -24,6 +25,7 @@ KEYS = {
     "effort",
     "prompt",
 }
+PLACEMENT = {"sessions", "hosts", "callback"}
 
 
 HEADS = [
@@ -49,6 +51,25 @@ class RefusingRun(fake_adapter.FakeInProcess):
 
 
 class Base(ApplicationCase):
+    ran = None
+
+    def delegate_cls(self) -> type[HarnessDelegate]:
+        """HarnessDelegate on this test's driver; its run returns self.ran when set."""
+        case, driver = self, self.driver
+
+        class Driven(HarnessDelegate):
+            def __init__(self, role, spec, **placement):
+                super().__init__(role, spec, driver=driver, **placement)
+
+            def run(self, on_event=None):
+                return super().run(on_event) if case.ran is None else case.ran
+
+            @classmethod
+            def preview(cls, role, spec, **placement):
+                return super().preview(role, spec, driver=driver, **placement)
+
+        return Driven
+
     def cli(self, *argv, stdin=""):
         """(exit code, stdout, stderr) of cli.main(argv), an argparse exit's code included."""
         out, err = io.StringIO(), io.StringIO()
@@ -58,7 +79,9 @@ class Base(ApplicationCase):
             mock.patch("sys.stdin", io.StringIO(stdin)),
         ):
             try:
-                code = cli.main(list(argv), application=self.application)
+                code = cli.main(
+                    list(argv), delegate_cls=self.delegate_cls(), application=self.application
+                )
             except SystemExit as e:
                 code = e.code
         return code, out.getvalue(), err.getvalue()
@@ -74,6 +97,7 @@ class Base(ApplicationCase):
         out=None,
     ):
         return self.cli(
+            "run",
             "--role",
             role,
             *(("--task", task) if task else ()),
