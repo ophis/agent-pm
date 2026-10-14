@@ -36,7 +36,7 @@ events = [[type(e).__name__, dataclasses.asdict(e)] for e in handle.events()]
 print(json.dumps({"sid": handle.sid, "events": events,
                   "files": [hosted_session.__file__, sys.modules["extension_client"].__file__]}))
 """
-INSTALLED_CHILD = """import sys
+INSTALLED_CHILD = """import json, sys
 from unittest import mock
 from agent_pm.session import Access, Spec, read_config
 from agent_pm.session.engine.hosted_session import HostedSession
@@ -44,9 +44,9 @@ HostedSession.configure_from(read_config())
 adapter = HostedSession._config().registry.adapter("codex")
 spec = Spec(workdir=sys.argv[1], sid="installed-layout", access=Access(cwd=sys.argv[1], project=True))
 with mock.patch("shutil.which", return_value="/protected/codex"):
-    launch = adapter.tui().launch(spec, (sys.executable, "-I", "/protected/hook.py"),
-                                  source_roots=(sys.argv[3],))
-print(launch.argv[-1])
+    launch = adapter.tui().launch(spec, (sys.executable, "-I", "/protected/hook.py"))
+print(json.dumps({"argv": launch.argv[1:-1], "pythonpath": launch.env.get("PYTHONPATH"),
+                  "plan": json.loads(launch.argv[-1])}))
 """
 
 
@@ -141,12 +141,15 @@ class ExtensionAdapterIntegration(Case):
             [("session", data["sid"]), ("client_session", data["sid"])],
         )
 
-    def test_installed_codex_launches_with_its_site_as_the_only_import_root(self):
+    def test_installed_codex_starts_its_module_with_its_site_as_the_only_import_root(self):
         child = self.child("codex", INSTALLED_CHILD)
         self.assertEqual(child.returncode, 0, child.stderr)
-        plan = json.loads(child.stdout)
-        self.assertEqual(plan["import_roots"], [self.site])
-        self.assertNotIn("protect", plan)
+        launched = json.loads(child.stdout)
+        self.assertEqual(
+            launched["argv"], ["-P", "-s", "-m", "agent_pm.session.adapters.codex.tui.start"]
+        )
+        self.assertEqual(launched["pythonpath"], self.site)
+        self.assertNotIn("protect", launched["plan"])
 
     def test_a_table_without_its_module_fails_before_launch(self):
         self.table('[adapters.absent]\nimplementation = "absent_client:AbsentAdapter"\n')

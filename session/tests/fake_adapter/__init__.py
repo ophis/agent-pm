@@ -160,7 +160,7 @@ class FakeTui(Tui):
     def __init__(self, adapter: FakeAdapter):
         self.adapter = adapter
 
-    def launch(self, spec: Spec, hook, *, source_roots: tuple[str, ...]):
+    def launch(self, spec: Spec, hook):
         return Launch((*_argv(self.adapter, spec), *hook))
 
     def reply(self, payload):

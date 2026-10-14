@@ -45,7 +45,7 @@ class Session(ABC):
 
     @abstractmethod
     def press(self, keys: Sequence[KeyPress]) -> None:
-        """DriverError without a terminal; ConfigError, nothing sent, if one is untranslatable."""
+        """SessionError without a terminal; ConfigError, nothing sent, if one is untranslatable."""
 
     @abstractmethod
     def state(self) -> Liveness: ...
@@ -137,7 +137,7 @@ class Session(ABC):
     @classmethod
     def inspect(cls, spec: Spec) -> SessionStatus:
         """Historical status using spec.workdir, client and sid, without starting or attaching.
-        A missing record raises DriverError.
+        A missing record raises SessionError.
         """
         return cls._hosted("inspect")(spec)
 
@@ -148,6 +148,10 @@ class Session(ABC):
     @classmethod
     def usage(cls, client: str) -> Usage | None:
         return cls._hosted("usage")(client)
+
+    @classmethod
+    def client_resume(cls, client: str, argv: Sequence[str]) -> int:
+        return cls._hosted("client_resume")(client, argv)
 
     @classmethod
     def layout(cls, *, display: Display = None) -> str | None:

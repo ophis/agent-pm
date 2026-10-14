@@ -55,6 +55,9 @@ class CodexAdapter(Adapter):
     def session_metadata(self, info):
         return self.common.session_metadata(info)
 
+    def resume_main(self, argv):
+        return self.common.resume_main(argv)
+
     def session_status(self, info: SessionInfo, *, env: Mapping[str, str] = MappingProxyType({})):
         return self.common.session_status(info.sid, info.cwd, transcript=info.transcript)
 

@@ -25,7 +25,7 @@ __all__ = [
     "Blocked",
     "ClientBound",
     "ConfigError",
-    "DriverError",
+    "SessionError",
     "Effort",
     "Exited",
     "HookCall",
@@ -185,6 +185,9 @@ def _member(enum, field: str, value):
 
 
 TAG = re.compile(r"[A-Za-z0-9_-]+")
+
+
+COMMAND = "agent-pm-session"
 
 
 def _string_tuple(value) -> bool:
@@ -559,15 +562,15 @@ class KeyPress:
         return "".join(on) + self.key
 
 
-class DriverError(Exception):
+class SessionError(Exception):
     """A failed start, or a call its Runtime lacks."""
 
 
-class NoRecordedSession(DriverError):
+class NoRecordedSession(SessionError):
     """The requested sid has no durable session record in its workdir."""
 
 
-class NotDisplayable(DriverError):
+class NotDisplayable(SessionError):
     """From a Host that is not Displayable: `host <name> cannot display`."""
 
 

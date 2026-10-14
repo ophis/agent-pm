@@ -1,12 +1,14 @@
-"""utils/src/agent_pm/utils/shell.py: err_text and redact."""
+"""utils/src/agent_pm/utils/shell.py: err_text, redact and command_path."""
 
 import io
+import os
 import signal
+import tempfile
 import unittest
 from types import SimpleNamespace
 from unittest import mock
 
-from agent_pm.utils import STOP_WAIT, kill_group, probe, resume_command, shell
+from agent_pm.utils import STOP_WAIT, command_path, kill_group, probe, resume_command, shell
 
 from utils.tests.case import Case
 from utils.tests.process_fixtures import DEVNULL, TimeoutExpired
@@ -25,6 +27,23 @@ class ShellExecution(Case):
             stdin=shell.subprocess.DEVNULL,
             env=env,
         )
+
+
+class CommandPath(Case):
+    def test_the_first_path_entry_holding_the_command_else_none(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            first, second = (os.path.join(os.path.realpath(tmp), d) for d in ("a b", "c"))
+            for folder in (first, second):
+                os.mkdir(folder)
+                path = os.path.join(folder, "tool")
+                with open(path, "w", encoding="utf-8") as f:
+                    f.write("#!/bin/sh\n")
+                os.chmod(path, 0o755)
+            with mock.patch.dict(
+                os.environ, {"PATH": os.pathsep.join(("/nowhere", first, second))}
+            ):
+                self.assertEqual(command_path("tool"), os.path.join(first, "tool"))
+                self.assertIsNone(command_path("absent-tool"))
 
 
 class KillGroup(Case):

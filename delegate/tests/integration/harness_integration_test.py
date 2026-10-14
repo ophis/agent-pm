@@ -28,7 +28,6 @@ from agent_pm.delegate.engine.harness_delegate import HarnessDelegate
 from agent_pm.delegate.engine.state import RunState
 from agent_pm.session import (
     SIGNALS,
-    DriverError,
     Exited,
     Launch,
     LimitHit,
@@ -36,6 +35,7 @@ from agent_pm.session import (
     Mode,
     NoRecordedSession,
     Reply,
+    SessionError,
     SessionStatus,
     Usage,
     Window,
@@ -237,7 +237,7 @@ class Planning(HarnessCase):
 
     def test_a_failed_launch_keeps_the_state_not_detached(self):
         for failure, raised in (
-            (DriverError("detach refused"), DriverError),
+            (SessionError("detach refused"), SessionError),
             (SessionConfigError("events file refused"), ConfigError),
         ):
             with self.subTest(failure=failure):
@@ -641,7 +641,7 @@ class ValidatingHost(RecordingHost):
 
 
 class FailingHost(RecordingHost):
-    failure: Exception = DriverError("detach refused")
+    failure: Exception = SessionError("detach refused")
 
     def detach(self, name, launch, *, display=None, events=None, record=None):
         raise FailingHost.failure
@@ -714,7 +714,7 @@ class TuiStart(HarnessCase):
     def test_a_harness_ending_first_fails_the_detach_and_stays_resumable(self):
         RecordingHost.harness_starts_agent = False
         delegate = self.tui(harness_host=DeadOnArrival("harness"))
-        with self.assertRaises(DriverError) as caught:
+        with self.assertRaises(SessionError) as caught:
             delegate.detach()
         name = f"dummy-tester-{SID[:8]}"
         self.assertEqual(str(caught.exception), f"tui session {name} did not start")
@@ -731,7 +731,7 @@ class TuiStart(HarnessCase):
         with (
             mock.patch("time.monotonic", side_effect=lambda: next(clock)),
             mock.patch("time.sleep") as slept,
-            self.assertRaises(DriverError),
+            self.assertRaises(SessionError),
         ):
             delegate.detach()
         self.assertEqual(slept.call_count, 1)
@@ -751,7 +751,7 @@ class TuiStart(HarnessCase):
         with (
             mock.patch("time.monotonic", side_effect=lambda: next(clock)),
             mock.patch("time.sleep"),
-            self.assertRaises(DriverError) as caught,
+            self.assertRaises(SessionError) as caught,
         ):
             delegate.detach()
         self.assertEqual(str(caught.exception), "tui session X did not start")
@@ -1137,7 +1137,7 @@ class LiveNameSession(HarnessSession):
     def preflight(cls, spec, **placement):
         super().preflight(spec, **placement)
         if spec.name in cls.live:
-            raise DriverError(f"tui session {spec.name} is running")
+            raise SessionError(f"tui session {spec.name} is running")
 
 
 class Answer(HarnessCase):

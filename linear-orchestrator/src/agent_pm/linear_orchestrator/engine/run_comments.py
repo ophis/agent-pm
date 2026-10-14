@@ -6,7 +6,7 @@ when a late write left an older one. Resume commands come from the owned run vie
 import re
 import threading
 
-from agent_pm.delegate import ConfigError, DriverError
+from agent_pm.delegate import ConfigError, SessionError
 from agent_pm.linear_orchestrator.engine import ops
 from agent_pm.linear_orchestrator.engine.types import (
     UUID_RE,
@@ -51,7 +51,7 @@ def base(*, sid, workdir, client, started_at, info, seq=0):
 def command(rec):
     try:
         st = rec["info"]()
-    except (ConfigError, RunConfigError, DriverError):
+    except (ConfigError, RunConfigError, SessionError):
         return None
     return st.resume_command if st.resumable != "unknown" and st.resume_command else None
 

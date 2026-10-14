@@ -7,20 +7,19 @@ import json
 import os
 import re
 import stat
-import sys
 import tempfile
 import types
 import unittest
 import unittest.mock
+import uuid
+from contextlib import redirect_stderr
 
 from agent_pm.session.engine import types as engine_types
 from agent_pm.session.modes import tui_hook
 
 from session.tests.case import SRC, Case
 from session.tests.tui_hook_support import (
-    HOOK,
     PROCESS,
-    SOURCE_ROOTS,
     identity,
     install,
     state,
@@ -29,6 +28,8 @@ from session.tests.tui_hook_support import (
 from utils.tests.process_fixtures import DEVNULL
 
 CLIENT = re.compile(r"claude|codex", re.I)
+HOOK = os.path.join(SRC["session"], "agent_pm", "session", "modes", "tui_hook.py")
+ROOTS = (SRC["session"], SRC["utils"])
 
 
 class InProcess(Case):
@@ -70,7 +71,7 @@ class InProcess(Case):
             unittest.mock.patch("os.access", fake_access),
             unittest.mock.patch("subprocess.run", self.mark),
         ):
-            tui_hook.main([self.dir, SOURCE_ROOTS, "tool"], io.BytesIO(b"{}"))
+            tui_hook.main([self.dir, "tool"], io.BytesIO(b"{}"), roots=ROOTS)
 
     def test_a_tmux_of_yours_or_roots_marks(self):
         for uid in (os.getuid(), 0):
@@ -112,10 +113,7 @@ class InProcess(Case):
             calls.attach_mock(flock, "flock")
             calls.attach_mock(write, "write")
             calls.attach_mock(self.mark, "mark")
-            tui_hook.main(
-                [self.dir, SOURCE_ROOTS, "tool"],
-                io.BytesIO(b'{"tool_name": "Bash"}'),
-            )
+            tui_hook.main([self.dir, "tool"], io.BytesIO(b'{"tool_name": "Bash"}'), roots=ROOTS)
         with open(os.path.join(self.dir, "hooks.jsonl"), "rb") as f:
             data = f.read()
         fd = calls.mock_calls[0].args[0]
@@ -179,26 +177,48 @@ class InProcess(Case):
             (os.rmdir if os.path.isdir(path) else os.unlink)(path)
 
 
-class Standalone(Case):
+class DeclaredRootCallback(Case):
+    """A callback outside sys.path loads in this process from its declared root."""
+
     def setUp(self):
-        with open(HOOK) as f:
-            self.source = f.read()
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.root = os.path.realpath(tmp.name)
+        self.dir = os.path.join(self.root, "s1")
+        os.mkdir(self.dir, 0o700)
 
-    def test_imports_only_the_stdlib_before_bootstrapping_shared_types(self):
-        names, shared = set(), []
-        for node in ast.walk(ast.parse(self.source)):
-            if isinstance(node, ast.Import):
-                names |= {a.name.split(".")[0] for a in node.names}
-            elif isinstance(node, ast.ImportFrom):
-                if node.module == "agent_pm.session.engine.types":
-                    shared.append([alias.name for alias in node.names])
-                else:
-                    names.add("." * node.level + (node.module or "").split(".")[0])
-        self.assertLessEqual(names, set(sys.stdlib_module_names))
-        self.assertEqual(shared, [["HookCall", "HookError", "Word"]] * 2)
+    def run_hook(self, module, roots):
+        state_ = {**state(self.root, None), "words": {}}
+        del state_["host_hook"]
+        write_state(
+            self.dir, {**state_, "adapter_hook": {"module": module, "state": {}, "roots": roots}}
+        )
+        with redirect_stderr(io.StringIO()) as stderr:
+            tui_hook.run(
+                [self.dir, "stop"], types.SimpleNamespace(buffer=io.BytesIO(b"{}")), roots=ROOTS
+            )
+        with open(os.path.join(self.dir, "hooks.jsonl"), encoding="utf-8") as f:
+            return stderr.getvalue(), [json.loads(line)["payload"] for line in f]
 
+    def write(self, *parts, text="def on_hook(call):\n    return {'loaded': __name__}\n"):
+        path = os.path.join(self.root, *parts)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(text)
+
+    def test_a_nested_namespace_callback_split_over_two_roots(self):
+        top = f"ns_{uuid.uuid4().hex}"
+        self.write("left", top, "nested", "other.py", text="")
+        self.write("right", top, "nested", "callback.py")
+        roots = [os.path.join(self.root, "left"), os.path.join(self.root, "right")]
+        module = f"{top}.nested.callback"
+        self.assertEqual(self.run_hook(module, roots), ("", [{"loaded": module}]))
+
+
+class Source(Case):
     def test_no_client_name(self):
-        self.assertEqual(CLIENT.findall(self.source), [])
+        with open(HOOK) as f:
+            self.assertEqual(CLIENT.findall(f.read()), [])
 
 
 class WordTest(Case):
@@ -212,7 +232,7 @@ class WordTest(Case):
 
 
 class SharedTypes(Case):
-    """The bootstrapped hook uses engine/types' HookError and Word."""
+    """The hook uses engine/types' HookError and Word."""
 
     def test_the_hook_uses_engine_types(self):
         self.assertEqual(

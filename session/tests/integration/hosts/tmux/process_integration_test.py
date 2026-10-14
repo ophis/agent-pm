@@ -5,7 +5,7 @@ import socket
 from pathlib import Path
 from unittest import mock
 
-from agent_pm.session import DriverError
+from agent_pm.session import SessionError
 from agent_pm.session.hosts.tmux.host import TmuxProcess, TmuxTerminal
 from agent_pm.session.hosts.tmux.types import PaneStatus, TuiError
 from agent_pm.utils import ProcessControl
@@ -44,7 +44,7 @@ class AttachListTest(AttachmentBase):
 
     def test_a_terminal_without_a_controller_is_refused(self):
         self.kind, self.controlled = "terminal", False
-        with self.assertRaisesRegex(DriverError, "tmux session tui: missing @control"):
+        with self.assertRaisesRegex(SessionError, "tmux session tui: missing @control"):
             self.host.attach("tui")
         self.tmux.kill.assert_not_called()
         self.socket.assert_not_called()
@@ -58,7 +58,7 @@ class AttachListTest(AttachmentBase):
 
     def test_a_detached_kind_session_without_control_is_refused_immediately(self):
         self.controlled = False
-        with self.assertRaisesRegex(DriverError, "tmux session d1: missing @control"):
+        with self.assertRaisesRegex(SessionError, "tmux session d1: missing @control"):
             self.host.attach("d1")
         self.socket.assert_not_called()
         self.tmux.kill.assert_not_called()
@@ -70,7 +70,7 @@ class AttachListTest(AttachmentBase):
         for path in (self.dir, "/tmp", os.path.join(self.dir, "control")):
             with self.subTest(path=path):
                 self.tmux.option.return_value = path
-                with self.assertRaisesRegex(DriverError, "tmux session d1: invalid @control"):
+                with self.assertRaisesRegex(SessionError, "tmux session d1: invalid @control"):
                     self.host.attach("d1")
                 self.assertEqual(sentinel.read_text(), "owned data")
         self.socket.assert_not_called()
@@ -79,7 +79,7 @@ class AttachListTest(AttachmentBase):
     def test_a_controller_directory_with_public_permissions_is_refused(self):
         self.controlled = True
         os.chmod(self.control.path, 0o755)
-        with self.assertRaisesRegex(DriverError, "invalid @control"):
+        with self.assertRaisesRegex(SessionError, "invalid @control"):
             self.host.attach("d1")
         self.socket.assert_not_called()
 
@@ -87,7 +87,7 @@ class AttachListTest(AttachmentBase):
         self.controlled = True
         Path(self.control.path, "control").unlink()
         Path(self.control.path, "control").write_text("not a socket")
-        with self.assertRaisesRegex(DriverError, "invalid @control"):
+        with self.assertRaisesRegex(SessionError, "invalid @control"):
             self.host.attach("d1")
         self.socket.assert_not_called()
 
@@ -100,7 +100,7 @@ class AttachListTest(AttachmentBase):
         ):
             with self.subTest(name=name, state=state):
                 self.tmux.status.return_value = state
-                with self.assertRaises(DriverError) as caught:
+                with self.assertRaises(SessionError) as caught:
                     self.host.attach(name)
                 self.assertEqual(str(caught.exception), message)
         self.tmux.status.return_value = PaneStatus.RUNNING
@@ -111,7 +111,7 @@ class AttachListTest(AttachmentBase):
         ):
             with self.subTest(found=found):
                 self.tmux.process.side_effect = [found]
-                with self.assertRaises(DriverError) as caught:
+                with self.assertRaises(SessionError) as caught:
                     self.host.attach("d1")
                 self.assertEqual(str(caught.exception), message)
 
@@ -136,7 +136,7 @@ class AttachListTest(AttachmentBase):
 
     def test_list_when_tmux_fails_is_a_driver_error(self):
         self.tmux.listing.return_value = None
-        with self.assertRaisesRegex(DriverError, "^tmux sessions unknown: tmux failed$"):
+        with self.assertRaisesRegex(SessionError, "^tmux sessions unknown: tmux failed$"):
             self.host.list()
 
 
@@ -193,7 +193,7 @@ class ProcessTest(AttachmentBase):
         process = self.host.attach("d1")
         self.assertFalse(process.wait_exit(0))
         self.tmux.status.return_value = PaneStatus.UNKNOWN
-        with self.assertRaisesRegex(DriverError, "^tmux session d1: tmux failed$"):
+        with self.assertRaisesRegex(SessionError, "^tmux session d1: tmux failed$"):
             process.alive()
 
     def test_close_terminates_its_group_after_closing_its_pane_absent_is_fine(self):
@@ -207,7 +207,7 @@ class ProcessTest(AttachmentBase):
         self.tmux.process.side_effect = [PROCESS, None]
         process.close()
         self.tmux.process.side_effect = None
-        with self.assertRaisesRegex(DriverError, "^tmux: can't find pane: %7$"):
+        with self.assertRaisesRegex(SessionError, "^tmux: can't find pane: %7$"):
             process.close()
 
     def test_after_its_pane_ends_wait_exit_waits_for_its_group_and_kill_ends_it(self):
@@ -248,7 +248,7 @@ class ProcessTest(AttachmentBase):
         process = self.host.attach("d1")
         self.tmux.status.return_value = 0
         for operation in (lambda: process.wait_exit(0), process.kill):
-            with self.assertRaisesRegex(DriverError, "permission denied"):
+            with self.assertRaisesRegex(SessionError, "permission denied"):
                 operation()
         process.kill()
         self.assertTrue(process.wait_exit(0))
@@ -280,12 +280,12 @@ class ProcessTest(AttachmentBase):
     def test_a_tmux_failure_reading_metadata_is_a_driver_error(self):
         process = self.host.attach("d1")
         self.tmux.option.side_effect = TuiError("tmux: boom")
-        with self.assertRaisesRegex(DriverError, "^tmux session d1: tmux: boom$"):
+        with self.assertRaisesRegex(SessionError, "^tmux session d1: tmux: boom$"):
             process.record()
         self.tmux.process.side_effect = TuiError("tmux: down")
         for call in (process.alive, process.display, process.close):
             with (
                 self.subTest(call=call),
-                self.assertRaisesRegex(DriverError, "^tmux session d1: tmux: down$"),
+                self.assertRaisesRegex(SessionError, "^tmux session d1: tmux: down$"),
             ):
                 call()

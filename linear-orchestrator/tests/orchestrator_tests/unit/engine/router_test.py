@@ -18,7 +18,7 @@ from agent_pm.delegate import Outcome, OutcomeStatus
 from agent_pm.linear_orchestrator.engine import config, inputs, issues, ops, router, runs
 from agent_pm.linear_orchestrator.engine import gate as quota
 from agent_pm.linear_orchestrator.engine.types import LinearError, Spec, Unavailable
-from agent_pm.session import ConfigError, DriverError, SessionStatus, Window
+from agent_pm.session import ConfigError, SessionError, SessionStatus, Window
 from agent_pm.session import Usage as SessionUsage
 from agent_pm.utils import SHORT
 from orchestrator_tests.process_fixtures import TimeoutExpired
@@ -739,7 +739,7 @@ class RouterEntry(OuterBase):
         harness = f"agent-pm-engineer-{ID}"
         for error, said in (
             (None, f"tui-closed {ID}"),
-            (DriverError("kill failed"), f"tui-error {ID} msg=DriverError: kill failed"),
+            (SessionError("kill failed"), f"tui-error {ID} msg=SessionError: kill failed"),
         ):
             with self.subTest(said=said):
                 self.lines, self.todo["state"], self.api.errors = [], "Todo", {}
@@ -821,7 +821,7 @@ class RouterEntry(OuterBase):
     def test_a_claim_whose_run_fails_to_build_or_start_is_not_stranded(self):
         for attr, error in (
             ("construct_error", DelegateConfigError("role engineer: refused")),
-            ("detach_error", DriverError("detach: duplicate")),
+            ("detach_error", SessionError("detach: duplicate")),
         ):
             with self.subTest(attr=attr):
                 self.lines, self.todo["state"], self.fake.mutations = [], "Todo", []
@@ -1172,7 +1172,7 @@ class ClientUsage(Base):
             (reading(None, None), None),
             (None, "reason=usage unknown"),
             (ConfigError("no client a"), "reason=usage unknown"),
-            (DriverError("boom"), "reason=usage unknown"),
+            (SessionError("boom"), "reason=usage unknown"),
         )
         for value, why in rows:
             with self.subTest(value=value):
@@ -1361,7 +1361,7 @@ class RunBrake(Base):
             (reading(None, None), 0, "five_hour=none weekly=none"),
             (None, 1, "unknown"),
             (ConfigError("no client a"), 1, "unknown"),
-            (DriverError("boom"), 1, "unknown"),
+            (SessionError("boom"), 1, "unknown"),
         )
         for value, rc, out in rows:
             with self.subTest(value=value):
@@ -2004,7 +2004,7 @@ class RunLaunching(OuterBase):
         for value, why in (
             (NO, "no"),
             (SessionStatus("unknown", None, ""), "unknown"),
-            (DriverError("boom"), "DriverError: boom"),
+            (SessionError("boom"), "SessionError: boom"),
         ):
             with self.subTest(why=why):
                 self.api.statuses[SID] = value
@@ -2068,7 +2068,7 @@ class RunLaunching(OuterBase):
     def test_a_new_runs_row_comes_once_its_delegate_state_is_built_before_its_detach(self):
         for attr, error, kinds in (
             ("construct_error", DelegateConfigError("role engineer: refused"), ["failed"]),
-            ("detach_error", DriverError("detach: duplicate"), ["start"]),
+            ("detach_error", SessionError("detach: duplicate"), ["start"]),
         ):
             with self.subTest(attr=attr):
                 with contextlib.suppress(FileNotFoundError):
@@ -2190,7 +2190,7 @@ class RunLaunching(OuterBase):
         for attr, error in (
             ("construct_error", DelegateConfigError("role engineer: refused")),
             ("detach_error", DelegateConfigError("cwd must be an existing directory")),
-            ("detach_error", DriverError("detach engineer-TASK-7-0b6f2c1e-drive: duplicate")),
+            ("detach_error", SessionError("detach engineer-TASK-7-0b6f2c1e-drive: duplicate")),
         ):
             with self.subTest(error=error):
                 self.api.construct_error = self.api.detach_error = None
@@ -3163,7 +3163,7 @@ class StaleRunRecovery(Base):
     def test_an_unknown_session_changes_nothing_and_is_said_once_a_day(self):
         statuses = (
             SessionStatus("unknown", None, ""),
-            DriverError("boom"),
+            SessionError("boom"),
             ConfigError("no client a"),
         )
         for st in statuses:
@@ -3194,7 +3194,7 @@ class StaleRunRecovery(Base):
     def test_an_unknown_session_is_not_settled_without_the_wait(self):
         fake = self.fake(issue("TASK-1", "In Progress", "researcher", updated=ago(hours=3)))
         self.resumable("TASK-1", "a", 300)
-        self.api.statuses[self.sid("a")] = DriverError("boom")
+        self.api.statuses[self.sid("a")] = SessionError("boom")
 
         def use(b):
             (found,) = b.issues("in_progress")

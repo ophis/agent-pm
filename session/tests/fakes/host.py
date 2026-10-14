@@ -15,7 +15,7 @@ import threading
 import time
 import uuid
 
-from agent_pm.session import ConfigError, DriverError, Host, HostProcess, Terminal
+from agent_pm.session import ConfigError, Host, HostProcess, SessionError, Terminal
 from agent_pm.session.engine.status_log import SessionStatusLog
 from agent_pm.session.engine.types import Key, KeyPress, Launch, Liveness, NamedKey, Paste, Word
 from agent_pm.utils import Display, ProcessControl, Record
@@ -125,9 +125,9 @@ class FakeProcess(HostProcess):
             try:
                 self._control.kill()
             except OSError as error:
-                raise DriverError(f"process group {self.name}: {error}") from error
+                raise SessionError(f"process group {self.name}: {error}") from error
         if not self.wait_exit(5):
-            raise DriverError(f"process group {self.name}: did not exit")
+            raise SessionError(f"process group {self.name}: did not exit")
 
     def close(self) -> None:
         self.kill()
@@ -141,7 +141,7 @@ class FakeProcess(HostProcess):
     def publish(self, record: Record) -> None:
         meta = self._own()
         if not meta:
-            raise DriverError(f"{self.name}: gone")
+            raise SessionError(f"{self.name}: gone")
         temporary = os.path.join(self.folder, "meta.json.tmp")
         with open(temporary, "w", encoding="utf-8") as f:
             json.dump({**meta, "record": record.to_line()}, f)
@@ -160,7 +160,7 @@ class FakeProcess(HostProcess):
         try:
             return self._control.live()
         except OSError as error:
-            raise DriverError(f"process group {self.name}: {error}") from error
+            raise SessionError(f"process group {self.name}: {error}") from error
 
 
 class FakeTerminal(FakeProcess, Terminal):
@@ -170,7 +170,7 @@ class FakeTerminal(FakeProcess, Terminal):
         elif isinstance(action, Key) and action.name in KEYS:
             data = KEYS[action.name].encode()
         else:
-            raise DriverError(f"{self.name}: cannot send {action!r}")
+            raise SessionError(f"{self.name}: cannot send {action!r}")
         self._write(data)
 
     def press(self, keys) -> None:
@@ -178,7 +178,7 @@ class FakeTerminal(FakeProcess, Terminal):
 
     def _write(self, data: bytes) -> None:
         if not self.alive():
-            raise DriverError(f"{self.name}: not alive")
+            raise SessionError(f"{self.name}: not alive")
         try:
             fd = os.open(os.path.join(self.folder, "input"), os.O_WRONLY | os.O_NONBLOCK)
             try:
@@ -187,7 +187,7 @@ class FakeTerminal(FakeProcess, Terminal):
             finally:
                 os.close(fd)
         except OSError as e:
-            raise DriverError(f"{self.name}: cannot send: {e}") from None
+            raise SessionError(f"{self.name}: cannot send: {e}") from None
 
 
 def _xterm(key: KeyPress) -> bytes:
@@ -237,7 +237,7 @@ class FakeHost(Host):
         folder = os.path.join(self.root(), name)
         cls = KINDS.get(_meta(folder).get("kind")) if NAME.fullmatch(name) else None
         if cls is None:
-            raise DriverError(f"no {self.name} session {name}")
+            raise SessionError(f"no {self.name} session {name}")
         return cls(name, folder)
 
     def list(self, display=None) -> list[str]:
@@ -262,11 +262,13 @@ class FakeHost(Host):
         folder = os.path.join(self.root(), name)
         previous = FakeProcess(name, folder)
         if previous.alive():
-            raise DriverError(f"{self.name} session {name} is live")
+            raise SessionError(f"{self.name} session {name} is live")
         if os.path.isdir(folder):
             previous.close()
         shutil.rmtree(folder, ignore_errors=True)
         os.makedirs(folder, mode=0o700)
+        if kind == "terminal":  # FR-47: no terminal of its own, so none of the caller's identity
+            env = {k: v for k, v in env.items() if k not in ("TMUX", "TMUX_PANE", "TERM")}
         control = ProcessControl.prepare(argv, cwd, env=env)
         meta = {
             "control": control.path,
@@ -300,7 +302,7 @@ class FakeHost(Host):
             ):
                 if supervisor.returncode is not None or time.monotonic() > deadline:
                     tail = (_read(folder, "output") or "").strip().rpartition("\n")[2]
-                    raise DriverError(f"{self.name} session {name} did not start: {tail}")
+                    raise SessionError(f"{self.name} session {name} did not start: {tail}")
                 time.sleep(POLL)
             control.wait_started()
         except BaseException:

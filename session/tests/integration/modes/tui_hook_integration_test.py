@@ -1,4 +1,4 @@
-"""modes/tui_hook.py run by path as tmux runs it."""
+"""modes/tui_hook.py as a client runs it: `agent-pm-session hook DIR LABEL`."""
 
 import io
 import json
@@ -13,14 +13,12 @@ from contextlib import redirect_stderr
 from agent_pm.session.modes import tui_hook
 
 from session.tests.case import SRC
-from session.tests.source_roots import source_roots_cases
 from session.tests.tui_hook_support import (
-    HOOK,
+    COMMAND,
     LINE,
     LOOKUP,
     PANE,
     PROCESS,
-    SOURCE_ROOTS,
     TMUX,
     HookBase,
     MarkingCases,
@@ -31,44 +29,38 @@ from session.tests.tui_hook_support import (
 )
 
 MISSING = object()
+ROOTS = (SRC["session"], SRC["utils"])
+RUN_HOOK = """import runpy, sys
+def run_hook(*arguments):
+    sys.argv = ["agent-pm-session", "hook", *arguments]
+    try:
+        runpy.run_module("agent_pm.session.cli", run_name="__main__", alter_sys=True)
+    except SystemExit as error:
+        assert error.code == 0, error.code
+"""
+
+
+def python(case, script, *args, **kwargs):
+    """`script` with `args` in a Python on this tree's session packages, case.env its env."""
+    env = {**case.env, "PYTHONPATH": os.pathsep.join(ROOTS), **kwargs.pop("env", {})}
+    return subprocess.run(
+        [sys.executable, "-P", "-s", "-c", script, *args], capture_output=True, env=env, **kwargs
+    )
 
 
 class MarkingTest(MarkingCases, HookBase):
     def test_disabled_logging_reports_exactly_one_error_line_and_exits_zero(self):
-        script = """import logging, runpy, sys
-logging.disable(logging.CRITICAL)
-path = sys.argv[1]
-sys.argv = [path]
-runpy.run_path(path, run_name="__main__")
-"""
-        result = subprocess.run(
-            [sys.executable, "-I", "-c", script, HOOK],
-            input=b"{}",
-            capture_output=True,
-            env=self.env,
-            check=True,
-        )
+        script = RUN_HOOK + "import logging\nlogging.disable(logging.CRITICAL)\nrun_hook()\n"
+        result = python(self, script, input=b"{}", check=True)
         self.assertEqual(result.stdout, b"")
         self.assertEqual(len(result.stderr.splitlines()), 1)
-        self.assertTrue(result.stderr.startswith(b"tui_hook: usage: tui_hook.py "))
-
-    def test_an_unexpected_error_still_exits_0(self):
-        res = subprocess.run(
-            [sys.executable, "-I", HOOK, self.dir, SOURCE_ROOTS, "stop"],
-            capture_output=True,
-            env=self.env,
-            timeout=60,
-            preexec_fn=lambda: os.close(0),
-        )
-        self.assertEqual((res.returncode, res.stdout), (0, b""), res.stderr)
-        self.assertError(res.stderr.decode(), "Error")
-        self.assertNothingWritten()
+        self.assertTrue(result.stderr.startswith(b"tui_hook: usage: agent-pm-session hook "))
 
     def test_adapter_error_is_one_stderr_line_without_a_record_or_mark(self):
         callback = os.path.join(self.root, "adapter.py")
         with open(callback, "w") as file:
             file.write('def on_hook(call):\n    raise RuntimeError("first\\nsecond")\n')
-        self.state["adapter_hook"] = descriptor("adapter")
+        self.state["adapter_hook"] = self.callback("adapter")
         write_state(self.dir, self.state)
         self.assertEqual(
             self.hook("stop", {"text": "payload"}), "tui_hook: RuntimeError: first second\n"
@@ -85,7 +77,9 @@ class ErrorLoggingTest(HookBase):
             file.write('raise RuntimeError("first\\nsecond")\n')
         with open(os.path.join(package, "callback.py"), "w") as file:
             file.write("def on_hook(*args): pass\n")
-        write_state(self.dir, {**self.state, "adapter_hook": descriptor("broken_package.callback")})
+        write_state(
+            self.dir, {**self.state, "adapter_hook": self.callback("broken_package.callback")}
+        )
         self.assertEqual(self.hook("stop"), "tui_hook: RuntimeError: first second\n")
         with open(os.path.join(self.dir, "hook.log")) as file:
             trace = file.read()
@@ -98,7 +92,7 @@ class ErrorLoggingTest(HookBase):
         callback = os.path.join(self.root, "adapter.py")
         with open(callback, "w") as file:
             file.write('def on_hook(call):\n    raise RuntimeError("first\\nsecond")\n')
-        self.state["adapter_hook"] = descriptor("adapter")
+        self.state["adapter_hook"] = self.callback("adapter")
         write_state(self.dir, self.state)
         error_log = os.path.join(self.dir, "hook.log")
         for count in (1, 2):
@@ -118,7 +112,7 @@ class ErrorLoggingTest(HookBase):
             "relative",
         ):
             with self.subTest(folder=folder):
-                self.assertError(self.hook("stop", args=[folder, SOURCE_ROOTS, "stop"]), "tui_hook")
+                self.assertError(self.hook("stop", args=[folder, "stop"]), "tui_hook")
                 self.assertFalse(os.path.exists(os.path.join(folder, "hook.log")))
         self.assertNothingWritten()
 
@@ -129,29 +123,25 @@ class ErrorLoggingTest(HookBase):
         self.assertNothingWritten()
 
     def test_failed_file_write_keeps_one_stderr_line(self):
-        script = """import builtins, io, os, runpy, sys
+        script = (
+            RUN_HOOK
+            + """import builtins, io, os
 from unittest import mock
 class BrokenFile(io.StringIO):
     def write(self, value):
         raise OSError("disk full")
-path, folder, roots = sys.argv[1:]
-sys.argv = [path, folder, roots, "stop"]
+folder = sys.argv[1]
 real_open = builtins.open
 def open_file(name, *args, **kwargs):
     if os.fspath(name) == os.path.join(folder, "hook.log"):
         return BrokenFile()
     return real_open(name, *args, **kwargs)
 with mock.patch("builtins.open", side_effect=open_file):
-    runpy.run_path(path, run_name="__main__")
+    run_hook(folder, "stop")
 """
-        os.unlink(os.path.join(self.dir, "session.json"))
-        result = subprocess.run(
-            [sys.executable, "-I", "-c", script, HOOK, self.dir, SOURCE_ROOTS],
-            input=b"{}",
-            capture_output=True,
-            env=self.env,
-            check=True,
         )
+        os.unlink(os.path.join(self.dir, "session.json"))
+        result = python(self, script, self.dir, input=b"{}", check=True)
         self.assertEqual(result.stdout, b"")
         self.assertError(result.stderr.decode(), "session.json")
         self.assertNothingWritten()
@@ -173,7 +163,7 @@ class PayloadTest(PayloadCases, HookBase):
             file.write(
                 'def on_hook(call):\n    return {**call.payload, "length": len(call.payload["a"])}\n'
             )
-        self.state["adapter_hook"] = descriptor("adapter")
+        self.state["adapter_hook"] = self.callback("adapter")
         write_state(self.dir, self.state)
         self.assertEqual(self.hook("tool", data), "")
         self.assertEqual(
@@ -186,7 +176,7 @@ class PayloadTest(PayloadCases, HookBase):
             unittest.mock.patch.dict(os.environ, self.env),
             redirect_stderr(io.StringIO()) as stderr,
         ):
-            tui_hook.main([self.dir, SOURCE_ROOTS, "stop"], stream)
+            tui_hook.main([self.dir, "stop"], stream, roots=ROOTS)
         self.assertEqual(
             stderr.getvalue(), f"tui_hook: payload: over {tui_hook.PAYLOAD_MAX} bytes\n"
         )
@@ -205,7 +195,7 @@ class PayloadTest(PayloadCases, HookBase):
     return {**call.payload, "original_length": len(call.payload.get("text", ""))}
 """
             )
-        self.state["adapter_hook"] = descriptor("adapter")
+        self.state["adapter_hook"] = self.callback("adapter")
         write_state(self.dir, self.state)
         self.assertEqual(self.hook("tool", {"text": "x" * 5000}), "")
         record = self.records()[0]
@@ -232,7 +222,7 @@ class PayloadTest(PayloadCases, HookBase):
                 "adapter",
             ):
                 with self.subTest(kind=kind, module=name):
-                    write_state(self.dir, {**self.state, kind: descriptor(name)})
+                    write_state(self.dir, {**self.state, kind: self.callback(name)})
                     self.assertError(self.hook("stop"), kind.split("_")[0])
         self.assertNothingWritten()
 
@@ -250,7 +240,9 @@ def on_hook(word, call):
     with open({seen!r}, "a") as output:
         output.write(json.dumps([word, call.payload, dict(call.state)]) + "\\n")
 """)
-        write_state(self.dir, {**self.state, "host_hook": descriptor("host_callback", {"key": 3})})
+        write_state(
+            self.dir, {**self.state, "host_hook": self.callback("host_callback", {"key": 3})}
+        )
         payload = {"text": "x" * 5000}
         for label in ("tool", "stop", "other"):
             self.assertEqual(self.hook(label, payload), "")
@@ -269,22 +261,21 @@ def on_hook(word, call):
     def test_two_synchronized_writers_keep_every_complete_journal_record(self):
         script = """import io, json, sys
 folder, encoded, writer = sys.argv[1:]
-sys.path[:0] = json.loads(encoded)
 from agent_pm.session.modes import tui_hook
 print("ready", flush=True)
 sys.stdin.buffer.read(1)
 for number in range(20):
     payload = json.dumps({"writer": writer, "number": number}).encode()
-    tui_hook.main([folder, encoded, "other"], io.BytesIO(payload))
+    tui_hook.main([folder, "other"], io.BytesIO(payload), roots=json.loads(encoded))
 """
         processes = []
         for writer in ("first", "second"):
             process = subprocess.Popen(
-                [sys.executable, "-I", "-c", script, self.dir, SOURCE_ROOTS, writer],
+                [sys.executable, "-P", "-s", "-c", script, self.dir, json.dumps(ROOTS), writer],
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
-                env=self.env,
+                env={**self.env, "PYTHONPATH": os.pathsep.join(ROOTS)},
             )
             self.addCleanup(process.kill)
             self.addCleanup(process.wait)
@@ -337,16 +328,20 @@ for number in range(20):
 
 
 class SecurityTest(HookBase):
-    def test_invalid_arguments_and_roots_drain_a_large_pipe_before_exiting(self):
+    def test_invalid_arguments_drain_a_large_pipe_before_exiting(self):
         data = b'{"data":"' + b"x" * (2 << 20) + b'"}'
-        for arguments in ([], [self.dir, "not-json", "stop"]):
+        env = {
+            **self.env,
+            "PATH": os.pathsep.join((os.path.dirname(sys.executable), "/usr/bin", "/bin")),
+        }
+        for arguments in ([], [self.dir, "stop", "extra"], ["relative", "stop"]):
             with self.subTest(arguments=arguments):
                 process = subprocess.Popen(
-                    [sys.executable, "-I", HOOK, *arguments],
+                    [COMMAND, "hook", *arguments],
                     stdin=subprocess.PIPE,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
-                    env=self.env,
+                    env=env,
                 )
                 self.addCleanup(process.kill)
                 self.addCleanup(process.wait)
@@ -367,37 +362,24 @@ class SecurityTest(HookBase):
         callback = os.path.join(package, "callback.py")
         with open(callback, "w") as file:
             file.write("def on_hook(*args): pass\n")
-        script = """import os, runpy, sys, types, unittest.mock
-path, rejected, *arguments = sys.argv[1:]
+        script = (
+            RUN_HOOK
+            + """import os, types, unittest.mock
+rejected, folder = sys.argv[1:]
 original = os.lstat
 def foreign_owner(filename):
     info = original(filename)
     return types.SimpleNamespace(st_mode=info.st_mode,
         st_uid=os.getuid() + 1 if filename == rejected else info.st_uid)
-sys.argv = [path, *arguments]
 with unittest.mock.patch("os.lstat", foreign_owner):
-    runpy.run_path(path, run_name="__main__")
+    run_hook(folder, "stop")
 """
+        )
         for kind in ("adapter_hook", "host_hook"):
             with self.subTest(kind=kind):
-                write_state(self.dir, {**self.state, kind: descriptor("agent_pm.callback")})
-                result = subprocess.run(
-                    [
-                        sys.executable,
-                        "-I",
-                        "-c",
-                        script,
-                        HOOK,
-                        callback,
-                        self.dir,
-                        json.dumps([self.root, *json.loads(SOURCE_ROOTS)]),
-                        "stop",
-                    ],
-                    input=b"{}",
-                    capture_output=True,
-                    env=self.env,
-                    timeout=10,
-                    check=True,
+                write_state(self.dir, {**self.state, kind: self.callback("agent_pm.callback")})
+                result = python(
+                    self, script, callback, self.dir, input=b"{}", timeout=10, check=True
                 )
                 self.assertEqual(result.stdout, b"")
                 self.assertError(result.stderr.decode(), "not a regular file owned by you")
@@ -419,7 +401,7 @@ with unittest.mock.patch("os.lstat", foreign_owner):
                 file.write(
                     "def on_hook(call):\n    return {**call.payload, 'callback_imported': True}\n"
                 )
-        self.state.update(adapter_hook=descriptor("callback_package.nested.callback"), words={})
+        self.state.update(adapter_hook=self.callback("callback_package.nested.callback"), words={})
         write_state(self.dir, self.state)
         return files, imported
 
@@ -440,8 +422,10 @@ with unittest.mock.patch("os.lstat", foreign_owner):
 
     def test_foreign_callback_files_are_rejected_before_any_package_code(self):
         files, imported = self.callback_package()
-        script = """import os, runpy, sys, types, unittest.mock
-path, rejected, *arguments = sys.argv[1:]
+        script = (
+            RUN_HOOK
+            + """import os, types, unittest.mock
+rejected, folder = sys.argv[1:]
 original = os.lstat
 def foreign_owner(filename):
     info = original(filename)
@@ -449,33 +433,15 @@ def foreign_owner(filename):
         st_mode=info.st_mode,
         st_uid=os.getuid() + 1 if filename == rejected else info.st_uid,
     )
-sys.argv = [path, *arguments]
 with unittest.mock.patch("os.lstat", foreign_owner):
-    try:
-        runpy.run_path(path, run_name="__main__")
-    except SystemExit as error:
-        assert error.code == 0
+    run_hook(folder, "stop")
 assert "callback_package" not in sys.modules
 """
+        )
         for rejected in files:
             with self.subTest(path=rejected):
-                result = subprocess.run(
-                    [
-                        sys.executable,
-                        "-I",
-                        "-c",
-                        script,
-                        HOOK,
-                        rejected,
-                        self.dir,
-                        json.dumps([self.root, *json.loads(SOURCE_ROOTS)]),
-                        "stop",
-                    ],
-                    input=b"{}",
-                    capture_output=True,
-                    env=self.env,
-                    timeout=60,
-                    check=True,
+                result = python(
+                    self, script, rejected, self.dir, input=b"{}", timeout=60, check=True
                 )
                 self.assertEqual(result.stdout, b"")
                 self.assertError(result.stderr.decode(), "not a regular file owned by you")
@@ -491,8 +457,10 @@ assert "callback_package" not in sys.modules
 
     def test_root_owned_callback_package_imports_after_the_complete_chain_is_checked(self):
         files, imported = self.callback_package()
-        script = """import json, os, runpy, sys, types, unittest.mock
-path, encoded_files, *arguments = sys.argv[1:]
+        script = (
+            RUN_HOOK
+            + """import json, os, types, unittest.mock
+encoded_files, folder = sys.argv[1:]
 files = json.loads(encoded_files)
 original = os.lstat
 def root_owner(filename):
@@ -501,30 +469,12 @@ def root_owner(filename):
         st_mode=info.st_mode,
         st_uid=0 if filename in files else info.st_uid,
     )
-sys.argv = [path, *arguments]
 with unittest.mock.patch("os.lstat", root_owner):
-    try:
-        runpy.run_path(path, run_name="__main__")
-    except SystemExit as error:
-        assert error.code == 0
+    run_hook(folder, "stop")
 """
-        result = subprocess.run(
-            [
-                sys.executable,
-                "-I",
-                "-c",
-                script,
-                HOOK,
-                json.dumps(files),
-                self.dir,
-                json.dumps([self.root, *json.loads(SOURCE_ROOTS)]),
-                "stop",
-            ],
-            input=b"{}",
-            capture_output=True,
-            env=self.env,
-            timeout=60,
-            check=True,
+        )
+        result = python(
+            self, script, json.dumps(files), self.dir, input=b"{}", timeout=60, check=True
         )
         self.assertEqual((result.stdout, result.stderr), (b"", b""))
         self.assertEqual(self.records()[0]["payload"], {"callback_imported": True})
@@ -540,38 +490,46 @@ with unittest.mock.patch("os.lstat", root_owner):
             file.write(
                 "def on_hook(call):\n    return {**call.payload, 'callback_imported': True}\n"
             )
-        self.state.update(adapter_hook=descriptor("namespace.nested.callback"), words={})
+        self.state.update(
+            adapter_hook=descriptor("namespace.nested.callback", roots=tuple(sources)), words={}
+        )
         write_state(self.dir, self.state)
-        roots = [*sources, *json.loads(SOURCE_ROOTS)]
-        self.assertEqual(self.hook("stop", args=[self.dir, json.dumps(roots), "stop"]), "")
+        self.assertEqual(self.hook("stop"), "")
         self.assertEqual(self.records()[0]["payload"], {"callback_imported": True})
+
+    def test_an_agent_pm_callback_runs_from_its_declared_root(self):
+        source = os.path.join(self.root, "extension")
+        package = os.path.join(source, "agent_pm", "ext_tui")
+        os.makedirs(package)
+        with open(os.path.join(package, "__init__.py"), "w") as file:
+            file.write("")
+        with open(os.path.join(package, "hooks.py"), "w") as file:
+            file.write("def on_hook(call):\n    return {**call.payload, 'extension': True}\n")
+        self.state.update(
+            adapter_hook=descriptor("agent_pm.ext_tui.hooks", roots=(source,)), words={}
+        )
+        write_state(self.dir, self.state)
+        self.assertEqual(self.hook("stop"), "")
+        self.assertEqual(self.records()[0]["payload"], {"extension": True})
 
     def test_callback_namespace_cannot_hide_a_package_outside_source_roots(self):
         _, imported = self.callback_package()
         source = os.path.join(self.root, "source")
         os.makedirs(os.path.join(source, "callback_package"))
-        script = """import runpy, sys
-path, *arguments = sys.argv[1:]
-sys.argv = [path, *arguments]
-try:
-    runpy.run_path(path, run_name="__main__")
-except SystemExit as error:
-    assert error.code == 0
+        hook = descriptor("callback_package.nested.callback", roots=(source,))
+        write_state(self.dir, {**self.state, "adapter_hook": hook})
+        script = (
+            RUN_HOOK
+            + """run_hook(sys.argv[1], "stop")
 assert "callback_package" not in sys.modules
 """
-        result = subprocess.run(
-            [
-                sys.executable,
-                "-c",
-                script,
-                HOOK,
-                self.dir,
-                json.dumps([source, *json.loads(SOURCE_ROOTS)]),
-                "stop",
-            ],
+        )
+        result = python(
+            self,
+            script,
+            self.dir,
             input=b"{}",
-            capture_output=True,
-            env={**self.env, "PYTHONPATH": self.root},
+            env={"PYTHONPATH": os.pathsep.join((*ROOTS, self.root))},
             timeout=60,
             check=True,
         )
@@ -584,117 +542,38 @@ assert "callback_package" not in sys.modules
         for args in (
             [],
             [self.dir],
-            [self.dir, "stop"],
-            [self.dir, SOURCE_ROOTS, "stop", "x"],
-            ["s1", SOURCE_ROOTS, "stop"],
-            [self.dir + "\n", SOURCE_ROOTS, "stop"],
-            [self.dir, SOURCE_ROOTS, ""],
-            [self.dir, SOURCE_ROOTS, "a b"],
-            [self.dir, SOURCE_ROOTS, "x" * 65],
-            [self.dir, SOURCE_ROOTS, "../x"],
+            [self.dir, "stop", "x"],
+            ["s1", "stop"],
+            [self.dir + "\n", "stop"],
+            [self.dir, ""],
+            [self.dir, "a b"],
+            [self.dir, "x" * 65],
+            [self.dir, "../x"],
         ):
             with self.subTest(args):
                 self.assertError(self.hook(None, args=args), "usage")
         self.assertNothingWritten()
 
-    def test_bad_source_roots_are_rejected_before_importing_the_callback(self):
-        _, invalid = source_roots_cases(self.root)
-        callback, imported = (
-            os.path.join(self.root, "adapter.py"),
-            os.path.join(self.root, "imported"),
-        )
-        with open(callback, "w") as file:
-            file.write(f"open({imported!r}, 'w').close()\n")
-        self.state["adapter_hook"] = descriptor("adapter")
-        write_state(self.dir, self.state)
-        cases = {
-            "malformed JSON": "not-json",
-            "excessive nesting": "[" * 1000 + "]" * 1000,
-            **{name: json.dumps(roots) for name, roots in invalid.items()},
-        }
-        for name, encoded in cases.items():
-            with self.subTest(roots=name):
-                self.assertError(
-                    self.hook("stop", args=[self.dir, encoded, "stop"]), "source roots"
-                )
-                self.assertFalse(os.path.exists(imported))
-        self.assertNothingWritten()
-
-    def test_valid_source_roots_reach_the_adapter_callback(self):
-        valid, _ = source_roots_cases(self.root)
-        callback = os.path.join(self.root, "adapter.py")
-        with open(callback, "w") as file:
+    def test_a_declared_root_callback_runs_with_sys_path_unchanged(self):
+        source = os.path.join(self.root, "distribution")
+        os.mkdir(source)
+        with open(os.path.join(source, "adapter.py"), "w") as file:
             file.write(
-                "def on_hook(call):\n    return {**call.payload, 'callback_imported': True}\n"
+                "import sys\n"
+                "def on_hook(call):\n"
+                f"    return {{**call.payload, 'on_path': {source!r} in sys.path}}\n"
             )
-        self.state.update(adapter_hook=descriptor("adapter"), words={})
+        self.state.update(adapter_hook=descriptor("adapter", roots=(source,)), words={})
         write_state(self.dir, self.state)
-        for name, roots in valid.items():
-            with self.subTest(roots=name):
-                roots = [self.root, *roots]
-                self.assertEqual(self.hook("stop", args=[self.dir, json.dumps(roots), "stop"]), "")
-                self.assertEqual(self.records()[-1]["payload"], {"callback_imported": True})
-
-    def test_supplied_distribution_roots_lead_once_before_callback_imports(self):
-        sources = [
-            os.path.join(self.root, name) for name in ("first-distribution", "second-distribution")
-        ]
-        for source, value in zip(sources, ("first", "second"), strict=True):
-            os.mkdir(source)
-            with open(os.path.join(source, "source_marker.py"), "w") as file:
-                file.write(f"VALUE = {value!r}\n")
-        roots = [*sources, *json.loads(SOURCE_ROOTS)]
-        callback = os.path.join(sources[0], "adapter.py")
-        with open(callback, "w") as file:
-            file.write(
-                f"""import sys
-from source_marker import VALUE
-def on_hook(call):
-    payload = dict(call.payload)
-    payload["source"] = VALUE
-    payload["roots"] = sys.path[:2]
-    payload["counts"] = [sys.path.count(path) for path in sys.path[:2]]
-    payload["import_roots"] = sys.path[:{len(roots)}]
-    payload["tail"] = sys.path[{len(roots)}:]
-    return payload
-"""
-            )
-        self.state.update(adapter_hook=descriptor("adapter"), words={})
-        write_state(self.dir, self.state)
-        script = """import io, json, runpy, sys
-path, folder, encoded = sys.argv[1:]
-roots = json.loads(encoded)
-sys.path[:0] = [*roots, *roots]
-main = runpy.run_path(path)["main"]
-for _ in range(2):
-    main([folder, encoded, "stop"], io.BytesIO(b"{}"))
-"""
-        result = subprocess.run(
-            [sys.executable, "-I", "-c", script, HOOK, self.dir, json.dumps(roots)],
-            capture_output=True,
-            env=self.env,
-            check=True,
-        )
-        self.assertEqual((result.stdout, result.stderr), (b"", b""))
-        records = self.records()
-        self.assertEqual(len(records), 2)
-        for record in records:
-            payload = record["payload"]
-            self.assertEqual(
-                (payload["source"], payload["roots"], payload["counts"]), ("first", sources, [1, 1])
-            )
-            self.assertEqual(payload["import_roots"], roots)
-            self.assertNotIn(SRC["session"], payload["tail"])
-            self.assertNotIn(SRC["utils"], payload["tail"])
+        self.assertEqual(self.hook("stop"), "")
+        self.assertEqual(self.records()[0]["payload"], {"on_path": False})
 
     def test_a_bad_session_dir_writes_nothing(self):
         afile = os.path.join(self.root, "file")
         open(afile, "w").close()
         for folder in (os.path.join(self.root, "missing"), afile):
             with self.subTest(folder):
-                self.assertError(
-                    self.hook(None, args=[folder, SOURCE_ROOTS, "stop"]), "session.json"
-                )
+                self.assertError(self.hook(None, args=[folder, "stop"]), "session.json")
         self.assertNothingWritten()
 
     def test_a_session_json_that_is_no_regular_file_writes_nothing(self):

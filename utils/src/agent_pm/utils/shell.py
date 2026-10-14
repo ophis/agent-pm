@@ -6,6 +6,7 @@ import contextlib
 import os
 import re
 import shlex
+import shutil
 import signal
 import subprocess
 from collections.abc import Callable, Mapping, Sequence
@@ -76,6 +77,12 @@ def redact(text: str) -> str:
 
 def err_text(res: subprocess.CompletedProcess) -> str:
     return redact((res.stderr or "").strip())[:200]
+
+
+def command_path(name: str) -> str | None:
+    """`name` where PATH finds it, absolute; None when PATH has none."""
+    found = shutil.which(name)
+    return None if found is None else os.path.abspath(found)
 
 
 def resume_command(cwd: str, env: Mapping[str, str], argv) -> str:

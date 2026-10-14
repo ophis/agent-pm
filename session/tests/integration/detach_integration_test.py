@@ -15,7 +15,7 @@ import unittest
 from unittest import mock
 
 from agent_pm.session import SIGNALS, HostProcess
-from agent_pm.session.engine.types import DriverError, Launch
+from agent_pm.session.engine.types import Launch, SessionError
 from agent_pm.session.hosts.tmux.host import Tmux
 from agent_pm.session.hosts.tmux.types import TuiError
 
@@ -76,7 +76,7 @@ class DetachTest(Case):
         self.assertEqual(
             [self.server.option("d1", key) for key in ("@opener", "@display")], [MANAGER, MANAGER]
         )
-        with self.assertRaises(DriverError) as caught:
+        with self.assertRaises(SessionError) as caught:
             self.session_cls.attach("d1")
         self.assertTrue(str(caught.exception).startswith("no tui session d1: "), caught.exception)
         with open(self.go, "w"):
@@ -88,7 +88,7 @@ class DetachTest(Case):
         self.blocked("d1")
         pid = self.server.tmux("display-message", "-p", "-t", "=d1:", "#{pane_pid}").stdout
         for name in ("d1", MANAGER):
-            with self.subTest(name=name), self.assertRaises(DriverError) as caught:
+            with self.subTest(name=name), self.assertRaises(SessionError) as caught:
                 self.detach(name, display="other")
             self.assertEqual(str(caught.exception), f"detach {name}: session {name} exists")
         self.assertEqual(
@@ -111,7 +111,7 @@ class DetachTest(Case):
             f.write("#!/nonexistent/interpreter\n")
         os.chmod(script, 0o755)
         error = f"detach d1: cannot run {script}: {os.strerror(errno.ENOENT)}"
-        with self.assertRaisesRegex(DriverError, "^" + re.escape(error) + "$"):
+        with self.assertRaisesRegex(SessionError, "^" + re.escape(error) + "$"):
             self.detach("d1", [script])
         live_tmux.wait(self.gone, what="no session left")
 

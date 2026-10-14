@@ -25,7 +25,6 @@ from agent_pm.session.engine.types import (
     Blocked,
     ClientBound,
     ConfigError,
-    DriverError,
     Exited,
     Hosts,
     IdleTimeout,
@@ -36,6 +35,7 @@ from agent_pm.session.engine.types import (
     NotDisplayable,
     Reply,
     Resumable,
+    SessionError,
     SessionEvent,
     SessionInfo,
     SessionRow,
@@ -267,7 +267,7 @@ class HostedSession(Session):
                 for configured in setup.hosts.tables
                 if cls.host(configured) is not on
             ):
-                raise DriverError(f"session {name} exists")
+                raise SessionError(f"session {name} exists")
 
         if name is not None:
             check_name(name)
@@ -306,7 +306,7 @@ class HostedSession(Session):
         try:
             adapter = setup.registry.adapter(state["client"])
         except ConfigError as e:
-            raise DriverError(f"no tui session {name}: {e}") from None
+            raise SessionError(f"no tui session {name}: {e}") from None
         running = tui.TuiRuntime.attach(name, state, adapter, host=on)
         session = cls(
             state["client"],
@@ -352,6 +352,11 @@ class HostedSession(Session):
             ),
             key=lambda row: row.name,
         )
+
+    @classmethod
+    def client_resume(cls, client: str, argv: Sequence[str]) -> int:
+        """Runs `client`'s SessionInfo.resume command."""
+        return cls._config().registry.adapter(client).resume_main(argv)
 
     @classmethod
     def usage(cls, client: str) -> Usage | None:
@@ -435,7 +440,7 @@ class HostedSession(Session):
         try:
             info = RunLog(spec.workdir).session(sid)
         except OSError as error:
-            raise DriverError(f"inspect session {sid}: {error}") from error
+            raise SessionError(f"inspect session {sid}: {error}") from error
         if info is None:
             raise NoRecordedSession(f"no recorded session {sid} in {spec.workdir}")
         return _resumable(lambda: setup.registry.adapter(client), info, spec)

@@ -83,7 +83,7 @@ class ClaudeTui(Tui):
         self.last = self.unseen = ""  # the turn's newest text; its turn end's text not yet read
         self.limited = False  # this turn's LimitHit given
 
-    def launch(self, spec: Spec, hook, *, source_roots: tuple[str, ...]):
+    def launch(self, spec: Spec, hook):
         common = self.common
         self.sid = spec.sid or ""
         hooks = {

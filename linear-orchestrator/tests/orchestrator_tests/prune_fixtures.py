@@ -9,7 +9,7 @@ from contextlib import redirect_stderr, redirect_stdout
 from dataclasses import replace
 from datetime import timedelta
 
-from agent_pm.delegate import ConfigError, DriverError, Spec
+from agent_pm.delegate import ConfigError, SessionError, Spec
 from agent_pm.linear_orchestrator.engine import config, log, ops, promote, prune, runs
 from agent_pm.linear_orchestrator.engine.types import LinearError
 from orchestrator_tests.case import Case
@@ -123,7 +123,7 @@ class PruneDelegate(FakeDelegate):
 
     def status(self):
         if self.owner.unknown:
-            raise DriverError("sessions unknown")
+            raise SessionError("sessions unknown")
         return super().status()
 
 
@@ -183,7 +183,7 @@ class PruneScenario(Case):
         for name in self.sessions[workdir]:
             try:
                 self.api.close(name)
-            except (ConfigError, DriverError) as error:
+            except (ConfigError, SessionError) as error:
                 failed = error
         if failed:
             raise failed

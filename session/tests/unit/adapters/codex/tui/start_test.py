@@ -23,19 +23,17 @@ from session.tests.unit.adapters.codex.support import Base, committed_tui
 DIRECTORY = pathlib.Path(tui_start.__file__).parent
 
 
-class BootstrapTest(Case):
-    def test_lone_surrogate_is_a_start_error_before_decoding_or_imports(self):
-        before = list(sys.path)
-        valid = json.dumps(
-            {"import_roots": [str(DIRECTORY)], "prompt": "\ud800"}, ensure_ascii=False
-        )
+class DecodeLaunchDataTest(Case):
+    def test_lone_surrogate_is_a_start_error_before_decoding(self):
+        valid = json.dumps({"prompt": "\ud800"}, ensure_ascii=False)
         for argv in ("\ud800", valid):
             with (
                 self.subTest(argv=argv[:20]),
+                mock.patch("json.loads") as decode,
                 self.assertRaisesRegex(tui_start.StartError, "surrogates not allowed"),
             ):
-                tui_start._bootstrap([argv])
-        self.assertEqual(sys.path, before)
+                tui_start._decode_launch_data([argv])
+            decode.assert_not_called()
 
     def test_main_reports_launch_validation_as_one_line_and_failure_status(self):
         stderr = io.StringIO()
@@ -99,10 +97,7 @@ class StartTest(Base):
                 mock.patch("shutil.which", return_value="/protected/codex"),
             ):
                 launch = committed_tui(
-                    self.adapter,
-                    dataclasses.replace(spec, prompt="prompt"),
-                    hook,
-                    source_roots=PACKAGE_ROOTS,
+                    self.adapter, dataclasses.replace(spec, prompt="prompt"), hook
                 )
                 plan = tui.decode(json.loads(launch.argv[-1]))
                 catalog, _ = self.catalog()
@@ -120,9 +115,7 @@ class StartTest(Base):
         run = self.adapter.tui()
         hook = HOOK
         with mock.patch("shutil.which", return_value="/protected/codex"):
-            launch = run.launch(
-                dataclasses.replace(self.spec, prompt="prompt"), hook, source_roots=PACKAGE_ROOTS
-            )
+            launch = run.launch(dataclasses.replace(self.spec, prompt="prompt"), hook)
         run.commit()
         before = {str(p): p.read_bytes() for p in self.home.rglob("*") if p.is_file()}
         with (
@@ -149,7 +142,6 @@ class StartTest(Base):
                 self.adapter,
                 dataclasses.replace(spec, prompt="prompt"),
                 (sys.executable, "-I", "/protected/hook.py", "/protected/session", ROOTS_JSON),
-                source_roots=PACKAGE_ROOTS,
             )
         with (
             mock.patch.dict(
@@ -163,6 +155,26 @@ class StartTest(Base):
         self.assertEqual(execute.call_args.args[2]["PYTHONPATH"], "/a b;c")
         self.assertFalse(LOCAL_ENV_VARS.intersection(execute.call_args.args[2]))
         self.assertFalse(LOCAL_ENV_VARS.intersection(trust.call_args.kwargs["env"]))
+
+    def test_the_client_gets_its_own_pythonpath_not_the_start_processes(self):
+        with mock.patch("shutil.which", return_value="/protected/codex"):
+            launch = committed_tui(
+                self.adapter,
+                dataclasses.replace(self.spec, prompt="prompt"),
+                (sys.executable, "-I", "/protected/hook.py", "/protected/session", ROOTS_JSON),
+            )
+        data = json.loads(launch.argv[-1])
+        for given, expected in ((None, None), ("/client lib", "/client lib")):
+            with (
+                self.subTest(given=given),
+                mock.patch.dict(os.environ, launch.env),
+                contextlib.nullcontext(mock.Mock(return_value="hooks.state={exact}")) as trust,
+                mock.patch("os.chdir"),
+                mock.patch("os.execve") as execute,
+            ):
+                tui_start.launch({**data, "pythonpath": given}, trust=trust)
+            for env in (execute.call_args.args[2], trust.call_args.kwargs["env"]):
+                self.assertEqual(env.get("PYTHONPATH"), expected)
 
     def test_hooks_list_initializes_and_closes_mock_process(self):
         proc = mock.Mock()
@@ -249,8 +261,8 @@ class StartTest(Base):
     def test_bad_launch_data_does_not_spawn(self):
         with mock.patch("subprocess.Popen") as proc:
             for data in ("null", "not-json", "{}"):
-                with self.assertRaises(tui_start.StartError):
-                    tui_start.launch(tui_start._bootstrap([data]))
+                with self.assertRaises((tui_start.StartError, ValueError)):
+                    tui_start.launch(tui_start._decode_launch_data([data]))
         proc.assert_not_called()
 
     def test_signal_during_spawn_cleans_owned_process_without_retry_or_exec(self):
@@ -259,7 +271,6 @@ class StartTest(Base):
             launch = run.launch(
                 dataclasses.replace(self.spec, prompt="prompt"),
                 (sys.executable, "-I", "/protected/hook.py", "/protected/session", ROOTS_JSON),
-                source_roots=PACKAGE_ROOTS,
             )
         run.commit()
         for signum in (tui_start.signal.SIGHUP, tui_start.signal.SIGTERM):
@@ -293,7 +304,6 @@ class StartTest(Base):
                 self.adapter,
                 dataclasses.replace(self.spec, prompt="hi"),
                 (sys.executable, "-I", "/protected/hook.py", "/protected/session", ROOTS_JSON),
-                source_roots=PACKAGE_ROOTS,
             )
         with (
             mock.patch.dict("os.environ", {"TMPDIR": "/protected"}),

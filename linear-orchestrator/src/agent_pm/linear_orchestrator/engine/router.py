@@ -120,7 +120,7 @@ def live_sessions(cfg, entries, *, say):
                 live[entry.role].append(ident)
         except (ConfigError, delegate.ConfigError) as error:
             say("recover-skip", ident, once=True, sid=entry.sid, reason=one_line(error))
-        except delegate.DriverError:
+        except delegate.SessionError:
             return None
     return live
 
@@ -283,7 +283,7 @@ class Board:
             except ConfigError as error:
                 self.status_errors[sid] = one_line(error)
                 self.statuses[sid] = None
-            except (delegate.ConfigError, delegate.DriverError):
+            except (delegate.ConfigError, delegate.SessionError):
                 self.statuses[sid] = None
         return self.statuses[sid]
 
@@ -331,7 +331,7 @@ class Board:
         ident = issue["identifier"]
         try:
             outcome = LinearRun.attach(ident, cfg=self.cfg, sid=sid).outcome()
-        except (ConfigError, delegate.ConfigError, delegate.DriverError):
+        except (ConfigError, delegate.ConfigError, delegate.SessionError):
             return None  # status says why
         if outcome is None:
             return None
@@ -468,7 +468,7 @@ def begin(cfg, spec: Spec) -> Spec:
     if spec.mode == "new" and spec.issue in latest(parse_log(cfg.runs_log)):
         try:
             LinearRun.attach(spec.issue, cfg=cfg).close()
-        except (ConfigError, delegate.ConfigError, delegate.DriverError) as error:
+        except (ConfigError, delegate.ConfigError, delegate.SessionError) as error:
             log("router", "tui-error", spec.issue, msg=one_line(error))
         else:
             log("router", "tui-closed", spec.issue)
@@ -543,7 +543,7 @@ def _outer(a, cfg, *, gql, run, keychain, now):
         try:
             st = LinearRun.attach(a.issue, cfg=cfg, sid=a.sid).session_info()
             why = None if st.resumable == "yes" else st.resumable
-        except (ConfigError, delegate.ConfigError, delegate.DriverError) as e:
+        except (ConfigError, delegate.ConfigError, delegate.SessionError) as e:
             why = one_line(e)
         if why:
             return fail(a.issue, "transient", f"session {a.sid} not resumable ({why})", 3)
@@ -617,7 +617,7 @@ def _outer(a, cfg, *, gql, run, keychain, now):
         if a.mode == "new":
             record(cfg, a, role=role, target=slug, now=now)
         linear_run.detach()
-    except (ConfigError, delegate.ConfigError, delegate.DriverError) as e:
+    except (ConfigError, delegate.ConfigError, delegate.SessionError) as e:
         log("router", "launch-error", a.issue, error=one_line(e))
         return 1
     return 0

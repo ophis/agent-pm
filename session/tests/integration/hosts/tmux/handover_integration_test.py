@@ -2,11 +2,9 @@
 the file standing alone.
 """
 
-import base64
 import errno
 import json
 import os
-import shutil
 import signal
 import subprocess
 import sys
@@ -15,8 +13,6 @@ import time
 import unittest
 from contextlib import suppress
 
-import agent_pm.session
-import agent_pm.utils
 from agent_pm.session.hosts.tmux.host import EXEC
 
 from session.tests.case import Case
@@ -25,29 +21,6 @@ WAIT = """import os, sys, time
 for _ in range(3000):
     if os.path.exists(sys.argv[1]): break
     time.sleep(0.01)"""
-
-
-class PackageEntryTest(Case):
-    def test_runs_with_only_the_explicit_package_roots(self):
-        with tempfile.TemporaryDirectory() as d:
-            roots = []
-            for package in (agent_pm.session, agent_pm.utils):
-                root = os.path.join(d, package.__name__.rsplit(".", 1)[1])
-                destination = os.path.join(root, *package.__name__.split("."))
-                shutil.copytree(os.path.dirname(package.__file__), destination)
-                roots.append(root)
-            entry = os.path.join(roots[0], "agent_pm", "session", "hosts", "tmux", "entry.py")
-            encoded = base64.urlsafe_b64encode(json.dumps(roots).encode()).decode()
-            res = subprocess.run(
-                [sys.executable, "-I", entry, encoded, "--help"],
-                cwd=d,
-                capture_output=True,
-                text=True,
-                stdin=subprocess.DEVNULL,
-                timeout=30,
-            )
-        self.assertEqual(res.returncode, 0, res.stderr)
-        self.assertIn("tile", res.stdout)
 
 
 class ExecTest(Case):

@@ -13,34 +13,24 @@ from agent_pm.session.adapters.codex.tui import start as tui_start
 
 from session.tests.case import SRC
 from session.tests.codex_tui import HOOK, PlanCase
-from session.tests.source_roots import PACKAGE_ROOTS, source_roots_cases
+from session.tests.source_roots import PACKAGE_ROOTS
 from session.tests.unit.adapters.codex.support import Base, committed_tui
 
 
 class StartPaths(Base):
-    def test_import_roots_are_required_and_validated_without_spawning(self):
+    def test_unknown_launch_fields_are_refused_without_spawning(self):
         with mock.patch("shutil.which", return_value="/protected/codex"):
             launch = committed_tui(
-                self.adapter,
-                dataclasses.replace(self.spec, prompt="prompt"),
-                HOOK,
-                source_roots=PACKAGE_ROOTS,
+                self.adapter, dataclasses.replace(self.spec, prompt="prompt"), HOOK
             )
         data = json.loads(launch.argv[-1])
-        missing = {key: value for key, value in data.items() if key != "import_roots"}
-        _, invalid = source_roots_cases(self.root)
         with mock.patch("subprocess.Popen") as proc, mock.patch("os.execve") as execute:
-            for changed in (
-                missing,
-                *(data | {"import_roots": roots} for roots in invalid.values()),
-            ):
+            for changed in (data | {"unknown": []}, data | {"import_roots": list(PACKAGE_ROOTS)}):
                 with (
-                    self.subTest(roots=changed.get("import_roots")),
-                    self.assertRaises(tui_start.StartError),
+                    self.subTest(changed=sorted(changed)),
+                    self.assertRaisesRegex(ValueError, "fields"),
                 ):
-                    tui_start.launch(tui_start._bootstrap([json.dumps(changed)]))
-            with self.assertRaisesRegex(ValueError, "fields"):
-                tui_start.launch(data | {"unknown": []})
+                    tui_start.launch(changed)
         proc.assert_not_called()
         execute.assert_not_called()
 
@@ -54,7 +44,6 @@ class TuiPaths(Base):
                 self.adapter,
                 dataclasses.replace(self.spec, prompt="hi"),
                 (*HOOK[:2], str(link), *HOOK[3:]),
-                source_roots=PACKAGE_ROOTS,
             )
         with mock.patch("os.chdir"), mock.patch("os.execve") as execute:
             tui_start.launch(
@@ -64,7 +53,7 @@ class TuiPaths(Base):
 
 
 class PlanPaths(PlanCase):
-    def test_hook_commands_preserve_roots_quoting_and_all_six_timeouts(self):
+    def test_hook_commands_preserve_quoting_and_all_six_timeouts(self):
         roots = []
         for package, name in (("session", "session 'sources"), ("utils", "utils sources 字")):
             root = Path(self.home) / name
@@ -75,9 +64,8 @@ class PlanPaths(PlanCase):
             json.dumps(roots, ensure_ascii=False, separators=(",", ":")),
             "opaque trailing word",
         )
-        hook = HookPlan(argv, tuple(roots))
+        hook = HookPlan(argv)
         self.assertEqual(hook.argv, argv)
-        self.assertEqual(hook.import_roots, tuple(roots))
         decoded = tui.decode(json.loads(tui.encode(dataclasses.replace(self.plan, hook=hook))))
         self.assertEqual(decoded.hook, hook)
         commands = tui.commands(hook)

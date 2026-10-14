@@ -105,10 +105,7 @@ GRID_PANES = (
     "#{window_id}\t#{@grid-manager}\t#{pane_id}\t#{pane_width}\t#{pane_height}\t#{socket_path}"
 )
 
-PY, SCRIPT = (
-    "/usr/bin/python3",
-    "/opt/a_b.c@1+2-3/tmux_host.py",
-)  # sys.executable and the module's path, patched
+COMMAND = "/opt/a_b.c@1+2-3/bin/agent-pm-session"
 
 GRID_HOOKS = ("pane-exited", "window-resized", "window-layout-changed")
 
@@ -164,7 +161,7 @@ def grid_read(pane):
     return ["tmux", "list-panes", "-t", pane, "-F", GRID_PANES]
 
 
-def grid_set(window, manager, n=3, *, hooks=True, retile="all"):
+def grid_set(window, manager, n=3, *, hooks=True, retile="all", command=COMMAND):
     """The one tmux call setting a grid window's options, unsetting @grid-busy, then per grid hook
     in order: with hooks, setting each of retile's MODE_HOOKS (each starts a no-wait tile unless
     @grid-busy is the window, under open-close only when the pane set changed); unsetting each other
@@ -173,7 +170,7 @@ def grid_set(window, manager, n=3, *, hooks=True, retile="all"):
     flags = "--no-wait --if-panes-changed" if retile == "open-close" else "--no-wait"
     hook = (
         f"if-shell -F '#{{==:#{{@grid-busy}},{window}}}' '' "
-        f"\"run-shell -b '{PY} -I {SCRIPT} {grids.entry_roots()} tile {flags} {window} >/dev/null 2>&1 || true'\""
+        f"\"run-shell -b '{command} tile {flags} {window} >/dev/null 2>&1 || true'\""
     )
     mode = MODE_HOOKS[retile]
     return [
@@ -512,9 +509,7 @@ class PaneFixture(Case):
     def show(self, fake, env, **kw):
         self.stderr = io.StringIO()
         with environ(**env), which(kw.pop("tmux", TMUX)), redirect_stderr(self.stderr):
-            return placement.show(
-                "s", kw.pop("template", None), **kw, proc=fake, script=grids.ENTRY
-            )
+            return placement.show("s", kw.pop("template", None), **kw, proc=fake, command=COMMAND)
 
     def clients(self, *rows):
         """A list-clients result: rows of (activity, tty, pane[, control mode, default "0"])."""

@@ -1,6 +1,6 @@
 """A TUI adapter installed outside the session's package roots (its own directory, importing only
-agent_pm.session.extension) declares its hook callback with its own root: modes/tui_hook.py, run by
-path with only the session's source roots, trusts and runs it; undeclared, the callback is refused.
+agent_pm.session.extension) declares its hook callback with its own root: `agent-pm-session hook`, on
+only the session's source roots, trusts and runs it; undeclared, the callback is refused.
 """
 
 import json
@@ -10,7 +10,7 @@ import sys
 import tempfile
 
 from session.tests.case import SRC, Case
-from session.tests.tui_hook_support import HOOK, SOURCE_ROOTS, state, write_state
+from session.tests.tui_hook_support import COMMAND, state, write_state
 
 ADAPTER = """import os
 
@@ -22,7 +22,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 class ExternalTui(Tui):
     hooks = {"stop": HookKind.TURN_END}
 
-    def launch(self, spec, hook, *, source_roots):
+    def launch(self, spec, hook):
         raise NotImplementedError
 
     def reply(self, payload):
@@ -75,10 +75,13 @@ class ExternalTuiHookTest(Case):
 
     def hook(self) -> str:
         res = subprocess.run(
-            [sys.executable, "-I", HOOK, self.dir, SOURCE_ROOTS, "stop"],
+            [COMMAND, "hook", self.dir, "stop"],
             input=json.dumps({"text": "hi"}).encode(),
             capture_output=True,
-            env={"HOME": self.root, "PATH": os.defpath},
+            env={
+                "HOME": self.root,
+                "PATH": os.pathsep.join((os.path.dirname(sys.executable), os.defpath)),
+            },
             timeout=60,
         )
         self.assertEqual((res.returncode, res.stdout), (0, b""), res.stderr)
@@ -101,7 +104,7 @@ class ExternalTuiHookTest(Case):
                 "roots": [self.installed],
             },
         )
-        self.assertNotIn(self.installed, json.loads(SOURCE_ROOTS))
+        self.assertNotIn(self.installed, (SRC["session"], SRC["utils"]))
         write_state(self.dir, {**self.state, "adapter_hook": declared})
         self.assertEqual(self.hook(), "")
         self.assertEqual(

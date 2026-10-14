@@ -16,7 +16,6 @@ from agent_pm.session.modes import tui
 from session.tests import fake_adapter
 from session.tests.case import Case
 from session.tests.fakes.terminal import ScreenHost
-from session.tests.source_roots import PACKAGE_ROOTS
 from session.tests.tui_support import SID, Live
 
 NAME = "w1"
@@ -45,7 +44,7 @@ class CloseTest(Case):
         def remove_after_hook(path, *args, **kwargs):
             hooks.append(
                 subprocess.run(
-                    [*tui._Store(NAME, host=host).hook_argv(PACKAGE_ROOTS), "stop"],
+                    [*tui._Store(NAME, host=host).hook_argv(), "stop"],
                     input=b"{}",
                     capture_output=True,
                     check=True,

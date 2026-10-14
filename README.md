@@ -162,6 +162,12 @@ max_runs = 1
 
 The run key `runtime` is renamed to `client`: set `client` wherever a local file sets `runtime` (`[delegate]`, `[delegate.roles.<role>]`, `[linear_orchestrator.core]` and its role tables); a `runtime` key left there is a config error naming `client`. `--runtime` options are `--client`, and `runs.jsonl` rows, worker states and tmux sessions recorded with `runtime` are not read.
 
+Codex recovery records live in `~/.agent-pm/sessions/codex`; `~/.agent-pm/core-new-sessions/codex` is not read. When upgrading, close running Codex TUI sessions, then move the old directory once:
+
+```bash
+mkdir -m 700 -p ~/.agent-pm/sessions && mv ~/.agent-pm/core-new-sessions/codex ~/.agent-pm/sessions/ && rmdir ~/.agent-pm/core-new-sessions
+```
+
 ## Using the board
 
 ```mermaid
@@ -263,6 +269,10 @@ process group to exit first (10 s, then a kill). `send NAME --key K…` takes ke
 or `Enter`, `Escape`, `Tab`, `BTab`, `BSpace`, `Up`, `Down`, `Left`, `Right`, `Home`, `End`,
 `PageUp`, `PageDown`, `F1`–`F12`, after any of `C-`, `M-`, `S-`.
 
+Every session's PATH starts with the `bin/` where PATH finds `agent-pm-session`. Its `hook`,
+`tile --no-wait [--if-panes-changed]` and `client-resume` subcommands are what tui clients' hooks,
+grid windows' tmux hooks and a client's published resume command run.
+
 Plain `ls` prints a header line, then one tab-separated row per session: `name`, `state`
 (`working`, `done`, `blocked` or `dead`), `client`, `sid` and `display`, `-` for none. `ls
 --records` prints only the Records sessions hold, one JSON line each; `--here` lists the sessions
@@ -276,7 +286,7 @@ The default policy sets Claude `--permission-mode auto`, `--strict-mcp-config` a
 
 For existing `~/.agent-pm/config.local.toml` overrides, remove `[session.adapters.codex]` `sandbox` and `shell_network`: those keys now fail validation. Express them in `[delegate.policy.codex].flags` using the options above. Move Claude `--permission-mode` and `--strict-mcp-config` from `[session.adapters.claude].flags` into `[delegate.policy.claude].flags`; keep there only flags every session, workers included, should get. Policy flag lists replace the defaults wholesale, so repeat every option you intend to keep.
 
-Codex snapshots save flags and the merged Adapter, Access and Spec environment. Resume replays them, ignoring current policy and new Spec flags/env; grants are also saved. The public resume command (run.jsonl, session comments) holds no environment values: it runs `session/src/agent_pm/session/adapters/codex/common/resume.py`, which reads them from the snapshot. Snapshots from before this contract fail with `unsupported legacy Codex recovery snapshot: start a new session`; they are not migrated. Access write directories are always emitted as `--add-dir`, including full-access runs.
+Codex snapshots save flags and the merged Adapter, Access and Spec environment. Resume replays them, ignoring current policy and new Spec flags/env; grants are also saved. The public resume command (run.jsonl, session comments) holds no environment values: it runs `agent-pm-session client-resume codex …`, which reads them from the snapshot. Snapshots from before this contract fail with `unsupported legacy Codex recovery snapshot: start a new session`; they are not migrated. Access write directories are always emitted as `--add-dir`, including full-access runs.
 
 ## Access
 

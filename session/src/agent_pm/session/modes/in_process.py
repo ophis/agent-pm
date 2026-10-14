@@ -17,10 +17,10 @@ from agent_pm.session.adapters.registry import Registry
 from agent_pm.session.engine.types import (
     ClientBound,
     ConfigError,
-    DriverError,
     Liveness,
     Mode,
     Prepared,
+    SessionError,
     SessionEvent,
     SessionInfo,
     Spec,
@@ -92,7 +92,7 @@ class InProcessRuntime(Runtime):
         try:
             threading.Thread(target=mode._pump, args=(run, prepared.spec), daemon=True).start()
         except RuntimeError as e:
-            raise DriverError(f"cannot start the in_process run: {e}") from e
+            raise SessionError(f"cannot start the in_process run: {e}") from e
         return mode
 
     def _pump(self, run: InProcess, spec: Spec) -> None:
@@ -135,10 +135,10 @@ class InProcessRuntime(Runtime):
         return Liveness.ABSENT if self.over.is_set() else Liveness.LIVE
 
     def send(self, text: str) -> None:
-        raise DriverError("send: tui mode only")
+        raise SessionError("send: tui mode only")
 
     def screen(self, lines: int | None = None) -> str:
-        raise DriverError("screen: tui mode only")
+        raise SessionError("screen: tui mode only")
 
     def stop(self) -> None:
         # A run blocked in a call goes on until its next yield or the process exits.

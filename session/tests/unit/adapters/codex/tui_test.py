@@ -91,9 +91,7 @@ class TuiTest(Base):
             mock.patch("subprocess.Popen") as proc,
         ):
             launch = run.launch(
-                dataclasses.replace(self.spec, prompt="quoted ' prompt\nnext", resume=resume),
-                HOOK,
-                source_roots=PACKAGE_ROOTS,
+                dataclasses.replace(self.spec, prompt="quoted ' prompt\nnext", resume=resume), HOOK
             )
         proc.assert_not_called()
         run.commit()
@@ -132,7 +130,7 @@ class TuiTest(Base):
                 self.subTest(path=path),
                 mock.patch("shutil.which", return_value="/protected/codex"),
             ):
-                committed_tui(self.adapter, spec, HOOK, source_roots=PACKAGE_ROOTS)
+                committed_tui(self.adapter, spec, HOOK)
             self.assertIn(
                 os.path.realpath(path), self.common.load(str(self.work), spec.sid).snapshot.dirs
             )
@@ -148,22 +146,18 @@ class TuiTest(Base):
         self.rollout()
         with mock.patch("shutil.which", return_value="/protected/codex"):
             launch = committed_tui(
-                self.adapter,
-                dataclasses.replace(spec, resume=True, access=self.spec.access),
-                HOOK,
-                source_roots=PACKAGE_ROOTS,
+                self.adapter, dataclasses.replace(spec, resume=True, access=self.spec.access), HOOK
             )
         self.assertEqual(json.loads(launch.argv[-1])["selection"], ["resume", NATIVE])
         self.assertIn(
             os.path.realpath(library), self.common.load(str(self.work), spec.sid).snapshot.dirs
         )
 
-    def test_launch_preserves_opaque_hook_words_and_separate_roots(self):
-        roots = tuple(reversed(PACKAGE_ROOTS))
+    def test_launch_preserves_opaque_hook_words(self):
         for index, hook in enumerate(
             (
                 (*HOOK, "extra opaque word"),
-                (*HOOK[:-1], json.dumps(list(roots), indent=2, ensure_ascii=False)),
+                (*HOOK[:-1], json.dumps(list(PACKAGE_ROOTS), indent=2, ensure_ascii=False)),
                 (*HOOK[:-1], "not JSON at all"),
             )
         ):
@@ -172,11 +166,9 @@ class TuiTest(Base):
                 self.subTest(hook=hook),
                 mock.patch("shutil.which", return_value="/protected/codex"),
             ):
-                launch = committed_tui(
-                    self.adapter, dataclasses.replace(spec, prompt="hi"), hook, source_roots=roots
-                )
+                launch = committed_tui(self.adapter, dataclasses.replace(spec, prompt="hi"), hook)
             data = json.loads(launch.argv[-1])
-            self.assertEqual(data["import_roots"], list(roots))
+            self.assertNotIn("import_roots", data)
             self.assertEqual(data["hook"], list(hook))
             plan = tui.decode(data)
             for label, command in tui.commands(plan.hook).items():
@@ -188,8 +180,9 @@ class TuiTest(Base):
     def test_factory_launch_flags_and_opaque_hook(self):
         self.assertIsNot(self.adapter.tui(), self.adapter.tui())
         run, launch, data = self.launch()
-        self.assertEqual(launch.argv[1], "-I")
-        self.assertTrue(launch.argv[2].endswith("/adapters/codex/tui/start.py"))
+        self.assertEqual(
+            launch.argv[1:5], ("-P", "-s", "-m", "agent_pm.session.adapters.codex.tui.start")
+        )
         plan = tui.decode(data)
         argv = tui.execution_argv(plan, run.state.snapshot, "hooks.state={trusted}")
         self.assertEqual(argv[:4], ["/protected/codex", "--no-daemon", "-C", str(self.cwd)])
@@ -226,17 +219,18 @@ class TuiTest(Base):
         self.assertEqual(launch.env["CODEX_HOME"], saved.snapshot.codex_home)
         self.assertIn(NATIVE, launch.resume)
 
-    def test_the_session_env_is_last_in_the_launch_env_and_its_resume(self):
+    def test_the_session_env_is_last_in_the_clients_env_and_its_resume(self):
         access = dataclasses.replace(self.spec.access, env={"PYTHONPATH": "/a b;c"})
         self.spec = dataclasses.replace(self.spec, access=access)
         adapter = CodexAdapter({**self.adapter.config, "env": {"PYTHONPATH": "/config"}})
-        _, launch, _ = self.launch(adapter=adapter)
-        self.assertEqual(launch.env["PYTHONPATH"], "/a b;c")
+        _, launch, data = self.launch(adapter=adapter)
+        self.assertEqual(data["pythonpath"], "/a b;c")
+        self.assertEqual(launch.env["PYTHONPATH"], os.pathsep.join(dict.fromkeys(PACKAGE_ROOTS)))
         state = self.common.bind(str(self.work), self.spec.sid, NATIVE)
         self.rollout()
         self.spec = dataclasses.replace(self.spec, access=Access())
-        _, resumed, _ = self.launch(resume=True, adapter=adapter)
-        self.assertEqual(resumed.env["PYTHONPATH"], "/a b;c")
+        _, resumed, data = self.launch(resume=True, adapter=adapter)
+        self.assertEqual(data["pythonpath"], "/a b;c")
         self.assertNotIn("/a b;c", resumed.resume)
         self.assertEqual(self.common.resume_launch(state).env["PYTHONPATH"], "/a b;c")
 
@@ -246,10 +240,7 @@ class TuiTest(Base):
             self.assertRaisesRegex(ConfigError, "invalid prompt"),
         ):
             committed_tui(
-                self.adapter,
-                dataclasses.replace(self.spec, prompt="invalid\0prompt"),
-                HOOK,
-                source_roots=PACKAGE_ROOTS,
+                self.adapter, dataclasses.replace(self.spec, prompt="invalid\0prompt"), HOOK
             )
         self.assertIsNone(self.common.load(str(self.work), self.spec.sid))
         self.assertFalse((self.home / ".agent-pm").exists())
@@ -259,22 +250,13 @@ class TuiTest(Base):
             ("surrogate\ud800", HOOK, PACKAGE_ROOTS),
             ("hi", (), PACKAGE_ROOTS),
             ("hi", ("relative-hook",), PACKAGE_ROOTS),
-            ("hi", HOOK, ()),
-            ("hi", HOOK, (*PACKAGE_ROOTS, PACKAGE_ROOTS[0])),
-            ("hi", HOOK, ("relative-root",)),
-            ("hi", HOOK, (str(self.root / "missing"),)),
         ):
             with (
                 self.subTest(prompt=prompt, hook=hook, roots=roots),
                 mock.patch("shutil.which", return_value="/protected/codex"),
                 self.assertRaises(ConfigError),
             ):
-                committed_tui(
-                    self.adapter,
-                    dataclasses.replace(self.spec, prompt=prompt),
-                    hook,
-                    source_roots=roots,
-                )
+                committed_tui(self.adapter, dataclasses.replace(self.spec, prompt=prompt), hook)
             self.assertIsNone(self.common.load(str(self.work), self.spec.sid))
             self.assertFalse((self.home / ".agent-pm").exists())
 
@@ -284,10 +266,7 @@ class TuiTest(Base):
             self.assertRaisesRegex(ConfigError, "missing.*state"),
         ):
             committed_tui(
-                self.adapter,
-                dataclasses.replace(self.spec, prompt="again", resume=True),
-                HOOK,
-                source_roots=PACKAGE_ROOTS,
+                self.adapter, dataclasses.replace(self.spec, prompt="again", resume=True), HOOK
             )
         which.assert_not_called()
 
@@ -319,9 +298,7 @@ class TuiTest(Base):
         second = dataclasses.replace(self.spec, sid="explicit-env", tier=None, effort=None)
         adapter = CodexAdapter({"env": {"CODEX_CI": "configured", "PAGER": "less"}})
         with mock.patch("shutil.which", return_value="/protected/codex"):
-            launch = committed_tui(
-                adapter, dataclasses.replace(second, prompt="hi"), HOOK, source_roots=PACKAGE_ROOTS
-            )
+            launch = committed_tui(adapter, dataclasses.replace(second, prompt="hi"), HOOK)
         self.assertEqual(launch.env["CODEX_CI"], "configured")
         self.assertNotIn("CODEX_CI", launch.unset)
         self.assertEqual(launch.env["PAGER"], "less")
@@ -490,12 +467,7 @@ class TuiTest(Base):
                 "shutil.which",
                 return_value=str(path if path.name == "codex" else "/protected/codex"),
             ):
-                launch = committed_tui(
-                    self.adapter,
-                    dataclasses.replace(spec, prompt="hi"),
-                    hook,
-                    source_roots=PACKAGE_ROOTS,
-                )
+                launch = committed_tui(self.adapter, dataclasses.replace(spec, prompt="hi"), hook)
             data = json.loads(launch.argv[-1])
             self.assertEqual(
                 (data["executable"], data["hook"]),
@@ -573,7 +545,6 @@ class TuiTest(Base):
                             adapter,
                             dataclasses.replace(spec, prompt="hi", resume=resume),
                             (*HOOK[:2], "/driver-only/hook.py", *HOOK[3:]),
-                            source_roots=PACKAGE_ROOTS,
                         )
                     if resume:
                         self.assertNotIn("TMPDIR", launch.env)
@@ -598,9 +569,7 @@ class TuiTest(Base):
             self.assertEqual(len(roots), len(set(roots)))
             self.assertFalse((self.home / ".agent-pm").exists())
             with mock.patch("shutil.which", return_value="/protected/codex"):
-                run.launch(
-                    dataclasses.replace(self.spec, prompt="hello"), HOOK, source_roots=PACKAGE_ROOTS
-                )
+                run.launch(dataclasses.replace(self.spec, prompt="hello"), HOOK)
             run.commit()
             saved = self.common.load(str(self.work), self.spec.sid).writable_roots
             changed_home, changed_tmp = self.root / "changed-home", self.root / "changed-tmp"
@@ -650,10 +619,7 @@ class SuppliedFlagsTest(Base):
     def launch(self, spec, *, resume=False, hook=HOOK):
         with mock.patch("shutil.which", return_value="/protected/codex"):
             launch = committed_tui(
-                self.adapter,
-                dataclasses.replace(spec, prompt=PROMPT, resume=resume),
-                hook,
-                source_roots=PACKAGE_ROOTS,
+                self.adapter, dataclasses.replace(spec, prompt=PROMPT, resume=resume), hook
             )
         return launch, json.loads(launch.argv[-1])
 
@@ -732,10 +698,7 @@ class LaunchPolicy(Base):
     def argv(self, adapter, spec, *, resume=False):
         with mock.patch("shutil.which", return_value="/protected/codex"):
             launch = committed_tui(
-                adapter,
-                dataclasses.replace(spec, prompt="hi", resume=resume),
-                HOOK,
-                source_roots=PACKAGE_ROOTS,
+                adapter, dataclasses.replace(spec, prompt="hi", resume=resume), HOOK
             )
         return tui.execution_argv(
             tui.decode(json.loads(launch.argv[-1])),
@@ -818,11 +781,10 @@ class PlanTest(PlanCase):
                 "workdir",
                 "sid",
                 "store",
-                "import_roots",
+                "pythonpath",
             },
         )
         self.assertEqual(data["hook"], list(self.plan.hook.argv))
-        self.assertEqual(data["import_roots"], list(self.plan.hook.import_roots))
         with mock.patch("json.loads", side_effect=AssertionError("launch JSON decoded twice")):
             decoded = tui.decode(data)
             with self.assertRaisesRegex(ValueError, "launch fields"):
@@ -833,7 +795,7 @@ class PlanTest(PlanCase):
         encoded = tui.encode(self.plan)
         data = json.loads(encoded)
         decoded = tui.decode(data)
-        for key in ("selection", "hook", "import_roots"):
+        for key in ("selection", "hook"):
             data[key].append("changed")
         data["prompt"] = "changed"
         self.assertEqual(decoded, self.plan)
@@ -1136,7 +1098,7 @@ class HookTest(Base):
     def test_authoritative_store_still_rejects_actual_writable_store(self):
         state = self.prepare()
         record = self.record()
-        unsafe = self.cwd / ".private-state" / "core-new-sessions" / "codex"
+        unsafe = self.cwd / ".private-state" / "sessions" / "codex"
         for directory in (unsafe.parent.parent, unsafe.parent, unsafe):
             directory.mkdir(mode=0o700, exist_ok=True)
         copied = unsafe / record.name

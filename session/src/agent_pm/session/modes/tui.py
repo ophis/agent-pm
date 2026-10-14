@@ -8,7 +8,6 @@ import json
 import os
 import signal
 import stat
-import sys
 import tempfile
 import time
 import uuid
@@ -16,17 +15,15 @@ from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, replace
 from typing import Self
 
-import agent_pm.session.engine.types
-import agent_pm.utils
 from agent_pm.session.adapters.base import Adapter, Tui
 from agent_pm.session.adapters.registry import Registry
 from agent_pm.session.engine.types import (
+    COMMAND,
     TAG,
     Activity,
     Blocked,
     ClientBound,
     ConfigError,
-    DriverError,
     HookError,
     HookKind,
     KeyPress,
@@ -34,6 +31,7 @@ from agent_pm.session.engine.types import (
     Liveness,
     Mode,
     Prepared,
+    SessionError,
     SessionEvent,
     SessionInfo,
     Spec,
@@ -44,7 +42,7 @@ from agent_pm.session.hosts.base import Displayable, Host, HostProcess, Terminal
 from agent_pm.session.modes import tui_hook
 from agent_pm.session.modes.base import Runtime, identity_drop
 from agent_pm.utils import CONFIG_NAME as NAME
-from agent_pm.utils import STATE, Display, json_records, module_roots, read_regular
+from agent_pm.utils import STATE, Display, command_path, json_records, read_regular
 
 TUI_DIR = f"{STATE}/tui"
 WORDS = {
@@ -111,9 +109,9 @@ def _read_state(name: str, path: str) -> dict:
     try:
         state = tui_hook.read_state(path, error=HookError)
     except HookError as e:
-        raise DriverError(f"no tui session {name}: {e}") from None
+        raise SessionError(f"no tui session {name}: {e}") from None
     if field := _bad(state):
-        raise DriverError(f"no tui session {name}: {path}: bad {field}")
+        raise SessionError(f"no tui session {name}: {path}: bad {field}")
     return state
 
 
@@ -126,14 +124,16 @@ class _Store:
         self.dir = os.path.join(self.root, name)
         self.state_file = os.path.join(self.dir, tui_hook.STATE)
 
-    def hook_argv(self, source_roots: tuple[str, ...]) -> tuple[str, ...]:
-        return (
-            sys.executable,
-            "-I",
-            os.path.abspath(tui_hook.__file__),
-            self.dir,
-            json.dumps(source_roots),
-        )
+    def hook_argv(self) -> tuple[str, ...]:
+        """The client's hook command: the running plugin's agent-pm-session (where PATH finds it)
+        and this dir; the client appends its label.
+        """
+        command = command_path(COMMAND)
+        if command is None:
+            raise ConfigError(
+                f"tui session {self.name}: {COMMAND} is not on PATH (its hooks run it)"
+            )
+        return (command, "hook", self.dir)
 
     def read(self) -> dict:
         return _read_state(self.name, self.state_file)
@@ -167,7 +167,7 @@ class _Store:
         check_name: Callable[[str], None] | None = None,
     ) -> Terminal:
         if field := _bad(state):
-            raise DriverError(f"tui session {self.name}: bad {field} {state.get(field)!r:.80}")
+            raise SessionError(f"tui session {self.name}: bad {field} {state.get(field)!r:.80}")
         with self._locked():
             if check_name is not None:
                 check_name(self.name)
@@ -175,7 +175,7 @@ class _Store:
             try:
                 commit()
                 return launch()
-            except (ConfigError, DriverError):
+            except (ConfigError, SessionError):
                 self._unmake(made)
                 raise
 
@@ -198,7 +198,7 @@ class _Store:
         try:
             fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK, 0o600)
         except OSError as e:
-            raise DriverError(f"{path}: {e.strerror or e}") from None
+            raise SessionError(f"{path}: {e.strerror or e}") from None
         try:
             fcntl.flock(fd, fcntl.LOCK_EX)
             yield
@@ -211,12 +211,12 @@ class _Store:
             fd = os.open(self.root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
             try:
                 if os.fstat(fd).st_uid != os.getuid():
-                    raise DriverError(f"{self.root}: not your directory")
+                    raise SessionError(f"{self.root}: not your directory")
                 os.fchmod(fd, 0o700)
             finally:
                 os.close(fd)
         except OSError as e:
-            raise DriverError(f"{self.root}: {e.strerror or e}") from None
+            raise SessionError(f"{self.root}: {e.strerror or e}") from None
 
     def _make(self, state: dict) -> os.stat_result:
         """A fresh dir with session.json, unless the session runs or is unknown; the dir's stat."""
@@ -227,14 +227,14 @@ class _Store:
         try:
             if os.path.lexists(folder):
                 if not stat.S_ISDIR(os.lstat(folder).st_mode):
-                    raise DriverError(f"{folder}: not a directory")
+                    raise SessionError(f"{folder}: not a directory")
                 self._remove()
             os.mkdir(folder, 0o700)
             made = os.lstat(folder)
         except FileExistsError:
-            raise DriverError(f"tui session {self.name} is starting") from None
+            raise SessionError(f"tui session {self.name} is starting") from None
         except OSError as e:
-            raise DriverError(f"{folder}: {e.strerror or e}") from None
+            raise SessionError(f"{folder}: {e.strerror or e}") from None
         try:
             fd, temp = tempfile.mkstemp(dir=folder, prefix=".session.")
             with os.fdopen(fd, "w") as f:
@@ -242,7 +242,7 @@ class _Store:
             os.replace(temp, self.state_file)
         except OSError as e:
             self._unmake(made)
-            raise DriverError(f"{folder}: {e.strerror or e}") from None
+            raise SessionError(f"{folder}: {e.strerror or e}") from None
         return made
 
     def _close(self) -> None:
@@ -250,15 +250,15 @@ class _Store:
             process = self.process()
             if process is not None:
                 process.close()
-        except DriverError as error:
-            raise DriverError(f"cannot close tui session {self.name}: {error}") from error
+        except SessionError as error:
+            raise SessionError(f"cannot close tui session {self.name}: {error}") from error
         self._drop()
 
     def _drop(self) -> None:
         try:
             self._remove()
         except OSError as e:
-            raise DriverError(f"cannot close tui session {self.name}: {e.strerror or e}") from None
+            raise SessionError(f"cannot close tui session {self.name}: {e.strerror or e}") from None
 
     def _remove(self, made: os.stat_result | None = None) -> None:
         try:
@@ -276,12 +276,12 @@ class _Store:
 
 
 def _stale(store: _Store) -> HostProcess | None:
-    """Tui session `store.name`'s dead process, else None; DriverError while it runs."""
+    """Tui session `store.name`'s dead process, else None; SessionError while it runs."""
     process = store.process()
     if process is not None and process.alive():
         host = store.host
         hint = f"; {host.attach_command(store.name)}" if isinstance(host, Displayable) else ""
-        raise DriverError(f"tui session {store.name} is running{hint}")
+        raise SessionError(f"tui session {store.name} is running{hint}")
     return process
 
 
@@ -344,7 +344,7 @@ class TuiRuntime(Runtime):
         try:
             pending.validate(display)
             _stale(pending.store)
-        except DriverError as error:
+        except SessionError as error:
             raise ConfigError(str(error)) from error
         return pending.prepared
 
@@ -368,9 +368,8 @@ class TuiRuntime(Runtime):
         store = _Store(name, host=host)
         spec = replace(spec, name=name, events=events)
         spec = cls._noted(spec, adapter)
-        roots = module_roots(agent_pm.session, agent_pm.utils)
-        hook = store.hook_argv(roots)
-        prepared = cls._launched(spec, lambda s: run.launch(s, hook, source_roots=roots), drop)
+        hook = store.hook_argv()
+        prepared = cls._launched(spec, lambda s: run.launch(s, hook), drop)
         metadata = {
             "sid": prepared.info.sid,
             "client": spec.client or "session",
@@ -378,7 +377,7 @@ class TuiRuntime(Runtime):
         }
         state = _state(prepared, run, host, metadata)
         if field := _bad(state):
-            raise DriverError(f"tui session {name}: bad {field} {state.get(field)!r:.80}")
+            raise SessionError(f"tui session {name}: bad {field} {state.get(field)!r:.80}")
         return _Start(prepared, run, store, state, metadata)
 
     @classmethod
@@ -399,8 +398,8 @@ class TuiRuntime(Runtime):
         try:
             pending.validate(display)
             host.prepare_events(prepared.spec.events)
-        except DriverError as error:
-            raise DriverError(f"cannot start tui session {store.name}: {error}") from error
+        except SessionError as error:
+            raise SessionError(f"cannot start tui session {store.name}: {error}") from error
 
         def launch() -> Terminal:
             try:
@@ -411,8 +410,8 @@ class TuiRuntime(Runtime):
                     events=prepared.spec.events,
                     metadata=pending.metadata,
                 )
-            except DriverError as error:
-                raise DriverError(f"cannot start tui session {store.name}: {error}") from error
+            except SessionError as error:
+                raise SessionError(f"cannot start tui session {store.name}: {error}") from error
 
         def commit() -> None:
             run.commit()
@@ -423,7 +422,7 @@ class TuiRuntime(Runtime):
 
     @classmethod
     def snapshot(cls, name: str) -> dict:
-        """Tui session `name`'s session.json as start wrote it; else DriverError."""
+        """Tui session `name`'s session.json as start wrote it; else SessionError."""
         return _read_state(
             checked_name(name), os.path.join(os.path.expanduser(TUI_DIR), name, tui_hook.STATE)
         )
@@ -436,18 +435,18 @@ class TuiRuntime(Runtime):
         store = _Store(name, host=host)
         info = SessionInfo.from_fields(state)
         if info is None:
-            raise DriverError(f"no tui session {name}: {store.state_file}: bad {_bad(state)}")
+            raise SessionError(f"no tui session {name}: {store.state_file}: bad {_bad(state)}")
         try:
             run = adapter.tui()
         except ConfigError as e:
-            raise DriverError(f"no tui session {name}: {e}") from None
+            raise SessionError(f"no tui session {name}: {e}") from None
         if run is None:
-            raise DriverError(f"no tui session {name}: client {state['client']!r} has no tui mode")
+            raise SessionError(f"no tui session {name}: client {state['client']!r} has no tui mode")
         terminal = store.process()
         if terminal is not None and not isinstance(terminal, Terminal):
-            raise DriverError(f"session {name} has no terminal")
+            raise SessionError(f"session {name} has no terminal")
         if terminal is None or terminal.session_identity() != (info.sid, state["generation"]):
-            raise DriverError(f"no tui session {name}")
+            raise SessionError(f"no tui session {name}")
         spec = Spec(
             workdir=state["workdir"],
             client=state["client"],
@@ -459,7 +458,7 @@ class TuiRuntime(Runtime):
         try:
             run.restore(spec, state["adapter_hook"]["state"] if "adapter_hook" in state else {})
         except ConfigError as e:
-            raise DriverError(f"no tui session {name}: {e}") from None
+            raise SessionError(f"no tui session {name}: {e}") from None
         records, offset = store.records(0)
         replayed = run.replay(records)
         return cls(
@@ -499,7 +498,7 @@ class TuiRuntime(Runtime):
                     self._end()
                     return final, True
                 if isinstance(self.host, Displayable):
-                    with contextlib.suppress(DriverError):
+                    with contextlib.suppress(SessionError):
                         screen = self.host.screen(self._terminal)
                         found = self._read()
                         if (
@@ -540,7 +539,7 @@ class TuiRuntime(Runtime):
                 return True
         try:
             current = self._store.read()
-        except DriverError:
+        except SessionError:
             self._end()
             return True
         if current["generation"] != self._generation:
@@ -567,7 +566,7 @@ class TuiRuntime(Runtime):
         return found
 
     def _mark_blocked(self) -> None:
-        with contextlib.suppress(DriverError):
+        with contextlib.suppress(SessionError):
             if self._terminal.activity() != Word.BLOCKED:
                 self._terminal.mark(Word.BLOCKED, self.prepared.spec.events)
 
@@ -598,12 +597,12 @@ class TuiRuntime(Runtime):
     def screen(self, lines: int | None = None) -> str:
         self._running()
         if not isinstance(self.host, Displayable):
-            raise DriverError(f"host {self.host.name} cannot display")
+            raise SessionError(f"host {self.host.name} cannot display")
         return self.host.screen(self._terminal, lines)
 
     def _running(self) -> None:
         if not self._terminal.alive():
-            raise DriverError(f"tui session {self.name} is not running")
+            raise SessionError(f"tui session {self.name} is not running")
 
     def stop(self) -> None:
         """Once; then ends (returncode: the code seen, else -SIGHUP)."""

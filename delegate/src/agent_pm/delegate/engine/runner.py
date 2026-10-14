@@ -30,7 +30,6 @@ from agent_pm.delegate.event.reply import OUTCOME, marks, outcome_block
 from agent_pm.delegate.event.types import InvalidOutcome, Outcome
 from agent_pm.session import ConfigError as SessionConfigError
 from agent_pm.session import (
-    DriverError,
     Exited,
     IdleTimeout,
     LimitHit,
@@ -38,6 +37,7 @@ from agent_pm.session import (
     Reply,
     RunLog,
     Session,
+    SessionError,
     Stderr,
     TurnEnd,
     TurnFailed,
@@ -108,13 +108,13 @@ class Tui(Headless):
         handle = super().start(p, p.spec.name, p.spec.events)
         name = handle.name
         if name is None:
-            raise DriverError("tui session has no name")
+            raise SessionError("tui session has no name")
         if handle.displayable:
             say(f"delegate: tui session {name}: {handle.attach_command()}")
             if self.driver.display is not None and p.run.show != "none":
                 try:
                     handle.show(command=p.run.show or None)
-                except (SessionConfigError, DriverError) as e:
+                except (SessionConfigError, SessionError) as e:
                     say(f"delegate: show {name}: {e}")
         return handle
 
@@ -131,7 +131,7 @@ class Tui(Headless):
             self.nudged = True
             try:
                 handle.send(NUDGE)
-            except DriverError as e:
+            except SessionError as e:
                 say(f"delegate: tui: {e}")
             self.note("nudge")
             return None
@@ -261,7 +261,7 @@ class _Attempts:
         except SessionConfigError as e:
             self.refused = True
             raise ConfigError(str(e)) from None
-        except DriverError as e:
+        except SessionError as e:
             self.drop_stale_out()
             self.note("input", text=p.params.input)
             return Result(1, None, f"{p.spec.mode}: {e}")
@@ -292,17 +292,17 @@ class _Attempts:
                 try:
                     handle = self.policy.fix(handle, p, FIX.format(error=e))
                     self.handle = handle
-                except (SessionConfigError, DriverError) as failed:
+                except (SessionConfigError, SessionError) as failed:
                     return Result(1, None, f"invalid outcome: {e}; resume failed: {failed}")
                 fixed = True
                 continue
             return self.finish(outcome, rc)
 
     def stop(self, handle: Session) -> bool:
-        """A DriverError is printed, not raised; False then, the session maybe running."""
+        """A SessionError is printed, not raised; False then, the session maybe running."""
         try:
             handle.stop()
-        except DriverError as e:
+        except SessionError as e:
             say(f"delegate: {self.plan.spec.mode}: {e}")
             return False
         return True
@@ -360,7 +360,7 @@ class _Attempts:
                 self.note("give_up", reason=answer.reason)
                 name = handle.name
                 if name is None:
-                    raise DriverError("tui session has no name")
+                    raise SessionError("tui session has no name")
                 command = f": {handle.attach_command()}" if handle.displayable else ""
                 say(f"delegate: {answer.reason}; session {name} left open{command}")
                 return 0, None, None, None

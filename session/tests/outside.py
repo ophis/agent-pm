@@ -6,7 +6,6 @@ import sys
 from agent_pm.session.extension import (
     Adapter,
     Display,
-    DriverError,
     Headless,
     Host,
     HostProcess,
@@ -14,6 +13,7 @@ from agent_pm.session.extension import (
     Launch,
     Record,
     Reply,
+    SessionError,
     Spec,
     Stderr,
     TurnEnd,
@@ -99,11 +99,11 @@ class OutsideHost(Host):
         return self.processes[name]
 
     def terminal(self, name, launch, *, display=None, events=None, record=None, metadata=None):
-        raise DriverError(f"host {self.name} has no terminals")
+        raise SessionError(f"host {self.name} has no terminals")
 
     def attach(self, name):
         if name not in self.processes:
-            raise DriverError(f"no process {name}")
+            raise SessionError(f"no process {name}")
         return self.processes[name]
 
     def list(self, display=None):

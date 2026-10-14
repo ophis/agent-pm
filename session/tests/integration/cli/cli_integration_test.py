@@ -28,6 +28,7 @@ SUBCOMMANDS = [
     "read",
     "tile",
     "hook",
+    "client-resume",
 ]
 DISPLAY_HELP = "display (--display D), per configured Host:\n"
 PROG = "agent-pm-session"
@@ -155,8 +156,8 @@ class ClientEnvTest(SessionCliCase):
 
     def test_the_client_gets_the_wrappers_bin_first_on_path_and_spaced_arguments_verbatim(self):
         bin_dir, log = self.path_logging_claude()
-        caller = os.pathsep.join((bin_dir, self.env()["PATH"]))
-        self.assertNotIn(os.path.join(REPO, "bin"), caller.split(os.pathsep))
+        given = [p for p in self.env()["PATH"].split(os.pathsep) if p != os.path.join(REPO, "bin")]
+        caller = os.pathsep.join((bin_dir, *given))
         record = self.record(
             self.start("w1", "--", "--model", "big  model", prompt="a b  c", PATH=caller)
         )

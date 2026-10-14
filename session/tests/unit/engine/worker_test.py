@@ -6,7 +6,7 @@ import json
 import os
 from unittest import mock
 
-from agent_pm.session import ConfigError, DriverError, Host, HostProcess, Mode
+from agent_pm.session import ConfigError, Host, HostProcess, Mode, SessionError
 from agent_pm.session.engine import worker
 from agent_pm.session.engine.types import Blocked, Exited, IdleTimeout, Reply
 from agent_pm.session.engine.worker import Worker, WorkerState
@@ -150,7 +150,7 @@ class StartTest(Base):
 
     def test_an_early_exit_reports_its_last_lines_and_publishes_nothing_keeping_it(self):
         self.session.events.return_value = iter([Exited(7)])
-        with self.assertRaises(DriverError) as caught:
+        with self.assertRaises(SessionError) as caught:
             self.worker().start(prompt="", resume=False)
         self.assertEqual(str(caught.exception), "w1: claude exited 7 at once")
         self.handle.publish.assert_not_called()
@@ -168,7 +168,7 @@ class StartTest(Base):
     def test_a_state_it_cannot_save_undoes_the_start(self):
         pointer = os.path.join(os.path.dirname(state().workdir()), worker.BY_NAME, "w1")
         os.makedirs(pointer, 0o700)
-        with self.assertRaisesRegex(DriverError, "^w1: not a regular file; start undone$"):
+        with self.assertRaisesRegex(SessionError, "^w1: not a regular file; start undone$"):
             self.worker().start(prompt="", resume=False)
         self.session.close.assert_called_once_with()
         self.handle.publish.assert_not_called()
@@ -203,16 +203,16 @@ class LoadTest(Base):
         self.session_cls.preflight.assert_called_once()
 
     def test_no_or_unreadable_state_is_not_a_worker(self):
-        with self.assertRaisesRegex(DriverError, "^w1: not a worker"):
+        with self.assertRaisesRegex(SessionError, "^w1: not a worker"):
             Worker.load("w1")
-        with self.assertRaisesRegex(DriverError, f"^w1: no worker {OTHER}"):
+        with self.assertRaisesRegex(SessionError, f"^w1: no worker {OTHER}"):
             Worker.load("w1", sid=OTHER)
         self.worker().start(prompt="", resume=False)
         path = os.path.join(state().workdir(), worker.STATE_FILE)
         for text in ("{", "[]", json.dumps({"version": 1})):
             with open(path, "w", encoding="utf-8") as f:
                 f.write(text)
-            with self.subTest(text=text), self.assertRaisesRegex(DriverError, "bad worker.json"):
+            with self.subTest(text=text), self.assertRaisesRegex(SessionError, "bad worker.json"):
                 Worker.load("w1")
         with self.assertRaises(ConfigError):
             Worker.load("a b")
@@ -252,7 +252,7 @@ class ResumeTest(Base):
 
     def test_a_group_that_outlives_its_kill_starts_nothing(self):
         self.handle.wait_exit.return_value = False
-        with self.assertRaisesRegex(DriverError, "old client did not exit; nothing started"):
+        with self.assertRaisesRegex(SessionError, "old client did not exit; nothing started"):
             self.worker().resume()
         self.session_cls.start.assert_not_called()
 
@@ -281,9 +281,9 @@ class ResumeTest(Base):
         for identity in ((OTHER, "g"), (None, None)):
             with self.subTest(identity=identity):
                 self.handle.session_identity.return_value = identity
-                with self.assertRaisesRegex(DriverError, f"^session w1 is not worker {SID}"):
+                with self.assertRaisesRegex(SessionError, f"^session w1 is not worker {SID}"):
                     self.worker().resume()
-                with self.assertRaisesRegex(DriverError, f"^session w1 is not worker {SID}"):
+                with self.assertRaisesRegex(SessionError, f"^session w1 is not worker {SID}"):
                     self.worker().restart()
                 self.assertEqual(self.calls(), [])
 
@@ -304,12 +304,12 @@ class RestartTest(Base):
                 if call == "resume":
                     self.handle.alive.return_value = False
                 with self.assertRaisesRegex(
-                    DriverError, "^w1: old session closed, none started: unknown client claude$"
+                    SessionError, "^w1: old session closed, none started: unknown client claude$"
                 ):
                     getattr(self.worker(), call)()
 
     def test_no_session_is_refused_untouched(self):
         self.host.list.return_value = []
-        with self.assertRaisesRegex(DriverError, "^w1: no session to restart; resume starts it$"):
+        with self.assertRaisesRegex(SessionError, "^w1: no session to restart; resume starts it$"):
             self.worker().restart()
         self.assertEqual(self.calls(), [])

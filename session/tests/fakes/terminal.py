@@ -4,7 +4,7 @@ import os
 import signal
 from unittest import mock
 
-from agent_pm.session import Displayable, DriverError, Host, Terminal
+from agent_pm.session import Displayable, Host, SessionError, Terminal
 from agent_pm.session.engine.types import ActivityState, Launch, Liveness, SessionRow
 
 
@@ -51,13 +51,13 @@ class MemoryTerminal(Terminal):
 
     def send(self, action):
         if not self.alive():
-            raise DriverError(f"terminal {self.name} is not running")
+            raise SessionError(f"terminal {self.name} is not running")
         self.calls.send(action)
 
     def press(self, keys):
         keys = tuple(keys)
         if not self.alive():
-            raise DriverError(f"terminal {self.name} is not running")
+            raise SessionError(f"terminal {self.name} is not running")
         self.calls.press(keys)
 
     def close(self):
@@ -150,7 +150,7 @@ class MemoryHost(Host):
     def attach(self, name):
         self.calls.attach(name)
         if name not in self.processes:
-            raise DriverError(f"no {self.name} session {name}")
+            raise SessionError(f"no {self.name} session {name}")
         return self.processes[name]
 
     def list(self, display=None):
@@ -171,7 +171,7 @@ class ScreenHost(MemoryHost, Displayable):
 
     def screen(self, name, lines=None):
         if isinstance(name, MemoryTerminal) and not name._own():
-            raise DriverError(f"terminal {name.name} is not running")
+            raise SessionError(f"terminal {name.name} is not running")
         return self.calls.screen(name, lines)
 
     def show(self, name, *, display=None, command=None):
@@ -183,5 +183,5 @@ class ScreenHost(MemoryHost, Displayable):
     def layout(self, *, display=None):
         return self.calls.layout(display=display)
 
-    def tile(self, window):
-        self.calls.tile(window)
+    def tile(self, window, *, wait=True, if_panes_changed=False):
+        self.calls.tile(window, wait=wait, if_panes_changed=if_panes_changed)

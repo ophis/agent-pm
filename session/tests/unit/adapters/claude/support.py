@@ -21,7 +21,6 @@ from agent_pm.session.engine.types import Spec as BaseSpec
 from agent_pm.utils import LOCAL_ENV_VARS
 
 from session.tests.case import Case
-from session.tests.source_roots import PACKAGE_ROOTS
 
 
 class ClaudeCommon(UnconfiguredCommon):
@@ -266,7 +265,7 @@ WANT_SETTINGS = "want a JSON object with a list of hooks per event"
 
 def tui_launch(work, prompt="hi", config=CONFIG, *, resume=False, **spec) -> Launch:
     spec = Spec(**{"workdir": work, "sid": SID, "prompt": prompt, "resume": resume, **spec})
-    return ClaudeAdapter(config).tui().launch(spec, HOOK, source_roots=PACKAGE_ROOTS)
+    return ClaudeAdapter(config).tui().launch(spec, HOOK)
 
 
 def said(mid, *blocks) -> dict:

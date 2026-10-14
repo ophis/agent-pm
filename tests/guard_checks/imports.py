@@ -16,10 +16,7 @@ from tests.guard_checks.common import (
     _tree_files,
     _within,
 )
-from tests.guard_data import (
-    IMPORT_BOOTSTRAPS,
-    STANDALONE,
-)
+from tests.guard_data import STANDALONE
 from tests.guard_data.delegate import DELEGATE_SRC
 from tests.guard_data.linear_orchestrator import (
     ORCH,
@@ -330,31 +327,10 @@ def import_hygiene(repo: str) -> list[str]:
         path, environ, putenv = (
             _spellings(nodes, n) for n in ("sys.path", "os.environ", "os.putenv")
         )
-        bootstrap = _path_bootstrap(rel, tree)
-        found.update(
-            f"{rel}:{n.lineno}: sys.path mutation"
-            for n in nodes
-            if _changes(n, path) and n is not bootstrap
-        )
+        found.update(f"{rel}:{n.lineno}: sys.path mutation" for n in nodes if _changes(n, path))
         found.update(
             f"{rel}:{n.lineno}: module-level environment write"
             for n in _at_import(tree)
             if _changes(n, environ) or isinstance(n, ast.Call) and _is(n.func, putenv)
         )
     return sorted(found)
-
-
-def _path_bootstrap(rel, tree):
-    name = IMPORT_BOOTSTRAPS.get(rel)
-    if name is None:
-        return None
-    assignment = ast.parse(
-        "sys.path[:] = [*roots, *(path for path in sys.path if path not in roots)]"
-    ).body[0]
-    for function in tree.body:
-        if not isinstance(function, ast.FunctionDef) or function.name != name:
-            continue
-        for statement in function.body:
-            if isinstance(statement, ast.Assign) and ast.dump(statement) == ast.dump(assignment):
-                return statement.targets[0]
-    return None
