@@ -142,6 +142,23 @@ class Detach(Base):
                 self.assertNotIn("AGENT_PM_EVENTS", Detaching.environments[0])
                 self.assertNotIn("AGENT_PM_EVENTS", os.environ)
 
+    def test_the_launchers_sid_is_the_runs_and_a_different_sid_exits_2(self):
+        other = "99999999-8888-7777-6666-555555555555"
+        for extra in ((), ("--sid", SID), ("--resume",), ("--sid", other)):
+            with self.subTest(extra=extra):
+                Detaching.made, Detaching.environments = [], []
+                os.environ["AGENT_PM_SID"] = SID
+                code, out, err = self.runs("--detach", "--events", self.events, *extra)
+                self.assertNotIn("AGENT_PM_SID", os.environ)
+                if other in extra:
+                    want = f"delegate: $AGENT_PM_SID {SID} differs from --sid {other}\n"
+                    self.assertEqual((code, out, err, Detaching.made), (2, "", want, []))
+                    continue
+                self.assertEqual(code, 0, err)
+                ((_, spec, _),) = Detaching.made
+                self.assertEqual((spec.sid, spec.resume), (SID, extra == ("--resume",)))
+                self.assertNotIn("AGENT_PM_SID", Detaching.environments[0])
+
     def test_an_unusable_events_file_given_or_inherited_exits_2_writing_nothing(self):
         self.detaching = False
         os.mkdir(self.events)
@@ -280,6 +297,22 @@ class DetachEvents(Harnessed):
                 self.assertEqual(RecordingHost.launches[0]["events"], want)
 
 
+class DetachSid(Harnessed):
+    def test_the_launchers_sid_is_stored_and_printed(self):
+        os.environ["AGENT_PM_SID"] = HARNESS_SID
+        code, out, err = self.cli("--detach", "--events", self.events)
+        self.assertEqual(code, 0, err)
+        self.assertEqual(Record.parse(out).sid, HARNESS_SID)
+        self.assertEqual(self.metadata()["spec"]["sid"], HARNESS_SID)
+        self.assertNotIn("AGENT_PM_SID", RecordingHost.launches[0]["env"])
+
+    def test_a_different_sid_starts_and_writes_nothing(self):
+        os.environ["AGENT_PM_SID"] = HARNESS_SID
+        code, out, _ = self.cli("--sid", SID, "--detach", "--events", self.events)
+        self.assertEqual((code, out), (2, ""))
+        self.assertEqual((RecordingHost.launches, os.path.exists(self.work)), ([], False))
+
+
 class DryRun(Base):
     def test_dry_run_prints_the_plan_and_creates_nothing(self):
         code, out, err = self.runs("--sid", SID, "--dry-run")
@@ -363,6 +396,12 @@ class InProcess(Base):
     def runs(self, *extra, **kw):
         with no_child():
             return super().runs(*extra, **kw)
+
+    def test_a_run_without_sid_takes_the_launchers(self):
+        os.environ["AGENT_PM_SID"] = SID
+        code, _, err = self.runs("--mode", "in_process")
+        self.assertEqual(code, 0, err)
+        self.assertIn(f"delegate: session {SID}\n", err)
 
     def test_the_launchers_events_are_ignored_without_detach(self):
         os.environ["AGENT_PM_EVENTS"] = os.path.join(self.tmp, "events")

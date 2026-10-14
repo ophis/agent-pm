@@ -94,9 +94,11 @@ class InstructTest(HarnessCase):
 
 class LaunchTest(HarnessCase):
     def test_the_launchers_variables_stay_out_of_the_harness_environment(self):
-        with mock.patch.dict(os.environ, {"AGENT_PM_EVENTS": "/manager/events", "KEPT": "kept"}):
+        launcher = {"AGENT_PM_SID": SID, "AGENT_PM_EVENTS": "/manager/events", "KEPT": "kept"}
+        with mock.patch.dict(os.environ, launcher):
             self.make().detach()
         environment = RecordingHost.launches[0]["env"]
+        self.assertNotIn("AGENT_PM_SID", environment)
         self.assertNotIn("AGENT_PM_EVENTS", environment)
         self.assertEqual(environment["KEPT"], "kept")
 

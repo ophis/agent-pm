@@ -3,7 +3,7 @@ a control-mode client on the manager, the session config's ClaudeAdapter running
 session/tests/integration/adapters/claude/fake_claude.py: the one Record line whose sessions are live
 on return, the harness session, the TUI beside the caller or in no pane, the harness's outcome and
 exited lines, a kill-session of the harness session, an events path tmux would misread, the events
-file a launcher gives in $AGENT_PM_EVENTS. Ports main's
+file and sid a launcher gives in $AGENT_PM_EVENTS and $AGENT_PM_SID. Ports main's
 tests/integration/core/drive_tui_integration_test.py
 test_detach_from_the_manager. Not ported, as role entries are TASK-356: its
 test_detach_events_default (the manager directory's events file needs roster) and main's
@@ -58,11 +58,13 @@ class Detach(Case):
         )
 
     def detach(self, *extra: str, steps, turns=(), inside=None, events=None, launcher=False):
-        """launcher: the events file comes as $AGENT_PM_EVENTS, as agent-pm-crew run gives it."""
+        """launcher: the events file and sid come as $AGENT_PM_EVENTS and $AGENT_PM_SID, as
+        agent-pm-crew run gives them.
+        """
         with open(self.scenario, "w") as f:
             json.dump({"steps": steps, "turns": list(turns)}, f)
         self.events_used = events or self.events
-        given = {"AGENT_PM_EVENTS": self.events_used}
+        given = {"AGENT_PM_EVENTS": self.events_used, "AGENT_PM_SID": SID}
         env = self.server.env(
             PYTHONPATH=PYTHONPATH,
             CLAUDE_CONFIG_DIR=os.path.join(self.dir, "config"),
@@ -71,8 +73,8 @@ class Detach(Case):
             **(given if launcher else {}),
         )
         argv = [*RUN, "--role", ROLE, "--input", "Hello.", "--out", self.out, "--workdir"]
-        argv += [self.work, "--sid", SID, "--detach", *extra]
-        argv += [] if launcher else ["--events", self.events_used]
+        argv += [self.work, "--detach", *extra]
+        argv += [] if launcher else ["--sid", SID, "--events", self.events_used]
         return subprocess.run(
             argv,
             cwd=self.proj,

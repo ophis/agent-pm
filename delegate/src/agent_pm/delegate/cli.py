@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """agent-pm-delegate: run a role on HarnessDelegate, deliver its prompt, or query its runs.
-`run --detach` starts the run's harness and prints the run's Record line on stdout; its events file
-is --events, else $AGENT_PM_EVENTS, which main reads once and removes from its environment.
+`run --detach` starts the run's harness and prints the run's Record line on stdout. main reads
+$AGENT_PM_SID and $AGENT_PM_EVENTS once and removes them from its environment: `run`'s sid is --sid,
+else $AGENT_PM_SID (the two must agree); `run --detach`'s events file is --events, else
+$AGENT_PM_EVENTS.
 
 Exits 0 on success, 2 on usage or config errors, 1 on other failures.
 """
@@ -14,7 +16,7 @@ from collections.abc import Sequence
 from dataclasses import asdict
 
 from agent_pm.delegate.composer import Composer, RunParams
-from agent_pm.delegate.engine.harness_delegate import EVENTS_ENV, HarnessDelegate
+from agent_pm.delegate.engine.harness_delegate import EVENTS_ENV, SID_ENV, HarnessDelegate
 from agent_pm.delegate.engine.runner import report, say
 from agent_pm.delegate.engine.types import Begun, ConfigError, Preview, Spec
 from agent_pm.session import ConfigError as SessionConfigError
@@ -28,7 +30,7 @@ def main(
     argv: Sequence[str] | None = None, *, delegate_cls: type[HarnessDelegate] = HarnessDelegate
 ) -> int:
     argv = sys.argv[1:] if argv is None else list(argv)
-    events = os.environ.pop(EVENTS_ENV, "") or None
+    sid, events = (os.environ.pop(key, "") or None for key in (SID_ENV, EVENTS_ENV))
     parser = argparse.ArgumentParser(prog="agent-pm-delegate")
     commands = parser.add_subparsers(dest="command", required=True)
     run = commands.add_parser("run", help="run a role in an agent session")
@@ -52,7 +54,7 @@ def main(
     _common_options(prompt)
     a = parser.parse_args(argv)
     if a.command == "run":
-        return _run(a, run, argv[1:], delegate_cls, events)
+        return _run(a, run, argv[1:], delegate_cls, sid=sid, events=events)
     if a.command == "prompt":
         return _prompt(a, prompt, delegate_cls)
     return _query(a, delegate_cls)
@@ -79,7 +81,7 @@ def _run_options(ap: argparse.ArgumentParser) -> None:
         help="list each role, its destination type and tasks, with their sources",
     )
     ap.add_argument("--client", action=Once, help="default: the role's client in the core config")
-    ap.add_argument("--sid")
+    ap.add_argument("--sid", help="default $AGENT_PM_SID; the two must agree")
     ap.add_argument("--resume", action="store_true")
     ap.add_argument("--mode", choices=[m.value for m in Mode], default=Mode.HEADLESS.value)
     ap.add_argument("--detach", action="store_true", help="run in a harness session of its own")
@@ -99,6 +101,8 @@ def _run(
     ap: argparse.ArgumentParser,
     argv: Sequence[str],
     delegate_cls: type[HarnessDelegate],
+    *,
+    sid: str | None,
     events: str | None,
 ) -> int:
     if a.list:
@@ -117,6 +121,9 @@ def _run(
     if a.detach and a.events is None:
         a.events = events
     try:
+        if sid is not None and a.sid not in (None, sid):
+            raise ConfigError(f"${SID_ENV} {sid} differs from --sid {a.sid}")
+        a.sid = sid if a.sid is None else a.sid
         _check(a)
     except ConfigError as e:
         say(f"delegate: {e}")
