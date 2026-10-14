@@ -367,6 +367,7 @@ class TuiMode(RunningMode):
         hooks = (*host.protected_paths(), *([events] if events else []), store.root)
         spec = replace(spec, name=name, events=events, protect=(*spec.protect, *hooks))
         cls.check_protection(spec, adapter)
+        protected = spec
         spec = cls._noted(spec, adapter)
         roots = module_roots(agent_pm.session, agent_pm.utils)
         hook = store.hook_argv(roots)
@@ -379,6 +380,16 @@ class TuiMode(RunningMode):
         state = _state(prepared, run, host, metadata)
         if field := _bad(state):
             raise DriverError(f"tui session {name}: bad {field} {state.get(field)!r:.80}")
+        trusted = tuple(
+            root
+            for key in ("adapter_hook", "host_hook")
+            if key in state
+            for root in state[key]["roots"]
+        )
+        if trusted:
+            cls.check_protection(
+                replace(protected, protect=(*protected.protect, *trusted)), adapter
+            )
         return _Start(prepared, run, store, state, metadata)
 
     @classmethod
@@ -504,7 +515,11 @@ class TuiMode(RunningMode):
                     with contextlib.suppress(DriverError):
                         screen = self.host.screen(self._terminal)
                         found = self._read()
-                        if not found and not self._replaced(self._terminal.state()):
+                        if (
+                            not found
+                            and not self._gone
+                            and not self._replaced(self._terminal.state())
+                        ):
                             found = self._scan(screen)
         deadline = time.monotonic() + timeout
         while not found and not self._gone and (left := deadline - time.monotonic()) > 0:

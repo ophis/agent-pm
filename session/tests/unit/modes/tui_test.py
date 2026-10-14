@@ -589,6 +589,19 @@ class StartTest(Base):
                 self.assertNoSessionDir()
         self.host.calls.terminal.assert_not_called()
 
+    def test_a_declared_hook_callback_root_rejects_an_overlapping_cwd_before_launch(self):
+        self.host.hook = HookCallback("fake_host_hook", {}, roots=("/declared/root",))
+        with self.assertRaisesRegex(
+            ConfigError, "writable path /declared/root/child overlaps protected path /declared/root"
+        ):
+            self.start(access=Access(cwd="/declared/root/child"))
+        self.assertEqual(self.recorded, [])
+        self.assertNoSessionDir()
+        self.host.calls.terminal.assert_not_called()
+        self.host.hook = HookCallback("fake_host_hook", {}, roots=("/elsewhere",))
+        self.start(access=Access(cwd="/declared/root/child"))
+        self.host.calls.terminal.assert_called_once()
+
     def test_its_child_env_drops_adapter_identities_then_takes_the_launch_env(self):
         self.driver_dependencies = {"class_loader": lambda _path, _base: IdentityAdapter}
         self.configure_session(

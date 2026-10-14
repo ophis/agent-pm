@@ -24,13 +24,17 @@ DIRECTORY = pathlib.Path(tui_start.__file__).parent
 
 
 class BootstrapTest(Case):
-    def test_lone_surrogate_in_valid_launch_data_is_a_start_error_before_imports(self):
+    def test_lone_surrogate_is_a_start_error_before_decoding_or_imports(self):
         before = list(sys.path)
-        data = json.dumps(
+        valid = json.dumps(
             {"import_roots": [str(DIRECTORY)], "prompt": "\ud800"}, ensure_ascii=False
         )
-        with self.assertRaisesRegex(tui_start.StartError, "surrogates not allowed"):
-            tui_start._bootstrap([data])
+        for argv in ("\ud800", valid):
+            with (
+                self.subTest(argv=argv[:20]),
+                self.assertRaisesRegex(tui_start.StartError, "surrogates not allowed"),
+            ):
+                tui_start._bootstrap([argv])
         self.assertEqual(sys.path, before)
 
     def test_main_reports_launch_validation_as_one_line_and_failure_status(self):

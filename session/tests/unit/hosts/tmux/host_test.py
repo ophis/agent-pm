@@ -421,6 +421,10 @@ class DisplayableTest(Base):
         with self.assertLogs("session", logging.WARNING) as logs:
             self.assertEqual(self.host.show("w1", command="false"), "tmux attach -t '=w1'")
         self.assertEqual(logs.output, ["WARNING:session:show w1: exit status 3"])
+        self.tmux.run_command.return_value = None
+        self.assertIsNone(self.host.show("w1", display="elsewhere:1.2", command="true"))
+        self.tmux.run_command.assert_called_with("w1", "true")
+        self.tmux.open_pane.assert_not_called()
 
     def test_show_refuses_an_absent_session_a_foreign_display_or_a_bad_setting(self):
         self.tmux.status.return_value = None
