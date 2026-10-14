@@ -13,7 +13,9 @@ from pathlib import Path
 import isolation
 
 root, sandbox, marker = map(Path, sys.argv[1:])
-gate = isolation.Gate(root, sandbox)
+workspace = marker.parent / "workspace"
+workspace.mkdir()
+gate = isolation.Gate(root, sandbox, workspace)
 gate.current = "sentinel.test"
 sys.addaudithook(gate.audit)
 blocked = []
@@ -37,10 +39,27 @@ except RuntimeError as error:
 else:
     raise AssertionError("unit write escaped")
 (sandbox / "owned").write_text("allowed")
+(workspace / "owned").write_text("allowed")
+summary = marker.parent / "summary"
+with gate.reporting(summary):
+    summary.write_text("reported")
+    try:
+        sys.audit("os.kill")
+    except RuntimeError:
+        pass
+    else:
+        raise AssertionError("reporting bypassed the process gate")
+try:
+    marker.write_text("escape")
+except RuntimeError:
+    pass
+else:
+    raise AssertionError("reporting bypassed the write gate")
 gate.unit = False
 bad = [
     ("tmux", ["tmux", "ls"], {}),
     ("tmux", ["tmux", "-S", str(marker), "ls"], {}),
+    ("tmux", ["tmux", "-S" + str(marker), "ls"], {"TMUX_TMPDIR": str(sandbox)}),
     ("tmux", ["tmux", "ls"], {"TMUX_TMPDIR": str(sandbox), "TMUX": str(marker) + ",1,0"}),
     ("git", ["git", "status"], {"GIT_DIR": str(marker)}),
 ]
@@ -53,6 +72,7 @@ for exe, argv, env in bad:
         raise AssertionError("integration tool escaped")
 sys.audit("subprocess.Popen", "tmux", ["tmux", "-S", str(sandbox / "socket"), "ls"], None, {})
 sys.audit("subprocess.Popen", "tmux", ["tmux", "ls"], None, {"TMUX_TMPDIR": str(sandbox)})
+sys.audit("subprocess.Popen", "tmux", ["tmux", "capture-pane", "-p", "-S", "-40"], None, {"TMUX_TMPDIR": str(sandbox)})
 sys.audit("subprocess.Popen", "git", ["git", "status"], None, {"GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1"})
 print(json.dumps(sorted(blocked)))
 """
@@ -87,3 +107,62 @@ class SandboxGates(Case):
         )
         self.assertFalse(marker.exists())
         self.assertEqual((sandbox / "owned").read_text(), "allowed")
+        self.assertEqual(Path(self.home, "workspace/owned").read_text(), "allowed")
+        self.assertEqual(Path(self.home, "summary").read_text(), "reported")
+
+    def test_the_launcher_cleans_inherited_environment_and_python_startup(self):
+        root = Path(self.home)
+        package = root / "unit"
+        package.mkdir()
+        (package / "__init__.py").touch()
+        marker = root / "startup-ran"
+        ambient = root / "ambient"
+        ambient.mkdir()
+        (ambient / "sitecustomize.py").write_text(
+            f"from pathlib import Path\nPath({str(marker)!r}).write_text('escaped')\n"
+        )
+        (package / "environment_test.py").write_text(
+            "import os, sys, unittest\n"
+            "class Environment(unittest.TestCase):\n"
+            "    def test_clean(self):\n"
+            "        self.assertNotIn('TMUX', os.environ)\n"
+            "        self.assertNotIn('GIT_DIR', os.environ)\n"
+            "        self.assertNotIn('GIT_CONFIG_COUNT', os.environ)\n"
+            "        self.assertEqual(os.environ['GIT_CONFIG_GLOBAL'], os.devnull)\n"
+            "        self.assertEqual(os.environ['GIT_CONFIG_NOSYSTEM'], '1')\n"
+            "        self.assertEqual(os.environ['TUI_ATTACH_PREFIX'], '')\n"
+            f"        self.assertNotIn({str(ambient)!r}, sys.path)\n"
+            "        self.assertTrue(os.environ['PATH'].split(os.pathsep)[0].endswith('blocked-bin'))\n"
+            "        self.assertNotEqual(os.environ['HOME'], os.environ['TMPDIR'])\n"
+        )
+        env = clean_env(None, REPO, str(Path(REPO, ".github")), str(ambient))
+        env.pop("RUN_TESTS_STATE", None)
+        env.update(
+            TMUX=str(marker) + ",1,0",
+            GIT_DIR=str(marker),
+            GIT_CONFIG_COUNT="1",
+            TUI_ATTACH_PREFIX="ambient",
+            RUN_TESTS_DURATIONS=str(root / "durations"),
+            GITHUB_STEP_SUMMARY=str(root / "step-summary"),
+        )
+        proc = subprocess.run(
+            [
+                sys.executable,
+                "-P",
+                "-S",
+                str(Path(REPO, ".github/run_tests.py")),
+                "Unit fixture",
+                "unit",
+            ],
+            cwd=root,
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertFalse(marker.exists())
+        self.assertEqual(
+            json.loads((root / "durations").read_text())["test"],
+            "unit.environment_test.Environment.test_clean",
+        )

@@ -47,13 +47,15 @@ def allowlist(root):
 
 
 class Gate:
-    def __init__(self, root, sandbox):
+    def __init__(self, root, sandbox, workspace=None):
         self.root = root.resolve()
         self.sandbox = Path(sandbox).resolve()
+        self.workspace = Path(workspace).resolve() if workspace else self.sandbox
         self.allowed = allowlist(self.root)
         self.current = "test discovery"
         self.unit = True
         self.exempt = False
+        self.reporting_file = None
 
     def fail(self, message):
         raise RuntimeError(
@@ -61,7 +63,8 @@ class Gate:
         )
 
     def inside(self, path):
-        return Path(path).resolve().is_relative_to(self.sandbox)
+        actual = Path(path).resolve()
+        return actual.is_relative_to(self.sandbox) or actual.is_relative_to(self.workspace)
 
     def audit(self, event, args):
         if event in DENIED and self.unit and not self.exempt:
@@ -82,6 +85,7 @@ class Gate:
                 and not isinstance(path, int)
                 and path != os.devnull
                 and not self.inside(path)
+                and Path(path).resolve() != self.reporting_file
             ):
                 self.fail(f"write outside temporary directory: {path}")
 
@@ -90,9 +94,25 @@ class Gate:
         if name == "tmux":
             if isinstance(argv, str):
                 self.fail("tmux requires a private socket")
-            if "-S" in argv:
-                index = argv.index("-S") + 1
-                socket = argv[index] if index < len(argv) else ""
+            options = []
+            index = 1
+            while index < len(argv) and argv[index].startswith("-"):
+                option = argv[index]
+                options.append(option)
+                if option in {"-S", "-L", "-f", "-T"}:
+                    index += 1
+                    if index < len(argv):
+                        options.append(argv[index])
+                index += 1
+            attached = next(
+                (option[2:] for option in options if option.startswith("-S") and len(option) > 2),
+                None,
+            )
+            if attached is not None:
+                socket = attached
+            elif "-S" in options:
+                index = options.index("-S") + 1
+                socket = options[index] if index < len(options) else ""
             else:
                 directory = env.get("TMUX_TMPDIR", "")
                 if not directory or not self.inside(directory):
@@ -110,6 +130,15 @@ class Gate:
                 or env.get("GIT_CONFIG_NOSYSTEM") != "1"
             ):
                 self.fail(f"git requires clean environment: {unsafe}")
+
+    @contextlib.contextmanager
+    def reporting(self, path):
+        previous = self.reporting_file
+        self.reporting_file = Path(path).resolve()
+        try:
+            yield
+        finally:
+            self.reporting_file = previous
 
     @contextlib.contextmanager
     def test(self, test):
@@ -141,6 +170,6 @@ def install(root):
     sandbox = os.environ["AGENT_PM_TEST_SANDBOX"]
     tempfile.tempdir = sandbox
     sys.dont_write_bytecode = True
-    gate = Gate(root, sandbox)
+    gate = Gate(root, sandbox, os.environ.get("AGENT_PM_TEST_WORKSPACE"))
     sys.addaudithook(gate.audit)
     return gate

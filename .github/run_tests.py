@@ -1,6 +1,7 @@
 """Run suites in a supervised child, annotate failures and optionally record durations."""
 
 import collections
+import contextlib
 import json
 import os
 import subprocess
@@ -32,7 +33,10 @@ def annotate(title, message):
 def append(variable, text):
     path = os.environ.get(variable)
     if path:
-        with open(path, "a", encoding="utf-8") as file:
+        with (
+            GATE.reporting(path) if GATE else contextlib.nullcontext(),
+            open(path, "a", encoding="utf-8") as file,
+        ):
             file.write(text)
 
 
@@ -124,10 +128,13 @@ def supervise(title):
     if STATE in os.environ:
         return None
     tail = collections.deque(maxlen=5 * TAIL)
-    with tempfile.TemporaryDirectory() as tmp:
+    repo = Path(__file__).resolve().parents[1]
+    with (
+        tempfile.TemporaryDirectory() as tmp,
+        tempfile.TemporaryDirectory(prefix=".test-sandbox-", dir=repo) as workspace,
+    ):
         state = os.path.join(tmp, "state")
         open(state, "w").close()
-        repo = Path(__file__).resolve().parents[1]
         roots = [
             repo,
             repo / ".github",
@@ -138,12 +145,13 @@ def supervise(title):
         ]
         env = clean_env(os.environ, *roots)
         env.update(
-            HOME=tmp,
+            HOME=workspace,
             TMPDIR=tmp,
             TMUX_TMPDIR=tmp,
             TUI_ATTACH_PREFIX="",
             AGENT_PM_TEST_SANDBOX=tmp,
-            AGENT_PM_TEST_TMP=tmp,
+            AGENT_PM_TEST_TMP=workspace,
+            AGENT_PM_TEST_WORKSPACE=workspace,
         )
         isolation.blockers(Path(tmp) / "blocked-bin")
         with subprocess.Popen(
