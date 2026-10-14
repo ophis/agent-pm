@@ -475,7 +475,7 @@ print(json.dumps(sorted((imports & sys.modules.keys()) - sys.stdlib_module_names
                     self.subTest(roots=changed.get("import_roots")),
                     self.assertRaises(tui_start.StartError),
                 ):
-                    tui_start.launch(changed)
+                    tui_start.launch(tui_start._bootstrap([json.dumps(changed)]))
             with self.assertRaisesRegex(tui_start.StartError, "fields"):
                 tui_start.launch(data | {"unknown": []})
         proc.assert_not_called()

@@ -74,16 +74,6 @@ class TuiTest(Base):
             for label, command in tui_plan.commands(plan.hook).items():
                 self.assertEqual(shlex.split(command), [*hook, label])
 
-    def test_launch_requires_valid_explicit_source_roots(self):
-        for roots in ((), ("relative",), ("/missing",), (PACKAGE_ROOTS[0], PACKAGE_ROOTS[0])):
-            with (
-                self.subTest(roots=roots),
-                mock.patch("shutil.which", return_value="/protected/codex"),
-                self.assertRaisesRegex(ConfigError, "source"),
-            ):
-                self.adapter.tui().launch("hi", self.spec, HOOK, source_roots=roots)
-            self.assertIsNone(self.common.load(str(self.work), self.spec.sid))
-
     def payload(self, **fields):
         return {"session_id": NATIVE, "cwd": str(self.cwd), **fields}
 

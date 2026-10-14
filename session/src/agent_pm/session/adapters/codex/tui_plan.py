@@ -10,7 +10,6 @@ from agent_pm.session.adapters.codex.common import launch_options, passed
 from agent_pm.session.adapters.codex.hook_schema import HOOKS
 from agent_pm.session.adapters.codex.types import HookPlan, LaunchPlan, Snapshot
 from agent_pm.session.adapters.flags import split_flags
-from agent_pm.utils import printable_abs
 
 FIELDS = frozenset(
     {
@@ -35,17 +34,6 @@ def _words(value: object) -> tuple[str, ...]:
     return tuple(value)
 
 
-def _roots(value: object) -> tuple[str, ...]:
-    if (
-        not isinstance(value, list)
-        or not value
-        or any(not printable_abs(path) or not os.path.isdir(path) for path in value)
-        or len(set(value)) != len(value)
-    ):
-        raise ValueError("Codex tui hook command requires distinct absolute source directories")
-    return tuple(value)
-
-
 def _paths(value: object, label: str) -> tuple[str, ...]:
     if not isinstance(value, list) or any(
         not isinstance(path, str) or "\0" in path or not os.path.isabs(path) for path in value
@@ -57,7 +45,7 @@ def _paths(value: object, label: str) -> tuple[str, ...]:
 def hook_plan(argv: Sequence[str], source_roots: Sequence[str]) -> HookPlan:
     if not argv or not os.path.isabs(argv[0]):
         raise ValueError("Codex tui requires an absolute Tui mode hook command")
-    return HookPlan(_words(list(argv)), _roots(list(source_roots)))
+    return HookPlan(_words(list(argv)), tuple(source_roots))
 
 
 def decode(data: object) -> LaunchPlan:
@@ -88,7 +76,7 @@ def decode(data: object) -> LaunchPlan:
         executable,
         selection,
         prompt,
-        HookPlan(hook, _roots(data["import_roots"])),
+        HookPlan(hook, tuple(data["import_roots"])),
         data["workdir"],
         data["sid"],
         data["store"],
