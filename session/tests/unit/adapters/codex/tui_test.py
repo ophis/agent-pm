@@ -120,12 +120,11 @@ class TuiTest(Base):
             os.path.realpath(library), self.common.load(str(self.work), spec.sid).snapshot.dirs
         )
 
-    def test_launch_preserves_opaque_hook_words_and_separate_roots(self):
-        roots = tuple(reversed(PACKAGE_ROOTS))
+    def test_launch_preserves_opaque_hook_words(self):
         for index, hook in enumerate(
             (
                 (*HOOK, "extra opaque word"),
-                (*HOOK[:-1], json.dumps(list(roots), indent=2, ensure_ascii=False)),
+                (*HOOK[:-1], json.dumps(list(PACKAGE_ROOTS), indent=2, ensure_ascii=False)),
                 (*HOOK[:-1], "not JSON at all"),
             )
         ):
@@ -135,10 +134,13 @@ class TuiTest(Base):
                 mock.patch("shutil.which", return_value="/protected/codex"),
             ):
                 launch = committed_tui(
-                    self.adapter, dataclasses.replace(spec, prompt="hi"), hook, source_roots=roots
+                    self.adapter,
+                    dataclasses.replace(spec, prompt="hi"),
+                    hook,
+                    source_roots=PACKAGE_ROOTS,
                 )
             data = json.loads(launch.argv[-1])
-            self.assertEqual(data["import_roots"], list(roots))
+            self.assertNotIn("import_roots", data)
             self.assertEqual(data["hook"], list(hook))
             plan = tui.decode(data)
             for label, command in tui.commands(plan.hook).items():
@@ -150,8 +152,9 @@ class TuiTest(Base):
     def test_factory_launch_flags_and_opaque_hook(self):
         self.assertIsNot(self.adapter.tui(), self.adapter.tui())
         run, launch, data = self.launch()
-        self.assertEqual(launch.argv[1], "-I")
-        self.assertTrue(launch.argv[2].endswith("/adapters/codex/tui/start.py"))
+        self.assertEqual(
+            launch.argv[1:5], ("-P", "-s", "-m", "agent_pm.session.adapters.codex.tui.start")
+        )
         plan = tui.decode(data)
         argv = tui.execution_argv(plan, run.state.snapshot, "hooks.state={trusted}")
         self.assertEqual(argv[:4], ["/protected/codex", "--no-daemon", "-C", str(self.cwd)])
@@ -188,17 +191,18 @@ class TuiTest(Base):
         self.assertEqual(launch.env["CODEX_HOME"], saved.snapshot.codex_home)
         self.assertIn(NATIVE, launch.resume)
 
-    def test_the_session_env_is_last_in_the_launch_env_and_its_resume(self):
+    def test_the_session_env_is_last_in_the_clients_env_and_its_resume(self):
         access = dataclasses.replace(self.spec.access, env={"PYTHONPATH": "/a b;c"})
         self.spec = dataclasses.replace(self.spec, access=access)
         adapter = CodexAdapter({**self.adapter.config, "env": {"PYTHONPATH": "/config"}})
-        _, launch, _ = self.launch(adapter=adapter)
-        self.assertEqual(launch.env["PYTHONPATH"], "/a b;c")
+        _, launch, data = self.launch(adapter=adapter)
+        self.assertEqual(data["pythonpath"], "/a b;c")
+        self.assertEqual(launch.env["PYTHONPATH"], os.pathsep.join(PACKAGE_ROOTS))
         state = self.common.bind(str(self.work), self.spec.sid, NATIVE)
         self.rollout()
         self.spec = dataclasses.replace(self.spec, access=Access())
-        _, resumed, _ = self.launch(resume=True, adapter=adapter)
-        self.assertEqual(resumed.env["PYTHONPATH"], "/a b;c")
+        _, resumed, data = self.launch(resume=True, adapter=adapter)
+        self.assertEqual(data["pythonpath"], "/a b;c")
         self.assertNotIn("/a b;c", resumed.resume)
         self.assertEqual(self.common.resume_launch(state).env["PYTHONPATH"], "/a b;c")
 
@@ -221,10 +225,6 @@ class TuiTest(Base):
             ("surrogate\ud800", HOOK, PACKAGE_ROOTS),
             ("hi", (), PACKAGE_ROOTS),
             ("hi", ("relative-hook",), PACKAGE_ROOTS),
-            ("hi", HOOK, ()),
-            ("hi", HOOK, (*PACKAGE_ROOTS, PACKAGE_ROOTS[0])),
-            ("hi", HOOK, ("relative-root",)),
-            ("hi", HOOK, (str(self.root / "missing"),)),
         ):
             with (
                 self.subTest(prompt=prompt, hook=hook, roots=roots),
@@ -762,11 +762,10 @@ class PlanTest(PlanCase):
                 "workdir",
                 "sid",
                 "store",
-                "import_roots",
+                "pythonpath",
             },
         )
         self.assertEqual(data["hook"], list(self.plan.hook.argv))
-        self.assertEqual(data["import_roots"], list(self.plan.hook.import_roots))
         with mock.patch("json.loads", side_effect=AssertionError("launch JSON decoded twice")):
             decoded = tui.decode(data)
             with self.assertRaisesRegex(ValueError, "launch fields"):
@@ -777,7 +776,7 @@ class PlanTest(PlanCase):
         encoded = tui.encode(self.plan)
         data = json.loads(encoded)
         decoded = tui.decode(data)
-        for key in ("selection", "hook", "import_roots"):
+        for key in ("selection", "hook"):
             data[key].append("changed")
         data["prompt"] = "changed"
         self.assertEqual(decoded, self.plan)

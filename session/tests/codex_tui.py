@@ -57,12 +57,12 @@ class PlanCase(Case):
             selection=("resume", "saved-native"),
             prompt="prompt\nwith Unicode: 字",
             hook=HookPlan(
-                (os.path.realpath(sys.executable), "-I", "/protected/mode hook.py", "/session dir"),
-                (SRC["session"], SRC["utils"]),
+                (os.path.realpath(sys.executable), "-I", "/protected/mode hook.py", "/session dir")
             ),
             workdir="/work",
             sid="caller-id",
             store="/private-state/recovery/codex",
+            pythonpath=None,
         )
         self.frontend = (
             "/protected/codex",

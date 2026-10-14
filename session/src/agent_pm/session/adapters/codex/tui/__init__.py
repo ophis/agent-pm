@@ -10,6 +10,7 @@ from collections.abc import Mapping
 from dataclasses import asdict, dataclass
 from types import MappingProxyType
 
+import agent_pm.utils
 from agent_pm.session.adapters.base import Tui
 from agent_pm.session.adapters.codex.common import (
     LIMIT_PREFIXES,
@@ -32,10 +33,11 @@ from agent_pm.session.engine.types import (
     LimitHit,
     Spec,
 )
+from agent_pm.utils import module_roots, source_path
 
 PASSED = ("-c", "--enable", "--disable")
 
-DIRECTORY = os.path.dirname(os.path.abspath(__file__))
+START = f"{__name__}.start"  # run as python -P -s -m on this layer's source roots
 
 
 HOOKS = (
@@ -57,7 +59,7 @@ FIELDS = frozenset(
         "workdir",
         "sid",
         "store",
-        "import_roots",
+        "pythonpath",
     }
 )
 
@@ -65,7 +67,6 @@ FIELDS = frozenset(
 @dataclass(frozen=True)
 class HookPlan:
     argv: tuple[str, ...]
-    import_roots: tuple[str, ...]
 
 
 @dataclass(frozen=True)
@@ -77,6 +78,7 @@ class LaunchPlan:
     workdir: str
     sid: str
     store: str
+    pythonpath: str | None  # the client's; START itself runs on this layer's roots
 
 
 def _hook_identity(value) -> tuple[str, str] | None:
@@ -126,23 +128,19 @@ class CodexTui(Tui):
             exe,
             self.common.selector(self.native, resume=resume),
             prompt,
-            HookPlan(tuple(hook), source_roots),
+            HookPlan(tuple(hook)),
             self.state.workdir,
             self.state.sid,
             store,
+            env.get("PYTHONPATH", os.environ.get("PYTHONPATH")),
         )
         try:
             encoded = encode(plan)
         except ValueError as exc:
             raise ConfigError(str(exc)) from exc
         launch = Launch(
-            (
-                os.path.realpath(sys.executable),
-                "-I",
-                os.path.join(DIRECTORY, "start.py"),
-                encoded,
-            ),
-            env=env,
+            (os.path.realpath(sys.executable), "-P", "-s", "-m", START, encoded),
+            env={**env, **source_path(module_roots(sys.modules[__name__], agent_pm.utils))},
             unset=common.UNSET,
             cwd=snapshot.cwd,
             project=snapshot.project,
@@ -254,21 +252,18 @@ def decode(data: object) -> LaunchPlan:
         raise ValueError("Codex tui launch: invalid prompt")
     if not isinstance(data["sid"], str):
         raise ValueError("Codex tui launch: invalid recovery identity")
-    roots = _strs(data["import_roots"], absolute=True)
-    if (
-        not roots
-        or len(set(roots)) != len(roots)
-        or not all(path.isprintable() and os.path.isdir(path) for path in roots)
-    ):
-        raise ValueError("Codex tui launch: invalid import roots")
+    pythonpath = data["pythonpath"]
+    if pythonpath is not None and (not isinstance(pythonpath, str) or "\0" in pythonpath):
+        raise ValueError("Codex tui launch: invalid PYTHONPATH")
     return LaunchPlan(
         executable,
         selection,
         prompt,
-        HookPlan(hook, roots),
+        HookPlan(hook),
         workdir,
         data["sid"],
         store,
+        pythonpath,
     )
 
 
@@ -276,7 +271,6 @@ def encode(plan: LaunchPlan) -> str:
     data = asdict(plan)
     data["selection"] = list(plan.selection)
     data["hook"] = list(plan.hook.argv)
-    data["import_roots"] = list(plan.hook.import_roots)
     decode(data)
     encoded = json.dumps(data, ensure_ascii=False)
     encoded.encode("utf-8")
