@@ -4,11 +4,17 @@ test, named in the test's docstring), end to end: bin/agent-pm-linear router as 
 """
 
 import os
+import re
+import signal
+import subprocess
+import time
 import unittest
 
-from agent_pm.linear_orchestrator.engine.router import BUSY
+from agent_pm.linear_orchestrator.engine.router import BUSY, LIVE
 from orchestrator_tests.integration.flow_fixtures import (
     ACCOUNTS,
+    HARNESS_EMAIL,
+    HUMAN,
     PROJECT,
     REPO,
     TIMEOUT,
@@ -17,7 +23,7 @@ from orchestrator_tests.integration.flow_fixtures import (
 )
 from orchestrator_tests.integration.segments import agent_calls
 
-from delegate.tests.replies import block, mark
+from delegate.tests.replies import block, mark, option
 from session.tests import live_tmux
 
 ENGINEER = ACCOUNTS["engineer"]
@@ -142,6 +148,96 @@ class MaxRuns(Parity):
         self.assertEqual((second["kind"], second["issue"]), ("start", OTHER))
         self.wait_end(second["sid"], OTHER)
         self.assertEqual((self.state(ID), self.state(OTHER)), ("in_review", "in_review"))
+
+
+def gone(pid):
+    res = subprocess.run(
+        ["ps", "-o", "stat=", "-p", str(pid)], capture_output=True, text=True, timeout=TIMEOUT
+    )
+    return res.stdout.strip() == "" or res.stdout.strip().startswith("Z")
+
+
+class Recover(Parity):
+    def setUp(self):
+        super().setUp()
+        self.seed(ID, "ENG: Session registry")
+
+    def transcript(self, sid):
+        """The Claude adapter's transcript of sid in ID's run dir and the files beside it."""
+        project = re.sub(r"[^A-Za-z0-9]", "-", os.path.realpath(os.path.join(self.runs_dir, ID)))
+        path = os.path.join(self.root, "claude-config", "projects", project, f"{sid}.jsonl")
+        self.assertTrue(os.path.isfile(path), path)
+        beside = os.walk(os.path.splitext(path)[0])
+        return [path, *(os.path.join(top, name) for top, _, names in beside for name in names)]
+
+    def interrupted(self):
+        """ID's run ended without an outcome by a SIGTERM to its harness, its transcript idle past
+        router.LIVE: In Progress, a resumable session no tick holds back. Claimed by --issue: a
+        tick's usage probe would hang with the agent.
+        """
+        self.scene([START], hang=True)
+        res = self.router("--issue", ID)
+        self.assertEqual(res.returncode, 0, res.stderr)
+        [row] = self.runs()
+        sid = row["sid"]
+        live_tmux.wait(
+            lambda: "start" in self.ledger(ID).get(sid, []), TIMEOUT, "write-back's start step"
+        )
+        [agent] = self.started()
+        harness = self.harness("engineer", ID, sid)
+        pane = self.server.tmux("list-panes", "-t", f"={harness}", "-F", "#{pane_pid}")
+        self.assertEqual(pane.returncode, 0, pane.stderr)
+        os.kill(int(pane.stdout), signal.SIGTERM)
+        self.wait_end(sid, ID)
+        live_tmux.wait(lambda: gone(agent["pid"]), TIMEOUT, f"fake claude {agent['pid']} to end")
+        self.assertEqual((self.state(ID), self.ledger(ID)), ("in_progress", {sid: ["start"]}))
+        idle = time.time() - 2 * LIVE.total_seconds()
+        for path in self.transcript(sid):
+            os.utime(path, (idle, idle))
+        return sid
+
+    def test_a_tick_resumes_an_interrupted_in_progress_run(self):
+        """v1 CLAUDE.md › Architecture: a tick, without `--issue`, Recovers dead In Progress agent
+        runs before it claims (v1 router_integration_test.test_a_crash_mid_run_resumes_the_session
+        ran Recover by --issue only).
+        """
+        sid = self.interrupted()
+        self.scene([START, DONE], rate_limit=usage(0.5))
+        self.tick()
+        self.assertEqual(
+            [(r["kind"], r["sid"]) for r in self.runs()], [("start", sid), ("resume", sid)]
+        )
+        self.assertTrue(
+            any(
+                line.startswith(f"router plan {ID} mode=resume sid={sid}") for line in self.routed()
+            ),
+            self.routed(),
+        )
+        self.wait_end(sid, ID, ends=2)
+        first, second = self.started(2)
+        self.assertEqual(option(first, "--session-id"), sid)
+        self.assertEqual((option(second, "--resume"), option(second, "--session-id")), (sid, None))
+        self.assertEqual(self.state(ID), "in_review")
+
+    def test_a_logged_role_not_the_assignees_is_not_resumed_and_goes_to_in_review(self):
+        """v1 CLAUDE.md › Architecture: Recover resumes a session only while its runs.jsonl
+        `role` is the assignee's (v1 router_test.test_fr22_a_logged_role_not_the_assignees_goes_to_review).
+        """
+        sid = self.interrupted()
+        with self.fake.lock:
+            self.fake.find(ID)["assignee"] = self.ids[ACCOUNTS["pm"]]
+        self.scene([START, DONE], rate_limit=usage(0.5))
+        self.tick()
+        self.assertEqual([(r["kind"], r["sid"]) for r in self.runs()], [("start", sid)])
+        self.assertEqual(len(agent_calls(self.calls())), 1)
+        why = "role (engineer) is not the assignee's (pm)"
+        self.assertIn(f"router recover {ID} to=in_review reason={why}", self.routed())
+        self.assertEqual(self.state(ID), "in_review")
+        self.assertEqual(self.history(ID)[-1], ("in_progress", "in_review", HARNESS_EMAIL))
+        author, body = self.comments(ID)[-1]
+        self.assertEqual(author, HARNESS_EMAIL)
+        self.assertTrue(body.startswith(f"The interrupted agent run's {why}; needs a look."), body)
+        self.assertEqual(self.subscribers(ID), [HUMAN])
 
 
 if __name__ == "__main__":
