@@ -27,3 +27,9 @@ class Configuration(Case):
         ):
             read_config(local=str(local))
         self.assertIn("hosts", read_config(local=os.devnull))
+
+    def test_utils_local_keys_are_rejected_as_an_unconfigured_lower_layer(self):
+        local = Path(self.home, "config.local.toml")
+        local.write_text("[utils]\nunknown = 1\n")
+        with self.assertRaisesRegex(ValueError, "unknown key 'unknown' in \\[utils\\]"):
+            read_config(local=str(local))

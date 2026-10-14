@@ -25,8 +25,10 @@ os.register_at_fork(after_in_child=_after_fork)
 
 def _remove_tmux_directory(pid, directory):
     if os.getpid() == pid and os.path.isdir(directory) and not os.path.islink(directory):
-        stop_tmux_servers(directory, clean_env())
-        shutil.rmtree(directory, ignore_errors=True)
+        try:
+            stop_tmux_servers(directory, {"PATH": os.environ.get("PATH", os.defpath)})
+        finally:
+            shutil.rmtree(directory, ignore_errors=True)
 
 
 def _tmux_directory():

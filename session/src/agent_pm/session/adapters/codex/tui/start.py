@@ -21,7 +21,13 @@ class StartError(Exception):
 
 
 def _decode_launch_data(argv):
-    if len(argv) != 1 or len(argv[0].encode("utf-8")) > ANSWER_MAX:
+    if len(argv) != 1:
+        raise StartError("Codex tui launch: expected bounded launch data")
+    try:
+        size = len(argv[0].encode("utf-8"))
+    except UnicodeEncodeError as exc:
+        raise StartError(str(exc)) from exc
+    if size > ANSWER_MAX:
         raise StartError("Codex tui launch: expected bounded launch data")
     try:
         data = json.loads(argv[0])
@@ -60,7 +66,7 @@ def _bootstrap(argv):
 if __name__ == "__main__":
     try:
         launch_data = _bootstrap(sys.argv[1:])
-    except (StartError, UnicodeEncodeError) as exc:
+    except StartError as exc:
         print(f"codex tui: {exc}", file=sys.stderr)
         sys.exit(1)
 

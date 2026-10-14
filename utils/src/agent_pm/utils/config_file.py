@@ -89,7 +89,7 @@ def read_resources(
         known[section] = (default, configs[section])
     if paths and (extra := paths.keys() - {p for p, _ in resources}):
         raise ConfigFileError(f"config path override has no resource: {min(extra)!r}")
-    return _layered(configs, known, local=local)
+    return _layered({"utils": {}, **configs}, {"utils": ({}, {}), **known}, local=local)
 
 
 def read_project(

@@ -12,7 +12,7 @@ from pathlib import Path
 
 from session.tests import live_tmux
 from tests.case import REPO, Case
-from utils.tests.sandbox import clean_env, owned_directory
+from utils.tests.sandbox import clean_env
 
 SCRIPT = """import json, os, subprocess, sys
 from pathlib import Path
@@ -289,7 +289,7 @@ print(json.dumps({"directory": str(directory), "pids": pids}))
 """
         env = clean_env(None, REPO)
         env.pop("AGENT_PM_TEST_SANDBOX", None)
-        env["TMPDIR"] = owned_directory(self, os.path.realpath("/tmp"), prefix="fallback-")
+        env["TMPDIR"] = os.environ["AGENT_PM_TEST_SANDBOX"]
         proc = subprocess.run(
             [sys.executable, "-P", "-S", "-c", script, kept.socket],
             env=env,
@@ -299,6 +299,7 @@ print(json.dumps({"directory": str(directory), "pids": pids}))
         )
         self.assertEqual(proc.returncode, 0, proc.stderr)
         found = json.loads(proc.stdout)
+        self.assertEqual(Path(found["directory"]).parent, Path(env["TMPDIR"]))
         self.assertFalse(Path(found["directory"]).exists())
         self.assertEqual(len(found["pids"]), 2)
         for pid in found["pids"]:
@@ -314,6 +315,76 @@ print(json.dumps({"directory": str(directory), "pids": pids}))
                 time.sleep(0.01)
         after = kept.tmux("has-session", "-t", "=kept")
         self.assertEqual(after.returncode, 0, after.stderr)
+
+    def test_fallback_exit_cleanup_ignores_a_daemon_held_allocation_lock(self):
+        script = """import json, threading
+from utils.tests import sandbox
+
+directory = sandbox.clean_env()["TMUX_TMPDIR"]
+locked = threading.Event()
+def hold_lock():
+    with sandbox._TMUX_LOCK:
+        locked.set()
+        threading.Event().wait()
+threading.Thread(target=hold_lock, daemon=True).start()
+assert locked.wait(timeout=5)
+print(json.dumps(directory))
+"""
+        env = clean_env(None, REPO)
+        env.pop("AGENT_PM_TEST_SANDBOX", None)
+        env["TMPDIR"] = os.environ["AGENT_PM_TEST_SANDBOX"]
+        proc = subprocess.run(
+            [sys.executable, "-P", "-S", "-c", script],
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        directory = Path(json.loads(proc.stdout))
+        self.assertEqual(directory.parent, Path(env["TMPDIR"]))
+        self.assertFalse(directory.exists())
+
+    def test_supervisor_removes_owned_temporary_roots_after_child_sigkill(self):
+        root = Path(self.home)
+        package = root / "integration"
+        package.mkdir()
+        (package / "__init__.py").touch()
+        marker = root / "fixture-paths"
+        (package / "kill_test.py").write_text(
+            "import json, os, signal, tempfile, unittest\nfrom pathlib import Path\n"
+            "class Killed(unittest.TestCase):\n"
+            "    def test_kill(self):\n"
+            "        sandbox = Path(os.environ['AGENT_PM_TEST_SANDBOX'])\n"
+            "        fixtures = [tempfile.mkdtemp(prefix=prefix) for prefix in ('fallback-', 'supervisor-')]\n"
+            f"        Path({str(marker)!r}).write_text(json.dumps([str(sandbox), *fixtures]))\n"
+            "        os.kill(os.getpid(), signal.SIGKILL)\n"
+        )
+        env = clean_env(None, REPO, str(Path(REPO, ".github")))
+        env.pop("RUN_TESTS_STATE", None)
+        proc = subprocess.run(
+            [
+                sys.executable,
+                "-P",
+                "-S",
+                str(Path(REPO, ".github/run_tests.py")),
+                "Killed fixture",
+                "integration",
+            ],
+            cwd=root,
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        self.assertEqual(proc.returncode, 137, proc.stderr)
+        sandbox, *fixtures = map(Path, json.loads(marker.read_text()))
+        self.assertEqual(sandbox.parent, Path(env["AGENT_PM_TEST_SANDBOX"]))
+        self.assertEqual(len(fixtures), 2)
+        for fixture in fixtures:
+            self.assertEqual(fixture.parent, sandbox)
+            self.assertFalse(fixture.exists())
+        self.assertFalse(sandbox.exists())
 
     def test_violations_after_the_last_stop_test_fail_the_run_with_their_origin(self):
         script = """import json, os, sys, threading, unittest
@@ -402,7 +473,7 @@ print(json.dumps({"code": code, "state": state.read_text()}))
             f"        Path({str(marker)!r}).write_text(json.dumps(pids))\n"
         )
         env = clean_env(None, REPO, str(Path(REPO, ".github")))
-        env["TMPDIR"] = owned_directory(self, os.path.realpath("/tmp"), prefix="supervisor-")
+        env["TMPDIR"] = os.environ["AGENT_PM_TEST_SANDBOX"]
         env.pop("RUN_TESTS_STATE", None)
         proc = subprocess.run(
             [

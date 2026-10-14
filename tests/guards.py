@@ -1838,7 +1838,7 @@ def _type_uses(project, rel, module, tree, data):
             if key in data
             and (source := key.rpartition(".")[0]) != module
             and not source.endswith(".types")
-            and not (data[key] and module.startswith(source + "."))
+            and not (data[key] and module.rpartition(".")[0] == source)
         }
     )
 

@@ -45,6 +45,11 @@ class FailingRun(StubRun):
         raise LookupError("no binding")
 
 
+class FailingCommitRun(StubRun):
+    def commit(self):
+        raise LookupError("cannot persist")
+
+
 class UnstreamedRun(StubRun):
     def events(self, lines):
         raise self.adapter.failure
@@ -81,6 +86,15 @@ class TuiOnly(Base):
 
 
 class Start(Base):
+    def test_a_commit_failure_leaves_no_session_record_or_process(self):
+        with (
+            self.faked() as calls,
+            self.assertRaisesRegex(LookupError, "^cannot persist$") as caught,
+        ):
+            self.start(StubAdapter(run=FailingCommitRun))
+        self.assertIsNone(caught.exception.__cause__)
+        self.assertEqual((self.recorded, self.mode, calls), ([], None, []))
+
     def test_one_session_line_then_the_launch_command_with_the_child_env_less_identities(self):
         launch = Launch(
             NOTHING,

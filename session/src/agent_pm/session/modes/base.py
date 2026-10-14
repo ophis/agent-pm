@@ -25,7 +25,7 @@ from agent_pm.session.engine.types import (
     Stderr,
 )
 from agent_pm.session.hosts.tmux import tmux_host
-from agent_pm.utils import Display
+from agent_pm.utils import Display, overlaps
 
 
 def child_env(launch: Launch, cwd: str, drop: Collection[str] = ()) -> dict[str, str]:
@@ -123,6 +123,25 @@ class RunningMode(ABC):
         if spec.access.commands and adapter.runtime_note:
             return replace(spec, prompt=spec.prompt + "\n\n" + adapter.runtime_note)
         return spec
+
+    @staticmethod
+    def check_protection(spec: Spec, adapter: Adapter) -> None:
+        if not spec.protect:
+            return
+        try:
+            writable = (
+                spec.access.cwd or spec.workdir,
+                *spec.access.dirs,
+                *adapter.writable_dirs(spec),
+            )
+            for path in writable:
+                for protected in spec.protect:
+                    if overlaps(path, protected):
+                        raise ConfigError(
+                            f"writable path {path} overlaps protected path {protected}"
+                        )
+        except OSError as error:
+            raise ConfigError(f"{spec.runtime}'s writable dirs: {error}") from error
 
     @staticmethod
     def _launched(spec: Spec, launch: Callable[[Spec], Launch], drop: Collection[str]) -> Prepared:

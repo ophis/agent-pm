@@ -12,9 +12,8 @@ from agent_pm.session.adapters.codex.tui import HOOKS, HookPlan
 from agent_pm.session.adapters.codex.tui import start as tui_start
 from agent_pm.session.engine.types import ConfigError
 
-from session.tests import case
 from session.tests.case import SRC
-from session.tests.codex_tui import HOOK, PlanCase, ProtectCase
+from session.tests.codex_tui import HOOK, PROTECTED_ROOTS, PlanCase, ProtectCase
 from session.tests.source_roots import PACKAGE_ROOTS, source_roots_cases
 from session.tests.unit.adapters.codex.support import NATIVE, Base, committed_tui
 
@@ -69,10 +68,7 @@ class ProtectPaths(ProtectCase):
             )
             data = self.launch(spec)
             protected = json.loads(data)["protect"]
-            self.assertIn(str(link), protected)
-            for root in case.ROOTS:
-                self.assertIn(str(Path(root) / "agent_pm"), protected)
-                self.assertNotIn(root, protected)
+            self.assertEqual(protected, [*PROTECTED_ROOTS, str(link)])
             link.unlink()
             link.symlink_to(target)
             with (

@@ -82,9 +82,11 @@ class LaunchLifecycleTest(Base):
             )
             with (
                 self.subTest(mode=mode),
+                mock.patch("subprocess.Popen") as popen,
                 self.assertRaisesRegex(ConfigError, "overlaps protected path"),
             ):
                 session.start(spec)
+            popen.assert_not_called()
             self.assertEqual(self.record().read_bytes(), before)
             self.assertFalse((self.work / "run.jsonl").exists())
 

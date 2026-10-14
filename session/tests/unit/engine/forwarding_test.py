@@ -40,8 +40,8 @@ from agent_pm.session.engine.types import (
 )
 from agent_pm.session.hosts.base import SIGNALS
 from agent_pm.session.hosts.tmux import TmuxHost, tmux_host
-from agent_pm.session.modes import headless, tui
-from agent_pm.utils import ProcessControl
+from agent_pm.session.modes import tui
+from agent_pm.utils import ProcessControl, probe
 
 from session.tests.case import HOSTS, Case
 from session.tests.hosted_support import (
@@ -67,7 +67,7 @@ SIGNATURES = {
         ("hosts", KEYWORD, EMPTY),
         ("default_host", KEYWORD, None),
         ("host", KEYWORD, tmux_host),
-        ("probe", KEYWORD, headless.probe),
+        ("probe", KEYWORD, probe),
         ("clock", KEYWORD, None),
         ("class_loader", KEYWORD, forwarding.load_class),
         ("harness_host", KEYWORD, None),
@@ -76,7 +76,7 @@ SIGNATURES = {
         ("config", POSITIONAL, EMPTY),
         ("hosts", KEYWORD, None),
         ("host", KEYWORD, tmux_host),
-        ("probe", KEYWORD, headless.probe),
+        ("probe", KEYWORD, probe),
         ("clock", KEYWORD, None),
         ("class_loader", KEYWORD, forwarding.load_class),
         ("harness_host", KEYWORD, None),

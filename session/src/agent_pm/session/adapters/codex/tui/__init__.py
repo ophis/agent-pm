@@ -5,7 +5,9 @@ import os
 import re
 import shlex
 import shutil
+import site
 import sys
+import sysconfig
 from collections.abc import Mapping
 from dataclasses import asdict, dataclass
 from types import MappingProxyType
@@ -142,6 +144,11 @@ class CodexTui(Tui):
                 [
                     *package_dirs(agent_pm.session, agent_pm.utils),
                     *(os.path.join(root, "agent_pm") for root in (*import_roots(), *source_roots)),
+                    *(
+                        sysconfig.get_path(name)
+                        for name in ("stdlib", "platstdlib", "purelib", "platlib")
+                    ),
+                    *site.getsitepackages(),
                 ]
             )
         )

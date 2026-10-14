@@ -1,16 +1,12 @@
 """The headless Mode: a Headless's command on pipes, leading its own process group; two daemon
 threads pump its events and Stderr lines into one queue, and the session ends at both pipes' EOF.
 stop() kills the whole group, so a grandchild holding the pipes dies too; every wait is bounded.
-probe() runs a short command for its stdout.
 """
 
-import contextlib
-import os
 import queue
-import signal
 import subprocess
 import threading
-from collections.abc import Callable, Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable
 from typing import Self
 
 from agent_pm.session.adapters.base import Adapter, Headless
@@ -28,47 +24,7 @@ from agent_pm.session.engine.types import (
 )
 from agent_pm.session.hosts.tmux import tmux_host
 from agent_pm.session.modes.base import RunningMode, identity_drop
-from agent_pm.utils import Display
-
-STOP_WAIT = 5
-
-
-def kill_group(proc: subprocess.Popen, *, ended: bool = False, wait: float = STOP_WAIT) -> None:
-    # ended (both pipes closed) and proc reaped: the group is gone and its id may be reused, so
-    # signal nothing.
-    if not (ended and proc.returncode is not None):
-        try:
-            os.killpg(proc.pid, signal.SIGKILL)
-        except (ProcessLookupError, PermissionError):
-            with contextlib.suppress(ProcessLookupError):
-                proc.kill()
-    with contextlib.suppress(subprocess.TimeoutExpired):
-        proc.wait(timeout=wait)
-
-
-def probe(argv: Sequence[str], *, cwd: str, env: Mapping[str, str], timeout: float) -> str | None:
-    try:
-        proc = subprocess.Popen(
-            argv,
-            cwd=cwd,
-            env=env,
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
-            text=True,
-            errors="replace",
-            process_group=0,
-        )
-    except (OSError, ValueError):
-        return None
-    try:
-        return proc.communicate(timeout=timeout)[0]
-    except subprocess.TimeoutExpired:
-        kill_group(proc)
-        return None
-    finally:
-        assert proc.stdout is not None
-        proc.stdout.close()
+from agent_pm.utils import STOP_WAIT, Display, kill_group
 
 
 class HeadlessMode(RunningMode):

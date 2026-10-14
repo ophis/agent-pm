@@ -363,6 +363,7 @@ class TuiMode(RunningMode):
         store = _Store(name, host=host)
         hooks = (tmux, *([events] if events else []), store.root)
         spec = replace(spec, name=name, events=events, protect=(*spec.protect, *hooks))
+        cls.check_protection(spec, adapter)
         spec = cls._noted(spec, adapter)
         roots = module_roots(agent_pm.session, agent_pm.utils)
         hook = store.hook_argv(roots)

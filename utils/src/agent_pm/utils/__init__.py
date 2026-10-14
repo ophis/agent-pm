@@ -58,7 +58,19 @@ from agent_pm.utils.process_control import ProcessControl
 from agent_pm.utils.record import Display, Record, Status, json_records, number
 from agent_pm.utils.registry import PATH as CLASS_PATH
 from agent_pm.utils.registry import load as load_class
-from agent_pm.utils.shell import LONG, SHORT, Runner, Stopped, err_text, redact, resume_command, sh
+from agent_pm.utils.shell import (
+    LONG,
+    SHORT,
+    STOP_WAIT,
+    Runner,
+    Stopped,
+    err_text,
+    kill_group,
+    probe,
+    redact,
+    resume_command,
+    sh,
+)
 from agent_pm.utils.text import one_line, parse_time, printable, sid_error, timestamp
 
 __all__ = [
@@ -83,6 +95,7 @@ __all__ = [
     "Runner",
     "SHORT",
     "STATE",
+    "STOP_WAIT",
     "Status",
     "Stopped",
     "append_line",
@@ -100,6 +113,7 @@ __all__ = [
     "import_roots",
     "load_config",
     "json_records",
+    "kill_group",
     "load_class",
     "number",
     "module_roots",
@@ -111,6 +125,7 @@ __all__ = [
     "package_dirs",
     "printable",
     "printable_abs",
+    "probe",
     "read_confined",
     "read_project",
     "read_resources",
