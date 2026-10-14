@@ -90,6 +90,13 @@ def _status(args) -> int:
     return 0
 
 
+def _report_error(error: Exception) -> None:
+    print(f"crew: {error}", file=sys.stderr)
+    if hasattr(error, "__notes__"):
+        for note in error.__notes__:
+            print(f"crew: {note}", file=sys.stderr)
+
+
 def _resume(args) -> int:
     crew = _crew(args)
     failed = 0
@@ -99,7 +106,7 @@ def _resume(args) -> int:
             if record is not None:
                 print(record.to_line())
         except (RosterError, RuntimeError, ValueError) as error:
-            print(f"crew: {error}", file=sys.stderr)
+            _report_error(error)
             failed = max(failed, 2 if isinstance(error, ValueError) else 1)
     return failed
 
@@ -204,10 +211,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         return args.func(args)
     except ValueError as error:
-        print(f"crew: {error}", file=sys.stderr)
+        _report_error(error)
         return 2
     except (OSError, RosterError, RuntimeError) as error:
-        print(f"crew: {error}", file=sys.stderr)
+        _report_error(error)
         return 1
 
 

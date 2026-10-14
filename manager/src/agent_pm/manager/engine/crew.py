@@ -117,7 +117,7 @@ class Crew:
             try:
                 self.roster.mark_if(spec.name, intent, State.LOST)
             except RosterError as mark_error:
-                raise error from mark_error
+                error.add_note(f"{spec.name}: could not mark lost: {mark_error}")
             raise
         return record
 
@@ -298,7 +298,7 @@ class Crew:
             try:
                 self.roster.mark_if(name, claimed, State.GONE)
             except RosterError as mark_error:
-                raise error from mark_error
+                error.add_note(f"{name}: could not mark gone: {mark_error}")
             raise
         return resumed
 

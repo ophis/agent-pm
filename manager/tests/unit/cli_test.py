@@ -3,14 +3,16 @@
 import contextlib
 import io
 import os
+import subprocess
 import uuid
 from unittest import mock
 
-from agent_pm.manager import Crew, Spec
+from agent_pm.manager import Crew, Spec, State
 from agent_pm.manager.cli import main
 from agent_pm.manager.engine.roster import Roster
 
 from manager.tests.case import Case
+from utils.tests.fakes import ctl
 
 
 class CliTest(Case):
@@ -145,3 +147,64 @@ class CliTest(Case):
         self.assertEqual(result, 0, stderr)
         self.assertEqual(stdout, "nothing to stop\n")
         self.assertFalse(os.path.exists(self.directory))
+
+    def test_run_reports_original_starter_failure_and_failed_lost_mark(self):
+        command = self.setup_ctl()
+        real_run = subprocess.run
+        with self.roster.hold("old holder") as lease, contextlib.ExitStack() as takeover:
+
+            def run(argv, **options):
+                if tuple(argv) == (command, "start", "worker"):
+                    takeover.enter_context(Roster(self.directory).hold("new holder", force=True))
+                    raise FileNotFoundError("original starter failure")
+                return real_run(argv, **options)
+
+            with (
+                mock.patch.dict(
+                    os.environ,
+                    {
+                        "AGENT_PM_HOLDER_ID": lease.id,
+                        "AGENT_PM_HOLDER_GENERATION": str(lease.generation),
+                    },
+                ),
+                mock.patch("subprocess.run", side_effect=run),
+            ):
+                result, stdout, stderr = self.invoke(
+                    "run", "worker", "--manager", "mgr", "--", command, "start", "worker"
+                )
+            self.assertEqual(result, 1, stderr)
+            self.assertEqual(stdout, "")
+            self.assertIn("original starter failure", stderr)
+            self.assertIn("stale holder generation", stderr)
+            self.assertIs(self.roster.entries()["worker"].state, State.STARTING)
+
+    def test_resume_reports_original_starter_failure_and_failed_gone_mark(self):
+        command = self.setup_ctl()
+        Crew(self.roster).run(Spec("worker", (command, "start", "worker")))
+        ctl.set_session(self.ctl_dir, "worker", alive=False, state="gone")
+        self.roster.mark("worker", State.GONE)
+        real_run = subprocess.run
+        with self.roster.hold("old holder") as lease, contextlib.ExitStack() as takeover:
+
+            def run(argv, **options):
+                if tuple(argv) == (command, "resume", "worker"):
+                    takeover.enter_context(Roster(self.directory).hold("new holder", force=True))
+                    raise FileNotFoundError("original starter failure")
+                return real_run(argv, **options)
+
+            with (
+                mock.patch.dict(
+                    os.environ,
+                    {
+                        "AGENT_PM_HOLDER_ID": lease.id,
+                        "AGENT_PM_HOLDER_GENERATION": str(lease.generation),
+                    },
+                ),
+                mock.patch("subprocess.run", side_effect=run),
+            ):
+                result, stdout, stderr = self.invoke("resume", "worker", "--manager", "mgr")
+            self.assertEqual(result, 1, stderr)
+            self.assertEqual(stdout, "")
+            self.assertIn("original starter failure", stderr)
+            self.assertIn("stale holder generation", stderr)
+            self.assertIs(self.roster.entries()["worker"].state, State.RESUMING)

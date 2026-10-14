@@ -729,8 +729,13 @@ class CrewTest(Case):
                 self.assertRaisesRegex(RuntimeError, "starter failed") as raised,
             ):
                 crew.run(Spec("worker", command))
-            self.assertIsInstance(raised.exception.__cause__, Stale)
-            self.assertIn("stale holder generation", str(raised.exception.__cause__))
+            self.assertIsNone(raised.exception.__cause__)
+            self.assertEqual(
+                raised.exception.__notes__,
+                [
+                    f"worker: could not mark lost: {self.directory}: stale holder generation; start a new manager holder"
+                ],
+            )
         entry = self.roster.entries()["worker"]
         self.assertEqual(entry.state, State.STARTING)
         self.assertIsNone(entry.record)
@@ -754,8 +759,13 @@ class CrewTest(Case):
                 self.assertRaisesRegex(RuntimeError, "resume starter failed") as raised,
             ):
                 self.crew.resume("worker")
-            self.assertIsInstance(raised.exception.__cause__, RosterError)
-            self.assertIn("not a readable regular file", str(raised.exception.__cause__))
+            self.assertIsNone(raised.exception.__cause__)
+            self.assertEqual(
+                raised.exception.__notes__,
+                [
+                    f"worker: could not mark gone: {self.roster.path}: not a readable regular file owned by you"
+                ],
+            )
         finally:
             if os.path.islink(self.roster.path):
                 os.unlink(self.roster.path)
@@ -763,6 +773,80 @@ class CrewTest(Case):
         entry = self.roster.entries()["worker"]
         self.assertEqual((entry.state, entry.record), (State.RESUMING, original))
         self.assertIsNotNone(entry.receipt)
+
+    def test_run_preserves_native_start_failure_cause_when_takeover_prevents_marking(self):
+        command = ("missing-starter-cause-task371",)
+        native_run = subprocess.run
+        failures = []
+        with self.roster.hold("original") as lease:
+            crew = Crew(self.roster, lease=lease)
+
+            def run(argv, **options):
+                if tuple(argv) == command:
+                    with Roster(self.directory).hold("successor", force=True) as successor:
+                        self.assertGreater(successor.generation, lease.generation)
+                    try:
+                        return native_run(argv, **options)
+                    except FileNotFoundError as error:
+                        failures.append(error)
+                        raise
+                return native_run(argv, **options)
+
+            with (
+                mock.patch("subprocess.run", side_effect=run),
+                self.assertRaisesRegex(RuntimeError, command[0]) as raised,
+            ):
+                crew.run(Spec("worker", command))
+            self.assertEqual(len(failures), 1)
+            self.assertIs(raised.exception.__cause__, failures[0])
+            self.assertIsInstance(failures[0], FileNotFoundError)
+            self.assertEqual(
+                raised.exception.__notes__,
+                [
+                    f"worker: could not mark lost: {self.directory}: stale holder generation; start a new manager holder"
+                ],
+            )
+        self.assertEqual(self.roster.entries()["worker"].state, State.STARTING)
+
+    def test_resume_preserves_native_start_failure_cause_when_unsafe_ledger_prevents_marking(self):
+        original = self.gone("worker")
+        backup = os.path.join(self.home, "ledger-backup.json")
+        missing = ("missing-resume-cause-task371",)
+        native_run = subprocess.run
+        failures = []
+
+        def run(argv, **options):
+            if tuple(argv) == original.resume:
+                os.replace(self.roster.path, backup)
+                os.symlink(backup, self.roster.path)
+                try:
+                    return native_run(missing, **options)
+                except FileNotFoundError as error:
+                    failures.append(error)
+                    raise
+            return native_run(argv, **options)
+
+        try:
+            with (
+                mock.patch("subprocess.run", side_effect=run),
+                self.assertRaisesRegex(RuntimeError, missing[0]) as raised,
+            ):
+                self.crew.resume("worker")
+            self.assertEqual(len(failures), 1)
+            self.assertIs(raised.exception.__cause__, failures[0])
+            self.assertIsInstance(failures[0], FileNotFoundError)
+            self.assertEqual(
+                raised.exception.__notes__,
+                [
+                    f"worker: could not mark gone: {self.roster.path}: not a readable regular file owned by you"
+                ],
+            )
+        finally:
+            if os.path.islink(self.roster.path):
+                os.unlink(self.roster.path)
+                os.replace(backup, self.roster.path)
+        entry = self.roster.entries()["worker"]
+        self.assertEqual((entry.state, entry.record), (State.RESUMING, original))
 
     def test_failed_resume_restores_gone_and_keeps_previous_record(self):
         original = self.gone("worker")
