@@ -1237,6 +1237,9 @@ class StandaloneImports(Sample):
         self.assertNotIn(path, guards.STANDALONE)
         self.assertEqual(guards.IMPORT_BOOTSTRAPS[path], "_bootstrap")
 
+    def test_tmux_host_uses_package_imports(self):
+        self.assertNotIn(guards.TMUX_HOST, guards.STANDALONE)
+
     def found(self, source):
         files = dict.fromkeys(guards.STANDALONE, source)
         return guards.standalone_imports(self.tree(files))
@@ -2462,7 +2465,7 @@ class AdaptersKey(Sample):
 
 
 class TmuxCalls(Sample):
-    def test_the_tmux_constant_only_in_tmux_host(self):
+    def test_the_tmux_constant_only_in_the_host_package(self):
         sample = 'import subprocess\nsubprocess.run(["tmux", "kill-server"])\n'
         root = self.tree(
             {
@@ -2481,16 +2484,14 @@ class TmuxCalls(Sample):
             sorted(
                 [
                     f'delegate/{PKG}/delegate/composer/y.py:1: str constant "tmux"',
-                    f'session/{PKG}/session/hosts/tmux/commands.py:2: str constant "tmux"',
-                    f'session/{PKG}/session/hosts/tmux/model/validation.py:2: str constant "tmux"',
                     'session/src/hosts/tmux/tmux_host.py:2: str constant "tmux"',
-                    f'session/{PKG}/session/modes/x.py:2: str constant "tmux"',
-                    f'session/{PKG}/session/hosts/tmux_external/x.py:2: str constant "tmux"',
+                    f"session/{PKG}/session/modes/x.py:2: tmux outside session/hosts/tmux/",
+                    f"session/{PKG}/session/hosts/tmux_external/x.py:2: tmux outside session/hosts/tmux/",
                 ]
             ),
         )
 
-    def test_tmux_inside_a_longer_string_is_clean(self):
+    def test_tmux_inside_a_longer_string_is_rejected(self):
         root = self.tree(
             {
                 f"session/{PKG}/session/modes/x.py": (
@@ -2498,7 +2499,128 @@ class TmuxCalls(Sample):
                 )
             }
         )
+        self.assertEqual(
+            guards.tmux_calls(root),
+            [
+                f"session/{PKG}/session/modes/x.py:{line}: tmux outside session/hosts/tmux/"
+                for line in (1, 2)
+            ],
+        )
+
+    def test_identifiers_imports_and_f_strings_cannot_hide_tmux(self):
+        source = (
+            "from agent_pm.session.hosts.tmux import TmuxHost\n"
+            "import agent_pm.session.hosts.tmux as transport\n"
+            "def _tmux(tmux_path):\n"
+            "    return f'{transport.TmuxHost}'\n"
+            "class TmuxProcess: pass\n"
+        )
+        base = f"session/{PKG}/session/cli.py"
+        self.assertEqual(
+            guards.tmux_calls(self.tree({base: source})),
+            [f"{base}:{line}: tmux outside session/hosts/tmux/" for line in range(1, 6)],
+        )
+
+    def test_packaged_configuration_and_test_fixtures_can_name_the_host(self):
+        root = self.tree(
+            {
+                f"session/{PKG}/session/config.toml": '[hosts]\ndefault = "tmux"\n',
+                "session/tests/unit/sample_test.py": 'HOST = "tmux"\n',
+            }
+        )
         self.assertEqual(guards.tmux_calls(root), [])
+
+
+class SessionDisplay(Sample):
+    def test_display_names_are_rejected_in_each_scoped_source(self):
+        for base in (
+            f"session/{PKG}/session/cli.py",
+            f"session/{PKG}/session/modes/sample.py",
+            f"session/{PKG}/session/hosts/other/sample.py",
+            f"utils/{PKG}/utils/sample.py",
+            guards.CONFIG_FILE,
+        ):
+            for source in (
+                "def f(pane): return pane\n",
+                "def f(_pane): return _pane\n",
+                "def f(pane_id): return pane_id\n",
+                "def opener(): pass\n",
+                "class split_from: pass\n",
+                "x = value.opener\n",
+                'x = f"{value.pane}"\n',
+                "from transport import pane as screen\n",
+                'x = "--split"\n',
+                'x = "--split-from"\n',
+                'x = "@opener"\n',
+                'x = "@record"\n',
+                'x = "@pane"\n',
+            ):
+                with self.subTest(base=base, source=source):
+                    self.assertTrue(guards.session_display(self.tree({base: source})))
+
+    def test_host_implementation_and_other_packages_are_out_of_scope(self):
+        source = 'def f(pane, opener, split_from): return "@record"\n'
+        root = self.tree(
+            {
+                f"session/{PKG}/session/hosts/tmux/transport.py": source,
+                f"delegate/{PKG}/delegate/engine/other.py": source,
+                f"linear-orchestrator/{OPKG}/engine/sample.py": source,
+                "session/tests/unit/sample_test.py": source,
+            }
+        )
+        self.assertEqual(guards.session_display(root), [])
+
+    def test_string_split_decorators_and_unrelated_words_are_clean(self):
+        source = (
+            '@record\ndef f(display): return display.split("/")\n'
+            'screenplay = "panel"\nreopener = "reopener"\n'
+        )
+        root = self.tree({f"session/{PKG}/session/engine/sample.py": source})
+        self.assertEqual(guards.session_display(root), [])
+
+
+class LegacyHostNames(Sample):
+    def baseline(self):
+        files = {}
+        for (path, name), (count, _) in guards.LEGACY_HOST_NAMES.items():
+            files[path] = files.get(path, "") + f"{name} = None\n" * count
+        return files
+
+    def test_only_the_exact_existing_names_and_counts_are_allowed(self):
+        root = self.tree(self.baseline())
+        self.assertEqual(guards.legacy_host_names(root), [])
+        self.assertEqual(guards.tmux_calls(root), [])
+        self.assertEqual(guards.session_display(root), [])
+
+    def test_an_extra_use_on_the_same_line_is_rejected(self):
+        files = self.baseline()
+        path = f"{guards.SESSION_SRC}engine/forwarding.py"
+        files[path] += "opener = opener\n"
+        self.assertEqual(
+            guards.legacy_host_names(self.tree(files)),
+            [f"{path}: opener: expected 4 legacy occurrences, found 6 (TASK-375)"],
+        )
+
+    def test_a_removed_name_or_file_is_stale(self):
+        files = self.baseline()
+        path = f"{guards.SESSION_SRC}engine/types.py"
+        files[path] = "pane = None\n"
+        self.assertEqual(
+            guards.legacy_host_names(self.tree(files)),
+            [f"{path}: opener: expected 1 legacy occurrences, found 0 (TASK-369)"],
+        )
+        del files[path]
+        self.assertEqual(len(guards.legacy_host_names(self.tree(files))), 2)
+
+    def test_new_names_and_other_modules_have_no_exemption(self):
+        files = self.baseline()
+        path = f"{guards.SESSION_SRC}engine/forwarding.py"
+        files[path] += "pane = None\nnew_tmux = None\n"
+        self.assertTrue(guards.session_display(self.tree(files)))
+        self.assertTrue(guards.tmux_calls(self.tree(files)))
+        files[f"{guards.SESSION_SRC}engine/other.py"] = "opener = None\nTmuxHost = None\n"
+        self.assertEqual(len(guards.session_display(self.tree(files))), 2)
+        self.assertEqual(len(guards.tmux_calls(self.tree(files))), 2)
 
 
 class PythonCommands(Sample):
@@ -2558,9 +2680,7 @@ class StatusLogFormat(Sample):
                 f"linear-orchestrator/{OPKG}/z.py": 'import time\nat = time.strftime("%H:%M:%S")\n',
             }
         )
-        outside = (
-            "status log line format outside session/engine/status_log.py or hosts/tmux/tmux_host.py"
-        )
+        outside = "status log line format outside session/engine/status_log.py"
         self.assertEqual(
             guards.status_log_format(root),
             sorted(
@@ -2573,7 +2693,7 @@ class StatusLogFormat(Sample):
             ),
         )
 
-    def test_status_log_and_tmux_host_own_the_clock(self):
+    def test_only_status_log_owns_the_clock(self):
         root = self.tree(
             {
                 f"session/{PKG}/session/engine/status_log.py": self.CLOCK,
@@ -2584,14 +2704,13 @@ class StatusLogFormat(Sample):
                 "tests/y_test.py": self.CLOCK,
             }
         )
-        outside = (
-            "status log line format outside session/engine/status_log.py or hosts/tmux/tmux_host.py"
-        )
+        outside = "status log line format outside session/engine/status_log.py"
         self.assertEqual(
             guards.status_log_format(root),
             [
                 f"session/{PKG}/session/hosts/tmux/lifecycle.py:1: {outside}",
                 f"session/{PKG}/session/hosts/tmux/model/clock.py:1: {outside}",
+                f"session/{PKG}/session/hosts/tmux/tmux_host.py:1: {outside}",
             ],
         )
 
@@ -2600,7 +2719,7 @@ class StatusLogFormat(Sample):
         self.assertEqual(
             guards.status_log_format(root),
             [
-                f"session/{PKG}/session/hosts/tmux_external/x.py:1: status log line format outside session/engine/status_log.py or hosts/tmux/tmux_host.py"
+                f"session/{PKG}/session/hosts/tmux_external/x.py:1: status log line format outside session/engine/status_log.py"
             ],
         )
 
