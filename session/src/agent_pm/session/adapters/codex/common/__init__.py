@@ -256,23 +256,6 @@ def native_id(value) -> bool:
         return False
 
 
-def hook_identity(value):
-    identifier, path = value.get("session_id"), value.get("cwd")
-    if (
-        value.get("agent_id") is not None
-        or not native_id(identifier)
-        or not isinstance(path, str)
-        or not os.path.isabs(path)
-        or "\0" in path
-    ):
-        return ""
-    return identifier
-
-
-def hook_cwd_matches(value, cwd: str) -> bool:
-    return os.path.realpath(value["cwd"]) == cwd
-
-
 _SESSION_VERSION = 1
 
 _SESSION_KEYS = frozenset({"version", "workdir", "sid", "snapshot", "native_id", "writable_roots"})
@@ -363,18 +346,6 @@ def check_writable_roots(root: str, paths: Sequence[str]) -> None:
         writable = absolute_path(path, "writable root")
         if os.path.commonpath((actual, writable)) == writable:
             raise RecoveryError(f"recovery state directory {root} is inside writable root {path}")
-
-
-def protect(state, dependencies, environment=None, added=()):
-    roots = [*state.writable_roots, *added, *implicit_writable_roots(environment)]
-    for root in roots:
-        root = os.path.realpath(root)
-        for dependency in dependencies:
-            for path in {os.path.abspath(dependency), os.path.realpath(dependency)}:
-                if inside(path, root) or inside(root, path):
-                    raise RecoveryError(
-                        f"Codex tui writable root {root} could rewrite hook dependency {path}"
-                    )
 
 
 def _state_data(fd: int, path: str):

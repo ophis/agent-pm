@@ -252,7 +252,7 @@ def _start(plan: LaunchPlan, termination, trust):
     if state is None:
         raise StartError("Codex tui launch: missing recovery state")
     env = {**os.environ, "CODEX_HOME": state.snapshot.codex_home}
-    common.protect(
+    tui.protect(
         state,
         [
             sys.prefix,

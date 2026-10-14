@@ -17,11 +17,11 @@ from agent_pm.session.adapters.codex.common import (
     RecoveryError,
     SessionStore,
     added_dirs,
-    hook_cwd_matches,
-    hook_identity,
+    implicit_writable_roots,
+    inside,
     launch_options,
+    native_id,
     passed,
-    protect,
     refuse,
     reset_at,
 )
@@ -56,6 +56,31 @@ FIELDS = frozenset(
         "import_roots",
     }
 )
+
+
+def _hook_identity(value) -> tuple[str, str] | None:
+    identifier, path = value.get("session_id"), value.get("cwd")
+    if (
+        value.get("agent_id") is not None
+        or not native_id(identifier)
+        or not isinstance(path, str)
+        or not os.path.isabs(path)
+        or "\0" in path
+    ):
+        return None
+    return identifier, os.path.realpath(path)
+
+
+def protect(state, dependencies, environment=None, added=()):
+    roots = [*state.writable_roots, *added, *implicit_writable_roots(environment)]
+    for root in roots:
+        root = os.path.realpath(root)
+        for dependency in dependencies:
+            for path in {os.path.abspath(dependency), os.path.realpath(dependency)}:
+                if inside(path, root) or inside(root, path):
+                    raise RecoveryError(
+                        f"Codex tui writable root {root} could rewrite hook dependency {path}"
+                    )
 
 
 class CodexTui(Tui):
@@ -145,14 +170,13 @@ class CodexTui(Tui):
         }
 
     def session_id(self, payload):
-        native = hook_identity(payload)
-        if (
-            not native
-            or self.native
-            and native != self.native
-            or self.state
-            and not hook_cwd_matches(payload, self.state.snapshot.cwd)
-        ):
+        if self.native and payload.get("session_id") != self.native:
+            return ""
+        identity = _hook_identity(payload)
+        if identity is None:
+            return ""
+        native, cwd = identity
+        if self.state and cwd != self.state.snapshot.cwd:
             return ""
         self.native = native
         if payload.get("hook_event_name") == "Stop":
@@ -297,20 +321,20 @@ def execution_argv(plan: LaunchPlan, snapshot: Snapshot, trusted_state: str) -> 
 
 
 def bind(label, value, workdir, sid, *, root=None):
-    if (
-        label not in CodexTui.hooks
-        or value.get("hook_event_name", label) != label
-        or not hook_identity(value)
-    ):
+    if label not in CodexTui.hooks or value.get("hook_event_name", label) != label:
         return False
     try:
+        identity = _hook_identity(value)
+        if identity is None:
+            return False
+        native, cwd = identity
         store = SessionStore(root)
         state = store.load(workdir, sid)
         if state is None:
             raise RecoveryError("missing Codex recovery state")
-        if not hook_cwd_matches(value, state.snapshot.cwd):
+        if cwd != state.snapshot.cwd:
             return False
-        store.bind(workdir, sid, value["session_id"], timeout=1 if label == "Interrupt" else 5)
+        store.bind(workdir, sid, native, timeout=1 if label == "Interrupt" else 5)
     except (RecoveryError, OSError, ValueError) as exc:
         print(f"codex hook: {exc}", file=sys.stderr)
         return False
