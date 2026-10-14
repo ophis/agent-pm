@@ -95,9 +95,10 @@ class Attended(Segment):
             res = self.router("--now", "--tui", AGENT_PM_EVENTS=self.events, **self.in_manager())
             self.assertEqual((res.returncode, res.stdout), (0, ""), res.stderr)
 
-    def interrupted(self, stop):
+    def interrupted(self, stop, *, written_back=True):
         """An attended run waiting on after its start mark, its harness ended by stop(ident, sid):
         its TUI ends too, the issue stays In Progress; router.py --issue --tui resumes it to done.
+        written_back False: the stop may kill the harness's last callback, so no session comment.
         """
         ident, account = self.pm_ready(), ACCOUNTS["pm"]
         sid = self.claim(ident, "pm", self.agent_script("pm", "open", ident), tui=True)
@@ -111,11 +112,15 @@ class Attended(Segment):
             self.expect_problem(lookup(account))
         with self.step("harness ended"):
             stop(ident, sid)
-            self.wait_end(sid, ident, role="pm")
-            tui = config.tui_name("pm", ident, sid)
-            live_tmux.wait(lambda: not self.live(tui), TIMEOUT, f"{tui} gone")
+            if written_back:
+                self.wait_end(sid, ident, role="pm")
+            harness, tui = self.harness("pm", ident, sid), config.tui_name("pm", ident, sid)
+            for name in (harness, tui):
+                live_tmux.wait(lambda name=name: not self.live(name), TIMEOUT, f"{name} gone")
             self.pending = None
-            self.expect_session(ident, sid, "interrupted")
+            self.assertEqual(self.state(ident), "in_progress")
+            if written_back:
+                self.expect_session(ident, sid, "interrupted")
         self.resume(ident, "pm", sid, self.agent_script("pm", "done", ident), tui=True)
         self.agent_run()
 
@@ -132,7 +137,7 @@ class Attended(Segment):
             res = self.script(ENTRY, "close", ident)
             self.assertEqual((res.returncode, res.stdout, res.stderr), (0, "", ""))
 
-        self.interrupted(close)
+        self.interrupted(close, written_back=False)
 
     def test_resume_brings_a_closed_tui_back_attended_at_its_display_its_record_unchanged(self):
         ident = self.pm_ready()
