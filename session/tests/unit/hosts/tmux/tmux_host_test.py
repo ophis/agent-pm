@@ -758,7 +758,7 @@ class SendTest(Case):
             fake.calls,
             [
                 ["tmux", "load-buffer", "-b", buffer, "-"],
-                ["tmux", "paste-buffer", "-p", "-d", "-b", buffer, "-t", "=s:"],
+                ["tmux", "paste-buffer", "-p", "-r", "-d", "-b", buffer, "-t", "=s:"],
                 ("sleep", 0.5),
                 ["tmux", "send-keys", "-t", "=s:", "Enter"],
             ],
@@ -806,7 +806,7 @@ class PasteTest(Case):
             fake.calls,
             [
                 ["tmux", "load-buffer", "-b", buffer, "-"],
-                ["tmux", "paste-buffer", "-p", "-d", "-b", buffer, "-t", "=s:"],
+                ["tmux", "paste-buffer", "-p", "-r", "-d", "-b", buffer, "-t", "=s:"],
             ],
         )
         self.assertEqual(
@@ -823,7 +823,7 @@ class PasteTest(Case):
                 self.assertEqual(
                     fake.calls[1:],
                     [
-                        ["tmux", "paste-buffer", "-p", "-d", "-b", buffer, "-t", "=s:"],
+                        ["tmux", "paste-buffer", "-p", "-r", "-d", "-b", buffer, "-t", "=s:"],
                         ["tmux", "delete-buffer", "-b", buffer],
                     ],
                 )
@@ -963,7 +963,7 @@ class PaneTargetTest(Case):
                 ["tmux", "display-message", "-p", "-t", "%12", FORMAT],
                 ["tmux", "kill-session", "-t", "%12"],
                 ["tmux", "load-buffer", "-b", buffer, "-"],
-                ["tmux", "paste-buffer", "-p", "-d", "-b", buffer, "-t", "%12"],
+                ["tmux", "paste-buffer", "-p", "-r", "-d", "-b", buffer, "-t", "%12"],
                 ["tmux", "send-keys", "-t", "%12", "Enter"],
                 ["tmux", "show-options", "-v", "-t", "%12", "@sid"],
                 ["tmux", "capture-pane", "-p", "-J", "-t", "%12"],

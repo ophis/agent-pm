@@ -612,7 +612,7 @@ def paste(target: str, text: str, *, proc=subprocess.run) -> None:
     # trailing ';'
     checked(["load-buffer", "-b", buffer, "-"], proc, text)
     try:
-        checked(["paste-buffer", "-p", "-d", "-b", buffer, "-t", target], proc)
+        checked(["paste-buffer", "-p", "-r", "-d", "-b", buffer, "-t", target], proc)
     except TuiError:
         with contextlib.suppress(TuiError):
             run(["delete-buffer", "-b", buffer], proc)
