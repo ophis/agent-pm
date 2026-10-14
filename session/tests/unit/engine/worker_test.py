@@ -277,9 +277,7 @@ class RestartTest(Base):
         self.handle.alive.return_value = True
         self.handle.wait_exit.return_value = True
         self.worker().restart()
-        self.assertEqual(
-            self.calls(), ["preflight", "retire", "close", "wait_exit", "start", "publish"]
-        )
+        self.assertEqual(self.calls(), ["retire", "close", "wait_exit", "start", "publish"])
 
     def test_no_session_is_refused_untouched(self):
         self.host.list.return_value = []

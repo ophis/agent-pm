@@ -288,7 +288,6 @@ class Worker:
         session = self._session()
         if session is None:
             raise DriverError(f"{self.state.name}: no session to restart; resume starts it")
-        self.check(prompt="", resume=True)
         self.replace(session)
         return self.start(prompt="", resume=True)
 
