@@ -80,10 +80,21 @@ def plan(
 
 
 def run(run: RunConfig, spec: Spec, *, on_event=None, driver: Driver | SessionDriver) -> Result:
+    """A session run makes its workdir; a refused start removes it again while still empty."""
     owner_driver = _owned(driver)
-    return execute(
-        planning.plan(run, spec, driver=owner_driver), driver=owner_driver, on_event=on_event
-    )
+    accepted = planning.plan(run, spec, driver=owner_driver)
+    if not owner_driver.session_based:
+        return execute(accepted, driver=owner_driver, on_event=on_event)
+    workdir = accepted.spec.workdir
+    made = not os.path.isdir(workdir)
+    os.makedirs(workdir, exist_ok=True)
+    try:
+        return execute(accepted, driver=owner_driver, on_event=on_event)
+    except ConfigError:
+        if made:
+            with contextlib.suppress(OSError):
+                os.rmdir(workdir)
+        raise
 
 
 __all__ = [

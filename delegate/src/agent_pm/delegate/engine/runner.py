@@ -221,7 +221,6 @@ class _Attempts:
         self.refused = False  # the Driver refused the start: nothing to close
 
     def note(self, kind: str, **fields) -> None:
-        os.makedirs(self.workdir, exist_ok=True)
         RunLog(self.workdir).note(kind, **fields)
 
     def close(self, result: dict, rc: int) -> None:

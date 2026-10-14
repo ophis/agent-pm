@@ -7,8 +7,19 @@ from contextlib import redirect_stderr
 from datetime import datetime
 from unittest import mock
 
-from agent_pm.delegate import Begun, ConfigError, Finished, Limit, Progress, Result, plan, run
-from agent_pm.delegate.engine.runner import FIX, NUDGE, POLICIES, STOP_LIMIT
+from agent_pm.delegate import (
+    Begun,
+    ConfigError,
+    Finished,
+    Limit,
+    Progress,
+    Result,
+    Spec,
+    composer,
+    plan,
+    run,
+)
+from agent_pm.delegate.engine.runner import FIX, NUDGE, POLICIES, STOP_LIMIT, execute
 from agent_pm.delegate.event.reply import marks
 from agent_pm.session import Activity, Blocked, DriverError, Exited, IdleTimeout, LimitHit, Mode
 
@@ -380,6 +391,25 @@ class TuiPolicy(Base):
             (str(cm.exception), os.path.lexists(self.work)),
             ("runtime 'fake' does not support tui mode", False),
         )
+
+    def test_the_run_wrapper_makes_a_new_workdir_and_records_a_failed_start_there(self):
+        with mock.patch.object(self.driver, "start", side_effect=DriverError("no tmux")):
+            self.assertEqual(self.go(mode="tui"), Result(1, None, "tui: no tmux"))
+        self.assertEqual(self.kinds(), ["input", "result", "end"])
+
+    def test_the_runner_records_into_an_existing_workdir_only(self):
+        accepted = plan(
+            composer.resolve("dummy-tester"),
+            Spec("Echo me.", self.work, task="echo", runtime="fake", mode="tui", cwd=self.work),
+            driver=self.driver,
+        )
+        with (
+            mock.patch.object(self.driver, "start", side_effect=DriverError("no tmux")),
+            redirect_stderr(io.StringIO()),
+            self.assertRaises(FileNotFoundError),
+        ):
+            execute(accepted, driver=self.driver)
+        self.assertFalse(os.path.lexists(self.work))
 
     def test_headless_turn_ends_never_nudge_and_an_idle_timeout_is_only_recorded(self):
         r = self.faked(
