@@ -342,6 +342,7 @@
   "session.tests.integration.hosted_integration_test.CloseTest.test_attach_then_close_and_close_leave_the_same_state_fr_4": 0.515292,
   "session.tests.integration.hosted_integration_test.CloseTest.test_list_and_close_need_no_configured_class": 0.342488,
   "session.tests.integration.hosted_integration_test.DisplayTest.test_a_display_given_to_start_is_stored_read_back_and_listed_fr_48": 0.681393,
+  "session.tests.integration.hosts.tmux.host_contract_integration_test.TmuxHostContractTest.test_killing_the_pane_stops_its_program_and_keeps_ownership_of_leftover_children": 1.20762,
   "session.tests.integration.live_tmux_integration_test.Cleanup.test_cleanups_kill_the_server_and_client_and_remove_the_root": 0.154068,
   "session.tests.integration.live_tmux_integration_test.Client.test_attach_shows_the_session_in_a_control_mode_client": 0.222453,
   "session.tests.integration.live_tmux_integration_test.Env.test_env_is_built_from_scratch": 0.017626,

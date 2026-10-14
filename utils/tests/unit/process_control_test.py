@@ -110,6 +110,51 @@ class ControlTest(Case):
         wait.assert_called_once_with(4242, os.WNOHANG)
         socket.return_value.__enter__.return_value.connect.assert_called_once()
 
+    def test_losing_the_pane_during_startup_cancels_before_any_launch_request(self):
+        control = ProcessControl.prepare(["program"], "/")
+        self.addCleanup(control.remove)
+        with mock.patch("os.getppid", return_value=1), mock.patch("select.select") as poll:
+            self.assertFalse(control._await_start(mock.Mock(), parent=4242))
+        self.assertTrue(control.cancelled)
+        self.assertFalse(control.requested)
+        poll.assert_not_called()
+
+    def test_losing_the_pane_sends_term_once_and_keeps_ownership_through_slow_cleanup(self):
+        control = ProcessControl.prepare(["program"], "/")
+        self.addCleanup(control.remove)
+        control.accepted = True
+        clock = [0.0]
+        group = mock.Mock(returncode=None, eof=False)
+        group.live.side_effect = lambda: clock[0] < 7
+
+        def receive():
+            if clock[0] == 0:
+                return [{"started": True}]
+            if clock[0] >= 6:
+                group.returncode = 0
+            return []
+
+        def poll(_read, _write, _error, timeout):
+            clock[0] += timeout
+            return [], [], []
+
+        group.receive.side_effect = receive
+        exited = mock.Mock()
+        with (
+            mock.patch("time.monotonic", side_effect=lambda: clock[0]),
+            mock.patch("select.select", side_effect=poll),
+            mock.patch("os.getppid", return_value=1),
+            mock.patch("signal.signal"),
+            mock.patch("signal.pthread_sigmask"),
+        ):
+            self.assertEqual(
+                control._serve(mock.Mock(), group, exited, detached=True, parent=4242), 0
+            )
+        group.send.assert_called_once_with(signal.SIGTERM)
+        group.kill.assert_not_called()
+        exited.assert_called_once_with(0)
+        self.assertGreaterEqual(clock[0], 7)
+
     def test_background_membership_probes_back_off_while_requests_remain_responsive(self):
         control = ProcessControl.prepare(["program"], "/")
         self.addCleanup(control.remove)

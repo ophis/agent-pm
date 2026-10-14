@@ -301,16 +301,18 @@ class ProcessControl:
 
     def run(self) -> int:
         read, write = os.pipe()
+        parent = os.getpid()
         pid = os.fork()
         if pid == 0:
             os.close(read)
 
             def exited(rc):
-                os.write(write, str(rc).encode() + b"\n")
+                with contextlib.suppress(OSError):
+                    os.write(write, str(rc).encode() + b"\n")
                 os.close(write)
 
             try:
-                self.serve(on_exit=exited, detached=True)
+                self.serve(on_exit=exited, detached=True, parent=parent)
             finally:
                 os._exit(0)
         os.close(write)
@@ -328,9 +330,16 @@ class ProcessControl:
         return int(result) if result else 1
 
     def serve(
-        self, *, on_exit: Callable[[int], None] | None = None, detached: bool = False, **options
+        self,
+        *,
+        on_exit: Callable[[int], None] | None = None,
+        detached: bool = False,
+        parent: int | None = None,
+        **options,
     ) -> int:
         group = None
+        if detached:
+            signal.signal(signal.SIGHUP, signal.SIG_IGN)
         with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as listener:
             try:
                 with open(os.path.join(self.path, "lock"), encoding="utf-8") as lock:
@@ -340,7 +349,7 @@ class ProcessControl:
                     listener.bind(os.path.join(self.path, "control"))
                     listener.listen()
                     fcntl.flock(lock, fcntl.LOCK_UN)
-                if not self._await_start(listener):
+                if not self._await_start(listener, parent=parent):
                     if on_exit is not None:
                         on_exit(1)
                     return 1
@@ -365,21 +374,20 @@ class ProcessControl:
                     fcntl.flock(lock, fcntl.LOCK_UN)
                 if detached:
                     os.setsid()
-                    signal.signal(signal.SIGHUP, signal.SIG_IGN)
                     with open(os.devnull, "r+b") as null:
                         for fd in (0, 1, 2):
                             os.dup2(null.fileno(), fd)
-                return self._serve(listener, group, on_exit, detached=detached)
+                return self._serve(listener, group, on_exit, detached=detached, parent=parent)
             finally:
                 if group is not None:
                     os.close(group.channel)
                 self.remove()
 
-    def _await_start(self, listener) -> bool:
+    def _await_start(self, listener, *, parent=None) -> bool:
         deadline = time.monotonic() + TIMEOUT
         while not self.requested and not self.cancelled:
             remaining = deadline - time.monotonic()
-            if remaining <= 0:
+            if remaining <= 0 or (parent is not None and os.getppid() != parent):
                 self.cancelled = True
                 break
             ready, _, _ = select.select([listener], [], [], min(POLL, remaining))
@@ -387,7 +395,7 @@ class ProcessControl:
                 self._answer(listener, None, reported=False)
         return self.requested and not self.cancelled
 
-    def _serve(self, listener, group, on_exit, *, detached=False) -> int:
+    def _serve(self, listener, group, on_exit, *, detached=False, parent=None) -> int:
         stopping: int | None = None
 
         def stop(signum, _frame):
@@ -416,9 +424,12 @@ class ProcessControl:
                     on_exit(group.returncode)
                 reported = True
             try:
+                if parent is not None and not reported and os.getppid() != parent:
+                    stopping = signal.SIGTERM
+                    parent = None
                 if self.cancelled:
                     group.kill()
-                if stopping is not None:
+                if stopping is not None and started:
                     group.send(stopping)
                     stopping = None
                 now = time.monotonic()

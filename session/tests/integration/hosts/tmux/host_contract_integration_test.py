@@ -4,7 +4,9 @@ detach halves run here. Also: a forged @record, a display completed once and sto
 """
 
 import os
+import signal
 import unittest
+from pathlib import Path
 from unittest import mock
 
 from agent_pm.session import DriverError
@@ -12,7 +14,7 @@ from agent_pm.session.hosts.tmux import TmuxHost
 
 from session.tests import live_tmux
 from session.tests.case import Case
-from session.tests.contracts.host import EXIT_7, SLEEP, HostContract
+from session.tests.contracts.host import EXIT_7, SLEEP, HostContract, gone, read
 
 MANAGER = "mgr"
 TERMINAL = "TmuxHost.terminal comes with TASK-368"
@@ -77,6 +79,60 @@ class TmuxHostContractTest(HostContract, Case):
         self.start("detach", name, EXIT_7, events=events)
         self.event(events, name, "exited 7")
         self.poll(lambda: name not in self.host.list(), f"{name} gone")
+
+    def test_killing_the_pane_stops_its_program_and_keeps_ownership_of_leftover_children(self):
+        name, ready, stopping, finish, finished = (
+            self.fresh(),
+            self.file("ready"),
+            self.file("stopping"),
+            self.file("finish"),
+            self.file("finished"),
+        )
+        script = """import os, signal, sys, time
+ready, stopping, finish, finished = sys.argv[1:]
+signal.signal(signal.SIGHUP, signal.SIG_IGN)
+def stop(signum, frame):
+    with open(stopping, 'a') as stream: stream.write('term\\n')
+    while not os.path.exists(finish): time.sleep(0.01)
+    with open(finished, 'w') as stream: stream.write('cleanup complete')
+    raise SystemExit(0)
+signal.signal(signal.SIGTERM, stop)
+signal.pthread_sigmask(signal.SIG_UNBLOCK, (signal.SIGHUP, signal.SIGTERM, signal.SIGINT))
+child = os.fork()
+if child == 0:
+    signal.signal(signal.SIGTERM, signal.SIG_IGN)
+    with open(ready + '.child', 'w'): pass
+    while True: time.sleep(1)
+while not os.path.exists(ready + '.child'): time.sleep(0.01)
+with open(ready, 'w') as stream: stream.write(f'{os.getpid()} {child}')
+while True: time.sleep(1)
+"""
+        process = self.start("detach", name, script, ready, stopping, finish, finished)
+        self.addCleanup(process.close)
+        own, child = map(int, self.poll(lambda: read(ready), "program and child ready").split())
+        control = self.server.option(name, "@control")
+        self.assertTrue(os.path.isdir(control))
+        pane = self.server.tmux("display-message", "-p", "-t", f"={name}:", "#{pane_pid}")
+        self.assertEqual(pane.returncode, 0, pane.stderr)
+        pane_pid = int(pane.stdout.strip())
+        self.assertNotIn(pane_pid, (own, child))
+        os.kill(pane_pid, signal.SIGKILL)
+        self.poll(lambda: name not in self.host.list(), "killed pane session gone")
+        self.poll(lambda: read(stopping), "program SIGTERM cleanup")
+        self.assertFalse(process.wait_exit(0.2))
+        self.assertFalse(gone(own))
+        self.assertIsNone(read(finished))
+        Path(finish).touch()
+        self.poll(lambda: read(finished) == "cleanup complete", "program cleanup complete")
+        self.poll(lambda: gone(own), "program exit")
+        self.assertEqual(read(stopping), "term\n")
+        self.assertFalse(gone(child))
+        self.assertFalse(process.wait_exit(0.2))
+        self.assertTrue(os.path.isdir(control))
+        process.close()
+        self.poll(lambda: gone(child), "leftover child exit")
+        self.poll(lambda: not os.path.exists(control), "controller generation retired")
+        self.assertTrue(process.wait_exit(0))
 
     def test_close_twice_of_a_detached_session_is_fine_and_forgets_it(self):
         name = self.fresh()
