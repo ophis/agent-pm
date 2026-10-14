@@ -197,10 +197,13 @@ class WrappersTest(TuiBase):
                     lambda: log.session(SID).persisted(),
                 ),
                 (lambda: sessions("("), lambda: HostedSession.list("(")),
-                (lambda: close("a b"), lambda: tui.TuiMode.close("a b", host=self.session.host())),
+                (
+                    lambda: close("a b"),
+                    lambda: tui.TuiRunner.close("a b", host=self.session.host()),
+                ),
                 (
                     lambda: self.driver.close("a b"),
-                    lambda: tui.TuiMode.close("a b", host=self.session.host()),
+                    lambda: tui.TuiRunner.close("a b", host=self.session.host()),
                 ),
             )
             for index, (wrapper, target) in enumerate(pairs):

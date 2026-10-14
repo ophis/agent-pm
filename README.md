@@ -203,7 +203,7 @@ The old router's `--tui` is gone; the new router gains it in [TASK-332](https://
 
 ```text
 delegate/             the Delegate (one role's run), the Composer, the built-in team; shared event/ and config.py
-session/              the session: an Adapter per runtime, Modes, Hosts (tmux); cli.py: agent-pm-session
+session/              the session: an Adapter per runtime, Runners, Hosts (tmux); cli.py: agent-pm-session
 utils/                shared utilities
 manager/              cli.py, engine/crew.py, roster.py and events.py: commands and bookkeeping
 linear-orchestrator/  cli.py: router, run, promote; engine/: scheduling, client, log, ops, issues, run_comments, writeback

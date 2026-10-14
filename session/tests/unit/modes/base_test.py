@@ -1,5 +1,5 @@
-"""modes/base.py: RunningMode, the ABC each Mode's running session implements (a class start
-returning it started, then its session calls), and the start helpers its Modes share: child_env
+"""modes/base.py: Runner, the ABC each Mode's running session implements (a class start
+returning it started, then its session calls), and the start helpers the Runners share: child_env
 and identity_drop.
 """
 
@@ -14,16 +14,16 @@ from agent_pm.session.adapters.registry import Registry
 from agent_pm.session.engine.types import ConfigError, Launch, Mode, Spec
 from agent_pm.session.hosts.base import Host
 from agent_pm.session.modes import headless, in_process, tui
-from agent_pm.session.modes.base import RunningMode, child_env, identity_drop
+from agent_pm.session.modes.base import Runner, child_env, identity_drop
 
 from session.tests.case import HOSTS, Case
 from session.tests.fakes.terminal import MemoryHost
 
 MEMBERS = ["poll", "returncode", "screen", "send", "start", "state", "stop"]
 KINDS = {
-    headless.HeadlessMode: Mode.HEADLESS,
-    in_process.InProcessMode: Mode.IN_PROCESS,
-    tui.TuiMode: Mode.TUI,
+    headless.HeadlessRunner: Mode.HEADLESS,
+    in_process.InProcessRunner: Mode.IN_PROCESS,
+    tui.TuiRunner: Mode.TUI,
 }
 IDENTITIES = {"AGENT_PM_SID", "INNER_SESSION", "INNER_ID", "OTHER_SESSION", "OTHER_ID"}
 
@@ -70,21 +70,21 @@ def registry(**adapters) -> Registry:
     )
 
 
-class RunningModeTest(Case):
+class RunnerTest(Case):
     def test_its_abstract_members_are_one_start_and_the_six_session_calls(self):
-        self.assertTrue(inspect.isabstract(RunningMode))
-        self.assertEqual(sorted(RunningMode.__abstractmethods__), MEMBERS)
+        self.assertTrue(inspect.isabstract(Runner))
+        self.assertEqual(sorted(Runner.__abstractmethods__), MEMBERS)
 
     def test_each_mode_subclasses_it_with_its_parameters_and_its_kind(self):
         for mode, name in itertools.product(KINDS, MEMBERS):
             with self.subTest(mode=mode.__name__, name=name):
-                self.assertTrue(issubclass(mode, RunningMode))
+                self.assertTrue(issubclass(mode, Runner))
                 self.assertFalse(inspect.isabstract(mode))
-                self.assertEqual(params(getattr(mode, name)), params(getattr(RunningMode, name)))
+                self.assertEqual(params(getattr(mode, name)), params(getattr(Runner, name)))
         self.assertEqual({mode: mode.kind for mode in KINDS}, KINDS)
 
     def test_start_is_the_class_entry_and_no_session_is_built_without_its_prepared(self):
-        for mode in (RunningMode, *KINDS):
+        for mode in (Runner, *KINDS):
             with self.subTest(mode=mode.__name__):
                 self.assertIsInstance(inspect.getattr_static(mode, "start"), classmethod)
                 self.assertIsInstance(inspect.getattr_static(mode, "prepared"), property)

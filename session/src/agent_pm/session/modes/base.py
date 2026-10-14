@@ -1,6 +1,6 @@
-"""A Mode's running session, and what its Modes share to start one. The class's start() fixes a
-Prepared before anything starts, has `record` write the session line, then starts and returns the
-session, so none exists unstarted. stop() is idempotent.
+"""Runner, a Mode's running session, and what the Runners share to start one. The class's
+start() fixes a Prepared before anything starts, has `record` write the session line, then starts
+and returns the session, so none exists unstarted. stop() is idempotent.
 """
 
 import os
@@ -49,11 +49,11 @@ def identity_drop(registry: Registry) -> frozenset[str]:
     return frozenset(drop)
 
 
-class RunningMode(ABC):
+class Runner(ABC):
     kind: ClassVar[Mode]
 
     def __init__(self, prepared: Prepared) -> None:
-        """Built by start (TuiMode.attach too) from what it started."""
+        """Built by start (TuiRunner.attach too) from what it started."""
         self._prepared = prepared
 
     @property
@@ -86,12 +86,12 @@ class RunningMode(ABC):
         check_name: Callable[[str], None] | None = None,
     ) -> Self:
         """The session started; spec.sid set; registry: tui settings and identity_drop; host: the
-        selected execution Host; display: a tui session's, kept as given (other Modes refuse one).
+        selected execution Host; display: a tui session's, kept as given (other Runners refuse one).
         """
 
     @abstractmethod
     def poll(self, timeout: float) -> tuple[list[SessionEvent | Stderr | ClientBound], bool]:
-        """Events within `timeout` s and whether they ended; raises the Mode's own failures."""
+        """Events within `timeout` s and whether they ended; raises the Runner's own failures."""
 
     @abstractmethod
     def returncode(self, timeout: float) -> int | None:

@@ -16,7 +16,7 @@ import unittest
 from unittest import mock
 
 from agent_pm.session.engine.types import DriverError, Launch, Reply, Spec, Stderr
-from agent_pm.session.modes.headless import HeadlessMode
+from agent_pm.session.modes.headless import HeadlessRunner
 
 from session.tests.fakes.terminal import MemoryHost
 from session.tests.headless_support import NOTHING, SID, HeadlessCase, StubAdapter, StubRun
@@ -299,7 +299,7 @@ class Start(Base):
 
     def test_start_returns_its_session_running_at_once_with_its_prepared(self):
         with self.spied() as calls:
-            mode = HeadlessMode.start(
+            mode = HeadlessRunner.start(
                 Spec(workdir=self.dir, sid=SID, runtime="stub"),
                 StubAdapter(Launch(python(SLEEPER))),
                 registry=self.driver.registry,
@@ -307,7 +307,7 @@ class Start(Base):
                 host=MemoryHost(),
             )
         self.addCleanup(mode.stop)
-        self.assertIsInstance(mode, HeadlessMode)
+        self.assertIsInstance(mode, HeadlessRunner)
         self.assertEqual(
             (mode.prepared.info, mode.prepared.argv, calls),
             (self.recorded[0], python(SLEEPER), [python(SLEEPER)]),

@@ -1,4 +1,4 @@
-"""The tui Mode: an Adapter command on a Host terminal; events from the hook records
+"""The tui Runner: an Adapter command on a Host terminal; events from the hook records
 appended to its session directory and from its terminal.
 """
 
@@ -42,7 +42,7 @@ from agent_pm.session.engine.types import (
 )
 from agent_pm.session.hosts.base import Displayable, Host, HostProcess, Terminal
 from agent_pm.session.modes import tui_hook
-from agent_pm.session.modes.base import RunningMode, identity_drop
+from agent_pm.session.modes.base import Runner, identity_drop
 from agent_pm.utils import CONFIG_NAME as NAME
 from agent_pm.utils import STATE, Display, json_records, module_roots, read_regular
 
@@ -300,7 +300,7 @@ class _Start:
         return Launch(self.prepared.argv, env=self.prepared.env, cwd=self.prepared.info.cwd)
 
 
-class TuiMode(RunningMode):
+class TuiRunner(Runner):
     """One tui session holding its terminal generation."""
 
     kind = Mode.TUI

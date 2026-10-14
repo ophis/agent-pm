@@ -94,7 +94,7 @@ class TuiTest(Live):
             [(r["kind"], r["sid"]) for r in RunLog(self.workdir).read()],
             [("session", SID)],
         )
-        self.assertEqual(tui.TuiMode.snapshot("w1")["sid"], SID)
+        self.assertEqual(tui.TuiRunner.snapshot("w1")["sid"], SID)
         stream = Stream(self, handle)
         self.assertEqual(
             [stream.next() for _ in range(3)], [Activity(""), TurnEnd("r1", 0), IdleTimeout(IDLE)]
@@ -272,7 +272,7 @@ class SameNameTest(Live):
         threads[0].join(WAIT)
         handle, error = sorted(results, key=lambda result: isinstance(result, Exception))
         self.addCleanup(handle.stop)
-        self.assertEqual(tui.TuiMode.snapshot("w6")["sid"], handle.sid)
+        self.assertEqual(tui.TuiRunner.snapshot("w6")["sid"], handle.sid)
         self.assertEqual(str(error), "tui session w6 is running; tmux attach -t '=w6'")
         self.assertEqual(
             (handle.state(), os.listdir(tui._Store("w6", host=self.driver.session_cls.host()).dir)),
@@ -305,7 +305,7 @@ class SameNameTest(Live):
         live_tmux.wait(lambda: os.path.exists(killed), what="the close's kill")
         new = self.start("w7", {"read": True})
         self.assertEqual((closer.communicate(timeout=WAIT)[1], closer.returncode), ("", 0))
-        self.assertEqual((new.state(), tui.TuiMode.snapshot("w7")["sid"]), ("live", new.sid))
+        self.assertEqual((new.state(), tui.TuiRunner.snapshot("w7")["sid"]), ("live", new.sid))
 
 
 if __name__ == "__main__":

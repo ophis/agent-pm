@@ -210,12 +210,12 @@ NOQA_ALLOWED = {
     (
         f"{SESSION_SRC}modes/headless.py",
         "BLE001",
-        "HeadlessMode._pump",
+        "HeadlessRunner._pump",
     ): "Forward failures to the caller thread.",
     (
         f"{SESSION_SRC}modes/in_process.py",
         "BLE001",
-        "InProcessMode._pump",
+        "InProcessRunner._pump",
     ): "Forward failures to the caller thread.",
     (
         f"{ORCH_PROJECT}/{ORCH_SRC}engine/run_comments.py",

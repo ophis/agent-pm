@@ -23,7 +23,7 @@ from agent_pm.session.engine.types import (
     Spec,
     Stderr,
 )
-from agent_pm.session.modes.in_process import InProcessMode
+from agent_pm.session.modes.in_process import InProcessRunner
 
 from session.tests.case import Case
 from session.tests.fakes.terminal import MemoryHost
@@ -85,10 +85,10 @@ class Base(Case):
         self.mode, self.recorded = None, []
 
     def start(self, adapter, spec=SPEC, record=None, display=None) -> Prepared:
-        """self.mode: InProcessMode started on spec with adapter and display, its session line
+        """self.mode: InProcessRunner started on spec with adapter and display, its session line
         given to record, else kept in self.recorded; its Prepared.
         """
-        self.mode = InProcessMode.start(
+        self.mode = InProcessRunner.start(
             spec,
             adapter,
             registry=self.driver.registry,
@@ -380,7 +380,7 @@ class Start(Base):
 
     def test_start_returns_its_session_running_at_once_with_its_prepared(self):
         script, reached, release, _ = self.held()
-        mode = InProcessMode.start(
+        mode = InProcessRunner.start(
             SPEC,
             StubAdapter(script),
             registry=self.driver.registry,
@@ -388,7 +388,7 @@ class Start(Base):
             host=MemoryHost(),
         )
         self.addCleanup(mode.stop)
-        self.assertIsInstance(mode, InProcessMode)
+        self.assertIsInstance(mode, InProcessRunner)
         self.assertEqual(mode.prepared.info, self.recorded[0])
         self.assertTrue(reached.wait(WAIT))
         self.assertEqual((mode.state(), mode.poll(WAIT)), ("live", ([Reply("one")], False)))

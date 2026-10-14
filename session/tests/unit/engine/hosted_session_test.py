@@ -689,7 +689,7 @@ class InProcessTest(Base):
 
 
 class Clock:
-    """The session's clock and time.monotonic's stand-in: `now` moves only when a StubMode
+    """The session's clock and time.monotonic's stand-in: `now` moves only when a StubRunner
     waits.
     """
 
@@ -699,8 +699,8 @@ class Clock:
         return self.now
 
 
-class StubMode:
-    """A Mode on a Clock: poll(timeout) gives the next script item (at, events, ended) once the
+class StubRunner:
+    """A Runner on a Clock: poll(timeout) gives the next script item (at, events, ended) once the
     clock reaches `at`, else ([], False), moving the clock to `at` or on by timeout, whichever is
     sooner; past LATE s it raises, so a session that never ends fails. returncode() gives `code`;
     every call is logged in `calls`.
@@ -742,7 +742,7 @@ class StubMode:
         self.calls.append(("stop",))
 
 
-class EventsOverAModeTest(Case):
+class EventsOverARunnerTest(Case):
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
@@ -753,7 +753,7 @@ class EventsOverAModeTest(Case):
         )
 
     def session(self, *script, code=0, idle_timeout=None, **kwargs) -> HostedSession:
-        self.mode = StubMode(self.clock, script, code)
+        self.mode = StubRunner(self.clock, script, code)
         return self.configured(
             "fake",
             Mode.TUI,
@@ -1260,7 +1260,7 @@ class TuiStartTest(HostedTuiBase):
                 )
             self.assertIs(session.info().project, project)
             self.assertIs(RunLog(self.workdir).session(session.sid).project, project)
-            self.assertIs(tui.TuiMode.snapshot(session.name)["project"], project)
+            self.assertIs(tui.TuiRunner.snapshot(session.name)["project"], project)
 
     def test_prepares_the_session_dir_records_the_session_then_begins_it_tagged_with_no_pane(self):
         order = []
@@ -1289,14 +1289,14 @@ class TuiStartTest(HostedTuiBase):
         self.assertEqual(call.kwargs["metadata"]["sid"], SID)
         self.assertEqual(call.kwargs["metadata"]["runtime"], "fake")
         self.assertEqual(
-            call.kwargs["metadata"]["generation"], tui.TuiMode.snapshot("w1")["generation"]
+            call.kwargs["metadata"]["generation"], tui.TuiRunner.snapshot("w1")["generation"]
         )
         self.assertEqual(launch.env["PWD"], self.workdir)
         self.assertEqual(stat.S_IMODE(os.stat(self.events).st_mode), 0o600)
         self.assertEqual(
             {
                 k: v
-                for k, v in tui.TuiMode.snapshot("w1").items()
+                for k, v in tui.TuiRunner.snapshot("w1").items()
                 if k in ("runtime", "sid", "events", "words", "host")
             },
             {
@@ -1584,7 +1584,7 @@ class AttachTest(HostedTuiBase):
                 terminal = self.host.processes["w1"]
                 terminal.calls.session_identity.return_value = (
                     found,
-                    tui.TuiMode.snapshot("w1")["generation"],
+                    tui.TuiRunner.snapshot("w1")["generation"],
                 )
                 self.session.attach("w1")
             self.assertEqual(str(caught.exception), "no tui session w1")
@@ -1778,7 +1778,7 @@ class MultipleHostsTest(HostedTuiBase):
             try:
                 first.start()
                 self.assertTrue(entered.wait(WAIT), "first terminal launch did not begin")
-                original = tui.TuiMode.snapshot("shared")
+                original = tui.TuiRunner.snapshot("shared")
                 later.start()
                 self.assertTrue(checked.wait(WAIT), "second start did not check the first Host")
             finally:
@@ -1795,7 +1795,7 @@ class MultipleHostsTest(HostedTuiBase):
         self.assertEqual(refusals, {"second": "session shared exists"})
         self.other.calls.terminal.assert_not_called()
         self.assertFalse(os.path.exists(os.path.join(self.dir, "second")))
-        self.assertEqual(tui.TuiMode.snapshot("shared"), original)
+        self.assertEqual(tui.TuiRunner.snapshot("shared"), original)
         self.assertEqual(self.session.attach("shared").record(), sessions["tmux"].record())
 
 
