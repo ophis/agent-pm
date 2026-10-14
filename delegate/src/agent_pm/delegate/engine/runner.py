@@ -208,11 +208,8 @@ def execute(
         if attempts.handle is not None:
             attempts.stop(attempts.handle)
         if not attempts.refused:
-            text = " ".join(str(e).split())
-            attempts.close(
-                {"error": f"stopped: {type(e).__name__}" + (f": {text}" if text else "")},
-                e.code if isinstance(e, (Stopped, SystemExit)) and isinstance(e.code, int) else 1,
-            )
+            ended = stopped(e)
+            attempts.close({"error": ended.error}, ended.returncode)
         raise
     closing = {"error": result.error}
     if result.outcome is not None:
@@ -222,6 +219,19 @@ def execute(
         }
     attempts.close(closing, result.returncode)
     return result
+
+
+def stopped(error: BaseException) -> Result:
+    """How a run that raised `error` ends: code `error.code` for a Stopped or an int-coded
+    SystemExit, else 1; error `stopped: <Type>[: text]` on one line.
+    """
+    text = " ".join(str(error).split())
+    code = getattr(error, "code", None)
+    return Result(
+        code if isinstance(error, (Stopped, SystemExit)) and isinstance(code, int) else 1,
+        None,
+        f"stopped: {type(error).__name__}" + (f": {text}" if text else ""),
+    )
 
 
 def _resets(at: float | None) -> str:

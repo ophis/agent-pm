@@ -350,6 +350,7 @@ class Segment(TmuxFlow):
                     if all(a["url"] != url for a in want.attachments):
                         changes["attachments"] = [{"url": url, "title": report["title"]}]
                 steps.append(f"move:{state}")
+                steps.append("outcome")
                 if state == "in_review" and HUMAN not in want.subscribers:
                     changes["subscribers"] = [HUMAN]
                 changes.update(state=state, history=[("in_progress", state, account)])

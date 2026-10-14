@@ -9,7 +9,7 @@ from collections import Counter
 
 from tests.guard_checks.common import _files, _strings
 from tests.guard_data import LEGACY_HOST_NAMES
-from tests.guard_data.delegate import CONFIG_FILE
+from tests.guard_data.delegate import CONFIG_FILE, DELEGATE_SRC
 from tests.guard_data.linear_orchestrator import HANDOFF_HOME, ORCH, ORCH_PROJECT
 from tests.guard_data.session import (
     ADAPTERS_HOME,
@@ -41,7 +41,7 @@ LOWER = tuple(p for p in PROJECTS if p != ORCH_PROJECT)
 
 
 DISPLAY_NAMES = re.compile(
-    r"(?<![a-zA-Z0-9])(?:pane|opener|split_from)(?![a-zA-Z0-9])|--split|@record|@pane"
+    r"(?<![a-zA-Z0-9])(?:pane|opener|split_from)(?![a-zA-Z0-9])|--split|@record|@pane|@opener"
 )
 
 
@@ -255,6 +255,28 @@ def session_display(repo: str) -> list[str]:
             if DISPLAY_NAMES.search(value) and (rel, value) not in LEGACY_HOST_NAMES
         )
     return sorted(found)
+
+
+def delegate_display(repo: str) -> list[str]:
+    found = set()
+    for rel, text in _lower_files(repo, ".py", projects=("delegate",)):
+        if rel.startswith(DELEGATE_SRC):
+            found.update(
+                f"{rel}:{line}: interprets display {value!r}"
+                for line, value in _code_words(text, ast.parse(text, rel))
+                if DISPLAY_NAMES.search(value)
+            )
+    return sorted(found)
+
+
+def delegate_tmux(repo: str) -> list[str]:
+    return [
+        f"{rel}:{number}: names tmux"
+        for rel, text in _lower_files(repo, ".py", projects=("delegate",))
+        if rel.startswith(DELEGATE_SRC)
+        for number, line in enumerate(text.splitlines(), 1)
+        if "tmux" in line.lower()
+    ]
 
 
 def legacy_host_names(repo: str) -> list[str]:

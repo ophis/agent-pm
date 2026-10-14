@@ -1,6 +1,6 @@
 """Write-back: an agent run's progress, outcome and usage limit as Linear comments, attachments and
 moves, each step once per session id (the ledger; comment steps by client id, found again on
-resume); bounce, the router's repo-check report.
+resume); `deliver`, one DelegateEvent's write-back; bounce, the router's repo-check report.
 """
 
 import contextlib
@@ -8,14 +8,17 @@ import functools
 import hashlib
 import json
 import os
+import re
 import subprocess
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, fields, replace
 from datetime import datetime
 from traceback import format_exception
 
-from agent_pm.delegate import Outcome, Progress
+from agent_pm.delegate import STATUSES, DelegateEvent, Outcome, OutcomeStatus, Progress
+from agent_pm.linear_orchestrator.engine import run_comments, runs
 from agent_pm.linear_orchestrator.engine.config import LOCAL, TASKS
+from agent_pm.linear_orchestrator.engine.linear_run import LinearRun
 from agent_pm.linear_orchestrator.engine.log import log
 from agent_pm.linear_orchestrator.engine.ops import (
     call,
@@ -26,6 +29,9 @@ from agent_pm.linear_orchestrator.engine.ops import (
     subscribe,
 )
 from agent_pm.linear_orchestrator.engine.types import (
+    ISSUE_ID,
+    Claim,
+    ConfigError,
     Invalid,
     Issue,
     LinearError,
@@ -40,6 +46,7 @@ from agent_pm.utils import (
     read_confined,
     repo_slug,
     save,
+    timestamp,
 )
 
 
@@ -58,6 +65,9 @@ class Context:
     repos: Mapping[str, str]
     team: str
     target: tuple[str, str] | None
+    # look each comment step up by its client id before posting it, as on resume: its event may
+    # come again after the post landed and its ledger write was lost
+    redelivered: bool = False
 
 
 M_TITLE = (
@@ -79,7 +89,7 @@ ATTACHED = ("already been linked", "Duplicate attachment", "Unable to create iss
 NO_FOLLOW = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK
 
 
-def context(cfg, role, gql, *, ident, issue_id, sid, resume, project, target):
+def context(cfg, role, gql, *, key, ident, issue_id, sid, resume, project, target):
     return Context(
         ident=ident,
         issue_id=issue_id,
@@ -88,7 +98,7 @@ def context(cfg, role, gql, *, ident, issue_id, sid, resume, project, target):
         resume=resume,
         project=project,
         workdir=cfg.run_dir(ident),
-        gql=functools.partial(gql, service=cfg.roles[role].key),
+        gql=functools.partial(gql, service=key),
         humans=tuple(e.lower() for e in cfg.human_members),
         states=cfg.states,
         repos=cfg.project_repos,
@@ -102,12 +112,32 @@ def for_run(cfg, role, gql, spec: Spec):
         cfg,
         role,
         gql,
+        key=cfg.roles[role].key,
         ident=spec.issue,
         issue_id=spec.uuid,
         sid=spec.sid,
         resume=spec.mode == "resume",
         project=spec.project,
         target=repo_slug(spec.target) if spec.target else None,
+    )
+
+
+def for_claim(cfg, claim: Claim, gql, *, attempt: int) -> Context:
+    """Writes as the claim's account, whatever the role's is now."""
+    return replace(
+        context(
+            cfg,
+            claim.role,
+            gql,
+            key=claim.key,
+            ident=claim.issue,
+            issue_id=claim.uuid,
+            sid=claim.sid,
+            resume=attempt > 1,
+            project=claim.project,
+            target=claim.target,
+        ),
+        redelivered=True,
     )
 
 
@@ -153,30 +183,61 @@ def _guarded_move(ctx, issue, ident, to, frm):
         log("writeback", "skip", ident, reason=f"move to {to}: issue is {now}")
 
 
+def _attempt(record):
+    return (
+        isinstance(record, dict)
+        and record.keys() <= {"started_at", "seq", "ended_at"}
+        and isinstance(record.get("started_at"), str)
+        and type(record.get("seq")) is int
+        and record["seq"] >= 0
+        and isinstance(record.get("ended_at", ""), str)
+    )
+
+
+def _entry(value):
+    if not isinstance(value, dict) or not value.keys() <= {"steps", "attempts"}:
+        return False
+    steps, attempts = value.get("steps", []), value.get("attempts", {})
+    return (
+        isinstance(steps, list)
+        and all(isinstance(s, str) for s in steps)
+        and isinstance(attempts, dict)
+        and all(n.isdigit() and _attempt(r) for n, r in attempts.items())
+    )
+
+
 def _ledger(ctx):
+    """{sid: {"steps": [step, ...], "attempts": {"<attempt>": {"started_at", "seq", "ended_at"}}}}:
+    each attempt's session comment start, last written number and, once written, end; anything
+    else reads as empty.
+    """
     try:
         with os.fdopen(os.open(os.path.join(ctx.workdir, LEDGER), NO_FOLLOW), "rb") as f:
             data = json.load(f)
     except (OSError, ValueError):
         return {}
-    valid = isinstance(data, dict) and all(
-        isinstance(v, list) and all(isinstance(s, str) for s in v) for v in data.values()
-    )
+    valid = isinstance(data, dict) and all(_entry(v) for v in data.values())
     return data if valid else {}
 
 
+def _done(ctx):
+    return _ledger(ctx).get(ctx.sid, {}).get("steps", [])
+
+
 def _step(ctx, step, call, cid=None):
-    if step in _ledger(ctx).get(ctx.sid, []):
+    if step in _done(ctx):
         return None
     try:
-        # on resume an unledgered post may have landed with its ledger write lost
+        # on resume or redelivery an unledgered post may have landed with its ledger write lost
         found = (
-            cid is not None and ctx.resume and find_comment(ctx.gql, cid, ctx.issue_id) is not None
+            cid is not None
+            and (ctx.resume or ctx.redelivered)
+            and find_comment(ctx.gql, cid, ctx.issue_id) is not None
         )
         if not found:
             call()
         ledger = _ledger(ctx)
-        ledger.setdefault(ctx.sid, []).append(step)
+        ledger.setdefault(ctx.sid, {}).setdefault("steps", []).append(step)
         save(os.path.join(ctx.workdir, LEDGER), json.dumps(ledger))
     except (LinearError, Unavailable, OSError, subprocess.SubprocessError) as e:
         _error(ctx, step, e)
@@ -190,19 +251,22 @@ def _post(ctx, step, body):
     return _step(ctx, step, lambda: comment(ctx.gql, ctx.issue_id, body, cid), cid)
 
 
-def progress(ctx, event: Progress) -> None:
+def progress(ctx, event: Progress) -> bool:
     # raises only Stopped: an on_event exception stops the Delegate's session
     try:
         if not isinstance(event, Progress):
-            return
+            return True
         task = TASKS[ctx.role]
         if event.name == "start":
-            _post(ctx, "start", say(task.start, event.text))
-        else:
-            digest = hashlib.sha256(event.text.encode()).hexdigest()[:12]
+            return _post(ctx, "start", say(task.start, event.text)) is None
+        digest = hashlib.sha256(event.text.encode()).hexdigest()[:12]
+        return (
             _post(ctx, f"progress:{event.name}:{digest}", f"Progress ({event.name}): {event.text}")
+            is None
+        )
     except Exception as e:  # noqa: BLE001  # A sink failure must not stop the run.
         _error(ctx, "sink", e)
+        return False
 
 
 def _read_file(path, workdir):
@@ -334,12 +398,143 @@ def _finish(ctx, o):
     ):
         return False
 
-    return (
-        _step(
-            ctx, f"move:{state}", lambda: _guarded_move(ctx, issue, ctx.ident, state, "in_progress")
+    if _step(
+        ctx, f"move:{state}", lambda: _guarded_move(ctx, issue, ctx.ident, state, "in_progress")
+    ):
+        return False
+    # the write-back is complete: Recover replays a valid outcome's write-back until this is ledgered
+    return _step(ctx, "outcome", lambda: None) is None
+
+
+def _session(ctx, cfg, client, attempt, *, gql, now, end=None) -> bool:
+    """The attempt's session comment, as the harness: running at Begun, its `end` (rc, outcome,
+    limit) at Finished, each written once.
+    """
+    record = _ledger(ctx).get(ctx.sid, {}).get("attempts", {}).get(str(attempt))
+    record = record or {"started_at": now(), "seq": 0}
+    if "ended_at" in record or end is None and record["seq"]:
+        return True
+    rec = run_comments.base(
+        sid=ctx.sid,
+        workdir=ctx.workdir,
+        client=client,
+        started_at=record["started_at"],
+        info=lambda: LinearRun.attach(ctx.ident, cfg=cfg, sid=ctx.sid).session_info(),
+        seq=record["seq"],
+    )
+    harness = functools.partial(gql, service=cfg.harness_key, timeout=run_comments.LIMIT)
+    if end is None:
+        error = run_comments.post(ctx.ident, rec, gql=harness)
+    else:
+        ended_at = now()
+        rc, outcome, limited = end
+        error = run_comments.post(
+            ctx.ident, rec, gql=harness, rc=rc, ended_at=ended_at, outcome=outcome, limit=limited
+        )
+        if error is None:
+            record = {**record, "ended_at": ended_at}
+            error = run_comments.repair(ctx.ident, ctx.issue_id, rec, gql=harness)
+    if error is None or "ended_at" in record:
+        record = {**record, "seq": rec["seq"]}
+    try:
+        ledger = _ledger(ctx)
+        ledger.setdefault(ctx.sid, {}).setdefault("attempts", {})[str(attempt)] = record
+        save(os.path.join(ctx.workdir, LEDGER), json.dumps(ledger))
+    except OSError as e:
+        error = error or one_line(e)
+    if error:
+        log("writeback", "registry-error", ctx.ident, sid=ctx.sid, error=error)
+    return error is None
+
+
+def _limited(ctx, runs_log, claim, attempt, resets_at) -> bool:
+    """A usage limit: its comment once per sid; this attempt's guarded move to In Review and its
+    runs.jsonl row, each once.
+    """
+    at = local_time(resets_at)
+    move = f"limit-move:{attempt}"
+    moved = move in _done(ctx) or (
+        _post(
+            ctx,
+            "limit",
+            say(LIMIT, f"resets at {at}." if at else "reset time unknown.")
+            + subscribe(ctx.gql, ctx.issue_id, ctx.humans),
+        )
+        is None
+        and _step(
+            ctx,
+            move,
+            lambda: _guarded_move(ctx, ctx.issue_id, ctx.ident, "in_review", "in_progress"),
         )
         is None
     )
+    noted = _step(
+        ctx,
+        f"limit-row:{attempt}",
+        lambda: runs.note_limit(
+            runs_log,
+            issue=ctx.ident,
+            sid=ctx.sid,
+            client=claim.client,
+            resets_at=at,
+            delegate_kind=claim.delegate_kind,
+        ),
+    )
+    return moved and noted is None
+
+
+def _outcome(data) -> Outcome:
+    """A Finished event's outcome fields as an Outcome; raises ValueError."""
+    names = {f.name for f in fields(Outcome)}
+    if not isinstance(data, dict) or data.keys() != names:
+        raise ValueError(f"outcome: want the fields {', '.join(sorted(names))}")
+    for name, value in data.items():
+        if name in ("questions", "files"):
+            valid = isinstance(value, list) and all(isinstance(v, str) for v in value)
+        else:
+            valid = isinstance(value, str) and (name != "status" or value in STATUSES)
+        if not valid:
+            raise ValueError(f"outcome {name}: {value!r}")
+    return Outcome(
+        OutcomeStatus(data["status"]),
+        data["title"],
+        data["summary"],
+        data["questions"],
+        data["url"],
+        data["files"],
+        data["deliverable"],
+    )
+
+
+def deliver(cfg, issue: str, workdir: str, event: DelegateEvent, *, gql, now=timestamp) -> bool:
+    """Writes the (issue, event.sid) run's event back as its start row's claim, each step once
+    however often the event arrives; False when a write failed. Raises ConfigError or ValueError,
+    before any write, on what it cannot write.
+    """
+    if not re.fullmatch(ISSUE_ID, issue):
+        raise ConfigError(f"bad issue id: {issue}")
+    if os.path.abspath(workdir) != os.path.abspath(cfg.run_dir(issue)):
+        raise ConfigError(f"--workdir {workdir}: {issue}'s is {cfg.run_dir(issue)}")
+    attempt = event.attempt
+    if attempt is None:  # DelegateEvent requires one
+        raise ValueError("attempt: missing")
+    claim = runs.claim(cfg.runs_log, issue, event.sid)
+    if claim.role not in TASKS:
+        raise ConfigError(f"{issue}: role {claim.role!r} has no write-back")
+    outcome = None if event.outcome is None else _outcome(event.outcome)
+    ctx = for_claim(cfg, claim, gql, attempt=attempt)
+    session = functools.partial(_session, ctx, cfg, claim.client, attempt, gql=gql, now=now)
+    if event.kind == "begun":
+        return session()
+    if event.kind == "progress":
+        return progress(ctx, Progress(event.name or "", event.text or ""))
+    # Finished: the outcome (once ledgered, never again), the limit, then the session's end
+    ok = outcome is None or "outcome" in _done(ctx) or finish(ctx, outcome)
+    if event.limit is not None:
+        ok = _limited(ctx, cfg.runs_log, claim, attempt, event.limit["resets_at"]) and ok
+    elif outcome is None:
+        log("writeback", "no-outcome", ctx.ident, sid=ctx.sid, error=event.error or "no result")
+    return session(end=(event.returncode, outcome, event.limit is not None)) and ok
 
 
 def limit(ctx, resets_at: float | None) -> bool:
