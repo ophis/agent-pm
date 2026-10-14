@@ -36,6 +36,7 @@ from agent_pm.session.engine.types import (
     TurnEnd,
     Word,
 )
+from agent_pm.session.hosts.base import HostProcess
 from agent_pm.session.modes import tui, tui_hook
 
 from session.tests import fake_adapter
@@ -253,6 +254,15 @@ class AttachTest(Base):
     def setUp(self):
         super().setUp()
         self.process = self.host.create(NAME, SID)
+
+    def test_a_nonterminal_host_process_cannot_be_attached_as_tui(self):
+        state = self.state()
+        process = mock.create_autospec(HostProcess, instance=True)
+        process.record.return_value = self.process.record()
+        self.host.processes[NAME] = process
+        with self.assertRaisesRegex(DriverError, "session w1 has no terminal"):
+            tui.TuiMode.attach(NAME, state, self.adapter, host=self.host)
+        process.close.assert_not_called()
 
     def attach(self, *lines, adapter=None) -> tui.TuiMode:
         """TuiMode.attach of self.adapter (else `adapter`) on a session dir with session.json and
@@ -1069,6 +1079,14 @@ class SendScreenTest(Base):
 
 
 class CloseStopTest(Base):
+    def test_close_accepts_a_nonterminal_host_process_and_removes_mode_state(self):
+        self.write_state(self.state())
+        process = mock.create_autospec(HostProcess, instance=True)
+        self.host.processes[NAME] = process
+        tui.TuiMode.close(NAME, host=self.host)
+        process.close.assert_called_once_with()
+        self.assertNoSessionDir()
+
     def test_close_kills_the_session_and_removes_its_dir(self):
         mode = self.started()
         self.append(record("tool"))

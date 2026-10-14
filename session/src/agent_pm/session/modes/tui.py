@@ -39,7 +39,7 @@ from agent_pm.session.engine.types import (
     Stderr,
     Word,
 )
-from agent_pm.session.hosts.base import Displayable, Host, Terminal
+from agent_pm.session.hosts.base import Displayable, Host, HostProcess, Terminal
 from agent_pm.session.modes import tui_hook
 from agent_pm.session.modes.base import RunningMode, identity_drop
 from agent_pm.utils import CONFIG_NAME as NAME
@@ -141,13 +141,10 @@ class _Store:
                 found.append((label, payload))
         return found, offset + end
 
-    def process(self) -> Terminal | None:
+    def process(self) -> HostProcess | None:
         if self.name not in self.host.list():
             return None
-        process = self.host.attach(self.name)
-        if not isinstance(process, Terminal):
-            raise DriverError(f"session {self.name} has no terminal")
-        return process
+        return self.host.attach(self.name)
 
     def holder(self) -> str | None:
         process = self.process()
@@ -440,6 +437,8 @@ class TuiMode(RunningMode):
                 f"no tui session {name}: runtime {state['runtime']!r} has no tui mode"
             )
         terminal = store.process()
+        if terminal is not None and not isinstance(terminal, Terminal):
+            raise DriverError(f"session {name} has no terminal")
         receipt = None if terminal is None else terminal.record()
         if terminal is None or receipt is None or receipt.sid != info.sid:
             raise DriverError(f"no tui session {name}")

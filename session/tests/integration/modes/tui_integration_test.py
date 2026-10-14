@@ -1,9 +1,10 @@
-"""A hook firing while close removes its mode state recreates no files."""
+"""Tui cleanup retires hook paths and closes arbitrary Host processes."""
 
 import os
 import subprocess
 import tempfile
 import unittest
+from pathlib import Path
 from unittest import mock
 
 from agent_pm.session.engine.types import Spec
@@ -13,7 +14,7 @@ from session.tests import fake_adapter
 from session.tests.case import Case
 from session.tests.fakes.terminal import ScreenHost
 from session.tests.source_roots import PACKAGE_ROOTS
-from session.tests.tui_support import SID
+from session.tests.tui_support import SID, Live
 
 NAME = "w1"
 
@@ -56,6 +57,21 @@ class CloseTest(Case):
         self.assertIn(b"session.json", hooks[0].stderr)
         self.assertFalse(os.path.lexists(os.path.join(root, NAME)))
         self.assertEqual(os.listdir(root), [f"{NAME}.lock"])
+
+
+class RawSessionCloseTest(Live):
+    def test_legacy_close_removes_an_untagged_session_and_its_mode_state(self):
+        name = "untagged"
+        created = self.server.tmux("new-session", "-d", "-s", name, "cat", "-")
+        self.assertEqual(created.returncode, 0, created.stderr)
+        self.assertEqual(self.server.option(name, "@kind"), "")
+        folder = Path(self.agent_pm, "tui", name)
+        folder.mkdir(parents=True)
+        (folder / "session.json").write_text("{}")
+        self.driver.close(name)
+        self.assertNotEqual(self.server.tmux("has-session", "-t", f"={name}").returncode, 0)
+        self.assertFalse(folder.exists())
+        self.driver.close(name)
 
 
 if __name__ == "__main__":
