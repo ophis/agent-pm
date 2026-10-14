@@ -60,6 +60,7 @@ class RecordingHost(Host):
                 "argv": list(launch.argv),
                 "cwd": launch.cwd,
                 "env": dict(launch.env),
+                "blocked_signals": launch.blocked_signals,
                 "display": display,
                 "events": events,
                 "record": record,

@@ -23,11 +23,21 @@ from agent_pm.delegate import (
 from agent_pm.delegate.engine.drivers import InstructionDriver
 from agent_pm.delegate.engine.harness_delegate import HarnessDelegate
 from agent_pm.delegate.engine.state import RunState
+from agent_pm.session import (
+    SIGNALS,
+    DriverError,
+    Exited,
+    Launch,
+    LimitHit,
+    Liveness,
+    Reply,
+    Usage,
+    Window,
+)
 from agent_pm.session import ConfigError as SessionConfigError
-from agent_pm.session import DriverError, Exited, Launch, LimitHit, Liveness, Reply, Usage, Window
 from agent_pm.utils import Record
 
-from delegate.tests.case import REPO, child_env
+from delegate.tests.case import REPO, SRC, child_env
 from delegate.tests.fakes.harness_session import (
     FailingSession,
     HarnessSession,
@@ -645,6 +655,43 @@ class FailingHost(RecordingHost):
 class RefusedEvents(RecordingHost):
     def events_path(self, events):
         raise SessionConfigError(f"events file {events}: tmux would misread it")
+
+
+class RootedSession(HarnessSession):
+    asked: list = []
+    failure: Exception | None = None
+
+    @classmethod
+    def class_roots(cls, runtime):
+        cls.asked.append(runtime)
+        if cls.failure is not None:
+            raise cls.failure
+        return ("/extra/root", SRC["session"])
+
+
+class HarnessLaunch(HarnessCase):
+    def test_pythonpath_is_the_harness_import_roots_not_the_callers(self):
+        RootedSession.asked, RootedSession.failure = [], None
+        with mock.patch.dict(os.environ, {"PYTHONPATH": "/caller/only"}):
+            self.make(session_cls=RootedSession, host="agent", harness_host="harness").detach()
+        roots = (SRC["delegate"], SRC["session"], SRC["utils"], REPO, "/extra/root")
+        self.assertEqual(RecordingHost.launches[0]["env"]["PYTHONPATH"], os.pathsep.join(roots))
+        self.assertEqual(RootedSession.asked[-1], "fake")
+
+    def test_an_unloadable_class_is_refused_writing_nothing(self):
+        RootedSession.asked, RootedSession.failure = [], SessionConfigError("[adapters.fake]: no x")
+        with self.assertRaises(ConfigError) as caught:
+            self.make(session_cls=RootedSession)
+        self.assertEqual(str(caught.exception), "[adapters.fake]: no x")
+        self.assertFalse(os.path.lexists(self.work))
+
+    def test_the_harness_runs_in_the_agents_cwd_with_its_signals_blocked(self):
+        project = os.path.join(self.home, "project")
+        os.mkdir(project)
+        spec = Spec("input", self.work, runtime="fake", sid=SID, cwd=project)
+        self.make(spec=spec).detach()
+        launch = RecordingHost.launches[0]
+        self.assertEqual((launch["cwd"], launch["blocked_signals"]), (project, SIGNALS))
 
 
 class Names(HarnessCase):

@@ -62,10 +62,13 @@ class Base(ApplicationCase):
 
     def delegate_cls(self) -> type[HarnessDelegate]:
         """HarnessDelegate on this test's driver; its run returns self.ran when set. Its Session
-        class is configured apart from the shared one.
+        class is configured apart from the shared one and loads no class by name (the driver holds
+        the fake runtime).
         """
         case, driver = self, self.driver
-        session_cls = type("CliSession", (driver.session_cls,), {})
+        session_cls = type(
+            "CliSession", (driver.session_cls,), {"class_roots": classmethod(lambda _cls, _runtime: ())}
+        )
 
         class Driven(HarnessDelegate):
             def __init__(self, role, spec, **placement):

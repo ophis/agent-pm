@@ -9,13 +9,12 @@ import sys
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, fields, is_dataclass, replace
 
-import agent_pm.session as session_package
 import agent_pm.utils as utils_package
 from agent_pm.delegate import config
 from agent_pm.delegate.composer import Composer, DelegateConfig, RunConfig, Team, teams
 from agent_pm.delegate.engine.base import Delegate
 from agent_pm.delegate.engine.callback import EventCallback
-from agent_pm.delegate.engine.config import package_dirs
+from agent_pm.delegate.engine.config import module_roots, package_dirs
 from agent_pm.delegate.engine.drivers import AgentDriver, Driver, InstructionDriver
 from agent_pm.delegate.engine.plan import plan
 from agent_pm.delegate.engine.runner import execute
@@ -56,8 +55,8 @@ from agent_pm.utils import (
     Display,
     Record,
     Status,
-    import_env,
     load_class,
+    source_path,
     thaw,
     under,
 )
@@ -591,8 +590,19 @@ class HarnessDelegate(Delegate):
         return state
 
     def _harness_launch(self, state: _State) -> Launch:
+        """The harness imports from the delegate, session and utils roots, then from its session
+        class's and the classes that session loads by name for the run's runtime.
+        """
+        try:
+            roots = (
+                *module_roots(),
+                *utils_package.module_roots(sys.modules[self.session_cls.__module__]),
+                *self.session_cls.class_roots(state.plan.runtime),
+            )
+        except (ValueError, SessionConfigError) as error:
+            raise ConfigError(str(error)) from None
         environment = {key: value for key, value in os.environ.items() if key != "PYTHONPATH"}
-        environment.update(import_env(config, session_package, utils_package))
+        environment.update(source_path(roots))
         return Launch(
             (sys.executable, "-P", "-m", "agent_pm.delegate.engine.harness_delegate", self.workdir),
             cwd=state.plan.session.access.cwd or self.workdir,
@@ -604,11 +614,12 @@ class HarnessDelegate(Delegate):
         """`state` saved detached before its harness starts; `previous` again when it cannot."""
         state = replace(state, detached=True)
         record = self._record(state)
+        launch = self._harness_launch(state)
         self._save(state)
         try:
             self._harness_host.detach(
                 state.harness_name,
-                self._harness_launch(state),
+                launch,
                 display=state.display,
                 events=state.events,
                 record=record,

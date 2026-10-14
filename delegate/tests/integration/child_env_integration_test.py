@@ -1,4 +1,6 @@
-"""Harness and Composer caller environments in source and installed package layouts."""
+"""Harness and Composer caller environments in source and installed package layouts. The harness
+also imports its session class (here the test's, under REPO).
+"""
 
 import json
 import os
@@ -84,8 +86,8 @@ class ChildEnvironments(Case):
         self.assertEqual(result.returncode, 0, result.stderr)
         return json.loads(result.stdout)
 
-    def assert_environments(self, actual, expected):
-        self.assertEqual(actual["harness"], expected)
+    def assert_environments(self, actual, expected, *, harness):
+        self.assertEqual(actual["harness"], harness)
         for label, commands, gate in (
             ("commands", ["command"], ""),
             ("gate", [], "gate"),
@@ -98,10 +100,14 @@ class ChildEnvironments(Case):
                 )
 
     def test_source_callers_supply_only_the_three_owned_import_roots(self):
-        expected = {
-            "PYTHONPATH": os.pathsep.join(SRC[name] for name in ("delegate", "session", "utils"))
-        }
-        self.assert_environments(self.caller_environments(), expected)
+        owned = tuple(SRC[name] for name in ("delegate", "session", "utils"))
+        self.assert_environments(
+            self.caller_environments(),
+            {"PYTHONPATH": os.pathsep.join(owned)},
+            harness={"PYTHONPATH": os.pathsep.join((*owned, REPO))},
+        )
 
     def test_installed_callers_supply_no_pythonpath(self):
-        self.assert_environments(self.caller_environments(installed=True), {})
+        self.assert_environments(
+            self.caller_environments(installed=True), {}, harness={"PYTHONPATH": REPO}
+        )
