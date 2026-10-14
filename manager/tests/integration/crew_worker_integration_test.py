@@ -33,7 +33,8 @@ def running(pid):
     return bool(stat) and not stat.startswith("Z")
 def note(what, **more):
     with open(log, "a") as f:
-        f.write(json.dumps({"what": what, "pid": os.getpid(), "argv": sys.argv[3:], **more}) + "\\n")
+        entry = {"what": what, "pid": os.getpid(), "argv": sys.argv[3:], "cwd": os.getcwd()}
+        f.write(json.dumps({**entry, **more}) + "\\n")
 try:
     with open(log) as f:
         before = [json.loads(line)["pid"] for line in f]
@@ -114,6 +115,7 @@ class DialogTest(LiveCrew):
         self.assertIn("session w1: waits on a dialog: Trust this folder?", res.stderr.splitlines())
         self.wait_event("w1", "blocked")
         self.assertEqual(self.server.option("w1", "@state"), "blocked")
+        self.assertIn("Trust this folder?", self.ok(self.session("read", "w1")).stdout)
 
 
 class RestartTest(LiveCrew):
@@ -135,7 +137,8 @@ class RestartTest(LiveCrew):
         self.assertEqual((record.detail, self.roster()["w1"].record), ("ext", record))
         self.wait_event("w1", "done")
         (begun,) = logged(log)
-        self.assertEqual(begun["what"], "start")
+        self.assertEqual((begun["what"], begun["cwd"]), ("start", self.cwd))
+        self.assertTrue(has_pair(begun["argv"], "--session-id", record.sid), begun["argv"])
         restarted = self.record(self.session("restart", "w1", **self.scene("w1")))
         self.assertEqual((restarted.sid, restarted.detail), (record.sid, "ext"))
         _, ended, resumed = self.until(

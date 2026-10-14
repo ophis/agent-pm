@@ -50,9 +50,13 @@ class RoleCase(LiveCrew):
         harness, tui = record.sessions
         self.wait_event(tui, "done")
         self.kill(harness)
-        if self.live(tui):  # the harness, stopping, may close it first
-            self.kill(tui)
-        self.until(lambda: ["outcome", "error"] in self.words(harness), "the harness's outcome")
+        self.server.tmux(
+            "kill-session", "-t", f"={tui}"
+        )  # the harness, stopping, may close it first
+        self.until(
+            lambda: self.gone(tui) and ["outcome", "error"] in self.words(harness),
+            f"{tui} gone, the harness's outcome",
+        )
         out = self.ok(self.crew("attach")).stdout.splitlines()
         self.assertIn(f"resume: agent-pm-crew resume --manager mgr {name}", out)
         self.assertEqual(self.roster()[name].state, State.GONE)
