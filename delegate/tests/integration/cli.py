@@ -19,7 +19,7 @@ from session.tests.integration.adapters.claude import fake_claude
 from session.tests.integration.adapters.codex import fake_codex
 from utils.tests.sandbox import reap
 
-CLI = (*PY, "-m", "agent_pm.delegate.cli")
+RUN = (*PY, "-m", "agent_pm.delegate.cli", "run")
 SID = "0f8fad5b-d9cb-469f-a165-70867728950e"
 WAIT = 30  # seconds
 RESETS = 1760000000
@@ -95,7 +95,7 @@ class Integration(Runs):
 
     def argv(self, *extra) -> list[str]:
         return [
-            *CLI,
+            *RUN,
             "--role",
             self.ROLE,
             "--input",
@@ -212,7 +212,7 @@ class CodexIntegration(Runs):
         with open(self.scenario, "w") as f:
             json.dump({"steps": steps, **scenario}, f)
         argv = [
-            *CLI,
+            *RUN,
             "--runtime",
             "codex",
             "--role",

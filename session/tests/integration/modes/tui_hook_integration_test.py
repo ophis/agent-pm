@@ -25,6 +25,7 @@ from session.tests.tui_hook_support import (
     MarkingCases,
     PayloadCases,
     RecordCases,
+    descriptor,
     write_state,
 )
 
@@ -65,10 +66,8 @@ runpy.run_path(path, run_name="__main__")
     def test_adapter_error_is_one_stderr_line_without_a_record_or_mark(self):
         callback = os.path.join(self.root, "adapter.py")
         with open(callback, "w") as file:
-            file.write(
-                'def on_hook(label, payload, state):\n    raise RuntimeError("first\\nsecond")\n'
-            )
-        self.state["adapter_hook"] = "adapter"
+            file.write('def on_hook(call):\n    raise RuntimeError("first\\nsecond")\n')
+        self.state["adapter_hook"] = descriptor("adapter")
         write_state(self.dir, self.state)
         self.assertEqual(
             self.hook("stop", {"text": "payload"}), "tui_hook: RuntimeError: first second\n"
@@ -85,7 +84,7 @@ class ErrorLoggingTest(HookBase):
             file.write('raise RuntimeError("first\\nsecond")\n')
         with open(os.path.join(package, "callback.py"), "w") as file:
             file.write("def on_hook(*args): pass\n")
-        write_state(self.dir, {**self.state, "adapter_hook": "broken_package.callback"})
+        write_state(self.dir, {**self.state, "adapter_hook": descriptor("broken_package.callback")})
         self.assertEqual(self.hook("stop"), "tui_hook: RuntimeError: first second\n")
         with open(os.path.join(self.dir, "hook.log")) as file:
             trace = file.read()
@@ -97,10 +96,8 @@ class ErrorLoggingTest(HookBase):
     def test_adapter_failures_append_full_tracebacks_without_a_record_or_mark(self):
         callback = os.path.join(self.root, "adapter.py")
         with open(callback, "w") as file:
-            file.write(
-                'def on_hook(label, payload, state):\n    raise RuntimeError("first\\nsecond")\n'
-            )
-        self.state["adapter_hook"] = "adapter"
+            file.write('def on_hook(call):\n    raise RuntimeError("first\\nsecond")\n')
+        self.state["adapter_hook"] = descriptor("adapter")
         write_state(self.dir, self.state)
         error_log = os.path.join(self.dir, "hook.log")
         for count in (1, 2):
@@ -173,9 +170,9 @@ class PayloadTest(PayloadCases, HookBase):
         callback = os.path.join(self.root, "adapter.py")
         with open(callback, "w") as file:
             file.write(
-                'def on_hook(label, payload, state):\n    payload["length"] = len(payload["a"])\n'
+                'def on_hook(call):\n    return {**call.payload, "length": len(call.payload["a"])}\n'
             )
-        self.state["adapter_hook"] = "adapter"
+        self.state["adapter_hook"] = descriptor("adapter")
         write_state(self.dir, self.state)
         self.assertEqual(self.hook("tool", data), "")
         self.assertEqual(
@@ -201,12 +198,13 @@ class PayloadTest(PayloadCases, HookBase):
         callback = os.path.join(self.root, "adapter.py")
         with open(callback, "w") as file:
             file.write(
-                """def on_hook(label, payload, state):
-    payload["original_length"] = len(payload.get("text", ""))
-    return label != "ask"
+                """def on_hook(call):
+    if call.label == "ask":
+        return None
+    return {**call.payload, "original_length": len(call.payload.get("text", ""))}
 """
             )
-        self.state["adapter_hook"] = "adapter"
+        self.state["adapter_hook"] = descriptor("adapter")
         write_state(self.dir, self.state)
         self.assertEqual(self.hook("tool", {"text": "x" * 5000}), "")
         record = self.records()[0]
@@ -233,7 +231,7 @@ class PayloadTest(PayloadCases, HookBase):
                 "adapter",
             ):
                 with self.subTest(kind=kind, module=name):
-                    write_state(self.dir, {**self.state, kind: name})
+                    write_state(self.dir, {**self.state, kind: descriptor(name)})
                     self.assertError(self.hook("stop"), kind.split("_")[0])
         self.assertNothingWritten()
 
@@ -244,16 +242,14 @@ class RecordsTest(RecordCases, HookBase):
         seen = os.path.join(self.root, "seen.jsonl")
         with open(callback, "w") as file:
             file.write(f"""import json
-def on_hook(word, payload, state):
+def on_hook(word, call):
     with open({self.hooks!r}) as journal:
         record = json.loads(journal.readlines()[-1])
-    assert record["payload"] == payload
+    assert record["payload"] == call.payload
     with open({seen!r}, "a") as output:
-        output.write(json.dumps([word, payload, state["host_state"]]) + "\\n")
+        output.write(json.dumps([word, call.payload, dict(call.state)]) + "\\n")
 """)
-        write_state(
-            self.dir, {**self.state, "host_hook": "host_callback", "host_state": {"key": 3}}
-        )
+        write_state(self.dir, {**self.state, "host_hook": descriptor("host_callback", {"key": 3})})
         payload = {"text": "x" * 5000}
         for label in ("tool", "stop", "other"):
             self.assertEqual(self.hook(label, payload), "")
@@ -314,7 +310,8 @@ for number in range(20):
         os.chmod(plain, 0o644)
         for tmux in (plain, os.path.join(self.root, "bin"), os.path.join(self.root, "missing")):
             with self.subTest(tmux):
-                write_state(self.dir, {**self.state, "host_state": {"executable": tmux}})
+                host = {**self.state["host_hook"], "state": {"executable": tmux}}
+                write_state(self.dir, {**self.state, "host_hook": host})
                 self.assertError(self.hook("stop"), tmux)
         self.assertEqual([r["label"] for r in self.records()], ["stop"] * 3)
         self.assertEqual((self.calls(), self.lines()), ([], ""))
@@ -382,7 +379,7 @@ with unittest.mock.patch("os.lstat", foreign_owner):
 """
         for kind in ("adapter_hook", "host_hook"):
             with self.subTest(kind=kind):
-                write_state(self.dir, {**self.state, kind: "agent_pm.callback"})
+                write_state(self.dir, {**self.state, kind: descriptor("agent_pm.callback")})
                 result = subprocess.run(
                     [
                         sys.executable,
@@ -419,9 +416,9 @@ with unittest.mock.patch("os.lstat", foreign_owner):
             with open(path, "w") as file:
                 file.write(f"with open({imported!r}, 'a') as marker: marker.write('imported\\n')\n")
                 file.write(
-                    "def on_hook(label, payload, state):\n    payload['callback_imported'] = True\n"
+                    "def on_hook(call):\n    return {**call.payload, 'callback_imported': True}\n"
                 )
-        self.state.update(adapter_hook="callback_package.nested.callback", words={})
+        self.state.update(adapter_hook=descriptor("callback_package.nested.callback"), words={})
         write_state(self.dir, self.state)
         return files, imported
 
@@ -540,9 +537,9 @@ with unittest.mock.patch("os.lstat", root_owner):
         callback = os.path.join(sources[1], "namespace", "nested", "callback.py")
         with open(callback, "w") as file:
             file.write(
-                "def on_hook(label, payload, state):\n    payload['callback_imported'] = True\n"
+                "def on_hook(call):\n    return {**call.payload, 'callback_imported': True}\n"
             )
-        self.state.update(adapter_hook="namespace.nested.callback", words={})
+        self.state.update(adapter_hook=descriptor("namespace.nested.callback"), words={})
         write_state(self.dir, self.state)
         roots = [*sources, *json.loads(SOURCE_ROOTS)]
         self.assertEqual(self.hook("stop", args=[self.dir, json.dumps(roots), "stop"]), "")
@@ -607,7 +604,7 @@ assert "callback_package" not in sys.modules
         )
         with open(callback, "w") as file:
             file.write(f"open({imported!r}, 'w').close()\n")
-        self.state["adapter_hook"] = "adapter"
+        self.state["adapter_hook"] = descriptor("adapter")
         write_state(self.dir, self.state)
         cases = {
             "malformed JSON": "not-json",
@@ -627,9 +624,9 @@ assert "callback_package" not in sys.modules
         callback = os.path.join(self.root, "adapter.py")
         with open(callback, "w") as file:
             file.write(
-                "def on_hook(label, payload, state):\n    payload['callback_imported'] = True\n"
+                "def on_hook(call):\n    return {**call.payload, 'callback_imported': True}\n"
             )
-        self.state.update(adapter_hook="adapter", words={})
+        self.state.update(adapter_hook=descriptor("adapter"), words={})
         write_state(self.dir, self.state)
         for name, roots in valid.items():
             with self.subTest(roots=name):
@@ -651,15 +648,17 @@ assert "callback_package" not in sys.modules
             file.write(
                 f"""import sys
 from source_marker import VALUE
-def on_hook(label, payload, state):
+def on_hook(call):
+    payload = dict(call.payload)
     payload["source"] = VALUE
     payload["roots"] = sys.path[:2]
     payload["counts"] = [sys.path.count(path) for path in sys.path[:2]]
     payload["import_roots"] = sys.path[:{len(roots)}]
     payload["tail"] = sys.path[{len(roots)}:]
+    return payload
 """
             )
-        self.state.update(adapter_hook="adapter", words={})
+        self.state.update(adapter_hook=descriptor("adapter"), words={})
         write_state(self.dir, self.state)
         script = """import io, json, runpy, sys
 path, folder, encoded = sys.argv[1:]

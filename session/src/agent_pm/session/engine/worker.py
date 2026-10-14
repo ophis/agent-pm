@@ -1,9 +1,7 @@
-"""Worker, a plain tui session agent-pm-session starts by name (FR-20): its state, WorkerState, in
-~/.agent-pm/workers/<sid>/worker.json (dir 0700, file 0600; by-name/<name> holds the sid its latest
-start used), its Record kept on its Host only once its early watch passes (EARLY s without its
-runtime exiting). resume is idempotent; restart and resume first retire the old session, then wait
-for its runtime's process group to exit: WAIT s, else kill it and wait again; still there, nothing
-starts (FR-36). Callers hold locked() around start, resume and restart: one worker starts once.
+"""Worker, a plain tui session started by name (FR-20): WorkerState in
+~/.agent-pm/workers/<sid>/worker.json (by-name/<name>: its latest sid); its Record on its Host once
+its early watch passes. restart and resume retire the old session and wait for its group (FR-36).
+Callers hold locked() around start, resume and restart.
 """
 
 from __future__ import annotations
@@ -232,9 +230,7 @@ class Worker:
             raise DriverError(f"{self.state.name}: {workdir}: {error.strerror or error}") from None
 
     def check(self, *, prompt: str, resume: bool) -> None:
-        """A start's validation: its sid not another worker's, then Session.preflight; writes,
-        closes and runs nothing.
-        """
+        """Its sid not another worker's, then Session.preflight; no effects."""
         data = read_regular(os.path.join(self.state.workdir(), STATE_FILE), limit=STATE_MAX)
         try:
             saved = json.loads(data) if data else None
@@ -310,9 +306,7 @@ class Worker:
             ) from None
 
     def replace(self, handle: HostProcess | None) -> None:
-        """Retire its session and close `handle` (its old process group, absent is fine), then wait
-        for that group: WAIT s, else kill it and wait again.
-        """
+        """Retire its session, close `handle`, wait WAIT s, else kill and wait again."""
         name = self.state.name
         self.session_cls.retire(name, host=self.state.host)
         if handle is None:

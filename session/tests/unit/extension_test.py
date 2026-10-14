@@ -34,6 +34,8 @@ TYPES = {
             "Effort",
             "Launch",
             "HookKind",
+            "HookCallback",
+            "HookCall",
             "Paste",
             "Key",
             "KeyPress",

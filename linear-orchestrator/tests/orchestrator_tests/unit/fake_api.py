@@ -48,9 +48,9 @@ class FakeApi:
         if name in self.errors:
             raise self.errors[name]
 
-    def show(self, name, split=None, split_from=None, opener=None):
+    def show(self, name, split=None, split_from=None, opener=None, *, command=None):
         calls = None if self.gql is None else len(self.gql().calls)
-        self.order.append(("show", name, split, split_from, opener, calls))
+        self.order.append(("show", name, split, split_from, opener, command, calls))
         return _answer(self.shown)
 
     def session_status(self, runtime, sid, cwd, *, workdir):

@@ -13,6 +13,7 @@ from agent_pm.session.engine.types import (
     ActivityState,
     ConfigError,
     DriverError,
+    HookCallback,
     Hosts,
     Key,
     KeyPress,
@@ -61,7 +62,6 @@ class HostProcess(ABC):
 
     @property
     def token(self) -> str | None:
-        """For Host.reclaim."""
         return None
 
     def publish(self, record: Record) -> None:
@@ -105,9 +105,7 @@ class HostProcess(ABC):
 
 
 class Terminal(HostProcess):
-    """send: into its input (Key names: the Adapter's). press: all translated first, else
-    ConfigError.
-    """
+    """send: into its input (Key names: the Adapter's)."""
 
     @abstractmethod
     def send(self, action: Paste | Key) -> None: ...
@@ -189,7 +187,7 @@ class Host(ABC):
         return [self.attach(name).row() for name in self.list(display)]
 
     def reclaim(self, token: str) -> HostProcess | None:
-        """token's live process group, its session gone or not; token is untrusted."""
+        """An untrusted token's live process group, else None."""
         return None
 
     def descendants(self, display: Display = None) -> list[str]:
@@ -207,8 +205,8 @@ class Host(ABC):
                 raise DriverError(f"events file {events}: {error.strerror}") from error
         return events
 
-    def hook_state(self, name: str, metadata: Mapping[str, str]) -> dict:
-        return {}
+    def hook_callback(self, name: str, metadata: Mapping[str, str]) -> HookCallback | None:
+        return None
 
     def protected_paths(self) -> tuple[str, ...]:
         return ()
@@ -236,10 +234,15 @@ class Host(ABC):
 
 
 class Displayable(ABC):
-    """show: None once shown, else an attach command; layout: display completed once its display destination is found."""
+    """show: None once shown, else an attach command; command: a shell command the Host runs to
+    show it instead, `{{session}}` the session name; layout: display completed once its display
+    destination is found.
+    """
 
     @abstractmethod
-    def show(self, name: str, *, display: Display = None) -> str | None: ...
+    def show(
+        self, name: str, *, display: Display = None, command: str | None = None
+    ) -> str | None: ...
 
     @abstractmethod
     def attach_command(self, name: str) -> str: ...

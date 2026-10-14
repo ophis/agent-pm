@@ -45,9 +45,7 @@ class Session(ABC):
 
     @abstractmethod
     def press(self, keys: Sequence[KeyPress]) -> None:
-        """Keys in KeyPress notation into its terminal: DriverError without one (headless,
-        in_process); ConfigError, nothing sent, when its Host cannot translate one.
-        """
+        """DriverError without a terminal; ConfigError, nothing sent, if one is untranslatable."""
 
     @abstractmethod
     def state(self) -> Liveness: ...
@@ -76,7 +74,7 @@ class Session(ABC):
     def displayable(self) -> bool: ...
 
     @abstractmethod
-    def show(self, *, display: Display = None) -> str | None: ...
+    def show(self, *, display: Display = None, command: str | None = None) -> str | None: ...
 
     @abstractmethod
     def attach_command(self) -> str: ...
@@ -133,9 +131,7 @@ class Session(ABC):
 
     @classmethod
     def retire(cls, name: str, *, host: str | None = None) -> None:
-        """Close session `name` on `host` (None: the default), live or not, absent fine, and drop
-        its tui state.
-        """
+        """Close session `name` on `host` whatever its state (absent fine); drop its tui state."""
         cls._hosted("retire")(name, host=host)
 
     @classmethod

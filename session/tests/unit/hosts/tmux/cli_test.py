@@ -10,7 +10,7 @@ from agent_pm.session.hosts.tmux import grid as grids
 
 from session.tests.case import Case
 from session.tests.tmux_fixtures import (
-    Tmux,
+    FakeTmux,
 )
 
 
@@ -37,7 +37,7 @@ class CliTest(Case):
         self.assertIn("By hand: agent-pm-session tile", " ".join(out.replace("-\n", "-").split()))
 
     def test_tile(self):
-        real, fake = grids.tile, Tmux()
+        real, fake = grids.tile, FakeTmux()
         tile = self.patch("tile", return_value=None)
         self.assertEqual(self.main("tile", "@3"), (0, "", ""))
         self.assertEqual(self.main("tile", "--no-wait", "@3"), (0, "", ""))

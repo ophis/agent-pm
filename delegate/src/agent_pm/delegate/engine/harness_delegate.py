@@ -18,7 +18,7 @@ from agent_pm.delegate.composer import Composer, DelegateConfig, RunConfig, Team
 from agent_pm.delegate.engine.base import Delegate
 from agent_pm.delegate.engine.callback import EventCallback
 from agent_pm.delegate.engine.config import package_dirs
-from agent_pm.delegate.engine.drivers import AgentDriver, Driver
+from agent_pm.delegate.engine.drivers import AgentDriver, Driver, InstructionDriver
 from agent_pm.delegate.engine.plan import plan
 from agent_pm.delegate.engine.runner import execute
 from agent_pm.delegate.engine.types import (
@@ -28,6 +28,7 @@ from agent_pm.delegate.engine.types import (
     Limit,
     Outer,
     Plan,
+    Preview,
     Result,
     Spec,
     Stopped,
@@ -98,7 +99,46 @@ class _State:
 
 
 class HarnessDelegate(Delegate):
-    def __init__(
+    def __init__(self, role: str, spec: Spec, **placement) -> None:
+        self._accept(role, spec, **placement)
+        try:
+            self.driver.preflight(self._state.plan.session)
+        except (SessionConfigError, DriverError) as error:
+            raise ConfigError(str(error)) from None
+        self._persist_new()
+
+    @classmethod
+    def preview(cls, role: str, spec: Spec, **placement) -> Preview:
+        """What the constructor would accept, without the session preflight; writes nothing."""
+        view = cls.__new__(cls)
+        view._accept(role, spec, **placement)
+        state = view._state
+        return Preview(
+            state.plan,
+            state.agent_name if state.plan.spec.mode == "tui" else None,
+            state.harness_name,
+            state.host,
+            state.harness_host,
+            state.callback,
+        )
+
+    @classmethod
+    def instruct(cls, role: str, spec: Spec) -> Result:
+        """Delivers the role's prompt to spec.out: no Session, no delegate.json."""
+        try:
+            composer = Composer(config=DelegateConfig(config.read_config()), team=spec.team)
+        except (OSError, ValueError) as error:
+            raise ConfigError(str(error)) from None
+        driver = InstructionDriver()
+        accepted = plan(
+            composer.resolve(role, spec.task),
+            replace(spec, team=composer.team),
+            driver=driver,
+            composition=composer,
+        )
+        return execute(accepted, driver=driver)
+
+    def _accept(
         self,
         role: str,
         spec: Spec,
@@ -156,10 +196,6 @@ class HarnessDelegate(Delegate):
                 ),
             ),
         )
-        try:
-            self.driver.preflight(accepted.session)
-        except (SessionConfigError, DriverError) as error:
-            raise ConfigError(str(error)) from None
         self.workdir = accepted.spec.workdir
         self._state = _State(
             role,
@@ -174,7 +210,6 @@ class HarnessDelegate(Delegate):
             1,
             {},
         )
-        self._persist_new()
 
     def _persist_new(self) -> None:
         try:
@@ -300,7 +335,11 @@ class HarnessDelegate(Delegate):
                 else _team(view._state.plan.spec.team),
             )
             view._settings = thaw(view.composer.config.values)
-            view.session_cls = session_cls or load_class(view._state.session_cls, Session)
+            view.session_cls = session_cls or (
+                Session
+                if view._state.session_cls == f"{Session.__module__}:{Session.__qualname__}"
+                else load_class(view._state.session_cls, Session)
+            )
             view._configure()
             view.session_cls.host(view._state.host)
             view.session_cls.host(view._state.harness_host)

@@ -74,7 +74,7 @@ max = "max"
 default = "tmux"
 
 [hosts.tmux]
-# TmuxHost (session/src/agent_pm/session/hosts/tmux/host.py), a thin wrap of tmux_host.py
+# TmuxHost (session/src/agent_pm/session/hosts/tmux/host.py)
 implementation = "agent_pm.session.hosts.tmux:TmuxHost"
 status_line = false
 workers_per_column = 3

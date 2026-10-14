@@ -28,6 +28,8 @@ __all__ = [
     "DriverError",
     "Effort",
     "Exited",
+    "HookCall",
+    "HookCallback",
     "HookError",
     "HookKind",
     "Hosts",
@@ -128,6 +130,49 @@ class ActivityState(StrEnum):
 
 class HookError(Exception):
     """One stderr line; the hook stops."""
+
+
+@dataclass(frozen=True)
+class HookCallback:
+    """A Tui's or Host's tui hook callback: module's on_hook, trusted only as a file of yours or
+    root's under the session's roots or roots (its own install's); state: its JSON data.
+    """
+
+    module: str
+    state: Mapping[str, object] = field(default_factory=dict)
+    roots: tuple[str, ...] = ()
+
+    def __post_init__(self):
+        if not isinstance(self.module, str) or not all(
+            part.isidentifier() for part in self.module.split(".")
+        ):
+            raise ConfigError(f"hook callback module {self.module!r:.80}: want a dotted name")
+        if not isinstance(self.state, Mapping):
+            raise ConfigError("hook callback state: want a mapping")
+        if (
+            not isinstance(self.roots, tuple)
+            or not all(map(printable_abs, self.roots))
+            or len(set(self.roots)) != len(self.roots)
+        ):
+            raise ConfigError("hook callback roots: want distinct printable absolute paths")
+
+    def fields(self) -> dict:
+        return {"module": self.module, "state": dict(self.state), "roots": list(self.roots)}
+
+
+@dataclass(frozen=True)
+class HookCall:
+    """A tui hook callback's input; state: its HookCallback.state. An adapter's on_hook(call)
+    returns the payload to journal (changed or not), or None to journal nothing and stop; a host's
+    on_hook(word, call) runs after the journal line and returns None.
+    """
+
+    label: str
+    payload: dict
+    sid: str
+    workdir: str
+    events: str | None
+    state: Mapping[str, object]
 
 
 def _member(enum, field: str, value):

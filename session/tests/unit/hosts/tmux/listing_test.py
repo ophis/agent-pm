@@ -13,7 +13,7 @@ from session.tests.tmux_fixtures import (
     HOST_PANES,
     LISTING,
     TMUX_KW,
-    Tmux,
+    FakeTmux,
     captured,
     expected_row,
     listed,
@@ -23,7 +23,7 @@ from session.tests.tmux_fixtures import (
 
 class ListingTest(Case):
     def listing(self, sessions, clients=(0, ""), panes=(0, ""), capture=(0, ""), match=None):
-        fake = Tmux(
+        fake = FakeTmux(
             results={
                 "list-sessions": sessions,
                 "list-clients": clients,

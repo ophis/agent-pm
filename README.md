@@ -43,7 +43,7 @@ flowchart TB
   end
   subgraph SE[agent_pm.session]
     SC["cli.py<br>agent-pm-session"]
-    DR["engine/: base · hosted · worker · forwarding · types · records<br>modes/: headless · tui · in_process<br>hosts/tmux/: host · tmux_host"]
+    DR["engine/: base · hosted · worker · forwarding · types · records<br>modes/: headless · tui · in_process<br>hosts/tmux/: host · transport · placement · grid"]
     subgraph AD[adapters/]
       CL[claude]
       CX[codex]
@@ -87,7 +87,7 @@ Before upgrading, close running agent-pm sessions: earlier sessions lack generat
 - `/agent-pm:tmux` and `ctmux`: removed, rebuilt by [TASK-356](https://linear.app/ophis-workgroup/issue/TASK-356).
 - `/agent-pm:manage`: coordinate the commander session through Crew; command guidance: `manager/skills/manage/SKILL.md`.
 - `/agent-pm:act-as <role>[:<task>] <input>`: run a core role in this conversation, on that task or one it picks: `delegate/skills/act-as/SKILL.md`.
-- Your own roles, tasks and templates, outside the plugin: `delegate/src/agent_pm/delegate/config.toml`'s `team_dirs` comment; the Delegate CLI's `--list` (`delegate/src/agent_pm/delegate/cli.py`) lists every role and task.
+- Your own roles, tasks and templates, outside the plugin: `delegate/src/agent_pm/delegate/config.toml`'s `team_dirs` comment; `agent-pm-delegate run --list` (`delegate/src/agent_pm/delegate/cli.py`) lists every role and task.
 
 ## Setup
 
@@ -109,7 +109,7 @@ launchd scheduling of router and promote returns with [TASK-379](https://linear.
 
 ### Local configuration migration
 
-Flat local files now fail validation. Move their top-level values into `[session]`, `[delegate]`, `[linear_orchestrator]` or `[manager]`, according to the project's `config.toml`. Prefix every table with that section: `[roles.engineer]` becomes `[delegate.roles.engineer]` for run settings, and `[linear_orchestrator.roles.engineer]` for board settings. Keep values and list contents unchanged. For a key defined by several layers, set it in every layer whose standalone reader needs the override; an upper packaged value takes precedence over a lower local value. Remove obsolete `show` keys. Old `core-new.local.toml` and `linear-new.local.toml` fragments belong under `delegate` and `linear_orchestrator` respectively. Migration is manual; no local file is rewritten.
+Flat local files now fail validation. Move their top-level values into `[session]`, `[delegate]`, `[linear_orchestrator]` or `[manager]`, according to the project's `config.toml`. Prefix every table with that section: `[roles.engineer]` becomes `[delegate.roles.engineer]` for run settings, and `[linear_orchestrator.roles.engineer]` for board settings. Keep values and list contents unchanged. For a key defined by several layers, set it in every layer whose standalone reader needs the override; an upper packaged value takes precedence over a lower local value. A `show` key belongs under `[delegate]` or `[delegate.roles.<role>]`. Old `core-new.local.toml` and `linear-new.local.toml` fragments belong under `delegate` and `linear_orchestrator` respectively. Migration is manual; no local file is rewritten.
 
 ```toml
 [session.hosts.tmux]
@@ -191,7 +191,7 @@ rm -rf ~/.agent-pm/logs/runs.log ~/.agent-pm/logs/router.log ~/.agent-pm/logs/pr
 
 ### Attended runs
 
-A `tui` run's give-up timeout, its default and where to set it: `delegate/src/agent_pm/delegate/config.toml`'s `idle_timeout` comment.
+A `tui` run's give-up timeout, its default and where to set it: `delegate/src/agent_pm/delegate/config.toml`'s `idle_timeout` comment. How a started `tui` session with a display is shown (a pane, only its attach command, or a command of yours): the same file's `show` comment.
 
 The old router's `--tui` is gone; the new router gains it in [TASK-332](https://linear.app/ophis-workgroup/issue/TASK-332).
 
@@ -242,6 +242,8 @@ Codex snapshots save flags and the merged Adapter, Access and Spec environment. 
 ## Access
 
 A run's `read` dirs and its role's tasks dir are never `--add-dir`: no runtime is granted write to them. Codex has no read-only-dir mechanism usable here, so it adds nothing for them: under `workspace-write` its sandbox reads the whole disk and writes only its roots; under the default `danger-full-access` (Runtime policy, above) it can write them too. Each runtime's grant and its limits: `delegate/src/agent_pm/delegate/config.toml`'s `read` comment.
+
+A `tui` run fails with a `ConfigError` before launch when its cwd, a write dir or a dir its runtime can write overlaps a TUI hook path: the tmux executable, the events file or `~/.agent-pm/tui` (`session/src/agent_pm/session/modes/base.py` `check_protection`).
 
 ## Tests
 

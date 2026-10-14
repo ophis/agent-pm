@@ -201,6 +201,7 @@ class Access(Fake):
                 "runtime": "a",
                 "output": {"type": "local"},
                 "idle_timeout": 60,
+                "show": "",
                 **kw,
             }
         )
@@ -641,30 +642,26 @@ class OwnedKeys(Fake):
                 self.local(local)
                 self.assertEqual(self.refused(overlays=(overlay,)), msg)
 
-    def test_show_is_an_unknown_key_at_every_level(self):
-        self.assertNotIn("show", RUN_KEYS)
-        self.assertNotIn("show", [f.name for f in fields(RunConfig)])
-        for local, overlay, msg in (
-            (
-                'show = "none"\n',
-                {},
-                f"config: {self.local_file}: unknown key 'show' in [delegate]",
-            ),
-            (
-                '[roles.writer]\nshow = "none"\n',
-                {},
-                "unknown key 'show' in roles.writer",
-            ),
-            ("", {"show": ""}, "run overlay: unknown key 'show' in [overlay]"),
-            (
-                "",
-                {"roles": {"writer": {"show": "none"}}},
-                "run overlay: unknown key 'show' in [overlay.roles.writer]",
-            ),
+    def test_show_resolves_global_then_role_then_overlay_and_is_one_line(self):
+        self.assertIn("show", RUN_KEYS)
+        self.assertEqual(self.resolved().show, "")
+        for local, overlays, want in (
+            ('show = "none"\n', (), "none"),
+            ('show = "none"\n[roles.writer]\nshow = "open {{session}}"\n', (), "open {{session}}"),
+            ('[roles.editor]\nshow = "none"\n', (), ""),
+            ('[roles.writer]\nshow = "none"\n', ({"show": ""},), ""),
+            ("", ({"roles": {"writer": {"show": "none"}}},), "none"),
         ):
-            with self.subTest(msg=msg):
+            with self.subTest(local=local, overlays=overlays):
                 self.local(local)
-                self.assertEqual(self.refused(overlays=(overlay,)), msg)
+                self.assertEqual(self.resolved(overlays=overlays).show, want)
+        for bad in ("a\nb", 7, "a\tb"):
+            with self.subTest(bad=bad):
+                self.local("")
+                self.assertEqual(
+                    self.refused(overlays=({"show": bad},)),
+                    f"show must be one line of shell command, got {bad!r:.80}",
+                )
 
 
 class Runtime(Fake):

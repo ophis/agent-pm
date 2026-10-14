@@ -97,3 +97,12 @@ class ShowTest(Case):
         self.assertEqual(len(after - before), 1)
         self.assertEqual(self.server.option("worker", "@pane"), "")
         self.assertIn("metadata refused", self.stderr.getvalue())
+
+    def test_a_command_runs_in_place_of_a_pane_with_the_session_name(self):
+        shown = os.path.join(self.home, "shown")
+        before = set(self.server.panes("=mgr:"))
+        self.assertIsNone(self.host.show("worker", command=f"printf %s {{{{session}}}} > {shown}"))
+        with open(shown) as f:
+            self.assertEqual(f.read(), "worker")
+        self.assertEqual(set(self.server.panes("=mgr:")), before)
+        self.assertEqual(self.server.option("worker", "@pane"), "")

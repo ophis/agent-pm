@@ -39,6 +39,7 @@ CONFIG = """\
 tier = 2
 effort = "high"
 idle_timeout = 60
+show = ""
 
 [output]
 type = "local"

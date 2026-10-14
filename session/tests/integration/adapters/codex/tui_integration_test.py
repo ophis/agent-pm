@@ -30,6 +30,7 @@ from agent_pm.session.engine.types import (
     Blocked,
     ConfigError,
     Exited,
+    HookCallback,
     LimitHit,
     Spec,
     TurnEnd,
@@ -1116,8 +1117,7 @@ class HookTest(Base):
             "events": None,
             "words": {},
             "tmux_path": sys.executable,
-            "adapter_hook": tui.__name__,
-            "adapter_state": {"store": SessionStore().root},
+            "adapter_hook": HookCallback(tui.__name__, {"store": SessionStore().root}).fields(),
         }
         (folder / "session.json").write_text(json.dumps(state))
         result = subprocess.run(

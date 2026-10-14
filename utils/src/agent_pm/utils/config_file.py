@@ -3,8 +3,9 @@
 Tables merge key by key; higher values and whole lists replace lower values. Each layer's local
 section overlays its file before the next layer. Sections use the package's final name, with
 hyphens replaced by underscores. Only supplied layers are read and validated against their own
-and lower files. Unknown top-level keys are rejected; nested tables are validated by their
-owners. Flat local keys are rejected. Explicit paths replace files while retaining
+and lower files; read_resources also always validates the local [utils] section, which accepts no
+keys without a utils resource. Unknown top-level keys are rejected; nested tables are validated by
+their owners. Flat local keys are rejected. Explicit paths replace files while retaining
 the defaults as their validation schema. Missing optional repository files contribute no keys.
 """
 

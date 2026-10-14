@@ -43,6 +43,7 @@ class RunConfig:
     cwd: str = ""
     role_title: str = ""
     idle_timeout: float
+    show: str
 
     def __post_init__(self):
         try:
@@ -78,6 +79,8 @@ class RunConfig:
             raise ConfigError("output.type is not set")
         if not isinstance(self.gate, str) or "\n" in self.gate or "`" in self.gate:
             raise ConfigError("gate must be one line of shell command without backticks")
+        if not isinstance(self.show, str) or not self.show.isprintable():
+            raise ConfigError(f"show must be one line of shell command, got {self.show!r:.80}")
         if not isinstance(self.language, str) or "\n" in self.language:
             raise ConfigError("language must be one line of text")
         if self.cwd and (

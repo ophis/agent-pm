@@ -71,8 +71,14 @@ def _state(prepared: Prepared, run: Tui, host: Host, metadata: Mapping[str, str]
         "words": {label: WORDS[kind] for label, kind in run.hooks.items() if kind in WORDS},
         "host": host.name,
         "generation": metadata["generation"],
-        **host.hook_state(spec.name or "", metadata),
-        **run.hook_state(),
+        **{
+            key: callback.fields()
+            for key, callback in (
+                ("adapter_hook", run.hook_callback()),
+                ("host_hook", host.hook_callback(spec.name or "", metadata)),
+            )
+            if callback is not None
+        },
     }
 
 
@@ -362,6 +368,7 @@ class TuiMode(RunningMode):
         hooks = (*host.protected_paths(), *([events] if events else []), store.root)
         spec = replace(spec, name=name, events=events, protect=(*spec.protect, *hooks))
         cls.check_protection(spec, adapter)
+        protected = spec
         spec = cls._noted(spec, adapter)
         roots = module_roots(agent_pm.session, agent_pm.utils)
         hook = store.hook_argv(roots)
@@ -374,6 +381,16 @@ class TuiMode(RunningMode):
         state = _state(prepared, run, host, metadata)
         if field := _bad(state):
             raise DriverError(f"tui session {name}: bad {field} {state.get(field)!r:.80}")
+        trusted = tuple(
+            root
+            for key in ("adapter_hook", "host_hook")
+            if key in state
+            for root in state[key]["roots"]
+        )
+        if trusted:
+            cls.check_protection(
+                replace(protected, protect=(*protected.protect, *trusted)), adapter
+            )
         return _Start(prepared, run, store, state, metadata)
 
     @classmethod
@@ -454,7 +471,7 @@ class TuiMode(RunningMode):
             events=state["events"],
         )
         try:
-            run.restore(spec, state.get("adapter_state", {}))
+            run.restore(spec, state["adapter_hook"]["state"] if "adapter_hook" in state else {})
         except ConfigError as e:
             raise DriverError(f"no tui session {name}: {e}") from None
         records, offset = store.records(0)
@@ -486,7 +503,7 @@ class TuiMode(RunningMode):
         found = self._read()
         if not found and not self._gone:
             state = self._terminal.state()
-            if state != Liveness.UNKNOWN:
+            if not self._replaced(state) and state != Liveness.UNKNOWN:
                 code = self._terminal.returncode()
                 if state == Liveness.ABSENT:
                     code = -signal.SIGHUP
@@ -495,11 +512,15 @@ class TuiMode(RunningMode):
                     final = self._read()
                     self._end()
                     return final, True
-                if self._terminal.alive() and isinstance(self.host, Displayable):
+                if isinstance(self.host, Displayable):
                     with contextlib.suppress(DriverError):
                         screen = self.host.screen(self._terminal)
                         found = self._read()
-                        if not found and not self._gone:
+                        if (
+                            not found
+                            and not self._gone
+                            and not self._replaced(self._terminal.state())
+                        ):
                             found = self._scan(screen)
         deadline = time.monotonic() + timeout
         while not found and not self._gone and (left := deadline - time.monotonic()) > 0:
@@ -512,24 +533,31 @@ class TuiMode(RunningMode):
         self._code = -signal.SIGHUP if self._code is None else self._code
 
     def _read(self) -> list[SessionEvent | Stderr | ClientBound]:
+        """New records' events, checked against the terminal and session.json only once found."""
         if self._gone:
             return []
-        if self._terminal.state() == Liveness.ABSENT:
+        records, end = self._store.records(self._offset)
+        if end == self._offset or self._replaced(self._terminal.state()):
+            return []
+        self._offset = end
+        return _translated(self.run, records)
+
+    def _replaced(self, state: Liveness) -> bool:
+        """Ended once another terminal holds its name or session.json is another generation's."""
+        if state == Liveness.ABSENT:
             replacement = self._store.process()
             if replacement is not None and replacement.identity != self._terminal.identity:
                 self._end()
-                return []
+                return True
         try:
             current = self._store.read()
         except DriverError:
             self._end()
-            return []
+            return True
         if current["generation"] != self._generation:
             self._end()
-            return []
-        records, end = self._store.records(self._offset)
-        self._offset = end
-        return _translated(self.run, records)
+            return True
+        return False
 
     def _scan(self, screen: str) -> list[SessionEvent | Stderr | ClientBound]:
         """Since the last scan: Activity("") once a dialog went, Blocked per new dialog, LimitHit

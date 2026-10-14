@@ -1,10 +1,11 @@
-"""utils/record.py: Record and Status lines, round trips and refusals."""
+"""utils/record.py: Record and Status lines, round trips and refusals; answer_keys."""
 
 import json
 import unittest
 from dataclasses import asdict
+from io import StringIO
 
-from agent_pm.utils import number
+from agent_pm.utils import answer_keys, number
 from agent_pm.utils.record import Record, RecordError, Status
 
 from utils.tests.case import Case
@@ -202,6 +203,149 @@ class DeepLine(Case):
                         cls.parse(text)
                     message = str(caught.exception)
                     self.assertTrue(message.startswith(f"{cls.__name__} line: not JSON"), message)
+
+
+class Usage(Exception):
+    pass
+
+
+class Failure(Exception):
+    pass
+
+
+RESOLVE_ERRORS = {"u": (Usage, "not a key"), "f": (Failure, "not found")}
+REPLY_ERRORS = {"ru": (Usage, "cannot answer"), "rf": (Failure, "lost")}
+NOT_JSON = "Record line: not JSON (Expecting value: line 1 column 1 (char 0))"
+
+
+def record_line(name: str) -> str:
+    resume = ("agent-pm-delegate", "resume", "/w")
+    record = Record(1, "role", name, (), None, "/w", ("agent-pm-delegate",), resume, None, None)
+    return record.to_line()
+
+
+def label(key: str | Record) -> str:
+    return key if isinstance(key, str) else key.name
+
+
+def reply_to(value: str) -> str | None:
+    if value in REPLY_ERRORS:
+        kind, message = REPLY_ERRORS[value]
+        raise kind(message)
+    return None if value == "q" else f"{value}: ok"
+
+
+class AnswerKeys(Case):
+    def setUp(self):
+        self.resolved = []
+
+    def resolve(self, key: str | Record) -> tuple[str, str]:
+        self.resolved.append(key)
+        if label(key) in RESOLVE_ERRORS:
+            kind, message = RESOLVE_ERRORS[label(key)]
+            raise kind(message)
+        return label(key), label(key)
+
+    def answer(
+        self, args=(), stdin: str | StringIO = "", *, resolve=None, reply=reply_to, single=False
+    ):
+        out, err = StringIO(), StringIO()
+        code = answer_keys(
+            args,
+            StringIO(stdin) if isinstance(stdin, str) else stdin,
+            resolve or self.resolve,
+            reply,
+            single=single,
+            usage=(Usage,),
+            failures=(Failure,),
+            prog="prog",
+            out=out,
+            err=err,
+        )
+        return code, out.getvalue(), err.getvalue()
+
+    def test_args_win_over_stdin(self):
+        stdin = StringIO("not json\n")
+        self.assertEqual(self.answer(["a", "b"], stdin), (0, "a: ok\nb: ok\n", ""))
+        self.assertEqual(stdin.read(), "not json\n")
+
+    def test_stdin_records_are_resolved_in_order(self):
+        stdin = f"{record_line('b')}\n{record_line('f')}\n{record_line('a')}"
+        self.assertEqual(self.answer((), stdin), (1, "b: ok\na: ok\n", "prog: f: not found\n"))
+        self.assertEqual(self.resolved, [Record.parse(record_line(n)) for n in ("b", "f", "a")])
+        self.assertEqual(self.answer((), ""), (0, "", ""))
+
+    def test_a_bad_stdin_line_stops_before_any_key(self):
+        for lines, error in (
+            ((record_line("a"), "not json"), f"stdin line 2: {NOT_JSON}"),
+            (('{"v": 1}', record_line("a")), "stdin line 1: kind: missing"),
+            ((record_line("a"), "[1]"), "stdin line 2: Record line: want a JSON object"),
+            (
+                (record_line("a"), record_line("b"), "", record_line("c")),
+                f"stdin line 3: {NOT_JSON}",
+            ),
+            ((record_line("a"), "\n"), f"stdin line 2: {NOT_JSON}"),
+        ):
+            with self.subTest(lines=lines):
+                stdin = "\n".join(lines) + "\n"
+                self.assertEqual(self.answer((), stdin), (2, "", f"prog: {error}\n"))
+                self.assertEqual(self.resolved, [])
+
+    def test_a_failing_key_is_named_and_later_keys_are_still_answered(self):
+        for args, code, err in (
+            (("a", "u", "b"), 2, "prog: u: not a key\n"),
+            (("a", "f", "b"), 1, "prog: f: not found\n"),
+            (("f", "a", "u", "b"), 2, "prog: f: not found\nprog: u: not a key\n"),
+            (("a", "ru", "b"), 2, "prog: ru: cannot answer\n"),
+            (("a", "rf", "b"), 1, "prog: rf: lost\n"),
+            (("rf", "a", "ru", "b"), 2, "prog: rf: lost\nprog: ru: cannot answer\n"),
+            (("a", "u", "rf", "b"), 2, "prog: u: not a key\nprog: rf: lost\n"),
+        ):
+            with self.subTest(args=args):
+                self.assertEqual(self.answer(args), (code, "a: ok\nb: ok\n", err))
+
+    def test_a_name_given_twice_answers_nothing(self):
+        self.assertEqual(
+            self.answer(("a", "b", "a")), (2, "", "prog: name a given more than once\n")
+        )
+        self.assertEqual(self.resolved, ["a", "b", "a"])
+        stdin = f"{record_line('b')}\n{record_line('b')}\n"
+        self.assertEqual(self.answer((), stdin), (2, "", "prog: name b given more than once\n"))
+
+    def test_single_takes_exactly_one_key(self):
+        for args, stdin, n in (
+            ((), "", 0),
+            (("a", "b"), "", 2),
+            ((), f"{record_line('a')}\n" * 2, 2),
+        ):
+            with self.subTest(args=args, stdin=stdin):
+                self.assertEqual(
+                    self.answer(args, stdin, single=True),
+                    (2, "", f"prog: takes exactly one key, got {n}\n"),
+                )
+        self.assertEqual(self.resolved, [])
+        self.assertEqual(self.answer(("a",), single=True), (0, "a: ok\n", ""))
+        self.assertEqual(self.answer((), record_line("b"), single=True), (0, "b: ok\n", ""))
+
+    def test_a_reply_of_none_writes_no_line(self):
+        self.assertEqual(self.answer(("a", "q", "b")), (0, "a: ok\nb: ok\n", ""))
+
+    def test_errors_reach_stderr_without_control_characters(self):
+        def resolve(_key):
+            raise Failure("\x1b]52;c;x\x07 gone\n")
+
+        self.assertEqual(
+            self.answer(("\x1b[2Ja",), resolve=resolve), (1, "", "prog: [2Ja: ]52;c;x gone\n")
+        )
+
+    def test_an_unclassified_exception_propagates(self):
+        def reply(_value):
+            raise RuntimeError("bug")
+
+        with self.assertRaises(KeyError):
+            self.answer(("a",), resolve=lambda key: {}[key])
+        with self.assertRaises(RuntimeError):
+            self.answer(("a",), reply=reply)
 
 
 if __name__ == "__main__":

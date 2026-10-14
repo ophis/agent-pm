@@ -1,4 +1,4 @@
-"""The tmux Host: TmuxHost (host.py) over tmux_host.py."""
+"""The tmux Host: TmuxHost (host.py) and the tmux package it runs."""
 
 from agent_pm.session.hosts.tmux.host import TmuxHost
 

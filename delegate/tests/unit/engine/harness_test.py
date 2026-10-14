@@ -15,7 +15,7 @@ from agent_pm.delegate.engine import detach, harness
 from agent_pm.delegate.engine.runner import STOP_LIMIT
 from agent_pm.session import SIGNALS, ConfigError, DriverError
 
-from delegate.tests.application_case import DRIVER, SID, SPLIT, TUI, Base
+from delegate.tests.application_case import DRIVER, SID, TUI, Base
 from delegate.tests.unit.runs import STOP, FakeHandle
 
 DONE_RESULT = Result(0, Outcome("done", "t", "s"))
@@ -161,8 +161,8 @@ class Harness(Base):
             ("needs_input", Result(0, Outcome("needs_input", "t", "s", ["Q?"])), 0, "needs_input"),
             ("failed", Result(0, Outcome("failed", "t", "s")), 0, "failed"),
             ("no outcome", Result(0, None, "the agent run returned no outcome"), 1, "error"),
-            ("the client exited 5", Result(5, None, "the client exited 5"), 3, "error"),
-            ("no start", Result(1, None, "headless: cannot start x"), 3, "error"),
+            ("the client exited 5", Result(5, None, "the client exited 5"), 1, "error"),
+            ("no start", Result(1, None, "headless: cannot start x"), 1, "error"),
         ):
             with self.subTest(name), self.ran(result) as run:
                 code, out, err = self.drives()
@@ -185,12 +185,9 @@ class Harness(Base):
         self.assert_outcome("error")
 
     def test_a_config_error_exits_2_and_writes_error(self):
-        for kw, extra, want in (
-            ({"role": "ghost", "task": None}, (), "unknown role 'ghost'"),
-            ({}, ("--split", "right"), SPLIT),
-        ):
+        for kw, want in (({"role": "ghost", "task": None}, "unknown role 'ghost'"),):
             with self.subTest(want=want), self.ran() as run:
-                code, out, err = self.drives(*extra, **kw)
+                code, out, err = self.drives(**kw)
                 self.assertEqual((code, out, err.splitlines()[-1]), (2, "", f"delegate: {want}"))
                 run.assert_not_called()
                 name = detach.names(kw.get("role", "dummy-tester"), SID, "headless")[1]
@@ -209,6 +206,26 @@ class Harness(Base):
         self.assertIn(f"delegate: tui session {TUI}: {self.driver.attach_command(TUI)}", err)
         self.show.assert_not_called()
         self.assert_outcome("error")
+
+    def test_begun_shows_as_the_runs_show_says(self):
+        attach = self.driver.attach_command(TUI)
+        for local, shown, printed in (
+            ('show = "none"\n', [], [attach]),
+            (
+                'show = "open {{session}}"\n',
+                [mock.call(TUI, None, None, "mgr", command="open {{session}}")],
+                [],
+            ),
+        ):
+            with self.subTest(local=local), self.ran():
+                Path(self.agent_pm, "config.local.toml").write_text("[delegate]\n" + local)
+                self.show.reset_mock()
+                code, out, err = self.drives("--opener", "mgr", mode="tui")
+                self.assertEqual((code, out), (0, ""), err)
+                self.assertEqual(self.show.call_args_list, shown)
+                lines = err.splitlines()
+                at = lines.index(f"delegate: session {SID}")
+                self.assertEqual(lines[at + 1 :], [*printed, "delegate: status done"])
 
     def test_input_dash_is_the_literal_text_stdin_unread(self):
         with self.ran() as run:
@@ -240,7 +257,7 @@ class Harness(Base):
                     "--split", "below", "--split-from", "mgr", "--opener", "mgr", mode="tui"
                 )
                 self.assertEqual((code, out), (0, ""), err)
-                self.show.assert_called_once_with(TUI, "below", "mgr", "mgr")
+                self.show.assert_called_once_with(TUI, "below", "mgr", "mgr", command=None)
                 lines = err.splitlines()
                 at = lines.index(f"delegate: session {SID}")
                 self.assertEqual(lines[at + 1 :], [*printed, "delegate: status done"])

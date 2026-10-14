@@ -98,9 +98,6 @@ class HostContract:
     def make_host(self) -> Host:
         raise NotImplementedError
 
-    def terminal_env(self, name: str) -> dict[str, str]:
-        return {}
-
     def setUp(self):
         super().setUp()
         self.host = self.make_host()
@@ -366,14 +363,14 @@ class HostContract:
 
     def test_a_host_that_cannot_display_returns_each_display_as_given(self):
         if isinstance(self.host, Displayable):
-            self.skipTest("a Displayable Host's display cases: TASK-368 (356-8)")
+            self.skipTest("applies only to a Host that cannot display")
         for value in (None, "", OTHER_DISPLAY):
             with self.subTest(value=value):
                 self.assertEqual(self.host.display(value), value)
 
     def test_a_session_on_a_host_that_cannot_display_refuses_show_attach_command_and_screen(self):
         if isinstance(self.host, Displayable):
-            self.skipTest("a Displayable Host's display cases: TASK-368 (356-8)")
+            self.skipTest("applies only to a Host that cannot display")
         scenario, kind = self.file("scenario"), type(self.host)
         with open(scenario, "w", encoding="utf-8") as f:
             json.dump([{"out": {"type": "message", "text": "hi"}}], f)

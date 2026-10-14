@@ -22,6 +22,7 @@ from agent_pm.delegate import (
 from agent_pm.delegate.engine.runner import FIX, NUDGE, POLICIES, STOP_LIMIT, execute
 from agent_pm.delegate.event.reply import marks
 from agent_pm.session import Activity, Blocked, DriverError, Exited, IdleTimeout, LimitHit, Mode
+from agent_pm.session import ConfigError as SessionConfigError
 
 from delegate.tests.replies import bare, block
 from delegate.tests.runner import INVALID, INVALID_ERROR, LEFT_OPEN, PENDING, SID, Base
@@ -120,8 +121,9 @@ class TuiPolicy(Base):
         self.enterContext(mock.patch.dict(os.environ))
         os.environ.pop("TUI_ATTACH_PREFIX", None)
 
-    def faked(self, *events, fail=None, stop_fail=None, mode="tui", **kw) -> Result:
+    def faked(self, *events, fail=None, stop_fail=None, show_fail=None, mode="tui", **kw) -> Result:
         self.handle = FakeHandle(events, fail, stop_fail)
+        self.handle.show_fail = show_fail
         with mock.patch.object(self.driver, "start", side_effect=self.handle.start) as self.started:
             return self.go(mode=mode, **kw)
 
@@ -177,6 +179,37 @@ class TuiPolicy(Base):
                     ),
                 )
                 self.assertIn(f"delegate: tui session {name}: tmux attach -t '={name}'\n", self.err)
+
+    def test_a_displayable_session_is_shown_as_the_configured_show_says(self):
+        command = "open -a Terminal {{session}}"
+        for local, shown in (
+            ("", [None]),
+            ('[delegate]\nshow = "none"\n', []),
+            (f'[delegate]\nshow = "{command}"\n', [command]),
+            ('[delegate]\nshow = "none"\n[delegate.roles.dummy-tester]\nshow = ""\n', [None]),
+            ('[delegate.roles.dummy-tester]\nshow = "none"\n', []),
+        ):
+            with self.subTest(local=local):
+                self.fresh()
+                self.write(os.path.join(self.agent_pm, "config.local.toml"), local)
+                self.driver.display = "mgr"
+                r = self.faked(turn(START, block(DONE)))
+                self.assertEqual((r.outcome.status, self.handle.shown), ("done", shown))
+                self.assertIn(f"delegate: tui session {NAME}: tmux attach -t '={NAME}'\n", self.err)
+
+    def test_a_session_started_without_a_display_is_not_shown(self):
+        r = self.faked(turn(START, block(DONE)))
+        self.assertEqual((r.outcome.status, self.handle.shown), ("done", []))
+        self.assertIn(f"delegate: tui session {NAME}: tmux attach -t '={NAME}'\n", self.err)
+
+    def test_a_failed_show_is_printed_and_the_run_goes_on(self):
+        for failure in (DriverError(f"no tmux session {NAME}"), SessionConfigError("bad split")):
+            with self.subTest(failure=failure):
+                self.fresh()
+                self.driver.display = "mgr"
+                r = self.faked(turn(START, block(DONE)), show_fail=failure)
+                self.assertEqual(r.outcome.status, "done")
+                self.assertIn(f"delegate: show {NAME}: {failure}\n", self.err)
 
     def test_a_valid_outcome_at_a_turn_end_is_done_and_leaves_the_session_even_with_work_pending(
         self,
