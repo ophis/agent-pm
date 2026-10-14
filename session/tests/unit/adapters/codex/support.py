@@ -7,7 +7,7 @@ from pathlib import Path
 from unittest import mock
 
 from agent_pm.session.adapters.codex import CodexAdapter
-from agent_pm.session.adapters.codex.sessions import SessionStore
+from agent_pm.session.adapters.codex.common import SessionStore
 from agent_pm.session.engine.types import Access, Spec
 
 from session.tests.case import REPO, Case

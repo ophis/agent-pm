@@ -123,7 +123,11 @@ class HookBase(Case):
                 sys.executable,
                 "-I",
                 HOOK,
-                *([self.dir, SOURCE_ROOTS, label] if args is None else args),
+                *(
+                    [self.dir, json.dumps([self.root, *json.loads(SOURCE_ROOTS)]), label]
+                    if args is None
+                    else args
+                ),
             ],
             input=data,
             capture_output=True,
@@ -210,7 +214,7 @@ runpy.run_path(path, run_name="__main__")
             file.write(
                 'def on_hook(label, payload, state):\n    raise RuntimeError("first\\nsecond")\n'
             )
-        self.state["adapter_hook"] = callback
+        self.state["adapter_hook"] = "adapter"
         write_state(self.dir, self.state)
         self.assertEqual(
             self.hook("stop", {"text": "payload"}), "tui_hook: RuntimeError: first second\n"
@@ -225,7 +229,7 @@ class ErrorLoggingTest(HookBase):
             file.write(
                 'def on_hook(label, payload, state):\n    raise RuntimeError("first\\nsecond")\n'
             )
-        self.state["adapter_hook"] = callback
+        self.state["adapter_hook"] = "adapter"
         write_state(self.dir, self.state)
         error_log = os.path.join(self.dir, "hook.log")
         for count in (1, 2):
@@ -323,7 +327,7 @@ class PayloadTest(HookBase):
             file.write(
                 'def on_hook(label, payload, state):\n    payload["length"] = len(payload["a"])\n'
             )
-        self.state["adapter_hook"] = callback
+        self.state["adapter_hook"] = "adapter"
         write_state(self.dir, self.state)
         self.assertEqual(self.hook("tool", data), "")
         self.assertEqual(
@@ -354,7 +358,7 @@ class PayloadTest(HookBase):
     return label != "ask"
 """
             )
-        self.state["adapter_hook"] = callback
+        self.state["adapter_hook"] = "adapter"
         write_state(self.dir, self.state)
         self.assertEqual(self.hook("tool", {"text": "x" * 5000}), "")
         record = self.records()[0]
@@ -364,13 +368,15 @@ class PayloadTest(HookBase):
         self.assertEqual(len(self.records()), 1)
         self.assertEqual(self.calls(), marked)
 
-    def test_callback_file_requires_absolute_regular_owned_module_with_on_hook(self):
+    def test_callback_module_requires_regular_owned_file_with_on_hook(self):
         callback = os.path.join(self.root, "adapter.py")
         with open(callback, "w") as file:
             file.write("value = 1\n")
-        for path in ("relative.py", os.path.join(self.root, "absent.py"), self.root, callback):
-            with self.subTest(path=path):
-                self.state["adapter_hook"] = path
+        os.symlink(callback, os.path.join(self.root, "linked.py"))
+        os.mkdir(os.path.join(self.root, "namespace"))
+        for name in ("relative.py/", callback, "absent", "namespace", "sys", "linked", "adapter"):
+            with self.subTest(module=name):
+                self.state["adapter_hook"] = name
                 write_state(self.dir, self.state)
                 self.assertError(self.hook("stop"), "adapter")
         self.assertNothingWritten()
@@ -630,7 +636,7 @@ class SecurityTest(HookBase):
         )
         with open(callback, "w") as file:
             file.write(f"open({imported!r}, 'w').close()\n")
-        self.state["adapter_hook"] = callback
+        self.state["adapter_hook"] = "adapter"
         write_state(self.dir, self.state)
         cases = {
             "malformed JSON": "not-json",
@@ -652,10 +658,11 @@ class SecurityTest(HookBase):
             file.write(
                 "def on_hook(label, payload, state):\n    payload['callback_imported'] = True\n"
             )
-        self.state.update(adapter_hook=callback, words={})
+        self.state.update(adapter_hook="adapter", words={})
         write_state(self.dir, self.state)
         for name, roots in valid.items():
             with self.subTest(roots=name):
+                roots = [self.root, *roots]
                 self.assertEqual(self.hook("stop", args=[self.dir, json.dumps(roots), "stop"]), "")
                 self.assertEqual(self.records()[-1]["payload"], {"callback_imported": True})
 
@@ -667,7 +674,7 @@ class SecurityTest(HookBase):
             os.mkdir(source)
             with open(os.path.join(source, "source_marker.py"), "w") as file:
                 file.write(f"VALUE = {value!r}\n")
-        callback = os.path.join(self.root, "adapter.py")
+        callback = os.path.join(sources[0], "adapter.py")
         with open(callback, "w") as file:
             file.write(
                 """import sys
@@ -679,7 +686,7 @@ def on_hook(label, payload, state):
     payload["tail"] = sys.path[2:]
 """
             )
-        self.state.update(adapter_hook=callback, words={})
+        self.state.update(adapter_hook="adapter", words={})
         write_state(self.dir, self.state)
         script = """import io, json, runpy, sys
 path, folder, encoded = sys.argv[1:]

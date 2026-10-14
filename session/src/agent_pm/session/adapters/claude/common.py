@@ -9,8 +9,7 @@ from collections.abc import Iterator, Mapping
 from types import MappingProxyType
 
 from agent_pm.session.adapters import common
-from agent_pm.session.adapters.flags import scan
-from agent_pm.session.adapters.selection import UUID
+from agent_pm.session.adapters.common import UUID, scan
 from agent_pm.session.engine.types import (
     ConfigError,
     Launch,
@@ -132,7 +131,7 @@ class ClaudeCommon:
 
     def __init__(self, config: Mapping, *, selector):
         self.selector = selector
-        common.check(config, TABLE, CHECKS)
+        common.check_config(config, TABLE, CHECKS)
         self.flags = tuple(config.get("flags", ()))
         if any(flag.startswith("--setting-sources") for flag in self.flags):
             raise ConfigError(

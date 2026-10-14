@@ -12,7 +12,8 @@ import subprocess
 import sys
 from unittest import mock
 
-from agent_pm.session.adapters.codex import tui_hook, tui_plan, tui_start
+from agent_pm.session.adapters.codex import app_server, tui
+from agent_pm.session.adapters.codex.tui import start as tui_start
 
 from session.tests import case
 from session.tests.case import Case
@@ -29,29 +30,30 @@ try:
     runpy.run_path(script, run_name="__main__")
 except SystemExit as error:
     status = error.code
-from agent_pm.session.adapters import flags
-from agent_pm.session.adapters.codex import app_server, hook_schema, sessions, tui_hook, tui_start, types
+from agent_pm.session.adapters import common as shared
+from agent_pm.session.adapters.codex import app_server, common, tui
+from agent_pm.session.adapters.codex.common import types
+from agent_pm.session.adapters.codex.tui import start
 roots = json.loads(data)["import_roots"]
 before = list(sys.path)
-tui_start._bootstrap([data])
+start._bootstrap([data])
 print(json.dumps([
     status,
     sys.path[:len(roots)] == roots,
     all(sys.path.count(root) == 1 for root in roots),
     sys.path == before,
-    sessions.flags is flags,
-    type(next(sessions.flags.scan(["--add-dir=/x"], sessions.VALUED))) is flags.Flag,
-    dataclasses.is_dataclass(sessions.SessionState),
-    sessions.SessionState is types.SessionState,
-    typing.get_type_hints(sessions.SessionState)["snapshot"] is types.Snapshot,
-    tui_start.sessions is sessions,
-    tui_hook.sessions is sessions,
-    tui_hook.sessions.RecoveryError is sessions.RecoveryError,
-    tui_start.app_server is app_server,
-    tui_start.HOOKS is hook_schema.HOOKS,
-    tui_hook.HOOKS is hook_schema.HOOKS,
+    type(next(shared.scan(["--add-dir=/x"], common.VALUED))) is shared.Flag,
+    dataclasses.is_dataclass(common.SessionState),
+    common.SessionState is types.SessionState,
+    typing.get_type_hints(common.SessionState)["snapshot"] is types.Snapshot,
+    start.common is common,
+    tui.SessionStore is common.SessionStore,
+    tui.RecoveryError is common.RecoveryError,
+    start.app_server is app_server,
+    start.HOOKS is tui.HOOKS,
+    tui.on_hook.__module__ == tui.__name__,
     sorted(name for name in sys.modules if name.startswith("_agent_pm_codex_")),
-    sessions.__file__,
+    common.__file__,
     sys.modules["agent_pm.utils"].__file__,
 ]))
 """
@@ -85,9 +87,9 @@ class BootstrapTest(Case):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stderr, "codex tui: Codex tui launch: missing recovery state\n")
         values = json.loads(result.stdout)
-        self.assertEqual(values[:16], [1, *([True] * 14), []])
-        self.assertTrue(values[16].startswith(data["import_roots"][0] + os.sep))
-        self.assertTrue(values[17].startswith(data["import_roots"][1] + os.sep))
+        self.assertEqual(values[:15], [1, *([True] * 13), []])
+        self.assertTrue(values[15].startswith(data["import_roots"][0] + os.sep))
+        self.assertTrue(values[16].startswith(data["import_roots"][1] + os.sep))
 
     def test_main_reports_launch_validation_as_one_line_and_failure_status(self):
         stderr = io.StringIO()
@@ -123,7 +125,7 @@ print(json.dumps([status, decode.call_count]))
         decoy = pathlib.Path(self.home) / "untrusted"
         decoy.mkdir()
         (decoy / "agent_pm.py").write_text('raise RuntimeError("untrusted agent_pm")\n')
-        (decoy / "sessions.py").write_text('raise RuntimeError("untrusted sessions")\n')
+        (decoy / "common.py").write_text('raise RuntimeError("untrusted sessions")\n')
         result = self.isolated(
             self.data(roots),
             code=INSPECT,
@@ -133,21 +135,21 @@ print(json.dumps([status, decode.call_count]))
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stderr, "codex tui: Codex tui launch: missing recovery state\n")
         values = json.loads(result.stdout)
-        self.assertEqual(values[:16], [1, *([True] * 14), []])
-        self.assertTrue(values[16].startswith(roots[0] + os.sep))
-        self.assertTrue(values[17].startswith(roots[1] + os.sep))
+        self.assertEqual(values[:15], [1, *([True] * 13), []])
+        self.assertTrue(values[15].startswith(roots[0] + os.sep))
+        self.assertTrue(values[16].startswith(roots[1] + os.sep))
 
     def test_package_imports_keep_sys_path_and_share_canonical_modules(self):
         code = """import json, sys
 before = list(sys.path)
-from agent_pm.session.adapters import flags
-from agent_pm.session.adapters.codex import sessions, tui_hook, tui_start
+from agent_pm.session.adapters import common as shared
+from agent_pm.session.adapters.codex import common, tui
+from agent_pm.session.adapters.codex.tui import start as tui_start
 print(json.dumps([
     sys.path == before,
-    sessions.flags is flags,
-    type(next(sessions.flags.scan(["--add-dir=/x"], sessions.VALUED))) is flags.Flag,
-    tui_start.sessions is sessions,
-    tui_hook.sessions is sessions,
+    type(next(shared.scan(["--add-dir=/x"], common.VALUED))) is shared.Flag,
+    tui_start.common is common,
+    tui.SessionStore is common.SessionStore,
     sorted(name for name in sys.modules if name.startswith("_agent_pm_codex_")),
 ]))
 """
@@ -157,7 +159,7 @@ print(json.dumps([
             text=True,
             check=True,
         )
-        self.assertEqual(json.loads(result.stdout), [True, True, True, True, True, []])
+        self.assertEqual(json.loads(result.stdout), [True, True, True, True, []])
 
     def test_bootstrap_rejects_missing_or_invalid_import_roots_before_package_imports(self):
         data = self.data()
@@ -210,8 +212,6 @@ print(json.dumps([
 
 class StartTest(Base):
     def test_shared_schema_preserves_hooks_in_isolated_scripts_and_adapter(self):
-        from agent_pm.session.adapters.codex import hook_schema
-
         expected = (
             ("SessionStart", "sessionStart", "activity"),
             ("UserPromptSubmit", "userPromptSubmit", "activity"),
@@ -220,13 +220,13 @@ class StartTest(Base):
             ("Stop", "stop", "turn_end"),
             ("Interrupt", "interrupt", "turn_end"),
         )
-        self.assertEqual(hook_schema.HOOKS, expected)
+        self.assertEqual(tui.HOOKS, expected)
         self.assertEqual(self.adapter.tui().hooks, {label: kind for label, _, kind in expected})
         self.assertEqual(tui_start.HOOKS, expected)
-        self.assertEqual(tui_hook.LABELS, {label for label, _, _ in expected})
+        self.assertEqual(set(tui.CodexTui.hooks), {label for label, _, _ in expected})
         code = """import json, sys
 sys.path[:0] = json.loads(sys.argv[1])
-from agent_pm.session.adapters.codex.hook_schema import HOOKS
+from agent_pm.session.adapters.codex.tui import HOOKS
 print(json.dumps(HOOKS))
 """
         result = subprocess.run(
@@ -297,12 +297,12 @@ print(json.dumps(HOOKS))
                 mock.patch("shutil.which", return_value="/protected/codex"),
             ):
                 launch = self.adapter.tui().launch("prompt", spec, hook, source_roots=PACKAGE_ROOTS)
-                plan = tui_plan.decode(json.loads(launch.argv[-1]))
+                plan = tui.decode(json.loads(launch.argv[-1]))
                 catalog, _ = self.catalog()
                 rows = catalog["data"][0]["hooks"]
                 for row, (event, _, _) in zip(rows, tui_start.HOOKS, strict=True):
                     row["command"] = shlex.join((*hook, event))
-                commands = tui_plan.commands(plan.hook)
+                commands = tui.commands(plan.hook)
                 trusted = tui_start.trusted(catalog, str(self.cwd), commands)
                 self.assertIn('"key-stop"={trusted_hash="sha256:', trusted)
                 rows[0]["command"] = shlex.join((*hook[:-1], "SessionStart"))
@@ -320,7 +320,7 @@ runpy.run_path(sys.argv[1])
 print(json.dumps(sorted((imports & sys.modules.keys()) - sys.stdlib_module_names)))
 """
         result = subprocess.run(
-            [sys.executable, "-I", "-c", script, str(DIRECTORY / "app_server.py")],
+            [sys.executable, "-I", "-c", script, str(pathlib.Path(app_server.__file__))],
             capture_output=True,
             text=True,
             check=True,
@@ -529,7 +529,7 @@ print(json.dumps(sorted((imports & sys.modules.keys()) - sys.stdlib_module_names
             mock.patch.dict("os.environ", {"TMPDIR": "/protected"}),
             mock.patch("subprocess.Popen") as proc,
             mock.patch("os.execve") as execute,
-            self.assertRaisesRegex(tui_start.sessions.RecoveryError, "rewrite|writable"),
+            self.assertRaisesRegex(tui_start.common.RecoveryError, "rewrite|writable"),
         ):
             tui_start.launch(json.loads(launch.argv[-1]))
         proc.assert_not_called()
@@ -573,7 +573,7 @@ class ProtectTest(Base):
                 mock.patch("subprocess.Popen") as proc,
                 mock.patch("os.execve") as execute,
                 self.assertRaisesRegex(
-                    tui_start.sessions.RecoveryError, f"could rewrite hook dependency {target}$"
+                    tui_start.common.RecoveryError, f"could rewrite hook dependency {target}$"
                 ),
             ):
                 tui_start.launch(json.loads(data))
@@ -608,9 +608,7 @@ class ProtectTest(Base):
         with (
             mock.patch("subprocess.Popen") as proc,
             mock.patch("os.execve") as execute,
-            self.assertRaisesRegex(
-                tui_start.sessions.RecoveryError, "could rewrite hook dependency"
-            ),
+            self.assertRaisesRegex(tui_start.common.RecoveryError, "could rewrite hook dependency"),
         ):
             tui_start.launch(json.loads(data))
         proc.assert_not_called()
@@ -629,7 +627,7 @@ class ProtectTest(Base):
         argv = execute.call_args.args[1]
         start = argv.index("-c", 6)
         self.assertEqual(argv[start : start + len(flags)], list(flags))
-        hook_flags = tui_plan.hook_flags(tui_plan.decode(json.loads(data)).hook)
+        hook_flags = tui.hook_flags(tui.decode(json.loads(data)).hook)
         self.assertEqual(
             trust.call_args.kwargs["args"],
             [*hook_flags, "-c", 'model_verbosity="low"', "--disable", "web"],

@@ -3,7 +3,7 @@
 from dataclasses import FrozenInstanceError
 from types import MappingProxyType
 
-from agent_pm.session.adapters.codex.types import (
+from agent_pm.session.adapters.codex.common.types import (
     NativeMetadata,
     SessionFile,
     SessionState,

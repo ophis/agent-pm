@@ -20,8 +20,9 @@ from unittest import mock
 from zoneinfo import ZoneInfo
 
 from agent_pm.session import Driver
-from agent_pm.session.adapters.codex import tui_plan, tui_start
-from agent_pm.session.adapters.codex.sessions import SessionStore
+from agent_pm.session.adapters.codex import tui
+from agent_pm.session.adapters.codex.common import SessionStore
+from agent_pm.session.adapters.codex.tui import start as tui_start
 from agent_pm.session.engine import records
 from agent_pm.session.engine.types import (
     Access,
@@ -447,7 +448,7 @@ class HookTrustIntegrationTest(Live):
         ):
             tui_start.hooks_list(
                 data["executable"],
-                tui_plan.trust_args(tui_plan.decode(data), run.state.snapshot),
+                tui.trust_args(tui.decode(data), run.state.snapshot),
                 str(self.cwd),
                 env,
             )

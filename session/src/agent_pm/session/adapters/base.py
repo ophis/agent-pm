@@ -9,7 +9,7 @@ signals): it applies spec.access.cwd, not its env. Starts no process.
 from abc import ABC, abstractmethod
 from collections.abc import Iterable, Iterator, Mapping
 
-from agent_pm.session.adapters.selection import select
+from agent_pm.session.adapters.common import select
 from agent_pm.session.engine.types import (
     Activity,
     Blocked,

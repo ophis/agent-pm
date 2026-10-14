@@ -10,6 +10,7 @@ when writable and report one stderr line.
 from __future__ import annotations
 
 import fcntl
+import importlib
 import importlib.util
 import json
 import os
@@ -166,27 +167,29 @@ def read_state(path: str) -> dict:
     for field, check in SESSION_STATE.items():
         if field not in state or not check(state[field]):
             raise HookError(f"{path}: bad {field}")
-    if "adapter_hook" in state and not _abs(state["adapter_hook"]):
+    if "adapter_hook" in state and (
+        not isinstance(state["adapter_hook"], str)
+        or not all(part.isidentifier() for part in state["adapter_hook"].split("."))
+    ):
         raise HookError(f"{path}: bad adapter_hook")
     if "adapter_state" in state and not isinstance(state["adapter_state"], dict):
         raise HookError(f"{path}: bad adapter_state")
     return state
 
 
-def load_adapter(path: str):
+def load_adapter(name: str):
+    spec = importlib.util.find_spec(name)
+    if spec is None or spec.origin is None:
+        raise HookError(f"adapter hook {name}: cannot find Python module")
     try:
-        info = os.lstat(path)
+        info = os.lstat(spec.origin)
     except OSError as error:
-        raise HookError(f"adapter hook {path}: {error.strerror}") from error
+        raise HookError(f"adapter hook {name}: {error.strerror}") from error
     if not stat.S_ISREG(info.st_mode) or info.st_uid not in (0, os.getuid()):
-        raise HookError(f"adapter hook {path}: not a regular file owned by you or root")
-    spec = importlib.util.spec_from_file_location("_agent_pm_adapter_hook", path)
-    if spec is None or spec.loader is None:
-        raise HookError(f"adapter hook {path}: cannot load Python module")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+        raise HookError(f"adapter hook {name}: not a regular file owned by you or root")
+    module = importlib.import_module(name)
     if not callable(getattr(module, "on_hook", None)):
-        raise HookError(f"adapter hook {path}: missing on_hook callback")
+        raise HookError(f"adapter hook {name}: missing on_hook callback")
     return module
 
 

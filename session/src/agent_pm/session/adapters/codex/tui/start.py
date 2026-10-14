@@ -63,9 +63,9 @@ if __name__ == "__main__":
         sys.exit(1)
 
 try:
-    from agent_pm.session.adapters.codex import app_server, sessions, tui_plan
-    from agent_pm.session.adapters.codex.hook_schema import HOOKS
-    from agent_pm.session.adapters.codex.types import LaunchPlan
+    from agent_pm.session.adapters.codex import app_server, common, tui
+    from agent_pm.session.adapters.codex.common.types import LaunchPlan
+    from agent_pm.session.adapters.codex.tui import HOOKS
 except ImportError as exc:
     if __name__ != "__main__":
         raise
@@ -128,7 +128,7 @@ def hook_trust(
     listing=None,
 ) -> str:
     listing = hooks_list if listing is None else listing
-    root = sessions.SessionStore(root).directory(create=False)
+    root = common.SessionStore(root).directory(create=False)
     if root is None:
         raise StartError("codex hooks/list: missing session store")
     lock = os.path.join(
@@ -140,7 +140,7 @@ def hook_trust(
         raise StartError(f"codex hooks/list: {lock}: {e.strerror}") from e
     try:
         info = os.fstat(fd)
-        if not sessions.private_file(info):
+        if not common.private_file(info):
             raise StartError("codex hooks/list: unsafe startup lock")
         _acquire_lock(fd, lock, termination)
         try:
@@ -232,7 +232,7 @@ def main(data):
         launch(data)
     except Stopped as exc:
         return 128 + exc.signum
-    except (StartError, sessions.RecoveryError, OSError, ValueError) as exc:
+    except (StartError, common.RecoveryError, OSError, ValueError) as exc:
         print(f"codex tui: {exc}", file=sys.stderr)
         return 1
     return 0
@@ -240,17 +240,17 @@ def main(data):
 
 def launch(data, *, trust=hook_trust):
     with _Termination() as termination:
-        return _start(tui_plan.decode(data), termination, trust)
+        return _start(tui.decode(data), termination, trust)
 
 
 def _start(plan: LaunchPlan, termination, trust):
-    commands = tui_plan.commands(plan.hook)
-    sessions.absolute_path(plan.store, "store")
-    state = sessions.SessionStore(plan.store).load(plan.workdir, plan.sid)
+    commands = tui.commands(plan.hook)
+    common.absolute_path(plan.store, "store")
+    state = common.SessionStore(plan.store).load(plan.workdir, plan.sid)
     if state is None:
         raise StartError("Codex tui launch: missing recovery state")
     env = {**os.environ, "CODEX_HOME": state.snapshot.codex_home}
-    sessions.protect(
+    common.protect(
         state,
         [
             sys.prefix,
@@ -262,20 +262,20 @@ def _start(plan: LaunchPlan, termination, trust):
             *plan.protect,
         ],
         env,
-        sessions.added_dirs(state.snapshot.flags, state.snapshot.cwd),
+        common.added_dirs(state.snapshot.flags, state.snapshot.cwd),
     )
     cwd = state.snapshot.cwd
     termination.check()
     trusted_state = trust(
         exe=plan.executable,
-        args=tui_plan.trust_args(plan, state.snapshot),
+        args=tui.trust_args(plan, state.snapshot),
         cwd=cwd,
         env=env,
         root=plan.store,
         termination=termination,
         commands=commands,
     )
-    command = tui_plan.execution_argv(plan, state.snapshot, trusted_state)
+    command = tui.execution_argv(plan, state.snapshot, trusted_state)
     os.chdir(cwd)
     termination.before_exec()
     os.execve(command[0], command, env)

@@ -91,7 +91,7 @@ SESSION_SRC = f"session/src/{PKG}/{SESSION}/"
 
 
 IMPORT_BOOTSTRAPS = {
-    f"{SESSION_SRC}adapters/codex/tui_start.py": "_bootstrap",
+    f"{SESSION_SRC}adapters/codex/tui/start.py": "_bootstrap",
     f"{SESSION_SRC}modes/tui_hook.py": "main",
 }
 
@@ -101,9 +101,7 @@ STANDALONE = frozenset(
     for path in (
         "hosts/tmux/tmux_host.py",
         "modes/tui_hook.py",
-        "adapters/flags.py",
         "adapters/codex/app_server.py",
-        "adapters/codex/hook_schema.py",
     )
 )
 
@@ -906,6 +904,7 @@ def unit_test_modules(repo: str) -> list[str]:
                 helper = os.path.join(tests, *parts[:unit], *relative, stem + ".py")
                 matches = (
                     os.path.isfile(home + ".py")
+                    or os.path.isfile(os.path.join(home, "__init__.py"))
                     or any(files for _, _, files in os.walk(home))
                     or os.path.isfile(helper)
                     or (

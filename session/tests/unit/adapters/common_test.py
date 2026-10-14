@@ -1,5 +1,4 @@
-from agent_pm.session.adapters.flags import scan, split_flags
-from agent_pm.session.adapters.selection import check
+from agent_pm.session.adapters.common import check_selection, scan, split_flags
 from agent_pm.session.engine.types import ConfigError
 
 from session.tests.case import Case
@@ -82,5 +81,5 @@ class FlagsTest(Case):
     def test_selection_retains_short_names_and_skips_option_values(self):
         for flag in ("-r", "-rsession", "-r=session", "--resume=session"):
             with self.subTest(flag=flag), self.assertRaisesRegex(ConfigError, "picks the session"):
-                check((flag,), ("-r", "--resume"))
-        check(("--model", "--resume", "--", "-r"), ("-r", "--resume"), ("--model",))
+                check_selection((flag,), ("-r", "--resume"))
+        check_selection(("--model", "--resume", "--", "-r"), ("-r", "--resume"), ("--model",))

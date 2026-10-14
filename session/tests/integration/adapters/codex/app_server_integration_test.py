@@ -120,29 +120,26 @@ class AppServerIntegrationTest(Case):
             ],
         )
 
-    def test_production_probe_isolates_the_shipped_types_sibling(self):
-        self.assertTrue((self.script.parent / "types.py").is_file())
+    def test_production_probe_isolates_stdlib_from_a_types_sibling(self):
         launch = CodexAdapter({}).usage_probe()
         self.assertEqual(Path(launch.argv[-1]), self.script)
-        code = """import json, os, sys, sysconfig, types
-folder = os.path.realpath(sys.argv[1])
-print(json.dumps([
-    sys.flags.isolated,
-    folder not in [os.path.realpath(path) for path in sys.path],
-    os.path.realpath(types.__file__) != os.path.join(folder, "types.py"),
-    os.path.realpath(types.__file__) == os.path.realpath(os.path.join(sysconfig.get_path("stdlib"), "types.py")),
-]))
-"""
-        result = subprocess.run(
-            (*launch.argv[:-1], "-c", code, str(self.script.parent)),
-            cwd=self.script.parent,
-            env=self.env,
-            capture_output=True,
-            text=True,
-            timeout=3,
-        )
-        self.assertEqual((result.returncode, result.stderr), (0, ""))
-        self.assertEqual(json.loads(result.stdout), [1, True, True, True])
+        self.assertEqual(launch.argv[:2], (os.path.realpath(sys.executable), "-I"))
+        with tempfile.TemporaryDirectory(dir=self.root) as directory:
+            folder = Path(directory)
+            copied_script = folder / "app_server.py"
+            copied_script.write_bytes(self.script.read_bytes())
+            marker = folder / "shadowed"
+            (folder / "types.py").write_text(f"open({str(marker)!r}, 'w').close()\n")
+            result = subprocess.run(
+                (*launch.argv[:2], str(copied_script), "--timeout", "0"),
+                cwd=folder,
+                env=self.env,
+                capture_output=True,
+                text=True,
+                timeout=3,
+            )
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (0, "null\n", ""))
+        self.assertFalse(marker.exists())
 
     def test_partial_null_and_empty_native_snapshots_are_preserved(self):
         for case in ("weekly-only", "null", "empty", "fallback", "five-first", "weekly-full"):

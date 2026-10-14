@@ -19,7 +19,7 @@ from unittest import mock
 
 import agent_pm.session as session_pkg
 from agent_pm.session import Driver
-from agent_pm.session.adapters import selection
+from agent_pm.session.adapters import common as selection
 from agent_pm.session.engine import api, records
 from agent_pm.session.engine import types as engine_types
 from agent_pm.session.engine.api import POLL, Mode
@@ -1937,7 +1937,7 @@ class ChecksTest(Base):
         forbidden = ("--resume", "-r", "resume", "fork", "--last")
         for flags in (("--", *forbidden), ("--resumes", "--continued", "--teleport-x")):
             with self.subTest(flags=flags):
-                selection.check(flags, forbidden)
+                selection.check_selection(flags, forbidden)
 
     def test_selection_words_used_as_option_values_are_not_selectors(self):
         from agent_pm.session.adapters.codex import CodexAdapter
@@ -1950,9 +1950,11 @@ class ChecksTest(Base):
             ("-cmodel=x",),
         ):
             with self.subTest(flags=flags):
-                selection.check(flags, CodexAdapter.forbidden_selection, CodexAdapter.valued_flags)
+                selection.check_selection(
+                    flags, CodexAdapter.forbidden_selection, CodexAdapter.valued_flags
+                )
         with self.assertRaisesRegex(ConfigError, "fork: picks the session"):
-            selection.check(
+            selection.check_selection(
                 ("--add-dir", "safe", "fork"),
                 CodexAdapter.forbidden_selection,
                 CodexAdapter.valued_flags,
