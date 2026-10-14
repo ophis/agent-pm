@@ -191,6 +191,16 @@ class KillTest(Case):
         with self.assertRaisesRegex(types.TuiError, r"^tmux: boom$"):
             transport.kill("s", proc=FakeTmux(fail={"kill-session"}))
 
+    def test_a_pane_id_kills_that_pane_only(self):
+        fake = FakeTmux()
+        transport.kill("%12", proc=fake)
+        self.assertEqual(fake.calls, [["tmux", "kill-pane", "-t", "%12"]])
+        self.assertEqual(fake.kwargs, [TMUX_KW])
+        with self.assertRaisesRegex(types.TuiError, r"^tmux: can't find pane: %12$"):
+            transport.kill(
+                "%12", proc=FakeTmux(results={"kill-pane": (1, "", "can't find pane: %12\n")})
+            )
+
 
 class SendTest(Case):
     def send(self, fake, text):
@@ -435,7 +445,7 @@ class PaneTargetTest(Case):
             fake.calls,
             [
                 ["tmux", "display-message", "-p", "-t", "%12", FORMAT],
-                ["tmux", "kill-session", "-t", "%12"],
+                ["tmux", "kill-pane", "-t", "%12"],
                 ["tmux", "load-buffer", "-b", buffer, "-"],
                 ["tmux", "paste-buffer", "-p", "-r", "-d", "-b", buffer, "-t", "%12"],
                 ["tmux", "send-keys", "-t", "%12", "Enter"],
@@ -450,8 +460,6 @@ class PaneTargetTest(Case):
         self.assertIsNone(
             transport.option("%12", "@sid", proc=FakeTmux(results={"show-options": gone}))
         )
-        with self.assertRaisesRegex(types.TuiError, r"^tmux: can't find pane: %12$"):
-            transport.kill("%12", proc=FakeTmux(results={"kill-session": gone}))
 
     def test_a_bad_target_is_refused_before_tmux(self):
         for target in ("%", "%x", "%1;", "%1 ", "%1:", "%1.0", "=%1", "%-1", "a b"):

@@ -184,7 +184,11 @@ def tmux_path() -> str | None:
 
 
 def kill(target: str, *, proc=subprocess.run) -> None:
-    checked(["kill-session", "-t", address(target, "")], proc)
+    """Kills the pane a pane id names, else the named session."""
+    if PANE.fullmatch(target):
+        checked(["kill-pane", "-t", target], proc)
+    else:
+        checked(["kill-session", "-t", address(target, "")], proc)
 
 
 def send(session: str, text: str, *, proc=subprocess.run, sleep=time.sleep) -> None:
