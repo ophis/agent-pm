@@ -228,6 +228,7 @@ def _exclusive(ctx):
     logged, when it cannot be opened.
     """
     try:
+        os.makedirs(ctx.workdir, exist_ok=True)
         fd = os.open(
             os.path.join(ctx.workdir, LOCK),
             os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK,

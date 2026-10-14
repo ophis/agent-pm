@@ -8,7 +8,7 @@ from datetime import UTC, datetime, timedelta, timezone
 from unittest import mock
 
 from agent_pm.linear_orchestrator.engine import runs
-from agent_pm.linear_orchestrator.engine.types import Claim
+from agent_pm.linear_orchestrator.engine.types import Claim, ConfigError
 from agent_pm.utils import save
 from orchestrator_tests import case
 
@@ -377,6 +377,14 @@ class DelegateOf(case.Case):
         ]
         self.assertEqual(runs.delegate_of(entries, "s"), "start")
         self.assertEqual(runs.delegate_of([entries[2], entries[0]], "s"), "old")
+
+    def test_a_kindless_row_of_the_sid_is_a_config_error(self):
+        entries = [
+            entry("start", "TASK-1", "s", "pm", minutes=40),
+            entry("resume", "TASK-1", "s", "pm", minutes=30)._replace(delegate_kind=None),
+        ]
+        with self.assertRaisesRegex(ConfigError, "TASK-1: session s's runs.jsonl row has no"):
+            runs.delegate_of(entries, "s")
 
 
 class NoteLimit(Case):

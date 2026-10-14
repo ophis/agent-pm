@@ -3953,6 +3953,24 @@ class RecoverWriteBack(TickBase):
         self.assertEqual(self.start.launches, [])
         self.assertEqual(self.linear.issues["TASK-1"]["state"], "In Review")
 
+    def test_a_live_run_is_not_written_back(self):
+        self.ended()
+        self.assertEqual(self.tick(self.linear, "--now", live=["agent-pm-researcher-TASK-1"]), 0)
+        self.assertEqual((self.start.launches, self.linear.mutations), ([], []))
+        self.assertEqual(self.steps(), ["comment"])
+
+    def test_a_complete_write_back_resumes_as_before(self):
+        self.ended()
+        done = ["comment", "move:in_review", "outcome"]
+        self.write(
+            os.path.join(self.workdir, "writeback.json"),
+            json.dumps({self.sid("a"): {"steps": done}}),
+        )
+        self.touch("a", 40)
+        self.assertEqual(self.tick(self.linear, "--now"), 0)
+        self.assertEqual(self.launched_runs(), [("TASK-1", "resume")])
+        self.assertEqual(self.steps(), done)
+
     def test_without_an_outcome_the_run_resumes(self):
         self.touch("a", 40)
         self.assertEqual(self.tick(self.linear, "--now"), 0)

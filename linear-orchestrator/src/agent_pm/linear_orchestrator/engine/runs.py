@@ -202,9 +202,9 @@ def client_of(entries, sid):
 
 
 def delegate_of(entries, sid) -> str:
-    """Raises ConfigError for a row without one."""
+    """Raises ConfigError when a row of the sid has none."""
     mine = [e for e in entries if e.sid == sid]
     first = next((e for e in mine if e.kind == "start"), min(mine, key=lambda e: e.ts))
-    if first.delegate_kind is None:
+    if any(e.delegate_kind is None for e in mine):
         raise ConfigError(f"{first.issue}: session {sid}'s runs.jsonl row has no delegate kind")
     return first.delegate_kind

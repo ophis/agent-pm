@@ -1586,6 +1586,24 @@ class Events(RunCase):
     def said(self):
         return [f"{e['src']} {show(e)}" for e in logged()]
 
+    def racing(self, module, name, act):
+        """On module.name's first call, runs act on another thread and gives it half a second
+        before the call goes on; act's results and its thread.
+        """
+        real, results, threads = getattr(module, name), [], []
+
+        def first(*args, **kwargs):
+            if not threads:
+                threads.append(threading.Thread(target=lambda: results.append(act())))
+                threads[0].start()
+                threads[0].join(0.5)
+            return real(*args, **kwargs)
+
+        patched = mock.patch.object(module, name, first)
+        patched.start()
+        self.addCleanup(patched.stop)
+        return results, threads
+
     @staticmethod
     def finished(rc=0, *, outcome=None, error="", limit=None, attempt=1):
         return delegate_event(
@@ -2138,27 +2156,9 @@ class LimitEvents(Events):
         self.assertEqual(self.linear.calls[n:], [])
         self.assertEqual(self.rows(), [self.row()])
 
-    # a callback and Recover writing back one run at once: each step once, none lost
-    def racing(self, module, name, event):
-        """On module.name's first call, delivers event on another thread and gives it half a
-        second before the call goes on; that delivery's results and thread.
-        """
-        real, results, threads = getattr(module, name), [], []
-
-        def first(*args, **kwargs):
-            if not threads:
-                threads.append(threading.Thread(target=lambda: results.append(self.deliver(event))))
-                threads[0].start()
-                threads[0].join(0.5)
-            return real(*args, **kwargs)
-
-        patched = mock.patch.object(module, name, first)
-        patched.start()
-        self.addCleanup(patched.stop)
-        return results, threads
-
     def test_a_redelivered_limit_records_one_row(self):
-        results, threads = self.racing(writeback.runs, "note_limit", self.limited())
+        again = self.limited()
+        results, threads = self.racing(writeback.runs, "note_limit", lambda: self.deliver(again))
         self.assertTrue(self.deliver(self.limited()))
         threads[0].join()
         self.assertEqual(results, [True])
@@ -2169,7 +2169,7 @@ class LimitEvents(Events):
 
     def test_two_writers_lose_no_step(self):
         one, two = (delegate_event("progress", name="build", text=t) for t in ("one", "two"))
-        results, threads = self.racing(writeback, "save", two)
+        results, threads = self.racing(writeback, "save", lambda: self.deliver(two))
         self.assertTrue(self.deliver(one))
         threads[0].join()
         self.assertEqual(results, [True])
@@ -2178,3 +2178,31 @@ class LimitEvents(Events):
             self.ledger()[RUN_SID]["steps"],
             [f"progress:build:{digest['one']}", f"progress:build:{digest['two']}"],
         )
+
+
+class RecoverReplay(Events):
+    """Recover's in-process write-back of an ended run's outcome (FR-41)."""
+
+    def outcome(self):
+        data = outcome_data()
+        return Outcome(**data | {"status": OutcomeStatus(data["status"])})
+
+    def replay(self):
+        return writeback.replay(self.cfg, RUN_ISSUE, RUN_SID, self.outcome(), gql=self.linear)
+
+    def test_a_callback_and_recover_at_once_write_each_step_once(self):
+        results, threads = self.racing(writeback, "save", self.replay)
+        self.assertTrue(self.deliver(self.finished(outcome=outcome_data())))
+        threads[0].join()
+        self.assertEqual(results, [True])
+        self.assertEqual(
+            self.ledger()[RUN_SID]["steps"],
+            ["comment", f"attach:{PR}", "move:in_review", "outcome"],
+        )
+        self.assertEqual(len(self.linear.writes("state")), 1)
+        self.assertEqual(len([c for c in self.linear.comments if c != RUN_SESSION]), 1)
+
+    def test_a_first_event_makes_its_workdir(self):
+        shutil.rmtree(self.workdir)
+        self.assertTrue(self.deliver(delegate_event("progress", name="build", text="one")))
+        self.assertEqual(len(self.ledger()[RUN_SID]["steps"]), 1)
