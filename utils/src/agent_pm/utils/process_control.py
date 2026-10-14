@@ -60,7 +60,6 @@ class _Group:
             os.close(read)
             cls._anchor(write, argv, cwd, **options)
         os.close(write)
-        os.setpgid(pid, pid)
         return cls(pid, read)
 
     @staticmethod

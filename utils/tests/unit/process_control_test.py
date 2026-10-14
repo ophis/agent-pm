@@ -12,6 +12,17 @@ from utils.tests.case import Case
 
 
 class GroupTest(Case):
+    def test_parent_does_not_race_an_exited_anchor_to_set_its_group(self):
+        with (
+            mock.patch("os.fork", return_value=4242),
+            mock.patch("os.setpgid", side_effect=ProcessLookupError) as setpgid,
+        ):
+            group = _Group.launch(["missing"], "/")
+        self.addCleanup(os.close, group.channel)
+        setpgid.assert_not_called()
+        self.assertEqual(group.receive(), [])
+        self.assertTrue(group.eof)
+
     def group(self):
         read, write = os.pipe()
         self.addCleanup(os.close, read)

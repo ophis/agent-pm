@@ -15,6 +15,18 @@ from utils.tests.case import Case
 
 
 class ProcessControlTest(Case):
+    def test_exec_failure_is_reported_without_a_startup_timeout(self):
+        control = ProcessControl.prepare(["/no-such-task366-program"], os.getcwd())
+        process = subprocess.Popen(
+            control.command(), stdout=subprocess.PIPE, stderr=subprocess.PIPE
+        )
+        self.addCleanup(control.remove)
+        self.addCleanup(process.communicate, timeout=10)
+        started = time.monotonic()
+        with self.assertRaises(FileNotFoundError):
+            control.wait_started()
+        self.assertLess(time.monotonic() - started, 2)
+
     def start(self, script, *args):
         control = ProcessControl.prepare([sys.executable, "-I", "-c", script, *args], os.getcwd())
         process = subprocess.Popen(
