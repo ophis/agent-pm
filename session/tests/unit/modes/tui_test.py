@@ -614,9 +614,13 @@ class StartTest(Base):
         self.nothing_hosted()
 
     def test_an_unavailable_host_is_a_driver_error_with_nothing_started(self):
-        self.host.calls.validate.side_effect = DriverError("host unavailable")
-        with self.assertRaisesRegex(DriverError, r"\Ahost unavailable\Z"):
+        failure = DriverError("host unavailable")
+        self.host.calls.validate.side_effect = failure
+        with self.assertRaisesRegex(
+            DriverError, rf"\Acannot start tui session {NAME}: host unavailable\Z"
+        ) as caught:
             self.start(events=None)
+        self.assertIs(caught.exception.__cause__, failure)
         self.host.calls.validate.assert_called_once()
         self.nothing_hosted()
 
