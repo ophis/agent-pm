@@ -1,14 +1,14 @@
 """LinearRun reattaches the real HarnessDelegate's durable state through process-free Sessions."""
 
-from dataclasses import replace
+import os
 
 from agent_pm.delegate import Delegate
 from agent_pm.linear_orchestrator.engine import runs
 from agent_pm.linear_orchestrator.engine.linear_run import LinearRun
+from agent_pm.linear_orchestrator.engine.types import Config, Docs
 from agent_pm.session import Mode
 from agent_pm.session import Spec as SessionSpec
 from agent_pm.utils import load_class
-from orchestrator_tests.linear_run_case import RunCase
 
 from delegate.tests.fakes.harness_session import HarnessSession, RecordingHost
 from delegate.tests.harness import SID, HarnessCase
@@ -23,12 +23,25 @@ class HarnessProvider(HARNESS_DELEGATE):
         )
 
 
-class HarnessRun(HarnessCase, RunCase):
+class HarnessRun(HarnessCase):
     def setUp(self):
-        HarnessCase.setUp(self)
-        RunCase.setUp(self)
-        self.cfg = replace(
-            self.cfg, delegate_kind="harness", delegates={"harness": HARNESS_DELEGATE}, protect=()
+        super().setUp()
+        self.cfg = Config(
+            team="",
+            states={},
+            human_members=(),
+            harness_key="",
+            task_label_group="",
+            task_labels={},
+            roles={},
+            project_repos={},
+            local_clones={},
+            work_dir=os.path.join(self.home, "pipeline"),
+            protect=(),
+            docs=Docs("", "", {}),
+            stages={},
+            delegate_kind="harness",
+            delegates={"harness": HARNESS_DELEGATE},
         )
 
     def test_real_harness_state_round_trip_owns_both_sessions_and_resumes_once(self):

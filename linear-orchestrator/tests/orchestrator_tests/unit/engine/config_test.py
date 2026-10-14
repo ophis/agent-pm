@@ -7,7 +7,6 @@ import json
 import os
 import re
 import shlex
-import subprocess
 import tomllib
 from importlib.resources import files
 from pathlib import Path
@@ -17,7 +16,7 @@ from agent_pm import delegate, utils
 from agent_pm.linear_orchestrator.engine import config
 from agent_pm.linear_orchestrator.engine.types import State
 from agent_pm.utils import temp_dirs
-from orchestrator_tests.case import REPO, ROOTS, Case
+from orchestrator_tests.case import REPO, ROOTS, Case, system_probe
 from orchestrator_tests.config_fixtures import (
     BASE,
     CORE_LOCAL,
@@ -27,7 +26,7 @@ from orchestrator_tests.config_fixtures import (
     ConfigFile,
     write,
 )
-from orchestrator_tests.process_fixtures import DEVNULL
+from orchestrator_tests.process_fixtures import DEVNULL, CompletedProcess
 from orchestrator_tests.unit.board_ids import HEADER, STATES, TASK_GROUP, TEAM, role
 from orchestrator_tests.unit.config_fixtures import GATE
 
@@ -663,7 +662,7 @@ class DeploymentWritePaths(ConfigFile, Case):
         for directory in (REPO, os.path.join(REPO, "delegate"), os.path.dirname(REPO)):
             with (
                 self.subTest(directory=directory),
-                mock.patch("subprocess.run", wraps=subprocess.run) as runs,
+                mock.patch("subprocess.run", wraps=system_probe) as runs,
                 self.assertRaisesRegex(
                     config.ConfigError,
                     "local_clones.ophis/x must neither lie in nor contain deployment",
@@ -792,7 +791,7 @@ class ShellExecution(Case):
     def test_clone_default_shell_uses_configured_path_and_inherited_environment(self):
         clone = os.path.join(self.home, "clone")
         os.makedirs(os.path.join(clone, ".git"))
-        result = subprocess.CompletedProcess([], 0, "https://github.com/ophis/agent-pm\n", "")
+        result = CompletedProcess([], 0, "https://github.com/ophis/agent-pm\n", "")
         for front in ("", "/tools/bin"):
             with (
                 self.subTest(front=front),
