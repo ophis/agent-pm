@@ -15,7 +15,6 @@ import re
 import shutil
 import signal
 import stat
-import subprocess
 import sys
 import tempfile
 import threading
@@ -23,11 +22,13 @@ import time
 import unittest
 import unittest.mock
 from contextlib import ExitStack, contextmanager, redirect_stderr, redirect_stdout, suppress
+from types import SimpleNamespace
 
 from agent_pm.session.hosts.tmux import tmux_host
 from agent_pm.session.hosts.tmux.tmux_host import TuiError
 
 from session.tests.case import Case
+from utils.tests.process_fixtures import DEVNULL, TimeoutExpired
 
 RUNTIME = re.compile(r"claude|codex|print_prompt", re.I)
 
@@ -39,9 +40,9 @@ PGREP = ["pgrep", "-a", "-x", "iTerm2"]
 
 ITERM = {"ITERM_SESSION_ID": "w0t0p0:ABC", "TERM_PROGRAM": "iTerm.app"}
 
-TMUX_KW = {"capture_output": True, "text": True, "stdin": subprocess.DEVNULL}
+TMUX_KW = {"capture_output": True, "text": True, "stdin": DEVNULL}
 
-SH_KW = {"stdin": subprocess.DEVNULL, "timeout": 30}
+SH_KW = {"stdin": DEVNULL, "timeout": 30}
 
 OSA_KW = {**TMUX_KW, "timeout": 30}
 
@@ -128,7 +129,7 @@ RETILE_ERROR = "^retile must be one of all, open-close, off, not {}$"
 
 
 def done(argv, rc=0, out="", err=""):
-    return subprocess.CompletedProcess(argv, rc, out, err)
+    return SimpleNamespace(args=argv, returncode=rc, stdout=out, stderr=err)
 
 
 def record(opener, pane):
@@ -1707,7 +1708,7 @@ class MarkTest(Case):
         self.assertFalse(os.path.exists(os.path.join(self.root, "missing")))
 
     def test_a_failed_tmux_call_or_bad_value_raises_writing_no_line(self):
-        timeout = subprocess.TimeoutExpired(["tmux"], 5)
+        timeout = TimeoutExpired(["tmux"], 5)
         cases = (
             (Tmux(pane="w1", fail={"set-option"}), {}, "^tmux: boom$"),
             (Tmux(), {}, "^tmux: no server running$"),
@@ -2827,7 +2828,7 @@ class ShowTest(Case):
         for template, result, why in (
             ("open {{name}} {{session}}", None, "unknown placeholder {{name}}"),
             ("false", (3,), "exit status 3"),
-            ("sleep 99", subprocess.TimeoutExpired("/bin/sh", 30), "timed out after 30 s"),
+            ("sleep 99", TimeoutExpired("/bin/sh", 30), "timed out after 30 s"),
             ("x", missing, str(missing)),
         ):
             with self.subTest(why=why):
@@ -3724,7 +3725,7 @@ class PanePlacementTest(PaneFixture):
             ({"pgrep": (1,)}, "iTerm2 is not running"),
             ({"osascript": missing}, f"osascript: {missing}"),
             (
-                {"osascript": subprocess.TimeoutExpired("osascript", 30)},
+                {"osascript": TimeoutExpired("osascript", 30)},
                 "osascript timed out after 30 s",
             ),
             (

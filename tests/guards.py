@@ -15,16 +15,7 @@ from agent_pm.utils.config_file import LEVELS
 
 from tests.import_policy import violation
 
-UNIT_ISOLATION_ALLOWED = {
-    "session/tests/unit/adapters/codex/tui_test.py": "TASK-385 Phase B",
-    "session/tests/unit/adapters/codex/tui/start_test.py": "TASK-385 Phase B",
-    "session/tests/unit/engine/hosted_test.py": "TASK-385 Phase B",
-    "session/tests/unit/fakes/host_test.py": "TASK-385 Phase B",
-    "session/tests/unit/hosts/tmux/tmux_host_test.py": "TASK-385 Phase B",
-    "session/tests/unit/modes/headless_test.py": "TASK-385 Phase B",
-    "session/tests/unit/modes/tui_hook_test.py": "TASK-385 Phase B",
-    "session/tests/unit/modes/tui_test.py": "TASK-385 Phase B",
-}
+UNIT_ISOLATION_ALLOWED = {}
 
 
 RUNTIME = re.compile(r"claude|codex|print_prompt", re.I)
