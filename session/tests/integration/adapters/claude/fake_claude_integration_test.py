@@ -526,6 +526,11 @@ class BadScenario(Case):
             {"steps": [{"kind": "write", "path": 1, "text": "x"}]},
             {"steps": [{"kind": "write", "path": "", "text": "x"}]},
             {"steps": [{"kind": "write", "path": "a", "text": None}]},
+            {"steps": [{"kind": "run", "argv": ["true"]}]},
+            {"steps": [{"kind": "run", "argv": [], "path": "a"}]},
+            {"steps": [{"kind": "run", "argv": "true", "path": "a"}]},
+            {"steps": [{"kind": "run", "argv": [1], "path": "a"}]},
+            {"steps": [{"kind": "run", "argv": ["true"], "path": ""}]},
             {"resume": "x"},
             {"resume": [1]},
             {"turns": "x"},
@@ -564,6 +569,7 @@ class BadScenario(Case):
             {"steps": [{"kind": "sleep", "seconds": True}]},
             {"steps": [{"kind": "sleep"}]},
             {"steps": [{"kind": "write", "path": "a", "text": "x"}]},
+            {"steps": [{"kind": "run", "argv": ["true"], "path": "a"}]},
         ):
             with self.subTest(scenario=scenario):
                 self.scene(**scenario)
@@ -611,6 +617,17 @@ class PrintMode(Case):
         )
         with open(os.path.join(self.proj, "sub", "out.md"), encoding="utf-8") as f:
             self.assertEqual(f.read(), "# Out\n")
+
+    def test_a_run_step_writes_its_commands_result_under_the_cwd_then_the_next_step_runs(self):
+        argv = ["/bin/sh", "-c", "pwd -P; printf oops >&2; exit 3"]
+        self.scene(steps=[{"kind": "run", "argv": argv, "path": "ran.json"}, "After."])
+        res = self.run_fake(*ARGS)
+        self.assertEqual(self.result(res), "After.")
+        with open(os.path.join(self.proj, "ran.json"), encoding="utf-8") as f:
+            self.assertEqual(
+                json.load(f),
+                {"returncode": 3, "stdout": os.path.realpath(self.proj) + "\n", "stderr": "oops"},
+            )
 
     def test_resume_steps_replace_steps_only_on_a_resume(self):
         self.scene(steps=["First."], resume=["Again."])
