@@ -183,7 +183,7 @@ class Driver:
     ) -> str | None:
         tui.checked_name(name)
         display = TmuxHost.fold(opener, split, split_from)
-        self.registry.tui()
+        self.session_cls.host().tui_settings()
         return self._shown().show(name, display=display)
 
     def usage(self, runtime: str) -> Usage | None:

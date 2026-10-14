@@ -276,7 +276,6 @@ OPTION_WORD = re.compile(r"[a-z0-9]+(?:[_-][a-z0-9]+)*")
 
 OPTION_TUPLES_ALLOWED = {
     (CONFIG_LEVELS, "UNCONFIGURED"): "the projects without their own config.toml, a subset",
-    (f"{SESSION_SRC}adapters/registry.py", "TUI_KEYS"): "the [hosts.tmux] keys tui() reads",
     (f"{SESSION_SRC}adapters/claude/tui.py", "MONTHS"): "month names, indexed by month",
     (f"{SESSION_SRC}adapters/claude/tui.py", "WEEKDAYS"): "weekday names, indexed by weekday",
     (

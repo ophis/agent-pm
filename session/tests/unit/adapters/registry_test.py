@@ -1,7 +1,8 @@
 """adapters/registry.py: what a caller-owned Registry stores (read-only copies of the
 [adapters.<name>] tables and the parsed Hosts, never parsed again), settings() from a read session
-config, the tui settings from [hosts.tmux] and Adapter loading from module.path:Class. Caller-owned
-fake module tables supply the adapter loader; each test constructs fresh settings.
+config, the tui settings the Driver's held default Host reads from [hosts.tmux] and Adapter loading
+from module.path:Class. Caller-owned fake module tables supply the adapter loader; each test
+constructs fresh settings.
 """
 
 import abc
@@ -22,7 +23,7 @@ from agent_pm.session import Driver, Host, Hosts, Spec, read_config
 from agent_pm.session.adapters import registry
 from agent_pm.session.adapters.base import Adapter
 from agent_pm.session.adapters.claude import ClaudeAdapter
-from agent_pm.session.engine.types import ConfigError
+from agent_pm.session.engine.types import ConfigError, TuiSettings
 from agent_pm.utils import load_class
 
 from session.tests import fake_adapter
@@ -53,6 +54,10 @@ class AbstractAdapter(Adapter, abc.ABC):
 
 def odd_adapter():
     return None
+
+
+def tui(driver: Driver) -> TuiSettings:
+    return driver.session_cls.host().tui_settings()
 
 
 def package(name, **names) -> types.ModuleType:
@@ -108,8 +113,8 @@ class ConfigureTest(Base):
             self.assertEqual(self.driver.registry.configured(), ["a", "fake"])
             self.assertEqual(self.driver.registry.adapter("fake").config, {"scenario": "/s"})
             self.assertEqual(
-                self.driver.registry.tui(),
-                registry.TuiSettings(status_line=True, per_column=None, retile=None),
+                tui(self.driver),
+                TuiSettings(status_line=True, per_column=None, retile=None),
             )
         opened.assert_not_called()
 
@@ -119,9 +124,9 @@ class ConfigureTest(Base):
         first = self.driver
         self.configure(FAKE + 'scenario = "/b"\n')
         self.assertEqual(first.registry.adapter("fake").config, {"scenario": "/a"})
-        self.assertEqual(first.registry.tui().per_column, 2)
+        self.assertEqual(tui(first).per_column, 2)
         self.assertEqual(self.driver.registry.adapter("fake").config, {"scenario": "/b"})
-        self.assertEqual(self.driver.registry.tui(), registry.TuiSettings())
+        self.assertEqual(tui(self.driver), TuiSettings())
 
     def test_the_adapter_tables_are_deep_copies(self):
         self.register(fake=fake_adapter)
@@ -213,10 +218,11 @@ class ConfigureTest(Base):
         ):
             self.driver = Driver(**settings({}, {"workers_per_column": 4}))
             imp.assert_not_called()
-            self.assertEqual(
-                self.driver.registry.tui(),
-                registry.TuiSettings(status_line=False, per_column=4, retile=None),
-            )
+            for _ in range(2):
+                self.assertEqual(
+                    tui(self.driver),
+                    TuiSettings(status_line=False, per_column=4, retile=None),
+                )
         imp.assert_called_once_with("agent_pm.session.hosts.tmux")
         self.assertIs(
             load_class(HOSTS["tmux"]["implementation"], Host), agent_pm.session.hosts.tmux.TmuxHost
@@ -283,8 +289,8 @@ class SettingsTest(Base):
         self.assertEqual(found["hosts"].default, "tmux")
         self.driver = Driver(**found)
         self.assertEqual(
-            self.driver.registry.tui(),
-            registry.TuiSettings(status_line=True, per_column=3, retile="open-close"),
+            tui(self.driver),
+            TuiSettings(status_line=True, per_column=3, retile="open-close"),
         )
 
 
@@ -292,15 +298,15 @@ class TuiTest(Base):
     def test_defaults_when_unset(self):
         self.configure(FAKE)
         self.assertEqual(
-            self.driver.registry.tui(),
-            registry.TuiSettings(status_line=False, per_column=None, retile=None),
+            tui(self.driver),
+            TuiSettings(status_line=False, per_column=None, retile=None),
         )
         self.assertEqual(
-            registry.TuiSettings(),
-            registry.TuiSettings(status_line=False, per_column=None, retile=None),
+            TuiSettings(),
+            TuiSettings(status_line=False, per_column=None, retile=None),
         )
         self.driver = Driver(adapters={}, hosts={"other": HOSTS["tmux"]}, default_host="other")
-        self.assertEqual(self.driver.registry.tui(), registry.TuiSettings())
+        self.assertEqual(tui(self.driver), TuiSettings())
 
     def test_the_hosts_tmux_keys_values(self):
         for tmux, want in (
@@ -316,11 +322,11 @@ class TuiTest(Base):
         ):
             with self.subTest(tmux=tmux):
                 self.configure(FAKE, tmux)
-                self.assertEqual(self.driver.registry.tui(), registry.TuiSettings(*want))
+                self.assertEqual(tui(self.driver), TuiSettings(*want))
 
     def test_an_adapters_key_is_no_setting(self):
         self.configure("[adapters.fake]\nstatus_line = true\nworkers_per_column = 2\n")
-        self.assertEqual(self.driver.registry.tui(), registry.TuiSettings())
+        self.assertEqual(tui(self.driver), TuiSettings())
 
     def test_a_value_of_the_wrong_type_or_range_is_a_config_error_naming_its_key(self):
         self.register(fake=fake_adapter)
@@ -340,7 +346,7 @@ class TuiTest(Base):
             for value in values:
                 with self.subTest(key=key, value=value):
                     self.configure(FAKE, {key: value})
-                    self.refused(message, self.driver.registry.tui)
+                    self.refused(message, lambda: tui(self.driver))
                     self.assertIs(
                         type(self.driver.registry.adapter("fake")), fake_adapter.FakeAdapter
                     )

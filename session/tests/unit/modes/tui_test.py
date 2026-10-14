@@ -1226,6 +1226,24 @@ class PollTest(Base):
         self.assertTrue(all(0 < seconds <= 0.1 for _, seconds in self.log), self.log)
         self.assertAlmostEqual(self.clock.now, 0.5)
 
+    def test_a_quiet_wait_checks_the_terminal_once_per_poll_however_long(self):
+        for timeout in (0.5, 5):
+            with self.subTest(timeout=timeout):
+                mode = self.started()
+                self.assertEqual(mode.poll(timeout), ([], False))
+                self.assertEqual(
+                    self.host.calls.mock_calls, [mock.call.screen(mode._terminal, None)]
+                )
+                self.assertEqual(
+                    sorted(call[0] for call in mode._terminal.calls.mock_calls),
+                    ["alive", "returncode", "state", "state"],
+                )
+        mode = self.started()
+        late = self.clock.now + 2.05
+        self.clock.actions.append((late, lambda: self.append(record("tool", tool="late"))))
+        self.assertEqual(mode.poll(5), ([Activity("late")], False))
+        self.assertEqual(mode._terminal.calls.state.call_count, 3)
+
     def test_a_record_while_waiting_returns_at_once(self):
         mode = self.started()
         self.clock.actions.append((0.25, lambda: self.append(record("tool", tool="late"))))

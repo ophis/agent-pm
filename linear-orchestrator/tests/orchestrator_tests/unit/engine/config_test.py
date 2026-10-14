@@ -987,7 +987,7 @@ class ConfigurationRoot(ConfigFile, Case):
         )
         cfg = self.load(PIPELINE)
         self.assertEqual(cfg.driver.registry.configured(), ["a", "claude", "codex"])
-        self.assertEqual(cfg.driver.registry.tui().status_line, True)
+        self.assertEqual(cfg.driver.session_cls.host().tui_settings().status_line, True)
 
     def test_a_later_delegate_plan_keeps_the_settings_load_configured(self):
         path, local = (os.path.join(self.dir, n) for n in ("config.toml", "config.local.toml"))
@@ -999,7 +999,7 @@ class ConfigurationRoot(ConfigFile, Case):
         delegate.plan(
             pm.run, delegate.Spec("x", work, runtime="claude", cwd=work), driver=cfg.driver
         )
-        self.assertTrue(cfg.driver.registry.tui().status_line)
+        self.assertTrue(cfg.driver.session_cls.host().tui_settings().status_line)
 
     def test_a_bad_session_config_stops_the_caller(self):
         write(

@@ -491,7 +491,7 @@ class TuiMode(RunningMode):
         found = self._read()
         if not found and not self._gone:
             state = self._terminal.state()
-            if state != Liveness.UNKNOWN:
+            if not self._replaced(state) and state != Liveness.UNKNOWN:
                 code = self._terminal.returncode()
                 if state == Liveness.ABSENT:
                     code = -signal.SIGHUP
@@ -504,7 +504,7 @@ class TuiMode(RunningMode):
                     with contextlib.suppress(DriverError):
                         screen = self.host.screen(self._terminal)
                         found = self._read()
-                        if not found and not self._gone:
+                        if not found and not self._replaced(self._terminal.state()):
                             found = self._scan(screen)
         deadline = time.monotonic() + timeout
         while not found and not self._gone and (left := deadline - time.monotonic()) > 0:
@@ -517,24 +517,31 @@ class TuiMode(RunningMode):
         self._code = -signal.SIGHUP if self._code is None else self._code
 
     def _read(self) -> list[SessionEvent | Stderr | ClientBound]:
+        """New records' events, checked against the terminal and session.json only once found."""
         if self._gone:
             return []
-        if self._terminal.state() == Liveness.ABSENT:
+        records, end = self._store.records(self._offset)
+        if end == self._offset or self._replaced(self._terminal.state()):
+            return []
+        self._offset = end
+        return _translated(self.run, records)
+
+    def _replaced(self, state: Liveness) -> bool:
+        """Ended once another terminal holds its name or session.json is another generation's."""
+        if state == Liveness.ABSENT:
             replacement = self._store.process()
             if replacement is not None and replacement.identity != self._terminal.identity:
                 self._end()
-                return []
+                return True
         try:
             current = self._store.read()
         except DriverError:
             self._end()
-            return []
+            return True
         if current["generation"] != self._generation:
             self._end()
-            return []
-        records, end = self._store.records(self._offset)
-        self._offset = end
-        return _translated(self.run, records)
+            return True
+        return False
 
     def _scan(self, screen: str) -> list[SessionEvent | Stderr | ClientBound]:
         """Since the last scan: Activity("") once a dialog went, Blocked per new dialog, LimitHit
