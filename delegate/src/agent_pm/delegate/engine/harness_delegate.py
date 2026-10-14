@@ -237,13 +237,21 @@ class HarnessDelegate(Delegate):
             raise ConfigError(str(error)) from None
 
     def _replacing(self, payload: bytes) -> int:
-        """The attempt replacing the run `payload` records, refused while that run is alive."""
+        """The attempt replacing the run `payload` records, refused while that run is alive; the
+        agent session it left open (a tui run's, after its outcome) is closed.
+        """
         try:
             previous = self._parse(payload)
         except ConfigError:
             return self._salvaged(payload)
         if self._alive(previous):
             raise ConfigError(f"{self.workdir}: delegate is still alive")
+        agent = self._agent(previous)
+        if agent is not None:
+            try:
+                agent.close()
+            except DriverError as error:
+                raise ConfigError(str(error)) from None
         return previous.attempt + 1
 
     def _salvaged(self, payload: bytes) -> int:

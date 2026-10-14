@@ -2,7 +2,9 @@
 a control-mode client on the manager, the session config's ClaudeAdapter running
 session/tests/integration/adapters/claude/fake_claude.py: the one Record line whose sessions are live
 on return, the harness session, the TUI beside the caller or in no pane, the harness's outcome and
-exited lines, a kill-session of the harness session, an events path tmux would misread. Ports main's
+exited lines, a kill-session of the harness session, an events path tmux would misread, a needs_input
+run answered by `run --resume --sid --input --detach` (refused while the run lives) whose outcome a
+`resume WORKDIR` then leaves alone. Ports main's
 tests/integration/core/drive_tui_integration_test.py
 test_detach_from_the_manager. Not ported, as role entries are TASK-356: its
 test_detach_events_default (the manager directory's events file needs roster) and main's
@@ -38,6 +40,8 @@ TURN_END = re.compile(rf"{STAMP} {TUI} done")
 HARNESS_LINE = re.compile(rf"{STAMP} {HARNESS} ((?:outcome [a-z_]+)|(?:exited -?[0-9]+))")
 START = mark("start", "echoing")
 WAIT = 60  # seconds: a run
+ANSWER = "Use option B."
+RESUME = (*RUN[:-1], "resume")
 
 
 class Detach(Case):
@@ -56,18 +60,23 @@ class Detach(Case):
             os.path.join(self.dir, f) for f in ("events", "scenario.json")
         )
 
-    def detach(self, *extra: str, steps, turns=(), inside=None, events=None):
+    def detach(
+        self, *extra: str, steps, turns=(), inside=None, events=None, text="Hello.", **scenario
+    ):
         with open(self.scenario, "w") as f:
-            json.dump({"steps": steps, "turns": list(turns)}, f)
+            json.dump({"steps": steps, "turns": list(turns), **scenario}, f)
+        argv = [*RUN, "--role", ROLE, "--input", text, "--out", self.out, "--workdir"]
+        argv += [self.work, "--sid", SID, "--detach", "--events", events or self.events, *extra]
+        self.events_used = events or self.events
+        return self.cli(argv, inside=inside)
+
+    def cli(self, argv, *, inside=None) -> subprocess.CompletedProcess:
         env = self.server.env(
             PYTHONPATH=PYTHONPATH,
             CLAUDE_CONFIG_DIR=os.path.join(self.dir, "config"),
             **{fake_claude.ENV: self.scenario},
             **(self.server.inside(inside) if inside else {}),
         )
-        argv = [*RUN, "--role", ROLE, "--input", "Hello.", "--out", self.out, "--workdir"]
-        argv += [self.work, "--sid", SID, "--detach", "--events", events or self.events, *extra]
-        self.events_used = events or self.events
         return subprocess.run(
             argv,
             cwd=self.proj,
@@ -239,6 +248,62 @@ class Headless(Detach):
         self.assertEqual(self.ended(), ["outcome needs_input", "exited 0"])
         self.assertFalse(os.path.exists(self.out))
         self.assertEqual(self.last("result")["outcome"]["questions"], ASKING["questions"])
+
+
+class Answer(Detach):
+    def setUp(self):
+        super().setUp()
+        self.second = os.path.join(self.dir, "answer-events")
+
+    def answer(self, *extra: str, steps, turns=()) -> subprocess.CompletedProcess:
+        return self.detach(
+            *extra, "--resume", steps=steps, turns=turns, events=self.second, text=ANSWER
+        )
+
+    def answered(self, record: Record, *, turn_ends: int) -> None:
+        """record's run resumed SID with ANSWER to done; a resume then starts nothing."""
+        shaped = self.ended(turn_ends=turn_ends)
+        self.assertEqual(self.harness_lines(shaped), ["outcome done", "exited 0"])
+        self.assertEqual(self.read(self.out), DONE["deliverable"])
+        self.assertEqual(self.attempt(), 2)
+        records = self.records()
+        self.assertEqual([e["text"] for e in records if e["kind"] == "input"], ["Hello.", ANSWER])
+        self.assertEqual({e["sid"] for e in records if e["kind"] == "session"}, {SID})
+        again = self.cli([*RESUME, self.work])
+        self.assertEqual(again.returncode, 0, again.stderr)
+        self.assertEqual(Record.parse(again.stdout), record)
+        self.assertFalse(self.live(HARNESS))
+        self.assertEqual(shape(live_tmux.events(self.second)), shaped)
+
+    def attempt(self) -> int:
+        with open(os.path.join(self.work, "delegate.json")) as f:
+            return json.load(f)["attempt"]
+
+    def test_headless_needs_input_answered_by_a_detached_resume(self):
+        self.said(self.detach(steps=[block(ASKING)]), tui=False)
+        self.assertEqual(self.ended(), ["outcome needs_input", "exited 0"])
+        res = self.answer(steps=[START, block(DONE)])
+        self.answered(self.said(res, tui=False), turn_ends=0)
+
+    def test_tui_needs_input_answered_by_a_detached_resume_closing_its_open_tui(self):
+        res = self.detach("--mode", "tui", steps=[START], turns=[[block(ASKING)]])
+        self.said(res, tui=True)
+        shaped = self.ended(turn_ends=2)
+        self.assertEqual(self.harness_lines(shaped), ["outcome needs_input", "exited 0"])
+        self.assertTrue(self.live(TUI))
+        res = self.answer("--mode", "tui", steps=[START], turns=[[block(DONE)]])
+        self.answered(self.said(res, tui=True), turn_ends=2)
+
+    def test_an_answer_while_the_run_lives_exits_2_starting_nothing(self):
+        self.said(self.detach(steps=[START], hang=True), tui=False)
+        res = self.answer(steps=[START, block(DONE)])
+        self.assertEqual((res.returncode, res.stdout), (2, ""), res.stderr)
+        self.assertIn(f"delegate: {self.work}: delegate is still alive\n", res.stderr)
+        self.assertTrue(self.live(HARNESS))
+        self.assertEqual(self.attempt(), 1)
+        shown = self.server.tmux("display-message", "-p", "-t", f"={HARNESS}:", "#{pane_pid}")
+        self.assertEqual(self.server.tmux("kill-session", "-t", f"={HARNESS}").returncode, 0)
+        self.until(lambda: not running(int(shown.stdout)), "the harness ended")
 
 
 if __name__ == "__main__":
