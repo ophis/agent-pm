@@ -1,5 +1,6 @@
 """Holder process lifetime, environment and signal forwarding with native flock."""
 
+import contextlib
 import errno
 import json
 import multiprocessing
@@ -61,9 +62,10 @@ class HolderTest(Case):
         return process
 
     def finish(self, process, master=None):
-        if process.poll() is None:
-            process.send_signal(signal.SIGCONT)
-            process.terminate()
+        # An unreaped leader pins its pid, so its own process group cannot be reused.
+        if process.returncode is None:
+            with contextlib.suppress(ProcessLookupError):
+                os.killpg(process.pid, signal.SIGKILL)
         try:
             if master is None:
                 process.communicate(timeout=3)
