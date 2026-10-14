@@ -103,11 +103,6 @@ def main(argv: list[str], *, application=None) -> int:
     if argv and argv[0] in ("prompt", "run"):
         argv = argv[1:]
     ap = argparse.ArgumentParser(prog=f"delegate {command}")
-    ap.add_argument(
-        "--list",
-        action="store_true",
-        help="list each role, its destination type and tasks, with their sources",
-    )
     ap.add_argument("--role")
     ap.add_argument("--task")
     ap.add_argument(
@@ -123,6 +118,11 @@ def main(argv: list[str], *, application=None) -> int:
         if a.role is None:
             ap.error("the following arguments are required: --role")
         return _prompt(a, application=application)
+    ap.add_argument(
+        "--list",
+        action="store_true",
+        help="list each role, its destination type and tasks, with their sources",
+    )
     ap.add_argument("--runtime", action=Once, help="default: the role's runtime in the core config")
     ap.add_argument("--sid")
     ap.add_argument("--resume", action="store_true")

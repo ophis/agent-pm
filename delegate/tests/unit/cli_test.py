@@ -554,6 +554,15 @@ class Prompt(Case):
                 self.assertIn("unrecognized arguments:", err)
                 self.assertFalse(os.path.exists(self.work))
 
+    def test_list_is_rejected_and_absent_from_prompt_help(self):
+        code, out, err = self.prompt("--list")
+        self.assertEqual((code, out), (2, ""))
+        self.assertIn("unrecognized arguments: --list", err)
+        code, out, err = self.prompt("--help")
+        self.assertEqual((code, err), (0, ""))
+        self.assertNotIn("--list", out)
+        self.assertFalse(os.path.exists(self.work))
+
     def test_hidden_driver_option_is_removed(self):
         code, out, err = self.prompt("--driver", "obsolete")
         self.assertEqual((code, out), (2, ""))
