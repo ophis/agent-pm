@@ -476,21 +476,10 @@ class Board:
         return taken, task, role, runtime
 
 
-def begin(runs, *, mode, issue, sid, role, task, runtime, now=datetime.now):
-    ident = issue["identifier"]
-    kind = "resume" if mode == "resume" else "start"
-    note(runs, kind, issue=ident, sid=sid, role=role, runtime=runtime, now=now)
-    return Spec(
-        uuid=issue["id"],
-        input="",
-        issue=ident,
-        project=issue["project"]["id"],
-        assignee=issue["assignee"]["email"],
-        sid=sid,
-        task=task,
-        mode=mode,
-        runtime=runtime,
-    )
+def begin(path, spec: Spec, *, role, now=datetime.now):
+    kind = "resume" if spec.mode == "resume" else "start"
+    note(path, kind, issue=spec.issue, sid=spec.sid, role=role, runtime=spec.runtime, now=now)
+    return spec
 
 
 def fail(ident, kind, reason, rc):
@@ -647,7 +636,9 @@ def choose(board, gate, live_ids, full, counts):
         runtime = runtime_of(board.entries, sid)
         if not gate.blocked(runtime, issue["identifier"]):
             board.plan(("resume", issue, sid), counts)
-            return "resume", issue, sid, board.role(issue), None, runtime
+            return Spec.from_issue(
+                issue, mode="resume", sid=sid, task=None, runtime=runtime
+            ), board.role(issue)
     if not (queue := board.queue(full)):
         return None
     board.plan(("new", len(queue)), counts)
@@ -655,7 +646,9 @@ def choose(board, gate, live_ids, full, counts):
         board.say("skip", reason="nothing claimed")
         return None
     issue, task, role, runtime = taken
-    return "new", issue, str(uuid.uuid4()), role, task, runtime
+    return Spec.from_issue(
+        issue, mode="new", sid=str(uuid.uuid4()), task=task, runtime=runtime
+    ), role
 
 
 def tick(opts, cfg, gql, *, start, clock=datetime.now, hour=None):
@@ -694,17 +687,8 @@ def tick(opts, cfg, gql, *, start, clock=datetime.now, hour=None):
             run = choose(board, gate, {i for ids in live.values() for i in ids}, full, counts)
             if run is None or dry:
                 return 0
-            mode, issue, sid, role, task, runtime = run
-            a = begin(
-                runs,
-                mode=mode,
-                issue=issue,
-                sid=sid,
-                role=role,
-                task=task,
-                runtime=runtime,
-                now=clock,
-            )
+            spec, role = run
+            a = begin(runs, spec, role=role, now=clock)
             walk.write()  # the outer logs past the walk
             return start_run(start, a, walk)
 
@@ -735,27 +719,20 @@ def run_issue(opts, cfg, gql, start, *, clock=datetime.now):
             if not board.settle(issue, sid, wait=False):
                 return stop
             board.plan(("resume", issue, sid))
-            run = ("resume", issue, sid, board.role(issue), None, runtime_of(entries, sid))
+            spec = Spec.from_issue(
+                issue, mode="resume", sid=sid, task=None, runtime=runtime_of(entries, sid)
+            )
+            role = board.role(issue)
         elif board.is_blocked(ident) or not (taken := board.take(ident)):
             return stop
         else:
             issue, task, role, runtime = taken
-            run = ("new", issue, str(uuid.uuid4()), role, task, runtime)
+            spec = Spec.from_issue(
+                issue, mode="new", sid=str(uuid.uuid4()), task=task, runtime=runtime
+            )
         if dry:
             return 0
-        mode, issue, sid, role, task, runtime = run
-        return start(
-            begin(
-                runs,
-                mode=mode,
-                issue=issue,
-                sid=sid,
-                role=role,
-                task=task,
-                runtime=runtime,
-                now=clock,
-            )
-        )
+        return start(begin(runs, spec, role=role, now=clock))
 
 
 def brake(role, cfg):

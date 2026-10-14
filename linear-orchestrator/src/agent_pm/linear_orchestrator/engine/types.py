@@ -100,6 +100,20 @@ class Spec:
     events: str | None = None
 
     @classmethod
+    def from_issue(cls, issue, *, mode, sid, task, runtime):
+        return cls(
+            uuid=issue["id"],
+            issue=issue["identifier"],
+            project=issue["project"]["id"],
+            assignee=issue["assignee"]["email"],
+            sid=sid,
+            task=task,
+            mode=mode,
+            runtime=runtime,
+            input="",
+        )
+
+    @classmethod
     def from_argv(cls, argv):
         parser = argparse.ArgumentParser(prog="run.py")
         for item in fields(cls):

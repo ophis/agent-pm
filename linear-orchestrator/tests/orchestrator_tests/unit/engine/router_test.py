@@ -2042,12 +2042,8 @@ class RunStartRecords(Base):
         got = [
             router.begin(
                 path,
-                mode=mode,
-                issue=found,
-                sid="s1",
+                Spec.from_issue(found, mode=mode, sid="s1", task=task, runtime="a"),
                 role="researcher",
-                task=task,
-                runtime="a",
                 now=lambda: datetime.fromisoformat(stamp),
             )
             for mode, task in (("new", "light-research"), ("resume", None))
@@ -3089,7 +3085,9 @@ class ClaimRechecks(Base):
         self.assertEqual(self.said(), ["pick TASK-1 queue=1", "claim TASK-1 role=pm runtime=b"])
         self.assertEqual(self.api.usage_calls, ["b"])
         a = router.begin(
-            self.runs, mode="new", issue=taken, sid="s1", role=role, task=task, runtime=runtime
+            self.runs,
+            Spec.from_issue(taken, mode="new", sid="s1", task=task, runtime=runtime),
+            role=role,
         )
         self.assertEqual((a.assignee, a.runtime), (ROLE["pm"], "b"))
 
@@ -3140,12 +3138,8 @@ class ClaimRechecks(Base):
         self.assertEqual(self.claim(fake), f"TASK-1 https://linear.app/x/TASK-1 {PD}")
         a = router.begin(
             self.runs,
-            mode="new",
-            issue=self.taken[0],
-            sid="s1",
+            Spec.from_issue(self.taken[0], mode="new", sid="s1", task=None, runtime="a"),
             role="researcher",
-            task=None,
-            runtime="a",
         )
         self.assertEqual(a.project, IDS[PD])
 
