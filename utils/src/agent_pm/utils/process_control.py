@@ -160,17 +160,26 @@ class ProcessControl:
             real
         ).startswith("apm-group-"):
             raise PermissionError("untrusted process controller path")
-        folder = os.stat(real, follow_symlinks=False)
-        control = os.stat(os.path.join(real, "control"), follow_symlinks=False)
+        attached = cls(real)
+        try:
+            folder = os.stat(real, follow_symlinks=False)
+        except FileNotFoundError:
+            attached.ended = True
+            return attached
         if not (
             stat.S_ISDIR(folder.st_mode)
             and stat.S_IMODE(folder.st_mode) == 0o700
             and folder.st_uid == os.getuid()
-            and stat.S_ISSOCK(control.st_mode)
-            and control.st_uid == os.getuid()
         ):
             raise PermissionError("untrusted process controller ownership or permissions")
-        return cls(real)
+        try:
+            control = os.stat(os.path.join(real, "control"), follow_symlinks=False)
+        except FileNotFoundError:
+            attached.ended = True
+            return attached
+        if not (stat.S_ISSOCK(control.st_mode) and control.st_uid == os.getuid()):
+            raise PermissionError("untrusted process controller ownership or permissions")
+        return attached
 
     @classmethod
     def prepare(
@@ -270,6 +279,11 @@ class ProcessControl:
                     raise ConnectionResetError("process controller disconnected")
                 response = json.loads(line)
         except (FileNotFoundError, ConnectionRefusedError, ConnectionResetError):
+            try:
+                os.stat(os.path.join(self.path, "control"), follow_symlinks=False)
+            except FileNotFoundError:
+                self.ended = True
+                return False
             if (
                 not os.path.isdir(self.path)
                 or _read(os.path.join(self.path, "done.json")) is not None

@@ -134,6 +134,64 @@ class ControlTest(Case):
         self.assertLessEqual(len(probes), 11)
         self.assertGreaterEqual(probes[-1] - probes[-2], 1)
 
+    def test_attach_during_teardown_reports_ended_without_contacting_a_socket(self):
+        control = ProcessControl.prepare(["program"], "/")
+        self.addCleanup(control.remove)
+        for removed in (False, True):
+            with self.subTest(directory_removed=removed):
+                if removed:
+                    control.remove()
+                attached = ProcessControl.attach(control.path)
+                with mock.patch("socket.socket") as socket:
+                    self.assertFalse(attached.running())
+                    self.assertFalse(attached.live())
+                    attached.kill()
+                    socket.assert_not_called()
+
+    def test_a_query_during_directory_removal_reports_ended(self):
+        control = ProcessControl.prepare(["program"], "/")
+        self.addCleanup(control.remove)
+        socket_path = os.path.join(control.path, "control")
+        with open(socket_path, "w"):
+            pass
+
+        def removed(_path):
+            os.unlink(socket_path)
+            raise FileNotFoundError("controller retired its socket")
+
+        with mock.patch("socket.socket") as socket:
+            connection = socket.return_value.__enter__.return_value
+            connection.connect.side_effect = removed
+            self.assertFalse(control.live())
+            self.assertTrue(control.ended)
+            self.assertTrue(os.path.isdir(control.path))
+            control.kill()
+            connection.connect.assert_called_once()
+
+    def test_a_denied_socket_stat_does_not_retire_the_generation(self):
+        control = ProcessControl.prepare(["program"], "/")
+        self.addCleanup(control.remove)
+        original = os.stat
+
+        def denied(path, *args, **kwargs):
+            if path == os.path.join(control.path, "control"):
+                raise PermissionError("cannot inspect controller socket")
+            return original(path, *args, **kwargs)
+
+        with mock.patch("socket.socket") as socket, mock.patch("os.stat", side_effect=denied):
+            connection = socket.return_value.__enter__.return_value
+            connection.connect.side_effect = ConnectionRefusedError("cannot connect")
+            with self.assertRaises(PermissionError):
+                control.live()
+        self.assertFalse(control.ended)
+
+    def test_an_existing_untrusted_directory_is_not_an_ended_controller(self):
+        control = ProcessControl.prepare(["program"], "/")
+        self.addCleanup(control.remove)
+        os.chmod(control.path, 0o755)
+        with self.assertRaises(PermissionError):
+            ProcessControl.attach(control.path)
+
     def test_a_completed_generation_never_contacts_or_signals_a_reused_group(self):
         control = ProcessControl.prepare(["program"], "/")
         self.addCleanup(control.remove)

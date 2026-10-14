@@ -357,6 +357,13 @@ class AttachListTest(Base):
         self.tmux.kill.assert_called_once_with("%7")
         self.socket.assert_not_called()
 
+    def test_attach_during_controller_teardown_returns_an_ended_handle(self):
+        self.control.remove()
+        handle = self.host.attach("w1")
+        self.assertFalse(handle.alive())
+        self.assertTrue(handle.wait_exit(0))
+        self.connection.connect.assert_not_called()
+
     def test_a_detached_kind_session_without_control_is_refused_immediately(self):
         self.controlled = False
         with self.assertRaisesRegex(DriverError, "tmux session d1: missing @control"):
