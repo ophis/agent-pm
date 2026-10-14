@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import contextlib
 import errno
+import fcntl
 import json
 import os
 import select
@@ -130,7 +131,8 @@ class _Group:
             try:
                 os.killpg(self.pid, sig)
             except ProcessLookupError:
-                self._reap()
+                if self.eof or self.returncode is not None:
+                    self._reap()
 
     def kill(self) -> None:
         self.send(signal.SIGKILL)
@@ -149,6 +151,7 @@ class ProcessControl:
         self.path = path
         self.ended = False
         self.accepted = False
+        self.cancelled = False
 
     @classmethod
     def attach(cls, path: str) -> ProcessControl:
@@ -179,6 +182,7 @@ class ProcessControl:
             if env is not None:
                 launch["env"] = dict(env)
             _write(os.path.join(path, "launch.json"), launch)
+            _write(os.path.join(path, "lock"), {})
         except BaseException:
             shutil.rmtree(path)
             raise
@@ -189,6 +193,29 @@ class ProcessControl:
 
     def remove(self) -> None:
         shutil.rmtree(self.path, ignore_errors=True)
+
+    def cancel(self) -> None:
+        try:
+            with open(os.path.join(self.path, "lock"), encoding="utf-8") as lock:
+                fcntl.flock(lock, fcntl.LOCK_EX)
+                with contextlib.suppress(FileNotFoundError):
+                    os.unlink(os.path.join(self.path, "launch.json"))
+                ready = os.path.exists(os.path.join(self.path, "control"))
+        except FileNotFoundError:
+            return
+        if not ready:
+            self.remove()
+            return
+        try:
+            self._request("cancel")
+        except (FileNotFoundError, ConnectionRefusedError, ConnectionResetError):
+            self.remove()
+            return
+        deadline = time.monotonic() + TIMEOUT
+        while os.path.exists(self.path):
+            if time.monotonic() >= deadline:
+                raise TimeoutError("process controller did not cancel")
+            time.sleep(POLL)
 
     def wait_started(self, timeout: float = TIMEOUT) -> None:
         deadline = time.monotonic() + timeout
@@ -280,17 +307,20 @@ class ProcessControl:
     def serve(
         self, *, on_exit: Callable[[int], None] | None = None, detached: bool = False, **options
     ) -> int:
-        launch = _read(os.path.join(self.path, "launch.json"))
-        if launch is None:
-            raise FileNotFoundError("missing process launch")
-        os.unlink(os.path.join(self.path, "launch.json"))
         with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as listener:
-            listener.bind(os.path.join(self.path, "control"))
-            listener.listen()
-            signal.signal(signal.SIGCHLD, signal.SIG_DFL)
-            if "env" in launch:
-                options["env"] = launch["env"]
-            group = _Group.launch(launch["argv"], launch["cwd"], **options)
+            with open(os.path.join(self.path, "lock"), encoding="utf-8") as lock:
+                fcntl.flock(lock, fcntl.LOCK_EX)
+                launch = _read(os.path.join(self.path, "launch.json"))
+                if launch is None:
+                    raise FileNotFoundError("missing process launch")
+                os.unlink(os.path.join(self.path, "launch.json"))
+                listener.bind(os.path.join(self.path, "control"))
+                listener.listen()
+                signal.signal(signal.SIGCHLD, signal.SIG_DFL)
+                if "env" in launch:
+                    options["env"] = launch["env"]
+                group = _Group.launch(launch["argv"], launch["cwd"], **options)
+                fcntl.flock(lock, fcntl.LOCK_UN)
             if detached:
                 os.setsid()
                 signal.signal(signal.SIGHUP, signal.SIG_IGN)
@@ -334,6 +364,8 @@ class ProcessControl:
                     on_exit(group.returncode)
                 reported = True
             try:
+                if self.cancelled:
+                    group.kill()
                 if stopping is not None:
                     group.send(stopping)
                     stopping = None
@@ -365,6 +397,9 @@ class ProcessControl:
                     command = stream.readline(32)
                 if command == b"started\n":
                     self.accepted = True
+                elif command == b"cancel\n":
+                    self.accepted = self.cancelled = True
+                    group.kill()
                 elif command == b"kill\n":
                     group.kill()
                 elif command.startswith(b"signal "):

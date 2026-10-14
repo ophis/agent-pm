@@ -198,6 +198,36 @@ class DisplayTest(Base):
 
 
 class DetachTest(Base):
+    def test_tmux_failure_removes_the_launch_without_killing_an_existing_name(self):
+        paths = []
+
+        def refuse(*_args, **kw):
+            paths.append(kw["control"])
+            raise TuiError("session d1 exists")
+
+        self.tmux.detach.side_effect = refuse
+        with self.assertRaisesRegex(DriverError, "session d1 exists"):
+            self.detach()
+        self.assertEqual(len(paths), 1)
+        self.assertFalse(os.path.exists(paths[0]))
+        self.tmux.kill.assert_not_called()
+
+    def test_startup_timeout_cancels_launch_and_kills_only_the_captured_pane(self):
+        paths = []
+
+        def pending(*_args, **kw):
+            paths.append(kw["control"])
+            return PROCESS
+
+        self.tmux.detach.side_effect = pending
+        with (
+            mock.patch("time.monotonic", side_effect=[0, 11]),
+            self.assertRaisesRegex(DriverError, "process controller did not start"),
+        ):
+            self.detach()
+        self.assertFalse(os.path.exists(paths[0]))
+        self.tmux.kill.assert_called_once_with("%7")
+
     def detach(self, **kw):
         return self.host.detach("d1", ["tool", "a b"], self.dir, {"PATH": "/bin"}, **kw)
 

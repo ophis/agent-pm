@@ -15,6 +15,33 @@ from utils.tests.case import Case
 
 
 class ProcessControlTest(Case):
+    def test_cancel_before_controller_start_prevents_a_late_program_launch(self):
+        with tempfile.TemporaryDirectory() as folder:
+            marker = Path(folder, "must-not-start")
+            control = ProcessControl.prepare(
+                [
+                    sys.executable,
+                    "-I",
+                    "-c",
+                    "import pathlib, sys; pathlib.Path(sys.argv[1]).touch()",
+                    str(marker),
+                ],
+                os.getcwd(),
+            )
+            command = control.command()
+            control.cancel()
+            result = subprocess.run(command, capture_output=True, timeout=10, check=False)
+            self.assertEqual(result.returncode, 1)
+            self.assertFalse(marker.exists())
+            self.assertFalse(os.path.exists(control.path))
+
+    def test_cancel_a_started_controller_ends_its_group_and_removes_its_directory(self):
+        control, process = self.start("import time; time.sleep(60)")
+        control.cancel()
+        process.communicate(timeout=10)
+        self.assertFalse(control.live())
+        self.assertFalse(os.path.exists(control.path))
+
     def test_program_environment_has_no_controller_interpreter_additions(self):
         env = {"ONE": "a b", "TWO": ""}
         control = ProcessControl.prepare(["/usr/bin/env"], os.getcwd(), env=env)

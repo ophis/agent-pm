@@ -230,10 +230,15 @@ class TmuxHost(Host, Displayable):
                 control=control.path,
             )
         except TuiError as e:
+            control.cancel()
             raise DriverError(f"detach {name}: {e}") from e
         try:
             control.wait_started()
         except OSError as error:
+            control.cancel()
+            pane = process.split(" ")[2]
+            if self.tmux.process(pane) == process:
+                self.tmux.kill(pane)
             why = os.strerror(error.errno) if error.errno is not None else str(error)
             raise DriverError(
                 f"detach {name}: cannot run {error.filename or argv[0]}: {why}"
