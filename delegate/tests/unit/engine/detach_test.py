@@ -3,13 +3,16 @@ refusals before starting, session failures, outcome lines and write errors.
 """
 
 import errno
+import hashlib
 import io
 import json
 import os
 import sys
 import tempfile
 import time
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import redirect_stderr, redirect_stdout
+from pathlib import Path
 from unittest import mock
 
 from agent_pm.delegate import ConfigError, Spec, composer, plan
@@ -48,7 +51,9 @@ class Detach(Base):
         )
 
     def plan(self, mode="headless", task="echo", **kw):
-        return self.planned("dummy-tester", task, mode=mode, input=INPUT, sid=SID, **kw)[0]
+        return self.planned(
+            "dummy-tester", task, mode=mode, input=INPUT, sid=kw.pop("sid", SID), **kw
+        )[0]
 
     def detached(self, p, events=None, **kw):
         out, err = io.StringIO(), io.StringIO()
@@ -60,9 +65,12 @@ class Detach(Base):
     def argv(self):
         return [sys.executable, "-P", "-m", "agent_pm.delegate.engine.harness", self.work]
 
+    def state_path(self):
+        env = self.started.call_args.kwargs["env"]
+        return Path(self.work, env["AGENT_PM_HARNESS_STATE"])
+
     def invocation(self):
-        with open(os.path.join(self.work, "harness.json")) as stream:
-            return json.load(stream)
+        return json.loads(self.state_path().read_bytes())
 
     def refusal(self, p, **kw) -> str:
         with self.assertRaises(ConfigError) as cm:
@@ -77,13 +85,24 @@ class Detach(Base):
             DRIVER,
             self.argv(),
             cwd=self.tmp,
-            env={**os.environ, "PYTHONPATH": PYTHONPATH},
+            env={
+                **os.environ,
+                "PYTHONPATH": PYTHONPATH,
+                "AGENT_PM_HARNESS_STATE": self.state_path().name,
+                "AGENT_PM_HARNESS_DIGEST": hashlib.sha256(
+                    self.state_path().read_bytes()
+                ).hexdigest(),
+            },
             opener=None,
         )
         with open(self.events, "rb") as f:
             self.assertEqual(f.read(), b"")
-        self.assertEqual(self.invocation()["input"], INPUT)
-        self.assertEqual(os.stat(os.path.join(self.work, "harness.json")).st_mode & 0o777, 0o600)
+        invocation = self.invocation()
+        self.assertEqual(invocation["input"], INPUT)
+        self.assertEqual((invocation["sid"], invocation["out"]), (SID, self.out))
+        key = hashlib.sha256(SID.encode("utf-8")).hexdigest()
+        self.assertRegex(self.state_path().name, rf"\Aharness-{key}-[a-z0-9_]{{8}}\.json\Z")
+        self.assertEqual(self.state_path().stat().st_mode & 0o777, 0o600)
 
     def test_tui_passes_each_option_given_and_the_layouts_opener(self):
         got = self.detached(self.plan("tui", repo="-r"), split="right", split_from="mgr")
@@ -185,6 +204,30 @@ class Detach(Base):
                 with self.assertRaises(raised) as cm:
                     self.detached(self.plan())
                 self.assertEqual(str(cm.exception), str(error))
+                self.assertEqual(os.listdir(self.work), [])
+
+    def test_concurrent_detaches_keep_each_sessions_authenticated_invocation(self):
+        plans = [self.plan(sid=sid) for sid in (SID, "22222222-2222-4222-8222-222222222222")]
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            futures = [
+                executor.submit(detach.detach, p, driver=self.driver, events=self.events)
+                for p in plans
+            ]
+            self.assertEqual([f.result().tui for f in futures], [None, None])
+        states = {}
+        for call in self.started.call_args_list:
+            env = call.kwargs["env"]
+            payload = Path(self.work, env["AGENT_PM_HARNESS_STATE"]).read_bytes()
+            self.assertEqual(hashlib.sha256(payload).hexdigest(), env["AGENT_PM_HARNESS_DIGEST"])
+            invocation = json.loads(payload)
+            states[invocation["sid"]] = invocation
+        self.assertEqual(set(states), {p.sid for p in plans})
+        self.assertEqual(len(os.listdir(self.work)), 2)
+        for p in plans:
+            self.assertEqual(
+                states[p.sid]["harness"], detach.names(p.run.role, p.sid, p.spec.mode)[1]
+            )
+            self.assertEqual(states[p.sid]["input"], p.params.input)
 
 
 class Outcome(Case):

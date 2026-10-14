@@ -1,11 +1,13 @@
-"""A detached run: persist its invocation in harness.json, then start engine.harness in
+"""A detached run: persist a session-keyed invocation, then start engine.harness in
 `<role>-<sid8>-drive` (tui agent: `<role>-<sid8>`). Refusals are ConfigError before anything starts.
 The harness appends its one outcome line when it ends.
 """
 
+import hashlib
 import json
 import os
 import sys
+import tempfile
 from dataclasses import dataclass
 
 from agent_pm.delegate.engine.config import PYTHONPATH
@@ -14,7 +16,7 @@ from agent_pm.delegate.engine.runner import say
 from agent_pm.delegate.engine.types import ConfigError, Plan
 from agent_pm.session import ConfigError as SessionConfigError
 from agent_pm.session import DriverError, Mode, SessionStatusLog
-from agent_pm.utils import append_line, save
+from agent_pm.utils import append_line
 
 MODES = frozenset({Mode.HEADLESS, Mode.TUI})
 
@@ -70,11 +72,11 @@ def detach(
         "harness": harness,
         "role": p.run.role,
         "input": p.params.input,
-        "out": p.spec.out,
+        "out": p.params.out,
         "workdir": p.params.workdir,
-        "runtime": p.spec.runtime,
+        "runtime": p.runtime,
         "mode": mode,
-        "sid": p.spec.sid,
+        "sid": p.sid,
         "events": events,
         "task": p.run.task or None,
         "repo": p.spec.repo,
@@ -86,10 +88,7 @@ def detach(
         "dry_run": False,
         "list": False,
     }
-    try:
-        save(os.path.join(p.params.workdir, "harness.json"), json.dumps(invocation))
-    except OSError as error:
-        raise ConfigError(f"harness state: {error}") from None
+    state, authentication = _write_invocation(p, invocation)
     argv = [
         sys.executable,
         "-P",
@@ -97,17 +96,45 @@ def detach(
         "agent_pm.delegate.engine.harness",
         p.params.workdir,
     ]
+    started = False
     try:
         driver.detach(
             harness,
             argv,
             cwd=os.getcwd(),
-            env={**os.environ, "PYTHONPATH": PYTHONPATH},
+            env={**os.environ, "PYTHONPATH": PYTHONPATH, **authentication},
             opener=opener,
         )
     except SessionConfigError as e:
         raise ConfigError(str(e)) from None
+    else:
+        started = True
+    finally:
+        if not started:
+            os.unlink(state)
     return Detached(harness, tui)
+
+
+def _write_invocation(p: Plan, invocation: dict) -> tuple[str, dict[str, str]]:
+    payload = json.dumps(invocation, sort_keys=True).encode("utf-8")
+    key = hashlib.sha256(p.sid.encode("utf-8")).hexdigest()
+    try:
+        os.makedirs(p.params.workdir, exist_ok=True)
+        descriptor, path = tempfile.mkstemp(
+            prefix=f"harness-{key}-", suffix=".json", dir=p.params.workdir
+        )
+        try:
+            with os.fdopen(descriptor, "wb") as stream:
+                stream.write(payload)
+        except OSError:
+            os.unlink(path)
+            raise
+    except OSError as error:
+        raise ConfigError(f"harness state: {error}") from None
+    return path, {
+        "AGENT_PM_HARNESS_STATE": os.path.basename(path),
+        "AGENT_PM_HARNESS_DIGEST": hashlib.sha256(payload).hexdigest(),
+    }
 
 
 def outcome(events: str, driver: str, status: str | None) -> None:

@@ -46,6 +46,10 @@ class Detach(Base):
     def detaches(self, *extra, events=None, **kw):
         return self.runs("--sid", SID, "--detach", "--events", events or self.events, *extra, **kw)
 
+    def invocation(self):
+        name = self.started.call_args.kwargs["env"]["AGENT_PM_HARNESS_STATE"]
+        return json.loads(Path(self.work, name).read_bytes())
+
     def assert_nothing_started(self):
         self.started.assert_not_called()
         self.assertEqual(
@@ -129,10 +133,13 @@ class Detach(Base):
                     (name, argv),
                     (DRIVER, [PY[0], "-P", "-m", "agent_pm.delegate.engine.harness", self.work]),
                 )
-                invocation = json.loads(Path(self.work, "harness.json").read_text())
+                invocation = self.invocation()
                 self.assertEqual({key: invocation[key] for key in tail}, tail)
         self.layout.assert_called_once_with("below", "mgr")
-        self.assertEqual((self.launches(), os.listdir(self.work)), ([], ["harness.json"]))
+        self.assertEqual(self.launches(), [])
+        states = list(Path(self.work).glob("harness-*.json"))
+        self.assertEqual(len(states), 2)
+        self.assertEqual(set(os.listdir(self.work)), {path.name for path in states})
 
     def test_detach_configures_the_session_before_reaching_it(self):
         seen = []
@@ -144,9 +151,7 @@ class Detach(Base):
     def test_input_dash_is_read_by_the_caller(self):
         code, _, err = self.detaches(input="-", stdin="-x\nUse B.\n")
         self.assertEqual(code, 0, err)
-        self.assertEqual(
-            json.loads(Path(self.work, "harness.json").read_text())["input"], "-x\nUse B.\n"
-        )
+        self.assertEqual(self.invocation()["input"], "-x\nUse B.\n")
 
     def test_a_driver_failure_exits_3(self):
         self.started.side_effect = DriverError(f"detach {DRIVER}: duplicate session")
