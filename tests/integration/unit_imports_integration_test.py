@@ -12,6 +12,19 @@ CONFIG = 'lint.flake8-tidy-imports.banned-api = {subprocess = {msg = "Unit tests
 GATE_CONFIG = 'lint.flake8-tidy-imports.banned-api = {isolation = {msg = "Tests cannot access interpreter gates"}}'
 
 
+def _unit_files(root):
+    return sorted(
+        str(path)
+        for path in root.rglob("*.py")
+        if (
+            {"unit", "tests"}.issubset(path.relative_to(root).parts)
+            or path.parent == root / ".github"
+            and path.name.endswith("_test.py")
+        )
+        and str(path.relative_to(root)) not in UNIT_ISOLATION_ALLOWED
+    )
+
+
 class UnitImports(Case):
     def test_test_files_cannot_import_the_interpreter_gate(self):
         root = Path(REPO)
@@ -48,13 +61,7 @@ class UnitImports(Case):
 
     def test_unit_imports_obey_the_boundary(self):
         root = Path(REPO)
-        files = sorted(
-            str(path)
-            for path in root.rglob("*.py")
-            if "unit" in path.relative_to(root).parts
-            and "tests" in path.relative_to(root).parts
-            and str(path.relative_to(root)) not in UNIT_ISOLATION_ALLOWED
-        )
+        files = _unit_files(root)
         proc = subprocess.run(
             [
                 "ruff",
@@ -75,6 +82,35 @@ class UnitImports(Case):
         )
         self.assertIn(proc.returncode, (0, 1), proc.stderr)
         self.assertEqual(json.loads(proc.stdout), [])
+
+    def test_github_unit_modules_are_selected_without_selecting_the_runner(self):
+        root = Path(self.home)
+        github = root / ".github"
+        github.mkdir()
+        sample = github / "escape_test.py"
+        sample.write_text("import subprocess\n")
+        (github / "run_tests.py").write_text("import subprocess\n")
+        files = _unit_files(root)
+        self.assertEqual(files, [str(sample)])
+        proc = subprocess.run(
+            [
+                "ruff",
+                "check",
+                "--isolated",
+                "--select",
+                "TID251",
+                "--config",
+                CONFIG,
+                "--output-format",
+                "json",
+                *files,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        self.assertEqual(proc.returncode, 1, proc.stderr)
+        self.assertEqual([item["code"] for item in json.loads(proc.stdout)], ["TID251"])
 
     def test_the_rule_rejects_both_process_and_socket_imports(self):
         sample = Path(self.home, "sample.py")
