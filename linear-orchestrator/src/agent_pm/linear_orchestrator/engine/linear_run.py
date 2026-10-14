@@ -126,6 +126,9 @@ class LinearRun:
     def close(self) -> None:
         self.delegate.close()
 
+    def forget(self) -> None:
+        self.delegate.forget()
+
     def attach_command(self) -> str | None:
         return self.delegate.attach_command()
 

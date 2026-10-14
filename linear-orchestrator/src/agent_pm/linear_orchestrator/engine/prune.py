@@ -1,6 +1,7 @@
 """Prune, for each issue Done or Canceled at least 24 hours ago (its latest move into either; unknown:
 skipped):
-- closes its recorded run through LinearRun before its checkouts go;
+- closes its recorded run through LinearRun, then has its Delegate forget the run (its files in the
+  State dir go; the workdir stays), before its checkouts go;
 - deletes <work_dir>/work/<ID>/src/<owner>/*, publish and tmp, each a real directory inside its own
   folder, a src or publish entry only as a clone or worktree (.git a directory or a file),
   uncommitted work included;
@@ -239,14 +240,20 @@ class Pruner:
         if view is None:
             return
         if self.dry:
-            self.say("prune-plan", ident, session=view.sid, what="close the run")
+            self.say(
+                "prune-plan", ident, session=view.sid, what="close the run and forget its state"
+            )
             return
         try:
             view.close()
         except (config.ConfigError, DelegateConfigError, DriverError, OSError, ValueError) as error:
             self.error(ident, session=view.sid, error=one_line(error))
-        else:
-            self.say("prune-closed", ident, session=view.sid)
+            return
+        self.say("prune-closed", ident, session=view.sid)
+        try:
+            view.forget()
+        except (DelegateConfigError, OSError) as error:
+            self.error(ident, session=view.sid, error=one_line(error))
 
     def finished_issues(self, finished):
         ids = [uid for uid, role in self.roles.items() if role in ARCHIVE_ROLES]

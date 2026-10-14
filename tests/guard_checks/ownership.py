@@ -8,7 +8,7 @@ import tokenize
 
 from tests.guard_checks.common import _files, _strings
 from tests.guard_data.delegate import CONFIG_FILE, DELEGATE_SRC
-from tests.guard_data.linear_orchestrator import HANDOFF_HOME, ORCH, ORCH_PROJECT
+from tests.guard_data.linear_orchestrator import HANDOFF_HOME, ORCH, ORCH_FILES, ORCH_PROJECT
 from tests.guard_data.session import (
     ADAPTERS_HOME,
     SESSION_SRC,
@@ -256,9 +256,17 @@ def session_display(repo: str) -> list[str]:
 
 
 def delegate_display(repo: str) -> list[str]:
+    return _display(repo, "delegate", DELEGATE_SRC)
+
+
+def orchestrator_display(repo: str) -> list[str]:
+    return _display(repo, ORCH_PROJECT, ORCH_FILES)
+
+
+def _display(repo, project, src):
     found = set()
-    for rel, text in _lower_files(repo, ".py", projects=("delegate",)):
-        if rel.startswith(DELEGATE_SRC):
+    for rel, text in _lower_files(repo, ".py", projects=(project,)):
+        if rel.startswith(src):
             found.update(
                 f"{rel}:{line}: interprets display {value!r}"
                 for line, value in _code_words(text, ast.parse(text, rel))

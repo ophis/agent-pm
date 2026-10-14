@@ -63,6 +63,12 @@ class Delegate(ABC):
     def close(self) -> None: ...
 
     @abstractmethod
+    def forget(self) -> None:
+        """Deletes the run's state, so attach raises ConfigError; its workdir stays. Idempotent;
+        ConfigError while the run is running.
+        """
+
+    @abstractmethod
     def session_info(self) -> SessionStatus: ...
 
     @abstractmethod
