@@ -528,7 +528,7 @@ class Prompt(Case):
 
     def test_instruction_matches_composer_bytes_no_client_or_session_configuration(self):
         Path(self.agent_pm, "config.local.toml").write_text(
-            '[hosts]\ndefault = "missing"\n', encoding="utf-8"
+            local_section('[hosts]\ndefault = "missing"\n', "session"), encoding="utf-8"
         )
         config = composer.resolve("dummy-tester", "echo")
         expected = composer.render(

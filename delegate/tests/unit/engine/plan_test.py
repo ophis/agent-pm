@@ -539,7 +539,7 @@ class InstructionPlans(InstructionCase):
             )
             with self.subTest(runtime=runtime):
                 with open(local, "w", encoding="utf-8") as stream:
-                    stream.write(policy)
+                    stream.write(local_section(policy, "delegate"))
                 run, spec = self.given("researcher", runtime=runtime)
                 agent = AgentDriver(configure().session_cls)
                 got, instruction = (
@@ -552,7 +552,9 @@ class InstructionPlans(InstructionCase):
                 )
                 self.assertEqual(got.prompt, instruction.prompt)
                 with open(local, "w", encoding="utf-8") as stream:
-                    stream.write(f"team_dirs = {json.dumps([team])}\n{policy}")
+                    stream.write(
+                        local_section(f"team_dirs = {json.dumps([team])}\n{policy}", "delegate")
+                    )
                 self.assertEqual(plan(run, spec, driver=self.driver).prompt, instruction.prompt)
                 with self.assertRaises(ConfigError) as caught:
                     plan(run, spec, driver=agent)

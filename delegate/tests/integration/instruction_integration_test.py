@@ -15,6 +15,7 @@ from agent_pm.delegate import composer
 
 from delegate.tests.case import Case
 from delegate.tests.skills.act_as import argv, head, prefix
+from utils.tests.case import local_section
 
 SID = "0f8fad5b-d9cb-469f-a165-70867728950e"
 ROLES = ("researcher", "pm", "engineer", "dummy-tester")
@@ -41,12 +42,12 @@ class Instruction(Case):
         return os.path.join(self.adhoc, f"2026-01-02-{role}-compare-a-b")
 
     def config(self, role=None, destination=None):
+        text = f"trusted_dirs = [{json.dumps(self.proj)}]\n"
+        if role is not None:
+            text += f"[roles.{role}.output]\n"
+            text += "".join(f"{key} = {json.dumps(value)}\n" for key, value in destination.items())
         with open(self.local, "w", encoding="utf-8") as f:
-            f.write(f"trusted_dirs = [{json.dumps(self.proj)}]\n")
-            if role is not None:
-                f.write(f"[roles.{role}.output]\n")
-                for key, value in destination.items():
-                    f.write(f"{key} = {json.dumps(value)}\n")
+            f.write(local_section(text, "delegate"))
 
     def cli(self, role, *extra, out=None) -> subprocess.CompletedProcess:
         work = self.work(role)

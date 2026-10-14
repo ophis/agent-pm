@@ -6,11 +6,12 @@ import tempfile
 
 from agent_pm.delegate.engine.application import Application
 
-from delegate.tests.case import Case, local_section
+from delegate.tests.case import Case
 from delegate.tests.replies import block
 from delegate.tests.unit.runs import DONE, START, said
 from session.tests import fake_adapter
 from session.tests.modules import adapter_loader
+from utils.tests.case import local_section
 
 SID = "11111111-2222-3333-4444-555555555555"
 TUI = "dummy-tester-11111111"
