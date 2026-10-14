@@ -122,6 +122,7 @@ class Case(Base):
         self.api = FakeApi(self.order, lambda: self.gql)
         for p in (
             mock.patch.object(signal, "signal", lambda s, h: self.handlers.__setitem__(s, h)),
+            mock.patch.object(signal, "pthread_sigmask"),
         ):
             p.start()
             self.addCleanup(p.stop)

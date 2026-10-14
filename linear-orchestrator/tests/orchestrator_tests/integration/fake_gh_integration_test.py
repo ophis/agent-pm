@@ -36,14 +36,16 @@ class Case(case.Case):
         for d in (self.home, self.bin, self.repos):
             os.mkdir(d)
         self.scenario = os.path.join(self.root, "scenario.json")
-        self.env = {
-            "HOME": self.home,
-            "PATH": f"{self.bin}:/usr/bin:/bin",
-            "GIT_CONFIG_NOSYSTEM": "1",
-            "GIT_ALLOW_PROTOCOL": "file",
-            fake_gh.ENV: self.scenario,
-        }
+        self.env = case.child_env(
+            {
+                "HOME": self.home,
+                "PATH": f"{self.bin}:/usr/bin:/bin",
+                fake_gh.ENV: self.scenario,
+            },
+            case.REPO,
+        )
         fake_gh.install(self.bin)
+        fake_gh.git_shim(self.bin, self.home)
 
     def write(self, scenario):
         with open(self.scenario, "w") as f:

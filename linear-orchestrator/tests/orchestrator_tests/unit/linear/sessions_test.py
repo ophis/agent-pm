@@ -2,7 +2,6 @@
 numbered `#<seq>`, repaired at the end after a late write; the resume command is the Driver's
 session_status."""
 
-import subprocess
 import threading
 import time
 from datetime import datetime
@@ -13,6 +12,7 @@ from agent_pm.linear_orchestrator.engine.types import LinearError, Stopped
 from agent_pm.linear_orchestrator.linear import linear, sessions
 from agent_pm.session import ConfigError, SessionStatus
 from orchestrator_tests import case
+from orchestrator_tests.process_fixtures import CalledProcessError
 from orchestrator_tests.unit.fake_api import FakeApi
 
 SID = "0b6f2c1e-6d0a-4c1b-9a51-3f1f6b0e2a7d"
@@ -442,7 +442,7 @@ class Failure(Case):
         self.assertEqual(out, "timed out after 0.1s")
 
     def test_secret_outside_the_message_does_not_leak(self):
-        exc = subprocess.CalledProcessError(
+        exc = CalledProcessError(
             1,
             ["security", "find-generic-password", "-s", "svc", "-w"],
             output="lin_api_SECRET",

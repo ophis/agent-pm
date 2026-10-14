@@ -2,28 +2,24 @@ import json
 import os
 import re
 import shlex
-import subprocess
+import shutil
 import sys
 import tempfile
 from urllib.parse import unquote
+
+from utils.tests.sandbox import clean_env, git_run
 
 ENV = "FAKE_GH_SCENARIO"
 RAW = "Accept: application/vnd.github.raw+json"
 API = re.compile(r"repos/([^/]+)/([^/]+)(?:/contents/([^?]+)\?ref=([^?]+))?")
 TAIL = "/usr/bin:/bin"
-IDENTITY = {
-    "GIT_AUTHOR_NAME": "fake gh",
-    "GIT_AUTHOR_EMAIL": "fake-gh@agents.test",
-    "GIT_COMMITTER_NAME": "fake gh",
-    "GIT_COMMITTER_EMAIL": "fake-gh@agents.test",
-}
 
 
 def install(bin_dir: str) -> str:
     path = os.path.join(bin_dir, "gh")
     with open(path, "w") as f:
         f.write(
-            f'#!/bin/sh\nexec {shlex.quote(sys.executable)} {shlex.quote(os.path.abspath(__file__))} "$@"\n'
+            f'#!/bin/sh\nexec {shlex.quote(sys.executable)} -P -S {shlex.quote(os.path.abspath(__file__))} "$@"\n'
         )
     os.chmod(path, 0o755)
     return path
@@ -33,10 +29,10 @@ def bare(root: str, owner: str, name: str, branches=()) -> str:
     path = os.path.join(root, owner, f"{name}.git")
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with tempfile.TemporaryDirectory() as home:
-        env = {"HOME": home, "PATH": TAIL, "GIT_CONFIG_NOSYSTEM": "1", **IDENTITY}
+        env = clean_env({"HOME": home, "PATH": TAIL})
 
         def git(*args: str) -> str:
-            res = subprocess.run(["git", *args], env=env, input="", capture_output=True, text=True)
+            res = git_run(*args, env=env, input="", check=False)
             if res.returncode != 0:
                 raise GitCommandError(args, res.stderr.strip())
             return res.stdout.strip()
@@ -47,6 +43,31 @@ def bare(root: str, owner: str, name: str, branches=()) -> str:
             commit = git("--git-dir", path, "commit-tree", tree, "-m", branch)
             git("--git-dir", path, "update-ref", f"refs/heads/{branch}", commit)
     return path
+
+
+def git_shim(bin_dir: str, home: str) -> None:
+    executable = shutil.which("git", path=TAIL)
+    if executable is None:
+        raise FileNotFoundError("git")
+    argv = [
+        executable,
+        "-c",
+        "core.fsmonitor=false",
+        "-c",
+        "core.hooksPath=/dev/null",
+        "-c",
+        "init.templateDir=",
+        "-c",
+        "protocol.allow=never",
+        "-c",
+        "protocol.file.allow=always",
+        "-c",
+        f"include.path={os.path.join(home, '.gitconfig')}",
+    ]
+    path = os.path.join(bin_dir, "git")
+    with open(path, "w") as f:
+        f.write(f'#!/bin/sh\nexec {shlex.join(argv)} "$@"\n')
+    os.chmod(path, 0o700)
 
 
 def gitconfig(home: str, root: str) -> None:

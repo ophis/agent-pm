@@ -15,6 +15,7 @@ import tomllib
 from urllib.parse import quote
 
 from orchestrator_tests.case import PY, Case, child_env
+from orchestrator_tests.case import REPO as WORKTREE
 from orchestrator_tests.integration import fake_gh, fake_linear
 from orchestrator_tests.unit import board_ids, run_fixtures
 from orchestrator_tests.unit.run_fixtures import ID, SID
@@ -140,7 +141,7 @@ class Flow(Case):
             # prune lists tmux sessions: a private dir (or base()'s server), never the developer's
             "TMUX_TMPDIR": self.root,
             **self.base(),
-            **child_env({}, os.path.dirname(os.path.dirname(os.path.dirname(__file__)))),
+            **child_env({}, WORKTREE, os.path.dirname(os.path.dirname(os.path.dirname(__file__)))),
             "TZ": "UTC",
             "AGENT_PM_PATH": self.bin,
             "CLAUDE_CONFIG_DIR": os.path.join(self.root, "claude-config"),
@@ -257,6 +258,7 @@ class TmuxFlow(Flow):
         repos = os.path.join(self.root, "repos")
         fake_gh.bare(repos, *REPO.split("/"))
         fake_gh.gitconfig(self.home, repos)
+        fake_gh.git_shim(self.bin, self.home)
         self.gh_scenario, self.gh = os.path.join(self.root, "gh.json"), copy.deepcopy(GH)
         self.write_gh()
         self.guard()
@@ -268,8 +270,6 @@ class TmuxFlow(Flow):
         return {
             **super().env(),
             fake_gh.ENV: self.gh_scenario,
-            "GIT_CONFIG_NOSYSTEM": "1",
-            "GIT_ALLOW_PROTOCOL": "file",
         }
 
     def write_gh(self):

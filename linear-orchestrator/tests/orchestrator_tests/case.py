@@ -6,11 +6,15 @@ import os
 import sys
 import tempfile
 import unittest
+from contextlib import ExitStack
+from types import SimpleNamespace
 from unittest import mock
 
 import agent_pm
 from agent_pm.linear_orchestrator.linear import linear
 from agent_pm.utils import import_roots
+
+from utils.tests.sandbox import clean_env
 
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 ROOTS = import_roots(REPO)
@@ -38,8 +42,11 @@ class Case(unittest.TestCase):
             return result
         with (
             tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as self.home,
-            mock.patch.dict(os.environ, {"HOME": self.home}),
+            mock.patch.dict(os.environ, {**clean_env(), "HOME": self.home}, clear=True),
+            ExitStack() as stack,
         ):
+            if ".unit." in self.id():
+                stack.enter_context(mock.patch("subprocess.run", _getconf))
             linear.use_logs(None)
             self.agent_pm = os.path.join(self.home, ".agent-pm")
             os.mkdir(self.agent_pm)
@@ -70,12 +77,11 @@ def _foreign(modules=None) -> str | None:
     return None
 
 
-KEEP = ("PYTHONDONTWRITEBYTECODE",)
-
-
 def child_env(base=None, *extra: str) -> dict[str, str]:
-    env = os.environ if base is None else base
-    return {
-        **{k: v for k, v in env.items() if not k.startswith("PYTHON") or k in KEEP},
-        "PYTHONPATH": os.pathsep.join((*ROOTS, *extra)),
-    }
+    return clean_env(base, *ROOTS, *extra)
+
+
+def _getconf(argv, *_args, **_kwargs):
+    if argv != ["getconf", "DARWIN_USER_TEMP_DIR"]:
+        raise AssertionError(f"unexpected subprocess: {argv}")
+    return SimpleNamespace(stdout="")

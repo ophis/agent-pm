@@ -5,7 +5,6 @@ checkouts and archives it.
 """
 
 import os
-import subprocess
 import unittest
 from datetime import UTC, datetime, timedelta
 
@@ -20,6 +19,8 @@ from orchestrator_tests.integration.flow_fixtures import (
     Flow,
     TmuxFlow,
 )
+
+from utils.tests.sandbox import git_run
 
 SOURCE, TITLE = "TASK-12", "Session registries in agent harnesses"
 INSTRUCTIONS = "Write the PRD for a session registry."
@@ -167,10 +168,11 @@ class Promote(Tick):
 
 class Prune(Tick, TmuxFlow):
     def git_init(self, path):
-        res = subprocess.run(
-            ["git", "init", "--quiet", path],
+        res = git_run(
+            "init",
+            "--quiet",
+            path,
             env=self.env(),
-            stdin=subprocess.DEVNULL,
             capture_output=True,
             text=True,
             timeout=TIMEOUT,
