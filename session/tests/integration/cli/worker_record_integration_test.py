@@ -162,7 +162,14 @@ class AdoptionTest(RecordCase):
         self.stored(w2, inside=SECOND)
         self.wait_event("w1", "done")
         status = [
-            Status(name="w1", alive=True, state="done", outcome=None, attach="tmux attach -t '=w1'")
+            Status(
+                "w1",
+                alive=True,
+                state="done",
+                outcome=None,
+                attach="tmux attach -t '=w1'",
+                cwd=self.cwd,
+            )
         ]
         self.assertEqual(self.status("w1", inside=None), status)
         self.assertEqual(self.status(stdin=w1.to_line() + "\n", inside=None), status)

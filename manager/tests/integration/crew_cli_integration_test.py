@@ -3,9 +3,7 @@
 import json
 import os
 import shlex
-import shutil
 import subprocess
-from dataclasses import replace
 from pathlib import Path
 from unittest import mock
 
@@ -13,7 +11,7 @@ from agent_pm.manager import Crew, Roster, Spec, State
 from agent_pm.utils import Record, Status
 
 from manager.tests import fake_session
-from manager.tests.case import REPO, Case, child_env
+from manager.tests.case import Case, child_env, with_ctl
 from utils.tests.fakes import ctl
 
 
@@ -37,17 +35,6 @@ class Commands(Case):
         self.crew_bin = self.plugin_root()
         fake_session.install(os.path.dirname(self.crew_bin), self.sessions)
         self.directory = os.path.join(self.agent_pm, "managers", "mgr")
-
-    def plugin_root(self) -> str:
-        """This tree's projects under a plugin root whose bin/ holds only agent-pm-crew: the
-        launcher puts its own bin/ first on PATH, so the fake agent-pm-session beside it wins over
-        the real one.
-        """
-        root = os.path.join(self.home, "plugin")
-        os.makedirs(os.path.join(root, "bin"))
-        for project in ("utils", "session", "delegate", "manager"):
-            os.symlink(os.path.join(REPO, project), os.path.join(root, project))
-        return shutil.copy(os.path.join(REPO, "bin", "agent-pm-crew"), os.path.join(root, "bin"))
 
     def invoke(self, *argv, clean=False):
         env = dict(os.environ)
@@ -201,9 +188,10 @@ class Commands(Case):
 
     def test_resume_continues_after_client_failure_and_exits_one(self):
         roster = Roster(self.directory)
-        first = replace(self.fake_record("a"), resume=("missing-resume-command", "resume", "a"))
+        first = with_ctl(self.fake_record("a"), "agent-pm-delegate")  # not on PATH
         ctl.set_session(self.ctl_dir, "a", alive=False, sid=first.sid)
-        roster.adopt(first)
+        roster.begin(Spec("a", (self.command, "start", "a")), sid=first.sid)
+        roster.commit("a", first)
         roster.mark("a", State.GONE)
         second = Crew(roster).run(Spec("b", (self.command, "start", "b")))
         ctl.set_session(self.ctl_dir, "b", alive=False)
@@ -211,7 +199,7 @@ class Commands(Case):
         with mock.patch.dict(os.environ, _without_manager_identity(), clear=True):
             result = self.invoke("resume", "a", "b", "--manager", "mgr")
         self.assertEqual(result.returncode, 1, result.stderr)
-        self.assertIn("missing-resume-command", result.stderr)
+        self.assertIn("agent-pm-delegate", result.stderr)
         self.assertEqual([Record.parse(line) for line in result.stdout.splitlines()], [second])
         entries = roster.entries()
         self.assertEqual((entries["a"].state, entries["a"].record), (State.GONE, first))
@@ -244,11 +232,13 @@ class Commands(Case):
         self.assertEqual(closed, [["a", "orphan"]])
         self.assertEqual(crew.roster.entries(), {})
 
-    def test_orphans_are_adopted_once_and_release_supports_handoff(self):
+    def test_a_lost_launch_is_adopted_once_and_release_supports_handoff(self):
         orphan = self.fake_record("orphan")
         ctl.set_session(self.ctl_dir, "orphan", alive=True)
         fake_session.set_records(self.sessions, [orphan])
         original = Roster(self.directory)
+        original.begin(Spec("orphan", (self.command, "start", "orphan")), sid=orphan.sid)
+        original.mark("orphan", State.LOST)
         with original.hold("first") as first:
             result = self.invoke("attach", "--manager", "mgr")
             self.assertEqual(result.returncode, 1)
@@ -317,7 +307,7 @@ class Commands(Case):
         output = self.succeeded("attach", "--manager", "mgr")
         resume = shlex.join(("agent-pm-crew", "resume", "--manager", "mgr", "needs resume"))
         self.assertEqual(output.count(resume), 1)
-        self.assertNotIn("fake-ctl resume", output)
+        self.assertNotIn("agent-pm-linear resume", output)
         self.assertIn("2 12:00:00 actual dead\n", output)
         self.assertNotIn("noise", output)
         self.assertIn(f"monitor: tail -n +1 -F {shlex.quote(crew.roster.events)}\n", output)

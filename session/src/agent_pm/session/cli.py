@@ -33,12 +33,14 @@ from agent_pm.session.engine.types import (
     KeyPress,
     NotDisplayable,
     SessionError,
+    SessionInfo,
     SessionRow,
 )
 from agent_pm.session.engine.worker import Worker
 from agent_pm.session.hosts.base import Displayable, Host
 from agent_pm.session.modes import tui_hook
 from agent_pm.session.modes.base import EVENTS, START_SID
+from agent_pm.session.modes.tui import TuiRuntime
 from agent_pm.utils import Record, Status, module_roots
 
 PROG = COMMAND
@@ -245,14 +247,44 @@ def _state(name: str, hosts: Hosts) -> tuple[bool, str, str | None]:
     return True, handle.activity() or ActivityState.WORKING, attach
 
 
+def _cwd(name: str) -> str | None:
+    """Tui session `name`'s cwd as its start recorded it; None for any other session."""
+    try:
+        info = SessionInfo.from_fields(TuiRuntime.snapshot(name))
+    except SessionError:
+        return None
+    return None if info is None else info.cwd
+
+
 def _status(name: str, record: Record | None, hosts: Hosts) -> str:
-    found = [_state(session, hosts) for session in _sessions(name, record)]
-    alive, state, attach = next((each for each in found if each[0]), found[0])
-    return Status(name, alive, str(state), None, attach).to_line()
+    sessions = _sessions(name, record)
+    found = [(session, *_state(session, hosts)) for session in sessions]
+    session, alive, state, attach = next((each for each in found if each[1]), found[0])
+    return Status(name, alive, str(state), None, attach, _cwd(session) if alive else None).to_line()
+
+
+def _carried(name: str, record: Record | None, hosts: Hosts) -> tuple[str, ...]:
+    """The key's sessions, once each live one publishes a Record key's sid: a reused name is
+    another run's session.
+    """
+    sessions = _sessions(name, record)
+    if record is None:
+        return sessions
+    for session in sessions:
+        host = Session.host(_host_of(session, hosts))
+        if session not in host.list():
+            continue
+        found = host.attach(session).record()
+        have = None if found is None else found.sid
+        if found is None or have != record.sid:
+            raise SessionError(
+                f"session {session} carries sid {have or 'none'}, not the Record's {record.sid}"
+            )
+    return sessions
 
 
 def _show(name: str, record: Record | None, hosts: Hosts) -> None:
-    for session in _sessions(name, record):
+    for session in _carried(name, record, hosts):
         shown = _shown(session, hosts)
         if record is None:
             display = Session.host(_host_of(session, hosts)).attach(session).display()
@@ -269,7 +301,7 @@ def _attach_command(name: str, record: Record | None, hosts: Hosts) -> str:
 
 
 def _close(name: str, record: Record | None, hosts: Hosts) -> None:
-    for session in _sessions(name, record):
+    for session in _carried(name, record, hosts):
         Session.retire(session, host=_host_of(session, hosts))
 
 

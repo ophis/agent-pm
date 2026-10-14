@@ -143,7 +143,16 @@ class HostContract:
 
     def a_record(self, name: str) -> Record:
         return Record(
-            1, "fake", name, (name,), None, None, ("fake-ctl",), ("fake-ctl", "x"), None, None
+            1,
+            "fake",
+            name,
+            (name,),
+            None,
+            None,
+            ("agent-pm-session",),
+            ("agent-pm-session", "resume", name),
+            None,
+            None,
         )
 
     def test_detach_writes_exited_and_the_returncode_when_its_program_exits(self):

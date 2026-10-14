@@ -11,7 +11,7 @@ from pathlib import Path
 
 from agent_pm.manager import Crew, Roster, RosterError, Spec, State
 from agent_pm.manager.engine.holder import Holder
-from agent_pm.manager.engine.types import Lease
+from agent_pm.manager.engine.types import Lease, StatusError
 from agent_pm.utils import STATE
 
 
@@ -85,8 +85,16 @@ def _attach(args) -> int:
 
 
 def _status(args) -> int:
-    for status in _crew(args).status(args.names):
+    failed = None
+    try:
+        statuses = _crew(args).status(args.names)
+    except StatusError as error:
+        statuses, failed = error.statuses, error
+    for status in statuses:
         print(status.to_line())
+    if failed is not None:
+        _report_error(failed)
+        return 1
     return 0
 
 

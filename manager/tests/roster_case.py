@@ -23,18 +23,19 @@ class RosterCase(Case):
             ("s1", "s2"),
             str(uuid4()),
             self.home,
-            ("fake-ctl",),
-            ("fake-ctl", "resume", "x"),
+            ("agent-pm-session",),
+            ("agent-pm-session", "resume", "x"),
             "opaque",
             "detail",
         )
 
-    def begin(self, name="x", note=None):
-        self.roster.begin(Spec(name, ("fake-ctl", "start", name), note), sid=self.record.sid)
+    def begin(self, name="x", note=None, sid=None):
+        self.roster.begin(Spec(name, ("fake-ctl", "start", name), note), sid=sid or self.record.sid)
 
-    def live(self, name="x", note=None):
-        self.begin(name, note)
-        self.roster.commit(name, self.record)
+    def live(self, name="x", note=None, record=None):
+        record = record or self.record
+        self.begin(name, note, record.sid)
+        self.roster.commit(name, record)
 
     def content(self):
         return json.loads(Path(self.roster.path).read_text())

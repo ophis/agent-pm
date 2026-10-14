@@ -526,6 +526,7 @@ class HarnessDelegate(Delegate):
             if state.result is None or state.result.outcome is None
             else state.result.outcome.status,
             self.attach_command(),
+            state.plan.session.access.cwd or state.plan.session.workdir,
         )
 
     def attach_command(self) -> str | None:

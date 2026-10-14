@@ -1,14 +1,16 @@
-"""Case, every manager test's base; child helpers (PY, child_env); this tree's import roots (REPO,
-SRC, ROOTS, PYTHONPATH).
+"""Case, every manager test's base; child helpers (PY, child_env); with_ctl; this tree's import
+roots (REPO, SRC, ROOTS, PYTHONPATH).
 """
 
 import contextlib
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
 import unittest
 import uuid
+from dataclasses import replace
 from unittest import mock
 
 import agent_pm
@@ -66,6 +68,16 @@ class Case(unittest.TestCase):
         )
         return command
 
+    def plugin_root(self) -> str:
+        """A plugin root's agent-pm-crew, alone in its bin/: the launcher puts that bin/ first on
+        PATH, so fakes beat <repo>/bin's layer commands.
+        """
+        root = os.path.join(self.home, "plugin")
+        os.makedirs(os.path.join(root, "bin"))
+        for project in ("utils", "session", "delegate", "manager"):
+            os.symlink(os.path.join(REPO, project), os.path.join(root, project))
+        return shutil.copy(os.path.join(REPO, "bin", "agent-pm-crew"), os.path.join(root, "bin"))
+
     def fake_record(
         self, name: str, *, display: str | None = None, sid: str | None = None
     ) -> Record:
@@ -119,6 +131,10 @@ def _foreign(modules=None) -> str | None:
                     f"run with PYTHONPATH={RUN_WITH}"
                 )
     return None
+
+
+def with_ctl(record: Record, command: str) -> Record:
+    return replace(record, ctl=(command,), resume=(command, "resume", record.name))
 
 
 def child_env(base=None, *extra: str) -> dict[str, str]:

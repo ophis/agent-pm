@@ -292,7 +292,11 @@ class Views(HarnessCase):
     def test_attach_keeps_identity_after_default_client_and_rules_change(self):
         delegate = self.make(host="agent", harness_host="harness", display="original")
         record = delegate.detach(
-            outer={"kind": "outer", "ctl": ["owner"], "resume": ["owner", "resume", "id"]}
+            outer={
+                "kind": "outer",
+                "ctl": ["agent-pm-linear"],
+                "resume": ["agent-pm-linear", "resume", "id"],
+            }
         )
         before = self.metadata()
         self.settings(language="French", client="changed-client", default="changed")
@@ -856,7 +860,11 @@ class Names(HarnessCase):
 
 
 class Outer(HarnessCase):
-    OUTER = {"kind": "crew", "ctl": ("agent-pm-crew",), "resume": ("agent-pm-crew", "resume", "r")}
+    OUTER = {
+        "kind": "pipeline",
+        "ctl": ("agent-pm-linear",),
+        "resume": ("agent-pm-linear", "resume", "TASK-1"),
+    }
 
     def test_the_default_record_is_a_role_run_answered_by_agent_pm_delegate(self):
         record = self.make().detach()
@@ -888,6 +896,8 @@ class Outer(HarnessCase):
         for outer, message in (
             ({"kind": "crew", "extra": 1}, "outer: unknown key extra"),
             ({"ctl": ("/x/agent-pm-crew",)}, "ctl"),
+            ({"ctl": ("agent-pm-crew",), "resume": ("agent-pm-crew", "resume", "r")}, "ctl"),
+            ({"resume": ("agent-pm-delegate", "resume", "--help")}, "resume"),
         ):
             with self.subTest(outer=outer):
                 delegate = self.make()
@@ -1072,7 +1082,16 @@ class Corrupt(HarnessCase):
 
     def record_line(self):
         return Record(
-            1, "role", "n", (), SID, self.work, ("agent-pm-delegate",), ("x",), None, None
+            1,
+            "role",
+            "n",
+            (),
+            SID,
+            self.work,
+            ("agent-pm-delegate",),
+            ("agent-pm-delegate", "resume", self.work),
+            None,
+            None,
         ).to_line()
 
     def test_a_held_run_lock_keeps_a_corrupt_record(self):

@@ -1,19 +1,27 @@
 """Record v1, one JSON line naming a started thing by its outermost starter (ctl queries it, resume
-resumes it), and Status, the line `<ctl> status` prints per Record. Display is opaque: only the
-session layer interprets it. answer_keys is the one batch rule of every ctl's queries. json_records
-yields JSON objects from text or byte lines.
+resumes it; only a LayerCommand, in the exact form that command prints, so a forged line runs
+nothing else), and Status, the line `<ctl> status` prints per Record (cwd, optional: where the
+run works). Display is opaque: only the session layer interprets it. answer_keys is the one batch
+rule of every ctl's queries. json_records yields JSON objects from text or byte lines.
 """
 
 import json
 import math
 from collections.abc import Callable, Iterable, Iterator, Sequence
-from dataclasses import asdict, dataclass, fields
+from dataclasses import MISSING, asdict, dataclass, fields
+from enum import StrEnum
 from typing import Self, TextIO, TypeVar
 
 from agent_pm.utils.text import printable
 
 Display = str | None
 T = TypeVar("T")
+
+
+class LayerCommand(StrEnum):
+    DELEGATE = "agent-pm-delegate"
+    LINEAR = "agent-pm-linear"
+    SESSION = "agent-pm-session"
 
 
 class RecordError(ValueError):
@@ -44,8 +52,8 @@ class _Line:
             raise RecordError(f"{kind}: not JSON ({e})") from None
         _check(ok=isinstance(data, dict), message=f"{kind}: want a JSON object")
         names = [f.name for f in fields(cls)]
-        for name in names:
-            _check(ok=name in data, message=f"{name}: missing")
+        for f in fields(cls):
+            _check(ok=f.name in data or f.default is not MISSING, message=f"{f.name}: missing")
         for name in data:
             _check(ok=name in names, message=f"{name}: unknown field")
         return cls(**{k: tuple(v) if isinstance(v, list) else v for k, v in data.items()})
@@ -86,10 +94,17 @@ class Record(_Line):
                 ok=isinstance(argv, tuple) and bool(argv) and all(isinstance(a, str) for a in argv),
                 message=f"{field}: want a non-empty list of str",
             )
-            _check(
-                ok=bool(argv[0]) and "/" not in argv[0],
-                message=f"{field}[0] must be a command name without /",
-            )
+        _check(
+            ok=len(self.ctl) == 1 and self.ctl[0] in tuple(LayerCommand),
+            message=f"ctl: want [C], C one of {', '.join(LayerCommand)}",
+        )
+        _check(
+            ok=len(self.resume) == 3
+            and self.resume[:2] == (self.ctl[0], "resume")
+            and _text(self.resume[2])
+            and not self.resume[2].startswith("-"),
+            message="resume: want [ctl[0], resume, KEY], KEY printable and not starting with -",
+        )
         _check(
             ok=self.display is None or isinstance(self.display, str),
             message="display: want null or a str",
@@ -103,6 +118,7 @@ class Status(_Line):
     state: str
     outcome: str | None
     attach: str | None
+    cwd: str | None = None
 
     def __post_init__(self):
         _check(ok=_text(self.name), message="name: want a non-empty printable str")
@@ -113,6 +129,10 @@ class Status(_Line):
             _check(
                 ok=value is None or isinstance(value, str), message=f"{field}: want null or a str"
             )
+        _check(
+            ok=self.cwd is None or _text(self.cwd),
+            message="cwd: want null or a non-empty printable str",
+        )
 
 
 def answer_keys(

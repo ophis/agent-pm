@@ -1,4 +1,4 @@
-"""Crew starts and controls Records through real fake-ctl processes, never lower-layer APIs."""
+"""Crew starts and controls Records through real fake ctl processes, never lower-layer APIs."""
 
 import contextlib
 import io
@@ -24,11 +24,13 @@ from agent_pm.manager.engine.crew import (
     Crew,
 )
 from agent_pm.manager.engine.roster import LOCK_TIMEOUT, Roster
-from agent_pm.manager.engine.types import Held, RosterError, Spec, Stale, State
+from agent_pm.manager.engine.types import Held, RosterError, Spec, Stale, State, StatusError
 from agent_pm.utils import Status
 
-from manager.tests.case import Case
+from manager.tests.case import Case, with_ctl
 from utils.tests.fakes import ctl
+
+MISSING = "agent-pm-delegate"  # a layer command off setup_ctl's PATH
 
 
 class CrewTest(Case):
@@ -45,6 +47,11 @@ class CrewTest(Case):
         if display is not None:
             argv += ("--display", display)
         return self.crew.run(Spec(name, argv, note))
+
+    def own(self, record):
+        """record committed under its name, as if this roster launched it."""
+        self.roster.begin(Spec(record.name, (record.ctl[0], "start")), sid=record.sid)
+        self.roster.commit(record.name, record)
 
     def gone(self, name):
         record = self.start(name)
@@ -456,7 +463,7 @@ class CrewTest(Case):
         self.assertEqual(self.roster.entries()["young"].state, State.STARTING)
         self.assertEqual(self.roster.entries()["resuming"].state, State.GONE)
 
-    def test_attach_adopts_sid_matched_orphan_under_original_alias_and_note(self):
+    def test_attach_adopts_only_the_sid_matched_orphan_under_its_alias_and_note(self):
         sid = str(uuid.uuid4())
         self.roster.begin(Spec("alias", (self.command, "start", "actual-name"), "keep"), sid=sid)
         self.age("alias")
@@ -466,7 +473,7 @@ class CrewTest(Case):
         ctl.set_session(self.ctl_dir, "extra", alive=True, sid=extra.sid)
         with self.listed((orphan, orphan, extra)):
             self.crew.attach()
-        self.assertEqual(set(self.roster.entries()), {"alias", "extra"})
+        self.assertEqual(set(self.roster.entries()), {"alias"})
         self.assertEqual(self.roster.entries()["alias"].note, "keep")
         self.assertEqual(self.roster.entries()["alias"].record, orphan)
         self.assertEqual(self.roster.entries()["alias"].state, State.LIVE)
@@ -477,7 +484,7 @@ class CrewTest(Case):
         ctl.set_session(self.ctl_dir, "role", alive=False)
         with self.listed():
             table = self.crew.attach()
-        self.assertNotIn("resume role: fake-ctl resume role", table)
+        self.assertNotIn("resume role: agent-pm-linear resume role", table)
         self.assertIn(f"role\tfake\t{original.sid}\tgone\t", table)
         record = self.crew.resume("role")
         self.assertEqual(record.display, "opaque")
@@ -544,6 +551,56 @@ class CrewTest(Case):
         self.assertEqual(self.calls("show"), [])
         self.assertEqual(self.roster.entries()["two"].state, State.LIVE)
 
+    def test_attach_shows_the_cwd_each_status_reports(self):
+        record = self.start("one")
+        self.start("two")
+        real_run = subprocess.run
+
+        def run(argv, **options):
+            if tuple(argv) == (self.command, "status"):
+                lines = (
+                    Status(
+                        name, alive=True, state="working", outcome=None, attach=None, cwd=cwd
+                    ).to_line()
+                    for name, cwd in (("one", "/w/repo one"), ("two", None))
+                )
+                return subprocess.CompletedProcess(argv, 0, "\n".join(lines) + "\n", "")
+            return real_run(argv, **options)
+
+        with mock.patch("subprocess.run", side_effect=run), self.listed():
+            table = self.crew.attach().splitlines()
+        rows = {row.split("\t")[0]: row.split("\t") for row in table[1:] if "\t" in row}
+        self.assertEqual(table[0].split("\t")[5], "cwd")
+        self.assertEqual((rows["one"][5], rows["two"][5]), ("/w/repo one", "-"))
+        self.assertNotEqual(rows["one"][5], record.workdir)
+
+    def test_a_key_its_ctl_fails_is_the_only_status_lost(self):
+        self.start("one")
+        self.start("two")
+        ctl.set_session(self.ctl_dir, "one", alive=True)
+        one = Status("one", alive=True, state="working", outcome=None, attach=None)
+        real_run = subprocess.run
+
+        def run(argv, **options):
+            if tuple(argv) == (self.command, "status"):
+                return subprocess.CompletedProcess(argv, 1, one.to_line() + "\n", "two: boom\n")
+            return real_run(argv, **options)
+
+        with mock.patch("subprocess.run", side_effect=run):
+            with self.assertRaises(StatusError) as caught:
+                self.crew.status(("two", "one"))
+            self.assertEqual(caught.exception.statuses, [one])
+            self.assertIn("two:", str(caught.exception))
+            self.assertIn("boom", str(caught.exception))
+            self.assertNotIn("one:", str(caught.exception))
+            stderr = io.StringIO()
+            with self.listed(), contextlib.redirect_stderr(stderr):
+                table = self.crew.attach()
+        self.assertIn("one\tfake\t", table)
+        self.assertIn(f"one\tfake\t{self.roster.entries()['one'].sid}\tworking\t", table)
+        self.assertIn(f"two\tfake\t{self.roster.entries()['two'].sid}\tunknown\t", table)
+        self.assertIn("crew: two: ", stderr.getvalue())
+
     def test_status_rejects_missing_duplicate_and_extra_responses(self):
         self.start("worker")
         responses = (
@@ -599,12 +656,12 @@ class CrewTest(Case):
     def test_attach_keeps_failed_ctl_unknown_and_processes_healthy_group(self):
         healthy = self.start("healthy", display="view")
         ctl.set_session(self.ctl_dir, "healthy", displayable=True)
-        bad = replace(self.fake_record("broken"), ctl=("missing-ctl-task371",))
-        self.roster.adopt(bad)
+        bad = with_ctl(self.fake_record("broken"), MISSING)
+        self.own(bad)
         stderr = io.StringIO()
         with self.listed((healthy, bad)), contextlib.redirect_stderr(stderr):
             table = self.crew.attach()
-        self.assertIn("missing-ctl-task371", stderr.getvalue())
+        self.assertIn(MISSING, stderr.getvalue())
         self.assertIn("broken\tfake\t" + bad.sid + "\tunknown\t", table)
         self.assertEqual(self.roster.entries()["broken"].state, State.LIVE)
         self.assertEqual(self.calls("show"), [{"argv": ["show"], "names": ["healthy"]}])
@@ -612,12 +669,12 @@ class CrewTest(Case):
     def test_attach_reports_nonzero_status_and_show_without_aborting_other_groups(self):
         self.start("healthy", display="view")
         ctl.set_session(self.ctl_dir, "healthy", displayable=True)
-        bad = replace(self.fake_record("broken"), ctl=("failing-ctl-task371",))
+        bad = with_ctl(self.fake_record("broken"), "agent-pm-session")
         command = os.path.join(self.bin_dir, bad.ctl[0])
         with open(command, "w", encoding="utf-8") as stream:
             stream.write("#!/bin/sh\necho broken-controller >&2\nexit 7\n")
         os.chmod(command, 0o700)
-        self.roster.adopt(bad)
+        self.own(bad)
         real_run = subprocess.run
 
         def run(argv, **options):
@@ -685,24 +742,24 @@ class CrewTest(Case):
         self.assertEqual(self.calls("close"), [{"argv": ["close"], "names": ["owned", "orphan"]}])
 
     def test_stop_all_closes_healthy_groups_and_retains_failed_groups(self):
-        bad = replace(self.fake_record("broken"), ctl=("missing-ctl-task371",))
-        self.roster.adopt(bad)
+        bad = with_ctl(self.fake_record("broken"), MISSING)
+        self.own(bad)
         self.start("healthy")
-        with self.listed(), self.assertRaisesRegex(RuntimeError, "missing-ctl-task371"):
+        with self.listed(), self.assertRaisesRegex(RuntimeError, MISSING):
             self.crew.stop_all()
         self.assertEqual(set(self.roster.entries()), {"broken"})
         self.assertEqual(self.calls("close"), [{"argv": ["close"], "names": ["healthy"]}])
 
     def test_each_ctl_is_queried_once_and_answers_are_mapped_to_their_names(self):
         self.start("one")
-        second = "other-ctl"
+        second = "agent-pm-delegate"
         shutil.copyfile(
             os.path.join(self.bin_dir, self.command), os.path.join(self.bin_dir, second)
         )
         os.chmod(os.path.join(self.bin_dir, second), 0o700)
         record = self.fake_record("two")
         self.roster.begin(Spec("two", (second, "start", "two")), sid=record.sid)
-        self.roster.commit("two", replace(record, ctl=(second,)))
+        self.roster.commit("two", with_ctl(record, second))
         ctl.set_session(self.ctl_dir, "two", alive=True)
         statuses = self.crew.status()
         self.assertEqual([status.name for status in statuses], ["one", "two"])

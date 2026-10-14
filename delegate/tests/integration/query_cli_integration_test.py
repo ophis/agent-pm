@@ -34,7 +34,10 @@ class Queries(Integration):
 
     def test_status_and_outcome_answer_from_the_workdir_or_its_record(self):
         line = (
-            Status(NAME, alive=False, state="absent", outcome="done", attach=None).to_line() + "\n"
+            Status(
+                NAME, alive=False, state="absent", outcome="done", attach=None, cwd=self.proj
+            ).to_line()
+            + "\n"
         )
         self.assertEqual(self.query("status", self.work), (0, line, ""))
         resume = ("agent-pm-delegate", "resume", self.work)
@@ -53,7 +56,9 @@ class Queries(Integration):
             (code, out),
             (
                 2,
-                Status(NAME, alive=False, state="absent", outcome="done", attach=None).to_line()
+                Status(
+                    NAME, alive=False, state="absent", outcome="done", attach=None, cwd=self.proj
+                ).to_line()
                 + "\n",
             ),
         )

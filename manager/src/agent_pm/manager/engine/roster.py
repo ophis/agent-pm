@@ -605,40 +605,31 @@ class Roster:
             data["entries"][name] = asdict(replace(self._get(data, name), note=text or None))
 
     def adopt(self, record: Record) -> str | None:
+        """The entry this roster launched with record.sid takes record; None when none did, so a
+        Record anyone else published is never adopted.
+        """
         _name(record.name)
         if not _uuid4(record.sid):
             raise RosterError("sid: want a canonical uuid4")
-        with self._locked(create=True) as data:
+        with self._locked() as data:
             self._lease(data)
             matches = [
-                name
-                for name, value in data["entries"].items()
-                if record.sid is not None and value["sid"] == record.sid
+                name for name, value in data["entries"].items() if value["sid"] == record.sid
             ]
             if len(matches) > 1:
                 raise RosterError(f"sid {record.sid}: more than one roster entry matches")
-            self._control_available(data, record, matches[0] if matches else None)
-            if matches:
-                name = matches[0]
-                current = self._get(data, name)
-                if current.state in {State.LOST, State.RESUMING}:
-                    data["entries"][name] = asdict(
-                        replace(current, record=record, state=State.LIVE, argv=())
-                    )
-                elif current.state != State.STARTING and current.record != record:
-                    raise RosterError(f"sid {record.sid}: already owned by {name}")
-                return name
-            if record.name in data["entries"]:
-                current = self._get(data, record.name)
-                if current.record == record:
-                    return record.name
-                if current.state == State.LOST:
-                    return None
-                raise RosterError(f"{record.name}: already owned by another sid")
-            data["entries"][record.name] = asdict(
-                Entry(record, State.LIVE, None, _now(), sid=record.sid)
-            )
-            return record.name
+            if not matches:
+                return None
+            name = matches[0]
+            self._control_available(data, record, name)
+            current = self._get(data, name)
+            if current.state in {State.LOST, State.RESUMING}:
+                data["entries"][name] = asdict(
+                    replace(current, record=record, state=State.LIVE, argv=())
+                )
+            elif current.state != State.STARTING and current.record != record:
+                raise RosterError(f"sid {record.sid}: already owned by {name}")
+            return name
 
     def backlog(self) -> tuple[int, int, list[str]]:
         with self._locked() as data:

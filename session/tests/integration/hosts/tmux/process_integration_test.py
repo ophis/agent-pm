@@ -161,7 +161,7 @@ class ProcessTest(AttachmentBase):
             ("", None),
             ("{forged", None),
             ('{"v":1}', None),
-            (LINE.to_line().replace('"ctl"]', '"/bin/sh"]', 1), None),
+            (LINE.to_line().replace('["agent-pm-delegate"]', '["sh"]', 1), None),
         ):
             with self.subTest(stored=stored):
                 self.tmux.option.return_value = stored
