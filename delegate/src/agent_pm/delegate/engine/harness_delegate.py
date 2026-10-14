@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import signal
 import sys
+import time
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, fields, is_dataclass, replace
 
@@ -17,7 +19,7 @@ from agent_pm.delegate.engine.callback import EventCallback
 from agent_pm.delegate.engine.config import module_roots, package_dirs
 from agent_pm.delegate.engine.drivers import AgentDriver, Driver, InstructionDriver
 from agent_pm.delegate.engine.plan import plan
-from agent_pm.delegate.engine.runner import execute
+from agent_pm.delegate.engine.runner import execute, say
 from agent_pm.delegate.engine.state import RunState
 from agent_pm.delegate.engine.types import (
     ConfigError,
@@ -93,6 +95,10 @@ class _State:
     completed: bool = False
     result: Result | None = None
     events: str | None = None
+
+
+TUI_START_TIMEOUT = 30  # seconds: a detached tui run's agent session to go live
+TUI_POLL = 0.1  # seconds
 
 
 class HarnessDelegate(Delegate):
@@ -651,7 +657,33 @@ class HarnessDelegate(Delegate):
                 return self._record(previous)
             if previous.completed:
                 raise ConfigError(f"{self.workdir}: delegate run already completed")
-            return self._launch(previous, replace(previous, outer=given))
+            record = self._launch(previous, replace(previous, outer=given))
+        self._started(self._state)
+        return record
+
+    def _started(self, state: _State) -> None:
+        """Tui: waits, outside the mutex, until the harness has the agent session live, then shows
+        it at the run's display; DriverError, both closed, when the harness ends first or
+        TUI_START_TIMEOUT passes.
+        """
+        if state.plan.spec.mode != Mode.TUI:
+            return
+        deadline = time.monotonic() + TUI_START_TIMEOUT
+        while (agent := self._agent(state)) is None or agent.state() != Liveness.LIVE:
+            harness = self._harness(state)
+            if harness is None or not harness.alive() or time.monotonic() >= deadline:
+                for session in (harness, agent):
+                    if session is not None:
+                        with contextlib.suppress(DriverError):
+                            session.close()
+                raise DriverError(f"tui session {state.agent_name} did not start")
+            time.sleep(TUI_POLL)
+        if agent.displayable:
+            try:
+                if command := agent.show(display=state.display):
+                    say(command)
+            except (SessionConfigError, DriverError) as error:
+                say(f"delegate: show {state.agent_name}: {error}")
 
     def resume(self) -> Record:
         with self.store.mutex():
@@ -699,7 +731,9 @@ class HarnessDelegate(Delegate):
             state = replace(
                 state, plan=accepted, completed=False, result=None, attempt=state.attempt + 1
             )
-            return self._launch(previous, state)
+            record = self._launch(previous, state)
+        self._started(self._state)
+        return record
 
 
 def _stop(signum, _frame):

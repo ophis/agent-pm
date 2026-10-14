@@ -67,7 +67,9 @@ class Base(ApplicationCase):
         """
         case, driver = self, self.driver
         session_cls = type(
-            "CliSession", (driver.session_cls,), {"class_roots": classmethod(lambda _cls, _runtime: ())}
+            "CliSession",
+            (driver.session_cls,),
+            {"class_roots": classmethod(lambda _cls, _runtime: ())},
         )
 
         class Driven(HarnessDelegate):

@@ -1,4 +1,7 @@
-"""Process-free Session and Hosts for HarnessDelegate's ownership and view contracts."""
+"""Process-free Session and Hosts for HarnessDelegate's ownership and view contracts. A
+RecordingHost given a tui run's harness starts its agent session as the harness would, unless
+harness_starts_agent is False.
+"""
 
 import json
 import os
@@ -11,11 +14,14 @@ from agent_pm.session import (
     HostProcess,
     Launch,
     Liveness,
+    Mode,
     NotDisplayable,
     Resumable,
+    Session,
     SessionStatus,
 )
-from agent_pm.utils import Record, append_line, read_regular, save
+from agent_pm.session import Spec as SessionSpec
+from agent_pm.utils import Record, append_line, load_class, read_regular, save
 
 from delegate.tests.fakes.session import SessionClass
 
@@ -49,6 +55,7 @@ class RecordingProcess(HostProcess):
 class RecordingHost(Host):
     processes: dict[tuple[str, str], RecordingProcess] = {}
     launches: list[dict] = []
+    harness_starts_agent = True
 
     def detach(self, name, launch, *, display=None, events=None, record=None):
         process = RecordingProcess(name, display=display, record=record)
@@ -66,6 +73,8 @@ class RecordingHost(Host):
                 "record": record,
             }
         )
+        if RecordingHost.harness_starts_agent and record is not None and len(record.sessions) == 2:
+            _start_agent(record, display)
         return process
 
     def terminal(self, name, launch, *, display=None, events=None, record=None):
@@ -84,6 +93,25 @@ class RecordingHost(Host):
             and process.alive()
             and (display is None or display == process.display())
         ]
+
+
+def _start_agent(record, display):
+    """The run's agent session on its agent Host, through its stored session class."""
+    with open(os.path.join(record.workdir, "delegate.json"), encoding="utf-8") as file:
+        state = json.load(file)
+    session_cls = load_class(state["session_cls"], Session)
+    spec = SessionSpec(
+        workdir=record.workdir,
+        runtime=state["plan"]["session"]["runtime"],
+        mode=Mode.TUI,
+        sid=record.sid,
+        name=record.sessions[1],
+    )
+    session_cls.start(spec, host=state["host"], display=display)
+
+
+def harness_launches():
+    return [launch for launch in RecordingHost.launches if launch["argv"] != ["fake-agent"]]
 
 
 class ShowingHost(RecordingHost, Displayable):
@@ -120,6 +148,7 @@ class HarnessSession(SessionClass):
         cls.preflights, cls.preflight_error = [], None
         cls.host_names = {}
         RecordingHost.processes, RecordingHost.launches, ShowingHost.shown = {}, [], []
+        RecordingHost.harness_starts_agent = True
         kind = ShowingHost if displayable else RecordingHost
         cls.hosts = {name: kind(name) for name in ("agent", "harness", "changed")}
         cls.script = ()
