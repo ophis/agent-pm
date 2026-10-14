@@ -30,10 +30,9 @@ from agent_pm.session.engine.types import (
     Usage,
 )
 from agent_pm.session.hosts.base import SIGNALS, Displayable, Host
-from agent_pm.session.hosts.tmux import TmuxHost, tmux_host
+from agent_pm.session.hosts.tmux import TmuxHost
 from agent_pm.session.modes import tui
-from agent_pm.utils import load_class, printable_abs
-from agent_pm.utils import probe as run_probe
+from agent_pm.utils import load_class, printable_abs, probe
 
 Handle = Session
 
@@ -81,8 +80,8 @@ class Driver:
         adapters: Mapping,
         hosts: Hosts | Mapping,
         default_host: str | None = None,
-        host=tmux_host,
-        probe=run_probe,
+        host=None,
+        probe=probe,
         clock: Callable[[], float] | None = None,
         class_loader=load_class,
         harness_host: str | None = None,
@@ -125,8 +124,8 @@ class Driver:
         config: Mapping,
         *,
         hosts: Hosts | None = None,
-        host=tmux_host,
-        probe=run_probe,
+        host=None,
+        probe=probe,
         clock: Callable[[], float] | None = None,
         class_loader=load_class,
         harness_host: str | None = None,
@@ -181,11 +180,13 @@ class Driver:
         split: str | None = None,
         split_from: str | None = None,
         opener: str | None = None,
+        *,
+        command: str | None = None,
     ) -> str | None:
         tui.checked_name(name)
         display = TmuxHost.fold(opener, split, split_from)
-        self.registry.tui()
-        return self._shown().show(name, display=display)
+        self.session_cls.host().tui_settings()
+        return self._shown().show(name, display=display, command=command)
 
     def usage(self, runtime: str) -> Usage | None:
         return self.session_cls.usage(runtime)

@@ -23,6 +23,7 @@ from agent_pm.session.engine.types import (
     ClientBound,
     ConfigError,
     DriverError,
+    HookCallback,
     HookKind,
     Key,
     Launch,
@@ -37,7 +38,7 @@ from agent_pm.session.engine.types import (
     Word,
 )
 from agent_pm.session.hosts.base import HostProcess
-from agent_pm.session.hosts.tmux import tmux_host
+from agent_pm.session.hosts.tmux.types import TuiError
 from agent_pm.session.modes import tui, tui_hook
 
 from session.tests import fake_adapter
@@ -151,7 +152,9 @@ class Base(Case):
         self.addCleanup(tmp.cleanup)
         self.tmp = os.path.realpath(tmp.name)
         self.events = os.path.join(self.home, "events")
-        self.host = ScreenHost(protected=("/host/tool",), hook={"host_state": {"selected": True}})
+        self.host = ScreenHost(
+            protected=("/host/tool",), hook=HookCallback("fake_host_hook", {"selected": True})
+        )
         self.log = []
         self.clock = Clock(self.log)
         for patch in (
@@ -220,7 +223,7 @@ class Base(Case):
             "words": WORDS,
             "generation": generation,
             "host": self.host.name,
-            "host_state": {"selected": True},
+            "host_hook": {"module": "fake_host_hook", "state": {"selected": True}, "roots": []},
             **changes,
         }
 
@@ -386,7 +389,8 @@ class AttachTest(Base):
         self.assertEqual(len(polled), 6)
 
     def test_a_fresh_tui_is_restored_once_with_its_adapter_state_before_its_records(self):
-        for extra, kept in (({"adapter_state": {"store": "/s"}}, {"store": "/s"}), ({}, {})):
+        restored = {"module": "fake_adapter_hook", "state": {"store": "/s"}, "roots": []}
+        for extra, kept in (({"adapter_hook": restored}, {"store": "/s"}), ({}, {})):
             with self.subTest(extra=extra):
                 adapter = FreshAdapter({"tui": True})
                 self.write_state(self.state(**extra))
@@ -584,6 +588,19 @@ class StartTest(Base):
                 self.assertEqual(self.recorded, [])
                 self.assertNoSessionDir()
         self.host.calls.terminal.assert_not_called()
+
+    def test_a_declared_hook_callback_root_rejects_an_overlapping_cwd_before_launch(self):
+        self.host.hook = HookCallback("fake_host_hook", {}, roots=("/declared/root",))
+        with self.assertRaisesRegex(
+            ConfigError, "writable path /declared/root/child overlaps protected path /declared/root"
+        ):
+            self.start(access=Access(cwd="/declared/root/child"))
+        self.assertEqual(self.recorded, [])
+        self.assertNoSessionDir()
+        self.host.calls.terminal.assert_not_called()
+        self.host.hook = HookCallback("fake_host_hook", {}, roots=("/elsewhere",))
+        self.start(access=Access(cwd="/declared/root/child"))
+        self.host.calls.terminal.assert_called_once()
 
     def test_its_child_env_drops_adapter_identities_then_takes_the_launch_env(self):
         self.driver_dependencies = {"class_loader": lambda _path, _base: IdentityAdapter}
@@ -1215,12 +1232,29 @@ class PollTest(Base):
         self.assertEqual(mode.poll(0.5), ([], False))
         self.assertEqual(self.host.calls.mock_calls, [mock.call.screen(mode._terminal, None)])
         mode._terminal.calls.returncode.assert_called_once_with()
-        mode._terminal.calls.alive.assert_called_once_with()
         self.assertEqual(
-            {call[0] for call in mode._terminal.calls.mock_calls}, {"state", "returncode", "alive"}
+            {call[0] for call in mode._terminal.calls.mock_calls}, {"state", "returncode"}
         )
         self.assertTrue(all(0 < seconds <= 0.1 for _, seconds in self.log), self.log)
         self.assertAlmostEqual(self.clock.now, 0.5)
+
+    def test_a_quiet_wait_checks_the_terminal_once_per_poll_however_long(self):
+        for timeout in (0.5, 5):
+            with self.subTest(timeout=timeout):
+                mode = self.started()
+                self.assertEqual(mode.poll(timeout), ([], False))
+                self.assertEqual(
+                    self.host.calls.mock_calls, [mock.call.screen(mode._terminal, None)]
+                )
+                self.assertEqual(
+                    sorted(call[0] for call in mode._terminal.calls.mock_calls),
+                    ["returncode", "state", "state"],
+                )
+        mode = self.started()
+        late = self.clock.now + 2.05
+        self.clock.actions.append((late, lambda: self.append(record("tool", tool="late"))))
+        self.assertEqual(mode.poll(5), ([Activity("late")], False))
+        self.assertEqual(mode._terminal.calls.state.call_count, 3)
 
     def test_a_record_while_waiting_returns_at_once(self):
         mode = self.started()
@@ -1537,7 +1571,7 @@ class PrepareTest(Base):
             [
                 c
                 for c in self.host.calls.mock_calls
-                if c[0] not in ("protected_paths", "hook_state", "validate")
+                if c[0] not in ("protected_paths", "hook_callback", "validate")
             ],
             [],
         )
@@ -1715,7 +1749,7 @@ class StoreTest(Base):
 class TransportErrorTest(TmuxBase):
     def test_real_host_launch_keeps_the_modes_exact_error_prefix(self):
         self.tmux.tmux_path.return_value = self.tool
-        self.tmux.start.side_effect = tmux_host.TuiError("tmux: boom")
+        self.tmux.start.side_effect = TuiError("tmux: boom")
         workdir = os.path.join(self.dir, "work")
         os.mkdir(workdir)
 
@@ -1738,7 +1772,7 @@ class TransportErrorTest(TmuxBase):
     def test_real_host_close_keeps_the_modes_exact_error_prefix(self):
         self.controlled, self.kind = False, None
         self.tmux.listing.return_value = [{"name": NAME, "display": None}]
-        self.tmux.kill.side_effect = tmux_host.TuiError("tmux: boom")
+        self.tmux.kill.side_effect = TuiError("tmux: boom")
         with self.assertRaises(DriverError) as caught:
             tui.TuiMode.close(NAME, host=self.host)
         self.assertEqual(str(caught.exception), "cannot close tui session w1: tmux: boom")

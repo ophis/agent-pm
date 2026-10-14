@@ -69,6 +69,7 @@ def clean_env(base=None, *import_roots):
 def stop_tmux_servers(root, env):
     if Path(root).is_symlink():
         return
+    failures = []
     for path, directories, files in os.walk(root):
         directory = Path(path)
         directories[:] = [name for name in directories if not (directory / name).is_symlink()]
@@ -78,14 +79,19 @@ def stop_tmux_servers(root, env):
             socket = directory / name
             if socket.is_symlink() or not socket.is_socket():
                 continue
-            subprocess.run(
-                ["tmux", "-S", str(socket), "kill-server"],
-                env=env,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                timeout=10,
-                check=False,
-            )
+            try:
+                subprocess.run(
+                    ["tmux", "-S", str(socket), "kill-server"],
+                    env=env,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    timeout=10,
+                    check=False,
+                )
+            except (OSError, subprocess.TimeoutExpired) as error:
+                failures.append(error)
+    if failures:
+        raise ExceptionGroup(f"{root}: tmux kill-server failed", failures)
 
 
 def git_run(*argv, cwd=None, env=None, **kwargs):

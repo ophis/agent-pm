@@ -1,21 +1,31 @@
-"""TmuxHost, the Host on tmux: a thin wrap of tmux_host.py (TASK-368 moves that code in). Its display
-format, FORMAT, has one encoder (fold) and one decoder (unfold). TmuxProcess, a session it hosts,
-keeps its Record and display in the tmux options @record and @display.
+"""TmuxHost, the Host on tmux, runs every tmux call through the Tmux it holds; Tmux's start and
+detach hand a launch to a new session's pane (EXEC). TmuxHost's display format, FORMAT, has one
+encoder (fold) and one decoder (unfold). TmuxProcess, a session it hosts, keeps its Record and
+display in the tmux options @record and @display.
 """
 
 from __future__ import annotations
 
 import contextlib
+import errno
+import json
 import logging
 import os
+import shutil
 import signal
+import stat
+import subprocess
+import sys
+import tempfile
 import time
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 
+from agent_pm.session.engine.status_log import SessionStatusLog
 from agent_pm.session.engine.types import (
     ActivityState,
     ConfigError,
     DriverError,
+    HookCallback,
     Key,
     Launch,
     Liveness,
@@ -25,8 +35,24 @@ from agent_pm.session.engine.types import (
     Word,
 )
 from agent_pm.session.hosts.base import Displayable, Host, HostProcess, Terminal
-from agent_pm.session.hosts.tmux import tmux_host
-from agent_pm.session.hosts.tmux.tmux_host import TuiError
+from agent_pm.session.hosts.tmux import grid, hook, placement, transport
+from agent_pm.session.hosts.tmux.listing import listing
+from agent_pm.session.hosts.tmux.transport import (
+    ITERM_OPENER,
+    NAME,
+    OPENER,
+    PROCESS,
+    PROCESS_ID,
+    USER_OPTION,
+    attach_command,
+    display_error,
+    error,
+    kill,
+    run,
+    session_name,
+    status,
+)
+from agent_pm.session.hosts.tmux.types import Anchor, PaneStatus, Retile, Split, TuiError
 from agent_pm.utils import CONFIG_NAME, Display, ProcessControl, Record, sid_error
 
 FORMAT = "<opener>[/<split>[/<split_from>]]"
@@ -38,14 +64,505 @@ LOG = logging.getLogger("session")
 Parts = tuple[str | None, str | None, str | None]
 
 
+HANDOVER_TIMEOUT = 10
+
+
+ERRPIPE = "errpipe"
+
+
+DIED = "set-option @state dead"
+
+
+CLOCK = f'"$(date +{SessionStatusLog.CLOCK})"'
+DEAD_EVENT = (
+    "run-shell -b 'echo "
+    + SessionStatusLog.line("#{q:session_name}", "dead", at=CLOCK)
+    + " >> #{q:@events}'"
+)
+EXIT_STATUS = (
+    "#{?pane_dead_signal,-#{?#{m:*[!0-9]*,#{pane_dead_signal}},$(kill -l #{q:pane_dead_signal}),"
+    "#{pane_dead_signal}},#{pane_dead_status}}"
+)
+EXITED_EVENT = (
+    "run-shell 'echo "
+    + SessionStatusLog.line("#{q:session_name}", "exited", EXIT_STATUS, at=CLOCK)
+    + " >> #{q:@events}' ; kill-session"
+)
+
+
+BORDER = " #{session_name} #{@state} "
+
+
+TERMINAL_KEYS = (
+    "TMUX",
+    "TMUX_PANE",
+    "TERM",
+    "COLORTERM",
+    "TERM_PROGRAM",
+    "TERM_PROGRAM_VERSION",
+    "TERM_SESSION_ID",
+    "ITERM_SESSION_ID",
+    "ITERM_PROFILE",
+    "LC_TERMINAL",
+    "LC_TERMINAL_VERSION",
+    "COLUMNS",
+    "LINES",
+)
+
+
+EXEC = f"""import errno, json, os, signal, sys
+with open(sys.argv[1]) as f: h = json.load(f)
+w = os.open(sys.argv[2], os.O_WRONLY | os.O_NONBLOCK)
+try:
+    os.chdir(h['cwd'])
+    os.unlink(sys.argv[1])
+    h['env'].update((k, os.environ[k]) for k in {TERMINAL_KEYS!r} if k in os.environ)
+    for s in (signal.SIGPIPE, signal.SIGXFSZ): signal.signal(s, signal.SIG_DFL)
+    os.execve(h['argv'][0], h['argv'], h['env'])
+except BaseException as e:
+    os.write(w, b'%d' % (isinstance(e, OSError) and e.errno or errno.EINVAL))
+    raise"""
+
+
+def _command(argv: Sequence[str], env: Mapping[str, str]) -> list[str]:
+    if not argv:
+        raise TuiError("no command")
+    exe = shutil.which(argv[0], path=env.get("PATH", os.defpath))
+    if exe is None:
+        raise TuiError(f"command not found: {argv[0]}")
+    return [os.path.abspath(exe), *argv[1:]]
+
+
+def _wrapper(tmp: str) -> tuple[str, list[str]]:
+    path, fifo = os.path.join(tmp, "handover.json"), os.path.join(tmp, ERRPIPE)
+    for arg in (sys.executable, path, fifo):
+        if "#" in arg or arg.endswith(";"):
+            raise TuiError(f"tmux would misread {arg!r}")
+    return path, [sys.executable, "-I", "-c", EXEC, path, fifo]
+
+
+def _handover(
+    path: str,
+    argv: list[str],
+    cwd: str,
+    env: Mapping[str, str],
+) -> int:
+    cwd = os.path.abspath(cwd)
+    child = {k: v for k, v in env.items() if k not in TERMINAL_KEYS}
+    with os.fdopen(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "w") as f:
+        json.dump(
+            {
+                "argv": argv,
+                "cwd": cwd,
+                "env": {**child, "PWD": cwd},
+            },
+            f,
+        )
+    fifo = os.path.join(os.path.dirname(path), ERRPIPE)
+    os.mkfifo(fifo, 0o600)
+    return os.open(fifo, os.O_RDONLY | os.O_NONBLOCK)
+
+
+def _tags(session: str, tags: Mapping[str, str]) -> list[str]:
+    args = []
+    for key, value in tags.items():
+        if key == "@display" and (why := display_error(value)):
+            raise TuiError(why)
+        if (
+            not USER_OPTION.fullmatch(key)
+            or not isinstance(value, str)
+            or value.endswith(";")
+            or "\0" in value
+        ):
+            raise TuiError(
+                f"tag {key!r}={value!r}: want {USER_OPTION.pattern} and a str tmux takes verbatim"
+            )
+        args += [";", "set-option", "-t", f"={session}:", key, value]
+    return args
+
+
+def _started(path: str, pipe: int, command: str, sleep) -> bool:
+    """
+    Whether the handover went, then execve closed the errpipe, each in time; errpipe data raises.
+    """
+    polls, out = 0, b""
+    while os.path.exists(path):
+        if polls == round(HANDOVER_TIMEOUT / POLL):
+            return False
+        sleep(POLL)
+        polls += 1
+    polls = 0
+    while True:  # only now: a FIFO no writer opened reads EOF
+        try:
+            chunk = os.read(pipe, 64)
+        except BlockingIOError:
+            if polls >= round(HANDOVER_TIMEOUT / POLL):
+                return False
+            sleep(POLL)
+            polls += 1
+            continue
+        if not chunk:
+            break
+        out += chunk
+    if out:
+        try:
+            reason = os.strerror(int(out))
+        except (ValueError, OverflowError):
+            reason = "bad errpipe data"
+        raise TuiError(f"cannot run {command}: {reason}")
+    return True
+
+
+def validate_events(path: str) -> str:
+    """Check an events destination without opening it for writing or creating it."""
+    path = os.path.abspath(path)
+    if "#" in path or path.endswith(";"):
+        raise TuiError(f"events file {path}: tmux would misread it")
+    try:
+        info = os.lstat(path)
+    except FileNotFoundError:
+        parent = os.path.dirname(path)
+        if not os.path.isdir(parent):
+            raise TuiError(f"events file {path}: No such file or directory") from None
+        if not os.access(parent, os.W_OK):
+            raise TuiError(f"events file {path}: Permission denied") from None
+    except OSError as error:
+        raise TuiError(f"events file {path}: {error.strerror}") from error
+    else:
+        if stat.S_ISDIR(info.st_mode):
+            raise TuiError(f"events file {path}: {os.strerror(errno.EISDIR)}")
+        if stat.S_ISLNK(info.st_mode):
+            raise TuiError(f"events file {path}: Too many levels of symbolic links")
+        if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid():
+            raise TuiError(f"events file {path}: not a regular file owned by you")
+        if not os.access(path, os.W_OK):
+            raise TuiError(f"events file {path}: Permission denied")
+    return path
+
+
+def validate_start(
+    session: str, argv: Sequence[str], env: Mapping[str, str], tags: Mapping[str, str]
+) -> None:
+    session_name(session)
+    _tags(session, tags)
+    _command(argv, env)
+
+
+def events_file(path: str) -> str:
+    """The absolute path, created 0600 when missing; TuiError unless a regular file tmux takes
+    verbatim.
+    """
+    path = validate_events(path)
+    try:
+        fd = os.open(
+            path, os.O_WRONLY | os.O_CREAT | os.O_APPEND | os.O_NOFOLLOW | os.O_NONBLOCK, 0o600
+        )
+        try:
+            st = os.fstat(fd)
+        finally:
+            os.close(fd)
+    except OSError as e:
+        raise TuiError(f"events file {path}: {e.strerror}") from e
+    if not stat.S_ISREG(st.st_mode) or st.st_uid != os.getuid():
+        raise TuiError(f"events file {path}: not a regular file owned by you")
+    return path
+
+
+def _decorations(session: str, events: str | None, *, status_line: bool) -> list[list[str]]:
+    target = f"={session}:"
+    died = DIED if events is None else f"{DIED} ; {DEAD_EVENT}"
+    return [
+        *([["set-option", "-t", target, "@events", events]] if events is not None else []),
+        ["set-hook", "-p", "-t", target, "pane-died", died],
+        ["set-option", "-w", "-t", target, "pane-border-status", "top"],
+        ["set-option", "-w", "-t", target, "pane-border-format", BORDER],
+        ["set-option", "-t", target, "status", "on" if status_line else "off"],
+    ]
+
+
+class Tmux:
+    """Every tmux call a TmuxHost makes, through proc (subprocess.run's signature) and sleep:
+    production uses one Tmux(), tests inject a fake. start and detach hand a launch over to a new
+    session's pane; the rest bind the tmux package's commands to proc.
+    """
+
+    PAUSE = transport.PAUSE
+
+    def __init__(self, proc=subprocess.run, sleep=time.sleep) -> None:
+        self.proc, self.sleep = proc, sleep
+
+    def start(
+        self,
+        session: str,
+        launch: Launch,
+        *,
+        events: str | None = None,
+        status_line: bool = False,
+        tags: Mapping[str, str] | None = None,
+    ) -> None:
+        """Runs argv in a new detached session that keeps its pane once argv ends, in cwd with env (its
+        terminal keys the pane's, PWD cwd), tags, @events, the pane-died hook (@state dead, a dead line
+        to @events), the `<session> <state>` border and the status line set in the same tmux call (an
+        instant death still gets its dead line); opens no pane. An existing session is refused untouched; argv reaches the pane through a 0600 handover file. Returns once argv has exec'd;
+        raising, it leaves no session of its own.
+        """
+        argv, cwd, env = launch.argv, launch.cwd, launch.env
+        session_name(session)
+        tag_options = _tags(session, tags or {})
+        argv = _command(argv, env)
+        if events is not None:
+            events = events_file(events)
+        tmp = pipe = None
+        may_run = False
+        try:
+            tmp = tempfile.mkdtemp()
+            path, wrapper = _wrapper(tmp)
+            state = status(session, proc=self.proc)
+            if state == PaneStatus.RUNNING:
+                raise TuiError(f"session {session} is running; {attach_command(session)}")
+            if isinstance(state, int):
+                raise TuiError(f"session {session} exists")
+            pipe = _handover(path, argv, cwd, env)
+            cols, rows = shutil.get_terminal_size()
+            decorations = [
+                arg
+                for args in _decorations(session, events, status_line=status_line)
+                for arg in (";", *args)
+            ]
+            # new-session may have run even when the tmux call fails
+            may_run = True
+            res = run(
+                [
+                    "new-session",
+                    "-d",
+                    "-s",
+                    session,
+                    "-x",
+                    str(cols),
+                    "-y",
+                    str(rows),
+                    *wrapper,
+                    ";",
+                    "set-option",
+                    "-p",
+                    "-t",
+                    f"={session}:",
+                    "remain-on-exit",
+                    "on",
+                    *tag_options,
+                    *decorations,
+                ],
+                self.proc,
+            )
+            if res.returncode:
+                if error(res).startswith(
+                    "duplicate session:"
+                ):  # another start took the name: not ours to kill
+                    may_run = False
+                raise TuiError(f"tmux: {error(res)}")
+            if not _started(path, pipe, argv[0], self.sleep):
+                raise TuiError("the session did not start")
+            may_run = False
+        except OSError as e:
+            raise TuiError(f"handover: {e}") from e
+        finally:
+            if tmp:
+                shutil.rmtree(
+                    tmp, ignore_errors=True
+                )  # first, so a late wrapper finds no file to run
+            if pipe is not None:
+                os.close(pipe)
+            if may_run:
+                with contextlib.suppress(TuiError):
+                    kill(session, proc=self.proc)
+
+    def detach(
+        self,
+        session: str,
+        launch: Launch,
+        *,
+        opener: str | None = None,
+        display: str | None = None,
+        events: str | None = None,
+        record: str | None = None,
+        control: str | None = None,
+    ) -> str:
+        """Runs argv as start does; env's full iTerm2
+        $ITERM_SESSION_ID stays; opener, display and record (a line) become @opener, @display, @record.
+        No decoration; with events, @events and a kept pane whose pane-died hook appends
+        `HH:MM:SS <session> exited <rc>` (signal n: -n) to it, then kills the session. An existing
+        session is refused untouched. Returns its pane's process(), read as tmux made it.
+        """
+        argv, cwd, env = launch.argv, launch.cwd, launch.env
+        session_name(session)
+        if opener is not None and not OPENER.fullmatch(opener):
+            raise TuiError(
+                f"invalid opener {opener!r}: want a tmux session name or $ITERM_SESSION_ID's value"
+            )
+        named = {
+            "@kind": "detach",
+            "@opener": opener,
+            "@display": display,
+            "@record": record,
+            "@control": control,
+        }
+        tag_options = _tags(session, {k: v for k, v in named.items() if v is not None})
+        exited = []
+        if events is not None:
+            target = f"={session}:"
+            exited = [
+                *(";", "set-option", "-p", "-t", target, "remain-on-exit", "on"),
+                *(";", "set-option", "-t", target, "@events", events_file(events)),
+                *(";", "set-hook", "-p", "-t", target, "pane-died", EXITED_EVENT),
+            ]
+        for arg in argv:
+            if "\0" in arg:
+                raise TuiError("an argv item holds a NUL character")
+            try:
+                os.fsencode(arg)
+            except UnicodeEncodeError:
+                raise TuiError("an argv item cannot be encoded") from None
+        argv = _command(argv, env)
+        iterm = env.get("ITERM_SESSION_ID", "")
+        terminal = ["-e", f"ITERM_SESSION_ID={iterm}"] if ITERM_OPENER.fullmatch(iterm) else []
+        tmp = pipe = None
+        may_run = False
+        try:
+            tmp = tempfile.mkdtemp()
+            path, wrapper = _wrapper(tmp)
+            pipe = _handover(path, argv, cwd, env)
+            may_run = True
+            res = run(
+                [
+                    "new-session",
+                    "-d",
+                    "-P",
+                    "-F",
+                    PROCESS,
+                    *terminal,
+                    "-s",
+                    session,
+                    *wrapper,
+                    *exited,
+                    *tag_options,
+                ],
+                self.proc,
+            )
+            if res.returncode:
+                if error(res).startswith("duplicate session:"):
+                    may_run = False
+                    raise TuiError(f"session {session} exists")
+                raise TuiError(f"tmux: {error(res)}")
+            found = res.stdout.strip()
+            if not PROCESS_ID.fullmatch(found):
+                raise TuiError(f"tmux: bad new session {found!r:.80}")
+            if not _started(path, pipe, argv[0], self.sleep):
+                raise TuiError(f"session {session} did not start")
+            may_run = False
+        except OSError as e:
+            raise TuiError(f"handover: {e}") from e
+        else:
+            return found
+        finally:
+            if tmp:
+                shutil.rmtree(
+                    tmp, ignore_errors=True
+                )  # first, so a late wrapper finds no file to run
+            if pipe is not None:
+                os.close(pipe)
+            if may_run:
+                with contextlib.suppress(TuiError):
+                    kill(session, proc=self.proc)
+
+    def status(self, target: str):
+        return transport.status(target, proc=self.proc)
+
+    def process(self, target: str) -> str | None:
+        return transport.process(target, proc=self.proc)
+
+    def process_status(self, target: str):
+        return transport.process_status(target, proc=self.proc)
+
+    def option(self, target: str, name: str) -> str | None:
+        return transport.option(target, name, proc=self.proc)
+
+    def kill(self, target: str) -> None:
+        transport.kill(target, proc=self.proc)
+
+    def paste(self, target: str, text: str) -> None:
+        transport.paste(target, text, proc=self.proc)
+
+    def keys(self, target: str, *names: str) -> None:
+        transport.keys(target, *names, proc=self.proc)
+
+    def send(self, session: str, text: str) -> None:
+        transport.send(session, text, proc=self.proc, sleep=self.sleep)
+
+    def read(self, target: str, lines: int | None = None) -> str:
+        return transport.read(target, lines, proc=self.proc)
+
+    def listing(self) -> list[dict] | None:
+        return listing(proc=self.proc)
+
+    def own_session(self) -> str | None:
+        return placement.own_session(proc=self.proc)
+
+    def opener(self) -> str:
+        return placement.opener(proc=self.proc)
+
+    def anchor(self, split_from: str | None = None) -> Anchor:
+        return placement.anchor(split_from, proc=self.proc)
+
+    def open_pane(
+        self, session: str, parts: Parts, *, per_column: int | None, retile: str | None
+    ) -> str | None:
+        """A pane for session, placed by a display's parts (opener, split, split_from)."""
+        opener, split, split_from = parts
+        return placement.open_pane(
+            session,
+            opener=opener,
+            split=split,
+            split_from=split_from,
+            per_column=per_column,
+            retile=retile,
+            proc=self.proc,
+        )
+
+    def run_command(self, session: str, template: str) -> str | None:
+        return placement.run_command(session, template, proc=self.proc)
+
+    def tile(self, window: str) -> None:
+        grid.tile(window, proc=self.proc)
+
+    def mark(self, word: str, events: str | None, *, pane: str) -> None:
+        hook.mark(word, events, pane=pane, proc=self.proc)
+
+    def tmux_path(self) -> str | None:
+        return transport.tmux_path()
+
+    def attach_command(self, session: str) -> str:
+        return transport.attach_command(session)
+
+    def events_file(self, path: str) -> str:
+        return events_file(path)
+
+    def validate_events(self, path: str) -> str:
+        return validate_events(path)
+
+    def validate_start(
+        self, session: str, argv: Sequence[str], env: Mapping[str, str], tags: Mapping[str, str]
+    ) -> None:
+        validate_start(session, argv, env, tags)
+
+
 def _session(name) -> str:
-    if not isinstance(name, str) or not tmux_host.NAME.fullmatch(name):
+    if not isinstance(name, str) or not NAME.fullmatch(name):
         raise DriverError(f"no tmux session {name!r:.80}")
     return name
 
 
 def _checked(display) -> None:
-    if why := tmux_host.display_error(display):
+    if why := display_error(display):
         raise ConfigError(why)
 
 
@@ -55,7 +572,7 @@ class TmuxProcess(HostProcess):
     """
 
     def __init__(
-        self, name: str, process: str, *, tmux=tmux_host, control: ProcessControl | None = None
+        self, name: str, process: str, *, tmux: Tmux, control: ProcessControl | None = None
     ) -> None:
         self.name = name
         self.tmux = tmux
@@ -80,24 +597,19 @@ class TmuxProcess(HostProcess):
 
     def state(self) -> Liveness:
         try:
-            own = self._own()
+            own, value = self._pane_state()
         except DriverError:
             return Liveness.UNKNOWN
-        if not own:
+        if not own or value is None:
             return Liveness.ABSENT
-        value = self.tmux.status(self._pane)
-        if value == self.tmux.PaneStatus.UNKNOWN:
-            return Liveness.UNKNOWN
-        return Liveness.ABSENT if value is None else Liveness.LIVE
+        return Liveness.UNKNOWN if value == PaneStatus.UNKNOWN else Liveness.LIVE
 
     def returncode(self) -> int | None:
         try:
-            if not self._own():
-                return -signal.SIGHUP
+            own, value = self._pane_state()
         except DriverError:
             return None
-        value = self.tmux.status(self._pane)
-        if value is None:
+        if not own or value is None:
             return -signal.SIGHUP
         return value if isinstance(value, int) else None
 
@@ -116,14 +628,12 @@ class TmuxProcess(HostProcess):
                 raise DriverError(str(error)) from error
 
     def alive(self) -> bool:
-        if not self._own():
+        own, state = self._pane_state()
+        if not own:
             return False
-        state = self.tmux.status(self._pane)
-        if state == self.tmux.PaneStatus.UNKNOWN:
+        if state == PaneStatus.UNKNOWN:
             raise DriverError(f"tmux session {self.name}: tmux failed")
-        return state == self.tmux.PaneStatus.RUNNING and (
-            self._control is None or self._control.running()
-        )
+        return state == PaneStatus.RUNNING and (self._control is None or self._control.running())
 
     def wait_exit(self, timeout: float) -> bool:
         deadline = time.monotonic() + timeout
@@ -139,21 +649,31 @@ class TmuxProcess(HostProcess):
             raise DriverError(f"process group {self.name}: did not exit")
 
     def close(self) -> None:
+        """Closes the pane, then ends the process group, even when the pane fails; every failure
+        is in the one DriverError raised.
+        """
+        failures = []
+        for step in (self._close_pane, self._end_group):
+            try:
+                step()
+            except DriverError as error:
+                failures.append(str(error))
+        if failures:
+            raise DriverError("; ".join(failures))
+
+    def _end_group(self) -> None:
+        if self._control is None:
+            return
         try:
-            self._close_pane()
-        finally:
-            if self._control is not None:
-                try:
-                    self._control.terminate()
-                except (ConnectionRefusedError, ConnectionResetError):
-                    pass
-                except OSError as error:
-                    raise DriverError(f"process group {self.name}: {error}") from error
-                else:
-                    if not self._wait_group(KILL_WAIT):
-                        self._kill_group()
-                        if not self._wait_group(KILL_WAIT):
-                            raise DriverError(f"process group {self.name}: did not exit")
+            self._control.terminate()
+        except (ConnectionRefusedError, ConnectionResetError):
+            return
+        except OSError as error:
+            raise DriverError(f"process group {self.name}: {error}") from error
+        if not self._wait_group(KILL_WAIT):
+            self._kill_group()
+            if not self._wait_group(KILL_WAIT):
+                raise DriverError(f"process group {self.name}: did not exit")
 
     def _wait_group(self, timeout: float) -> bool:
         deadline = time.monotonic() + timeout
@@ -181,6 +701,14 @@ class TmuxProcess(HostProcess):
 
     def display(self) -> Display:
         return self._option("@display")
+
+    def _pane_state(self):
+        """Whether its captured pane still runs this process, and the pane's status(): one call."""
+        try:
+            found, value = self.tmux.process_status(self._pane)
+        except TuiError as e:
+            raise DriverError(f"tmux session {self.name}: {e}") from None
+        return found == self._process, value
 
     def _own(self) -> bool:
         try:
@@ -236,23 +764,23 @@ class TmuxHost(Host, Displayable):
     not in FORMAT is kept as given.
     """
 
-    def __init__(self, name: str, settings: Mapping | None = None, *, tmux=tmux_host) -> None:
+    def __init__(
+        self, name: str, settings: Mapping | None = None, *, tmux: Tmux | None = None
+    ) -> None:
         super().__init__(name, settings)
-        self.tmux = tmux
+        self.tmux = Tmux() if tmux is None else tmux
 
     @classmethod
     def fold(cls, opener, split, split_from) -> Display:
         """FORMAT's one encoder; None when every part is. ConfigError for a bad part."""
-        if opener is not None and not (
-            isinstance(opener, str) and tmux_host.OPENER.fullmatch(opener)
-        ):
+        if opener is not None and not (isinstance(opener, str) and OPENER.fullmatch(opener)):
             raise ConfigError(
                 f"opener must be a tmux session name or $ITERM_SESSION_ID's value, got {opener!r:.80}"
             )
-        if split is not None and split not in tuple(tmux_host.Split):
-            raise ConfigError(f"split must be {' or '.join(tmux_host.Split)}, got {split!r:.80}")
+        if split is not None and split not in tuple(Split):
+            raise ConfigError(f"split must be {' or '.join(Split)}, got {split!r:.80}")
         if split_from is not None and not (
-            isinstance(split_from, str) and tmux_host.NAME.fullmatch(split_from)
+            isinstance(split_from, str) and NAME.fullmatch(split_from)
         ):
             raise ConfigError(f"split_from must match [A-Za-z0-9_-]+, got {split_from!r:.80}")
         return "/".join((opener or "", split or "", split_from or "")).rstrip("/") or None
@@ -264,7 +792,7 @@ class TmuxHost(Host, Displayable):
         """
         if display is None:
             return None, None, None
-        if tmux_host.display_error(display):
+        if display_error(display):
             return None
         given = display.split("/")
         if len(given) > 3:
@@ -393,10 +921,10 @@ class TmuxHost(Host, Displayable):
         except TuiError as error:
             raise ConfigError(str(error)) from error
 
-    def hook_state(self, name: str, metadata: Mapping[str, str]) -> dict:
-        return {
-            "host_hook": "agent_pm.session.hosts.tmux.hook",
-            "host_state": {
+    def hook_callback(self, name: str, metadata: Mapping[str, str]) -> HookCallback:
+        return HookCallback(
+            hook.__name__,
+            {
                 "executable": self._executable(),
                 "target": name,
                 "generation": metadata["generation"],
@@ -406,7 +934,7 @@ class TmuxHost(Host, Displayable):
                     if key in ("TMUX", "TMUX_TMPDIR")
                 },
             },
-        }
+        )
 
     def _executable(self) -> str:
         path = self.tmux.tmux_path()
@@ -427,8 +955,8 @@ class TmuxHost(Host, Displayable):
             isinstance(per, bool) or not isinstance(per, int) or not 1 <= per <= 9999
         ):
             raise ConfigError("workers_per_column: want an integer from 1 to 9999")
-        if retile is not None and retile not in tuple(self.tmux.Retile):
-            raise ConfigError(f"grid_retile: want one of {', '.join(self.tmux.Retile)}")
+        if retile is not None and retile not in tuple(Retile):
+            raise ConfigError(f"grid_retile: want one of {', '.join(Retile)}")
         return TuiSettings(line, per, retile)
 
     def _cancel_launch(
@@ -458,7 +986,7 @@ class TmuxHost(Host, Displayable):
         state = self.tmux.status(_session(name))
         if state is None:
             raise DriverError(f"no tmux session {name}")
-        if state == self.tmux.PaneStatus.UNKNOWN:
+        if state == PaneStatus.UNKNOWN:
             raise DriverError(f"tmux session {name}: tmux failed")
         try:
             process = self.tmux.process(name)
@@ -466,8 +994,11 @@ class TmuxHost(Host, Displayable):
             raise DriverError(f"tmux session {name}: {e}") from None
         if process is None:
             raise DriverError(f"no tmux session {name}")
-        kind = TmuxTerminal if self.tmux.option(name, "@kind") == "terminal" else TmuxProcess
-        return kind(name, process, tmux=self.tmux)
+        try:
+            terminal = self.tmux.option(name, "@kind") == "terminal"
+        except TuiError as e:
+            raise DriverError(f"tmux session {name}: {e}") from None
+        return (TmuxTerminal if terminal else TmuxProcess)(name, process, tmux=self.tmux)
 
     def list(self, display: Display = None) -> list[str]:
         if display == "":
@@ -536,22 +1067,23 @@ class TmuxHost(Host, Displayable):
     def display_help(self) -> str:
         return (
             f"{FORMAT}: opener a tmux session name or $ITERM_SESSION_ID's value (empty: the "
-            f"caller's), split {' or '.join(tmux_host.Split)}, split_from the tmux session whose "
+            f"caller's), split {' or '.join(Split)}, split_from the tmux session whose "
             "pane it goes beside; any other printable value not ending in ; is kept as given"
         )
 
-    def show(self, name: str, *, display: Display = None) -> str | None:
-        opener, split, split_from = self._parts(display)
+    def show(self, name: str, *, display: Display = None, command: str | None = None) -> str | None:
         if self.tmux.status(_session(name)) is None:
             raise DriverError(f"no tmux session {name}")
         try:
-            why = self.tmux.open_pane(
-                name,
-                split=split,
-                split_from=split_from,
-                opener=opener,
-                per_column=self.settings.get("workers_per_column"),
-                retile=self.settings.get("grid_retile"),
+            why = (
+                self.tmux.open_pane(
+                    name,
+                    self._parts(display),
+                    per_column=self.settings.get("workers_per_column"),
+                    retile=self.settings.get("grid_retile"),
+                )
+                if command is None
+                else self.tmux.run_command(name, command)
             )
         except TuiError as e:
             raise ConfigError(str(e)) from None

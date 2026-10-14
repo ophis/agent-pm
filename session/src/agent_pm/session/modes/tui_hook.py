@@ -1,6 +1,8 @@
 """A standalone tui hook drains stdin, checks callback sources, binds runtime identity,
 and appends one hooks.jsonl record before notifying its optional Host callback.
 Never stdout, always exits 0; failures retain a traceback and one stderr line.
+session.json's adapter_hook and host_hook are HookCallback.fields(): a callback module is
+trusted under the given source roots or its own declared roots, each its on_hook given a HookCall.
 """
 
 from __future__ import annotations
@@ -55,15 +57,17 @@ def _source_roots(encoded: str) -> list[str]:
     return roots
 
 
-def _bootstrap(argv: list[str]) -> tuple[str, list[str], str]:
+def _arguments(argv: list[str]) -> tuple[str, list[str], str]:
     if len(argv) != 3 or not _abs(argv[0]) or not LABEL.fullmatch(argv[2]):
         raise ValueError(
             "usage: tui_hook.py <absolute session dir> <roots JSON> <label [A-Za-z0-9_.-]{1,64}>"
         )
     folder, encoded_roots, label = argv
-    roots = _source_roots(encoded_roots)
+    return folder, _source_roots(encoded_roots), label
+
+
+def _bootstrap(roots: list[str]) -> None:
     sys.path[:] = [*roots, *(path for path in sys.path if path not in roots)]
-    return folder, roots, label
 
 
 def say(text: str) -> None:
@@ -73,7 +77,7 @@ def say(text: str) -> None:
 
 
 if __name__ != "__main__":
-    from agent_pm.session.engine.types import HookError, Word
+    from agent_pm.session.engine.types import HookCall, HookError, Word
 
 
 SESSION_STATE = {  # what this hook or an adapter_hook reads
@@ -87,13 +91,20 @@ SESSION_STATE = {  # what this hook or an adapter_hook reads
 
 
 def _prepare(argv: list[str]):
-    folder, roots, label = _bootstrap(argv)
+    folder, roots, label = _arguments(argv)
     path = os.path.join(folder, STATE)
     state = _read_state(path, ValueError)
     _check_callbacks(state, path, ValueError)
-    for kind in ("adapter", "host"):
-        if name := state.get(kind + "_hook"):
-            _check_module(name, roots, kind + " hook", ValueError)
+    hooks = [
+        (kind, state[kind + "_hook"]) for kind in ("adapter", "host") if kind + "_hook" in state
+    ]
+    for kind, hook in hooks:
+        if missing := [root for root in hook["roots"] if not os.path.isdir(root)]:
+            raise ValueError(f"{kind} hook {hook['module']}: root {missing[0]} is no directory")
+    own = [root for _, hook in hooks for root in hook["roots"] if root not in roots]
+    _bootstrap([*roots, *dict.fromkeys(own)])
+    for kind, hook in hooks:
+        _check_module(hook["module"], [*roots, *hook["roots"]], kind + " hook", ValueError)
     _check_module("agent_pm.session.engine.types", roots, "shared types", ValueError)
     return folder, label, state
 
@@ -109,20 +120,31 @@ def main(argv: list[str], stdin) -> None:
 
 def _dispatch(folder, label, payload, state):
     _validate_state(state, os.path.join(folder, STATE), HookError)
-    if "adapter_hook" in state:
-        adapter = _load_callback(state["adapter_hook"], "adapter hook")
-        if adapter.on_hook(label, payload, state) is False:
+
+    def call(kind, given) -> HookCall:
+        return HookCall(
+            label, given, state["sid"], state["workdir"], state["events"], state[kind]["state"]
+        )
+
+    if adapter_hook := state.get("adapter_hook"):
+        adapter = _load_callback(adapter_hook["module"], "adapter hook")
+        payload = adapter.on_hook(call("adapter_hook", payload))
+        if payload is None:
             return
+        if not isinstance(payload, dict):
+            raise HookError(
+                f"adapter hook {adapter_hook['module']}: on_hook returned "
+                f"{type(payload).__name__}, not a payload dict or None"
+            )
     word = state["words"].get(label)
-    host = (
-        _load_callback(state["host_hook"], "host hook") if word and "host_hook" in state else None
-    )
+    host_hook = state.get("host_hook") if word else None
+    host = None if host_hook is None else _load_callback(host_hook["module"], "host hook")
     if word != Word.DONE:
         payload = cut(payload)
     stamp = datetime.now().astimezone().isoformat(timespec="milliseconds")
     append(os.path.join(folder, HOOKS), {"ts": stamp, "label": label, "payload": payload})
     if host is not None:
-        host.on_hook(word, payload, state)
+        host.on_hook(word, call("host_hook", payload))
 
 
 def read_payload(stream) -> dict:
@@ -193,16 +215,19 @@ def _validate_state(state, path, error):
 
 
 def _check_callbacks(state, path, error):
-    for kind in ("adapter", "host"):
-        hook, data = kind + "_hook", kind + "_state"
+    for hook in ("adapter_hook", "host_hook"):
+        value = state.get(hook, {})
         if hook in state and (
-            not isinstance(state[hook], str)
-            or not state[hook]
-            or not all(part.isidentifier() for part in state[hook].split("."))
+            not isinstance(value, dict)
+            or set(value) != {"module", "state", "roots"}
+            or not isinstance(value["module"], str)
+            or not all(part.isidentifier() for part in value["module"].split("."))
+            or not isinstance(value["state"], dict)
+            or not isinstance(value["roots"], list)
+            or not all(map(_abs, value["roots"]))
+            or len(set(value["roots"])) != len(value["roots"])
         ):
             raise error(f"{path}: bad {hook}")
-        if data in state and not isinstance(state[data], dict):
-            raise error(f"{path}: bad {data}")
 
 
 def _check_module(name: str, roots: list[str], kind: str, error):
@@ -270,7 +295,7 @@ if __name__ == "__main__":
     try:
         payload = read_payload(sys.stdin.buffer)
         folder, label, state = _prepare(sys.argv[1:])
-        from agent_pm.session.engine.types import HookError, Word
+        from agent_pm.session.engine.types import HookCall, HookError, Word
 
         types_loaded = True
         _dispatch(folder, label, payload, state)

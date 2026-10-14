@@ -18,6 +18,7 @@ from unittest import mock
 from agent_pm.session.engine.types import DriverError, Launch, Reply, Spec, Stderr
 from agent_pm.session.modes.headless import HeadlessMode
 
+from session.tests.fakes.terminal import MemoryHost
 from session.tests.headless_support import NOTHING, SID, HeadlessCase, StubAdapter, StubRun
 
 WAIT = 10  # upper bound on any wait, in seconds
@@ -303,6 +304,7 @@ class Start(Base):
                 StubAdapter(Launch(python(SLEEPER))),
                 registry=self.driver.registry,
                 record=self.recorded.append,
+                host=MemoryHost(),
             )
         self.addCleanup(mode.stop)
         self.assertIsInstance(mode, HeadlessMode)

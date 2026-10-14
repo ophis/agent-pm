@@ -84,6 +84,7 @@ CORE_TOML = """tier = 2
 effort = "high"
 runtime = "claude"
 idle_timeout = 60
+show = ""
 output = { type = "local" }
 
 [roles.researcher]
@@ -131,6 +132,7 @@ class CatalogDelegate(FakeDelegate):
             runtime="catalog",
             output={"type": "github", "repo": "acme/notes", "branch": "trunk", "dir": f"{role}/"},
             idle_timeout=60,
+            show="",
         )
 
 

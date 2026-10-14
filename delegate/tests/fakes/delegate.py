@@ -100,6 +100,7 @@ class FakeDelegate(Delegate):
             runtime="fake",
             output={"type": "local"},
             idle_timeout=60,
+            show="",
         )
 
     @classmethod

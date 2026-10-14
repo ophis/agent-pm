@@ -13,14 +13,9 @@ from agent_pm.session.hosts.tmux.grid import (
     RETILE,
     tile,
 )
+from agent_pm.session.hosts.tmux.host import Tmux
 from agent_pm.session.hosts.tmux.placement import (
     show,
-)
-from agent_pm.session.hosts.tmux.tmux_host import (
-    read,
-    send,
-    start,
-    status,
 )
 from agent_pm.session.hosts.tmux.transport import (
     session_name,
@@ -33,17 +28,18 @@ from agent_pm.session.hosts.tmux.types import (
 
 
 def main(argv: list[str] | None = None, *, operations=None) -> int:
+    tmux = Tmux()
     actions = {
-        "start": start,
-        "send": send,
-        "read": read,
+        "start": tmux.start,
+        "send": tmux.send,
+        "read": tmux.read,
         "tile": tile,
-        "status": status,
+        "status": tmux.status,
         "show": show,
         **(operations or {}),
     }
     ap = argparse.ArgumentParser(
-        prog="tmux_host.py",
+        prog="entry.py",
         description="Host a command, e.g. an agent's TUI, in a "
         "detached tmux session: start it, "
         "type into it, read it, show it. The show: --show T; else, opened from tmux, a grid "

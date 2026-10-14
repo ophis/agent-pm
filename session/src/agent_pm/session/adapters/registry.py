@@ -1,13 +1,12 @@
 """Caller-owned adapter configuration, copied read-only once: adapter_class loads a table's
 `implementation` (module.path:Class); adapter builds one per call (per session) from its own copy.
-Validates the host settings.
 """
 
 from collections.abc import Mapping
 from dataclasses import dataclass
 
 from agent_pm.session.adapters.base import Adapter
-from agent_pm.session.engine.types import ConfigError, Hosts, TuiSettings
+from agent_pm.session.engine.types import ConfigError, Hosts
 from agent_pm.session.hosts.base import Host
 from agent_pm.utils import CONFIG_NAME as NAME
 from agent_pm.utils import freeze, thaw
@@ -22,7 +21,6 @@ class Settings:
 
 
 PACKAGE = "agent_pm.session"
-TUI_KEYS = ("status_line", "workers_per_column", "grid_retile")
 
 
 def settings(config: Mapping, *, hosts: Hosts | None = None) -> dict:
@@ -35,8 +33,6 @@ def settings(config: Mapping, *, hosts: Hosts | None = None) -> dict:
 
 
 class Registry:
-    """`hosts` is already parsed."""
-
     def __init__(self, *, adapters: Mapping, hosts: Hosts, class_loader=load) -> None:
         if not isinstance(adapters, Mapping) or not all(
             isinstance(k, str) and isinstance(t, Mapping) for k, t in adapters.items()
@@ -47,11 +43,6 @@ class Registry:
 
     def configured(self) -> list[str]:
         return sorted(self.settings.adapters)
-
-    def tui(self) -> TuiSettings:
-        table = thaw(self.settings.hosts[self.settings.default_host])
-        kind = self.class_loader(table.pop("implementation"), Host)
-        return kind(self.settings.default_host, table).tui_settings()
 
     def _table(self, name: str) -> Mapping:
         if not isinstance(name, str) or not NAME.match(name):

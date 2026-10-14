@@ -69,12 +69,12 @@ max = "max"
 #   status_line       true → tui sessions show tmux's status line
 #   workers_per_column panes per tmux grid column (the tmux Host's show), 1..9999
 #   grid_retile       when a tmux grid re-tiles: "open-close" (a pane opens or closes), "all" (also a drag or a
-#                     window resize), "off" (never by itself: session/src/agent_pm/session/hosts/tmux/tmux_host.py tile @N)
+#                     window resize), "off" (never by itself)
 [hosts]
 default = "tmux"
 
 [hosts.tmux]
-# TmuxHost (session/src/agent_pm/session/hosts/tmux/host.py), a thin wrap of tmux_host.py
+# TmuxHost (session/src/agent_pm/session/hosts/tmux/host.py)
 implementation = "agent_pm.session.hosts.tmux:TmuxHost"
 status_line = false
 workers_per_column = 3

@@ -29,18 +29,26 @@ def state(root: str, events) -> dict:
         "resume": "",
         "events": events,
         "words": dict(WORDS),
-        "host_hook": "agent_pm.session.hosts.tmux.hook",
-        "host_state": {
-            "executable": os.path.join(root, "bin", "tmux"),
-            "target": "w1",
-            "generation": uuid.uuid4().hex,
-            "environment": {"TMUX_TMPDIR": root},
+        "host_hook": {
+            "module": "agent_pm.session.hosts.tmux.hook",
+            "state": {
+                "executable": os.path.join(root, "bin", "tmux"),
+                "target": "w1",
+                "generation": uuid.uuid4().hex,
+                "environment": {"TMUX_TMPDIR": root},
+            },
+            "roots": [],
         },
     }
 
 
+def descriptor(module: str, state: dict | None = None, roots: tuple[str, ...] = ()) -> dict:
+    """A session.json callback descriptor, as HookCallback.fields() writes it."""
+    return {"module": module, "state": {} if state is None else state, "roots": list(roots)}
+
+
 def identity(value: dict) -> str:
-    return f"{value['sid']}\t{value['host_state']['generation']}"
+    return f"{value['sid']}\t{value['host_hook']['state']['generation']}"
 
 
 def write_state(folder: str, value) -> None:
