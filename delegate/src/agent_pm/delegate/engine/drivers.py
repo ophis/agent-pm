@@ -21,8 +21,8 @@ class Driver(ABC):
 
 
 class AgentDriver(Driver):
-    def __init__(self, session_cls: type[Session], *, harness_host: str | None = None):
-        self.session_cls, self.harness_host = session_cls, harness_host
+    def __init__(self, session_cls: type[Session]):
+        self.session_cls = session_cls
 
     def start(
         self,
