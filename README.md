@@ -187,7 +187,7 @@ tmux attach -t '=agent-pm-<role>-<ID>'                       # watch one agent r
 | `<work_dir>/logs/orchestrator.jsonl` | Every router, promote, prune, run and write-back event, one JSON object a line: `ts`, `src`, `kind`, then `issue` when it has one. An idle tick writes none; the same skip, config-load error or Linear outage (`linear-error`: a 5xx, rate limit, timeout or network error; the run stops, the next retries), once a day |
 | `<work_dir>/logs/runs.jsonl` | Start/resume rows from the last 7 days, every issue's latest session rows regardless of age, and unexpired usage limits. Rows record Delegate kind and client; legacy rows use the fixed `harness` registration. Keep it: resume and Recover read it |
 
-An agent run's workdir `<work_dir>/work/<ID>/` holds `run.jsonl` (its record: input, sessions, progress, outcome; headless, the client's stderr), `writeback.json` (the write-back steps done) and, for a `local` or `orchestrator` destination, `out.md` (the deliverable); `src/`, `publish/` and `tmp/` are workspaces (Finish). Documents are published from the agent run's clone in `publish/`: `git pull` your own docs clone to see them. Each session gets a `Run <sid>` comment on its issue, holding `cd <cwd> && claude --resume <sid>`: to open the session, first move the issue out of In Progress, or the router may resume it once idle 30 minutes. Moving `<work_dir>` or a run's cwd breaks resuming its in-progress agent runs.
+An agent run's workdir `<work_dir>/work/<ID>/` holds `run.jsonl` (its record: input, sessions, progress, outcome; headless, the client's stderr), `writeback.json` (each session id's write-back steps done and each attempt's `Run <sid>` comment start and number) and, for a `local` or `orchestrator` destination, `out.md` (the deliverable); `src/`, `publish/` and `tmp/` are workspaces (Finish). Documents are published from the agent run's clone in `publish/`: `git pull` your own docs clone to see them. Each session gets a `Run <sid>` comment on its issue, holding `cd <cwd> && claude --resume <sid>`: to open the session, first move the issue out of In Progress, or the router may resume it once idle 30 minutes. Moving `<work_dir>` or a run's cwd breaks resuming its in-progress agent runs.
 
 **Upgrade** to `orchestrator.jsonl` and `runs.jsonl`: deploy with no issue In Progress (nothing reads the old `runs.log`, so Recover would send such an issue back to Todo for a new session); delete the old logs, no archive (another `<work_dir>`: its `logs/`):
 
@@ -208,7 +208,7 @@ delegate/             the Delegate (one role's run), the Composer, the built-in 
 session/              the session: an Adapter per client, Runtimes, Hosts (tmux); cli.py: agent-pm-session
 utils/                shared utilities
 manager/              cli.py, engine/crew.py, roster.py and events.py: commands and bookkeeping
-linear-orchestrator/  cli.py: router, run, promote; engine/: scheduling, client, log, ops, issues, run_comments, writeback
+linear-orchestrator/  cli.py: router, run, promote, run queries, writeback; engine/: scheduling, client, log, ops, issues, run_comments, writeback
 tests/                repo-wide checks: guard_checks/ (rules), guard_data/ (each layer's exceptions), checks.py (runner), case.py and suites
 .github/              CI workflows and their helpers
 ```

@@ -183,6 +183,23 @@ ISSUE_ID = r"[A-Z][A-Z0-9]*-\d+"
 UUID_RE = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
 
 
+@dataclass(frozen=True)
+class Claim:
+    """A run's claim context as its sid's runs.jsonl start row recorded it; `key`: the role's
+    Keychain service then, its write-back's Linear account.
+    """
+
+    issue: str
+    sid: str
+    role: str
+    uuid: str
+    project: str | None
+    target: tuple[str, str] | None
+    key: str
+    client: str
+    delegate_kind: str
+
+
 @dataclass(frozen=True, kw_only=True)
 class Spec:
     uuid: str

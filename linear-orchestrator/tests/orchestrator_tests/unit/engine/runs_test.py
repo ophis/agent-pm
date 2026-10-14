@@ -8,6 +8,7 @@ from datetime import UTC, datetime, timedelta, timezone
 from unittest import mock
 
 from agent_pm.linear_orchestrator.engine import runs
+from agent_pm.linear_orchestrator.engine.types import Claim
 from agent_pm.utils import save
 from orchestrator_tests import case
 
@@ -400,3 +401,97 @@ class NoteLimit(Case):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+SID_A, SID_B = "0b6f2c1e-6d0a-4c1b-9a51-3f1f6b0e2a7d", "9c1d2e3f-4a5b-4c6d-8e7f-a0b1c2d3e4f5"
+
+UUID = "11111111-2222-4333-8444-555555555555"
+
+
+def start(sid, **fields):
+    return json.dumps(
+        {
+            "ts": stamp(NOW),
+            "kind": "start",
+            "issue": "TASK-1",
+            "sid": sid,
+            "role": "engineer",
+            "client": "claude",
+            "delegate_kind": "harness",
+            "uuid": UUID,
+            "project": "p1",
+            "target": "ophis/agent-pm",
+            "key": "agent-pm-engineer",
+        }
+        | fields
+    )
+
+
+class ClaimOf(Case):
+    def test_the_sids_start_row_not_the_latest(self):
+        self.write(
+            [
+                start(SID_A),
+                start(SID_B, role="researcher", key="agent-pm-researcher", target=None),
+                json.dumps({**json.loads(start(SID_A)), "kind": "resume", "key": "changed"}),
+            ]
+        )
+        self.assertEqual(
+            runs.claim(self.log, "TASK-1", SID_A),
+            Claim(
+                issue="TASK-1",
+                sid=SID_A,
+                role="engineer",
+                uuid=UUID,
+                project="p1",
+                target=("ophis", "agent-pm"),
+                key="agent-pm-engineer",
+                client="claude",
+                delegate_kind="harness",
+            ),
+        )
+        self.assertEqual(runs.claim(self.log, "TASK-1", SID_B).key, "agent-pm-researcher")
+        self.assertIsNone(runs.claim(self.log, "TASK-1", SID_B).target)
+
+    def test_null_project_and_target_are_none(self):
+        self.write([start(SID_A, project=None, target=None)])
+        found = runs.claim(self.log, "TASK-1", SID_A)
+        self.assertEqual((found.project, found.target), (None, None))
+
+    def test_no_start_row_for_the_issue_and_sid_raises(self):
+        self.write(
+            [
+                "not json",
+                json.dumps({**json.loads(start(SID_A)), "kind": "resume"}),
+                start(SID_B),
+                json.dumps({**json.loads(start(SID_A)), "issue": "TASK-2"}),
+            ]
+        )
+        with self.assertRaisesRegex(ValueError, f"TASK-1: no start row for session {SID_A}"):
+            runs.claim(self.log, "TASK-1", SID_A)
+        with self.assertRaisesRegex(ValueError, "no start row"):
+            runs.claim(os.path.join(self.tmp, "missing.jsonl"), "TASK-1", SID_A)
+
+    def test_an_incomplete_start_row_raises_naming_the_field(self):
+        for field, value in (
+            ("role", None),
+            ("role", ""),
+            ("uuid", "TASK-1"),
+            ("project", 7),
+            ("target", "not a slug"),
+            ("key", ""),
+            ("key", None),
+            ("client", ""),
+            ("delegate_kind", None),
+        ):
+            with self.subTest(field=field, value=value):
+                self.write([start(SID_A, **{field: value})])
+                with self.assertRaisesRegex(ValueError, f"start row {field}"):
+                    runs.claim(self.log, "TASK-1", SID_A)
+        for field in ("role", "uuid", "project", "target", "key", "client", "delegate_kind"):
+            with self.subTest(missing=field):
+                row = json.loads(start(SID_A))
+                del row[field]
+                self.write([json.dumps(row)])
+                with self.assertRaisesRegex(ValueError, f"start row {field}"):
+                    runs.claim(self.log, "TASK-1", SID_A)
