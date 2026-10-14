@@ -20,6 +20,8 @@ from agent_pm.session.engine.types import (
     Blocked,
     ClientBound,
     ConfigError,
+    HookCall,
+    HookCallback,
     HookKind,
     Key,
     LimitHit,
@@ -29,7 +31,13 @@ from agent_pm.session.engine.types import (
 from agent_pm.utils import LOCAL_ENV_VARS
 
 from session.tests.case import ROOTS, SRC
-from session.tests.codex_tui import INTERPRETER_ROOTS, PROTECTED_ROOTS, PlanCase
+from session.tests.codex_tui import (
+    INTERPRETER_PATHS,
+    INTERPRETER_ROOTS,
+    PROTECTED_ROOTS,
+    PlanCase,
+    interpreter,
+)
 from session.tests.source_roots import PACKAGE_ROOTS
 from session.tests.unit.adapters.codex.support import CHILD, NATIVE, Base, committed_tui
 
@@ -43,6 +51,10 @@ HOOK = (
 
 
 class TuiTest(Base):
+    def setUp(self):
+        super().setUp()
+        self.enterContext(interpreter())
+
     def launch(self, *, resume=False, adapter=None):
         run = (adapter or self.adapter).tui()
         with (
@@ -93,6 +105,23 @@ class TuiTest(Base):
                     self.adapter.tui().launch(spec, HOOK, source_roots=PACKAGE_ROOTS)
                 self.assertIsNone(self.common.load(str(self.work), spec.sid))
         self.assertFalse((self.home / ".agent-pm").exists())
+
+    def test_a_virtual_environment_inside_the_cwd_is_rejected_before_commit(self):
+        venv = self.cwd / ".venv" / "lib" / "python3.11" / "site-packages"
+        venv.mkdir(parents=True)
+        layout = {**INTERPRETER_PATHS, "purelib": str(venv), "platlib": str(venv)}
+        spec = dataclasses.replace(self.spec, sid="venv")
+        with (
+            interpreter(layout, (str(venv),)),
+            mock.patch("shutil.which", return_value="/protected/codex"),
+            self.assertRaises(ConfigError) as raised,
+        ):
+            self.adapter.tui().launch(spec, HOOK, source_roots=PACKAGE_ROOTS)
+        self.assertEqual(
+            str(raised.exception),
+            f"Codex tui writable root {self.cwd} could rewrite hook dependency {venv}",
+        )
+        self.assertIsNone(self.common.load(str(self.work), spec.sid))
 
     def test_resume_rejects_saved_library_grants_without_rewriting_recovery(self):
         library = INTERPRETER_ROOTS[0]
@@ -179,11 +208,7 @@ class TuiTest(Base):
         self.assertEqual(set(commands), set(run.hooks))
         for label, command in commands.items():
             self.assertEqual(shlex.split(command), [*HOOK, label])
-        self.assertEqual(
-            run.hook_state()["adapter_hook"],
-            tui.__name__,
-        )
-        self.assertEqual(run.hook_state()["adapter_state"], {"store": data["store"]})
+        self.assertEqual(run.hook_callback(), HookCallback(tui.__name__, {"store": data["store"]}))
         self.assertIsNone(self.common.load(str(self.work), self.spec.sid).native_id)
 
     def test_resume_uses_shared_saved_policy_and_native_file(self):
@@ -377,12 +402,12 @@ class TuiTest(Base):
             self.adapter.tui().hook_events("Stop", foreign), [ClientBound(NATIVE), TurnEnd()]
         )
         restored = self.adapter.tui()
-        restored.restore(self.spec, run.hook_state()["adapter_state"])
+        restored.restore(self.spec, run.hook_callback().state)
         self.assertEqual(
             (restored.native, restored.store, restored.state),
             (NATIVE, data["store"], self.common.load(str(self.work), self.spec.sid)),
         )
-        self.assertEqual(restored.hook_state(), run.hook_state())
+        self.assertEqual(restored.hook_callback(), run.hook_callback())
         for payload in (foreign, self.payload(session_id=CHILD)):
             self.assertEqual(restored.hook_events("Stop", payload), [])
         self.assertEqual(
@@ -980,15 +1005,14 @@ class HookTest(Base):
     def test_callback_binds_and_adds_label_without_another_payload_reader(self):
         self.prepare()
         payload = self.payload(last_assistant_message="reply")
-        state = {
-            "workdir": str(self.work),
-            "sid": self.spec.sid,
-            "adapter_state": {"store": common.SessionStore().root},
-        }
-        self.assertTrue(tui.on_hook("Stop", payload, state))
-        self.assertEqual(payload["hook_event_name"], "Stop")
+        state = {"store": common.SessionStore().root}
+
+        def call(given):
+            return HookCall("Stop", given, self.spec.sid, str(self.work), None, state)
+
+        self.assertEqual(tui.on_hook(call(payload)), {**payload, "hook_event_name": "Stop"})
         self.assertEqual(self.common.load(str(self.work), self.spec.sid).native_id, NATIVE)
-        self.assertFalse(tui.on_hook("Stop", self.payload(agent_id=CHILD), state))
+        self.assertIsNone(tui.on_hook(call(self.payload(agent_id=CHILD))))
 
     def test_invalid_identity_is_ignored_before_loading_a_record(self):
         for fields in (

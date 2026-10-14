@@ -223,6 +223,7 @@ class Refusals(Base):
             runtime="fake",
             output={"type": "local"},
             idle_timeout=60,
+            show="",
         )
         for kw, want in (
             ({"mode": "x"}, "mode must be one of headless, tui, in_process, got 'x'"),

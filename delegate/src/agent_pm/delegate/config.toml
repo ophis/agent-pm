@@ -24,6 +24,9 @@
 #                   (the orchestrator's runs: the workdir). A resume reuses its recorded one (<workdir>/run.jsonl)
 #   idle_timeout    positive finite seconds without a session event. In tui mode the run gives up, leaving the
 #                   session open; other modes record the idle event and continue
+#   show            how a started tui session is shown, when its Host can display: "" → a pane (the tmux Host: in
+#                   the display's grid or split); "none" → nothing, the attach command printed; else a one-line shell
+#                   command run instead, {{session}} the session name
 #   users           local, global only: GitHub logins whose PR comments are the user's; [] → the gh login
 #   trusted_dirs    local, global only: dirs you trust (absolute or ~ path, matched by real path); [] → none. A cwd
 #                   that is one or under one loads its project settings; any other, user settings only, with a stderr
@@ -55,6 +58,7 @@ commands = []
 gate = ""
 cwd = ""
 idle_timeout = 7200
+show = ""
 users = []
 trusted_dirs = []
 team_dirs = []
@@ -99,7 +103,7 @@ host = ""
 #                 they are approved. {{workdir}} is the agent run's workdir, {{team}} core's team/ dir; [] → none
 #   gate          a usage-gate command the researcher runs before a costly step (deep research: before a second
 #                 round); its approval follows the runtime's Adapter; "" → none (the orchestrator's overlay sets it)
-#   <run key>     tier, effort, runtime, language, cwd, idle_timeout or [output], for that role
+#   <run key>     tier, effort, runtime, language, cwd, idle_timeout, show or [output], for that role
 
 # ── Researcher ──────────────────────────────────────────
 [roles.researcher]

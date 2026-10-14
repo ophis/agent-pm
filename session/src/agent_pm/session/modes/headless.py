@@ -22,6 +22,7 @@ from agent_pm.session.engine.types import (
     Spec,
     Stderr,
 )
+from agent_pm.session.hosts.base import Host
 from agent_pm.session.modes.base import RunningMode, identity_drop
 from agent_pm.utils import STOP_WAIT, Display, kill_group
 
@@ -42,7 +43,7 @@ class HeadlessMode(RunningMode):
         adapter: Adapter,
         *,
         registry: Registry,
-        host=None,
+        host: Host,
         display: Display = None,
     ) -> Prepared:
         return cls._prepare(spec, adapter, registry=registry, display=display)[0]
@@ -73,7 +74,7 @@ class HeadlessMode(RunningMode):
         *,
         registry: Registry,
         record: Callable[[SessionInfo], None],
-        host=None,
+        host: Host,
         display: Display = None,
         check_name: Callable[[str], None] | None = None,
     ) -> Self:

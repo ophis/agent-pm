@@ -2,15 +2,19 @@
 
 import ast
 import builtins
+import enum
 import fnmatch
 import importlib
+import inspect
 import io
+import json
 import os
 import re
 import sys
 import sysconfig
 import tokenize
 import tomllib
+import types
 from collections import Counter
 
 from agent_pm.utils.config_file import LEVELS
@@ -37,7 +41,7 @@ TOML_IMPLEMENTATION = re.compile(
 TOML_RUNTIME = re.compile(r'\s*runtime\s*=\s*"[a-z][a-z0-9_]*"\s*\Z')
 
 
-TMUX_HOST = "session/src/agent_pm/session/hosts/tmux/tmux_host.py"
+TMUX_HOST = "session/src/agent_pm/session/hosts/tmux/host.py"
 
 
 PKG = "agent_pm"
@@ -99,6 +103,12 @@ LOCAL_EXAMPLE = re.compile(r"\s*# local: ?(.*)")
 
 
 SESSION_SRC = f"session/src/{PKG}/{SESSION}/"
+
+
+SESSION_INTERFACE = "tests/session_interface.json"
+
+
+SESSION_INTERFACE_MODULES = ("agent_pm.session", "agent_pm.session.extension")
 
 
 OBJECT_EXPORT_MODULES = (
@@ -276,7 +286,6 @@ OPTION_WORD = re.compile(r"[a-z0-9]+(?:[_-][a-z0-9]+)*")
 
 OPTION_TUPLES_ALLOWED = {
     (CONFIG_LEVELS, "UNCONFIGURED"): "the projects without their own config.toml, a subset",
-    (f"{SESSION_SRC}adapters/registry.py", "TUI_KEYS"): "the [hosts.tmux] keys tui() reads",
     (f"{SESSION_SRC}adapters/claude/tui.py", "MONTHS"): "month names, indexed by month",
     (f"{SESSION_SRC}adapters/claude/tui.py", "WEEKDAYS"): "weekday names, indexed by weekday",
     (
@@ -316,7 +325,6 @@ DISPLAY_NAMES = re.compile(
 LEGACY_HOST_NAMES = {
     (f"{SESSION_SRC}engine/forwarding.py", "TmuxHost"): (6, "TASK-375"),
     (f"{SESSION_SRC}engine/forwarding.py", "tmux"): (4, "TASK-375"),
-    (f"{SESSION_SRC}engine/forwarding.py", "tmux_host"): (3, "TASK-375"),
     (f"{SESSION_SRC}engine/forwarding.py", "_opener"): (2, "TASK-375"),
     (f"{SESSION_SRC}engine/forwarding.py", "opener"): (4, "TASK-375"),
     (f"{SESSION_SRC}engine/forwarding.py", "split_from"): (4, "TASK-375"),
@@ -2316,3 +2324,104 @@ def _path_steps(node, bound):
             1 if part == ".." else -1 for part in node.value.split("/") if part not in ("", ".")
         )
     return 0
+
+
+def session_interface_snapshot(repo: str) -> list[str]:
+    """The session's public interface (_session_interface()) equals SESSION_INTERFACE. Only TASK-369
+    and TASK-387 change it on purpose, rewriting the file from _session_interface().
+    """
+    try:
+        with open(os.path.join(repo, SESSION_INTERFACE), encoding="utf-8") as f:
+            want = json.load(f)
+    except FileNotFoundError:
+        return [f"{SESSION_INTERFACE}: missing"]
+    have = _session_interface()
+    return [
+        f"{SESSION_INTERFACE}: {key}: {want.get(key, 'absent')} -> {have.get(key, 'absent')}"
+        for key in sorted(want.keys() | have.keys())
+        if want.get(key) != have.get(key)
+    ]
+
+
+def _session_interface() -> dict[str, str]:
+    """Each SESSION_INTERFACE_MODULES export and its classes' public members: kind, bases, enum
+    values and parameters (name, kind, default); annotations are left out (their text varies by
+    Python version).
+    """
+    found = {}
+    for name in SESSION_INTERFACE_MODULES:
+        module = importlib.import_module(name)
+        for export in module.__all__:
+            value = getattr(module, export)
+            found[f"{name}.{export}"] = _interface_entry(value)
+            if inspect.isclass(value) and not issubclass(value, enum.Enum):
+                for member, described in _interface_members(value).items():
+                    found[f"{name}.{export}.{member}"] = described
+    return found
+
+
+def _interface_entry(value) -> str:
+    if inspect.isclass(value) and issubclass(value, enum.Enum):
+        return f"enum {[member.value for member in value]}"
+    if inspect.isclass(value):
+        bases = ", ".join(_qualified(base) for base in value.__bases__)
+        return f"class({bases}){_parameters(value)}"
+    if callable(value):
+        return f"def{_parameters(value)}"
+    return f"value {_stable(value)}"
+
+
+def _interface_members(cls) -> dict[str, str]:
+    found = {}
+    for klass in reversed(cls.__mro__):
+        if not klass.__module__.startswith("agent_pm."):
+            continue
+        for name, member in vars(klass).items():
+            if name.startswith("_"):
+                continue
+            if isinstance(member, property):
+                found[name] = "property"
+            elif isinstance(member, (classmethod, staticmethod)):
+                found[name] = f"{type(member).__name__}{_parameters(member.__func__)}"
+            elif inspect.isfunction(member):
+                found[name] = f"def{_parameters(member)}"
+            else:
+                found[name] = "attribute"
+    return found
+
+
+def _parameters(value) -> str:
+    try:
+        signature = inspect.signature(value)
+    except (TypeError, ValueError):
+        return "(?)"
+    return (
+        "("
+        + ", ".join(
+            f"{p.name}:{p.kind.name}"
+            + ("" if p.default is inspect.Parameter.empty else f"={_stable(p.default)}")
+            for p in signature.parameters.values()
+        )
+        + ")"
+    )
+
+
+def _stable(value) -> str:
+    if isinstance(value, enum.Enum):
+        return repr(value.value)
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return repr(value)
+    if (
+        isinstance(value, types.UnionType | types.GenericAlias)
+        or type(value).__module__ == "typing"
+    ):
+        return str(value)
+    if isinstance(value, tuple | list | frozenset):
+        return f"{type(value).__name__}({', '.join(sorted(_stable(v) for v in value))})"
+    if hasattr(value, "__qualname__"):
+        return _qualified(value)
+    return type(value).__name__
+
+
+def _qualified(value) -> str:
+    return f"{value.__module__}.{value.__qualname__}"

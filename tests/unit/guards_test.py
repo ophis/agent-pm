@@ -1,5 +1,6 @@
 import ast
 import importlib
+import json
 import os
 import sys
 from pathlib import Path
@@ -3174,3 +3175,57 @@ class UnitIsolation(Sample):
                 guards.unit_isolation_allowlist(root),
                 [f"{root}/tests/guards.py: unit isolation allowlist must remain empty"],
             )
+
+
+class SessionInterfaceSnapshot(Sample):
+    def snapshot(self) -> dict:
+        with open(os.path.join(REPO, guards.SESSION_INTERFACE), encoding="utf-8") as f:
+            return json.load(f)
+
+    def checked(self, snapshot) -> list[str]:
+        return guards.session_interface_snapshot(
+            self.tree({guards.SESSION_INTERFACE: json.dumps(snapshot)})
+        )
+
+    def test_the_repository_matches_its_snapshot(self):
+        self.assertEqual(guards.session_interface_snapshot(REPO), [])
+
+    def test_the_snapshot_covers_both_entry_modules_and_their_signatures(self):
+        snapshot = self.snapshot()
+        self.assertEqual(
+            guards.SESSION_INTERFACE_MODULES, ("agent_pm.session", "agent_pm.session.extension")
+        )
+        self.assertEqual(
+            snapshot["agent_pm.session.extension.Host.terminal"],
+            "def(self:POSITIONAL_OR_KEYWORD, name:POSITIONAL_OR_KEYWORD, "
+            "launch:POSITIONAL_OR_KEYWORD, display:KEYWORD_ONLY=None, events:KEYWORD_ONLY=None, "
+            "record:KEYWORD_ONLY=None, metadata:KEYWORD_ONLY=None)",
+        )
+        self.assertIn("agent_pm.session.Session.show", snapshot)
+
+    def test_a_changed_removed_or_added_export_or_signature_fails(self):
+        key = "agent_pm.session.Session.show"
+        snapshot = self.snapshot()
+        have = snapshot[key]
+        for changed, want in (
+            (
+                {**snapshot, key: "def(self:POSITIONAL_OR_KEYWORD)"},
+                f"{guards.SESSION_INTERFACE}: {key}: def(self:POSITIONAL_OR_KEYWORD) -> {have}",
+            ),
+            (
+                {k: v for k, v in snapshot.items() if k != key},
+                f"{guards.SESSION_INTERFACE}: {key}: absent -> {have}",
+            ),
+            (
+                {**snapshot, "agent_pm.session.Gone": "def()"},
+                f"{guards.SESSION_INTERFACE}: agent_pm.session.Gone: def() -> absent",
+            ),
+        ):
+            with self.subTest(want=want):
+                self.assertEqual(self.checked(changed), [want])
+
+    def test_a_missing_snapshot_fails(self):
+        self.assertEqual(
+            guards.session_interface_snapshot(self.tree({"README.md": ""})),
+            [f"{guards.SESSION_INTERFACE}: missing"],
+        )

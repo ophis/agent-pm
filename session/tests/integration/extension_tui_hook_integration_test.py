@@ -1,0 +1,124 @@
+"""A TUI adapter installed outside the session's package roots (its own directory, importing only
+agent_pm.session.extension) declares its hook callback with its own root: modes/tui_hook.py, run by
+path with only the session's source roots, trusts and runs it; undeclared, the callback is refused.
+"""
+
+import json
+import os
+import subprocess
+import sys
+import tempfile
+
+from session.tests.case import SRC, Case
+from session.tests.tui_hook_support import HOOK, SOURCE_ROOTS, state, write_state
+
+ADAPTER = """import os
+
+from agent_pm.session.extension import HookCallback, HookKind, Tui
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+class ExternalTui(Tui):
+    hooks = {"stop": HookKind.TURN_END}
+
+    def launch(self, spec, hook, *, source_roots):
+        raise NotImplementedError
+
+    def reply(self, payload):
+        return ""
+
+    def hook_callback(self):
+        return HookCallback("external_tui.hooks", {"tag": "external"}, roots=(ROOT,))
+"""
+CALLBACK = """def on_hook(call):
+    return {
+        **call.payload,
+        "seen": [call.label, call.sid, call.workdir, call.events, dict(call.state)],
+    }
+"""
+DECLARE = """import json
+from external_tui import ExternalTui
+print(json.dumps(ExternalTui().hook_callback().fields()))
+"""
+
+
+class ExternalTuiHookTest(Case):
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.root = os.path.realpath(tmp.name)
+        self.installed = os.path.join(self.root, "installed")
+        package = os.path.join(self.installed, "external_tui")
+        os.makedirs(package)
+        for name, text in (("__init__.py", ADAPTER), ("hooks.py", CALLBACK)):
+            with open(os.path.join(package, name), "w") as f:
+                f.write(text)
+        self.dir = os.path.join(self.root, "s1")
+        os.mkdir(self.dir, 0o700)
+        self.state = {**state(self.root, None), "words": {}}
+        del self.state["host_hook"]
+
+    def declared(self) -> dict:
+        res = subprocess.run(
+            [sys.executable, "-P", "-c", DECLARE],
+            capture_output=True,
+            text=True,
+            env={
+                "PYTHONPATH": os.pathsep.join((SRC["session"], SRC["utils"], self.installed)),
+                "HOME": self.root,
+            },
+            timeout=60,
+        )
+        self.assertEqual(res.returncode, 0, res.stderr)
+        return json.loads(res.stdout)
+
+    def hook(self) -> str:
+        res = subprocess.run(
+            [sys.executable, "-I", HOOK, self.dir, SOURCE_ROOTS, "stop"],
+            input=json.dumps({"text": "hi"}).encode(),
+            capture_output=True,
+            env={"HOME": self.root, "PATH": os.defpath},
+            timeout=60,
+        )
+        self.assertEqual((res.returncode, res.stdout), (0, b""), res.stderr)
+        return res.stderr.decode()
+
+    def records(self) -> list[dict]:
+        try:
+            with open(os.path.join(self.dir, "hooks.jsonl")) as f:
+                return [json.loads(line) for line in f]
+        except FileNotFoundError:
+            return []
+
+    def test_its_declared_callback_runs_from_its_own_root(self):
+        declared = self.declared()
+        self.assertEqual(
+            declared,
+            {
+                "module": "external_tui.hooks",
+                "state": {"tag": "external"},
+                "roots": [self.installed],
+            },
+        )
+        self.assertNotIn(self.installed, json.loads(SOURCE_ROOTS))
+        write_state(self.dir, {**self.state, "adapter_hook": declared})
+        self.assertEqual(self.hook(), "")
+        self.assertEqual(
+            [record["payload"] for record in self.records()],
+            [
+                {
+                    "text": "hi",
+                    "seen": ["stop", self.state["sid"], self.root, None, {"tag": "external"}],
+                }
+            ],
+        )
+
+    def test_without_its_root_the_callback_is_refused_and_nothing_journaled(self):
+        undeclared = {**self.declared(), "roots": []}
+        write_state(self.dir, {**self.state, "adapter_hook": undeclared})
+        self.assertRegex(
+            self.hook(),
+            r"\Atui_hook: adapter hook external_tui.hooks: cannot find Python module\n\Z",
+        )
+        self.assertEqual(self.records(), [])

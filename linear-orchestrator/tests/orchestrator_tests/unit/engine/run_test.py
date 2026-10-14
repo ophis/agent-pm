@@ -31,6 +31,7 @@ from orchestrator_tests.unit.run_fixtures import (
     UUID,
     Base,
     Gql,
+    local,
     logged,
 )
 
@@ -548,10 +549,26 @@ class RunTui(Case):
         )
         self.assertEqual(
             [o for o in self.order if o[0] == "show"],
-            [("show", TUI, "below", "dev", "w0t0p0:ABC", 2)],
+            [("show", TUI, "below", "dev", "w0t0p0:ABC", None, 2)],
         )
         self.assertEqual(self.err, "attach-command\n")
         self.assertIn(f"writeback step TASK-7 sid={SID} step=move:in_review", self.said())
+
+    def test_a_tui_run_shows_as_its_roles_show_says(self):
+        for show, shown, printed in (
+            ("none", [], f"attach {TUI}\n"),
+            ("open {{session}}", [("show", TUI, None, None, None, "open {{session}}")], "x\n"),
+        ):
+            with self.subTest(show=show):
+                self.order.clear()
+                self.api.shown = "x"
+                with open(self.local, "a") as f:
+                    f.write(f'\n[delegate.roles.engineer]\nshow = "{show}"\n')
+                self.done()
+                self.assertEqual(self.main("--tui"), 0)
+                self.assertEqual([o[:-1] for o in self.order if o[0] == "show"], shown)
+                self.assertEqual(self.err, printed)
+                self.write_local(local(self.work))
 
     def test_a_show_error_is_logged_never_raised(self):
         self.api.shown = DriverError(f"no tmux session {TUI}")

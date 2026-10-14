@@ -13,6 +13,7 @@ from agent_pm.session.engine.types import (
     ActivityState,
     ConfigError,
     DriverError,
+    HookCallback,
     Hosts,
     Key,
     Launch,
@@ -186,8 +187,8 @@ class Host(ABC):
                 raise DriverError(f"events file {events}: {error.strerror}") from error
         return events
 
-    def hook_state(self, name: str, metadata: Mapping[str, str]) -> dict:
-        return {}
+    def hook_callback(self, name: str, metadata: Mapping[str, str]) -> HookCallback | None:
+        return None
 
     def protected_paths(self) -> tuple[str, ...]:
         return ()
@@ -215,10 +216,15 @@ class Host(ABC):
 
 
 class Displayable(ABC):
-    """show: None once shown, else an attach command; layout: display completed once its display destination is found."""
+    """show: None once shown, else an attach command; command: a shell command the Host runs to
+    show it instead, `{{session}}` the session name; layout: display completed once its display
+    destination is found.
+    """
 
     @abstractmethod
-    def show(self, name: str, *, display: Display = None) -> str | None: ...
+    def show(
+        self, name: str, *, display: Display = None, command: str | None = None
+    ) -> str | None: ...
 
     @abstractmethod
     def attach_command(self, name: str) -> str: ...

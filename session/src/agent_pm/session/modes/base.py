@@ -24,6 +24,7 @@ from agent_pm.session.engine.types import (
     Spec,
     Stderr,
 )
+from agent_pm.session.hosts.base import Host
 from agent_pm.utils import Display, overlaps
 
 
@@ -62,7 +63,7 @@ class RunningMode(ABC):
         adapter: Adapter,
         *,
         registry: Registry,
-        host=None,
+        host: Host,
         display: Display = None,
     ) -> Prepared:
         raise NotImplementedError
@@ -76,7 +77,7 @@ class RunningMode(ABC):
         *,
         registry: Registry,
         record: Callable[[SessionInfo], None],
-        host=None,
+        host: Host,
         display: Display = None,
         check_name: Callable[[str], None] | None = None,
     ) -> Self:
