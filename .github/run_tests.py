@@ -139,7 +139,9 @@ def supervise(title):
     tail = collections.deque(maxlen=5 * TAIL)
     repo = Path(__file__).resolve().parents[1]
     with (
-        tempfile.TemporaryDirectory() as tmp,
+        tempfile.TemporaryDirectory(
+            dir=os.environ.get("AGENT_PM_TEST_SANDBOX") or os.path.realpath("/tmp")
+        ) as tmp,
         tempfile.TemporaryDirectory(prefix=".test-sandbox-", dir=repo) as workspace,
     ):
         state = os.path.join(tmp, "state")
@@ -177,7 +179,7 @@ def supervise(title):
                     sys.stderr.write(line)
                     tail.append(line)
         finally:
-            stop_tmux_servers(tmp, clean_env(env))
+            stop_tmux_servers(tmp, env)
         with open(state, encoding="utf-8") as file:
             lines = file.read().splitlines()
     code = 128 - child.returncode if child.returncode < 0 else child.returncode
