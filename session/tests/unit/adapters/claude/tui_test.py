@@ -781,11 +781,48 @@ class TranscriptTest(Base):
         self.append(PROMPT, {**limited(notice), "isSidechain": True}, limited(notice))
         self.assertEqual(self.run.observe(), [LimitHit(resets)])
 
-    def test_attach_order_keeps_a_late_final_text_unrepeated(self):
-        self.append(PROMPT, said("m1", text("A")))
+    def restored(self):
         run = ClaudeAdapter({}).tui()
         run.restore(Spec(workdir=self.work, sid=SID), {"transcript": self.path, "start": 0})
-        replayed = [*run.observe(), *run.hook_events("Stop", {"last_assistant_message": "C"})]
-        self.assertEqual(replayed, [Reply("A"), TurnEnd("C", 0)])
+        return run
+
+    def test_a_replay_keeps_a_late_final_text_unrepeated(self):
+        self.append(PROMPT, said("m1", text("A")))
+        run = self.restored()
+        replayed = run.replay([("UserPromptSubmit", {}), ("Stop", {"last_assistant_message": "C"})])
+        self.assertEqual(replayed, [Reply("A"), Activity(""), TurnEnd("C", 0)])
         self.append(said("m2", text("C")))
+        self.assertEqual(run.observe(), [])
+
+    def test_a_replay_leaves_no_earlier_turns_text_unseen(self):
+        self.append(PROMPT, said("m1", text("C")), PROMPT)
+        run = self.restored()
+        stop = ("Stop", {"last_assistant_message": "C"})
+        run.replay([("UserPromptSubmit", {}), stop, ("UserPromptSubmit", {})])
+        self.append(said("m2", text("C")))
+        self.assertEqual(run.observe(), [Reply("C")])
+
+    def test_a_replay_of_an_open_turn_leaves_its_newest_text_seen(self):
+        self.append(PROMPT, said("m1", text("C")))
+        run = self.restored()
+        run.replay([("UserPromptSubmit", {})])
+        self.assertEqual(
+            run.hook_events("Stop", {"last_assistant_message": "C"}), [TurnEnd("C", 0)]
+        )
+        self.append(said("m2", text("C")))
+        self.assertEqual(run.observe(), [Reply("C")])
+
+    def test_after_a_replay_the_latest_turns_limit_is_given_live_once(self):
+        notice = "You've hit your weekly limit · resets Oct 15, 2027, 9am (UTC)"
+        rate_limit = ("StopFailure", {"error": "rate_limit", "last_assistant_message": notice})
+        resets = epoch("2027-10-15 09:00", "UTC")
+        self.append(PROMPT, limited(notice), PROMPT)
+        run = self.restored()
+        run.replay([("UserPromptSubmit", {}), rate_limit, ("UserPromptSubmit", {})])
+        self.append(limited(notice))
+        self.assertEqual(run.observe(), [LimitHit(resets)])
+        self.assertEqual(run.hook_events(*rate_limit), [])
+        run = self.restored()
+        run.replay([("UserPromptSubmit", {}), rate_limit, ("UserPromptSubmit", {})])
+        self.assertEqual(run.hook_events(*rate_limit), [LimitHit(resets)])
         self.assertEqual(run.observe(), [])

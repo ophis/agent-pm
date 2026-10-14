@@ -476,7 +476,7 @@ class TuiMode(RunningMode):
         except ConfigError as e:
             raise DriverError(f"no tui session {name}: {e}") from None
         records, offset = store.records(0)
-        replayed = [*run.observe(), *_translated(run, records)]
+        replayed = run.replay(records)
         return cls(
             Prepared(spec, info),
             run,

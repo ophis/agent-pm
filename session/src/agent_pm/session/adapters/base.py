@@ -125,7 +125,7 @@ class Tui(ABC):
         return None
 
     def restore(self, spec: Spec, state: Mapping) -> None:
-        """On attach, before hook_events; state: hook_callback()'s state."""
+        """On attach, before replay; state: hook_callback()'s state."""
         return None
 
     @abstractmethod
@@ -146,6 +146,13 @@ class Tui(ABC):
 
     def observe(self) -> list[SessionEvent]:  # its runtime's own record, since the last call
         return []
+
+    def replay(self, records: Iterable[tuple[str, dict]]) -> list[SessionEvent | ClientBound]:
+        """On attach: observe(), then the hook log `records`' events."""
+        found: list[SessionEvent | ClientBound] = [*self.observe()]
+        return found + [
+            event for label, payload in records for event in self.hook_events(label, payload)
+        ]
 
     def failure(self, payload: dict) -> list[TurnFailed | LimitHit]:
         return [TurnFailed("unknown")]

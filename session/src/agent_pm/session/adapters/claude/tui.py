@@ -18,13 +18,16 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from agent_pm.session.adapters.base import Tui
 from agent_pm.session.adapters.claude.common import ClaudeCommon
 from agent_pm.session.engine.types import (
+    ClientBound,
     ConfigError,
     HookCall,
     HookCallback,
     HookKind,
     LimitHit,
     Reply,
+    SessionEvent,
     Spec,
+    TurnEnd,
     TurnFailed,
 )
 from agent_pm.utils import number, read_regular
@@ -117,6 +120,24 @@ class ClaudeTui(Tui):
         end = data.rfind(b"\n") + 1
         self.offset += end
         return [reply for line in data[:end].split(b"\n") for reply in self._record(line)]
+
+    def replay(self, records):
+        """Ends in the latest turn's state, not the oldest's: no LimitHit given live yet (the replay
+        gives none), and a Stop since the hook log's last prompt leaves its text unseen unless it is
+        the transcript's newest.
+        """
+        found: list[SessionEvent | ClientBound] = [*self.observe()]
+        newest, ended = self.last, None
+        for label, payload in records:
+            events = self.hook_events(label, payload)
+            found += events
+            if label == "UserPromptSubmit":
+                ended = None
+            ended = next((e.reply for e in events if isinstance(e, TurnEnd)), ended)
+        self.limited = False
+        self.last = newest if ended is None else ""
+        self.unseen = ended if ended and ended.strip() and ended != newest else ""
+        return found
 
     def _record(self, line: bytes) -> Sequence[Reply | LimitHit]:
         try:

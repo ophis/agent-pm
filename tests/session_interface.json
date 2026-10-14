@@ -378,6 +378,7 @@
  "agent_pm.session.extension.Tui.limit": "def(self:POSITIONAL_OR_KEYWORD, screen:POSITIONAL_OR_KEYWORD)",
  "agent_pm.session.extension.Tui.observe": "def(self:POSITIONAL_OR_KEYWORD)",
  "agent_pm.session.extension.Tui.pending": "def(self:POSITIONAL_OR_KEYWORD, payload:POSITIONAL_OR_KEYWORD)",
+ "agent_pm.session.extension.Tui.replay": "def(self:POSITIONAL_OR_KEYWORD, records:POSITIONAL_OR_KEYWORD)",
  "agent_pm.session.extension.Tui.reply": "def(self:POSITIONAL_OR_KEYWORD, payload:POSITIONAL_OR_KEYWORD)",
  "agent_pm.session.extension.Tui.restore": "def(self:POSITIONAL_OR_KEYWORD, spec:POSITIONAL_OR_KEYWORD, state:POSITIONAL_OR_KEYWORD)",
  "agent_pm.session.extension.Tui.session_id": "def(self:POSITIONAL_OR_KEYWORD, payload:POSITIONAL_OR_KEYWORD)",
