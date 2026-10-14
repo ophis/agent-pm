@@ -1,5 +1,5 @@
-from tests import guards
 from tests.guard_checks import commands
+from tests.guard_data.linear_orchestrator import ORCH_PROJECT
 from tests.guard_samples import PKG, Sample
 
 OPKG = "src/agent_pm/linear_orchestrator"
@@ -58,7 +58,7 @@ class PythonCommands(Sample):
         root = self.tree(
             {
                 "delegate/src/agent_pm/delegate/config.toml": 'commands = ["python3 x.py", "python3 -m agent_pm.x"]\n# python3 -P {{team}}/tools/repo.py\ngate = "python3 -P {{team}}/x.py"\n',
-                f"{guards.ORCH_PROJECT}/{OPKG}/config.toml": 'gate = "python3 -P -m agent_pmx.y"\n',
+                f"{ORCH_PROJECT}/{OPKG}/config.toml": 'gate = "python3 -P -m agent_pmx.y"\n',
                 "delegate/skills/a/SKILL.md": "Run `python3.11 x.py`.\n- Bash(python -P -m agent_pm.delegate.cli --list)\n",
                 "manager/skills/b/SKILL.md": "Run `python3 y.py`.\n",
                 f"{team}/roles/r.md": (
@@ -77,7 +77,7 @@ class PythonCommands(Sample):
                 f'{team}/roles/r.md:2: python command "python3 -I -m agent_pm.x"',
                 f'{team}/roles/r.md:5: python command "python3 -P <team>/tools/../repo.py"',
                 f'{team}/roles/r.md:6: python command "python3 -P <team>/tools/repo.pyc"',
-                f'{guards.ORCH_PROJECT}/{OPKG}/config.toml:1: python command "python3 -P -m agent_pmx.y"',
+                f'{ORCH_PROJECT}/{OPKG}/config.toml:1: python command "python3 -P -m agent_pmx.y"',
                 'manager/skills/b/SKILL.md:1: python command "python3 y.py"',
             ],
         )

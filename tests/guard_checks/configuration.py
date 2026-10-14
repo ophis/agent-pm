@@ -6,16 +6,15 @@ import re
 import tomllib
 
 from tests.guard_checks.common import _bindings, _dotted, _files
-from tests.guards import (
-    CONFIG_LEVELS,
+from tests.guard_data.linear_orchestrator import (
     CONFIG_PY,
     ENTRIES,
     LOAD_HELPERS,
     ONCE,
     ORCH_PROJECT,
-    PKG,
-    PROJECTS,
 )
+from tests.guard_data.utils import CONFIG_LEVELS
+from tests.guards import PKG, PROJECTS
 
 LOCAL_EXAMPLE = re.compile(r"\s*# local: ?(.*)")
 

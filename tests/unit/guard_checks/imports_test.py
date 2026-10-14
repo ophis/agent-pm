@@ -3,6 +3,9 @@ from pathlib import Path
 from tests import guards
 from tests.case import REPO
 from tests.guard_checks import imports
+from tests.guard_data import DELEGATE_SESSION_FORWARDING_ALLOWED, IMPORT_BOOTSTRAPS, STANDALONE
+from tests.guard_data.linear_orchestrator import ORCH_PKG, ORCH_SESSION_CONTRACT, ORCH_SRC
+from tests.guard_data.session import SESSION_SRC, TMUX_HOST
 from tests.guard_samples import PKG, Sample
 
 
@@ -39,9 +42,9 @@ class DelegateSessionForwarding(Sample):
 
     def test_compatibility_exception_is_exact_and_expires(self):
         public = self.BASE + "__init__.py", "agent_pm.session.Driver"
-        self.assertEqual(set(guards.DELEGATE_SESSION_FORWARDING_ALLOWED), {public})
-        self.assertIn("configure()", guards.DELEGATE_SESSION_FORWARDING_ALLOWED[public])
-        self.assertIn("356-14", guards.DELEGATE_SESSION_FORWARDING_ALLOWED[public])
+        self.assertEqual(set(DELEGATE_SESSION_FORWARDING_ALLOWED), {public})
+        self.assertIn("configure()", DELEGATE_SESSION_FORWARDING_ALLOWED[public])
+        self.assertIn("356-14", DELEGATE_SESSION_FORWARDING_ALLOWED[public])
         sample = (
             "from agent_pm.session import Driver as SessionDriver\nSessionDriver.from_config({})\n"
         )
@@ -60,15 +63,15 @@ class OrchestratorSessionImports(Sample):
         root = self.tree(
             {
                 "pyproject.toml": config or Path(REPO, "pyproject.toml").read_text(),
-                f"linear-orchestrator/{guards.ORCH_SRC}{module}": sample,
+                f"linear-orchestrator/{ORCH_SRC}{module}": sample,
             }
         )
         return imports.orchestrator_session_imports(root)
 
     def message(self, rel, name):
-        module = f"{guards.ORCH_PKG}.{rel.removesuffix('.py').replace('/', '.')}"
+        module = f"{ORCH_PKG}.{rel.removesuffix('.py').replace('/', '.')}"
         return (
-            f"linear-orchestrator/{guards.ORCH_SRC}{rel}: {module} imports {name} from "
+            f"linear-orchestrator/{ORCH_SRC}{rel}: {module} imports {name} from "
             "agent_pm.session; go through agent_pm.delegate"
         )
 
@@ -101,9 +104,7 @@ class OrchestratorSessionImports(Sample):
         config = config.replace("ignore_imports = [\n", "ignore_imports = [\n" + edge, 1)
         self.assertEqual(
             self.check("engine/run.py", "", config),
-            [
-                f"pyproject.toml: {guards.ORCH_SESSION_CONTRACT!r} must ignore exactly ORCH_SESSION_IMPORTS"
-            ],
+            [f"pyproject.toml: {ORCH_SESSION_CONTRACT!r} must ignore exactly ORCH_SESSION_IMPORTS"],
         )
 
 
@@ -213,14 +214,14 @@ class ImportHygiene(Sample):
                     f"import sys\ndef {function}(roots):\n"
                     "    sys.path[:] = [*roots, *(path for path in sys.path if path not in roots)]\n"
                 )
-                for path, function in guards.IMPORT_BOOTSTRAPS.items()
+                for path, function in IMPORT_BOOTSTRAPS.items()
             }
         )
         self.assertEqual(imports.import_hygiene(root), [])
 
     def test_bootstrap_permission_does_not_cover_other_scopes(self):
         assignment = "sys.path[:] = [*roots, *(path for path in sys.path if path not in roots)]"
-        for path, function in guards.IMPORT_BOOTSTRAPS.items():
+        for path, function in IMPORT_BOOTSTRAPS.items():
             with self.subTest(path=path):
                 root = self.tree(
                     {
@@ -240,7 +241,7 @@ class ImportHygiene(Sample):
                 )
 
     def test_bootstrap_permission_covers_only_one_root_prefix_assignment(self):
-        for path, function in guards.IMPORT_BOOTSTRAPS.items():
+        for path, function in IMPORT_BOOTSTRAPS.items():
             with self.subTest(path=path):
                 root = self.tree(
                     {
@@ -316,20 +317,20 @@ class ImportHygiene(Sample):
 
 class StandaloneImports(Sample):
     def test_tui_hook_bootstraps_package_imports(self):
-        path = f"{guards.SESSION_SRC}modes/tui_hook.py"
-        self.assertNotIn(path, guards.STANDALONE)
-        self.assertEqual(guards.IMPORT_BOOTSTRAPS[path], "_bootstrap")
+        path = f"{SESSION_SRC}modes/tui_hook.py"
+        self.assertNotIn(path, STANDALONE)
+        self.assertEqual(IMPORT_BOOTSTRAPS[path], "_bootstrap")
 
     def test_tmux_host_uses_package_imports(self):
-        self.assertNotIn(guards.TMUX_HOST, guards.STANDALONE)
+        self.assertNotIn(TMUX_HOST, STANDALONE)
 
     def test_tmux_command_bootstraps_supplied_package_roots(self):
-        path = f"{guards.SESSION_SRC}hosts/tmux/entry.py"
-        self.assertNotIn(path, guards.STANDALONE)
-        self.assertEqual(guards.IMPORT_BOOTSTRAPS[path], "_bootstrap")
+        path = f"{SESSION_SRC}hosts/tmux/entry.py"
+        self.assertNotIn(path, STANDALONE)
+        self.assertEqual(IMPORT_BOOTSTRAPS[path], "_bootstrap")
 
     def found(self, source):
-        files = dict.fromkeys(guards.STANDALONE, source)
+        files = dict.fromkeys(STANDALONE, source)
         return imports.standalone_imports(self.tree(files))
 
     def test_stdlib_imports_aliases_and_nested_imports_are_clean(self):
@@ -346,7 +347,7 @@ class StandaloneImports(Sample):
             self.found(source),
             sorted(
                 f"{path}:{line}: non-stdlib import {name}"
-                for path in guards.STANDALONE
+                for path in STANDALONE
                 for line, name in (
                     (1, "requests"),
                     (1, "agent_pm.utils"),
@@ -358,8 +359,8 @@ class StandaloneImports(Sample):
         )
 
     def test_missing_inventory_file_is_reported(self):
-        missing = min(guards.STANDALONE)
-        root = self.tree({path: "" for path in guards.STANDALONE if path != missing})
+        missing = min(STANDALONE)
+        root = self.tree({path: "" for path in STANDALONE if path != missing})
         self.assertEqual(
             imports.standalone_imports(root), [f"{missing}: missing standalone script"]
         )
@@ -376,7 +377,7 @@ import agent_pm.utils
             self.found(source),
             sorted(
                 f"{path}:{line}: non-stdlib import {name}"
-                for path in guards.STANDALONE
+                for path in STANDALONE
                 for line, name in (
                     (2, "agent_pm.session.adapters"),
                     (5, "requests"),
@@ -398,14 +399,14 @@ if not __package__:
             self.found(source),
             sorted(
                 f"{path}:{line}: non-stdlib import {name}"
-                for path in guards.STANDALONE
+                for path in STANDALONE
                 for line, name in ((3, "agent_pm.utils"), (5, "requests"), (7, "other"))
             ),
         )
 
     def test_unlisted_module_is_not_a_standalone_script(self):
-        files = dict.fromkeys(guards.STANDALONE, "")
-        files[f"{guards.SESSION_SRC}engine/ordinary.py"] = "import agent_pm.utils\n"
+        files = dict.fromkeys(STANDALONE, "")
+        files[f"{SESSION_SRC}engine/ordinary.py"] = "import agent_pm.utils\n"
         self.assertEqual(imports.standalone_imports(self.tree(files)), [])
 
 

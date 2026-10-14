@@ -8,21 +8,18 @@ import tokenize
 from collections import Counter
 
 from tests.guard_checks.common import _files, _strings
-from tests.guards import (
+from tests.guard_data import LEGACY_HOST_NAMES
+from tests.guard_data.delegate import CONFIG_FILE
+from tests.guard_data.linear_orchestrator import HANDOFF_HOME, ORCH, ORCH_PROJECT
+from tests.guard_data.session import (
     ADAPTERS_HOME,
-    CONFIG_FILE,
-    CONFIG_LEVELS,
-    HANDOFF_HOME,
-    LEGACY_HOST_NAMES,
-    ORCH,
-    ORCH_PROJECT,
-    PKG,
-    PROJECTS,
     SESSION_SRC,
     STATUS_LOG_CLOCK,
     STATUS_LOG_HOME,
     TMUX_HOME,
 )
+from tests.guard_data.utils import CONFIG_LEVELS
+from tests.guards import PKG, PROJECTS
 
 RUNTIME = re.compile(r"claude|codex", re.I)
 

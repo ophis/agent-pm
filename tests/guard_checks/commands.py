@@ -5,7 +5,9 @@ import os
 import re
 
 from tests.guard_checks.common import _bindings, _dotted, _files, _strings, _tree_files
-from tests.guards import COMMAND_DOCS, COMMAND_FILES, COMMAND_SRC, PKG, SESSION_COMMAND, SESSION_SRC
+from tests.guard_data import COMMAND_DOCS, COMMAND_FILES, COMMAND_SRC
+from tests.guard_data.session import SESSION_COMMAND, SESSION_SRC
+from tests.guards import PKG
 
 COMMAND = "agent-pm-"
 

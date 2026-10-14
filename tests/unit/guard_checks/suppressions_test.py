@@ -1,8 +1,8 @@
 from unittest import mock
 
-from tests import guards
 from tests.case import REPO
 from tests.guard_checks import suppressions
+from tests.guard_data import NOQA_ALLOWED
 from tests.guard_samples import PKG, Sample
 
 
@@ -27,7 +27,7 @@ class SourceSuppressions(Sample):
 
     def found(self, extra=None, *, replace=None):
         files = {}
-        for (path, code, scope), reason in guards.NOQA_ALLOWED.items():
+        for (path, code, scope), reason in NOQA_ALLOWED.items():
             comments = (
                 [f"# pylint: disable={code}  # {reason}", f"# pylint: enable={code}"]
                 if code == "duplicate-code"
@@ -44,7 +44,7 @@ class SourceSuppressions(Sample):
 
     def test_hook_suppression_is_only_at_the_hook_run_boundary(self):
         path = "session/src/agent_pm/session/modes/tui_hook.py"
-        reason = guards.NOQA_ALLOWED[path, "BLE001", "run"]
+        reason = NOQA_ALLOWED[path, "BLE001", "run"]
         comment = f"# noqa: BLE001  # {reason}"
         self.assertEqual(
             self.found({path: self.scoped("run", [comment]) + self.scoped("other", [comment])}),
@@ -54,7 +54,7 @@ class SourceSuppressions(Sample):
     def test_pylint_disable_requires_a_matching_enable(self):
         path = "tests/example.py"
         reason = "Fixture approval."
-        with mock.patch.dict(guards.NOQA_ALLOWED, {(path, "duplicate-code", "outer"): reason}):
+        with mock.patch.dict(NOQA_ALLOWED, {(path, "duplicate-code", "outer"): reason}):
             self.assertEqual(
                 self.found(
                     {path: self.scoped("outer", [f"# pylint: disable=duplicate-code  # {reason}"])}
@@ -85,7 +85,7 @@ class SourceSuppressions(Sample):
     def test_pylint_enable_cannot_close_another_scope(self):
         path = "tests/example.py"
         reason = "Fixture approval."
-        with mock.patch.dict(guards.NOQA_ALLOWED, {(path, "duplicate-code", "outer"): reason}):
+        with mock.patch.dict(NOQA_ALLOWED, {(path, "duplicate-code", "outer"): reason}):
             self.assertEqual(
                 self.found(
                     {
@@ -183,14 +183,14 @@ class SourceSuppressions(Sample):
         )
 
     def test_compound_codes_cannot_hide_an_unlisted_rule(self):
-        (path, code, scope), reason = next(iter(guards.NOQA_ALLOWED.items()))
+        (path, code, scope), reason = next(iter(NOQA_ALLOWED.items()))
         self.assertEqual(
             self.found({path: self.scoped(scope, [f"# noqa: {code}, F401  # {reason}"])}),
             [f"{path}:3: suppression F401 in {scope} is not allowed"],
         )
 
     def test_reason_must_match_the_inventory(self):
-        (path, code, scope), _ = next(iter(guards.NOQA_ALLOWED.items()))
+        (path, code, scope), _ = next(iter(NOQA_ALLOWED.items()))
         self.assertEqual(
             self.found({path: self.scoped(scope, [f"# noqa: {code}  # Different reason."])}),
             [
@@ -200,7 +200,7 @@ class SourceSuppressions(Sample):
         )
 
     def test_each_inventory_entry_needs_a_comment(self):
-        path, code, scope = next(iter(guards.NOQA_ALLOWED))
+        path, code, scope = next(iter(NOQA_ALLOWED))
         for files, replace in (({path: "value = 1\n"}, None), ({}, path)):
             with self.subTest(replace=replace):
                 self.assertEqual(
@@ -209,7 +209,7 @@ class SourceSuppressions(Sample):
                 )
 
     def test_duplicate_comments_cannot_reuse_an_entry(self):
-        (path, code, scope), reason = next(iter(guards.NOQA_ALLOWED.items()))
+        (path, code, scope), reason = next(iter(NOQA_ALLOWED.items()))
         comment = f"# noqa: {code}  # {reason}"
         self.assertEqual(
             self.found({path: self.scoped(scope, [comment, comment])}),
@@ -217,7 +217,7 @@ class SourceSuppressions(Sample):
         )
 
     def test_whitespace_case_and_comment_only_lines_are_checked(self):
-        (path, code, scope), reason = next(iter(guards.NOQA_ALLOWED.items()))
+        (path, code, scope), reason = next(iter(NOQA_ALLOWED.items()))
         self.assertEqual(
             self.found(
                 {
@@ -237,7 +237,7 @@ class SourceSuppressions(Sample):
         )
 
     def test_same_file_and_rule_do_not_allow_another_function(self):
-        (path, code, scope), reason = next(iter(guards.NOQA_ALLOWED.items()))
+        (path, code, scope), reason = next(iter(NOQA_ALLOWED.items()))
         comment = f"# noqa: {code} # {reason}"
         for other in ("other", "Other._pump", "HeadlessMode.other", "HeadlessMode._pump.nested"):
             with self.subTest(other):
@@ -250,7 +250,7 @@ class SourceSuppressions(Sample):
 
     def test_nested_functions_use_the_innermost_qualified_name(self):
         self.assertEqual(self.found(), [])
-        (path, code, scope), reason = next(iter(guards.NOQA_ALLOWED.items()))
+        (path, code, scope), reason = next(iter(NOQA_ALLOWED.items()))
         comment = f"# noqa: {code} # {reason}"
         source = self.scoped(scope + ".nested", [comment])
         self.assertEqual(
@@ -262,7 +262,7 @@ class SourceSuppressions(Sample):
         )
 
     def test_async_methods_and_moved_module_comments_cannot_borrow_an_entry(self):
-        (path, code, scope), reason = next(iter(guards.NOQA_ALLOWED.items()))
+        (path, code, scope), reason = next(iter(NOQA_ALLOWED.items()))
         source = self.scoped(scope, [f"# noqa: {code} # {reason}"])
         self.assertEqual(self.found({path: source.replace("def _pump", "async def _pump")}), [])
         self.assertEqual(

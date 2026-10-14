@@ -1,6 +1,8 @@
-from tests import guards
 from tests.case import REPO
 from tests.guard_checks import data_types
+from tests.guard_data import OPTION_TUPLES_ALLOWED, STANDALONE
+from tests.guard_data.linear_orchestrator import ORCH_PROJECT
+from tests.guard_data.session import SESSION_SRC
 from tests.guard_samples import PKG, Sample
 
 OPKG = "src/agent_pm/linear_orchestrator"
@@ -138,21 +140,21 @@ class SharedTypes(Sample):
                 self.assertEqual(data_types.shared_types(root), [])
 
     def test_standalone_definitions_and_consumers_keep_local_data_types(self):
-        for path in guards.STANDALONE:
+        for path in STANDALONE:
             with self.subTest(path=path):
                 module = path.split("/src/")[1].removesuffix(".py").replace("/", ".")
                 root = self.tree(
                     {
                         path: self.DATA,
-                        f"{guards.SESSION_SRC}engine/ordinary.py": f"from {module} import A\n",
+                        f"{SESSION_SRC}engine/ordinary.py": f"from {module} import A\n",
                     }
                 )
                 self.assertEqual(data_types.shared_types(root), [])
                 root = self.tree(
                     {
                         path: "from agent_pm.session.engine.ordinary import A\n",
-                        f"{guards.SESSION_SRC}engine/ordinary.py": self.DATA,
-                        f"{guards.SESSION_SRC}engine/consumer.py": (
+                        f"{SESSION_SRC}engine/ordinary.py": self.DATA,
+                        f"{SESSION_SRC}engine/consumer.py": (
                             "from agent_pm.session.engine.ordinary import A\n"
                         ),
                     }
@@ -160,7 +162,7 @@ class SharedTypes(Sample):
                 self.assertEqual(
                     data_types.shared_types(root),
                     [
-                        f"{guards.SESSION_SRC}engine/consumer.py:1: agent_pm.session.engine.ordinary.A: a shared data type belongs in a types.py"
+                        f"{SESSION_SRC}engine/consumer.py:1: agent_pm.session.engine.ordinary.A: a shared data type belongs in a types.py"
                     ],
                 )
 
@@ -264,7 +266,7 @@ class TypesOnly(Sample):
 
 class RunSpecSerialization(Sample):
     def test_serialization_belongs_to_the_run_spec(self):
-        path = f"{guards.ORCH_PROJECT}/{OPKG}/engine/types.py"
+        path = f"{ORCH_PROJECT}/{OPKG}/engine/types.py"
         source = "from dataclasses import dataclass\n@dataclass\nclass Spec:\n    def to_argv(self): return ['run']\n    @classmethod\n    def from_argv(cls, argv): return argv\n    def run(self): return 1\n"
         self.assertEqual(
             data_types.types_only(self.tree({path: source})),
@@ -276,7 +278,7 @@ class RunSpecSerialization(Sample):
 
     def test_serializer_names_do_not_allow_other_types_or_layers(self):
         for path, name in (
-            (f"{guards.ORCH_PROJECT}/{OPKG}/engine/types.py", "Other"),
+            (f"{ORCH_PROJECT}/{OPKG}/engine/types.py", "Other"),
             ("utils/src/agent_pm/utils/types.py", "Spec"),
         ):
             with self.subTest(path=path, name=name):
@@ -295,7 +297,7 @@ class OptionTuples(Sample):
 
     def found(self, extra=None, *, instead=None):
         files = {}
-        for key in guards.OPTION_TUPLES_ALLOWED:
+        for key in OPTION_TUPLES_ALLOWED:
             rel, name = key
             files[rel] = files.get(rel, "") + (instead or {}).get(key, f'{name} = ("a", "b")\n')
         for rel, text in (extra or {}).items():
@@ -307,7 +309,7 @@ class OptionTuples(Sample):
 
     def test_allowlisted_tuples_pass_each_with_a_one_line_reason(self):
         self.assertEqual(self.found(), [])
-        for key, reason in guards.OPTION_TUPLES_ALLOWED.items():
+        for key, reason in OPTION_TUPLES_ALLOWED.items():
             with self.subTest(key=key):
                 self.assertTrue(reason.strip())
                 self.assertNotIn("\n", reason)
@@ -379,7 +381,7 @@ class OptionTuples(Sample):
         )
 
     def test_an_allowlisted_name_that_is_no_longer_an_option_tuple_is_stale(self):
-        key = rel, name = next(iter(guards.OPTION_TUPLES_ALLOWED))
+        key = rel, name = next(iter(OPTION_TUPLES_ALLOWED))
         for source in (
             "",
             f"{name} = tuple(range(2))\n",
@@ -394,5 +396,5 @@ class OptionTuples(Sample):
     def test_every_entry_is_stale_in_an_empty_tree(self):
         self.assertEqual(
             data_types.option_tuples(self.tree({})),
-            sorted(f"{rel}: {name}: {self.STALE}" for rel, name in guards.OPTION_TUPLES_ALLOWED),
+            sorted(f"{rel}: {name}: {self.STALE}" for rel, name in OPTION_TUPLES_ALLOWED),
         )

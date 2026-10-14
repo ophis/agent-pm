@@ -2,6 +2,9 @@ import os
 
 from tests import guards
 from tests.guard_checks import imports, placement
+from tests.guard_data import PACKAGE_CLIMB_ALLOWED
+from tests.guard_data.linear_orchestrator import ORCH_PKG, ORCH_PROJECT
+from tests.guard_data.session import SESSION_SRC
 from tests.guard_samples import PKG, Sample
 
 OPKG = "src/agent_pm/linear_orchestrator"
@@ -120,15 +123,15 @@ class PackageClimbs(Sample):
             ): "TASK-393",
             ("manager/src/agent_pm/manager/engine/crew.py", "BIN"): "TASK-373",
         }
-        self.assertLessEqual(guards.PACKAGE_CLIMB_ALLOWED.keys(), expected.keys())
-        for key, owner in guards.PACKAGE_CLIMB_ALLOWED.items():
+        self.assertLessEqual(PACKAGE_CLIMB_ALLOWED.keys(), expected.keys())
+        for key, owner in PACKAGE_CLIMB_ALLOWED.items():
             self.assertEqual(owner, expected[key])
 
     def test_every_exemption_must_still_have_an_escape(self):
         root = self.tree({})
         found = placement.package_climbs(root)
         self.assertEqual(len(found), 5)
-        for (rel, name), ticket in guards.PACKAGE_CLIMB_ALLOWED.items():
+        for (rel, name), ticket in PACKAGE_CLIMB_ALLOWED.items():
             self.assertIn(f"{rel}: {name}: allowlisted but no package escape ({ticket})", found)
 
 
@@ -189,14 +192,14 @@ class OrchestratorLayout(Sample):
     def test_only_cli_is_executable(self):
         root = self.tree(
             {
-                f"{guards.ORCH_PROJECT}/{OPKG}/cli.py": 'if __name__ == "__main__": pass\n',
-                f"{guards.ORCH_PROJECT}/{OPKG}/engine/run.py": 'if __name__ == "__main__": pass\n',
+                f"{ORCH_PROJECT}/{OPKG}/cli.py": 'if __name__ == "__main__": pass\n',
+                f"{ORCH_PROJECT}/{OPKG}/engine/run.py": 'if __name__ == "__main__": pass\n',
             }
         )
         self.assertEqual(
             placement.orchestrator_entry(root),
             [
-                f"{guards.ORCH_PROJECT}/{OPKG}/engine/run.py:1: entry outside cli.py",
+                f"{ORCH_PROJECT}/{OPKG}/engine/run.py:1: entry outside cli.py",
             ],
         )
 
@@ -204,24 +207,24 @@ class OrchestratorLayout(Sample):
         self.assertEqual(
             placement.orchestrator_entry(self.tree({})),
             [
-                f"{guards.ORCH_PROJECT}/{OPKG}/cli.py: missing entry",
+                f"{ORCH_PROJECT}/{OPKG}/cli.py: missing entry",
             ],
         )
 
     def test_session_imports_are_frozen_at_their_owners(self):
         root = self.tree(
             {
-                f"{guards.ORCH_PROJECT}/{OPKG}/engine/router.py": "from agent_pm.session import DriverError, Session\n",
-                f"{guards.ORCH_PROJECT}/{OPKG}/engine/ops.py": "from agent_pm.session import DriverError\n",
-                f"{guards.ORCH_PROJECT}/{OPKG}/engine/new.py": "import agent_pm.session as session\nsession.Driver()\n",
+                f"{ORCH_PROJECT}/{OPKG}/engine/router.py": "from agent_pm.session import DriverError, Session\n",
+                f"{ORCH_PROJECT}/{OPKG}/engine/ops.py": "from agent_pm.session import DriverError\n",
+                f"{ORCH_PROJECT}/{OPKG}/engine/new.py": "import agent_pm.session as session\nsession.Driver()\n",
             }
         )
         self.assertEqual(
             imports.orchestrator_session_imports(root),
             [
-                f"{guards.ORCH_PROJECT}/{OPKG}/engine/new.py: {guards.ORCH_PKG}.engine.new imports Driver from agent_pm.session; go through agent_pm.delegate",
-                f"{guards.ORCH_PROJECT}/{OPKG}/engine/ops.py: {guards.ORCH_PKG}.engine.ops imports DriverError from agent_pm.session; go through agent_pm.delegate",
-                f"{guards.ORCH_PROJECT}/{OPKG}/engine/router.py: {guards.ORCH_PKG}.engine.router imports Session from agent_pm.session; go through agent_pm.delegate",
+                f"{ORCH_PROJECT}/{OPKG}/engine/new.py: {ORCH_PKG}.engine.new imports Driver from agent_pm.session; go through agent_pm.delegate",
+                f"{ORCH_PROJECT}/{OPKG}/engine/ops.py: {ORCH_PKG}.engine.ops imports DriverError from agent_pm.session; go through agent_pm.delegate",
+                f"{ORCH_PROJECT}/{OPKG}/engine/router.py: {ORCH_PKG}.engine.router imports Session from agent_pm.session; go through agent_pm.delegate",
             ],
         )
 
@@ -233,7 +236,7 @@ class PackageTop(Sample):
             for project in guards.PROJECTS
             for path, text in self.package(project, "__init__.py", "engine/x.py").items()
         }
-        files[guards.SESSION_SRC + "config.toml"] = ""
+        files[SESSION_SRC + "config.toml"] = ""
         self.assertEqual(placement.package_top(self.tree(files)), [])
 
     def package(self, project, *entries):
@@ -255,7 +258,7 @@ class PackageTop(Sample):
                 "team/x.py",
                 "misc/x.py",
             ),
-            **self.package(guards.ORCH_PROJECT, "__init__.py", "engine/x.py", "config.toml"),
+            **self.package(ORCH_PROJECT, "__init__.py", "engine/x.py", "config.toml"),
             **self.package("manager", "__init__.py", "engine/crew.py", "engine/roster.py", "y.py"),
         }
         self.assertEqual(

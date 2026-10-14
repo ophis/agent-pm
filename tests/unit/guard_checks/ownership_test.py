@@ -1,6 +1,9 @@
-from tests import guards
 from tests.case import REPO
 from tests.guard_checks import commands, exports, ownership
+from tests.guard_data import LEGACY_HOST_NAMES
+from tests.guard_data.delegate import CONFIG_FILE
+from tests.guard_data.session import ADAPTERS_HOME, SESSION_SRC
+from tests.guard_data.utils import CONFIG_LEVELS
 from tests.guard_samples import PKG, Sample
 
 OPKG = "src/agent_pm/linear_orchestrator"
@@ -30,40 +33,40 @@ class DelegatePackageNames(Sample):
 class SessionNames(Sample):
     def test_layer_owned_config_entry_can_forward_to_utils(self):
         root = self.tree(
-            {guards.SESSION_SRC + "engine/config.py": "from agent_pm.utils import read_resources\n"}
+            {SESSION_SRC + "engine/config.py": "from agent_pm.utils import read_resources\n"}
         )
         self.assertEqual(ownership.session_names(root), [])
 
     def test_layer_owned_config_entry_cannot_read_repository_configuration(self):
         root = self.tree(
-            {guards.SESSION_SRC + "engine/config.py": "from agent_pm.utils import read_project\n"}
+            {SESSION_SRC + "engine/config.py": "from agent_pm.utils import read_project\n"}
         )
         self.assertEqual(
             ownership.session_names(root),
-            [guards.SESSION_SRC + "engine/config.py: names read_project"],
+            [SESSION_SRC + "engine/config.py: names read_project"],
         )
 
     def test_config_readers_protocol_and_team_names_are_rejected(self):
         root = self.tree(
             {
-                guards.SESSION_SRC
+                SESSION_SRC
                 + "engine/probe.py": "import tomllib\nfrom agent_pm.utils import read_project\nTAG = 'agent-pm-progress'\nTEAM = 'team/'\n"
             }
         )
         self.assertEqual(
             ownership.session_names(root),
             [
-                guards.SESSION_SRC + "engine/probe.py: names agent-pm-progress",
-                guards.SESSION_SRC + "engine/probe.py: names read_project",
-                guards.SESSION_SRC + "engine/probe.py: names team/",
-                guards.SESSION_SRC + "engine/probe.py: names tomllib",
+                SESSION_SRC + "engine/probe.py: names agent-pm-progress",
+                SESSION_SRC + "engine/probe.py: names read_project",
+                SESSION_SRC + "engine/probe.py: names team/",
+                SESSION_SRC + "engine/probe.py: names tomllib",
             ],
         )
 
     def test_runtime_state_json_and_other_layers_are_clean(self):
         root = self.tree(
             {
-                guards.SESSION_SRC + "engine/probe.py": "import json\n",
+                SESSION_SRC + "engine/probe.py": "import json\n",
                 "delegate/src/agent_pm/delegate/probe.py": "import tomllib\n",
             }
         )
@@ -145,9 +148,7 @@ class Standalone(Sample):
                 "session/tests/a_test.py": "import agent_pm.linear_orchestrator\n",
                 "linear-orchestrator/b.py": "import agent_pm.linear_orchestrator\n",
                 "tests/c.py": "import agent_pm.linear_orchestrator\n",
-                guards.CONFIG_LEVELS: (
-                    'LEVELS = (("linear-orchestrator",),)\n# linear-orchestrator\n'
-                ),
+                CONFIG_LEVELS: ('LEVELS = (("linear-orchestrator",),)\n# linear-orchestrator\n'),
             }
         )
         self.assertEqual(
@@ -158,7 +159,7 @@ class Standalone(Sample):
                 f"{team}/roles/r.md:2: names linear_orchestrator",
                 f"manager/{PKG}/manager/z.py:1: names linear-orchestrator",
                 f"session/{PKG}/session/x.py:1: names linear_orchestrator",
-                f"{guards.CONFIG_LEVELS}:2: names linear-orchestrator",
+                f"{CONFIG_LEVELS}:2: names linear-orchestrator",
                 f"utils/{PKG}/utils/y.py:1: names linear_orchestrator",
             ],
         )
@@ -241,15 +242,15 @@ class AdaptersKey(Sample):
             {
                 f"delegate/{PKG}/delegate/composer/x.py": sample,
                 f"session/{PKG}/session/adapters/x.py": sample,
-                guards.CONFIG_FILE: sample,
-                guards.ADAPTERS_HOME: sample,
+                CONFIG_FILE: sample,
+                ADAPTERS_HOME: sample,
             }
         )
         self.assertEqual(
             ownership.adapters_key(root),
             [
                 f'delegate/{PKG}/delegate/composer/x.py:2: literal key "adapters"',
-                f'{guards.CONFIG_FILE}:2: literal key "adapters"',
+                f'{CONFIG_FILE}:2: literal key "adapters"',
                 f'session/{PKG}/session/adapters/x.py:2: literal key "adapters"',
             ],
         )
@@ -329,7 +330,7 @@ class SessionDisplay(Sample):
             f"session/{PKG}/session/modes/sample.py",
             f"session/{PKG}/session/hosts/other/sample.py",
             f"utils/{PKG}/utils/sample.py",
-            guards.CONFIG_FILE,
+            CONFIG_FILE,
         ):
             for source in (
                 "def f(pane): return pane\n",
@@ -373,7 +374,7 @@ class SessionDisplay(Sample):
 class LegacyHostNames(Sample):
     def baseline(self):
         files = {}
-        for (path, name), (count, _) in guards.LEGACY_HOST_NAMES.items():
+        for (path, name), (count, _) in LEGACY_HOST_NAMES.items():
             files[path] = files.get(path, "") + f"{name} = None\n" * count
         return files
 
@@ -385,7 +386,7 @@ class LegacyHostNames(Sample):
 
     def test_an_extra_use_on_the_same_line_is_rejected(self):
         files = self.baseline()
-        path = f"{guards.SESSION_SRC}engine/forwarding.py"
+        path = f"{SESSION_SRC}engine/forwarding.py"
         files[path] += "opener = opener\n"
         self.assertEqual(
             ownership.legacy_host_names(self.tree(files)),
@@ -394,7 +395,7 @@ class LegacyHostNames(Sample):
 
     def test_a_removed_name_or_file_is_stale(self):
         files = self.baseline()
-        path = f"{guards.SESSION_SRC}engine/forwarding.py"
+        path = f"{SESSION_SRC}engine/forwarding.py"
         files[path] = files[path].replace("\nopener = None", "\n").replace("\n\n", "\n")
         self.assertEqual(
             ownership.legacy_host_names(self.tree(files)),
@@ -403,16 +404,16 @@ class LegacyHostNames(Sample):
         del files[path]
         self.assertEqual(
             len(ownership.legacy_host_names(self.tree(files))),
-            len([key for key in guards.LEGACY_HOST_NAMES if key[0] == path]),
+            len([key for key in LEGACY_HOST_NAMES if key[0] == path]),
         )
 
     def test_new_names_and_other_modules_have_no_exemption(self):
         files = self.baseline()
-        path = f"{guards.SESSION_SRC}engine/forwarding.py"
+        path = f"{SESSION_SRC}engine/forwarding.py"
         files[path] += "pane = None\nnew_tmux = None\n"
         self.assertTrue(ownership.session_display(self.tree(files)))
         self.assertTrue(ownership.tmux_calls(self.tree(files)))
-        files[f"{guards.SESSION_SRC}engine/other.py"] = "opener = None\nTmuxHost = None\n"
+        files[f"{SESSION_SRC}engine/other.py"] = "opener = None\nTmuxHost = None\n"
         self.assertEqual(len(ownership.session_display(self.tree(files))), 2)
         self.assertEqual(len(ownership.tmux_calls(self.tree(files))), 2)
 

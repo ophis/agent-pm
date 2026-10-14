@@ -6,7 +6,7 @@ import re
 import tokenize
 
 from tests.guard_checks.common import _tree_files
-from tests.guards import NOQA_ALLOWED
+from tests.guard_data import NOQA_ALLOWED
 
 
 def source_suppressions(repo: str) -> list[str]:

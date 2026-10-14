@@ -4,6 +4,9 @@ import os
 from tests import guards
 from tests.case import ORCH_ROOT, REPO
 from tests.guard_checks import configuration, ownership
+from tests.guard_data.linear_orchestrator import CONFIG_PY, LOAD_HELPERS, ORCH_PROJECT
+from tests.guard_data.session import SESSION_SRC
+from tests.guard_data.utils import CONFIG_LEVELS
 from tests.guard_samples import Sample
 
 OPKG = "src/agent_pm/linear_orchestrator"
@@ -61,9 +64,9 @@ class ConfigOnce(Sample):
         )
 
     def test_the_load_helpers_are_config_py_functions(self):
-        with open(os.path.join(REPO, guards.ORCH_PROJECT, guards.CONFIG_PY), encoding="utf-8") as f:
+        with open(os.path.join(REPO, ORCH_PROJECT, CONFIG_PY), encoding="utf-8") as f:
             defined = {n.name for n in ast.parse(f.read()).body if isinstance(n, ast.FunctionDef)}
-        self.assertLessEqual(set(guards.LOAD_HELPERS), defined)
+        self.assertLessEqual(set(LOAD_HELPERS), defined)
 
     def test_the_real_entries_calls_outside_an_entry(self):
         files = {}
@@ -90,12 +93,10 @@ class OrchestratorAbsent(Sample):
 
 class ConfigLevels(Sample):
     def levels(self, text):
-        return configuration.config_levels(self.tree({guards.CONFIG_LEVELS: text}))
+        return configuration.config_levels(self.tree({CONFIG_LEVELS: text}))
 
     def test_the_layer_order_and_the_config_levels(self):
-        self.assertEqual(
-            guards.LAYERS, ("utils", "session", "delegate", guards.ORCH_PROJECT, "manager")
-        )
+        self.assertEqual(guards.LAYERS, ("utils", "session", "delegate", ORCH_PROJECT, "manager"))
         self.assertEqual(
             self.levels(
                 'LEVELS = (("utils", "session"), ("delegate",), ("linear-orchestrator",), ("manager",))\n'
@@ -104,7 +105,7 @@ class ConfigLevels(Sample):
         )
 
     def test_each_project_once_and_only_projects(self):
-        at = guards.CONFIG_LEVELS
+        at = CONFIG_LEVELS
         self.assertEqual(
             self.levels('LEVELS = (("utils", "session"), ("delegate", "x"), ("delegate",))\n'),
             [
@@ -124,14 +125,14 @@ class ExplicitKeys(Sample):
     def test_packaged_defaults_supply_keys_for_local_examples(self):
         root = self.tree(
             {
-                guards.SESSION_SRC + "config.toml": "[hosts.tmux]\nstatus_line = false\n",
+                SESSION_SRC + "config.toml": "[hosts.tmux]\nstatus_line = false\n",
                 "delegate/config.toml": "# local: [session.hosts.tmux]\n# local: status_line = true\n",
             }
         )
         self.assertEqual(configuration.explicit_keys(root), [])
 
     def test_packaged_defaults_reject_commented_only_keys(self):
-        rel = guards.SESSION_SRC + "config.toml"
+        rel = SESSION_SRC + "config.toml"
         root = self.tree(
             {rel: "[hosts.tmux]\nx = 1\n# local: [hosts.tmux]\n# local: status_line = true\n"}
         )
@@ -146,7 +147,7 @@ class ExplicitKeys(Sample):
                 "delegate/src/agent_pm/delegate/config.toml": (
                     'cwd = ""\n# local: cwd = "/x"\n[output]\ntype = "local"\ndir = ""\n[roles.a.output]\ntype = "x"\n# local: [roles.b]\n# local: cwd = "/y"\n# local: [roles.b.output]\n# local: dir = "d"\n'
                 ),
-                f"{guards.ORCH_PROJECT}/{OPKG}/config.toml": (
+                f"{ORCH_PROJECT}/{OPKG}/config.toml": (
                     '[labels]\n# local: [labels]\n# local: x = "1"\n[roles.a]\nkey = ""\n# local: [roles.c]\n# local: key = "k"\n# local: [core.roles.a]\n# local: cwd = "/z"\n'
                 ),
             }
@@ -156,7 +157,7 @@ class ExplicitKeys(Sample):
     def test_sectioned_examples_keep_dynamic_empty_tables_and_reject_missing_keys(self):
         root = self.tree(
             {
-                f"{guards.ORCH_PROJECT}/{OPKG}/config.toml": (
+                f"{ORCH_PROJECT}/{OPKG}/config.toml": (
                     '[labels]\n# local: [linear_orchestrator.labels]\n# local: x = "1"\n'
                     '[roles.a]\nkey = ""\n# local: [linear_orchestrator.roles.b]\n# local: key = "k"\n'
                     "# local: [linear_orchestrator]\n# local: typo = 1\n# local: [session]\n"
@@ -166,7 +167,7 @@ class ExplicitKeys(Sample):
         self.assertEqual(
             configuration.explicit_keys(root),
             [
-                f"{guards.ORCH_PROJECT}/{OPKG}/config.toml: `# local:` key linear_orchestrator.typo has no real line",
+                f"{ORCH_PROJECT}/{OPKG}/config.toml: `# local:` key linear_orchestrator.typo has no real line",
             ],
         )
 

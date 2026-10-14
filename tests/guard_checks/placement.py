@@ -4,15 +4,9 @@ import ast
 import os
 
 from tests.guard_checks.common import _bindings, _dotted, _files
-from tests.guards import (
-    ENTRY_MODULES,
-    ORCH_PROJECT,
-    ORCH_SRC,
-    PACKAGE_CLIMB_ALLOWED,
-    PKG,
-    PROJECTS,
-    SUBPACKAGES,
-)
+from tests.guard_data import ENTRY_MODULES, PACKAGE_CLIMB_ALLOWED, SUBPACKAGES
+from tests.guard_data.linear_orchestrator import ORCH_PROJECT, ORCH_SRC
+from tests.guards import PKG, PROJECTS
 
 LEFTOVERS = {"__pycache__", ".DS_Store"}
 

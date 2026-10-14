@@ -12,13 +12,9 @@ import sysconfig
 import types
 
 from tests.guard_checks.common import _at_import, _bindings, _dotted, _files, _resolve_boundary
-from tests.guards import (
-    OBJECT_EXPORT_MODULES,
-    OBJECT_EXPORTS_ALLOWED,
-    PROJECTS,
-    SESSION_INTERFACE,
-    SESSION_INTERFACE_MODULES,
-)
+from tests.guard_data import OBJECT_EXPORT_MODULES, OBJECT_EXPORTS_ALLOWED
+from tests.guard_data.session import SESSION_INTERFACE, SESSION_INTERFACE_MODULES
+from tests.guards import PROJECTS
 
 
 def manager_exports(repo: str) -> list[str]:

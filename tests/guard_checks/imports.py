@@ -17,19 +17,20 @@ from tests.guard_checks.common import (
     _tree_files,
     _within,
 )
-from tests.guards import (
+from tests.guard_data import (
     DELEGATE_SESSION_FORWARDING_ALLOWED,
     IMPORT_BOOTSTRAPS,
+    ORCH_SESSION_IMPORTS,
+    STANDALONE,
+)
+from tests.guard_data.linear_orchestrator import (
     ORCH_PKG,
     ORCH_PROJECT,
     ORCH_SESSION_CONTRACT,
-    ORCH_SESSION_IMPORTS,
     ORCH_SRC,
-    PKG,
-    PROJECTS,
-    SESSION,
-    STANDALONE,
 )
+from tests.guard_data.session import SESSION
+from tests.guards import PKG, PROJECTS
 from tests.import_policy import violation
 
 READS = {"copy", "count", "get", "index", "items", "keys", "values"}

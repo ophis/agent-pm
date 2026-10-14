@@ -2,9 +2,10 @@ import json
 import os
 import sys
 
-from tests import guards
 from tests.case import REPO
 from tests.guard_checks import exports
+from tests.guard_data import OBJECT_EXPORTS_ALLOWED
+from tests.guard_data.session import SESSION_INTERFACE, SESSION_INTERFACE_MODULES
 from tests.guard_samples import PKG, Sample
 
 
@@ -358,12 +359,12 @@ class DelegateObjectExports(Sample):
         }
         actual = {
             key
-            for key in guards.OBJECT_EXPORTS_ALLOWED
+            for key in OBJECT_EXPORTS_ALLOWED
             if key[0] in ("agent_pm.delegate", "agent_pm.delegate.composer")
         }
         self.assertLessEqual(actual, expected)
         for key in actual:
-            self.assertTrue(guards.OBJECT_EXPORTS_ALLOWED[key].strip())
+            self.assertTrue(OBJECT_EXPORTS_ALLOWED[key].strip())
 
     def test_only_pinned_functions_and_objects_are_allowed(self):
         for package in self.LEGACY:
@@ -505,10 +506,10 @@ class ObjectExports(Sample):
     def test_the_allowlisted_wrappers_pass_each_with_a_one_line_reason(self):
         self.assertEqual(self.found(), [])
         self.assertEqual(
-            {key for key in guards.OBJECT_EXPORTS_ALLOWED if key[0] == "agent_pm.session"},
+            {key for key in OBJECT_EXPORTS_ALLOWED if key[0] == "agent_pm.session"},
             {("agent_pm.session", n) for n in self.ENTRY_FUNCTIONS},
         )
-        for key, reason in guards.OBJECT_EXPORTS_ALLOWED.items():
+        for key, reason in OBJECT_EXPORTS_ALLOWED.items():
             with self.subTest(key=key):
                 self.assertTrue(reason.strip())
                 self.assertNotIn("\n", reason)
@@ -587,12 +588,12 @@ class ObjectExports(Sample):
 
 class SessionInterfaceSnapshot(Sample):
     def snapshot(self) -> dict:
-        with open(os.path.join(REPO, guards.SESSION_INTERFACE), encoding="utf-8") as f:
+        with open(os.path.join(REPO, SESSION_INTERFACE), encoding="utf-8") as f:
             return json.load(f)
 
     def checked(self, snapshot) -> list[str]:
         return exports.session_interface_snapshot(
-            self.tree({guards.SESSION_INTERFACE: json.dumps(snapshot)})
+            self.tree({SESSION_INTERFACE: json.dumps(snapshot)})
         )
 
     def test_the_repository_matches_its_snapshot(self):
@@ -601,7 +602,7 @@ class SessionInterfaceSnapshot(Sample):
     def test_the_snapshot_covers_both_entry_modules_and_their_signatures(self):
         snapshot = self.snapshot()
         self.assertEqual(
-            guards.SESSION_INTERFACE_MODULES, ("agent_pm.session", "agent_pm.session.extension")
+            SESSION_INTERFACE_MODULES, ("agent_pm.session", "agent_pm.session.extension")
         )
         self.assertEqual(
             snapshot["agent_pm.session.extension.Host.terminal"],
@@ -618,15 +619,15 @@ class SessionInterfaceSnapshot(Sample):
         for changed, want in (
             (
                 {**snapshot, key: "def(self:POSITIONAL_OR_KEYWORD)"},
-                f"{guards.SESSION_INTERFACE}: {key}: def(self:POSITIONAL_OR_KEYWORD) -> {have}",
+                f"{SESSION_INTERFACE}: {key}: def(self:POSITIONAL_OR_KEYWORD) -> {have}",
             ),
             (
                 {k: v for k, v in snapshot.items() if k != key},
-                f"{guards.SESSION_INTERFACE}: {key}: absent -> {have}",
+                f"{SESSION_INTERFACE}: {key}: absent -> {have}",
             ),
             (
                 {**snapshot, "agent_pm.session.Gone": "def()"},
-                f"{guards.SESSION_INTERFACE}: agent_pm.session.Gone: def() -> absent",
+                f"{SESSION_INTERFACE}: agent_pm.session.Gone: def() -> absent",
             ),
         ):
             with self.subTest(want=want):
@@ -635,5 +636,5 @@ class SessionInterfaceSnapshot(Sample):
     def test_a_missing_snapshot_fails(self):
         self.assertEqual(
             exports.session_interface_snapshot(self.tree({"README.md": ""})),
-            [f"{guards.SESSION_INTERFACE}: missing"],
+            [f"{SESSION_INTERFACE}: missing"],
         )
