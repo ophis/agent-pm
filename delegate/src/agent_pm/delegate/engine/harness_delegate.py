@@ -241,7 +241,7 @@ class HarnessDelegate(Delegate):
 
     def _replacing(self, payload: bytes) -> int:
         """The attempt replacing the run `payload` records, refused while that run is alive; the
-        agent session it left open (a tui run's, after its outcome) is closed.
+        agent session it left open (a tui run's, after its outcome or its process's death) is closed.
         """
         try:
             previous = self._parse(payload)
@@ -473,12 +473,7 @@ class HarnessDelegate(Delegate):
         if state.detached:
             process = self._harness(state)
             return process is not None and process.alive()
-        if state.completed:
-            return False
-        if self.store.running():
-            return True
-        agent = self._agent(state)
-        return agent is not None and agent.state() == Liveness.LIVE
+        return not state.completed and self.store.running()
 
     def alive(self) -> bool:
         return self._alive(self._read())
