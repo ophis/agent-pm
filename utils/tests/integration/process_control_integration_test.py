@@ -55,6 +55,29 @@ class ProcessControlTest(Case):
         self.assertEqual(dict(line.split("=", 1) for line in out.decode().splitlines()), env)
         self.assertEqual((process.returncode, err), (0, b""))
 
+    def test_only_requested_controller_environment_replaces_explicit_values(self):
+        control = ProcessControl.prepare(
+            ["/usr/bin/env"],
+            os.getcwd(),
+            env={"ONE": "kept", "INHERITED": "caller", "ABSENT": "caller"},
+            inherit_env=("INHERITED", "ABSENT"),
+        )
+        process = subprocess.Popen(
+            control.command(),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            env={"INHERITED": "controller", "UNRELATED": "excluded"},
+        )
+        self.addCleanup(control.remove)
+        self.addCleanup(process.communicate, timeout=10)
+        control.wait_started()
+        out, err = process.communicate(timeout=10)
+        self.assertEqual(
+            dict(line.split("=", 1) for line in out.decode().splitlines()),
+            {"ONE": "kept", "INHERITED": "controller"},
+        )
+        self.assertEqual((process.returncode, err), (0, b""))
+
     def test_exec_failure_is_reported_without_a_startup_timeout(self):
         control = ProcessControl.prepare(["/no-such-task366-program"], os.getcwd())
         process = subprocess.Popen(

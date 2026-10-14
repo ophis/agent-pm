@@ -216,7 +216,9 @@ class TmuxHost(Host, Displayable):
                 raise ConfigError(str(e)) from None
         parts = self.unfold(display)
         try:
-            control = ProcessControl.prepare(argv, cwd, env=env)
+            control = ProcessControl.prepare(
+                argv, cwd, env=env, inherit_env=(*tmux_host.TERMINAL_KEYS, "PWD")
+            )
             process = self.tmux.detach(
                 name,
                 control.command(),

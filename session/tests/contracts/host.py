@@ -86,6 +86,9 @@ class HostContract:
     def make_host(self) -> Host:
         raise NotImplementedError
 
+    def terminal_env(self, name: str) -> dict[str, str]:
+        return {}
+
     def setUp(self):
         super().setUp()
         self.host = self.make_host()
@@ -153,28 +156,46 @@ class HostContract:
         terminal.send(Key("Enter"))
         self.poll(lambda: (read(out) or "").rstrip("\r\n") == "hello host", f"line in {out}")
 
-    def test_the_program_gets_the_env_given_verbatim_and_nothing_of_its_creators(self):
+    def test_the_program_gets_only_the_given_env_with_its_own_terminal_context(self):
         name, out = self.fresh(), self.file("env")
-        env = self.env(HOST_CONTRACT_VALUE="a b 'c' \"$HOME\" ;*")
+        gate = self.file("finish")
+        env = self.env(
+            HOST_CONTRACT_VALUE="a b 'c' \"$HOME\" ;*",
+            TMUX="caller-server",
+            TMUX_PANE="caller-pane",
+            TERM="caller-terminal",
+            PWD="/wrong-directory",
+        )
         with mock.patch.dict(os.environ, {"HOST_CONTRACT_CREATOR_ONLY": "1"}):
-            self.host.detach(
+            process = self.host.detach(
                 name,
                 [
                     "/usr/bin/perl",
                     "-e",
                     'open(my $out, ">", $ARGV[0]) or die $!; '
-                    'print $out map { "$_=$ENV{$_}\\0" } keys %ENV;',
+                    'print $out map { "$_=$ENV{$_}\\0" } keys %ENV; close($out); '
+                    "select(undef, undef, undef, 0.01) until -e $ARGV[1];",
                     out,
+                    gate,
                 ],
                 self.home,
                 env,
             )
+        self.addCleanup(process.close)
         got = dict(
             entry.split("=", 1)
             for entry in self.poll(lambda: read(out), f"env in {out}").split("\0")
             if entry
         )
-        self.assertEqual(got, env)
+        expected = {
+            key: value for key, value in env.items() if key not in {"TMUX", "TMUX_PANE", "TERM"}
+        }
+        self.assertEqual(
+            got, {**expected, **self.terminal_env(name), "PWD": self.home}, f"program env: {got!r}"
+        )
+        with open(gate, "w", encoding="utf-8"):
+            pass
+        self.assertTrue(process.wait_exit(DEADLINE))
 
     def test_a_foreign_display_is_kept_and_listed_only_under_itself(self):
         name = self.fresh()

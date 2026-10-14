@@ -22,6 +22,8 @@ class TmuxHostContractTest(HostContract, Case):
     def setUp(self):
         self.server = live_tmux.Server(self, self.home)
         self.server.start(MANAGER)
+        colored = self.server.tmux("set-environment", "-g", "COLORTERM", "truecolor")
+        self.assertEqual(colored.returncode, 0, colored.stderr)
         patch = mock.patch.dict(os.environ, self.server.env(), clear=True)
         patch.start()
         self.addCleanup(patch.stop)
@@ -29,6 +31,23 @@ class TmuxHostContractTest(HostContract, Case):
 
     def make_host(self):
         return TmuxHost("tmux")
+
+    def terminal_env(self, name):
+        terminal = self.server.tmux("show-options", "-gv", "default-terminal")
+        version = self.server.tmux("display-message", "-p", "#{version}")
+        identity = self.server.tmux(
+            "display-message", "-p", "-t", f"={name}:", "#{pid} #{session_id} #{pane_id}"
+        )
+        self.assertEqual((terminal.returncode, version.returncode, identity.returncode), (0, 0, 0))
+        pid, session, pane = identity.stdout.strip().split()
+        return {
+            "TMUX": f"{self.server.socket},{pid},{session.removeprefix('$')}",
+            "TMUX_PANE": pane,
+            "TERM": terminal.stdout.strip(),
+            "TERM_PROGRAM": "tmux",
+            "TERM_PROGRAM_VERSION": version.stdout.strip(),
+            "COLORTERM": "truecolor",
+        }
 
     def start(self, kind, name, code, *args, **kw):
         if kind == "terminal":

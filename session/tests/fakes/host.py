@@ -17,6 +17,7 @@ import uuid
 
 from agent_pm.session import DriverError, Host, HostProcess, Terminal
 from agent_pm.session.engine.types import Key, Paste
+from agent_pm.session.hosts.tmux import tmux_host
 from agent_pm.utils import Display, ProcessControl, Record, import_roots
 
 NAME = re.compile(r"[A-Za-z0-9_-]+\Z")
@@ -167,6 +168,8 @@ class FakeHost(Host):
             previous.close()
         shutil.rmtree(folder, ignore_errors=True)
         os.makedirs(folder, mode=0o700)
+        env = {key: value for key, value in env.items() if key not in tmux_host.TERMINAL_KEYS}
+        env["PWD"] = os.path.abspath(cwd)
         control = ProcessControl.prepare(argv, cwd, env=env)
         meta = {
             "control": control.path,

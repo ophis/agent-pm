@@ -174,13 +174,21 @@ class ProcessControl:
 
     @classmethod
     def prepare(
-        cls, argv: Sequence[str], cwd: str, *, env: Mapping[str, str] | None = None
+        cls,
+        argv: Sequence[str],
+        cwd: str,
+        *,
+        env: Mapping[str, str] | None = None,
+        inherit_env: Sequence[str] = (),
     ) -> ProcessControl:
+        """Persist the launch; inherit_env replaces explicit entries with controller values."""
         path = tempfile.mkdtemp(prefix="apm-group-", dir="/tmp")
         try:
             launch = {"argv": list(argv), "cwd": cwd}
             if env is not None:
                 launch["env"] = dict(env)
+            if inherit_env:
+                launch["inherit_env"] = list(inherit_env)
             _write(os.path.join(path, "launch.json"), launch)
             _write(os.path.join(path, "lock"), {})
         except BaseException:
@@ -318,7 +326,15 @@ class ProcessControl:
                 listener.listen()
                 signal.signal(signal.SIGCHLD, signal.SIG_DFL)
                 if "env" in launch:
-                    options["env"] = launch["env"]
+                    inherited = launch.get("inherit_env", ())
+                    options["env"] = {
+                        **{
+                            key: value
+                            for key, value in launch["env"].items()
+                            if key not in inherited
+                        },
+                        **{key: os.environ[key] for key in inherited if key in os.environ},
+                    }
                 group = _Group.launch(launch["argv"], launch["cwd"], **options)
                 fcntl.flock(lock, fcntl.LOCK_UN)
             if detached:

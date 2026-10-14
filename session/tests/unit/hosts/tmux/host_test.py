@@ -249,7 +249,12 @@ class DetachTest(Base):
         self.assertEqual((process.name, process.alive()), ("d1", True))
         self.assertEqual(
             json.loads(Path(self.control.path, "launch.json").read_text()),
-            {"argv": ["tool", "a b"], "cwd": self.dir, "env": {"PATH": "/bin"}},
+            {
+                "argv": ["tool", "a b"],
+                "cwd": self.dir,
+                "env": {"PATH": "/bin"},
+                "inherit_env": [*tmux_host.TERMINAL_KEYS, "PWD"],
+            },
         )
         self.tmux.status.assert_called_with("%7")
         self.assertEqual(SIGNALS, (signal.SIGHUP, signal.SIGTERM, signal.SIGINT))
