@@ -10,7 +10,15 @@ from unittest import mock
 
 from agent_pm import delegate
 from agent_pm.delegate import Begun, Finished, Limit, Outcome, Progress, Result, Spec
-from agent_pm.linear_orchestrator.engine import config, ops, run, run_comments, runs, writeback
+from agent_pm.linear_orchestrator.engine import (
+    config,
+    ops,
+    router,
+    run,
+    run_comments,
+    runs,
+    writeback,
+)
 from agent_pm.linear_orchestrator.engine import log as event_log
 from agent_pm.linear_orchestrator.engine.types import Spec as RunSpec
 from agent_pm.linear_orchestrator.engine.types import Stopped
@@ -537,6 +545,16 @@ class RunTui(Case):
         f"agent-pm-engineer-{ID}",
     ]
 
+    def prepare_cleanup(self, *extra):
+        cfg = config.load()
+        event_log.use_logs(cfg.logs_dir)
+        return router.begin(
+            cfg,
+            RunSpec.from_argv(self.argv(*extra)),
+            role="engineer",
+            now=lambda: datetime.fromisoformat(NOW),
+        )
+
     def test_selected_recorded_run_closes_all_owned_sessions_before_new_run(self):
         for extra in ((), ("--tui",)):
             with self.subTest(extra=extra):
@@ -545,6 +563,7 @@ class RunTui(Case):
                 self.gql = Gql()
                 self.order.clear()
                 before = len(self.said())
+                self.prepare_cleanup(*extra)
                 self.assertEqual(self.main(*extra), 0, (self.said(), self.err))
                 self.assertEqual(
                     self.order[:4],
@@ -552,7 +571,7 @@ class RunTui(Case):
                 )
                 self.assertEqual(
                     self.said()[before : before + 2],
-                    [f"run launch TASK-7 mode=new sid={SID}", "run tui-closed TASK-7"],
+                    ["router tui-closed TASK-7", f"run launch TASK-7 mode=new sid={SID}"],
                 )
                 self.assertFalse(
                     any(o[0] == "sessions" for o in self.order if isinstance(o, tuple))
@@ -560,12 +579,14 @@ class RunTui(Case):
 
     def test_unrecorded_matching_sessions_remain_untouched(self):
         self.api.live = [*self.MINE, *self.OTHER]
+        self.prepare_cleanup()
         self.assertEqual(self.main(), 0, (self.said(), self.err))
         self.assertEqual(self.order, ["run"])
         self.assertEqual(self.said()[0], f"run launch TASK-7 mode=new sid={SID}")
 
     def test_other_recorded_issue_remains_untouched(self):
         self.record_cleanup(["unrelated-agent"], issue="TASK-70")
+        self.prepare_cleanup()
         self.assertEqual(self.main(), 0, (self.said(), self.err))
         self.assertEqual(self.order, ["run"])
         self.assertFalse(any("tui-" in line for line in self.said()))
@@ -573,19 +594,22 @@ class RunTui(Case):
     def test_unknown_recorded_view_logs_error_and_the_run_goes_on(self):
         self.record_cleanup(self.MINE)
         os.unlink(os.path.join(self.rd, "delegate.json"))
+        self.prepare_cleanup()
         self.assertEqual(self.main(), 0, (self.said(), self.err))
         self.assertEqual(self.order, ["run"])
         self.assertEqual(
-            self.said()[1], f"run tui-error TASK-7 msg=ConfigError: {self.rd!r}: no delegate.json"
+            self.said()[0],
+            f"router tui-error TASK-7 msg=ConfigError: {self.rd!r}: no delegate.json",
         )
 
     def test_close_error_logs_and_other_owned_sessions_close_before_run(self):
         self.record_cleanup(self.MINE)
         self.api.errors = {self.MINE[0]: DriverError("kill failed")}
         self.done(Progress("start", "x"))
+        self.prepare_cleanup()
         self.assertEqual(self.main(), 0, (self.said(), self.err))
         self.assertEqual(self.order[:3], [*(("close", x) for x in self.MINE), "run"])
-        self.assertEqual(self.said()[1], "run tui-error TASK-7 msg=DriverError: kill failed")
+        self.assertEqual(self.said()[0], "router tui-error TASK-7 msg=DriverError: kill failed")
         self.assertIn(f"writeback step TASK-7 sid={SID} step=move:in_review", self.said())
         self.assertEqual(self.gql.calls[-2:], [*updated(ended("done", 0)), REPAIR])
 
@@ -695,7 +719,6 @@ class RunUsageLimits(Case):
         self.assertEqual(
             self.said()[1:],
             [
-                f"run tui-error TASK-7 msg=IsADirectoryError: [Errno 21] Is a directory: '{self.runs}'",
                 f"run end TASK-7 sid={SID} exit=-9",
                 f"writeback step TASK-7 sid={SID} step=limit",
                 (

@@ -348,7 +348,10 @@ TOOL_STRINGS = ("tmux", "adapters")
 TOML_STRING = re.compile(r""""((?:\\.|[^"\\])*)"|'([^']*)'""")
 
 
-ENTRIES = (f"{ORCH_SRC}cli.py", *(f"{ORCH_SRC}engine/{name}.py" for name in ("run", "promote", "router")))
+ENTRIES = (
+    f"{ORCH_SRC}cli.py",
+    *(f"{ORCH_SRC}engine/{name}.py" for name in ("run", "promote", "router")),
+)
 
 
 ONCE = (f"{ORCH_PKG}.engine.config.load", f"{ORCH_PKG}.engine.log.use_logs")
@@ -807,7 +810,7 @@ def manager_exports(repo: str) -> list[str]:
     if not isinstance(names, list | tuple) or not all(isinstance(name, str) for name in names):
         return [f"{base}:{exports.lineno}: __all__ must be a literal sequence of names"]
     found = []
-    for name, (_, kind) in _export_kinds(repo, "agent_pm.manager", names, "manager").items():
+    for name, (_, kind) in _export_kinds(repo, "agent_pm.manager", names).items():
         if kind == "function":
             found.append(f"{base}:{exports.lineno}: exports function {name}")
         elif kind not in ("class", "constant") and (not name.isupper() or kind == "module"):
@@ -834,7 +837,7 @@ def object_exports(repo: str) -> list[str]:
         if names is None or not all(isinstance(name, str) for name in names):
             found.add(f"{rel}: no literal __all__")
             continue
-        for name, (target, kind) in _export_kinds(repo, package, names, project).items():
+        for name, (target, kind) in _export_kinds(repo, package, names).items():
             if package == "agent_pm.delegate" and target.endswith(".HarnessDelegate"):
                 found.add(f"{rel}: __all__ exports concrete Delegate {name} (FR-47)")
                 continue
@@ -910,7 +913,7 @@ def _is_literal(node):
     return True
 
 
-def _export_kinds(repo, package, names, project):
+def _export_kinds(repo, package, names):
     """Each name `package` exports: what it resolves to through re-exports and aliases, and that
     target's kind (function, class, constant, alias, value, module or None: unresolved).
     """

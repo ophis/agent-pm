@@ -26,6 +26,7 @@ import re
 import subprocess
 import sys
 import uuid
+from collections.abc import Callable
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from traceback import format_exception
@@ -126,8 +127,6 @@ def live_sessions(cfg, entries, *, say=None):
 
 def full_roles(roles, live):
     return {r for r in roles if len(live[r]) >= roles[r].max_runs}
-
-
 
 
 def rank(issue):
@@ -287,7 +286,13 @@ class Board:
         return self.statuses[sid]
 
     def unknown(self, ident, sid):
-        self.say("recover-skip", ident, once=True, sid=sid, reason=self.status_errors.get(sid, "session unknown"))
+        self.say(
+            "recover-skip",
+            ident,
+            once=True,
+            sid=sid,
+            reason=self.status_errors.get(sid, "session unknown"),
+        )
         return False
 
     def recover(self, live_ids=()):
@@ -444,7 +449,16 @@ def begin(cfg, spec: Spec, *, role, now=datetime.now):
             log("router", "tui-closed", spec.issue)
     kind = "resume" if spec.mode == "resume" else "start"
     delegate_kind = cfg.delegate_kind if spec.mode == "new" else delegate_of(entries, spec.sid)
-    note(cfg.runs_log, kind, issue=spec.issue, sid=spec.sid, role=role, runtime=spec.runtime, delegate_kind=delegate_kind, now=now)
+    note(
+        cfg.runs_log,
+        kind,
+        issue=spec.issue,
+        sid=spec.sid,
+        role=role,
+        runtime=spec.runtime,
+        delegate_kind=delegate_kind,
+        now=now,
+    )
     return spec
 
 
@@ -659,8 +673,8 @@ def tick(opts, cfg, gql, *, start, clock=datetime.now, hour=None):
             if run is None or dry:
                 return 0
             spec, role = run
-            a = begin(cfg, spec, role=role, now=clock)
             walk.write()  # the outer logs past the walk
+            a = begin(cfg, spec, role=role, now=clock)
             return start_run(start, a, walk)
 
 
@@ -704,9 +718,7 @@ def run_issue(opts, cfg, gql, start, *, clock=datetime.now):
             )
         if dry:
             return 0
-        return start(
-            begin(cfg, spec, role=role, now=clock)
-        )
+        return start(begin(cfg, spec, role=role, now=clock))
 
 
 def brake(role, cfg):

@@ -75,4 +75,3 @@ class Gate:
         if self.dry:
             self.say("usage", runtime=runtime, **shown, allowed=reason is None)
         return reason, fields
-

@@ -11,7 +11,6 @@ from datetime import UTC, datetime, timedelta
 
 from agent_pm import delegate
 from agent_pm.linear_orchestrator.engine import ops, runs
-from agent_pm.session import Session
 from orchestrator_tests.integration import fake_linear
 from orchestrator_tests.integration.flow_fixtures import (
     ACCOUNTS,
@@ -184,7 +183,7 @@ class PruneSessionDelegate(FakeDelegate):
     def close(self):
         with open(os.path.join(self.workdir, "delegate.json")) as stream:
             state = json.load(stream)
-        Session.host().attach(state["name"]).close()
+        delegate.configure().session_cls.host().attach(state["name"]).close()
         super().close()
 
 
@@ -247,7 +246,7 @@ class Prune(Tick, TmuxFlow):
         with open(local, "w") as stream:
             stream.write(
                 text.replace(
-                    "agent_pm.delegate.engine.harness_delegate:HarnessDelegate",
+                    "orchestrator_tests.integration.legacy_run_delegate:LegacyRunDelegate",
                     "orchestrator_tests.integration.promote_integration_test:PruneSessionDelegate",
                 )
             )

@@ -92,9 +92,8 @@ type = "units"
 container = "agent_pm.linear_orchestrator"
 units = ["agent_pm.linear_orchestrator", "agent_pm.linear_orchestrator.cli", "agent_pm.linear_orchestrator.engine", "agent_pm.linear_orchestrator.engine.client", "agent_pm.linear_orchestrator.engine.log", "agent_pm.linear_orchestrator.engine.ops", "agent_pm.linear_orchestrator.engine.issues", "agent_pm.linear_orchestrator.engine.run_comments", "agent_pm.linear_orchestrator.engine.types"]
 dependencies = [
-    "agent_pm.linear_orchestrator -> agent_pm.linear_orchestrator.engine.linear_run",
+    "agent_pm.linear_orchestrator -> agent_pm.linear_orchestrator.engine",
     "agent_pm.linear_orchestrator.engine -> agent_pm.linear_orchestrator.engine.client agent_pm.linear_orchestrator.engine.log agent_pm.linear_orchestrator.engine.ops agent_pm.linear_orchestrator.engine.issues agent_pm.linear_orchestrator.engine.run_comments agent_pm.linear_orchestrator.engine.types agent_pm.delegate agent_pm.utils",
-    "agent_pm.linear_orchestrator.engine.config -> agent_pm.linear_orchestrator",
     "agent_pm.linear_orchestrator.engine.router -> agent_pm.session", # until TASK-374
     "agent_pm.linear_orchestrator.engine.run -> agent_pm.session", # until TASK-374
     "agent_pm.linear_orchestrator.engine.client -> agent_pm.linear_orchestrator.engine.types agent_pm.utils",

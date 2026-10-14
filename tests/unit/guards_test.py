@@ -1789,6 +1789,7 @@ class RunSpecSerialization(Sample):
         self.assertEqual(
             guards.types_only(self.tree({path: source})),
             [
+                f"{path}:6: Spec.from_argv: business method in types module",
                 f"{path}:7: Spec.run: business method in types module",
             ],
         )

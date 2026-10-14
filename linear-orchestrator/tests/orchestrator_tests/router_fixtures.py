@@ -14,11 +14,13 @@ from unittest import mock
 
 from agent_pm.linear_orchestrator.engine import (
     config,
-    gate,
     inputs,
     ops,
     router,
     runs,
+)
+from agent_pm.linear_orchestrator.engine import (
+    gate as quota,
 )
 from agent_pm.linear_orchestrator.engine.types import LinearError, Spec
 from agent_pm.session import SessionStatus
@@ -434,7 +436,7 @@ class Base(run_fixtures.Base):
                     cfg,
                     now=NOW,
                     dry=dry,
-                    gate=gate.Gate(self.runs, NOW, dry=dry, cfg=cfg) if gate else None,
+                    gate=quota.Gate(self.runs, NOW, dry=dry, cfg=cfg) if gate else None,
                 )
             )
         self.raw, self.err = err.getvalue(), self.unmap(err.getvalue())
@@ -510,7 +512,9 @@ class TickBase(Base):
         for name in live or ():
             found = re.fullmatch(r"agent-pm-([a-z][a-z0-9-]*)-([A-Z][A-Z0-9]*-\d+)", name)
             if found and found[2] not in recorded:
-                self.add(kind="start", ident=found[2], sid=f"live:{name}", minutes_ago=10, role=found[1])
+                self.add(
+                    kind="start", ident=found[2], sid=f"live:{name}", minutes_ago=10, role=found[1]
+                )
                 recorded.add(found[2])
         if live is None and not self.lines:
             self.add(kind="start", ident="TASK-0", sid="unknown", minutes_ago=10)

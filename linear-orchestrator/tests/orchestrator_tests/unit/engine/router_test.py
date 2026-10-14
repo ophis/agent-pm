@@ -8,11 +8,12 @@ import os
 import re
 import sys
 from contextlib import redirect_stderr, redirect_stdout
-from datetime import UTC, datetime, timedelta
 from dataclasses import replace
+from datetime import UTC, datetime, timedelta
 from unittest import mock
 
-from agent_pm.linear_orchestrator.engine import config, gate, inputs, issues, ops, router, runs
+from agent_pm.linear_orchestrator.engine import config, inputs, issues, ops, router, runs
+from agent_pm.linear_orchestrator.engine import gate as quota
 from agent_pm.linear_orchestrator.engine.types import LinearError, Spec, Unavailable
 from agent_pm.session import ConfigError, DriverError, SessionStatus, Window
 from agent_pm.session import Usage as SessionUsage
@@ -1026,17 +1027,17 @@ class RuntimeUsage(Base):
 
     def gate(self):
         self.write_runs()
-        return gate.Gate(self.runs, NOW, dry=False, cfg=self.cfg())
+        return quota.Gate(self.runs, NOW, dry=False, cfg=self.cfg())
 
     def test_a_usage_probe_defect_is_not_unknown_usage(self):
         error = AttributeError("adapter defect")
         self.api.usages["a"] = error
         with self.assertRaises(AttributeError) as caught:
-            gate.read_usage("researcher", delegate_cls=self.cfg().delegate_cls)
+            quota.read_usage("researcher", delegate_cls=self.cfg().delegate_cls)
         self.assertIs(caught.exception, error)
 
     def test_thresholds(self):
-        self.assertEqual((gate.MAX_5H, gate.BRAKE_5H, gate.MAX_WEEK), (90, 80, 100))
+        self.assertEqual((quota.MAX_5H, quota.BRAKE_5H, quota.MAX_WEEK), (90, 80, 100))
         rows = (
             (reading(89.9, 99.9), None),
             (reading(90, 10), "reason=usage usage=five_hour=90% weekly=10%"),
@@ -1083,7 +1084,7 @@ class RuntimeUsage(Base):
             (reading(89.94, None), "five_hour=89.94% weekly=none"),
         )
         for usage, out in rows:
-            self.assertEqual(gate.summary(usage), out)
+            self.assertEqual(quota.summary(usage), out)
 
 
 class ClaimUsageGates(Base):
@@ -1228,7 +1229,7 @@ class RunBrake(Base):
         return rc, out.getvalue()
 
     def test_blocks_at_brake_5h(self):
-        self.assertEqual(gate.BRAKE_5H, 80)
+        self.assertEqual(quota.BRAKE_5H, 80)
         rows = (
             (reading(70), 0, "five_hour=70% weekly=10%"),
             (reading(79.9, 99.9), 0, "five_hour=79.9% weekly=99.9%"),
@@ -2207,7 +2208,12 @@ class ExplicitIssueRuns(TickBase):
                 self.assertEqual(self.err, "router.py: agent runs unknown; try again\n")
                 self.assertEqual(
                     (fake.queries, self.start.launches, self.state, self.said()),
-                    ([], [], self.before(), ["recover-skip TASK-0 sid=unknown reason=ConfigError: agent runs unknown"])
+                    (
+                        [],
+                        [],
+                        self.before(),
+                        ["recover-skip TASK-0 sid=unknown reason=ConfigError: agent runs unknown"],
+                    ),
                 )
 
     def test_a_live_agent_run_is_refused_with_its_attach_command(self):
@@ -3228,35 +3234,81 @@ class LiveLimits(Base):
 
 
 class SessionInventory(Base):
-    def test_exact_names_of_the_roles(self):
+    def test_only_recorded_alive_runs_count_once(self):
         self.api.live = [
             "agent-pm-engineer-TASK-2",
             "agent-pm-engineer-TASK-10",
             "agent-pm-researcher-TASK-1",
             "agent-pm-pm-TASK-6",
-            "agent-pm-pm-lead-TASK-4",
-            "agent-pm-engineer",
-            "agent-pm-engineer-TASK-1x",
-            "agent-pm-engineer-task-3",
-            "agent-pm-engineer-TASK-",
-            "agent-pm-ghost-TASK-5",
             "engineer-TASK-7-0b6f2c1e",
             "other",
         ]
+        for ident, role in (
+            ("TASK-1", "researcher"),
+            ("TASK-2", "engineer"),
+            ("TASK-6", "pm"),
+            ("TASK-7", "engineer"),
+        ):
+            self.add(kind="start", ident=ident, sid=ident, minutes_ago=60, role=role)
+        self.add(kind="resume", ident="TASK-2", sid="TASK-2", minutes_ago=30, role="engineer")
+        self.write_runs()
         self.assertEqual(
-            router.live_sessions(["researcher", "pm", "pm-lead", "engineer"], driver=self.api),
+            router.live_sessions(self.cfg(), runs.parse_log(self.runs)),
             {
                 "researcher": ["TASK-1"],
                 "pm": ["TASK-6"],
-                "pm-lead": ["TASK-4"],
-                "engineer": ["TASK-10", "TASK-2"],
+                "engineer": ["TASK-2"],
             },
         )
-        self.assertEqual(self.api.order, SESSIONS)
+        self.assertEqual(self.api.order, [])
 
-    def test_unknown_sessions_are_none(self):
+    def test_unknown_recorded_run_is_not_treated_as_inactive(self):
+        self.add(kind="start", ident="TASK-1", sid="unknown", minutes_ago=60)
+        self.write_runs()
         self.api.live = None
-        self.assertIsNone(router.live_sessions(["researcher", "engineer"], driver=self.api))
+        with redirect_stderr(io.StringIO()), self.log_dir(again=False):
+            self.assertIsNone(router.live_sessions(self.cfg(), runs.parse_log(self.runs)))
+        self.raw = ""
+        self.assertEqual(
+            self.said(), ["recover-skip TASK-1 sid=unknown reason=ConfigError: agent runs unknown"]
+        )
+
+    def test_removed_legacy_kind_is_not_reinterpreted_as_current_default(self):
+        self.add(kind="start", ident="TASK-1", sid="old", minutes_ago=60)
+        self.write_runs()
+        cfg = self.cfg()
+        cfg = replace(cfg, delegate_kind="replacement", delegates={"replacement": cfg.delegate_cls})
+        with redirect_stderr(io.StringIO()), self.log_dir(again=False):
+            self.assertIsNone(router.live_sessions(cfg, runs.parse_log(self.runs)))
+        self.raw = ""
+        self.assertEqual(
+            self.said(),
+            [
+                "recover-skip TASK-1 sid=old reason=ConfigError: delegate kind 'harness' is no longer configured"
+            ],
+        )
+
+
+class RetainedLiveRuns(TickBase):
+    def test_eight_day_live_run_counts_on_second_tick(self):
+        self.add(kind="start", ident="TASK-1", sid="old", minutes_ago=8 * 24 * 60)
+        before = self.before()
+        for again in (False, True):
+            with self.subTest(again=again):
+                fake = self.fake(issue("TASK-2", "Todo", "researcher"))
+                self.assertEqual(
+                    self.tick(fake, live=["agent-pm-researcher-TASK-1"], again=again), 0
+                )
+                self.assertEqual(
+                    (self.start.launches, fake.mutations, self.state), ([], [], before)
+                )
+
+    def test_retained_tui_of_ended_run_does_not_fill_capacity(self):
+        self.add(kind="start", ident="TASK-1", sid="ended", minutes_ago=60)
+        self.tick(
+            self.fake(issue("TASK-2", "Todo", "researcher")), live=["researcher-TASK-1-aaaaaaaa"]
+        )
+        self.assertEqual(self.launched_runs(), [("TASK-2", "new")])
 
 
 class ScheduledRuns(TickScenario):
@@ -3351,7 +3403,13 @@ class ScheduledRuns(TickScenario):
             with self.subTest(argv=argv):
                 fake = FakeLinear([issue("TASK-1", "Todo", "researcher")])
                 self.assertEqual(self.tick(fake, *argv, live=None), 0)
-                self.assertEqual(self.said(), ["recover-skip TASK-8 sid=old reason=ConfigError: agent runs unknown", "skip reason=agent runs unknown"])
+                self.assertEqual(
+                    self.said(),
+                    [
+                        "recover-skip TASK-8 sid=old reason=ConfigError: agent runs unknown",
+                        "skip reason=agent runs unknown",
+                    ],
+                )
                 self.assertEqual(
                     (fake.queries, self.start.launches, self.api.usage_calls, self.state),
                     ([], [], [], before),
@@ -3448,7 +3506,9 @@ class ScheduledRuns(TickScenario):
         )
         for ident in ("TASK-1", "TASK-3", "TASK-4"):
             for m in (390, 380, 370, 360):
-                self.add(kind="start", ident=ident, sid=f"{ident}-{m}", minutes_ago=m, role="engineer")
+                self.add(
+                    kind="start", ident=ident, sid=f"{ident}-{m}", minutes_ago=m, role="engineer"
+                )
         self.tick(fake, live=["agent-pm-engineer-TASK-1"])
         self.assertEqual(
             self.said(),

@@ -337,6 +337,16 @@ class Gate(Flow):
     SHIMS = ("claude", "python3")
 
     def test_the_researchers_gate_on_a_sessions_core_only_pythonpath(self):
+        local = os.path.join(self.agent_pm, "config.local.toml")
+        with open(local) as stream:
+            settings = stream.read()
+        with open(local, "w") as stream:
+            stream.write(
+                settings.replace(
+                    "orchestrator_tests.integration.legacy_run_delegate:LegacyRunDelegate",
+                    "agent_pm.delegate.engine.harness_delegate:HarnessDelegate",
+                )
+            )
         shim = os.path.join(self.bin, "python3")
         with open(shim, "w") as f:
             f.write(f'#!/bin/sh\nexec {shlex.quote(sys.executable)} "$@"\n')

@@ -3,6 +3,7 @@
 import argparse
 import sys
 from datetime import UTC, datetime
+from functools import partial
 
 from agent_pm.delegate import ConfigError as DelegateConfigError
 from agent_pm.delegate import DriverError
@@ -49,7 +50,13 @@ def main(argv=None, *, cfg=None):
             if not view.alive() and view.outcome() is None:
                 entries = runs.parse_log(cfg.runs_log)
                 entry = runs.latest(entries)[issue]
-                gate = gate or Gate(cfg.runs_log, datetime.now(UTC), cfg=cfg, dry=False)
+                gate = gate or Gate(
+                    cfg.runs_log,
+                    datetime.now(UTC),
+                    cfg=cfg,
+                    dry=False,
+                    say=partial(event_log.log, "router", quiet=True),
+                )
                 if gate.blocked(
                     entry.role,
                     issue,

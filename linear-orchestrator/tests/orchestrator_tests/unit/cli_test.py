@@ -13,6 +13,7 @@ from agent_pm.linear_orchestrator.engine import runs
 from agent_pm.utils import Record, Status
 from orchestrator_tests.case import Case
 from orchestrator_tests.linear_run_case import ReadyDelegate, RunCase
+from orchestrator_tests.unit.streams import Stderr
 
 from delegate.tests.fakes.delegate import FakeDelegate
 
@@ -39,8 +40,8 @@ class Commands(Case):
 
 
 class Queries(RunCase):
-    def call(self, arguments, *, stdin=""):
-        stdout, stderr = io.StringIO(), io.StringIO()
+    def call(self, arguments, *, stdin="", tty=False):
+        stdout, stderr = io.StringIO(), Stderr(tty=tty)
         with (
             redirect_stdout(stdout),
             redirect_stderr(stderr),
@@ -108,9 +109,10 @@ class Queries(RunCase):
             delegate_kind="fake",
             resets_at=(datetime.now(UTC) + timedelta(hours=1)).isoformat(),
         )
-        result, output, errors = self.call(["resume", "TASK-1"])
-        self.assertEqual((result, output), (1, ""))
-        self.assertEqual(errors, "TASK-1: resume blocked by usage gate\n")
+        for tty in (False, True):
+            result, output, errors = self.call(["resume", "TASK-1"], tty=tty)
+            self.assertEqual((result, output), (1, ""))
+            self.assertEqual(errors, "TASK-1: resume blocked by usage gate\n")
         self.assertEqual(ReadyDelegate.usage_calls, [])
         self.assertFalse(FakeDelegate.attach(self.cfg.run_dir("TASK-1")).alive())
 

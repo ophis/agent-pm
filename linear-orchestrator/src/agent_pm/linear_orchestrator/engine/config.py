@@ -7,12 +7,13 @@ import site
 import subprocess
 import sys
 import sysconfig
+from importlib import resources
 from types import MappingProxyType
 from typing import Any
 
-import agent_pm.linear_orchestrator as orchestrator
 import agent_pm.utils as utils
 from agent_pm import delegate
+from agent_pm.linear_orchestrator.engine import types
 from agent_pm.linear_orchestrator.engine.log import config_error
 from agent_pm.linear_orchestrator.engine.types import (
     UUID_RE,
@@ -178,14 +179,14 @@ def pythonpath() -> str:
             *site.getsitepackages(),
         )
     }
-    roots = (*utils.module_roots(orchestrator), *delegate.module_roots())
+    roots = (*utils.module_roots(types), *delegate.module_roots())
     return os.pathsep.join(
         dict.fromkeys(root for root in roots if root and os.path.realpath(root) not in installed)
     )
 
 
 def deployment_dirs() -> tuple[tuple[str, ...], tuple[str, ...]]:
-    own = tuple(dict.fromkeys(os.path.realpath(path) for path in utils.package_dirs(orchestrator)))
+    own = (os.path.realpath(str(resources.files("agent_pm.linear_orchestrator"))),)
     packages = tuple(
         dict.fromkeys(os.path.realpath(path) for path in (*own, *delegate.package_dirs()))
     )
