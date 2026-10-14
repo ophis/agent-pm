@@ -277,6 +277,9 @@ class Base(Case):
         with open(os.path.join(ctx.workdir, "writeback.json")) as f:
             return json.load(f)
 
+    def steps(self, ctx):
+        return {sid: entry["steps"] for sid, entry in self.ledger(ctx).items()}
+
     def no_ledger(self, ctx):
         self.assertFalse(os.path.exists(os.path.join(ctx.workdir, "writeback.json")))
 
@@ -289,7 +292,7 @@ class ProgressReporting(Base):
         writeback.progress(ctx, start)
         writeback.progress(ctx, start)
         self.assertEqual(gql.calls, [post("start", "Build started: first build of the PRD")])
-        self.assertEqual(self.ledger(ctx), {SID: ["start"]})
+        self.assertEqual(self.steps(ctx), {SID: ["start"]})
         self.assertEqual(self.lines(), [f"step {ID} step=start"])
         writeback.progress(replace(ctx, sid=OTHER_SID), start)
         self.assertEqual(
@@ -333,7 +336,7 @@ class ProgressReporting(Base):
                 post(steps[1], "Progress (tests): 13 passing"),
             ],
         )
-        self.assertEqual(self.ledger(ctx), {SID: steps})
+        self.assertEqual(self.steps(ctx), {SID: steps})
 
     def test_swallows_system_exit_and_retries_later(self):
         gql = Gql(fail=lambda _name, _v: LinearError("linear api error: down"))
@@ -671,7 +674,7 @@ class UsageLimitReporting(Base):
                         move("in_review"),
                     ],
                 )
-                self.assertEqual(self.ledger(ctx), {SID: ["limit"]})
+                self.assertEqual(self.steps(ctx), {SID: ["limit"]})
 
     def test_local_time(self):
         self.assertEqual(writeback.local_time(T), "2026-10-11T18:00:00+08:00")
@@ -723,7 +726,7 @@ class UsageLimitReporting(Base):
         again = Gql()
         self.assertTrue(writeback.limit(replace(ctx, gql=again, resume=True), None))
         self.assertEqual(again.calls, [sub(HUMANS[0]), sub(HUMANS[1]), reread(), move("in_review")])
-        self.assertEqual(self.ledger(ctx), {SID: ["limit"]})
+        self.assertEqual(self.steps(ctx), {SID: ["limit"]})
         self.assertEqual(self.lines(), [f"step {ID} step=limit"])
 
     def test_a_failed_comment_stops_before_the_move(self):
@@ -768,7 +771,7 @@ class CompletionSteps(Base):
             )
         )
         self.assertEqual(gql.calls, expect(body="Build ready: Ready.", state="in_review"))
-        self.assertIn(f"attach:{PR}", self.ledger(ctx)[SID])
+        self.assertIn(f"attach:{PR}", self.steps(ctx)[SID])
 
     def test_already_linked_errors_count_as_attached(self):
         for text in (
@@ -786,7 +789,7 @@ class CompletionSteps(Base):
                     )
                 )
                 self.assertEqual(gql.calls[-1], move("in_review"))
-                self.assertIn(f"attach:{PR}", self.ledger(ctx)[SID])
+                self.assertIn(f"attach:{PR}", self.steps(ctx)[SID])
 
     def test_other_attach_error_stops(self):
         gql = Gql(
@@ -826,7 +829,7 @@ class CompletionSteps(Base):
                     [skip] if skip else [],
                 )
                 self.assertEqual(self.lines()[-1], f"step {ID} step=move:in_review")
-                self.assertIn("move:in_review", self.ledger(ctx)[SID])
+                self.assertIn("move:in_review", self.steps(ctx)[SID])
 
     def test_subscribe_failures_noted_and_finish_continues(self):
         def fail(name, v):
@@ -1226,7 +1229,7 @@ class CompletionMessages(Base):
         ]
         self.assertEqual(self.lines(), [f"step {ID} step={s}" for s in steps])
         self.assertEqual([e["sid"] for e in logged()], [SID] * len(steps))
-        self.assertEqual(self.ledger(ctx), {SID: steps})
+        self.assertEqual(self.ledger(ctx), {SID: {"steps": steps}})
 
     def test_design_retitle_and_mapped_approve_line(self):
         gql = Gql()
@@ -1248,7 +1251,7 @@ class CompletionMessages(Base):
             ),
         )
         self.assertEqual(
-            self.ledger(ctx), {SID: ["retitle", "comment", f"attach:{PRD}", "move:in_review"]}
+            self.steps(ctx), {SID: ["retitle", "comment", f"attach:{PRD}", "move:in_review"]}
         )
 
 
@@ -1307,7 +1310,11 @@ class CompletionLedger(Base):
 
     def test_other_sid_does_not_skip(self):
         ctx = self.ctx()
-        self.write(ctx, "writeback.json", json.dumps({OTHER_SID: ["comment", "move:in_review"]}))
+        self.write(
+            ctx,
+            "writeback.json",
+            json.dumps({OTHER_SID: {"steps": ["comment", "move:in_review"]}}),
+        )
         gql = Gql()
         writeback.finish(
             replace(ctx, gql=gql),
@@ -1318,7 +1325,7 @@ class CompletionLedger(Base):
             expect(body="Build failed: push not permitted", state="in_review"),
         )
         self.assertEqual(
-            self.ledger(ctx),
+            self.steps(ctx),
             {OTHER_SID: ["comment", "move:in_review"], SID: ["comment", "move:in_review"]},
         )
 
@@ -1328,6 +1335,10 @@ class CompletionLedger(Base):
             json.dumps([1]),
             json.dumps({SID: "comment move:in_review"}),
             json.dumps({SID: [1]}),
+            json.dumps({SID: ["comment", "move:in_review"]}),
+            json.dumps({SID: {"steps": "comment move:in_review"}}),
+            json.dumps({SID: {"steps": [1]}}),
+            json.dumps({SID: {"steps": ["comment", "move:in_review"], "done": True}}),
         ):
             with self.subTest(text=text):
                 gql = Gql()
@@ -1350,14 +1361,14 @@ class CompletionLedger(Base):
                 ctx, Outcome(status="failed", title="ENG-7: x", summary="push not permitted")
             )
         )
-        self.assertEqual(self.ledger(ctx), {SID: ["comment", "move:in_review"]})
+        self.assertEqual(self.steps(ctx), {SID: ["comment", "move:in_review"]})
 
     def test_symlinked_ledger_is_empty_and_replaced(self):
         gql = Gql()
         ctx = self.ctx(gql=gql)
         elsewhere = os.path.join(self.tmp, "elsewhere.json")
         with open(elsewhere, "w") as f:
-            f.write(json.dumps({SID: ["comment", "move:in_review"]}))
+            f.write(json.dumps({SID: {"steps": ["comment", "move:in_review"]}}))
         os.symlink(elsewhere, os.path.join(ctx.workdir, "writeback.json"))
         writeback.finish(
             ctx, Outcome(status="failed", title="ENG-7: x", summary="push not permitted")
@@ -1368,7 +1379,7 @@ class CompletionLedger(Base):
         )
         self.assertFalse(os.path.islink(os.path.join(ctx.workdir, "writeback.json")))
         with open(elsewhere) as f:
-            self.assertEqual(json.load(f), {SID: ["comment", "move:in_review"]})
+            self.assertEqual(json.load(f), {SID: {"steps": ["comment", "move:in_review"]}})
 
     def test_ledger_write_failure_leaves_no_temp(self):
         ctx = self.ctx()
@@ -1422,7 +1433,7 @@ class ResumedComments(Base):
         gql.calls.clear()
         writeback.progress(replace(ctx, resume=True), START)
         self.assertEqual(gql.calls, [find("start")])
-        self.assertEqual(self.ledger(ctx), {SID: ["start"]})
+        self.assertEqual(self.steps(ctx), {SID: ["start"]})
         self.assertEqual(self.lines()[-1], f"step {ID} step=start found=true")
 
     def test_a_resumed_finish_counts_a_found_comment_as_posted(self):
@@ -1438,7 +1449,7 @@ class ResumedComments(Base):
             gql.calls,
             [READ, sub(HUMANS[0]), sub(HUMANS[1]), find("comment"), reread(), move("in_review")],
         )
-        self.assertEqual(self.ledger(ctx), {SID: ["comment", "move:in_review"]})
+        self.assertEqual(self.steps(ctx), {SID: ["comment", "move:in_review"]})
         self.assertEqual(
             self.lines(), [f"step {ID} step=comment found=true", f"step {ID} step=move:in_review"]
         )

@@ -153,20 +153,28 @@ def _guarded_move(ctx, issue, ident, to, frm):
         log("writeback", "skip", ident, reason=f"move to {to}: issue is {now}")
 
 
+def _entry(value):
+    steps = value.get("steps", []) if isinstance(value, dict) else None
+    return (
+        isinstance(steps, list)
+        and all(isinstance(s, str) for s in steps)
+        and value.keys() <= {"steps"}
+    )
+
+
 def _ledger(ctx):
+    """{sid: {"steps": [step, ...]}}; anything else reads as empty."""
     try:
         with os.fdopen(os.open(os.path.join(ctx.workdir, LEDGER), NO_FOLLOW), "rb") as f:
             data = json.load(f)
     except (OSError, ValueError):
         return {}
-    valid = isinstance(data, dict) and all(
-        isinstance(v, list) and all(isinstance(s, str) for s in v) for v in data.values()
-    )
+    valid = isinstance(data, dict) and all(_entry(v) for v in data.values())
     return data if valid else {}
 
 
 def _step(ctx, step, call, cid=None):
-    if step in _ledger(ctx).get(ctx.sid, []):
+    if step in _ledger(ctx).get(ctx.sid, {}).get("steps", []):
         return None
     try:
         # on resume an unledgered post may have landed with its ledger write lost
@@ -176,7 +184,7 @@ def _step(ctx, step, call, cid=None):
         if not found:
             call()
         ledger = _ledger(ctx)
-        ledger.setdefault(ctx.sid, []).append(step)
+        ledger.setdefault(ctx.sid, {}).setdefault("steps", []).append(step)
         save(os.path.join(ctx.workdir, LEDGER), json.dumps(ledger))
     except (LinearError, Unavailable, OSError, subprocess.SubprocessError) as e:
         _error(ctx, step, e)
