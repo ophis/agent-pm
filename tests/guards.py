@@ -16,7 +16,6 @@ from agent_pm.utils.config_file import LEVELS
 from tests.import_policy import violation
 
 UNIT_ISOLATION_ALLOWED = {
-    "delegate/tests/unit/engine/plan_test.py": "TASK-365 harness-host process; TASK-385 Phase B",
     "session/tests/unit/adapters/codex/tui_test.py": "TASK-385 Phase B",
     "session/tests/unit/adapters/codex/tui/start_test.py": "TASK-385 Phase B",
     "session/tests/unit/engine/hosted_test.py": "TASK-385 Phase B",

@@ -6,7 +6,6 @@ Codex's own writable dirs included, read dirs (the tasks dir among them) never a
 import io
 import json
 import os
-import sys
 import uuid
 from contextlib import redirect_stderr
 from dataclasses import replace
@@ -23,7 +22,6 @@ from agent_pm.session import Access, note
 
 from delegate.tests.plans import SID, TASKS, Base, write_team
 from delegate.tests.unit.engine.print_prompt import GITHUB, ROLES, RUNTIMES, PrintPromptCase
-from session.tests.fakes.host import FakeHost
 from utils.tests.case import local_section
 
 
@@ -57,20 +55,6 @@ class Configures(Base):
                 driver = configure()
                 self.assertEqual(driver.harness_host, want)
                 self.assertEqual(driver.registry.settings.default_host, "tmux")
-
-    def test_configures_driver_detaches_on_the_harness_host_not_the_default(self):
-        fake = 'implementation = "session.tests.fakes.host:FakeHost"\n'
-        self.local(
-            f'[hosts]\ndefault = "spare"\n[hosts.spare]\n{fake}root = "~/spare"\n'
-            f'[hosts.fake]\n{fake}[delegates]\nharness_host = "fake"\n'
-        )
-        driver = configure()
-        driver.detach("d1", [sys.executable, "-I", "-c", "pass"], self.tmp, {}, opener="mgr")
-        process = FakeHost("fake").attach("d1")
-        self.addCleanup(process.close)
-        self.assertEqual(process.display(), "mgr")
-        self.assertTrue(process.wait_exit(10))
-        self.assertEqual(FakeHost("spare", {"root": "~/spare"}).list(), [])
 
     def test_configure_refuses_a_bad_hosts_table_as_the_session_configs(self):
         self.local('[hosts]\ndefault = "nope"\n')

@@ -3,15 +3,17 @@
 import json
 import os
 import shutil
+import sys
 import tempfile
 import unittest
 from unittest import mock
 
-from agent_pm.delegate import composer
+from agent_pm.delegate import composer, configure
 from agent_pm.utils import temp_dirs, under
 
 from delegate.tests.case import REPO
 from delegate.tests.plans import TASKS, TASKS_PARAM, Base, write_team
+from session.tests.fakes.host import FakeHost
 
 TEAMS = REPO
 IN_TEMP = under(os.path.realpath(TEAMS), temp_dirs()) is not None
@@ -87,3 +89,19 @@ class CustomTeam(Base):
                         f"team_dirs: {self.team} overlaps a dir codex can write {what}: the "
                         "agent run can write there",
                     )
+
+
+class Configures(Base):
+    def test_configures_driver_detaches_on_the_harness_host_not_the_default(self):
+        fake = 'implementation = "session.tests.fakes.host:FakeHost"\n'
+        self.local(
+            f'[hosts]\ndefault = "spare"\n[hosts.spare]\n{fake}root = "~/spare"\n'
+            f'[hosts.fake]\n{fake}[delegates]\nharness_host = "fake"\n'
+        )
+        driver = configure()
+        driver.detach("d1", [sys.executable, "-I", "-c", "pass"], self.tmp, {}, opener="mgr")
+        process = FakeHost("fake").attach("d1")
+        self.addCleanup(process.close)
+        self.assertEqual(process.display(), "mgr")
+        self.assertTrue(process.wait_exit(10))
+        self.assertEqual(FakeHost("spare", {"root": "~/spare"}).list(), [])
