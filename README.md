@@ -23,7 +23,7 @@ flowchart TB
     CC[Control/resume commands]
   end
   subgraph MG[agent_pm.manager]
-    W["engine/crew.py"] --> RS["engine/roster.py"]
+    MC["cli.py<br>agent-pm-crew"] --> W["engine/crew.py"] --> RS["engine/roster.py"]
   end
   subgraph LO[agent_pm.linear_orchestrator]
     LCLI["cli.py<br>agent-pm-linear"]
@@ -62,7 +62,7 @@ flowchart TB
   LD -.->|"router · promote"| LCLI
   HU -.->|"router --issue"| LCLI
   HU -.->|"act-as · CLI"| D
-  HU -.-> W
+  HU -.-> MC
   HU -.-> SC
   SC --> DR
   LCLI --> R & PP & WB
