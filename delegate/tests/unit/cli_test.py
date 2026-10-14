@@ -299,7 +299,7 @@ class Tui(Base):
                 with mock.patch.object(self.driver, "start", side_effect=handle.start) as start:
                     code, out, err = self.runs("--mode", "tui")
                 self.assertEqual((code, out, err.splitlines()[-1]), (want, "", last))
-                spec = start.call_args.args[0]
+                spec = start.call_args.args[0].session
                 self.assertEqual(
                     ((spec.runtime, spec.mode), spec.name, spec.events),
                     (("fake", "tui"), None, None),

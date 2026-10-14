@@ -147,10 +147,17 @@ class TuiPolicy(Base):
                 r = self.faked(turn(START, block(DONE)), **kw)
                 args, given = self.started.call_args
                 self.assertEqual(
-                    ((args[0].runtime, args[0].mode), r.outcome.status), (("fake", "tui"), "done")
+                    ((args[0].session.runtime, args[0].session.mode), r.outcome.status),
+                    (("fake", "tui"), "done"),
                 )
                 self.assertEqual(
-                    (given, args[0].sid, args[0].name, args[0].resume, args[0].events),
+                    (
+                        given,
+                        args[0].session.sid,
+                        args[0].session.name,
+                        args[0].session.resume,
+                        args[0].session.events,
+                    ),
                     (
                         {"idle_timeout": IDLE_TIMEOUT},
                         self.events[0].sid,
@@ -384,7 +391,7 @@ class TuiPolicy(Base):
         self.assertEqual(self.kinds(), ["input", "idle", "progress", "result", "end"])
         args, given = self.started.call_args
         self.assertEqual(
-            (given, args[0].sid, args[0].resume, args[0].events),
+            (given, args[0].session.sid, args[0].session.resume, args[0].session.events),
             ({"idle_timeout": IDLE_TIMEOUT}, self.events[0].sid, False, None),
         )
 

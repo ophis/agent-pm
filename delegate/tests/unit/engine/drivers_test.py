@@ -6,7 +6,7 @@ from dataclasses import fields
 
 from agent_pm.delegate import ConfigError, Spec, composer, plan, run
 from agent_pm.delegate.engine.drivers import AgentDriver, Driver, InstructionDriver
-from agent_pm.delegate.engine.types import Instruction
+from agent_pm.delegate.engine.types import DriverSpec, Instruction
 from agent_pm.session import Session
 from agent_pm.session import Spec as StartSpec
 
@@ -39,7 +39,12 @@ class Drivers(Case):
         self.assertNotIn("idle_timeout", {field.name for field in fields(spec)})
         for timeout in (None, 30):
             with self.subTest(idle_timeout=timeout):
-                session = driver.start(spec, host="other", display="opaque", idle_timeout=timeout)
+                session = driver.start(
+                    DriverSpec(spec, os.path.join(self.home, "out")),
+                    host="other",
+                    display="opaque",
+                    idle_timeout=timeout,
+                )
                 self.assertIsInstance(session, Session)
                 self.assertEqual(
                     session_cls.started[-1],
@@ -57,15 +62,24 @@ class Drivers(Case):
         prompt = "héllo\r\n[agent-pm-progress:start] input, not an event\n\x1b"
         spec = StartSpec(workdir=self.home, runtime="fake", mode="headless", prompt=prompt)
         with no_child():
-            instruction = InstructionDriver(out).start(spec)
+            instruction = InstructionDriver().start(DriverSpec(spec, out))
         self.assertEqual(instruction, Instruction(out))
         with open(out, "rb") as stream:
             self.assertEqual(stream.read(), prompt.encode("utf-8"))
         self.assertFalse(os.path.exists(os.path.join(self.home, "run.jsonl")))
 
+    def test_one_instruction_driver_uses_each_specs_output_destination(self):
+        driver = InstructionDriver()
+        session = StartSpec(workdir=self.home, prompt="exact instruction")
+        for filename in ("first.md", "second.md"):
+            out = os.path.join(self.home, filename)
+            self.assertEqual(driver.start(DriverSpec(session, out)), Instruction(out))
+            with open(out, encoding="utf-8") as stream:
+                self.assertEqual(stream.read(), session.prompt)
+
     def test_instruction_resume_and_detach_are_refused_before_any_write(self):
         out = os.path.join(self.home, "work", "prompt.md")
-        driver = InstructionDriver(out)
+        driver = InstructionDriver()
         spec = StartSpec(
             workdir=self.home,
             runtime="fake",
@@ -75,14 +89,14 @@ class Drivers(Case):
             resume=True,
         )
         with self.assertRaisesRegex(ConfigError, "instruction has no session to resume"):
-            driver.start(spec)
+            driver.start(DriverSpec(spec, out))
         with self.assertRaisesRegex(ConfigError, "instruction cannot detach"):
             driver.detach()
         self.assertFalse(os.path.exists(os.path.dirname(out)))
 
     def test_instruction_rejects_session_controls_before_any_write(self):
         out = os.path.join(self.home, "work", "prompt.md")
-        driver = InstructionDriver(out)
+        driver = InstructionDriver()
         spec = StartSpec(workdir=self.home, runtime="fake", mode="headless", prompt="the prompt")
         for keywords, message in (
             ({"host": "other"}, "instruction has no host or display"),
@@ -91,7 +105,7 @@ class Drivers(Case):
         ):
             with self.subTest(keywords=keywords), no_child():
                 with self.assertRaises(ConfigError) as caught:
-                    driver.start(spec, **keywords)
+                    driver.start(DriverSpec(spec, out), **keywords)
                 self.assertEqual(str(caught.exception), message)
                 self.assertFalse(os.path.exists(os.path.dirname(out)))
 
@@ -100,7 +114,7 @@ class Drivers(Case):
         out = os.path.join(work, "prompt.md")
         spec = Spec("[agent-pm-progress:start] source text", work, out=out, cwd=work)
         config = composer.resolve("dummy-tester")
-        driver = InstructionDriver(out)
+        driver = InstructionDriver()
         expected = plan(config, spec, driver=driver).prompt
         events = []
         with no_child():

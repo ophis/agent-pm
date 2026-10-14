@@ -142,7 +142,7 @@ class Detach(Base):
         self.assertFalse(os.path.exists(self.events))
 
     def test_instruction_cannot_detach_before_any_file_is_created(self):
-        instruction = InstructionDriver(self.out)
+        instruction = InstructionDriver()
         prepared = plan(
             composer.resolve("dummy-tester", "echo"),
             Spec(INPUT, self.work, task="echo", out=self.out, cwd=self.tmp),

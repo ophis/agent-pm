@@ -177,7 +177,7 @@ class Harness(Base):
             (code, out, err.splitlines()[-1]),
             (1, "", "delegate: the agent run returned no outcome"),
         )
-        spec = start.call_args.args[0]
+        spec = start.call_args.args[0].session
         self.assertEqual((spec.name, spec.events, spec.sid), (TUI, self.events, SID))
         self.assertIn(f"delegate: tui session {TUI}: {self.driver.attach_command(TUI)}", err)
         self.show.assert_not_called()

@@ -70,12 +70,14 @@ class Headless:
 
     def start(self, p: Plan, name: str | None = None, events: str | None = None) -> Session:
         return self.driver.start(
-            replace(p.session, name=name, events=events), idle_timeout=IDLE_TIMEOUT
+            replace(p.driver_spec, session=replace(p.session, name=name, events=events)),
+            idle_timeout=IDLE_TIMEOUT,
         )
 
     def fix(self, handle: Session, p: Plan, text: str) -> Session:
         return self.driver.start(
-            replace(p.session, prompt=text, resume=True), idle_timeout=IDLE_TIMEOUT
+            replace(p.driver_spec, session=replace(p.session, prompt=text, resume=True)),
+            idle_timeout=IDLE_TIMEOUT,
         )
 
     def turn_end(self, handle: Session, reply: str, pending: int) -> str | GiveUp | None:
@@ -156,7 +158,7 @@ def run(
         driver = AgentDriver(driver.session_cls)
     p = plan(run, spec, driver=driver)
     if isinstance(driver, InstructionDriver):
-        instruction = driver.start(p.session)
+        instruction = driver.start(p.driver_spec)
         return Result(0, None, instruction=instruction.path)
     attempts = _Attempts(p, on_event or (lambda _event: None), driver)
     try:

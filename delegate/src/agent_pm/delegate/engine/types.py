@@ -44,6 +44,12 @@ class Spec:
 
 
 @dataclass(frozen=True)
+class DriverSpec:
+    session: SessionSpec
+    out: str
+
+
+@dataclass(frozen=True)
 class Plan:
     """`spec` resolved: its runtime, sid and team set, its paths absolute; `session` the session's
     Spec.
@@ -54,6 +60,10 @@ class Plan:
     prompt: str
     run: RunConfig
     params: RunParams
+
+    @property
+    def driver_spec(self) -> DriverSpec:
+        return DriverSpec(self.session, self.params.out)
 
     @property
     def runtime(self) -> str:

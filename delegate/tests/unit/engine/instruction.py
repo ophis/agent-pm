@@ -35,5 +35,5 @@ class InstructionCase(Case):
             "cwd": work,
             **kw,
         }
-        self.driver = InstructionDriver(kw["out"])
+        self.driver = InstructionDriver()
         return composer.resolve(role), Spec(INPUT, work, **kw)

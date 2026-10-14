@@ -58,6 +58,7 @@ class FakeHandle:
         self.name, self.sid = NAME, None
 
     def start(self, spec, *, display=None, host=None, idle_timeout=None):
+        spec = spec.session
         os.makedirs(spec.workdir, exist_ok=True)
         self.name, self.sid = spec.name or NAME, spec.sid
         return self

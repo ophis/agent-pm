@@ -99,7 +99,7 @@ def prompt(a: argparse.Namespace, *, application=None) -> int:
             raise ConfigError("prompt needs --out PATH")
         team = composer.team(composer.TEAM, composer.team_dirs())
         config = composer.resolve(a.role, a.task, team=team)
-        application = Application(InstructionDriver(a.out)) if application is None else application
+        application = Application(InstructionDriver()) if application is None else application
         spec = Spec(
             sys.stdin.read() if a.input == "-" else a.input,
             a.workdir,
