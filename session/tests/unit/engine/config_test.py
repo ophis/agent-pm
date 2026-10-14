@@ -22,6 +22,8 @@ class Configuration(Case):
     def test_flat_local_keys_have_a_session_migration_hint(self):
         local = Path(self.home, "config.local.toml")
         local.write_text("[hosts.tmux]\nstatus_line = true\n")
-        with self.assertRaisesRegex(ValueError, r"unknown key 'hosts.tmux.status_line'.*move it under \[session\]"):
+        with self.assertRaisesRegex(
+            ValueError, r"unknown key 'hosts.tmux.status_line'.*move it under \[session\]"
+        ):
             read_config(local=str(local))
         self.assertIn("hosts", read_config(local=os.devnull))
