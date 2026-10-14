@@ -59,6 +59,7 @@ from agent_pm.utils import (
     printable_abs,
     sid_error,
     thaw,
+from agent_pm.utils import probe as run_probe
 )
 
 
@@ -222,7 +223,7 @@ class HostedSession(Session):
         hosts: Hosts,
         class_loader=load_class,
         tmux=tmux_host,
-        probe=headless.probe,
+        probe=run_probe,
         clock: Callable[[], float] = time.monotonic,
         host_factory: HostFactory | None = None,
     ) -> None:

@@ -232,6 +232,14 @@ class OptionSets(Case):
 
     def test_a_hook_word_is_an_activity_state(self):
         self.assertLessEqual(set(Word), set(ActivityState))
+        self.assertIsNot(Word, ActivityState)
+        for word in Word:
+            with self.subTest(word=word):
+                state = ActivityState(word)
+                self.assertEqual(state.value, word.value)
+                self.assertIsNot(state, word)
+                self.assertIsInstance(state, ActivityState)
+        self.assertNotIn(ActivityState.DEAD, Word)
 
 
 class CarriedEnums(Case):

@@ -1,13 +1,17 @@
 """Subprocess runs with a timeout, their stderr shown with URL userinfo masked."""
 
+import contextlib
+import os
 import re
 import shlex
+import signal
 import subprocess
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 
 from agent_pm.utils.environment import environment_ok
 
 SHORT, LONG = 60, 600
+STOP_WAIT = 5
 USERINFO = re.compile(r"//[^@/\s]+@")
 
 Runner = Callable[[list[str], int], subprocess.CompletedProcess]
@@ -17,6 +21,43 @@ class Stopped(BaseException):
     def __init__(self, code: int):
         super().__init__(code)
         self.code = code
+
+
+def kill_group(proc: subprocess.Popen, *, ended: bool = False, wait: float = STOP_WAIT) -> None:
+    # Closed pipes and a reaped process mean the group is gone and its id may be reused.
+    if not (ended and proc.returncode is not None):
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except (ProcessLookupError, PermissionError):
+            with contextlib.suppress(ProcessLookupError):
+                proc.kill()
+    with contextlib.suppress(subprocess.TimeoutExpired):
+        proc.wait(timeout=wait)
+
+
+def probe(argv: Sequence[str], *, cwd: str, env: Mapping[str, str], timeout: float) -> str | None:
+    try:
+        proc = subprocess.Popen(
+            argv,
+            cwd=cwd,
+            env=env,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            errors="replace",
+            process_group=0,
+        )
+    except (OSError, ValueError):
+        return None
+    try:
+        return proc.communicate(timeout=timeout)[0]
+    except subprocess.TimeoutExpired:
+        kill_group(proc)
+        return None
+    finally:
+        assert proc.stdout is not None
+        proc.stdout.close()
 
 
 def sh(

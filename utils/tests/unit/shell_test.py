@@ -1,12 +1,15 @@
 """utils/src/agent_pm/utils/shell.py: err_text and redact."""
 
+import io
+import signal
 import unittest
 from types import SimpleNamespace
 from unittest import mock
 
-from agent_pm.utils import resume_command, shell
+from agent_pm.utils import STOP_WAIT, kill_group, probe, resume_command, shell
 
 from utils.tests.case import Case
+from utils.tests.process_fixtures import DEVNULL, TimeoutExpired
 
 
 class ShellExecution(Case):
@@ -22,6 +25,83 @@ class ShellExecution(Case):
             stdin=shell.subprocess.DEVNULL,
             env=env,
         )
+
+
+class KillGroup(Case):
+    def test_signals_the_group_until_closed_pipes_and_a_reaped_process_confirm_exit(self):
+        for ended, returncode, signals in (
+            (False, None, True),
+            (True, None, True),
+            (False, 0, True),
+            (True, 0, False),
+        ):
+            with self.subTest(ended=ended, returncode=returncode):
+                proc = mock.Mock(pid=4242, returncode=returncode)
+                with mock.patch("os.killpg") as killpg:
+                    kill_group(proc, ended=ended, wait=0.25)
+                self.assertEqual(
+                    killpg.call_args_list, [mock.call(4242, signal.SIGKILL)] if signals else []
+                )
+                proc.kill.assert_not_called()
+                proc.wait.assert_called_once_with(timeout=0.25)
+
+    def test_signal_failure_falls_back_to_the_child_and_bounds_the_wait(self):
+        for error in (ProcessLookupError(), PermissionError()):
+            with self.subTest(error=type(error).__name__):
+                proc = mock.Mock(pid=4242, returncode=None)
+                proc.wait.side_effect = TimeoutExpired("child", STOP_WAIT)
+                with mock.patch("os.killpg", side_effect=error):
+                    kill_group(proc)
+                proc.kill.assert_called_once_with()
+                proc.wait.assert_called_once_with(timeout=STOP_WAIT)
+
+    def test_a_child_already_gone_still_gets_reaped(self):
+        proc = mock.Mock(pid=4242, returncode=None)
+        proc.kill.side_effect = ProcessLookupError()
+        with mock.patch("os.killpg", side_effect=ProcessLookupError()):
+            kill_group(proc)
+        proc.wait.assert_called_once_with(timeout=STOP_WAIT)
+
+
+class Probe(Case):
+    def test_returns_stdout_and_closes_its_pipe_with_an_explicit_environment(self):
+        proc = mock.Mock(stdout=io.StringIO(), communicate=mock.Mock(return_value=("output", None)))
+        env = {"ONLY": "value"}
+        with mock.patch("subprocess.Popen", return_value=proc) as popen:
+            self.assertEqual(probe(["tool"], cwd="/work", env=env, timeout=3), "output")
+        popen.assert_called_once_with(
+            ["tool"],
+            cwd="/work",
+            env=env,
+            stdin=DEVNULL,
+            stdout=shell.subprocess.PIPE,
+            stderr=DEVNULL,
+            text=True,
+            errors="replace",
+            process_group=0,
+        )
+        proc.communicate.assert_called_once_with(timeout=3)
+        proc.wait.assert_not_called()
+        self.assertTrue(proc.stdout.closed)
+
+    def test_spawn_errors_return_none_without_signalling(self):
+        for error in (OSError("missing"), ValueError("bad argument")):
+            with (
+                self.subTest(error=error),
+                mock.patch("subprocess.Popen", side_effect=error),
+                mock.patch("os.killpg") as killpg,
+            ):
+                self.assertIsNone(probe(["tool"], cwd="/work", env={}, timeout=3))
+                killpg.assert_not_called()
+
+    def test_timeout_kills_and_reaps_the_group_then_closes_stdout(self):
+        proc = mock.Mock(pid=4242, returncode=None, stdout=io.StringIO())
+        proc.communicate.side_effect = TimeoutExpired("tool", 3)
+        with mock.patch("subprocess.Popen", return_value=proc), mock.patch("os.killpg") as killpg:
+            self.assertIsNone(probe(["tool"], cwd="/work", env={}, timeout=3))
+        killpg.assert_called_once_with(4242, signal.SIGKILL)
+        proc.wait.assert_called_once_with(timeout=STOP_WAIT)
+        self.assertTrue(proc.stdout.closed)
 
 
 class ErrText(Case):

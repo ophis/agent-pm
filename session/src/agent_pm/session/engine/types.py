@@ -116,9 +116,9 @@ class Word(StrEnum):
 class ActivityState(StrEnum):
     """A listed session's activity: its pane's Word, dead once its pane died."""
 
-    WORKING = "working"
-    DONE = "done"
-    BLOCKED = "blocked"
+    WORKING = Word.WORKING.value
+    DONE = Word.DONE.value
+    BLOCKED = Word.BLOCKED.value
     DEAD = "dead"
 
 
