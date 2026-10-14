@@ -23,7 +23,7 @@ from agent_pm.session import Driver
 from agent_pm.session.adapters.codex import tui
 from agent_pm.session.adapters.codex.common import SessionStore
 from agent_pm.session.adapters.codex.tui import start as tui_start
-from agent_pm.session.engine import records
+from agent_pm.session.engine.records import RunLog
 from agent_pm.session.engine.types import (
     Access,
     Activity,
@@ -31,27 +31,26 @@ from agent_pm.session.engine.types import (
     ConfigError,
     Exited,
     LimitHit,
-    SessionBound,
     Spec,
     TurnEnd,
 )
-from agent_pm.session.modes.tui import hook_argv
+from agent_pm.session.modes import tui_hook
 
 from session.tests import live_tmux
-from session.tests.case import PY, REPO, ROOTS, Case, child_env, settings
+from session.tests.case import PY, REPO, ROOTS, SRC, Case, child_env, settings
 from session.tests.integration.adapters.codex import fake_codex, fake_tui
 from session.tests.source_roots import PACKAGE_ROOTS
+from session.tests.unit.adapters.codex.support import CHILD, NATIVE, Base
 
 WAIT = 15
 
 CHANGED = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
 
 ATTACH = """import json, sys
-from agent_pm.session.engine import api
 from agent_pm.session import Driver, TurnEnd
 driver = Driver(**json.loads(sys.argv[1]))
 h = driver.attach(sys.argv[2])
-before = [h.sid, h.state(), h.reply, h.info().native_id]
+before = [h.sid, h.state(), h.reply]
 if sys.argv[3]:
     h.send(sys.argv[3])
     turn = next(e for e in h.events() if isinstance(e, TurnEnd))
@@ -135,7 +134,7 @@ class Live(Case):
         self.config = settings(
             {
                 "codex": {
-                    "implementation": "adapters.codex:CodexAdapter",
+                    "implementation": "agent_pm.session.adapters.codex:CodexAdapter",
                     "tiers": {"1": "gpt-test"},
                     "efforts": {"low": "low"},
                     "env": {
@@ -213,6 +212,10 @@ class Live(Case):
 
     def record(self):
         return next(Path(SessionStore().root).glob("*.json"))
+
+    def clients(self):
+        log = RunLog(str(self.work)).read()
+        return [line["client_id"] for line in log if line["kind"] == "client_session"]
 
     def attach(self, text="", name="w1"):
         result = subprocess.run(
@@ -410,11 +413,15 @@ class HookTrustIntegrationTest(Live):
         self.scene(catalog_case="silent")
         run = self.driver.registry.adapter("codex").tui()
         launch = run.launch(
-            "hello",
-            dataclasses.replace(self.spec, sid=self.sid),
-            hook_argv("/protected/session", PACKAGE_ROOTS),
+            dataclasses.replace(self.spec, sid=self.sid, prompt="hello"),
+            (
+                sys.executable,
+                "-I",
+                os.path.abspath(tui_hook.__file__),
+                "/protected/session",
+                json.dumps(PACKAGE_ROOTS),
+            ),
             source_roots=PACKAGE_ROOTS,
-            resume=False,
         )
         data = json.loads(launch.argv[-1])
         env = {**dict(os.environ), **launch.env}
@@ -515,10 +522,7 @@ class TuiLaunchIntegrationTest(Live):
         handle = self.start(prompt="quoted ' prompt\nnext")
         stream = Stream(self, handle)
         found = stream.until(TurnEnd)
-        native = self.bound().native_id
-        self.assertEqual(
-            found, [SessionBound(native), Activity(), Activity(), Blocked("Bash"), TurnEnd(raw)]
-        )
+        self.assertEqual(found, [Activity(), Activity(), Blocked("Bash"), TurnEnd(raw)])
         self.assertEqual(self.lines(2), ["w1 blocked", "w1 done"])
         self.assertEqual(handle.reply, raw)
         self.assertEqual(len(self.server.panes("=mgr:")), 1)
@@ -529,9 +533,7 @@ class TuiLaunchIntegrationTest(Live):
         self.assertEqual(stat.S_IMODE(hook_store.stat().st_mode), 0o600)
         handle.send("more")
         self.assertEqual(stream.until(TurnEnd), [Activity(), TurnEnd("second")])
-        self.assertEqual(
-            self.attach("last"), [[self.sid, "live", "second", native], ["third", 0], "third"]
-        )
+        self.assertEqual(self.attach("last"), [[self.sid, "live", "second"], ["third", 0], "third"])
         self.assertEqual(stream.until(TurnEnd), [Activity(), TurnEnd("third")])
         self.assertEqual(self.lines(4), ["w1 blocked", "w1 done", "w1 done", "w1 done"])
         (call,) = self.calls()
@@ -579,7 +581,7 @@ class TuiLaunchIntegrationTest(Live):
             [h["payload"]["prompt"] for h in self.hooks() if h["hook"] == "UserPromptSubmit"],
             [call["argv"][-1], "more", "last"],
         )
-        kinds = [r["kind"] for r in records.read(records.path(str(self.work)))]
+        kinds = [r["kind"] for r in RunLog(str(self.work)).read()]
         self.assertEqual(
             [kind for kind in kinds if kind != "session_metadata"], ["session", "client_session"]
         )
@@ -759,7 +761,7 @@ class TuiLaunchIntegrationTest(Live):
         stream = Stream(self, self.start())
         self.assertEqual(
             stream.until(TurnEnd),
-            [SessionBound(self.bound().native_id), Activity(), Activity(), TurnEnd("quoted reply")],
+            [Activity(), Activity(), TurnEnd("quoted reply")],
         )
         stream.quiet()
 
@@ -871,10 +873,7 @@ class TuiRecoveryIntegrationTest(Live):
         self.scene([[{"kind": "pause", "file": str(release)}, "done"]])
         handle = self.start()
         live_tmux.wait(lambda: self.bound().native_id, WAIT, what="durable root binding")
-        self.assertEqual(handle.info().native_id, "")
-        self.assertEqual(
-            [r["kind"] for r in records.read(records.path(str(self.work)))], ["session"]
-        )
+        self.assertEqual([r["kind"] for r in RunLog(str(self.work)).read()], ["session"])
         native = self.bound().native_id
         handle.stop()
         self.scene([["recovered"]])
@@ -882,7 +881,7 @@ class TuiRecoveryIntegrationTest(Live):
         stream = Stream(self, resumed)
         self.assertEqual(
             stream.until(TurnEnd),
-            [SessionBound(native), Activity(), Activity(), TurnEnd("recovered")],
+            [Activity(), Activity(), TurnEnd("recovered")],
         )
         self.assertEqual(self.calls()[-1]["argv"][:2], ["resume", native])
         self.assertEqual(
@@ -900,13 +899,12 @@ class TuiRecoveryIntegrationTest(Live):
         handle.send("interrupt")
         self.assertEqual(stream.until(TurnEnd), [Activity(), TurnEnd("kept")])
         self.assertEqual(self.lines(2), ["w1 done", "w1 done"])
-        native = self.bound().native_id
         self.assertEqual(
             self.attach("interrupt again"),
-            [[self.sid, "live", "kept", native], ["kept", 0], "kept"],
+            [[self.sid, "live", "kept"], ["kept", 0], "kept"],
         )
         self.assertEqual(stream.until(TurnEnd), [Activity(), TurnEnd("kept")])
-        self.assertEqual(self.attach(), [self.sid, "live", "kept", native])
+        self.assertEqual(self.attach(), [self.sid, "live", "kept"])
         handle.send("recover")
         self.assertEqual(stream.until(TurnEnd), [Activity(), TurnEnd("after")])
         live_tmux.wait(lambda: len(self.hooks()) == 9, WAIT, what="all hook results logged")
@@ -919,7 +917,7 @@ class TuiRecoveryIntegrationTest(Live):
         handle = self.start()
         stream = Stream(self, handle)
         self.assertEqual(stream.until(TurnEnd)[-1], TurnEnd())
-        self.assertEqual(self.attach(), [self.sid, "live", "", self.bound().native_id])
+        self.assertEqual(self.attach(), [self.sid, "live", ""])
         handle.send("silent")
         self.assertEqual(stream.until(TurnEnd), [Activity(), TurnEnd()])
         live_tmux.wait(
@@ -958,7 +956,6 @@ class TuiRecoveryIntegrationTest(Live):
         self.assertEqual(
             found,
             [
-                SessionBound(self.bound().native_id),
                 Activity(),
                 Activity(),
                 Activity("Bash"),
@@ -966,7 +963,7 @@ class TuiRecoveryIntegrationTest(Live):
             ],
         )
         self.assertEqual(self.lines(1), ["w1 done"])
-        self.assertEqual(self.attach()[2:], ["root", self.bound().native_id])
+        self.assertEqual(self.attach()[2], "root")
         stream.quiet()
 
     def test_resume_keeps_native_id_cwd_home_model_effort_dirs_network_and_commands(self):
@@ -996,7 +993,7 @@ class TuiRecoveryIntegrationTest(Live):
         self.assertTrue(resumed.info().transcript)
         self.assertIn(native, resumed.info().resume)
         found = Stream(self, resumed).until(TurnEnd)
-        self.assertEqual(found, [SessionBound(native), Activity(), Activity(), TurnEnd("resumed")])
+        self.assertEqual(found, [Activity(), Activity(), TurnEnd("resumed")])
         first, second = self.calls()
         self.assertEqual(second["argv"], ["resume", native, *first["argv"]])
         self.assertEqual(
@@ -1013,11 +1010,12 @@ class TuiRecoveryIntegrationTest(Live):
         )
 
     def test_headless_to_tui_to_headless_resume_uses_one_store(self):
-        self.assertEqual(self.headless()[0], SessionBound(fake_codex.NATIVE))
+        self.headless()
         handle = self.start(resume=self.sid)
         self.assertEqual(Stream(self, handle).until(TurnEnd)[-1], TurnEnd("first"))
         handle.stop()
-        self.assertEqual(self.headless(resume=True)[0], SessionBound(fake_codex.NATIVE))
+        self.headless(resume=True)
+        self.assertEqual(self.clients(), [fake_codex.NATIVE] * 3)
         self.assertEqual(self.bound().native_id, fake_codex.NATIVE)
         self.assertEqual(self.calls()[0]["argv"][:2], ["resume", fake_codex.NATIVE])
         self.assertEqual(len(list(self.record().parent.glob("*.json"))), 1)
@@ -1027,7 +1025,8 @@ class TuiRecoveryIntegrationTest(Live):
         self.assertEqual(Stream(self, handle).until(TurnEnd)[-1], TurnEnd("first"))
         native = self.bound().native_id
         handle.stop()
-        self.assertEqual(self.headless(resume=True)[0], SessionBound(native))
+        self.headless(resume=True)
+        self.assertEqual(self.clients(), [native, native])
         self.assertEqual(self.bound().native_id, native)
         self.assertEqual(len(list(self.record().parent.glob("*.json"))), 1)
 
@@ -1097,3 +1096,50 @@ class TuiRecoveryIntegrationTest(Live):
         self.assertEqual(self.logged(), [])
         self.assertEqual([r.name for r in self.driver.sessions()], ["mgr"])
         self.assertFalse((self.work / "run.jsonl").exists())
+
+
+class HookTest(Base):
+    def test_generic_isolated_hook_loads_binding_callback_and_records_once(self):
+        self.prepare()
+        folder = self.root / "hook-session"
+        folder.mkdir()
+
+        roots_json = json.dumps([SRC["session"], SRC["utils"]])
+        state = {
+            "runtime": "codex",
+            "sid": self.spec.sid,
+            "workdir": str(self.work),
+            "cwd": str(self.cwd),
+            "project": False,
+            "transcript": "",
+            "resume": "",
+            "events": None,
+            "words": {},
+            "tmux_path": sys.executable,
+            "adapter_hook": tui.__name__,
+            "adapter_state": {"store": SessionStore().root},
+        }
+        (folder / "session.json").write_text(json.dumps(state))
+        result = subprocess.run(
+            [sys.executable, "-I", tui_hook.__file__, str(folder), roots_json, "Stop"],
+            input=json.dumps(
+                {"session_id": NATIVE, "cwd": str(self.cwd), "last_assistant_message": "reply"}
+            ),
+            capture_output=True,
+            text=True,
+            timeout=20,
+        )
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (0, "", ""))
+        records = [json.loads(line) for line in (folder / "hooks.jsonl").read_text().splitlines()]
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0]["payload"]["hook_event_name"], "Stop")
+        self.assertEqual(self.common.load(str(self.work), self.spec.sid).native_id, NATIVE)
+        result = subprocess.run(
+            [sys.executable, "-I", tui_hook.__file__, str(folder), roots_json, "Stop"],
+            input=json.dumps({"session_id": NATIVE, "cwd": str(self.cwd), "agent_id": CHILD}),
+            capture_output=True,
+            text=True,
+            timeout=20,
+        )
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (0, "", ""))
+        self.assertEqual(len((folder / "hooks.jsonl").read_text().splitlines()), 1)

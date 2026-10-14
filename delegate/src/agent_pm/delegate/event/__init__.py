@@ -2,7 +2,11 @@
 Delegate to orchestration (DelegateEvent, the callback line); types.py holds their shared data.
 """
 
-from agent_pm.delegate.event.delegate_event import KINDS, DelegateEvent, DelegateEventError
+from agent_pm.delegate.event.delegate_event import (
+    DelegateEvent,
+    DelegateEventError,
+    DelegateEventKind,
+)
 from agent_pm.delegate.event.reply import OUTCOME, PROGRESS
 
-__all__ = ["PROGRESS", "OUTCOME", "DelegateEvent", "DelegateEventError", "KINDS"]
+__all__ = ["PROGRESS", "OUTCOME", "DelegateEvent", "DelegateEventError", "DelegateEventKind"]

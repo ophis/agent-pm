@@ -38,7 +38,7 @@ class Base(Case):
         local = os.path.join(self.agent_pm, "config.local.toml")
         with open(local, "w") as f:
             f.write(text)
-        fake = {"implementation": "adapters.fake:FakeAdapter"}
+        fake = {"implementation": "agent_pm.session.adapters.fake:FakeAdapter"}
         self.configure_session(committed(local) | {"fake": fake})
 
     def planned(

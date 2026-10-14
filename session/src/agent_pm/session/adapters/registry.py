@@ -1,15 +1,16 @@
-"""Construct adapters from caller-owned configuration and validate their host settings."""
+"""Caller-owned adapter configuration, copied read-only once: adapter_class loads a table's
+`implementation` (module.path:Class); adapter builds one per call (per session) from its own copy.
+Validates the host settings.
+"""
 
-import copy
-import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 
 from agent_pm.session.adapters.base import Adapter
-from agent_pm.session.engine.types import ConfigError
-from agent_pm.session.hosts import tables
-from agent_pm.session.hosts.tables import NAME
+from agent_pm.session.engine.types import ConfigError, Hosts
+from agent_pm.session.hosts.base import NAME, Host
 from agent_pm.session.hosts.tmux import tmux_host
+from agent_pm.utils import freeze, thaw
 from agent_pm.utils import load_class as load
 
 
@@ -24,47 +25,33 @@ class TuiSettings:
 
 @dataclass(frozen=True)
 class Settings:
-    adapters: dict[str, dict]
-    hosts: dict[str, dict]
+    adapters: Mapping[str, Mapping]
+    hosts: Mapping[str, Mapping]
     default_host: str
 
 
 PACKAGE = "agent_pm.session"
-IMPLEMENTATION = re.compile(r"adapters\.(?P<name>[^:]+):(?P<cls>[A-Za-z_][A-Za-z0-9_]*Adapter)\Z")
 TUI_KEYS = ("status_line", "workers_per_column", "grid_retile")
 
 
-def settings(config: Mapping) -> dict:
+def settings(config: Mapping, *, hosts: Hosts | None = None) -> dict:
+    """A read session config's [adapters], and its [hosts] parsed once (`hosts`: parsed already)."""
     if not isinstance(config, Mapping):
-        raise ValueError("session config: want a table")
-    found = tables.parse(config.get("hosts"))
-    return {
-        "adapters": config.get("adapters", {}),
-        "hosts": found.tables,
-        "default_host": found.default,
-    }
+        raise ConfigError("session config: want a table")
+    if hosts is None:
+        hosts = Host.parse_hosts(config.get("hosts"))
+    return {"adapters": config.get("adapters", {}), "hosts": hosts}
 
 
 class Registry:
-    """Caller-owned adapter and host configuration."""
+    """`hosts` is already parsed."""
 
-    def __init__(
-        self, *, adapters: Mapping, hosts: Mapping, default_host: str, class_loader=load
-    ) -> None:
+    def __init__(self, *, adapters: Mapping, hosts: Hosts, class_loader=load) -> None:
         if not isinstance(adapters, Mapping) or not all(
             isinstance(k, str) and isinstance(t, Mapping) for k, t in adapters.items()
         ):
             raise ConfigError("adapters: want a mapping of [adapters.<name>] tables")
-        if not isinstance(hosts, Mapping) or "default" in hosts:
-            raise ConfigError("hosts: want a mapping of [hosts.<name>] tables")
-        try:
-            found = tables.parse({**hosts, "default": default_host})
-        except ValueError as e:
-            raise ConfigError(str(e)) from None
-        settings = Settings(
-            copy.deepcopy({k: dict(t) for k, t in adapters.items()}), found.tables, found.default
-        )
-        self.settings = settings
+        self.settings = Settings(freeze(adapters), hosts.tables, hosts.default)
         self.class_loader = class_loader
 
     def configured(self) -> list[str]:
@@ -79,25 +66,30 @@ class Registry:
             isinstance(per, bool) or not isinstance(per, int) or not 1 <= per <= 9999
         ):
             raise ConfigError("workers_per_column: want an integer from 1 to 9999")
-        if retile is not None and (not isinstance(retile, str) or retile not in tmux_host.RETILES):
-            raise ConfigError(f"grid_retile: want one of {', '.join(tmux_host.RETILES)}")
+        if retile is not None and retile not in tuple(tmux_host.Retile):
+            raise ConfigError(f"grid_retile: want one of {', '.join(tmux_host.Retile)}")
         return TuiSettings(bool(line), per, retile)
 
-    def adapter(self, name: str) -> Adapter:
+    def _table(self, name: str) -> Mapping:
         if not isinstance(name, str) or not NAME.match(name):
             raise ConfigError(f"unsafe runtime name {name!r}: want a lowercase identifier")
         table = self.settings.adapters.get(name)
         if table is None:
             raise ConfigError(f"no [adapters.{name}] table in the configured adapters")
-        config = dict(table)
-        implementation = config.pop("implementation", None)
-        found = IMPLEMENTATION.match(implementation) if isinstance(implementation, str) else None
-        if not found or found["name"] != name:
-            raise ConfigError(
-                f'[adapters.{name}].implementation must be "adapters.{name}:<Class>Adapter"'
-            )
+        return table
+
+    def adapter_class(self, name: str) -> type[Adapter]:
+        path = self._table(name).get("implementation")
+        where = f"[adapters.{name}].implementation"
+        if isinstance(path, str) and path.startswith("adapters."):
+            raise ConfigError(f"{where}: {path} is relative: want {PACKAGE}.{path}")
         try:
-            cls = self.class_loader(f"{PACKAGE}.adapters.{name}:{found['cls']}", Adapter)
+            return self.class_loader(path, Adapter)
         except ValueError as e:
-            raise ConfigError(f"adapter {name!r}: {e}") from e
+            raise ConfigError(f"{where}: {e}") from None
+
+    def adapter(self, name: str) -> Adapter:
+        cls = self.adapter_class(name)
+        config = thaw(self._table(name))
+        config.pop("implementation", None)
         return cls(config)

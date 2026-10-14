@@ -1,10 +1,16 @@
 """Outcome data and validation failures shared by the delegate's callers."""
 
 from dataclasses import dataclass, field
-from typing import Literal
+from enum import StrEnum
 
-OutcomeStatus = Literal["done", "needs_input", "failed"]
-STATUSES: tuple[OutcomeStatus, ...] = ("done", "needs_input", "failed")
+
+class OutcomeStatus(StrEnum):
+    DONE = "done"
+    NEEDS_INPUT = "needs_input"
+    FAILED = "failed"
+
+
+STATUSES = tuple(OutcomeStatus)
 
 
 class InvalidOutcome(Exception):

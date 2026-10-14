@@ -6,6 +6,7 @@ import os
 import re
 import stat
 from collections.abc import Mapping, Sequence
+from enum import StrEnum
 from pathlib import Path
 
 from agent_pm.delegate.composer.base import METHOD, PLACEHOLDER, TEAM, read_text, title_of
@@ -16,11 +17,16 @@ from agent_pm.utils import LOCAL, read_project, temp_dirs, under, unfenced
 from agent_pm.utils import load_config as load
 
 START = re.compile(rf"^\s*\[{PROGRESS}:start\] \S", re.M)
-KINDS = ("roles", "tasks", "templates")
 TEAM_NAME = re.compile(r"[a-z0-9-]+")
 INDEX = re.compile(r"^## Tasks\n(.*?)(?=^#|\Z)", re.M | re.S)
 INDEX_LINE = re.compile(r"^- `([\w-]+)`(?: \(`([^`]*)`\))?: (.+)$", re.M)
 INDEX_DEFAULT = re.compile(r"unsure → `([\w-]+)` \(`([^`]*)`\)")
+
+
+class TeamKind(StrEnum):
+    ROLES = "roles"
+    TASKS = "tasks"
+    TEMPLATES = "templates"
 
 
 def lookup(team: Team, kind: str, name: str) -> str | None:
@@ -141,7 +147,7 @@ def team_dirs(config: str = CONFIG, local: str = LOCAL) -> tuple[str, ...]:
 def team(root: str = TEAM, dirs: Sequence[str] = ()) -> Team:
     files, misnamed = {}, []
     for base in (root, *dirs):
-        for kind in KINDS:
+        for kind in TeamKind:
             sub = os.path.join(base, kind)
             try:
                 names = sorted(os.listdir(sub)) if os.path.isdir(sub) else []
@@ -314,7 +320,7 @@ def check_team_dirs(
 
 def team_paths(d: str) -> list[str]:
     paths = [d]
-    for kind in KINDS:
+    for kind in TeamKind:
         if os.path.isdir(sub := os.path.join(d, kind)):
             try:
                 names = sorted(os.listdir(sub))

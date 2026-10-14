@@ -1,15 +1,33 @@
-"""Host process and display interfaces and defaults."""
+"""Host process and display interfaces and defaults; Host.parse_hosts, the one [hosts] parser."""
 
 import inspect
+import operator
+import tomllib
+from types import MappingProxyType
+from unittest import mock
 
 from agent_pm.session import (
+    ConfigError,
     Displayable,
     Host,
     HostProcess,
+    Hosts,
     Terminal,
 )
 
 from session.tests.case import Case
+
+TWO = """[hosts]
+default = "a"
+
+[hosts.a]
+implementation = "pkg.mod:AHost"
+per_column = 2
+
+[hosts.b_2]
+implementation = "pkg.b:BHost"
+"""
+NAMES = "a, b_2"
 
 PROCESS = {"alive", "close", "wait_exit", "kill", "record", "display"}
 
@@ -38,6 +56,16 @@ class Abstract(Case):
     def test_a_terminal_is_a_host_process(self):
         self.assertTrue(issubclass(Terminal, HostProcess))
 
+    def test_displayable_placement_is_keyword_only(self):
+        key, either = inspect.Parameter.KEYWORD_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD
+        for method, parameters in (
+            (Displayable.show, [("self", either), ("name", either), ("display", key)]),
+            (Displayable.layout, [("self", either), ("display", key)]),
+        ):
+            with self.subTest(method=method.__name__):
+                found = inspect.signature(method).parameters.values()
+                self.assertEqual([(p.name, p.kind) for p in found], parameters)
+
 
 class HostDefaults(Case):
     def test_name_and_a_copy_of_settings(self):
@@ -47,9 +75,96 @@ class HostDefaults(Case):
         self.assertIsNot(host.settings, settings)
         self.assertEqual(MinimalHost("m").settings, {})
 
+    def test_each_host_gets_its_own_mutable_settings_even_from_read_only_ones(self):
+        given = MappingProxyType({"sizes": (1, [2]), "grid": MappingProxyType({"a": 1})})
+        first, second = MinimalHost("a", given), MinimalHost("b", given)
+        first.settings["sizes"][1].append(3)
+        first.settings["grid"]["b"] = 2
+        self.assertEqual(second.settings, {"sizes": (1, [2]), "grid": {"a": 1}})
+
     def test_display_returns_its_value_and_display_help_is_empty(self):
         host = MinimalHost("m")
         self.assertFalse(isinstance(host, Displayable))
         self.assertEqual(host.display("elsewhere:1.2"), "elsewhere:1.2")
         self.assertIsNone(host.display(None))
         self.assertEqual(host.display_help(), "")
+
+
+def table(base: str = TWO, text: str = ""):
+    return tomllib.loads(base + text).get("hosts")
+
+
+class ParseHosts(Case):
+    def refused(self, found, message):
+        with self.assertRaises(ConfigError) as caught:
+            Host.parse_hosts(found)
+        self.assertEqual(str(caught.exception), message)
+
+    def test_the_default_and_its_tables(self):
+        self.assertEqual(
+            Host.parse_hosts(table()),
+            Hosts(
+                "a",
+                {
+                    "a": {"implementation": "pkg.mod:AHost", "per_column": 2},
+                    "b_2": {"implementation": "pkg.b:BHost"},
+                },
+            ),
+        )
+
+    def test_a_non_string_key(self):
+        found = {**table(), 1: {"implementation": "pkg.c:CHost"}}
+        self.refused(found, "[hosts] 1: want a string key")
+
+    def test_the_tables_are_read_only_deep_copies(self):
+        found = {**table(), "c": {"implementation": "pkg.c:CHost", "sizes": [1]}}
+        hosts = Host.parse_hosts(found)
+        found["a"]["per_column"] = 3
+        found["c"]["sizes"].append(2)
+        found["d"] = {"implementation": "pkg.d:DHost"}
+        self.assertEqual((hosts.tables["a"]["per_column"], hosts.tables["c"]["sizes"]), (2, (1,)))
+        self.assertNotIn("d", hosts.tables)
+        for mapping, key in ((hosts.tables, "d"), (hosts.tables["a"], "per_column")):
+            with self.subTest(key=key), self.assertRaises(TypeError):
+                operator.setitem(mapping, key, 3)
+
+    def test_no_hosts_table(self):
+        for found in (None, 1, "a", []):
+            with self.subTest(found=found):
+                self.refused(found, "[hosts]: missing")
+
+    def test_a_key_that_is_neither_default_nor_a_table(self):
+        self.refused(
+            table(TWO.replace('default = "a"', 'default = "a"\nnoise = 1')),
+            "[hosts] noise: want default or a [hosts.<name>] table",
+        )
+
+    def test_a_table_name_that_is_not_a_host_name(self):
+        for key, name in (("A", "A"), ("1a", "1a"), ("a-b", "a-b"), ('"a b"', "a b"), ('""', "")):
+            with self.subTest(name=name):
+                self.refused(
+                    table(text=f'[hosts.{key}]\nimplementation = "pkg.c:CHost"\n'),
+                    f"[hosts.{name}]: want a name matching [a-z][a-z0-9_]*",
+                )
+
+    def test_a_table_without_a_class_path(self):
+        for line in ("", 'implementation = "pkg.mod.AHost"\n', "implementation = 1\n"):
+            with self.subTest(line=line):
+                self.refused(
+                    table(TWO.replace('implementation = "pkg.mod:AHost"\n', line)),
+                    "[hosts.a].implementation: want module.path:Class",
+                )
+
+    def test_the_default_must_name_a_table(self):
+        for line in ("", 'default = "c"', "default = 1", 'default = ""', "default = []"):
+            with self.subTest(line=line):
+                self.refused(
+                    table(TWO.replace('default = "a"', line)),
+                    f"[hosts] default: want one of {NAMES}",
+                )
+
+    def test_the_class_is_never_loaded(self):
+        found = table(TWO.replace("pkg.mod:AHost", "agent_pm.session.hosts.tmux:TmuxHost"))
+        with mock.patch("importlib.import_module") as imp:
+            self.assertEqual(Host.parse_hosts(found).default, "a")
+        imp.assert_not_called()

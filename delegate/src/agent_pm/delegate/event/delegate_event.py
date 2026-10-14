@@ -5,15 +5,22 @@ a Limit's fields).
 
 import json
 from dataclasses import dataclass, fields
+from enum import StrEnum
 from typing import Self
 
-KINDS = ("begun", "progress", "finished")
-_FIELDS = {
-    "begun": ("sid",),
-    "progress": ("name", "text"),
-    "finished": ("returncode", "outcome", "error", "limit"),
+
+class DelegateEventKind(StrEnum):
+    BEGUN = "begun"
+    PROGRESS = "progress"
+    FINISHED = "finished"
+
+
+_FIELDS: dict[str, tuple[str, ...]] = {
+    DelegateEventKind.BEGUN: ("sid",),
+    DelegateEventKind.PROGRESS: ("name", "text"),
+    DelegateEventKind.FINISHED: ("returncode", "outcome", "error", "limit"),
 }
-_KIND = f"kind: want one of {', '.join(KINDS)}"
+_KIND = f"kind: want one of {', '.join(DelegateEventKind)}"
 
 
 class DelegateEventError(ValueError):
@@ -41,18 +48,18 @@ class DelegateEvent:
     limit: dict | None = None
 
     def __post_init__(self):
-        _check(ok=self.kind in KINDS, message=_KIND)
+        _check(ok=self.kind in tuple(DelegateEventKind), message=_KIND)
         for each in fields(self)[1:]:
             if each.name not in _FIELDS[self.kind]:
                 _check(
                     ok=getattr(self, each.name) == each.default,
                     message=f"{each.name}: not a {self.kind} field",
                 )
-        if self.kind == "begun":
+        if self.kind == DelegateEventKind.BEGUN:
             _check(
                 ok=isinstance(self.sid, str) and self.sid != "", message="sid: want a non-empty str"
             )
-        elif self.kind == "progress":
+        elif self.kind == DelegateEventKind.PROGRESS:
             for field in ("name", "text"):
                 _check(ok=isinstance(getattr(self, field), str), message=f"{field}: want a str")
         else:
@@ -88,7 +95,7 @@ class DelegateEvent:
         _check(ok=isinstance(data, dict), message="DelegateEvent line: want a JSON object")
         _check(ok=type(data.get("v")) is int and data["v"] == 1, message="v: want 1")
         kind = data.get("kind")
-        _check(ok=kind in KINDS, message=_KIND)
+        _check(ok=kind in tuple(DelegateEventKind), message=_KIND)
         for key in data:
             _check(ok=key in ("v", "kind", *_FIELDS[kind]), message=f"{key}: not a {kind} field")
         return cls(**{k: v for k, v in data.items() if k != "v"})

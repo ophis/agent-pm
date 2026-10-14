@@ -6,7 +6,7 @@ import stat
 import sys
 import tempfile
 from collections.abc import Iterator
-from enum import Enum
+from enum import StrEnum
 from pathlib import Path
 
 
@@ -40,6 +40,12 @@ def read_regular(
         return None
     finally:
         os.close(fd)
+
+
+def holds(path: str | Path, text: str) -> bool:
+    """Whether `path` is a regular file holding exactly `text`."""
+    data = text.encode()
+    return read_regular(path, limit=len(data) + 1) == data
 
 
 @contextlib.contextmanager
@@ -134,7 +140,7 @@ def save(path: str | Path, text: str | bytes, *, own: bool = False, durable: boo
         sync_directory(path.parent)
 
 
-class ConfinedReason(Enum):
+class ConfinedReason(StrEnum):
     REGULAR = "regular"
     SINGLE_LINK = "single_link"
     SUFFIX = "suffix"

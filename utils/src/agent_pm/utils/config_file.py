@@ -1,4 +1,4 @@
-"""TOML config loading and table merging, and the projects' config files: each project's
+"""TOML config loading, table merging and freezing, and the projects' config files: each project's
 <root>/<name>/config.toml, merged in LEVELS order (a higher level's key wins), with LOCAL, this
 machine's one local file, on top of all.
 
@@ -12,9 +12,12 @@ role>.account), else a suffix of the key (roles.<role>.cwd: cwd), else all of th
 top-level key no project has is a ValueError.
 """
 
+import copy
 import os
 import tomllib
 from collections.abc import Iterator, Mapping
+from types import MappingProxyType
+from typing import Any
 
 from agent_pm.utils.paths import ROOT, STATE
 
@@ -37,6 +40,32 @@ def merge(base: dict, over: dict) -> dict:
 def load(path: str) -> dict:
     with open(path, "rb") as f:
         return tomllib.load(f)
+
+
+class _Array(tuple):
+    """A frozen list; thawed, a list again."""
+
+
+def freeze(value: Any) -> Any:
+    """A read-only deep copy: mappings as MappingProxyType, lists as tuples."""
+    if isinstance(value, Mapping):
+        return MappingProxyType({k: freeze(v) for k, v in value.items()})
+    if isinstance(value, (list, _Array)):
+        return _Array(freeze(v) for v in value)
+    if isinstance(value, tuple):
+        return tuple(freeze(v) for v in value)
+    return copy.deepcopy(value)
+
+
+def thaw(value: Any) -> Any:
+    """A fresh mutable deep copy: mappings as dicts, freeze's lists lists again."""
+    if isinstance(value, Mapping):
+        return {k: thaw(v) for k, v in value.items()}
+    if isinstance(value, _Array):
+        return [thaw(v) for v in value]
+    if isinstance(value, tuple):
+        return tuple(thaw(v) for v in value)
+    return copy.deepcopy(value)
 
 
 def read_project(

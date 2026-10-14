@@ -18,6 +18,7 @@ from contextlib import contextmanager, suppress
 from dataclasses import replace
 from datetime import datetime
 from functools import cached_property, wraps
+from types import MappingProxyType
 from typing import Literal, overload
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -36,6 +37,7 @@ from agent_pm.session.adapters.common import (
 from agent_pm.session.engine.types import (
     ConfigError,
     Launch,
+    Resumable,
     SessionInfo,
     SessionStatus,
     Spec,
@@ -789,13 +791,15 @@ class CodexCommon:
         "CODEX_PERMISSION_PROFILE",
         "CLAUDECODE",
     )
-    DEFAULTS = {
-        "NO_COLOR": "1",
-        "CODEX_CI": "1",
-        "PAGER": "cat",
-        "GIT_PAGER": "cat",
-        "GH_PAGER": "cat",
-    }
+    DEFAULTS = MappingProxyType(
+        {
+            "NO_COLOR": "1",
+            "CODEX_CI": "1",
+            "PAGER": "cat",
+            "GIT_PAGER": "cat",
+            "GH_PAGER": "cat",
+        }
+    )
 
     def __init__(self, config, *, selector):
         self.selector = selector
@@ -863,7 +867,7 @@ class CodexCommon:
                 "dirs": [absolute_path(path, "dir") for path in spec.access.dirs],
                 "commands": list(spec.access.commands),
                 "model": self._mapped("tiers", spec.tier),
-                "effort": self._mapped("efforts", spec.effort),
+                "effort": self._mapped("efforts", spec.effort and spec.effort.value),
                 "codex_home": home,
                 "flags": list(spec.flags),
                 "env": explicit,
@@ -992,7 +996,7 @@ class CodexCommon:
     def session_metadata(self, info: SessionInfo) -> SessionInfo:
         try:
             state = self.lookup(info.sid, info.cwd)
-            if state is None or not state.native_id or state.native_id != info.native_id:
+            if state is None or not state.native_id:
                 return info
             found = session_file(state.snapshot, state.native_id)
             return replace(
@@ -1013,11 +1017,11 @@ class CodexCommon:
         try:
             state = self.lookup(sid, cwd)
             if state is None or state.native_id is None:
-                return SessionStatus("no", None, "")
+                return SessionStatus(Resumable.NO, None, "")
             resume = self.resume_command(state)
             found = session_file(state.snapshot, state.native_id)
             if found is None:
-                return SessionStatus("no", None, resume)
-            return SessionStatus("yes", self.last_active(state, found), resume)
+                return SessionStatus(Resumable.NO, None, resume)
+            return SessionStatus(Resumable.YES, self.last_active(state, found), resume)
         except (ConfigError, RecoveryError, OSError):
-            return SessionStatus("unknown", None, resume)
+            return SessionStatus(Resumable.UNKNOWN, None, resume)

@@ -1,6 +1,7 @@
 """hosts/tmux/tmux_host.py: every tmux, sh, pgrep and osascript call through a fake proc (no tmux runs here):
-start (no pane), detach, status, listing, tmux_path, paste/keys/send, read, option, pane, mark, the events
-file, the show and its placement, the grid's tile, the CLI, the pane wrapper (EXEC) and the file standing alone."""
+start (no pane), detach, status, listing, display_error, tmux_path, paste/keys/send, read, option, pane, process, mark,
+the events file, the show and its placement, the grid's tile, the CLI, the pane wrapper (EXEC)'s text and the file's imports
+(running them: its integration test)."""
 
 import ast
 import contextlib
@@ -64,6 +65,16 @@ DIED = "set-option @state dead"
 
 DIED_EVENTS = (
     DIED + " ; run-shell -b 'echo \"$(date +%H:%M:%S)\" #{q:session_name} dead >> #{q:@events}'"
+)
+
+NEW_PROCESS = "4242 $3 %7 4343"
+
+NEW = ["-P", "-F", "#{pid} #{session_id} #{pane_id} #{pane_pid}"]
+
+EXITED = (
+    'run-shell \'echo "$(date +%H:%M:%S)" #{q:session_name} exited'
+    " #{?pane_dead_signal,-#{?#{m:*[!0-9]*,#{pane_dead_signal}},$(kill -l #{q:pane_dead_signal}),"
+    "#{pane_dead_signal}},#{pane_dead_status}} >> #{q:@events}' ; kill-session"
 )
 
 INSIDE = {"TMUX": "/tmp/tmux-501/default,1,0", "TMUX_PANE": "%3", "ITERM_SESSION_ID": "w0t0p0:ABC"}
@@ -352,6 +363,8 @@ class Tmux:
             )
         if argv[1] == "new-session":
             self.take_launch(argv)
+            if "-P" in argv:
+                return done(argv, 0, NEW_PROCESS + "\n")
         return done(argv)
 
     def take_launch(self, argv):
@@ -382,10 +395,10 @@ LISTING = [
     "-u",
     "list-sessions",
     "-F",
-    "#{session_name}\t#{pane_dead}\t#{@sid}\t#{@runtime}\t#{@state}\t#{@pane}\t#{@opener}",
+    "#{session_name}\t#{pane_dead}\t#{@sid}\t#{@runtime}\t#{@state}\t#{@pane}\t#{@opener}\t#{@display}",
 ]
 
-COLUMNS = ("name", "dead", "sid", "runtime", "state", "pane", "opener")
+COLUMNS = ("name", "dead", "sid", "runtime", "state", "pane", "opener", "display")
 
 ALL_CLIENTS = [
     "tmux",
@@ -419,6 +432,7 @@ def expected_row(name, **fields):
         "state": None,
         "pane": None,
         "opener": None,
+        "display": None,
         "dead": False,
         "shown": None,
         "last_lines": None,
@@ -452,12 +466,6 @@ def grid(cells, per_column=3, width=160, height=48, manager_width=79):
     return tmux_host._grid_layout(
         cells, "%0", width=width, height=height, manager_width=manager_width, per_column=per_column
     )
-
-
-WAIT = """import os, sys, time
-for _ in range(3000):
-    if os.path.exists(sys.argv[1]): break
-    time.sleep(0.01)"""
 
 
 def opening_commands(*, window="@1", manager="%3", opener="mgr", n=3, retile="all", hooks=True):
@@ -1101,7 +1109,7 @@ class CliTest(Case):
         read.return_value, show.return_value, status.return_value = (
             "pane\ntext",
             None,
-            tmux_host.RUNNING,
+            tmux_host.PaneStatus.RUNNING,
         )
         self.assertEqual(self.main("send", "s", "hi there"), (0, "", ""))
         send.assert_called_once_with("s", "hi there")
@@ -1131,7 +1139,7 @@ class CliTest(Case):
     @unittest.mock.patch.dict(os.environ, {"NO_COLOR": "1"})
     def test_per_column(self):
         show = self.patch("show", return_value=None)
-        self.patch("status", return_value=tmux_host.RUNNING)
+        self.patch("status", return_value=tmux_host.PaneStatus.RUNNING)
         for value, n in (("1", 1), ("2", 2), ("9999", 9999), ("0003", 3)):
             with self.subTest(value=value):
                 self.assertEqual(self.main("show", "--per-column", value, "s")[0], 0)
@@ -1148,7 +1156,7 @@ class CliTest(Case):
     @unittest.mock.patch.dict(os.environ, {"NO_COLOR": "1"})
     def test_grid_retile(self):
         show = self.patch("show", return_value=None)
-        self.patch("status", return_value=tmux_host.RUNNING)
+        self.patch("status", return_value=tmux_host.PaneStatus.RUNNING)
         for mode in ("all", "open-close", "off"):
             with self.subTest(mode=mode):
                 self.assertEqual(self.main("show", "--grid-retile", mode, "s")[0], 0)
@@ -1158,9 +1166,23 @@ class CliTest(Case):
             with self.subTest(value=value):
                 rc, _, err = self.main("show", "--grid-retile", value, "s")
                 self.assertEqual(rc, 2)
-                self.assertIn("--grid-retile", err)
+                self.assertIn(
+                    f"--grid-retile: invalid choice: {value!r} (choose from 'all', 'open-close', "
+                    "'off')",
+                    " ".join(err.split()),
+                )
         show.assert_not_called()
         self.assertIn("--grid-retile M", " ".join(self.main("show", "-h")[1].split()))
+
+    @unittest.mock.patch.dict(os.environ, {"NO_COLOR": "1"})
+    def test_split_choices(self):
+        show = self.patch("show")
+        rc, _, err = self.main("show", "--split", "up", "s")
+        self.assertEqual(rc, 2)
+        self.assertIn(
+            "--split: invalid choice: 'up' (choose from 'right', 'below')", " ".join(err.split())
+        )
+        show.assert_not_called()
 
     def test_tile(self):
         real, fake = tmux_host.tile, Tmux()
@@ -1200,7 +1222,7 @@ class CliTest(Case):
         )
         self.assertEqual(self.main("show", "s"), (1, "", "tui: no session s\n"))
         show.assert_not_called()
-        status.return_value = tmux_host.RUNNING
+        status.return_value = tmux_host.PaneStatus.RUNNING
         self.assertEqual(self.main("show", "s")[0], 1)
 
     def test_exit_2(self):
@@ -1242,35 +1264,19 @@ class SingleFileTest(Case):
     def test_no_runtime_name(self):
         self.assertEqual(RUNTIME.findall(self.source), [])
 
-    def test_runs_alone(self):
-        with tempfile.TemporaryDirectory() as d:
-            bundle = shutil.copytree(os.path.dirname(tmux_host.__file__), os.path.join(d, "host"))
-            copy = os.path.join(bundle, "tmux_host.py")
-            res = subprocess.run(
-                [sys.executable, "-I", copy, "--help"],
-                cwd=d,
-                capture_output=True,
-                text=True,
-                stdin=subprocess.DEVNULL,
-                timeout=30,
-            )
-        self.assertEqual(res.returncode, 0, res.stderr)
-        for word in ("start", "send", "read", "show"):
-            self.assertIn(word, res.stdout)
-
 
 class DetachTest(StartFixture):
     """Session d hosting argv as old drive.detach did: no decoration, no dead pane kept."""
 
     def detach(self, fake, session="d", argv=("tool", "-x", "a b"), env=None, **kw):
         env = {"PATH": self.bin, "HOME": "/h"} if env is None else env
-        tmux_host.detach(
+        return tmux_host.detach(
             session, list(argv), **kw, proc=fake, sleep=self.sleep, cwd=self.cwd, env=env
         )
 
-    def test_new_session_runs_the_wrapper_and_returns_once_argv_execd(self):
+    def test_new_session_runs_the_wrapper_and_returns_its_process_once_argv_execd(self):
         fake = Tmux()
-        self.assertIsNone(self.detach(fake))
+        self.assertEqual(self.detach(fake), NEW_PROCESS)
         self.assertEqual(
             fake.calls,
             [
@@ -1278,6 +1284,7 @@ class DetachTest(StartFixture):
                     "tmux",
                     "new-session",
                     "-d",
+                    *NEW,
                     "-s",
                     "d",
                     sys.executable,
@@ -1345,6 +1352,7 @@ class DetachTest(StartFixture):
                     "tmux",
                     "new-session",
                     "-d",
+                    *NEW,
                     *(["-e", f"ITERM_SESSION_ID={value}"] if given else []),
                     "-s",
                     "d",
@@ -1364,6 +1372,7 @@ class DetachTest(StartFixture):
                             "tmux",
                             "new-session",
                             "-d",
+                            *NEW,
                             "-s",
                             "d",
                             sys.executable,
@@ -1381,6 +1390,127 @@ class DetachTest(StartFixture):
                         ]
                     ],
                 )
+
+    def test_events_keep_the_pane_for_the_exited_hook_and_tags_set_in_the_same_call(self):
+        events, line = os.path.join(self.root, "events"), '{"v":1,"name":"d"}'
+        fake = Tmux()
+        self.detach(fake, opener="mgr", display="mgr/right", events=events, record=line)
+        self.assertEqual(
+            fake.calls[0][fake.calls[0].index(fake.fifo) + 1 :],
+            [
+                ";",
+                "set-option",
+                "-p",
+                "-t",
+                "=d:",
+                "remain-on-exit",
+                "on",
+                ";",
+                "set-option",
+                "-t",
+                "=d:",
+                "@events",
+                events,
+                ";",
+                "set-hook",
+                "-p",
+                "-t",
+                "=d:",
+                "pane-died",
+                EXITED,
+                ";",
+                "set-option",
+                "-t",
+                "=d:",
+                "@opener",
+                "mgr",
+                ";",
+                "set-option",
+                "-t",
+                "=d:",
+                "@display",
+                "mgr/right",
+                ";",
+                "set-option",
+                "-t",
+                "=d:",
+                "@record",
+                line,
+            ],
+        )
+        self.assertEqual(stat.S_IMODE(os.stat(events).st_mode), 0o600)
+
+    def test_a_display_or_record_is_stored_without_events_and_no_pane_kept(self):
+        fake = Tmux()
+        self.detach(fake, display="elsewhere:1.2", record="{}")
+        self.assertEqual(
+            fake.calls[0][fake.calls[0].index(fake.fifo) + 1 :],
+            [
+                ";",
+                "set-option",
+                "-t",
+                "=d:",
+                "@display",
+                "elsewhere:1.2",
+                ";",
+                "set-option",
+                "-t",
+                "=d:",
+                "@record",
+                "{}",
+            ],
+        )
+
+    def test_the_exited_hook_is_a_constant_reading_its_values_only_through_tmux_formats(self):
+        self.assertEqual(tmux_host.EXITED_EVENT, EXITED)
+        self.assertEqual(
+            set(re.findall(r"#\{[^{}]*\}", EXITED)),
+            {
+                "#{q:session_name}",
+                "#{pane_dead_signal}",
+                "#{q:pane_dead_signal}",
+                "#{pane_dead_status}",
+                "#{q:@events}",
+            },
+        )
+        self.assertEqual(EXITED.count("{"), EXITED.count("#{"))
+        self.assertEqual(EXITED.count("{"), EXITED.count("}"))
+        hooks = []
+        for session, events in (("d", "e1"), ("other-name", "e 2 'x'")):
+            fake = Tmux()
+            self.detach(fake, session=session, events=os.path.join(self.root, events))
+            hooks.append(fake.calls[0][fake.calls[0].index("pane-died") + 1])
+        self.assertEqual(hooks, [EXITED, EXITED])
+
+    def test_a_bad_display_record_or_events_is_refused_before_tmux(self):
+        target, link = os.path.join(self.root, "target"), os.path.join(self.root, "link")
+        open(target, "w").close()
+        os.symlink(target, link)
+        for kw, error in (
+            ({"display": "mgr\tx"}, "^display 'mgr\\\\tx': want printable text not ending in ;$"),
+            ({"display": "mgr\nx"}, "^display "),
+            ({"display": "mgr;"}, "^display "),
+            ({"display": 5}, "^display 5: "),
+            ({"record": "{};"}, "^tag '@record'"),
+            ({"record": "a\0b"}, "^tag '@record'"),
+            ({"events": link}, f"^events file {re.escape(link)}: "),
+            ({"events": os.path.join(self.root, "a#b")}, "tmux would misread"),
+        ):
+            with self.subTest(**kw):
+                fake = Tmux()
+                with self.assertRaisesRegex(tmux_host.TuiError, error):
+                    self.detach(fake, **kw)
+                self.assertEqual(fake.calls, [])
+                self.assertEqual(os.listdir(self.temp), [])
+
+    def test_a_new_session_tmux_does_not_name_is_killed(self):
+        for out in ("", "4242 $3 %7\n", "4242 $3 %7 x\n"):
+            with self.subTest(out=out):
+                fake = Tmux(results={"new-session": (0, out, "")})
+                with self.assertRaisesRegex(tmux_host.TuiError, "^tmux: bad new session "):
+                    self.detach(fake)
+                self.assertEqual(fake.commands(), ["new-session", "kill-session"])
+                self.assertEqual(os.listdir(self.temp), [])
 
     def test_an_existing_session_is_refused_untouched(self):
         fake = Tmux(results={"new-session": (1, "", "duplicate session: d\n")})
@@ -1491,148 +1621,6 @@ class ExecTest(Case):
     def test_safe_for_tmux(self):
         self.assertNotIn("#", tmux_host.EXEC)
         self.assertFalse(tmux_host.EXEC.rstrip().endswith(";"))
-
-    def setUp(self):
-        tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(tmp.cleanup)
-        self.root = os.path.realpath(tmp.name)
-        self.path, self.fifo = (os.path.join(self.root, n) for n in ("handover.json", "errpipe"))
-        os.mkfifo(self.fifo, 0o600)
-        self.reader = os.open(self.fifo, os.O_RDONLY | os.O_NONBLOCK)
-        self.addCleanup(os.close, self.reader)
-
-    def run_exec(self, argv, env, cwd, pane, prelude="", **extra):
-        """The wrapper as tmux runs it, given a handover file naming argv and the errpipe; `prelude`
-        runs before it.
-        """
-        with open(self.path, "w") as f:
-            json.dump({"argv": argv, "env": env, "cwd": cwd, **extra}, f)
-        return subprocess.run(
-            self.wrapper(prelude),
-            env=pane,
-            capture_output=True,
-            text=True,
-            stdin=subprocess.DEVNULL,
-            timeout=30,
-        )
-
-    def wrapper(self, prelude=""):
-        return [sys.executable, "-I", "-c", prelude + tmux_host.EXEC, self.path, self.fifo]
-
-    def piped(self):
-        """What the wrapper wrote to the errpipe, read to EOF; BlockingIOError while a writer holds
-        it open.
-        """
-        out = b""
-        while chunk := os.read(self.reader, 64):
-            out += chunk
-        return out
-
-    def test_runs_the_handover(self):
-        cwd = os.path.join(self.root, "cwd")
-        os.makedirs(cwd)
-        code = "import json, os, sys; print(json.dumps([os.getcwd(), dict(os.environ), sys.argv]))"
-        env = {"A": "1", "B": "two words"}
-        pane = {"TERM": "tmux-256color", "PANE_ONLY": "1", "PATH": os.environ.get("PATH", "")}
-        res = self.run_exec([sys.executable, "-c", code, "x", "y z"], env, cwd, pane)
-        self.assertEqual(res.returncode, 0, res.stderr)
-        got_cwd, got_env, got_argv = json.loads(res.stdout)
-        self.assertEqual(got_cwd, cwd)
-        self.assertEqual(
-            {k: got_env.get(k) for k in (*env, "TERM")}, {**env, "TERM": "tmux-256color"}
-        )
-        self.assertNotIn("PANE_ONLY", got_env)
-        self.assertNotIn("PATH", got_env)
-        self.assertEqual(got_argv, ["-c", "x", "y z"])
-        self.assertFalse(os.path.exists(self.path))
-        self.assertEqual(self.piped(), b"")
-
-    def test_execve_closes_the_errpipe_while_argv_runs(self):
-        """EOF with no data once argv runs: the wrapper's end never reaches argv."""
-        go = os.path.join(self.root, "go")
-        with open(self.path, "w") as f:
-            json.dump({"argv": [sys.executable, "-c", WAIT, go], "env": {}, "cwd": self.root}, f)
-        wrapper = subprocess.Popen(
-            self.wrapper(),
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            stdin=subprocess.DEVNULL,
-            text=True,
-        )
-        self.addCleanup(lambda: wrapper.returncode is None and wrapper.kill())
-        piped, deadline = None, time.monotonic() + 10
-        while piped is None and time.monotonic() < deadline:
-            time.sleep(0.01)
-            if not os.path.exists(self.path):  # a FIFO no writer opened yet reads as EOF too
-                with suppress(BlockingIOError):
-                    piped = self.piped()
-        self.assertEqual(piped, b"")
-        self.assertIsNone(wrapper.poll())
-        open(go, "w").close()
-        out, err = wrapper.communicate(timeout=30)
-        self.assertEqual((wrapper.returncode, out), (0, ""), err)
-
-    def test_an_exec_failure_writes_its_errno_and_argv_never_runs(self):
-        for text, number in (
-            ("#!/nonexistent/interpreter\nprint('ran')\n", errno.ENOENT),
-            ("echo ran\n", errno.ENOEXEC),
-        ):
-            with self.subTest(text=text):
-                program = os.path.join(self.root, "program")
-                with open(program, "w") as f:
-                    f.write(text)
-                os.chmod(program, 0o755)
-                res = self.run_exec([program], {}, self.root, {})
-                self.assertEqual((res.returncode, res.stdout), (1, ""))
-                self.assertEqual(self.piped(), b"%d" % number)
-                self.assertFalse(os.path.exists(self.path))
-
-    def test_any_other_exec_failure_writes_einval_and_argv_never_runs(self):
-        for env in ({"X": "a\0b"}, {"X": "\ud800"}, {"X=Y": "1"}):
-            with self.subTest(env=env):
-                res = self.run_exec([sys.executable, "-c", "print('ran')"], env, self.root, {})
-                self.assertEqual((res.returncode, res.stdout), (1, ""))
-                self.assertIn("Error: ", res.stderr)
-                self.assertEqual(self.piped(), b"%d" % errno.EINVAL)
-
-    def test_a_cwd_it_cannot_enter_fails_it_leaving_the_handover_untaken(self):
-        res = self.run_exec(
-            [sys.executable, "-c", "print('ran')"], {}, os.path.join(self.root, "missing"), {}
-        )
-        self.assertEqual((res.returncode, res.stdout), (1, ""))
-        self.assertIn("FileNotFoundError", res.stderr)
-        self.assertTrue(os.path.exists(self.path))
-        self.assertEqual(self.piped(), b"%d" % errno.ENOENT)
-
-    def test_an_errpipe_without_a_reader_runs_nothing_leaving_the_handover_untaken(self):
-        """The caller gone: ENXIO."""
-        self.fifo = os.path.join(self.root, "unread")
-        os.mkfifo(self.fifo, 0o600)
-        res = self.run_exec([sys.executable, "-c", "print('ran')"], {}, self.root, {})
-        self.assertEqual((res.returncode, res.stdout), (1, ""))
-        self.assertIn(f"[Errno {errno.ENXIO}]", res.stderr)
-        self.assertTrue(os.path.exists(self.path))
-
-    def test_block_signals_stay_blocked_in_argv(self):
-        code = "import json, signal; print(json.dumps(sorted(signal.pthread_sigmask(signal.SIG_BLOCK, []))))"
-        for extra, want in (
-            ({}, set()),
-            ({"block": [signal.SIGHUP, signal.SIGTERM]}, {signal.SIGHUP, signal.SIGTERM}),
-        ):
-            with self.subTest(**extra):
-                res = self.run_exec([sys.executable, "-c", code], {}, self.root, {}, **extra)
-                self.assertEqual(res.returncode, 0, res.stderr)
-                self.assertEqual(
-                    set(json.loads(res.stdout)) & {signal.SIGHUP, signal.SIGTERM}, want
-                )
-
-    def test_default_signal_dispositions(self):
-        for sig in (signal.SIGPIPE, signal.SIGXFSZ):
-            with self.subTest(sig=sig.name):
-                res = self.run_exec(
-                    ["/bin/sh", "-c", f"kill -{sig.name[3:]} $$"], {}, self.root, {}
-                )
-                self.assertEqual(res.returncode, -sig, res.stderr)
 
 
 class MarkTest(Case):
@@ -1814,17 +1802,66 @@ class EventsFileTest(Case):
             self.assertFalse(os.path.exists(path))
 
 
+class DisplayErrorTest(Case):
+    def test_none_or_printable_text_not_ending_in_a_semicolon(self):
+        for value in (None, "", "mgr", "mgr/right/m1", "elsewhere:1.2", "a b#{x}", "\u00e9"):
+            with self.subTest(value=value):
+                self.assertIsNone(tmux_host.display_error(value))
+        for value in ("a\tb", "a\nb", "a\0b", "a\u2028b", "mgr;", 5, b"x"):
+            with self.subTest(value=value):
+                self.assertEqual(
+                    tmux_host.display_error(value),
+                    f"display {value!r:.80}: want printable text not ending in ;",
+                )
+
+
+class ProcessIdentityTest(Case):
+    FORMAT = "#{pid} #{session_id} #{pane_id} #{pane_pid}"
+
+    def test_the_server_session_pane_and_process_ids_of_its_pane_else_none(self):
+        for target, printed, want in (
+            ("s", (0, "4242 $3 %7 4343\n"), "4242 $3 %7 4343"),
+            ("%7", (0, "4242 $3 %7 4343\n"), "4242 $3 %7 4343"),
+            ("s", (0, " \n"), None),
+            ("%7", (0, "4242   \n"), None),
+            ("s", (1, "", "can't find session: =s\n"), None),
+            ("%7", (1, "", "can't find pane: %7\n"), None),
+            ("s", (1, "", "no server running on /tmp/tmux-501/default\n"), None),
+        ):
+            with self.subTest(target=target, printed=printed):
+                fake = Tmux(results={"display-message": printed})
+                self.assertEqual(tmux_host.process(target, proc=fake), want)
+                at = "=s:" if target == "s" else target
+                self.assertEqual(
+                    fake.calls, [["tmux", "display-message", "-p", "-t", at, self.FORMAT]]
+                )
+
+    def test_a_failure_bad_output_or_bad_target_raises(self):
+        for printed, error in (
+            ((1, "", "boom\n"), "^tmux: boom$"),
+            ((0, "4242 $3 %7\n"), "^bad tmux process "),
+        ):
+            with self.subTest(printed=printed):
+                fake = Tmux(results={"display-message": printed})
+                with self.assertRaisesRegex(tmux_host.TuiError, error):
+                    tmux_host.process("s", proc=fake)
+        fake = Tmux()
+        with self.assertRaisesRegex(tmux_host.TuiError, "invalid target"):
+            tmux_host.process("a b", proc=fake)
+        self.assertEqual(fake.calls, [])
+
+
 class StatusTest(Case):
     def test_states(self):
         # a signal death: -n (tmux prints the signal's name where libc has one, else its number)
         for pane, want in (
-            ("0  ", tmux_host.RUNNING),
+            ("0  ", tmux_host.PaneStatus.RUNNING),
             ("1 3 ", 3),
             ("1 0 ", 0),
             ("1  kill", -9),
             ("1  9", -9),
             ("1  term", -15),
-            ("1  ", tmux_host.RUNNING),
+            ("1  ", tmux_host.PaneStatus.RUNNING),
             ("  ", None),
             (None, None),
         ):
@@ -1836,18 +1873,30 @@ class StatusTest(Case):
                 )
                 self.assertEqual(fake.kwargs, [TMUX_KW])
 
+    def test_a_pane_status_is_a_str_enum_member(self):
+        self.assertEqual(list(tmux_host.PaneStatus), ["running", "unknown"])
+        for name in ("RUNNING", "UNKNOWN"):
+            with self.subTest(name=name):
+                self.assertFalse(hasattr(tmux_host, name))
+        for result, want in (
+            ((0, "0  \n"), tmux_host.PaneStatus.RUNNING),
+            ((0, "x\n"), tmux_host.PaneStatus.UNKNOWN),
+        ):
+            with self.subTest(result=result):
+                fake = Tmux(results={"display-message": result})
+                self.assertIs(tmux_host.status("s", proc=fake), want)
+
     def test_absent_for_a_missing_session_or_server_else_unknown(self):
-        self.assertEqual(tmux_host.UNKNOWN, "unknown")
         missing = FileNotFoundError(2, "No such file or directory", "tmux")
         for result, want in (
             *(((1, "", err + "\n"), None) for err in ABSENT),
-            *(((1, "", err + "\n"), tmux_host.UNKNOWN) for err in FAILED),
-            ((0, "x\n"), tmux_host.UNKNOWN),
-            ((0, "2 0 \n"), tmux_host.UNKNOWN),
-            ((0, "1 0\n"), tmux_host.UNKNOWN),
-            ((0, ""), tmux_host.UNKNOWN),
-            (missing, tmux_host.UNKNOWN),
-            (PermissionError(13, "Permission denied"), tmux_host.UNKNOWN),
+            *(((1, "", err + "\n"), tmux_host.PaneStatus.UNKNOWN) for err in FAILED),
+            ((0, "x\n"), tmux_host.PaneStatus.UNKNOWN),
+            ((0, "2 0 \n"), tmux_host.PaneStatus.UNKNOWN),
+            ((0, "1 0\n"), tmux_host.PaneStatus.UNKNOWN),
+            ((0, ""), tmux_host.PaneStatus.UNKNOWN),
+            (missing, tmux_host.PaneStatus.UNKNOWN),
+            (PermissionError(13, "Permission denied"), tmux_host.PaneStatus.UNKNOWN),
         ):
             with self.subTest(result=result):
                 fake = Tmux(results={"display-message": result})
@@ -2304,11 +2353,14 @@ class GridOpenTest(Case):
 
 class RetileTest(Case):
     def test_modes(self):
-        self.assertEqual(tmux_host.RETILES, ("all", "open-close", "off"))
-        self.assertEqual(tmux_host.RETILE, "open-close")
+        self.assertEqual(list(tmux_host.Retile), ["all", "open-close", "off"])
+        self.assertIs(tmux_host.RETILE, tmux_host.Retile.OPEN_CLOSE)
         self.assertEqual(tmux_host.RETILE_HOOKS, MODE_HOOKS)
+        self.assertEqual(list(tmux_host.RETILE_HOOKS), list(tmux_host.Retile))
+        for retile in tmux_host.RETILE_HOOKS:
+            self.assertIs(type(retile), tmux_host.Retile)
         self.assertEqual(tmux_host.GRID_PANES_SET, "@grid-panes")
-        for retile in (None, *tmux_host.RETILES):
+        for retile in (None, *tmux_host.Retile, "all"):
             with self.subTest(retile=retile):
                 self.assertIsNone(tmux_host._retile(retile))
         for bad in ("x", True, 1, "", "ALL"):
@@ -2319,6 +2371,23 @@ class RetileTest(Case):
                 ),
             ):
                 tmux_host._retile(bad)
+
+
+class SplitTest(Case):
+    def test_sides(self):
+        self.assertEqual(list(tmux_host.Split), ["right", "below"])
+        for split in (None, *tmux_host.Split, "below"):
+            with self.subTest(split=split):
+                self.assertIsNone(tmux_host._layout(split, None))
+        for bad in ("up", "", "RIGHT", 1, ["right"]):
+            with (
+                self.subTest(split=bad),
+                self.assertRaisesRegex(
+                    tmux_host.TuiError,
+                    f"^split must be one of right, below, not {re.escape(repr(bad))}$",
+                ),
+            ):
+                tmux_host._layout(bad, None)
 
 
 class GridTreeTest(Case):
@@ -3171,11 +3240,14 @@ class ListingTest(Case):
 
     def test_a_name_failing_NAME_or_a_row_tmux_split_wrongly_is_dropped(self):
         got, fake = self.listing(
-            (0, "".join(f"{n}\t0\t\t\t\t\t\n" for n in ("a b", "", "%1", "x;", "#{x}", "ok")))
+            (0, "".join(f"{n}\t0\t\t\t\t\t\t\n" for n in ("a b", "", "%1", "x;", "#{x}", "ok")))
         )
         self.assertEqual(got, [expected_row("ok")])
-        got, _ = self.listing((0, "w1\t0\ts\tid\t\t\t\t\nw2\t0\nw3\t0\t\t\t\t\t\n"))
+        got, _ = self.listing((0, "w1\t0\ts\tid\t\t\t\t\t\nw2\t0\nw3\t0\t\t\t\t\t\t\n"))
         self.assertEqual(got, [expected_row("w3")])
+        forged = listed(("w4", "0", "", "", "", "", "", "mgr\tx"), ("w5", "0"))
+        got, _ = self.listing(forged)
+        self.assertEqual(got, [expected_row("w5")])
         got, fake = self.listing(listed(("a b", "0")))
         self.assertEqual((got, fake.calls), ([], [LISTING]))
 
@@ -3203,6 +3275,11 @@ class ListingTest(Case):
             ("opener", "a b", None),
             ("opener", "x:", None),
             ("opener", "%3", None),
+            ("display", "mgr/right/m1", "mgr/right/m1"),
+            ("display", "elsewhere:1.2", "elsewhere:1.2"),
+            ("display", "", None),
+            ("display", "mgr;", None),
+            ("display", "a\x1bb", None),
             ("dead", "0", False),
             ("dead", "1", True),
             ("dead", "", None),
@@ -4322,6 +4399,18 @@ class StartTest(StartFixture):
                     self.start(fake, tags=tags)
                 self.assertEqual(fake.calls, [])
                 self.assertEqual(os.listdir(self.temp), [])
+
+    def test_a_display_tag_tmux_could_not_list_or_a_nul_is_refused_before_tmux(self):
+        for tags, error in (
+            ({"@display": "a\tb"}, "^display "),
+            ({"@display": "x;"}, "^display "),
+            ({"@k": "a\0b"}, "^tag "),
+        ):
+            with self.subTest(tags=tags):
+                fake = Tmux()
+                with self.assertRaisesRegex(tmux_host.TuiError, error):
+                    self.start(fake, tags=tags)
+                self.assertEqual(fake.calls, [])
 
     def test_a_failed_tmux_call_kills_the_session_it_may_have_made(self):
         fake = Tmux(

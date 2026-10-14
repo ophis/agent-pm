@@ -1,7 +1,9 @@
-"""modes/in_process.py: an InProcess's run on a daemon thread, its events, a raise as a traceback
-and code 1, stop's drain and -SIGKILL, bounded waits, send and screen refused, over real threads.
+"""modes/in_process.py: its start from a Spec (checks and the InProcess's check, one session line,
+then the run), the run on a daemon thread, its events, a raise as a traceback and code 1, stop's
+drain and -SIGKILL, bounded waits, send and screen refused, over real threads.
 """
 
+import dataclasses
 import io
 import logging
 import signal
@@ -11,33 +13,66 @@ import unittest
 from unittest import mock
 
 from agent_pm.session.adapters.base import Adapter, InProcess
-from agent_pm.session.engine.types import DriverError, Reply, Spec, Stderr
+from agent_pm.session.engine.types import (
+    Access,
+    ConfigError,
+    DriverError,
+    Prepared,
+    Reply,
+    SessionInfo,
+    Spec,
+    Stderr,
+)
 from agent_pm.session.modes.in_process import InProcessMode
 
 from session.tests.case import Case
 
 WAIT = 10  # upper bound on any wait, in seconds
 SHORT = 0.2  # a timeout that must lapse, in seconds
-SPEC = Spec(workdir="/tmp/in-process-test")
+SPEC = Spec(workdir="/tmp/in-process-test", prompt="hi", sid="s", runtime="stub")
+RESUME = Spec(workdir="/tmp/in-process-test", prompt="hi", sid="s", resume=True)
 
 
 class StubAdapter(Adapter):
+    """Its in_process() is a StubRun of `script`, each Spec its check gets kept in `checked`
+    (ConfigError: raised).
+    """
+
+    forbidden_selection = ("--resume",)
+    runtime_note = "STUB NOTE"
+
+    def __init__(self, script, refusal=None):
+        super().__init__({})
+        self.script, self.refusal, self.checked = script, refusal, []
+
     def headless(self):
         return None
 
     def tui(self):
         return None
 
+    def in_process(self):
+        return StubRun(self)
+
+
+class NoInProcess(StubAdapter):
+    def in_process(self):
+        return None
+
 
 class StubRun(InProcess):
-    """run: script(prompt, spec, resume)."""
+    """run: its adapter's script(spec)."""
 
-    def __init__(self, script):
-        super().__init__(StubAdapter({}))
-        self.script = script
+    def __init__(self, adapter: StubAdapter):
+        self.adapter = adapter
 
-    def run(self, prompt, spec: Spec, *, resume: bool = False):
-        return self.script(prompt, spec, resume)
+    def check(self, spec: Spec):
+        self.adapter.checked.append(spec)
+        if self.adapter.refusal:
+            raise self.adapter.refusal
+
+    def run(self, spec: Spec):
+        return self.adapter.script(spec)
 
 
 def ended(*_):
@@ -45,9 +80,24 @@ def ended(*_):
 
 
 class Base(Case):
-    def begin(self, script, *, resume=False):
-        self.mode = InProcessMode(StubRun(script))
-        self.mode.begin("hi", SPEC, resume=resume)
+    def setUp(self):
+        self.mode, self.recorded = None, []
+
+    def start(self, adapter, spec=SPEC, record=None, display=None) -> Prepared:
+        """self.mode: InProcessMode started on spec with adapter and display, its session line
+        given to record, else kept in self.recorded; its Prepared.
+        """
+        self.mode = InProcessMode.start(
+            spec,
+            adapter,
+            registry=self.driver.registry,
+            record=record or self.recorded.append,
+            display=display,
+        )
+        return self.mode.prepared
+
+    def begin(self, script, spec=SPEC):
+        self.start(StubAdapter(script), spec)
         self.addCleanup(self.mode.stop)
 
     def held(self):
@@ -94,16 +144,16 @@ class Run(Base):
         self.assertEqual(self.mode.returncode(WAIT), 0)
         self.assertEqual(self.mode.state(), "absent")
 
-    def test_run_gets_prompt_spec_and_resume_on_a_daemon_thread_of_its_own(self):
+    def test_run_gets_the_spec_on_a_daemon_thread_of_its_own(self):
         calls = []
 
         def script(*args):
             calls.append((args, threading.get_ident(), threading.current_thread().daemon))
             return []
 
-        self.begin(script, resume=True)
+        self.begin(script, RESUME)
         self.assertEqual(self.drain(), [])
-        self.assertEqual(calls, [(("hi", SPEC, True), mock.ANY, True)])
+        self.assertEqual(calls, [((RESUME,), mock.ANY, True)])
         self.assertNotEqual(calls[0][1], threading.get_ident())
 
     def test_poll_and_returncode_wait_at_most_their_timeout_while_the_run_is_live(self):
@@ -210,17 +260,6 @@ class Stop(Base):
         self.assertEqual(self.mode.poll(SHORT), ([], False))
         self.assertEqual(self.mode.returncode(0), -signal.SIGKILL)
 
-    def test_is_a_no_op_before_begin(self):
-        mode = InProcessMode(StubRun(ended))
-        mode.stop()
-        self.assertEqual(mode.state(), "absent")
-        self.assertIsNone(mode.returncode(0))
-        self.mode = mode
-        mode.begin("hi", SPEC, resume=False)
-        self.addCleanup(mode.stop)
-        self.assertEqual(self.drain(), [Reply("a")])
-        self.assertEqual(mode.returncode(WAIT), 0)
-
     def test_disabled_logging_keeps_stop_bounded_and_suppresses_late_failure(self):
         release, reached = threading.Event(), threading.Event()
         workers = []
@@ -247,40 +286,107 @@ class Stop(Base):
         self.assertEqual(self.mode.poll(SHORT), ([], False))
 
 
-class Begin(Base):
-    def test_a_thread_that_cannot_start_is_a_driver_error(self):
+class Start(Base):
+    def test_its_check_gets_the_spec_before_the_session_line_then_its_run_the_same(self):
+        runs = []
+        adapter = StubAdapter(lambda spec: runs.append(spec) or [])
+        for given, project in (("", False), ("/cwd", True)):
+            with self.subTest(cwd=given):
+                spec = Spec(
+                    workdir="/w",
+                    sid="s",
+                    runtime="stub",
+                    prompt="hi",
+                    access=Access(cwd=given, project=project, commands=("git",)),
+                )
+                checked, lines = len(adapter.checked), []
+                prepared = self.start(
+                    adapter,
+                    spec,
+                    record=lambda info, *, lines=lines, checked=checked: lines.append(
+                        (info, len(adapter.checked) - checked, len(runs))
+                    ),
+                )
+                self.assertEqual(self.drain(), [])
+                noted = adapter.checked[checked]
+                info = SessionInfo(
+                    sid="s",
+                    cwd=given or "/w",
+                    project=project,
+                    transcript="",
+                    resume="",
+                )
+                self.assertEqual(
+                    (noted.prompt, runs[-1], lines),
+                    ("hi\n\nSTUB NOTE", noted, [(info, 1, len(runs) - 1)]),
+                )
+                self.assertEqual(prepared, Prepared(noted, info))
+
+    def test_refused_before_its_session_line_or_its_run(self):
+        refused = StubAdapter(ended, ConfigError("tier 4 is unmapped"))
+        for adapter, fields, message in (
+            (NoInProcess(ended), {}, "runtime 'stub' does not support in_process mode"),
+            (StubAdapter(ended), {"name": "w1"}, "name: tui mode only"),
+            (StubAdapter(ended), {"events": "/e"}, "events: tui mode only"),
+            (StubAdapter(ended), {"protect": ("/p",)}, "protect: tui mode only"),
+            (
+                StubAdapter(ended),
+                {"flags": ("--resume",)},
+                "--resume: picks the session; use sid= or resume=",
+            ),
+            (StubAdapter(ended), {"sid": None}, "sid: missing"),
+            (refused, {}, "tier 4 is unmapped"),
+        ):
+            with (
+                self.subTest(message=message),
+                mock.patch("threading.Thread.start", side_effect=AssertionError("run")) as thread,
+                self.assertRaises(ConfigError) as caught,
+            ):
+                self.start(adapter, dataclasses.replace(SPEC, **fields))
+            self.assertEqual(str(caught.exception), message)
+            thread.assert_not_called()
+        with self.assertRaises(ConfigError) as caught:
+            self.start(StubAdapter(ended), display="mgr")
+        self.assertEqual(str(caught.exception), "display: tui mode only")
+        self.assertEqual((self.recorded, len(refused.checked), self.mode), ([], 1, None))
+
+    def test_a_thread_that_cannot_start_is_a_driver_error_after_the_session_line(self):
         calls = []
-        mode = InProcessMode(StubRun(lambda *args: calls.append(args) or []))
         with (
             mock.patch(
                 "threading.Thread.start", side_effect=RuntimeError("can't start new thread")
             ),
             self.assertRaises(DriverError) as caught,
         ):
-            mode.begin("hi", SPEC, resume=False)
+            self.start(StubAdapter(lambda *args: calls.append(args) or []))
         self.assertEqual(
             str(caught.exception), "cannot start the in_process run: can't start new thread"
         )
-        self.assertEqual(calls, [])
-        self.assertEqual(mode.state(), "absent")
-        mode.stop()
+        self.assertEqual((calls, len(self.recorded), self.mode), ([], 1, None))
 
-    def test_send_and_screen_raise_driver_error_before_and_after_begin(self):
-        self.mode = InProcessMode(StubRun(ended))
-        for when in ("before", "after"):
-            if when == "after":
-                self.mode.begin("hi", SPEC, resume=False)
-            for call, message in (
-                (lambda: self.mode.send("x"), "send: tui mode only"),
-                (self.mode.screen, "screen: tui mode only"),
-                (lambda: self.mode.screen(5), "screen: tui mode only"),
-            ):
-                with (
-                    self.subTest(when=when, message=message),
-                    self.assertRaises(DriverError) as caught,
-                ):
-                    call()
-                self.assertEqual(str(caught.exception), message)
+    def test_start_returns_its_session_running_at_once_with_its_prepared(self):
+        script, reached, release, _ = self.held()
+        mode = InProcessMode.start(
+            SPEC, StubAdapter(script), registry=self.driver.registry, record=self.recorded.append
+        )
+        self.addCleanup(mode.stop)
+        self.assertIsInstance(mode, InProcessMode)
+        self.assertEqual(mode.prepared.info, self.recorded[0])
+        self.assertTrue(reached.wait(WAIT))
+        self.assertEqual((mode.state(), mode.poll(WAIT)), ("live", ([Reply("one")], False)))
+        mode.stop()
+        self.assertEqual((mode.state(), mode.returncode(0)), ("absent", -signal.SIGKILL))
+
+    def test_send_and_screen_raise_driver_error(self):
+        self.start(StubAdapter(ended))
+        for call, message in (
+            (lambda: self.mode.send("x"), "send: tui mode only"),
+            (self.mode.screen, "screen: tui mode only"),
+            (lambda: self.mode.screen(5), "screen: tui mode only"),
+        ):
+            with self.subTest(message=message), self.assertRaises(DriverError) as caught:
+                call()
+            self.assertEqual(str(caught.exception), message)
 
 
 if __name__ == "__main__":

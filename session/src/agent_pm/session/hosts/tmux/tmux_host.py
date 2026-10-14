@@ -23,6 +23,7 @@ import tempfile
 import time
 import uuid
 from collections.abc import Mapping, Sequence
+from enum import StrEnum
 from typing import NamedTuple
 
 NAME = re.compile(r"[A-Za-z0-9_-]+")
@@ -31,6 +32,7 @@ ITERM_ID = re.compile(r"[A-Za-z0-9-]+")
 ITERM_OPENER = re.compile(rf"[A-Za-z0-9]+:{ITERM_ID.pattern}")  # w0t0p0:<unique id>
 OPENER = re.compile(rf"{NAME.pattern}|{ITERM_OPENER.pattern}")
 SESSION_ID = re.compile(r"\$[0-9]+")
+PROCESS_ID = re.compile(r"[0-9]+ \$[0-9]+ %[0-9]+ [0-9]+")
 USER_OPTION = re.compile(r"@[A-Za-z0-9_-]+")
 ABSENT = re.compile(
     r"can't find (session|pane).*|no server running.*|"
@@ -38,8 +40,6 @@ ABSENT = re.compile(
     re.S,
 )
 HOST = "tmux"  # its [hosts.<name>] table
-RUNNING = "running"
-UNKNOWN = "unknown"  # tmux failed otherwise, or is missing
 HANDOVER_TIMEOUT = 10
 ERRPIPE = "errpipe"
 POLL = 0.1
@@ -48,14 +48,34 @@ SHOW_TIMEOUT = 30
 MARK_TIMEOUT = 5
 PLACEHOLDERS = {"session"}
 SLOT = re.compile(r"\{\{([^{}]*)\}\}")
-SPLITS = ("right", "below")
+
+
+class PaneStatus(StrEnum):
+    RUNNING = "running"
+    UNKNOWN = "unknown"  # tmux failed otherwise, or is missing
+
+
+class Split(StrEnum):
+    RIGHT = "right"
+    BELOW = "below"
+
+
 DIED = "set-option @state dead"
 DEAD_EVENT = "run-shell -b 'echo \"$(date +%H:%M:%S)\" #{q:session_name} dead >> #{q:@events}'"
+# A signal death is -n as status() says; tmux names the signal where libc can (macOS: kill), so
+# sh's kill -l numbers a name.
+EXITED_EVENT = (
+    'run-shell \'echo "$(date +%H:%M:%S)" #{q:session_name} exited'
+    " #{?pane_dead_signal,-#{?#{m:*[!0-9]*,#{pane_dead_signal}},$(kill -l #{q:pane_dead_signal}),"
+    "#{pane_dead_signal}},#{pane_dead_status}} >> #{q:@events}' ; kill-session"
+)
 BORDER = " #{session_name} #{@state} "
 CLIENTS = "#{client_activity} #{client_tty} #{pane_id} #{client_control_mode} #{socket_path}"
 PANES = "#{pane_dead} #{pane_tty} #{pane_id}"
 SESSIONS = "#{session_id}\t#{session_name}\t#{@opener}\t#{@pane}\t#{socket_path}"
-LISTING = "#{session_name}\t#{pane_dead}\t#{@sid}\t#{@runtime}\t#{@state}\t#{@pane}\t#{@opener}"
+# server pid, session id, pane id, pane pid: a later pane of its name differs
+PROCESS = "#{pid} #{session_id} #{pane_id} #{pane_pid}"
+LISTING = "#{session_name}\t#{pane_dead}\t#{@sid}\t#{@runtime}\t#{@state}\t#{@pane}\t#{@opener}\t#{@display}"
 SHOWN = "#{client_activity}\t#{client_tty}\t#{session_name}"
 HOSTS = "#{pane_dead}\t#{pane_tty}\t#{session_name}"
 LAST_LINES = 2000
@@ -68,12 +88,19 @@ GRID_BUSY = "@grid-busy"
 GRID_PANES_SET = "@grid-panes"  # sorted pane ids at the last tile
 PANE_SET = re.compile(r"%[0-9]+( %[0-9]+)*")
 GRID_HOOKS = ("pane-exited", "window-resized", "window-layout-changed")
-RETILES = ("all", "open-close", "off")
-RETILE = "open-close"
-RETILE_HOOKS = {
-    "all": GRID_HOOKS,
-    "open-close": ("pane-exited", "window-layout-changed"),
-    "off": (),
+
+
+class Retile(StrEnum):
+    ALL = "all"
+    OPEN_CLOSE = "open-close"
+    OFF = "off"
+
+
+RETILE = Retile.OPEN_CLOSE
+RETILE_HOOKS: dict[Retile, tuple[str, ...]] = {
+    Retile.ALL: GRID_HOOKS,
+    Retile.OPEN_CLOSE: ("pane-exited", "window-layout-changed"),
+    Retile.OFF: (),
 }
 GRID_WINDOW = (
     "#{window_width}\t#{window_height}\t#{window_zoomed_flag}\t#{window_layout}\t"
@@ -215,7 +242,7 @@ def start(
         tmp = tempfile.mkdtemp()
         path, wrapper = _wrapper(tmp)
         state = status(session, proc=proc)
-        if state == RUNNING:
+        if state == PaneStatus.RUNNING:
             raise TuiError(f"session {session} is running; {attach_command(session)}")
         if isinstance(state, int):
             kill(session, proc=proc)
@@ -280,18 +307,33 @@ def detach(
     env: Mapping[str, str],
     block: tuple[int, ...] = (),
     opener: str | None = None,
+    display: str | None = None,
+    events: str | None = None,
+    record: str | None = None,
     proc=subprocess.run,
     sleep=time.sleep,
-) -> None:
+) -> str:
     """Runs argv as start does, `block` blocked until argv unblocks them; env's full iTerm2
-    $ITERM_SESSION_ID stays and opener becomes @opener. No decoration, no kept pane. An existing
-    session is refused untouched.
+    $ITERM_SESSION_ID stays; opener, display and record (a line) become @opener, @display, @record.
+    No decoration; with events, @events and a kept pane whose pane-died hook appends
+    `HH:MM:SS <session> exited <rc>` (signal n: -n) to it, then kills the session. An existing
+    session is refused untouched. Returns its pane's process(), read as tmux made it.
     """
     _name(session)
     if opener is not None and not OPENER.fullmatch(opener):
         raise TuiError(
             f"invalid opener {opener!r}: want a tmux session name or $ITERM_SESSION_ID's value"
         )
+    named = {"@opener": opener, "@display": display, "@record": record}
+    tag_options = _tags(session, {k: v for k, v in named.items() if v is not None})
+    exited = []
+    if events is not None:
+        target = f"={session}:"
+        exited = [
+            *(";", "set-option", "-p", "-t", target, "remain-on-exit", "on"),
+            *(";", "set-option", "-t", target, "@events", events_file(events)),
+            *(";", "set-hook", "-p", "-t", target, "pane-died", EXITED_EVENT),
+        ]
     for arg in argv:
         if "\0" in arg:
             raise TuiError("an argv item holds a NUL character")
@@ -313,15 +355,15 @@ def detach(
             [
                 "new-session",
                 "-d",
+                "-P",
+                "-F",
+                PROCESS,
                 *terminal,
                 "-s",
                 session,
                 *wrapper,
-                *(
-                    [";", "set-option", "-t", f"={session}:", "@opener", opener]
-                    if opener is not None
-                    else []
-                ),
+                *exited,
+                *tag_options,
             ],
             proc,
         )
@@ -330,11 +372,16 @@ def detach(
                 may_run = False
                 raise TuiError(f"session {session} exists")
             raise TuiError(f"tmux: {_err(res)}")
+        found = res.stdout.strip()
+        if not PROCESS_ID.fullmatch(found):
+            raise TuiError(f"tmux: bad new session {found!r:.80}")
         if not _started(path, pipe, argv[0], sleep):
             raise TuiError(f"session {session} did not start")
         may_run = False
     except OSError as e:
         raise TuiError(f"handover: {e}") from e
+    else:
+        return found
     finally:
         if tmp:
             shutil.rmtree(tmp, ignore_errors=True)  # first, so a late wrapper finds no file to run
@@ -389,7 +436,14 @@ def _handover(
 def _tags(session: str, tags: Mapping[str, str]) -> list[str]:
     args = []
     for key, value in tags.items():
-        if not USER_OPTION.fullmatch(key) or not isinstance(value, str) or value.endswith(";"):
+        if key == "@display" and (why := display_error(value)):
+            raise TuiError(why)
+        if (
+            not USER_OPTION.fullmatch(key)
+            or not isinstance(value, str)
+            or value.endswith(";")
+            or "\0" in value
+        ):
             raise TuiError(
                 f"tag {key!r}={value!r}: want {USER_OPTION.pattern} and a str tmux takes verbatim"
             )
@@ -505,6 +559,17 @@ def events_file(path: str) -> str:
     return path
 
 
+def display_error(value) -> str | None:
+    """Why value cannot be a display (None: it can): one is None or printable text not ending in ;,
+    so a tab-separated listing row stays one row.
+    """
+    if value is None or (
+        isinstance(value, str) and value.isprintable() and not value.endswith(";")
+    ):
+        return None
+    return f"display {value!r:.80}: want printable text not ending in ;"
+
+
 def _decorations(session: str, events: str | None, *, status_line: bool) -> list[list[str]]:
     target = f"={session}:"
     died = DIED if events is None else f"{DIED} ; {DEAD_EVENT}"
@@ -518,8 +583,8 @@ def _decorations(session: str, events: str | None, *, status_line: bool) -> list
 
 
 def status(target: str, *, proc=subprocess.run):
-    """RUNNING, None (target or server absent), UNKNOWN, or the dead pane's exit status (signal n:
-    -n).
+    """PaneStatus.RUNNING, None (target or server absent), PaneStatus.UNKNOWN, or the dead pane's
+    exit status (signal n: -n).
     """
     target = _target(target)
     try:
@@ -534,17 +599,17 @@ def status(target: str, *, proc=subprocess.run):
             proc,
         )
     except TuiError:
-        return UNKNOWN
+        return PaneStatus.UNKNOWN
     if res.returncode:
-        return None if _absent(res) else UNKNOWN
+        return None if _absent(res) else PaneStatus.UNKNOWN
     fields = res.stdout.rstrip("\n").split(" ")
     if fields == ["", "", ""]:  # tmux (3.7) exits 0 with empty fields for a missing session
         return None
     if len(fields) != 3 or fields[0] not in ("0", "1"):
-        return UNKNOWN
+        return PaneStatus.UNKNOWN
     dead, code, sig = fields
     if dead == "0" or not (code or sig):  # dead, but not yet reaped
-        return RUNNING
+        return PaneStatus.RUNNING
     if sig:  # libc's sys_signame (macOS: "kill"), else the number
         return -(int(sig) if sig.isdigit() else getattr(signal, "SIG" + sig.upper(), 0))
     return int(code)
@@ -553,10 +618,10 @@ def status(target: str, *, proc=subprocess.run):
 def listing(match=None, *, proc=subprocess.run) -> list[dict] | None:
     """Sessions named NAME that match (compiled; None: all) fullmatches, by name: tags, pane state,
     `shown` (no client: None; else the newest client's host session, "" if none or not NAME), a dead
-    pane's last LAST_LINES lines; a bad or empty field None. [] when no server runs, None when tmux
-    fails.
+    pane's last LAST_LINES lines; a bad or empty field None, a row of the wrong width dropped. []
+    when no server runs, None when tmux fails.
     """
-    found = _table(["list-sessions", "-F", LISTING], 7, proc)
+    found = _table(["list-sessions", "-F", LISTING], 8, proc)
     if found is None:
         return None
     rows = sorted(
@@ -579,7 +644,7 @@ def listing(match=None, *, proc=subprocess.run) -> list[dict] | None:
             return None
         hosts = {tty: session for dead, tty, session in panes if dead != "1"}
     out = []
-    for name, dead, sid, runtime, state, pane, opener in rows:
+    for name, dead, sid, runtime, state, pane, opener, display in rows:
         tty = recent.get(name)
         host = "" if tty is None else hosts.get(tty, "")
         out.append(
@@ -590,6 +655,7 @@ def listing(match=None, *, proc=subprocess.run) -> list[dict] | None:
                 "state": _printable(state),
                 "pane": pane if PANE.fullmatch(pane) or ITERM_ID.fullmatch(pane) else None,
                 "opener": opener if OPENER.fullmatch(opener) else None,
+                "display": display if display and not display_error(display) else None,
                 "dead": {"1": True, "0": False}.get(dead),
                 "shown": None if name not in recent else host if NAME.fullmatch(host) else "",
                 "last_lines": _last_lines(name, proc) if dead == "1" else None,
@@ -685,6 +751,21 @@ def pane(session: str, *, proc=subprocess.run) -> str | None:
         return None
     if not PANE.fullmatch(found):
         raise TuiError(f"bad tmux pane {found!r}")
+    return found
+
+
+def process(target: str, *, proc=subprocess.run) -> str | None:
+    """PROCESS of target's pane (a session's: its active one); None when absent."""
+    res = _tmux(["display-message", "-p", "-t", _target(target), PROCESS], proc)
+    if res.returncode:
+        if _absent(res):
+            return None
+        raise TuiError(f"tmux: {_err(res)}")
+    found = res.stdout.strip()
+    if " " not in found:  # tmux (3.7) exits 0 printing only #{pid} for a missing target
+        return None
+    if not PROCESS_ID.fullmatch(found):
+        raise TuiError(f"bad tmux process {found!r:.80}")
     return found
 
 
@@ -818,7 +899,7 @@ def open_pane(
         proc=proc,
         tile_window=tile_window,
         per_column=PER_COLUMN if per_column is None else per_column,
-        retile=RETILE if retile is None else retile,
+        retile=RETILE if retile is None else Retile(retile),
     )
 
 
@@ -892,7 +973,7 @@ def _grid_up(
     manager: str,
     *,
     per_column: int,
-    retile: str,
+    retile: Retile,
     script: str = __file__,
     proc=subprocess.run,
     tile_window=None,
@@ -927,7 +1008,7 @@ def _grid_up(
     bad = [p for p in paths if not HOOK_PATH.fullmatch(p)] if mode else []
     if bad:
         print(f"tui: show: grid: hooks: {bad[0]}: tmux would misread it", file=sys.stderr)
-    flags = "--no-wait --if-panes-changed" if retile == "open-close" else "--no-wait"
+    flags = "--no-wait --if-panes-changed" if retile == Retile.OPEN_CLOSE else "--no-wait"
     hook = (
         f"if-shell -F '#{{==:#{{{GRID_BUSY}}},{window}}}' '' "
         f"\"run-shell -b '{paths[0]} -I {paths[1]} tile {flags} {window} >/dev/null 2>&1 || true'\""
@@ -1643,8 +1724,8 @@ def main(argv: list[str] | None = None, *, operations=None) -> int:
 
 
 def _layout(split: str | None, split_from: str | None, opener: str | None = None) -> None:
-    if split is not None and split not in SPLITS:
-        raise TuiError(f"split must be one of {', '.join(SPLITS)}, not {split!r}")
+    if split is not None and split not in tuple(Split):
+        raise TuiError(f"split must be one of {', '.join(Split)}, not {split!r}")
     if split_from is not None:
         _name(split_from)
     if opener is not None and not OPENER.fullmatch(opener):
@@ -1663,8 +1744,8 @@ def _per_column(per_column: int | None) -> None:
 
 
 def _retile(retile: str | None) -> None:
-    if retile is not None and retile not in RETILES:
-        raise TuiError(f"retile must be one of {', '.join(RETILES)}, not {retile!r}")
+    if retile is not None and retile not in tuple(Retile):
+        raise TuiError(f"retile must be one of {', '.join(Retile)}, not {retile!r}")
 
 
 def _run(session: str, template: str, proc) -> str | None:
@@ -1792,7 +1873,7 @@ def _show_options(p: argparse.ArgumentParser) -> None:
     p.add_argument("--show", metavar="T", help="the show command, instead of the split")
     p.add_argument(
         "--split",
-        choices=SPLITS,
+        choices=[s.value for s in Split],
         help="the split's side outside the grid (default: below the newest pane "
         "you opened that still shows, else right of yours; with "
         "--split-from, right)",
@@ -1813,7 +1894,7 @@ def _show_options(p: argparse.ArgumentParser) -> None:
     p.add_argument(
         "--grid-retile",
         metavar="M",
-        choices=RETILES,
+        choices=[r.value for r in Retile],
         default=RETILE,
         help=(
             f"when the grid re-tiles by itself: {RETILE} (default) when a pane opens or closes; all also "

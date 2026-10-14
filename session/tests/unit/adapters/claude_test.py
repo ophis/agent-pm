@@ -153,8 +153,8 @@ class WritableDirsTest(Base):
         os.symlink(self.added, self.link)
 
     def dirs(self, *, resume=False, workdir=None, **access) -> tuple[str, ...]:
-        spec = Spec(workdir=workdir or self.work, sid=SID, access=Access(**access))
-        return ClaudeAdapter(CONFIG).writable_dirs(spec, resume=resume)
+        spec = Spec(workdir=workdir or self.work, sid=SID, access=Access(**access), resume=resume)
+        return ClaudeAdapter(CONFIG).writable_dirs(spec)
 
     def test_the_workdir_without_a_cwd_then_the_added_dirs(self):
         self.assertEqual(self.dirs(), (self.work,))
@@ -215,8 +215,6 @@ class WritableDirsTest(Base):
                         sid=SID,
                         access=Access(cwd=cwd, dirs=(self.tmp,), reads=(self.tmp,)),
                         flags=given,
+                        resume=resume,
                     )
-                    self.assertEqual(
-                        ClaudeAdapter(CONFIG).writable_dirs(spec, resume=resume),
-                        dirs,
-                    )
+                    self.assertEqual(ClaudeAdapter(CONFIG).writable_dirs(spec), dirs)

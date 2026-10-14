@@ -20,11 +20,6 @@
 #   runtime         required: the Adapter that runs the agent run (an [adapters.<name>] name); the orchestrator's
 #                   overlay may set it per role. The Composer passes it through unchecked
 #   language        the language reports and PRDs are written in (one line); "" → no rule: the model's default
-#   show            tui mode only: how the agent run's TUI window opens. Not used yet: a later change wires the
-#                   display; until then the window opens as for "".
-#                   ""           → open a pane: a tmux grid, else stacked (the Driver's show)
-#                   "none"       → open nothing; print the `tmux attach` command
-#                   "<command>"  → run it; {{session}} is the tmux session name
 #   cwd             the dir the agent run starts in (absolute or ~ path); "" → the caller's current directory
 #                   (the orchestrator's runs: the workdir). A resume reuses its recorded one (<workdir>/run.jsonl)
 #   users           local, global only: GitHub logins whose PR comments are the user's; [] → the gh login
@@ -56,13 +51,11 @@ read = []
 write = []
 commands = []
 gate = ""
-show = ""
 cwd = ""
 users = []
 trusted_dirs = []
 team_dirs = []
 # local: language = "Chinese"
-# local: show = "none"   # e.g. on a server: no window, attach by hand
 # local: cwd = "~/src/<name>"
 # local: users = ["octocat"]
 # local: trusted_dirs = ["~/src/<name>"]
@@ -102,7 +95,7 @@ host = ""
 #                 they are approved. {{workdir}} is the agent run's workdir, {{team}} core's team/ dir; [] → none
 #   gate          a usage-gate command the researcher runs before a costly step (deep research: before a second
 #                 round); its approval follows the runtime's Adapter; "" → none (the orchestrator's overlay sets it)
-#   <run key>     tier, effort, runtime, language, show, cwd or [output], for that role
+#   <run key>     tier, effort, runtime, language, cwd or [output], for that role
 
 # ── Researcher ──────────────────────────────────────────
 [roles.researcher]
@@ -141,7 +134,7 @@ tier = 3
 effort = "low"
 
 # [delegates]
-#   harness_host  the [hosts.<name>] (session/config.toml) the harness runs on; "" → none
+#   harness_host  the [hosts.<name>] (session/config.toml) the harness runs on; "" → [hosts] default
 [delegates]
 harness_host = ""
 

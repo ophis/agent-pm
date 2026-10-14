@@ -15,13 +15,13 @@ START = "the composed prompt is handed to the caller"
 
 
 class PrintPromptInProcess(InProcess):
-    def check(self, prompt: str, spec: Spec, *, resume: bool = False):
-        if resume:
+    def check(self, spec: Spec):
+        if spec.resume:
             raise ConfigError("print_prompt has no session to resume")
         if spec.reply_tags is None:
             raise ConfigError("print_prompt needs the caller's reply protocol (Spec.reply_tags)")
 
-    def run(self, prompt, spec: Spec, *, resume: bool = False):
+    def run(self, spec: Spec):
         if spec.reply_tags is None:
             raise ConfigError("print_prompt needs the caller's reply protocol (Spec.reply_tags)")
         progress, outcome = spec.reply_tags
@@ -29,7 +29,7 @@ class PrintPromptInProcess(InProcess):
         os.makedirs(tmp, exist_ok=True)
         fd, path = tempfile.mkstemp(prefix="prompt-", suffix=".md", dir=tmp)
         with os.fdopen(fd, "wb") as f:
-            f.write(prompt.encode())
+            f.write(spec.prompt.encode())
         data = {
             "status": "done",
             "title": "Composed prompt",

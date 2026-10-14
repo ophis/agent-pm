@@ -2,10 +2,11 @@
 Host to display on.
 """
 
+import inspect
 import unittest
 
-from agent_pm.session import Displayable, DriverError, NotDisplayable, Usage
-from agent_pm.session.engine.types import Exited, Reply, Spec, TurnEnd
+from agent_pm.session import Displayable, DriverError, Hosts, Mode, NotDisplayable, Session, Usage
+from agent_pm.session.engine.types import ConfigError, Exited, Reply, Spec, TurnEnd
 
 from session.tests.case import Case
 from session.tests.fakes.host import FakeHost
@@ -13,8 +14,32 @@ from session.tests.fakes.session import FakeSession
 
 
 class Scripted(Case):
-    def start(self, cls, name=None, **kw):
-        return cls.start("fake", "headless", "the prompt", Spec(workdir=self.home, name=name), **kw)
+    def spec(self, **fields) -> Spec:
+        return Spec(
+            workdir=self.home, runtime="fake", mode=Mode.HEADLESS, prompt="the prompt", **fields
+        )
+
+    def start(self, cls, name=None, display=None, idle_timeout=None, **fields):
+        return cls.start(self.spec(name=name, **fields), display=display, idle_timeout=idle_timeout)
+
+    def test_its_class_methods_take_the_abcs_parameters(self):
+        for name in (
+            "configure",
+            "start",
+            "attach",
+            "list",
+            "usage",
+            "layout",
+            "writable_dirs",
+            "display",
+            "host",
+        ):
+            with self.subTest(name=name):
+                fake, abc = (
+                    [(p.name, p.kind, p.default) for p in inspect.signature(m).parameters.values()]
+                    for m in (getattr(FakeSession, name), getattr(Session, name))
+                )
+                self.assertEqual(fake, abc)
 
     def test_events_are_the_script_then_exited_0_and_reply_the_last_one(self):
         session = self.start(FakeSession.scripted(Reply("first"), TurnEnd("second"), TurnEnd()))
@@ -29,13 +54,21 @@ class Scripted(Case):
 
     def test_start_records_its_arguments_and_names_the_session_from_the_sid(self):
         cls = FakeSession.scripted()
-        session = self.start(cls, resume="abc12345-6789", display="d")
+        session = self.start(cls, sid="abc12345-6789", resume=True, display="d", idle_timeout=2)
         self.assertEqual((session.sid, session.name), ("abc12345-6789", "fake-abc12345"))
-        self.assertEqual(cls.started[0]["prompt"], "the prompt")
-        self.assertEqual(cls.started[0]["display"], "d")
+        self.assertEqual((session.runtime, session.mode), ("fake", Mode.HEADLESS))
+        self.assertEqual(cls.started[0]["spec"].prompt, "the prompt")
+        self.assertEqual((cls.started[0]["display"], cls.started[0]["idle_timeout"]), ("d", 2))
         self.assertEqual(session.info().cwd, self.home)
         session.send("more")
         self.assertEqual(session.sent, ["more"])
+
+    def test_a_spec_without_runtime_or_mode_is_refused(self):
+        for field in ("runtime", "mode"):
+            spec = Spec(workdir=self.home, **{"runtime": "fake", "mode": Mode.TUI, field: None})
+            with self.subTest(field=field), self.assertRaises(ConfigError) as caught:
+                FakeSession.scripted().start(spec)
+            self.assertEqual(str(caught.exception), f"spec.{field}: required to start")
 
     def test_a_live_name_is_refused_until_closed(self):
         cls = FakeSession.scripted()
@@ -69,7 +102,7 @@ class Scripted(Case):
         cls = FakeSession.scripted()
         self.assertIsNone(cls.usage("fake"))
         self.assertIsNone(cls.layout())
-        self.assertEqual(cls.writable_dirs("fake", Spec(workdir=self.home)), ())
+        self.assertEqual(cls.writable_dirs(self.spec()), ())
         self.assertEqual(cls.display("d"), "d")
         host = cls.host()
         self.assertIsInstance(host, FakeHost)
@@ -79,12 +112,12 @@ class Scripted(Case):
     def test_classes_from_scripted_share_no_state(self):
         first, second = FakeSession.scripted(Reply("a")), FakeSession.scripted()
         self.start(first, name="w1")
-        first.configure(adapters={}, hosts={}, default_host="fake")
+        first.configure(adapters={}, hosts=Hosts("fake", {}))
         first.usage_result = Usage(None, None)
         self.assertEqual((second.started, second.live, second.script), ([], {}, ()))
         self.assertIsNone(second.configured)
         self.assertIsNone(second.usage("fake"))
-        self.assertEqual(first.configured["default_host"], "fake")
+        self.assertEqual(first.configured["hosts"].default, "fake")
         self.assertEqual(first.usage("fake"), Usage(None, None))
         self.assertEqual(len(first.started), 1)
         self.start(second, name="w1")
@@ -92,7 +125,7 @@ class Scripted(Case):
     def test_a_fresh_class_plays_an_empty_script_on_state_no_subclass_shares(self):
         cls = FakeSession.scripted()
         session = self.start(cls, name="w1")
-        cls.configure(adapters={}, hosts={}, default_host="fake")
+        cls.configure(adapters={}, hosts=Hosts("fake", {}))
         self.assertEqual(list(session.events()), [Exited(0)])
         self.assertIs(cls.attach("w1"), session)
         self.assertEqual([row.name for row in cls.list()], ["w1"])

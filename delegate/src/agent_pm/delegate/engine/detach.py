@@ -12,10 +12,10 @@ from agent_pm.delegate.engine.config import PYTHONPATH
 from agent_pm.delegate.engine.runner import say
 from agent_pm.delegate.engine.types import ConfigError, Plan
 from agent_pm.session import ConfigError as SessionConfigError
-from agent_pm.session import DriverError, SessionStatusLog
+from agent_pm.session import DriverError, Mode, SessionStatusLog
 from agent_pm.utils import append_line
 
-MODES = ("headless", "tui")
+MODES = frozenset({Mode.HEADLESS, Mode.TUI})
 
 
 def names(role: str, sid: str, mode: str) -> tuple[str | None, str]:

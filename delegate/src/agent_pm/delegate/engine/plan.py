@@ -16,21 +16,25 @@ from agent_pm.delegate.composer import DELIVERABLE, RunConfig, RunParams, Team
 from agent_pm.delegate.engine import config
 from agent_pm.delegate.engine.types import ConfigError, Plan, Spec
 from agent_pm.delegate.event.reply import OUTCOME, PROGRESS
-from agent_pm.session import MODES, Access, Driver, Session, session_record
+from agent_pm.session import Access, Driver, Host, Mode, session_record
 from agent_pm.session import ConfigError as SessionConfigError
 from agent_pm.session import Spec as SessionSpec
 from agent_pm.utils import LOCAL, read_project, under
 
 
 def configure(*, local: str = LOCAL, cfg: Mapping | None = None) -> Driver:
-    """The session from its config once harness_host (`cfg`, else read) names its host."""
+    """The session's Driver from its config, [hosts] parsed once, keeping harness_host (`cfg`, else
+    read) once it names one of those hosts.
+    """
     with _config("session"):
         table = read_project("session", local=local)
-        hosts = Session.parse_hosts(table.get("hosts")).tables
+        hosts = Host.parse_hosts(table.get("hosts"))
     with _config("delegate"):
-        config.harness_host(read_project("delegate", local=local) if cfg is None else cfg, hosts)
+        harness = config.harness_host(
+            read_project("delegate", local=local) if cfg is None else cfg, hosts.tables
+        )
     with _config("session"):
-        return Driver.from_config(table)
+        return Driver.from_config(table, hosts=hosts, harness_host=harness)
 
 
 @contextlib.contextmanager
@@ -94,8 +98,8 @@ def place(
 @_own
 def plan(run: RunConfig, spec: Spec, *, driver: Driver) -> Plan:
     """With the built-in team the configured team dirs are checked for overlap only."""
-    if spec.mode not in MODES:
-        raise ConfigError(f"mode must be one of {', '.join(MODES)}, got {spec.mode!r}")
+    if spec.mode not in tuple(Mode):
+        raise ConfigError(f"mode must be one of {', '.join(Mode)}, got {spec.mode!r}")
     if spec.mode != "tui" and spec.name is not None:
         raise ConfigError("name: tui mode only")
     if spec.mode != "tui" and spec.events is not None:

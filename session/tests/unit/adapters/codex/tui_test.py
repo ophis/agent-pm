@@ -6,7 +6,6 @@ import io
 import json
 import os
 import shlex
-import subprocess
 import sys
 import time
 import tomllib
@@ -17,19 +16,19 @@ from zoneinfo import ZoneInfo
 
 from agent_pm.session.adapters.codex import CodexAdapter, common, tui
 from agent_pm.session.adapters.codex.common.types import HookPlan, LaunchPlan, Snapshot
-from agent_pm.session.adapters.codex.tui import HOOKS
+from agent_pm.session.adapters.codex.tui import HOOKS, CodexTui
 from agent_pm.session.engine.types import (
     Access,
     Activity,
     Blocked,
+    ClientBound,
     ConfigError,
+    HookKind,
     Key,
     LimitHit,
     Paste,
-    SessionBound,
     TurnEnd,
 )
-from agent_pm.session.modes import tui_hook as mode_hook
 
 from session.tests.case import ROOTS, SRC, Case
 from session.tests.source_roots import PACKAGE_ROOTS
@@ -52,10 +51,27 @@ class TuiTest(Base):
             mock.patch("subprocess.Popen") as proc,
         ):
             launch = run.launch(
-                "quoted ' prompt\nnext", self.spec, HOOK, source_roots=PACKAGE_ROOTS, resume=resume
+                dataclasses.replace(self.spec, prompt="quoted ' prompt\nnext", resume=resume),
+                HOOK,
+                source_roots=PACKAGE_ROOTS,
             )
         proc.assert_not_called()
         return run, launch, json.loads(launch.argv[-1])
+
+    def test_each_hook_label_maps_to_its_hook_kind(self):
+        self.assertEqual(
+            CodexTui.hooks,
+            {
+                "SessionStart": HookKind.ACTIVITY,
+                "UserPromptSubmit": HookKind.ACTIVITY,
+                "PostToolUse": HookKind.ACTIVITY,
+                "PermissionRequest": HookKind.BLOCKED,
+                "Stop": HookKind.TURN_END,
+                "Interrupt": HookKind.TURN_END,
+            },
+        )
+        for kind in CodexTui.hooks.values():
+            self.assertIs(type(kind), HookKind)
 
     def test_the_launch_protects_the_import_roots_first(self):
         _, _, data = self.launch()
@@ -75,7 +91,9 @@ class TuiTest(Base):
                 self.subTest(hook=hook),
                 mock.patch("shutil.which", return_value="/protected/codex"),
             ):
-                launch = self.adapter.tui().launch("hi", spec, hook, source_roots=roots)
+                launch = self.adapter.tui().launch(
+                    dataclasses.replace(spec, prompt="hi"), hook, source_roots=roots
+                )
             data = json.loads(launch.argv[-1])
             self.assertEqual(data["import_roots"], list(roots))
             self.assertEqual(data["hook"], list(hook))
@@ -148,7 +166,9 @@ class TuiTest(Base):
             self.assertRaisesRegex(ConfigError, "missing.*state"),
         ):
             self.adapter.tui().launch(
-                "again", self.spec, HOOK, source_roots=PACKAGE_ROOTS, resume=True
+                dataclasses.replace(self.spec, prompt="again", resume=True),
+                HOOK,
+                source_roots=PACKAGE_ROOTS,
             )
         which.assert_not_called()
 
@@ -181,7 +201,7 @@ class TuiTest(Base):
         adapter = CodexAdapter({"env": {"CODEX_CI": "configured", "PAGER": "less"}})
         with mock.patch("shutil.which", return_value="/protected/codex"):
             launch = adapter.tui().launch(
-                "hi", second, HOOK, source_roots=PACKAGE_ROOTS, resume=False
+                dataclasses.replace(second, prompt="hi"), HOOK, source_roots=PACKAGE_ROOTS
             )
         self.assertEqual(launch.env["CODEX_CI"], "configured")
         self.assertNotIn("CODEX_CI", launch.unset)
@@ -191,22 +211,20 @@ class TuiTest(Base):
         run, _, _ = self.launch()
         self.assertEqual(run.submit("x"), (Paste("x"), Key("Enter")))
         self.assertEqual(
-            run.hook_events("SessionStart", self.payload()), [SessionBound(NATIVE), Activity("")]
+            run.hook_events("SessionStart", self.payload()), [ClientBound(NATIVE), Activity("")]
         )
         self.assertEqual(
-            run.hook_events("PostToolUse", self.payload(tool_name="Bash"), NATIVE),
-            [Activity("Bash")],
+            run.hook_events("PostToolUse", self.payload(tool_name="Bash")), [Activity("Bash")]
         )
         self.assertEqual(
-            run.hook_events("PermissionRequest", self.payload(tool_name="Bash"), NATIVE),
-            [Blocked("Bash")],
+            run.hook_events("PermissionRequest", self.payload(tool_name="Bash")), [Blocked("Bash")]
         )
         self.assertEqual(
-            run.hook_events("Stop", self.payload(last_assistant_message=None), NATIVE), [TurnEnd()]
+            run.hook_events("Stop", self.payload(last_assistant_message=None)), [TurnEnd()]
         )
         self.assertEqual(
             run.hook_events(
-                "Stop", self.payload(last_assistant_message="raw", background_tasks=[1]), NATIVE
+                "Stop", self.payload(last_assistant_message="raw", background_tasks=[1])
             ),
             [TurnEnd("raw", 0)],
         )
@@ -222,23 +240,54 @@ class TuiTest(Base):
     def test_interrupt_retains_root_reply_on_live_and_attach_replay(self):
         run = self.adapter.tui()
         self.assertEqual(
-            run.hook_events("Interrupt", self.payload()), [SessionBound(NATIVE), TurnEnd()]
+            run.hook_events("Interrupt", self.payload()), [ClientBound(NATIVE), TurnEnd()]
         )
         self.assertEqual(
-            run.hook_events("Stop", self.payload(last_assistant_message="kept"), NATIVE),
+            run.hook_events("Stop", self.payload(last_assistant_message="kept")),
             [TurnEnd("kept")],
         )
         self.assertEqual(
-            run.hook_events("Interrupt", self.payload(last_assistant_message="discard"), NATIVE),
+            run.hook_events("Interrupt", self.payload(last_assistant_message="discard")),
             [TurnEnd("kept")],
         )
         attached = self.adapter.tui()
-        attached.session_id(self.payload(hook_event_name="Stop", last_assistant_message="kept"))
         self.assertEqual(
-            attached.hook_events("Interrupt", self.payload(), NATIVE), [TurnEnd("kept")]
+            attached.hook_events("Stop", self.payload(last_assistant_message="kept")),
+            [ClientBound(NATIVE), TurnEnd("kept")],
         )
-        attached.session_id(self.payload(hook_event_name="Stop", last_assistant_message=None))
-        self.assertEqual(attached.hook_events("Interrupt", self.payload(), NATIVE), [TurnEnd()])
+        self.assertEqual(attached.hook_events("Interrupt", self.payload()), [TurnEnd("kept")])
+        attached.hook_events("Stop", self.payload(last_assistant_message=None))
+        self.assertEqual(attached.hook_events("Interrupt", self.payload()), [TurnEnd()])
+
+    def test_restore_readies_a_fresh_tui_as_the_one_that_launched(self):
+        run, _, data = self.launch()
+        self.common.bind(str(self.work), self.spec.sid, NATIVE)
+        foreign = self.payload(cwd=str(self.extra))
+        self.assertEqual(
+            self.adapter.tui().hook_events("Stop", foreign), [ClientBound(NATIVE), TurnEnd()]
+        )
+        restored = self.adapter.tui()
+        restored.restore(self.spec, run.hook_state()["adapter_state"])
+        self.assertEqual(
+            (restored.native, restored.store, restored.state),
+            (NATIVE, data["store"], self.common.load(str(self.work), self.spec.sid)),
+        )
+        self.assertEqual(restored.hook_state(), run.hook_state())
+        for payload in (foreign, self.payload(session_id=CHILD)):
+            self.assertEqual(restored.hook_events("Stop", payload), [])
+        self.assertEqual(
+            restored.hook_events("Stop", self.payload(last_assistant_message="r")),
+            [ClientBound(NATIVE), TurnEnd("r")],
+        )
+
+    def test_restore_without_a_recovery_state_keeps_none_and_a_bad_store_is_a_config_error(self):
+        self.launch()
+        fresh = self.adapter.tui()
+        fresh.restore(dataclasses.replace(self.spec, sid="other-id"), {})
+        self.assertEqual((fresh.state, fresh.native), (None, ""))
+        for state in ({"store": "relative/store"}, {"store": str(self.extra)}):
+            with self.subTest(state=state), self.assertRaises(ConfigError):
+                self.adapter.tui().restore(self.spec, state)
 
     def test_identity_accepts_canonical_cwd_alias_and_keeps_native_binding(self):
         run, _, _ = self.launch()
@@ -313,7 +362,7 @@ class TuiTest(Base):
                 self.assertRaisesRegex(ConfigError, "rewrite|writable"),
             ):
                 self.adapter.tui().launch(
-                    "hi", spec, hook, source_roots=PACKAGE_ROOTS, resume=False
+                    dataclasses.replace(spec, prompt="hi"), hook, source_roots=PACKAGE_ROOTS
                 )
             self.assertIsNone(self.common.load(str(self.work), spec.sid))
 
@@ -325,11 +374,9 @@ class TuiTest(Base):
             self.assertRaisesRegex(ConfigError, "rewrite|writable"),
         ):
             self.adapter.tui().launch(
-                "hi",
-                self.spec,
+                dataclasses.replace(self.spec, prompt="hi"),
                 (*HOOK[:2], str(link), *HOOK[3:]),
                 source_roots=PACKAGE_ROOTS,
-                resume=False,
             )
         self.assertIsNone(self.common.load(str(self.work), self.spec.sid))
 
@@ -383,7 +430,9 @@ class TuiTest(Base):
                     if resume:
                         with mock.patch("shutil.which", return_value="/protected/codex"):
                             launch = adapter.tui().launch(
-                                "hi", spec, HOOK, source_roots=PACKAGE_ROOTS, resume=True
+                                dataclasses.replace(spec, prompt="hi", resume=True),
+                                HOOK,
+                                source_roots=PACKAGE_ROOTS,
                             )
                             self.assertNotIn("TMPDIR", launch.env)
                         continue
@@ -392,11 +441,9 @@ class TuiTest(Base):
                         self.assertRaisesRegex(ConfigError, "rewrite|writable"),
                     ):
                         adapter.tui().launch(
-                            "hi",
-                            spec,
+                            dataclasses.replace(spec, prompt="hi", resume=resume),
                             (*HOOK[:2], "/driver-only/hook.py", *HOOK[3:]),
                             source_roots=PACKAGE_ROOTS,
-                            resume=resume,
                         )
                     if not resume:
                         self.assertIsNone(self.common.load(str(self.work), spec.sid))
@@ -420,7 +467,9 @@ class TuiTest(Base):
             self.assertEqual(len(roots), len(set(roots)))
             self.assertFalse((self.home / ".agent-pm").exists())
             with mock.patch("shutil.which", return_value="/protected/codex"):
-                run.launch("hello", self.spec, HOOK, source_roots=PACKAGE_ROOTS, resume=False)
+                run.launch(
+                    dataclasses.replace(self.spec, prompt="hello"), HOOK, source_roots=PACKAGE_ROOTS
+                )
             saved = self.common.load(str(self.work), self.spec.sid).writable_roots
             changed_home, changed_tmp = self.root / "changed-home", self.root / "changed-tmp"
             changed = CodexAdapter(
@@ -469,7 +518,9 @@ class SuppliedFlagsTest(Base):
     def launch(self, spec, *, resume=False):
         with mock.patch("shutil.which", return_value="/protected/codex"):
             launch = self.adapter.tui().launch(
-                PROMPT, spec, HOOK, source_roots=PACKAGE_ROOTS, resume=resume
+                dataclasses.replace(spec, prompt=PROMPT, resume=resume),
+                HOOK,
+                source_roots=PACKAGE_ROOTS,
             )
         return launch, json.loads(launch.argv[-1])
 
@@ -553,7 +604,9 @@ class LaunchPolicy(Base):
     def argv(self, adapter, spec, *, resume=False):
         with mock.patch("shutil.which", return_value="/protected/codex"):
             launch = adapter.tui().launch(
-                "hi", spec, HOOK, source_roots=PACKAGE_ROOTS, resume=resume
+                dataclasses.replace(spec, prompt="hi", resume=resume),
+                HOOK,
+                source_roots=PACKAGE_ROOTS,
             )
         return tui.execution_argv(
             tui.decode(json.loads(launch.argv[-1])),
@@ -945,49 +998,6 @@ class HookTest(Base):
             tui.bind("Stop", self.payload(cwd=str(alias)), str(self.work), self.spec.sid)
         )
         self.assertEqual(self.common.load(str(self.work), self.spec.sid).native_id, NATIVE)
-
-    def test_generic_isolated_hook_loads_binding_callback_and_records_once(self):
-        self.prepare()
-        folder = self.root / "hook-session"
-        folder.mkdir()
-
-        roots_json = json.dumps([SRC["session"], SRC["utils"]])
-        state = {
-            "runtime": "codex",
-            "sid": self.spec.sid,
-            "workdir": str(self.work),
-            "cwd": str(self.cwd),
-            "project": False,
-            "transcript": "",
-            "resume": "",
-            "events": None,
-            "words": {},
-            "tmux_path": sys.executable,
-            "adapter_hook": tui.__name__,
-            "adapter_state": {"store": common.SessionStore().root},
-        }
-        (folder / "session.json").write_text(json.dumps(state))
-        result = subprocess.run(
-            [sys.executable, "-I", mode_hook.__file__, str(folder), roots_json, "Stop"],
-            input=json.dumps(self.payload(last_assistant_message="reply")),
-            capture_output=True,
-            text=True,
-            timeout=20,
-        )
-        self.assertEqual((result.returncode, result.stdout, result.stderr), (0, "", ""))
-        records = [json.loads(line) for line in (folder / "hooks.jsonl").read_text().splitlines()]
-        self.assertEqual(len(records), 1)
-        self.assertEqual(records[0]["payload"]["hook_event_name"], "Stop")
-        self.assertEqual(self.common.load(str(self.work), self.spec.sid).native_id, NATIVE)
-        result = subprocess.run(
-            [sys.executable, "-I", mode_hook.__file__, str(folder), roots_json, "Stop"],
-            input=json.dumps(self.payload(agent_id=CHILD)),
-            capture_output=True,
-            text=True,
-            timeout=20,
-        )
-        self.assertEqual((result.returncode, result.stdout, result.stderr), (0, "", ""))
-        self.assertEqual(len((folder / "hooks.jsonl").read_text().splitlines()), 1)
 
     def test_missing_malformed_and_fifo_record_fail_without_forwarding(self):
         with contextlib.redirect_stderr(io.StringIO()):

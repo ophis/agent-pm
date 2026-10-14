@@ -1,13 +1,14 @@
 """Public utility modules and functions shared by the layers."""
 
 from agent_pm.utils.args import Once
-from agent_pm.utils.config_file import LOCAL, ConfigFileError, read_project, unset
+from agent_pm.utils.config_file import LOCAL, ConfigFileError, freeze, read_project, thaw, unset
 from agent_pm.utils.config_file import load as load_config
 from agent_pm.utils.files import (
     ConfinedFileError,
     ConfinedReason,
     append_line,
     file_lock,
+    holds,
     read_confined,
     read_regular,
     save,
@@ -71,6 +72,8 @@ __all__ = [
     "err_text",
     "fenced",
     "file_lock",
+    "freeze",
+    "holds",
     "run_git",
     "import_roots",
     "load_config",
@@ -93,6 +96,7 @@ __all__ = [
     "sh",
     "sid_error",
     "temp_dirs",
+    "thaw",
     "under",
     "unfenced",
     "unset",

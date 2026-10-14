@@ -1,6 +1,7 @@
 """Session behavior tests with caller-owned dependencies."""
 
 import contextlib
+import dataclasses
 import glob
 import json
 import os
@@ -453,8 +454,8 @@ class ClaudeTuiLaunch(Case):
             background=1,
         )
         new, resume = (
-            tui.launch("do it", spec, hook, source_roots=PACKAGE_ROOTS, resume=False),
-            tui.launch("", spec, hook, source_roots=PACKAGE_ROOTS, resume=True),
+            tui.launch(dataclasses.replace(spec, prompt="do it"), hook, source_roots=PACKAGE_ROOTS),
+            tui.launch(dataclasses.replace(spec, resume=True), hook, source_roots=PACKAGE_ROOTS),
         )
         self.assertEqual(new.argv[-2:], ("--", "do it"))
         res = self.run_argv(new.argv)

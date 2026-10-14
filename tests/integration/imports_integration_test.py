@@ -44,7 +44,8 @@ class ImportsAlone(Case):
         names = [
             n for sub, root in SRC.items() for n in modules(root, f"agent_pm.{sub}")
         ] + modules(REPO, "tests")
-        self.assertIn("agent_pm.session.engine.api", names)
+        self.assertIn("agent_pm.session.engine.hosted", names)
+        self.assertNotIn("agent_pm.session.engine.api", names)
         self.assertIn("agent_pm.linear_orchestrator.engine.run", names)
         self.assertIn("tests.case", names)
         for name in names:

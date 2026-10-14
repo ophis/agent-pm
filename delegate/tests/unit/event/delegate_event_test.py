@@ -5,7 +5,7 @@ import unittest
 
 from agent_pm import delegate
 from agent_pm.delegate import event as event_package
-from agent_pm.delegate.event import KINDS, DelegateEvent, DelegateEventError
+from agent_pm.delegate.event import DelegateEvent, DelegateEventError, DelegateEventKind
 
 from delegate.tests.case import Case
 
@@ -49,7 +49,9 @@ class EventLine(Case):
             '{"v":1,"kind":"finished","returncode":2,"outcome":null,"error":"","limit":null}',
         )
         self.assertEqual(list(json.loads(PROGRESS.to_line())), ["v", "kind", "name", "text"])
-        self.assertEqual(KINDS, ("begun", "progress", "finished"))
+        self.assertEqual(list(DelegateEventKind), ["begun", "progress", "finished"])
+        self.assertEqual(DelegateEvent(DelegateEventKind.BEGUN, sid=SID), BEGUN)
+        self.assertEqual(DelegateEvent(DelegateEventKind.BEGUN, sid=SID).to_line(), BEGUN.to_line())
 
     def test_a_finished_line_without_the_optional_fields_takes_their_defaults(self):
         self.assertEqual(DelegateEvent.parse(line(v=1, kind="finished", returncode=2)), BARE)
@@ -117,9 +119,10 @@ class EventLine(Case):
 
 class Exports(Case):
     def test_event_and_delegate_export_the_callback_event(self):
-        for name in ("DelegateEvent", "DelegateEventError", "KINDS"):
+        for name in ("DelegateEvent", "DelegateEventError", "DelegateEventKind"):
             with self.subTest(name=name):
                 self.assertIn(name, event_package.__all__)
+        self.assertNotIn("KINDS", event_package.__all__)
         self.assertIn("DelegateEvent", delegate.__all__)
         self.assertIs(delegate.DelegateEvent, DelegateEvent)
 

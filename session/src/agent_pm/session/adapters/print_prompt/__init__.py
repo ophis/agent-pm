@@ -8,11 +8,5 @@ from agent_pm.session.adapters.print_prompt.in_process import PrintPromptInProce
 
 
 class PrintPromptAdapter(Adapter):
-    def headless(self):
-        return None
-
-    def tui(self):
-        return None
-
     def in_process(self):
-        return PrintPromptInProcess(self)
+        return PrintPromptInProcess()

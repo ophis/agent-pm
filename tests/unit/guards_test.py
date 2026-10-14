@@ -13,6 +13,9 @@ from tests.guard_samples import PKG, Sample, fixtures, test_suites
 OPKG = "src/agent_pm/linear_orchestrator"
 
 
+UNLISTED = "not __init__.py, cli.py, engine/, a listed subpackage or a listed entry module"
+
+
 PROBE = "import importlib,json,sys\nprint(json.dumps({n:importlib.import_module(n).__file__ for n in sys.argv[1:]}))\n"
 
 
@@ -166,7 +169,7 @@ class LiteralImports(Sample):
 
     def test_dynamic_calls_cannot_bypass_unit_contracts(self):
         for sample in (
-            "import importlib\nimportlib.import_module('agent_pm.session.hosts.tables')",
+            "import importlib\nimportlib.import_module('agent_pm.session.hosts.tmux.tmux_host')",
             "from importlib import import_module as load\nload('agent_pm.session.modes.tui')",
             "__import__('agent_pm.manager')",
         ):
@@ -894,7 +897,7 @@ class SharedTypes(Sample):
         for source in (
             "from typing import NamedTuple\nclass A(NamedTuple):\n    value: int\n",
             "from enum import Enum\nclass A(Enum):\n    value = 1\n",
-            "from enum import StrEnum\nclass A(StrEnum):\n    value = 'one'\n",
+            "from enum import StrEnum\nclass A(StrEnum):\n    VALUE = 'value'\n",
             "from typing import TypedDict\nclass A(TypedDict):\n    value: int\n",
         ):
             with self.subTest(source=source):
@@ -1041,6 +1044,14 @@ class TypesOnly(Sample):
         source = "from dataclasses import dataclass as dc\nfrom typing import NamedTuple, TypedDict, Protocol\nfrom enum import Enum\nfrom abc import ABC\n@dc\nclass Data:\n    value: int\nclass Tuple(NamedTuple):\n    value: int\nclass Table(TypedDict):\n    value: int\nclass Choice(Enum):\n    value = 1\nclass Interface(Protocol):\n    def run(self): ...\nclass Abstract(ABC):\n    pass\nclass Error(Exception):\n    pass\nclass Child(Error):\n    pass\n"
         self.assertEqual(self.found(source), [])
 
+    def test_a_str_enum_is_a_data_type(self):
+        for source in (
+            "from enum import StrEnum\nclass Choice(StrEnum):\n    ONE = 'one'\n",
+            "import enum as e\nclass Choice(e.StrEnum):\n    ONE = 'one'\n",
+        ):
+            with self.subTest(source=source):
+                self.assertEqual(self.found(source), [])
+
     def test_dunders_properties_and_abstract_methods_are_allowed(self):
         source = "from abc import ABC, abstractmethod\nclass Interface(ABC):\n    def __init__(self): self.value = 1\n    @property\n    def value(self): return 1\n    @abstractmethod\n    def run(self): pass\n"
         self.assertEqual(self.found(source), [])
@@ -1048,6 +1059,13 @@ class TypesOnly(Sample):
     def test_dataclass_methods_may_work_on_their_own_fields_and_methods(self):
         source = "from dataclasses import dataclass\n@dataclass\nclass Team:\n    root: str\n    def custom(self, path): return path != self.root\n    def source(self, path): return path if self.custom(path) else 'built-in'\n"
         self.assertEqual(self.found(source), [])
+
+    def test_a_dataclass_classmethod_building_the_class_is_allowed(self):
+        source = "from dataclasses import dataclass\n@dataclass\nclass Data:\n    value: int\n    @classmethod\n    def parse(cls, fields): return cls(fields['v']) if 'v' in fields else None\n    @classmethod\n    def other(cls, value): return value\n"
+        self.assertEqual(
+            self.found(source),
+            [f"{self.HOME}/types.py:8: Data.other: business method in types module"],
+        )
 
     def test_methods_on_other_kinds_and_unrelated_dataclass_methods_are_reported(self):
         source = "from dataclasses import dataclass\nfrom abc import ABC\nclass Interface(ABC):\n    def run(self): return 1\n@dataclass\nclass Data:\n    value: int\n    def run(self): return 1\n    def other(self): return self.unknown\n    @staticmethod\n    def factory(value): return value\n"
@@ -1120,10 +1138,12 @@ class PackageTop(Sample):
         sub = guards.PROJECTS[project]
         return {f"{project}/{PKG}/{sub}/{e}": "" for e in entries}
 
-    def test_only_init_cli_engine_and_listed_subpackages(self):
+    def test_only_init_cli_engine_and_listed_subpackages_and_entry_modules(self):
         files = {
             **self.package("utils", "__init__.py", "x.py"),
-            **self.package("session", "__init__.py", "engine/x.py", "modes/x.py", "extra.py"),
+            **self.package(
+                "session", "__init__.py", "extension.py", "engine/x.py", "modes/x.py", "extra.py"
+            ),
             **self.package(
                 "delegate", "__init__.py", "cli.py", "engine/x.py", "team/x.py", "misc/x.py"
             ),
@@ -1133,9 +1153,9 @@ class PackageTop(Sample):
         self.assertEqual(
             guards.package_top(self.tree(files)),
             [
-                f"delegate/{PKG}/delegate/misc: not __init__.py, cli.py, engine/ or a listed subpackage",
-                f"manager/{PKG}/manager/y.py: not __init__.py, cli.py, engine/ or a listed subpackage",
-                f"session/{PKG}/session/extra.py: not __init__.py, cli.py, engine/ or a listed subpackage",
+                f"delegate/{PKG}/delegate/misc: {UNLISTED}",
+                f"manager/{PKG}/manager/y.py: {UNLISTED}",
+                f"session/{PKG}/session/extra.py: {UNLISTED}",
             ],
         )
 
@@ -1598,7 +1618,7 @@ class RuntimeNames(Sample):
     def test_toml_table_header_implementation_line_and_comments_are_exempt(self):
         root = self.tree(
             {
-                "delegate/config.toml": '# codex in a comment\n[adapters.codex]\nimplementation = "adapters.codex:CodexAdapter"  # codex\nkey = "x # codex"\n'
+                "delegate/config.toml": '# codex in a comment\n[adapters.codex]\nimplementation = "agent_pm.session.adapters.codex:CodexAdapter"  # codex\nkey = "x # codex"\n'
             }
         )
         self.assertEqual(guards.runtime_names(root), ["delegate/config.toml:4: runtime name codex"])
@@ -1607,11 +1627,19 @@ class RuntimeNames(Sample):
         root = self.tree(
             {
                 "delegate/config.toml": (
-                    '# [adapters.print_prompt]  act-as\'s runtime\n[adapters.print_prompt]\nimplementation = "adapters.print_prompt:PrintPromptAdapter"\n'
+                    '# [adapters.print_prompt]  act-as\'s runtime\n[adapters.print_prompt]\nimplementation = "agent_pm.session.adapters.print_prompt:PrintPromptAdapter"\n'
                 )
             }
         )
         self.assertEqual(guards.runtime_names(root), [])
+
+    def test_toml_implementation_line_is_exempt_only_as_module_path_class(self):
+        root = self.tree(
+            {
+                "delegate/config.toml": 'implementation = "codex"\nimplementation = "my.codex:Codex"\n'
+            }
+        )
+        self.assertEqual(guards.runtime_names(root), ["delegate/config.toml:1: runtime name codex"])
 
     def test_toml_runtime_line_is_exempt_under_any_table(self):
         root = self.tree(
@@ -1625,7 +1653,7 @@ class RuntimeNames(Sample):
         root = self.tree(
             {
                 "delegate/config.toml": (
-                    '[adapters.codex]\nimplementation = "adapters.codex:CodexAdapter"\n[roles.pm]\nmodel = "codex"\nruntime = ["codex"]\nruntime = "codex\nruntime = "codex" x\n'
+                    '[adapters.codex]\nimplementation = "agent_pm.session.adapters.codex:CodexAdapter"\n[roles.pm]\nmodel = "codex"\nruntime = ["codex"]\nruntime = "codex\nruntime = "codex" x\n'
                 )
             }
         )
@@ -1817,6 +1845,232 @@ class StatusLogFormat(Sample):
             [
                 f"session/{PKG}/session/hosts/tmux_external/x.py:1: status log line format outside session/engine/status_log.py or hosts/tmux/tmux_host.py"
             ],
+        )
+
+
+class OptionTuples(Sample):
+    FAILS = "a fixed option set is a StrEnum (FR-49)"
+    STALE = "allowlisted but not an option tuple"
+
+    def found(self, extra=None, *, instead=None):
+        files = {}
+        for key in guards.OPTION_TUPLES_ALLOWED:
+            rel, name = key
+            files[rel] = files.get(rel, "") + (instead or {}).get(key, f'{name} = ("a", "b")\n')
+        for rel, text in (extra or {}).items():
+            files[rel] = files.get(rel, "") + text
+        return guards.option_tuples(self.tree(files))
+
+    def test_the_real_tree_is_clean(self):
+        self.assertEqual(guards.option_tuples(REPO), [])
+
+    def test_allowlisted_tuples_pass_each_with_a_one_line_reason(self):
+        self.assertEqual(self.found(), [])
+        for key, reason in guards.OPTION_TUPLES_ALLOWED.items():
+            with self.subTest(key=key):
+                self.assertTrue(reason.strip())
+                self.assertNotIn("\n", reason)
+
+    def test_a_module_level_tuple_of_option_words_fails(self):
+        rel = f"delegate/{PKG}/delegate/x.py"
+        source = (
+            'X = ("a", "b")\n'
+            '_HOOKS: tuple = ("pane-exited", "window-resized")\n'
+            'Y = Z = ("a_b", "c2", "d")\n'
+            'TIERS = ("1", "2", "3")\n'
+        )
+        self.assertEqual(
+            self.found({rel: source}),
+            [
+                f"{rel}:1: X: {self.FAILS}",
+                f"{rel}:2: _HOOKS: {self.FAILS}",
+                f"{rel}:3: Y: {self.FAILS}",
+                f"{rel}:3: Z: {self.FAILS}",
+                f"{rel}:4: TIERS: {self.FAILS}",
+            ],
+        )
+
+    def test_top_level_if_and_try_blocks_and_standalone_scripts_count(self):
+        rel = f"session/{PKG}/session/modes/tui_hook.py"
+        source = (
+            'if True:\n    A = ("a", "b")\nelse:\n    B = ("a", "b")\n'
+            'try:\n    C = ("a", "b")\nexcept ImportError:\n    D = ("a", "b")\n'
+            'finally:\n    E = ("a", "b")\n'
+        )
+        self.assertEqual(
+            self.found({rel: source}),
+            sorted(
+                f"{rel}:{line}: {name}: {self.FAILS}"
+                for line, name in ((2, "A"), (4, "B"), (6, "C"), (8, "D"), (10, "E"))
+            ),
+        )
+
+    def test_other_shapes_places_and_trees_pass(self):
+        source = (
+            'ONE = ("a",)\n'
+            'MIXED = ("a", 1)\n'
+            'PATHS = ("crew.py", "drive.py")\n'
+            'FLAGS = ("-P", "-m")\n'
+            'UPPER = ("A", "B")\n'
+            'SPACED = ("a b", "c")\n'
+            'VERSIONS = ("1.0", "2.0")\n'
+            'SIGNED = ("-1", "2")\n'
+            'LISTED = ["a", "b"]\n'
+            'NESTED = (("a", "b"), ("c", "d"))\n'
+            'lower = ("a", "b")\n'
+            'Mixed = ("a", "b")\n'
+            "BARE: tuple[str, ...]\n"
+            'A, B = ("a", "b")\n'
+            'def f():\n    LOCAL = ("a", "b")\n'
+            'class C:\n    FIELD = ("a", "b")\n'
+            'with open("x") as f:\n    WITH = ("a", "b")\n'
+        )
+        self.assertEqual(
+            self.found(
+                {
+                    f"delegate/{PKG}/delegate/x.py": source,
+                    "delegate/tests/unit/x_test.py": 'X = ("a", "b")\n',
+                    "delegate/skills/tool.py": 'X = ("a", "b")\n',
+                    "tests/x.py": 'X = ("a", "b")\n',
+                }
+            ),
+            [],
+        )
+
+    def test_an_allowlisted_name_that_is_no_longer_an_option_tuple_is_stale(self):
+        key = rel, name = next(iter(guards.OPTION_TUPLES_ALLOWED))
+        for source in (
+            "",
+            f"{name} = tuple(range(2))\n",
+            f'{name} = ("a",)\n',
+            f'def f():\n    {name} = ("a", "b")\n',
+        ):
+            with self.subTest(source=source):
+                self.assertEqual(
+                    self.found(instead={key: source}), [f"{rel}: {name}: {self.STALE}"]
+                )
+
+    def test_every_entry_is_stale_in_an_empty_tree(self):
+        self.assertEqual(
+            guards.option_tuples(self.tree({})),
+            sorted(f"{rel}: {name}: {self.STALE}" for rel, name in guards.OPTION_TUPLES_ALLOWED),
+        )
+
+
+class ObjectExports(Sample):
+    SESSION = f"session/{PKG}/session/"
+    INIT = SESSION + "__init__.py"
+    EXTENSION = SESSION + "extension.py"
+    WRAPPERS = ("close", "note", "session_record", "sessions")
+    BAD = ("OS", "Shut", "modes", "f", "g", "LAMBDA", "Ghost")
+    BAD_SOURCE = (
+        "import os as OS\n"
+        "from agent_pm.session.engine.forwarding import close as Shut\n"
+        "from agent_pm.session import modes\n"
+        "def f(): pass\n"
+        "g = f\n"
+        "LAMBDA = lambda: 0\n"
+    )
+
+    def init(self, source="", names=()):
+        """A session __init__ exporting the allowlisted wrappers (forwarding.py's), then `names`."""
+        imported = f"from agent_pm.session.engine.forwarding import {', '.join(self.WRAPPERS)}\n"
+        return f"{imported}{source}__all__ = {[*self.WRAPPERS, *names]!r}\n"
+
+    def found(self, files=None):
+        tree = {
+            self.SESSION + "engine/forwarding.py": "".join(
+                f"def {name}(): pass\n" for name in self.WRAPPERS
+            ),
+            self.SESSION + "modes/__init__.py": "",
+            self.INIT: self.init(),
+            self.EXTENSION: "__all__ = []\n",
+            **(files or {}),
+        }
+        return guards.object_exports(self.tree(tree))
+
+    def test_the_real_tree_is_clean(self):
+        self.assertEqual(guards.object_exports(REPO), [])
+
+    def test_the_allowlisted_wrappers_pass_each_with_a_one_line_reason(self):
+        self.assertEqual(self.found(), [])
+        self.assertEqual(
+            set(guards.OBJECT_EXPORTS_ALLOWED), {("agent_pm.session", n) for n in self.WRAPPERS}
+        )
+        for key, reason in guards.OBJECT_EXPORTS_ALLOWED.items():
+            with self.subTest(key=key):
+                self.assertTrue(reason.strip())
+                self.assertNotIn("\n", reason)
+
+    def test_a_function_alias_lambda_module_or_unbound_name_fails_in_either_entry_module(self):
+        for rel, text in (
+            (self.INIT, self.init(self.BAD_SOURCE, self.BAD)),
+            (self.EXTENSION, f"{self.BAD_SOURCE}__all__ = {list(self.BAD)!r}\n"),
+        ):
+            with self.subTest(rel=rel):
+                self.assertEqual(
+                    self.found({rel: text}),
+                    sorted(f"{rel}: __all__ exports function {n} (FR-44)" for n in self.BAD),
+                )
+
+    def test_a_conditional_alias_or_partial_of_a_function_fails_in_either_entry_module(self):
+        source = "import functools\ndef f(): pass\nalias = f if True else f\npart = functools.partial(f)\n"
+        names = ("alias", "part")
+        for rel, text in (
+            (self.INIT, self.init(source, names)),
+            (self.EXTENSION, f"{source}__all__ = {list(names)!r}\n"),
+        ):
+            with self.subTest(rel=rel):
+                self.assertEqual(
+                    self.found({rel: text}),
+                    sorted(f"{rel}: __all__ exports unrecognised value {n} (FR-44)" for n in names),
+                )
+
+    def test_classes_exceptions_enums_constants_and_type_aliases_pass(self):
+        extension = (
+            "import signal\n"
+            "from pathlib import Path\n"
+            "from agent_pm.session.engine.types import Error, Event, Mode, Spec\n"
+            "from agent_pm.utils import Display\n"
+            "Handle = Spec\n"
+            "SIGNALS = (signal.SIGHUP, signal.SIGTERM)\n"
+            'NAME = "x"\n'
+        )
+        names = ["Spec", "Mode", "Error", "Event", "Display", "Handle", "SIGNALS", "NAME", "Path"]
+        types = (
+            "from enum import StrEnum\n"
+            "class Spec: pass\n"
+            'class Mode(StrEnum):\n    A = "a"\n'
+            "class Error(Exception): pass\n"
+            "Event = Spec | Mode\n"
+        )
+        utils = f"utils/{PKG}/utils/"
+        self.assertEqual(
+            self.found(
+                {
+                    self.EXTENSION: f"{extension}__all__ = {names!r}\n",
+                    self.SESSION + "engine/types.py": types,
+                    utils + "__init__.py": "from agent_pm.utils.record import Display\n"
+                    'def helper(): pass\n__all__ = ["Display", "helper"]\n',
+                    utils + "record.py": "Display = str | None\n",
+                }
+            ),
+            [],
+        )
+
+    def test_without_a_literal_all_of_names_an_entry_module_fails(self):
+        for source in ("", "__all__ = names()\n", "__all__ = [1]\n", '__all__ = ("A",)\n'):
+            with self.subTest(source=source):
+                self.assertEqual(
+                    self.found({self.EXTENSION: source}), [f"{self.EXTENSION}: no literal __all__"]
+                )
+
+    def test_an_allowlisted_name_no_longer_exported_as_a_function_is_stale(self):
+        stale = "allowlisted but not an exported function (FR-44)"
+        init = 'class close: pass\n__all__ = ["close"]\n'
+        self.assertEqual(
+            self.found({self.INIT: init}),
+            [f"agent_pm.session: {name}: {stale}" for name in self.WRAPPERS],
         )
 
 

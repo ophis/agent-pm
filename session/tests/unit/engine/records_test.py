@@ -1,6 +1,7 @@
-"""session/engine/records.py: run.jsonl writes and reads."""
+"""session/engine/records.py: RunLog, run.jsonl writes and reads."""
 
 import errno
+import inspect
 import io
 import json
 import os
@@ -12,6 +13,8 @@ from contextlib import redirect_stderr
 from datetime import datetime
 
 from agent_pm.session.engine import records
+from agent_pm.session.engine.records import RunLog
+from agent_pm.session.engine.types import SessionInfo
 from agent_pm.utils import append_line
 
 from session.tests.case import Case
@@ -26,6 +29,7 @@ class Base(Case):
         self.addCleanup(tmp.cleanup)
         self.dir = tmp.name
         self.path = os.path.join(self.dir, "run.jsonl")
+        self.log = RunLog(self.dir)
 
     def content(self) -> bytes:
         with open(self.path, "rb") as f:
@@ -56,22 +60,32 @@ class Base(Case):
         return out["value"]
 
 
+class Module(Case):
+    def test_exposes_only_run_log_and_the_channel(self):
+        functions = [
+            name
+            for name, value in vars(records).items()
+            if inspect.isfunction(value) and value.__module__ == records.__name__
+        ]
+        self.assertEqual(functions, [])
+        self.assertEqual(records.CHANNEL, "run.jsonl")
+
+
 class Stamp(Case):
     def test_is_local_iso_8601_with_offset_to_the_millisecond(self):
-        text = records.stamp()
+        text = RunLog.stamp()
         self.assertRegex(text, r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}[+-]\d\d:\d\d$")
         self.assertIsNotNone(datetime.fromisoformat(text).utcoffset())
 
 
 class RecordPath(Case):
     def test_is_run_jsonl_in_the_absolute_workdir(self):
-        self.assertEqual(records.CHANNEL, "run.jsonl")
-        self.assertEqual(records.path("w"), os.path.join(os.path.abspath("w"), "run.jsonl"))
+        self.assertEqual(RunLog("w").path, os.path.join(os.path.abspath("w"), "run.jsonl"))
 
 
 class Note(Base):
     def test_writes_one_json_line_with_a_millisecond_ts_kind_and_fields(self):
-        records.note(self.path, "session", sid=SID, cwd="/wörk", project=False)
+        self.log.note("session", sid=SID, cwd="/wörk", project=False)
         line = self.content().decode()
         self.assertTrue(line.endswith("\n") and line.count("\n") == 1)
         self.assertIn("/wörk", line)
@@ -81,45 +95,25 @@ class Note(Base):
 
     def test_durable_syncs_the_file_and_its_directory(self):
         with unittest.mock.patch.object(os, "fsync", wraps=os.fsync) as fsync:
-            records.note(self.path, "client_session", sid=SID, client_id="n")
+            self.log.note("client_session", sid=SID, client_id="n")
             self.assertEqual(fsync.call_count, 0)
-            records.note(self.path, "client_session", durable=True, sid=SID, client_id="n")
+            self.log.note("client_session", durable=True, sid=SID, client_id="n")
             self.assertEqual(fsync.call_count, 2)
-        self.assertEqual(len(records.read(self.path)), 2)
+        self.assertEqual(len(self.log.read()), 2)
 
     def test_an_os_error_is_raised_or_with_best_effort_printed(self):
-        missing = os.path.join(self.dir, "gone", "run.jsonl")
+        missing = RunLog(os.path.join(self.dir, "gone"))
         with self.assertRaises(OSError):
-            records.note(missing, "stderr", text="x")
+            missing.note("stderr", text="x")
         err = io.StringIO()
         with redirect_stderr(err):
-            records.note(missing, "stderr", best_effort=True, text="x")
+            missing.note("stderr", best_effort=True, text="x")
         self.assertRegex(err.getvalue(), r"^records: .*gone")
 
 
 class AppendLine(Case):
     def test_is_the_utils_one(self):
         self.assertIs(records.append_line, append_line)
-
-
-class Holds(Base):
-    def test_only_a_regular_file_holding_exactly_the_text(self):
-        self.assertFalse(records.holds(self.path, "x"))
-        with open(self.path, "w") as f:
-            f.write("héllo")
-        self.assertTrue(records.holds(self.path, "héllo"))
-        for text in ("héll", "héllo!", "", "other"):
-            self.assertFalse(records.holds(self.path, text), text)
-
-    def test_a_symlink_or_fifo_is_no_without_blocking(self):
-        target = os.path.join(self.dir, "target")
-        with open(target, "w") as f:
-            f.write("x")
-        os.symlink(target, self.path)
-        self.assertFalse(records.holds(self.path, "x"))
-        os.remove(self.path)
-        os.mkfifo(self.path)
-        self.assertFalse(self.promptly(lambda: records.holds(self.path, "")))
 
 
 class Read(Base):
@@ -136,34 +130,41 @@ class Read(Base):
             b"[" * 100_000,
             second,
         )
-        self.assertEqual(records.read(self.path), [first, second])
+        self.assertEqual(self.log.read(), [first, second])
 
     def test_missing_or_empty_is_empty(self):
-        self.assertEqual(records.read(self.path), [])
+        self.assertEqual(self.log.read(), [])
         self.write()
-        self.assertEqual(records.read(self.path), [])
+        self.assertEqual(self.log.read(), [])
 
     def test_a_symlink_fifo_or_directory_is_never_read(self):
         target = os.path.join(self.dir, "planted.jsonl")
         with open(target, "w") as f:
             f.write(json.dumps({"kind": "session"}) + "\n")
         os.symlink(target, self.path)
-        self.assertEqual(records.read(self.path), [])
+        self.assertEqual(self.log.read(), [])
         os.remove(self.path)
         os.mkfifo(self.path)
-        self.assertEqual(self.promptly(lambda: records.read(self.path)), [])
-        self.assertEqual(records.read(self.dir), [])
+        self.assertEqual(self.promptly(self.log.read), [])
+        os.remove(self.path)
+        os.mkdir(self.path)
+        self.assertEqual(self.log.read(), [])
 
     def test_an_os_error_while_reading_is_empty(self):
         self.write({"kind": "session"})
         with unittest.mock.patch.object(os, "fstat", side_effect=OSError(errno.EIO, "I/O error")):
-            self.assertEqual(records.read(self.path), [])
+            self.assertEqual(self.log.read(), [])
+
+
+def info(**changes) -> SessionInfo:
+    fields = {"sid": SID, "cwd": "/a", "project": False}
+    return SessionInfo(**{**fields, "transcript": "", "resume": "", **changes})
 
 
 class Session(Base):
-    def test_the_latest_valid_session_record_of_the_sid_wins(self):
+    def test_the_latest_valid_session_line_of_the_sid_wins(self):
         first = {"ts": "t", "kind": "session", "sid": SID, "cwd": "/a", "project": False}
-        latest = {**first, "cwd": "/b", "project": True}
+        latest = {**first, "cwd": "/b", "project": True, "transcript": "/t", "resume": "r"}
         self.write(
             first,
             latest,
@@ -177,9 +178,18 @@ class Session(Base):
             {**first, "cwd": "/x\x1b[2J"},
             {**first, "cwd": 3},
             {**first, "project": 1},
+            {**first, "transcript": "rel.jsonl"},
+            {**first, "transcript": 3},
+            {**first, "resume": None},
             {k: v for k, v in first.items() if k != "project"},
         )
-        self.assertEqual(records.session_record(self.dir, SID), latest)
+        self.assertEqual(
+            self.log.session(SID), info(cwd="/b", project=True, transcript="/t", resume="r")
+        )
+
+    def test_a_line_without_transcript_or_resume_has_them_empty(self):
+        self.write({"kind": "session", "sid": SID, "cwd": "/a", "project": False})
+        self.assertEqual(self.log.session(SID), info())
 
     def test_metadata_updates_only_the_matching_latest_session(self):
         first = {"kind": "session", "sid": SID, "cwd": "/a", "project": False}
@@ -187,17 +197,26 @@ class Session(Base):
             first,
             {"kind": "session_metadata", "sid": "other", "resume": "wrong"},
             {"kind": "session_metadata", "sid": SID, "transcript": "/t", "resume": "resume"},
+            {"kind": "session_metadata", "sid": SID, "transcript": "rel", "resume": "forged"},
+            {"kind": "session_metadata", "sid": SID, "resume": 3},
         )
-        self.assertEqual(
-            records.session_record(self.dir, SID), {**first, "transcript": "/t", "resume": "resume"}
-        )
+        self.assertEqual(self.log.session(SID), info(transcript="/t", resume="resume"))
         self.write(first, {"kind": "session_metadata", "sid": SID, "transcript": "/t"}, first)
-        self.assertEqual(records.session_record(self.dir, SID), first)
+        self.assertEqual(self.log.session(SID), info())
 
-    def test_none_without_a_valid_session_record(self):
-        self.assertIsNone(records.session_record(self.dir, SID))
+    def test_a_client_session_line_changes_no_identity(self):
+        first = {"kind": "session", "sid": SID, "cwd": "/a", "project": False}
+        self.write(
+            {"kind": "client_session", "sid": SID, "client_id": "early"},
+            first,
+            {"kind": "client_session", "sid": SID, "client_id": "n1"},
+        )
+        self.assertEqual(self.log.session(SID), info())
+
+    def test_none_without_a_valid_session_line(self):
+        self.assertIsNone(self.log.session(SID))
         self.write(b"", {"ts": "t", "kind": "session", "sid": SID, "cwd": "/a", "project": "yes"})
-        self.assertIsNone(records.session_record(self.dir, SID))
+        self.assertIsNone(self.log.session(SID))
 
 
 if __name__ == "__main__":

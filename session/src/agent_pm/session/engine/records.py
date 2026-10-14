@@ -7,61 +7,59 @@ import json
 import os
 import sys
 from datetime import datetime
-from pathlib import Path
 
-from agent_pm.utils import append_line, json_records, printable_abs, read_regular
+from agent_pm.session.engine.types import SessionInfo
+from agent_pm.utils import append_line, json_records, read_regular
 
 CHANNEL = "run.jsonl"
 
 
-def path(workdir: str) -> str:
-    return os.path.join(os.path.abspath(workdir), CHANNEL)
+class RunLog:
+    def __init__(self, workdir: str):
+        self.path = os.path.join(os.path.abspath(workdir), CHANNEL)
 
+    @staticmethod
+    def stamp() -> str:
+        return datetime.now().astimezone().isoformat(timespec="milliseconds")
 
-def stamp() -> str:
-    return datetime.now().astimezone().isoformat(timespec="milliseconds")
+    def note(
+        self, kind: str, *, best_effort: bool = False, durable: bool = False, **fields
+    ) -> None:
+        try:
+            append_line(
+                self.path,
+                json.dumps({"ts": self.stamp(), "kind": kind, **fields}, ensure_ascii=False) + "\n",
+                durable=durable,
+            )
+        except OSError as e:
+            if not best_effort:
+                raise
+            print(f"records: {e}", file=sys.stderr)
 
+    def read(self) -> list[dict]:
+        data = read_regular(self.path)
+        if data is None:
+            return []
+        return list(json_records(data.split(b"\n")))
 
-def holds(path: str | Path, text: str) -> bool:
-    data = text.encode()
-    return read_regular(path, limit=len(data) + 1) == data
-
-
-def note(
-    path: str, kind: str, *, best_effort: bool = False, durable: bool = False, **fields
-) -> None:
-    try:
-        append_line(
-            path,
-            json.dumps({"ts": stamp(), "kind": kind, **fields}, ensure_ascii=False) + "\n",
-            durable=durable,
-        )
-    except OSError as e:
-        if not best_effort:
-            raise
-        print(f"records: {e}", file=sys.stderr)
-
-
-def read(path: str) -> list[dict]:
-    data = read_regular(path)
-    if data is None:
-        return []
-    return list(json_records(data.split(b"\n")))
-
-
-def session_record(workdir: str, sid: str) -> dict | None:
-    found = None
-    for e in read(path(workdir)):
-        if (
-            e.get("kind") == "session"
-            and e.get("sid") == sid
-            and printable_abs(e.get("cwd"))
-            and isinstance(e.get("project"), bool)
-        ):
-            found = e
-        elif e.get("kind") == "session_metadata" and e.get("sid") == sid and found is not None:
-            found = {
-                **found,
-                **{key: e[key] for key in ("transcript", "resume") if isinstance(e.get(key), str)},
-            }
-    return found
+    def session(self, sid: str) -> SessionInfo | None:
+        """The latest valid `session` line of `sid`, with its later valid `session_metadata` lines
+        folded in. A forged valid-looking line is indistinguishable: callers re-check what they act
+        on (delegate's plan.place re-checks cwd against trusted_dirs).
+        """
+        found = None
+        for e in self.read():
+            if e.get("sid") != sid:
+                continue
+            kind = e.get("kind")
+            if kind == "session":
+                found = SessionInfo.from_fields(e) or found
+            elif found is None:
+                continue
+            elif kind == "session_metadata":
+                fields = {
+                    **found.persisted(),
+                    **{k: e[k] for k in ("transcript", "resume") if k in e},
+                }
+                found = SessionInfo.from_fields(fields) or found
+        return found

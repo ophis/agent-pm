@@ -22,6 +22,7 @@ from agent_pm.delegate.composer.run import (
 from agent_pm.delegate.composer.teams import role_tables, team
 from agent_pm.delegate.composer.types import Intent
 from agent_pm.delegate.engine.config import PYTHONPATH
+from agent_pm.session import Effort
 from agent_pm.utils import LOCAL, read_project
 
 from delegate.tests.case import Case
@@ -165,8 +166,8 @@ class ExplicitPaths(Fake):
 
     def test_resolve(self):
         self.local('[roles.writer]\neffort = "low"\n')
-        self.assertEqual(self.resolved().effort, "low")
-        self.assertEqual(self.resolved(local=os.devnull).effort, "medium")
+        self.assertIs(self.resolved().effort, Effort.LOW)
+        self.assertIs(self.resolved(local=os.devnull).effort, Effort.MEDIUM)
 
     def test_trusted_dirs(self):
         self.local('trusted_dirs = ["/x/../y"]\n')
@@ -386,6 +387,7 @@ class Resolve(Fake):
         overlay = {"effort": "low", "roles": {"editor": {"tier": 3, "output": {"type": "local"}}}}
         run = self.resolved("editor", overlays=[overlay])
         self.assertEqual((run.tier, run.effort, run.output), (3, "low", {"type": "local"}))
+        self.assertIs(run.effort, Effort.LOW)
         self.assertEqual(self.resolved("editor", overlays=[overlay, {"tier": 4}]).tier, 4)
 
     def test_gate_defaults_to_empty_and_an_overlays_or_the_configs_gate_is_its_value_verbatim(self):
@@ -409,14 +411,14 @@ class Resolve(Fake):
 
     def test_the_local_file_goes_on_top(self):
         self.local(
-            'language = "French"\nshow = ""\ncwd = "/srv"\n'
+            'language = "French"\ncwd = "/srv"\n'
             '[roles.editor]\ntier = 3\n[roles.editor.output]\nbranch = "trunk"\n'
             '[roles.writer]\nread = ["/data"]\n'
         )
         run = self.resolved("editor")
         self.assertEqual(
-            (run.language, run.show, run.cwd, run.tier, run.effort),
-            ("French", "", "/srv", 3, "high"),
+            (run.language, run.cwd, run.tier, run.effort),
+            ("French", "/srv", 3, "high"),
         )
         self.assertEqual(run.output, {"type": "github", "repo": "o/docs", "branch": "trunk"})
         self.assertEqual(self.resolved().read, ["/data"])
@@ -557,11 +559,10 @@ class Validate(Fake):
         )
 
     def test_an_invalid_overlay_value(self):
-        self.assertLessEqual({"language", "show", "runtime"}, RUN_KEYS)
-        gate, language, show = (
+        self.assertLessEqual({"language", "runtime"}, RUN_KEYS)
+        gate, language = (
             "gate must be one line of shell command without backticks",
             "language must be one line of text",
-            "show must be one line of shell command",
         )
         for overlay, msg in (
             ({"tier": 9}, TIER),
@@ -570,8 +571,6 @@ class Validate(Fake):
             ({"gate": 7}, gate),
             ({"language": "a\nb"}, language),
             ({"language": 7}, language),
-            ({"show": "a\nb"}, show),
-            ({"show": 7}, show),
         ):
             with self.subTest(overlay=overlay):
                 self.assertIn(msg, self.refused("editor", overlays=[overlay]))
@@ -581,17 +580,6 @@ class Validate(Fake):
         for change in ({"effort": "ultra"}, {"gate": "a\nb"}, {"runtime": ""}):
             with self.subTest(change=change), self.assertRaises(ConfigError):
                 replace(run, **change)
-
-    def test_show_is_empty_a_pane_by_default_and_an_overlay_sets_it_at_any_level(self):
-        self.assertEqual(self.resolved("editor").show, "")
-        for overlay, show in (
-            ({"show": "none"}, "none"),
-            ({"show": ""}, ""),
-            ({"show": "open-it {{session}}"}, "open-it {{session}}"),
-            ({"roles": {"editor": {"show": "x {{session}}"}}}, "x {{session}}"),
-        ):
-            with self.subTest(overlay=overlay):
-                self.assertEqual(self.resolved("editor", overlays=[overlay]).show, show)
 
     def test_unknown_role_or_task_or_another_roles(self):
         for role, task, msg in (
@@ -612,7 +600,7 @@ class OwnedKeys(Fake):
         self.configure(
             "surprise = 1\n"
             + RUN_CONFIG
-            + '\n[adapters.x]\nimplementation = "adapters.x:XAdapter"\nmodel = "m"\n'
+            + '\n[adapters.x]\nimplementation = "agent_pm.session.adapters.x:XAdapter"\nmodel = "m"\n'
         )
         self.assertEqual(self.resolved().runtime, "a")
 
@@ -629,6 +617,27 @@ class OwnedKeys(Fake):
                 "",
                 {"roles": {"writer": {"model": "m"}}},
                 "run overlay: unknown key 'model' in [overlay.roles.writer]",
+            ),
+        ):
+            with self.subTest(msg=msg):
+                self.local(local)
+                self.assertEqual(self.refused(overlays=(overlay,)), msg)
+
+    def test_show_is_an_unknown_key_at_every_level(self):
+        self.assertNotIn("show", RUN_KEYS)
+        self.assertNotIn("show", [f.name for f in fields(RunConfig)])
+        for local, overlay, msg in (
+            (
+                'show = "none"\n',
+                {},
+                f"config: {self.local_file}: unknown key 'show': no project's config.toml has it",
+            ),
+            ('[roles.writer]\nshow = "none"\n', {}, "unknown key 'show' in roles.writer"),
+            ("", {"show": ""}, "run overlay: unknown key 'show' in [overlay]"),
+            (
+                "",
+                {"roles": {"writer": {"show": "none"}}},
+                "run overlay: unknown key 'show' in [overlay.roles.writer]",
             ),
         ):
             with self.subTest(msg=msg):
@@ -734,12 +743,12 @@ class TeamRoles(Fake):
 class Real(RealConfig):
     def test_a_local_files_other_layers_keys_are_left_alone(self):
         self.local(
-            'users = ["octocat"]\ntrusted_dirs = ["~/data-repo"]\nshow = "none"\n[hosts.tmux]\n'
+            'users = ["octocat"]\ntrusted_dirs = ["~/data-repo"]\nlanguage = "French"\n[hosts.tmux]\n'
             'workers_per_column = 2\ngrid_retile = "off"\nteam = "T"\n[roles.pm]\naccount = "pm@x"\n'
         )
         for role, task in role_tasks():
             run = composer.resolve(role, task)
-            self.assertEqual((run.task, run.show), (task, "none"))
+            self.assertEqual((run.task, run.language), (task, "French"))
 
     def test_a_task_from_another_roles_index_is_an_error(self):
         with self.assertRaisesRegex(

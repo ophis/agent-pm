@@ -1,11 +1,14 @@
-"""adapters/registry.py: what a caller-owned Registry stores (the [adapters.<name>] tables, the hosts'
-tables and the default host), settings() from a read session config, the tui settings from
-[hosts.tmux] and Adapter loading. Caller-owned fake module tables supply the adapter loader; each test constructs fresh settings.
+"""adapters/registry.py: what a caller-owned Registry stores (read-only copies of the
+[adapters.<name>] tables and the parsed Hosts, never parsed again), settings() from a read session
+config, the tui settings from [hosts.tmux] and Adapter loading from module.path:Class. Caller-owned
+fake module tables supply the adapter loader; each test constructs fresh settings.
 """
 
+import abc
 import importlib
 import importlib.abc
 import importlib.util
+import operator
 import os
 import sys
 import tempfile
@@ -14,24 +17,24 @@ import types
 import unittest
 from unittest import mock
 
-import agent_pm.session
 import agent_pm.session.hosts.tmux
-from agent_pm.session import Driver, Spec
+from agent_pm.session import Driver, Host, Hosts, Spec
 from agent_pm.session.adapters import registry
 from agent_pm.session.adapters.base import Adapter
 from agent_pm.session.adapters.claude import ClaudeAdapter
 from agent_pm.session.adapters.print_prompt import PrintPromptAdapter
 from agent_pm.session.engine.types import ConfigError
-from agent_pm.utils import read_project
+from agent_pm.utils import load_class, read_project
 
 from session.tests import fake_adapter
 from session.tests.case import HOSTS, Case, settings
 from session.tests.modules import adapter_loader
 
-FAKE = '[adapters.fake]\nimplementation = "adapters.fake:FakeAdapter"\n'
+FAKE_CLASS = "agent_pm.session.adapters.fake:FakeAdapter"
+FAKE = f'[adapters.fake]\nimplementation = "{FAKE_CLASS}"\n'
 MISSING = (
-    "adapter '{n}': agent_pm.session.adapters.{n}:{c}Adapter: cannot import agent_pm.session.adapters.{n}: "
-    "No module named 'agent_pm.session.adapters.{n}'"
+    "[adapters.{n}].implementation: agent_pm.session.adapters.{n}:{c}Adapter: cannot import "
+    "agent_pm.session.adapters.{n}: No module named 'agent_pm.session.adapters.{n}'"
 )
 
 
@@ -39,9 +42,14 @@ class OddAdapter:
     pass
 
 
-class HalfAdapter(Adapter):
+class HeadlessOnlyAdapter(Adapter):
     def headless(self):
-        return None
+        return fake_adapter.FakeHeadless(self)
+
+
+class AbstractAdapter(Adapter, abc.ABC):
+    @abc.abstractmethod
+    def extra(self): ...
 
 
 def odd_adapter():
@@ -119,11 +127,61 @@ class ConfigureTest(Base):
     def test_the_adapter_tables_are_deep_copies(self):
         self.register(fake=fake_adapter)
         given = settings(
-            {"fake": {"implementation": "adapters.fake:FakeAdapter", "log": {"a": [1]}}}
+            {
+                "fake": {
+                    "implementation": FAKE_CLASS,
+                    "log": {"a": [1]},
+                }
+            }
         )
         self.driver = Driver(**given, class_loader=adapter_loader(getattr(self, "modules", {})))
         given["adapters"]["fake"]["log"]["a"].append(2)
+        given["adapters"]["fake"]["scenario"] = "/s"
+        given["adapters"]["other"] = {}
         self.assertEqual(self.driver.registry.adapter("fake").config, {"log": {"a": [1]}})
+        self.assertEqual(self.driver.registry.configured(), ["fake"])
+
+    def test_the_settings_are_read_only_and_each_adapter_gets_its_own_copy(self):
+        self.register(fake=fake_adapter)
+        self.configure(FAKE + "[adapters.fake.log]\na = [1]\n", {"status_line": True})
+        found = self.driver.registry.settings
+        self.assertEqual(found.adapters["fake"]["log"]["a"], (1,))
+        for table, key in (
+            (found.adapters, "other"),
+            (found.adapters["fake"], "scenario"),
+            (found.adapters["fake"]["log"], "b"),
+            (found.hosts, "pty"),
+            (found.hosts["tmux"], "status_line"),
+        ):
+            with self.subTest(key=key), self.assertRaises(TypeError):
+                operator.setitem(table, key, {})
+        first, second = (self.driver.registry.adapter("fake") for _ in range(2))
+        self.assertIsNot(first, second)
+        first.config["log"]["a"].append(2)
+        self.assertEqual(second.config, {"log": {"a": [1]}})
+        self.assertEqual(found.adapters["fake"]["log"]["a"], (1,))
+
+    def test_an_adapter_gets_lists_and_tuples_as_given_also_through_another_drivers_settings(self):
+        self.register(fake=fake_adapter)
+        loader = adapter_loader(self.modules)
+        log = {"l": [1, [2]], "t": (3, [4])}
+        first = Driver(
+            **settings({"fake": {"implementation": FAKE_CLASS, "log": log}}),
+            class_loader=loader,
+        )
+        given = first.registry.settings
+        again = Driver(
+            adapters=given.adapters,
+            hosts=given.hosts,
+            default_host=given.default_host,
+            class_loader=loader,
+        )
+        for driver in (first, again):
+            with self.subTest(driver=driver):
+                found = driver.registry.adapter("fake").config["log"]
+                self.assertEqual(found, log)
+                self.assertEqual([type(found[k]) for k in ("l", "t")], [list, tuple])
+                self.assertEqual(type(found["t"][1]), list)
 
     def test_refuses_bad_input_and_keeps_what_was_configured(self):
         self.configure(FAKE)
@@ -150,7 +208,7 @@ class ConfigureTest(Base):
                 self.refused(message, lambda *, given=given: Driver(**given))
                 self.assertEqual(self.driver.registry.configured(), ["fake"])
 
-    def test_the_forward_tmux_host_name_is_never_loaded(self):
+    def test_the_tmux_host_name_resolves_but_a_driver_never_loads_it(self):
         with (
             mock.patch.object(importlib, "import_module", wraps=importlib.import_module) as imp,
         ):
@@ -160,7 +218,20 @@ class ConfigureTest(Base):
                 registry.TuiSettings(status_line=False, per_column=4, retile=None),
             )
         imp.assert_not_called()
-        self.assertFalse(hasattr(agent_pm.session.hosts.tmux, "TmuxHost"))
+        self.assertIs(
+            load_class(HOSTS["tmux"]["implementation"], Host), agent_pm.session.hosts.tmux.TmuxHost
+        )
+
+    def test_a_registry_keeps_the_parsed_hosts_tables_as_they_are(self):
+        source = {"x": {"per_column": [1]}}
+        hosts = Hosts("x", source)
+        found = registry.Registry(adapters={}, hosts=hosts)
+        source["x"]["per_column"].append(2)
+        source["y"] = {}
+        self.assertIs(found.settings.hosts, hosts.tables)
+        self.assertEqual(
+            (found.settings.hosts, found.settings.default_host), ({"x": {"per_column": (1,)}}, "x")
+        )
 
 
 class SettingsTest(Base):
@@ -172,13 +243,19 @@ class SettingsTest(Base):
         self.assertEqual(
             found,
             {
-                "adapters": {"fake": {"implementation": "adapters.fake:FakeAdapter"}},
-                "hosts": {
-                    "a": {"implementation": "pkg.mod:AHost"},
-                    "b": {"implementation": "p.b:B"},
-                },
-                "default_host": "a",
+                "adapters": {"fake": {"implementation": FAKE_CLASS}},
+                "hosts": Hosts(
+                    "a",
+                    {"a": {"implementation": "pkg.mod:AHost"}, "b": {"implementation": "p.b:B"}},
+                ),
             },
+        )
+
+    def test_hosts_parsed_already_are_not_parsed_again(self):
+        hosts = Hosts("x", {"x": {}})
+        self.assertEqual(
+            registry.settings(tomllib.loads(FAKE), hosts=hosts),
+            {"adapters": {"fake": {"implementation": FAKE_CLASS}}, "hosts": hosts},
         )
 
     def test_configure_from_a_read_config(self):
@@ -189,12 +266,12 @@ class SettingsTest(Base):
             Driver.from_config({})
         self.assertEqual(self.driver.registry.configured(), ["fake"])
         self.assertEqual(registry.settings(tomllib.loads(self.TWO))["adapters"], {})
-        with self.assertRaisesRegex(ValueError, r"\A\[hosts\]: missing\Z"):
+        with self.assertRaisesRegex(ConfigError, r"\A\[hosts\]: missing\Z"):
             registry.settings({})
         for config in (None, 1, [], "x"):
             with (
                 self.subTest(config=config),
-                self.assertRaisesRegex(ValueError, r"\Asession config: want a table\Z"),
+                self.assertRaisesRegex(ConfigError, r"\Asession config: want a table\Z"),
             ):
                 registry.settings(config)
 
@@ -203,7 +280,7 @@ class SettingsTest(Base):
             f.write("[hosts.tmux]\nstatus_line = true\n")
         found = registry.settings(read_project("session"))
         self.assertEqual(sorted(found["adapters"]), ["claude", "codex", "print_prompt"])
-        self.assertEqual(found["default_host"], "tmux")
+        self.assertEqual(found["hosts"].default, "tmux")
         self.driver = Driver(**found)
         self.assertEqual(
             self.driver.registry.tui(),
@@ -269,57 +346,122 @@ class TuiTest(Base):
                     )
 
 
+class CountedAdapter(fake_adapter.FakeAdapter):
+    built: list = []
+
+    def __init__(self, config):
+        type(self).built.append(config)
+        super().__init__(config)
+
+
 class AdapterTest(Base):
+    def setUp(self):
+        CountedAdapter.built = []
+
     def test_builds_the_configured_class_from_its_table_minus_implementation(self):
         self.register(fake=fake_adapter)
         self.configure(FAKE + 'scenario = "/s.json"\nlog = "/log"\n')
         built = self.driver.registry.adapter("fake")
-        self.assertEqual(registry.PACKAGE, agent_pm.session.__name__)
         self.assertIs(type(built), fake_adapter.FakeAdapter)
         self.assertEqual(built.config, {"scenario": "/s.json", "log": "/log"})
 
+    def test_a_name_unrelated_to_its_module_and_class_loads_through_load_class(self):
+        found = registry.Registry(
+            adapters={
+                "alpha": {"implementation": "session.tests.fake_adapter:FakeAdapter", "log": "/l"},
+                "mine": {"implementation": "agent_pm.session.adapters.claude:ClaudeAdapter"},
+            },
+            hosts=Host.parse_hosts({**HOSTS, "default": "tmux"}),
+        )
+        self.assertIs(found.class_loader, load_class)
+        self.assertIs(found.adapter_class("alpha"), fake_adapter.FakeAdapter)
+        self.assertEqual(found.adapter("alpha").config, {"log": "/l"})
+        self.assertIs(type(found.adapter("mine")), ClaudeAdapter)
+
+    def test_adapter_class_loads_without_building_and_adapter_builds_one_per_call(self):
+        self.register(counted=package("counted", CountedAdapter=CountedAdapter))
+        self.configure(
+            '[adapters.counted]\nimplementation = "agent_pm.session.adapters.counted:CountedAdapter"\n'
+            "[adapters.counted.log]\na = [1]\n"
+        )
+        self.assertIs(self.driver.registry.adapter_class("counted"), CountedAdapter)
+        self.assertEqual(CountedAdapter.built, [])
+        first, second = (self.driver.registry.adapter("counted") for _ in range(2))
+        self.assertIsNot(first, second)
+        self.assertEqual(CountedAdapter.built, [{"log": {"a": [1]}}] * 2)
+        self.assertIsNot(first.config["log"], second.config["log"])
+
     def test_refuses_an_unsafe_name(self):
         for bad in ("Fake", "", "../fake", "a-b", "1a", "fake\n", "adapters.fake", 1, None):
-            with self.subTest(bad=bad):
-                self.refused(
-                    f"unsafe runtime name {bad!r}: want a lowercase identifier",
-                    lambda *, bad=bad: self.driver.registry.adapter(bad),
-                )
+            for call in (self.driver.registry.adapter, self.driver.registry.adapter_class):
+                with self.subTest(bad=bad, call=call.__name__):
+                    self.refused(
+                        f"unsafe runtime name {bad!r}: want a lowercase identifier",
+                        lambda *, bad=bad, call=call: call(bad),
+                    )
 
     def test_refuses_a_missing_table(self):
-        self.configure('[adapters.other]\nimplementation = "adapters.other:OtherAdapter"\n')
-        self.refused(
-            "no [adapters.fake] table in the configured adapters",
-            lambda: self.driver.registry.adapter("fake"),
+        self.configure(
+            '[adapters.other]\nimplementation = "agent_pm.session.adapters.other:OtherAdapter"\n'
         )
+        for call in (self.driver.registry.adapter, self.driver.registry.adapter_class):
+            with self.subTest(call=call.__name__):
+                self.refused(
+                    "no [adapters.fake] table in the configured adapters",
+                    lambda *, call=call: call("fake"),
+                )
 
-    def test_refuses_an_implementation_of_another_shape_or_package(self):
+    def test_refuses_an_implementation_not_of_the_module_path_class_form(self):
         self.register(fake=fake_adapter)
-        message = '[adapters.fake].implementation must be "adapters.fake:<Class>Adapter"'
-        for line in (
-            "",
-            "implementation = 1\n",
-            'implementation = "adapters.fake:Fake"\n',
-            'implementation = "adapters.fake:Adapter"\n',
-            'implementation = "adapters.fake.FakeAdapter"\n',
-            'implementation = "fake:FakeAdapter"\n',
-            'implementation = "adapters.fake:FakeAdapter\\n"\n',
-            'implementation = "adapters.fake:fake.FakeAdapter"\n',
-            'implementation = "adapters.other:OtherAdapter"\n',
-            'implementation = "adapters.Fake:FakeAdapter"\n',
+        for line, shown in (
+            ("", "None"),
+            ("implementation = 1\n", "1"),
+            ('implementation = "agent_pm.session.adapters.fake.FakeAdapter"\n', None),
+            ('implementation = "fake:"\n', None),
+            ('implementation = ":FakeAdapter"\n', None),
+            ('implementation = "a:b:FakeAdapter"\n', None),
+            ('implementation = "agent_pm.session.adapters.fake:FakeAdapter\\n"\n', None),
+            ('implementation = "agent_pm..fake:FakeAdapter"\n', None),
         ):
             with self.subTest(line=line):
                 self.configure("[adapters.fake]\n" + line)
-                self.refused(message, lambda: self.driver.registry.adapter("fake"))
+                path = shown or tomllib.loads(line)["implementation"]
+                self.refused(
+                    f"[adapters.fake].implementation: {path}: want module.path:Class",
+                    lambda: self.driver.registry.adapter("fake"),
+                )
+
+    def test_refuses_the_old_relative_form_naming_the_full_form_before_any_import(self):
+        def unused(path, _base):
+            raise AssertionError(f"loaded {path}")
+
+        for name, path in (
+            ("fake", "adapters.fake:FakeAdapter"),
+            ("mine", "adapters.claude:ClaudeAdapter"),
+            ("x", "adapters.x.y:Z"),
+        ):
+            with self.subTest(path=path):
+                self.driver = Driver(
+                    **settings({name: {"implementation": path}}), class_loader=unused
+                )
+                self.refused(
+                    f"[adapters.{name}].implementation: {path} is relative: want "
+                    f"agent_pm.session.{path}",
+                    lambda *, name=name: self.driver.registry.adapter_class(name),
+                )
 
     def test_refuses_a_missing_package(self):
-        self.configure('[adapters.nope]\nimplementation = "adapters.nope:NopeAdapter"\n')
+        self.configure(
+            '[adapters.nope]\nimplementation = "agent_pm.session.adapters.nope:NopeAdapter"\n'
+        )
         self.refused(
             MISSING.format(n="nope", c="Nope"), lambda: self.driver.registry.adapter("nope")
         )
 
     def test_refuses_a_package_that_fails_to_import(self):
-        self.configure('[adapters.broken]\nimplementation = "adapters.broken:BrokenAdapter"\n')
+        self.configure(
+            '[adapters.broken]\nimplementation = "agent_pm.session.adapters.broken:BrokenAdapter"\n'
+        )
         for source, shown in (
             ("import agent_pm_absent_dependency\n", "No module named 'agent_pm_absent_dependency'"),
             ("from agent_pm.session.adapters.base import Absent\n", "cannot import name 'Absent'"),
@@ -338,34 +480,46 @@ class AdapterTest(Base):
                     self.driver.registry.adapter("broken")
                 self.assertTrue(
                     str(caught.exception).startswith(
-                        "adapter 'broken': agent_pm.session.adapters.broken:BrokenAdapter: cannot import "
-                        f"agent_pm.session.adapters.broken: {shown}"
+                        "[adapters.broken].implementation: agent_pm.session.adapters.broken:BrokenAdapter: "
+                        f"cannot import agent_pm.session.adapters.broken: {shown}"
                     ),
                     caught.exception,
                 )
 
     def test_refuses_a_missing_class(self):
         self.register(empty=package("empty"))
-        self.configure('[adapters.empty]\nimplementation = "adapters.empty:EmptyAdapter"\n')
+        self.configure(
+            '[adapters.empty]\nimplementation = "agent_pm.session.adapters.empty:EmptyAdapter"\n'
+        )
         self.refused(
             (
-                "adapter 'empty': agent_pm.session.adapters.empty:EmptyAdapter: agent_pm.session.adapters.empty has "
-                "no EmptyAdapter"
+                "[adapters.empty].implementation: agent_pm.session.adapters.empty:EmptyAdapter: "
+                "agent_pm.session.adapters.empty has no EmptyAdapter"
             ),
             lambda: self.driver.registry.adapter("empty"),
         )
 
     def test_refuses_what_is_not_a_concrete_adapter_subclass(self):
-        for value in (OddAdapter, odd_adapter, Adapter, HalfAdapter, fake_adapter.FakeHeadless):
+        for value in (OddAdapter, odd_adapter, Adapter, AbstractAdapter, fake_adapter.FakeHeadless):
             with self.subTest(value=value):
                 self.register(odd=package("odd", OddAdapter=value))
-                self.configure('[adapters.odd]\nimplementation = "adapters.odd:OddAdapter"\n')
+                self.configure(
+                    '[adapters.odd]\nimplementation = "agent_pm.session.adapters.odd:OddAdapter"\n'
+                )
                 self.refused(
                     (
-                        "adapter 'odd': agent_pm.session.adapters.odd:OddAdapter must be a concrete Adapter subclass"
+                        "[adapters.odd].implementation: agent_pm.session.adapters.odd:OddAdapter "
+                        "must be a concrete Adapter subclass"
                     ),
-                    lambda: self.driver.registry.adapter("odd"),
+                    lambda: self.driver.registry.adapter_class("odd"),
                 )
+
+    def test_an_adapter_offering_one_mode_is_concrete(self):
+        self.register(one=package("one", OneAdapter=HeadlessOnlyAdapter))
+        self.configure(
+            '[adapters.one]\nimplementation = "agent_pm.session.adapters.one:OneAdapter"\n'
+        )
+        self.assertIs(self.driver.registry.adapter_class("one"), HeadlessOnlyAdapter)
 
     def test_an_unknown_key_is_the_adapters_config_error(self):
         self.register(fake=fake_adapter)
@@ -402,7 +556,7 @@ class Committed(Case):
         self.assertEqual(
             tables["claude"],
             {
-                "implementation": "adapters.claude:ClaudeAdapter",
+                "implementation": "agent_pm.session.adapters.claude:ClaudeAdapter",
                 "flags": [],
                 "allow": [],
                 "env": {},
@@ -415,7 +569,7 @@ class Committed(Case):
         self.assertIs(type(adapter), ClaudeAdapter)
         argv = (
             adapter.headless()
-            .launch("hi", Spec(workdir=tmp.name, tier=4, effort="low", sid=SID), resume=False)
+            .launch(Spec(workdir=tmp.name, tier=4, effort="low", sid=SID, prompt="hi"))
             .argv
         )
         self.assertEqual(

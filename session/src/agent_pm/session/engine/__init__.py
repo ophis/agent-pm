@@ -1,1 +1,3 @@
-"""The Session ABC (base.py) and how a session runs: api.py, records.py, status_log.py, types.py."""
+"""Session (base.py), HostedSession (hosted.py), records.py, status_log.py, types.py; forwarding.py:
+deprecated wrappers.
+"""

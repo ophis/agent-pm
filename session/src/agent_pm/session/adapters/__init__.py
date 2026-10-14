@@ -1,1 +1,1 @@
-"""Runtime subpackages instantiated by the caller-owned Registry in registry.py."""
+"""Built-in runtime subpackages; registry.py loads any configured Adapter class."""

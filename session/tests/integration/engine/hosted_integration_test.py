@@ -1,0 +1,200 @@
+"""HostedSession's sessions of the fake runtime: real child processes."""
+
+import json
+import os
+import unittest
+import uuid
+from unittest import mock
+
+from agent_pm.session import NotDisplayable
+from agent_pm.session.adapters.base import Adapter
+from agent_pm.session.engine.hosted import HostedSession
+from agent_pm.session.engine.types import (
+    Access,
+    DriverError,
+    Exited,
+    Liveness,
+    Mode,
+    SessionInfo,
+    SessionStatus,
+    Usage,
+    Window,
+)
+
+from session.tests.unit.engine.support import (
+    LAUNCHED,
+    PYTHONPATH,
+    Base,
+    EnvBase,
+    ProbeAdapter,
+    TuiBase,
+)
+
+
+class SessionTest(Base):
+    def test_send_and_screen_are_tui_only(self):
+        session = self.start()
+        for call, message in (
+            (lambda: session.send("x"), "send: tui mode only"),
+            (session.screen, "screen: tui mode only"),
+        ):
+            with self.subTest(message=message), self.assertRaises(DriverError) as caught:
+                call()
+            self.assertEqual(str(caught.exception), message)
+        self.assertEqual(self.drain(session), [Exited(0)])
+
+    def test_state_is_live_while_the_process_runs_then_absent(self):
+        self.steps({"sleep": 1})
+        session = self.start()
+        self.assertIs(session.state(), Liveness.LIVE)
+        self.assertEqual(self.drain(session), [Exited(0)])
+        self.assertIs(session.state(), Liveness.ABSENT)
+
+    def test_attributes_info_reply_and_the_run_log(self):
+        cwd = os.path.join(self.dir, "cwd")
+        os.mkdir(cwd)
+        session = self.start(spec=self.spec(access=Access(cwd=cwd, project=True)), sid="s1")
+        self.assertIsInstance(session, HostedSession)
+        self.assertEqual((session.sid, session.runtime, session.mode), ("s1", "fake", "headless"))
+        self.assertIs(session.mode, Mode.HEADLESS)
+        info = SessionInfo(
+            sid="s1",
+            cwd=cwd,
+            project=True,
+            transcript=os.path.join(self.workdir, "fake-s1.jsonl"),
+            resume="fake --resume s1",
+        )
+        self.assertEqual(session.info(), info)
+        self.assertIsNone(session.reply)
+        self.assertEqual(self.drain(session), [Exited(0)])
+        (line,) = self.written()
+        self.assertEqual(
+            {k: v for k, v in line.items() if k != "ts"},
+            {
+                "kind": "session",
+                "sid": "s1",
+                "cwd": cwd,
+                "project": True,
+                "transcript": info.transcript,
+                "resume": info.resume,
+            },
+        )
+
+    def test_its_session_status_is_its_runtimes_for_its_sid_and_cwd(self):
+        session = self.start(runtime="probe", sid="s1")
+        self.assertEqual(
+            session.session_status(), SessionStatus("yes", 1.5, f"probe s1 {self.workdir}")
+        )
+        with mock.patch.object(
+            ProbeAdapter, "session_status", side_effect=PermissionError(13, "denied")
+        ):
+            self.assertEqual(session.session_status(), SessionStatus("unknown", None, ""))
+
+    def test_a_headless_session_cannot_display_and_has_no_record(self):
+        session = self.start()
+        self.assertFalse(session.displayable)
+        self.assertIsNone(session.record())
+        for name, call in (
+            ("show", session.show),
+            ("attach_command", session.attach_command),
+            ("screen", session.screen),
+        ):
+            with self.subTest(name=name), self.assertRaises(NotDisplayable) as caught:
+                call()
+            self.assertEqual(str(caught.exception), f"{name}: tui mode only")
+        session.close()
+        self.assertEqual(session.state(), "absent")
+
+
+class TuiStartTest(TuiBase):
+    def test_a_start_builds_only_its_runtimes_adapter_once(self):
+        built, load = [], self.driver_dependencies["class_loader"]
+
+        def counted(path, base):
+            found = load(path, base)
+            if base is not Adapter:
+                return found
+
+            class Counted(found):
+                def __init__(self, config):
+                    built.append(path)
+                    super().__init__(config)
+
+            return Counted
+
+        self.driver_dependencies = {**self.driver_dependencies, "class_loader": counted}
+        self.configure(tui=True)
+        for start in (self.run_once, lambda: self.tui(name="w1")):
+            with self.subTest(start=start):
+                built.clear()
+                start()
+                self.assertEqual(built, ["agent_pm.session.adapters.fake:FakeAdapter"])
+
+
+class SessionEnvTest(EnvBase):
+    def test_a_headless_session_gets_it_and_its_usage_probe_does_not(self):
+        self.run_once(runtime="env", spec=self.spec(access=self.access))
+        with open(self.log, encoding="utf-8") as f:
+            (entry,) = [json.loads(line) for line in f]
+        self.assertEqual(entry["env"]["PYTHONPATH"], PYTHONPATH)
+        self.assertEqual(self.session.usage("env"), Usage(Window(7.0, None), None))
+        self.assertEqual(self.probe.call_args.kwargs["env"]["PYTHONPATH"], "/parent")
+
+
+class ChecksTest(Base):
+    def test_the_spec_sid_is_the_sessions_new_or_resumed(self):
+        for resume in (False, True):
+            with self.subTest(resume=resume):
+                self.assertEqual(self.start(spec=self.spec(sid="s1"), resume=resume).sid, "s1")
+
+    def test_headless_flags_and_env_reach_the_adapter_and_child(self):
+        LAUNCHED.clear()
+        spec = self.spec(flags=("--custom", "value"), env={"FAKE_ENV": "spec"})
+        session, _ = self.run_once(runtime="env", spec=spec)
+        self.assertEqual(
+            (LAUNCHED[0].flags, dict(LAUNCHED[0].env), LAUNCHED[0].sid),
+            (spec.flags, dict(spec.env), session.sid),
+        )
+        with open(self.log, encoding="utf-8") as f:
+            self.assertEqual(json.loads(f.readline())["env"]["FAKE_ENV"], "spec")
+
+
+class SidTest(Base):
+    def test_resume_continues_that_session(self):
+        session, argv = self.run_once(sid="r1", resume=True)
+        self.assertEqual(session.sid, "r1")
+        self.assertIn("--resume", argv)
+        self.assertEqual(argv[argv.index("--sid") + 1], "r1")
+        self.assertEqual(self.written()[0]["sid"], "r1")
+
+    def test_sid_names_a_new_session_and_reaches_launch(self):
+        session, argv = self.run_once(sid="s1")
+        self.assertEqual((session.sid, session.info().sid), ("s1", "s1"))
+        self.assertNotIn("--resume", argv)
+        self.assertEqual(argv[argv.index("--sid") + 1], "s1")
+        self.assertEqual(self.written()[0]["sid"], "s1")
+
+    def test_neither_picks_a_uuid4(self):
+        session, argv = self.run_once()
+        self.assertEqual(uuid.UUID(session.sid).version, 4)
+        self.assertEqual(str(uuid.UUID(session.sid)), session.sid)
+        self.assertEqual(argv[argv.index("--sid") + 1], session.sid)
+        self.assertEqual(self.written()[0]["sid"], session.sid)
+
+
+class RuntimeNoteTest(Base):
+    def test_with_commands_the_note_follows_the_prompt(self):
+        _, argv = self.run_once(spec=self.spec(access=Access(commands=("git",))))
+        self.assertEqual(argv[-1], "hello\n\nFAKE NOTE")
+
+    def test_without_commands_the_prompt_is_unchanged(self):
+        _, argv = self.run_once()
+        self.assertEqual(argv[-1], "hello")
+
+    def test_an_empty_note_leaves_the_prompt_unchanged(self):
+        _, argv = self.run_once(runtime="quiet", spec=self.spec(access=Access(commands=("git",))))
+        self.assertEqual(argv[-1], "hello")
+
+
+if __name__ == "__main__":
+    unittest.main()

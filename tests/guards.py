@@ -25,7 +25,7 @@ TOML_HEADER = re.compile(r"\s*\[\s*(?:adapters|policy)\.[a-z][a-z0-9_]*(\.[^\]]*
 
 
 TOML_IMPLEMENTATION = re.compile(
-    r'\s*implementation\s*=\s*"adapters\.[a-z][a-z0-9_]*:[A-Za-z_][A-Za-z0-9_]*Adapter"\s*\Z'
+    r'\s*implementation\s*=\s*"[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*:[A-Za-z_]\w*"\s*\Z'
 )
 
 
@@ -72,6 +72,9 @@ SUBPACKAGES = {
 }
 
 
+ENTRY_MODULES = {SESSION: {"extension.py"}}  # public modules besides __init__.py
+
+
 LOWER = tuple(p for p in PROJECTS if p != ORCH_PROJECT)
 
 
@@ -88,6 +91,20 @@ LOCAL_EXAMPLE = re.compile(r"\s*# local: ?(.*)")
 
 
 SESSION_SRC = f"session/src/{PKG}/{SESSION}/"
+
+
+OBJECT_EXPORT_MODULES = (
+    f"{SESSION_SRC}__init__.py",
+    *(f"{SESSION_SRC}{module}" for module in sorted(ENTRY_MODULES[SESSION])),
+)
+
+
+OBJECT_EXPORTS_ALLOWED = {
+    (f"{PKG}.{SESSION}", "close"): "FR-4 forwarding wrapper; 356-14 (FR-27) deletes",
+    (f"{PKG}.{SESSION}", "sessions"): "FR-4 forwarding wrapper; 356-14 (FR-27) deletes",
+    (f"{PKG}.{SESSION}", "note"): "FR-4 forwarding wrapper; 356-14 (FR-27) deletes",
+    (f"{PKG}.{SESSION}", "session_record"): "FR-4 forwarding wrapper; 356-14 (FR-27) deletes",
+}
 
 
 IMPORT_BOOTSTRAPS = {
@@ -177,6 +194,32 @@ NOQA_ALLOWED = {
         "duplicate-code",
         "inner",
     ): "Build writeback.context directly in both callers; no shared builder by design.",
+}
+
+
+ORCH_FILES = f"{ORCH_PROJECT}/{ORCH_SRC}"
+
+
+OPTION_NAME = re.compile(r"_?[A-Z][A-Z0-9_]*")
+
+
+OPTION_WORD = re.compile(r"[a-z0-9]+(?:[_-][a-z0-9]+)*")
+
+
+OPTION_TUPLES_ALLOWED = {
+    (CONFIG_LEVELS, "UNCONFIGURED"): "the projects without their own config.toml, a subset",
+    (f"{SESSION_SRC}adapters/registry.py", "TUI_KEYS"): "the [hosts.tmux] keys tui() reads",
+    (f"{SESSION_SRC}adapters/claude/tui.py", "MONTHS"): "month names, indexed by month",
+    (f"{SESSION_SRC}adapters/claude/tui.py", "WEEKDAYS"): "weekday names, indexed by weekday",
+    (TMUX_HOST, "GRID_HOOKS"): "tmux hook names the grid sets and unsets together",
+    (
+        f"delegate/src/{PKG}/delegate/event/outcome.py",
+        "SAVES_DELIVERABLE",
+    ): "the destinations whose deliverable comes back, a subset",
+    (f"{ORCH_FILES}linear/linear.py", "ONCE"): "the log fields keying a once-only line",
+    (f"{ORCH_FILES}engine/config.py", "CLONES"): "checkout dir names in a workdir",
+    (f"{ORCH_FILES}engine/prune.py", "ARCHIVE_ROLES"): "roles whose finished issues are archived",
+    (f"{ORCH_FILES}engine/router.py", "SHARED"): "the arguments router passes on to run",
 }
 
 
@@ -592,16 +635,7 @@ def manager_exports(repo: str) -> list[str]:
     if not os.path.isfile(path):
         return []
     with open(path, encoding="utf-8") as source:
-        tree = ast.parse(source.read(), base)
-    exports = next(
-        (
-            n.value
-            for n in tree.body
-            if isinstance(n, ast.Assign)
-            and any(isinstance(t, ast.Name) and t.id == "__all__" for t in n.targets)
-        ),
-        None,
-    )
+        exports = _all_node(ast.parse(source.read(), base))
     if exports is None:
         return [f"{base}: missing __all__"]
     try:
@@ -610,36 +644,84 @@ def manager_exports(repo: str) -> list[str]:
         return [f"{base}:{exports.lineno}: __all__ must be a literal sequence of names"]
     if not isinstance(names, list | tuple) or not all(isinstance(name, str) for name in names):
         return [f"{base}:{exports.lineno}: __all__ must be a literal sequence of names"]
-    modules = _source_modules(repo, ("manager", "utils"))
-    definitions = {}
-    for project in ("manager", "utils"):
-        for rel, text in _files(os.path.join(repo, project, "src"), ".py"):
-            module = rel.removesuffix(".py").replace("/", ".").removesuffix(".__init__")
-            for node in ast.parse(text).body:
-                if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
-                    definitions[f"{module}.{node.name}"] = "function"
-                elif isinstance(node, ast.ClassDef):
-                    definitions[f"{module}.{node.name}"] = "class"
-                elif isinstance(node, ast.Assign | ast.AnnAssign):
-                    targets = node.targets if isinstance(node, ast.Assign) else [node.target]
-                    if isinstance(node.value, ast.Lambda):
-                        kind = "function"
-                    else:
-                        try:
-                            ast.literal_eval(node.value)
-                        except (ValueError, TypeError):
-                            continue
-                        kind = "constant"
-                    for target in targets:
-                        if isinstance(target, ast.Name):
-                            definitions[f"{module}.{target.id}"] = kind
     found = []
+    for name, (_, kind) in _export_kinds(repo, "agent_pm.manager", names, "manager").items():
+        if kind == "function":
+            found.append(f"{base}:{exports.lineno}: exports function {name}")
+        elif kind not in ("class", "constant") and (not name.isupper() or kind == "module"):
+            found.append(f"{base}:{exports.lineno}: exports nonconstant {name}")
+    return sorted(found)
+
+
+def object_exports(repo: str) -> list[str]:
+    """FR-44: a session entry module's literal __all__ exports only classes, constants and type
+    aliases, unless allowlisted.
+    """
+    found, seen = set(), set()
+    for rel in OBJECT_EXPORT_MODULES:
+        path = os.path.join(repo, rel)
+        if not os.path.isfile(path):
+            continue
+        package = rel.removeprefix("session/src/").removesuffix(".py").replace("/", ".")
+        package = package.removesuffix(".__init__")
+        with open(path, encoding="utf-8") as source:
+            exports = _all_node(ast.parse(source.read(), rel))
+        literal = isinstance(exports, ast.List) and _is_literal(exports)
+        names = ast.literal_eval(exports) if literal else None
+        if names is None or not all(isinstance(name, str) for name in names):
+            found.add(f"{rel}: no literal __all__")
+            continue
+        for name, (_, kind) in _export_kinds(repo, package, names, SESSION).items():
+            if kind in ("class", "constant", "alias"):
+                continue
+            if (package, name) in OBJECT_EXPORTS_ALLOWED:
+                seen.add((package, name))
+            elif kind == "value":
+                found.add(f"{rel}: __all__ exports unrecognised value {name} (FR-44)")
+            else:
+                found.add(f"{rel}: __all__ exports function {name} (FR-44)")
+        found.update(
+            f"{pkg}: {name}: allowlisted but not an exported function (FR-44)"
+            for pkg, name in OBJECT_EXPORTS_ALLOWED.keys() - seen
+            if pkg == package
+        )
+    return sorted(found)
+
+
+def _all_node(tree):
+    return next(
+        (
+            n.value
+            for n in tree.body
+            if isinstance(n, ast.Assign)
+            and any(isinstance(t, ast.Name) and t.id == "__all__" for t in n.targets)
+        ),
+        None,
+    )
+
+
+def _is_literal(node):
+    try:
+        ast.literal_eval(node)
+    except (ValueError, TypeError):
+        return False
+    return True
+
+
+def _export_kinds(repo, package, names, project):
+    """Each name `package` exports: what it resolves to through re-exports and aliases, and that
+    target's kind (function, class, constant, alias, value, module or None: unresolved).
+    """
+    projects = (project, "utils")
+    modules = _source_modules(repo, projects)
+    definitions = _definitions(repo, projects)
+    kinds = {}
     for name in names:
-        original = f"agent_pm.manager.{name}"
+        original = f"{package}.{name}"
         resolved = _resolve_boundary(original, modules)
         kind = definitions.get(original) or definitions.get(resolved)
         if kind is None and "." not in resolved:
-            kind = definitions.get(f"agent_pm.manager.{resolved}")
+            kind = definitions.get(f"{package}.{resolved}")
         if kind is None:
             module, _, member = resolved.rpartition(".")
             if module.split(".")[0] in sys.stdlib_module_names:
@@ -647,15 +729,73 @@ def manager_exports(repo: str) -> list[str]:
                 kind = (
                     "class" if isinstance(value, type) else "function" if callable(value) else None
                 )
-        if kind == "function":
-            found.append(f"{base}:{exports.lineno}: exports function {name}")
-        elif (
-            kind != "class"
-            and kind != "constant"
-            and (not name.isupper() or resolved in modules or resolved in sys.stdlib_module_names)
-        ):
-            found.append(f"{base}:{exports.lineno}: exports nonconstant {name}")
-    return sorted(found)
+        if resolved in modules or resolved in sys.stdlib_module_names:
+            kind = "module"
+        kinds[name] = (resolved, kind)
+    return kinds
+
+
+def _definitions(repo, projects):
+    """module.name: the kind of each top-level def, class or assignment (an alias resolves later)."""
+    found = {}
+    for project in projects:
+        for rel, text in _files(os.path.join(repo, project, "src"), ".py"):
+            module = rel.removesuffix(".py").replace("/", ".").removesuffix(".__init__")
+            for node in ast.parse(text).body:
+                if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+                    found[f"{module}.{node.name}"] = "function"
+                elif isinstance(node, ast.ClassDef):
+                    found[f"{module}.{node.name}"] = "class"
+                elif isinstance(node, ast.Assign | ast.AnnAssign) and node.value is not None:
+                    if isinstance(node.value, ast.Name | ast.Attribute):
+                        continue
+                    targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+                    for target in targets:
+                        if isinstance(target, ast.Name):
+                            found[f"{module}.{target.id}"] = _assigned_kind(node, target.id)
+    return found
+
+
+GENERICS = frozenset(
+    {"Annotated", "Callable", "Iterable", "Iterator", "Literal", "Mapping", "Optional", "Sequence"}
+    | {"Union", "dict", "frozenset", "list", "set", "tuple", "type"}
+)
+
+
+def _assigned_kind(node, name):
+    """function (a lambda); constant (a literal, or an ALL_CAPS tuple, list or set of literals and
+    dotted names); alias (annotated TypeAlias, a union or a subscripted generic); else value.
+    """
+    value = node.value
+    if isinstance(value, ast.Lambda):
+        return "function"
+    if _is_literal(value) or name.isupper() and _references(value):
+        return "constant"
+    if _name(getattr(node, "annotation", None)).endswith("TypeAlias") or _typing(value):
+        return "alias"
+    return "value"
+
+
+def _references(node):
+    return isinstance(node, ast.Tuple | ast.List | ast.Set) and all(
+        _is_literal(e) or _name(e) for e in node.elts
+    )
+
+
+def _name(node):
+    if isinstance(node, ast.Name):
+        return node.id
+    if isinstance(node, ast.Attribute) and (base := _name(node.value)):
+        return f"{base}.{node.attr}"
+    return ""
+
+
+def _typing(node, *, operand=False):
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.BitOr):
+        return _typing(node.left, operand=True) and _typing(node.right, operand=True)
+    if isinstance(node, ast.Subscript):
+        return _name(node.value).rpartition(".")[2] in GENERICS
+    return operand and (bool(_name(node)) or isinstance(node, ast.Constant) and node.value is None)
 
 
 def literal_imports(repo: str) -> list[str]:
@@ -877,9 +1017,11 @@ def package_top(repo: str) -> list[str]:
         path = os.path.join(repo, rel)
         have = {e for e in (os.listdir(path) if os.path.isdir(path) else ()) if e not in LEFTOVERS}
         found.update(f"{rel}/{e}: missing" for e in (TOP - {"cli.py"}) - have)
+        listed = TOP | SUBPACKAGES.get(project, set()) | ENTRY_MODULES.get(project, set())
         found.update(
-            f"{rel}/{e}: not __init__.py, cli.py, engine/ or a listed subpackage"
-            for e in have - TOP - SUBPACKAGES.get(project, set())
+            f"{rel}/{e}: not __init__.py, cli.py, engine/, a listed subpackage or a listed entry"
+            " module"
+            for e in have - listed
         )
     return sorted(found)
 
@@ -1262,10 +1404,22 @@ def _type_methods(project, rel, node, kind, bound):
             and not decorators & {"staticmethod", "classmethod"}
         ):
             continue
+        if kind == "dataclass" and "classmethod" in decorators and _builds(method, args):
+            continue
         found.append(
             f"{project}/src/{rel}:{method.lineno}: {node.name}.{method.name}: business method in types module"
         )
     return found
+
+
+def _builds(method, args):
+    """Whether a classmethod calls its own class: an alternate constructor."""
+    return bool(args) and any(
+        isinstance(child, ast.Call)
+        and isinstance(child.func, ast.Name)
+        and child.func.id == args[0].arg
+        for child in ast.walk(method)
+    )
 
 
 def _type_uses(project, rel, module, tree, data):
@@ -1448,5 +1602,52 @@ def test_boundaries(repo: str) -> list[str]:
         for rel, text in _tree_files(repo, ".py")
         for line, reason in _boundary_violations(
             text, rel.split("/")[0].replace("-", "_"), modules, shipped="/src/" in rel
+        )
+    )
+
+
+def option_tuples(repo: str) -> list[str]:
+    """FR-49: a module-level tuple of option words in shipped code is a StrEnum, unless allowlisted."""
+    found, seen = set(), set()
+    for project in PROJECTS:
+        for rel, text in _files(os.path.join(repo, project, "src"), ".py"):
+            rel = f"{project}/src/{rel}"
+            for node in _module_assignments(ast.parse(text, rel).body):
+                targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+                for name in (t.id for t in targets if isinstance(t, ast.Name)):
+                    if not (OPTION_NAME.fullmatch(name) and _option_words(node.value)):
+                        continue
+                    if (rel, name) in OPTION_TUPLES_ALLOWED:
+                        seen.add((rel, name))
+                    else:
+                        found.add(
+                            f"{rel}:{node.lineno}: {name}: a fixed option set is a StrEnum (FR-49)"
+                        )
+    found.update(
+        f"{rel}: {name}: allowlisted but not an option tuple"
+        for rel, name in OPTION_TUPLES_ALLOWED.keys() - seen
+    )
+    return sorted(found)
+
+
+def _module_assignments(body):
+    for node in body:
+        if isinstance(node, ast.Assign | ast.AnnAssign):
+            yield node
+        elif isinstance(node, ast.If | ast.Try):
+            blocks = [node.body, node.orelse, *(h.body for h in getattr(node, "handlers", ()))]
+            for block in [*blocks, getattr(node, "finalbody", [])]:
+                yield from _module_assignments(block)
+
+
+def _option_words(value):
+    return (
+        isinstance(value, ast.Tuple)
+        and len(value.elts) >= 2
+        and all(
+            isinstance(e, ast.Constant)
+            and isinstance(e.value, str)
+            and OPTION_WORD.fullmatch(e.value)
+            for e in value.elts
         )
     )

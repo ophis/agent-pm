@@ -1,7 +1,8 @@
 """FakeHost, a Host that cannot display: real processes, each under supervisor.py in its own process
 group, state in one dir per session under settings["root"] (default ~/.agent-pm/fake-host):
-meta.json, env.json, pid, rc, output, and a terminal's FIFO input. Every call reads that state, so
-any process sees the sessions another started.
+meta.json (its start's id), env.json, pid, rc, output, and a terminal's FIFO input. Every call
+reads that state, so any process sees the sessions another started; a handle acts only on its own
+start and process group.
 """
 
 import contextlib
@@ -14,6 +15,7 @@ import subprocess
 import sys
 import threading
 import time
+import uuid
 
 from agent_pm.session import DriverError, Host, HostProcess, Terminal
 from agent_pm.session.engine.types import Key, Paste
@@ -46,17 +48,19 @@ class FakeProcess(HostProcess):
     def __init__(self, name: str, folder: str) -> None:
         self.name = name
         self.folder = folder
+        self._id = _meta(folder).get("id")
+        pid = _read(folder, "pid")
+        self._pid = self._group = int(pid) if pid else None
 
-    def _pid(self) -> int | None:
-        pid = _read(self.folder, "pid")
-        return int(pid) if pid else None
+    def _own(self) -> dict:
+        meta = _meta(self.folder)
+        return meta if self._id is not None and meta.get("id") == self._id else {}
 
     def alive(self) -> bool:
-        pid = self._pid()
-        if pid is None or _read(self.folder, "rc") is not None:
+        if not self._own() or self._pid is None or _read(self.folder, "rc") is not None:
             return False
         try:
-            os.kill(pid, 0)
+            os.kill(self._pid, 0)
         except ProcessLookupError:
             return False
         except PermissionError:
@@ -65,7 +69,7 @@ class FakeProcess(HostProcess):
 
     def wait_exit(self, timeout: float) -> bool:
         deadline = time.monotonic() + timeout
-        while self.alive():
+        while self.alive() or self._live_group() is not None:
             if time.monotonic() >= deadline:
                 return False
             time.sleep(POLL)
@@ -73,25 +77,32 @@ class FakeProcess(HostProcess):
 
     def kill(self) -> None:
         """The whole process group, whatever its leader's state (a child the program left is in it),
-        once: its pid may be reused after.
+        until found empty: its id may be reused after.
         """
-        if (pid := self._pid()) is not None and _read(self.folder, "killed") is None:
+        if (group := self._live_group()) is not None:
             with contextlib.suppress(ProcessLookupError, PermissionError):
-                os.killpg(pid, signal.SIGKILL)
-            with open(os.path.join(self.folder, "killed"), "w"):
-                pass
+                os.killpg(group, signal.SIGKILL)
         self.wait_exit(5)
 
     def close(self) -> None:
         self.kill()
-        shutil.rmtree(self.folder, ignore_errors=True)
+        if self._own():
+            shutil.rmtree(self.folder, ignore_errors=True)
 
     def record(self) -> Record | None:
-        line = _meta(self.folder).get("record")
+        line = self._own().get("record")
         return None if line is None else Record.parse(line)
 
     def display(self) -> Display:
-        return _meta(self.folder).get("display")
+        return self._own().get("display")
+
+    def _live_group(self) -> int | None:
+        if self._group is not None:
+            try:
+                os.killpg(self._group, 0)
+            except (ProcessLookupError, PermissionError):
+                self._group = None
+        return self._group
 
 
 class FakeTerminal(FakeProcess, Terminal):
@@ -162,7 +173,13 @@ class FakeHost(Host):
             raise DriverError(f"{self.name} session {name} is live")
         shutil.rmtree(folder, ignore_errors=True)
         os.makedirs(folder, mode=0o700)
-        meta = {"kind": kind, "argv": list(argv), "cwd": cwd, "display": display}
+        meta = {
+            "kind": kind,
+            "id": uuid.uuid4().hex,
+            "argv": list(argv),
+            "cwd": cwd,
+            "display": display,
+        }
         meta["record"] = None if record is None else record.to_line()
         for file, data in (("meta.json", meta), ("env.json", dict(env))):
             with open(os.path.join(folder, file), "w", encoding="utf-8") as f:

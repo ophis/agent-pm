@@ -9,9 +9,9 @@ from agent_pm.session.adapters.claude import ClaudeAdapter
 from agent_pm.session.engine.types import (
     Access,
     Activity,
+    ClientBound,
     LimitHit,
     Reply,
-    SessionBound,
     TurnEnd,
 )
 
@@ -169,6 +169,7 @@ class ParseTest(Base):
     def setUp(self):
         super().setUp()
         self.run = ClaudeAdapter({}).headless()
+        self.run.launch(Spec(workdir=self.work, sid=SID, prompt="hi"))
 
     def parse(self, *records):
         return [event for record in records for event in self.run.parse(record)]
@@ -186,11 +187,13 @@ class ParseTest(Base):
         ]
         self.assertEqual(
             list(self.run.events(lines)),
-            [SessionBound(SID), Reply("one"), Reply("two"), Reply("three"), TurnEnd("three", 0)],
+            [ClientBound(SID), Reply("one"), Reply("two"), Reply("three"), TurnEnd("three", 0)],
         )
 
-    def test_init_binds_its_session_id(self):
-        self.assertEqual(self.parse(INIT), [SessionBound(SID)])
+    def test_init_binds_the_sid_it_launched(self):
+        self.assertEqual(self.parse(INIT), [ClientBound(SID)])
+        self.assertEqual(self.parse({**INIT, "session_id": "other"}), [ClientBound(SID)])
+        self.assertEqual(list(ClaudeAdapter({}).headless().parse(INIT)), [])
         for record in (
             {**INIT, "subtype": "other"},
             {**INIT, "session_id": ""},
@@ -431,7 +434,7 @@ class SuppliedPolicy(Base):
     def test_a_policy_reaches_both_runtime_launches(self):
         flags = CLAUDE
         adapter = ClaudeAdapter({})
-        spec = Spec(workdir=str(self.work), sid=SID, flags=flags)
-        launch = adapter.headless().launch("hi", spec, resume=False)
+        spec = Spec(workdir=str(self.work), sid=SID, flags=flags, prompt="hi")
+        launch = adapter.headless().launch(spec)
         start = launch.argv.index(flags[0])
         self.assertEqual(launch.argv[start : start + len(flags)], flags)

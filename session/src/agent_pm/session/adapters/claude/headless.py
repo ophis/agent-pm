@@ -3,43 +3,45 @@ the prompt last after "--" so a leading "-" stays the prompt. parse turns init, 
 and rate-limit records into events, one LimitHit per run.
 """
 
-from agent_pm.session.adapters.base import Headless
+from agent_pm.session.adapters.base import JsonHeadless
 from agent_pm.session.adapters.claude.common import ClaudeCommon
 from agent_pm.session.engine.types import (
     Activity,
+    ClientBound,
     LimitHit,
     Reply,
-    SessionBound,
     Spec,
     TurnEnd,
 )
 from agent_pm.utils import number
 
 
-class ClaudeHeadless(Headless):
+class ClaudeHeadless(JsonHeadless):
     def __init__(self, common: ClaudeCommon):
         self.common = common
         self.limit_sent = False
         self.resets_at = None
+        self.sid = ""
 
-    def launch(self, prompt, spec: Spec, *, resume: bool = False):
+    def launch(self, spec: Spec):
         common = self.common
+        self.sid = spec.sid or ""
         return common.launch(
             spec,
             None,
             head=("-p",),
             output=("--output-format", "stream-json", "--verbose"),
-            tail=(*spec.flags, "--", prompt),
+            tail=(*spec.flags, "--", spec.prompt),
             env=common.ENV,
-            resume=resume,
+            resume=spec.resume,
         )
 
     def parse(self, record):
         kind = record.get("type")
         if kind == "system":
             native = record.get("session_id")
-            if record.get("subtype") == "init" and isinstance(native, str) and native:
-                yield SessionBound(native)
+            if record.get("subtype") == "init" and isinstance(native, str) and native and self.sid:
+                yield ClientBound(self.sid)  # its native id is the sid it launched
         elif kind == "rate_limit_event":
             info = record.get("rate_limit_info")
             if isinstance(info, dict) and info.get("status") == "rejected":

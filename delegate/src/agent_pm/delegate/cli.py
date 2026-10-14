@@ -28,9 +28,9 @@ from agent_pm.delegate.composer import RunParams, Team
 from agent_pm.delegate.engine import detach
 from agent_pm.delegate.engine.runner import say
 from agent_pm.delegate.engine.types import Stopped
-from agent_pm.session import MODES, SIGNALS, DriverError, holds
+from agent_pm.session import SIGNALS, DriverError, Mode
 from agent_pm.session import ConfigError as SessionConfigError
-from agent_pm.utils import Once, printable
+from agent_pm.utils import Once, holds, printable
 
 LIST_PARAMS = RunParams(input="", out="/agent-pm-list/work/out.md", workdir="/agent-pm-list/work")
 
@@ -68,7 +68,7 @@ def main(argv: list[str], *, application=None) -> int:
     ap.add_argument("--runtime", action=Once, help="default: the role's runtime in the core config")
     ap.add_argument("--sid")
     ap.add_argument("--resume", action="store_true")
-    ap.add_argument("--mode", choices=MODES, default="headless")
+    ap.add_argument("--mode", choices=[m.value for m in Mode], default=Mode.HEADLESS.value)
     ap.add_argument("--detach", action="store_true", help="run in a Driver session of its own")
     ap.add_argument("--events", metavar="FILE", help="--detach: the outcome line's file")
     ap.add_argument("--split", choices=("right", "below"))

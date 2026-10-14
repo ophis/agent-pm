@@ -11,11 +11,14 @@ from agent_pm.session.engine.types import (
     Access,
     Activity,
     Blocked,
+    ClientBound,
+    HookKind,
     Launch,
-    SessionBound,
+    Spec,
     TurnEnd,
 )
 
+from session.tests.source_roots import PACKAGE_ROOTS
 from session.tests.unit.adapters.claude.support import (
     CEILING,
     CONFIG,
@@ -109,6 +112,8 @@ class TuiArgvTest(Base):
 
     def test_each_hook_runs_the_hook_argv_and_its_label(self):
         self.assertEqual(ClaudeTui.hooks, HOOKS)
+        for kind in ClaudeTui.hooks.values():
+            self.assertIs(type(kind), HookKind)
         hooks = json.loads(self.tui(config={}).argv[6])["hooks"]
         self.assertEqual(list(hooks), list(HOOKS))
         for label, entries in hooks.items():
@@ -339,6 +344,7 @@ class TuiPayloadTest(Base):
     def setUp(self):
         super().setUp()
         self.run = ClaudeAdapter({}).tui()
+        self.run.restore(Spec(workdir=self.work, sid=SID), {})
         self.path = os.path.join(self.tmp, "t.jsonl")
 
     def transcript(self, *records):
@@ -453,7 +459,7 @@ class TuiPayloadTest(Base):
             (
                 "Stop",
                 {"session_id": "n1", "last_assistant_message": "hi", "background_tasks": [1, 2]},
-                [SessionBound("n1"), TurnEnd("hi", 2)],
+                [ClientBound(SID), TurnEnd("hi", 2)],
             ),
             ("PermissionRequest", {"session_id": "n0", "tool_name": "Bash"}, [Blocked("Bash")]),
             ("Notification", {"message": "Claude is waiting"}, [Blocked("Claude is waiting")]),
@@ -463,7 +469,20 @@ class TuiPayloadTest(Base):
         )
         for label, payload, events in rows:
             with self.subTest(label=label):
-                self.assertEqual(self.run.hook_events(label, payload, "n0"), events)
+                self.assertEqual(self.run.hook_events(label, payload), events)
+
+    def test_it_binds_the_sid_it_launched_or_restored_once(self):
+        launched = ClaudeAdapter({}).tui()
+        launched.launch(Spec(workdir=self.work, sid=SID), HOOK, source_roots=PACKAGE_ROOTS)
+        for run in (launched, self.run):
+            with self.subTest(run=run):
+                self.assertEqual(
+                    run.hook_events("SessionStart", {"session_id": SID}), [ClientBound(SID)]
+                )
+                self.assertEqual(run.hook_events("SessionStart", {"session_id": SID}), [])
+        self.assertEqual(
+            ClaudeAdapter({}).tui().hook_events("SessionStart", {"session_id": SID}), []
+        )
 
     def test_the_trust_dialog(self):
         self.assertEqual(ClaudeTui.dialogs, ("Quick safety check",))
