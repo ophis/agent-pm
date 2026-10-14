@@ -719,11 +719,15 @@ class TuiLaunchIntegrationTest(Live):
                 handle.stop()
 
     def test_startup_dialog_screens_are_blocked_events(self):
-        for index, dialog in enumerate(("Trust this folder?", "Hooks need review")):
+        screens = {
+            "Trust this folder?": "Trust this folder? Codex can read files.\n\n› 1. Trust and continue",
+            "Hooks need review": "Hooks need review\n1 hook is new or changed.\n\n› 1. Review hooks",
+        }
+        for index, (dialog, screen) in enumerate(screens.items()):
             with self.subTest(dialog=dialog):
                 release = self.root / f"release-{index}"
                 self.scene(
-                    [[{"kind": "screen", "text": dialog}, {"kind": "pause", "file": str(release)}]]
+                    [[{"kind": "screen", "text": screen}, {"kind": "pause", "file": str(release)}]]
                 )
                 handle = self.start(f"w{index}", sid=f"dialog-{index}")
                 found = Stream(self, handle).until(Blocked)
