@@ -11,7 +11,7 @@ from unittest import mock
 from agent_pm.session.engine.types import Spec
 from agent_pm.session.hosts.tmux import TmuxHost
 from agent_pm.session.hosts.tmux.host import Tmux
-from agent_pm.session.modes import tui
+from agent_pm.session.runtimes import tui
 
 from session.tests import fake_adapter
 from session.tests.case import Case

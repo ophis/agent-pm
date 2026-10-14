@@ -39,8 +39,8 @@ from agent_pm.session.engine.types import (
     Word,
 )
 from agent_pm.session.hosts.base import Displayable, Host, HostProcess, Terminal
-from agent_pm.session.modes import tui_hook
-from agent_pm.session.modes.base import Runtime, identity_drop
+from agent_pm.session.runtimes import tui_hook
+from agent_pm.session.runtimes.base import Runtime, identity_drop
 from agent_pm.utils import CONFIG_NAME as NAME
 from agent_pm.utils import STATE, Display, command_path, json_records, read_regular
 

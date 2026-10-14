@@ -43,7 +43,7 @@ class SourceSuppressions(Sample):
         self.assertEqual(suppressions.source_suppressions(REPO), [])
 
     def test_hook_suppression_is_only_at_the_hook_run_boundary(self):
-        path = "session/src/agent_pm/session/modes/tui_hook.py"
+        path = "session/src/agent_pm/session/runtimes/tui_hook.py"
         reason = NOQA_ALLOWED[path, "BLE001", "run"]
         comment = f"# noqa: BLE001  # {reason}"
         self.assertEqual(

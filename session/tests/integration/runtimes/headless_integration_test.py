@@ -1,4 +1,4 @@
-"""modes/headless.py over real Python children: the command on pipes, its state, its process group's
+"""runtimes/headless.py over real Python children: the command on pipes, its state, its process group's
 kill, bounded waits, and a session running once started.
 """
 
@@ -16,7 +16,7 @@ import unittest
 from unittest import mock
 
 from agent_pm.session.engine.types import Launch, Reply, SessionError, Spec, Stderr
-from agent_pm.session.modes.headless import HeadlessRuntime
+from agent_pm.session.runtimes.headless import HeadlessRuntime
 
 from session.tests.fakes.terminal import MemoryHost
 from session.tests.headless_support import NOTHING, SID, HeadlessCase, StubAdapter, StubRun

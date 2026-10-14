@@ -1,4 +1,4 @@
-"""modes/base.py: Runtime, the ABC each Mode's running session implements (a class start
+"""runtimes/base.py: Runtime, the ABC each Mode's running session implements (a class start
 returning it started, then its session calls), and the start helpers the Runtimes share: child_env
 and identity_drop.
 """
@@ -14,8 +14,8 @@ from agent_pm.session.adapters.codex import CodexAdapter
 from agent_pm.session.adapters.registry import Registry
 from agent_pm.session.engine.types import ConfigError, Launch, Mode, Spec
 from agent_pm.session.hosts.base import Host
-from agent_pm.session.modes import headless, in_process, tui
-from agent_pm.session.modes.base import Runtime, child_env, identity_drop
+from agent_pm.session.runtimes import headless, in_process, tui
+from agent_pm.session.runtimes.base import Runtime, child_env, identity_drop
 
 from session.tests.case import HOSTS, Case
 from session.tests.fakes.terminal import MemoryHost

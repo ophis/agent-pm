@@ -63,7 +63,7 @@ How the session layer hosts a client: headless (e.g. `claude -p`, on a pipe, end
 _Avoid_: runtime (the class that runs it)
 
 **Runtime**:
-The session layer class that runs a session in one Mode: starts the client's process or thread (a tui one can also attach to a live session), polls its events, sends to it and stops it. In code: the ABC `Runtime` (`session/src/agent_pm/session/modes/base.py`) and `HeadlessRuntime`, `TuiRuntime` and `InProcessRuntime` (`modes/`).
+The session layer class that runs a session in one Mode: starts the client's process or thread (a tui one can also attach to a live session), polls its events, sends to it and stops it. In code: the ABC `Runtime` (`session/src/agent_pm/session/runtimes/base.py`) and `HeadlessRuntime`, `TuiRuntime` and `InProcessRuntime` (`runtimes/`).
 _Avoid_: mode (the value it runs), runner
 
 **Session**:

@@ -182,7 +182,7 @@ class LiteralImports(Sample):
     def test_dynamic_calls_cannot_bypass_unit_contracts(self):
         for sample in (
             "import importlib\nimportlib.import_module('agent_pm.session.hosts.tmux.tmux_host')",
-            "from importlib import import_module as load\nload('agent_pm.session.modes.tui')",
+            "from importlib import import_module as load\nload('agent_pm.session.runtimes.tui')",
             "__import__('agent_pm.manager')",
         ):
             with self.subTest(sample=sample):
@@ -264,7 +264,7 @@ class ImportHygiene(Sample):
     def test_no_startup_bootstrap_may_change_search_paths(self):
         assignment = "sys.path[:] = [*roots, *(path for path in sys.path if path not in roots)]"
         script = f"import sys\ndef _bootstrap(roots):\n    {assignment}\ndef main(roots):\n    {assignment}\n"
-        for path in (f"{SESSION_SRC}modes/tui_hook.py", "tests/other.py"):
+        for path in (f"{SESSION_SRC}runtimes/tui_hook.py", "tests/other.py"):
             with self.subTest(path=path):
                 self.assertEqual(
                     imports.import_hygiene(self.tree({path: script})),
@@ -312,7 +312,7 @@ class ImportHygiene(Sample):
 
 class StandaloneImports(Sample):
     def test_tui_hook_uses_package_imports(self):
-        path = f"{SESSION_SRC}modes/tui_hook.py"
+        path = f"{SESSION_SRC}runtimes/tui_hook.py"
         self.assertNotIn(path, STANDALONE)
 
     def test_tmux_host_uses_package_imports(self):

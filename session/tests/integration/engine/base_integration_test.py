@@ -15,7 +15,7 @@ CALLED = ("start", "attach", "usage", "layout", "writable_dirs", "display", "hos
 DISPATCH = """import json, os
 from agent_pm.session import ConfigError, SessionError, Hosts, Mode, Session, Spec
 from agent_pm.session.engine.hosted_session import HostedSession
-from agent_pm.session.modes import tui
+from agent_pm.session.runtimes import tui
 spec = Spec(workdir=os.environ["HOME"], client="fake", mode=Mode.HEADLESS, prompt="hi")
 calls = {
     "start": lambda: Session.start(spec),

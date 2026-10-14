@@ -3,7 +3,7 @@ import tempfile
 
 from agent_pm.session.adapters.base import Adapter, JsonHeadless
 from agent_pm.session.engine.types import Launch, Prepared, Reply, Spec, Stderr
-from agent_pm.session.modes.headless import HeadlessRuntime
+from agent_pm.session.runtimes.headless import HeadlessRuntime
 
 from session.tests.case import Case
 from session.tests.fakes.terminal import MemoryHost

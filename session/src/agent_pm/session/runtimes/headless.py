@@ -23,7 +23,7 @@ from agent_pm.session.engine.types import (
     Stderr,
 )
 from agent_pm.session.hosts.base import Host
-from agent_pm.session.modes.base import Runtime, identity_drop
+from agent_pm.session.runtimes.base import Runtime, identity_drop
 from agent_pm.utils import STOP_WAIT, Display, kill_group
 
 

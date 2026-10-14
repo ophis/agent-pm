@@ -27,7 +27,7 @@ from agent_pm.session.engine.types import (
     Stderr,
 )
 from agent_pm.session.hosts.base import Host
-from agent_pm.session.modes.base import Runtime
+from agent_pm.session.runtimes.base import Runtime
 from agent_pm.utils import Display
 
 END = object()

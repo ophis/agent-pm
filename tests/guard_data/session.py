@@ -33,7 +33,7 @@ SESSION_INTERFACE_MODULES = ("agent_pm.session", "agent_pm.session.extension")
 
 
 SUBPACKAGES = {
-    SESSION: {"adapters", "hosts", "modes"},
+    SESSION: {"adapters", "hosts", "runtimes"},
 }
 
 
@@ -58,17 +58,17 @@ STANDALONE = frozenset(f"{SESSION_SRC}{path}" for path in ("adapters/codex/commo
 
 NOQA_ALLOWED = {
     (
-        f"{SESSION_SRC}modes/headless.py",
+        f"{SESSION_SRC}runtimes/headless.py",
         "BLE001",
         "HeadlessRuntime._pump",
     ): "Forward failures to the caller thread.",
     (
-        f"{SESSION_SRC}modes/in_process.py",
+        f"{SESSION_SRC}runtimes/in_process.py",
         "BLE001",
         "InProcessRuntime._pump",
     ): "Forward failures to the caller thread.",
     (
-        f"{SESSION_SRC}modes/tui_hook.py",
+        f"{SESSION_SRC}runtimes/tui_hook.py",
         "BLE001",
         "run",
     ): "the hook must never fail the client",

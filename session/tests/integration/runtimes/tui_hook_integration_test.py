@@ -1,4 +1,4 @@
-"""modes/tui_hook.py as a client runs it: `agent-pm-session hook DIR LABEL`."""
+"""runtimes/tui_hook.py as a client runs it: `agent-pm-session hook DIR LABEL`."""
 
 import io
 import json
@@ -10,7 +10,7 @@ import unittest
 import unittest.mock
 from contextlib import redirect_stderr
 
-from agent_pm.session.modes import tui_hook
+from agent_pm.session.runtimes import tui_hook
 
 from session.tests.case import SRC
 from session.tests.tui_hook_support import (
@@ -261,7 +261,7 @@ def on_hook(word, call):
     def test_two_synchronized_writers_keep_every_complete_journal_record(self):
         script = """import io, json, sys
 folder, encoded, writer = sys.argv[1:]
-from agent_pm.session.modes import tui_hook
+from agent_pm.session.runtimes import tui_hook
 print("ready", flush=True)
 sys.stdin.buffer.read(1)
 for number in range(20):

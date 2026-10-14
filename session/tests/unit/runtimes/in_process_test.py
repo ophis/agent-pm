@@ -1,4 +1,4 @@
-"""modes/in_process.py: its start from a Spec (checks and the InProcess's check, one session line,
+"""runtimes/in_process.py: its start from a Spec (checks and the InProcess's check, one session line,
 then the run), the run on a daemon thread, its events, a raise as a traceback and code 1, stop's
 drain and -SIGKILL, bounded waits, send and screen refused, over real threads.
 """
@@ -23,7 +23,7 @@ from agent_pm.session.engine.types import (
     Spec,
     Stderr,
 )
-from agent_pm.session.modes.in_process import InProcessRuntime
+from agent_pm.session.runtimes.in_process import InProcessRuntime
 
 from session.tests.case import Case
 from session.tests.fakes.terminal import MemoryHost

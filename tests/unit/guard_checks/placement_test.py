@@ -82,7 +82,7 @@ class PackageClimbs(Sample):
         self.assertEqual(
             self.violations(
                 "import os\nHOOK = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'hosts/tmux/tmux_host.py')\n",
-                "modes/tui_hook.py",
+                "runtimes/tui_hook.py",
             ),
             [],
         )
@@ -252,7 +252,7 @@ class PackageTop(Sample):
         files = {
             **self.package("utils", "__init__.py", "x.py"),
             **self.package(
-                "session", "__init__.py", "extension.py", "engine/x.py", "modes/x.py", "extra.py"
+                "session", "__init__.py", "extension.py", "engine/x.py", "runtimes/x.py", "extra.py"
             ),
             **self.package(
                 "delegate",

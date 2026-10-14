@@ -54,7 +54,7 @@ from agent_pm.session.engine.types import (
     Window,
 )
 from agent_pm.session.hosts.tmux import TmuxHost
-from agent_pm.session.modes import tui
+from agent_pm.session.runtimes import tui
 from agent_pm.utils import Record, load_class
 
 from session.tests import fake_adapter

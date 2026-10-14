@@ -15,7 +15,7 @@ import uuid
 from contextlib import redirect_stderr
 
 from agent_pm.session.engine import types as engine_types
-from agent_pm.session.modes import tui_hook
+from agent_pm.session.runtimes import tui_hook
 
 from session.tests.case import SRC, Case
 from session.tests.tui_hook_support import (
@@ -28,7 +28,7 @@ from session.tests.tui_hook_support import (
 from utils.tests.process_fixtures import DEVNULL
 
 CLIENT = re.compile(r"claude|codex", re.I)
-HOOK = os.path.join(SRC["session"], "agent_pm", "session", "modes", "tui_hook.py")
+HOOK = os.path.join(SRC["session"], "agent_pm", "session", "runtimes", "tui_hook.py")
 ROOTS = (SRC["session"], SRC["utils"])
 
 
@@ -289,7 +289,7 @@ class SharedTypes(Case):
     def hook_types(self, path: str, classes: set[str]) -> list[str]:
         tree, bound, found = ast.parse(self.source(path)), set(), []
         for node in ast.walk(tree):
-            if isinstance(node, ast.ImportFrom) and node.module == "agent_pm.session.modes":
+            if isinstance(node, ast.ImportFrom) and node.module == "agent_pm.session.runtimes":
                 bound |= {a.asname or a.name for a in node.names if a.name == "tui_hook"}
             elif isinstance(node, ast.ImportFrom) and node.module == tui_hook.__name__:
                 found += [f"{path}: {a.name}" for a in node.names if a.name in classes]

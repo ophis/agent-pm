@@ -10,7 +10,7 @@ from agent_pm.session import extension
 from agent_pm.session.adapters import base as adapters_base
 from agent_pm.session.engine import types as engine_types
 from agent_pm.session.hosts import base as hosts_base
-from agent_pm.session.modes.base import Runtime
+from agent_pm.session.runtimes.base import Runtime
 
 from session.tests.case import Case
 

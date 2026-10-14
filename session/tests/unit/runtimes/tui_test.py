@@ -42,7 +42,7 @@ from agent_pm.session.engine.types import (
 )
 from agent_pm.session.hosts.base import HostProcess
 from agent_pm.session.hosts.tmux.types import TuiError
-from agent_pm.session.modes import tui, tui_hook
+from agent_pm.session.runtimes import tui, tui_hook
 
 from session.tests import fake_adapter
 from session.tests.case import PLUGIN_BIN, Case

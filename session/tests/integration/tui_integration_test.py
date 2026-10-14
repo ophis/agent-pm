@@ -32,7 +32,7 @@ from agent_pm.session.engine.types import (
     TurnEnd,
 )
 from agent_pm.session.hosts.tmux.host import Tmux
-from agent_pm.session.modes import tui
+from agent_pm.session.runtimes import tui
 
 from session.tests import fake_adapter, live_tmux
 from session.tests.case import PY, SPAWNS

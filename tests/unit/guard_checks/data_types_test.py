@@ -334,7 +334,7 @@ class OptionTuples(Sample):
         )
 
     def test_top_level_if_and_try_blocks_and_standalone_scripts_count(self):
-        rel = f"session/{PKG}/session/modes/tui_hook.py"
+        rel = f"session/{PKG}/session/runtimes/tui_hook.py"
         source = (
             'if True:\n    A = ("a", "b")\nelse:\n    B = ("a", "b")\n'
             'try:\n    C = ("a", "b")\nexcept ImportError:\n    D = ("a", "b")\n'

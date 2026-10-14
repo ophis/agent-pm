@@ -48,7 +48,7 @@ flowchart TB
   end
   subgraph SE[agent_pm.session]
     SC["cli.py<br>agent-pm-session"]
-    DR["engine/: base · hosted_session · worker · types · records<br>modes/: headless · tui · in_process<br>hosts/tmux/: host · transport · placement · grid"]
+    DR["engine/: base · hosted_session · worker · types · records<br>runtimes/: headless · tui · in_process<br>hosts/tmux/: host · transport · placement · grid"]
     subgraph AD[adapters/]
       CL[claude]
       CX[codex]
@@ -280,7 +280,7 @@ the caller opened (`--descendants`: and those they opened, transitively).
 
 ## Client policy
 
-Delegate reads `[policy.<client>]` `flags` (an argv list) and `env` (a string table) from core config with the local overlay, then supplies them as `Spec.flags/env`. Plain workers use their session Spec's flags and env. Every session then takes the same path: Adapters add client dialogue options, `[adapters.<client>]` keys and Access grants (workers included; a Claude worker's Access gives it `--setting-sources user,project,local`, Claude's default); the session layer owns session selection and the child env: the caller's, minus Git's repository selectors (`git rev-parse --local-env-vars`), minus every Adapter's identity markers, and minus an Adapter's injected defaults (Codex: `NO_COLOR`, `CODEX_CI`, `PAGER`, `GIT_PAGER`, `GH_PAGER`) only inside that client and at the injected value (`session/src/agent_pm/session/modes/base.py` `identity_drop`), under the Launch env.
+Delegate reads `[policy.<client>]` `flags` (an argv list) and `env` (a string table) from core config with the local overlay, then supplies them as `Spec.flags/env`. Plain workers use their session Spec's flags and env. Every session then takes the same path: Adapters add client dialogue options, `[adapters.<client>]` keys and Access grants (workers included; a Claude worker's Access gives it `--setting-sources user,project,local`, Claude's default); the session layer owns session selection and the child env: the caller's, minus Git's repository selectors (`git rev-parse --local-env-vars`), minus every Adapter's identity markers, and minus an Adapter's injected defaults (Codex: `NO_COLOR`, `CODEX_CI`, `PAGER`, `GIT_PAGER`, `GH_PAGER`) only inside that client and at the injected value (`session/src/agent_pm/session/runtimes/base.py` `identity_drop`), under the Launch env.
 
 The default policy sets Claude `--permission-mode auto`, `--strict-mcp-config` and a `--settings` turning this core's plugin off (the tui hooks merge into it), and Codex `-s danger-full-access`, `approval_policy="on-request"`, `approvals_reviewer="auto_review"`. To use Codex `workspace-write`, replace its policy flags with `-s workspace-write`, the approval options, `-c sandbox_workspace_write.network_access=false`, and `-c sandbox_workspace_write.writable_roots=[]`. Full access does not enforce writable-root or team-dir boundaries.
 

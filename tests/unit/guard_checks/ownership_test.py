@@ -262,7 +262,7 @@ class TmuxCalls(Sample):
                 f"session/{PKG}/session/hosts/tmux/commands.py": sample,
                 f"session/{PKG}/session/hosts/tmux/model/validation.py": sample,
                 f"session/{PKG}/session/hosts/tmux_external/x.py": sample,
-                f"session/{PKG}/session/modes/x.py": sample,
+                f"session/{PKG}/session/runtimes/x.py": sample,
                 f"delegate/{PKG}/delegate/composer/y.py": 'TOOL = "tmux"\n',
                 "session/src/hosts/tmux/tmux_host.py": sample,
                 "session/tests/z.py": sample,
@@ -274,7 +274,7 @@ class TmuxCalls(Sample):
                 [
                     f'delegate/{PKG}/delegate/composer/y.py:1: str constant "tmux"',
                     'session/src/hosts/tmux/tmux_host.py:2: str constant "tmux"',
-                    f"session/{PKG}/session/modes/x.py:2: tmux outside session/hosts/tmux/",
+                    f"session/{PKG}/session/runtimes/x.py:2: tmux outside session/hosts/tmux/",
                     f"session/{PKG}/session/hosts/tmux_external/x.py:2: tmux outside session/hosts/tmux/",
                 ]
             ),
@@ -283,7 +283,7 @@ class TmuxCalls(Sample):
     def test_tmux_inside_a_longer_string_is_rejected(self):
         root = self.tree(
             {
-                f"session/{PKG}/session/modes/x.py": (
+                f"session/{PKG}/session/runtimes/x.py": (
                     'HINT = "tmux attach -t =s"\nPATH = "/usr/bin/tmux"\n'
                 )
             }
@@ -291,7 +291,7 @@ class TmuxCalls(Sample):
         self.assertEqual(
             ownership.tmux_calls(root),
             [
-                f"session/{PKG}/session/modes/x.py:{line}: tmux outside session/hosts/tmux/"
+                f"session/{PKG}/session/runtimes/x.py:{line}: tmux outside session/hosts/tmux/"
                 for line in (1, 2)
             ],
         )
@@ -324,7 +324,7 @@ class SessionDisplay(Sample):
     def test_display_names_are_rejected_in_each_scoped_source(self):
         for base in (
             f"session/{PKG}/session/cli.py",
-            f"session/{PKG}/session/modes/sample.py",
+            f"session/{PKG}/session/runtimes/sample.py",
             f"session/{PKG}/session/hosts/other/sample.py",
             f"utils/{PKG}/utils/sample.py",
             CONFIG_FILE,

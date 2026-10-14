@@ -11,7 +11,7 @@ import unittest
 
 from agent_pm.session import Host, Mode, Session, Spec
 from agent_pm.session.engine.hosted_session import UNCONFIGURED, HostedSession
-from agent_pm.session.modes import tui
+from agent_pm.session.runtimes import tui
 
 from session.tests import fake_adapter
 from session.tests.case import HOSTS, PY

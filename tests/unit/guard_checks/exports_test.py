@@ -454,11 +454,11 @@ class ObjectExports(Sample):
     INIT = SESSION + "__init__.py"
     EXTENSION = SESSION + "extension.py"
     ENTRY_FUNCTIONS = ("read_config",)
-    BAD = ("OS", "Shut", "modes", "f", "g", "LAMBDA", "Ghost")
+    BAD = ("OS", "Shut", "runtimes", "f", "g", "LAMBDA", "Ghost")
     BAD_SOURCE = (
         "import os as OS\n"
         "from agent_pm.session.engine.config import read_config as Shut\n"
-        "from agent_pm.session import modes\n"
+        "from agent_pm.session import runtimes\n"
         "def f(): pass\n"
         "g = f\n"
         "LAMBDA = lambda: 0\n"
@@ -473,7 +473,7 @@ class ObjectExports(Sample):
         tree = {
             "delegate/src/agent_pm/delegate/event/__init__.py": "__all__ = []\n",
             self.SESSION + "engine/config.py": "def read_config(): pass\n",
-            self.SESSION + "modes/__init__.py": "",
+            self.SESSION + "runtimes/__init__.py": "",
             self.INIT: self.init(),
             self.EXTENSION: "__all__ = []\n",
             **(files or {}),
