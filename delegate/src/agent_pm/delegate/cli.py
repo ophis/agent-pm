@@ -18,7 +18,7 @@ from agent_pm.delegate.engine.runner import report, say
 from agent_pm.delegate.engine.types import Begun, ConfigError, Preview, Spec
 from agent_pm.session import ConfigError as SessionConfigError
 from agent_pm.session import DriverError, Mode, NotDisplayable
-from agent_pm.utils import Once, answer_keys
+from agent_pm.utils import Display, Once, answer_keys
 
 LIST_PARAMS = RunParams(input="", out="/agent-pm-list/work/out.md", workdir="/agent-pm-list/work")
 
@@ -82,6 +82,11 @@ def _run_options(ap: argparse.ArgumentParser) -> None:
     ap.add_argument("--mode", choices=[m.value for m in Mode], default=Mode.HEADLESS.value)
     ap.add_argument("--detach", action="store_true", help="run in a harness session of its own")
     ap.add_argument("--events", metavar="FILE", help="--detach: the run's events file")
+    ap.add_argument(
+        "--display",
+        metavar="D",
+        help="where its sessions show, completed on its agent's Host: agent-pm-session --help",
+    )
     ap.add_argument("--dry-run", action="store_true")
 
 
@@ -112,22 +117,22 @@ def _run(
     spec = spec_of(a, sys.stdin.read() if a.input == "-" else a.input)
     try:
         if a.dry_run:
-            shown = _shown(delegate_cls.preview(a.role, spec), a)
+            shown = _shown(delegate_cls.preview(a.role, spec, display=a.display), a)
             print(json.dumps(shown, ensure_ascii=False, indent=1))
             return 0
         if a.detach:
-            return _detach(delegate_cls, a.role, spec)
-        result = delegate_cls(a.role, spec).run(_begun)
+            return _detach(delegate_cls, a.role, spec, a.display)
+        result = delegate_cls(a.role, spec, display=a.display).run(_begun)
     except ConfigError as e:
         say(f"delegate: {e}")
         return 2
     return report(result, a.out)[0]
 
 
-def _detach(delegate_cls: type[HarnessDelegate], role: str, spec: Spec) -> int:
+def _detach(delegate_cls: type[HarnessDelegate], role: str, spec: Spec, display: Display) -> int:
     """Prints the run's Record line once its listed sessions are live."""
     try:
-        record = delegate_cls(role, spec).detach()
+        record = delegate_cls(role, spec, display=display).detach()
     except (DriverError, OSError) as e:
         say(f"delegate: {e}")
         return 1

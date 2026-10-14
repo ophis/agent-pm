@@ -30,6 +30,9 @@ from delegate.tests.cli_case import (
     Base,
     RefusingAdapter,
 )
+from delegate.tests.fakes.harness_session import HarnessSession, RecordingHost
+from delegate.tests.harness import SID as HARNESS_SID
+from delegate.tests.harness import HarnessCase
 from delegate.tests.replies import block
 from delegate.tests.unit.runs import DONE, START, STOP, FakeHandle, no_child, turn
 from session.tests import fake_adapter
@@ -115,11 +118,16 @@ class Detach(Base):
                     (code, out, err), (0, RECORD.to_line() + "\n", f"delegate: session {SID}\n")
                 )
                 ((role, spec, placement),) = Detaching.made
-                self.assertEqual((role, placement), ("dummy-tester", {}))
+                self.assertEqual((role, placement), ("dummy-tester", {"display": None}))
                 self.assertEqual(
                     (spec.mode, spec.sid, spec.events, spec.workdir, spec.out),
                     (mode, SID, self.events, self.work, self.out),
                 )
+
+    def test_a_display_is_given_to_the_delegate_unread(self):
+        code, _, err = self.detaches("--mode", "tui", "--display", "mgr:%1 right")
+        self.assertEqual(code, 0, err)
+        self.assertEqual(Detaching.made[0][2], {"display": "mgr:%1 right"})
 
     def test_input_dash_is_read_by_the_caller(self):
         code, _, err = self.detaches(input="-", stdin="-x\nUse B.\n")
@@ -156,6 +164,67 @@ class Detach(Base):
                 )
         self.assertEqual((self.launches(), os.path.exists(self.work)), ([], False))
         self.assertFalse(os.path.exists(self.events))
+
+
+class Shown(HarnessSession):
+    """Completes a display as `shown:<value>`, recording each (value, host) it is asked."""
+
+    asked: list = []
+
+    @classmethod
+    def display(cls, value=None, *, host=None):
+        cls.asked.append((value, host))
+        return f"shown:{value}"
+
+
+class Harnessed(HarnessCase):
+    """cli.main `run` on HarnessDelegate over Shown sessions on RecordingHosts (default `agent`),
+    cwd the test's HOME: no process starts.
+    """
+
+    def setUp(self):
+        super().setUp()
+        Shown.asked = []
+        self.addCleanup(os.chdir, os.getcwd())
+        os.chdir(self.home)
+        self.events = os.path.join(self.home, "events")
+
+    def cli(self, *extra, stdin=""):
+        class Bound(HarnessDelegate):
+            def __init__(self, role, spec, **placement):
+                super().__init__(role, spec, session_cls=Shown, **placement)
+
+        argv = ["run", "--role", "dummy-tester", "--task", "echo", "--input", "Hello."]
+        argv += ["--out", os.path.join(self.work, "out.md"), "--workdir", self.work]
+        out, err = io.StringIO(), io.StringIO()
+        with (
+            redirect_stdout(out),
+            redirect_stderr(err),
+            mock.patch("sys.stdin", io.StringIO(stdin)),
+        ):
+            try:
+                code = cli.main([*argv, "--client", "fake", *extra], delegate_cls=Bound)
+            except SystemExit as exit:
+                code = exit.code
+        return code, out.getvalue(), err.getvalue()
+
+
+class DetachDisplay(Harnessed):
+    def test_a_given_or_absent_display_is_completed_once_on_the_agent_host_and_kept(self):
+        for given, extra in (("mgr:%1 right", ("--display", "mgr:%1 right")), (None, ())):
+            with self.subTest(given=given):
+                HarnessSession.reset()
+                Shown.asked = []
+                self.work = os.path.join(self.home, "given" if given else "absent")
+                code, out, err = self.cli(
+                    "--sid", HARNESS_SID, "--detach", "--events", self.events, *extra
+                )
+                self.assertEqual(code, 0, err)
+                self.assertEqual(Shown.asked, [(given, "agent")])
+                shown = f"shown:{given}"
+                self.assertEqual(Record.parse(out).display, shown)
+                self.assertEqual(self.metadata()["display"], shown)
+                self.assertEqual(RecordingHost.launches[0]["display"], shown)
 
 
 class DryRun(Base):
