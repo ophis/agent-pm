@@ -227,6 +227,9 @@ def main(argv):
         return code
     root = Path.cwd()
     GATE = isolation.install(root)
+    GATE.unit_only = directories == ["--unit"] or all(
+        "unit" in Path(path).parts or path == ".github" for path in directories
+    )
     GATE.unit = directories == ["--unit"] or any(
         "unit" in Path(path).parts or path == ".github" for path in directories
     )

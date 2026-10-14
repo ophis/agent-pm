@@ -63,6 +63,7 @@ class Gate:
         self.workspace = Path(workspace).resolve() if workspace else self.sandbox
         self.current = "test discovery"
         self.unit = True
+        self.unit_only = False
         self.reporting_file = None
 
     def fail(self, message):
@@ -182,7 +183,7 @@ class Gate:
         path = Path(inspect.getfile(type(test))).resolve()
         previous = self.current, self.unit
         self.current = test.id()
-        self.unit = "unit" in path.parts or path.parent == self.root / ".github"
+        self.unit = self.unit_only or "unit" in path.parts or path.parent == self.root / ".github"
         path_before = os.environ.get("PATH", os.defpath)
         if self.unit:
             os.environ["PATH"] = str(self.sandbox / "blocked-bin") + os.pathsep + path_before

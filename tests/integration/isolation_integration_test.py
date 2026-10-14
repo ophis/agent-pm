@@ -79,6 +79,43 @@ print(json.dumps(sorted(blocked)))
 
 
 class SandboxGates(Case):
+    def test_unit_selection_keeps_external_testcase_classes_under_the_unit_gate(self):
+        root = Path(self.home)
+        (root / ".github").mkdir()
+        for package in (root / "tests", root / "tests/unit"):
+            package.mkdir()
+            (package / "__init__.py").touch()
+        marker = root / "escaped"
+        helper = root / "helper.py"
+        helper.write_text(
+            "import os, unittest\n"
+            "class External(unittest.TestCase):\n"
+            "    def test_write(self):\n"
+            f"        os.mkdir({str(marker)!r})\n"
+        )
+        (root / "tests/unit/external_test.py").write_text(
+            "import importlib.util, sys\n"
+            f"spec = importlib.util.spec_from_file_location('helper', {str(helper)!r})\n"
+            "helper = importlib.util.module_from_spec(spec)\n"
+            "sys.modules['helper'] = helper\n"
+            "spec.loader.exec_module(helper)\n"
+            "External = helper.External\n"
+        )
+        env = clean_env(None, REPO, str(Path(REPO, ".github")))
+        env.pop("RUN_TESTS_STATE", None)
+        proc = subprocess.run(
+            [sys.executable, "-P", "-S", str(Path(REPO, ".github/run_tests.py")), "Unit", "--unit"],
+            cwd=root,
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        self.assertEqual(proc.returncode, 1, proc.stderr)
+        self.assertIn("helper.External.test_write", proc.stderr)
+        self.assertIn("write outside temporary directory", proc.stderr)
+        self.assertFalse(marker.exists())
+
     def test_every_filesystem_mutation_is_confined_to_owned_roots(self):
         script = """import os, shutil, sqlite3, sys
 from pathlib import Path
