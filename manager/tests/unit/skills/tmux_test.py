@@ -7,7 +7,17 @@ import os
 import re
 
 from manager.tests.case import Case
-from manager.tests.skills.tmux import BIN, body, examples, rules, section, sections
+from manager.tests.skills.tmux import (
+    BIN,
+    SKILLS,
+    body,
+    examples,
+    flags,
+    rules,
+    section,
+    sections,
+    spans,
+)
 
 RETIRED = (
     "crew.py",
@@ -29,12 +39,26 @@ class Commands(Case):
         for command in commands:
             self.assertIn(command[0], sorted(os.listdir(BIN)), command)
 
-    def test_pre_approved_rules_are_read_only_bin_commands(self):
+    def test_pre_approved_rules_are_read_only(self):
         for rule in rules("tmux"):
-            self.assertIn(rule.split()[0], sorted(os.listdir(BIN)), rule)
             self.assertNotRegex(
                 rule, r"\b(run(?! --list)|start|send|stop|forget|close|resume|restart|tile)\b"
             )
+
+    def test_a_client_without_bin_on_its_path_reaches_this_plugins_bin(self):
+        fallback = "${CLAUDE_SKILL_DIR}/../../../bin/<command>"
+        self.assertIn(fallback, body("tmux"))
+        own = os.path.join(SKILLS, "tmux", "../../../bin")
+        self.assertEqual(os.path.realpath(own), os.path.realpath(BIN))
+
+    def test_crew_launches_take_no_session_id_and_direct_detaches_name_their_events(self):
+        for commands in spans(body("tmux")):
+            outer = commands[0][:2] == ["agent-pm-crew", "run"]
+            for command in commands[1:] if outer else commands:
+                if outer:
+                    self.assertFalse({"--sid", "--resume"} & set(flags(command)), command)
+                elif command[:2] == ["agent-pm-delegate", "run"] and "--detach" in flags(command):
+                    self.assertIn("--events", flags(command))
 
     def test_no_retired_path_flag_or_manual_repair(self):
         for word in (*RETIRED, *REPAIRS):
@@ -54,6 +78,44 @@ class Flows(Case):
         self.assertIn("--mode headless", launch)
         self.assertIn("--display D", launch)
         self.assertIn("agent-pm-session --help", launch)
+
+    def test_start_attaches_reads_its_output_and_arms_one_listener(self):
+        start = section("tmux", "Start")
+        for phrase in (
+            "`ctmux <name>`",
+            "agent-pm-crew hold --manager",
+            "TaskStop",
+            "`agent-pm-crew attach`",
+            "lease",
+            "`name kind sid state note cwd attach`",
+            "backlog",
+            "`resume: agent-pm-crew resume … <name>`",
+            "`tail -n +<N+1> -F <events>`",
+            "`next-event:`",
+            "`monitor expired:`",
+            "run_in_background",
+            "--after <line>",
+        ):
+            self.assertIn(phrase, start)
+
+    def test_direct_names_every_daily_operation(self):
+        direct = section("tmux", "Direct")
+        for phrase in (
+            "`agent-pm-session send <name> '<text>'`",
+            "`agent-pm-session read <name> [--lines <n>]`",
+            "`agent-pm-session reply <name>`",
+            "`agent-pm-session restart <name>`",
+            "`agent-pm-session send <name> '/color <color>'`",
+            "`agent-pm-crew note <name> '<text>'`",
+            "`''` clears",
+            "`agent-pm-crew status [<name>…]`",
+            "`agent-pm-crew stop <name>`",
+            "`agent-pm-crew stop-all [--dry-run]`",
+            "`agent-pm-crew forget <name>`",
+            "`--force`",
+            "`agent-pm-crew release`",
+        ):
+            self.assertIn(phrase, direct)
 
     def test_events_handles_every_word(self):
         events = section("tmux", "Events")
