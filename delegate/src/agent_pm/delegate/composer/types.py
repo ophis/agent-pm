@@ -42,15 +42,19 @@ class RunConfig:
     language: str = ""
     cwd: str = ""
     role_title: str = ""
-    idle_timeout: float = 7200
+    idle_timeout: float
 
     def __post_init__(self):
-        if (
-            isinstance(self.idle_timeout, bool)
-            or not isinstance(self.idle_timeout, (int, float))
-            or not math.isfinite(self.idle_timeout)
-            or self.idle_timeout <= 0
-        ):
+        try:
+            seconds = (
+                not isinstance(self.idle_timeout, bool)
+                and isinstance(self.idle_timeout, (int, float))
+                and math.isfinite(self.idle_timeout)
+                and self.idle_timeout > 0
+            )
+        except OverflowError:
+            seconds = False
+        if not seconds:
             raise ConfigError(
                 f"idle_timeout must be a positive finite number of seconds, got {self.idle_timeout!r}"
             )

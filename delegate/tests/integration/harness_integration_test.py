@@ -10,7 +10,8 @@ from dataclasses import replace
 
 from agent_pm.delegate import Begun, ConfigError, Finished, Limit, Outcome, Progress, Spec
 from agent_pm.delegate.engine.harness_delegate import HarnessDelegate
-from agent_pm.session import Exited, LimitHit, Reply
+from agent_pm.session import ConfigError as SessionConfigError
+from agent_pm.session import Exited, LimitHit, Liveness, Reply, Usage, Window
 from agent_pm.utils import Record
 
 from delegate.tests.case import REPO, child_env
@@ -20,6 +21,7 @@ from delegate.tests.fakes.harness_session import (
     PersistentSession,
     RecordingHost,
 )
+from delegate.tests.fakes.session import SessionClass
 from delegate.tests.harness import SID, HarnessCase
 from delegate.tests.replies import block, mark
 from delegate.tests.unit.runs import DONE
@@ -47,6 +49,16 @@ print(json.dumps({"queried": UsageAdapter.queried, "probes": probes,
                   "starts": UsageAdapter.starts, "session_starts": HarnessSession.started,
                   "launches": RecordingHost.launches}))
 """
+
+
+class ConfiguredSession(HarnessSession):
+    """Its Hosts are the configured [hosts], as HostedSession's are."""
+
+    @classmethod
+    def host(cls, name=None):
+        if name is not None and name not in cls.configured["hosts"].tables:
+            raise SessionConfigError(f"unknown host {name}")
+        return super().host(name)
 
 
 def _close_child(child):
@@ -120,6 +132,28 @@ class Planning(HarnessCase):
             first.detach()
         self.assertEqual(RecordingHost.launches, [])
 
+    def test_a_harness_host_named_default_is_refused_naming_the_configured_hosts(self):
+        self.settings(harness_host="default")
+        with self.assertRaises(ConfigError) as caught:
+            self.make()
+        self.assertEqual(
+            str(caught.exception),
+            "[delegates] harness_host: want one of agent, changed, harness, tmux",
+        )
+        self.assertFalse(os.path.lexists(self.work))
+
+    def test_replacing_a_run_whose_harness_host_left_the_config_is_refused(self):
+        ConfiguredSession.reset()
+        self.make(harness_host="harness", session_cls=ConfiguredSession).detach()
+        with open(os.path.join(self.work, "delegate.json"), "rb") as file:
+            before = file.read()
+        self.settings(hosts=("agent", "changed"))
+        with self.assertRaises(ConfigError) as caught:
+            self.make(session_cls=ConfiguredSession)
+        self.assertEqual(str(caught.exception), "unknown host harness")
+        with open(os.path.join(self.work, "delegate.json"), "rb") as file:
+            self.assertEqual(file.read(), before)
+
     def test_protect_reaches_session_spec_with_delegate_package_dirs(self):
         team = self.team_dir()
         self.settings(team_dirs=(team,))
@@ -171,6 +205,74 @@ class Views(HarnessCase):
                 with self.assertRaises(ConfigError):
                     HarnessDelegate.attach(self.work)
         self.assertEqual((HarnessSession.started, RecordingHost.launches), ([], []))
+
+    def test_attach_refuses_a_stored_host_removed_from_config(self):
+        for removed in ("changed", "harness"):
+            with self.subTest(removed=removed):
+                ConfiguredSession.reset()
+                self.settings()
+                self.work = os.path.join(self.home, removed)
+                self.make(
+                    host="changed", harness_host="harness", session_cls=ConfiguredSession
+                ).detach()
+                self.settings(
+                    hosts=tuple(h for h in ("agent", "harness", "changed") if h != removed)
+                )
+                with self.assertRaises(ConfigError) as caught:
+                    HarnessDelegate.attach(self.work, session_cls=ConfiguredSession)
+                self.assertEqual(str(caught.exception), f"unknown host {removed}")
+
+    def test_resume_refuses_a_cwd_no_longer_trusted_and_launches_nothing(self):
+        project = os.path.join(self.home, "project")
+        os.mkdir(project)
+        self.settings(trusted_dirs=(project,))
+        spec = Spec("input", self.work, task="echo", sid=SID, cwd=project, runtime="fake")
+        record = self.make(spec=spec).detach()
+        self.assertTrue(self.metadata()["plan"]["session"]["access"]["project"])
+        self.stop(record)
+        self.settings()
+        view = HarnessDelegate.attach(self.work)
+        launches, starts = len(RecordingHost.launches), len(HarnessSession.started)
+        with self.assertRaises(ConfigError) as caught:
+            view.resume()
+        self.assertEqual(str(caught.exception), f"cwd {project} is no longer in trusted_dirs")
+        self.assertEqual(
+            (len(RecordingHost.launches), len(HarnessSession.started)), (launches, starts)
+        )
+
+    def test_a_completed_foreground_tui_left_open_is_not_alive(self):
+        spec = Spec(
+            "input", self.work, task="echo", sid=SID, cwd=self.work, runtime="fake", mode="tui"
+        )
+        delegate = self.make(spec=spec)
+        self.assertEqual(delegate.run().outcome.status, "done")
+        agent = HarnessSession.attach(f"dummy-tester-{SID[:8]}")
+        self.assertEqual(agent.state(), Liveness.LIVE)
+        self.assertEqual(
+            (delegate.alive(), HarnessDelegate.attach(self.work).alive()), (False, False)
+        )
+
+    def test_a_completed_object_refuses_a_second_run_keeping_its_result(self):
+        delegate = self.make()
+        delegate.run()
+        path = os.path.join(self.work, "delegate.json")
+        with open(path, "rb") as file:
+            before = file.read()
+        starts = len(HarnessSession.started)
+        with self.assertRaises(ConfigError) as caught:
+            delegate.run()
+        self.assertEqual(str(caught.exception), f"{self.work}: delegate run already completed")
+        with open(path, "rb") as file:
+            self.assertEqual((file.read(), len(HarnessSession.started)), (before, starts))
+
+    def test_a_completed_object_refuses_to_detach_launching_nothing(self):
+        delegate = self.make()
+        delegate.run()
+        launched = list(RecordingHost.launches)
+        with self.assertRaises(ConfigError) as caught:
+            delegate.detach()
+        self.assertEqual(str(caught.exception), f"{self.work}: delegate run already completed")
+        self.assertEqual(RecordingHost.launches, launched)
 
     def test_completed_session_info_uses_public_history_without_starting(self):
         delegate = self.make()
@@ -278,6 +380,38 @@ class UsageQueries(HarnessCase):
                 "session_starts": [],
                 "launches": [],
             },
+        )
+
+    def test_usage_configures_and_asks_only_the_given_session_class(self):
+        sentinel = Usage(Window(12.5, 1767225600.0), Window(37.0, None))
+        asked = []
+
+        class Probe(SessionClass):
+            @classmethod
+            def usage(cls, runtime):
+                asked.append(runtime)
+                return sentinel
+
+        self.assertIs(HarnessDelegate.usage("dummy-tester", session_cls=Probe), sentinel)
+        self.assertEqual(asked, ["fake"])
+        self.assertEqual(
+            sorted(Probe.configured["hosts"].tables), ["agent", "changed", "harness", "tmux"]
+        )
+
+    def test_session_config_errors_are_the_delegates(self):
+        class Refusing(SessionClass):
+            @classmethod
+            def usage(cls, runtime):
+                raise SessionConfigError(f"[adapters.{runtime}]: no usage probe")
+
+        with self.assertRaises(ConfigError) as caught:
+            HarnessDelegate.usage("dummy-tester", session_cls=Refusing)
+        self.assertEqual(str(caught.exception), "[adapters.fake]: no usage probe")
+        self.settings(default="nope")
+        with self.assertRaises(ConfigError) as caught:
+            HarnessDelegate.usage("dummy-tester", session_cls=SessionClass)
+        self.assertEqual(
+            str(caught.exception), "[hosts] default: want one of agent, changed, harness, tmux"
         )
 
 

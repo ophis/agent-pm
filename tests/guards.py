@@ -185,11 +185,7 @@ DELEGATE_SESSION_FORWARDING_ALLOWED = {
     (
         "delegate/src/agent_pm/delegate/__init__.py",
         "agent_pm.session.Driver",
-    ): "FR-13 public run() forwarding compatibility; 356-14 (FR-27) deletes",
-    (
-        "delegate/src/agent_pm/delegate/engine/plan.py",
-        "agent_pm.session.Driver",
-    ): "Legacy configure() compatibility; TASK-370 converts its callers",
+    ): "FR-13 public plan()/run() forwarding and configure() for the orchestrator's engine/config.py; 356-14 (FR-27) deletes",
 }
 
 

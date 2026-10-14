@@ -46,6 +46,7 @@ RUN_CONFIG = """\
 tier = 2
 effort = "high"
 runtime = "a"
+idle_timeout = 60
 
 [output]
 type = "local"

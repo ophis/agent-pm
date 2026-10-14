@@ -38,6 +38,7 @@ from utils.tests.case import local_section
 CONFIG = """\
 tier = 2
 effort = "high"
+idle_timeout = 60
 
 [output]
 type = "local"

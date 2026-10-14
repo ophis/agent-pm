@@ -98,6 +98,7 @@ class FakeDelegate(Delegate):
             effort="high",
             runtime="fake",
             output={"type": "local"},
+            idle_timeout=60,
         )
 
     @classmethod

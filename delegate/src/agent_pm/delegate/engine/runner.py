@@ -140,7 +140,8 @@ class Tui(Headless):
         self.count = 0
 
     def idle(self, seconds: float) -> str | GiveUp | None:
-        return GiveUp(f"no event for {seconds / 3600:g} h")
+        size, unit = (3600, "h") if seconds >= 3600 else (60, "min") if seconds >= 60 else (1, "s")
+        return GiveUp(f"no event for {seconds / size:g} {unit}")
 
 
 POLICIES = {Mode.HEADLESS: Headless, Mode.TUI: Tui, Mode.IN_PROCESS: Headless}
@@ -221,7 +222,6 @@ class _Attempts:
         self.refused = False  # the Driver refused the start: nothing to close
 
     def note(self, kind: str, **fields) -> None:
-        os.makedirs(self.workdir, exist_ok=True)
         RunLog(self.workdir).note(kind, **fields)
 
     def close(self, result: dict, rc: int) -> None:

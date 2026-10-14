@@ -24,6 +24,7 @@ TEXTS = {
 CONFIG = {
     "tier": 2,
     "effort": "high",
+    "idle_timeout": 60,
     "runtime": "runtime-a",
     "language": "English",
     "output": {"type": "local"},
@@ -59,6 +60,7 @@ class OwnedComposer(Case):
         original = {
             "tier": 2,
             "effort": "high",
+            "idle_timeout": 60,
             "runtime": "runtime-a",
             "roles": {"writer": {"read": ["/read/a"]}},
             "output": {"type": "local"},

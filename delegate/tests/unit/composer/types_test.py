@@ -9,7 +9,9 @@ from delegate.tests.case import Case
 
 
 def run_config(effort) -> RunConfig:
-    return RunConfig(role="writer", tier=2, effort=effort, runtime="a", output={"type": "local"})
+    return RunConfig(
+        role="writer", tier=2, effort=effort, runtime="a", output={"type": "local"}, idle_timeout=60
+    )
 
 
 class RunConfigEffort(Case):
@@ -29,8 +31,9 @@ class RunConfigEffort(Case):
 
 
 class RunConfigIdleTimeout(Case):
-    def test_default_is_two_hours_in_seconds(self):
-        self.assertEqual(run_config("high").idle_timeout, 7200)
+    def test_it_has_no_default(self):
+        with self.assertRaisesRegex(TypeError, "idle_timeout"):
+            RunConfig(role="writer", tier=2, effort="high", runtime="a", output={"type": "local"})
 
     def test_positive_integer_and_fractional_seconds_are_accepted(self):
         for seconds in (1, 0.3, 14400):
@@ -53,6 +56,7 @@ class RunConfigIdleTimeout(Case):
             {},
             float("nan"),
             float("inf"),
+            10**400,
         ):
             with (
                 self.subTest(value=value),

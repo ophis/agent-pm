@@ -82,6 +82,7 @@ def fields(roles):
 CORE_TOML = """tier = 2
 effort = "high"
 runtime = "claude"
+idle_timeout = 60
 output = { type = "local" }
 
 [roles.researcher]

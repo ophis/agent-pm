@@ -4,18 +4,16 @@ Exits 0 on an instruction, valid outcome or detach; 1 without an outcome; 2 on c
 usage errors; 3 on client/start failure or usage limit. The harness exits 128 + signum on a signal.
 """
 
-import argparse
 import functools
 import json
 import os
 import sys
 from dataclasses import replace
 
-from agent_pm.delegate import composer, run
+from agent_pm.delegate import composer, configure, plan, run
 from agent_pm.delegate.composer import RunParams, Team
 from agent_pm.delegate.engine import detach
 from agent_pm.delegate.engine.drivers import InstructionDriver
-from agent_pm.delegate.engine.plan import configure, plan
 from agent_pm.delegate.engine.runner import say
 from agent_pm.delegate.engine.types import Begun, ConfigError, Plan, Spec
 from agent_pm.session import ConfigError as SessionConfigError
@@ -43,7 +41,7 @@ class Application:
     def run(self, config, spec, *, on_event):
         return run(config, spec, driver=self.driver, on_event=on_event)
 
-    def run_cli(self, a: argparse.Namespace) -> tuple[int, str | None]:
+    def run_cli(self, a) -> tuple[int, str | None]:
         """(exit code, the valid outcome's status)."""
         try:
             if not a.list and None in (a.input, a.out, a.workdir):
@@ -95,7 +93,7 @@ class Application:
         return 0, result.outcome.status
 
 
-def prompt(a: argparse.Namespace, *, application=None) -> int:
+def prompt(a, *, application=None) -> int:
     try:
         if None in (a.input, a.out, a.workdir):
             raise ConfigError("--input, --out and --workdir are required")
@@ -120,7 +118,7 @@ def prompt(a: argparse.Namespace, *, application=None) -> int:
     return 0
 
 
-def _check_detach(a: argparse.Namespace) -> None:
+def _check_detach(a) -> None:
     detached = a.detach or a.harness is not None
     if a.events is not None and not detached:
         raise ConfigError("--events needs --detach")
@@ -132,7 +130,7 @@ def _check_detach(a: argparse.Namespace) -> None:
         raise ConfigError("--detach needs --out PATH")
 
 
-def _detach(a: argparse.Namespace, p: Plan, driver) -> int:
+def _detach(a, p: Plan, driver) -> int:
     tui, harness = detach.names(p.run.role, p.sid, p.spec.mode)
     if a.dry_run:
         shown = {**_shown(p), "driver": harness, "tui": tui, "events": os.path.abspath(a.events)}
@@ -186,7 +184,7 @@ def _shown(p: Plan) -> dict:
     }
 
 
-def _begun(a: argparse.Namespace, tui: str | None, driver, event) -> None:
+def _begun(a, tui: str | None, driver, event) -> None:
     if not isinstance(event, Begun):
         return
     say(f"delegate: session {event.sid}")

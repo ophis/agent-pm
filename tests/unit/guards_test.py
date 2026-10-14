@@ -664,21 +664,20 @@ class DelegateSessionForwarding(Sample):
         self.assertEqual(self.references(sample), [])
 
     def test_compatibility_exception_is_exact_and_expires(self):
-        key = self.BASE + "engine/plan.py", "agent_pm.session.Driver"
         public = self.BASE + "__init__.py", "agent_pm.session.Driver"
-        self.assertEqual(set(guards.DELEGATE_SESSION_FORWARDING_ALLOWED), {key, public})
+        self.assertEqual(set(guards.DELEGATE_SESSION_FORWARDING_ALLOWED), {public})
+        self.assertIn("configure()", guards.DELEGATE_SESSION_FORWARDING_ALLOWED[public])
+        self.assertIn("356-14", guards.DELEGATE_SESSION_FORWARDING_ALLOWED[public])
         sample = (
             "from agent_pm.session import Driver as SessionDriver\nSessionDriver.from_config({})\n"
         )
-        self.assertEqual(self.references(sample, "engine/plan.py"), [])
-        self.assertTrue(self.references(sample, "cli.py"))
+        self.assertEqual(self.references(sample, "__init__.py"), [])
+        for rel in ("engine/plan.py", "cli.py"):
+            with self.subTest(rel=rel):
+                self.assertTrue(self.references(sample, rel))
         found = guards.delegate_session_forwarding(self.tree({}))
         self.assertEqual(
-            found,
-            sorted(
-                f"{rel}: {name}: allowlisted but no forwarding reference (FR-34)"
-                for rel, name in (key, public)
-            ),
+            found, [f"{public[0]}: {public[1]}: allowlisted but no forwarding reference (FR-34)"]
         )
 
 

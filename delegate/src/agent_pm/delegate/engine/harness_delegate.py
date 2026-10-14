@@ -125,7 +125,9 @@ class HarnessDelegate(Delegate):
                 if isinstance(harness_host, Host)
                 else session_cls.host(
                     harness_host
-                    or config.harness_host(self._settings, self._settings.get("hosts", {}))
+                    or config.harness_host(
+                        self._settings, Host.parse_hosts(self._settings.get("hosts")).tables
+                    )
                     or agent_host.name
                 )
             )
@@ -328,11 +330,13 @@ class HarnessDelegate(Delegate):
         return Composer().trusted_dirs()
 
     @classmethod
-    def usage(cls, role: str) -> Usage | None:
+    def usage(cls, role: str, *, session_cls: type[Session] = Session) -> Usage | None:
         composition = Composer()
-        settings = thaw(composition.config.values)
-        Session.configure_from(settings)
-        return Session.usage(composition.resolve(role).runtime)
+        try:
+            session_cls.configure_from(thaw(composition.config.values))
+            return session_cls.usage(composition.resolve(role).runtime)
+        except SessionConfigError as error:
+            raise ConfigError(str(error)) from None
 
     def _agent(self, state: _State) -> Session | None:
         agent = self.driver.session
@@ -362,6 +366,8 @@ class HarnessDelegate(Delegate):
             return host.attach(state.harness_name)
         except DriverError:
             return None
+        except SessionConfigError as error:
+            raise ConfigError(str(error)) from None
 
     def _alive(self, state: _State) -> bool:
         if state.detached:
@@ -489,7 +495,8 @@ class HarnessDelegate(Delegate):
     def run(self, on_event: Callable[[Event], None] | None = None) -> Result:
         with file_lock(self._path + ".run", own=True):
             with file_lock(self._path, own=True):
-                self._current()
+                if self._current().completed:
+                    raise ConfigError(f"{self.workdir}: delegate run already completed")
             callback = (
                 None
                 if self._state.callback is None
@@ -547,6 +554,8 @@ class HarnessDelegate(Delegate):
             state = self._current()
             if self._alive(state):
                 return self._record(state)
+            if state.completed:
+                raise ConfigError(f"{self.workdir}: delegate run already completed")
             state = replace(state, outer={} if outer is None else outer.copy())
             return self._detach(state)
 
