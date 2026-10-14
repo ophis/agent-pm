@@ -15,7 +15,14 @@ from pathlib import Path
 from threading import Event
 from unittest import mock
 
-from agent_pm.manager.engine.crew import HERE, RECOVERY_AGE, RECOVERY_MARGIN, TIMEOUT, Crew
+from agent_pm.manager.engine.crew import (
+    DESCENDANTS,
+    HERE,
+    RECOVERY_AGE,
+    RECOVERY_MARGIN,
+    TIMEOUT,
+    Crew,
+)
 from agent_pm.manager.engine.roster import LOCK_TIMEOUT, Roster
 from agent_pm.manager.engine.types import Held, RosterError, Spec, Stale, State
 from agent_pm.utils import Status
@@ -1006,7 +1013,7 @@ class StopAllTest(Case):
         native_run = subprocess.run
 
         def run(argv, **options):
-            if tuple(argv) == HERE:
+            if tuple(argv) == DESCENDANTS:
                 return subprocess.CompletedProcess(argv, 1, "", "listing unavailable")
             return native_run(argv, **options)
 
