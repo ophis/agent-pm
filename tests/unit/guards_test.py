@@ -488,12 +488,33 @@ class DelegateObjectExports(Sample):
             "render",
         ],
     }
+    VALUES = {
+        "agent_pm.delegate": {
+            "CONFIG": "CONFIG: str = os.path.join('a', 'config.toml')\n",
+            "PYTHONPATH": "PYTHONPATH: str = os.pathsep.join(('a', 'b'))\n",
+            "STATUSES": "STATUSES = tuple(('done', 'failed'))\n",
+        },
+        "agent_pm.delegate.composer": {
+            "DELIVERABLE": "DELIVERABLE = os.path.join('tmp', 'deliverable.md')\n",
+            "TEAM": "TEAM = os.path.join(os.path.dirname(__file__), 'team')\n",
+        },
+    }
+    UNRECOGNISED = {
+        "PATH": "PATH: str = os.path.join('a', 'b')\n",
+        "COUNT": "COUNT: int = int('1')\n",
+        "CHOICES": "class Choice(StrEnum):\n    A = 'a'\nCHOICES = tuple(Choice)\n",
+        "FROZEN": "FROZEN = frozenset(('a', 'b'))\n",
+        "HOME": "HOME = os.path.dirname(os.path.abspath(__file__))\n",
+        "ROOTS": "ROOTS = os.pathsep.join(('a', 'b'))\n",
+    }
 
     def exports(self, package, extra="", names=()):
         rel = "delegate/src/" + package.replace(".", "/") + "/__init__.py"
-        functions = self.LEGACY[package]
-        sample = "".join(f"def {name}(): pass\n" for name in functions)
-        sample += extra + f"__all__ = {[*functions, *names]!r}\n"
+        functions, values = self.LEGACY[package], self.VALUES[package]
+        sample = "import os\nfrom enum import StrEnum\n"
+        sample += "".join(f"def {name}(): pass\n" for name in functions)
+        sample += "".join(values.values())
+        sample += extra + f"__all__ = {[*functions, *values, *names]!r}\n"
         root = self.tree({rel: sample})
         return [
             item
@@ -502,7 +523,12 @@ class DelegateObjectExports(Sample):
         ]
 
     def test_legacy_inventory_can_only_shrink(self):
-        expected = {(package, name) for package, names in self.LEGACY.items() for name in names}
+        expected = {
+            (package, name)
+            for inventory in (self.LEGACY, self.VALUES)
+            for package, names in inventory.items()
+            for name in names
+        }
         actual = {
             key
             for key in guards.OBJECT_EXPORTS_ALLOWED
@@ -549,32 +575,61 @@ class DelegateObjectExports(Sample):
             rel = "delegate/src/" + package.replace(".", "/") + "/__init__.py"
             self.assertIn(f"{rel}: no literal __all__", guards.object_exports(root))
 
-    def test_typed_scalar_constants_pass_but_typed_callables_fail(self):
+    def test_annotated_values_and_constructor_calls_are_unrecognised_values(self):
         for package in self.LEGACY:
+            rel = "delegate/src/" + package.replace(".", "/") + "/__init__.py"
+            for name, source in self.UNRECOGNISED.items():
+                with self.subTest(package=package, name=name):
+                    self.assertEqual(
+                        self.exports(package, source, [name]),
+                        [f"{rel}: __all__ exports unrecognised value {name} (FR-44)"],
+                    )
+
+    def test_legacy_values_pass_only_in_their_allowlisted_package(self):
+        for package, values in self.VALUES.items():
+            (other,) = self.VALUES.keys() - {package}
+            rel = "delegate/src/" + other.replace(".", "/") + "/__init__.py"
+            self.assertEqual(self.exports(package), [])
+            for name, source in values.items():
+                with self.subTest(package=package, name=name):
+                    self.assertEqual(
+                        self.exports(other, source, [name]),
+                        [f"{rel}: __all__ exports unrecognised value {name} (FR-44)"],
+                    )
+
+    def test_an_allowlisted_value_that_became_a_constant_is_stale(self):
+        stale = "allowlisted but not an exported function or value (FR-44)"
+        for package, values in self.VALUES.items():
+            for name in values:
+                with self.subTest(package=package, name=name):
+                    self.assertEqual(
+                        self.exports(package, f"{name} = 'literal'\n"),
+                        [f"{package}: {name}: {stale}"],
+                    )
+
+    def test_literals_constant_names_and_their_arithmetic_pass_but_typed_callables_fail(self):
+        source = (
+            "import os\n"
+            "NAME = 'x'\n"
+            "LABEL: str = 'label'\n"
+            "TIMEOUT = 2 * 60 * 60\n"
+            "TOTAL = TIMEOUT * 2\n"
+            "COPY = NAME\n"
+            "SEPARATORS = (os.sep, '/')\n"
+        )
+        names = ["NAME", "LABEL", "TIMEOUT", "TOTAL", "COPY", "SEPARATORS"]
+        for package in self.LEGACY:
+            rel = "delegate/src/" + package.replace(".", "/") + "/__init__.py"
             with self.subTest(package=package):
-                self.assertEqual(
-                    self.exports(
-                        package, "import os\nPATH: str = os.path.join('a', 'b')\n", ["PATH"]
-                    ),
-                    [],
-                )
-                for source in (
+                self.assertEqual(self.exports(package, source, names), [])
+                for bad in (
                     "BAD: str = lambda: 'value'\n",
                     "def helper(): pass\nBAD: str = helper\n",
                 ):
-                    self.assertEqual(len(self.exports(package, source, ["BAD"])), 1)
-
-    def test_nested_arithmetic_paths_and_immutable_enum_values_are_constants(self):
-        source = (
-            "import os\nfrom enum import StrEnum\n"
-            "class Choice(StrEnum):\n    A = 'a'\n"
-            "TIMEOUT = 2 * 60 * 60\n"
-            "PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'team')\n"
-            "CHOICES = tuple(Choice)\n"
-        )
-        for package in self.LEGACY:
-            with self.subTest(package=package):
-                self.assertEqual(self.exports(package, source, ["TIMEOUT", "PATH", "CHOICES"]), [])
+                    self.assertEqual(
+                        self.exports(package, bad, ["BAD"]),
+                        [f"{rel}: __all__ exports function BAD (FR-44)"],
+                    )
 
 
 class DelegateSessionForwarding(Sample):
@@ -2956,7 +3011,7 @@ class ObjectExports(Sample):
                 )
 
     def test_an_allowlisted_name_no_longer_exported_as_a_function_is_stale(self):
-        stale = "allowlisted but not an exported function (FR-44)"
+        stale = "allowlisted but not an exported function or value (FR-44)"
         init = 'class close: pass\n__all__ = ["close"]\n'
         self.assertEqual(
             self.found({self.INIT: init}),
