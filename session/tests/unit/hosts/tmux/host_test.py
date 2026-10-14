@@ -430,6 +430,30 @@ class TerminalTest(Base):
             self.host.attach("t1")
 
 
+class AttachTest(Base):
+    def setUp(self):
+        super().setUp()
+        self.tmux.process.side_effect = lambda target: (
+            "4242 $3 %9 5555" if target == "w1" else PROCESS if target == "%7" else None
+        )
+
+    def test_a_launched_session_without_a_valid_process_option_is_refused(self):
+        for value, error in (
+            (None, "^tmux session w1: missing @process; close sessions before upgrading$"),
+            ("4242 $3 %9", r"^tmux session w1: bad @process '4242 \$3 %9'$"),
+        ):
+            with self.subTest(value=value):
+                self.recorded = value
+                with self.assertRaisesRegex(DriverError, error):
+                    self.host.attach("w1")
+
+    def test_a_foreign_session_is_its_active_pane(self):
+        self.kind, self.controlled = None, False
+        handle = self.host.attach("w1")
+        self.assertIs(type(handle), TmuxProcess)
+        self.assertEqual(handle.identity, "4242 $3 %9 5555")
+
+
 class DisplayableTest(Base):
     def test_show_opens_a_pane_per_the_unfolded_display_and_the_grid_settings(self):
         self.tmux.open_pane.return_value = None

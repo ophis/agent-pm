@@ -50,11 +50,14 @@ class Base(Case):
         self.completed(self.control.path)
         self.controlled = True
         self.kind = "detach"
+        self.recorded = PROCESS
         self.tmux.option.side_effect = lambda _pane, key: (
             self.control.path
             if key == "@control" and self.controlled
             else self.kind
             if key == "@kind"
+            else self.recorded
+            if key == "@process"
             else self.tmux.option.return_value
         )
         self.tmux.detach.side_effect = self.detached

@@ -1086,22 +1086,29 @@ class TmuxHost(Host, Displayable):
         return "; ".join(errors)
 
     def attach(self, name: str) -> TmuxProcess:
+        """A session it launched is the pane its launch recorded (@process), whichever pane is
+        active; any other session is its active pane.
+        """
         state = self.tmux.status(_session(name))
         if state is None:
             raise DriverError(f"no tmux session {name}")
         if state == PaneStatus.UNKNOWN:
             raise DriverError(f"tmux session {name}: tmux failed")
         try:
-            process = self.tmux.process(name)
+            kind = self.tmux.option(name, "@kind")
+            launched = kind in ("detach", "terminal")
+            process = self.tmux.option(name, "@process") if launched else self.tmux.process(name)
         except TuiError as e:
             raise DriverError(f"tmux session {name}: {e}") from None
+        if launched and process is None:
+            raise DriverError(
+                f"tmux session {name}: missing @process; close sessions before upgrading"
+            )
+        if launched and not PROCESS_ID.fullmatch(process or ""):
+            raise DriverError(f"tmux session {name}: bad @process {process!r:.80}")
         if process is None:
             raise DriverError(f"no tmux session {name}")
-        try:
-            terminal = self.tmux.option(name, "@kind") == "terminal"
-        except TuiError as e:
-            raise DriverError(f"tmux session {name}: {e}") from None
-        return (TmuxTerminal if terminal else TmuxProcess)(name, process, tmux=self.tmux)
+        return (TmuxTerminal if kind == "terminal" else TmuxProcess)(name, process, tmux=self.tmux)
 
     def list(self, display: Display = None) -> list[str]:
         if display == "":
