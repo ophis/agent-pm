@@ -233,7 +233,7 @@ class Projects(Case):
 
     def test_a_new_table_under_a_known_one_is_taken_as_its_owners(self):
         self.local("[session.hosts.other]\nstatus_line = true\n[session.adapters]\nx = 1\n")
-        with self.assertRaisesRegex(ValueError, "unknown key 'x'"):
+        with self.assertRaisesRegex(ValueError, r"unknown key 'x' in \[session.adapters\]"):
             self.read("session")
         self.local("[session.hosts.other]\nstatus_line = true\n")
         self.assertEqual(self.read("session")["hosts"]["other"], {"status_line": True})
@@ -409,10 +409,30 @@ class Resources(Case):
                 read_project("linear-orchestrator", root=self.root)
 
     def test_unknown_nested_keys_and_non_table_sections_are_errors(self):
-        for text in ("[delegate.roles.pm]\nunknown_field = 1\n", "session = 1\n"):
+        cases = (
+            (
+                "[delegate.roles.pm]\nunknown_field = 1\n",
+                r"unknown key 'unknown_field' in \[delegate.roles.pm\]",
+            ),
+            (
+                "[delegate.roles.pm.unknown]\ntier = 1\n",
+                r"unknown key 'tier' in \[delegate.roles.pm.unknown\]",
+            ),
+            ("session = 1\n", r"\[session\]: want a table"),
+        )
+        for text, error in cases:
             self.local(text)
-            with self.subTest(text=text), self.assertRaises(ConfigFileError):
+            with self.subTest(text=text), self.assertRaisesRegex(ConfigFileError, error):
                 read_resources(self.resources)
+
+    def test_empty_table_schema_supports_new_named_instances(self):
+        Path(self.root, self.package, "session", "config.toml").write_text(
+            SESSION + "[adapters.stub.env]\n"
+        )
+        self.local('[session.adapters.other.env]\nCUSTOM = "value"\n')
+        self.assertEqual(
+            read_resources(self.resources[:1])["adapters"]["other"]["env"], {"CUSTOM": "value"}
+        )
 
     def test_package_location_wins_over_legacy_location(self):
         folder = Path(self.root, "session", "src", "agent_pm", "session")

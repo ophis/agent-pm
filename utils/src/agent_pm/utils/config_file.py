@@ -162,14 +162,16 @@ def _layered(
 def _known_key(schema: Mapping, keys: tuple) -> bool:
     if not keys or keys[0] not in schema:
         return False
+    leaves = list(_leaves(schema, ()))
     return (
         _has(schema, keys)
+        or any(len(k) == len(keys) and k[0] == keys[0] and k[-1] == keys[-1] for k, _ in leaves)
+        or any(len(k) == len(keys) and k[0] == keys[0] for k, _ in leaves)
+        and any(_has(schema, keys[i:]) for i in range(1, len(keys)))
         or any(
-            len(k) == len(keys) and k[0] == keys[0] and k[-1] == keys[-1]
-            for k, _ in _leaves(schema, ())
+            value == {} and len(keys) >= len(k) and keys[0] == k[0] and keys[len(k) - 1] == k[-1]
+            for k, value in leaves
         )
-        or any(_has(schema, keys[i:]) for i in range(1, len(keys)))
-        or any(value == {} and keys[: len(k)] == k for k, value in _leaves(schema, ()))
     )
 
 
