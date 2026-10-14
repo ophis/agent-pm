@@ -1,25 +1,21 @@
-import json
 import os
 import re
-import shlex
 import shutil
 import sys
 
 from agent_pm.session.adapters.base import Tui
-from agent_pm.session.adapters.codex import sessions
+from agent_pm.session.adapters.codex import sessions, tui_plan
 from agent_pm.session.adapters.codex.common import (
     LIMIT_PREFIXES,
     CodexCommon,
     added_dirs,
-    launch_flags,
-    passed,
     refuse,
     reset_at,
 )
 from agent_pm.session.adapters.codex.hook_schema import HOOKS
-from agent_pm.session.adapters.flags import split_flags
+from agent_pm.session.adapters.codex.types import LaunchPlan
 from agent_pm.session.engine.types import ConfigError, Launch, LimitHit, Spec
-from agent_pm.utils import import_roots, printable_abs
+from agent_pm.utils import import_roots
 
 DIRECTORY = os.path.dirname(os.path.abspath(__file__))
 
@@ -46,7 +42,7 @@ class CodexTui(Tui):
         common = self.common
         self.state = common.prepare(spec, persist=False, resume=resume)
         snapshot = self.state.snapshot
-        saved_flags = tuple(snapshot.flags)
+        saved_flags = snapshot.flags
         refuse(saved_flags)
         self.native = self.state.native_id or ""
         env = common.environment(snapshot, interactive=True)
@@ -57,21 +53,11 @@ class CodexTui(Tui):
         if exe is None:
             raise ConfigError("codex not found on PATH")
         exe = os.path.abspath(exe)
-        if not hook or not os.path.isabs(hook[0]):
-            raise ConfigError("Codex tui requires an absolute Tui mode hook command")
         try:
-            roots = json.loads(hook[-1])
-        except (ValueError, RecursionError) as exc:
-            raise ConfigError("Codex tui hook command requires source roots JSON") from exc
-        if (
-            not isinstance(roots, list)
-            or not roots
-            or any(not printable_abs(path) or not os.path.isdir(path) for path in roots)
-            or len(set(roots)) != len(roots)
-        ):
-            raise ConfigError(
-                "Codex tui hook command requires distinct absolute source directories"
-            )
+            hooks = tui_plan.hook_plan(hook)
+        except ValueError as exc:
+            raise ConfigError(str(exc)) from exc
+        roots = hooks.import_roots
         protected_roots = tuple(dict.fromkeys([*import_roots(), *roots]))
         dependencies = [
             *protected_roots,
@@ -90,53 +76,22 @@ class CodexTui(Tui):
             raise ConfigError(str(exc)) from exc
         if not resume:
             self.state = common.save(self.state)
-        commands = {event: shlex.join((*hook, event)) for event in self.hooks}
-        hook_flags = [
-            word
-            for event, command in commands.items()
-            for word in (
-                "-c",
-                (
-                    f'hooks.{event}=[{{hooks=[{{type="command",command={json.dumps(command, ensure_ascii=False)},'
-                    f"timeout={3 if event == 'Interrupt' else 10}}}]}}]"
-                ),
-            )
-        ]
-        _, literal = split_flags(saved_flags)
-        argv = [
+        plan = LaunchPlan(
             exe,
-            *self.common.selector(self.native, resume=resume),
-            "--no-daemon",
-            "-C",
-            snapshot.cwd,
-            "-c",
-            'tui.notification_method="bel"',
-            *launch_flags(snapshot, interactive=True),
-            *hook_flags,
-            *(
-                [*literal, *([prompt] if prompt else [])]
-                if literal
-                else (["--", prompt] if prompt else [])
-            ),
-        ]
-        data = {
-            "argv": argv,
-            "hook": list(hook),
-            "commands": commands,
-            "hook_flags": [*hook_flags, *passed(saved_flags)],
-            "workdir": self.state.workdir,
-            "sid": self.state.sid,
-            "store": store,
-            "import_roots": list(roots),
-            "protect": [*protected_roots, *spec.protect],
-            "add_dirs": added,
-        }
+            self.common.selector(self.native, resume=resume),
+            prompt,
+            hooks,
+            self.state.workdir,
+            self.state.sid,
+            store,
+            (*protected_roots, *spec.protect),
+        )
         return Launch(
             (
                 os.path.realpath(sys.executable),
                 "-I",
                 os.path.join(DIRECTORY, "tui_start.py"),
-                json.dumps(data, ensure_ascii=False),
+                tui_plan.encode(plan),
             ),
             env=env,
             unset=unset,

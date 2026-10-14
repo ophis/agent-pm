@@ -1,8 +1,8 @@
 """Codex startup run with Python -I and one bounded JSON object argument.
 
-Required keys: argv, hook, commands, hook_flags, workdir, sid, store, protect,
-add_dirs, import_roots. import_roots must name distinct absolute source directories
-for the already-imported session and utils packages in the launching interpreter.
+Required keys: executable, selection, prompt, hook, workdir, sid, store, protect,
+import_roots. import_roots must name distinct absolute source directories for the
+already-imported session and utils packages in the launching interpreter.
 """
 
 from __future__ import annotations
@@ -15,6 +15,7 @@ import re
 import signal
 import sys
 import time
+from collections.abc import Mapping
 
 
 class StartError(Exception):
@@ -67,8 +68,9 @@ if __name__ == "__main__":
         sys.exit(1)
 
 try:
-    from agent_pm.session.adapters.codex import app_server, sessions
+    from agent_pm.session.adapters.codex import app_server, sessions, tui_plan
     from agent_pm.session.adapters.codex.hook_schema import HOOKS
+    from agent_pm.session.adapters.codex.types import LaunchPlan
 except ImportError as exc:
     if __name__ != "__main__":
         raise
@@ -125,7 +127,7 @@ def hook_trust(
     cwd: str,
     env: dict[str, str],
     *,
-    commands: dict[str, str],
+    commands: Mapping[str, str],
     root=None,
     termination=None,
     listing=None,
@@ -177,7 +179,7 @@ def hooks_list(exe: str, args: list[str], cwd: str, env: dict[str, str], *, term
         raise StartError(f"codex hooks/list: {e}") from None
 
 
-def trusted(result, cwd: str, commands: dict[str, str]) -> str:
+def trusted(result, cwd: str, commands: Mapping[str, str]) -> str:
     hooks = _listed_hooks(result, cwd)
     ours = [h for h in hooks if h.get("source") == "sessionFlags"]
     trusted = []
@@ -246,10 +248,10 @@ def launch(data, *, trust=hook_trust):
         return _start(_launch_data(data), termination, trust)
 
 
-def _start(data, termination, trust):
-    commands = data["commands"]
-    sessions.absolute_path(data["store"], "store")
-    state = sessions.SessionStore(data["store"]).load(data["workdir"], data["sid"])
+def _start(plan: LaunchPlan, termination, trust):
+    commands = tui_plan.commands(plan.hook)
+    sessions.absolute_path(plan.store, "store")
+    state = sessions.SessionStore(plan.store).load(plan.workdir, plan.sid)
     if state is None:
         raise StartError("Codex tui launch: missing recovery state")
     env = {**os.environ, "CODEX_HOME": state.snapshot.codex_home}
@@ -259,28 +261,26 @@ def _start(data, termination, trust):
             sys.prefix,
             sys.base_prefix,
             sys.executable,
-            data["argv"][0],
-            data["store"],
-            *(word for word in data["hook"] if os.path.isabs(word)),
-            *data["protect"],
+            plan.executable,
+            plan.store,
+            *(word for word in tui_plan.hook_argv(plan.hook) if os.path.isabs(word)),
+            *plan.protect,
         ],
         env,
-        data["add_dirs"],
+        sessions.added_dirs(state.snapshot.flags, state.snapshot.cwd),
     )
     cwd = state.snapshot.cwd
     termination.check()
     trusted_state = trust(
-        exe=data["argv"][0],
-        args=data["hook_flags"],
+        exe=plan.executable,
+        args=tui_plan.trust_args(plan, state.snapshot),
         cwd=cwd,
         env=env,
-        root=data["store"],
+        root=plan.store,
         termination=termination,
         commands=commands,
     )
-    command = data["argv"].copy()
-    index = command.index("--") if "--" in command else len(command)
-    command[index:index] = ["-c", trusted_state]
+    command = tui_plan.execution_argv(plan, state.snapshot, trusted_state)
     os.chdir(cwd)
     termination.before_exec()
     os.execve(command[0], command, env)
@@ -322,44 +322,11 @@ def _listed_hooks(result, cwd):
     return hooks
 
 
-def _launch_data(data):
-    if not isinstance(data, dict) or set(data) != {
-        "argv",
-        "hook",
-        "commands",
-        "hook_flags",
-        "workdir",
-        "sid",
-        "store",
-        "protect",
-        "add_dirs",
-        "import_roots",
-    }:
-        raise StartError("Codex tui launch: invalid launch fields")
-    _import_roots(data["import_roots"])
-    for key in ("argv", "hook", "hook_flags"):
-        if (
-            not isinstance(data[key], list)
-            or not data[key]
-            or any(not isinstance(w, str) or "\0" in w for w in data[key])
-        ):
-            raise StartError("Codex tui launch: invalid command")
-    if not os.path.isabs(data["argv"][0]) or not os.path.isabs(data["hook"][0]):
-        raise StartError("Codex tui launch: expected absolute executables")
-    commands = data["commands"]
-    if (
-        not isinstance(commands, dict)
-        or set(commands) != {event for event, name, _ in HOOKS}
-        or any(not isinstance(word, str) or not word for word in commands.values())
-    ):
-        raise StartError("Codex tui launch: invalid hook commands")
-    for key in ("protect", "add_dirs"):
-        if not isinstance(data[key], list) or any(
-            not isinstance(path, str) or "\0" in path or not os.path.isabs(path)
-            for path in data[key]
-        ):
-            raise StartError(f"Codex tui launch: invalid {key} paths")
-    return data
+def _launch_data(data) -> LaunchPlan:
+    try:
+        return tui_plan.decode(data)
+    except ValueError as exc:
+        raise StartError(str(exc)) from exc
 
 
 if __name__ == "__main__":

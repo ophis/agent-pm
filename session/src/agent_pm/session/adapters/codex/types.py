@@ -87,3 +87,49 @@ class SessionState:
         if any(not isinstance(root, str) for root in roots):
             raise ValueError("session writable roots must contain strings")
         object.__setattr__(self, "writable_roots", roots)
+
+
+@dataclass(frozen=True)
+class HookPlan:
+    prefix: tuple[str, ...]
+    import_roots: tuple[str, ...]
+
+    def __post_init__(self):
+        for name, values in (("prefix", self.prefix), ("import_roots", self.import_roots)):
+            copied = tuple(values)
+            if any(not isinstance(value, str) for value in copied):
+                raise ValueError(f"hook plan {name} must contain strings")
+            object.__setattr__(self, name, copied)
+
+
+@dataclass(frozen=True)
+class LaunchPlan:
+    executable: str
+    selection: tuple[str, ...]
+    prompt: str
+    hook: HookPlan
+    workdir: str
+    sid: str
+    store: str
+    protect: tuple[str, ...]
+
+    def __post_init__(self):
+        if not isinstance(self.hook, HookPlan):
+            raise ValueError("launch hook must be HookPlan")
+        if any(
+            not isinstance(value, str)
+            for value in (self.executable, self.prompt, self.workdir, self.sid, self.store)
+        ):
+            raise ValueError(
+                "launch plan executable, prompt, identity and store must contain strings"
+            )
+        for name, values in (
+            ("selection", self.selection),
+            ("protect", self.protect),
+        ):
+            copied = tuple(values)
+            if any(not isinstance(value, str) for value in copied):
+                raise ValueError(f"launch plan {name} must contain strings")
+            object.__setattr__(self, name, copied)
+        if any(word.startswith("-") for word in self.selection):
+            raise ValueError("Codex tui launch: invalid session selection")

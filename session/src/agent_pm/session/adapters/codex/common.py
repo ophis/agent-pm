@@ -166,8 +166,8 @@ def _config_home(cwd: str, config_home: str | None = None) -> str:
     return os.path.abspath(os.path.join(cwd, os.path.expanduser(config_home or "~/.codex")))
 
 
-def launch_flags(snapshot: Snapshot, *, interactive: bool) -> list[str]:
-    model = [
+def launch_options(snapshot: Snapshot) -> list[str]:
+    result = [
         *(("-m", snapshot.model) if snapshot.model is not None else ()),
         *(
             ("-c", f"model_reasoning_effort={snapshot.effort}")
@@ -175,12 +175,16 @@ def launch_flags(snapshot: Snapshot, *, interactive: bool) -> list[str]:
             else ()
         ),
     ]
-    supplied, _ = split_flags(snapshot.flags)
-    result = [*supplied, *model]
     if not snapshot.project:
         result.extend(("-c", "project_doc_max_bytes=0"))
     for directory in snapshot.dirs:
         result.extend(("--add-dir", directory))
+    return result
+
+
+def launch_flags(snapshot: Snapshot, *, interactive: bool) -> list[str]:
+    supplied, _ = split_flags(snapshot.flags)
+    result = [*supplied, *launch_options(snapshot)]
     if not interactive:
         result[:0] = ["--json", "--skip-git-repo-check"]
     return result

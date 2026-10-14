@@ -20,7 +20,7 @@ from unittest import mock
 from zoneinfo import ZoneInfo
 
 from agent_pm.session import Driver
-from agent_pm.session.adapters.codex import tui_start
+from agent_pm.session.adapters.codex import tui_plan, tui_start
 from agent_pm.session.adapters.codex.sessions import SessionStore
 from agent_pm.session.engine import records
 from agent_pm.session.engine.types import (
@@ -443,7 +443,12 @@ class HookTrustIntegrationTest(Live):
             ),
             self.assertRaisesRegex(tui_start.StartError, "no answer"),
         ):
-            tui_start.hooks_list(data["argv"][0], data["hook_flags"], str(self.cwd), env)
+            tui_start.hooks_list(
+                data["executable"],
+                tui_plan.trust_args(tui_plan.decode(data), run.state.snapshot),
+                str(self.cwd),
+                env,
+            )
         self.assertLess(clock() - started, 3)
         (probe,) = self.calls("app-server")
         self.assertFalse(self.pid_exists(probe["pid"]))

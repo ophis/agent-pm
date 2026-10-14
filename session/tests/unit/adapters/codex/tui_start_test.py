@@ -11,7 +11,7 @@ import subprocess
 import sys
 from unittest import mock
 
-from agent_pm.session.adapters.codex import tui_hook, tui_start
+from agent_pm.session.adapters.codex import tui_hook, tui_plan, tui_start
 
 from session.tests import case
 from session.tests.case import Case
@@ -59,16 +59,15 @@ print(json.dumps([
 class BootstrapTest(Case):
     def data(self, roots=None):
         return {
-            "argv": [sys.executable],
+            "executable": sys.executable,
+            "selection": [],
+            "prompt": "",
             "hook": [sys.executable],
-            "commands": {label: "command-" + label for label, _, _ in tui_start.HOOKS},
-            "hook_flags": ["-c", "fixture"],
             "workdir": self.home,
             "sid": "bootstrap",
             "store": "/uncreated-agent-pm-state/recovery/codex",
             "import_roots": roots or [case.SRC["session"], case.SRC["utils"]],
             "protect": [],
-            "add_dirs": [],
         }
 
     def isolated(self, data, *, code=None, cwd=None, env=None):
@@ -548,7 +547,7 @@ class ProtectTest(Base):
     def test_bad_protect_launch_data_does_not_spawn(self):
         data = json.loads(self.launch(self.spec))
         with mock.patch.object(subprocess, "Popen") as proc:
-            for key in ("protect", "add_dirs"):
+            for key in ("protect",):
                 for paths in ("/protected", ["relative"], [1], ["/a\0b"], None):
                     with (
                         self.subTest(key=key, paths=paths),
@@ -594,7 +593,7 @@ class ProtectTest(Base):
         argv = execute.call_args.args[1]
         start = argv.index("-c", 6)
         self.assertEqual(argv[start : start + len(flags)], list(flags))
-        hook_flags = [word for word in json.loads(data)["hook_flags"]][:-4]
+        hook_flags = tui_plan.hook_flags(tui_plan.decode(json.loads(data)).hook)
         self.assertEqual(
             trust.call_args.kwargs["args"],
             [*hook_flags, "-c", 'model_verbosity="low"', "--disable", "web"],

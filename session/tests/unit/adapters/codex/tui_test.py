@@ -9,7 +9,7 @@ from datetime import datetime
 from unittest import mock
 from zoneinfo import ZoneInfo
 
-from agent_pm.session.adapters.codex import CodexAdapter
+from agent_pm.session.adapters.codex import CodexAdapter, sessions, tui_plan
 from agent_pm.session.engine.types import (
     Access,
     Activity,
@@ -74,15 +74,19 @@ class TuiTest(Base):
         run, launch, data = self.launch()
         self.assertEqual(launch.argv[1], "-I")
         self.assertTrue(launch.argv[2].endswith("/adapters/codex/tui_start.py"))
-        self.assertEqual(data["argv"][:4], ["/protected/codex", "--no-daemon", "-C", str(self.cwd)])
-        self.assertEqual(data["argv"][-2:], ["--", "quoted ' prompt\nnext"])
-        self.assertIn('tui.notification_method="bel"', data["argv"])
-        self.assertNotIn("sandbox_workspace_write.writable_roots=[]", data["argv"])
-        self.assertIn("model_reasoning_effort=low", data["argv"])
-        self.assertIn("gpt-test", data["argv"])
-        self.assertEqual(data["hook"], list(HOOK))
-        self.assertEqual(set(data["commands"]), set(run.hooks))
-        for label, command in data["commands"].items():
+        plan = tui_plan.decode(data)
+        argv = tui_plan.execution_argv(plan, run.state.snapshot, "hooks.state={trusted}")
+        self.assertEqual(argv[:4], ["/protected/codex", "--no-daemon", "-C", str(self.cwd)])
+        self.assertEqual(argv[-2:], ["--", "quoted ' prompt\nnext"])
+        self.assertIn('tui.notification_method="bel"', argv)
+        self.assertNotIn("sandbox_workspace_write.writable_roots=[]", argv)
+        self.assertIn("model_reasoning_effort=low", argv)
+        self.assertIn("gpt-test", argv)
+        self.assertEqual(data["hook"], list(HOOK[:-1]))
+        self.assertEqual(tui_plan.hook_argv(plan.hook), HOOK)
+        commands = tui_plan.commands(plan.hook)
+        self.assertEqual(set(commands), set(run.hooks))
+        for label, command in commands.items():
             self.assertEqual(shlex.split(command), [*HOOK, label])
         self.assertEqual(
             run.hook_state()["adapter_hook"],
@@ -101,9 +105,12 @@ class TuiTest(Base):
         self.rollout()
         other = CodexAdapter({"env": {"CODEX_HOME": str(self.extra)}})
         run, launch, data = self.launch(resume=True, adapter=other)
-        self.assertEqual(data["argv"][:3], ["/protected/codex", "resume", NATIVE])
-        self.assertIn("gpt-test", data["argv"])
-        self.assertIn("sandbox_workspace_write.network_access=false", data["argv"])
+        argv = tui_plan.execution_argv(
+            tui_plan.decode(data), run.state.snapshot, "hooks.state={trusted}"
+        )
+        self.assertEqual(argv[:3], ["/protected/codex", "resume", NATIVE])
+        self.assertIn("gpt-test", argv)
+        self.assertIn("sandbox_workspace_write.network_access=false", argv)
         self.assertEqual(launch.env["CODEX_HOME"], saved.snapshot.codex_home)
         self.assertIn(NATIVE, launch.resume)
 
@@ -440,18 +447,25 @@ class SuppliedFlagsTest(Base):
         flags = ("--add-dir", "../../added", '--config=model_verbosity="low"', "--enable", "web")
         spec = dataclasses.replace(self.spec, flags=flags, env={"S": "s"})
         launch, data = self.launch(spec)
-        argv = data["argv"]
+        plan = tui_plan.decode(data)
+        snapshot = self.common.load(data["workdir"], data["sid"]).snapshot
+        argv = tui_plan.execution_argv(plan, snapshot, "hooks.state={trusted}")
         start = argv.index("--add-dir")
         self.assertEqual(argv[start : start + len(flags)], list(flags))
         self.assertEqual(launch.env["S"], "s")
-        self.assertEqual(data["add_dirs"], [os.path.join(self.cwd, "../../added")])
+        self.assertNotIn("add_dirs", data)
+        self.assertEqual(
+            sessions.added_dirs(snapshot.flags, str(self.cwd)),
+            [os.path.join(self.cwd, "../../added")],
+        )
         hook_flags = [
             word
             for event in self.adapter.tui().hooks
             for word in ("-c", next(word for word in argv if word.startswith(f"hooks.{event}=")))
         ]
         self.assertEqual(
-            data["hook_flags"], [*hook_flags, "-c", 'model_verbosity="low"', "--enable", "web"]
+            tui_plan.trust_args(plan, snapshot),
+            [*hook_flags, "-c", 'model_verbosity="low"', "--enable", "web"],
         )
         self.assert_no_policy(argv)
 
@@ -496,14 +510,24 @@ class SuppliedFlagsTest(Base):
         with self.assertRaisesRegex(ConfigError, "could rewrite hook dependency"):
             self.launch(changed, resume=True)
         changed = dataclasses.replace(spec, flags=("--add-dir", "/unrecorded"))
-        self.assertEqual(self.launch(changed, resume=True)[1]["add_dirs"], [str(guarded)])
+        _, data = self.launch(changed, resume=True)
+        self.assertEqual(
+            sessions.added_dirs(
+                self.common.load(data["workdir"], data["sid"]).snapshot.flags, str(self.cwd)
+            ),
+            [str(guarded)],
+        )
 
 
 class LaunchPolicy(Base):
     def argv(self, adapter, spec, *, resume=False):
         with mock.patch("shutil.which", return_value="/protected/codex"):
             launch = adapter.tui().launch("hi", spec, HOOK, resume=resume)
-        return json.loads(launch.argv[-1])["argv"]
+        return tui_plan.execution_argv(
+            tui_plan.decode(json.loads(launch.argv[-1])),
+            adapter.common.load(spec.workdir, spec.sid).snapshot,
+            "hooks.state={trusted}",
+        )
 
     def test_supplied_policy_and_saved_replay_in_both_modes(self):
         mode = "tui"
@@ -552,7 +576,15 @@ class LaunchPolicy(Base):
                 self.assertIn("gpt-test", argv[:boundary])
                 self.assertIn(str(self.extra), argv[:boundary])
                 self.assertIn("project_doc_max_bytes=0", argv[:boundary])
-                self.assertEqual(sum(word.startswith("hooks.") for word in argv[:boundary]), 6)
+                self.assertEqual(argv[:boundary].count("hooks.state={trusted}"), 1)
+                self.assertEqual(
+                    sum(
+                        word.startswith("hooks.")
+                        for word in argv[:boundary]
+                        if word != "hooks.state={trusted}"
+                    ),
+                    6,
+                )
             self.assertEqual(
                 self.common.load(str(self.work), spec.sid).snapshot.flags, tuple(supplied)
             )
