@@ -24,7 +24,7 @@ from agent_pm.manager.engine.crew import (
     Crew,
 )
 from agent_pm.manager.engine.roster import LOCK_TIMEOUT, Roster
-from agent_pm.manager.engine.types import Held, RosterError, Spec, Stale, State
+from agent_pm.manager.engine.types import Held, RosterError, Spec, Stale, State, StatusError
 from agent_pm.utils import Status
 
 from manager.tests.case import Case, with_ctl
@@ -550,6 +550,33 @@ class CrewTest(Case):
         self.assertEqual(len(self.calls("status")), 1)
         self.assertEqual(self.calls("show"), [])
         self.assertEqual(self.roster.entries()["two"].state, State.LIVE)
+
+    def test_a_key_its_ctl_fails_is_the_only_status_lost(self):
+        self.start("one")
+        self.start("two")
+        ctl.set_session(self.ctl_dir, "one", alive=True)
+        one = Status("one", alive=True, state="working", outcome=None, attach=None)
+        real_run = subprocess.run
+
+        def run(argv, **options):
+            if tuple(argv) == (self.command, "status"):
+                return subprocess.CompletedProcess(argv, 1, one.to_line() + "\n", "two: boom\n")
+            return real_run(argv, **options)
+
+        with mock.patch("subprocess.run", side_effect=run):
+            with self.assertRaises(StatusError) as caught:
+                self.crew.status(("two", "one"))
+            self.assertEqual(caught.exception.statuses, [one])
+            self.assertIn("two:", str(caught.exception))
+            self.assertIn("boom", str(caught.exception))
+            self.assertNotIn("one:", str(caught.exception))
+            stderr = io.StringIO()
+            with self.listed(), contextlib.redirect_stderr(stderr):
+                table = self.crew.attach()
+        self.assertIn("one\tfake\t", table)
+        self.assertIn(f"one\tfake\t{self.roster.entries()['one'].sid}\tworking\t", table)
+        self.assertIn(f"two\tfake\t{self.roster.entries()['two'].sid}\tunknown\t", table)
+        self.assertIn("crew: two: ", stderr.getvalue())
 
     def test_status_rejects_missing_duplicate_and_extra_responses(self):
         self.start("worker")

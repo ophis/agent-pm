@@ -12,7 +12,7 @@ from collections.abc import Iterable
 from dataclasses import replace
 
 from agent_pm.manager.engine.roster import LOCK_TIMEOUT, Roster
-from agent_pm.manager.engine.types import Entry, Lease, RosterError, Spec, State
+from agent_pm.manager.engine.types import Entry, Lease, RosterError, Spec, State, StatusError
 from agent_pm.utils import Record, Status, printable
 
 TIMEOUT = 30
@@ -48,15 +48,15 @@ class Crew:
             env["AGENT_PM_EVENTS"] = self.roster.events
         return env
 
-    def _execute(self, argv: tuple[str, ...], text: str = "", *, events: bool = False) -> str:
+    def _call(self, argv: tuple[str, ...], text: str) -> subprocess.CompletedProcess:
         try:
-            result = subprocess.run(
+            return subprocess.run(
                 argv,
                 input=text,
                 capture_output=True,
                 text=True,
                 timeout=TIMEOUT,
-                env=self._env(events=events),
+                env=self._env(events=False),
             )
         except OSError as error:
             raise RuntimeError(f"{shlex.join(argv)}: {error}") from error
@@ -64,6 +64,9 @@ class Crew:
             raise RuntimeError(
                 f"{shlex.join(argv)}: no response within {TIMEOUT} seconds"
             ) from error
+
+    def _execute(self, argv: tuple[str, ...], text: str = "") -> str:
+        result = self._call(argv, text)
         if result.returncode:
             reason = result.stderr.strip() or f"exit {result.returncode}"
             raise RuntimeError(f"{shlex.join(argv)}: {reason}")
@@ -123,10 +126,14 @@ class Crew:
             raise
         return record
 
-    def _statuses(self, entries: dict[str, Entry]) -> tuple[dict[str, Status], list[str]]:
+    def _statuses(self, entries: dict[str, Entry]) -> tuple[dict[str, Status], dict[str, str]]:
+        """Each entry's Status, else why it has none: one `<ctl> status` per ctl, whose exit 1
+        drops only the keys it answered no Status for (utils answer_keys).
+        """
         groups: dict[tuple[str, ...], dict[str, Record]] = {}
+        owners: dict[tuple[str, tuple[str, ...]], list[str]] = {}
         answers: dict[str, Status] = {}
-        failures: dict[tuple[str, ...], str] = {}
+        failures: dict[str, str] = {}
         for name, entry in entries.items():
             record = entry.record
             if record is None:
@@ -134,44 +141,59 @@ class Crew:
                     name, alive=False, state=entry.state, outcome=None, attach=None
                 )
                 continue
-            group = groups.setdefault(record.ctl, {})
-            if record.name in group and group[record.name] != record:
-                failures[record.ctl] = f"{name}: ambiguous Record name {record.name!r}"
-            group[record.name] = record
+            owners.setdefault((record.name, record.ctl), []).append(name)
+            groups.setdefault(record.ctl, {}).setdefault(record.name, record)
+        for (key, ctl), names in owners.items():
+            if any(entries[name].record != groups[ctl][key] for name in names):
+                groups[ctl].pop(key)
+                for name in names:
+                    failures[name] = f"ambiguous Record name {key!r}"
         for ctl, records in groups.items():
-            if ctl in failures:
+            if not records:
                 continue
+            argv = (*ctl, "status")
+            text = "".join(record.to_line() + "\n" for record in records.values())
             try:
-                raw = self._execute(
-                    (*ctl, "status"), "".join(r.to_line() + "\n" for r in records.values())
-                )
-                statuses = [Status.parse(line) for line in raw.splitlines()]
-            except ValueError as error:
-                failures[ctl] = f"{shlex.join(ctl)} status: invalid Status: {error}"
-                continue
+                result = self._call(argv, text)
+                if result.returncode not in (0, 1):
+                    reason = result.stderr.strip() or f"exit {result.returncode}"
+                    raise RuntimeError(f"{shlex.join(argv)}: {reason}")
+                try:
+                    statuses = [Status.parse(line) for line in result.stdout.splitlines()]
+                except ValueError as error:
+                    raise RuntimeError(f"{shlex.join(argv)}: invalid Status: {error}") from None
+                returned = {status.name: status for status in statuses}
+                if len(returned) != len(statuses) or not returned.keys() <= records.keys():
+                    raise RuntimeError(f"{shlex.join(argv)}: expected one Status per Record")
             except RuntimeError as error:
-                failures[ctl] = str(error)
+                for key in records:
+                    for name in owners[key, ctl]:
+                        failures[name] = str(error)
                 continue
-            returned = {status.name: status for status in statuses}
-            if len(returned) != len(statuses) or returned.keys() != records.keys():
-                failures[ctl] = f"{shlex.join(ctl)} status: expected one Status per Record"
-                continue
-            for name, entry in entries.items():
-                record = entry.record
-                if record is not None and record.ctl == ctl:
-                    answers[name] = replace(returned[record.name], name=name)
-        return answers, list(failures.values())
+            reason = result.stderr.strip() or f"exit {result.returncode}"
+            for key in records:
+                for name in owners[key, ctl]:
+                    if key in returned:
+                        answers[name] = replace(returned[key], name=name)
+                    else:
+                        failures[name] = f"{shlex.join(argv)}: no Status: {reason}"
+        return answers, failures
 
     def status(self, names: Iterable[str] = ()) -> list[Status]:
+        """The selected entries' Statuses; StatusError when any failed, holding the others'."""
         entries = self.roster.entries()
         selected = tuple(names) or tuple(sorted(entries))
         missing = set(selected) - entries.keys()
         if missing:
             raise ValueError(f"not in roster: {', '.join(sorted(missing))}")
         answers, failures = self._statuses({name: entries[name] for name in selected})
+        statuses = [answers[name] for name in selected if name in answers]
         if failures:
-            raise RuntimeError("\n".join(failures))
-        return [answers[name] for name in selected]
+            raise StatusError(
+                "\n".join(f"{name}: {failures[name]}" for name in selected if name in failures),
+                statuses,
+            )
+        return statuses
 
     def _control(self, verb: str, records: Iterable[Record]) -> dict[tuple[str, ...], str]:
         groups: dict[tuple[str, ...], list[Record]] = {}
@@ -213,8 +235,8 @@ class Crew:
                 print(f"crew: adopt {record.name}: {error}", file=sys.stderr)
         entries = self.roster.entries()
         answers, failures = self._statuses(entries)
-        for failure in failures:
-            print(f"crew: {failure}", file=sys.stderr)
+        for name, failure in failures.items():
+            print(f"crew: {name}: {failure}", file=sys.stderr)
         shown: list[Record] = []
         for name, entry in tuple(entries.items()):
             if name not in answers:

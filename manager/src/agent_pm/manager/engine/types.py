@@ -3,7 +3,7 @@
 from dataclasses import dataclass
 from enum import StrEnum
 
-from agent_pm.utils import Record
+from agent_pm.utils import Record, Status
 
 
 @dataclass(frozen=True)
@@ -50,3 +50,11 @@ class Stale(RosterError):
 
 class Held(RosterError):
     pass
+
+
+class StatusError(RuntimeError):
+    """Some keys' status failed, each named in the message; statuses: the other keys' answers."""
+
+    def __init__(self, message: str, statuses: list[Status]):
+        super().__init__(message)
+        self.statuses = statuses
