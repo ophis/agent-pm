@@ -1,5 +1,6 @@
 """HarnessDelegate plans before writing and persists its identity for durable views."""
 
+import hashlib
 import json
 import os
 import stat
@@ -20,8 +21,9 @@ from agent_pm.delegate import (
     Spec,
 )
 from agent_pm.delegate.engine.harness_delegate import HarnessDelegate
+from agent_pm.delegate.engine.state import RunState
 from agent_pm.session import ConfigError as SessionConfigError
-from agent_pm.session import Exited, LimitHit, Liveness, Reply, Usage, Window
+from agent_pm.session import Exited, Launch, LimitHit, Liveness, Reply, Usage, Window
 from agent_pm.utils import Record
 
 from delegate.tests.case import REPO, child_env
@@ -205,15 +207,16 @@ class Views(HarnessCase):
 
     def test_attach_refuses_missing_malformed_and_foreign_metadata(self):
         os.mkdir(self.work)
+        os.makedirs(os.path.dirname(self.state_record()), exist_ok=True)
         for value in (None, "not json", "{}", '{"worker": true}'):
             with self.subTest(value=value):
                 if value is not None:
-                    with open(
-                        os.path.join(self.work, "delegate.json"), "w", encoding="utf-8"
-                    ) as file:
-                        file.write(value)
-                with self.assertRaises(ConfigError):
+                    for path in (self.state_record(), os.path.join(self.work, "delegate.json")):
+                        with open(path, "w", encoding="utf-8") as file:
+                            file.write(value)
+                with self.assertRaises(ConfigError) as caught:
                     HarnessDelegate.attach(self.work)
+                self.assertIn(self.work, str(caught.exception))
         self.assertEqual((HarnessSession.started, RecordingHost.launches), ([], []))
 
     def test_attach_refuses_a_stored_host_removed_from_config(self):
@@ -525,6 +528,127 @@ class Completion(HarnessCase):
         self.assertEqual(len(seen), 1)
         self.assertIsInstance(seen[0], Begun)
         self.assertFalse(HarnessSession.live)
+
+
+class StateDir(HarnessCase):
+    def test_construction_writes_the_state_record_and_its_published_copy(self):
+        self.make()
+        record = self.state_record()
+        key = hashlib.sha256(os.fsencode(os.path.abspath(self.work))).hexdigest()
+        self.assertEqual(record, os.path.join(self.agent_pm, "delegates", f"{key}.json"))
+        with open(record, "rb") as file:
+            payload = file.read()
+        with open(os.path.join(self.work, "delegate.json"), "rb") as file:
+            self.assertEqual(file.read(), payload)
+        for path in (record, os.path.join(self.work, "delegate.json")):
+            self.assertEqual(stat.S_IMODE(os.stat(path).st_mode), 0o600)
+        self.assertEqual(stat.S_IMODE(os.stat(os.path.dirname(record)).st_mode), 0o700)
+
+    def test_no_lock_file_lands_in_the_workdir(self):
+        self.make().run()
+        self.make(host="agent", harness_host="harness").detach()
+        self.assertEqual([name for name in os.listdir(self.work) if name.endswith(".lock")], [])
+
+    def test_reads_take_the_state_record_not_the_published_copy(self):
+        self.make().run()
+        with open(os.path.join(self.work, "delegate.json"), "w", encoding="utf-8") as file:
+            file.write("edited by the agent")
+        view = HarnessDelegate.attach(self.work)
+        self.assertEqual(view.outcome().status, "done")
+        self.assertEqual(self.make().run().returncode, 0)
+
+    def test_a_refused_construction_writes_no_state_record(self):
+        with self.assertRaises(ConfigError):
+            self.make(role="absent-role")
+        self.assertFalse(os.path.lexists(self.state_record()))
+        self.assertFalse(os.path.lexists(self.work))
+
+    def test_a_foreground_run_holds_the_run_lock_against_a_new_construction(self):
+        delegate = self.make()
+        seen = []
+
+        def construct(event):
+            if isinstance(event, Begun):
+                with self.assertRaises(ConfigError) as caught:
+                    self.make()
+                seen.append(str(caught.exception))
+
+        delegate.run(construct)
+        self.assertEqual(seen, [f"{self.work}: delegate is still alive"])
+        self.assertEqual(self.make().run().returncode, 0)
+        self.assertEqual(self.metadata()["attempt"], 2)
+
+
+class Corrupt(HarnessCase):
+    def corrupt(self, text):
+        self.make()
+        with open(self.state_record(), "w", encoding="utf-8") as file:
+            file.write(text)
+
+    def test_a_corrupt_record_is_replaced_keeping_a_readable_attempt(self):
+        for text, attempt in (
+            ("not json", 1),
+            ("[1]", 1),
+            ('{"version": 2, "attempt": 4}', 5),
+            ('{"version": 1, "attempt": 6}', 7),
+            ('{"attempt": true}', 1),
+            ('{"attempt": 0}', 1),
+        ):
+            with self.subTest(text=text):
+                self.work = os.path.join(self.home, f"corrupt-{attempt}-{len(text)}")
+                self.corrupt(text)
+                self.make()
+                self.assertEqual(self.metadata()["attempt"], attempt)
+
+    def test_attach_by_workdir_or_record_refuses_a_corrupt_record(self):
+        self.corrupt('{"version": 2}')
+        for call in (
+            lambda: HarnessDelegate.attach(self.work),
+            lambda: HarnessDelegate.attach(Record.parse(self.record_line())),
+        ):
+            with self.subTest(call=call), self.assertRaises(ConfigError) as caught:
+                call()
+            self.assertIn(self.work, str(caught.exception))
+
+    def record_line(self):
+        return Record(
+            1, "role", "n", (), SID, self.work, ("agent-pm-delegate",), ("x",), None, None
+        ).to_line()
+
+    def test_a_held_run_lock_keeps_a_corrupt_record(self):
+        self.corrupt("not json")
+        with RunState(self.work).run_lock(), self.assertRaises(ConfigError) as caught:
+            self.make()
+        self.assertEqual(str(caught.exception), f"{self.work}: delegate is still alive")
+        with open(self.state_record(), encoding="utf-8") as file:
+            self.assertEqual(file.read(), "not json")
+
+    def test_a_live_harness_named_by_a_corrupt_record_keeps_it(self):
+        HarnessSession.hosts["harness"].detach("x-drive", Launch(("x",), cwd=self.home))
+        self.corrupt('{"harness_host": "harness", "harness_name": "x-drive", "attempt": 2}')
+        with self.assertRaises(ConfigError) as caught:
+            self.make()
+        self.assertEqual(str(caught.exception), f"{self.work}: delegate is still alive")
+        RecordingHost.processes["harness", "x-drive"].close()
+        self.make()
+        self.assertEqual(self.metadata()["attempt"], 3)
+
+    def test_an_unknown_harness_host_in_a_corrupt_record_is_refused(self):
+        self.corrupt('{"harness_host": "ghost", "harness_name": "x-drive"}')
+        ConfiguredSession.reset()
+        with self.assertRaises(ConfigError) as caught:
+            self.make(session_cls=ConfiguredSession)
+        self.assertEqual(str(caught.exception), "unknown host ghost")
+        with open(self.state_record(), encoding="utf-8") as file:
+            self.assertEqual(json.load(file)["harness_host"], "ghost")
+
+    def test_a_symlinked_state_record_is_refused(self):
+        self.make()
+        target = os.path.join(self.home, "elsewhere.json")
+        os.replace(self.state_record(), target)
+        os.symlink(target, self.state_record())
+        with self.assertRaises(ConfigError):
+            HarnessDelegate.attach(self.work)
 
 
 class Attempts(HarnessCase):

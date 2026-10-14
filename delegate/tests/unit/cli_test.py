@@ -16,8 +16,9 @@ from agent_pm.delegate.composer import RunParams
 from agent_pm.delegate.composer.prompt import RESUME
 from agent_pm.delegate.engine.harness_delegate import HarnessDelegate
 from agent_pm.delegate.engine.runner import STOP_LIMIT
+from agent_pm.delegate.engine.state import RunState
 from agent_pm.session import DriverError, NotDisplayable
-from agent_pm.utils import Record, Status, file_lock
+from agent_pm.utils import Record, Status
 
 from delegate.tests.application_case import DRIVER, SID, SPLIT, TUI
 from delegate.tests.case import PY, Case, committed
@@ -281,19 +282,13 @@ class InProcess(Base):
         )
         self.assertEqual(
             sorted(os.listdir(self.work)),
-            [
-                "delegate.json",
-                "delegate.json.lock",
-                "delegate.json.run.lock",
-                "out.md",
-                "run.jsonl",
-            ],
+            ["delegate.json", "out.md", "run.jsonl"],
         )
 
     def test_an_answer_while_the_run_is_alive_exits_2_and_starts_nothing(self):
         spec = Spec("Hello.", self.work, task="echo", mode="in_process", runtime="fake", sid=SID)
         self.delegate_cls()("dummy-tester", spec)
-        with file_lock(os.path.join(self.work, "delegate.json.run"), own=True):
+        with RunState(self.work).run_lock():
             code, out, err = self.runs("--mode", "in_process", "--sid", SID, "--resume")
         self.assertEqual(
             (code, out, err), (2, "", f"delegate: {self.work}: delegate is still alive\n")

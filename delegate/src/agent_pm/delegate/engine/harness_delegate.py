@@ -2,11 +2,9 @@
 
 from __future__ import annotations
 
-import fcntl
 import json
 import os
 import signal
-import stat
 import sys
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, fields, is_dataclass, replace
@@ -21,6 +19,7 @@ from agent_pm.delegate.engine.config import package_dirs
 from agent_pm.delegate.engine.drivers import AgentDriver, Driver, InstructionDriver
 from agent_pm.delegate.engine.plan import plan
 from agent_pm.delegate.engine.runner import execute
+from agent_pm.delegate.engine.state import RunState
 from agent_pm.delegate.engine.types import (
     ConfigError,
     Event,
@@ -56,11 +55,8 @@ from agent_pm.utils import (
     Display,
     Record,
     Status,
-    file_lock,
     import_env,
     load_class,
-    read_regular,
-    save,
     thaw,
     under,
 )
@@ -197,6 +193,7 @@ class HarnessDelegate(Delegate):
             ),
         )
         self.workdir = accepted.spec.workdir
+        self.store = RunState(self.workdir)
         self._state = _State(
             role,
             accepted,
@@ -213,24 +210,47 @@ class HarnessDelegate(Delegate):
 
     def _persist_new(self) -> None:
         try:
-            os.makedirs(self.workdir, exist_ok=True)
-            with file_lock(self._path, own=True):
-                if read_regular(self._path, own=True) is not None:
-                    previous = self._read()
-                    if self._alive(previous):
-                        raise ConfigError(f"{self.workdir}: delegate is still alive")
-                    self._state = replace(self._state, attempt=previous.attempt + 1)
+            with self.store.mutex():
+                payload = self.store.read()
+                if payload is not None:
+                    self._state = replace(self._state, attempt=self._replacing(payload))
                 self._save(self._state)
         except OSError as error:
             raise ConfigError(str(error)) from None
 
+    def _replacing(self, payload: bytes) -> int:
+        """The attempt replacing the run `payload` records, refused while that run is alive."""
+        try:
+            previous = self._parse(payload)
+        except ConfigError:
+            return self._salvaged(payload)
+        if self._alive(previous):
+            raise ConfigError(f"{self.workdir}: delegate is still alive")
+        return previous.attempt + 1
+
+    def _salvaged(self, payload: bytes) -> int:
+        """A corrupt record's run counts as alive while its run lock is held or the harness it
+        names lives; its attempt is kept when readable.
+        """
+        try:
+            data = json.loads(payload)
+        except ValueError:
+            data = None
+        data = data if isinstance(data, dict) else {}
+        host, name = data.get("harness_host"), data.get("harness_name")
+        if self.store.running() or (
+            isinstance(host, str)
+            and isinstance(name, str)
+            and (process := self._process(host, name)) is not None
+            and process.alive()
+        ):
+            raise ConfigError(f"{self.workdir}: delegate is still alive")
+        attempt = data.get("attempt")
+        return attempt + 1 if type(attempt) is int and attempt >= 1 else 1
+
     @property
     def _harness_host(self) -> Host:
         return self._harness_override or self.session_cls.host(self._state.harness_host)
-
-    @property
-    def _path(self) -> str:
-        return os.path.join(self.workdir, "delegate.json")
 
     def _configure(self) -> None:
         try:
@@ -254,10 +274,12 @@ class HarnessDelegate(Delegate):
         }
         spec["team"] = None if team is None else {"root": team.root, "dirs": team.dirs}
         values["plan"], values["spec"], values["version"] = accepted, spec, 1
-        save(self._path, json.dumps(values), own=True, durable=True)
+        self.store.write(json.dumps(values))
 
     def _read(self) -> _State:
-        payload = read_regular(self._path, own=True)
+        return self._parse(self.store.read())
+
+    def _parse(self, payload: bytes | None) -> _State:
         try:
             if payload is None:
                 raise ValueError("missing metadata")
@@ -326,6 +348,7 @@ class HarnessDelegate(Delegate):
             raise ConfigError("record has no workdir")
         view = cls.__new__(cls)
         view.workdir = os.path.abspath(workdir)
+        view.store = RunState(view.workdir)
         view._state = view._read()
         try:
             view.composer = composer or Composer(
@@ -393,16 +416,16 @@ class HarnessDelegate(Delegate):
             raise ConfigError(str(error)) from None
 
     def _harness(self, state: _State) -> HostProcess | None:
-        if not state.detached:
-            return None
+        return self._process(state.harness_host, state.harness_name) if state.detached else None
+
+    def _process(self, host_name: str, name: str) -> HostProcess | None:
         try:
             host = (
                 self._harness_override
-                if self._harness_override is not None
-                and self._harness_override.name == state.harness_host
-                else self.session_cls.host(state.harness_host)
+                if self._harness_override is not None and self._harness_override.name == host_name
+                else self.session_cls.host(host_name)
             )
-            return host.attach(state.harness_name)
+            return host.attach(name)
         except DriverError:
             return None
         except SessionConfigError as error:
@@ -414,29 +437,10 @@ class HarnessDelegate(Delegate):
             return process is not None and process.alive()
         if state.completed:
             return False
-        if self._running():
+        if self.store.running():
             return True
         agent = self._agent(state)
         return agent is not None and agent.state() == Liveness.LIVE
-
-    def _running(self) -> bool:
-        try:
-            descriptor = os.open(
-                self._path + ".run.lock", os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK
-            )
-        except FileNotFoundError:
-            return False
-        try:
-            opened = os.fstat(descriptor)
-            if not stat.S_ISREG(opened.st_mode) or opened.st_uid != os.getuid():
-                raise ConfigError(f"{self.workdir}: invalid delegate run lock")
-            try:
-                fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            except BlockingIOError:
-                return True
-            return False
-        finally:
-            os.close(descriptor)
 
     def alive(self) -> bool:
         return self._alive(self._read())
@@ -532,8 +536,8 @@ class HarnessDelegate(Delegate):
         )
 
     def run(self, on_event: Callable[[Event], None] | None = None) -> Result:
-        with file_lock(self._path + ".run", own=True):
-            with file_lock(self._path, own=True):
+        with self.store.run_lock():
+            with self.store.mutex():
                 if self._current().completed:
                     raise ConfigError(f"{self.workdir}: delegate run already completed")
             callback = (
@@ -549,7 +553,7 @@ class HarnessDelegate(Delegate):
 
             def emit(event: Event) -> None:
                 if isinstance(event, Finished):
-                    with file_lock(self._path, own=True):
+                    with self.store.mutex():
                         state = self._current()
                         self._state = replace(state, result=event.result, completed=True)
                         self._save(self._state)
@@ -594,7 +598,7 @@ class HarnessDelegate(Delegate):
         return record
 
     def detach(self, *, outer: Outer | None = None) -> Record:
-        with file_lock(self._path, own=True):
+        with self.store.mutex():
             state = self._current()
             if self._alive(state):
                 return self._record(state)
@@ -604,7 +608,7 @@ class HarnessDelegate(Delegate):
             return self._detach(state)
 
     def resume(self) -> Record:
-        with file_lock(self._path, own=True):
+        with self.store.mutex():
             state = self._state = self._read()
             if self._alive(state) or state.result is not None and state.result.outcome is not None:
                 return self._record(state)
