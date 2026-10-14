@@ -1,4 +1,6 @@
-"""Standard-library test isolation, child environments and owned process cleanup."""
+"""Standard-library test isolation, child environments, a tree's project import roots and owned
+process cleanup.
+"""
 
 import atexit
 import contextlib
@@ -45,6 +47,26 @@ def _tmux_directory():
                 atexit.register(_remove_tmux_directory, pid, directory)
             _TMUX_DIRECTORIES[pid] = directory
         return _TMUX_DIRECTORIES[pid]
+
+
+def project_roots(repo: str) -> tuple[str, ...]:
+    """Each <repo>/<dir>/src whose agent_pm/ (no __init__.py) holds just package <dir> (- as _)."""
+    found = []
+    for name in sorted(os.listdir(repo)):
+        top = os.path.join(repo, name, "src", "agent_pm")
+        subs = [s for s in _entries(top) if os.path.isfile(os.path.join(top, s, "__init__.py"))]
+        if subs == [name.replace("-", "_")] and not os.path.isfile(
+            os.path.join(top, "__init__.py")
+        ):
+            found.append(os.path.dirname(top))
+    return tuple(found)
+
+
+def _entries(path: str) -> list[str]:
+    try:
+        return os.listdir(path)
+    except OSError:
+        return []
 
 
 def clean_env(base=None, *import_roots):

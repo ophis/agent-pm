@@ -46,7 +46,6 @@ from agent_pm.utils.markdown import fenced, unfenced
 from agent_pm.utils.paths import (
     STATE,
     import_env,
-    import_roots,
     module_roots,
     overlaps,
     package_dirs,
@@ -115,7 +114,6 @@ __all__ = [
     "freeze",
     "holds",
     "import_env",
-    "import_roots",
     "json_records",
     "kill_group",
     "load_class",

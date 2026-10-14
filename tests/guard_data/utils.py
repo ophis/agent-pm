@@ -10,7 +10,6 @@ STANDALONE = frozenset({"utils/src/agent_pm/utils/process_control.py"})
 
 PACKAGE_CLIMB_ALLOWED = {
     ("utils/src/agent_pm/utils/paths.py", "ROOT"): "TASK-393",
-    ("utils/src/agent_pm/utils/paths.py", "import_roots"): "TASK-393",
     ("utils/src/agent_pm/utils/config_file.py", "read_project"): "TASK-393",
 }
 
