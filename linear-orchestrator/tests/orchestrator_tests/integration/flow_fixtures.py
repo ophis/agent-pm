@@ -307,6 +307,9 @@ class TmuxFlow(Flow):
         return self.server.inside(MANAGER)
 
     def live(self, session):
+        # tmux on Linux (CI: 3.4) can leave an exited pane process unreaped, its session listed,
+        # until another child of the server exits: a no-op job is one
+        self.server.tmux("run-shell", "-b", "true")
         return self.server.tmux("has-session", "-t", f"={session}").returncode == 0
 
     def wait_end(self, sid, ident, ends=1, role="engineer", timeout=TIMEOUT):
