@@ -29,7 +29,7 @@ def provider(api, cfg):
             self.role, self.spec = role, spec
 
         @classmethod
-        def attach(cls, record_or_workdir):
+        def attach(cls, record_or_workdir, *, sid=None):
             workdir = (
                 record_or_workdir.workdir
                 if isinstance(record_or_workdir, Record)
@@ -42,6 +42,8 @@ def provider(api, cfg):
             if not entries:
                 raise ConfigError(f"{view.issue}: no recorded run")
             view.entry = entries[-1]
+            if sid is not None and sid != view.entry.sid:
+                raise ConfigError(f"sid {sid} is not the run's")
             return view
 
         @classmethod

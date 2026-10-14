@@ -73,9 +73,11 @@ class FakeDelegate(Delegate):
             raise ConfigError(f"no role {role!r}")
 
     @classmethod
-    def attach(cls, record_or_workdir):
+    def attach(cls, record_or_workdir, *, sid=None):
         workdir = getattr(record_or_workdir, "workdir", record_or_workdir)
-        _load(workdir)
+        state = _load(workdir)
+        if sid is not None and sid != state["sid"]:
+            raise ConfigError(f"sid {sid} is not the run's")
         view = cls.__new__(cls)
         view.workdir = os.path.abspath(workdir)
         return view

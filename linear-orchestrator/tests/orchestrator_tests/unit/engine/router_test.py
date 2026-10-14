@@ -817,6 +817,28 @@ class RouterEntry(OuterBase):
         )
         self.assertEqual(self.todo["state"], "In Review")
 
+    def test_a_claim_whose_run_fails_to_build_or_start_is_not_stranded(self):
+        for attr, error in (
+            ("construct_error", DelegateConfigError("role engineer: refused")),
+            ("detach_error", DriverError("detach: duplicate")),
+        ):
+            with self.subTest(attr=attr):
+                self.lines, self.todo["state"], self.fake.mutations = [], "Todo", []
+                self.api.construct_error = self.api.detach_error = None
+                setattr(self.api, attr, error)
+                self.assertEqual(self.entry("--issue", ID), 1)
+                self.assertEqual(self.todo["state"], "In Progress")
+                self.lines = self.raw_runs().splitlines() if os.path.exists(self.runs) else []
+                setattr(self.api, attr, None)
+                self.assertEqual(self.entry(now=NOW + timedelta(hours=3)), 0)
+                said = self.said()
+                self.assertFalse([line for line in said if line.startswith("recover-skip")], said)
+                self.assertTrue(
+                    [line for line in said if line.startswith("recover TASK-7 to=todo")]
+                )
+                self.assertIn("claim TASK-7 role=engineer client=a", said)
+                self.assertEqual(said[-1], "launch TASK-7 exit=0")
+
     def test_a_live_run_is_refused(self):
         for role in ("engineer", "pm"):
             with self.subTest(role=role):

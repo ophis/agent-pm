@@ -3,6 +3,7 @@
 import os
 from dataclasses import replace
 
+from agent_pm.delegate import ConfigError as DelegateConfigError
 from agent_pm.delegate import NotDisplayable
 from agent_pm.linear_orchestrator.engine import runs
 from agent_pm.linear_orchestrator.engine.linear_run import LinearRun
@@ -21,7 +22,7 @@ class CapturedDelegate(ReadyDelegate):
 
 class OtherDelegate(FakeDelegate):
     @classmethod
-    def attach(cls, record_or_workdir):
+    def attach(cls, record_or_workdir, *, sid=None):
         raise AssertionError("current default must not attach this run")
 
 
@@ -118,6 +119,21 @@ class Runs(RunCase):
         self.start(sid=newer)
         with self.assertRaisesRegex(ConfigError, "no longer the latest"):
             LinearRun.attach("TASK-1", cfg=self.cfg, sid=SID)
+
+    def test_a_newer_row_without_its_own_delegate_state_never_views_the_previous_session(self):
+        self.start()
+        newer = "abcdef12-0000-4000-8000-000000000000"
+        runs.note(
+            self.cfg.runs_log,
+            "start",
+            issue="TASK-1",
+            sid=newer,
+            role="researcher",
+            client="fake",
+            delegate_kind="fake",
+        )
+        with self.assertRaisesRegex(DelegateConfigError, f"sid {newer} is not the run's"):
+            LinearRun.attach("TASK-1", cfg=self.cfg)
 
     def test_legacy_rows_use_harness_even_when_current_default_changes(self):
         owner = LinearRun(
