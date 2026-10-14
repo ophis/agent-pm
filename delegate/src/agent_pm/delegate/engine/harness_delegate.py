@@ -99,6 +99,7 @@ class _State:
 
 TUI_START_TIMEOUT = 30  # seconds: a detached tui run's agent session to go live
 TUI_POLL = 0.1  # seconds
+EVENTS_ENV = "AGENT_PM_EVENTS"  # a launcher's events file: no harness inherits it
 
 
 class HarnessDelegate(Delegate):
@@ -624,7 +625,9 @@ class HarnessDelegate(Delegate):
             )
         except (ValueError, SessionConfigError) as error:
             raise ConfigError(str(error)) from None
-        environment = {key: value for key, value in os.environ.items() if key != "PYTHONPATH"}
+        environment = {
+            key: value for key, value in os.environ.items() if key not in ("PYTHONPATH", EVENTS_ENV)
+        }
         environment.update(source_path(roots))
         return Launch(
             (sys.executable, "-P", "-s", "-m", "agent_pm.delegate.engine.harness", self.workdir),

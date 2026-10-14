@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """agent-pm-delegate: run a role on HarnessDelegate, deliver its prompt, or query its runs.
-`run --detach` starts the run's harness and prints the run's Record line on stdout.
+`run --detach` starts the run's harness and prints the run's Record line on stdout; its events file
+is --events, else $AGENT_PM_EVENTS, which main reads once and removes from its environment.
 
 Exits 0 on success, 2 on usage or config errors, 1 on other failures.
 """
@@ -13,7 +14,7 @@ from collections.abc import Sequence
 from dataclasses import asdict
 
 from agent_pm.delegate.composer import Composer, RunParams
-from agent_pm.delegate.engine.harness_delegate import HarnessDelegate
+from agent_pm.delegate.engine.harness_delegate import EVENTS_ENV, HarnessDelegate
 from agent_pm.delegate.engine.runner import report, say
 from agent_pm.delegate.engine.types import Begun, ConfigError, Preview, Spec
 from agent_pm.session import ConfigError as SessionConfigError
@@ -27,6 +28,7 @@ def main(
     argv: Sequence[str] | None = None, *, delegate_cls: type[HarnessDelegate] = HarnessDelegate
 ) -> int:
     argv = sys.argv[1:] if argv is None else list(argv)
+    events = os.environ.pop(EVENTS_ENV, "") or None
     parser = argparse.ArgumentParser(prog="agent-pm-delegate")
     commands = parser.add_subparsers(dest="command", required=True)
     run = commands.add_parser("run", help="run a role in an agent session")
@@ -50,7 +52,7 @@ def main(
     _common_options(prompt)
     a = parser.parse_args(argv)
     if a.command == "run":
-        return _run(a, run, argv[1:], delegate_cls)
+        return _run(a, run, argv[1:], delegate_cls, events)
     if a.command == "prompt":
         return _prompt(a, prompt, delegate_cls)
     return _query(a, delegate_cls)
@@ -81,7 +83,9 @@ def _run_options(ap: argparse.ArgumentParser) -> None:
     ap.add_argument("--resume", action="store_true")
     ap.add_argument("--mode", choices=[m.value for m in Mode], default=Mode.HEADLESS.value)
     ap.add_argument("--detach", action="store_true", help="run in a harness session of its own")
-    ap.add_argument("--events", metavar="FILE", help="--detach: the run's events file")
+    ap.add_argument(
+        "--events", metavar="FILE", help="--detach: the run's events file; default $AGENT_PM_EVENTS"
+    )
     ap.add_argument(
         "--display",
         metavar="D",
@@ -95,6 +99,7 @@ def _run(
     ap: argparse.ArgumentParser,
     argv: Sequence[str],
     delegate_cls: type[HarnessDelegate],
+    events: str | None,
 ) -> int:
     if a.list:
         if extra := next(
@@ -109,6 +114,8 @@ def _run(
         return 0
     if a.role is None:
         ap.error("the following arguments are required: --role")
+    if a.detach and a.events is None:
+        a.events = events
     try:
         _check(a)
     except ConfigError as e:
@@ -168,6 +175,8 @@ def _check(a: argparse.Namespace) -> None:
         raise ConfigError("--detach needs --events")
     if a.detach and a.out == "-":
         raise ConfigError("--detach needs --out PATH")
+    if a.detach and a.mode == Mode.IN_PROCESS:
+        raise ConfigError("--detach needs --mode headless or tui")
 
 
 def _begun(event) -> None:
