@@ -2100,7 +2100,8 @@ class ObjectExports(Sample):
     def test_the_allowlisted_wrappers_pass_each_with_a_one_line_reason(self):
         self.assertEqual(self.found(), [])
         self.assertEqual(
-            set(guards.OBJECT_EXPORTS_ALLOWED), {("agent_pm.session", n) for n in self.ENTRY_FUNCTIONS}
+            set(guards.OBJECT_EXPORTS_ALLOWED),
+            {("agent_pm.session", n) for n in self.ENTRY_FUNCTIONS},
         )
         for key, reason in guards.OBJECT_EXPORTS_ALLOWED.items():
             with self.subTest(key=key):

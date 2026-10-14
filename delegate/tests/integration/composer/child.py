@@ -10,7 +10,6 @@ import tempfile
 
 from delegate.tests import case
 from delegate.tests.case import PY, child_env
-from utils.tests.case import local_section
 
 TIMEOUT = 60
 PRELUDE = "import json, os, sys\nfrom agent_pm.delegate import composer\n"
@@ -71,7 +70,7 @@ class Case(case.Case):
 
     def local(self, text: str, mode: str = "w") -> None:
         with open(os.path.join(self.agent_pm, "config.local.toml"), mode, encoding="utf-8") as f:
-            f.write(local_section(text, "delegate"))
+            f.write(text)
 
     def child(self, code: str, *args: str):
         res = subprocess.run(

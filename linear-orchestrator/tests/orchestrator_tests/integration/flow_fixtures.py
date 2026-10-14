@@ -47,7 +47,9 @@ PROJECT = {"id": run_fixtures.PROJECT, "name": "Widgets"}
 
 REPO = _CFG["project_repos"][PROJECT["id"]]
 
-_OUTPUTS = {r: o["output"] for r, o in tomllib.loads(run_fixtures.CORE_LOCAL)["delegate"]["roles"].items()}
+_OUTPUTS = {
+    r: o["output"] for r, o in tomllib.loads(run_fixtures.CORE_LOCAL)["delegate"]["roles"].items()
+}
 
 [(DOCS, BRANCH)] = {(o["repo"], o["branch"]) for o in _OUTPUTS.values()}
 
