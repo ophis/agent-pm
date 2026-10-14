@@ -103,12 +103,6 @@ class RunningMode(ABC):
                 raise ConfigError(f"{key}: tui mode only")
 
     @staticmethod
-    def _no_tui_fields(spec: Spec) -> Spec:
-        if spec.protect:
-            raise ConfigError("protect: tui mode only")
-        return spec
-
-    @staticmethod
     def _selected(spec: Spec, adapter: Adapter) -> None:
         check_selection(spec.flags, adapter.forbidden_selection, adapter.valued_flags)
 

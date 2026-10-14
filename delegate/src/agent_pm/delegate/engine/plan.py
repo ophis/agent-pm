@@ -148,6 +148,7 @@ def plan(run: RunConfig, spec: Spec, *, driver: Driver) -> Plan:
         flags=flags,
         env=env,
         reply_tags=(PROGRESS, OUTCOME),
+        protect=spec.protect,
     )
     _check_team_dirs(
         team,
