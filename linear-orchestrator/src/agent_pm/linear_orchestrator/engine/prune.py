@@ -154,18 +154,18 @@ class Pruner:
             return
         at = ["git", *GUARD, "-C", clone, f"--git-dir={common}"]
         try:
-            git(self.run_git, clone, at[-1], "worktree", "prune", pre=GUARD)
+            git(clone, at[-1], "worktree", "prune", run=self.run_git, pre=GUARD)
             head = self.run_git(
                 [*at, "symbolic-ref", "-q", "--short", "refs/remotes/origin/HEAD"], SHORT
             )
             default = head.stdout.strip().removeprefix("origin/") if head.returncode == 0 else None
             listed = git(
-                self.run_git,
                 clone,
                 at[-1],
                 "for-each-ref",
                 "--format=%(refname:short)",
                 f"refs/heads/{ident}-*",
+                run=self.run_git,
                 pre=GUARD,
             )
             for branch in listed.split():
@@ -185,7 +185,7 @@ class Pruner:
                     == 0
                     for b in dict.fromkeys(filter(None, (branch, default)))
                 ):
-                    git(self.run_git, clone, at[-1], "branch", "-D", branch, pre=GUARD)
+                    git(clone, at[-1], "branch", "-D", branch, run=self.run_git, pre=GUARD)
                     self.say("prune-removed", ident, what=f"branch {branch} in {clone}")
                 else:
                     self.say(

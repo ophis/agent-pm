@@ -20,7 +20,7 @@ class GitError(RuntimeError):
         super().__init__(f"git {shown[:200]}: {err_text(result)}")
 
 
-def git(run: Runner, wt: str, *args: str, timeout: int = SHORT, pre: tuple[str, ...] = ()) -> str:
+def git(wt: str, *args: str, run: Runner, timeout: int = SHORT, pre: tuple[str, ...] = ()) -> str:
     for i in range(5):
         res = run(["git", *pre, "-C", wt, *args], timeout)
         if res.returncode == 0:

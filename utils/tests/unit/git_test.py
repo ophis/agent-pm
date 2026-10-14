@@ -173,7 +173,7 @@ class Retry(Case):
 
         with unittest.mock.patch.object(agent_pm.utils.git.time, "sleep") as sleep:
             try:
-                return agent_pm.utils.git.git(run, "/w", *args), calls, sleep
+                return agent_pm.utils.git.git("/w", *args, run=run), calls, sleep
             except RuntimeError as e:
                 return e, calls, sleep
 
@@ -216,9 +216,9 @@ class Retry(Case):
     def test_pre_options_go_before_the_worktree_and_the_timeout_is_passed(self):
         seen = []
         agent_pm.utils.git.git(
-            lambda argv, t: seen.append((argv, t)) or ok(),
             "/w",
             "status",
+            run=lambda argv, t: seen.append((argv, t)) or ok(),
             timeout=9,
             pre=("-c", "a=b"),
         )
