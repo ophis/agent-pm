@@ -1,7 +1,8 @@
 """Workers through `agent-pm-crew run -- agent-pm-session start` (FR-17, FR-20) on the real
 commands (manager/tests/live_crew.py): the worker's Record and entry, a gone worker's crew resume,
 a live one's no-op, main's crew_integration_test.py dialog waits (C:429, C:528) on this entry,
-and main's test_client_flag_starts_its_worker_and_a_restart_waits_for_the_old_one (FR-36).
+main's test_client_flag_starts_its_worker_and_a_restart_waits_for_the_old_one (FR-36), and one
+pane per live worker however often crew attach shows it.
 """
 
 import glob
@@ -88,6 +89,20 @@ class WorkerTest(LiveCrew):
         self.assertTrue(self.live("w1"))
         self.assertTrue(has_pair(logged(self.log("w1"))[-1]["argv"], "--resume", record.sid))
         self.assertEqual(self.roster()["w1"].state, State.LIVE)
+
+
+class PaneTest(LiveCrew):
+    def test_three_attaches_leave_each_worker_its_one_pane(self):
+        for name in ("w1", "w2"):
+            self.record(self.worker(name))
+        window = f"={MANAGER}:"
+        panes = {name: self.server.pane_of(name) for name in ("w1", "w2")}
+        before = set(self.server.panes(window))
+        self.assertTrue(set(panes.values()) <= before, (panes, before))
+        for _ in range(3):
+            self.ok(self.crew("attach"))
+            self.assertEqual(set(self.server.panes(window)), before)
+            self.assertEqual({name: self.server.pane_of(name) for name in panes}, panes)
 
 
 class DialogTest(LiveCrew):

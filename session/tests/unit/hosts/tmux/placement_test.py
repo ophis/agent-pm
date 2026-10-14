@@ -496,6 +496,46 @@ class ContainerTest(Case):
         self.assertNotIn("osascript", fake.commands())
 
 
+class ShownOnceTest(PaneFixture):
+    """open_pane opens no second pane while one its opener opened still shows the session."""
+
+    def fake(self, pane, opener="own", live="", clients=(0, "")):
+        return FakeTmux(
+            results={
+                "display-message": (0, "own\n"),
+                "list-sessions": (0, f"$1\ts\t{opener}\t{pane}\t{SOCK}\n"),
+                "list-panes": (0, live),
+                "list-clients": clients,
+                "pgrep": (1,),
+                "split-window": (0, "%10\n"),
+            }
+        )
+
+    def test_a_session_its_opener_already_shows_gets_no_second_pane(self):
+        attached = self.clients((1, "/dev/ttys009", "%5"))
+        for fake, check in (
+            (self.fake("%5", live="%2\n%5\n"), LIVE),
+            (self.fake("ABC-1", clients=attached), clients_of("s")),
+        ):
+            with self.subTest(check=check):
+                for _ in range(3):
+                    self.assertIsNone(self.show(fake, INSIDE))
+                    self.assertEqual(self.stderr.getvalue(), ATTACH)
+                self.assertEqual(fake.calls, [OWN, SESSIONS, check] * 3)
+
+    def test_a_pane_opens_once_none_shows_the_session_or_for_another_opener(self):
+        own = self.clients((5, "/dev/ttys004", "%9"))
+        for fake in (
+            self.fake("%5", live="%2\n", clients=own),
+            self.fake("ABC-1", clients=seq((0, ""), own)),
+            self.fake("%5", opener="other", live="%5\n", clients=own),
+            self.fake("", live="%5\n", clients=own),
+        ):
+            with self.subTest(calls=fake.calls):
+                self.assertIsNone(self.show(fake, INSIDE))
+                self.assertEqual(fake.calls[-3:], [split_window("-h", "%3"), *record("own", "%10")])
+
+
 class PanePlacementTest(PaneFixture):
     def test_iterm2_pane_split_from(self):
         fake = FakeTmux(
@@ -1024,7 +1064,6 @@ class StackTest(Case):
             ("$6", "e", "cmd ", "%6", SOCK),
             ("$6", "f", "other", "%6", SOCK),
             ("$6", "g", "c:md:x", "%6", SOCK),
-            ("$5", "s", "cmd", "%5", SOCK),
             ("5", "h", "cmd", "%5", SOCK),
             ("$5x", "i", "cmd", "%5", SOCK),
             ("$4", "j", "cmd", "", SOCK),

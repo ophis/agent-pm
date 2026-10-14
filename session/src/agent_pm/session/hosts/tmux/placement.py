@@ -107,10 +107,12 @@ def open_pane(
     proc=subprocess.run,
     tile_window=None,
 ) -> str | None:
-    """Opens a pane on the session, recording @opener and @pane. Grid mode (_grid): splits the pane
-    _grid picks and tiles the window per retile and per_column, ignoring split and split_from. Else
-    below the newest open @pane of the opener's other sessions, else right of the opener's pane; or
-    beside split_from's pane on side split. None or the failure.
+    """Opens a pane on the session, recording @opener and @pane; none while a pane that opener
+    opened still shows it (_open; checked when the sessions are listed: not for an iTerm2 opener
+    with split or split_from). Grid mode (_grid): splits the pane _grid picks and tiles the window
+    per retile and per_column, ignoring split and split_from. Else below the newest open @pane of
+    the opener's other sessions, else right of the opener's pane; or beside split_from's pane on
+    side split. None or the failure.
     """
     _layout(split, split_from, opener)
     validate_per_column(per_column)
@@ -129,6 +131,8 @@ def open_pane(
                     raise
         in_tmux = opener is not None and ":" not in opener
         sessions = _sessions(proc) if in_tmux or (split is None and split_from is None) else []
+        if opener is not None and _open(session, opener, sessions, proc):
+            return None
         grid = _grid(opener, sessions, proc, own=own) if opener is not None and in_tmux else None
         if grid is not None:
             window, manager, at, side = grid
@@ -180,6 +184,22 @@ def _sessions(proc) -> list[list[str]]:
         for f in (line.split("\t") for line in lines)
         if len(f) == 5 and SESSION_ID.fullmatch(f[0])
     ]
+
+
+def _open(session: str, opener: str, sessions: list[list[str]], proc) -> bool:
+    """Whether a pane opener opened still shows session: its @opener and @pane, that tmux pane
+    alive, or an iTerm2 pane's client attached.
+    """
+    row = next((f for f in sessions if f[1] == session), None)
+    if row is None or row[2] != opener or not row[3]:
+        return False
+    try:
+        if PANE.fullmatch(row[3]):
+            panes = checked(["list-panes", "-a", "-F", "#{pane_id}"], proc).stdout.split()
+            return row[3] in panes
+        return bool(_clients(session, proc))
+    except TuiError:
+        return False
 
 
 def _grid(
