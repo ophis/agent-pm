@@ -67,6 +67,8 @@ class _Group:
     def _anchor(channel, argv, cwd, **options):
         try:
             os.setpgid(0, 0)
+            for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
+                signal.signal(sig, lambda *_: None)
             if os.isatty(0):
                 prior = signal.signal(signal.SIGTTOU, signal.SIG_IGN)
                 os.tcsetpgrp(0, os.getpid())
@@ -238,7 +240,6 @@ class ProcessControl:
 
     def _serve(self, listener, group, on_exit) -> int:
         stopping: int | None = None
-        deadline: float | None = None
 
         def stop(signum, _frame):
             nonlocal stopping
@@ -268,9 +269,6 @@ class ProcessControl:
                 if stopping is not None:
                     group.send(stopping)
                     stopping = None
-                    deadline = time.monotonic() + 5
-                if deadline is not None and time.monotonic() >= deadline:
-                    group.kill()
                 live = not started or group.live()
             except OSError:
                 live = True
