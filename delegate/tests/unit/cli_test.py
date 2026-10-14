@@ -426,7 +426,7 @@ class Configures(Base):
         for text, want in (
             (
                 '[delegates]\nharness_host = "nope"\n',
-                "delegate: [delegates] harness_host: want one of",
+                "delegate: [delegates] harness_host: want one of tmux",
             ),
             (
                 "[delegates]\nkind = 1\n",
@@ -436,9 +436,7 @@ class Configures(Base):
             with self.subTest(text):
                 self.local(text)
                 code, out, err = self.runs()
-                self.assertEqual((code, out), (2, ""))
-                self.assertTrue(err.startswith(want), err)
-                self.assertEqual(len(err.splitlines()), 1, err)
+                self.assertEqual((code, out, err), (2, "", f"{want}\n"))
         self.assertEqual((self.launches(), os.path.exists(self.work)), ([], False))
 
     def test_list_works_without_a_runtime(self):

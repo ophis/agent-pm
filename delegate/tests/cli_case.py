@@ -1,6 +1,7 @@
 """Shared fixtures for unit and integration coverage."""
 
 import io
+import os
 from contextlib import redirect_stderr, redirect_stdout
 from unittest import mock
 
@@ -51,22 +52,33 @@ class RefusingRun(fake_adapter.FakeInProcess):
 
 
 class Base(ApplicationCase):
+    def setUp(self):
+        super().setUp()
+        self.enterContext(mock.patch.dict(os.environ))
+        for key in ("TMUX", "TMUX_PANE"):
+            os.environ.pop(key, None)
+
     ran = None
 
     def delegate_cls(self) -> type[HarnessDelegate]:
-        """HarnessDelegate on this test's driver; its run returns self.ran when set."""
+        """HarnessDelegate on this test's driver; its run returns self.ran when set. Its Session
+        class is configured apart from the shared one.
+        """
         case, driver = self, self.driver
+        session_cls = type("CliSession", (driver.session_cls,), {})
 
         class Driven(HarnessDelegate):
             def __init__(self, role, spec, **placement):
-                super().__init__(role, spec, driver=driver, **placement)
+                super().__init__(role, spec, driver=driver, session_cls=session_cls, **placement)
 
             def run(self, on_event=None):
                 return super().run(on_event) if case.ran is None else case.ran
 
             @classmethod
             def preview(cls, role, spec, **placement):
-                return super().preview(role, spec, driver=driver, **placement)
+                return super().preview(
+                    role, spec, driver=driver, session_cls=session_cls, **placement
+                )
 
         return Driven
 
