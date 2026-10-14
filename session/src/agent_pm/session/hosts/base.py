@@ -174,7 +174,10 @@ class Host(ABC):
         record: Record | None = None,
         metadata: Mapping[str, str] | None = None,
     ) -> Terminal:
-        """metadata carries private sid/client/generation separately from the published Record."""
+        """Its program gets launch.env, the terminal's own identity (TERM among it) replacing the
+        caller's; detach's gets launch.env as given. metadata carries private sid/client/generation
+        separately from the published Record.
+        """
         ...
 
     @abstractmethod

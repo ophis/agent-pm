@@ -24,6 +24,7 @@ from session.tests.case import PY, REPO, child_env
 from session.tests.modules import adapter_loader
 
 OTHER_DISPLAY = "elsewhere:1.2"
+TERMINAL_IDENTITY = ("TMUX", "TMUX_PANE", "TERM")
 DEADLINE = 10
 POLL = 0.05
 PUT = (
@@ -177,10 +178,23 @@ class HostContract:
         terminal.press(tuple(map(KeyPress.parse, PRESSED)))
         self.poll(lambda: read(out) == RECEIVED.hex(), f"{RECEIVED!r} in {out}")
 
-    def test_the_program_gets_the_supplied_environment_verbatim(self):
-        for kind in ("detach", "terminal"):
-            with self.subTest(kind=kind):
-                self.check_environment(kind)
+    def test_a_detached_program_gets_the_supplied_environment_verbatim(self):
+        got, env = self.check_environment("detach")
+        self.assertEqual(got, env, f"program env: {got!r}")
+
+    def test_a_terminal_program_gets_the_hosts_terminal_identity_and_the_rest_verbatim(self):
+        got, env = self.check_environment("terminal")
+        self.assertEqual(
+            {key: value for key, value in got.items() if key not in TERMINAL_IDENTITY},
+            {key: value for key, value in env.items() if key not in TERMINAL_IDENTITY},
+            f"program env: {got!r}",
+        )
+        for key in TERMINAL_IDENTITY:
+            self.assertNotEqual(got.get(key), env[key], key)
+        self.assert_terminal_identity(got)
+
+    def assert_terminal_identity(self, env: dict[str, str]) -> None:
+        """The Host's own TERMINAL_IDENTITY values in a terminal program's `env`."""
 
     def check_environment(self, kind):
         name, out = self.fresh(), self.file("env")
@@ -215,10 +229,10 @@ class HostContract:
             for entry in self.poll(lambda: read(out), f"env in {out}").split("\0")
             if entry
         )
-        self.assertEqual(got, env, f"program env: {got!r}")
         with open(gate, "w", encoding="utf-8"):
             pass
         self.assertTrue(process.wait_exit(DEADLINE))
+        return got, env
 
     def test_a_foreign_display_is_kept_and_listed_only_under_itself(self):
         name = self.fresh()

@@ -45,7 +45,7 @@ class LaunchTest(Case):
         self.handles.append(process)
         return process
 
-    def test_literal_arguments_supplied_path_cwd_and_environment_reach_both_kinds(self):
+    def test_literal_argv_path_cwd_and_env_reach_both_kinds_terminals_keep_their_identity(self):
         bindir = Path(self.home, "bin with spaces")
         bindir.mkdir()
         script = bindir / "literal-program"
@@ -79,7 +79,12 @@ class LaunchTest(Case):
                 got = json.loads(out.read_text())
                 self.assertEqual(got["argv"], data)
                 self.assertTrue(os.path.samefile(got["cwd"], self.home))
-                self.assertEqual({key: got["env"][key] for key in env}, env)
+                given = {key: value for key, value in env.items() if key not in ("TMUX", "TERM")}
+                self.assertEqual({key: got["env"][key] for key in given}, given)
+                self.assertEqual(
+                    {key: got["env"][key] == env[key] for key in ("TMUX", "TERM")},
+                    {"TMUX": kind == "detach", "TERM": kind == "detach"},
+                )
                 self.assertTrue(process.alive())
                 gate.touch()
                 self.assertTrue(process.wait_exit(WAIT))

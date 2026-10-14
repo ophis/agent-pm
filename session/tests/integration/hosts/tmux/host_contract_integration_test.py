@@ -45,6 +45,13 @@ class TmuxHostContractTest(HostContract, Case):
 
         return super().poll(poked, what)
 
+    def assert_terminal_identity(self, env):
+        terminal = self.server.tmux("show-options", "-gv", "default-terminal")
+        self.assertEqual(terminal.returncode, 0, terminal.stderr)
+        self.assertEqual(env["TERM"], terminal.stdout.strip())
+        self.assertEqual(env["TMUX"].split(",")[0], self.server.socket)
+        self.assertRegex(env["TMUX_PANE"], r"\A%[0-9]+\Z")
+
     def test_list_without_a_display_names_every_detached_session_sorted(self):
         first, second = self.fresh(), self.fresh()
         self.start("detach", second, SLEEP)

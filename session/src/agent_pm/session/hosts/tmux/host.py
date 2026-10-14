@@ -96,6 +96,9 @@ EXITED_EVENT = (
 BORDER = " #{session_name} #{@state} "
 
 
+TERMINAL_IDENTITY = ("TMUX", "TMUX_PANE", "TERM")  # a terminal program's are its pane's (FR-47)
+
+
 TERMINAL_KEYS = (
     "TMUX",
     "TMUX_PANE",
@@ -957,7 +960,11 @@ class TmuxHost(Host, Displayable):
         events = self.prepare_events(events)
         parts = self.unfold(display)
         control = ProcessControl.prepare(
-            launch.argv, launch.cwd, env=launch.env, blocked_signals=launch.blocked_signals
+            launch.argv,
+            launch.cwd,
+            env=launch.env,
+            inherit_env=TERMINAL_IDENTITY if terminal else (),
+            blocked_signals=launch.blocked_signals,
         )
         process = None
         try:
