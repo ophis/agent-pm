@@ -19,16 +19,22 @@ from agent_pm.utils import LOCAL_ENV_VARS
 from session.tests.case import SPAWNS, Case
 from session.tests.source_roots import PACKAGE_ROOTS
 from session.tests.unit.adapters.claude.support import (
+    API_KEY_PROBE,
     CEILING,
     CONFIG,
     HOOK,
+    PROBE_REPLY,
+    PROBE_RESULT,
     SID,
+    SUBSCRIPTION_PROBE,
     UNSET,
     Base,
     ClaudeCommon,
     Spec,
     event,
     info_line,
+    probe_init,
+    stdout,
     tui_launch,
     unified,
     usage,
@@ -468,7 +474,54 @@ class ParseUsageTest(Case):
             with self.subTest(line=line):
                 self.assertEqual(usage(line), Usage(None, None))
 
-    def test_no_event_or_a_bad_info_is_none(self):
+    def test_a_successful_probe_without_an_event_has_no_telemetry(self):
+        self.assertEqual(ClaudeCommon.parse_usage(API_KEY_PROBE), Usage(None, None))
+        self.assertEqual(ClaudeAdapter({}).usage(API_KEY_PROBE), Usage(None, None))
+
+    def test_a_subscription_probe_reads_its_windows(self):
+        self.assertEqual(
+            ClaudeCommon.parse_usage(SUBSCRIPTION_PROBE),
+            Usage(Window(25.0, 1760000000.0), Window(40.0, 1760500000.0)),
+        )
+
+    def test_a_failed_probe_is_none(self):
+        init = probe_init("ANTHROPIC_API_KEY")
+        refused = {
+            **PROBE_RESULT,
+            "is_error": True,
+            "result": "Invalid API key · Please run /login",
+        }
+        unflagged = {k: v for k, v in PROBE_RESULT.items() if k != "is_error"}
+        rows = (
+            "",
+            "garbage",
+            stdout(init),
+            stdout(init, PROBE_REPLY),
+            stdout(init, PROBE_REPLY, refused),
+            stdout(init, PROBE_REPLY, unflagged),
+            *(
+                stdout(init, PROBE_REPLY, {**PROBE_RESULT, "is_error": v})
+                for v in (None, "false", 0)
+            ),
+            stdout(init, PROBE_RESULT, refused),
+        )
+        for output in rows:
+            with self.subTest(output=output[-80:]):
+                self.assertIsNone(ClaudeCommon.parse_usage(output))
+
+    def test_an_event_decides_beside_a_result(self):
+        rejected = info_line(
+            {
+                "status": "rejected",
+                "resetsAt": 9,
+                "unifiedWindows": {"five_hour": {"utilization": 0.25}},
+            }
+        )
+        refused = json.dumps({**PROBE_RESULT, "is_error": True})
+        self.assertIsNone(usage(event(five=0.1), info_line(None), json.dumps(PROBE_RESULT)))
+        self.assertEqual(usage(rejected, refused), Usage(Window(100.0, 9.0), None))
+
+    def test_no_successful_result_or_a_bad_info_is_none(self):
         rows = (
             (),
             ("garbage",),

@@ -1,5 +1,5 @@
 """One role's run to its Result: an invalid outcome gets one fix of the same session, a usage limit
-ends the run, the deliverable is saved to `out`; records go to <workdir>/run.jsonl. A Mode's policy
+or a failed turn ends the run, the deliverable is saved to `out`; records go to <workdir>/run.jsonl. A Mode's policy
 (POLICIES) starts the session, sends the fix and answers each turn end and IdleTimeout: go on
 (None), END or GiveUp.
 """
@@ -43,6 +43,7 @@ from agent_pm.session import (
     Session,
     Stderr,
     TurnEnd,
+    TurnFailed,
 )
 from agent_pm.utils import holds, printable, save
 
@@ -275,10 +276,13 @@ class _Attempts:
         self.on_event(Begun(p.sid))
         fixed = False
         while True:
-            rc, last, limit = self.attempt(handle)
+            rc, last, limit, failed = self.attempt(handle)
             diagnostic = f"the client exited {rc}" if rc else ""
             if limit:
                 return Result(rc, None, f"usage limit; {_resets(limit.resets_at)}", limit)
+            if failed:
+                detail = f" ({failed.detail})" if failed.detail else ""
+                return Result(rc, None, f"the client's turn failed: {failed.error}{detail}")
             if (block := outcome_block(last or "")) is None:
                 return Result(rc, None, diagnostic or "the agent run returned no outcome")
             try:
@@ -320,11 +324,12 @@ class _Attempts:
                 return f"cannot remove the stale out: {e}"
         return ""
 
-    def attempt(self, handle: Session) -> tuple[int, str | None, Limit | None]:
-        """rc 0 when the policy ended it, the session running on."""
+    def attempt(self, handle: Session) -> tuple[int, str | None, Limit | None, TurnFailed | None]:
+        """rc 0 when the policy or a failed turn ended it, the session running on."""
         rc: int | None = None
         last: str | None = None
         limit: Limit | None = None
+        failed: TurnFailed | None = None
         replied: str | None = None
         for event in handle.events():
             answer = None
@@ -343,6 +348,10 @@ class _Attempts:
                 self.note("idle", seconds=event.seconds)
                 if not limit:
                     answer = self.policy.idle(event.seconds)
+            elif isinstance(event, TurnFailed):
+                self.note("turn_failed", error=event.error, detail=event.detail)
+                failed = event
+                break
             elif isinstance(event, LimitHit):
                 self.note("limit", resets_at=event.resets_at)
                 limit = Limit(event.resets_at)
@@ -357,10 +366,10 @@ class _Attempts:
                     raise DriverError("tui session has no name")
                 command = f": {handle.attach_command()}" if handle.displayable else ""
                 say(f"delegate: {answer.reason}; session {name} left open{command}")
-                return 0, None, None
+                return 0, None, None, None
             if answer == END:
                 break
-        return rc or 0, last, limit
+        return rc or 0, last, limit, failed
 
     def reply(self, text: str) -> str:
         for line in text.splitlines():
