@@ -81,26 +81,31 @@ class AnnotatingResult(unittest.TextTestResult):
 
     def addUnexpectedSuccess(self, test):
         super().addUnexpectedSuccess(test)
-        self.report(test, "unexpected success")
+        self.report(test.id(), "unexpected success")
 
     def annotate(self, test, err):
         kind, value = err[0].__name__, str(err[1]).strip()
-        self.report(test, f"{kind}: {value.splitlines()[0]}" if value else kind)
+        self.report(test.id(), f"{kind}: {value.splitlines()[0]}" if value else kind)
 
-    def report(self, test, line):
-        self.failed.append((test.id(), line))
-        annotate(test.id(), line)
+    def report(self, test_id, line):
+        self.failed.append((test_id, line))
+        annotate(test_id, line)
 
 
 def run(suite, title):
     result = unittest.TextTestRunner(verbosity=2, resultclass=AnnotatingResult).run(suite)
+    if GATE:
+        for error in GATE.violations:
+            result.report(title, str(error))
+        GATE.violations.clear()
+    successful = result.wasSuccessful() and not result.failed
     if result.failed:
         cells = [(test, line.replace("|", "\\|")) for test, line in result.failed]
         rows = [f"| `{test}` | {line} |" for test, line in cells]
         table = "\n".join(["| Test | Error |", "| --- | --- |", *rows])
         append("GITHUB_STEP_SUMMARY", f"### {title}: {len(rows)} failed\n\n{table}\n\n")
-    append(STATE, "passed\n" if result.wasSuccessful() else "failed\n")
-    return 0 if result.wasSuccessful() else 1
+    append(STATE, "passed\n" if successful else "failed\n")
+    return 0 if successful else 1
 
 
 def crash(code, lines):

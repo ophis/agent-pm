@@ -98,6 +98,70 @@ print(json.dumps(sorted(blocked)))
 
 
 class SandboxGates(Case):
+    def test_violations_after_the_last_stop_test_fail_the_run_with_their_origin(self):
+        script = """import json, os, sys, threading, unittest
+from pathlib import Path
+import isolation, run_tests
+
+root, scope = Path(sys.argv[1]), sys.argv[2]
+__file__ = str(root / "fixture.py")
+sandbox = root / "sandbox"
+sandbox.mkdir()
+state = root / "state"
+os.environ["RUN_TESTS_STATE"] = str(state)
+os.environ["AGENT_PM_TEST_SANDBOX"] = str(sandbox)
+run_tests.GATE = isolation.install(root)
+run_tests.GATE.unit_only = True
+def swallowed_violation():
+    try:
+        sys.audit("socket.bind")
+    except RuntimeError:
+        pass
+class Tail(unittest.TestCase):
+    def test_pass(self):
+        pass
+    @classmethod
+    def tearDownClass(cls):
+        if scope == "class":
+            swallowed_violation()
+def tearDownModule():
+    if scope == "module":
+        swallowed_violation()
+def late_thread():
+    swallowed_violation()
+class LateSuite(unittest.TestSuite):
+    def run(self, result, debug=False):
+        result = super().run(result, debug)
+        if scope == "thread":
+            thread = threading.Thread(target=late_thread)
+            thread.start()
+            thread.join()
+        return result
+code = run_tests.run(LateSuite([Tail("test_pass")]), "Tail fixture")
+print(json.dumps({"code": code, "state": state.read_text()}))
+"""
+        for scope, origin in (
+            ("class", "tearDownClass"),
+            ("module", "tearDownModule"),
+            ("thread", "late_thread"),
+        ):
+            with self.subTest(scope=scope):
+                root = Path(self.home, scope)
+                root.mkdir()
+                proc = subprocess.run(
+                    [sys.executable, "-P", "-S", "-c", script, str(root), scope],
+                    env=clean_env(None, REPO, str(Path(REPO, ".github"))),
+                    capture_output=True,
+                    text=True,
+                    timeout=10,
+                )
+                self.assertEqual(proc.returncode, 0, proc.stderr)
+                found = json.loads(proc.stdout.splitlines()[-1])
+                self.assertEqual(found["code"], 1)
+                self.assertTrue(found["state"].endswith("failed\n"), found)
+                self.assertIn("forbidden socket.bind", proc.stdout)
+                self.assertIn(origin, proc.stdout)
+
     @unittest.skipUnless(shutil.which("tmux"), "tmux is unavailable")
     def test_supervisor_stops_its_private_default_tmux_server(self):
         root = Path(self.home)
