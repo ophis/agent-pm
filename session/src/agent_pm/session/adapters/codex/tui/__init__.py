@@ -7,12 +7,13 @@ import shlex
 import shutil
 import sys
 from collections.abc import Mapping
-from dataclasses import asdict
+from dataclasses import asdict, dataclass
 from types import MappingProxyType
 
 from agent_pm.session.adapters.base import Tui
 from agent_pm.session.adapters.codex.common import (
     LIMIT_PREFIXES,
+    VALUED,
     CodexCommon,
     RecoveryError,
     SessionStore,
@@ -21,14 +22,15 @@ from agent_pm.session.adapters.codex.common import (
     inside,
     launch_options,
     native_id,
-    passed,
     refuse,
     reset_at,
 )
-from agent_pm.session.adapters.codex.common.types import HookPlan, LaunchPlan, Snapshot
-from agent_pm.session.adapters.common import split_flags
+from agent_pm.session.adapters.codex.common.types import Snapshot
+from agent_pm.session.adapters.common import scan, split_flags
 from agent_pm.session.engine.types import ConfigError, HookKind, Launch, LimitHit, Spec
 from agent_pm.utils import import_roots
+
+PASSED = ("-c", "--enable", "--disable")
 
 DIRECTORY = os.path.dirname(os.path.abspath(__file__))
 
@@ -56,6 +58,24 @@ FIELDS = frozenset(
         "import_roots",
     }
 )
+
+
+@dataclass(frozen=True)
+class HookPlan:
+    argv: tuple[str, ...]
+    import_roots: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class LaunchPlan:
+    executable: str
+    selection: tuple[str, ...]
+    prompt: str
+    hook: HookPlan
+    workdir: str
+    sid: str
+    store: str
+    protect: tuple[str, ...]
 
 
 def _hook_identity(value) -> tuple[str, str] | None:
@@ -300,6 +320,15 @@ def hook_flags(plan: HookPlan) -> tuple[str, ...]:
             ),
         )
     )
+
+
+def passed(flags) -> list[str]:
+    return [
+        word
+        for flag in scan(flags, VALUED)
+        if flag.word in PASSED and flag.value is not None
+        for word in (flag.word, flag.value)
+    ]
 
 
 def trust_args(plan: LaunchPlan, snapshot: Snapshot) -> list[str]:

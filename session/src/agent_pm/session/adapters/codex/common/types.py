@@ -48,21 +48,3 @@ class SessionState:
 
     def __post_init__(self):
         object.__setattr__(self, "writable_roots", tuple(self.writable_roots))
-
-
-@dataclass(frozen=True)
-class HookPlan:
-    argv: tuple[str, ...]
-    import_roots: tuple[str, ...]
-
-
-@dataclass(frozen=True)
-class LaunchPlan:
-    executable: str
-    selection: tuple[str, ...]
-    prompt: str
-    hook: HookPlan
-    workdir: str
-    sid: str
-    store: str
-    protect: tuple[str, ...]

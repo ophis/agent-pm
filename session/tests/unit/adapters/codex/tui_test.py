@@ -15,8 +15,8 @@ from unittest import mock
 from zoneinfo import ZoneInfo
 
 from agent_pm.session.adapters.codex import CodexAdapter, common, tui
-from agent_pm.session.adapters.codex.common.types import HookPlan, LaunchPlan, Snapshot
-from agent_pm.session.adapters.codex.tui import HOOKS, CodexTui
+from agent_pm.session.adapters.codex.common.types import Snapshot
+from agent_pm.session.adapters.codex.tui import HOOKS, CodexTui, HookPlan, LaunchPlan
 from agent_pm.session.engine.types import (
     Access,
     Activity,

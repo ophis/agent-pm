@@ -626,7 +626,6 @@ RESET = re.compile(
 )
 RESERVED = ("-C", "-p", "--dangerously-bypass-hook-trust")
 RESERVED_KEYS = ("hooks",)
-PASSED = ("-c", "--enable", "--disable")
 
 
 def reset_at(message, environment):
@@ -669,15 +668,6 @@ def refuse(flags) -> None:
         )
         if flag.word in RESERVED or key in RESERVED_KEYS:
             raise ConfigError(f"{flag.text}: the Codex adapter sets hooks, session and cwd")
-
-
-def passed(flags) -> list[str]:
-    return [
-        word
-        for flag in scan(flags, VALUED)
-        if flag.word in PASSED and flag.value is not None
-        for word in (flag.word, flag.value)
-    ]
 
 
 def _recover(method):

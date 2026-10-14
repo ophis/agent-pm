@@ -1,4 +1,5 @@
 """Codex startup run with Python -I and one bounded JSON object argument."""
+# Start JSON fields: tui.FIELDS; import_roots is mandatory (unique absolute source dirs).
 
 from __future__ import annotations
 
@@ -66,7 +67,6 @@ if __name__ == "__main__":
 try:
     from agent_pm.session.adapters.codex import common, tui
     from agent_pm.session.adapters.codex.common import app_server
-    from agent_pm.session.adapters.codex.common.types import LaunchPlan
     from agent_pm.session.adapters.codex.tui import HOOKS
 except ImportError as exc:
     if __name__ != "__main__":
@@ -245,7 +245,7 @@ def launch(data, *, trust=hook_trust):
         return _start(tui.decode(data), termination, trust)
 
 
-def _start(plan: LaunchPlan, termination, trust):
+def _start(plan: tui.LaunchPlan, termination, trust):
     commands = tui.commands(plan.hook)
     common.absolute_path(plan.store, "store")
     state = common.SessionStore(plan.store).load(plan.workdir, plan.sid)
