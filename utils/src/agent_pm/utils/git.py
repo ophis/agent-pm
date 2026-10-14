@@ -171,6 +171,11 @@ URL = re.compile(
 SLUG = re.compile(r"[A-Za-z0-9._-]{1,100}")
 
 
+def repo_slug(value) -> tuple[str, str] | None:
+    match = re.fullmatch(rf"({OWNER})/({NAME})", value) if isinstance(value, str) else None
+    return (match.group(1), match.group(2)) if match and match.group(2) not in (".", "..") else None
+
+
 class Invalid(Exception):
     pass
 

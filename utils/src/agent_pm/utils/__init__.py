@@ -37,6 +37,7 @@ from agent_pm.utils.git import (
     common_dir,
     find_checkouts,
     origin,
+    repo_slug,
     resolve,
 )
 from agent_pm.utils.git import git as run_git
@@ -57,7 +58,7 @@ from agent_pm.utils.record import Display, Record, Status, json_records, number
 from agent_pm.utils.registry import PATH as CLASS_PATH
 from agent_pm.utils.registry import load as load_class
 from agent_pm.utils.shell import LONG, SHORT, Runner, Stopped, err_text, redact, resume_command, sh
-from agent_pm.utils.text import printable, sid_error
+from agent_pm.utils.text import one_line, parse_time, printable, sid_error, timestamp
 
 __all__ = [
     "CLASS_PATH",
@@ -101,6 +102,8 @@ __all__ = [
     "load_class",
     "number",
     "module_roots",
+    "one_line",
+    "parse_time",
     "origin",
     "overlaps",
     "package_dirs",
@@ -112,12 +115,14 @@ __all__ = [
     "read_regular",
     "real_dirs",
     "redact",
+    "repo_slug",
     "resolve",
     "resume_command",
     "save",
     "sync_directory",
     "sh",
     "sid_error",
+    "timestamp",
     "temp_dirs",
     "thaw",
     "under",

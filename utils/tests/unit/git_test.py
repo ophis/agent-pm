@@ -92,6 +92,31 @@ class Retry(Case):
 
 
 class Parse(Case):
+    def test_strict_github_repo_slugs(self):
+        cases = {
+            "ophis/agent-pm": ("ophis", "agent-pm"),
+            "ophis/.github": ("ophis", ".github"),
+            "Ophis/Agent-PM.git": ("Ophis", "Agent-PM.git"),
+            "a/..x": ("a", "..x"),
+            "-a/b": None,
+            "a/-b": None,
+            "a/..": None,
+            "a/.": None,
+            "a b/c": None,
+            "ophis": None,
+            "https://github.com/ophis/x": None,
+            "github.com/ophis/x": None,
+            "ophis/x/": None,
+            " ophis/x": None,
+            "ophis/x ": None,
+            "": None,
+            None: None,
+            42: None,
+        }
+        for value, want in cases.items():
+            with self.subTest(value=value):
+                self.assertEqual(repos.repo_slug(value), want)
+
     def test_forms(self):
         for spec, want in (
             ("o/n", ("github.com", "o", "n")),
