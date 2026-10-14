@@ -1,15 +1,19 @@
 """Record v1, one JSON line naming a started thing by its outermost starter (ctl queries it, resume
 resumes it), and Status, the line `<ctl> status` prints per Record. Display is opaque: only the
-session layer interprets it. json_records yields JSON objects from text or byte lines.
+session layer interprets it. answer_keys is the one batch rule of every ctl's queries. json_records
+yields JSON objects from text or byte lines.
 """
 
 import json
 import math
-from collections.abc import Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator, Sequence
 from dataclasses import asdict, dataclass, fields
-from typing import Self
+from typing import Self, TextIO, TypeVar
+
+from agent_pm.utils.text import printable
 
 Display = str | None
+T = TypeVar("T")
 
 
 class RecordError(ValueError):
@@ -109,6 +113,70 @@ class Status(_Line):
             _check(
                 ok=value is None or isinstance(value, str), message=f"{field}: want null or a str"
             )
+
+
+def answer_keys(
+    args: Sequence[str],
+    stdin: TextIO,
+    resolve: Callable[[str | Record], tuple[str, T]],
+    reply: Callable[[T], str | None],
+    *,
+    single: bool = False,
+    usage: tuple[type[Exception], ...],
+    failures: tuple[type[Exception], ...],
+    prog: str,
+    out: TextIO,
+    err: TextIO,
+) -> int:
+    """Keys are args, else one Record per stdin line (stdin unread when args). Resolves each key to
+    (name, value) in order, then writes each reply(value) that is not None. A usage or failures
+    exception from either step prints `<label>: <error>` and drops the key. Returns 2 on a bad stdin
+    line, a key count other than one when single, a name resolved twice (nothing replied) or a
+    usage error; else 1 if a key failed; else 0.
+    """
+
+    def complain(text: str) -> None:
+        err.write(printable(f"{prog}: {text}") + "\n")
+
+    def failed(key: str | Record, e: Exception) -> int:
+        complain(f"{key if isinstance(key, str) else key.name}: {e}")
+        return 2 if isinstance(e, usage) else 1
+
+    keys: list[str | Record] = list(args)
+    if not keys:
+        for n, line in enumerate(stdin, 1):
+            try:
+                keys.append(Record.parse(line))
+            except RecordError as e:
+                complain(f"stdin line {n}: {e}")
+                return 2
+    if single and len(keys) != 1:
+        complain(f"takes exactly one key, got {len(keys)}")
+        return 2
+    codes = [0]
+    resolved: list[tuple[str | Record, str, T]] = []
+    for key in keys:
+        try:
+            name, value = resolve(key)
+        except usage + failures as e:
+            codes.append(failed(key, e))
+            continue
+        resolved.append((key, name, value))
+    names = set()
+    for _, name, _ in resolved:
+        if name in names:
+            complain(f"name {name} given more than once")
+            return 2
+        names.add(name)
+    for key, _, value in resolved:
+        try:
+            text = reply(value)
+        except usage + failures as e:
+            codes.append(failed(key, e))
+            continue
+        if text is not None:
+            out.write(text + "\n")
+    return max(codes)
 
 
 def json_records(lines: Iterable[str | bytes]) -> Iterator[dict]:
