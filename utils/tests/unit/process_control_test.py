@@ -91,6 +91,63 @@ class ControlTest(Case):
         os.mkdir(path, 0o700)
         return ProcessControl(path)
 
+    def test_start_retries_a_bound_socket_before_the_controller_listens(self):
+        control = self.control()
+        self.addCleanup(control.remove)
+        with open(os.path.join(control.path, "control"), "w"):
+            pass
+        requests = []
+
+        def respond(command):
+            requests.append(command)
+            if command == b"start\n":
+                with open(os.path.join(control.path, "started.json"), "w") as stream:
+                    json.dump({"started": True}, stream)
+
+        with mock.patch("socket.socket") as socket, mock.patch("time.sleep"):
+            connection = socket.return_value.__enter__.return_value
+            connection.connect.side_effect = [ConnectionRefusedError, None, None]
+            connection.sendall.side_effect = respond
+            connection.makefile.return_value.__enter__.return_value.readline.return_value = (
+                b'{"live": true}\n'
+            )
+            control.wait_started()
+        self.assertEqual(connection.connect.call_count, 3)
+        self.assertEqual(requests, [b"start\n", b"started\n"])
+        self.assertFalse(control.ended)
+
+    def test_a_controller_that_never_listens_still_times_out(self):
+        control = self.control()
+        self.addCleanup(control.remove)
+        with open(os.path.join(control.path, "control"), "w"):
+            pass
+        with (
+            mock.patch("socket.socket") as socket,
+            mock.patch("time.monotonic", side_effect=[0, 0, 1]),
+            mock.patch("time.sleep"),
+        ):
+            connection = socket.return_value.__enter__.return_value
+            connection.connect.side_effect = ConnectionRefusedError
+            with self.assertRaisesRegex(TimeoutError, "process controller did not start"):
+                control.wait_started(timeout=1)
+        connection.connect.assert_called_once()
+        self.assertFalse(control.ended)
+
+    def test_connection_refusal_after_start_is_not_a_startup_retry(self):
+        control = self.control()
+        self.addCleanup(control.remove)
+        with open(os.path.join(control.path, "control"), "w"):
+            pass
+        with open(os.path.join(control.path, "started.json"), "w") as stream:
+            json.dump({"started": True}, stream)
+        with mock.patch("socket.socket") as socket, mock.patch("time.sleep") as sleep:
+            connection = socket.return_value.__enter__.return_value
+            connection.connect.side_effect = ConnectionRefusedError
+            with self.assertRaises(ConnectionRefusedError):
+                control.wait_started()
+        connection.connect.assert_called_once()
+        sleep.assert_not_called()
+
     def test_a_signal_forwarding_socket_error_does_not_end_the_pane(self):
         control = self.control()
         self.addCleanup(control.remove)

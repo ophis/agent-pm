@@ -241,7 +241,8 @@ class ProcessControl:
             if time.monotonic() >= deadline:
                 raise TimeoutError("process controller did not start")
             if os.path.exists(os.path.join(self.path, "control")):
-                self._request("start")
+                with contextlib.suppress(ConnectionRefusedError):
+                    self._request("start")
             time.sleep(POLL)
         self._request("started")
         if "error" in message:
