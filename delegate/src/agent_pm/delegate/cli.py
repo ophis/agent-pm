@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """agent-pm-delegate: run a role on HarnessDelegate, deliver its prompt, or query its runs.
+`run --detach` starts the run's harness and prints the run's Record line on stdout.
 
-Exits 0 on success, 2 on usage or config errors, 1 on other failures. `run --detach` takes the old
-path (engine.application) until 356-7e.
+Exits 0 on success, 2 on usage or config errors, 1 on other failures.
 """
 
 import argparse
@@ -13,7 +13,6 @@ from collections.abc import Sequence
 from dataclasses import asdict
 
 from agent_pm.delegate.composer import Composer, RunParams
-from agent_pm.delegate.engine.application import Application
 from agent_pm.delegate.engine.harness_delegate import HarnessDelegate
 from agent_pm.delegate.engine.runner import report, say
 from agent_pm.delegate.engine.types import Begun, ConfigError, Preview, Spec
@@ -22,16 +21,11 @@ from agent_pm.session import DriverError, Mode, NotDisplayable
 from agent_pm.utils import Once, answer_keys
 
 LIST_PARAMS = RunParams(input="", out="/agent-pm-list/work/out.md", workdir="/agent-pm-list/work")
-SPLIT = "--split and --split-from need --detach --mode tui"
 
 
 def main(
-    argv: Sequence[str] | None = None,
-    *,
-    delegate_cls: type[HarnessDelegate] = HarnessDelegate,
-    application: Application | None = None,
+    argv: Sequence[str] | None = None, *, delegate_cls: type[HarnessDelegate] = HarnessDelegate
 ) -> int:
-    """`application` serves only `run --detach`."""
     argv = sys.argv[1:] if argv is None else list(argv)
     parser = argparse.ArgumentParser(prog="agent-pm-delegate")
     commands = parser.add_subparsers(dest="command", required=True)
@@ -56,7 +50,7 @@ def main(
     _common_options(prompt)
     a = parser.parse_args(argv)
     if a.command == "run":
-        return _run(a, run, argv[1:], delegate_cls, application)
+        return _run(a, run, argv[1:], delegate_cls)
     if a.command == "prompt":
         return _prompt(a, prompt, delegate_cls)
     return _query(a, delegate_cls)
@@ -86,10 +80,8 @@ def _run_options(ap: argparse.ArgumentParser) -> None:
     ap.add_argument("--sid")
     ap.add_argument("--resume", action="store_true")
     ap.add_argument("--mode", choices=[m.value for m in Mode], default=Mode.HEADLESS.value)
-    ap.add_argument("--detach", action="store_true", help="run in a Driver session of its own")
-    ap.add_argument("--events", metavar="FILE", help="--detach: the outcome line's file")
-    ap.add_argument("--split", choices=("right", "below"))
-    ap.add_argument("--split-from", metavar="SESSION")
+    ap.add_argument("--detach", action="store_true", help="run in a harness session of its own")
+    ap.add_argument("--events", metavar="FILE", help="--detach: the run's events file")
     ap.add_argument("--dry-run", action="store_true")
 
 
@@ -98,7 +90,6 @@ def _run(
     ap: argparse.ArgumentParser,
     argv: Sequence[str],
     delegate_cls: type[HarnessDelegate],
-    application: Application | None,
 ) -> int:
     if a.list:
         if extra := next(
@@ -119,19 +110,30 @@ def _run(
         say(f"delegate: {e}")
         return 2
     spec = spec_of(a, sys.stdin.read() if a.input == "-" else a.input)
-    if a.detach and not a.dry_run:
-        a.harness = a.opener = None
-        return (application or Application()).run_cli(a, spec)[0]
     try:
         if a.dry_run:
             shown = _shown(delegate_cls.preview(a.role, spec), a)
             print(json.dumps(shown, ensure_ascii=False, indent=1))
             return 0
+        if a.detach:
+            return _detach(delegate_cls, a.role, spec)
         result = delegate_cls(a.role, spec).run(_begun)
     except ConfigError as e:
         say(f"delegate: {e}")
         return 2
     return report(result, a.out)[0]
+
+
+def _detach(delegate_cls: type[HarnessDelegate], role: str, spec: Spec) -> int:
+    """Prints the run's Record line once its listed sessions are live."""
+    try:
+        record = delegate_cls(role, spec).detach()
+    except (DriverError, OSError) as e:
+        say(f"delegate: {e}")
+        return 1
+    say(f"delegate: session {record.sid}")
+    print(record.to_line(), flush=True)
+    return 0
 
 
 def spec_of(a, text: str) -> Spec:
@@ -144,7 +146,7 @@ def spec_of(a, text: str) -> Spec:
         client=a.client,
         sid=a.sid,
         resume=a.resume,
-        events=a.events if a.mode == "tui" else None,
+        events=a.events,
         out=None if a.out == "-" else a.out,
         repo=a.repo,
     )
@@ -159,8 +161,6 @@ def _check(a: argparse.Namespace) -> None:
         raise ConfigError("--events needs --detach")
     if a.detach and a.events is None:
         raise ConfigError("--detach needs --events")
-    if (a.split is not None or a.split_from is not None) and not (a.detach and a.mode == "tui"):
-        raise ConfigError(SPLIT)
     if a.detach and a.out == "-":
         raise ConfigError("--detach needs --out PATH")
 

@@ -117,7 +117,7 @@ class FakeDelegate(Delegate):
 
     def _record(self, state: dict) -> Record:
         outer = {
-            "kind": state["role"],
+            "kind": "role",
             "ctl": ["agent-pm-delegate"],
             "resume": ["agent-pm-delegate", "resume", self.workdir],
             **state["outer"],

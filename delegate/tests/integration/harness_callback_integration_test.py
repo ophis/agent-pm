@@ -41,7 +41,8 @@ class Callbacks(HarnessCase):
             line = call.kwargs["input"]
             self.assertEqual(len(line.splitlines()), 1)
             events.append(DelegateEvent.parse(line))
-        self.assertEqual((events[0].kind, events[0].sid), ("begun", SID))
+        self.assertEqual([event.kind for event in events], ["begun", "progress", "finished"])
+        self.assertEqual({(event.sid, event.attempt) for event in events}, {(SID, 1)})
         self.assertEqual(
             (events[1].kind, events[1].name, events[1].text), ("progress", "start", "echoing")
         )
@@ -76,6 +77,19 @@ class Callbacks(HarnessCase):
                 errors = [row for row in self.records() if row["kind"] == "callback_error"]
                 self.assertEqual(len(errors), 1)
                 self.assertTrue(errors[0]["error"])
+
+    def test_a_replacing_run_stamps_its_own_attempt(self):
+        self.make().run()
+        replacing = self.make(callback=CALLBACK)
+        with mock.patch(
+            "subprocess.run", return_value=subprocess.CompletedProcess(CALLBACK, 0)
+        ) as run:
+            replacing.run()
+        stamps = {
+            (event.sid, event.attempt)
+            for event in (DelegateEvent.parse(c.kwargs["input"]) for c in run.call_args_list)
+        }
+        self.assertEqual(stamps, {(SID, 2)})
 
     def test_no_callback_invokes_no_command(self):
         with mock.patch("subprocess.run") as run:

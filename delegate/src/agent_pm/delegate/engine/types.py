@@ -33,7 +33,9 @@ class Outer(TypedDict, total=False):
 @dataclass(frozen=True)
 class Spec:
     """One run to start: `resume` resumes session `sid`; client None: the role's; `out` None:
-    nothing is saved; `team` None: the built-in one. name and events: tui only.
+    nothing is saved; `team` None: the built-in one. name and events: tui only for plan();
+    HarnessDelegate takes them in every mode (`name`: its agent session, `<name>-drive` its
+    harness's; `events`: also the detached harness's outcome line).
     """
 
     input: str

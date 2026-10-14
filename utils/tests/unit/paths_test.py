@@ -19,6 +19,7 @@ from agent_pm.utils.paths import (
     package_dirs,
     printable_abs,
     real_dirs,
+    source_path,
     temp_dirs,
     under,
 )
@@ -356,3 +357,30 @@ class ImportEnvironment(Case):
             self.assertEqual(
                 import_env(*self.packages), {"PYTHONPATH": os.pathsep.join((root, *self.roots[1:]))}
             )
+
+
+class SourcePath(Case):
+    def setUp(self):
+        self.installed = os.path.realpath(next(path for path in sys.path if path))
+        self.enterContext(
+            mock.patch(
+                "sysconfig.get_paths",
+                return_value={"purelib": self.installed, "platlib": self.installed},
+            )
+        )
+
+    def test_roots_once_in_order_without_the_installed_ones(self):
+        roots = ("/checkout/delegate/src", self.installed, "/repo", "/checkout/delegate/src")
+        self.assertEqual(
+            source_path(roots), {"PYTHONPATH": os.pathsep.join(("/checkout/delegate/src", "/repo"))}
+        )
+
+    def test_nothing_left_to_supply_is_no_pythonpath(self):
+        self.assertEqual(source_path(()), {})
+        self.assertEqual(source_path((self.installed,)), {})
+
+    def test_an_installed_path_missing_from_sys_path_is_still_supplied(self):
+        with mock.patch(
+            "sysconfig.get_paths", return_value={"purelib": "/off-path", "platlib": "/off-path"}
+        ):
+            self.assertEqual(source_path(("/off-path",)), {"PYTHONPATH": "/off-path"})

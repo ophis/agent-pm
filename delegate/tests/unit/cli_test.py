@@ -1,6 +1,5 @@
 """Pure logic over fake objects and in-process adapters."""
 
-import errno
 import io
 import json
 import os
@@ -16,15 +15,18 @@ from agent_pm.delegate.composer import RunParams
 from agent_pm.delegate.composer.prompt import RESUME
 from agent_pm.delegate.engine.harness_delegate import HarnessDelegate
 from agent_pm.delegate.engine.runner import STOP_LIMIT
+from agent_pm.delegate.engine.state import RunState
 from agent_pm.session import DriverError, NotDisplayable
-from agent_pm.utils import Record, Status, file_lock
+from agent_pm.utils import Record, Status
 
-from delegate.tests.application_case import DRIVER, SID, SPLIT, TUI
-from delegate.tests.case import PY, Case, committed
+from delegate.tests.case import Case, committed
 from delegate.tests.cli_case import (
+    HARNESS,
     HEADS,
     KEYS,
     PLACEMENT,
+    SID,
+    TUI,
     Base,
     RefusingAdapter,
 )
@@ -35,71 +37,108 @@ from session.tests.modules import adapter_loader
 from utils.tests.case import local_section
 
 
+class Detaching:
+    """A delegate class for `run --detach`: records each construction's role and Spec; its detach
+    returns RECORD or raises `failure`.
+    """
+
+    made: list = []
+    failure: Exception | None = None
+
+    def __init__(self, role, spec, **placement):
+        Detaching.made.append((role, spec, placement))
+        if isinstance(Detaching.failure, ConfigError):
+            raise Detaching.failure
+
+    def detach(self, *, outer=None):
+        if Detaching.failure is not None:
+            raise Detaching.failure
+        return RECORD
+
+
+RECORD = Record(
+    1,
+    "role",
+    TUI,
+    (HARNESS, TUI),
+    SID,
+    "/work",
+    ("agent-pm-delegate",),
+    ("agent-pm-delegate", "resume", "/work"),
+    "mgr",
+    "dummy-tester",
+)
+
+
 class Detach(Base):
-    """detach_session and layout (the opener `mgr`) patched; events file `events`."""
+    """`run --detach` on a Detaching delegate class; events file `events`."""
 
     def setUp(self):
         super().setUp()
         self.events = os.path.join(self.tmp, "events")
-        self.started = self.enterContext(mock.patch.object(self.driver, "detach"))
-        self.layout = self.enterContext(
-            mock.patch.object(self.driver, "layout", return_value="mgr")
-        )
+        Detaching.made, Detaching.failure = [], None
+        self.detaching = True
+
+    def delegate_cls(self):
+        return Detaching if self.detaching else super().delegate_cls()
 
     def detaches(self, *extra, events=None, **kw):
         return self.runs("--sid", SID, "--detach", "--events", events or self.events, *extra, **kw)
 
-    def invocation(self):
-        name = self.started.call_args.kwargs["env"]["AGENT_PM_HARNESS_STATE"]
-        return json.loads(Path(self.work, name).read_bytes())
-
-    def assert_nothing_started(self):
-        self.started.assert_not_called()
-        self.assertEqual(
-            (self.launches(), os.path.exists(self.work), os.path.exists(self.events)),
-            ([], False, False),
-        )
-
-    def test_usage_errors_exit_2_and_start_nothing(self):
+    def test_usage_errors_exit_2_and_construct_nothing(self):
         e = self.events
         for argv, out, want in (
             (("--detach",), None, "--detach needs --events"),
             (("--events", e), None, "--events needs --detach"),
             (("--events", e, "--mode", "tui"), None, "--events needs --detach"),
-            (("--split", "right", "--mode", "tui"), None, SPLIT),
-            (("--split-from", "mgr"), None, SPLIT),
-            (("--detach", "--events", e, "--split", "below"), None, SPLIT),
-            (
-                ("--detach", "--events", e, "--split-from", "mgr", "--mode", "in_process"),
-                None,
-                SPLIT,
-            ),
             (("--detach", "--events", e), "-", "--detach needs --out PATH"),
             (("--detach", "--events", e, "--dry-run"), "-", "--detach needs --out PATH"),
         ):
             with self.subTest(argv=argv, out=out):
                 self.assertEqual(self.runs(*argv, out=out), (2, "", f"delegate: {want}\n"))
-        self.layout.assert_not_called()
-        self.assert_nothing_started()
+        self.assertEqual(Detaching.made, [])
 
-    def test_detach_refusals_exit_2_with_nothing_started(self):
-        folder = os.path.join(self.tmp, "dir")
-        os.mkdir(folder)
-        for extra, events, want in (
-            (
-                ("--mode", "in_process"),
-                None,
-                "--detach: mode must be headless or tui, got 'in_process'",
-            ),
-            ((), folder, f"events file {folder}: {os.strerror(errno.EISDIR)}"),
+    def test_split_options_are_gone(self):
+        for extra in (("--split", "right"), ("--split-from", "mgr")):
+            with self.subTest(extra=extra):
+                code, out, err = self.detaches("--mode", "tui", *extra)
+                self.assertEqual((code, out), (2, ""))
+                self.assertIn("unrecognized arguments", err)
+        self.assertEqual(Detaching.made, [])
+
+    def test_detach_prints_one_record_line_and_names_its_session(self):
+        for mode in ("headless", "tui"):
+            with self.subTest(mode=mode):
+                Detaching.made = []
+                code, out, err = self.detaches("--mode", mode)
+                self.assertEqual(
+                    (code, out, err), (0, RECORD.to_line() + "\n", f"delegate: session {SID}\n")
+                )
+                ((role, spec, placement),) = Detaching.made
+                self.assertEqual((role, placement), ("dummy-tester", {}))
+                self.assertEqual(
+                    (spec.mode, spec.sid, spec.events, spec.workdir, spec.out),
+                    (mode, SID, self.events, self.work, self.out),
+                )
+
+    def test_input_dash_is_read_by_the_caller(self):
+        code, _, err = self.detaches(input="-", stdin="-x\nUse B.\n")
+        self.assertEqual(code, 0, err)
+        self.assertEqual(Detaching.made[0][1].input, "-x\nUse B.\n")
+
+    def test_a_refusal_exits_2_and_a_start_failure_1_without_a_record(self):
+        for failure, code in (
+            (ConfigError(f"{self.work}: delegate is still alive"), 2),
+            (DriverError(f"detach {HARNESS}: duplicate session"), 1),
+            (DriverError(f"tui session {TUI} did not start"), 1),
+            (OSError("No space left on device"), 1),
         ):
-            with self.subTest(want=want):
-                code, out, err = self.detaches(*extra, events=events)
-                self.assertEqual((code, out, err.splitlines()[-1]), (2, "", f"delegate: {want}"))
-        self.assertEqual(os.listdir(folder), [])
-        self.assert_nothing_started()
+            with self.subTest(failure=failure):
+                Detaching.failure = failure
+                self.assertEqual(self.detaches(), (code, "", f"delegate: {failure}\n"))
 
     def test_dry_run_adds_the_session_names_and_the_events_file(self):
+        self.detaching = False
         for mode, tui in (("headless", None), ("tui", TUI)):
             with self.subTest(mode=mode):
                 code, out, err = self.detaches("--mode", mode, "--dry-run", events="events")
@@ -110,64 +149,13 @@ class Detach(Base):
                     (shown["mode"], shown["sessions"], shown["hosts"], shown["events"]),
                     (
                         mode,
-                        {"agent": tui, "harness": DRIVER},
+                        {"agent": tui, "harness": HARNESS},
                         {"agent": "tmux", "harness": "tmux"},
                         self.events,
                     ),
                 )
-        self.layout.assert_not_called()
-        self.assert_nothing_started()
-
-    def test_detach_names_its_sessions_and_exits_0_at_once(self):
-        lines = [
-            f"delegate: session {SID}",
-            f"delegate: driver session {DRIVER}: {self.driver.attach_command(DRIVER)}",
-            f"delegate: tui session {TUI}: {self.driver.attach_command(TUI)}",
-        ]
-        for mode, extra, shown, tail in (
-            ("headless", (), lines[:2], {"events": self.events, "task": "echo"}),
-            (
-                "tui",
-                ("--split", "below", "--split-from", "mgr"),
-                lines,
-                {"split": "below", "split_from": "mgr", "opener": "mgr"},
-            ),
-        ):
-            with self.subTest(mode=mode):
-                code, out, err = self.detaches("--mode", mode, *extra)
-                self.assertEqual((code, out, err.splitlines()[1:]), (0, "", shown), err)
-                name, argv = self.started.call_args.args
-                self.assertEqual(
-                    (name, argv),
-                    (DRIVER, [PY[0], "-P", "-m", "agent_pm.delegate.engine.harness", self.work]),
-                )
-                invocation = self.invocation()
-                self.assertEqual({key: invocation[key] for key in tail}, tail)
-        self.layout.assert_called_once_with("below", "mgr")
-        self.assertEqual(self.launches(), [])
-        states = list(Path(self.work).glob("harness-*.json"))
-        self.assertEqual(len(states), 2)
-        self.assertEqual(set(os.listdir(self.work)), {path.name for path in states})
-
-    def test_detach_configures_the_session_before_reaching_it(self):
-        seen = []
-        self.started.side_effect = lambda *_args, **_kwargs: seen.append(self.driver)
-        code, _, err = self.detaches()
-        self.assertEqual((code, len(seen)), (0, 1), err)
-        self.assertIs(seen[0], self.driver)
-
-    def test_input_dash_is_read_by_the_caller(self):
-        code, _, err = self.detaches(input="-", stdin="-x\nUse B.\n")
-        self.assertEqual(code, 0, err)
-        self.assertEqual(self.invocation()["input"], "-x\nUse B.\n")
-
-    def test_a_driver_failure_exits_1(self):
-        self.started.side_effect = DriverError(f"detach {DRIVER}: duplicate session")
-        code, out, err = self.detaches()
-        self.assertEqual(
-            (code, out, err.splitlines()[1:]),
-            (1, "", [f"delegate: detach {DRIVER}: duplicate session"]),
-        )
+        self.assertEqual((self.launches(), os.path.exists(self.work)), ([], False))
+        self.assertFalse(os.path.exists(self.events))
 
 
 class DryRun(Base):
@@ -281,19 +269,13 @@ class InProcess(Base):
         )
         self.assertEqual(
             sorted(os.listdir(self.work)),
-            [
-                "delegate.json",
-                "delegate.json.lock",
-                "delegate.json.run.lock",
-                "out.md",
-                "run.jsonl",
-            ],
+            ["delegate.json", "out.md", "run.jsonl"],
         )
 
     def test_an_answer_while_the_run_is_alive_exits_2_and_starts_nothing(self):
         spec = Spec("Hello.", self.work, task="echo", mode="in_process", client="fake", sid=SID)
         self.delegate_cls()("dummy-tester", spec)
-        with file_lock(os.path.join(self.work, "delegate.json.run"), own=True):
+        with RunState(self.work).run_lock():
             code, out, err = self.runs("--mode", "in_process", "--sid", SID, "--resume")
         self.assertEqual(
             (code, out, err), (2, "", f"delegate: {self.work}: delegate is still alive\n")
@@ -422,7 +404,6 @@ class Configures(Base):
         self.assertEqual((self.launches(), os.path.exists(self.work)), ([], False))
 
     def test_an_unknown_harness_host_or_delegates_key_exits_2_and_starts_nothing(self):
-        self.application = None
         for text, want in (
             (
                 '[delegates]\nharness_host = "nope"\n',

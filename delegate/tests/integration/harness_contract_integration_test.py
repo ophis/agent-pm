@@ -7,12 +7,16 @@ import sys
 from agent_pm.delegate import Begun, Spec
 from agent_pm.delegate.composer.prompt import RESUME
 from agent_pm.delegate.engine.harness_delegate import HarnessDelegate
-from agent_pm.session import Exited, Liveness, Mode, NotDisplayable, Reply
-from agent_pm.session import Spec as SessionSpec
+from agent_pm.session import Exited, Liveness, NotDisplayable, Reply
 
 from delegate.tests.case import REPO, child_env
 from delegate.tests.contracts.delegate import DelegateContract
-from delegate.tests.fakes.harness_session import HarnessSession, RecordingHost, ShowingHost
+from delegate.tests.fakes.harness_session import (
+    HarnessSession,
+    RecordingHost,
+    ShowingHost,
+    harness_launches,
+)
 from delegate.tests.harness import SID, HarnessCase
 from delegate.tests.replies import block
 from delegate.tests.unit.runs import DONE
@@ -147,17 +151,6 @@ class Ownership(HarnessCase):
             display="target",
         )
         record = delegate.detach()
-        HarnessSession.start(
-            SessionSpec(
-                workdir=self.work,
-                client="fake",
-                mode=Mode.TUI,
-                sid=SID,
-                name=self.metadata()["agent_name"],
-            ),
-            host="agent",
-            display="target",
-        )
         return record, HarnessDelegate.attach(record)
 
     def test_harness_owns_liveness_while_agent_owns_state_and_display_target(self):
@@ -212,10 +205,11 @@ class Ownership(HarnessCase):
         record, view = self.pair()
         agent_name = self.metadata()["agent_name"]
         RecordingHost.processes["harness", self.metadata()["harness_name"]].close()
-        before = len(RecordingHost.launches)
+        before = len(harness_launches())
+        old_agent = HarnessSession.live[agent_name]
         resumed = view.resume()
         self.assertEqual((resumed.sid, resumed.sessions), (record.sid, record.sessions))
-        self.assertFalse(RecordingHost.processes["agent", agent_name].alive())
-        self.assertEqual(len(RecordingHost.launches), before + 1)
+        self.assertEqual(old_agent.state(), Liveness.ABSENT)
+        self.assertEqual(len(harness_launches()), before + 1)
         self.assertEqual(view.resume(), resumed)
-        self.assertEqual(len(RecordingHost.launches), before + 1)
+        self.assertEqual(len(harness_launches()), before + 1)

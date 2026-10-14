@@ -25,6 +25,10 @@ class SessionClass(FakeSession):
         )
 
     @classmethod
+    def class_roots(cls, client):
+        return ()
+
+    @classmethod
     def preflight(cls, spec, *, display=None, host=None, idle_timeout=None):
         cls.preflights.append(
             {"spec": spec, "display": display, "host": host, "idle_timeout": idle_timeout}

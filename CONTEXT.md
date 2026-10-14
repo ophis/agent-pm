@@ -40,6 +40,9 @@ The component that turns a role, an optional task and free-text input into an ag
 **Driver**:
 The Delegate interface for starting a prompt: `AgentDriver` starts a Session through its configured class; `InstructionDriver` returns an Instruction file directly. In code: `delegate/src/agent_pm/delegate/engine/drivers.py`. The session package's `Driver` is a deprecated forwarding wrapper.
 
+**Harness**:
+The process that runs one detached Delegate run to its end as session `<name>-drive` on its harness Host, the run's authoritative state kept in the State dir. In code: `delegate/src/agent_pm/delegate/engine/harness.py`; the State dir: `engine/state.py`.
+
 **Composer**:
 The component that assembles principles, role and input into a prompt (no task text: the agent run reads its task file) and resolves the role's run config.
 

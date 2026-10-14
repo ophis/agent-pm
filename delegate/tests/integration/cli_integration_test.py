@@ -77,13 +77,7 @@ class NewRun(Integration):
         )
         self.assertEqual(
             set(os.listdir(self.work)),
-            {
-                "out.md",
-                "run.jsonl",
-                "delegate.json",
-                "delegate.json.lock",
-                "delegate.json.run.lock",
-            },
+            {"out.md", "run.jsonl", "delegate.json"},
         )
         self.assertTrue(os.path.isfile(self.transcript))
         (call,) = self.calls()

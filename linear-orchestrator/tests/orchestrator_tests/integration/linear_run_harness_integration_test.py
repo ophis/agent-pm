@@ -6,11 +6,9 @@ from agent_pm.delegate import Delegate
 from agent_pm.linear_orchestrator.engine import runs
 from agent_pm.linear_orchestrator.engine.linear_run import LinearRun
 from agent_pm.linear_orchestrator.engine.types import Config, Docs
-from agent_pm.session import Mode
-from agent_pm.session import Spec as SessionSpec
 from agent_pm.utils import load_class
 
-from delegate.tests.fakes.harness_session import HarnessSession, RecordingHost
+from delegate.tests.fakes.harness_session import HarnessSession, RecordingHost, harness_launches
 from delegate.tests.harness import SID, HarnessCase
 
 HARNESS_DELEGATE = load_class("agent_pm.delegate.engine.harness_delegate:HarnessDelegate", Delegate)
@@ -69,27 +67,18 @@ class HarnessRun(HarnessCase):
             delegate_kind="harness",
         )
         record = owner.detach()
-        HarnessSession.start(
-            SessionSpec(
-                workdir=self.work,
-                client="fake",
-                mode=Mode.TUI,
-                sid=SID,
-                name=self.metadata()["agent_name"],
-            ),
-            host="agent",
-        )
+        self.assertEqual(HarnessSession.live[self.metadata()["agent_name"]].sid, SID)
         view = LinearRun.attach(issue, cfg=self.cfg)
         self.assertIs(type(view.delegate), HARNESS_DELEGATE)
         self.assertTrue(view.alive())
         self.assertEqual(view.status().name, issue)
         self.assertEqual(view.resume(), record)
-        self.assertEqual(len(RecordingHost.launches), 2)
+        self.assertEqual(len(harness_launches()), 1)
         view.close()
         self.assertFalse(view.alive())
         self.assertTrue(all(not process.alive() for process in RecordingHost.processes.values()))
         resumed = view.resume()
         self.assertEqual((resumed.sid, resumed.sessions), (record.sid, record.sessions))
         self.assertEqual(view.resume(), resumed)
-        self.assertEqual(len(RecordingHost.launches), 3)
+        self.assertEqual(len(harness_launches()), 2)
         self.addCleanup(view.close)
