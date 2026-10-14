@@ -12,6 +12,7 @@ manager/tests/integration/crew_integration_test.py role-run cases run through ag
 manager/tests/integration/crew_*_integration_test.py.
 """
 
+import contextlib
 import json
 import os
 import re
@@ -246,9 +247,15 @@ class Tui(Detach):
         res = self.detach("--mode", "tui", steps=[START], turns=[[block(DONE)]])
         self.said(res, tui=True)
         self.until(lambda: self.kinds().count("session") > 0, "a session row")
-        with open(launched, encoding="utf-8") as f:
-            tui = [e["env"] for e in map(json.loads, f) if "--session-id" in e["argv"]]
-        self.assertEqual([env.get("FAKE_TOKEN") for env in tui], [SECRET])
+
+        def tui_launches():
+            with contextlib.suppress(FileNotFoundError), open(launched, encoding="utf-8") as f:
+                whole = [json.loads(line) for line in f if line.endswith("\n")]
+                return [e["env"] for e in whole if "--session-id" in e["argv"]]
+            return []
+
+        self.until(tui_launches, "the tui claude's launch record")
+        self.assertEqual([env.get("FAKE_TOKEN") for env in tui_launches()], [SECRET])
         ps = subprocess.run(["ps", "-A", "-ww", "-o", "args="], capture_output=True, text=True)
         self.assertEqual(ps.returncode, 0, ps.stderr)
         self.ended(turn_ends=2)
