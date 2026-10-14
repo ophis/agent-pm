@@ -3,12 +3,22 @@
 import os
 from abc import ABC, abstractmethod
 
+from agent_pm.delegate.engine import config
 from agent_pm.delegate.engine.types import ConfigError, DriverSpec, Instruction
+from agent_pm.session import ConfigError as SessionConfigError
 from agent_pm.session import Session, Spec
 from agent_pm.utils import Display, save
 
 
 class Driver(ABC):
+    session_based = True
+
+    def policy(self, runtime: str) -> tuple[tuple[str, ...], dict[str, str]]:
+        return (), {}
+
+    def writable_dirs(self, spec: Spec) -> tuple[str, ...]:
+        return ()
+
     @abstractmethod
     def start(
         self,
@@ -23,6 +33,14 @@ class Driver(ABC):
 class AgentDriver(Driver):
     def __init__(self, session_cls: type[Session]):
         self.session_cls = session_cls
+
+    def policy(self, runtime: str) -> tuple[tuple[str, ...], dict[str, str]]:
+        try:
+            flags, env = config.policy(runtime)
+            self.session_cls.validate_policy(flags=tuple(flags), env=env)
+            return tuple(flags), dict(env)
+        except (OSError, ValueError, SessionConfigError) as error:
+            raise ConfigError(f"policy.{runtime}: {error}") from None
 
     def start(
         self,
@@ -41,6 +59,8 @@ class AgentDriver(Driver):
 
 
 class InstructionDriver(Driver):
+    session_based = False
+
     def start(
         self,
         spec: DriverSpec,
@@ -59,6 +79,3 @@ class InstructionDriver(Driver):
         path = os.path.abspath(spec.out)
         save(path, session.prompt)
         return Instruction(path)
-
-    def detach(self) -> None:
-        raise ConfigError("instruction cannot detach")

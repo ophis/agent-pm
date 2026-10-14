@@ -14,10 +14,10 @@ from dataclasses import replace
 from agent_pm.delegate import composer
 from agent_pm.delegate.composer import DELIVERABLE, RunConfig, RunParams, Team
 from agent_pm.delegate.engine import config
-from agent_pm.delegate.engine.drivers import AgentDriver, InstructionDriver
+from agent_pm.delegate.engine.drivers import AgentDriver, Driver
 from agent_pm.delegate.engine.types import ConfigError, Plan, Spec
 from agent_pm.delegate.event.reply import OUTCOME, PROGRESS
-from agent_pm.session import Access, Host, Mode, Session, read_config, session_record
+from agent_pm.session import Access, Host, Mode, read_config, session_record
 from agent_pm.session import ConfigError as SessionConfigError
 from agent_pm.session import Driver as SessionDriver
 from agent_pm.session import Spec as SessionSpec
@@ -45,15 +45,6 @@ def _config(name: str) -> Iterator[None]:
         yield
     except (OSError, ValueError, SessionConfigError) as e:
         raise ConfigError(f"{name} config: {e}") from None
-
-
-def policy(runtime: str) -> tuple[tuple[str, ...], dict[str, str]]:
-    try:
-        flags, env = config.policy(runtime)
-        Session.validate_policy(flags=tuple(flags), env=env)
-        return tuple(flags), dict(env)
-    except (OSError, ValueError, SessionConfigError) as exc:
-        raise ConfigError(f"policy.{runtime}: {exc}") from None
 
 
 def _own(f):
@@ -93,13 +84,11 @@ def place(
 
 
 @_own
-def plan(
-    run: RunConfig, spec: Spec, *, driver: AgentDriver | InstructionDriver | SessionDriver
-) -> Plan:
+def plan(run: RunConfig, spec: Spec, *, driver: Driver | SessionDriver) -> Plan:
     """With the built-in team the configured team dirs are checked for overlap only."""
     if isinstance(driver, SessionDriver):
         driver = AgentDriver(driver.session_cls)
-    if isinstance(driver, InstructionDriver) and spec.resume:
+    if not driver.session_based and spec.resume:
         raise ConfigError("instruction has no session to resume")
     if spec.mode not in tuple(Mode):
         raise ConfigError(f"mode must be one of {', '.join(Mode)}, got {spec.mode!r}")
@@ -133,11 +122,7 @@ def plan(
     )
     resume = spec.sid if spec.resume else None
     here, project = place(run, workdir, resume_sid=resume, cwd=spec.cwd)
-    if (
-        not isinstance(driver, InstructionDriver)
-        and not project
-        and os.path.realpath(here) != os.path.realpath(workdir)
-    ):
+    if driver.session_based and not project and os.path.realpath(here) != os.path.realpath(workdir):
         print(
             f"delegate: cwd {here} is not in trusted_dirs: its project settings are off",
             file=sys.stderr,
@@ -151,7 +136,7 @@ def plan(
         reads=intent.reads,
         env=intent.env,
     )
-    flags, env = ((), {}) if isinstance(driver, InstructionDriver) else policy(runtime)
+    flags, env = driver.policy(runtime)
     session = SessionSpec(
         workdir=workdir,
         runtime=runtime,
@@ -193,7 +178,7 @@ def _check_team_dirs(
     *,
     runtime: str,
     spec: SessionSpec,
-    driver: AgentDriver | InstructionDriver,
+    driver: Driver,
 ) -> None:
     """Every dir the run can write counts, those `runtime` can write itself (writable_dirs) last;
     spec.access.reads, read only, do not.
@@ -203,8 +188,7 @@ def _check_team_dirs(
     writes = [("the workdir", spec.workdir), ("the cwd", spec.access.cwd)]
     writes += [(f"write dir {p}", p) for p in write_dirs]
     writes += [("a dir the run adds", p) for p in spec.access.dirs]
-    if not isinstance(driver, InstructionDriver):
-        writes += [(f"a dir {runtime} can write", p) for p in driver.writable_dirs(spec)]
+    writes += [(f"a dir {runtime} can write", p) for p in driver.writable_dirs(spec)]
     composer.check_team_dirs(team.dirs, writes=writes)
     for path in (p for d in guarded for p in composer.team_paths(d)):
         real = os.path.realpath(path)

@@ -93,8 +93,13 @@ def child_env(base=None, *extra: str) -> dict[str, str]:
 class FakeDriver:
     """A forwarding fake whose per-test methods may be replaced."""
 
+    session_based = True
+
     def __init__(self, driver):
         self.driver = driver
+
+    def policy(self, runtime):
+        return AgentDriver(self.driver.session_cls).policy(runtime)
 
     def start(self, spec, *, display=None, host=None, idle_timeout=None):
         return AgentDriver(self.driver.session_cls).start(

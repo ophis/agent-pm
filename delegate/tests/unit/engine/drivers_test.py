@@ -16,6 +16,29 @@ from delegate.tests.unit.runs import no_child
 
 
 class Drivers(Case):
+    def test_a_driver_capability_selects_instruction_delivery_without_concrete_type_checks(self):
+        class FileDriver(Driver):
+            session_based = False
+
+            def start(self, spec, *, display=None, host=None, idle_timeout=None):
+                return InstructionDriver().start(
+                    spec, display=display, host=host, idle_timeout=idle_timeout
+                )
+
+        work = os.path.join(self.home, "work")
+        out = os.path.join(work, "instruction.md")
+        events = []
+        with no_child():
+            result = run(
+                composer.resolve("dummy-tester"),
+                Spec("input", work, out=out, cwd=work),
+                driver=FileDriver(),
+                on_event=events.append,
+            )
+        self.assertEqual((result.returncode, result.instruction, result.outcome), (0, out, None))
+        self.assertEqual(events, [])
+        self.assertFalse(os.path.exists(os.path.join(work, "run.jsonl")))
+
     def test_driver_is_abstract_and_has_no_abstract_constructor(self):
         self.assertEqual(Driver.__abstractmethods__, frozenset({"start"}))
         with self.assertRaises(TypeError):
@@ -77,7 +100,7 @@ class Drivers(Case):
             with open(out, encoding="utf-8") as stream:
                 self.assertEqual(stream.read(), session.prompt)
 
-    def test_instruction_resume_and_detach_are_refused_before_any_write(self):
+    def test_instruction_resume_is_refused_before_any_write(self):
         out = os.path.join(self.home, "work", "prompt.md")
         driver = InstructionDriver()
         spec = StartSpec(
@@ -90,8 +113,7 @@ class Drivers(Case):
         )
         with self.assertRaisesRegex(ConfigError, "instruction has no session to resume"):
             driver.start(DriverSpec(spec, out))
-        with self.assertRaisesRegex(ConfigError, "instruction cannot detach"):
-            driver.detach()
+        self.assertFalse(driver.session_based)
         self.assertFalse(os.path.exists(os.path.dirname(out)))
 
     def test_instruction_rejects_session_controls_before_any_write(self):

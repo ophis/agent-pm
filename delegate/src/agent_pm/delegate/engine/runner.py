@@ -12,13 +12,14 @@ from datetime import datetime
 from pathlib import Path
 
 from agent_pm.delegate.composer import RunConfig
-from agent_pm.delegate.engine.drivers import AgentDriver, InstructionDriver
+from agent_pm.delegate.engine.drivers import AgentDriver, Driver
 from agent_pm.delegate.engine.plan import plan
 from agent_pm.delegate.engine.types import (
     Begun,
     ConfigError,
     Event,
     Finished,
+    Instruction,
     Limit,
     Plan,
     Progress,
@@ -65,20 +66,26 @@ class GiveUp:
 
 
 class Headless:
-    def __init__(self, note: Callable[..., None], driver: AgentDriver):
+    def __init__(self, note: Callable[..., None], driver: Driver):
         self.note, self.driver = note, driver
 
     def start(self, p: Plan, name: str | None = None, events: str | None = None) -> Session:
-        return self.driver.start(
+        handle = self.driver.start(
             replace(p.driver_spec, session=replace(p.session, name=name, events=events)),
             idle_timeout=IDLE_TIMEOUT,
         )
+        if isinstance(handle, Instruction):
+            raise ConfigError("session driver returned an Instruction")
+        return handle
 
     def fix(self, handle: Session, p: Plan, text: str) -> Session:
-        return self.driver.start(
+        resumed = self.driver.start(
             replace(p.driver_spec, session=replace(p.session, prompt=text, resume=True)),
             idle_timeout=IDLE_TIMEOUT,
         )
+        if isinstance(resumed, Instruction):
+            raise ConfigError("session driver returned an Instruction")
+        return resumed
 
     def turn_end(self, handle: Session, reply: str, pending: int) -> str | GiveUp | None:
         return None
@@ -96,7 +103,7 @@ class Tui(Headless):
     gives up. The session is left open.
     """
 
-    def __init__(self, note: Callable[..., None], driver: AgentDriver):
+    def __init__(self, note: Callable[..., None], driver: Driver):
         super().__init__(note, driver)
         self.nudged, self.count = False, 0
 
@@ -149,7 +156,7 @@ def run(
     spec: Spec,
     *,
     on_event: Callable[[Event], None] | None = None,
-    driver: AgentDriver | InstructionDriver | SessionDriver,
+    driver: Driver | SessionDriver,
 ) -> Result:
     """on_event gets Begun once, a Progress per mark line and Finished only with a valid outcome;
     its exception stops the session and propagates.
@@ -157,9 +164,11 @@ def run(
     if isinstance(driver, SessionDriver):
         driver = AgentDriver(driver.session_cls)
     p = plan(run, spec, driver=driver)
-    if isinstance(driver, InstructionDriver):
+    if not driver.session_based:
         instruction = driver.start(p.driver_spec)
-        return Result(0, None, instruction=instruction.path)
+        if isinstance(instruction, Instruction):
+            return Result(0, None, instruction=instruction.path)
+        raise ConfigError("instruction driver returned a Session")
     attempts = _Attempts(p, on_event or (lambda _event: None), driver)
     try:
         result = attempts.result()
@@ -191,7 +200,7 @@ def _resets(at: float | None) -> str:
 
 
 class _Attempts:
-    def __init__(self, p: Plan, on_event: Callable[[Event], None], driver: AgentDriver):
+    def __init__(self, p: Plan, on_event: Callable[[Event], None], driver: Driver):
         self.plan, self.on_event, self.policy = (
             p,
             on_event,

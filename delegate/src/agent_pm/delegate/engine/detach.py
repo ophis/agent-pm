@@ -9,7 +9,7 @@ import sys
 from dataclasses import dataclass
 
 from agent_pm.delegate.engine.config import PYTHONPATH
-from agent_pm.delegate.engine.drivers import InstructionDriver
+from agent_pm.delegate.engine.drivers import Driver
 from agent_pm.delegate.engine.runner import say
 from agent_pm.delegate.engine.types import ConfigError, Plan
 from agent_pm.session import ConfigError as SessionConfigError
@@ -43,8 +43,9 @@ def detach(
     layout, None when the caller has no pane and split_from is None. The owner's DriverError
     propagates.
     """
-    if isinstance(driver, InstructionDriver):
-        raise ConfigError("instruction cannot detach")
+    if isinstance(driver, Driver):
+        kind = "agent driver" if driver.session_based else "instruction"
+        raise ConfigError(f"{kind} cannot detach")
     mode = p.spec.mode
     if mode not in MODES:
         raise ConfigError(f"--detach: mode must be headless or tui, got {mode!r}")
