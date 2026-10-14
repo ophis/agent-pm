@@ -123,7 +123,7 @@ class InnerTui(fake_adapter.FakeTui):
 
 
 class EnvAdapter(ProbeAdapter):
-    """Launches carry the caller environment."""
+    """Launches merge spec.access.env and spec.env."""
 
     def headless(self):
         return EnvRun(self)
@@ -285,7 +285,7 @@ def drive(case, runtime="fake", mode="headless", prompt="hello", spec=None, **kw
 
 
 def fake_tmux() -> mock.Mock:
-    """Autospecced tmux decisions with recorded command responses."""
+    """Recorded tmux responses; defaults: status None, listing [], pane %1, PAUSE 0."""
     host = mock.create_autospec(tmux_host)
     for name in ("PaneStatus", "NAME", "OPENER", "Split", "TuiError"):
         setattr(host, name, getattr(tmux_host, name))
