@@ -668,7 +668,7 @@ class SessionStatusTest(Base):
         self.write(path, 3000)
         resume = (
             f"cd {shlex.quote(self.work)} && "
-            f"CLAUDE_CONFIG_DIR={shlex.quote(env['CLAUDE_CONFIG_DIR'])} S=s claude --resume {SID}"
+            f"CLAUDE_CONFIG_DIR={shlex.quote(env['CLAUDE_CONFIG_DIR'])} claude --resume {SID}"
         )
         for recorded in ("", path):
             with self.subTest(recorded=recorded):

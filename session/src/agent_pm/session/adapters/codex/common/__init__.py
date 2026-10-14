@@ -636,7 +636,8 @@ class SessionStore:
                     try:
                         state = operation.read(entry.path)
                     except RecoveryError as exc:
-                        print(f"codex recovery: {exc}", file=sys.stderr)
+                        named = str(exc) if entry.path in str(exc) else f"{entry.path}: {exc}"
+                        print(f"codex recovery: {named}", file=sys.stderr)
                         skipped.append(exc)
                         continue
                     if state is not None and state.sid == sid and state.snapshot.cwd == cwd:

@@ -764,6 +764,18 @@ class SessionStatusTest(Base):
         line = f"codex recovery: malformed recovery state: {bad}"
         self.assertEqual(err.getvalue().splitlines(), [line, line])
 
+    def test_a_skipped_files_line_names_it(self):
+        self.bound()
+        bad = self.record().with_name("1" * 64 + ".json")
+        bad.write_text("{}")
+        bad.chmod(0o600)
+        with contextlib.redirect_stderr(io.StringIO()) as err:
+            self.assertEqual(
+                self.common.session_status(self.spec.sid, str(self.cwd)).resumable, "no"
+            )
+        (line,) = err.getvalue().splitlines()
+        self.assertTrue(line.startswith(f"codex recovery: {bad}: invalid"), line)
+
     def test_a_missing_recorded_transcript_is_no_without_discovery_fallback(self):
         self.bound()
         resume = self.common.session_status(self.spec.sid, str(self.cwd)).resume_command

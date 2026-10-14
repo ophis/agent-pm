@@ -299,7 +299,7 @@ class ClaudeCommon:
         transcript: str = "",
         env: Mapping[str, str] = MappingProxyType({}),
     ) -> SessionStatus:
-        """`env`: the run's access and spec env, which may name its CLAUDE_CONFIG_DIR."""
+        """`env`: the run's access and spec env; its CLAUDE_CONFIG_DIR, if any, goes in the resume."""
         try:
             self.uuid(sid)
         except ConfigError:
@@ -332,4 +332,5 @@ class ClaudeCommon:
         for each in paths:
             with contextlib.suppress(OSError):
                 times.append(os.lstat(each).st_mtime)
-        return SessionStatus(resumable, max(times, default=None), self.resume(cwd, sid, env=env))
+        named = {k: v for k, v in env.items() if k == "CLAUDE_CONFIG_DIR"}
+        return SessionStatus(resumable, max(times, default=None), self.resume(cwd, sid, env=named))
