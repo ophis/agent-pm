@@ -162,7 +162,7 @@ class FakeDelegate(Delegate):
         raise NotDisplayable("host fake cannot display")
 
     def attach_command(self):
-        raise NotDisplayable("host fake cannot display")
+        return None
 
     def close(self):
         _update(self.workdir, alive=False)

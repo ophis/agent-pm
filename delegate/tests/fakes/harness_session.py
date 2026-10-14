@@ -1,0 +1,238 @@
+"""Process-free Session and Hosts for HarnessDelegate's ownership and view contracts."""
+
+import json
+import os
+
+from agent_pm.session import (
+    Displayable,
+    DriverError,
+    Host,
+    HostProcess,
+    Liveness,
+    NotDisplayable,
+    Resumable,
+    SessionStatus,
+)
+from agent_pm.utils import Record, append_line, read_regular, save
+
+from session.tests.fakes.session import FakeSession
+
+
+class RecordingProcess(HostProcess):
+    def __init__(self, name, *, display=None, record=None):
+        self.name, self.display_value, self.record_value = name, display, record
+        self.live = True
+        self.closed = 0
+
+    def alive(self):
+        return self.live
+
+    def close(self):
+        self.closed += 1
+        self.live = False
+
+    def wait_exit(self, timeout):
+        return not self.live
+
+    def kill(self):
+        self.live = False
+
+    def record(self):
+        return self.record_value
+
+    def display(self):
+        return self.display_value
+
+
+class RecordingHost(Host):
+    processes: dict[tuple[str, str], RecordingProcess] = {}
+    launches: list[dict] = []
+
+    def detach(self, name, argv, cwd, env, *, display=None, events=None, record=None):
+        process = RecordingProcess(name, display=display, record=record)
+        self.processes[self.name, name] = process
+        self.launches.append(
+            {
+                "host": self.name,
+                "name": name,
+                "argv": argv,
+                "cwd": cwd,
+                "env": env,
+                "display": display,
+                "events": events,
+                "record": record,
+            }
+        )
+        return process
+
+    def terminal(self, name, argv, cwd, env, *, display=None, events=None, record=None):
+        raise NotImplementedError("HarnessSession owns its terminal without a process")
+
+    def attach(self, name):
+        if (self.name, name) not in self.processes:
+            raise DriverError(f"no {self.name} session {name}")
+        return self.processes[self.name, name]
+
+    def list(self, display=None):
+        return [
+            name
+            for (host, name), process in self.processes.items()
+            if host == self.name
+            and process.alive()
+            and (display is None or display == process.display())
+        ]
+
+
+class ShowingHost(RecordingHost, Displayable):
+    shown: list[tuple[str, str | None]] = []
+
+    def show(self, name, *, display=None):
+        self.shown.append((name, display))
+        return self.attach_command(name)
+
+    def attach_command(self, name):
+        return f"{self.name} attach {name}"
+
+    def screen(self, name, lines=None):
+        return ""
+
+    def layout(self, *, display=None):
+        return None
+
+    def tile(self, window):
+        return None
+
+
+class HarnessSession(FakeSession):
+    hosts: dict[str, RecordingHost] = {}
+    attached: list[tuple[str, str | None]] = []
+    inspected: list = []
+    history = SessionStatus(Resumable.YES, None, "")
+
+    @classmethod
+    def reset(cls, *, displayable=False):
+        cls.started, cls.live, cls.attached, cls.inspected = [], {}, [], []
+        RecordingHost.processes, RecordingHost.launches, ShowingHost.shown = {}, [], []
+        kind = ShowingHost if displayable else RecordingHost
+        cls.hosts = {name: kind(name) for name in ("agent", "harness", "changed")}
+        cls.script = ()
+
+    @classmethod
+    def host(cls, name=None):
+        key = name or "agent"
+        if key not in cls.hosts:
+            raise DriverError(f"unknown host {key}")
+        return cls.hosts[key]
+
+    @classmethod
+    def start(cls, spec, *, display=None, host=None, idle_timeout=None):
+        session = super().start(spec, display=display, host=host, idle_timeout=idle_timeout)
+        session.host_name = host or "agent"
+        cls.host(session.host_name).detach(
+            session.name, ["fake-agent"], spec.workdir, {}, display=display
+        )
+        return session
+
+    @classmethod
+    def attach(cls, name, *, host=None, idle_timeout=None):
+        cls.attached.append((name, host))
+        cls.host(host)
+        session = super().attach(name, host=host, idle_timeout=idle_timeout)
+        if session.host_name != (host or "agent"):
+            raise DriverError(f"no {host} session {name}")
+        return session
+
+    @classmethod
+    def inspect(cls, spec):
+        cls.inspected.append(spec)
+        return cls.history
+
+    @property
+    def displayable(self):
+        return isinstance(self.host(self.host_name), Displayable)
+
+    def show(self, *, display=None):
+        host = self.host(self.host_name)
+        if not isinstance(host, Displayable):
+            raise NotDisplayable(f"host {host.name} cannot display")
+        return host.show(self.name, display=display)
+
+    def attach_command(self):
+        host = self.host(self.host_name)
+        if not isinstance(host, Displayable):
+            raise NotDisplayable(f"host {host.name} cannot display")
+        return host.attach_command(self.name)
+
+    def stop(self):
+        self._state = Liveness.ABSENT
+        self.host(self.host_name).attach(self.name).close()
+        super().stop()
+
+
+class DiskProcess(HostProcess):
+    def __init__(self, name, path):
+        self.name, self.path = name, path
+
+    def data(self):
+        return json.loads(read_regular(self.path) or b"{}")
+
+    def alive(self):
+        return self.data().get("alive", False)
+
+    def close(self):
+        save(self.path, json.dumps({**self.data(), "alive": False}))
+
+    def wait_exit(self, timeout):
+        return not self.alive()
+
+    def kill(self):
+        self.close()
+
+    def record(self):
+        line = self.data().get("record")
+        return None if line is None else Record.parse(line)
+
+    def display(self):
+        return self.data().get("display")
+
+
+class DiskHost(RecordingHost):
+    def root(self):
+        return os.path.expanduser("~/.agent-pm/harness-fake")
+
+    def path(self, name):
+        return os.path.join(self.root(), f"{self.name}-{name}.json")
+
+    def detach(self, name, argv, cwd, env, *, display=None, events=None, record=None):
+        path = self.path(name)
+        save(
+            path,
+            json.dumps(
+                {"alive": True, "display": display, "record": record.to_line() if record else None}
+            ),
+        )
+        append_line(
+            os.path.join(self.root(), "launches.jsonl"),
+            json.dumps({"host": self.name, "name": name, "argv": argv}),
+        )
+        return DiskProcess(name, path)
+
+    def attach(self, name):
+        if not os.path.isfile(self.path(name)):
+            raise DriverError(f"no {self.name} session {name}")
+        return DiskProcess(name, self.path(name))
+
+    def list(self, display=None):
+        return []
+
+
+class PersistentSession(HarnessSession):
+    @classmethod
+    def host(cls, name=None):
+        return DiskHost(name or "agent")
+
+
+class FailingSession(HarnessSession):
+    @classmethod
+    def start(cls, spec, *, display=None, host=None, idle_timeout=None):
+        raise DriverError("fake spawn refused")

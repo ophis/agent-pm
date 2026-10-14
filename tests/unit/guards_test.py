@@ -124,8 +124,6 @@ class PackageClimbs(Sample):
                 "session/src/agent_pm/session/adapters/codex/tui/__init__.py",
                 "import_roots()",
             ): "TASK-393",
-            ("delegate/src/agent_pm/delegate/engine/config.py", "DELEGATE"): "TASK-367",
-            ("delegate/src/agent_pm/delegate/engine/config.py", "import_roots()"): "TASK-367",
             ("manager/src/agent_pm/manager/engine/crew.py", "BIN"): "TASK-373",
         }
         self.assertLessEqual(guards.PACKAGE_CLIMB_ALLOWED.keys(), expected.keys())
@@ -457,6 +455,171 @@ class EventObjectExports(Sample):
             }
         )
         self.assertEqual(self.exports(self.tree(files)), [])
+
+
+class DelegateObjectExports(Sample):
+    LEGACY = {
+        "agent_pm.delegate": [
+            "resolve_run",
+            "task_index",
+            "trusted_dirs",
+            "configure",
+            "plan",
+            "run",
+            "harness_host",
+            "read_config",
+        ],
+        "agent_pm.delegate.composer": [
+            "team",
+            "team_dirs",
+            "index",
+            "lookup",
+            "path_for",
+            "check_all",
+            "catalog",
+            "check_team_dirs",
+            "check_overlap",
+            "team_paths",
+            "resolve",
+            "trusted_dirs",
+            "access",
+            "render",
+        ],
+    }
+
+    def exports(self, package, extra="", names=()):
+        rel = "delegate/src/" + package.replace(".", "/") + "/__init__.py"
+        functions = self.LEGACY[package]
+        sample = "".join(f"def {name}(): pass\n" for name in functions)
+        sample += extra + f"__all__ = {[*functions, *names]!r}\n"
+        root = self.tree({rel: sample})
+        return [
+            item
+            for item in guards.object_exports(root)
+            if item.startswith(rel + ":") or item.startswith(package + ":")
+        ]
+
+    def test_legacy_inventory_can_only_shrink(self):
+        expected = {(package, name) for package, names in self.LEGACY.items() for name in names}
+        actual = {
+            key
+            for key in guards.OBJECT_EXPORTS_ALLOWED
+            if key[0] in ("agent_pm.delegate", "agent_pm.delegate.composer")
+        }
+        self.assertLessEqual(actual, expected)
+        for key in actual:
+            self.assertTrue(guards.OBJECT_EXPORTS_ALLOWED[key].strip())
+
+    def test_only_pinned_functions_and_objects_are_allowed(self):
+        for package in self.LEGACY:
+            with self.subTest(package=package):
+                self.assertEqual(self.exports(package, "class Public: pass\n", ["Public"]), [])
+                self.assertEqual(
+                    len(self.exports(package, "def new_function(): pass\n", ["new_function"])),
+                    1,
+                )
+                self.assertEqual(len(self.exports(package, "Alias = render\n", ["Alias"])), 1)
+
+    def test_concrete_delegate_cannot_be_exported_under_an_alias(self):
+        for name in ("HarnessDelegate", "Renamed"):
+            with self.subTest(name=name):
+                found = self.exports(
+                    "agent_pm.delegate",
+                    "class HarnessDelegate: pass\nRenamed = HarnessDelegate\n",
+                    [name],
+                )
+                self.assertEqual(len(found), 1)
+                self.assertIn(f"concrete Delegate {name} (FR-47)", found[0])
+
+    def test_missing_all_is_rejected_for_both_packages(self):
+        root = self.tree({})
+        for package in self.LEGACY:
+            rel = "delegate/src/" + package.replace(".", "/") + "/__init__.py"
+            self.assertIn(f"{rel}: no literal __all__", guards.object_exports(root))
+
+    def test_typed_scalar_constants_pass_but_typed_callables_fail(self):
+        for package in self.LEGACY:
+            with self.subTest(package=package):
+                self.assertEqual(
+                    self.exports(
+                        package, "import os\nPATH: str = os.path.join('a', 'b')\n", ["PATH"]
+                    ),
+                    [],
+                )
+                for source in (
+                    "BAD: str = lambda: 'value'\n",
+                    "def helper(): pass\nBAD: str = helper\n",
+                ):
+                    self.assertEqual(len(self.exports(package, source, ["BAD"])), 1)
+
+
+class DelegateSessionForwarding(Sample):
+    BASE = "delegate/src/agent_pm/delegate/"
+
+    def references(self, sample, rel="engine/runner.py"):
+        root = self.tree({self.BASE + rel: sample})
+        return [
+            item
+            for item in guards.delegate_session_forwarding(root)
+            if item.startswith(self.BASE + rel + ":")
+            and "allowlisted but no forwarding reference" not in item
+        ]
+
+    def test_session_wrappers_are_rejected_even_when_aliased(self):
+        for wrapper in ("Driver", "Handle", "close", "note", "session_record", "sessions"):
+            for sample in (
+                f"from agent_pm.session import {wrapper} as old\nold()\n",
+                f"import agent_pm.session as s\ns.{wrapper}()\n",
+                f"from agent_pm import session as s\nold = s.{wrapper}\nold()\n",
+                f"from agent_pm.session.engine.forwarding import {wrapper} as old\nold()\n",
+            ):
+                with self.subTest(wrapper=wrapper, sample=sample):
+                    self.assertTrue(self.references(sample))
+
+    def test_object_methods_and_delegate_own_driver_pass(self):
+        sample = (
+            "from agent_pm.session import Session, RunLog\n"
+            "from agent_pm.delegate.engine.drivers import Driver\n"
+            "Session.attach('name').close()\nRunLog('workdir').note('kind')\nDriver()\n"
+        )
+        self.assertEqual(self.references(sample), [])
+
+    def test_compatibility_exception_is_exact_and_expires(self):
+        key = self.BASE + "engine/plan.py", "agent_pm.session.Driver"
+        public = self.BASE + "__init__.py", "agent_pm.session.Driver"
+        self.assertEqual(set(guards.DELEGATE_SESSION_FORWARDING_ALLOWED), {key, public})
+        sample = "from agent_pm.session import Driver as SessionDriver\nSessionDriver()\n"
+        self.assertEqual(self.references(sample, "engine/plan.py"), [])
+        self.assertTrue(self.references(sample, "cli.py"))
+        found = guards.delegate_session_forwarding(self.tree({}))
+        self.assertEqual(
+            found,
+            sorted(
+                f"{rel}: {name}: allowlisted but no forwarding reference (FR-34)"
+                for rel, name in (key, public)
+            ),
+        )
+
+
+class DelegatePackageNames(Sample):
+    def test_legacy_resource_access_is_rejected_in_production_only(self):
+        base = "delegate/src/agent_pm/delegate/"
+        for sample in (
+            "from agent_pm.utils import read_project as read\nread('delegate')\n",
+            "import agent_pm.utils as u\nu.import_roots()\n",
+            "DELEGATE = '/repo/delegate'\n",
+            "from .config import IMPORT_ROOTS\n",
+        ):
+            with self.subTest(sample=sample):
+                root = self.tree({base + "engine/config.py": sample})
+                self.assertTrue(guards.delegate_package_names(root))
+        root = self.tree(
+            {
+                base + "engine/config.py": "from agent_pm.utils import read_resources\n",
+                "delegate/tests/sample.py": "from agent_pm.utils import read_project\n",
+            }
+        )
+        self.assertEqual(guards.delegate_package_names(root), [])
 
 
 class SessionNames(Sample):
@@ -2540,7 +2703,11 @@ class ObjectExports(Sample):
             self.EXTENSION: "__all__ = []\n",
             **(files or {}),
         }
-        return guards.object_exports(self.tree(tree))
+        return [
+            entry
+            for entry in guards.object_exports(self.tree(tree))
+            if entry.startswith(self.SESSION) or entry.startswith("agent_pm.session:")
+        ]
 
     def test_the_real_tree_is_clean(self):
         self.assertEqual(guards.object_exports(REPO), [])
@@ -2548,7 +2715,7 @@ class ObjectExports(Sample):
     def test_the_allowlisted_wrappers_pass_each_with_a_one_line_reason(self):
         self.assertEqual(self.found(), [])
         self.assertEqual(
-            set(guards.OBJECT_EXPORTS_ALLOWED),
+            {key for key in guards.OBJECT_EXPORTS_ALLOWED if key[0] == "agent_pm.session"},
             {("agent_pm.session", n) for n in self.ENTRY_FUNCTIONS},
         )
         for key, reason in guards.OBJECT_EXPORTS_ALLOWED.items():

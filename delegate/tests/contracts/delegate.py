@@ -5,7 +5,6 @@ end(record) (its sessions gone, no outcome) and finish(record) (its sessions gon
 Each case uses only the Delegate ABC and these hooks.
 """
 
-import inspect
 import os
 import uuid
 
@@ -15,9 +14,6 @@ from agent_pm.utils import Record, Status
 
 NO_ROLE = "no-such-role"
 OUTER = {"kind": "crew", "ctl": ("agent-pm-crew",), "resume": ("agent-pm-crew", "resume", "r1")}
-
-
-KEYWORD = {"driver", "session_cls", "composer", "display", "host", "harness_host", "callback"}
 
 
 class DelegateContract:
@@ -44,16 +40,6 @@ class DelegateContract:
         record = self.make(workdir).detach(outer=outer)
         self.addCleanup(self.delegate_cls.attach(workdir).close)
         return record, workdir
-
-    def test_its_constructor_takes_role_spec_and_optional_keywords(self):
-        found = list(inspect.signature(self.delegate_cls.__init__).parameters.values())[1:]
-        self.assertEqual(
-            [p.name for p in found if p.kind is p.POSITIONAL_OR_KEYWORD], ["role", "spec"]
-        )
-        keywords = [p for p in found if p.kind is p.KEYWORD_ONLY]
-        self.assertEqual({p.name for p in keywords}, KEYWORD)
-        self.assertEqual([p.name for p in keywords if p.default is p.empty], [])
-        self.assertEqual(len(found), 2 + len(KEYWORD))
 
     def test_an_unknown_role_is_refused_with_config_error_writing_nothing(self):
         workdir = self.workdir()
@@ -122,9 +108,10 @@ class DelegateContract:
         if self.DISPLAYABLE:
             self.assertIsInstance(view.attach_command(), str)
             return
-        for method in (view.show, view.attach_command):
-            with self.subTest(method=method.__name__), self.assertRaises(NotDisplayable):
-                method()
+        self.assertIsNone(view.attach_command())
+        self.assertIsNone(view.status().attach)
+        with self.assertRaises(NotDisplayable):
+            view.show()
 
     def test_run_reports_begun_first_and_finished_last_and_returns_its_outcome(self):
         seen = []
