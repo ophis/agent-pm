@@ -12,7 +12,7 @@ from dataclasses import replace
 from types import SimpleNamespace
 from unittest import mock
 
-from agent_pm.delegate import PYTHONPATH, ConfigError, composer, configure, plan
+from agent_pm.delegate import ConfigError, composer, configure, plan
 from agent_pm.delegate.composer import RunConfig, RunParams
 from agent_pm.delegate.composer.prompt import RESUME
 from agent_pm.delegate.engine.drivers import AgentDriver
@@ -20,6 +20,7 @@ from agent_pm.delegate.engine.plan import place
 from agent_pm.delegate.event.reply import OUTCOME, PROGRESS
 from agent_pm.session import Access, note
 
+from delegate.tests.case import SRC
 from delegate.tests.plans import SID, TASKS, Base, write_team
 from delegate.tests.unit.engine.instruction import CLIENTS, GITHUB, ROLES, InstructionCase
 from utils.tests.case import local_section
@@ -247,7 +248,9 @@ class Planned(Base):
 
     def test_the_access_is_the_intents_with_the_gate_last_and_its_env(self):
         command, gate = f"x --dir {self.work}/src *", "python3 /u/usage.py *"
-        env = {"PYTHONPATH": PYTHONPATH}
+        env = {
+            "PYTHONPATH": os.pathsep.join(SRC[name] for name in ("delegate", "session", "utils"))
+        }
         for keys, commands, want in (
             (self.KEYS | {"gate": gate}, (command, gate), env),
             (self.KEYS | {"gate": ""}, (command,), env),

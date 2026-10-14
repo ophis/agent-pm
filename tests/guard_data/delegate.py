@@ -33,7 +33,6 @@ OBJECT_EXPORTS_ALLOWED = {
     ("agent_pm.delegate", "run"): "FR-13 forwarding wrapper; 356-14 (FR-27) deletes",
     ("agent_pm.delegate", "harness_host"): "Legacy Host configuration; 356-14 (FR-27) deletes",
     ("agent_pm.delegate", "CONFIG"): "Legacy config path computed at import (os.path.join)",
-    ("agent_pm.delegate", "PYTHONPATH"): "Legacy import roots computed at import (os.pathsep.join)",
     ("agent_pm.delegate", "STATUSES"): "Legacy tuple(OutcomeStatus) copy of the enum's values",
     ("agent_pm.delegate.composer", "team"): "FR-46 forwarding wrapper; 356-14 (FR-27) deletes",
     ("agent_pm.delegate.composer", "team_dirs"): "FR-46 forwarding wrapper; 356-14 (FR-27) deletes",
