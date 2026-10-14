@@ -24,6 +24,8 @@ from agent_pm.session.extension import (
     Launch,
     LimitHit,
     Reply,
+    SessionInfo,
+    SessionStatus,
     Spec,
     Stderr,
     Tui,
@@ -42,6 +44,11 @@ class FakeAdapter(Adapter):
 
     def tui(self):
         return FakeTui(self) if self.config.get("tui") else None
+
+
+class InspectAdapter(FakeAdapter):
+    def session_status(self, info: SessionInfo):
+        return SessionStatus("yes", 1.5, f"{info.sid} {info.cwd} {info.transcript} {info.resume}")
 
 
 class InProcessFakeAdapter(FakeAdapter):

@@ -10,6 +10,7 @@ import shlex
 import unittest
 from datetime import UTC, datetime
 
+from agent_pm.delegate import PYTHONPATH
 from agent_pm.linear_orchestrator.linear import linear
 from orchestrator_tests.integration.flow_fixtures import (
     ACCOUNTS,
@@ -102,7 +103,9 @@ class Run(Flow):
         for _, _, v, _ in self.wrote(since):
             if v.get("c") == SESSION and "b" in v and v["b"] not in bodies[-1:]:
                 bodies.append(v["b"])
-        command = re.escape(f"\n\n```\ncd {shlex.quote(self.rd)} && claude --resume {SID}\n```")
+        command = re.escape(
+            f"\n\n```\ncd {shlex.quote(self.rd)} && PYTHONPATH={shlex.quote(PYTHONPATH)} claude --resume {SID}\n```"
+        )
         self.assertEqual(len(bodies), len(lines), bodies)
         for body, line in zip(bodies, lines, strict=True):
             self.assertRegex(body, rf"\ARun {SID} · {line}{command}\Z")

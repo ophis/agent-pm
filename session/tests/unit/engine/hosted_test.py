@@ -143,6 +143,28 @@ class InspectTest(Base):
         self.assertEqual(self.inspect(spec), SessionStatus("yes", 1.5, f"probe {SID} {self.dir}"))
         self.assertFalse(os.path.exists(self.log))
 
+    def test_inspection_passes_folded_transcript_and_resume_metadata_to_the_adapter(self):
+        self.configure(
+            tables={
+                "history": {
+                    "implementation": "agent_pm.session.adapters.fake:InspectAdapter",
+                    "scenario": self.scenario,
+                    "log": self.log,
+                }
+            }
+        )
+        os.makedirs(self.workdir)
+        log = RunLog(self.workdir)
+        info = SessionInfo(
+            sid=SID, cwd=self.dir, project=False, transcript="/old/transcript", resume="old resume"
+        )
+        log.note("session", **info.persisted())
+        log.note("session_metadata", sid=SID, transcript="/saved/transcript", resume="saved resume")
+        self.assertEqual(
+            self.inspect(Spec(workdir=self.workdir, runtime="history", sid=SID)),
+            SessionStatus("yes", 1.5, f"{SID} {self.dir} /saved/transcript saved resume"),
+        )
+
     def test_a_sid_without_a_record_is_an_error_without_starting_a_process(self):
         spec = Spec(workdir=self.workdir, runtime="probe", sid=SID)
         with self.assertRaisesRegex(NoRecordedSession, "no recorded session"):

@@ -274,12 +274,14 @@ class ClaudeCommon:
                 five_hour = _full(five_hour, resets)
         return Usage(five_hour, weekly)
 
-    def session_status(self, sid: str, cwd: str) -> SessionStatus:
+    def session_status(
+        self, sid: str, cwd: str, *, transcript: str = "", resume: str = ""
+    ) -> SessionStatus:
         try:
             self.uuid(sid)
         except ConfigError:
             return SessionStatus(Resumable.NO, None, "")
-        path = self.transcript(cwd, sid)
+        path = transcript or self.transcript(cwd, sid)
         try:
             mode = os.lstat(path).st_mode
         except (FileNotFoundError, NotADirectoryError):
@@ -295,4 +297,4 @@ class ClaudeCommon:
         for each in paths:
             with contextlib.suppress(OSError):
                 times.append(os.lstat(each).st_mtime)
-        return SessionStatus(resumable, max(times, default=None), self.resume(cwd, sid))
+        return SessionStatus(resumable, max(times, default=None), resume or self.resume(cwd, sid))

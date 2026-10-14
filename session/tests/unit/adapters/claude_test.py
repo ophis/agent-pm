@@ -11,6 +11,7 @@ from agent_pm.session.engine.types import (
     Access,
     ConfigError,
     Launch,
+    SessionInfo,
     SessionStatus,
     Usage,
     Window,
@@ -132,13 +133,29 @@ class AdapterTest(Base):
         self.assertEqual(ClaudeAdapter({}).usage(event(five=0.25)), Usage(Window(25.0, 1.0), None))
         self.assertIsNone(ClaudeAdapter({}).usage("garbage"))
 
+    def test_status_uses_the_recorded_transcript_and_resume_hint(self):
+        path = os.path.join(self.work, "historical-transcript")
+        with open(path, "w", encoding="utf-8") as stream:
+            stream.write("recorded")
+        info = SessionInfo(
+            sid=SID, cwd=self.work, project=False, transcript=path, resume="saved resume"
+        )
+        self.assertEqual(
+            ClaudeAdapter({}).session_status(info),
+            SessionStatus("yes", os.stat(path).st_mtime, "saved resume"),
+        )
+
     def test_session_status(self):
         self.assertEqual(
-            ClaudeAdapter({}).session_status(SID, self.work),
+            ClaudeAdapter({}).session_status(
+                SessionInfo(sid=SID, cwd=self.work, project=False, transcript="", resume="")
+            ),
             SessionStatus("no", None, f"cd {shlex.quote(self.work)} && claude --resume {SID}"),
         )
         self.assertEqual(
-            ClaudeAdapter({}).session_status("x", self.work),
+            ClaudeAdapter({}).session_status(
+                SessionInfo(sid="x", cwd=self.work, project=False, transcript="", resume="")
+            ),
             SessionStatus("no", None, ""),
         )
 

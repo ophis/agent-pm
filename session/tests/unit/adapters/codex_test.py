@@ -7,7 +7,14 @@ from pathlib import Path
 from unittest import mock
 
 from agent_pm.session.adapters.codex import CodexAdapter
-from agent_pm.session.engine.types import ConfigError, Launch, SessionStatus, Usage, Window
+from agent_pm.session.engine.types import (
+    ConfigError,
+    Launch,
+    SessionInfo,
+    SessionStatus,
+    Usage,
+    Window,
+)
 
 from session.tests.case import Case
 from session.tests.unit.adapters.codex.support import CHILD, NATIVE, Base
@@ -21,30 +28,85 @@ class SessionStatusTest(Base):
         self.common.bind(str(self.work), self.spec.sid, NATIVE)
         self.rollout()
         self.rollout(CHILD, parent=NATIVE, stamp=300)
-        info = self.adapter.session_status(self.spec.sid, str(self.cwd))
+        info = self.adapter.session_status(
+            SessionInfo(
+                sid=self.spec.sid, cwd=str(self.cwd), project=False, transcript="", resume=""
+            )
+        )
         self.assertIsInstance(info, SessionStatus)
         self.assertEqual((info.resumable, info.last_active), ("yes", 300))
         self.assertIn("codex resume", info.resume_command)
         self.assertIn(NATIVE, info.resume_command)
         self.assertIn("CODEX_HOME=", info.resume_command)
 
+    def test_status_uses_a_recorded_transcript_outside_current_discovery_and_resume_hint(self):
+        self.prepare()
+        self.common.bind(str(self.work), self.spec.sid, NATIVE)
+        original = self.rollout()
+        recorded = Path(self.work, original.name)
+        original.rename(recorded)
+        info = SessionInfo(
+            sid=self.spec.sid,
+            cwd=str(self.cwd),
+            project=False,
+            transcript=str(recorded),
+            resume="saved resume",
+        )
+        self.assertEqual(
+            self.adapter.session_status(info),
+            SessionStatus("yes", recorded.stat().st_mtime, "saved resume"),
+        )
+
     def test_missing_and_unreadable_storage_have_distinct_status(self):
         self.assertEqual(
-            self.adapter.session_status(self.spec.sid, str(self.cwd)), SessionStatus("no", None, "")
+            self.adapter.session_status(
+                SessionInfo(
+                    sid=self.spec.sid, cwd=str(self.cwd), project=False, transcript="", resume=""
+                )
+            ),
+            SessionStatus("no", None, ""),
         )
         self.prepare()
         self.assertEqual(
-            self.adapter.session_status(self.spec.sid, str(self.cwd)), SessionStatus("no", None, "")
+            self.adapter.session_status(
+                SessionInfo(
+                    sid=self.spec.sid, cwd=str(self.cwd), project=False, transcript="", resume=""
+                )
+            ),
+            SessionStatus("no", None, ""),
         )
         self.common.bind(str(self.work), self.spec.sid, NATIVE)
-        self.assertEqual(self.adapter.session_status(self.spec.sid, str(self.cwd)).resumable, "no")
+        self.assertEqual(
+            self.adapter.session_status(
+                SessionInfo(
+                    sid=self.spec.sid, cwd=str(self.cwd), project=False, transcript="", resume=""
+                )
+            ).resumable,
+            "no",
+        )
         path = self.rollout()
         with mock.patch("os.open", side_effect=PermissionError("unreadable")):
             self.assertEqual(
-                self.adapter.session_status(self.spec.sid, str(self.cwd)).resumable, "unknown"
+                self.adapter.session_status(
+                    SessionInfo(
+                        sid=self.spec.sid,
+                        cwd=str(self.cwd),
+                        project=False,
+                        transcript="",
+                        resume="",
+                    )
+                ).resumable,
+                "unknown",
             )
         path.unlink()
-        self.assertEqual(self.adapter.session_status(self.spec.sid, str(self.cwd)).resumable, "no")
+        self.assertEqual(
+            self.adapter.session_status(
+                SessionInfo(
+                    sid=self.spec.sid, cwd=str(self.cwd), project=False, transcript="", resume=""
+                )
+            ).resumable,
+            "no",
+        )
 
 
 class UsageTest(Case):

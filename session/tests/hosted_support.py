@@ -99,8 +99,8 @@ class ProbeAdapter(fake_adapter.FakeAdapter):
     def usage(self, output):
         return engine_types.Usage(engine_types.Window(float(output), None), None)
 
-    def session_status(self, sid, cwd):
-        return engine_types.SessionStatus("yes", 1.5, f"probe {sid} {cwd}")
+    def session_status(self, info):
+        return engine_types.SessionStatus("yes", 1.5, f"probe {info.sid} {info.cwd}")
 
 
 class InnerAdapter(fake_adapter.FakeAdapter):

@@ -4,7 +4,7 @@ from agent_pm.session.adapters.base import Adapter
 from agent_pm.session.adapters.codex.common import CodexCommon
 from agent_pm.session.adapters.codex.headless import CodexHeadless
 from agent_pm.session.adapters.codex.tui import CodexTui
-from agent_pm.session.engine.types import Spec
+from agent_pm.session.engine.types import SessionInfo, Spec
 
 
 class CodexAdapter(Adapter):
@@ -49,8 +49,10 @@ class CodexAdapter(Adapter):
     def session_metadata(self, info):
         return self.common.session_metadata(info)
 
-    def session_status(self, sid, cwd):
-        return self.common.session_status(sid, cwd)
+    def session_status(self, info: SessionInfo):
+        return self.common.session_status(
+            info.sid, info.cwd, transcript=info.transcript, resume=info.resume
+        )
 
     def writable_dirs(self, spec: Spec):
         return self.common.writable_dirs(spec, resume=spec.resume)

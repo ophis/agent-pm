@@ -125,13 +125,13 @@ def _row(found: Mapping, own: str | None) -> SessionRow:
     )
 
 
-def _resumable(adapter: Callable[[], Adapter], sid: str, cwd: str) -> SessionStatus:
-    if error := sid_error(sid):
+def _resumable(adapter: Callable[[], Adapter], info: SessionInfo) -> SessionStatus:
+    if error := sid_error(info.sid):
         raise ConfigError(error)
-    if not printable_abs(cwd):
-        raise ConfigError(f"cwd must be a printable absolute path, got {cwd!r:.80}")
+    if not printable_abs(info.cwd):
+        raise ConfigError(f"cwd must be a printable absolute path, got {info.cwd!r:.80}")
     try:
-        return adapter().session_status(sid, cwd)
+        return adapter().session_status(info)
     except OSError:
         return SessionStatus(Resumable.UNKNOWN, None, "")
 
@@ -399,7 +399,7 @@ class HostedSession(Session):
             raise DriverError(f"inspect session {sid}: {error}") from error
         if info is None:
             raise NoRecordedSession(f"no recorded session {sid} in {spec.workdir}")
-        return _resumable(lambda: setup.registry.adapter(runtime), sid, info.cwd)
+        return _resumable(lambda: setup.registry.adapter(runtime), info)
 
     def events(self) -> Iterator[SessionEvent | Stderr | IdleTimeout]:
         last = self._clock()
@@ -508,7 +508,7 @@ class HostedSession(Session):
             self.stop()
 
     def session_status(self) -> SessionStatus:
-        return _resumable(lambda: self._adapter, self.sid, self._info.cwd)
+        return _resumable(lambda: self._adapter, self.info())
 
     def record(self) -> Record | None:
         name = self._tui()
