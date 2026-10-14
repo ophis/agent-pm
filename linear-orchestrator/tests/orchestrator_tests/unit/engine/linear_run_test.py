@@ -26,7 +26,7 @@ class OtherDelegate(FakeDelegate):
 
 
 class Runs(RunCase):
-    def test_constructed_delegate_receives_exact_spec_display_and_protection(self):
+    def test_constructed_delegate_receives_exact_spec_and_display(self):
         owner, record = self.start(delegate_cls=CapturedDelegate, display="opaque:\nvalue")
         role, spec, options = owner.delegate.accepted
         self.assertEqual(role, "researcher")
@@ -36,7 +36,6 @@ class Runs(RunCase):
         self.assertEqual(spec.name, "researcher-TASK-1-1234abcd")
         self.assertEqual(spec.cwd, spec.workdir)
         self.assertEqual(spec.out, os.path.join(spec.workdir, "out.md"))
-        self.assertEqual(spec.protect, self.cfg.protect)
         self.assertEqual(
             options,
             {"display": "opaque:\nvalue", "callback": None, "overlays": (self.cfg.core,)},

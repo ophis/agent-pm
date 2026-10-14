@@ -6,7 +6,7 @@ HERE = Path(__file__).resolve().parent
 
 # A real os.abort() makes macOS file a crash report per run: print faulthandler's report and exit
 # 134 instead.
-SCRIPT = """import faulthandler, os, sys, unittest
+SCRIPT = """import faulthandler, os, subprocess, sys, unittest
 sys.path.insert(0, {github!r})
 import run_tests
 
@@ -20,6 +20,20 @@ class T(unittest.TestCase):
     def test_a(self):
         if {mode!r} == "mid":
             abort()
+        if {mode!r} in ("leak", "brief"):
+            seconds = "60" if {mode!r} == "leak" else "1"
+            marker = os.path.join(os.environ["AGENT_PM_TEST_SANDBOX"], "marker")
+            sleeper = [sys.executable, "-c", "import sys, time; time.sleep(float(sys.argv[1]))"]
+            child = subprocess.Popen(
+                [*sleeper, seconds, marker],
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True,
+            )
+            print("started", child.pid, flush=True)
+        if {mode!r} == "tmux":
+            subprocess.run(["tmux", "-f", os.devnull, "new-session", "-d", "sleep 60"], check=True)
         self.assertNotEqual({mode!r}, "fail")
 
 code = run_tests.supervise("Unit x")

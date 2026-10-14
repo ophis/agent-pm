@@ -134,7 +134,6 @@ def inner(a, cfg, *, gql, driver, run=delegate.run, now=timestamp):
             events=a.events,
             out=os.path.join(rd, "out.md"),
             cwd=rd,
-            protect=cfg.protect,
         )
         result = run(
             cfg.roles[role].run,

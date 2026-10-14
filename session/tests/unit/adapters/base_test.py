@@ -517,8 +517,8 @@ class SpecTest(Refusals):
             (spec.access, spec.tier, spec.effort, spec.sid), (Access(), None, None, None)
         )
         self.assertEqual(
-            (spec.flags, spec.env, spec.name, spec.protect, spec.reply_tags),
-            ((), {}, None, (), None),
+            (spec.flags, spec.env, spec.name, spec.reply_tags),
+            ((), {}, None, None),
         )
 
     def plain(self, **fields):
@@ -527,19 +527,17 @@ class SpecTest(Refusals):
             flags=("--model", "x", "--", "-p"),
             env={"A": "1", "_b2": "", "PATH": "/bin:/usr/bin"},
             name="worker-1",
-            protect=("/p", "/q r/ü"),
             **fields,
         )
 
     def test_accepts_the_plain_session_fields(self):
         spec = self.plain()
         self.assertEqual(
-            (spec.flags, dict(spec.env), spec.name, spec.protect),
+            (spec.flags, dict(spec.env), spec.name),
             (
                 ("--model", "x", "--", "-p"),
                 {"A": "1", "_b2": "", "PATH": "/bin:/usr/bin"},
                 "worker-1",
-                ("/p", "/q r/ü"),
             ),
         )
         self.assertEqual(Spec(workdir="/w", env=MappingProxyType({"A": "1"})).env, {"A": "1"})
@@ -593,14 +591,6 @@ class SpecTest(Refusals):
             with self.subTest(bad=bad):
                 self.refused(
                     lambda *, bad=bad: Spec(workdir="/w", name=bad), "name must be None or a string"
-                )
-
-    def test_refuses_protect_that_is_not_a_tuple_of_printable_absolute_paths(self):
-        for bad in (["/p"], ("p",), ("",), ("/p\n",), ("/p\0",), ("/p", 1), (b"/p",), "/p", None):
-            with self.subTest(bad=bad):
-                self.refused(
-                    lambda *, bad=bad: Spec(workdir="/w", protect=bad),
-                    "protect must be a tuple of printable absolute paths",
                 )
 
     def test_reply_tags_are_none_or_a_progress_and_an_outcome_tag(self):
@@ -694,7 +684,6 @@ class SpecTest(Refusals):
                     lambda *, bad=bad: Spec(
                         workdir="/w",
                         access=Access(cwd="/x/deploy/work", dirs=(bad,)),
-                        protect=("/x/other/agent-pm",),
                         runtime="claude",
                     ),
                     "dirs must contain only printable absolute paths",

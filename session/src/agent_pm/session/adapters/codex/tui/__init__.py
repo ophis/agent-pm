@@ -5,15 +5,11 @@ import os
 import re
 import shlex
 import shutil
-import site
 import sys
-import sysconfig
 from collections.abc import Mapping
 from dataclasses import asdict, dataclass
 from types import MappingProxyType
 
-import agent_pm.session.engine.types
-import agent_pm.utils
 from agent_pm.session.adapters.base import Tui
 from agent_pm.session.adapters.codex.common import (
     LIMIT_PREFIXES,
@@ -21,9 +17,6 @@ from agent_pm.session.adapters.codex.common import (
     CodexCommon,
     RecoveryError,
     SessionStore,
-    added_dirs,
-    implicit_writable_roots,
-    inside,
     launch_options,
     native_id,
     reset_at,
@@ -39,7 +32,6 @@ from agent_pm.session.engine.types import (
     LimitHit,
     Spec,
 )
-from agent_pm.utils import import_roots, package_dirs
 
 PASSED = ("-c", "--enable", "--disable")
 
@@ -65,7 +57,6 @@ FIELDS = frozenset(
         "workdir",
         "sid",
         "store",
-        "protect",
         "import_roots",
     }
 )
@@ -86,7 +77,6 @@ class LaunchPlan:
     workdir: str
     sid: str
     store: str
-    protect: tuple[str, ...]
 
 
 def _hook_identity(value) -> tuple[str, str] | None:
@@ -100,18 +90,6 @@ def _hook_identity(value) -> tuple[str, str] | None:
     ):
         return None
     return identifier, os.path.realpath(path)
-
-
-def protect(state, dependencies, environment=None, added=()):
-    roots = [*state.writable_roots, *added, *implicit_writable_roots(environment)]
-    for root in roots:
-        root = os.path.realpath(root)
-        for dependency in dependencies:
-            for path in {os.path.abspath(dependency), os.path.realpath(dependency)}:
-                if inside(path, root) or inside(root, path):
-                    raise RecoveryError(
-                        f"Codex tui writable root {root} could rewrite hook dependency {path}"
-                    )
 
 
 class CodexTui(Tui):
@@ -137,51 +115,21 @@ class CodexTui(Tui):
         prompt, resume = spec.prompt, spec.resume
         self.state = common.prepare(spec)
         snapshot = self.state.snapshot
-        saved_flags = snapshot.flags
         self.native = self.state.native_id or ""
         env = common.environment(snapshot, interactive=True)
-        effective_env = common.environment(snapshot, interactive=True, ambient=True)
         store = self.store = common.store.root
         exe = shutil.which("codex", path=env.get("PATH", os.environ.get("PATH")))
         if exe is None:
             raise ConfigError("codex not found on PATH")
         exe = os.path.abspath(exe)
-        hooks = HookPlan(tuple(hook), source_roots)
-        protected_roots = tuple(
-            dict.fromkeys(
-                [
-                    *package_dirs(agent_pm.session, agent_pm.utils),
-                    *(os.path.join(root, "agent_pm") for root in (*import_roots(), *source_roots)),
-                    *(
-                        sysconfig.get_path(name)
-                        for name in ("stdlib", "platstdlib", "purelib", "platlib")
-                    ),
-                    *site.getsitepackages(),
-                ]
-            )
-        )
-        dependencies = [
-            *protected_roots,
-            sys.executable,
-            exe,
-            store,
-            *(word for word in hook if os.path.isabs(word)),
-            *spec.protect,
-        ]
-        added = added_dirs(saved_flags, snapshot.cwd)
-        try:
-            protect(self.state, dependencies, effective_env, added)
-        except RecoveryError as exc:
-            raise ConfigError(str(exc)) from exc
         plan = LaunchPlan(
             exe,
             self.common.selector(self.native, resume=resume),
             prompt,
-            hooks,
+            HookPlan(tuple(hook), source_roots),
             self.state.workdir,
             self.state.sid,
             store,
-            (*protected_roots, *spec.protect),
         )
         try:
             encoded = encode(plan)
@@ -321,7 +269,6 @@ def decode(data: object) -> LaunchPlan:
         workdir,
         data["sid"],
         store,
-        _strs(data["protect"], absolute=True),
     )
 
 
@@ -330,7 +277,6 @@ def encode(plan: LaunchPlan) -> str:
     data["selection"] = list(plan.selection)
     data["hook"] = list(plan.hook.argv)
     data["import_roots"] = list(plan.hook.import_roots)
-    data["protect"] = list(plan.protect)
     decode(data)
     encoded = json.dumps(data, ensure_ascii=False)
     encoded.encode("utf-8")

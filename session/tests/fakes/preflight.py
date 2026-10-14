@@ -11,7 +11,6 @@ from agent_pm.session.extension import (
     Spec,
     Tui,
 )
-from agent_pm.utils import overlaps
 
 
 class PreflightAdapter(Adapter):
@@ -54,15 +53,6 @@ class PreflightHeadless(JsonHeadless):
 
     def parse(self, record):
         return ()
-
-
-class SandboxedPreflightAdapter(PreflightAdapter):
-    def launch(self, spec):
-        for path in (spec.access.cwd or spec.workdir, *spec.access.dirs):
-            for protected in spec.protect:
-                if overlaps(path, protected):
-                    raise ConfigError(f"writable path {path} overlaps protected path {protected}")
-        return super().launch(spec)
 
 
 class PreflightTui(Tui):

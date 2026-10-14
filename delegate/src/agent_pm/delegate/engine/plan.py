@@ -140,7 +140,6 @@ def plan(
         flags=flags,
         env=env,
         reply_tags=(PROGRESS, OUTCOME),
-        protect=spec.protect,
     )
     _check_team_dirs(
         team,

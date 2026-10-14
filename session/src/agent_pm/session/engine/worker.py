@@ -145,7 +145,6 @@ class WorkerState:
             access=Access(cwd=self.cwd, project=True),
             sid=self.sid,
             name=self.name,
-            protect=(os.path.realpath(os.path.expanduser(WORKERS)),),
             runtime=self.runtime,
             mode=Mode.TUI,
             prompt=prompt,

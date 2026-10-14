@@ -16,7 +16,7 @@ from agent_pm import delegate, utils
 from agent_pm.linear_orchestrator.engine import config
 from agent_pm.linear_orchestrator.engine.types import State
 from agent_pm.utils import temp_dirs
-from orchestrator_tests.case import REPO, ROOTS, Case, system_probe
+from orchestrator_tests.case import REPO, ROOTS, Case
 from orchestrator_tests.config_fixtures import (
     BASE,
     CORE_LOCAL,
@@ -661,45 +661,18 @@ class DelegateRegistry(ConfigFile, Case):
 
 
 class DeploymentWritePaths(ConfigFile, Case):
-    def test_local_clone_deployment_overlap_is_rejected_before_origin_checks(self):
+    def test_deployment_checkout_is_a_valid_cwd_and_write_dir(self):
         for directory in (REPO, os.path.join(REPO, "delegate"), os.path.dirname(REPO)):
-            with (
-                self.subTest(directory=directory),
-                mock.patch("subprocess.run", wraps=system_probe) as runs,
-                self.assertRaisesRegex(
-                    config.ConfigError,
-                    "local_clones.ophis/x must neither lie in nor contain deployment",
-                ),
-            ):
-                self.load(PIPELINE + f'[local_clones]\n"ophis/x" = {json.dumps(directory)}\n')
-            self.assertTrue(runs.call_args_list)
-            self.assertTrue(all("rev-parse" in call.args[0] for call in runs.call_args_list))
-
-    def test_symlinks_resolve_before_deployment_overlap_checks(self):
-        deployment = os.path.join(self.home, "deployment")
-        os.mkdir(deployment)
-        alias = os.path.join(self.home, "deployment-link")
-        os.symlink(deployment, alias)
-        with self.assertRaisesRegex(
-            config.ConfigError, "must neither lie in nor contain deployment"
-        ):
-            config._writable_path("core.roles.engineer.cwd", alias, (deployment,))
-
-    def test_resolved_cwd_and_writes_cannot_overlap_deployments(self):
-        for field, directory in (
-            ("cwd", REPO),
-            ("write", os.path.join(REPO, "delegate")),
-            ("write", os.path.dirname(REPO)),
-        ):
-            value = [directory] if field == "write" else directory
-            with (
-                self.subTest(field=field, directory=directory),
-                self.assertRaisesRegex(
-                    config.ConfigError,
-                    f"core.roles.engineer.{field} must neither lie in nor contain deployment",
-                ),
-            ):
-                self.load(PIPELINE + f"[core.roles.engineer]\n{field} = {json.dumps(value)}\n")
+            with self.subTest(directory=directory):
+                cfg = self.load(
+                    PIPELINE
+                    + f"[core.roles.engineer]\ncwd = {json.dumps(directory)}\n"
+                    + f"write = [{json.dumps(directory)}]\n"
+                )
+                self.assertEqual(
+                    (cfg.roles["engineer"].run.cwd, cfg.roles["engineer"].run.write),
+                    (directory, [directory]),
+                )
 
     def test_separate_cwd_and_write_directories_remain_valid(self):
         directory = os.path.join(self.home, "external-work")
@@ -714,19 +687,16 @@ class DeploymentWritePaths(ConfigFile, Case):
 
 
 class DeploymentDirectories(Case):
-    def test_own_package_and_deployment_checkout_are_protected(self):
+    def test_deployment_checkout_and_packages_are_valid_work_dirs(self):
         packages = tuple(
             os.path.join(REPO, project, "src", "agent_pm", project.replace("-", "_"))
             for project in ("linear-orchestrator", "delegate", "session", "utils")
         )
-        protected, protect = config.deployment_dirs()
-        self.assertEqual(protected, (os.path.realpath(REPO), *packages))
-        self.assertEqual(protect, (os.path.realpath(REPO), packages[0]))
-        for directory in packages:
+        for directory in (REPO, *packages, os.path.join(packages[0], "missing")):
             with self.subTest(directory=directory):
-                self.assertIn(directory, protected)
-                with self.assertRaisesRegex(config.ConfigError, "work_dir must neither"):
-                    config._work_dir({"work_dir": directory}, protected)
+                self.assertEqual(
+                    config._work_dir({"work_dir": directory}), os.path.realpath(directory)
+                )
 
     def test_local_clone_equal_containment_and_symlink_boundaries(self):
         root = Path(self.home).resolve()
@@ -739,19 +709,12 @@ class DeploymentDirectories(Case):
                 self.subTest(work=work),
                 self.assertRaisesRegex(config.ConfigError, "local_clones.ophis/x"),
             ):
-                config._work_dir({"work_dir": str(work)}, (), {"ophis/x": str(clone)})
+                config._work_dir({"work_dir": str(work)}, {"ophis/x": str(clone)})
         sibling = root / "sibling" / "missing"
         self.assertEqual(
-            config._work_dir({"work_dir": str(sibling)}, (), {"ophis/x": str(clone)}), str(sibling)
+            config._work_dir({"work_dir": str(sibling)}, {"ophis/x": str(clone)}), str(sibling)
         )
         self.assertFalse(sibling.exists())
-
-    def test_discovery_failure_rejects_directory_discovery(self):
-        with (
-            mock.patch("subprocess.run", side_effect=PermissionError("inaccessible deployment")),
-            self.assertRaisesRegex(config.ConfigError, "inaccessible deployment"),
-        ):
-            config.deployment_dirs()
 
     def test_pythonpath_skips_standard_installation_locations(self):
         roots = (
@@ -974,21 +937,13 @@ class ConfigurationRoot(ConfigFile, Case):
         write(path, text)
         return config.load(path=path)
 
-    def test_work_dir_rejects_checkout_equality_containment_and_symlink(self):
+    def test_work_dir_may_equal_lie_in_contain_or_link_to_the_checkout(self):
         root = os.path.realpath(self.root)
         link = os.path.join(self.home, "deployment-link")
         os.symlink(root, link)
         for work in (root, os.path.join(root, "state", "missing"), os.path.dirname(root), link):
-            with self.subTest(work=work), self.assertRaises(config.ConfigError) as caught:
-                config._work_dir({"work_dir": work}, (root,))
-            self.assertEqual(
-                str(caught.exception),
-                "linear-orchestrator/config.toml: work_dir must neither lie in nor contain "
-                f"the repo {root}: {work!r}",
-            )
-        sibling = os.path.join(os.path.dirname(root), "separate-state", "missing")
-        self.assertFalse(os.path.exists(sibling))
-        self.assertEqual(config._work_dir({"work_dir": sibling}, (root,)), sibling)
+            with self.subTest(work=work):
+                self.assertEqual(config._work_dir({"work_dir": work}), os.path.realpath(work))
 
     def test_explicit_paths_preserve_nested_overlay_values_and_local_precedence(self):
         local = os.path.join(self.agent_pm, "config.local.toml")

@@ -117,10 +117,6 @@ class PackageClimbs(Sample):
             ("utils/src/agent_pm/utils/paths.py", "ROOT"): "TASK-393",
             ("utils/src/agent_pm/utils/paths.py", "import_roots"): "TASK-393",
             ("utils/src/agent_pm/utils/config_file.py", "read_project"): "TASK-393",
-            (
-                "session/src/agent_pm/session/adapters/codex/tui/__init__.py",
-                "import_roots()",
-            ): "TASK-393",
         }
         self.assertLessEqual(PACKAGE_CLIMB_ALLOWED.keys(), expected.keys())
         for key, owner in PACKAGE_CLIMB_ALLOWED.items():

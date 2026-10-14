@@ -2,7 +2,9 @@
 
 import contextlib
 import os
+import shutil
 import signal
+import socket
 import subprocess
 import sys
 import tempfile
@@ -11,6 +13,7 @@ from pathlib import Path
 from unittest import mock
 
 from agent_pm.utils import ProcessControl
+from agent_pm.utils.process_control import TIMEOUT
 
 from utils.tests.case import Case
 from utils.tests.sandbox import clean_env
@@ -240,6 +243,83 @@ class ProcessControlTest(Case):
             while os.path.exists(control.path):
                 self.assertLess(time.monotonic(), deadline)
                 time.sleep(0.02)
+
+
+class ControllerRetirementTest(Case):
+    """A controller whose client never confirms retires once its group ends."""
+
+    def launch(self, script, *args):
+        control = ProcessControl.prepare(
+            [sys.executable, "-I", "-c", script, *args], os.getcwd(), root=self.home
+        )
+        process = subprocess.Popen(
+            control.command(),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            start_new_session=True,
+            env=clean_env(),
+        )
+        self.addCleanup(control.remove)
+        self.addCleanup(process.communicate, timeout=10)
+
+        def stop():
+            with contextlib.suppress(OSError):
+                control.kill()
+
+        self.addCleanup(stop)
+        deadline = time.monotonic() + 10
+        while True:
+            try:
+                with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as connection:
+                    connection.connect(os.path.join(control.path, "control"))
+                    connection.sendall(b"start\n")
+                    connection.recv(64)
+                break
+            except (FileNotFoundError, ConnectionRefusedError):
+                self.assertLess(time.monotonic(), deadline)
+                time.sleep(0.02)
+        return control, process
+
+    def assert_retires(self, control, within):
+        deadline = time.monotonic() + within
+        while os.path.exists(control.path) or _named(control.path):
+            self.assertLess(time.monotonic(), deadline, f"controller {control.path} remains")
+            time.sleep(0.1)
+
+    def test_a_client_lost_between_start_and_started_leaves_no_controller(self):
+        control, process = self.launch("raise SystemExit(3)")
+        self.assertEqual(process.wait(timeout=10), 3)
+        time.sleep(1)
+        self.assertTrue(os.path.isdir(control.path))
+        self.assert_retires(control, within=TIMEOUT + 5)
+
+    def test_a_deleted_directory_retires_the_controller_once_its_group_ends(self):
+        release = Path(self.home, "release")
+        control, process = self.launch(
+            "import pathlib, sys, time\n"
+            "while not pathlib.Path(sys.argv[1]).exists():\n"
+            "    time.sleep(0.02)\n"
+            "raise SystemExit(5)\n",
+            str(release),
+        )
+        self.addCleanup(release.touch)
+        deadline = time.monotonic() + 10
+        while not os.path.exists(os.path.join(control.path, "started.json")):
+            self.assertLess(time.monotonic(), deadline)
+            time.sleep(0.02)
+        shutil.rmtree(control.path)
+        time.sleep(0.5)
+        self.assertIsNone(process.poll())
+        release.touch()
+        self.assertEqual(process.wait(timeout=10), 5)
+        self.assert_retires(control, within=2)
+
+
+def _named(path):
+    listing = subprocess.run(
+        ["ps", "-A", "-ww", "-o", "args="], capture_output=True, text=True, check=True
+    )
+    return any(path in line for line in listing.stdout.splitlines())
 
 
 class ControllerAttachmentTest(Case):

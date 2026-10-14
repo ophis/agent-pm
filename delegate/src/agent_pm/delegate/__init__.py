@@ -17,7 +17,7 @@ from agent_pm.delegate.config import (
 )
 from agent_pm.delegate.engine import plan as planning
 from agent_pm.delegate.engine.base import Delegate
-from agent_pm.delegate.engine.config import module_roots, package_dirs
+from agent_pm.delegate.engine.config import module_roots
 from agent_pm.delegate.engine.drivers import AgentDriver, Driver
 from agent_pm.delegate.engine.runner import execute
 from agent_pm.delegate.engine.types import (
@@ -130,6 +130,5 @@ __all__ = [
     "PYTHONPATH",
     "harness_host",
     "module_roots",
-    "package_dirs",
     "read_config",
 ]

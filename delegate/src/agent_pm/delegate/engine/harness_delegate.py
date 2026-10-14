@@ -15,7 +15,7 @@ from agent_pm.delegate import config
 from agent_pm.delegate.composer import Composer, DelegateConfig, RunConfig, Team, teams
 from agent_pm.delegate.engine.base import Delegate
 from agent_pm.delegate.engine.callback import EventCallback
-from agent_pm.delegate.engine.config import module_roots, package_dirs
+from agent_pm.delegate.engine.config import module_roots
 from agent_pm.delegate.engine.drivers import AgentDriver, Driver, InstructionDriver
 from agent_pm.delegate.engine.plan import plan
 from agent_pm.delegate.engine.runner import execute, say
@@ -200,13 +200,7 @@ class HarnessDelegate(Delegate):
         accepted = replace(
             accepted,
             spec=replace(accepted.spec, name=name if tui else None),
-            session=replace(
-                accepted.session,
-                name=name if tui else None,
-                protect=tuple(
-                    dict.fromkeys((*spec.protect, *package_dirs(), *self.composer.team.dirs))
-                ),
-            ),
+            session=replace(accepted.session, name=name if tui else None),
         )
         self.workdir = accepted.spec.workdir
         self.store = RunState(self.workdir)
@@ -314,7 +308,6 @@ class HarnessDelegate(Delegate):
                 raise ValueError("unsupported metadata version")
             given = data.pop("spec")
             team = given.pop("team")
-            given["protect"] = tuple(given["protect"])
             spec = Spec(
                 **given, team=None if team is None else Team(team["root"], tuple(team["dirs"]))
             )
@@ -326,7 +319,6 @@ class HarnessDelegate(Delegate):
             for key in ("dirs", "reads", "commands"):
                 access[key] = tuple(access[key])
             session["access"] = Access(**access)
-            session["protect"] = tuple(session["protect"])
             session["flags"] = tuple(session["flags"])
             session["reply_tags"] = tuple(session["reply_tags"])
             accepted = Plan(spec, SessionSpec(**session), RunConfig(**planned["run"]))
@@ -740,15 +732,6 @@ class HarnessDelegate(Delegate):
                     accepted.session,
                     access=replace(
                         accepted.session.access, cwd=original.cwd, project=original.project
-                    ),
-                    protect=tuple(
-                        dict.fromkeys(
-                            (
-                                *spec.protect,
-                                *package_dirs(),
-                                *self.composer.team.dirs,
-                            )
-                        )
                     ),
                 ),
             )

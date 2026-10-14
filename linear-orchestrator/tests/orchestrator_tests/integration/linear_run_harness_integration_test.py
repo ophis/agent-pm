@@ -35,7 +35,6 @@ class HarnessRun(HarnessCase):
             project_repos={},
             local_clones={},
             work_dir=os.path.join(self.home, "pipeline"),
-            protect=(),
             docs=Docs("", "", {}),
             stages={},
             delegate_kind="harness",

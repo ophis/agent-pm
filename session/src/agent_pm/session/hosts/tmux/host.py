@@ -1050,9 +1050,6 @@ class TmuxHost(Host, Displayable):
             raise DriverError("tmux not found")
         return path
 
-    def protected_paths(self) -> tuple[str, ...]:
-        return (self._executable(),)
-
     def tui_settings(self) -> TuiSettings:
         line = self.settings.get("status_line", False)
         per = self.settings.get("workers_per_column")
@@ -1139,7 +1136,7 @@ class TmuxHost(Host, Displayable):
         return sorted(found)
 
     def reclaim(self, token: str) -> TmuxGroup | None:
-        """A group-only handle on token's controller (a private /tmp/apm-group-* directory and
+        """A group-only handle on token's controller (a private apm-group-* directory and
         socket of this user's) while its group lives; else None; DriverError if it cannot tell.
         """
         if not isinstance(token, str):
