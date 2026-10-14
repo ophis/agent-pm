@@ -61,12 +61,12 @@ class ExecTest(Case):
         self.reader = os.open(self.fifo, os.O_RDONLY | os.O_NONBLOCK)
         self.addCleanup(os.close, self.reader)
 
-    def run_exec(self, argv, env, cwd, pane, prelude="", **extra):
+    def run_exec(self, argv, env, cwd, pane, prelude=""):
         """The wrapper as tmux runs it, given a handover file naming argv and the errpipe; `prelude`
         runs before it.
         """
         with open(self.path, "w") as f:
-            json.dump({"argv": argv, "env": env, "cwd": cwd, **extra}, f)
+            json.dump({"argv": argv, "env": env, "cwd": cwd}, f)
         return subprocess.run(
             self.wrapper(prelude),
             env=pane,
@@ -172,19 +172,6 @@ class ExecTest(Case):
         self.assertEqual((res.returncode, res.stdout), (1, ""))
         self.assertIn(f"[Errno {errno.ENXIO}]", res.stderr)
         self.assertTrue(os.path.exists(self.path))
-
-    def test_block_signals_stay_blocked_in_argv(self):
-        code = "import json, signal; print(json.dumps(sorted(signal.pthread_sigmask(signal.SIG_BLOCK, []))))"
-        for extra, want in (
-            ({}, set()),
-            ({"block": [signal.SIGHUP, signal.SIGTERM]}, {signal.SIGHUP, signal.SIGTERM}),
-        ):
-            with self.subTest(**extra):
-                res = self.run_exec([sys.executable, "-c", code], {}, self.root, {}, **extra)
-                self.assertEqual(res.returncode, 0, res.stderr)
-                self.assertEqual(
-                    set(json.loads(res.stdout)) & {signal.SIGHUP, signal.SIGTERM}, want
-                )
 
     def test_default_signal_dispositions(self):
         for sig in (signal.SIGPIPE, signal.SIGXFSZ):

@@ -275,7 +275,6 @@ class DetachTest(Base):
             },
         )
         self.tmux.status.assert_called_with("%7")
-        self.assertEqual(SIGNALS, (signal.SIGHUP, signal.SIGTERM, signal.SIGINT))
 
     def test_only_an_explicit_launch_mask_is_applied_to_the_target(self):
         self.host.detach(
@@ -617,6 +616,21 @@ class CloseTest(Base):
         self.assertFalse(self.control.ended)
         self.killpg.assert_not_called()
 
+    def test_a_failed_pane_kill_and_a_denied_termination_both_reach_the_error(self):
+        self.active()
+        process = TmuxProcess("w1", PROCESS, tmux=self.tmux, control=self.control)
+        self.tmux.kill.side_effect = TuiError("tmux: boom")
+        self.connection.connect.side_effect = PermissionError("termination denied")
+        with self.assertRaises(DriverError) as caught:
+            process.close()
+        self.assertEqual(str(caught.exception), "tmux: boom; process group w1: termination denied")
+
+    def test_attach_wraps_a_failed_kind_read_as_a_driver_error(self):
+        self.tmux.option.side_effect = TuiError("tmux: lost server")
+        with self.assertRaises(DriverError) as caught:
+            self.host.attach("t1")
+        self.assertEqual(str(caught.exception), "tmux session t1: tmux: lost server")
+
     def test_close_removes_the_pane_then_allows_term_cleanup_without_hard_kill(self):
         self.active({"live": True}, {"live": True}, {"live": False})
         process = TmuxProcess("w1", PROCESS, tmux=self.tmux, control=self.control)
@@ -744,7 +758,7 @@ class DetachHandoverTest(StartFixture):
         self.sleep.assert_not_called()
         self.assertEqual(os.listdir(self.temp), [])
 
-    def test_handover_file_with_the_blocked_signals(self):
+    def test_handover_file_without_the_terminal_keys(self):
         env = {
             "PATH": self.bin,
             "HOME": "/h",
@@ -752,28 +766,19 @@ class DetachHandoverTest(StartFixture):
             "PWD": "/elsewhere",
             **{k: "x" for k in TERMINAL_KEYS},
         }
-        handed = [int(signal.SIGHUP), int(signal.SIGTERM), int(signal.SIGINT)]
-        for block, want in (((), []), ((signal.SIGHUP, signal.SIGTERM, signal.SIGINT), handed)):
-            with self.subTest(block=block):
-                fake = FakeTmux()
-                self.detach(fake, env=env, block=block)
-                self.assertEqual(
-                    fake._handover,
-                    {
-                        "argv": [self.tool, "-x", "a b"],
-                        "cwd": self.cwd,
-                        "env": {
-                            "PATH": self.bin,
-                            "HOME": "/h",
-                            "CHILD_SESSION": "1",
-                            "PWD": self.cwd,
-                        },
-                        "block": want,
-                    },
-                )
-                self.assertEqual(fake.mode, 0o600)
-                self.assertEqual(fake.dir_mode, 0o700)
-                self.assertEqual(os.listdir(self.temp), [])
+        fake = FakeTmux()
+        self.detach(fake, env=env)
+        self.assertEqual(
+            fake._handover,
+            {
+                "argv": [self.tool, "-x", "a b"],
+                "cwd": self.cwd,
+                "env": {"PATH": self.bin, "HOME": "/h", "CHILD_SESSION": "1", "PWD": self.cwd},
+            },
+        )
+        self.assertEqual(fake.mode, 0o600)
+        self.assertEqual(fake.dir_mode, 0o700)
+        self.assertEqual(os.listdir(self.temp), [])
 
     def test_the_envs_iterm_session_id_goes_to_the_session_only_in_its_iterm2_form(self):
         for value, given in (

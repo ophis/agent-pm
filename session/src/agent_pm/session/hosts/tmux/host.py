@@ -112,7 +112,6 @@ TERMINAL_KEYS = (
 
 EXEC = f"""import errno, json, os, signal, sys
 with open(sys.argv[1]) as f: h = json.load(f)
-signal.pthread_sigmask(signal.SIG_BLOCK, h.get('block', []))
 w = os.open(sys.argv[2], os.O_WRONLY | os.O_NONBLOCK)
 try:
     os.chdir(h['cwd'])
@@ -147,7 +146,6 @@ def _handover(
     argv: list[str],
     cwd: str,
     env: Mapping[str, str],
-    block: list[int] | None = None,
 ) -> int:
     cwd = os.path.abspath(cwd)
     child = {k: v for k, v in env.items() if k not in TERMINAL_KEYS}
@@ -157,7 +155,6 @@ def _handover(
                 "argv": argv,
                 "cwd": cwd,
                 "env": {**child, "PWD": cwd},
-                **({"block": block} if block is not None else {}),
             },
             f,
         )
@@ -384,14 +381,13 @@ class Tmux:
         session: str,
         launch: Launch,
         *,
-        block: tuple[int, ...] = (),
         opener: str | None = None,
         display: str | None = None,
         events: str | None = None,
         record: str | None = None,
         control: str | None = None,
     ) -> str:
-        """Runs argv as start does, `block` blocked until argv unblocks them; env's full iTerm2
+        """Runs argv as start does; env's full iTerm2
         $ITERM_SESSION_ID stays; opener, display and record (a line) become @opener, @display, @record.
         No decoration; with events, @events and a kept pane whose pane-died hook appends
         `HH:MM:SS <session> exited <rc>` (signal n: -n) to it, then kills the session. An existing
@@ -434,7 +430,7 @@ class Tmux:
         try:
             tmp = tempfile.mkdtemp()
             path, wrapper = _wrapper(tmp)
-            pipe = _handover(path, argv, cwd, env, block=[int(s) for s in block])
+            pipe = _handover(path, argv, cwd, env)
             may_run = True
             res = run(
                 [
@@ -655,21 +651,31 @@ class TmuxProcess(HostProcess):
             raise DriverError(f"process group {self.name}: did not exit")
 
     def close(self) -> None:
+        """Closes the pane, then ends the process group, even when the pane fails; every failure
+        is in the one DriverError raised.
+        """
+        failures = []
+        for step in (self._close_pane, self._end_group):
+            try:
+                step()
+            except DriverError as error:
+                failures.append(str(error))
+        if failures:
+            raise DriverError("; ".join(failures))
+
+    def _end_group(self) -> None:
+        if self._control is None:
+            return
         try:
-            self._close_pane()
-        finally:
-            if self._control is not None:
-                try:
-                    self._control.terminate()
-                except (ConnectionRefusedError, ConnectionResetError):
-                    pass
-                except OSError as error:
-                    raise DriverError(f"process group {self.name}: {error}") from error
-                else:
-                    if not self._wait_group(KILL_WAIT):
-                        self._kill_group()
-                        if not self._wait_group(KILL_WAIT):
-                            raise DriverError(f"process group {self.name}: did not exit")
+            self._control.terminate()
+        except (ConnectionRefusedError, ConnectionResetError):
+            return
+        except OSError as error:
+            raise DriverError(f"process group {self.name}: {error}") from error
+        if not self._wait_group(KILL_WAIT):
+            self._kill_group()
+            if not self._wait_group(KILL_WAIT):
+                raise DriverError(f"process group {self.name}: did not exit")
 
     def _wait_group(self, timeout: float) -> bool:
         deadline = time.monotonic() + timeout
@@ -982,8 +988,11 @@ class TmuxHost(Host, Displayable):
             raise DriverError(f"tmux session {name}: {e}") from None
         if process is None:
             raise DriverError(f"no tmux session {name}")
-        kind = TmuxTerminal if self.tmux.option(name, "@kind") == "terminal" else TmuxProcess
-        return kind(name, process, tmux=self.tmux)
+        try:
+            terminal = self.tmux.option(name, "@kind") == "terminal"
+        except TuiError as e:
+            raise DriverError(f"tmux session {name}: {e}") from None
+        return (TmuxTerminal if terminal else TmuxProcess)(name, process, tmux=self.tmux)
 
     def list(self, display: Display = None) -> list[str]:
         if display == "":

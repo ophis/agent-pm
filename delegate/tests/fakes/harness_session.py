@@ -67,7 +67,7 @@ class RecordingHost(Host):
         )
         return process
 
-    def terminal(self, name, launch, *, display=None, events=None, record=None):
+    def terminal(self, name, launch, *, display=None, events=None, record=None, metadata=None):
         raise NotImplementedError("HarnessSession owns its terminal without a process")
 
     def attach(self, name):

@@ -1,5 +1,6 @@
 """The detached Delegate process, loaded from its authenticated per-launch invocation.
-Driver.detach blocks SIGNALS through exec; main unblocks them after installing its handlers.
+Its launch (HarnessDelegate's, or the deprecated Driver.detach) blocks SIGNALS through exec; main
+unblocks them after installing its handlers.
 """
 
 import hashlib

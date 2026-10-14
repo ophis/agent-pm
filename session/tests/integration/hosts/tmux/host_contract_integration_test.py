@@ -36,23 +36,6 @@ class TmuxHostContractTest(HostContract, Case):
     def make_host(self):
         return TmuxHost("tmux")
 
-    def terminal_env(self, name):
-        terminal = self.server.tmux("show-options", "-gv", "default-terminal")
-        version = self.server.tmux("display-message", "-p", "#{version}")
-        identity = self.server.tmux(
-            "display-message", "-p", "-t", f"={name}:", "#{pid} #{session_id} #{pane_id}"
-        )
-        self.assertEqual((terminal.returncode, version.returncode, identity.returncode), (0, 0, 0))
-        pid, session, pane = identity.stdout.strip().split()
-        return {
-            "TMUX": f"{self.server.socket},{pid},{session.removeprefix('$')}",
-            "TMUX_PANE": pane,
-            "TERM": terminal.stdout.strip(),
-            "TERM_PROGRAM": "tmux",
-            "TERM_PROGRAM_VERSION": version.stdout.strip(),
-            "COLORTERM": "truecolor",
-        }
-
     def poll(self, check, what: str):
         def poked():
             # tmux on Linux (CI: 3.4) can leave a dead pane's process unreaped, so no pane-died,

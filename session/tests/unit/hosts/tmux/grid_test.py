@@ -1,8 +1,10 @@
 """Grid selection, retile scheduling and bounded lock coordination."""
 
+import base64
 import contextlib
 import errno
 import io
+import json
 import os
 import re
 import sys
@@ -16,7 +18,7 @@ from agent_pm.session.hosts.tmux import grid as grids
 from agent_pm.session.hosts.tmux import layout as layouts
 from agent_pm.session.hosts.tmux import placement, types
 
-from session.tests.case import Case
+from session.tests.case import SRC, Case
 from session.tests.tmux_fixtures import (
     ATTACH,
     HOSTS,
@@ -465,6 +467,15 @@ class GridOpenTest(Case):
                     ):
                         call()
                 self.assertEqual(fake.calls, [])
+
+
+class EntryRootsTest(Case):
+    def test_the_hook_argument_is_url_safe_base64_of_the_json_package_roots(self):
+        encoded = grids.entry_roots()
+        self.assertRegex(encoded, r"\A[A-Za-z0-9_=-]+\Z")
+        self.assertEqual(
+            json.loads(base64.urlsafe_b64decode(encoded)), [SRC["session"], SRC["utils"]]
+        )
 
 
 class RetileTest(Case):
