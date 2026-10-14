@@ -26,7 +26,14 @@ KINDS = {
     in_process.InProcessRuntime: Mode.IN_PROCESS,
     tui.TuiRuntime: Mode.TUI,
 }
-IDENTITIES = {"AGENT_PM_SID", "INNER_SESSION", "INNER_ID", "OTHER_SESSION", "OTHER_ID"}
+IDENTITIES = {
+    "AGENT_PM_SID",
+    "AGENT_PM_EVENTS",
+    "INNER_SESSION",
+    "INNER_ID",
+    "OTHER_SESSION",
+    "OTHER_ID",
+}
 
 
 class NoModeAdapter(Adapter):
@@ -182,12 +189,20 @@ class IdentityDropTest(ChildEnvTest):
         self.assertEqual(
             identity_drop(registry(inner=InnerAdapter, other=OtherAdapter)), IDENTITIES
         )
-        self.assertEqual(identity_drop(registry()), frozenset({"AGENT_PM_SID"}))
+        self.assertEqual(identity_drop(registry()), frozenset({"AGENT_PM_SID", "AGENT_PM_EVENTS"}))
 
     def test_a_callers_start_token_never_reaches_a_client(self):
         self.environ(AGENT_PM_SID="0f8fad5b-d9cb-469f-a165-70867728950e", KEEP="k")
         env = child_env(Launch(("x",)), "/cwd", identity_drop(registry()))
         self.assertEqual((env.get("AGENT_PM_SID"), env["KEEP"]), (None, "k"))
+
+    def test_a_callers_events_file_never_reaches_a_client(self):
+        self.environ(AGENT_PM_EVENTS="/harness/events", KEEP="k")
+        env = child_env(Launch(("x",)), "/cwd", identity_drop(registry()))
+        self.assertEqual((env.get("AGENT_PM_EVENTS"), env["KEEP"]), (None, "k"))
+        given = Launch(("x",), env={"AGENT_PM_EVENTS": "/given/events"})
+        env = child_env(given, "/cwd", identity_drop(registry()))
+        self.assertEqual(env["AGENT_PM_EVENTS"], "/given/events")
 
     def test_a_child_default_only_inside_its_client_and_at_its_value(self):
         both = registry(inner=InnerAdapter, other=OtherAdapter)

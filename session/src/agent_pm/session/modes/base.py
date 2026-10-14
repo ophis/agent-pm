@@ -32,6 +32,8 @@ from agent_pm.utils import Display, command_path
 
 START_SID = "AGENT_PM_SID"
 
+EVENTS = "AGENT_PM_EVENTS"
+
 
 def child_env(launch: Launch, cwd: str, drop: Collection[str] = ()) -> dict[str, str]:
     """The environment less drop and unset, then the launch env and PWD; PATH led by the running
@@ -49,11 +51,12 @@ def child_env(launch: Launch, cwd: str, drop: Collection[str] = ()) -> dict[str,
 
 
 def identity_drop(registry: Registry) -> frozenset[str]:
-    """START_SID (a caller's start token, never a nested start's), each configured Adapter class's
-    identity_env, and its child_defaults at their value inside it; builds no Adapter.
+    """START_SID and EVENTS (a caller's start token and events file, never a nested start's), each
+    configured Adapter class's identity_env, and its child_defaults at their value inside it; builds
+    no Adapter.
     """
     kinds = [registry.adapter_class(name) for name in registry.configured()]
-    drop = {START_SID, *(key for kind in kinds for key in kind.identity_env)}
+    drop = {START_SID, EVENTS, *(key for kind in kinds for key in kind.identity_env)}
     for kind in kinds:
         if kind.session_env and kind.session_env in os.environ:
             drop.update(k for k, v in kind.child_defaults.items() if os.environ.get(k) == v)

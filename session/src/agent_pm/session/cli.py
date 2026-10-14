@@ -39,11 +39,10 @@ from agent_pm.session.engine.types import (
 from agent_pm.session.engine.worker import Worker
 from agent_pm.session.hosts.base import Displayable, Host
 from agent_pm.session.modes import tui_hook
-from agent_pm.session.modes.base import START_SID
+from agent_pm.session.modes.base import EVENTS, START_SID
 from agent_pm.utils import Record, Status, module_roots
 
 PROG = COMMAND
-EVENTS = "AGENT_PM_EVENTS"
 GONE = "gone"
 HEADER = "name\tstate\tclient\tsid\tdisplay"
 
