@@ -92,7 +92,7 @@ class Base(Case):
 
     def terminal_started(self, *_args, **kw):
         self.kind = "terminal"
-        self.detached(control=kw["tags"]["@control"])
+        return self.detached(control=kw["tags"]["@control"])
 
     def active(self, *responses):
         self.controlled = True
