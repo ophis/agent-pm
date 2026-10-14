@@ -1747,6 +1747,19 @@ def _package_paths(node, bound, paths, depth, project, *, scope=""):
         climb = _package_climb(node, bound, paths)
         if climb is not None and climb > depth:
             yield scope, node.lineno
+    # Negative parents indices select from the filesystem root, rather than the package.
+    if (
+        isinstance(node, ast.Subscript)
+        and isinstance(node.value, ast.Attribute)
+        and node.value.attr == "parents"
+        and isinstance(node.slice, ast.UnaryOp)
+        and isinstance(node.slice.op, ast.USub)
+        and isinstance(node.slice.operand, ast.Constant)
+        and isinstance(node.slice.operand.value, int)
+        and node.slice.operand.value > 0
+        and _package_climb(node.value.value, bound, paths) is not None
+    ):
+        yield scope, node.lineno
     for child in ast.iter_child_nodes(node):
         yield from _package_paths(child, bound, paths, depth, project, scope=scope)
 

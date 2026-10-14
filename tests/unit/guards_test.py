@@ -30,6 +30,7 @@ class PackageClimbs(Sample):
             "os.path.join(os.path.dirname(__file__), *[os.pardir] * 2)",
             "os.path.dirname(os.path.dirname(os.path.dirname(__file__)))",
             "Path(__file__).parents[2]",
+            "Path(__file__).parents[-1]",
             "Path(__file__).parent.parent.parent",
             "Path(__file__).resolve().parent / '..' / '..'",
         ):
