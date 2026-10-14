@@ -13,7 +13,7 @@ from agent_pm.linear_orchestrator.engine.config import load
 from agent_pm.linear_orchestrator.engine.gate import Gate
 from agent_pm.linear_orchestrator.engine.linear_run import LinearRun
 from agent_pm.linear_orchestrator.engine.types import ConfigError
-from agent_pm.utils import Record, query_batch, query_inputs
+from agent_pm.utils import Record, answer_keys
 
 
 def main(argv=None):
@@ -27,10 +27,9 @@ def main(argv=None):
         commands.add_parser(command, help="legacy entry, replaced by TASK-374")
     for command in ("status", "show", "close", "attach-command", "resume"):
         query = commands.add_parser(command)
-        query.add_argument("keys", nargs="*", metavar="ISSUE", help="omit or -: Records on stdin")
+        query.add_argument("keys", nargs="*", metavar="ISSUE", help="omit: Records on stdin")
     args = parser.parse_args(arguments)
     try:
-        inputs = query_inputs(args.keys, sys.stdin)
         cfg = load()
     except (ConfigError, DelegateConfigError, ValueError, OSError) as error:
         print(f"agent-pm-linear: {error}", file=sys.stderr)
@@ -39,46 +38,54 @@ def main(argv=None):
 
     gate = None
 
-    def control(item):
+    def viewed(key):
+        issue = key.name if isinstance(key, Record) else key
+        sid = key.sid if isinstance(key, Record) else None
+        return issue, LinearRun.attach(issue, cfg=cfg, sid=sid)
+
+    def resume(view):
         nonlocal gate
-        issue = item.name if isinstance(item, Record) else item
-        sid = item.sid if isinstance(item, Record) else None
-        view = LinearRun.attach(issue, cfg=cfg, sid=sid)
-        if args.command == "status":
-            return view.status().to_line()
-        if args.command == "resume":
-            if not view.alive() and view.outcome() is None:
-                entries = runs.parse_log(cfg.runs_log)
-                entry = runs.latest(entries)[issue]
-                gate = gate or Gate(
-                    cfg.runs_log,
-                    datetime.now(UTC),
-                    cfg=cfg,
-                    dry=False,
-                    say=partial(event_log.log, "router", quiet=True),
-                )
-                if gate.blocked(
-                    entry.role,
-                    issue,
-                    key=(view.delegate_kind, runs.runtime_of(entries, view.sid)),
-                ):
-                    raise RuntimeError("resume blocked by usage gate")
-            return view.resume().to_line()
-        if args.command == "close":
-            view.close()
-            return None
-        if args.command == "show":
-            return view.show()
+        if not view.alive() and view.outcome() is None:
+            entries = runs.parse_log(cfg.runs_log)
+            entry = runs.latest(entries)[view.issue]
+            gate = gate or Gate(
+                cfg.runs_log,
+                datetime.now(UTC),
+                cfg=cfg,
+                dry=False,
+                say=partial(event_log.log, "router", quiet=True),
+            )
+            if gate.blocked(
+                entry.role,
+                view.issue,
+                key=(view.delegate_kind, runs.runtime_of(entries, view.sid)),
+            ):
+                raise RuntimeError("resume blocked by usage gate")
+        return view.resume().to_line()
+
+    def attach_command(view):
         command = view.attach_command()
         if command is None:
             raise RuntimeError("run has no live displayable session")
         return command
 
-    return query_batch(
-        inputs,
-        control,
-        configuration_errors=(ConfigError, DelegateConfigError, ValueError),
-        operational_errors=(DriverError, RuntimeError, OSError),
+    reply = {
+        "status": lambda view: view.status().to_line(),
+        "resume": resume,
+        "close": lambda view: view.close(),
+        "show": lambda view: view.show(),
+        "attach-command": attach_command,
+    }[args.command]
+    return answer_keys(
+        args.keys,
+        sys.stdin,
+        viewed,
+        reply,
+        usage=(ConfigError, DelegateConfigError, ValueError),
+        failures=(DriverError, RuntimeError, OSError),
+        prog="agent-pm-linear",
+        out=sys.stdout,
+        err=sys.stderr,
     )
 
 

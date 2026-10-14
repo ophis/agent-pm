@@ -107,7 +107,7 @@ class Queries(RunCase):
         for tty in (False, True):
             result, output, errors = self.call(["resume", "TASK-1"], tty=tty)
             self.assertEqual((result, output), (1, ""))
-            self.assertEqual(errors, "TASK-1: resume blocked by usage gate\n")
+            self.assertEqual(errors, "agent-pm-linear: TASK-1: resume blocked by usage gate\n")
         self.assertEqual(ReadyDelegate.usage_calls, [])
         self.assertFalse(FakeDelegate.attach(self.cfg.run_dir("TASK-1")).alive())
 
@@ -136,7 +136,7 @@ class Queries(RunCase):
             result, output, errors = self.call([command, "TASK-2"])
             self.assertEqual((result, output), (1, ""))
             self.assertEqual(len(errors.splitlines()), 1)
-            self.assertTrue(errors.startswith("TASK-2: "))
+            self.assertTrue(errors.startswith("agent-pm-linear: TASK-2: "))
 
     def test_invalid_or_duplicate_input_has_no_control_effect(self):
         owner, record = self.start()
@@ -144,17 +144,18 @@ class Queries(RunCase):
             (["close", "TASK-1", "TASK-1"], ""),
             (["close"], record.to_line() + "\n" + record.to_line()),
             (["close"], record.to_line() + "\ninvalid"),
-            (["close"], ""),
         ):
             with self.subTest(arguments=arguments, stdin=stdin):
                 result, output, errors = self.call(arguments, stdin=stdin)
                 self.assertEqual((result, output), (2, ""))
                 self.assertEqual(len(errors.splitlines()), 1)
                 self.assertTrue(owner.alive())
+        self.assertEqual(self.call(["close"], stdin=""), (0, "", ""))
+        self.assertTrue(owner.alive())
 
     def test_batch_configuration_error_preserves_valid_key_output(self):
         self.start()
         result, output, errors = self.call(["status", "TASK-8", "TASK-1"])
         self.assertEqual(result, 2)
         self.assertEqual(Status.parse(output).name, "TASK-1")
-        self.assertEqual(errors, "TASK-8: TASK-8: no recorded run\n")
+        self.assertEqual(errors, "agent-pm-linear: TASK-8: TASK-8: no recorded run\n")
