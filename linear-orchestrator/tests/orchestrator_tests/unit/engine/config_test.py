@@ -130,6 +130,7 @@ class CatalogDelegate(FakeDelegate):
             effort="high",
             runtime="catalog",
             output={"type": "github", "repo": "acme/notes", "branch": "trunk", "dir": f"{role}/"},
+            idle_timeout=60,
         )
 
 

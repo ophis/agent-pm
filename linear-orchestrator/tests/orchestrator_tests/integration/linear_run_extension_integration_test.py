@@ -26,6 +26,7 @@ class ExtensionDelegate(FakeDelegate):
         return RunConfig(
             role=role, task=task or "", tier=2, effort="high", runtime="fake",
             output={"type": "github", "repo": "acme/notes", "branch": "main", "dir": role + "/"},
+            idle_timeout=60,
         )
 
 class NewDefault(ExtensionDelegate):
