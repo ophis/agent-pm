@@ -157,6 +157,7 @@ OBJECT_EXPORTS_ALLOWED = {
 
 IMPORT_BOOTSTRAPS = {
     f"{SESSION_SRC}adapters/codex/tui/start.py": "_bootstrap",
+    f"{SESSION_SRC}hosts/tmux/entry.py": "_bootstrap",
     f"{SESSION_SRC}modes/tui_hook.py": "_bootstrap",
 }
 
