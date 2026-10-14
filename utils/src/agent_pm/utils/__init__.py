@@ -51,6 +51,7 @@ from agent_pm.utils.paths import (
     package_dirs,
     printable_abs,
     real_dirs,
+    source_path,
     temp_dirs,
     under,
 )
@@ -141,6 +142,7 @@ __all__ = [
     "save",
     "sh",
     "sid_error",
+    "source_path",
     "sync_directory",
     "temp_dirs",
     "thaw",

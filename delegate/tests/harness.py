@@ -5,6 +5,7 @@ import os
 
 from agent_pm.delegate import Spec
 from agent_pm.delegate.engine.harness_delegate import HarnessDelegate
+from agent_pm.delegate.engine.state import RunState
 from agent_pm.session import Exited, Reply
 
 from delegate.tests.case import REPO, Case
@@ -67,6 +68,9 @@ class HarnessCase(Case):
             "Hello.\nLiteral input.", self.work, task="echo", sid=SID, cwd=self.work, runtime="fake"
         )
         return HarnessDelegate(role, spec, session_cls=session_cls, **kw)
+
+    def state_record(self) -> str:
+        return RunState(self.work).record
 
     def metadata(self):
         with open(os.path.join(self.work, "delegate.json"), encoding="utf-8") as file:

@@ -8,6 +8,7 @@ import subprocess
 import sys
 import sysconfig
 import tempfile
+from collections.abc import Sequence
 from types import ModuleType
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), *[os.pardir] * 4))
@@ -34,12 +35,25 @@ def module_roots(*packages: ModuleType) -> tuple[str, ...]:
 def import_env(*packages: ModuleType) -> dict[str, str]:
     """Installed packages use the interpreter's paths; source runs supply only their roots."""
     roots = module_roots(*packages)
-    paths = sysconfig.get_paths()
-    installed = {os.path.realpath(paths[name]) for name in ("purelib", "platlib")}
-    available = {os.path.realpath(path) for path in sys.path if path}
-    if all(os.path.realpath(root) in installed & available for root in roots):
+    if all(os.path.realpath(root) in _installed() for root in roots):
         return {}
     return {"PYTHONPATH": os.pathsep.join(roots)}
+
+
+def source_path(roots: Sequence[str]) -> dict[str, str]:
+    """A child's PYTHONPATH for `roots`: each once, in order, minus the interpreter's installed
+    paths (as import_env); {} when none remain.
+    """
+    installed = _installed()
+    kept = [root for root in dict.fromkeys(roots) if os.path.realpath(root) not in installed]
+    return {"PYTHONPATH": os.pathsep.join(kept)} if kept else {}
+
+
+def _installed() -> set[str]:
+    """The interpreter's purelib and platlib that are on its sys.path."""
+    paths = sysconfig.get_paths()
+    installed = {os.path.realpath(paths[name]) for name in ("purelib", "platlib")}
+    return installed & {os.path.realpath(path) for path in sys.path if path}
 
 
 def package_dirs(*packages: ModuleType) -> tuple[str, ...]:

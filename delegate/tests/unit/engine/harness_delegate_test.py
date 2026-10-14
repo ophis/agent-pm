@@ -116,7 +116,7 @@ class OverlayTest(HarnessCase):
 
     def test_a_record_without_overlays_is_corrupt(self):
         self.make()
-        path = os.path.join(self.work, "delegate.json")
+        path = self.state_record()
         with open(path, encoding="utf-8") as file:
             data = json.load(file)
         self.assertEqual(data["overlays"], [])
