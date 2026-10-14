@@ -37,12 +37,14 @@ from agent_pm.session.engine.types import (
     Word,
 )
 from agent_pm.session.hosts.base import HostProcess
+from agent_pm.session.hosts.tmux import tmux_host
 from agent_pm.session.modes import tui, tui_hook
 
 from session.tests import fake_adapter
 from session.tests.case import SRC, Case
 from session.tests.fakes.terminal import MemoryHost, ScreenHost
 from session.tests.source_roots import PACKAGE_ROOTS
+from session.tests.tmux_host_support import Base as TmuxBase
 
 NAME = "w1"
 
@@ -203,10 +205,9 @@ class Base(Case):
 
     def state(self, **changes) -> dict:
         process = self.host.processes.get(NAME)
-        receipt = None if process is None else process.calls.record.return_value
         generation = (
-            "fixture-generation" if receipt is None or receipt.detail is None else receipt.detail
-        )
+            None if process is None else process.session_identity()[1]
+        ) or "fixture-generation"
         return {
             "runtime": "fake",
             "sid": SID,
@@ -436,13 +437,15 @@ class AttachTest(Base):
         with self.assertRaisesRegex(DriverError, r"\Ano tui session w1\Z"):
             self.attach()
         self.host.calls.attach.assert_not_called()
-        self.host.create(NAME, SID).calls.record.return_value = None
+        self.host.create(NAME, SID).calls.session_identity.return_value = (None, None)
         with self.assertRaisesRegex(DriverError, r"\Ano tui session w1\Z"):
             self.attach()
 
-    def test_attach_checks_the_receipt_of_its_captured_terminal(self):
+    def test_attach_checks_the_private_identity_of_its_captured_terminal(self):
         old = self.process
-        old.calls.record.side_effect = lambda: self.host.create(NAME, "other").record()
+        old.calls.session_identity.side_effect = lambda: self.host.create(
+            NAME, "other"
+        ).session_identity()
         with self.assertRaisesRegex(DriverError, r"\Ano tui session w1\Z"):
             self.attach()
         self.host.calls.attach.assert_called_once_with(NAME)
@@ -481,7 +484,7 @@ class StartTest(Base):
         self.assertFalse(os.path.lexists(self.root))
         self.assertEqual(self.recorded, [])
 
-    def test_display_and_identity_are_kept_in_the_host_receipt(self):
+    def test_display_and_private_identity_are_separate_from_the_host_receipt(self):
         mode = tui.TuiMode.start(
             Spec(workdir=self.tmp, name=NAME, runtime="fake", sid=SID),
             self.adapter,
@@ -492,9 +495,9 @@ class StartTest(Base):
         )
         call = self.host.calls.terminal.call_args
         self.assertEqual(call.kwargs["display"], "opaque-location")
-        self.assertEqual(call.kwargs["record"].display, "opaque-location")
-        self.assertEqual(call.kwargs["record"].sid, SID)
-        self.assertEqual(call.kwargs["record"].kind, "fake")
+        self.assertIsNone(call.kwargs["record"])
+        self.assertEqual(call.kwargs["metadata"]["sid"], SID)
+        self.assertEqual(call.kwargs["metadata"]["runtime"], "fake")
         self.assertEqual(mode._terminal.display(), "opaque-location")
 
     def test_the_selected_host_receives_the_launch_and_identity_receipt(self):
@@ -512,8 +515,8 @@ class StartTest(Base):
             ),
         )
         self.assertEqual(call.kwargs["events"], self.events)
-        self.assertEqual(call.kwargs["record"].sid, SID)
-        self.assertEqual(call.kwargs["record"].kind, "fake")
+        self.assertEqual(call.kwargs["metadata"]["sid"], SID)
+        self.assertEqual(call.kwargs["metadata"]["runtime"], "fake")
         self.assertEqual(self.run.roots, PACKAGE_ROOTS)
         self.assertEqual(
             (mode.name, mode.prepared.info.sid, mode._store.dir), (NAME, SID, self.dir)
@@ -655,7 +658,7 @@ class StartTest(Base):
         self.host.calls.terminal.side_effect = DriverError("tmux: boom")
         with self.assertRaises(DriverError) as caught:
             self.start()
-        self.assertEqual(str(caught.exception), "tmux: boom")
+        self.assertEqual(str(caught.exception), "cannot start tui session w1: tmux: boom")
         self.assertEqual(len(self.recorded), 1)
         self.assertNoSessionDir()
         self.assertEqual(sorted(os.listdir(self.root)), ["w1.lock", "w2"])
@@ -690,7 +693,9 @@ class StartTest(Base):
 
     def test_a_terminal_acquisition_failure_leaves_no_session(self):
         self.host.calls.terminal.side_effect = DriverError("terminal could not be acquired")
-        with self.assertRaisesRegex(DriverError, "terminal could not be acquired"):
+        with self.assertRaisesRegex(
+            DriverError, r"\Acannot start tui session w1: terminal could not be acquired\Z"
+        ):
             self.start()
         self.assertEqual(len(self.recorded), 1)
         self.assertEqual(self.host.processes, {})
@@ -710,7 +715,7 @@ class StartTest(Base):
         thread.start()
         thread.join(5)
         self.assertFalse(thread.is_alive())
-        self.assertEqual(caught, ["terminal could not be acquired"])
+        self.assertEqual(caught, ["cannot start tui session w1: terminal could not be acquired"])
         self.assertEqual(self.host.processes, {})
         self.assertNoSessionDir()
 
@@ -1123,7 +1128,9 @@ class CloseStopTest(Base):
         for state in (Liveness.LIVE, Liveness.UNKNOWN):
             with self.subTest(state=state):
                 mode._terminal.calls.state.return_value = state
-                with self.assertRaisesRegex(DriverError, r"\Ahost close failed\Z"):
+                with self.assertRaisesRegex(
+                    DriverError, r"\Acannot close tui session w1: host close failed\Z"
+                ):
                     tui.TuiMode.close(NAME, host=self.host)
                 self.assertTrue(os.path.isdir(self.dir))
 
@@ -1703,3 +1710,35 @@ class StoreTest(Base):
         self.assertEqual(found, [("tool", {"tool": "t"}), ("stop", {})])
         self.assertEqual(store.records(len(first)), ([("stop", {})], end))
         self.assertEqual(store.records(end), ([], end))
+
+
+class TransportErrorTest(TmuxBase):
+    def test_real_host_launch_keeps_the_modes_exact_error_prefix(self):
+        self.tmux.tmux_path.return_value = self.tool
+        self.tmux.start.side_effect = tmux_host.TuiError("tmux: boom")
+        workdir = os.path.join(self.dir, "work")
+        os.mkdir(workdir)
+
+        class Launchable(ScanTui):
+            def launch(self, spec, hook, *, source_roots):
+                return Launch((sys.executable,))
+
+        adapter = TuiAdapter({"tui": True})
+        adapter.run = Launchable(adapter)
+        with self.assertRaises(DriverError) as caught:
+            tui.TuiMode.start(
+                Spec(workdir=workdir, name=NAME, runtime="fake", sid=SID),
+                adapter,
+                registry=self.driver.registry,
+                record=lambda _info: None,
+                host=self.host,
+            )
+        self.assertEqual(str(caught.exception), "cannot start tui session w1: tmux: boom")
+
+    def test_real_host_close_keeps_the_modes_exact_error_prefix(self):
+        self.controlled, self.kind = False, None
+        self.tmux.listing.return_value = [{"name": NAME, "display": None}]
+        self.tmux.kill.side_effect = tmux_host.TuiError("tmux: boom")
+        with self.assertRaises(DriverError) as caught:
+            tui.TuiMode.close(NAME, host=self.host)
+        self.assertEqual(str(caught.exception), "cannot close tui session w1: tmux: boom")

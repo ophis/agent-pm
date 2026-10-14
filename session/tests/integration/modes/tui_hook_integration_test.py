@@ -19,8 +19,8 @@ from session.tests.tui_hook_support import (
     HOOK,
     SOURCE_ROOTS,
     WORDS,
+    identity,
     install,
-    receipt,
     state,
     write_state,
 )
@@ -29,7 +29,7 @@ PANE = "%3"
 LINE = r"\A[0-9]{2}:[0-9]{2}:[0-9]{2} w1 %s\n\Z"  # one event line
 TS = r"\A\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}[+-]\d\d:\d\d\Z"
 MISSING = object()
-LOOKUP = ["display-message", "-p", "-t", "=w1:", "#{pane_id}\t#{@record}"]
+LOOKUP = ["display-message", "-p", "-t", "=w1:", "#{pane_id}\t#{@sid}\t#{@generation}"]
 TMUX = """#!{python} -I
 import json, os, sys
 with open(os.environ["TMUX_LOG"], "a") as f:
@@ -38,7 +38,7 @@ if os.environ.get("TMUX_FAIL"):
     sys.exit("boom\\nagain")
 if sys.argv[1] == "display-message":
     if "pane_id" in sys.argv[-1]:
-        print("" if os.environ.get("TMUX_TARGET_ABSENT") else "%3\\t" + os.environ["TMUX_TARGET_RECORD"])
+        print("" if os.environ.get("TMUX_TARGET_ABSENT") else "%3\\t" + os.environ["TMUX_TARGET_IDENTITY"])
     else:
         print("w1")
 """
@@ -71,7 +71,7 @@ class HookBase(Case):
             "HOME": self.root,
         }
         self.state = state(self.root, self.events)
-        self.env["TMUX_TARGET_RECORD"] = receipt(self.state).to_line()
+        self.env["TMUX_TARGET_IDENTITY"] = identity(self.state)
         write_state(self.dir, self.state)
 
     def hook(self, label, payload=None, args=None, **env):

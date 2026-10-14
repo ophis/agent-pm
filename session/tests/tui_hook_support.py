@@ -2,8 +2,6 @@ import json
 import os
 import uuid
 
-from agent_pm.utils import Record
-
 from session.tests.case import SRC
 
 HOOK = os.path.join(SRC["session"], "agent_pm", "session", "modes", "tui_hook.py")
@@ -41,20 +39,8 @@ def state(root: str, events) -> dict:
     }
 
 
-def receipt(value: dict) -> Record:
-    saved = value["host_state"]
-    return Record(
-        1,
-        "fake",
-        saved["target"],
-        (saved["target"],),
-        value["sid"],
-        None,
-        ("ctl",),
-        ("resume",),
-        None,
-        saved["generation"],
-    )
+def identity(value: dict) -> str:
+    return f"{value['sid']}\t{value['host_state']['generation']}"
 
 
 def write_state(folder: str, value) -> None:

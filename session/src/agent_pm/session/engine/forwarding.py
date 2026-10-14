@@ -29,7 +29,7 @@ from agent_pm.session.engine.types import (
     Spec,
     Usage,
 )
-from agent_pm.session.hosts.base import Displayable, Host
+from agent_pm.session.hosts.base import SIGNALS, Displayable, Host
 from agent_pm.session.hosts.tmux import TmuxHost, tmux_host
 from agent_pm.session.modes import tui
 from agent_pm.utils import load_class, printable_abs
@@ -250,7 +250,7 @@ class Driver:
             raise ConfigError(f"cwd must be an existing directory, got {cwd!r:.80}")
         display = TmuxHost.fold(opener, None, None)
         try:
-            launch = Launch(tuple(argv), cwd=cwd, env=env)
+            launch = Launch(tuple(argv), cwd=cwd, env=env, blocked_signals=SIGNALS)
         except ConfigError as error:
             raise DriverError(
                 f"detach {name}: cannot run {argv[0]}: {os.strerror(errno.EINVAL)}"

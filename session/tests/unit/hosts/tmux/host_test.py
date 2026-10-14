@@ -11,10 +11,10 @@ from pathlib import Path
 from unittest import mock
 
 from agent_pm.session import ConfigError, Displayable, DriverError, Host, Launch, Terminal
-from agent_pm.session.engine.types import ActivityState, Paste, SessionRow
+from agent_pm.session.engine.types import ActivityState, Key, Paste, SessionRow
 from agent_pm.session.hosts.base import SIGNALS
 from agent_pm.session.hosts.tmux import TmuxHost, tmux_host, types
-from agent_pm.session.hosts.tmux.host import TmuxProcess
+from agent_pm.session.hosts.tmux.host import TmuxProcess, TmuxTerminal
 from agent_pm.utils import ProcessControl, load_class
 
 from session.tests.case import Case
@@ -275,6 +275,43 @@ class DetachTest(Base):
 
 
 class TerminalTest(Base):
+    def test_failed_process_lookup_closes_only_the_session_owned_by_the_new_controller(self):
+        for result in (None, TuiError("cannot inspect pane")):
+            with self.subTest(result=result):
+                self.tmux.process.side_effect = [result]
+                self.tmux.kill.reset_mock()
+                with self.assertRaises(DriverError):
+                    self.host.terminal("t1", Launch((self.tool,), cwd=self.dir))
+                self.tmux.kill.assert_called_once_with("t1")
+                self.assertFalse(os.path.exists(self.control.path))
+
+    def test_failed_process_lookup_never_closes_a_replacement_controller_session(self):
+        self.tmux.process.return_value = None
+        self.tmux.option.side_effect = lambda _target, _key: "/another-controller"
+        with self.assertRaises(DriverError):
+            self.host.terminal("t1", Launch((self.tool,), cwd=self.dir))
+        self.tmux.kill.assert_not_called()
+
+    def test_only_a_key_following_a_paste_waits_for_paste_delivery(self):
+        self.active(*[{"live": True}] * 4)
+        terminal = TmuxTerminal("t1", PROCESS, tmux=self.tmux, control=self.control)
+        order = mock.Mock()
+        order.attach_mock(self.tmux.paste, "paste")
+        order.attach_mock(self.tmux.keys, "keys")
+        with mock.patch("time.sleep") as sleep:
+            order.attach_mock(sleep, "sleep")
+            terminal.send(Key("Escape"))
+            terminal.send(Paste("a b"))
+            terminal.send(Key("Enter"))
+            terminal.send(Key("Escape"))
+        self.assertEqual(order.mock_calls, [
+            mock.call.keys("%7", "Escape"),
+            mock.call.paste("%7", "a b"),
+            mock.call.sleep(self.tmux.PAUSE),
+            mock.call.keys("%7", "Enter"),
+            mock.call.keys("%7", "Escape"),
+        ])
+
     def test_terminal_launch_has_a_controller_identity_and_keeps_its_metadata(self):
         events = os.path.join(self.dir, "events")
         launch = Launch((self.tool, "a b"), cwd=self.dir, env={"PATH": "/bin", "TERM": "exact"})
@@ -486,6 +523,16 @@ class RowsTest(Base):
 
 
 class CloseTest(Base):
+    def test_a_failed_pane_kill_still_terminates_the_owned_process_group(self):
+        self.active({"live": True}, {"live": False})
+        process = TmuxProcess("w1", PROCESS, tmux=self.tmux, control=self.control)
+        self.tmux.kill.side_effect = TuiError("tmux: boom")
+        with self.assertRaisesRegex(DriverError, "^tmux: boom$"):
+            process.close()
+        self.assertEqual(self.connection.sendall.call_args_list, [
+            mock.call(b"signal 15\n"), mock.call(b"live\n")
+        ])
+
     def test_close_during_controller_retirement_never_sends_a_numeric_group_signal(self):
         self.active()
         Path(self.control.path, "control").touch(mode=0o600)

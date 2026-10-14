@@ -98,7 +98,7 @@ class OutsideHost(Host):
         self.processes[name] = OutsideProcess(name, child, display, record)
         return self.processes[name]
 
-    def terminal(self, name, launch, *, display=None, events=None, record=None):
+    def terminal(self, name, launch, *, display=None, events=None, record=None, metadata=None):
         raise DriverError(f"host {self.name} has no terminals")
 
     def attach(self, name):

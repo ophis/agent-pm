@@ -63,7 +63,9 @@ class Base(Case):
         )
         allocate = tempfile.mkdtemp
 
-        def private(**kw):
+        def private(*args, **kw):
+            if args:
+                return allocate(*args, **kw)
             self.assertEqual(kw, {"prefix": "apm-group-", "dir": "/tmp"})
             return allocate(prefix=kw["prefix"], dir=self.dir)
 

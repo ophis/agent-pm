@@ -59,9 +59,8 @@ from agent_pm.utils import (
 from agent_pm.utils import probe as run_probe
 
 
-def _request(spec: Spec, display: Display, idle_timeout: float | None) -> tuple[str, Mode]:
+def _request(spec: Spec, idle_timeout: float | None) -> tuple[str, Mode]:
     _idle(idle_timeout)
-    _displayed(display)
     if not isinstance(spec, Spec):
         raise ConfigError(f"spec: want a Spec, got {type(spec).__name__}")
     runtime, mode = spec.runtime, spec.mode
@@ -105,13 +104,6 @@ def _idle(idle_timeout) -> None:
         raise ConfigError(
             f"idle_timeout must be a positive number of seconds, got {idle_timeout!r}"
         )
-
-
-def _displayed(display) -> None:
-    if display is not None and (
-        not isinstance(display, str) or not display.isprintable() or display.endswith(";")
-    ):
-        raise ConfigError(f"display {display!r:.80}: want printable text not ending in ;")
 
 
 def _session_line(workdir: str) -> Callable[[SessionInfo], None]:
@@ -224,11 +216,12 @@ class HostedSession(Session):
         idle_timeout: float | None = None,
     ) -> None:
         setup = cls._config()
-        runtime, mode = _request(spec, display, idle_timeout)
+        runtime, mode = _request(spec, idle_timeout)
         adapter = setup.registry.adapter(runtime)
         spec = replace(spec, sid=spec.sid or str(uuid.uuid4()))
         RunningMode.check_protection(spec, adapter)
         on = cls.host(host)
+        on.validate_display(display)
         MODES[mode].preflight(
             spec,
             adapter,
@@ -248,11 +241,12 @@ class HostedSession(Session):
     ) -> HostedSession:
         """spec.sid: its id, else a new one; display: kept by its Host."""
         setup = cls._config()
-        runtime, mode = _request(spec, display, idle_timeout)
+        runtime, mode = _request(spec, idle_timeout)
         adapter = setup.registry.adapter(runtime)
         spec = replace(spec, sid=spec.sid or str(uuid.uuid4()))
         RunningMode.check_protection(spec, adapter)
         on = cls.host(host)
+        on.validate_display(display)
         name = tui.TuiMode.resolve_name(spec) if mode == Mode.TUI else spec.name
 
         def check_name(name: str) -> None:
@@ -368,7 +362,7 @@ class HostedSession(Session):
     @classmethod
     def layout(cls, *, display: Display = None) -> str | None:
         on = cls.host()
-        _displayed(display)
+        on.validate_display(display)
         return on.layout(display=display) if isinstance(on, Displayable) else None
 
     @classmethod
@@ -389,7 +383,7 @@ class HostedSession(Session):
     @classmethod
     def display(cls, value: Display = None, *, host: str | None = None) -> Display:
         on = cls.host(host)
-        _displayed(value)
+        on.validate_display(value)
         return on.display(value)
 
     @classmethod

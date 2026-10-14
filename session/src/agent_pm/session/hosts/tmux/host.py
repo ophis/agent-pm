@@ -101,6 +101,9 @@ class TmuxProcess(HostProcess):
             return -signal.SIGHUP
         return value if isinstance(value, int) else None
 
+    def session_identity(self) -> tuple[str | None, str | None]:
+        return self._option("@sid"), self._option("@generation")
+
     def activity(self) -> Word | None:
         value = self._option("@state")
         return Word(value) if value in tuple(Word) else None
@@ -136,19 +139,21 @@ class TmuxProcess(HostProcess):
             raise DriverError(f"process group {self.name}: did not exit")
 
     def close(self) -> None:
-        self._close_pane()
-        if self._control is None:
-            return
         try:
-            self._control.terminate()
-        except (ConnectionRefusedError, ConnectionResetError):
-            return
-        except OSError as error:
-            raise DriverError(f"process group {self.name}: {error}") from error
-        if not self._wait_group(KILL_WAIT):
-            self._kill_group()
-            if not self._wait_group(KILL_WAIT):
-                raise DriverError(f"process group {self.name}: did not exit")
+            self._close_pane()
+        finally:
+            if self._control is not None:
+                try:
+                    self._control.terminate()
+                except (ConnectionRefusedError, ConnectionResetError):
+                    pass
+                except OSError as error:
+                    raise DriverError(f"process group {self.name}: {error}") from error
+                else:
+                    if not self._wait_group(KILL_WAIT):
+                        self._kill_group()
+                        if not self._wait_group(KILL_WAIT):
+                            raise DriverError(f"process group {self.name}: did not exit")
 
     def _wait_group(self, timeout: float) -> bool:
         deadline = time.monotonic() + timeout
@@ -165,7 +170,7 @@ class TmuxProcess(HostProcess):
             self.tmux.kill(self._pane)
         except TuiError as e:
             if self._own():
-                raise DriverError(f"close {self.name}: {e}") from None
+                raise DriverError(str(e)) from None
 
     def record(self) -> Record | None:
         line = self._option("@record")
@@ -208,15 +213,20 @@ class TmuxProcess(HostProcess):
 
 
 class TmuxTerminal(TmuxProcess, Terminal):
+    _pasted = False
+
     def send(self, action: Paste | Key) -> None:
         if not self.alive():
             raise DriverError(f"tui session {self.name} is not running")
         try:
             if isinstance(action, Paste):
                 self.tmux.paste(self._pane, action.text)
+                self._pasted = True
             else:
-                time.sleep(self.tmux.PAUSE)
+                if self._pasted:
+                    time.sleep(self.tmux.PAUSE)
                 self.tmux.keys(self._pane, action.name)
+                self._pasted = False
         except TuiError as error:
             raise DriverError(f"send to tui session {self.name}: {error}") from error
 
@@ -287,19 +297,29 @@ class TmuxHost(Host, Displayable):
         display: Display = None,
         events: str | None = None,
         record: Record | None = None,
+        metadata: Mapping[str, str] | None = None,
     ) -> TmuxTerminal:
         process = self._launch(
-            name, launch, display=display, events=events, record=record, terminal=True
+            name,
+            launch,
+            display=display,
+            events=events,
+            record=record,
+            terminal=True,
+            metadata=metadata,
         )
         return TmuxTerminal(name, process.identity, tmux=self.tmux, control=process._control)
 
-    def _launch(self, name, launch, *, display, events, record, terminal):
+    def _launch(self, name, launch, *, display, events, record, terminal, metadata=None):
         self.validate(name, launch, display=display)
         events = self.events_path(events)
         events = self.prepare_events(events)
         parts = self.unfold(display)
-        control = ProcessControl.prepare(launch.argv, launch.cwd, env=launch.env)
+        control = ProcessControl.prepare(
+            launch.argv, launch.cwd, env=launch.env, blocked_signals=launch.blocked_signals
+        )
         process = None
+        created = False
         try:
             command = Launch(tuple(control.command()), cwd=launch.cwd, env=launch.env)
             if terminal:
@@ -316,11 +336,17 @@ class TmuxHost(Host, Displayable):
                             if record is not None and record.sid is not None
                             else {}
                         ),
+                        **{
+                            f"@{key}": value
+                            for key, value in (metadata or {}).items()
+                            if key in ("sid", "runtime", "generation")
+                        },
                         **({"@display": display} if display is not None else {}),
                         **({"@opener": parts[0]} if parts is not None and parts[0] else {}),
                         **({"@record": record.to_line()} if record is not None else {}),
                     },
                 )
+                created = True
                 process = self.tmux.process(name)
                 if process is None:
                     raise TuiError(f"session {name} disappeared during start")
@@ -336,21 +362,19 @@ class TmuxHost(Host, Displayable):
                 )
             control.wait_started()
         except (TuiError, OSError) as error:
-            cleanup = self._cancel_launch(control, process)
+            cleanup = self._cancel_launch(control, process, name if created else None)
             detail = f"; {cleanup}" if cleanup else ""
             failure = (
                 f"cannot run {error.filename or launch.argv[0]}: {os.strerror(error.errno)}"
                 if isinstance(error, OSError) and error.errno is not None
                 else str(error)
             )
-            raise DriverError(
-                f"{'start' if terminal else 'detach'} {name}: {failure}{detail}"
-            ) from error
+            prefix = "" if terminal else f"detach {name}: "
+            raise DriverError(f"{prefix}{failure}{detail}") from error
         return TmuxProcess(name, process, tmux=self.tmux, control=control)
 
     def validate(self, name: str, launch: Launch, *, display: Display = None) -> None:
         super().validate(name, launch, display=display)
-        _checked(display)
         try:
             self.tmux.validate_start(name, launch.argv, launch.env, {})
         except TuiError as error:
@@ -369,13 +393,13 @@ class TmuxHost(Host, Displayable):
         except TuiError as error:
             raise ConfigError(str(error)) from error
 
-    def hook_state(self, record: Record) -> dict:
+    def hook_state(self, name: str, metadata: Mapping[str, str]) -> dict:
         return {
             "host_hook": "agent_pm.session.hosts.tmux.hook",
             "host_state": {
                 "executable": self._executable(),
-                "target": record.name,
-                "generation": record.detail,
+                "target": name,
+                "generation": metadata["generation"],
                 "environment": {
                     key: value
                     for key, value in os.environ.items()
@@ -407,7 +431,9 @@ class TmuxHost(Host, Displayable):
             raise ConfigError(f"grid_retile: want one of {', '.join(self.tmux.Retile)}")
         return TuiSettings(line, per, retile)
 
-    def _cancel_launch(self, control: ProcessControl, process: str | None = None) -> str:
+    def _cancel_launch(
+        self, control: ProcessControl, process: str | None = None, name: str | None = None
+    ) -> str:
         errors = []
         try:
             control.cancel()
@@ -420,6 +446,12 @@ class TmuxHost(Host, Displayable):
                     self.tmux.kill(pane)
             except TuiError as error:
                 errors.append(f"close pane: {error}")
+        elif name is not None:
+            try:
+                if self.tmux.option(name, "@control") == control.path:
+                    self.tmux.kill(name)
+            except TuiError as error:
+                errors.append(f"close session: {error}")
         return "; ".join(errors)
 
     def attach(self, name: str) -> TmuxProcess:
@@ -486,6 +518,9 @@ class TmuxHost(Host, Displayable):
             for row in found
             if row["name"] in names
         ]
+
+    def validate_display(self, value: Display) -> None:
+        _checked(value)
 
     def display(self, value: Display) -> Display:
         _checked(value)

@@ -43,7 +43,7 @@ from agent_pm.session.hosts.base import Displayable, Host, HostProcess, Terminal
 from agent_pm.session.modes import tui_hook
 from agent_pm.session.modes.base import RunningMode, identity_drop
 from agent_pm.utils import CONFIG_NAME as NAME
-from agent_pm.utils import STATE, Display, Record, json_records, module_roots, read_regular
+from agent_pm.utils import STATE, Display, json_records, module_roots, read_regular
 
 TUI_DIR = f"{STATE}/tui"
 WORDS = {
@@ -60,7 +60,7 @@ def checked_name(name) -> str:
     return name
 
 
-def _state(prepared: Prepared, run: Tui, host: Host, receipt: Record) -> dict:
+def _state(prepared: Prepared, run: Tui, host: Host, metadata: Mapping[str, str]) -> dict:
     spec = prepared.spec
     return {
         "runtime": spec.runtime,
@@ -69,8 +69,8 @@ def _state(prepared: Prepared, run: Tui, host: Host, receipt: Record) -> dict:
         "events": spec.events,
         "words": {label: WORDS[kind] for label, kind in run.hooks.items() if kind in WORDS},
         "host": host.name,
-        "generation": receipt.detail,
-        **host.hook_state(receipt),
+        "generation": metadata["generation"],
+        **host.hook_state(spec.name or "", metadata),
         **run.hook_state(),
     }
 
@@ -245,9 +245,12 @@ class _Store:
         return made
 
     def _close(self) -> None:
-        process = self.process()
-        if process is not None:
-            process.close()
+        try:
+            process = self.process()
+            if process is not None:
+                process.close()
+        except DriverError as error:
+            raise DriverError(f"cannot close tui session {self.name}: {error}") from error
         self._drop()
 
     def _drop(self) -> None:
@@ -277,7 +280,7 @@ class _Start:
     run: Tui
     store: _Store
     state: dict
-    receipt: Record
+    metadata: Mapping[str, str]
 
     def validate(self, display: Display) -> None:
         self.store.host.validate(self.store.name, self.launch, display=display)
@@ -358,22 +361,15 @@ class TuiMode(RunningMode):
         roots = module_roots(agent_pm.session, agent_pm.utils)
         hook = store.hook_argv(roots)
         prepared = cls._launched(spec, lambda s: run.launch(s, hook, source_roots=roots), drop)
-        receipt = Record(
-            1,
-            spec.runtime or "session",
-            name,
-            (name,),
-            prepared.info.sid,
-            spec.workdir,
-            ("agent-pm-session",),
-            ("agent-pm-session", "resume", name),
-            display,
-            uuid.uuid4().hex,
-        )
-        state = _state(prepared, run, host, receipt)
+        metadata = {
+            "sid": prepared.info.sid,
+            "runtime": spec.runtime or "session",
+            "generation": uuid.uuid4().hex,
+        }
+        state = _state(prepared, run, host, metadata)
         if field := _bad(state):
             raise DriverError(f"tui session {name}: bad {field} {state.get(field)!r:.80}")
-        return _Start(prepared, run, store, state, receipt)
+        return _Start(prepared, run, store, state, metadata)
 
     @classmethod
     def start(
@@ -397,13 +393,16 @@ class TuiMode(RunningMode):
             raise DriverError(f"cannot start tui session {store.name}: {error}") from error
 
         def launch() -> Terminal:
-            return host.terminal(
-                store.name,
-                pending.launch,
-                display=display,
-                events=prepared.spec.events,
-                record=pending.receipt,
-            )
+            try:
+                return host.terminal(
+                    store.name,
+                    pending.launch,
+                    display=display,
+                    events=prepared.spec.events,
+                    metadata=pending.metadata,
+                )
+            except DriverError as error:
+                raise DriverError(f"cannot start tui session {store.name}: {error}") from error
 
         def commit() -> None:
             run.commit()
@@ -439,8 +438,7 @@ class TuiMode(RunningMode):
         terminal = store.process()
         if terminal is not None and not isinstance(terminal, Terminal):
             raise DriverError(f"session {name} has no terminal")
-        receipt = None if terminal is None else terminal.record()
-        if terminal is None or receipt is None or receipt.sid != info.sid:
+        if terminal is None or terminal.session_identity() != (info.sid, state["generation"]):
             raise DriverError(f"no tui session {name}")
         spec = Spec(
             workdir=state["workdir"],

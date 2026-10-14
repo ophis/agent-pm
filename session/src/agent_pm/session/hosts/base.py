@@ -58,6 +58,10 @@ class HostProcess(ABC):
     def identity(self) -> str:
         return self.name
 
+    def session_identity(self) -> tuple[str | None, str | None]:
+        """Private terminal sid and generation, independent of its published Record."""
+        return None, None
+
     def state(self) -> Liveness:
         return Liveness.LIVE if self.alive() else Liveness.ABSENT
 
@@ -157,7 +161,10 @@ class Host(ABC):
         display: Display = None,
         events: str | None = None,
         record: Record | None = None,
-    ) -> Terminal: ...
+        metadata: Mapping[str, str] | None = None,
+    ) -> Terminal:
+        """metadata carries private sid/runtime/generation separately from the published Record."""
+        ...
 
     @abstractmethod
     def attach(self, name: str) -> HostProcess: ...
@@ -179,7 +186,7 @@ class Host(ABC):
                 raise DriverError(f"events file {events}: {error.strerror}") from error
         return events
 
-    def hook_state(self, record: Record) -> dict:
+    def hook_state(self, name: str, metadata: Mapping[str, str]) -> dict:
         return {}
 
     def protected_paths(self) -> tuple[str, ...]:
@@ -189,12 +196,18 @@ class Host(ABC):
         return TuiSettings()
 
     def validate(self, name: str, launch: Launch, *, display: Display = None) -> None:
+        self.validate_display(display)
         if not launch.argv:
             raise ConfigError("no command")
         if not printable_abs(launch.cwd):
             raise ConfigError(f"cwd must be a printable absolute path, got {launch.cwd!r:.80}")
 
+    def validate_display(self, value: Display) -> None:
+        if value is not None and not isinstance(value, str):
+            raise ConfigError(f"display {value!r:.80}: want text")
+
     def display(self, value: Display) -> Display:
+        self.validate_display(value)
         return value
 
     def display_help(self) -> str:

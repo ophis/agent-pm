@@ -66,6 +66,7 @@ from session.tests.hosted_support import (
     HostedEnvBase,
     HostedTuiBase,
     ProbeAdapter,
+    fake_tmux,
 )
 from session.tests.source_roots import PACKAGE_ROOTS
 from utils.tests.sandbox import owned_directory
@@ -351,6 +352,12 @@ class HostTest(Case):
 
 
 class DisplayTest(HostedTuiBase):
+    def test_a_non_tmux_host_accepts_an_opaque_display_ending_in_semicolon(self):
+        self.assertEqual(self.session.display("opaque;"), "opaque;")
+        session = self.tui(name="w1", display="opaque;")
+        self.assertEqual(self.host.calls.terminal.call_args.kwargs["display"], "opaque;")
+        self.assertEqual(session.name, "w1")
+
     def test_display_is_completed_by_its_host(self):
         for value, completed in (
             ("/below", "mgr/below"),
@@ -365,6 +372,9 @@ class DisplayTest(HostedTuiBase):
         )
 
     def test_a_display_not_printable_or_ending_in_a_semicolon_is_refused(self):
+        transport = fake_tmux(self)
+        selected = TmuxHost("tmux", tmux=transport)
+        self.session = self.session._rebound(host_factory=lambda *_args: selected)
         for bad in ("a\tb", "a\nb", "x;"):
             for name, call in (
                 ("display", lambda bad=bad: self.session.display(bad)),
@@ -377,7 +387,8 @@ class DisplayTest(HostedTuiBase):
                     str(caught.exception),
                     f"display {bad!r}: want printable text not ending in ;",
                 )
-        self.nothing_hosted()
+        self.assertEqual(transport.mock_calls, [])
+        self.assertFalse(os.path.lexists(self.root))
 
     def test_layout_is_the_default_hosts_completed_display(self):
         self.host.calls.layout.return_value = "mgr/below"
@@ -1185,8 +1196,13 @@ class TuiStartTest(HostedTuiBase):
         self.assertEqual(launch.cwd, self.workdir)
         self.assertEqual(call.kwargs["events"], self.events)
         self.assertIsNone(call.kwargs["display"])
-        receipt = call.kwargs["record"]
-        self.assertEqual((receipt.name, receipt.sid, receipt.workdir), ("w1", SID, self.workdir))
+        self.assertIsNone(call.kwargs["record"])
+        self.assertIsNone(session.record())
+        self.assertEqual(call.kwargs["metadata"]["sid"], SID)
+        self.assertEqual(call.kwargs["metadata"]["runtime"], "fake")
+        self.assertEqual(
+            call.kwargs["metadata"]["generation"], tui.TuiMode.snapshot("w1")["generation"]
+        )
         self.assertEqual(launch.env["PWD"], self.workdir)
         self.assertEqual(stat.S_IMODE(os.stat(self.events).st_mode), 0o600)
         self.assertEqual(
@@ -1473,8 +1489,8 @@ class AttachTest(HostedTuiBase):
         for found in ("other", None):
             with self.subTest(found=found), self.assertRaises(DriverError) as caught:
                 terminal = self.host.processes["w1"]
-                terminal.calls.record.return_value = (
-                    None if found is None else dataclasses.replace(terminal.record(), sid=found)
+                terminal.calls.session_identity.return_value = (
+                    found, tui.TuiMode.snapshot("w1")["generation"]
                 )
                 self.session.attach("w1")
             self.assertEqual(str(caught.exception), "no tui session w1")

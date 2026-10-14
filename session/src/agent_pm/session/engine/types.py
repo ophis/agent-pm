@@ -4,6 +4,7 @@ seconds.
 """
 
 import re
+import signal
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import StrEnum
@@ -254,8 +255,17 @@ class Launch:
     resume: str = ""  # a human's shell command, each interpolated field shlex.quoted
 
     project: bool | None = None
+    blocked_signals: tuple[int, ...] = ()
 
     def __post_init__(self):
+        if not isinstance(self.blocked_signals, tuple) or any(
+            isinstance(value, bool)
+            or not isinstance(value, int)
+            or value not in signal.valid_signals()
+            or value in (signal.SIGKILL, signal.SIGSTOP)
+            for value in self.blocked_signals
+        ):
+            raise ConfigError("launch: blocked_signals must be a tuple of catchable signal numbers")
         if self.project is not None and not isinstance(self.project, bool):
             raise ConfigError("launch: project must be a bool or None")
         env = self.env

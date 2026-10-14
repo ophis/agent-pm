@@ -1,6 +1,7 @@
 import dataclasses
 import inspect
 import operator
+import signal
 import typing
 from types import MappingProxyType
 
@@ -89,6 +90,17 @@ INFO = SessionInfo(sid="s", cwd="/w", project=False, transcript="", resume="")
 
 
 class FrozenLaunchData(Case):
+    def test_signal_mask_is_explicit_and_immutable(self):
+        self.assertEqual(Launch(("x",)).blocked_signals, ())
+        signals = (signal.SIGHUP, signal.SIGTERM, signal.SIGINT)
+        launch = Launch(("x",), blocked_signals=signals)
+        self.assertEqual(launch.blocked_signals, signals)
+        with self.assertRaises(dataclasses.FrozenInstanceError):
+            launch.blocked_signals = ()
+        for invalid in (("TERM",), (True,), (0,), (-1,), [signal.SIGTERM]):
+            with self.subTest(invalid=invalid), self.assertRaises(ConfigError):
+                Launch(("x",), blocked_signals=invalid)
+
     def test_access_launch_and_prepared_keep_a_copy_of_the_callers_env(self):
         for build in (
             lambda env: Access(env=env),

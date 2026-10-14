@@ -17,7 +17,7 @@ from agent_pm.session.engine import types as engine_types
 from agent_pm.session.modes import tui_hook
 
 from session.tests.case import SRC, Case
-from session.tests.tui_hook_support import HOOK, SOURCE_ROOTS, install, receipt, state, write_state
+from session.tests.tui_hook_support import HOOK, SOURCE_ROOTS, identity, install, state, write_state
 from utils.tests.process_fixtures import DEVNULL
 
 RUNTIME = re.compile(r"claude|codex", re.I)
@@ -34,7 +34,7 @@ class InProcess(Case):
         self.tmux = install(os.path.join(self.root, "bin"), "")
         self.state = state(self.root, self.events)
         write_state(self.dir, self.state)
-        self.lookup = f"%3\t{receipt(self.state).to_line()}\n"
+        self.lookup = f"%3\t{identity(self.state)}\n"
         self.mark = unittest.mock.Mock(
             side_effect=[
                 unittest.mock.Mock(returncode=0, stdout=self.lookup, stderr=""),
@@ -117,7 +117,14 @@ class InProcess(Case):
                 unittest.mock.call.flock(fd, fcntl.LOCK_EX),
                 unittest.mock.call.write(fd, data),
                 unittest.mock.call.mark(
-                    [self.tmux, "display-message", "-p", "-t", "=w1:", "#{pane_id}\t#{@record}"],
+                    [
+                        self.tmux,
+                        "display-message",
+                        "-p",
+                        "-t",
+                        "=w1:",
+                        "#{pane_id}\t#{@sid}\t#{@generation}",
+                    ],
                     capture_output=True,
                     text=True,
                     stdin=DEVNULL,

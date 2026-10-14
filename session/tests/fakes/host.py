@@ -110,6 +110,10 @@ class FakeProcess(HostProcess):
         line = self._own().get("record")
         return None if line is None else Record.parse(line)
 
+    def session_identity(self):
+        metadata = self._own().get("metadata", {})
+        return metadata.get("sid"), metadata.get("generation")
+
     def display(self) -> Display:
         return self._own().get("display")
 
@@ -153,8 +157,18 @@ class FakeHost(Host):
     def detach(self, name, launch: Launch, *, display=None, events=None, record=None):
         return self._start("detach", name, launch, display=display, events=events, record=record)
 
-    def terminal(self, name, launch: Launch, *, display=None, events=None, record=None):
-        return self._start("terminal", name, launch, display=display, events=events, record=record)
+    def terminal(
+        self, name, launch: Launch, *, display=None, events=None, record=None, metadata=None
+    ):
+        return self._start(
+            "terminal",
+            name,
+            launch,
+            display=display,
+            events=events,
+            record=record,
+            metadata=metadata,
+        )
 
     def attach(self, name: str) -> FakeProcess:
         folder = os.path.join(self.root(), name)
@@ -174,7 +188,7 @@ class FakeHost(Host):
             and (display is None or meta.get("display") == display)
         ]
 
-    def _start(self, kind, name, launch: Launch, *, display, events, record):
+    def _start(self, kind, name, launch: Launch, *, display, events, record, metadata=None):
         argv, cwd, env = launch.argv, launch.cwd, launch.env
         if not isinstance(name, str) or not NAME.fullmatch(name):
             raise ValueError(f"name: want [A-Za-z0-9_-]+, not {name!r}")
@@ -199,6 +213,7 @@ class FakeHost(Host):
             "cwd": cwd,
             "display": display,
         }
+        meta["metadata"] = dict(metadata or {})
         meta["record"] = None if record is None else record.to_line()
         for file, data in (("meta.json", meta), ("env.json", dict(env))):
             with open(os.path.join(folder, file), "w", encoding="utf-8") as f:
