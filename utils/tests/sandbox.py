@@ -31,7 +31,7 @@ def _remove_tmux_directory(pid, directory):
 def _tmux_directory():
     pid = os.getpid()
     with _TMUX_LOCK:
-        if pid not in _TMUX_DIRECTORIES:
+        if pid not in _TMUX_DIRECTORIES or not os.path.isdir(_TMUX_DIRECTORIES[pid]):
             sandbox = os.environ.get("AGENT_PM_TEST_SANDBOX") or None
             directory = tempfile.mkdtemp(prefix="tmux-", dir=sandbox)
             if sandbox is None:

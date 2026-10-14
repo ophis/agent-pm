@@ -234,6 +234,38 @@ print(json.dumps(str(parent)))
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertFalse(Path(json.loads(proc.stdout)).exists())
 
+    def test_clean_env_recreates_a_cached_directory_when_it_is_removed(self):
+        script = """import json, shutil
+from pathlib import Path
+from utils.tests.sandbox import clean_env
+
+first = Path(clean_env()["TMUX_TMPDIR"])
+shutil.rmtree(first)
+second = Path(clean_env()["TMUX_TMPDIR"])
+assert second != first
+assert not first.exists()
+assert second.is_dir()
+assert list(second.iterdir()) == []
+assert second.stat().st_mode & 0o777 == 0o700
+assert clean_env()["TMUX_TMPDIR"] == str(second)
+print(json.dumps(str(second)))
+"""
+        for mode in ("sandbox", "fallback"):
+            with self.subTest(mode=mode):
+                env = clean_env(None, REPO)
+                if mode == "fallback":
+                    env.pop("AGENT_PM_TEST_SANDBOX", None)
+                proc = subprocess.run(
+                    [sys.executable, "-P", "-S", "-c", script],
+                    env=env,
+                    capture_output=True,
+                    text=True,
+                    timeout=10,
+                )
+                self.assertEqual(proc.returncode, 0, proc.stderr)
+                directory = Path(json.loads(proc.stdout))
+                self.assertEqual(directory.exists(), mode == "sandbox")
+
     def test_violations_after_the_last_stop_test_fail_the_run_with_their_origin(self):
         script = """import json, os, sys, threading, unittest
 from pathlib import Path
