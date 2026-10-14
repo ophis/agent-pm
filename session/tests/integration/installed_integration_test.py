@@ -59,6 +59,7 @@ class InstalledIntegration(Case):
             )
         )
         self.config = self.site / "agent_pm" / "session" / "config.toml"
+        self.config.chmod(0o600)
         with self.config.open("a", encoding="utf-8") as f:
             f.write(
                 f'\n[adapters.fake]\nimplementation = "{MODULE}:FakeAdapter"\n'
