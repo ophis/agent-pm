@@ -193,8 +193,7 @@ class Checks:
             "PYTHONDONTWRITEBYTECODE": "1",
             "PYTHONPATH": os.pathsep.join((*ROOTS, "/r1", "/r2")),
         }
-        if self.tree != "session/tests":
-            expected.update(GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM="1")
+        expected.update(GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM="1")
         self.assertEqual(child_env(base, "/r1", "/r2"), expected)
         with mock.patch.dict(os.environ, {"PYTHONWARNINGS": "error", "OTHER": "1"}):
             env = child_env()

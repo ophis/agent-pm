@@ -118,11 +118,7 @@ class Live(Case):
         self.cwd, self.codex_home = self.work / "project", self.home / ".codex"
         for path in (self.home, self.cwd, self.codex_home, self.extra):
             path.mkdir(parents=True, exist_ok=True)
-        mkdtemp = tempfile.mkdtemp
-        with mock.patch.object(
-            live_tmux.tempfile, "mkdtemp", side_effect=lambda: mkdtemp(dir=parent)
-        ):
-            self.server = live_tmux.Server(self, str(self.home))
+        self.server = live_tmux.Server(self, str(self.home), bin_dir=str(self.root / "bin"))
         self.server.start("mgr")
         fake_tui.install(self.server.bin)
         self.log, self.scenario, self.events = (

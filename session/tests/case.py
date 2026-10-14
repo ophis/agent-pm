@@ -12,11 +12,13 @@ import agent_pm
 from agent_pm.session import Driver
 from agent_pm.utils import import_roots
 
+from utils.tests.sandbox import clean_env
+
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 ROOTS = import_roots(REPO)
 SRC = {os.path.basename(os.path.dirname(r)).replace("-", "_"): r for r in ROOTS}
 RUN_WITH = os.pathsep.join(os.path.relpath(root, REPO) for root in ROOTS)
-PY = (sys.executable, "-P", "-s")
+PY = (sys.executable, "-P", "-S")
 SPAWNS = ("subprocess.Popen", "os.fork", "os.posix_spawn", "os.posix_spawnp")
 HOSTS = {"tmux": {"implementation": "agent_pm.session.hosts.tmux:TmuxHost"}}
 
@@ -47,7 +49,11 @@ class Case(unittest.TestCase):
             return result
         with (
             tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as self.home,
-            mock.patch.dict(os.environ, {"HOME": self.home}),
+            mock.patch.dict(
+                os.environ,
+                {**clean_env(None, *ROOTS), "HOME": self.home, "TUI_ATTACH_PREFIX": ""},
+                clear=True,
+            ),
         ):
             self.agent_pm = os.path.join(self.home, ".agent-pm")
             os.mkdir(self.agent_pm)
@@ -82,12 +88,5 @@ def _foreign(modules=None) -> str | None:
     return None
 
 
-KEEP = ("PYTHONDONTWRITEBYTECODE",)
-
-
 def child_env(base=None, *extra: str) -> dict[str, str]:
-    env = os.environ if base is None else base
-    return {
-        **{k: v for k, v in env.items() if not k.startswith("PYTHON") or k in KEEP},
-        "PYTHONPATH": os.pathsep.join((*ROOTS, *extra)),
-    }
+    return clean_env(base, *ROOTS, *extra)

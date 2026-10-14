@@ -58,6 +58,8 @@ class InProcessFakeAdapter(FakeAdapter):
 def _argv(adapter, spec) -> tuple[str, ...]:
     return (
         sys.executable,
+        "-I",
+        "-S",
         RUNTIME,
         "--scenario",
         adapter.config["scenario"],
