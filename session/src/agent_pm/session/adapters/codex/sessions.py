@@ -453,9 +453,6 @@ class SessionStore:
         digest = hashlib.sha256((workdir + "\x00" + sid).encode("utf-8")).hexdigest()
         return os.path.join(root, digest + ".json")
 
-    def validate_recovery(self, state: SessionState) -> Snapshot:
-        return self._validate_recovery(self._resolve_root(), state)
-
     def _validate_recovery(self, root: str, state: SessionState) -> Snapshot:
         snapshot = validate_snapshot(snapshot_data(state.snapshot))
         paths = [
@@ -566,7 +563,6 @@ class SessionStore:
         *,
         persist: bool = True,
     ) -> SessionState:
-        root = self._resolve_root()
         workdir, sid = session_identity(workdir, sid)
         snapshot_value = snapshot_data(snapshot)
         validate_snapshot(snapshot_value)
@@ -585,35 +581,28 @@ class SessionStore:
             sid,
         )
         if persist:
-            return self._save(root, state)
-        self._validate_for_save(root, state)
+            return self.save(state)
+        self._validate_for_save(self._resolve_root(), state)
         return state
-
-    def save(self, state: SessionState) -> SessionState:
-        return self._save(self._resolve_root(), state)
 
     def _validate_for_save(self, root: str, state: SessionState) -> None:
         self._validate_recovery(root, state)
         check_writable_roots(root, [*state.writable_roots, *implicit_writable_roots()])
 
-    def _save(self, root: str, state: SessionState) -> SessionState:
+    def save(self, state: SessionState) -> SessionState:
+        root = self._resolve_root()
         self._validate_for_save(root, state)
         self._directory(root, create=True)
         self._write(root, state, exclusive=True)
         return state
 
     def load(self, workdir: str, sid: object) -> SessionState | None:
-        return self._load(self._resolve_root(), workdir, sid)
-
-    def _load(self, root: str, workdir: str, sid: object) -> SessionState | None:
+        root = self._resolve_root()
         workdir, sid = session_identity(workdir, sid)
         directory = self._directory(root, create=False)
         if directory is None:
             return None
-        state = self._read(root, self._path(root, workdir, sid), workdir, sid)
-        if state is not None:
-            check_writable_roots(root, state.writable_roots)
-        return state
+        return self._read(root, self._path(root, workdir, sid), workdir, sid)
 
     def bind(
         self,
@@ -630,7 +619,7 @@ class SessionStore:
         if directory is None:
             raise RecoveryError(f"missing recovery state for run ID {sid!r}")
         with self._locked(root, timeout):
-            existing = self._load(root, workdir, sid)
+            existing = self._read(root, self._path(root, workdir, sid), workdir, sid)
             if existing is None:
                 raise RecoveryError(f"missing recovery state for run ID {sid!r}")
             validated = replace(existing, native_id=identifier)

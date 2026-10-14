@@ -1,10 +1,14 @@
 """Codex recovery snapshots validate session environment by the Access.env rule."""
 
 import json
+import os
+from dataclasses import replace
+from unittest import mock
 
 from agent_pm.session import Access, ConfigError
 from agent_pm.session.adapters.codex.sessions import (
     RecoveryError,
+    SessionStore,
     read_metadata,
     snapshot_data,
     validate_snapshot,
@@ -54,6 +58,47 @@ class SnapshotEnvTest(Base):
 
 
 class StoreRootTest(Base):
+    def test_each_operation_resolves_the_default_root_once(self):
+        state = self.prepare()
+        store = SessionStore()
+        operations = (
+            lambda: store.directory(create=False),
+            lambda: store.create(
+                state.workdir, "preview", state.snapshot, state.writable_roots, persist=False
+            ),
+            lambda: store.create(state.workdir, "new", state.snapshot, state.writable_roots),
+            lambda: store.save(replace(state, sid="saved")),
+            lambda: store.load(state.workdir, state.sid),
+            lambda: store.bind(state.workdir, state.sid, NATIVE),
+            lambda: store.lookup(state.sid, state.snapshot.cwd),
+        )
+        for operation in operations:
+            with (
+                self.subTest(operation=operation),
+                mock.patch("os.path.expanduser", wraps=os.path.expanduser) as expanduser,
+            ):
+                operation()
+                expanduser.assert_called_once_with("~")
+
+    def test_existing_store_resolves_and_validates_a_changed_home_per_operation(self):
+        state = self.prepare()
+        store = SessionStore()
+        self.assertEqual(store.load(state.workdir, state.sid), state)
+        other_home = self.root / "other-home"
+        other_home.mkdir()
+        with mock.patch.dict(os.environ, {"HOME": str(other_home)}):
+            self.assertIsNone(store.load(state.workdir, state.sid))
+            store.create(state.workdir, state.sid, state.snapshot, state.writable_roots)
+            self.assertEqual(store.load(state.workdir, state.sid), state)
+            parent = other_home / ".agent-pm" / "core-new-sessions"
+            target = other_home / "moved-store"
+            parent.rename(target)
+            parent.symlink_to(target, target_is_directory=True)
+            with self.assertRaisesRegex(RecoveryError, "symlink"):
+                store.create(
+                    state.workdir, "preview", state.snapshot, state.writable_roots, persist=False
+                )
+
     def test_nonpersisted_prepare_rejects_a_symlinked_default_store(self):
         store = self.home / ".agent-pm" / "core-new-sessions" / "codex"
         target = self.root / "store-target"

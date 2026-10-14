@@ -204,7 +204,6 @@ class HookTest(Base):
         runtime_home = self.cwd / "runtime-home"
         runtime_home.mkdir()
         with mock.patch.dict(os.environ, {"HOME": str(runtime_home)}):
-            self.assertEqual(sessions.SessionStore(store).validate_recovery(state), state.snapshot)
             self.assertEqual(
                 sessions.SessionStore(store).lookup(self.spec.sid, state.snapshot.cwd), state
             )
@@ -239,7 +238,6 @@ class HookTest(Base):
         copied.chmod(0o600)
         root = str(unsafe)
         calls = (
-            lambda: sessions.SessionStore(root).validate_recovery(state),
             lambda: sessions.SessionStore(root).lookup(self.spec.sid, state.snapshot.cwd),
             lambda: sessions.SessionStore(root).load(str(self.work), self.spec.sid),
             lambda: sessions.SessionStore(root).bind(str(self.work), self.spec.sid, NATIVE),

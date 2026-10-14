@@ -270,7 +270,7 @@ class CodexCommon:
                 raise ConfigError(f"missing Codex recovery state for run ID {spec.sid!r}")
             if state.native_id is None:
                 raise ConfigError(f"missing Codex native ID for run ID {spec.sid!r}")
-            snapshot = self.store.validate_recovery(state)
+            snapshot = state.snapshot
             refuse(snapshot.flags)
             environment = self.environment(snapshot, ambient=True)
             check_writable_roots(self.store.root, implicit_writable_roots(environment))
