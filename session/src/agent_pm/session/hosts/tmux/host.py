@@ -89,7 +89,7 @@ EXIT_STATUS = (
 EXITED_EVENT = (
     "run-shell 'echo "
     + SessionStatusLog.line("#{q:session_name}", "exited", EXIT_STATUS, at=CLOCK)
-    + " >> #{q:@events}' ; kill-session"
+    + " >> #{q:@events}' ; kill-pane"
 )
 
 
@@ -417,7 +417,7 @@ class Tmux:
         """Runs argv as start does; env's full iTerm2
         $ITERM_SESSION_ID stays; opener, display and record (a line) become @opener, @display, @record.
         No decoration; with events, @events and a kept pane whose pane-died hook appends
-        `HH:MM:SS <session> exited <rc>` (signal n: -n) to it, then kills the session. @process set
+        `HH:MM:SS <session> exited <rc>` (signal n: -n) to it, then kills that pane. @process set
         in the same tmux call. An existing session is refused untouched. Returns its pane's
         process(), read as tmux made it.
         """

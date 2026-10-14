@@ -108,6 +108,28 @@ class TmuxHostContractTest(HostContract, Case):
         self.assertNotIn("user pane", last)
         self.assertNotIn("user pane", self.host.screen(name))
 
+    def test_a_split_refocused_detached_sessions_exit_closes_only_its_launched_pane(self):
+        name, gate, events = self.fresh(), self.file("gate"), self.file("events")
+        self.start("detach", name, GATED, gate, events=events)
+        self.poll(
+            lambda: (
+                "agent pane" in self.server.tmux("capture-pane", "-p", "-t", f"={name}:").stdout
+            ),
+            "the launched pane printing",
+        )
+        other = self.split(name)
+        Path(gate).touch()
+        self.event(events, name, "exited 7")
+
+        def panes():
+            listed = self.server.tmux("list-panes", "-s", "-t", f"={name}:", "-F", "#{pane_id}")
+            self.assertEqual(listed.returncode, 0, listed.stderr)
+            return listed.stdout.split()
+
+        self.poll(lambda: panes() == [other], "only the user's pane left")
+        self.assertIn(name, self.host.list())
+        self.assertEqual(self.row(name).state, ActivityState.DEAD)
+
     def test_list_without_a_display_names_every_detached_session_sorted(self):
         first, second = self.fresh(), self.fresh()
         self.start("detach", second, SLEEP)
