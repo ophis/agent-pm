@@ -6,7 +6,6 @@ import io
 import json
 import os
 import re
-import subprocess
 import sys
 import tempfile
 import urllib.request
@@ -298,7 +297,7 @@ class LinearGql(Case):
     def gql(self, query=VIEWER, body=b'{"data": {}}', **kw):
         run = mock.Mock(return_value=SimpleNamespace(stdout="secret\n"))
         with (
-            mock.patch.object(subprocess, "run", run),
+            mock.patch("subprocess.run", run),
             mock.patch.object(
                 urllib.request, "build_opener", side_effect=AssertionError("opener built")
             ),
@@ -339,7 +338,7 @@ class LinearGql(Case):
 
     def test_the_service_is_required(self):
         with (
-            mock.patch.object(subprocess, "run", side_effect=AssertionError("Keychain read")),
+            mock.patch("subprocess.run", side_effect=AssertionError("Keychain read")),
             mock.patch.object(
                 urllib.request, "urlopen", side_effect=AssertionError("request sent")
             ),
@@ -352,7 +351,7 @@ class LinearGql(Case):
         for out, key in (("\n", ""), ("lin api\n", "lin api"), ("lin\x1bapi\n", "lin\x1bapi")):
             with (
                 self.subTest(key=key),
-                mock.patch.object(subprocess, "run", return_value=SimpleNamespace(stdout=out)),
+                mock.patch("subprocess.run", return_value=SimpleNamespace(stdout=out)),
             ):
                 code = refused(self, lambda: linear.linear_gql(VIEWER, service="svc"))
                 self.assertIn("svc", code)
@@ -362,7 +361,7 @@ class LinearGql(Case):
 
 class Unavailable(Case):
     def setUp(self):
-        p = mock.patch.object(subprocess, "run", return_value=SimpleNamespace(stdout=SECRET + "\n"))
+        p = mock.patch("subprocess.run", return_value=SimpleNamespace(stdout=SECRET + "\n"))
         p.start()
         self.addCleanup(p.stop)
 
@@ -530,9 +529,7 @@ class Outage(Case):
 class HasKey(Case):
     def test_key_existence_check_never_reads_the_secret(self):
         for code, want in ((0, True), (44, False)):
-            with mock.patch.object(
-                subprocess, "run", return_value=SimpleNamespace(returncode=code)
-            ) as m:
+            with mock.patch("subprocess.run", return_value=SimpleNamespace(returncode=code)) as m:
                 self.assertIs(linear.has_key("svc"), want)
             self.assertEqual(
                 m.call_args.args[0], ["/usr/bin/security", "find-generic-password", "-s", "svc"]

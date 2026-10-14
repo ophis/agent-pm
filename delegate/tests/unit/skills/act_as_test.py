@@ -4,14 +4,10 @@ step 4 puts its PYTHONPATH before each command of the prompt that runs an agent_
 tool.
 """
 
-import os
 import re
-import subprocess
-
-from agent_pm.delegate import cli, composer
 
 from delegate.tests.case import Case
-from delegate.tests.skills.act_as import argv, command, head, prefix, text
+from delegate.tests.skills.act_as import command, head, prefix, text
 
 RULE = re.compile(r"^allowed-tools:\n  - Bash\((.+)\)$", re.M)
 ROLES = ["researcher", "pm", "engineer", "dummy-tester"]
@@ -24,18 +20,3 @@ class ActAs(Case):
 
     def test_step_4s_prefix_is_step_1s(self):
         self.assertEqual(prefix(), command(1).partition(" python3 ")[0])
-
-    def test_step_1s_command_lists_the_team(self):
-        env = {k: v for k, v in os.environ.items() if not k.startswith("PYTHON")}
-        res = subprocess.run(
-            argv(command(1)),
-            cwd=self.home,
-            env={**env, "HOME": self.home},
-            stdin=subprocess.DEVNULL,
-            capture_output=True,
-            encoding="utf-8",
-            timeout=60,
-        )
-        want = cli.listing(composer.team(composer.TEAM, composer.team_dirs()))
-        self.assertEqual((res.returncode, res.stdout), (0, want), res.stderr)
-        self.assertEqual([r.split()[0] for r in want.splitlines() if r[:1] != " "], ROLES)

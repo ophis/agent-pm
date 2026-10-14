@@ -8,64 +8,38 @@ import json
 import os
 import re
 import shlex
-import subprocess
-import tempfile
 import tomllib
 from unittest import mock
 
 from agent_pm import delegate
 from agent_pm.linear_orchestrator.engine import config
-from agent_pm.utils import GUARD, SHORT, temp_dirs
-from orchestrator_tests.case import ORCH_ROOT, PY, REPO, ROOTS, Case, child_env
+from agent_pm.utils import temp_dirs
+from orchestrator_tests.case import REPO, ROOTS, Case
+from orchestrator_tests.config_fixtures import (
+    BASE,
+    CORE_LOCAL,
+    PIPELINE,
+    SID,
+    SLUG,
+    ConfigFile,
+    write,
+)
+from orchestrator_tests.process_fixtures import DEVNULL
 from orchestrator_tests.unit.board_ids import HEADER, STATES, TASK_GROUP, TEAM, role
 from orchestrator_tests.unit.config_fixtures import GATE
 
 from utils.tests.case import local_section
 
-BASE = (
-    HEADER
-    + role("researcher", 'next = "pm"')
-    + role("pm", 'next = "engineer"')
-    + role("engineer")
-    + role("solo")
-)
-
-PIPELINE = (
-    HEADER + role("researcher", 'next = "pm"') + role("pm", 'next = "engineer"') + role("engineer")
-)
-
-CORE_TOP = '[delegate]\nlanguage = "Chinese"\n'
-
-CORE_TABLES = """[delegate.roles.researcher.output]
-type = "github"
-repo = "ophis/private_docs"
-branch = "main"
-dir = "Research/"
-
-[delegate.roles.pm.output]
-type = "github"
-repo = "ophis/private_docs"
-branch = "main"
-dir = "Product Design/"
-"""
-
-CORE_LOCAL = CORE_TOP + "\n" + CORE_TABLES
-
 LABEL1, LABEL2 = "00000000-0000-4000-8000-000000000021", "00000000-0000-4000-8000-000000000022"
 
 P1, P2 = "a0000000-0000-4000-8000-000000000031", "b0000000-0000-4000-8000-000000000032"
 
-SLUG = "ophis/agent-pm"
-
-HTTPS = "https://github.com/ophis/agent-pm.git"
 
 STATES_LINE = HEADER[HEADER.index("states = ") : HEADER.index("task_label_group")]
 
 ROOT_Q = shlex.quote(config.ROOT)
 
 LABEL = ("linear-orchestrator/config.toml", "core")
-
-SID = "0b6f2c1e-6d0a-4c1b-9a51-3f1f6b0e2a7d"
 
 
 def missing(keys):
@@ -80,11 +54,6 @@ def old_key(key):
         f"core: linear-orchestrator/config.toml: [core.roles.researcher] has {key!r}: task-level config and default_task "
         "are gone; set run keys in [core.roles.researcher] (a run without a task picks one)"
     )
-
-
-def write(path, text):
-    with open(path, "w") as f:
-        f.write(text)
 
 
 ROLES = {
@@ -141,185 +110,10 @@ DEPLOYMENT = {
     "work_dir",
 }
 
-STEPS = (
-    "\n## Steps\n\n1. **Report progress:**\n   [agent-pm-progress:start] the topic\n2. **Write.** Write it.\n\n"
-    "## Resume\n\nRedo step 2.\n"
-)
-
-
-def git(*args):
-    subprocess.run(
-        ["git", *GUARD, *args], check=True, capture_output=True, stdin=subprocess.DEVNULL
-    )
-
-
-IMPORT_ALONE = """import json, os, sys
-opened = []
-sys.addaudithook(lambda event, args: event == "open" and opened.append(str(args[0])))
-from agent_pm.linear_orchestrator.engine import config
-import agent_pm.session
-home, front = os.environ["HOME"], os.environ["AGENT_PM_PATH"]
-os.environ.update(HOME="/later", AGENT_PM_PATH="/later/bin")
-print(json.dumps({
-    "read": [p for p in opened if p.endswith(".toml") or p.startswith(home)],
-    "kept": sorted(k for k, v in vars(config).items() if isinstance(v, str) and (home in v or front in v)),
-    "path": config.path(),
-}))
-"""
 
 ID = "TASK-12"
 
 A, B = "engineer-TASK-12-0b6f2c1e", "dummy-tester-TASK-12-7c1d9e2f"
-
-
-class ConfigFile:
-    def setUp(self):
-        write(os.path.join(self.agent_pm, "config.local.toml"), CORE_LOCAL)
-        tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(tmp.cleanup)
-        self.dir = tmp.name
-
-    def local(self, text):
-        """~/.agent-pm/config.local.toml: `text` amid CORE_LOCAL (the delegate's keys)."""
-        write(
-            os.path.join(self.agent_pm, "config.local.toml"),
-            CORE_LOCAL + "\n" + local_section(text, "linear_orchestrator"),
-        )
-
-    def load(self, text):
-        path = os.path.join(self.dir, "config.toml")
-        write(path, text)
-        return config.load(path=path)
-
-    def fails(self, message, text):
-        with self.assertRaises(config.ConfigError) as cm:
-            self.load(text)
-        self.assertEqual(str(cm.exception), message)
-        return cm.exception
-
-
-class Clones(ConfigFile, Case):
-    def setUp(self):
-        super().setUp()
-        self.dir = os.path.realpath(self.dir)
-
-    def clone(self, name="clone", origin=HTTPS):
-        path = os.path.join(self.dir, name)
-        git("init", "-q", path)
-        if origin:
-            git("-C", path, "remote", "add", "origin", origin)
-        return path
-
-    def bad(self):
-        dotgit_file = os.path.join(self.dir, "file")
-        os.makedirs(dotgit_file)
-        write(os.path.join(dotgit_file, ".git"), "gitdir: /elsewhere\n")
-        linked = os.path.join(self.dir, "linked")
-        os.makedirs(linked)
-        os.symlink(os.path.join(self.clone("real"), ".git"), os.path.join(linked, ".git"))
-        missing = os.path.join(self.dir, "missing")
-        no_origin = self.clone("no-origin", origin=None)
-        gitlab = self.clone("gitlab", "https://gitlab.com/ophis/agent-pm.git")
-        other = self.clone("other", "https://github.com/ophis/other.git")
-        return [
-            ("missing", missing, f"{missing} does not exist"),
-            (".git a file", dotgit_file, f"{dotgit_file} is not a git clone"),
-            (".git a symlink", linked, f"{linked} is not a git clone"),
-            ("no origin", no_origin, f"{no_origin}: no origin URL naming host/owner/name"),
-            (
-                "non-github host",
-                gitlab,
-                "origin is gitlab.com/ophis/agent-pm, not github.com/ophis/agent-pm",
-            ),
-            (
-                "other owner/name",
-                other,
-                "origin is github.com/ophis/other, not github.com/ophis/agent-pm",
-            ),
-        ]
-
-
-class ClonePaths(Clones):
-    def test_entries_stored_as_realpaths(self):
-        home = os.path.realpath(os.path.dirname(self.agent_pm))
-        real = os.path.join(home, "real")
-        os.makedirs(real)
-        os.symlink(real, os.path.join(self.dir, "link"))
-        git("init", "-q", real)
-        git("-C", real, "remote", "add", "origin", HTTPS)
-        cfg = self.load(
-            f'work_dir = "{self.dir}/w"\n'
-            + PIPELINE
-            + f'[local_clones]\n"{SLUG}" = "{self.dir}/link"\n'
-        )
-        self.assertEqual(cfg.local_clones, {SLUG: real})
-
-
-class CloneValidation(Clones):
-    def test_matching_origin(self):
-        for name, origin, slug in (
-            ("https", HTTPS, SLUG),
-            ("scp", "git@github.com:ophis/agent-pm.git", SLUG),
-            ("bare", "https://github.com/ophis/agent-pm", SLUG),
-            ("case", HTTPS, "OPHIS/Agent-PM"),
-            ("origin case", "https://GitHub.com/Ophis/AGENT-PM.git", SLUG),
-        ):
-            with self.subTest(name):
-                self.assertIsNone(config.clone_error(self.clone(name, origin), slug))
-
-    def test_reasons(self):
-        bad = self.bad() + [
-            (repr(path), path, f"{path!r} has a non-printable character")
-            for path in ("/x\ny", "/x\x85y", "/x\u2028y")
-        ]
-        for name, path, reason in bad:
-            with self.subTest(name):
-                self.assertEqual(config.clone_error(path, SLUG), reason)
-
-    def test_run_failures_are_reasons(self):
-        clone = self.clone()
-        for error in (
-            OSError("boom"),
-            subprocess.TimeoutExpired(["git"], 10),
-            UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid start byte"),
-        ):
-
-            def run(_argv, _timeout, *, error=error):
-                raise error
-
-            with self.subTest(type(error).__name__):
-                self.assertEqual(config.clone_error(clone, SLUG, run=run), f"git: {error}")
-
-    def test_git_runs_guarded(self):
-        clone, calls = self.clone(), []
-
-        def run(argv, timeout):
-            calls.append((argv, timeout))
-            return subprocess.CompletedProcess(argv, 0, HTTPS + "\n", "")
-
-        self.assertIsNone(config.clone_error(clone, SLUG, run=run))
-        self.assertEqual(
-            calls, [(["git", *GUARD, "-C", clone, "remote", "get-url", "origin"], SHORT)]
-        )
-
-
-class RunnableClones(Clones):
-    def runs(self, key, path):
-        return self.load(PIPELINE + f'[local_clones]\n"{key}" = {json.dumps(path)}\n').roles
-
-    def test_each_entry_is_checked_and_a_bad_one_names_its_key(self):
-        self.assertEqual(list(self.runs(SLUG, self.clone())), ["researcher", "pm", "engineer"])
-        for name, path, reason in self.bad():
-            with self.subTest(name):
-                self.fails(
-                    f"linear-orchestrator/config.toml: local_clones.{SLUG}: {reason}",
-                    PIPELINE + f'[local_clones]\n"{SLUG}" = {json.dumps(path)}\n',
-                )
-
-    def test_no_entries_runs_no_git(self):
-        with mock.patch.object(subprocess, "run") as clone_error:
-            self.assertEqual(list(self.load(PIPELINE).roles), ["researcher", "pm", "engineer"])
-        clone_error.assert_not_called()
 
 
 class ConfigurationLoading(ConfigFile, Case):
@@ -632,25 +426,6 @@ class ConfigurationLoading(ConfigFile, Case):
                 e = self.fails(message, text)
                 self.assertEqual((e.msg, e.logs_dir), (message, logs))
 
-    def test_importing_reads_no_config_file(self):
-        write(os.path.join(self.agent_pm, "config.local.toml"), "[[[ not toml")
-        code = (
-            "import json\nfrom agent_pm.linear_orchestrator.engine import config\n"
-            "try:\n    config.load()\nexcept config.ConfigError as e:\n    print(json.dumps([e.msg, e.logs_dir]))"
-        )
-        res = subprocess.run(
-            [*PY, "-c", code],
-            capture_output=True,
-            text=True,
-            stdin=subprocess.DEVNULL,
-            timeout=60,
-            env=child_env(None, ORCH_ROOT),
-        )
-        self.assertEqual((res.returncode, res.stderr), (0, ""))
-        msg, logs = json.loads(res.stdout)
-        self.assertTrue(msg.startswith("linear-orchestrator/config.toml: "), msg)
-        self.assertIsNone(logs)
-
 
 class CommittedConfiguration(Case):
     def setUp(self):
@@ -739,65 +514,6 @@ class CommittedConfiguration(Case):
         )
 
 
-class TeamDirectoryIsolation(ConfigFile, Case):
-    def setUp(self):
-        super().setUp()
-        team = tempfile.TemporaryDirectory(dir=os.environ.get("AGENT_PM_TEST_TMP", REPO))
-        self.addCleanup(team.cleanup)
-        self.team = os.path.realpath(team.name)
-        writer = (
-            "# Writer\n\nYou write.\n\n## Tasks\n\nPick the task below that fits the input; unsure → `one-pager` "
-            "(`<tasks>/one-pager.md`).\n\n- `one-pager` (`<tasks>/one-pager.md`): a brief; always; light.\n"
-        )
-        for rel, text in (
-            ("tasks/one-pager.md", "# One-Pager\n" + STEPS),
-            ("roles/writer.md", writer),
-        ):
-            path = os.path.join(self.team, rel)
-            os.makedirs(os.path.dirname(path), exist_ok=True)
-            write(path, text)
-        self.work = os.path.join(os.path.dirname(self.agent_pm), "work")
-
-    def seen(self):
-        cfg = self.load(PIPELINE)
-        pm = cfg.roles["pm"]
-        return pm, delegate.plan(
-            pm.run,
-            delegate.Spec(
-                "x",
-                self.work,
-                runtime="claude",
-                sid=SID,
-                out=os.path.join(self.work, "out.md"),
-                cwd=self.work,
-            ),
-            driver=cfg.driver,
-        )
-
-    def test_team_dirs_change_no_orchestrator_run(self):
-        before = self.seen()
-        write(
-            os.path.join(self.agent_pm, "config.local.toml"),
-            CORE_TOP
-            + f"team_dirs = {json.dumps([self.team])}\n"
-            + CORE_TABLES
-            + "[delegate.roles.writer]\ntier = 3\n",
-        )
-        listed = subprocess.run(
-            [*PY, "-m", "agent_pm.delegate.cli", "--list"],
-            env=child_env(),
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        self.assertEqual(listed.returncode, 0, listed.stderr)
-        self.assertIn("writer", listed.stdout)
-        after = self.seen()
-        self.assertEqual(after, before)
-        self.assertNotIn("one-pager", after[1].prompt)
-        self.assertFalse(os.path.exists(self.work))
-
-
 class WritableDirectories(Case):
     def test_work_then_the_temp_dirs(self):
         self.assertEqual(config.writable("/w"), ("/w", *temp_dirs()))
@@ -847,59 +563,6 @@ class WorkDirectories(ConfigFile, Case):
             PIPELINE + '[local_clones]\n"ophis/x" = "~"\n',
         )
 
-    def test_set(self):
-        home = os.path.realpath(os.path.dirname(self.agent_pm))
-        self.assertEqual(
-            self.load('work_dir = "~/d"\n' + PIPELINE).work_dir, os.path.join(home, "d")
-        )
-        for name in ("d-c", "c"):
-            path = os.path.join(home, name)
-            git("init", "-q", path)
-            git(
-                "-C",
-                path,
-                "remote",
-                "add",
-                "origin",
-                f"https://github.com/ophis/{'x' if name == 'd-c' else 'y'}.git",
-            )
-        cfg = self.load(
-            f'work_dir = "{home}/d"\n'
-            + PIPELINE
-            + f'[local_clones]\n"ophis/x" = "{home}/d-c"\n"ophis/y" = "{home}/c"\n'
-        )
-        self.assertEqual(cfg.work_dir, f"{home}/d")
-
-    def test_refused(self):
-        real = os.path.realpath(config.ROOT)
-        d = os.path.realpath(self.dir)
-        link, clink = os.path.join(d, "link"), os.path.join(d, "clink")
-        os.symlink(real, link)
-        os.makedirs(os.path.join(d, "c"))
-        os.symlink(os.path.join(d, "c"), clink)
-        repo = f"work_dir must neither lie in nor contain the repo {real}: "
-
-        def clone(path):
-            return f'[local_clones]\n"ophis/x" = "{path}"\n'
-
-        def in_clone(path):
-            return f"work_dir must neither lie in nor contain local_clones.ophis/x {path}: "
-
-        cases = [
-            (f'work_dir = "{real}"\n', "", f"{repo}{real!r}"),
-            (f'work_dir = "{real}/w"\n', "", f"{repo}{real + '/w'!r}"),
-            (f'work_dir = "{link}/w"\n', "", f"{repo}{link + '/w'!r}"),
-            (f'work_dir = "{os.path.dirname(real)}"\n', "", f"{repo}{os.path.dirname(real)!r}"),
-            (f'work_dir = "{d}/c"\n', clone(f"{d}/c"), f"{in_clone(d + '/c')}{d + '/c'!r}"),
-            (f'work_dir = "{clink}"\n', clone(f"{d}/c/x"), f"{in_clone(d + '/c/x')}{clink!r}"),
-            (f'work_dir = "{clink}/w"\n', clone(f"{d}/c"), f"{in_clone(d + '/c')}{clink + '/w'!r}"),
-            ('work_dir = "w"\n', "", "work_dir must be a printable absolute or ~ path: 'w'"),
-            ("work_dir = 5\n", "", "work_dir must be a printable absolute or ~ path: 5"),
-        ]
-        for text, tail, msg in cases:
-            with self.subTest(text=text, tail=tail):
-                self.fails(f"linear-orchestrator/config.toml: {msg}", text + BASE + tail)
-
 
 class ExecutablePath(Case):
     def path(self, home, env):
@@ -919,35 +582,11 @@ class ExecutablePath(Case):
                 with self.subTest(home=home, env=env):
                     self.assertEqual(self.path(home, env), front + default)
 
-    def test_importing_reads_no_config_home_or_environment(self):
-        with tempfile.TemporaryDirectory() as home:
-            env = {**os.environ, "HOME": home, "AGENT_PM_PATH": "/before/bin"}
-            res = subprocess.run(
-                [*PY, "-c", IMPORT_ALONE],
-                capture_output=True,
-                text=True,
-                stdin=subprocess.DEVNULL,
-                timeout=60,
-                env=child_env(env, ORCH_ROOT),
-            )
-            self.assertEqual((res.returncode, res.stderr), (0, ""))
-            self.assertEqual(
-                json.loads(res.stdout),
-                {
-                    "read": [],
-                    "kept": [],
-                    "path": (
-                        "/later/bin:/opt/homebrew/bin:/later/.local/bin:/usr/local/bin:/usr/bin:/bin"
-                    ),
-                },
-            )
-            self.assertEqual(os.listdir(home), [])
-
 
 class ShellExecution(Case):
     def test_sh_run(self):
         with (
-            mock.patch.object(subprocess, "run", return_value="res") as run,
+            mock.patch("subprocess.run", return_value="res") as run,
             mock.patch.dict(os.environ, {"PATH": "/usr/bin:/bin", "KEEP": "1"}),
         ):
             self.assertEqual(config.sh_run(["git", "status"], 5), "res")
@@ -957,7 +596,7 @@ class ShellExecution(Case):
             capture_output=True,
             text=True,
             timeout=5,
-            stdin=subprocess.DEVNULL,
+            stdin=DEVNULL,
             env=env,
         )
         self.assertEqual(env["KEEP"], "1")

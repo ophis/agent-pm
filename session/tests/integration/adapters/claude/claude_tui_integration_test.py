@@ -37,7 +37,7 @@ from agent_pm.session.modes import tui
 from session.tests import detach_support as detach_live
 from session.tests import live_tmux
 from session.tests import tui_support as tui_live
-from session.tests.case import PY, child_env
+from session.tests.case import PY
 from session.tests.integration.adapters.claude import fake_claude
 from session.tests.processes import reject_command
 from session.tests.source_roots import PACKAGE_ROOTS
@@ -296,7 +296,7 @@ class AttachTest(Live):
         self.assertEqual([stream.next() for _ in range(2)], [Activity(""), TurnEnd("One.", 0)])
         res = subprocess.run(
             [*PY, "-c", ATTACH, json.dumps(TABLE), "w1", "more"],
-            env=child_env(),
+            env=self.server.child_env(),
             capture_output=True,
             text=True,
             stdin=subprocess.DEVNULL,

@@ -2,6 +2,7 @@
 
 import io
 import os
+import re
 import tempfile
 from contextlib import redirect_stderr
 from dataclasses import replace
@@ -9,11 +10,31 @@ from dataclasses import replace
 from agent_pm.delegate import ConfigError, Spec, composer, plan
 
 from delegate.tests.case import Case, committed
+from delegate.tests.unit.composer.teams import POET, VERSE
 from session.tests import fake_adapter
 from session.tests.modules import adapter_loader
 from utils.tests.case import local_section
 
 SID = "11111111-2222-3333-4444-555555555555"
+
+
+TASKS = os.path.join(composer.TEAM, "tasks")
+
+
+TASKS_PARAM = re.compile(r"\n- `<tasks>`: `([^`]+)`\n")
+
+
+TEAM_FILES = {"roles/poet.md": POET, "tasks/verse.md": VERSE}
+
+
+def write_team(top, files=TEAM_FILES):
+    for rel, text in files.items():
+        path = os.path.join(top, rel)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        os.chmod(os.path.dirname(path), 0o755)
+        with open(path, "w") as f:
+            f.write(text)
+        os.chmod(path, 0o644)
 
 
 class Base(Case):

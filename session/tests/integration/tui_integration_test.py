@@ -31,7 +31,7 @@ from agent_pm.session.hosts.tmux import tmux_host
 from agent_pm.session.modes import tui
 
 from session.tests import fake_adapter, live_tmux
-from session.tests.case import PY, child_env
+from session.tests.case import PY
 from session.tests.tui_support import DIALOG, IDLE, MANAGER, SID, WAIT, Live, Stream
 
 # Another process: attaches by name, sends text, prints [sid, state, reply, its first event but
@@ -110,7 +110,7 @@ class TuiTest(Live):
 
         res = subprocess.run(
             [*PY, "-c", ATTACH, fake_adapter.__file__, json.dumps(self.config), "w1", "more"],
-            env=child_env(),
+            env=self.server.child_env(),
             capture_output=True,
             text=True,
             stdin=subprocess.DEVNULL,
@@ -250,7 +250,7 @@ class SameNameTest(Live):
         old, events = self.old("w5")
         res = subprocess.run(
             [*PY, "-c", CLOSE, "w5"],
-            env=child_env(),
+            env=self.server.child_env(),
             capture_output=True,
             text=True,
             stdin=subprocess.DEVNULL,
@@ -264,7 +264,7 @@ class SameNameTest(Live):
         killed = os.path.join(self.dir, "killed")
         closer = subprocess.Popen(
             [*PY, "-c", SLOW_CLOSE, "w7", killed],
-            env=child_env(),
+            env=self.server.child_env(),
             text=True,
             stdin=subprocess.DEVNULL,
             stderr=subprocess.PIPE,

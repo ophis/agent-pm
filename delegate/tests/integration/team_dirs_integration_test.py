@@ -10,8 +10,6 @@ refused. Main's tests/integration/core/team_dirs_integration_test.py, the Delega
 import json
 import os
 import re
-import shutil
-import tempfile
 import unittest
 
 from agent_pm.delegate.composer.prompt import RESUME, RETURN
@@ -21,9 +19,10 @@ from delegate.tests.case import REPO
 from delegate.tests.integration.cli import CLI, NATIVE, CodexIntegration, Integration, codex_said
 from delegate.tests.integration.composer import child
 from delegate.tests.replies import block, mark
+from utils.tests.sandbox import owned_directory
 
 # outside every temp dir (check_team_dirs refuses one there): the repo's gitignored work/
-TEAMS = os.path.join(REPO, "work", "new-team-dirs-tests")
+TEAMS = os.path.join(REPO, "work")
 IN_TEMP = under(os.path.realpath(TEAMS), temp_dirs()) is not None
 CORE_TASKS = os.path.join(REPO, "delegate", "src", "agent_pm", "delegate", "team", "tasks")
 MARK = "[agent-pm-progress:start] the topic"
@@ -59,12 +58,7 @@ print(json.dumps(rows))
 
 def make_team(case: unittest.TestCase) -> str:
     """A team dir of TEAM's files under TEAMS, removed after `case`'s test."""
-    os.makedirs(TEAMS, mode=0o700, exist_ok=True)
-    if os.path.realpath(TEAMS) != TEAMS:
-        case.fail(f"{TEAMS} must not contain symlinks")
-    os.chmod(TEAMS, 0o700)
-    team = tempfile.mkdtemp(dir=TEAMS, prefix="team-")
-    case.addCleanup(shutil.rmtree, team, ignore_errors=True)
+    team = owned_directory(case, TEAMS, prefix="team-")
     os.chmod(team, 0o755)
     for rel, text in TEAM.items():
         path = os.path.join(team, rel)

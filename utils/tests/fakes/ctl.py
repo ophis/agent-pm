@@ -34,7 +34,7 @@ GONE = {
 def install(bin_dir: str, state_dir: str) -> str:
     os.makedirs(state_dir, exist_ok=True)
     path = os.path.join(bin_dir, COMMAND)
-    argv = ("env", f"PYTHONPATH={PYTHONPATH}", sys.executable, "-P", SCRIPT)
+    argv = ("env", f"PYTHONPATH={PYTHONPATH}", sys.executable, "-P", "-S", SCRIPT)
     files.save(path, f'#!/bin/sh\nexec {shlex.join((*argv, os.path.abspath(state_dir)))} "$@"\n')
     os.chmod(path, 0o755)
     return COMMAND

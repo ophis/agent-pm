@@ -1,6 +1,5 @@
 import io
 import os
-import subprocess
 import urllib.request
 from types import SimpleNamespace
 from unittest import mock
@@ -29,9 +28,7 @@ def failing(error, gql=None, ops=None):
         with (
             mock.patch.dict(os.environ),
             mock.patch.object(urllib.request, "urlopen", side_effect=error()),
-            mock.patch.object(
-                subprocess, "run", return_value=SimpleNamespace(stdout="lin_api_outage\n")
-            ),
+            mock.patch("subprocess.run", return_value=SimpleNamespace(stdout="lin_api_outage\n")),
         ):
             return linear.linear_gql(query, **{"service": "linear-api-key", **v})
 

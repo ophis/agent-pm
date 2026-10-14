@@ -1,17 +1,24 @@
 """Run suites in a supervised child, annotate failures and optionally record durations."""
 
 import collections
+import contextlib
 import json
 import os
 import subprocess
 import sys
+import sysconfig
 import tempfile
 import time
 import unittest
 from pathlib import Path
 
+import isolation
+
+from utils.tests.sandbox import clean_env, stop_tmux_servers
+
 STATE = "RUN_TESTS_STATE"
 TAIL = 40
+GATE = None
 
 
 def escape(text, *, prop=False):
@@ -26,7 +33,10 @@ def annotate(title, message):
 def append(variable, text):
     path = os.environ.get(variable)
     if path:
-        with open(path, "a", encoding="utf-8") as file:
+        with (
+            GATE.reporting(path) if GATE else contextlib.nullcontext(),
+            open(path, "a", encoding="utf-8") as file,
+        ):
             file.write(text)
 
 
@@ -36,16 +46,25 @@ class AnnotatingResult(unittest.TextTestResult):
         self.failed = []
 
     def startTest(self, test):
+        self.guard = GATE.test(test) if GATE else None
+        if self.guard:
+            self.guard.__enter__()
         self.started = time.monotonic()
         append(STATE, f"start {test.id()}\n")
         super().startTest(test)
 
     def stopTest(self, test):
+        if GATE:
+            for error in GATE.violations:
+                self.addError(test, (type(error), error, error.__traceback__))
+            GATE.violations.clear()
         append(
             "RUN_TESTS_DURATIONS",
             json.dumps({"test": test.id(), "seconds": time.monotonic() - self.started}) + "\n",
         )
         super().stopTest(test)
+        if self.guard:
+            self.guard.__exit__(None, None, None)
 
     def addFailure(self, test, err):
         super().addFailure(test, err)
@@ -62,26 +81,31 @@ class AnnotatingResult(unittest.TextTestResult):
 
     def addUnexpectedSuccess(self, test):
         super().addUnexpectedSuccess(test)
-        self.report(test, "unexpected success")
+        self.report(test.id(), "unexpected success")
 
     def annotate(self, test, err):
         kind, value = err[0].__name__, str(err[1]).strip()
-        self.report(test, f"{kind}: {value.splitlines()[0]}" if value else kind)
+        self.report(test.id(), f"{kind}: {value.splitlines()[0]}" if value else kind)
 
-    def report(self, test, line):
-        self.failed.append((test.id(), line))
-        annotate(test.id(), line)
+    def report(self, test_id, line):
+        self.failed.append((test_id, line))
+        annotate(test_id, line)
 
 
 def run(suite, title):
     result = unittest.TextTestRunner(verbosity=2, resultclass=AnnotatingResult).run(suite)
+    if GATE:
+        for error in GATE.violations:
+            result.report(title, str(error))
+        GATE.violations.clear()
+    successful = result.wasSuccessful() and not result.failed
     if result.failed:
         cells = [(test, line.replace("|", "\\|")) for test, line in result.failed]
         rows = [f"| `{test}` | {line} |" for test, line in cells]
         table = "\n".join(["| Test | Error |", "| --- | --- |", *rows])
         append("GITHUB_STEP_SUMMARY", f"### {title}: {len(rows)} failed\n\n{table}\n\n")
-    append(STATE, "passed\n" if result.wasSuccessful() else "failed\n")
-    return 0 if result.wasSuccessful() else 1
+    append(STATE, "passed\n" if successful else "failed\n")
+    return 0 if successful else 1
 
 
 def crash(code, lines):
@@ -113,19 +137,47 @@ def supervise(title):
     if STATE in os.environ:
         return None
     tail = collections.deque(maxlen=5 * TAIL)
-    with tempfile.TemporaryDirectory() as tmp:
+    repo = Path(__file__).resolve().parents[1]
+    with (
+        tempfile.TemporaryDirectory() as tmp,
+        tempfile.TemporaryDirectory(prefix=".test-sandbox-", dir=repo) as workspace,
+    ):
         state = os.path.join(tmp, "state")
         open(state, "w").close()
-        with subprocess.Popen(
-            [sys.executable, "-X", "faulthandler", *sys.orig_argv[1:]],
-            env={**os.environ, STATE: state},
-            stderr=subprocess.PIPE,
-            text=True,
-            errors="replace",
-        ) as child:
-            for line in child.stderr:
-                sys.stderr.write(line)
-                tail.append(line)
+        roots = [
+            repo,
+            repo / ".github",
+            repo / "linear-orchestrator/tests",
+            *sorted(repo.glob("*/src")),
+            sysconfig.get_path("purelib"),
+            sysconfig.get_path("platlib"),
+        ]
+        env = clean_env(
+            {**os.environ, "HOME": workspace, "AGENT_PM_TEST_WORKSPACE": workspace}, *roots
+        )
+        env.update(
+            HOME=workspace,
+            TMPDIR=tmp,
+            TMUX_TMPDIR=tmp,
+            TUI_ATTACH_PREFIX="",
+            AGENT_PM_TEST_SANDBOX=tmp,
+            AGENT_PM_TEST_TMP=workspace,
+            AGENT_PM_TEST_WORKSPACE=workspace,
+        )
+        isolation.blockers(Path(tmp) / "blocked-bin")
+        try:
+            with subprocess.Popen(
+                [sys.executable, "-P", "-S", "-X", "faulthandler", *sys.orig_argv[1:]],
+                env={**env, STATE: state},
+                stderr=subprocess.PIPE,
+                text=True,
+                errors="replace",
+            ) as child:
+                for line in child.stderr:
+                    sys.stderr.write(line)
+                    tail.append(line)
+        finally:
+            stop_tmux_servers(tmp, clean_env(env))
         with open(state, encoding="utf-8") as file:
             lines = file.read().splitlines()
     code = 128 - child.returncode if child.returncode < 0 else child.returncode
@@ -180,6 +232,7 @@ def unit_directories(root):
 
 
 def main(argv):
+    global GATE
     if len(argv) < 2:
         sys.exit("usage: run_tests.py <title> <start dir>... | <title> --unit")
     title, *directories = argv
@@ -187,6 +240,13 @@ def main(argv):
     if code is not None:
         return code
     root = Path.cwd()
+    GATE = isolation.install(root)
+    GATE.unit_only = directories == ["--unit"] or all(
+        "unit" in Path(path).parts or path == ".github" for path in directories
+    )
+    GATE.unit = directories == ["--unit"] or any(
+        "unit" in Path(path).parts or path == ".github" for path in directories
+    )
     return run(
         discover(root, unit_directories(root) if directories == ["--unit"] else directories), title
     )

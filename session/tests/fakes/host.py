@@ -188,7 +188,7 @@ class FakeHost(Host):
         own = {k: v for k, v in os.environ.items() if not k.startswith("PYTHON")}
         with open(os.path.join(folder, "output"), "ab") as output:
             supervisor = subprocess.Popen(
-                [sys.executable, "-P", SUPERVISOR, folder, events],
+                [sys.executable, "-P", "-S", SUPERVISOR, folder, events],
                 env={**own, "PYTHONPATH": PYTHONPATH},
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.DEVNULL,

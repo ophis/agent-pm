@@ -1,0 +1,111 @@
+"""Event rotation transaction recovery, including native process death and later appends."""
+
+import subprocess
+from pathlib import Path
+
+from agent_pm.utils import append_line
+
+from manager.tests.case import PY, child_env
+from manager.tests.events_case import EventsCase
+
+
+class EventsTest(EventsCase):
+    def crashed(self, script):
+        result = subprocess.run(
+            (*PY, "-c", script),
+            env=child_env(),
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 91, result.stderr)
+
+    def crash_replace(self, source, destination, *, after=False, recovering=False):
+        script = (
+            "import os\n"
+            "from unittest import mock\n"
+            "from agent_pm.manager.engine.events import Events\n"
+            "from agent_pm.utils import file_lock\n"
+            f"events=Events({self.directory!r})\n"
+            "original=os.replace\n"
+            "def replace(source,destination):\n"
+            f" match=str(source)=={str(source)!r} and str(destination)=={str(destination)!r}\n"
+            f" if match and not {after!r}: os._exit(91)\n"
+            " original(source,destination)\n"
+            f" if match and {after!r}: os._exit(91)\n"
+            "with file_lock(events.path,own=True),mock.patch('os.replace',side_effect=replace):\n"
+            f" events.{'recover(0)' if recovering else 'rotate(1,0)'}"
+        )
+        self.crashed(script)
+
+    def test_crash_before_archive_rename_preserves_original_and_later_appends(self):
+        self.crash_replace(self.events.path, self.events.archive)
+        append_line(self.events.path, b"new\n", own=True, locked=True)
+        self.recover()
+        self.assertEqual(Path(self.events.path).read_bytes(), self.original + b"new\n")
+        self.assertFalse(Path(self.events.archive).exists())
+        self.assertFalse(Path(self.events.journal).exists())
+
+    def test_crash_after_archive_rename_preserves_new_file_arrivals(self):
+        self.crash_replace(self.events.path, self.events.archive, after=True)
+        self.assertFalse(Path(self.events.path).exists())
+        append_line(self.events.path, b"new\n", own=True, locked=True)
+        self.recover()
+        self.assertEqual(Path(self.events.path).read_bytes(), self.original + b"new\n")
+        self.assertFalse(Path(self.events.journal).exists())
+
+    def test_crash_before_candidate_publish_preserves_unprefixed_new_file_arrivals(self):
+        self.crash_replace(self.events.candidate, self.events.path)
+        append_line(self.events.path, b"new\n", own=True, locked=True)
+        self.recover()
+        self.assertEqual(Path(self.events.path).read_bytes(), self.original + b"new\n")
+        self.assertFalse(Path(self.events.candidate).exists())
+        self.assertFalse(Path(self.events.journal).exists())
+
+    def test_crash_after_candidate_publish_strips_only_copied_tail(self):
+        self.crash_replace(self.events.candidate, self.events.path, after=True)
+        append_line(self.events.path, b"new\n", own=True, locked=True)
+        self.recover()
+        append_line(self.events.path, b"later\n", own=True, locked=True)
+        self.recover()
+        self.assertEqual(Path(self.events.path).read_bytes(), self.original + b"new\nlater\n")
+        self.assertFalse(Path(self.events.journal).exists())
+
+    def test_crash_before_rollback_publish_rebuilds_with_later_appends(self):
+        self.crash_replace(self.events.candidate, self.events.path, after=True)
+        append_line(self.events.path, b"one\n", own=True, locked=True)
+        self.crash_replace(self.events.rollback, self.events.path, recovering=True)
+        append_line(self.events.path, b"two\n", own=True, locked=True)
+        self.recover()
+        self.assertEqual(Path(self.events.path).read_bytes(), self.original + b"one\ntwo\n")
+        self.assertFalse(Path(self.events.rollback).exists())
+        self.assertFalse(Path(self.events.journal).exists())
+
+    def test_crash_after_rollback_publish_does_not_duplicate_old_or_new_lines(self):
+        self.crash_replace(self.events.candidate, self.events.path, after=True)
+        append_line(self.events.path, b"one\n", own=True, locked=True)
+        self.crash_replace(self.events.rollback, self.events.path, after=True, recovering=True)
+        append_line(self.events.path, b"two\n", own=True, locked=True)
+        self.recover()
+        self.recover()
+        self.assertEqual(Path(self.events.path).read_bytes(), self.original + b"one\ntwo\n")
+        self.assertFalse(Path(self.events.journal).exists())
+
+    def test_crash_after_durable_ledger_commit_finishes_without_rollback(self):
+        self.crashed(
+            "import os\n"
+            "from agent_pm.manager.engine.events import Events\n"
+            "from agent_pm.utils import file_lock,save\n"
+            f"events=Events({self.directory!r})\n"
+            "with file_lock(events.path,own=True):\n"
+            " events.rotate(1,0)\n"
+            f' save({str(self.ledger)!r},\'{{"gen":1,"cursor":0}}\\n\',own=True,durable=True)\n'
+            " os._exit(91)"
+        )
+        append_line(self.events.path, b"new\n", own=True, locked=True)
+        self.recover()
+        self.assertEqual(self.generation(), 1)
+        self.assertEqual(Path(self.events.path).read_bytes(), b"old\nnew\n")
+        self.assertEqual(Path(self.events.archive).read_bytes(), self.original)
+        self.assertFalse(Path(self.events.journal).exists())

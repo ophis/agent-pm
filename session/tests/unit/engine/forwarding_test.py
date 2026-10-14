@@ -41,7 +41,7 @@ from agent_pm.session.hosts.tmux import TmuxHost, tmux_host
 from agent_pm.session.modes import headless, tui
 
 from session.tests.case import HOSTS, Case
-from session.tests.unit.engine.support import (
+from session.tests.hosted_support import (
     LAUNCHED,
     NO_PANE,
     OPENERS,

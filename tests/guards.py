@@ -15,6 +15,9 @@ from agent_pm.utils.config_file import LEVELS
 
 from tests.import_policy import violation
 
+UNIT_ISOLATION_ALLOWED = {}
+
+
 RUNTIME = re.compile(r"claude|codex|print_prompt", re.I)
 
 
@@ -1004,9 +1007,17 @@ def standalone(repo: str) -> list[str]:
 
 
 def standalone_imports(repo: str) -> list[str]:
+    return _stdlib_imports(repo, STANDALONE)
+
+
+def test_gate_imports(repo: str) -> list[str]:
+    return _stdlib_imports(repo, {".github/isolation.py", "utils/tests/sandbox.py"})
+
+
+def _stdlib_imports(repo, paths):
     found = []
     standard = sys.stdlib_module_names | {"__future__", "builtins"}
-    for rel in sorted(STANDALONE):
+    for rel in sorted(paths):
         path = os.path.join(repo, rel)
         if not os.path.isfile(path):
             found.append(f"{rel}: missing standalone script")
@@ -1240,6 +1251,41 @@ def unit_test_modules(repo: str) -> list[str]:
                 if not stem or stem == "__init__" or not matches:
                     test = os.path.relpath(os.path.join(top, name), repo)
                     found.append(f"{test}: missing source module {source}.py")
+    return sorted(found)
+
+
+def unit_isolation_allowlist(repo: str) -> list[str]:
+    return (
+        [f"{os.path.join(repo, 'tests/guards.py')}: unit isolation allowlist must remain empty"]
+        if UNIT_ISOLATION_ALLOWED
+        else []
+    )
+
+
+def test_gate_mutation(repo: str) -> list[str]:
+    found = set()
+    for rel, text in _tree_files(repo, ".py"):
+        if "tests" not in rel.split("/") and not (
+            rel.startswith(".github/") and rel.endswith("_test.py")
+        ):
+            continue
+        tree = ast.parse(text)
+        aliases = _boundary_bindings(tree)
+        for node in ast.walk(tree):
+            name = _boundary_name(node, aliases)
+            if isinstance(node, ast.Name | ast.Attribute) and any(
+                _within(name, target) for target in ("run_tests.GATE", "run_tests.isolation")
+            ):
+                found.add(f"{rel}:{node.lineno}: interpreter gate access")
+            if not isinstance(node, ast.Call) or not node.args:
+                continue
+            call = _boundary_name(node.func, aliases)
+            target = _boundary_name(node.args[0], aliases)
+            if ("patch" in call.split(".") or call in {"setattr", "delattr"}) and any(
+                _within(target, name)
+                for name in ("isolation", "run_tests.GATE", "run_tests.isolation")
+            ):
+                found.add(f"{rel}:{node.lineno}: interpreter gate patch")
     return sorted(found)
 
 

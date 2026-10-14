@@ -9,7 +9,7 @@ from agent_pm.session.engine.types import Exited
 
 from session.tests.case import HOSTS
 from session.tests.fakes.host import FakeHost
-from session.tests.unit.engine.support import (
+from session.tests.hosted_support import (
     WAIT,
     Base,
     TuiBase,

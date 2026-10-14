@@ -17,6 +17,7 @@ from agent_pm.manager.engine.roster import Roster
 from agent_pm.manager.engine.types import Held
 
 from manager.tests.case import PY, Case, child_env
+from utils.tests.sandbox import reap
 
 
 def _hold_contender(directory, barrier, release, outcomes):
@@ -35,12 +36,6 @@ class HolderTest(Case):
         self.roster = Roster(self.directory)
 
     def start(self, script, *options):
-        group_file = Path(self.home, f"child-group-{time.monotonic_ns()}")
-        script = (
-            "import os,pathlib\n"
-            f"pathlib.Path({str(group_file)!r}).write_text(str(os.getpgrp()))\n"
-            f"{script}"
-        )
         process = subprocess.Popen(
             (
                 *PY,
@@ -52,6 +47,8 @@ class HolderTest(Case):
                 *options,
                 "--",
                 sys.executable,
+                "-I",
+                "-S",
                 "-c",
                 script,
             ),
@@ -61,30 +58,21 @@ class HolderTest(Case):
             text=True,
             process_group=0,
         )
-        self.addCleanup(self.finish, process, group_file)
+        self.addCleanup(self.finish, process)
         return process
 
-    def finish(self, process, group_file=None, master=None):
-        groups = []
-        if process.poll() is None:
-            groups.append(process.pid)
-        if group_file is not None and group_file.exists():
-            text = group_file.read_text().strip()
-            if text.isdigit():
-                groups.append(int(text))
-        for signum in (signal.SIGCONT, signal.SIGTERM):
-            for group in groups:
-                with contextlib.suppress(ProcessLookupError):
-                    os.killpg(group, signum)
+    def finish(self, process, master=None):
+        # An unreaped leader pins its pid, so its own process group cannot be reused.
+        if process.returncode is None:
+            with contextlib.suppress(ProcessLookupError):
+                os.killpg(process.pid, signal.SIGKILL)
         try:
             if master is None:
                 process.communicate(timeout=3)
             else:
                 self.wait_terminal(process, master, timeout=3)
         except subprocess.TimeoutExpired:
-            for group in groups:
-                with contextlib.suppress(ProcessLookupError):
-                    os.killpg(group, signal.SIGKILL)
+            reap(process)
             if master is None:
                 process.communicate(timeout=10)
             else:
@@ -113,7 +101,7 @@ class HolderTest(Case):
                 self.fail(f"{path}: child did not become ready")
             time.sleep(0.01)
 
-    def terminal(self, script, group_file):
+    def terminal(self, script):
         master, slave = os.openpty()
         self.addCleanup(os.close, master)
         self.addCleanup(os.close, slave)
@@ -126,7 +114,7 @@ class HolderTest(Case):
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
-        self.addCleanup(self.finish, process, group_file, master)
+        self.addCleanup(self.finish, process, master)
         return process, master
 
     def test_child_environment_replaces_inherited_identity_and_preserves_exit_code(self):
@@ -149,6 +137,8 @@ class HolderTest(Case):
                 "display-only",
                 "--",
                 sys.executable,
+                "-I",
+                "-S",
                 "-c",
                 "import json,os,sys\n"
                 "keys=('AGENT_PM_MANAGER','AGENT_PM_HOLDER_ID','AGENT_PM_HOLDER_GENERATION')\n"
@@ -325,7 +315,7 @@ class HolderTest(Case):
             "def handle(signum,frame):\n"
             f" pathlib.Path({str(manager_signal)!r}).write_text(str(signum))\n"
             "signal.signal(signal.SIGTERM,handle)\n"
-            f"child=subprocess.Popen(({sys.executable!r},'-c',{descendant!r}))\n"
+            f"child=subprocess.Popen(({sys.executable!r},'-I','-S','-c',{descendant!r}))\n"
             f"done=pathlib.Path({str(done)!r})\n"
             "while not done.exists(): time.sleep(.01)\n"
             "child.wait()"
@@ -366,10 +356,10 @@ class HolderTest(Case):
             "from agent_pm.manager.engine.holder import Holder\n"
             "from agent_pm.manager.engine.roster import Roster\n"
             "before=os.tcgetpgrp(0)\n"
-            f"rc=Holder(Roster({self.directory!r})).run(({sys.executable!r},'-c',{child!r}))\n"
+            f"rc=Holder(Roster({self.directory!r})).run(({sys.executable!r},'-I','-S','-c',{child!r}))\n"
             f"pathlib.Path({str(result)!r}).write_text(json.dumps([rc,before,os.tcgetpgrp(0)]))"
         )
-        process, master = self.terminal(driver, group_file)
+        process, master = self.terminal(driver)
         self.addCleanup(done.touch)
         os.write(master, b"ready\n")
         self.wait_for(ready, content=True)
@@ -401,12 +391,12 @@ class HolderTest(Case):
             "from agent_pm.manager.engine.roster import Roster\n"
             "try:\n"
             " with mock.patch('os.tcsetpgrp',side_effect=OSError(errno.EIO,'handoff unavailable')):\n"
-            f"  Holder(Roster({self.directory!r})).run(({sys.executable!r},'-c',{child!r}))\n"
+            f"  Holder(Roster({self.directory!r})).run(({sys.executable!r},'-I','-S','-c',{child!r}))\n"
             "except OSError as error:\n"
             " detail={'errno':error.errno,'trace':traceback.format_exc()}\n"
             f" pathlib.Path({str(result)!r}).write_text(json.dumps(detail))"
         )
-        process, master = self.terminal(driver, group_file)
+        process, master = self.terminal(driver)
         self.assertEqual(self.wait_terminal(process, master), 0)
         detail = json.loads(result.read_text())
         self.assertEqual(detail["errno"], errno.EIO, detail["trace"])

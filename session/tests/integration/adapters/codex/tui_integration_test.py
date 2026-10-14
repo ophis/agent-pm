@@ -37,7 +37,7 @@ from agent_pm.session.engine.types import (
 from agent_pm.session.modes import tui_hook
 
 from session.tests import live_tmux
-from session.tests.case import PY, REPO, ROOTS, SRC, Case, child_env, settings
+from session.tests.case import PY, REPO, ROOTS, SRC, Case, settings
 from session.tests.integration.adapters.codex import fake_codex, fake_tui
 from session.tests.source_roots import PACKAGE_ROOTS
 from session.tests.unit.adapters.codex.support import CHILD, NATIVE, Base
@@ -118,11 +118,7 @@ class Live(Case):
         self.cwd, self.codex_home = self.work / "project", self.home / ".codex"
         for path in (self.home, self.cwd, self.codex_home, self.extra):
             path.mkdir(parents=True, exist_ok=True)
-        mkdtemp = tempfile.mkdtemp
-        with mock.patch.object(
-            live_tmux.tempfile, "mkdtemp", side_effect=lambda: mkdtemp(dir=parent)
-        ):
-            self.server = live_tmux.Server(self, str(self.home))
+        self.server = live_tmux.Server(self, str(self.home), bin_dir=str(self.root / "bin"))
         self.server.start("mgr")
         fake_tui.install(self.server.bin)
         self.log, self.scenario, self.events = (
@@ -220,7 +216,7 @@ class Live(Case):
     def attach(self, text="", name="w1"):
         result = subprocess.run(
             [*PY, "-c", ATTACH, json.dumps(self.config), name, text],
-            env=child_env(),
+            env=self.server.child_env(),
             text=True,
             capture_output=True,
             stdin=subprocess.DEVNULL,

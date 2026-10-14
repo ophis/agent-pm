@@ -17,6 +17,7 @@ import time
 from delegate.tests.case import PY, REPO, Case, child_env
 from session.tests.integration.adapters.claude import fake_claude
 from session.tests.integration.adapters.codex import fake_codex
+from utils.tests.sandbox import reap
 
 CLI = (*PY, "-m", "agent_pm.delegate.cli")
 SID = "0f8fad5b-d9cb-469f-a165-70867728950e"
@@ -148,11 +149,12 @@ class Integration(Runs):
         return proc
 
     def reap(self, proc: subprocess.Popen) -> None:
-        targets = [(os.killpg, proc.pid)] + [(os.kill, call["pid"]) for call in self.calls()]
-        for kill, target in targets:
-            with contextlib.suppress(ProcessLookupError, PermissionError):
-                kill(target, signal.SIGKILL)
-        proc.communicate()
+        # Check before poll/reap, while the leader still pins its process-group id.
+        if proc.returncode is None:
+            with contextlib.suppress(ProcessLookupError):
+                os.killpg(proc.pid, signal.SIGKILL)
+        reap(proc)
+        proc.communicate(timeout=10)
 
     def until(self, proc: subprocess.Popen, done, what: str) -> None:
         deadline = time.monotonic() + WAIT

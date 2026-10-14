@@ -5,13 +5,9 @@ import fcntl
 import io
 import json
 import os
-import select
 import stat
-import subprocess
-import sys
 import threading
 import time
-import unittest
 from dataclasses import replace
 from pathlib import Path
 from unittest import mock
@@ -19,46 +15,12 @@ from uuid import uuid4
 
 from agent_pm.manager.engine.roster import Roster
 from agent_pm.manager.engine.types import Held, Lease, RosterError, Spec, Stale, State
-from agent_pm.utils import Record, append_line
+from agent_pm.utils import append_line
 
-from manager.tests.case import Case, child_env
+from manager.tests.roster_case import RosterCase
 
 
-class RosterTest(Case):
-    def setUp(self):
-        self.directory = os.path.join(self.agent_pm, "managers", "manager")
-        self.roster = Roster(self.directory)
-        self.record = Record(
-            1,
-            "custom",
-            "x",
-            ("s1", "s2"),
-            str(uuid4()),
-            self.home,
-            ("fake-ctl",),
-            ("fake-ctl", "resume", "x"),
-            "opaque",
-            "detail",
-        )
-
-    def begin(self, name="x", note=None):
-        self.roster.begin(Spec(name, ("fake-ctl", "start", name), note), sid=self.record.sid)
-
-    def live(self, name="x", note=None):
-        self.begin(name, note)
-        self.roster.commit(name, self.record)
-
-    def content(self):
-        return json.loads(Path(self.roster.path).read_text())
-
-    def _prepare_receipt(self, state):
-        self.begin(note="keep")
-        if state == State.RESUMING:
-            self.roster.commit("x", self.record)
-            self.roster.mark("x", State.GONE)
-            self.roster.claim_resume("x")
-        self.assertIs(self.roster.entries()["x"].state, state)
-
+class RosterTest(RosterCase):
     def test_missing_roster_reads_do_not_create_directories(self):
         self.assertEqual(self.roster.entries(), {})
         self.assertEqual(self.roster.backlog(), (0, 0, []))
@@ -755,65 +717,6 @@ class RosterTest(Case):
         self.assertTrue(self.roster.rotate_events())
         self.assertEqual((self.content()["cursor"], self.content()["gen"]), (0, 1))
 
-    def test_concurrent_distinct_process_writes_preserve_both_entries(self):
-        self.assertTrue(Path(self.roster.events).exists())
-        records = [
-            replace(self.record, name=name, sessions=(name,), sid=str(uuid4()))
-            for name in ("first", "second")
-        ]
-        script = """import sys
-from agent_pm.manager.engine.roster import Roster
-from agent_pm.utils import Record
-roster = Roster(sys.argv[1])
-record = Record.parse(sys.argv[2])
-print('ready', flush=True)
-sys.stdin.readline()
-print('writing', flush=True)
-roster.adopt(record)
-print('done', flush=True)
-"""
-        lock = os.open(Path(self.directory, "roster.lock"), os.O_RDWR)
-        children = []
-        try:
-            fcntl.flock(lock, fcntl.LOCK_EX)
-            for record in records:
-                children.append(
-                    subprocess.Popen(
-                        (sys.executable, "-P", "-c", script, self.directory, record.to_line()),
-                        env=child_env(),
-                        stdin=subprocess.PIPE,
-                        stdout=subprocess.PIPE,
-                        stderr=subprocess.PIPE,
-                        text=True,
-                    )
-                )
-            for child in children:
-                readable, _, _ = select.select([child.stdout], [], [], 10)
-                self.assertTrue(readable, "writer did not reach barrier")
-                self.assertEqual(child.stdout.readline(), "ready\n")
-            for child in children:
-                child.stdin.write("go\n")
-                child.stdin.flush()
-            for child in children:
-                readable, _, _ = select.select([child.stdout], [], [], 10)
-                self.assertTrue(readable, "writer did not begin its mutation")
-                self.assertEqual(child.stdout.readline(), "writing\n")
-                self.assertIsNone(child.poll())
-            fcntl.flock(lock, fcntl.LOCK_UN)
-            for child in children:
-                stdout, stderr = child.communicate(timeout=10)
-                self.assertEqual(child.returncode, 0, stderr)
-                self.assertEqual(stdout, "done\n")
-        finally:
-            os.close(lock)
-            for child in children:
-                if child.poll() is None:
-                    child.kill()
-                child.communicate(timeout=5)
-        entries = self.roster.entries()
-        self.assertEqual(set(entries), {"first", "second"})
-        self.assertEqual({entry.record for entry in entries.values()}, set(records))
-
     def test_hostile_entry_diagnostic_is_one_escaped_line_with_healthy_entry_kept(self):
         self.roster.adopt(self.record)
         data = self.content()
@@ -1477,7 +1380,3 @@ print('done', flush=True)
             self.fail("probe error became takeover")
         self.assertEqual(count, 2)
         self.assertIsNone(self.content()["holder"] if Path(self.roster.path).exists() else None)
-
-
-if __name__ == "__main__":
-    unittest.main()

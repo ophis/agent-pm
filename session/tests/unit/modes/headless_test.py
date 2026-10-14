@@ -6,7 +6,6 @@ process. Real children: session/tests/integration/modes/headless_integration_tes
 import contextlib
 import io
 import os
-import subprocess
 import sys
 import unittest
 from unittest import mock
@@ -23,6 +22,7 @@ from agent_pm.session.engine.types import (
 )
 
 from session.tests.headless_support import NOTHING, SID, HeadlessCase, StubAdapter, StubRun
+from utils.tests.process_fixtures import DEVNULL
 
 
 class NoHeadless(StubAdapter):
@@ -112,7 +112,7 @@ class Start(Base):
             (argv, kwargs["cwd"], kwargs["env"], lines),
             (NOTHING, self.dir, {**env, "HM_SET": "1", "PWD": self.dir}, 1),
         )
-        self.assertEqual((kwargs["stdin"], kwargs["process_group"]), (subprocess.DEVNULL, 0))
+        self.assertEqual((kwargs["stdin"], kwargs["process_group"]), (DEVNULL, 0))
         (spec,) = StubRun.specs
         self.assertEqual(prepared, Prepared(spec, info, NOTHING, kwargs["env"]))
         self.assertEqual((spec.prompt, spec.sid, spec.runtime), ("hi", SID, "stub"))

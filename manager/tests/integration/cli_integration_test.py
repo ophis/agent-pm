@@ -6,7 +6,7 @@ import subprocess
 from pathlib import Path
 
 from manager.tests import fake_session
-from manager.tests.case import REPO, Case
+from manager.tests.case import REPO, Case, child_env
 
 
 class PathsAndArguments(Case):
@@ -27,7 +27,7 @@ class PathsAndArguments(Case):
         return subprocess.run(
             (self.crew_bin, *argv),
             cwd=self.home,
-            env=env,
+            env=child_env(env),
             text=True,
             capture_output=True,
             timeout=20,

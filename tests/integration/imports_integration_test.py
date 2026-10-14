@@ -5,6 +5,7 @@ tests: all of them): it exits 0, leaving the dir empty and sys.path unchanged.
 
 import os
 import subprocess
+import sysconfig
 import tempfile
 import unittest
 
@@ -16,7 +17,13 @@ PATHS = {
         f"agent_pm.{PROJECTS[p]}": tuple(SRC[PROJECTS[q]] for q in LAYERS[: i + 1])
         for i, p in enumerate(LAYERS)
     },
-    "tests": (*ROOTS, REPO),
+    "tests": (
+        *ROOTS,
+        REPO,
+        os.path.join(REPO, ".github"),
+        sysconfig.get_path("purelib"),
+        sysconfig.get_path("platlib"),
+    ),
 }
 CHILD = """import importlib, sys
 path = list(sys.path)

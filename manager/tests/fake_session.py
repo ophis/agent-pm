@@ -12,7 +12,7 @@ def install(bin_dir: str, state_dir: str) -> None:
     Path(state_dir).mkdir(exist_ok=True)
     set_records(state_dir, ())
     utils_src = Path(__file__).resolve().parents[2] / "utils" / "src"
-    argv = ("env", f"PYTHONPATH={utils_src}", sys.executable, "-P", __file__, state_dir)
+    argv = ("env", f"PYTHONPATH={utils_src}", sys.executable, "-P", "-S", __file__, state_dir)
     command = Path(bin_dir, "agent-pm-session")
     save(command, f'#!/bin/sh\nexec {shlex.join(argv)} "$@"\n')
     command.chmod(0o755)

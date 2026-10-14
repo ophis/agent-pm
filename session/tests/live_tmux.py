@@ -13,6 +13,7 @@ import threading
 import time
 from typing import NamedTuple
 
+from session.tests.case import child_env
 from session.tests.grid import GridCheck
 from session.tests.integration.adapters.claude import fake_claude
 
@@ -33,7 +34,7 @@ class Client(NamedTuple):
 
 
 class Server:
-    def __init__(self, case, home: str):
+    def __init__(self, case, home: str, *, bin_dir: str | None = None):
         self.case, self.home, self.size, self.clients = case, home, (200, 50), []
         self.program = shutil.which("tmux")
         if self.program is None:
@@ -42,7 +43,7 @@ class Server:
         case.addCleanup(shutil.rmtree, self.root, ignore_errors=True)
         os.mkdir(os.path.join(self.root, f"tmux-{os.getuid()}"), 0o700)
         self.socket = os.path.join(self.root, f"tmux-{os.getuid()}", "default")
-        self.bin = os.path.join(self.root, "bin")
+        self.bin = bin_dir if bin_dir is not None else os.path.join(self.root, "bin")
         os.mkdir(self.bin)
         self.path = fake_claude.install(
             self.bin, tail=f"{os.path.dirname(self.program)}:/usr/bin:/bin"
@@ -60,6 +61,9 @@ class Server:
             "TMUX_TMPDIR": self.root,
             **extra,
         }
+
+    def child_env(self) -> dict[str, str]:
+        return {**child_env(), "TMUX_TMPDIR": self.root}
 
     def start(self, manager: str, width: int = 200, height: int = 50) -> None:
         """Capped (RLIMIT_NPROC) at the user's processes plus HEADROOM against a fork loop."""

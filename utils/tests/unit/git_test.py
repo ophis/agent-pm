@@ -1,159 +1,25 @@
 """utils/src/agent_pm/utils/git.py: common_dir over real git worktrees; git's lock retries."""
 
 import os
-import subprocess
 import tempfile
 import unittest
 import unittest.mock
+from types import SimpleNamespace
 
 import agent_pm.utils.git
 from agent_pm.utils import git as repos
-from agent_pm.utils.git import LOCAL_ENV_VARS, Checkouts, common_dir, find_checkouts
+from agent_pm.utils.git import LOCAL_ENV_VARS, Checkouts, find_checkouts
 
 from utils.tests.case import Case
-
-
-def git(*argv):
-    return subprocess.run(["git", *argv], check=True, capture_output=True, text=True).stdout.strip()
+from utils.tests.process_fixtures import TimeoutExpired
 
 
 def ok(stdout=""):
-    return subprocess.CompletedProcess([], 0, stdout, "")
+    return SimpleNamespace(returncode=0, stdout=stdout, stderr="")
 
 
 def fail(stderr):
-    return subprocess.CompletedProcess([], 1, "", stderr)
-
-
-class CommonDir(Case):
-    def setUp(self):
-        tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(tmp.cleanup)
-        self.tmp = os.path.realpath(tmp.name)
-        env = unittest.mock.patch.dict(
-            os.environ,
-            {
-                "GIT_CONFIG_GLOBAL": os.devnull,
-                "GIT_CONFIG_NOSYSTEM": "1",
-                "GIT_AUTHOR_NAME": "t",
-                "GIT_AUTHOR_EMAIL": "t@t",
-                "GIT_COMMITTER_NAME": "t",
-                "GIT_COMMITTER_EMAIL": "t@t",
-            },
-        )
-        env.start()
-        self.addCleanup(env.stop)
-        self.clone, self.bare = (
-            os.path.join(self.tmp, "clone"),
-            os.path.join(self.tmp, "origin.git"),
-        )
-        git("init", "-q", "-b", "main", self.clone)
-        git("-C", self.clone, "commit", "-q", "--allow-empty", "-m", "one")
-        git("clone", "-q", "--bare", self.clone, self.bare)
-
-    def add(self, branch="TASK-1-x", opts=()):
-        wt = os.path.join(self.tmp, "w", branch)
-        git("-C", self.clone, "worktree", "add", "-q", *opts, "-b", branch, wt)
-        return wt
-
-    def test_a_worktree_names_its_clones_git_dir(self):
-        common = os.path.join(self.clone, ".git")
-        self.assertEqual(common_dir(self.add()), common)
-        self.assertEqual(common_dir(self.add("TASK-1-rel", ("--relative-paths",))), common)
-
-    def test_a_crlf_git_file_is_read_as_git_reads_it(self):
-        wt = self.add()
-        gitdir = git("-C", wt, "rev-parse", "--path-format=absolute", "--git-dir")
-        with open(os.path.join(wt, ".git"), "w", newline="") as f:
-            f.write(f"gitdir: {gitdir}\r\n")
-        self.assertEqual(common_dir(wt), os.path.join(self.clone, ".git"))
-
-    def test_trailing_whitespace_is_part_of_the_path_as_for_git(self):
-        wt = self.add()
-        admin = git("-C", wt, "rev-parse", "--path-format=absolute", "--git-dir")
-        fake, other = os.path.join(self.tmp, "fake-admin"), os.path.join(self.tmp, "other", ".git")
-        os.makedirs(fake)
-        os.makedirs(other)
-        with open(os.path.join(fake, "commondir"), "w") as f:
-            f.write(other + "\n")
-        a = os.path.join(self.tmp, "a")
-        os.makedirs(a)
-        os.symlink(admin, os.path.join(a, "sym"))
-        os.symlink(fake, os.path.join(a, "sym "))
-        with open(os.path.join(wt, ".git"), "w") as f:
-            f.write(f"gitdir: {a}/sym \n")
-        self.assertEqual(common_dir(wt), other)
-
-    def test_a_commondir_symlink_is_followed(self):
-        wt = self.add()
-        admin = git("-C", wt, "rev-parse", "--path-format=absolute", "--git-dir")
-        path = os.path.join(admin, "commondir")
-        target = path + "-target"
-        os.rename(path, target)
-        os.symlink(target, path)
-        self.assertEqual(common_dir(wt), os.path.join(self.clone, ".git"))
-
-    def test_a_file_replaced_by_a_fifo_at_open_is_rejected_without_waiting(self):
-        wt = self.add()
-        admin = git("-C", wt, "rev-parse", "--path-format=absolute", "--git-dir")
-        open_file = os.open
-        for path in (os.path.join(wt, ".git"), os.path.join(admin, "commondir")):
-            with self.subTest(path=path):
-                backup = path + "-backup"
-
-                def replace(file, flags, *args, target=path, **kwargs):
-                    if file == target:
-                        self.assertTrue(flags & os.O_NONBLOCK)
-                        os.rename(target, target + "-backup")
-                        os.mkfifo(target)
-                    return open_file(file, flags, *args, **kwargs)
-
-                with unittest.mock.patch("os.open", side_effect=replace):
-                    self.assertIsNone(common_dir(wt))
-                os.unlink(path)
-                os.rename(backup, path)
-
-    def test_a_git_file_replaced_by_a_symlink_at_open_is_rejected(self):
-        wt = self.add()
-        path = os.path.join(wt, ".git")
-        target = path + "-target"
-        open_file = os.open
-
-        def replace(file, flags, *args, **kwargs):
-            if file == path:
-                os.rename(path, target)
-                os.symlink(target, path)
-            return open_file(file, flags, *args, **kwargs)
-
-        with unittest.mock.patch("os.open", side_effect=replace):
-            self.assertIsNone(common_dir(wt))
-
-    def test_no_worktree_names_no_clone(self):
-        wt = self.add()
-        plain, linked, junk, orphan, bare = (
-            os.path.join(self.tmp, d) for d in ("plain", "linked", "junk", "orphan", "bare")
-        )
-        for d in (plain, linked, junk, orphan, bare):
-            os.makedirs(d)
-        os.symlink(os.path.join(wt, ".git"), os.path.join(linked, ".git"))
-        for d, text in (
-            (junk, "nonsense\n"),
-            (orphan, f"gitdir: {self.tmp}/gone\n"),
-            (bare, f"gitdir: {self.bare}\n"),
-        ):
-            with open(os.path.join(d, ".git"), "w") as f:
-                f.write(text)
-        for path in (
-            self.clone,
-            plain,
-            linked,
-            junk,
-            orphan,
-            bare,
-            os.path.join(self.tmp, "missing"),
-        ):
-            with self.subTest(path=path):
-                self.assertIsNone(common_dir(path))
+    return SimpleNamespace(returncode=1, stdout="", stderr=stderr)
 
 
 class Retry(Case):
@@ -296,8 +162,10 @@ class CheckoutSearch(Case):
         current = argv[argv.index("-C") + 1]
         if current in (self.root, self.inner):
             return ok(f"true\n{current}\n")
-        return subprocess.CompletedProcess(
-            argv, 128, "", "fatal: not a git repository (or any of the parent directories): .git\n"
+        return SimpleNamespace(
+            returncode=128,
+            stdout="",
+            stderr="fatal: not a git repository (or any of the parent directories): .git\n",
         )
 
     def test_collects_inner_then_outer_and_uses_the_existing_ancestor(self):
@@ -322,8 +190,10 @@ class CheckoutSearch(Case):
             self.assertEqual({key: os.environ[key] for key in supplied}, supplied)
 
     def test_no_checkout_is_distinct_from_failure_and_partial_success_is_preserved(self):
-        absent = subprocess.CompletedProcess(
-            [], 128, "", "fatal: not a git repository (or any of the parent directories): .git\n"
+        absent = SimpleNamespace(
+            returncode=128,
+            stdout="",
+            stderr="fatal: not a git repository (or any of the parent directories): .git\n",
         )
         self.assertEqual(
             find_checkouts(self.inner, runner=lambda *_args: absent, timeout=7), Checkouts(())
@@ -338,7 +208,7 @@ class CheckoutSearch(Case):
             def failed(argv, timeout, env, message=message):
                 if argv[argv.index("-C") + 1] == self.inner:
                     return self.runner(argv, timeout, env)
-                return subprocess.CompletedProcess(argv, 128, "", message)
+                return SimpleNamespace(returncode=128, stdout="", stderr=message)
 
             with self.subTest(message=message):
                 result = find_checkouts(self.inner, runner=failed, timeout=7)
@@ -346,7 +216,7 @@ class CheckoutSearch(Case):
                 self.assertIn(message, result.error)
 
     def test_timeouts_and_operating_system_errors_are_failures(self):
-        for error in (subprocess.TimeoutExpired(["git"], 7), PermissionError("denied")):
+        for error in (TimeoutExpired(["git"], 7), PermissionError("denied")):
 
             def failed(_argv, _timeout, _env, error=error):
                 raise error
@@ -358,8 +228,10 @@ class CheckoutSearch(Case):
 
     def test_corrupt_metadata_cannot_be_classified_as_no_checkout(self):
         os.mkdir(os.path.join(self.inner, ".git"))
-        absent = subprocess.CompletedProcess(
-            [], 128, "", "fatal: not a git repository (or any of the parent directories): .git\n"
+        absent = SimpleNamespace(
+            returncode=128,
+            stdout="",
+            stderr="fatal: not a git repository (or any of the parent directories): .git\n",
         )
         result = find_checkouts(self.inner, runner=lambda *_args: absent, timeout=7)
         self.assertEqual(result.roots, ())

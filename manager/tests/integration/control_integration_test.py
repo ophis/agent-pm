@@ -11,7 +11,7 @@ from agent_pm.manager.engine.roster import Roster
 from agent_pm.manager.engine.types import Held, Spec
 from agent_pm.utils import Status
 
-from manager.tests.case import Case
+from manager.tests.case import Case, child_env
 from utils.tests.fakes import ctl
 
 
@@ -31,6 +31,7 @@ class Control(Case):
         result = subprocess.run(
             (self.command, "status"),
             input="".join(record.to_line() + "\n" for record in self.records),
+            env=child_env(),
             capture_output=True,
             text=True,
             check=True,
