@@ -15,7 +15,7 @@ import uuid
 from unittest import mock
 
 from agent_pm.session import Displayable, DriverError, Host, Mode, NotDisplayable, Spec
-from agent_pm.session.engine.hosted import HostedSession
+from agent_pm.session.engine.hosted_session import HostedSession
 from agent_pm.session.engine.types import Key, KeyPress, Launch, Paste
 from agent_pm.utils import Record
 

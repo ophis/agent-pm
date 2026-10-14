@@ -19,7 +19,7 @@ from agent_pm.session.adapters.codex.common import (
     snapshot_data,
     validate_snapshot,
 )
-from agent_pm.session.engine.hosted import HostedSession
+from agent_pm.session.engine.hosted_session import HostedSession
 from agent_pm.session.engine.types import Access, ConfigError, Mode, SessionInfo, SessionStatus
 from agent_pm.session.hosts.base import Host
 

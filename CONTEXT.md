@@ -56,7 +56,7 @@ How the session layer hosts an agent runtime: headless (e.g. `claude -p`, on a p
 _Avoid_: runner
 
 **Session**:
-One agent runtime session the session layer runs from a Spec, in a Mode, on a Host, known by its sid. In code: the ABC `Session` (`session/src/agent_pm/session/engine/base.py`) and its one concrete class, `HostedSession` (`engine/hosted.py`).
+One agent runtime session the session layer runs from a Spec, in a Mode, on a Host, known by its sid. In code: the ABC `Session` (`session/src/agent_pm/session/engine/base.py`) and its one concrete class, `HostedSession` (`engine/hosted_session.py`).
 _Avoid_: agent run (a role's run, in a session)
 
 **Spec**:

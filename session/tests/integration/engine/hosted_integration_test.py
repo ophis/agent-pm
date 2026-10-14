@@ -9,7 +9,7 @@ from unittest import mock
 
 from agent_pm.session import NotDisplayable
 from agent_pm.session.adapters.base import Adapter
-from agent_pm.session.engine.hosted import HostedSession
+from agent_pm.session.engine.hosted_session import HostedSession
 from agent_pm.session.engine.types import (
     Access,
     DriverError,

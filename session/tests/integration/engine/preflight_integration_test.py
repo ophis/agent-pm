@@ -10,7 +10,7 @@ from dataclasses import replace
 from unittest import mock
 
 from agent_pm.session import Access, ConfigError, DriverError, Effort, Host, Mode, Spec, read_config
-from agent_pm.session.engine.hosted import HostedSession
+from agent_pm.session.engine.hosted_session import HostedSession
 from agent_pm.session.hosts.tmux.host import validate_events, validate_start
 from agent_pm.session.hosts.tmux.types import PaneStatus, TuiError
 

@@ -14,7 +14,7 @@ CALLED = ("start", "attach", "usage", "layout", "writable_dirs", "display", "hos
 # "read_state": tui.TuiMode.snapshot("w1")'s error}.
 DISPATCH = """import json, os
 from agent_pm.session import ConfigError, DriverError, Hosts, Mode, Session, Spec
-from agent_pm.session.engine.hosted import HostedSession
+from agent_pm.session.engine.hosted_session import HostedSession
 from agent_pm.session.modes import tui
 spec = Spec(workdir=os.environ["HOME"], runtime="fake", mode=Mode.HEADLESS, prompt="hi")
 calls = {

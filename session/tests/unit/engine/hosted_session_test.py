@@ -22,9 +22,9 @@ from agent_pm.session.adapters import common as selection
 from agent_pm.session.adapters.base import Adapter
 from agent_pm.session.adapters.claude import ClaudeAdapter
 from agent_pm.session.adapters.codex import CodexAdapter
-from agent_pm.session.engine import hosted
+from agent_pm.session.engine import hosted_session
 from agent_pm.session.engine import types as engine_types
-from agent_pm.session.engine.hosted import POLL, HostedSession
+from agent_pm.session.engine.hosted_session import POLL, HostedSession
 from agent_pm.session.engine.records import RunLog
 from agent_pm.session.engine.types import (
     Access,
@@ -947,7 +947,10 @@ class UsageTest(Base):
         found, probe = self.usage("42.5")
         self.assertEqual(found, Usage(Window(42.5, None), None))
         probe.assert_called_once_with(
-            ("probe-cmd", "-x"), cwd=self.probe_dir, env=mock.ANY, timeout=hosted.PROBE_TIMEOUT
+            ("probe-cmd", "-x"),
+            cwd=self.probe_dir,
+            env=mock.ANY,
+            timeout=hosted_session.PROBE_TIMEOUT,
         )
 
     def test_a_spawn_error_is_none(self):
@@ -959,7 +962,7 @@ class UsageTest(Base):
     def test_a_timeout_is_none(self):
         found, probe = self.usage(None)
         self.assertIsNone(found)
-        self.assertEqual(probe.call_args.kwargs["timeout"], hosted.PROBE_TIMEOUT)
+        self.assertEqual(probe.call_args.kwargs["timeout"], hosted_session.PROBE_TIMEOUT)
 
     def test_a_reading_without_windows_is_a_usage(self):
         with mock.patch.object(ProbeAdapter, "usage", return_value=engine_types.Usage(None, None)):
@@ -1928,9 +1931,11 @@ class ChecksTest(Base):
 
 class ModulesTest(Case):
     def test_constants_and_the_modes(self):
-        self.assertEqual(hosted.POLL, 0.5)
-        self.assertEqual((hosted.PROBE_DIR, hosted.PROBE_TIMEOUT), ("~/.agent-pm/probe", 120))
-        self.assertEqual(sorted(hosted.MODES), sorted(Mode))
+        self.assertEqual(hosted_session.POLL, 0.5)
         self.assertEqual(
-            {mode: cls.kind for mode, cls in hosted.MODES.items()}, {m: m for m in Mode}
+            (hosted_session.PROBE_DIR, hosted_session.PROBE_TIMEOUT), ("~/.agent-pm/probe", 120)
+        )
+        self.assertEqual(sorted(hosted_session.MODES), sorted(Mode))
+        self.assertEqual(
+            {mode: cls.kind for mode, cls in hosted_session.MODES.items()}, {m: m for m in Mode}
         )

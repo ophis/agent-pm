@@ -12,7 +12,7 @@ from dataclasses import replace
 
 from agent_pm.session.adapters import registry
 from agent_pm.session.engine.base import Session
-from agent_pm.session.engine.hosted import HostedSession
+from agent_pm.session.engine.hosted_session import HostedSession
 from agent_pm.session.engine.records import RunLog
 from agent_pm.session.engine.types import (
     ConfigError,

@@ -15,7 +15,7 @@ from unittest import mock
 
 import agent_pm.session as session_pkg
 from agent_pm.session import Driver, Session
-from agent_pm.session.engine import forwarding, hosted
+from agent_pm.session.engine import forwarding, hosted_session
 from agent_pm.session.engine import types as engine_types
 from agent_pm.session.engine.forwarding import (
     Handle,
@@ -24,7 +24,7 @@ from agent_pm.session.engine.forwarding import (
     session_record,
     sessions,
 )
-from agent_pm.session.engine.hosted import HostedSession
+from agent_pm.session.engine.hosted_session import HostedSession
 from agent_pm.session.engine.records import RunLog
 from agent_pm.session.engine.types import (
     ConfigError,
@@ -156,7 +156,7 @@ class ExportsTest(Case):
                 self.assertIn(name, session_pkg.__all__)
         self.assertIs(session_pkg.SIGNALS, SIGNALS)
         self.assertIs(Handle, Session)
-        for name in ("api", "forwarding", "hosted", "HostedSession", "TmuxHost", "holds"):
+        for name in ("api", "forwarding", "hosted_session", "HostedSession", "TmuxHost", "holds"):
             with self.subTest(name=name):
                 self.assertNotIn(name, session_pkg.__all__)
         self.assertFalse(hasattr(forwarding, "holds"))
@@ -419,7 +419,7 @@ class UsageTest(Base):
         self.driver_dependencies = {**self.driver_dependencies, "probe": probe}
         self.configure("probe", probe={"argv": ("probe-cmd",)})
         self.assertEqual(self.driver.usage("probe"), Usage(Window(7.0, None), None))
-        self.assertEqual(probe.call_args.kwargs["timeout"], hosted.PROBE_TIMEOUT)
+        self.assertEqual(probe.call_args.kwargs["timeout"], hosted_session.PROBE_TIMEOUT)
 
 
 class AssignedTest(TuiBase):

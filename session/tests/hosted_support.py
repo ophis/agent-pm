@@ -12,7 +12,7 @@ from unittest import mock
 
 from agent_pm.session import Host, Session
 from agent_pm.session.engine import types as engine_types
-from agent_pm.session.engine.hosted import HostedSession
+from agent_pm.session.engine.hosted_session import HostedSession
 from agent_pm.session.engine.records import RunLog
 from agent_pm.session.engine.types import Access, ConfigError, Exited, Launch, Spec
 from agent_pm.session.hosts.tmux import transport

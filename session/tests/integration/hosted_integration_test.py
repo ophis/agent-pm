@@ -9,7 +9,7 @@ import os
 import unittest
 
 from agent_pm.session import ConfigError, Host, Mode, Spec, close, sessions
-from agent_pm.session.engine.hosted import UNCONFIGURED, HostedSession
+from agent_pm.session.engine.hosted_session import UNCONFIGURED, HostedSession
 from agent_pm.session.modes import tui
 
 from session.tests import fake_adapter

@@ -25,7 +25,7 @@ MODULE = "extension_runtime"
 # in workdir argv[1] and prints its events; a ConfigError exits 1, its text on stderr.
 CHILD = """import dataclasses, json, sys
 from agent_pm.session import Driver, ConfigError, Spec, read_config
-from agent_pm.session.engine import hosted
+from agent_pm.session.engine import hosted_session
 try:
     driver = Driver.from_config(read_config())
     handle = driver.start(sys.argv[2], "headless", "hello", Spec(workdir=sys.argv[1]))
@@ -33,7 +33,7 @@ except ConfigError as e:
     sys.exit(f"ConfigError: {e}")
 events = [[type(e).__name__, dataclasses.asdict(e)] for e in handle.events()]
 print(json.dumps({"sid": handle.sid, "events": events,
-                  "files": [hosted.__file__, sys.modules["extension_runtime"].__file__]}))
+                  "files": [hosted_session.__file__, sys.modules["extension_runtime"].__file__]}))
 """
 PROTECTED_CHILD = f"""import sys
 from unittest import mock

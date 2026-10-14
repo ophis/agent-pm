@@ -11,7 +11,7 @@ import sys
 import unittest
 
 from agent_pm.session import Exited, Launch, Mode, Reply, Spec, TurnEnd
-from agent_pm.session.engine.hosted import HostedSession
+from agent_pm.session.engine.hosted_session import HostedSession
 from agent_pm.session.extension import ConfigError, DriverError, Host, Record
 
 from session.tests import outside
