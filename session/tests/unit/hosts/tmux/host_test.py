@@ -11,7 +11,7 @@ from pathlib import Path
 from unittest import mock
 
 from agent_pm.session import ConfigError, Displayable, DriverError, Host, Launch, Terminal
-from agent_pm.session.engine.types import ActivityState, Key, Paste, SessionRow
+from agent_pm.session.engine.types import ActivityState, Key, KeyPress, Paste, SessionRow
 from agent_pm.session.hosts.base import SIGNALS
 from agent_pm.session.hosts.tmux import TmuxHost, tmux_host, types
 from agent_pm.session.hosts.tmux.host import TmuxProcess, TmuxTerminal
@@ -324,6 +324,30 @@ class TerminalTest(Base):
                 mock.call.keys("%7", "Escape"),
             ],
         )
+
+    def test_press_translates_every_key_then_sends_them_in_one_tmux_call(self):
+        self.active()
+        terminal = TmuxTerminal("t1", PROCESS, tmux=self.tmux, control=self.control)
+        notation = ("Escape", "3", "PageUp", "PageDown", " ", ";", "C-M-S-Up", "-", "BTab", "C-c")
+        terminal.press(tuple(map(KeyPress.parse, notation)))
+        self.tmux.press.assert_called_once_with(
+            "%7", "Escape", "3", "PPage", "NPage", "Space", "\\;", "C-M-S-Up", "-", "BTab", "C-c"
+        )
+
+    def test_a_key_it_cannot_translate_sends_none_of_the_keys(self):
+        self.active()
+        terminal = TmuxTerminal("t1", PROCESS, tmux=self.tmux, control=self.control)
+        with self.assertRaises(ConfigError):
+            terminal.press((KeyPress("Up"), "Up"))
+        self.tmux.press.assert_not_called()
+
+    def test_a_press_following_a_paste_waits_for_paste_delivery(self):
+        self.active()
+        terminal = TmuxTerminal("t1", PROCESS, tmux=self.tmux, control=self.control)
+        with mock.patch("time.sleep") as sleep:
+            terminal.send(Paste("a b"))
+            terminal.press((KeyPress("Enter"),))
+        sleep.assert_called_once_with(self.tmux.PAUSE)
 
     def test_terminal_launch_has_a_controller_identity_and_keeps_its_metadata(self):
         events = os.path.join(self.dir, "events")

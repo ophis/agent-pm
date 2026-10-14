@@ -628,6 +628,15 @@ def keys(target: str, *names: str, proc=subprocess.run) -> None:
     checked(["send-keys", "-t", target, *names], proc)
 
 
+def press(target: str, *names: str, proc=subprocess.run) -> None:
+    """Presses tmux key names after `--` (a `-` key is no flag); `;` must come escaped (`\\;`)."""
+    target = address(target)
+    for name in names:
+        if not name or name.endswith(";") and not name.endswith("\\;"):
+            raise TuiError(f"tmux would misread {name!r}")
+    checked(["send-keys", "-t", target, "--", *names], proc)
+
+
 def option(target: str, name: str, *, proc=subprocess.run) -> str | None:
     """None when unset or the target absent."""
     target = address(target)

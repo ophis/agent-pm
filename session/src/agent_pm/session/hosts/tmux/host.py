@@ -17,8 +17,10 @@ from agent_pm.session.engine.types import (
     ConfigError,
     DriverError,
     Key,
+    KeyPress,
     Launch,
     Liveness,
+    NamedKey,
     Paste,
     SessionRow,
     TuiSettings,
@@ -36,6 +38,7 @@ KILL_WAIT = 5
 LOG = logging.getLogger("session")
 
 Parts = tuple[str | None, str | None, str | None]
+TMUX_KEYS = {NamedKey.PAGE_UP: "PPage", NamedKey.PAGE_DOWN: "NPage", " ": "Space", ";": "\\;"}
 
 
 def _session(name) -> str:
@@ -229,6 +232,26 @@ class TmuxTerminal(TmuxProcess, Terminal):
                 self._pasted = False
         except TuiError as error:
             raise DriverError(f"send to tui session {self.name}: {error}") from error
+
+    def press(self, keys) -> None:
+        names = [_tmux_key(key) for key in keys]
+        if not self.alive():
+            raise DriverError(f"tui session {self.name} is not running")
+        try:
+            if self._pasted:
+                time.sleep(self.tmux.PAUSE)
+            self.tmux.press(self._pane, *names)
+            self._pasted = False
+        except TuiError as error:
+            raise DriverError(f"send to tui session {self.name}: {error}") from error
+
+
+def _tmux_key(key) -> str:
+    """KeyPress → tmux's key name: modifiers as C-, M-, S-; PageUp, PageDown, space and ; renamed."""
+    if not isinstance(key, KeyPress):
+        raise ConfigError(f"key {key!r:.80}: want a KeyPress")
+    prefixes = ("C-" * key.ctrl, "M-" * key.meta, "S-" * key.shift)
+    return "".join(prefixes) + TMUX_KEYS.get(key.key, key.key)
 
 
 class TmuxHost(Host, Displayable):

@@ -16,7 +16,7 @@ from unittest import mock
 
 from agent_pm.session import Displayable, DriverError, Host, Mode, NotDisplayable, Spec
 from agent_pm.session.engine.hosted import HostedSession
-from agent_pm.session.engine.types import Key, Launch, Paste
+from agent_pm.session.engine.types import Key, KeyPress, Launch, Paste
 from agent_pm.utils import Record
 
 from session.tests import fake_adapter
@@ -52,6 +52,18 @@ LEAVE = (
     "    time.sleep(0.01)\n"
     "put(f'{os.getpid()} {child.pid}')\n"
 )
+RAW = (
+    PUT + "import tty\n"
+    "if os.isatty(0):\n"
+    "    tty.setraw(0)\n"
+    "seen = b''\n"
+    "put(seen.hex())\n"
+    "while not seen.endswith(b'q'):\n"
+    "    seen += os.read(0, 64)\n"
+    "    put(seen.hex())\n"
+)
+PRESSED = ("Escape", "3", "Up", "BTab", "C-c", "q")
+RECEIVED = b"\x1b3\x1b[A\x1b[Z\x03q"
 CHILD = """import json, sys
 from agent_pm.session import Host, Launch
 from agent_pm.utils import load_class
@@ -160,6 +172,13 @@ class HostContract:
         terminal.send(Paste("hello host"))
         terminal.send(Key("Enter"))
         self.poll(lambda: (read(out) or "").rstrip("\r\n") == "hello host", f"line in {out}")
+
+    def test_keys_in_the_session_notation_reach_the_terminal_program_translated(self):
+        name, out = self.fresh(), self.file("keys")
+        terminal = self.start("terminal", name, RAW, out)
+        self.poll(lambda: read(out) == "", f"raw input in {out}")
+        terminal.press(tuple(map(KeyPress.parse, PRESSED)))
+        self.poll(lambda: read(out) == RECEIVED.hex(), f"{RECEIVED!r} in {out}")
 
     def test_the_program_gets_the_supplied_environment_verbatim(self):
         for kind in ("detach", "terminal"):

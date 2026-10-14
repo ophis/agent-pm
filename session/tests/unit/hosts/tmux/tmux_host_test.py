@@ -868,6 +868,19 @@ class KeysTest(Case):
         with self.assertRaisesRegex(types.TuiError, r"^tmux: boom$"):
             tmux_host.keys("s", "Enter", proc=Tmux(fail={"send-keys"}))
 
+    def test_press_names_the_keys_after_a_double_dash(self):
+        fake = Tmux()
+        self.assertIsNone(tmux_host.press("s", "-", "\\;", "C-c", proc=fake))
+        self.assertEqual(fake.calls, [["tmux", "send-keys", "-t", "=s:", "--", "-", "\\;", "C-c"]])
+
+    def test_press_refuses_an_empty_name_or_an_unescaped_semicolon(self):
+        for name in ("", ";", "C-;"):
+            with self.subTest(name=name):
+                fake = Tmux()
+                with self.assertRaisesRegex(types.TuiError, "^tmux would misread"):
+                    tmux_host.press("s", "Escape", name, proc=fake)
+                self.assertEqual(fake.calls, [])
+
 
 class ReadTest(Case):
     def test_visible_pane_or_last_lines(self):

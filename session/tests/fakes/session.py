@@ -61,6 +61,9 @@ class FakeSession(Session):
     def send(self, text: str) -> None:
         self.sent.append(text)
 
+    def press(self, keys) -> None:
+        self.sent.append(tuple(keys))
+
     def state(self) -> Liveness:
         return self._state
 

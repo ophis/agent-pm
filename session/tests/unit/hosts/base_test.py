@@ -34,7 +34,7 @@ PROCESS = {"alive", "close", "wait_exit", "kill", "record", "display"}
 ABSTRACT = {
     Host: {"detach", "terminal", "attach", "list"},
     HostProcess: PROCESS,
-    Terminal: PROCESS | {"send"},
+    Terminal: PROCESS | {"send", "press"},
     Displayable: {"show", "attach_command", "screen", "layout", "tile"},
 }
 

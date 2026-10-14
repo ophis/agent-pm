@@ -15,15 +15,42 @@ import threading
 import time
 import uuid
 
-from agent_pm.session import DriverError, Host, HostProcess, Terminal
+from agent_pm.session import ConfigError, DriverError, Host, HostProcess, Terminal
 from agent_pm.session.engine.status_log import SessionStatusLog
-from agent_pm.session.engine.types import Key, Launch, Liveness, Paste, Word
+from agent_pm.session.engine.types import Key, KeyPress, Launch, Liveness, NamedKey, Paste, Word
 from agent_pm.utils import Display, ProcessControl, Record, import_roots
 
 from utils.tests.sandbox import clean_env
 
 NAME = re.compile(r"[A-Za-z0-9_-]+\Z")
 KEYS = {"Enter": "\n", "Escape": "\x1b", "Tab": "\t"}
+XTERM = {
+    NamedKey.ENTER: b"\r",
+    NamedKey.ESCAPE: b"\x1b",
+    NamedKey.TAB: b"\t",
+    NamedKey.BTAB: b"\x1b[Z",
+    NamedKey.BSPACE: b"\x7f",
+    NamedKey.UP: b"\x1b[A",
+    NamedKey.DOWN: b"\x1b[B",
+    NamedKey.RIGHT: b"\x1b[C",
+    NamedKey.LEFT: b"\x1b[D",
+    NamedKey.HOME: b"\x1b[H",
+    NamedKey.END: b"\x1b[F",
+    NamedKey.PAGE_UP: b"\x1b[5~",
+    NamedKey.PAGE_DOWN: b"\x1b[6~",
+    NamedKey.F1: b"\x1bOP",
+    NamedKey.F2: b"\x1bOQ",
+    NamedKey.F3: b"\x1bOR",
+    NamedKey.F4: b"\x1bOS",
+    NamedKey.F5: b"\x1b[15~",
+    NamedKey.F6: b"\x1b[17~",
+    NamedKey.F7: b"\x1b[18~",
+    NamedKey.F8: b"\x1b[19~",
+    NamedKey.F9: b"\x1b[20~",
+    NamedKey.F10: b"\x1b[21~",
+    NamedKey.F11: b"\x1b[23~",
+    NamedKey.F12: b"\x1b[24~",
+}
 SUPERVISOR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "supervisor.py")
 START_TIMEOUT = 10
 POLL = 0.05
@@ -134,6 +161,12 @@ class FakeTerminal(FakeProcess, Terminal):
             data = KEYS[action.name].encode()
         else:
             raise DriverError(f"{self.name}: cannot send {action!r}")
+        self._write(data)
+
+    def press(self, keys) -> None:
+        self._write(b"".join(_xterm(key) for key in keys))
+
+    def _write(self, data: bytes) -> None:
         if not self.alive():
             raise DriverError(f"{self.name}: not alive")
         try:
@@ -145,6 +178,26 @@ class FakeTerminal(FakeProcess, Terminal):
                 os.close(fd)
         except OSError as e:
             raise DriverError(f"{self.name}: cannot send: {e}") from None
+
+
+def _xterm(key: KeyPress) -> bytes:
+    """A pty Host's translation, xterm's sequences: Ctrl only on an ASCII letter, Shift only on Tab
+    (BTab); else ConfigError.
+    """
+    if not isinstance(key, KeyPress):
+        raise ConfigError(f"key {key!r:.80}: want a KeyPress")
+    name = key.key
+    if key.shift:
+        if name != NamedKey.TAB:
+            raise ConfigError(f"key {key}: the fake host cannot translate it")
+        name = NamedKey.BTAB
+    if key.ctrl:
+        if not (len(name) == 1 and name.isascii() and name.isalpha()):
+            raise ConfigError(f"key {key}: the fake host cannot translate it")
+        data = bytes([ord(name.lower()) & 0x1F])
+    else:
+        data = XTERM.get(name, name.encode())
+    return b"\x1b" + data if key.meta else data
 
 
 KINDS = {"detach": FakeProcess, "terminal": FakeTerminal}

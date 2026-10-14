@@ -13,7 +13,7 @@ import sys
 import time
 import uuid
 from collections import deque
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from typing import Any, ClassVar, cast
 
@@ -30,6 +30,7 @@ from agent_pm.session.engine.types import (
     Exited,
     Hosts,
     IdleTimeout,
+    KeyPress,
     Liveness,
     Mode,
     NoRecordedSession,
@@ -507,6 +508,9 @@ class HostedSession(Session):
 
     def send(self, text: str) -> None:
         self._running.send(text)
+
+    def press(self, keys: Sequence[KeyPress]) -> None:
+        self._running.press(tuple(keys))
 
     def state(self) -> Liveness:
         return self._running.state()

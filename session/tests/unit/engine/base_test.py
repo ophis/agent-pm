@@ -32,6 +32,7 @@ ABSTRACT = {
         "show",
         "attach_command",
         "screen",
+        "press",
     }
 }
 

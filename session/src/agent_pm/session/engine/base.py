@@ -5,12 +5,13 @@ HostedSession's (loaded when called); a subclass's are its own.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from typing import Any
 
 from agent_pm.session.engine.types import (
     Hosts,
     IdleTimeout,
+    KeyPress,
     Liveness,
     Mode,
     ProcessOptions,
@@ -41,6 +42,12 @@ class Session(ABC):
 
     @abstractmethod
     def send(self, text: str) -> None: ...
+
+    @abstractmethod
+    def press(self, keys: Sequence[KeyPress]) -> None:
+        """Keys in KeyPress notation into its terminal: DriverError without one (headless,
+        in_process); ConfigError, nothing sent, when its Host cannot translate one.
+        """
 
     @abstractmethod
     def state(self) -> Liveness: ...

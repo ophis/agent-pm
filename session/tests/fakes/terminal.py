@@ -54,6 +54,12 @@ class MemoryTerminal(Terminal):
             raise DriverError(f"terminal {self.name} is not running")
         self.calls.send(action)
 
+    def press(self, keys):
+        keys = tuple(keys)
+        if not self.alive():
+            raise DriverError(f"terminal {self.name} is not running")
+        self.calls.press(keys)
+
     def close(self):
         self.calls.close()
         if self._own():

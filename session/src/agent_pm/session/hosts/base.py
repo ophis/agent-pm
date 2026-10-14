@@ -7,7 +7,7 @@ from __future__ import annotations
 import os
 import signal
 from abc import ABC, abstractmethod
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 
 from agent_pm.session.engine.types import (
     ActivityState,
@@ -15,6 +15,7 @@ from agent_pm.session.engine.types import (
     DriverError,
     Hosts,
     Key,
+    KeyPress,
     Launch,
     Liveness,
     Paste,
@@ -97,10 +98,15 @@ class HostProcess(ABC):
 
 
 class Terminal(HostProcess):
-    """send: into its input (Key names: the Adapter's)."""
+    """send: into its input (Key names: the Adapter's). press: keys in the session layer's notation,
+    each translated by its Host before any is sent; one it cannot translate is a ConfigError.
+    """
 
     @abstractmethod
     def send(self, action: Paste | Key) -> None: ...
+
+    @abstractmethod
+    def press(self, keys: Sequence[KeyPress]) -> None: ...
 
 
 class Host(ABC):

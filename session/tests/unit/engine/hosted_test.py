@@ -38,6 +38,7 @@ from agent_pm.session.engine.types import (
     Hosts,
     IdleTimeout,
     Key,
+    KeyPress,
     Mode,
     Paste,
     Reply,
@@ -543,6 +544,11 @@ class InProcessTest(Base):
     def logged(self) -> list[dict]:
         with open(self.log, encoding="utf-8") as f:
             return [json.loads(line) for line in f]
+
+    def test_an_in_process_session_has_no_terminal_to_press_keys_into(self):
+        session, _ = self.run_in_process()
+        with self.assertRaisesRegex(DriverError, "^press: a in_process session has no terminal$"):
+            session.press((KeyPress("Escape"),))
 
     def test_a_spec_started_in_process_yields_reply_turn_end_then_exited_fr_12(self):
         self.steps(

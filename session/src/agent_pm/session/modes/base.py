@@ -5,7 +5,7 @@ session, so none exists unstarted. stop() is idempotent.
 
 import os
 from abc import ABC, abstractmethod
-from collections.abc import Callable, Collection
+from collections.abc import Callable, Collection, Sequence
 from dataclasses import replace
 from typing import ClassVar, Self
 
@@ -15,6 +15,8 @@ from agent_pm.session.adapters.registry import Registry
 from agent_pm.session.engine.types import (
     ClientBound,
     ConfigError,
+    DriverError,
+    KeyPress,
     Launch,
     Liveness,
     Mode,
@@ -100,6 +102,9 @@ class RunningMode(ABC):
 
     @abstractmethod
     def screen(self, lines: int | None = None) -> str: ...
+
+    def press(self, keys: Sequence[KeyPress]) -> None:
+        raise DriverError(f"press: a {self.kind.value} session has no terminal")
 
     @abstractmethod
     def stop(self) -> None: ...
