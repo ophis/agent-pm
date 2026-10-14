@@ -6,7 +6,7 @@ import os
 import signal
 from unittest import mock
 
-from agent_pm.utils.process_control import ROOT_ENV, ProcessControl, _Group
+from agent_pm.utils.process_control import ROOT_ENV, TIMEOUT, ProcessControl, _Group
 
 from utils.tests.case import Case
 
@@ -285,6 +285,57 @@ class ControlTest(Case):
         self.assertGreater(len(probes), 3)
         self.assertLessEqual(len(probes), 11)
         self.assertGreaterEqual(probes[-1] - probes[-2], 1)
+
+    def serve(self, control, group, live_until=0.0):
+        clock = [0.0]
+        group.live.side_effect = lambda: clock[0] < live_until
+
+        def poll(_read, _write, _error, timeout):
+            clock[0] += timeout
+            return [], [], []
+
+        exited = mock.Mock()
+        with (
+            mock.patch("time.monotonic", side_effect=lambda: clock[0]),
+            mock.patch("select.select", side_effect=poll),
+            mock.patch("signal.signal"),
+            mock.patch("signal.pthread_sigmask"),
+        ):
+            rc = control._serve(mock.Mock(), group, exited)
+        return rc, clock[0], exited
+
+    def test_an_unaccepted_ended_group_retires_after_the_limit(self):
+        control = self.control()
+        self.addCleanup(control.remove)
+        group = mock.Mock(returncode=3, eof=False)
+        group.receive.return_value = [{"started": True}]
+        rc, ended, exited = self.serve(control, group, live_until=2)
+        self.assertEqual(rc, 3)
+        self.assertGreaterEqual(ended, 2 + TIMEOUT)
+        self.assertLess(ended, 2 + TIMEOUT + 1)
+        exited.assert_called_once_with(3)
+        with open(os.path.join(control.path, "done.json")) as stream:
+            self.assertEqual(json.load(stream), {"rc": 3})
+
+    def test_a_missing_directory_retires_an_ended_group_at_once_and_never_a_live_one(self):
+        control = self.control()
+        control.remove()
+        group = mock.Mock(returncode=None, eof=False)
+
+        def receive():
+            if group.receive.call_count == 1:
+                return [{"started": True}]
+            if not group.live():
+                group.returncode = 5
+            return []
+
+        group.receive.side_effect = receive
+        rc, ended, exited = self.serve(control, group, live_until=4)
+        self.assertEqual(rc, 5)
+        self.assertGreaterEqual(ended, 4)
+        self.assertLess(ended, 5)
+        exited.assert_called_once_with(5)
+        self.assertFalse(os.path.exists(control.path))
 
     def test_a_launch_that_fails_before_a_start_retry_is_answered_waits_for_its_acceptance(self):
         for accepting in (b"started\n", b"kill\n", b"signal 15\n"):

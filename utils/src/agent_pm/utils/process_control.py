@@ -1,5 +1,6 @@
 """Generation-scoped process control over a private Unix socket. A controller never reaps its
 anchor until that process group has no live members, so its numeric identity cannot be reused.
+After the group ends it retires once a client accepted it, its directory is gone, or TIMEOUT passed.
 The standalone entry point runs prepare()'s command with inherited terminal, environment and mask.
 Control directories live under the caller's root, else $AGENT_PM_CONTROL_ROOT, else /tmp.
 """
@@ -427,19 +428,19 @@ class ProcessControl:
         signal.pthread_sigmask(signal.SIG_UNBLOCK, {signal.SIGINT, signal.SIGTERM, signal.SIGHUP})
         started, reported = False, False
         live, probe_at, probe_delay = True, 0.0, POLL
+        ended_at: float | None = None
         while True:
             for message in group.receive():
                 if "started" in message or "error" in message:
-                    _write(os.path.join(self.path, "started.json"), message)
+                    self._record("started.json", message)
                     started = True
             if group.eof and not started:
-                _write(
-                    os.path.join(self.path, "started.json"),
-                    {"error": "anchor exited before launch", "errno": errno.ECHILD},
+                self._record(
+                    "started.json", {"error": "anchor exited before launch", "errno": errno.ECHILD}
                 )
                 started = True
             if group.returncode is not None and not reported:
-                _write(os.path.join(self.path, "exited.json"), {"rc": group.returncode})
+                self._record("exited.json", {"rc": group.returncode})
                 if on_exit is not None:
                     on_exit(group.returncode)
                 reported = True
@@ -459,17 +460,27 @@ class ProcessControl:
                     live = group.live()
             except OSError:
                 live = True
-            if started and not live and self.accepted:
-                rc = group.returncode if group.returncode is not None else 1
-                if not reported:
-                    _write(os.path.join(self.path, "exited.json"), {"rc": rc})
-                    if on_exit is not None:
-                        on_exit(rc)
-                _write(os.path.join(self.path, "done.json"), {"rc": rc})
-                return rc
+            if started and not live:
+                ended_at = time.monotonic() if ended_at is None else ended_at
+                if (
+                    self.accepted
+                    or not os.path.isdir(self.path)
+                    or time.monotonic() - ended_at >= TIMEOUT
+                ):
+                    rc = group.returncode if group.returncode is not None else 1
+                    if not reported:
+                        self._record("exited.json", {"rc": rc})
+                        if on_exit is not None:
+                            on_exit(rc)
+                    self._record("done.json", {"rc": rc})
+                    return rc
             ready, _, _ = select.select([listener], [], [], POLL)
             if ready:
                 self._answer(listener, group, reported=reported)
+
+    def _record(self, name, value):
+        with contextlib.suppress(FileNotFoundError):
+            _write(os.path.join(self.path, name), value)
 
     def _answer(self, listener, group, *, reported):
         connection, _ = listener.accept()
