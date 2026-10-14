@@ -61,13 +61,10 @@ class HostProcess(ABC):
 
     @property
     def token(self) -> str | None:
-        """Opaque: its Host's reclaim(token) finds its process group once its session is gone;
-        None when it cannot.
-        """
+        """For Host.reclaim."""
         return None
 
     def publish(self, record: Record) -> None:
-        """Store `record` as the Record record() returns, after launch."""
         raise DriverError(f"session {self.name}: its host cannot store a Record after launch")
 
     def session_identity(self) -> tuple[str | None, str | None]:
@@ -108,8 +105,8 @@ class HostProcess(ABC):
 
 
 class Terminal(HostProcess):
-    """send: into its input (Key names: the Adapter's). press: keys in the session layer's notation,
-    each translated by its Host before any is sent; one it cannot translate is a ConfigError.
+    """send: into its input (Key names: the Adapter's). press: all translated first, else
+    ConfigError.
     """
 
     @abstractmethod
@@ -192,15 +189,11 @@ class Host(ABC):
         return [self.attach(name).row() for name in self.list(display)]
 
     def reclaim(self, token: str) -> HostProcess | None:
-        """The process group a HostProcess.token named while any of it lives, its session gone or
-        not; None otherwise. token is untrusted (read back from a file).
-        """
+        """token's live process group, its session gone or not; token is untrusted."""
         return None
 
     def descendants(self, display: Display = None) -> list[str]:
-        """list(display)'s sessions and, where the Host knows who opened whom, the sessions they
-        opened, transitively; sorted.
-        """
+        """list(display) and, transitively, those they opened."""
         return self.list(display)
 
     def events_path(self, events: str | None) -> str | None:
