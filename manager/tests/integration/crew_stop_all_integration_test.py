@@ -11,10 +11,6 @@ START = mark("start", "echoing")
 
 
 class StopAllTest(LiveCrew):
-    def orphan(self, name: str, inside: str) -> None:
-        start = ("start", name, "--client", "claude", "--cwd", self.cwd, "--prompt", "hi")
-        self.record(self.session(*start, inside=inside, **self.scene(name)))
-
     def test_stop_all_stops_what_mgr_opened_and_only_that(self):
         for name in ("w1", "w2"):
             self.record(self.worker(name))

@@ -95,8 +95,12 @@ class LiveCrew(Case):
             )
 
     def crew(self, *args: str, manager: str = MANAGER, **kw) -> subprocess.CompletedProcess:
+        return self.call(*CREW, *args, **self.crew_env(manager), **kw)
+
+    def crew_env(self, manager: str = MANAGER) -> dict[str, str]:
+        """What a crew call adds to its caller's env: its manager, only utils and manager."""
         crew_path = os.pathsep.join((SRC["utils"], SRC["manager"]))
-        return self.call(*CREW, *args, AGENT_PM_MANAGER=manager, PYTHONPATH=crew_path, **kw)
+        return {"AGENT_PM_MANAGER": manager, "PYTHONPATH": crew_path}
 
     def session(self, *args: str, **kw) -> subprocess.CompletedProcess:
         return self.call("agent-pm-session", *args, **kw)
@@ -123,51 +127,37 @@ class LiveCrew(Case):
     def log(self, name: str) -> str:
         return os.path.join(self.root, f"{name}.claude.jsonl")
 
-    def worker(
-        self,
-        name: str,
-        *flags: str,
-        steps=None,
-        turns=(),
-        note: str | None = None,
-        client: str = "claude",
-        **kw,
+    def launch(
+        self, name: str, argv, *, steps=None, turns=(), note: str | None = None, **kw
     ) -> subprocess.CompletedProcess:
-        """crew run `name` -- agent-pm-session start `name`, a fake claude worker in self.cwd."""
+        """crew run `name` [--note] -- argv, `name`'s fake claude scenario in its env."""
         noted = ("--note", note) if note else ()
-        start = ("agent-pm-session", "start", name, "--client", client, "--cwd", self.cwd)
-        return self.crew(
-            "run",
-            name,
-            *noted,
-            "--",
-            *start,
-            "--prompt",
-            "hi",
-            *flags,
-            **{**self.scene(name, steps, turns), **kw},
-        )
+        return self.crew("run", name, *noted, "--", *argv, **self.scene(name, steps, turns), **kw)
 
-    def role(
-        self, name: str, *flags: str, steps, turns=(), mode: str = "tui", **kw
-    ) -> subprocess.CompletedProcess:
-        """crew run `name` -- agent-pm-delegate run … --detach, ROLE over the fake claude; its
-        workdir self.workdir(name), no --sid or --events.
-        """
+    def worker(self, name: str, *flags: str, client: str = "claude", **kw):
+        """crew run `name` -- agent-pm-session start `name`, a fake claude worker in self.cwd."""
+        return self.launch(name, self.worker_argv(name, *flags, client=client), **kw)
+
+    def worker_argv(self, name: str, *flags: str, client: str = "claude") -> tuple[str, ...]:
+        start = ("agent-pm-session", "start", name, "--client", client, "--cwd", self.cwd)
+        return (*start, "--prompt", "hi", *flags)
+
+    def orphan(self, name: str, inside: str | None = MANAGER) -> Record:
+        """A fake claude worker started by agent-pm-session itself, from session `inside`."""
+        argv = self.worker_argv(name)[1:]
+        return self.record(self.session(*argv, inside=inside, **self.scene(name)))
+
+    def role(self, name: str, *flags: str, mode: str = "tui", **kw):
+        """crew run `name` -- agent-pm-delegate run … --detach, ROLE over the fake claude."""
+        return self.launch(name, self.role_argv(name, *flags, mode=mode), **kw)
+
+    def role_argv(self, name: str, *flags: str, mode: str = "tui") -> tuple[str, ...]:
+        """ROLE's detached run, workdir self.workdir(name), no --sid or --events."""
         work = self.workdir(name)
         os.makedirs(work, exist_ok=True)
         run = ("agent-pm-delegate", "run", "--role", ROLE, "--input", "Hello.")
         detach = ("--out", os.path.join(work, "out.md"), "--workdir", work, "--mode", mode)
-        return self.crew(
-            "run",
-            name,
-            "--",
-            *run,
-            *detach,
-            "--detach",
-            *flags,
-            **{**self.scene(name, steps, turns), **kw},
-        )
+        return (*run, *detach, "--detach", *flags)
 
     def workdir(self, name: str) -> str:
         return os.path.join(self.root, f"{name}-work")
