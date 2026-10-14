@@ -370,7 +370,11 @@ class Gate(Flow):
         res = subprocess.run(
             ["sh", "-c", config.load().roles["researcher"].run.gate],
             cwd=self.root,
-            env={**self.env(), "PYTHONPATH": PYTHONPATH},
+            env={
+                **self.env(),
+                "PYTHONPATH": PYTHONPATH,
+                "PATH": os.pathsep.join((self.bin, config.path())),
+            },
             stdin=subprocess.DEVNULL,
             capture_output=True,
             text=True,

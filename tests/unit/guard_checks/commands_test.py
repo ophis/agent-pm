@@ -62,7 +62,7 @@ class PythonCommands(Sample):
                 "delegate/skills/a/SKILL.md": "Run `python3.11 x.py`.\n- Bash(python -P -m agent_pm.delegate.cli --list)\n",
                 "manager/skills/b/SKILL.md": "Run `python3 y.py`.\n",
                 f"{team}/roles/r.md": (
-                    "1. `python3 -P agent_pm.x`\n2. /usr/bin/python3 -I -m agent_pm.x\n3. `env PYTHONPATH=x python3 -P -m agent_pm.linear_orchestrator.engine.run`\n4. `python3 -P <team>/tools/repo.py status --dir x`\n5. `python3 -P <team>/tools/../repo.py`\n6. `python3 -P <team>/tools/repo.pyc`\n"
+                    "1. `python3 -P agent_pm.x`\n2. /usr/bin/python3 -I -m agent_pm.x\n3. `env PYTHONPATH=x python3 -P -m agent_pm.linear_orchestrator.engine.run`\n4. `python3 -P <team>/tools/repo.py status --dir x`\n5. `python3 -P <team>/tools/../repo.py`\n6. `python3 -P <team>/tools/repo.pyc`\n7. `python3 -P <role team>/tools/x.py`\n"
                 ),
             }
         )
@@ -93,3 +93,62 @@ class PythonCommands(Sample):
             }
         )
         self.assertEqual(commands.python_commands(root), [])
+
+
+class BinCommands(Sample):
+    SCRIPT = '#!/bin/sh\nexport PYTHONPATH=x\nexec python3 -P -m agent_pm.{0}.cli "$@"\n'
+    SKILL = "---\nname: a\nallowed-tools:\n  - Read\n  - Bash({0})\n---\n\nRun `{0}`.\n"
+
+    def shipped(self, files=()):
+        return self.tree(
+            {
+                "bin/agent-pm-delegate": self.SCRIPT.format("delegate"),
+                f"delegate/{PKG}/delegate/cli.py": "",
+                "delegate/skills/a/SKILL.md": self.SKILL.format("agent-pm-delegate run --list"),
+                f"delegate/{PKG}/delegate/config.toml": 'commands = ["python3 -P {{team}}/tools/repo.py *"]\n',
+                f"{ORCH_PROJECT}/{OPKG}/config.toml": '[core.roles.r]\ngate = "agent-pm-delegate run --list"\n',
+                **dict(files),
+            }
+        )
+
+    def test_shipped_commands_and_their_modules_pass(self):
+        self.assertEqual(commands.bin_commands(self.shipped()), [])
+
+    def test_a_skill_pre_approving_a_command_not_in_bin(self):
+        for rule in ("agent-pm-nope run", "python3 -P -m agent_pm.delegate.cli run --list"):
+            with self.subTest(rule=rule):
+                root = self.shipped({"manager/skills/b/SKILL.md": self.SKILL.format(rule)})
+                self.assertEqual(
+                    commands.bin_commands(root),
+                    [f'manager/skills/b/SKILL.md: pre-approves "{rule}", not a bin/ command'],
+                )
+
+    def test_a_config_gate_or_command_naming_an_agent_pm_command_not_in_bin(self):
+        root = self.shipped(
+            {
+                f"{ORCH_PROJECT}/{OPKG}/config.toml": '[core.roles.r]\ngate = "agent-pm-linear router --brake r"\ncommands = ["agent-pm-crew x *", "true"]\n'
+            }
+        )
+        rel = f"{ORCH_PROJECT}/{OPKG}/config.toml"
+        self.assertEqual(
+            commands.bin_commands(root),
+            [
+                f'{rel}: runs "agent-pm-crew x *", not a bin/ command',
+                f'{rel}: runs "agent-pm-linear router --brake r", not a bin/ command',
+            ],
+        )
+
+    def test_a_bin_command_runs_exactly_one_existing_module_of_its_own(self):
+        two = self.SCRIPT.format("delegate") + "exec python3 -P -m agent_pm.session.cli\n"
+        for script, want in (
+            ("#!/bin/sh\nexec true\n", "bin/agent-pm-x: runs 0 modules, not 1"),
+            (two, "bin/agent-pm-x: runs 2 modules, not 1"),
+            (self.SCRIPT.format("nope"), "bin/agent-pm-x: no module agent_pm.nope.cli"),
+            (
+                self.SCRIPT.format("delegate"),
+                "bin/agent-pm-x: runs agent_pm.delegate.cli, as bin/agent-pm-delegate does",
+            ),
+        ):
+            with self.subTest(want=want):
+                root = self.shipped({"bin/agent-pm-x": script})
+                self.assertEqual(commands.bin_commands(root), [want])

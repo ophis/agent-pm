@@ -13,6 +13,7 @@ import unittest
 
 from agent_pm.delegate.composer import Composer, RunParams
 
+from delegate.tests.case import REPO as CHECKOUT
 from delegate.tests.case import Case
 from delegate.tests.skills.act_as import argv, head, prefix
 from utils.tests.case import local_section
@@ -33,7 +34,9 @@ class Instruction(Case):
         self.local = os.path.join(self.agent_pm, "config.local.toml")
         self.config()
         self.env = {
-            "PATH": os.environ.get("PATH", os.defpath),
+            "PATH": os.pathsep.join(
+                (os.path.join(CHECKOUT, "bin"), os.environ.get("PATH", os.defpath))
+            ),
             "HOME": self.home,
             "PYTHONUTF8": "1",
         }
