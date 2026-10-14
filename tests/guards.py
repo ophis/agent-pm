@@ -79,7 +79,6 @@ SUBPACKAGES = {
 ENTRY_MODULES = {
     SESSION: {"extension.py"},
     "delegate": {"config.py"},
-    ORCH_PROJECT: {"config.toml"},
 }
 
 
@@ -191,13 +190,9 @@ DELEGATE_SESSION_FORWARDING_ALLOWED = {
 
 ORCH_SESSION_CONTRACT = "linear_orchestrator reaches session only through delegate"
 
-
 ORCH_SESSION_IMPORTS = {
-    f"{ORCH_PKG}.engine.config": {"Driver"},
-    f"{ORCH_PKG}.engine.prune": {"ConfigError", "DriverError"},
-    f"{ORCH_PKG}.engine.router": {"ConfigError", "DriverError"},
-    f"{ORCH_PKG}.engine.run": {"ConfigError", "DriverError", "SIGNALS"},
-    f"{ORCH_PKG}.engine.run_comments": {"ConfigError", "DriverError"},
+    f"{ORCH_PKG}.engine.router": {"ConfigError", "DriverError"},  # until TASK-374
+    f"{ORCH_PKG}.engine.run": {"ConfigError", "DriverError", "SIGNALS"},  # until TASK-374
 }
 
 
@@ -353,7 +348,7 @@ TOOL_STRINGS = ("tmux", "adapters")
 TOML_STRING = re.compile(r""""((?:\\.|[^"\\])*)"|'([^']*)'""")
 
 
-ENTRIES = tuple(f"{ORCH_SRC}engine/{name}.py" for name in ("run", "promote", "router"))
+ENTRIES = (f"{ORCH_SRC}cli.py", *(f"{ORCH_SRC}engine/{name}.py" for name in ("run", "promote", "router")))
 
 
 ONCE = (f"{ORCH_PKG}.engine.config.load", f"{ORCH_PKG}.engine.log.use_logs")
@@ -924,7 +919,7 @@ def _export_kinds(repo, package, names, project):
         definitions[f"builtins.{name}"] = (
             "class" if isinstance(value, type) else "function" if callable(value) else "constant"
         )
-    for owner in (project, "utils"):
+    for owner in PROJECTS:
         for rel, text in _files(os.path.join(repo, owner, "src"), ".py"):
             module = rel.removesuffix(".py").replace("/", ".").removesuffix(".__init__")
             _definitions(
@@ -1096,9 +1091,7 @@ def _typing(node, *, operand=False):
 
 
 def orchestrator_session_imports(repo: str) -> list[str]:
-    """Orchestration imports from session only ORCH_SESSION_IMPORTS's names, its contract's
-    ignore_imports in pyproject.toml.
-    """
+    """Orchestration reaches session only through Delegate."""
     found = []
     config = os.path.join(repo, "pyproject.toml")
     if os.path.isfile(config):
@@ -1127,7 +1120,7 @@ def orchestrator_session_imports(repo: str) -> list[str]:
         }
         found += [
             f"{ORCH_PROJECT}/{ORCH_SRC}{rel}: {module} imports {name} from {PKG}.{SESSION}; "
-            "go through agent_pm.delegate (TASK-394 removes this list)"
+            "go through agent_pm.delegate"
             for name in sorted(names - ORCH_SESSION_IMPORTS.get(module, set()))
         ]
     return found
@@ -1822,7 +1815,7 @@ def _type_methods(project, rel, node, kind, bound):
             project == ORCH_PROJECT
             and rel == ORCH_SRC.removeprefix("src/") + "engine/types.py"
             and node.name == "Spec"
-            and method.name in {"to_argv", "from_argv"}
+            and method.name == "to_argv"
             and kind == "dataclass"
         ):
             continue
