@@ -69,8 +69,8 @@ SESSION_STATE = {  # what this hook or an adapter_hook reads
 
 
 def _prepare(argv: Sequence[str], roots: Sequence[str]):
-    """The session dir, label and state, and the search path its callbacks load from: `roots`,
-    then each callback's own, then sys.path.
+    """The session dir, label and state, and each callback's module specs, found over `roots`,
+    then each callback's own roots, then sys.path.
     """
     folder, label = _arguments(argv)
     path = os.path.join(folder, STATE)
@@ -85,18 +85,22 @@ def _prepare(argv: Sequence[str], roots: Sequence[str]):
     search = list(
         dict.fromkeys([*roots, *(root for _, hook in hooks for root in hook["roots"]), *sys.path])
     )
-    for kind, hook in hooks:
-        _check_module(hook["module"], search, [*roots, *hook["roots"]], kind + " hook", HookError)
-    return folder, label, state, search
+    specs = {
+        hook["module"]: _check_module(
+            hook["module"], search, [*roots, *hook["roots"]], kind + " hook", HookError
+        )
+        for kind, hook in hooks
+    }
+    return folder, label, state, specs
 
 
 def main(argv: Sequence[str], stdin, *, roots: Sequence[str]) -> None:
     payload = read_payload(stdin)
-    folder, label, state, search = _prepare(argv, roots)
-    _dispatch(folder, label, payload, state, search)
+    folder, label, state, specs = _prepare(argv, roots)
+    _dispatch(folder, label, payload, state, specs)
 
 
-def _dispatch(folder, label, payload, state, search):
+def _dispatch(folder, label, payload, state, specs):
     _validate_state(state, os.path.join(folder, STATE), HookError)
 
     def call(kind, given) -> HookCall:
@@ -105,7 +109,7 @@ def _dispatch(folder, label, payload, state, search):
         )
 
     if adapter_hook := state.get("adapter_hook"):
-        adapter = _load_callback(adapter_hook["module"], "adapter hook", search)
+        adapter = _load_callback(adapter_hook["module"], "adapter hook", specs)
         payload = adapter.on_hook(call("adapter_hook", payload))
         if payload is None:
             return
@@ -116,7 +120,7 @@ def _dispatch(folder, label, payload, state, search):
             )
     word = state["words"].get(label)
     host_hook = state.get("host_hook") if word else None
-    host = None if host_hook is None else _load_callback(host_hook["module"], "host hook", search)
+    host = None if host_hook is None else _load_callback(host_hook["module"], "host hook", specs)
     if word != Word.DONE:
         payload = cut(payload)
     stamp = datetime.now().astimezone().isoformat(timespec="milliseconds")
@@ -209,11 +213,12 @@ def _check_callbacks(state, path, error):
 
 
 def _check_module(name: str, search: list[str], roots: list[str], kind: str, error):
-    paths = search
+    """The specs of `name` and each package above it, found over `search`."""
+    paths, specs = search, []
     parts = name.split(".")
     for index in range(len(parts)):
         # A segment lookup needs no loaded parent, including for namespace packages.
-        spec = importlib.machinery.PathFinder.find_spec(parts[index], paths)
+        spec = importlib.machinery.PathFinder.find_spec(".".join(parts[: index + 1]), paths)
         if spec is None or (spec.origin is None and index == len(parts) - 1):
             raise error(f"{kind} {name}: cannot find Python module")
         if spec.origin is not None:
@@ -228,23 +233,27 @@ def _check_module(name: str, search: list[str], roots: list[str], kind: str, err
             if not stat.S_ISREG(info.st_mode) or info.st_uid not in (0, os.getuid()):
                 raise error(f"{kind} {name}: not a regular file owned by you or root")
         paths = list(spec.submodule_search_locations or ())
+        specs.append(spec)
+    return specs
 
 
-def _load_callback(name: str, kind: str, search: list[str]):
-    top = name.partition(".")[0]
-    if top not in sys.modules:
-        spec = importlib.machinery.PathFinder.find_spec(top, search)
-        if spec is None:
-            raise HookError(f"{kind} {name}: cannot find Python module")
-        package = importlib.util.module_from_spec(spec)
-        sys.modules[top] = package
+def _load_callback(name: str, kind: str, specs):
+    """`name` from the specs _check_module found: each segment not yet loaded, from its spec."""
+    for spec in specs[name]:
+        if spec.name in sys.modules:
+            continue
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = module
         try:
             if spec.loader is not None:  # None: a namespace package (Python < 3.12)
-                spec.loader.exec_module(package)
+                spec.loader.exec_module(module)
         except BaseException:
-            del sys.modules[top]
+            del sys.modules[spec.name]
             raise
-    module = importlib.import_module(name)
+        parent, _, child = spec.name.rpartition(".")
+        if parent:
+            setattr(sys.modules[parent], child, module)
+    module = sys.modules[name]
     if not callable(getattr(module, "on_hook", None)):
         raise HookError(f"{kind} {name}: missing on_hook callback")
     return module

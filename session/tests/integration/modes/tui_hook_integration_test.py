@@ -497,6 +497,21 @@ with unittest.mock.patch("os.lstat", root_owner):
         self.assertEqual(self.hook("stop"), "")
         self.assertEqual(self.records()[0]["payload"], {"callback_imported": True})
 
+    def test_an_agent_pm_callback_runs_from_its_declared_root(self):
+        source = os.path.join(self.root, "extension")
+        package = os.path.join(source, "agent_pm", "ext_tui")
+        os.makedirs(package)
+        with open(os.path.join(package, "__init__.py"), "w") as file:
+            file.write("")
+        with open(os.path.join(package, "hooks.py"), "w") as file:
+            file.write("def on_hook(call):\n    return {**call.payload, 'extension': True}\n")
+        self.state.update(
+            adapter_hook=descriptor("agent_pm.ext_tui.hooks", roots=(source,)), words={}
+        )
+        write_state(self.dir, self.state)
+        self.assertEqual(self.hook("stop"), "")
+        self.assertEqual(self.records()[0]["payload"], {"extension": True})
+
     def test_callback_namespace_cannot_hide_a_package_outside_source_roots(self):
         _, imported = self.callback_package()
         source = os.path.join(self.root, "source")
