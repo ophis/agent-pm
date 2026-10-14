@@ -7,6 +7,7 @@ from types import SimpleNamespace
 
 from agent_pm import delegate
 from agent_pm.linear_orchestrator.engine import config, inputs, issues, target
+from agent_pm.linear_orchestrator.engine.types import Issue, Link, Linked, Note
 from agent_pm.utils import SHORT
 from orchestrator_tests.case import Case
 
@@ -43,7 +44,7 @@ NOT_FOUND = ok(code=1, stderr="gh: Not Found (HTTP 404)")
 
 
 def note(body, at, who=AGENT):
-    return issues.Note(body, at, who[0] if who else None, who[1] if who else None)
+    return Note(body, at, who[0] if who else None, who[1] if who else None)
 
 
 def issue(
@@ -56,7 +57,7 @@ def issue(
     linked=(),
     project="p-1",
 ):
-    return issues.Issue(
+    return Issue(
         "uuid-4",
         ident,
         f"https://linear.app/t/issue/{ident}",
@@ -556,11 +557,11 @@ class DocumentGathering(Case):
             f"  > {d}",
         )
         links = (
-            issues.Link("https://linear.app/t/issue/RES-4#comment-1"),
-            issues.Link(c),
-            issues.Link(a),
-            issues.Link("https://github.com/other/repo/blob/main/e.md"),
-            issues.Link(BASE + "Research/e.md"),
+            Link("https://linear.app/t/issue/RES-4#comment-1"),
+            Link(c),
+            Link(a),
+            Link("https://github.com/other/repo/blob/main/e.md"),
+            Link(BASE + "Research/e.md"),
         )
         gh = Gh(
             {endpoint(f"Research/{n}.md"): ok(n) for n in "abce"}
@@ -580,9 +581,9 @@ class DocumentGathering(Case):
             f"Lines {d}#L10 and [b]({e}?plain=1) and <{d}> and `{BASE}Research/c.md#section`."
         )
         links = (
-            issues.Link(d + "#section"),
-            issues.Link(e),
-            issues.Link(BASE + "Research/d.md?plain=1#L3"),
+            Link(d + "#section"),
+            Link(e),
+            Link(BASE + "Research/d.md?plain=1#L3"),
         )
         gh = Gh(
             {endpoint(f"Research/{n}.md"): ok(n) for n in "abcd"}
@@ -623,7 +624,7 @@ class DocumentGathering(Case):
         )
         gh = Gh({endpoint("Product%20Design/2026-08-01-PM-1-x.md"): ok("p1")})
         src = inputs.gather(
-            issue("", links=(issues.Link(url),), ident="ENG-7"),
+            issue("", links=(Link(url),), ident="ENG-7"),
             "engineer",
             DOCS,
             run=gh,
@@ -883,8 +884,8 @@ class ResearchInputs(Case):
 
     def test_user_notes_are_matched_case_insensitively_and_use_email_without_name(self):
         ns = (
-            issues.Note("Hi", "2026-09-02T00:00:00.000Z", "ANN@example.com", None),
-            issues.Note("Bye", "2026-09-03T00:00:00.000Z", "bob@example.com", "Bob"),
+            Note("Hi", "2026-09-02T00:00:00.000Z", "ANN@example.com", None),
+            Note("Bye", "2026-09-03T00:00:00.000Z", "bob@example.com", "Bob"),
         )
         got = inputs.render(
             issue("Q", notes=ns),
@@ -976,8 +977,8 @@ class DesignInputs(Case):
             title="PRD: Compare queues",
             notes=ns,
             linked=(
-                issues.Linked("RES-4", "Compare\nqueues  now", "Done"),
-                issues.Linked("ENG-1", "Other", "Todo"),
+                Linked("RES-4", "Compare\nqueues  now", "Done"),
+                Linked("ENG-1", "Other", "Todo"),
             ),
         )
         src = inputs.Sources(

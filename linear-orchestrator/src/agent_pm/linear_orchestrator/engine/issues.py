@@ -3,55 +3,18 @@ handoff, parse_handoff and head.
 """
 
 import re
-from dataclasses import dataclass, field
 
 from agent_pm.linear_orchestrator.engine import run_comments
-from agent_pm.linear_orchestrator.engine.types import ISSUE_ID, IssueError
+from agent_pm.linear_orchestrator.engine.types import (
+    ISSUE_ID,
+    Handoff,
+    Issue,
+    IssueError,
+    Link,
+    Linked,
+    Note,
+)
 from agent_pm.utils import one_line, parse_time
-
-
-@dataclass(frozen=True)
-class Note:
-    body: str
-    at: str
-    email: str | None
-    name: str | None
-
-
-@dataclass(frozen=True)
-class Link:
-    url: str
-
-
-@dataclass(frozen=True)
-class Linked:
-    identifier: str
-    title: str
-    state: str
-
-
-@dataclass(frozen=True)
-class Handoff:
-    source: str
-    instructions: str
-    comments: str
-
-
-@dataclass(frozen=True)
-class Issue:
-    id: str
-    identifier: str
-    url: str
-    title: str
-    description: str
-    created_at: str
-    project_id: str | None
-    notes: tuple[Note, ...]
-    links: tuple[Link, ...]
-    linked: tuple[Linked, ...]
-
-    handoff: Handoff | None = field(kw_only=True)
-
 
 Q_ISSUE = """query($i: String!) { issue(id: $i) { id identifier url title description createdAt
   project { id }

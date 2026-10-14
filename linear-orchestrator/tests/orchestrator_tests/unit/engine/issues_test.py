@@ -3,7 +3,7 @@
 import unittest
 
 from agent_pm.linear_orchestrator.engine import issues
-from agent_pm.linear_orchestrator.engine.issues import Handoff
+from agent_pm.linear_orchestrator.engine.types import Handoff, Issue, Link, Linked, Note
 from orchestrator_tests.case import Case
 
 SID = "0b6f2c1e-6d0a-4c1b-9a51-3f1f6b0e2a7d"
@@ -53,11 +53,11 @@ def read(**over):
 
 
 def note(body, at="2026-09-02T00:00:00.000Z", email="agent@example.com", name="Agent"):
-    return issues.Note(body, at, email, name)
+    return Note(body, at, email, name)
 
 
 def issue(description="", created_at="2026-09-01T00:00:00.000Z", notes=()):
-    return issues.Issue(
+    return Issue(
         "uuid-7",
         "ENG-7",
         URL,
@@ -113,7 +113,7 @@ class ReadIssue(Case):
         self.assertEqual(gql.calls, [(issues.Q_ISSUE, {"i": "ENG-7"})])
         self.assertEqual(
             got,
-            issues.Issue(
+            Issue(
                 "uuid-7",
                 "ENG-7",
                 URL,
@@ -122,8 +122,8 @@ class ReadIssue(Case):
                 "2026-09-01T00:00:00.000Z",
                 "p-1",
                 (),
-                (issues.Link("https://x/spec"), issues.Link("https://x/y")),
-                (issues.Linked("ENG-1", "One", "Done"), issues.Linked("ENG-2", "Two", "Todo")),
+                (Link("https://x/spec"), Link("https://x/y")),
+                (Linked("ENG-1", "One", "Done"), Linked("ENG-2", "Two", "Todo")),
                 handoff=issues.parse_handoff("Do the thing."),
             ),
         )
@@ -156,9 +156,9 @@ class ReadIssue(Case):
         self.assertEqual(
             got.notes,
             (
-                issues.Note("early", "2026-09-01T12:00:00.000Z", "ann@example.com", "Ann"),
-                issues.Note("mid", "2026-09-02T00:00:00.000Z", None, None),
-                issues.Note("late", "2026-09-03T00:00:00.000Z", "bob@example.com", "Bob"),
+                Note("early", "2026-09-01T12:00:00.000Z", "ann@example.com", "Ann"),
+                Note("mid", "2026-09-02T00:00:00.000Z", None, None),
+                Note("late", "2026-09-03T00:00:00.000Z", "bob@example.com", "Bob"),
             ),
         )
 
@@ -197,9 +197,9 @@ class ReadIssue(Case):
         self.assertEqual(
             got.linked,
             (
-                issues.Linked("ENG-1", "TENG-1", "Todo"),
-                issues.Linked("ENG-2", "TENG-2", "Todo"),
-                issues.Linked("ENG-4", "TENG-4", "Done"),
+                Linked("ENG-1", "TENG-1", "Todo"),
+                Linked("ENG-2", "TENG-2", "Todo"),
+                Linked("ENG-4", "TENG-4", "Done"),
             ),
         )
 

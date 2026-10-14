@@ -403,6 +403,7 @@ class PackagedDeployments(ConfigFile, Case):
         self.assertIn("deployment checkout", found["error"])
 
     def test_load_preserves_deployment_protection_without_local_clone(self):
+        git("init", "-q", str(self.deployment))
         clone = Path(self.dir) / "clone"
         git("init", "-q", str(clone))
         git("-C", str(clone), "remote", "add", "origin", HTTPS)
@@ -413,6 +414,7 @@ class PackagedDeployments(ConfigFile, Case):
             "print(json.dumps({'protect': cfg.protect, 'clones': dict(cfg.local_clones)}))\n"
         )
         self.assertIn(str(self.package()), found["protect"])
+        self.assertIn(str(self.deployment), found["protect"])
         self.assertNotIn(str(clone), found["protect"])
         self.assertEqual(found["clones"], {SLUG: str(clone)})
 

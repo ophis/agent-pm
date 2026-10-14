@@ -9,6 +9,7 @@ from unittest import mock
 
 from agent_pm import delegate
 from agent_pm.linear_orchestrator.engine import config, issues, target
+from agent_pm.linear_orchestrator.engine.types import Issue
 from agent_pm.utils import SHORT
 from orchestrator_tests.case import Case
 from orchestrator_tests.target_fixtures import LOCAL
@@ -30,7 +31,7 @@ def roles():
 
 
 def issue(description, title="ENG: Session Registry", ident="TASK-26", project=None):
-    return issues.Issue(
+    return Issue(
         id="uuid-26",
         identifier=ident,
         url=f"https://linear.app/t/issue/{ident}",

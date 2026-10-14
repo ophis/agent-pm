@@ -16,7 +16,6 @@ from traceback import format_exception
 
 from agent_pm.delegate import Outcome, Progress
 from agent_pm.linear_orchestrator.engine.config import LOCAL, TASKS
-from agent_pm.linear_orchestrator.engine.issues import Issue
 from agent_pm.linear_orchestrator.engine.log import log
 from agent_pm.linear_orchestrator.engine.ops import (
     call,
@@ -28,6 +27,7 @@ from agent_pm.linear_orchestrator.engine.ops import (
 )
 from agent_pm.linear_orchestrator.engine.types import (
     Invalid,
+    Issue,
     LinearError,
     Spec,
     Stopped,

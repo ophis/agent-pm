@@ -81,11 +81,6 @@ ENTRY_MODULES = {
 }  # public modules besides __init__.py
 
 
-ISSUE_TYPES = frozenset(
-    f"{ORCH_PKG}.engine.issues.{name}" for name in ("Issue", "Handoff", "Note", "Link", "Linked")
-)
-
-
 LOWER = tuple(p for p in PROJECTS if p != ORCH_PROJECT)
 
 
@@ -1704,7 +1699,6 @@ def _type_uses(project, rel, module, tree, data):
             if key in data
             and (source := key.rpartition(".")[0]) != module
             and not source.endswith(".types")
-            and key not in ISSUE_TYPES
             and not (data[key] and module.startswith(source + "."))
         }
     )

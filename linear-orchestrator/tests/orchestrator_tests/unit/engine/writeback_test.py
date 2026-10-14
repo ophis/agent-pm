@@ -19,7 +19,7 @@ from agent_pm.linear_orchestrator.engine import (
     runs,
     writeback,
 )
-from agent_pm.linear_orchestrator.engine.types import Invalid, LinearError, Stopped
+from agent_pm.linear_orchestrator.engine.types import Invalid, Issue, LinearError, Stopped
 from orchestrator_tests.case import Case
 from orchestrator_tests.unit import board_ids, run_fixtures
 from orchestrator_tests.unit.clock import logs_at
@@ -166,7 +166,7 @@ HANDOFF = (
 
 
 def issue(description):
-    return issues.Issue(
+    return Issue(
         UUID,
         ID,
         f"https://linear.app/t/issue/{ID}",

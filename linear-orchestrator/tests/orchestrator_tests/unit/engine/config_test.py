@@ -7,12 +7,12 @@ import json
 import os
 import re
 import shlex
-import sys
 import tomllib
 from importlib.resources import files
 from pathlib import Path
 from unittest import mock
 
+import agent_pm.linear_orchestrator as orchestrator
 from agent_pm import delegate, utils
 from agent_pm.linear_orchestrator.engine import config
 from agent_pm.linear_orchestrator.engine.types import State
@@ -545,14 +545,11 @@ class WorkDirectories(ConfigFile, Case):
 
 
 class DeploymentDirectories(Case):
-    def test_package_locations_are_read_from_loaded_modules(self):
-        packages = tuple(
-            sys.modules[f"agent_pm.{name}"]
-            for name in ("linear_orchestrator", "delegate", "session", "utils")
-        )
+    def test_own_package_and_deployment_checkout_are_protected(self):
+        packages = utils.package_dirs(orchestrator)
         protected = config.deployment_dirs()
-        self.assertIn(os.path.realpath(REPO), protected)
-        for directory in utils.package_dirs(*packages):
+        self.assertEqual(protected, (os.path.realpath(REPO), *packages))
+        for directory in packages:
             with self.subTest(directory=directory):
                 self.assertIn(directory, protected)
                 with self.assertRaisesRegex(config.ConfigError, "work_dir must neither"):
@@ -584,11 +581,11 @@ class DeploymentDirectories(Case):
             config.deployment_dirs()
 
     def test_pythonpath_skips_standard_installation_locations(self):
-        packages = tuple(
-            sys.modules[f"agent_pm.{name}"]
-            for name in ("linear_orchestrator", "delegate", "session", "utils")
+        roots = tuple(
+            dict.fromkeys(
+                (*utils.module_roots(orchestrator), *delegate.PYTHONPATH.split(os.pathsep))
+            )
         )
-        roots = utils.module_roots(*packages)
         self.assertEqual(config.pythonpath(), os.pathsep.join(roots))
         with (
             mock.patch(
@@ -884,7 +881,10 @@ class ConfigurationRoot(ConfigFile, Case):
             for path in (
                 os.path.join(os.path.dirname(root), "config.toml"),
                 os.path.join(
-                    root, "agent_pm", os.path.basename(os.path.dirname(root)), "config.toml"
+                    root,
+                    "agent_pm",
+                    os.path.basename(os.path.dirname(root)).replace("-", "_"),
+                    "config.toml",
                 ),
             )
         }
@@ -899,6 +899,25 @@ class ConfigurationRoot(ConfigFile, Case):
         )
         engineer = cfg.roles["engineer"]
         self.assertEqual((engineer.max_runs, engineer.run.language), (2, "French"))
+
+    def test_load_reads_each_config_once_passing_the_read_table_on(self):
+        path, local = (os.path.join(self.dir, n) for n in ("config.toml", "config.local.toml"))
+        write(path, PIPELINE)
+        write(local, "")
+        with (
+            mock.patch.object(builtins, "open", side_effect=open) as opened,
+            mock.patch.object(io, "open", side_effect=io.open) as resource_opened,
+        ):
+            config.load(path=path, local=local, core=self.core_path)
+        paths = [
+            str(call.args[0]) for call in [*opened.call_args_list, *resource_opened.call_args_list]
+        ]
+        session = os.path.join(REPO, "session", "src", "agent_pm", "session", "config.toml")
+        self.assertEqual(
+            [paths.count(file) for file in (path, self.core_path, session, local)],
+            [1, 1, 2, 3],
+            paths,
+        )
 
     def test_an_unknown_harness_host_or_delegates_key_stops_the_caller(self):
         for text, want in (

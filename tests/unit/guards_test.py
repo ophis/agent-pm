@@ -1309,6 +1309,25 @@ class SharedTypes(Sample):
         )
         self.assertEqual(self.found("types.py"), [])
 
+    def test_orchestrator_issue_data_types_have_no_exemption(self):
+        home = "linear-orchestrator/src/agent_pm/linear_orchestrator/engine"
+        for name in ("Issue", "Handoff", "Note", "Link", "Linked"):
+            with self.subTest(name=name):
+                root = self.tree(
+                    {
+                        f"{home}/issues.py": self.DATA.replace("class A:", f"class {name}:"),
+                        f"{home}/writeback.py": (
+                            f"from agent_pm.linear_orchestrator.engine.issues import {name}\n"
+                        ),
+                    }
+                )
+                self.assertEqual(
+                    guards.shared_types(root),
+                    [
+                        f"{home}/writeback.py:1: agent_pm.linear_orchestrator.engine.issues.{name}: a shared data type belongs in a types.py"
+                    ],
+                )
+
     def test_a_relative_import_and_a_module_attribute_count(self):
         for user in ("from .a import A\n", "from agent_pm.utils import a\n\nx = a.A\n"):
             with self.subTest(user):

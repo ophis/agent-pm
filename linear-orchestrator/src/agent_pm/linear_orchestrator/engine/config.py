@@ -17,6 +17,7 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Any
 
+import agent_pm.linear_orchestrator as orchestrator
 import agent_pm.utils as utils
 from agent_pm import delegate
 from agent_pm.linear_orchestrator.engine.log import config_error
@@ -217,13 +218,6 @@ def clone_error(clone, slug, *, run=None):
     return None
 
 
-def _packages():
-    return tuple(
-        sys.modules[f"agent_pm.{name}"]
-        for name in ("linear_orchestrator", "delegate", "session", "utils")
-    )
-
-
 def pythonpath() -> str:
     installed = {
         os.path.realpath(value)
@@ -234,13 +228,14 @@ def pythonpath() -> str:
             *site.getsitepackages(),
         )
     }
+    roots = (*utils.module_roots(orchestrator), *delegate.PYTHONPATH.split(os.pathsep))
     return os.pathsep.join(
-        root for root in utils.module_roots(*_packages()) if os.path.realpath(root) not in installed
+        dict.fromkeys(root for root in roots if root and os.path.realpath(root) not in installed)
     )
 
 
 def deployment_dirs() -> tuple[str, ...]:
-    packages = utils.package_dirs(*_packages())
+    packages = utils.package_dirs(orchestrator)
     protected = []
     for directory in packages:
         checkouts = utils.find_checkouts(

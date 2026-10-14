@@ -679,7 +679,7 @@ class GraphQLQueries(ServerCase):
             (
                 "ENG: Session registry",
                 PROJECT["id"],
-                (issues.Linked(prd["identifier"], "PRD: Widgets", "Done"),),
+                (types.Linked(prd["identifier"], "PRD: Widgets", "Done"),),
             ),
         )
         ops.call(self.eng, writeback.M_UNARCHIVE, "issueUnarchive", i=task["id"])
