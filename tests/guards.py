@@ -136,6 +136,11 @@ PACKAGE_CLIMB_ALLOWED = {
 }
 
 
+SESSION_NAMES_ALLOWED = {
+    (f"{SESSION_SRC}engine/config.py", "read_project"): "TASK-392",
+}
+
+
 NOQA_ALLOWED = {
     (
         f"{SESSION_SRC}modes/headless.py",
@@ -548,7 +553,7 @@ def session_names(repo: str) -> list[str]:
         f"{SESSION_SRC}{rel}: names {word}"
         for rel, text in _files(os.path.join(repo, SESSION_SRC), ".py")
         for word in forbidden
-        if word in text and not (word == "read_project" and rel == "engine/config.py")
+        if word in text and (f"{SESSION_SRC}{rel}", word) not in SESSION_NAMES_ALLOWED
     )
 
 

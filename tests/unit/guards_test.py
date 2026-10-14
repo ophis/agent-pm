@@ -243,6 +243,14 @@ class EveryTest(Sample):
 
 
 class SessionNames(Sample):
+    def test_configuration_forwarding_exemption_names_its_owner(self):
+        self.assertEqual(
+            guards.SESSION_NAMES_ALLOWED,
+            {
+                (guards.SESSION_SRC + "engine/config.py", "read_project"): "TASK-392",
+            },
+        )
+
     def test_layer_owned_config_entry_can_forward_to_utils(self):
         root = self.tree(
             {guards.SESSION_SRC + "engine/config.py": "from agent_pm.utils import read_project\n"}
