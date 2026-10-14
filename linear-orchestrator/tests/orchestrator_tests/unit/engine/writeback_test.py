@@ -828,8 +828,10 @@ class CompletionSteps(Base):
                     [line for line in self.lines() if line.startswith("skip")],
                     [skip] if skip else [],
                 )
-                self.assertEqual(self.lines()[-1], f"step {ID} step=move:in_review")
-                self.assertIn("move:in_review", self.steps(ctx)[SID])
+                self.assertEqual(
+                    self.lines()[-2:], [f"step {ID} step=move:in_review", f"step {ID} step=outcome"]
+                )
+                self.assertEqual(self.steps(ctx)[SID][-2:], ["move:in_review", "outcome"])
 
     def test_subscribe_failures_noted_and_finish_continues(self):
         def fail(name, v):
@@ -1226,6 +1228,7 @@ class CompletionMessages(Base):
             "comment",
             f"attach:{PR}",
             "move:in_review",
+            "outcome",
         ]
         self.assertEqual(self.lines(), [f"step {ID} step={s}" for s in steps])
         self.assertEqual([e["sid"] for e in logged()], [SID] * len(steps))
@@ -1251,8 +1254,35 @@ class CompletionMessages(Base):
             ),
         )
         self.assertEqual(
-            self.steps(ctx), {SID: ["retitle", "comment", f"attach:{PRD}", "move:in_review"]}
+            self.steps(ctx),
+            {SID: ["retitle", "comment", f"attach:{PRD}", "move:in_review", "outcome"]},
         )
+
+
+class CompletionMarker(Base):
+    DONE = Outcome(status="failed", title="ENG-7: x", summary="push not permitted")
+
+    def test_outcome_follows_the_move(self):
+        ctx = self.ctx()
+        self.assertTrue(writeback.finish(ctx, self.DONE))
+        self.assertEqual(self.steps(ctx), {SID: ["comment", "move:in_review", "outcome"]})
+
+    def test_no_outcome_after_a_failed_move_until_a_retry_moves(self):
+        broken = Gql(
+            fail=lambda name, _v: LinearError("linear api error: down") if name == "state" else None
+        )
+        ctx = self.ctx(gql=broken)
+        self.assertFalse(writeback.finish(ctx, self.DONE))
+        self.assertEqual(self.steps(ctx), {SID: ["comment"]})
+        again = Gql()
+        self.assertTrue(writeback.finish(replace(ctx, gql=again), self.DONE))
+        self.assertEqual(again.calls[-2:], [reread(), move("in_review")])
+        self.assertEqual(self.steps(ctx), {SID: ["comment", "move:in_review", "outcome"]})
+
+    def test_no_outcome_after_an_earlier_failed_step(self):
+        ctx = self.ctx(gql=Gql(fail=lambda name, _v: False if name == "comment" else None))
+        self.assertFalse(writeback.finish(ctx, self.DONE))
+        self.no_ledger(ctx)
 
 
 class CompletionLedger(Base):
@@ -1326,7 +1356,10 @@ class CompletionLedger(Base):
         )
         self.assertEqual(
             self.steps(ctx),
-            {OTHER_SID: ["comment", "move:in_review"], SID: ["comment", "move:in_review"]},
+            {
+                OTHER_SID: ["comment", "move:in_review"],
+                SID: ["comment", "move:in_review", "outcome"],
+            },
         )
 
     def test_unreadable_ledger_is_empty(self):
@@ -1361,7 +1394,7 @@ class CompletionLedger(Base):
                 ctx, Outcome(status="failed", title="ENG-7: x", summary="push not permitted")
             )
         )
-        self.assertEqual(self.steps(ctx), {SID: ["comment", "move:in_review"]})
+        self.assertEqual(self.steps(ctx), {SID: ["comment", "move:in_review", "outcome"]})
 
     def test_symlinked_ledger_is_empty_and_replaced(self):
         gql = Gql()
@@ -1449,9 +1482,14 @@ class ResumedComments(Base):
             gql.calls,
             [READ, sub(HUMANS[0]), sub(HUMANS[1]), find("comment"), reread(), move("in_review")],
         )
-        self.assertEqual(self.steps(ctx), {SID: ["comment", "move:in_review"]})
+        self.assertEqual(self.steps(ctx), {SID: ["comment", "move:in_review", "outcome"]})
         self.assertEqual(
-            self.lines(), [f"step {ID} step=comment found=true", f"step {ID} step=move:in_review"]
+            self.lines(),
+            [
+                f"step {ID} step=comment found=true",
+                f"step {ID} step=move:in_review",
+                f"step {ID} step=outcome",
+            ],
         )
 
     def test_a_resume_after_a_failed_post_finds_then_posts_once(self):

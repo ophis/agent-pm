@@ -342,12 +342,12 @@ def _finish(ctx, o):
     ):
         return False
 
-    return (
-        _step(
-            ctx, f"move:{state}", lambda: _guarded_move(ctx, issue, ctx.ident, state, "in_progress")
-        )
-        is None
-    )
+    if _step(
+        ctx, f"move:{state}", lambda: _guarded_move(ctx, issue, ctx.ident, state, "in_progress")
+    ):
+        return False
+    # the write-back is complete: Recover replays a valid outcome's write-back until this is ledgered
+    return _step(ctx, "outcome", lambda: None) is None
 
 
 def limit(ctx, resets_at: float | None) -> bool:

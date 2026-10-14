@@ -18,7 +18,7 @@ MANAGER = "manager"
 TUI = f"pm-{ID}-{SID[:8]}"
 OLD = f"pm-{ID}-aaaaaaaa"
 KEPT = (f"{OLD}-drive", f"engineer-{ID}-aaaaaaaa")
-LEDGER = ["start", "retitle", "comment", f"attach:{PRD}", "move:in_review"]
+LEDGER = ["start", "retitle", "comment", f"attach:{PRD}", "move:in_review", "outcome"]
 DONE = {
     "status": "done",
     "title": "Session Registry",
