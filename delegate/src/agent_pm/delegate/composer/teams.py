@@ -88,6 +88,12 @@ def tasks_dir(team: Team, role: str) -> str | None:
     )
 
 
+def role_team(team: Team, role: str) -> str:
+    """The team root holding the role's charter: its team dir, else the team root."""
+    path = lookup(team, "roles", role)
+    return os.path.dirname(os.path.dirname(path)) if path and team.custom(path) else team.root
+
+
 def used(team: Team, role: str, templates: Sequence[str] = ()) -> list[str]:
     paths = [lookup(team, "roles", role)]
     paths += [lookup(team, "tasks", t) for t in index(role, team)]
