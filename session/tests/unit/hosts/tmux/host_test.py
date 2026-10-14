@@ -297,7 +297,7 @@ class AttachListTest(Base):
         self.tmux.kill.assert_called_once_with("%7")
         self.socket.assert_not_called()
 
-    def test_a_pre_upgrade_session_is_refused_immediately(self):
+    def test_a_detached_kind_session_without_control_is_refused_immediately(self):
         self.controlled = False
         with self.assertRaisesRegex(DriverError, "tmux session d1: missing @control"):
             self.host.attach("d1")
