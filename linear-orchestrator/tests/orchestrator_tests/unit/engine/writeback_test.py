@@ -1864,3 +1864,125 @@ class RefusedEvents(Events):
         with self.assertRaisesRegex(ConfigError, "dummy"):
             self.deliver(delegate_event("begun", sid=other))
         self.assertEqual(self.linear.calls, [])
+
+
+def outcome_data(**fields):
+    return {
+        "status": "done",
+        "title": "TASK-1: x",
+        "summary": "Ready.",
+        "questions": [],
+        "url": PR,
+        "files": [],
+        "deliverable": "",
+    } | fields
+
+
+def session_body(line):
+    return f"Run {RUN_SID} · {line}\n\n```\n{RESUME_COMMAND}\n```"
+
+
+class FinishedEvents(Events):
+    def finished(self, rc=0, *, outcome=None, error="", limit=None, attempt=1):
+        return delegate_event(
+            "finished", attempt, returncode=rc, outcome=outcome, error=error, limit=limit
+        )
+
+    def test_an_outcome_is_written_back_then_the_session_ends(self):
+        self.assertTrue(self.deliver(delegate_event("begun")))
+        n = len(self.linear.calls)
+        self.assertTrue(self.deliver(self.finished(outcome=outcome_data())))
+        harness, states = self.cfg.harness_key, self.cfg.states
+        ended = session_body(f"done · #2 · {STARTED} → {RESTARTED} · exit 0")
+        self.assertEqual(
+            self.linear.calls[n:],
+            [
+                (CLAIM_KEY, "read", {"i": UUID}),
+                (
+                    CLAIM_KEY,
+                    "comment",
+                    {"c": ops.client_id(RUN_SID, "comment"), "i": UUID, "b": "Build ready: Ready."},
+                ),
+                (CLAIM_KEY, "attach", {"i": UUID, "u": PR, "t": "TASK-1: x"}),
+                (CLAIM_KEY, "reread", {"i": UUID}),
+                (CLAIM_KEY, "state", {"i": UUID, "s": states["in_review"]}),
+                (harness, "update", {"c": RUN_SESSION, "b": ended}),
+                (harness, "find", {"c": RUN_SESSION}),
+            ],
+        )
+        self.assertEqual(
+            self.ledger(),
+            {
+                RUN_SID: {
+                    "steps": ["comment", f"attach:{PR}", "move:in_review", "outcome"],
+                    "attempts": {"1": {"started_at": STARTED, "seq": 2, "ended_at": RESTARTED}},
+                }
+            },
+        )
+
+    def test_the_same_finished_twice_writes_once(self):
+        self.assertTrue(self.deliver(delegate_event("begun")))
+        self.assertTrue(self.deliver(self.finished(outcome=outcome_data())))
+        n = len(self.linear.calls)
+        self.assertTrue(self.deliver(self.finished(outcome=outcome_data())))
+        self.assertEqual(self.linear.calls[n:], [])
+        comments = [v for _, op, v in self.linear.calls if op == "comment" and v.get("i") == UUID]
+        self.assertEqual(len(comments), 1)
+        self.assertEqual(len(self.linear.writes("state")), 1)
+
+    def test_no_outcome_ends_the_session_and_leaves_the_issue_in_progress(self):
+        self.assertTrue(self.deliver(delegate_event("begun")))
+        n = len(self.linear.calls)
+        self.assertTrue(self.deliver(self.finished(1, error="the client exited 1")))
+        ended = session_body(f"interrupted · #2 · {STARTED} → {RESTARTED} · exit 1")
+        harness = self.cfg.harness_key
+        self.assertEqual(
+            self.linear.calls[n:],
+            [
+                (harness, "update", {"c": RUN_SESSION, "b": ended}),
+                (harness, "find", {"c": RUN_SESSION}),
+            ],
+        )
+        self.assertEqual(self.linear.state, self.cfg.states["in_progress"])
+        self.assertIn(
+            f"writeback no-outcome {RUN_ISSUE} sid={RUN_SID} error=the client exited 1",
+            self.said(),
+        )
+        self.assertNotIn("steps", self.ledger()[RUN_SID])
+
+    def test_a_finished_without_begun_starts_its_session_then(self):
+        self.assertTrue(self.deliver(self.finished(1, error="launch failed")))
+        body = session_body(f"interrupted · #1 · {STARTED} → {RESTARTED} · exit 1")
+        self.assertEqual(self.linear.comments[RUN_SESSION]["body"], body)
+        self.assertEqual(
+            self.ledger()[RUN_SID]["attempts"],
+            {"1": {"started_at": STARTED, "seq": 1, "ended_at": RESTARTED}},
+        )
+
+    def test_a_failed_move_leaves_no_outcome_and_a_replay_moves(self):
+        self.linear.fail = lambda op, _v: (
+            LinearError("linear api error: down") if op == "state" else None
+        )
+        self.assertFalse(self.deliver(self.finished(outcome=outcome_data())))
+        self.assertEqual(self.ledger()[RUN_SID]["steps"], ["comment", f"attach:{PR}"])
+        self.linear.fail = lambda _op, _v: None
+        n = len(self.linear.calls)
+        self.assertTrue(self.deliver(self.finished(outcome=outcome_data())))
+        self.assertEqual([op for _, op, _ in self.linear.calls[n:]], ["read", "reread", "state"])
+        self.assertEqual(
+            self.ledger()[RUN_SID]["steps"],
+            ["comment", f"attach:{PR}", "move:in_review", "outcome"],
+        )
+
+    def test_an_invalid_outcome_raises_before_any_write(self):
+        for name, data in (
+            ("a missing field", {"status": "done", "title": "x", "summary": "y"}),
+            ("an unknown status", outcome_data(status="maybe")),
+            ("an unknown field", outcome_data(extra="x")),
+            ("questions not a list of str", outcome_data(questions="why?")),
+            ("a non-str title", outcome_data(title=1)),
+        ):
+            with self.subTest(name), self.assertRaises(ValueError):
+                self.deliver(self.finished(outcome=data))
+        self.assertEqual(self.linear.calls, [])
+        self.assertFalse(os.path.exists(os.path.join(self.workdir, writeback.LEDGER)))

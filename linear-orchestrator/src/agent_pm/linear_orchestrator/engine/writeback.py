@@ -11,11 +11,11 @@ import os
 import re
 import subprocess
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 from datetime import datetime
 from traceback import format_exception
 
-from agent_pm.delegate import DelegateEvent, Outcome, Progress
+from agent_pm.delegate import STATUSES, DelegateEvent, Outcome, OutcomeStatus, Progress
 from agent_pm.linear_orchestrator.engine import run_comments, runs
 from agent_pm.linear_orchestrator.engine.config import LOCAL, TASKS
 from agent_pm.linear_orchestrator.engine.linear_run import LinearRun
@@ -214,8 +214,12 @@ def _ledger(ctx):
     return data if valid else {}
 
 
+def _done(ctx):
+    return _ledger(ctx).get(ctx.sid, {}).get("steps", [])
+
+
 def _step(ctx, step, call, cid=None):
-    if step in _ledger(ctx).get(ctx.sid, {}).get("steps", []):
+    if step in _done(ctx):
         return None
     try:
         # on resume an unledgered post may have landed with its ledger write lost
@@ -435,6 +439,29 @@ def _session(ctx, cfg, client, attempt, *, gql, now, end=None) -> bool:
     return error is None
 
 
+def _outcome(data) -> Outcome:
+    """A Finished event's outcome fields as an Outcome; raises ValueError."""
+    names = {f.name for f in fields(Outcome)}
+    if not isinstance(data, dict) or data.keys() != names:
+        raise ValueError(f"outcome: want the fields {', '.join(sorted(names))}")
+    for name, value in data.items():
+        if name in ("questions", "files"):
+            valid = isinstance(value, list) and all(isinstance(v, str) for v in value)
+        else:
+            valid = isinstance(value, str) and (name != "status" or value in STATUSES)
+        if not valid:
+            raise ValueError(f"outcome {name}: {value!r}")
+    return Outcome(
+        OutcomeStatus(data["status"]),
+        data["title"],
+        data["summary"],
+        data["questions"],
+        data["url"],
+        data["files"],
+        data["deliverable"],
+    )
+
+
 def deliver(cfg, issue: str, workdir: str, event: DelegateEvent, *, gql, now=timestamp) -> bool:
     """Writes the (issue, event.sid) run's event back as its start row's claim, each step once
     however often the event arrives; False when a write failed. Raises ConfigError or ValueError,
@@ -450,12 +477,18 @@ def deliver(cfg, issue: str, workdir: str, event: DelegateEvent, *, gql, now=tim
     claim = runs.claim(cfg.runs_log, issue, event.sid)
     if claim.role not in TASKS:
         raise ConfigError(f"{issue}: role {claim.role!r} has no write-back")
+    outcome = None if event.outcome is None else _outcome(event.outcome)
     ctx = for_claim(cfg, claim, gql, attempt=attempt)
+    session = functools.partial(_session, ctx, cfg, claim.client, attempt, gql=gql, now=now)
     if event.kind == "begun":
-        return _session(ctx, cfg, claim.client, attempt, gql=gql, now=now)
+        return session()
     if event.kind == "progress":
         return progress(ctx, Progress(event.name or "", event.text or ""))
-    raise ConfigError("finished: write-back comes with TASK-409's next commit")
+    # Finished: the outcome (once ledgered, never again), then the session's end
+    ok = outcome is None or "outcome" in _done(ctx) or finish(ctx, outcome)
+    if outcome is None:
+        log("writeback", "no-outcome", ctx.ident, sid=ctx.sid, error=event.error or "no result")
+    return session(end=(event.returncode, outcome, event.limit is not None)) and ok
 
 
 def limit(ctx, resets_at: float | None) -> bool:
