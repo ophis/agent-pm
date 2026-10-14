@@ -461,9 +461,13 @@ class UsageTest(Base):
         self.scenario(rate_limit={"status": "allowed", "unifiedWindows": {"five_hour": "high"}})
         self.assertEqual(self.driver.usage("claude"), Usage(None, None))
 
+    def test_a_successful_probe_without_an_event_has_no_telemetry(self):
+        self.scenario()
+        self.assertEqual(self.driver.usage("claude"), Usage(None, None))
+
     def test_unknown_is_none(self):
         for name, fields in (
-            ("no event", {}),
+            ("failed run", {"exit": 1}),
             ("no claude", {"rate_limit": {"unifiedWindows": {"five_hour": {"utilization": 0.25}}}}),
         ):
             with self.subTest(name), mock.patch.dict(os.environ):
