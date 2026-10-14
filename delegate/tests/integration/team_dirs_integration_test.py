@@ -86,7 +86,7 @@ class ComposerTeamDirs(child.Case):
         super().setUp()
         self.team = make_team(self)
         self.tasks = os.path.join(self.team, "tasks")
-        self.local(f"team_dirs = {json.dumps([self.team])}\n")
+        self.local(f"[delegate]\nteam_dirs = {json.dumps([self.team])}\n")
 
     def composed(self, **req) -> dict:
         got = self.compose("writer", "note", **req)
@@ -133,14 +133,14 @@ class ComposerTeamDirs(child.Case):
                 self.assertFalse(os.path.exists(os.path.join(self.work, "tasks")))
 
     def test_a_read_dir_holding_the_team_dir_composes_unadded(self):
-        self.local(f"[roles.writer]\nread = [{json.dumps(self.team)}]\n", "a")
+        self.local(f"[delegate.roles.writer]\nread = [{json.dumps(self.team)}]\n", "a")
         got = self.composed()
         self.assertEqual(
             (got["intent"]["dirs"], got["intent"]["reads"]), ([], [self.tasks, self.team])
         )
 
     def test_a_write_dir_holding_the_team_dir_is_refused(self):
-        self.local(f"[roles.writer]\nwrite = [{json.dumps(self.team)}]\n", "a")
+        self.local(f"[delegate.roles.writer]\nwrite = [{json.dumps(self.team)}]\n", "a")
         got = self.compose("writer", "note")
         self.assertEqual(
             got,
