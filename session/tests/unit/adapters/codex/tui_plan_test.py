@@ -129,7 +129,7 @@ class PlanTest(Case):
         for value in (None, 1, "relative", "/a\0b"):
             with (
                 self.subTest(executable=value),
-                self.assertRaisesRegex(ValueError, "absolute executables"),
+                self.assertRaisesRegex(ValueError, "absolute paths"),
             ):
                 tui_plan.decode(data | {"executable": value})
         for word in ("--add-dir", "-c", "--", "-s", "--sandbox=danger-full-access"):
@@ -150,7 +150,7 @@ class PlanTest(Case):
             json.dumps(roots, ensure_ascii=False, separators=(",", ":")),
             "opaque trailing word",
         )
-        hook = tui_plan.hook_plan(argv, tuple(roots))
+        hook = HookPlan(argv, tuple(roots))
         self.assertEqual(hook.argv, argv)
         self.assertEqual(hook.import_roots, tuple(roots))
         decoded = tui_plan.decode(

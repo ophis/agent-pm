@@ -1,9 +1,4 @@
-"""Codex startup run with Python -I and one bounded JSON object argument.
-
-Required keys: executable, selection, prompt, hook, workdir, sid, store, protect,
-import_roots. import_roots must name distinct absolute source directories for the
-already-imported session and utils packages in the launching interpreter.
-"""
+"""Codex startup run with Python -I and one bounded JSON object argument."""
 
 from __future__ import annotations
 
@@ -245,7 +240,7 @@ def main(data):
 
 def launch(data, *, trust=hook_trust):
     with _Termination() as termination:
-        return _start(_launch_data(data), termination, trust)
+        return _start(tui_plan.decode(data), termination, trust)
 
 
 def _start(plan: LaunchPlan, termination, trust):
@@ -320,13 +315,6 @@ def _listed_hooks(result, cwd):
             "codex hooks/list: Codex hooks are off (features.hooks); a Codex worker needs them"
         )
     return hooks
-
-
-def _launch_data(data) -> LaunchPlan:
-    try:
-        return tui_plan.decode(data)
-    except ValueError as exc:
-        raise StartError(str(exc)) from exc
 
 
 if __name__ == "__main__":

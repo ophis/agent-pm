@@ -13,7 +13,7 @@ from agent_pm.session.adapters.codex.common import (
     reset_at,
 )
 from agent_pm.session.adapters.codex.hook_schema import HOOKS
-from agent_pm.session.adapters.codex.types import LaunchPlan
+from agent_pm.session.adapters.codex.types import HookPlan, LaunchPlan
 from agent_pm.session.engine.types import ConfigError, Launch, LimitHit, Spec
 from agent_pm.utils import import_roots
 
@@ -55,10 +55,7 @@ class CodexTui(Tui):
         if exe is None:
             raise ConfigError("codex not found on PATH")
         exe = os.path.abspath(exe)
-        try:
-            hooks = tui_plan.hook_plan(hook, source_roots)
-        except ValueError as exc:
-            raise ConfigError(str(exc)) from exc
+        hooks = HookPlan(tuple(hook), source_roots)
         roots = hooks.import_roots
         protected_roots = tuple(dict.fromkeys([*import_roots(), *roots]))
         dependencies = [

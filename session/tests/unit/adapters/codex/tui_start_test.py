@@ -476,7 +476,7 @@ print(json.dumps(sorted((imports & sys.modules.keys()) - sys.stdlib_module_names
                     self.assertRaises(tui_start.StartError),
                 ):
                     tui_start.launch(tui_start._bootstrap([json.dumps(changed)]))
-            with self.assertRaisesRegex(tui_start.StartError, "fields"):
+            with self.assertRaisesRegex(ValueError, "fields"):
                 tui_start.launch(data | {"unknown": []})
         proc.assert_not_called()
         execute.assert_not_called()
@@ -587,10 +587,10 @@ class ProtectTest(Base):
                 for paths in ("/protected", ["relative"], [1], ["/a\0b"], None):
                     with (
                         self.subTest(key=key, paths=paths),
-                        self.assertRaises(tui_start.StartError),
+                        self.assertRaises(ValueError),
                     ):
                         tui_start.launch({**data, key: paths})
-                with self.assertRaisesRegex(tui_start.StartError, "fields"):
+                with self.assertRaisesRegex(ValueError, "fields"):
                     tui_start.launch({k: v for k, v in data.items() if k != key})
         proc.assert_not_called()
 

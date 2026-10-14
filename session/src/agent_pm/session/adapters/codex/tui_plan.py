@@ -3,7 +3,8 @@
 import json
 import os
 import shlex
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping
+from dataclasses import asdict
 from types import MappingProxyType
 
 from agent_pm.session.adapters.codex.common import launch_options, passed
@@ -26,79 +27,52 @@ FIELDS = frozenset(
 )
 
 
-def _words(value: object) -> tuple[str, ...]:
+def _strs(value: object, *, absolute: bool = False) -> tuple[str, ...]:
     if not isinstance(value, list) or any(
-        not isinstance(word, str) or "\0" in word for word in value
+        not isinstance(word, str) or "\0" in word or absolute and not os.path.isabs(word)
+        for word in value
     ):
-        raise ValueError("Codex tui launch: invalid command")
+        raise ValueError(
+            "Codex tui launch: expected absolute paths"
+            if absolute
+            else "Codex tui launch: invalid command"
+        )
     return tuple(value)
-
-
-def _paths(value: object, label: str) -> tuple[str, ...]:
-    if not isinstance(value, list) or any(
-        not isinstance(path, str) or "\0" in path or not os.path.isabs(path) for path in value
-    ):
-        raise ValueError(f"Codex tui launch: invalid {label} paths")
-    return tuple(value)
-
-
-def hook_plan(argv: Sequence[str], source_roots: Sequence[str]) -> HookPlan:
-    if not argv or not os.path.isabs(argv[0]):
-        raise ValueError("Codex tui requires an absolute Tui mode hook command")
-    return HookPlan(_words(list(argv)), tuple(source_roots))
 
 
 def decode(data: object) -> LaunchPlan:
     if not isinstance(data, dict) or frozenset(data) != FIELDS:
         raise ValueError("Codex tui launch: invalid launch fields")
-    selection, hook = _words(data["selection"]), _words(data["hook"])
+    selection, hook = _strs(data["selection"]), _strs(data["hook"])
     if any(word.startswith("-") for word in selection):
         raise ValueError("Codex tui launch: invalid session selection")
-    if not hook:
+    if not hook or not os.path.isabs(hook[0]):
         raise ValueError("Codex tui launch: invalid command")
-    executable = data["executable"]
-    if (
-        not isinstance(executable, str)
-        or "\0" in executable
-        or not os.path.isabs(executable)
-        or not os.path.isabs(hook[0])
-    ):
-        raise ValueError("Codex tui launch: expected absolute executables")
+    executable, workdir, store = _strs(
+        [data["executable"], data["workdir"], data["store"]], absolute=True
+    )
     prompt = data["prompt"]
     if not isinstance(prompt, str) or "\0" in prompt:
         raise ValueError("Codex tui launch: invalid prompt")
-    if any(
-        not isinstance(data[key], str) or "\0" in data[key] or not os.path.isabs(data[key])
-        for key in ("workdir", "store")
-    ) or not isinstance(data["sid"], str):
+    if not isinstance(data["sid"], str):
         raise ValueError("Codex tui launch: invalid recovery identity")
     return LaunchPlan(
         executable,
         selection,
         prompt,
         HookPlan(hook, tuple(data["import_roots"])),
-        data["workdir"],
+        workdir,
         data["sid"],
-        data["store"],
-        _paths(data["protect"], "protect"),
+        store,
+        _strs(data["protect"], absolute=True),
     )
 
 
 def encode(plan: LaunchPlan) -> str:
-    return json.dumps(
-        {
-            "executable": plan.executable,
-            "selection": list(plan.selection),
-            "prompt": plan.prompt,
-            "hook": list(plan.hook.argv),
-            "workdir": plan.workdir,
-            "sid": plan.sid,
-            "store": plan.store,
-            "protect": list(plan.protect),
-            "import_roots": list(plan.hook.import_roots),
-        },
-        ensure_ascii=False,
-    )
+    data = asdict(plan)
+    data["hook"] = plan.hook.argv
+    data["import_roots"] = plan.hook.import_roots
+    return json.dumps(data, ensure_ascii=False)
 
 
 def commands(plan: HookPlan) -> Mapping[str, str]:
