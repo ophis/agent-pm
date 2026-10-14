@@ -323,7 +323,7 @@ class Pulls(Case):
         self.assertEqual((res.returncode, res.stdout), (1, ""))
         self.assertIn("fake_gh.py:", res.stderr)
 
-    def test_pr_list_gives_the_branchs_prs_with_the_asked_fields(self):
+    def test_pr_list_gives_the_branch_prs_with_the_asked_fields(self):
         for repo in ("acme/widgets", "github.com/acme/widgets"):
             with self.subTest(repo):
                 self.assertEqual(
