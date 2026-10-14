@@ -552,6 +552,12 @@ PROMPT = {"type": "user", "message": {"content": "go on"}}
 RESULT = {"type": "user", "message": {"content": [{"type": "tool_result", "content": "ok"}]}}
 
 
+def limited(notice: str, quota=None) -> dict:
+    """Claude Code's transcript record of a usage-limit API error."""
+    record = {**said(None, text(notice)), "isApiErrorMessage": True, "error": "rate_limit"}
+    return record if quota is None else {**record, "quotaLimits": quota}
+
+
 class TranscriptTest(Base):
     def setUp(self):
         super().setUp()
@@ -704,6 +710,37 @@ class TranscriptTest(Base):
             said("m5", text("one"), tool("Read"), text("two")),
         )
         self.assertEqual(self.run.observe(), [Reply("one\ntwo")])
+
+    def test_a_limit_record_uses_its_reset(self):
+        notice = "You've hit your session limit · resets 3pm (America/Los_Angeles)"
+        for quota, resets in (
+            ({"status": "rejected", "resetsAt": 1790589600}, 1790589600.0),
+            ({"status": "rejected", "resetsAt": 1.5e9}, 1.5e9),
+            ({"status": "allowed", "resetsAt": 1790589600}, epoch("2026-10-11 15:00")),
+            ({"status": "rejected", "resetsAt": True}, epoch("2026-10-11 15:00")),
+            ({"status": "rejected", "resetsAt": 1e999}, epoch("2026-10-11 15:00")),
+            ({"status": "rejected"}, epoch("2026-10-11 15:00")),
+            ("rejected", epoch("2026-10-11 15:00")),
+            (None, epoch("2026-10-11 15:00")),
+        ):
+            with self.subTest(quota=quota), mock.patch("time.time", return_value=NOW):
+                self.append(PROMPT, limited(notice, quota))
+                self.assertEqual(self.run.observe(), [LimitHit(resets)])
+
+    def test_one_limit_per_turn_from_the_hook_or_the_record(self):
+        notice = "You've hit your weekly limit · resets Oct 15, 2027, 9am (UTC)"
+        rate_limit = {"error": "rate_limit", "last_assistant_message": notice}
+        resets = epoch("2027-10-15 09:00", "UTC")
+        self.append(PROMPT, limited(notice))
+        self.assertEqual(self.run.observe(), [LimitHit(resets)])
+        self.assertEqual(self.run.hook_events("StopFailure", rate_limit), [])
+        self.append(PROMPT)
+        self.assertEqual(self.run.observe(), [])
+        self.assertEqual(self.run.hook_events("StopFailure", rate_limit), [LimitHit(resets)])
+        self.append(limited(notice), {**limited(notice), "isSidechain": True})
+        self.assertEqual(self.run.observe(), [])
+        self.append(PROMPT, {**limited(notice), "isSidechain": True}, limited(notice))
+        self.assertEqual(self.run.observe(), [LimitHit(resets)])
 
     def test_attach_order_keeps_a_late_final_text_unrepeated(self):
         self.append(PROMPT, said("m1", text("A")))

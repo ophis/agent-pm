@@ -329,29 +329,39 @@ class Steps(Case):
             (res.returncode, res.stdout, self.fired()), (4, TRUST + "\n", []), res.stderr
         )
 
-    def test_a_limit_ends_the_turn_without_stop(self):
+    def test_a_limit_ends_the_turn_with_stop_failure_and_an_api_error(self):
         self.scene(
             steps=["Working.", {"kind": "limit", "text": LIMIT}, "Skipped."], turns=[["After."]]
         )
-        proc = self.popen(
-            *SESSION, "--settings", self.settings("UserPromptSubmit", "Stop"), "--", "hello"
-        )
+        hooks = self.settings("UserPromptSubmit", "Stop", "StopFailure")
+        proc = self.popen(*SESSION, "--settings", hooks, "--", "hello")
         self.assertEqual([proc.stdout.readline() for _ in range(2)], ["Working.\n", LIMIT + "\n"])
         time.sleep(0.5)
         self.assertIsNone(proc.poll())
-        self.assertEqual(self.names(), ["UserPromptSubmit"])
+        self.assertEqual(self.names(), ["UserPromptSubmit", "StopFailure"])
+        failure = self.fired()[-1]
+        self.assertEqual(
+            (failure["error"], failure["last_assistant_message"]), ("rate_limit", LIMIT)
+        )
         out, err = proc.communicate("again\n", timeout=30)
         self.assertEqual((proc.returncode, out), (0, "After.\n"), err)
-        self.assertEqual(self.names(), ["UserPromptSubmit", "UserPromptSubmit", "Stop"])
+        self.assertEqual(
+            self.names(), ["UserPromptSubmit", "StopFailure", "UserPromptSubmit", "Stop"]
+        )
         self.assertEqual(
             self.convo(),
             [
                 ("user", "hello"),
                 ("assistant", "Working."),
+                ("assistant", LIMIT),
                 ("user", "again"),
                 ("assistant", "After."),
             ],
         )
+        (path,) = self.transcripts()
+        with open(path, encoding="utf-8") as f:
+            error = [json.loads(line) for line in f][2]
+        self.assertEqual((error["isApiErrorMessage"], error["error"]), (True, "rate_limit"))
 
     def test_sleep(self):
         self.scene(steps=[{"kind": "sleep", "seconds": 0.5}, "Hi."])

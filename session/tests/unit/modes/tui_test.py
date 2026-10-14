@@ -15,6 +15,8 @@ import tempfile
 import threading
 from unittest import mock
 
+from agent_pm.session.adapters.claude import ClaudeAdapter
+from agent_pm.session.adapters.claude.tui import ClaudeTui
 from agent_pm.session.engine.records import RunLog
 from agent_pm.session.engine.types import (
     Access,
@@ -257,6 +259,19 @@ class Observing(ScanTui):
     def observe(self):
         found, self.records = self.records, []
         return found
+
+
+class ClaudeScreens(ScanTui):
+    """A ScanTui reading its screens as ClaudeTui does."""
+
+    dialogs = ClaudeTui.dialogs
+
+    def __init__(self, adapter):
+        super().__init__(adapter)
+        self.claude = ClaudeAdapter({}).tui()
+
+    def limit(self, screen):
+        return self.claude.limit(screen)
 
 
 class Keys(ScanTui):
@@ -1384,6 +1399,16 @@ class ScanTest(Base):
             self.scans(mode, "LIMIT 100", "LIMIT  100", "LIMIT 200", "", "LIMIT 200", "LIMIT 300"),
             [[LimitHit(100.0)], [], [], [], [LimitHit(200.0)], []],
         )
+
+    def test_quoted_limit_text_on_a_claude_screen_is_no_limit(self):
+        mode = self.start(run=ClaudeScreens(self.adapter))
+        self.host.calls.reset_mock()
+        screens = (
+            "> Documentation example: You've hit your weekly limit",
+            "  12 + You've hit your session limit · resets 3pm (UTC)",
+            "  ⎿  You've hit your session limit · resets 3pm (America/Los_Angeles)",
+        )
+        self.assertEqual(self.scans(mode, *screens), [[], [], []])
 
     def test_a_failed_read_is_no_event(self):
         mode = self.started()

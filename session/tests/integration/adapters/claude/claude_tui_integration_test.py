@@ -262,7 +262,7 @@ class BlockedTest(Live):
 
 
 class LimitTest(Live):
-    def test_the_usage_limit_screen_is_one_limit_hit_the_session_waiting(self):
+    def test_the_usage_limit_is_one_limit_hit_the_session_waiting(self):
         handle = self.start(
             "w1", scenario={"steps": [{"kind": "limit", "text": LIMIT}], "turns": [["Back."]]}
         )
@@ -272,14 +272,22 @@ class LimitTest(Live):
             [Activity(""), LimitHit(RESETS)],
         )
         stream.quiet(1.0)
-        self.assertEqual(
-            (handle.state(), self.server.option("w1", "@state"), live_tmux.events(self.events)),
-            ("live", "working", []),
-        )
+        self.lines("w1 done")
+        self.assertEqual((handle.state(), self.server.option("w1", "@state")), ("live", "done"))
         handle.send("go on")
         self.assertEqual([stream.next() for _ in range(2)], [Activity(""), TurnEnd("Back.", 0)])
-        self.lines("w1 done")
+        self.lines("w1 done", "w1 done")
         self.assertIn("You've hit your weekly limit", handle.screen())
+        stream.quiet(1.0)
+
+    def test_limit_text_the_agent_quotes_is_no_limit(self):
+        handle = self.start("w1", scenario={"steps": [f"Docs example: {LIMIT}"]})
+        stream = self.stream(handle)
+        self.assertEqual(
+            [stream.next() for _ in range(2)],
+            [Activity(""), TurnEnd(f"Docs example: {LIMIT}", 0)],
+        )
+        live_tmux.wait(lambda: LIMIT in " ".join(handle.screen().split()), what="the quote")
         stream.quiet(1.0)
 
 

@@ -1,6 +1,7 @@
 """Claude Code interactive launches, merged hooks, transcript replies and native usage limits.
 Each new main-thread assistant text in the transcript since launch is one Reply, read from a cursor;
-a turn end's text that lands later is not repeated.
+a turn end's text that lands later is not repeated. A usage limit comes from StopFailure or the
+transcript's API error, once a turn, never from the screen.
 """
 
 import json
@@ -9,6 +10,7 @@ import re
 import shlex
 import stat
 import time
+from collections.abc import Sequence
 from datetime import datetime, timedelta
 from types import MappingProxyType
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -16,7 +18,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from agent_pm.session.adapters.base import Tui
 from agent_pm.session.adapters.claude.common import ClaudeCommon
 from agent_pm.session.engine.types import ConfigError, HookKind, LimitHit, Reply, Spec, TurnFailed
-from agent_pm.utils import read_regular
+from agent_pm.utils import number, read_regular
 
 TAIL = 4 << 20
 LIMIT = re.compile(r"You've hit your ((?:[\w']+ ){0,3})limit|Usage limit reached")
@@ -66,6 +68,7 @@ class ClaudeTui(Tui):
         self.sid = ""
         self.transcript, self.start, self.offset = "", 0, 0
         self.last = self.unseen = ""  # the turn's newest text; its turn end's text not yet read
+        self.limited = False  # this turn's LimitHit given
 
     def launch(self, spec: Spec, hook, *, source_roots: tuple[str, ...]):
         common = self.common
@@ -105,7 +108,7 @@ class ClaudeTui(Tui):
         self.offset += end
         return [reply for line in data[:end].split(b"\n") for reply in self._record(line)]
 
-    def _record(self, line: bytes) -> list[Reply]:
+    def _record(self, line: bytes) -> Sequence[Reply | LimitHit]:
         try:
             record = json.loads(line)
         except (ValueError, RecursionError):
@@ -117,9 +120,19 @@ class ClaudeTui(Tui):
         if record.get("type") == "user":
             if isinstance(content, str) or _texts(content):  # a prompt: a new turn
                 self.last = self.unseen = ""
+                self.limited = False
             return []
-        if record.get("type") != "assistant" or record.get("isApiErrorMessage") is True:
+        if record.get("type") != "assistant":
             return []
+        if record.get("isApiErrorMessage") is True:
+            if record.get("error") != "rate_limit":
+                return []
+            quota = record.get("quotaLimits")
+            quota = quota if isinstance(quota, dict) else {}
+            resets = number(quota.get("resetsAt")) if quota.get("status") == "rejected" else None
+            if resets is None:
+                resets = _resets_in("\n".join(_texts(content)))
+            return self._limit(resets)
         text = "\n".join(_texts(content))
         if not text.strip():
             return []
@@ -160,14 +173,14 @@ class ClaudeTui(Tui):
         """StopFailure's typed error: rate_limit is the usage limit, any other a failed turn."""
         error = _first(payload, "error") or "unknown"
         if error == "rate_limit":
-            return [LimitHit(_resets_in(_first(payload, "last_assistant_message")))]
+            return self._limit(_resets_in(_first(payload, "last_assistant_message")))
         return [TurnFailed(error, _first(payload, "error_details", "last_assistant_message"))]
 
-    def limit(self, screen):
-        screen = " ".join(screen.split())
-        if not any(m[1] != "fast " for m in LIMIT.finditer(screen)):
-            return None
-        return LimitHit(_resets_in(screen))
+    def _limit(self, resets: float | None) -> list[LimitHit]:
+        if self.limited:
+            return []
+        self.limited = True
+        return [LimitHit(resets)]
 
 
 def _first(payload: dict, *keys: str) -> str:
