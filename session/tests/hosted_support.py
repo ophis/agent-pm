@@ -298,6 +298,7 @@ def fake_tmux(case=None) -> mock.Mock:
     host.validate_events.side_effect = validate_events
     host.validate_start.side_effect = validate_start
     host.status.return_value = None
+    host.process_status.side_effect = lambda target: (host.process(target), host.status(target))
     host.listing.return_value = []
     host.own_session.return_value = None
     tags = {}

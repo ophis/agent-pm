@@ -249,7 +249,9 @@ class ProcessTest(AttachmentBase):
                     (process.alive(), process.record(), process.display()), (False, None, None)
                 )
                 process.close()
-                self.tmux.status.assert_not_called()
+                self.assertEqual(
+                    {c.args for c in self.tmux.process_status.call_args_list}, {("%7",)}
+                )
                 self.tmux.option.assert_not_called()
                 self.tmux.kill.assert_not_called()
                 self.tmux.process.assert_called_with("%7")

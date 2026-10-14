@@ -201,6 +201,7 @@ class Access(Fake):
                 "runtime": "a",
                 "output": {"type": "local"},
                 "idle_timeout": 60,
+                "show": "",
                 **kw,
             }
         )

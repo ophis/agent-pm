@@ -25,6 +25,7 @@ def fake_tmux() -> mock.Mock:
     tmux.validate_events.side_effect = validate_events
     tmux.validate_start.side_effect = validate_start
     tmux.status.return_value = types.PaneStatus.RUNNING
+    tmux.process_status.side_effect = lambda target: (tmux.process(target), tmux.status(target))
     tmux.listing.return_value = []
     tmux.opener.return_value = "mgr"
     tmux.option.return_value = None

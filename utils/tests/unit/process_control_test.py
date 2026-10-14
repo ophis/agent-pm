@@ -1,9 +1,9 @@
 """Process group ownership lasts until the controller reaps its own anchor."""
 
+import io
 import json
 import os
 import signal
-import socket
 from unittest import mock
 
 from agent_pm.utils.process_control import ProcessControl, _Group
@@ -269,24 +269,18 @@ class ControlTest(Case):
             return [{"error": "No such file or directory", "errno": 2}]
 
         group.receive.side_effect = receive
-        clients, servers = zip(*(socket.socketpair() for _ in range(2)), strict=True)
-        for end in (*clients, *servers):
-            self.addCleanup(end.close)
-        for client, command in zip(clients, (b"start\n", b"started\n"), strict=True):
-            client.sendall(command)
+        clients = [Connection(b"start\n"), Connection(b"started\n")]
         listener = mock.Mock()
-        listener.accept.side_effect = [(server, None) for server in servers]
+        listener.accept.side_effect = [(client, None) for client in clients]
         with (
             mock.patch("select.select", return_value=([listener], [], [])),
             mock.patch("signal.signal"),
             mock.patch("signal.pthread_sigmask"),
         ):
             self.assertEqual(control._serve(listener, group, None), 1)
-        answers = []
-        for client in clients:
-            with client.makefile("rb") as stream:
-                answers.append(json.loads(stream.readline()))
-        self.assertEqual(answers, [{"live": True}, {"live": False}])
+        self.assertEqual(
+            [json.loads(client.answer) for client in clients], [{"live": True}, {"live": False}]
+        )
         with open(os.path.join(control.path, "done.json")) as stream:
             self.assertEqual(json.load(stream), {"rc": 1})
 
@@ -338,3 +332,25 @@ class ControlTest(Case):
             self.assertFalse(control.live())
             socket.assert_not_called()
             killpg.assert_not_called()
+
+
+class Connection:
+    """One accepted control connection: its command, then the answer the controller sends."""
+
+    def __init__(self, command: bytes):
+        self.command, self.answer = command, b""
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_):
+        return None
+
+    def settimeout(self, _seconds):
+        return None
+
+    def makefile(self, _mode):
+        return io.BytesIO(self.command)
+
+    def sendall(self, data: bytes):
+        self.answer += data

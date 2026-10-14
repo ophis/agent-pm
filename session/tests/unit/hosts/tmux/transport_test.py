@@ -72,6 +72,41 @@ class ProcessIdentityTest(Case):
         self.assertEqual(fake.calls, [])
 
 
+class ProcessStatusTest(Case):
+    """The pane's process identity and its status in one display-message."""
+
+    QUERY = (
+        "#{pid} #{session_id} #{pane_id} #{pane_pid}\t"
+        "#{pane_dead} #{pane_dead_status} #{pane_dead_signal}"
+    )
+
+    def test_one_call_gives_the_process_and_the_status(self):
+        for printed, want in (
+            ("4242 $3 %7 4343\t0  ", ("4242 $3 %7 4343", types.PaneStatus.RUNNING)),
+            ("4242 $3 %7 4343\t1 3 ", ("4242 $3 %7 4343", 3)),
+            ("4242 $3 %7 4343\t1  kill", ("4242 $3 %7 4343", -9)),
+            ("4242 $3 %7 4343\tx", ("4242 $3 %7 4343", types.PaneStatus.UNKNOWN)),
+            ("4242  %7 4343\t1 0 ", (None, None)),
+            ("\t  ", (None, None)),
+            (None, (None, None)),
+        ):
+            with self.subTest(printed=printed):
+                fake = FakeTmux(pane=printed)
+                self.assertEqual(transport.process_status("%7", proc=fake), want)
+                self.assertEqual(
+                    fake.calls, [["tmux", "display-message", "-p", "-t", "%7", self.QUERY]]
+                )
+
+    def test_a_failing_tmux_or_a_bad_identity_raises(self):
+        for fake, message in (
+            (FakeTmux(pane="", fail=("display-message",)), "tmux: boom"),
+            (FakeTmux(pane="4242 x\t0  "), "bad tmux process '4242 x'"),
+        ):
+            with self.subTest(message=message), self.assertRaises(types.TuiError) as caught:
+                transport.process_status("%7", proc=fake)
+            self.assertEqual(str(caught.exception), message)
+
+
 class StatusTest(Case):
     def test_states(self):
         # a signal death: -n (tmux prints the signal's name where libc has one, else its number)

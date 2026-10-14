@@ -59,6 +59,9 @@ PAUSE = 0.5
 PROCESS = "#{pid} #{session_id} #{pane_id} #{pane_pid}"
 
 
+DEAD = "#{pane_dead} #{pane_dead_status} #{pane_dead_signal}"
+
+
 SESSIONS = "#{session_id}\t#{session_name}\t#{@opener}\t#{@pane}\t#{socket_path}"
 
 
@@ -140,21 +143,28 @@ def status(target: str, *, proc=subprocess.run):
     """
     target = address(target)
     try:
-        res = run(
-            [
-                "display-message",
-                "-p",
-                "-t",
-                target,
-                "#{pane_dead} #{pane_dead_status} #{pane_dead_signal}",
-            ],
-            proc,
-        )
+        res = run(["display-message", "-p", "-t", target, DEAD], proc)
     except TuiError:
         return PaneStatus.UNKNOWN
     if res.returncode:
         return None if absent(res) else PaneStatus.UNKNOWN
-    fields = res.stdout.rstrip("\n").split(" ")
+    return _dead_status(res.stdout.rstrip("\n"))
+
+
+def process_status(target: str, *, proc=subprocess.run):
+    """(process(), status()) of target's pane from one tmux call; (None, None) when absent."""
+    res = run(["display-message", "-p", "-t", address(target), f"{PROCESS}\t{DEAD}"], proc)
+    if res.returncode:
+        if absent(res):
+            return None, None
+        raise TuiError(f"tmux: {error(res)}")
+    identity, _, dead = res.stdout.rstrip("\n").partition("\t")
+    found = _process_id(identity.strip())
+    return found, None if found is None else _dead_status(dead)
+
+
+def _dead_status(text: str):
+    fields = text.split(" ")
     if fields == ["", "", ""]:  # tmux (3.7) exits 0 with empty fields for a missing session
         return None
     if len(fields) != 3 or fields[0] not in ("0", "1"):
@@ -242,7 +252,10 @@ def process(target: str, *, proc=subprocess.run) -> str | None:
         if absent(res):
             return None
         raise TuiError(f"tmux: {error(res)}")
-    found = res.stdout.strip()
+    return _process_id(res.stdout.strip())
+
+
+def _process_id(found: str) -> str | None:
     if " " not in found or re.fullmatch(r"[0-9]+  %[0-9]+ [0-9]+", found):
         # A pane can outlive its session while tmux formats its remaining identity fields.
         return None

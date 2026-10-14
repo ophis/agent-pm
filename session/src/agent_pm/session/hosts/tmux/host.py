@@ -480,6 +480,9 @@ class Tmux:
     def process(self, target: str) -> str | None:
         return transport.process(target, proc=self.proc)
 
+    def process_status(self, target: str):
+        return transport.process_status(target, proc=self.proc)
+
     def option(self, target: str, name: str) -> str | None:
         return transport.option(target, name, proc=self.proc)
 
@@ -594,24 +597,19 @@ class TmuxProcess(HostProcess):
 
     def state(self) -> Liveness:
         try:
-            own = self._own()
+            own, value = self._pane_state()
         except DriverError:
             return Liveness.UNKNOWN
-        if not own:
+        if not own or value is None:
             return Liveness.ABSENT
-        value = self.tmux.status(self._pane)
-        if value == PaneStatus.UNKNOWN:
-            return Liveness.UNKNOWN
-        return Liveness.ABSENT if value is None else Liveness.LIVE
+        return Liveness.UNKNOWN if value == PaneStatus.UNKNOWN else Liveness.LIVE
 
     def returncode(self) -> int | None:
         try:
-            if not self._own():
-                return -signal.SIGHUP
+            own, value = self._pane_state()
         except DriverError:
             return None
-        value = self.tmux.status(self._pane)
-        if value is None:
+        if not own or value is None:
             return -signal.SIGHUP
         return value if isinstance(value, int) else None
 
@@ -630,9 +628,9 @@ class TmuxProcess(HostProcess):
                 raise DriverError(str(error)) from error
 
     def alive(self) -> bool:
-        if not self._own():
+        own, state = self._pane_state()
+        if not own:
             return False
-        state = self.tmux.status(self._pane)
         if state == PaneStatus.UNKNOWN:
             raise DriverError(f"tmux session {self.name}: tmux failed")
         return state == PaneStatus.RUNNING and (self._control is None or self._control.running())
@@ -703,6 +701,14 @@ class TmuxProcess(HostProcess):
 
     def display(self) -> Display:
         return self._option("@display")
+
+    def _pane_state(self):
+        """Whether its captured pane still runs this process, and the pane's status(): one call."""
+        try:
+            found, value = self.tmux.process_status(self._pane)
+        except TuiError as e:
+            raise DriverError(f"tmux session {self.name}: {e}") from None
+        return found == self._process, value
 
     def _own(self) -> bool:
         try:

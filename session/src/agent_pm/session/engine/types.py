@@ -159,10 +159,9 @@ class HookCallback:
 
 @dataclass(frozen=True)
 class HookCall:
-    """A tui hook callback's input: the hook's label, the runtime's whole payload, the session's
-    sid, workdir and events file (None: none) and the provider's HookCallback.state. An adapter's
-    on_hook(call) returns the payload to journal (a changed dict allowed), or None to journal
-    nothing and stop; a host's on_hook(word, call) runs after the journal line and returns None.
+    """A tui hook callback's input; state: its HookCallback.state. An adapter's on_hook(call)
+    returns the payload to journal (changed or not), or None to journal nothing and stop; a host's
+    on_hook(word, call) runs after the journal line and returns None.
     """
 
     label: str

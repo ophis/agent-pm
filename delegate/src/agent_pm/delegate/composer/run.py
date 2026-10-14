@@ -91,6 +91,7 @@ def resolve(
         tier=values.pop("tier", None),
         effort=values.pop("effort", None),
         idle_timeout=values.pop("idle_timeout", None),
+        show=values.pop("show", None),
         output=values.pop("output", {}),
         **values,
     )

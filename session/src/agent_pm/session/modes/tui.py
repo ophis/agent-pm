@@ -500,7 +500,7 @@ class TuiMode(RunningMode):
                     final = self._read()
                     self._end()
                     return final, True
-                if self._terminal.alive() and isinstance(self.host, Displayable):
+                if isinstance(self.host, Displayable):
                     with contextlib.suppress(DriverError):
                         screen = self.host.screen(self._terminal)
                         found = self._read()

@@ -1219,9 +1219,8 @@ class PollTest(Base):
         self.assertEqual(mode.poll(0.5), ([], False))
         self.assertEqual(self.host.calls.mock_calls, [mock.call.screen(mode._terminal, None)])
         mode._terminal.calls.returncode.assert_called_once_with()
-        mode._terminal.calls.alive.assert_called_once_with()
         self.assertEqual(
-            {call[0] for call in mode._terminal.calls.mock_calls}, {"state", "returncode", "alive"}
+            {call[0] for call in mode._terminal.calls.mock_calls}, {"state", "returncode"}
         )
         self.assertTrue(all(0 < seconds <= 0.1 for _, seconds in self.log), self.log)
         self.assertAlmostEqual(self.clock.now, 0.5)
@@ -1236,7 +1235,7 @@ class PollTest(Base):
                 )
                 self.assertEqual(
                     sorted(call[0] for call in mode._terminal.calls.mock_calls),
-                    ["alive", "returncode", "state", "state"],
+                    ["returncode", "state", "state"],
                 )
         mode = self.started()
         late = self.clock.now + 2.05

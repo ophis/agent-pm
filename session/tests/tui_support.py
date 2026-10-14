@@ -55,6 +55,7 @@ def fake_host() -> mock.Mock:
     host.validate_start.side_effect = _validate_start
     host.tmux_path.return_value = TMUX
     host.status.return_value = None
+    host.process_status.side_effect = lambda target: (host.process(target), host.status(target))
     host.read.return_value = ""
     host.option.return_value = None
     return host
