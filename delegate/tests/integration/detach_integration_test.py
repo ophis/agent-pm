@@ -244,9 +244,9 @@ class Tui(Detach):
                 out = self.cli([*PY, "-m", f"agent_pm.{layer}.cli", query, name])
                 self.assertEqual(out.returncode, 0, out.stderr)
                 printed += [out.stdout, out.stderr]
-        records = self.cli([*PY, "-m", "agent_pm.session.cli", "ls", "--records"])
-        printed += [records.stdout, self.read(os.path.join(self.work, "run.jsonl"))]
-        self.assertIn(TUI, records.stdout)
+        options = self.server.tmux("show-options", "-t", f"={TUI}:")
+        self.assertIn("@kind terminal", options.stdout)
+        printed += [options.stdout, self.read(os.path.join(self.work, "run.jsonl"))]
         for text in printed:
             self.assertNotIn(SECRET, text)
         resume = self.last("session")["resume"]
