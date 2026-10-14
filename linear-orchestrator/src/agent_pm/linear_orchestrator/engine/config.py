@@ -7,7 +7,6 @@ import site
 import subprocess
 import sys
 import sysconfig
-from importlib import resources
 from types import MappingProxyType
 from typing import Any
 
@@ -24,7 +23,7 @@ from agent_pm.linear_orchestrator.engine.types import (
     State,
     Task,
 )
-from agent_pm.utils import GUARD, SHORT, STATE, temp_dirs, under
+from agent_pm.utils import GUARD, STATE, temp_dirs, under
 
 LOCAL = utils.LOCAL
 
@@ -92,12 +91,11 @@ def load(*, path: str | None = None) -> Config:
         )
     except (OSError, ValueError) as e:
         raise ConfigError(f"linear-orchestrator/config.toml: {e}") from None
-    protected, protect = deployment_dirs()
-    work = _work_dir(cfg, protected)
+    work = _work_dir(cfg)
     try:
         cfg = _fill_paths(cfg)
-        _load_config(cfg, protected, LOCAL)
-        return _load(cfg, protected, protect, work)
+        _load_config(cfg, LOCAL)
+        return _load(cfg, work)
     except ConfigError as e:
         e.logs_dir = os.path.join(work, "logs")
         raise
@@ -185,30 +183,7 @@ def pythonpath() -> str:
     )
 
 
-def deployment_dirs() -> tuple[tuple[str, ...], tuple[str, ...]]:
-    own = (os.path.realpath(str(resources.files("agent_pm.linear_orchestrator"))),)
-    packages = tuple(
-        dict.fromkeys(os.path.realpath(path) for path in (*own, *delegate.package_dirs()))
-    )
-    deployments = []
-    for directory in packages:
-        checkouts = utils.find_checkouts(
-            directory,
-            runner=lambda argv, timeout, env: utils.sh(argv, timeout, env=env),
-            timeout=SHORT,
-        )
-        if checkouts.error:
-            raise ConfigError(
-                f"linear-orchestrator/src/agent_pm/linear_orchestrator/config.toml: deployment checkout: {checkouts.error}"
-            )
-        deployments.extend(checkouts.roots)
-    return (
-        tuple(dict.fromkeys((*deployments, *packages))),
-        tuple(dict.fromkeys((*deployments, *own))),
-    )
-
-
-def _work_dir(cfg, protected, clones=None):
+def _work_dir(cfg, clones=None):
     v = cfg.get("work_dir", STATE)
     path = os.path.expanduser(v) if isinstance(v, str) and v.isprintable() else ""
     if not os.path.isabs(path):
@@ -217,11 +192,6 @@ def _work_dir(cfg, protected, clones=None):
         )
     path = os.path.realpath(path)
     try:
-        for directory in protected:
-            if utils.overlaps(path, directory):
-                raise ConfigError(
-                    f"linear-orchestrator/config.toml: work_dir must neither lie in nor contain the repo {directory}: {v!r}"
-                )
         for k, clone in (clones or {}).items():
             if utils.overlaps(path, clone):
                 raise ConfigError(
@@ -232,9 +202,9 @@ def _work_dir(cfg, protected, clones=None):
     return path
 
 
-def _load(cfg, protected, protect, work):
+def _load(cfg, work):
     kind, delegates = _delegates(cfg)
-    roles = _runnable(cfg, work, protected, delegates[kind])
+    roles = _runnable(cfg, work, delegates[kind])
     docs = _docs(roles, LOCAL)
     frozen = {
         k: MappingProxyType(dict(cfg[k]))
@@ -247,7 +217,6 @@ def _load(cfg, protected, protect, work):
         task_label_group=cfg["task_label_group"],
         roles=MappingProxyType(roles),
         work_dir=work,
-        protect=protect,
         docs=docs,
         stages=MappingProxyType(_stage_order(cfg["roles"])),
         states=frozen["states"],
@@ -311,7 +280,7 @@ def _check_ids(cfg):
         )
 
 
-def _load_config(cfg, protected, local):
+def _load_config(cfg, local):
     if missing := utils.unset(cfg, REQUIRED):
         raise ConfigError(
             f"linear-orchestrator/config.toml: required, unset: {', '.join(missing)}: set them in {local} (linear-orchestrator/config.toml's `# local:` lines)"
@@ -328,9 +297,7 @@ def _load_config(cfg, protected, local):
     _next_chains(cfg["roles"])
     _project_repos(cfg)
     _local_clones(cfg)
-    _work_dir(cfg, protected, cfg["local_clones"])
-    for name, clone in cfg["local_clones"].items():
-        _writable_path(f"local_clones.{name}", clone, protected)
+    _work_dir(cfg, cfg["local_clones"])
     _task_labels(cfg)
 
 
@@ -439,7 +406,7 @@ def _fill_paths(value: Any) -> Any:
     return value
 
 
-def _runnable(cfg, work, protected, delegate_cls):
+def _runnable(cfg, work, delegate_cls):
     try:
         trusted = delegate_cls.trusted_dirs()
         index = delegate_cls.roles()
@@ -449,25 +416,9 @@ def _runnable(cfg, work, protected, delegate_cls):
         if under(work, [d]):
             raise ConfigError(f"core: trusted_dirs: {d} is or contains work_dir {work}")
     out = _resolve_roles(cfg, cfg.get("core", {}), delegate_cls, index)
-    for name, role in out.items():
-        for directory in role.run.write:
-            _writable_path(f"core.roles.{name}.write", directory, protected)
-        if role.run.cwd:
-            _writable_path(f"core.roles.{name}.cwd", role.run.cwd, protected)
     _role_links(cfg, out)
     _runnable_inputs(cfg, out)
     return out
-
-
-def _writable_path(key, directory, protected):
-    try:
-        for deployment in protected:
-            if utils.overlaps(os.path.expanduser(directory), deployment):
-                raise ConfigError(
-                    f"linear-orchestrator/config.toml: {key} must neither lie in nor contain deployment {deployment}: {directory!r}"
-                )
-    except OSError as error:
-        raise ConfigError(f"linear-orchestrator/config.toml: {key}: {error}") from None
 
 
 def _resolve_roles(cfg, overlay, delegate_cls, index):

@@ -42,7 +42,6 @@ class Config:
     project_repos: Mapping[str, str]
     local_clones: Mapping[str, str]
     work_dir: str
-    protect: tuple[str, ...]
     docs: Docs
     stages: Mapping[str, int]
     delegate_kind: str
