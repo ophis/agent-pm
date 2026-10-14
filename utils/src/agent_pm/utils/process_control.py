@@ -299,9 +299,7 @@ class ProcessControl:
         os.close(write)
 
         def forward(signum, _frame):
-            with contextlib.suppress(
-                FileNotFoundError, ConnectionRefusedError, ConnectionResetError
-            ):
+            with contextlib.suppress(OSError):
                 self._request(f"signal {signum}")
 
         for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):

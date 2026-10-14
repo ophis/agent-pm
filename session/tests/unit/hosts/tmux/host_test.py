@@ -228,6 +228,66 @@ class DetachTest(Base):
         self.assertFalse(os.path.exists(paths[0]))
         self.tmux.kill.assert_called_once_with("%7")
 
+    def test_a_cancellation_socket_error_is_a_driver_error(self):
+        def refuse(*_args, **kw):
+            control = ProcessControl(kw["control"])
+            self.addCleanup(control.remove)
+            Path(control.path, "control").touch()
+            raise TuiError("cannot create pane")
+
+        self.tmux.detach.side_effect = refuse
+        self.connection.connect.side_effect = TimeoutError("cancel timed out")
+        with self.assertRaisesRegex(
+            DriverError, "cannot create pane; cancel controller: cancel timed out"
+        ):
+            self.detach()
+        self.tmux.kill.assert_not_called()
+
+    def test_a_cancellation_deadline_is_a_driver_error(self):
+        def refuse(*_args, **kw):
+            control = ProcessControl(kw["control"])
+            self.addCleanup(control.remove)
+            Path(control.path, "control").touch()
+            raise TuiError("cannot create pane")
+
+        self.tmux.detach.side_effect = refuse
+        with (
+            mock.patch("time.monotonic", side_effect=[0, 11]),
+            self.assertRaisesRegex(
+                DriverError, "cancel controller: process controller did not cancel"
+            ),
+        ):
+            self.detach()
+        self.tmux.kill.assert_not_called()
+
+    def test_a_startup_cleanup_tmux_error_is_a_driver_error(self):
+        self.tmux.detach.side_effect = lambda *_args, **_kw: PROCESS
+        self.tmux.process.side_effect = TuiError("cannot inspect pane")
+        with (
+            mock.patch("time.monotonic", side_effect=[0, 11]),
+            self.assertRaisesRegex(
+                DriverError, "process controller did not start; close pane: cannot inspect pane"
+            ),
+        ):
+            self.detach()
+        self.tmux.kill.assert_not_called()
+
+    def test_failed_cancellation_still_closes_only_the_owned_pane(self):
+        def pending(*_args, **kw):
+            control = ProcessControl(kw["control"])
+            self.addCleanup(control.remove)
+            Path(control.path, "control").touch()
+            return PROCESS
+
+        self.tmux.detach.side_effect = pending
+        self.connection.connect.side_effect = PermissionError("controller denied")
+        with (
+            mock.patch("time.monotonic", side_effect=[0, 11]),
+            self.assertRaisesRegex(DriverError, "cancel controller: controller denied"),
+        ):
+            self.detach()
+        self.tmux.kill.assert_called_once_with("%7")
+
     def detach(self, **kw):
         return self.host.detach("d1", ["tool", "a b"], self.dir, {"PATH": "/bin"}, **kw)
 

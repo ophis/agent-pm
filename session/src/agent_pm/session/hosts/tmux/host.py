@@ -231,21 +231,35 @@ class TmuxHost(Host, Displayable):
                 record=None if record is None else record.to_line(),
                 control=control.path,
             )
-        except TuiError as e:
-            control.cancel()
-            raise DriverError(f"detach {name}: {e}") from e
+        except TuiError as error:
+            cleanup = self._cancel_launch(control)
+            detail = f"; {cleanup}" if cleanup else ""
+            raise DriverError(f"detach {name}: {error}{detail}") from error
         try:
             control.wait_started()
         except OSError as error:
-            control.cancel()
-            pane = process.split(" ")[2]
-            if self.tmux.process(pane) == process:
-                self.tmux.kill(pane)
+            cleanup = self._cancel_launch(control, process)
+            detail = f"; {cleanup}" if cleanup else ""
             why = os.strerror(error.errno) if error.errno is not None else str(error)
             raise DriverError(
-                f"detach {name}: cannot run {error.filename or argv[0]}: {why}"
-            ) from None
+                f"detach {name}: cannot run {error.filename or argv[0]}: {why}{detail}"
+            ) from error
         return TmuxProcess(name, process, tmux=self.tmux, control=control)
+
+    def _cancel_launch(self, control: ProcessControl, process: str | None = None) -> str:
+        errors = []
+        try:
+            control.cancel()
+        except OSError as error:
+            errors.append(f"cancel controller: {error}")
+        if process is not None:
+            pane = process.split(" ")[2]
+            try:
+                if self.tmux.process(pane) == process:
+                    self.tmux.kill(pane)
+            except TuiError as error:
+                errors.append(f"close pane: {error}")
+        return "; ".join(errors)
 
     def terminal(
         self,

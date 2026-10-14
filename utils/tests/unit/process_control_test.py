@@ -84,6 +84,32 @@ class GroupTest(Case):
 
 
 class ControlTest(Case):
+    def test_a_signal_forwarding_socket_error_does_not_end_the_pane(self):
+        control = ProcessControl.prepare(["program"], "/")
+        self.addCleanup(control.remove)
+        read, write = os.pipe()
+        os.write(write, b"0\n")
+        handlers = {}
+        with (
+            mock.patch("os.pipe", return_value=(read, write)),
+            mock.patch("os.fork", return_value=4242),
+            mock.patch("os.waitpid", return_value=(0, 0)) as wait,
+            mock.patch("socket.socket") as socket,
+            mock.patch(
+                "signal.signal", side_effect=lambda sig, handler: handlers.update({sig: handler})
+            ),
+            mock.patch(
+                "signal.pthread_sigmask",
+                side_effect=lambda *_: handlers[signal.SIGTERM](signal.SIGTERM, None),
+            ),
+        ):
+            socket.return_value.__enter__.return_value.connect.side_effect = PermissionError(
+                "denied"
+            )
+            self.assertEqual(control.run(), 0)
+        wait.assert_called_once_with(4242, os.WNOHANG)
+        socket.return_value.__enter__.return_value.connect.assert_called_once()
+
     def test_background_membership_probes_back_off_while_requests_remain_responsive(self):
         control = ProcessControl.prepare(["program"], "/")
         self.addCleanup(control.remove)
