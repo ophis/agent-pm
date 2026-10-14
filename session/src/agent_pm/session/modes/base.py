@@ -13,6 +13,7 @@ from agent_pm.session.adapters.base import Adapter
 from agent_pm.session.adapters.common import check_selection
 from agent_pm.session.adapters.registry import Registry
 from agent_pm.session.engine.types import (
+    COMMAND,
     ClientBound,
     ConfigError,
     KeyPress,
@@ -27,14 +28,24 @@ from agent_pm.session.engine.types import (
     Stderr,
 )
 from agent_pm.session.hosts.base import Host
-from agent_pm.utils import Display
+from agent_pm.utils import Display, command_path
 
 START_SID = "AGENT_PM_SID"
 
 
 def child_env(launch: Launch, cwd: str, drop: Collection[str] = ()) -> dict[str, str]:
+    """The environment less drop and unset, then the launch env and PWD; PATH led by the running
+    plugin's bin/, where PATH finds COMMAND (FR-32), when it does.
+    """
     env = {k: v for k, v in os.environ.items() if k not in drop and k not in launch.unset}
-    return {**env, **launch.env, "PWD": cwd}
+    env = {**env, **launch.env, "PWD": cwd}
+    command = command_path(COMMAND)
+    if command is not None:
+        plugin = os.path.dirname(command)
+        path = env.get("PATH", os.defpath)
+        if path.split(os.pathsep)[0] != plugin:
+            env["PATH"] = plugin + os.pathsep + path
+    return env
 
 
 def identity_drop(registry: Registry) -> frozenset[str]:

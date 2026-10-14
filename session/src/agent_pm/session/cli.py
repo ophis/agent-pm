@@ -26,6 +26,7 @@ import agent_pm.utils
 from agent_pm.session.engine.base import Session
 from agent_pm.session.engine.config import read_config
 from agent_pm.session.engine.types import (
+    COMMAND,
     TAG,
     ActivityState,
     ConfigError,
@@ -41,7 +42,7 @@ from agent_pm.session.modes import tui_hook
 from agent_pm.session.modes.base import START_SID
 from agent_pm.utils import Record, Status, module_roots
 
-PROG = "agent-pm-session"
+PROG = COMMAND
 EVENTS = "AGENT_PM_EVENTS"
 GONE = "gone"
 HEADER = "name\tstate\tclient\tsid\tdisplay"

@@ -1,0 +1,39 @@
+"""FR-32: a session's client runs the running plugin's commands: its PATH starts with the bin/ where
+the starter's PATH finds agent-pm-session, so agent-pm-crew and agent-pm-session resolve there and run,
+ahead of a stale agent-pm-crew earlier on the starter's PATH.
+"""
+
+import json
+import os
+import sys
+from unittest import mock
+
+from session.tests.case import REPO
+from session.tests.hosted_support import Base
+
+PLUGIN_BIN = os.path.join(REPO, "bin")
+
+
+class PluginPathTest(Base):
+    def test_a_client_runs_the_plugins_commands_from_the_bin_its_path_leads_with(self):
+        stale = os.path.join(self.dir, "stale bin")
+        os.mkdir(stale)
+        with open(os.path.join(stale, "agent-pm-crew"), "w", encoding="utf-8") as f:
+            f.write("#!/bin/sh\nexit 3\n")
+        os.chmod(os.path.join(stale, "agent-pm-crew"), 0o755)
+        inherited = os.pathsep.join(
+            (stale, os.path.dirname(sys.executable), "/usr/bin", PLUGIN_BIN, "/bin")
+        )
+        commands = (["agent-pm-crew", "--help"], ["agent-pm-session", "--help"])
+        self.steps(*({"run": argv} for argv in commands))
+        with mock.patch.dict(os.environ, {"PATH": inherited}):
+            self.drain(self.start())
+        with open(self.log, encoding="utf-8") as f:
+            ran = [entry for entry in map(json.loads, f) if "ran" in entry]
+        self.assertEqual(
+            ran,
+            [
+                {"ran": argv, "found": os.path.join(PLUGIN_BIN, argv[0]), "rc": 0}
+                for argv in commands
+            ],
+        )

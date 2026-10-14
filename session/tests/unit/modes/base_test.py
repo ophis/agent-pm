@@ -6,6 +6,7 @@ and identity_drop.
 import inspect
 import itertools
 import os
+import tempfile
 from unittest import mock
 
 from agent_pm.session.adapters.base import Adapter
@@ -134,6 +135,45 @@ class ChildEnvTest(Case):
             {k: env[k] for k in ("KEEP", "EDITOR", "ZED", "OTHER_MODE")},
             {"KEEP": "k", "EDITOR": "vi", "ZED": "1", "OTHER_MODE": "on"},
         )
+
+
+class PluginPathTest(ChildEnvTest):
+    """FR-32: a session's PATH starts with the running plugin's bin/, the directory where PATH
+    finds agent-pm-session (each plugin bin/ script puts its own first).
+    """
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.plugin = os.path.join(os.path.realpath(tmp.name), "plugin root", "bin")
+        os.makedirs(self.plugin)
+        command = os.path.join(self.plugin, "agent-pm-session")
+        with open(command, "w", encoding="utf-8") as f:
+            f.write("#!/bin/sh\n")
+        os.chmod(command, 0o755)
+
+    def test_the_plugin_bin_goes_first_over_the_inherited_and_the_launch_path(self):
+        self.environ(PATH=os.pathsep.join(("/usr/bin", self.plugin, "/bin")))
+        self.assertEqual(
+            child_env(Launch(("x",)), "/cwd")["PATH"],
+            os.pathsep.join((self.plugin, "/usr/bin", self.plugin, "/bin")),
+        )
+        snapshot = Launch(("x",), env={"PATH": "/opt/old/bin:/usr/bin"})
+        self.assertEqual(
+            child_env(snapshot, "/cwd")["PATH"],
+            os.pathsep.join((self.plugin, "/opt/old/bin", "/usr/bin")),
+        )
+
+    def test_a_path_already_led_by_the_plugin_bin_is_kept(self):
+        path = os.pathsep.join((self.plugin, "/usr/bin"))
+        self.environ(PATH=path)
+        self.assertEqual(child_env(Launch(("x",)), "/cwd")["PATH"], path)
+
+    def test_without_agent_pm_session_on_path_the_path_is_unchanged(self):
+        self.environ(PATH="/usr/bin:/bin")
+        self.assertEqual(child_env(Launch(("x",)), "/cwd")["PATH"], "/usr/bin:/bin")
+        launch = Launch(("x",), env={"PATH": "/opt/bin"})
+        self.assertEqual(child_env(launch, "/cwd")["PATH"], "/opt/bin")
 
 
 class IdentityDropTest(ChildEnvTest):
