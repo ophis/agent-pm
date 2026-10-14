@@ -28,6 +28,7 @@ SUBCOMMANDS = [
     "read",
     "tile",
     "hook",
+    "client-resume",
 ]
 DISPLAY_HELP = "display (--display D), per configured Host:\n"
 PROG = "agent-pm-session"

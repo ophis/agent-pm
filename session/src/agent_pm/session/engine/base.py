@@ -150,6 +150,10 @@ class Session(ABC):
         return cls._hosted("usage")(client)
 
     @classmethod
+    def client_resume(cls, client: str, argv: Sequence[str]) -> int:
+        return cls._hosted("client_resume")(client, argv)
+
+    @classmethod
     def layout(cls, *, display: Display = None) -> str | None:
         return cls._hosted("layout")(display=display)
 

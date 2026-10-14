@@ -10,7 +10,7 @@ no global state (cwd, environ, signals): it applies spec.access.cwd, not its env
 """
 
 from abc import ABC, abstractmethod
-from collections.abc import Iterable, Iterator, Mapping
+from collections.abc import Iterable, Iterator, Mapping, Sequence
 from types import MappingProxyType
 from typing import ClassVar
 
@@ -78,6 +78,10 @@ class Adapter:
 
     def session_metadata(self, info: SessionInfo) -> SessionInfo:
         return info
+
+    def resume_main(self, argv: Sequence[str]) -> int:
+        """Runs its public resume command's arguments (SessionInfo.resume); returns on failure."""
+        raise ConfigError("this client has no resume command")
 
     def session_status(
         self, info: SessionInfo, *, env: Mapping[str, str] = MappingProxyType({})

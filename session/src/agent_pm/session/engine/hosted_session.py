@@ -354,6 +354,11 @@ class HostedSession(Session):
         )
 
     @classmethod
+    def client_resume(cls, client: str, argv: Sequence[str]) -> int:
+        """Runs `client`'s SessionInfo.resume command."""
+        return cls._config().registry.adapter(client).resume_main(argv)
+
+    @classmethod
     def usage(cls, client: str) -> Usage | None:
         setup = cls._config()
         adapter = setup.registry.adapter(client)

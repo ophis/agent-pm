@@ -173,6 +173,12 @@ def _parser(hosts: Hosts | None) -> argparse.ArgumentParser:
         help="a tui client's hook call (its hook config runs it)",
         description="DIR LABEL, the hook's payload on stdin; never fails, never prints stdout.",
     )
+    p = sub.add_parser(
+        "client-resume",
+        help="resume a client's own session (its session info's resume command runs this)",
+    )
+    p.add_argument("client")
+    p.add_argument("arguments", nargs=argparse.REMAINDER)
     return ap
 
 
@@ -393,6 +399,8 @@ def _run(args, flags: list[str], hosts: Hosts, start_sid: str | None) -> int:
             print(text)
     elif cmd == "read":
         print(_shown(args.name, hosts).screen(args.name, args.lines))
+    elif cmd == "client-resume":
+        return Session.client_resume(args.client, args.arguments)
     else:
         host = Session.host()
         if not isinstance(host, Displayable):

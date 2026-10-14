@@ -53,11 +53,6 @@ OBJECT_EXPORTS_ALLOWED = {
 }
 
 
-IMPORT_BOOTSTRAPS = {
-    f"{SESSION_SRC}adapters/codex/common/resume.py": "_bootstrap",
-}
-
-
 STANDALONE = frozenset(f"{SESSION_SRC}{path}" for path in ("adapters/codex/common/app_server.py",))
 
 

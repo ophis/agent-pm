@@ -12,7 +12,6 @@ import logging
 import os
 import shlex
 import stat
-import sys
 import tempfile
 import threading
 from pathlib import Path
@@ -23,7 +22,7 @@ from agent_pm.session.adapters import common as selection
 from agent_pm.session.adapters.base import Adapter
 from agent_pm.session.adapters.claude import ClaudeAdapter
 from agent_pm.session.adapters.codex import CodexAdapter
-from agent_pm.session.adapters.codex.common import RESUME, SessionStore
+from agent_pm.session.adapters.codex.common import SessionStore
 from agent_pm.session.engine import hosted_session
 from agent_pm.session.engine import types as engine_types
 from agent_pm.session.engine.hosted_session import POLL, HostedSession
@@ -73,7 +72,6 @@ from session.tests.hosted_support import (
     ProbeAdapter,
     fake_tmux,
 )
-from session.tests.source_roots import PACKAGE_ROOTS
 from session.tests.threads import capture_errors
 from utils.tests.sandbox import owned_directory
 
@@ -272,6 +270,12 @@ class InspectTest(Base):
             self.assertEqual(str(caught.exception), message)
 
 
+class ClientResumeTest(Base):
+    def test_a_client_without_a_resume_command_is_a_config_error(self):
+        with self.assertRaisesRegex(ConfigError, "^this client has no resume command$"):
+            self.session.client_resume("fake", ["x"])
+
+
 class HistoricalRecordTest(Case):
     def setUp(self):
         directory = owned_directory(self, os.environ.get("AGENT_PM_TEST_TMP", REPO))
@@ -338,8 +342,8 @@ class HistoricalRecordTest(Case):
             encoding="utf-8",
         )
         os.utime(outside, (9000, 9000))
-        roots = json.dumps(list(PACKAGE_ROOTS))
-        argv = [sys.executable, "-I", RESUME, roots, SessionStore().root, str(self.work), SID, SID]
+        locators = [SessionStore().root, str(self.work), SID, SID]
+        argv = ["agent-pm-session", "client-resume", "codex", *locators]
         command = f"cd {shlex.quote(str(self.cwd))} && {shlex.join(argv)}"
         self.forged("codex", outside, expected=SessionStatus("unknown", None, command))
 
