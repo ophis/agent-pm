@@ -76,8 +76,12 @@ class _Group:
             rc = program.wait()
             os.write(channel, json.dumps({"rc": rc}).encode() + b"\n")
         except (OSError, ValueError) as error:
-            code = error.errno if isinstance(error, OSError) else errno.EINVAL
-            os.write(channel, json.dumps({"error": str(error), "errno": code}).encode() + b"\n")
+            message = {
+                "error": error.strerror if isinstance(error, OSError) else str(error),
+                "errno": error.errno if isinstance(error, OSError) else errno.EINVAL,
+                "filename": error.filename if isinstance(error, OSError) else None,
+            }
+            os.write(channel, json.dumps(message).encode() + b"\n")
         finally:
             os._exit(0)
 
@@ -166,7 +170,7 @@ class ProcessControl:
                 raise TimeoutError("process controller did not start")
             time.sleep(POLL)
         if "error" in message:
-            raise OSError(message["errno"], message["error"])
+            raise OSError(message["errno"], message["error"], message.get("filename"))
 
     def running(self) -> bool:
         return (

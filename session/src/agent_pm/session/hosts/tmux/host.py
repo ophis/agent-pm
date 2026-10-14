@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import contextlib
 import logging
+import os
 import time
 from collections.abc import Mapping, Sequence
 
@@ -211,7 +212,10 @@ class TmuxHost(Host, Displayable):
         try:
             control.wait_started()
         except OSError as error:
-            raise DriverError(f"start {name}: {error}") from error
+            why = os.strerror(error.errno) if error.errno is not None else str(error)
+            raise DriverError(
+                f"detach {name}: cannot run {error.filename or argv[0]}: {why}"
+            ) from None
         return TmuxProcess(name, process, tmux=self.tmux, control=control)
 
     def terminal(
