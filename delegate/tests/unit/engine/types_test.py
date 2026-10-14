@@ -6,7 +6,7 @@ import unittest
 from agent_pm import delegate
 
 from delegate.tests.case import Case
-from delegate.tests.unit.engine.plans import Base
+from delegate.tests.plans import Base
 
 SPEC = {
     "input": None,

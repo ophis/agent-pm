@@ -16,11 +16,6 @@ from agent_pm.utils.config_file import LEVELS
 from tests.import_policy import violation
 
 UNIT_ISOLATION_ALLOWED = {
-    "delegate/tests/unit/cli_test.py": "TASK-385 migration",
-    "delegate/tests/unit/engine/plan_test.py": "TASK-385 migration",
-    "delegate/tests/unit/engine/runner_test.py": "TASK-385 migration",
-    "delegate/tests/unit/skills/act_as_test.py": "TASK-385 migration",
-    "delegate/tests/unit/team/tools/repo_test.py": "TASK-385 migration",
     "linear-orchestrator/tests/orchestrator_tests/unit/engine/config_test.py": "TASK-385 migration",
     "linear-orchestrator/tests/orchestrator_tests/unit/engine/prune_test.py": "TASK-385 migration",
     "linear-orchestrator/tests/orchestrator_tests/unit/engine/router_test.py": "TASK-385 migration",

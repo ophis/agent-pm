@@ -5,6 +5,7 @@ composer's Index, TeamDirs and catalog tests) and the team dir checks (the old d
 import os
 import re
 import tempfile
+from types import SimpleNamespace
 from unittest import mock
 
 from agent_pm.delegate.composer import ConfigError
@@ -588,9 +589,10 @@ class TeamDirChecks(Fake):
         self.assertIsNone(check_team_dirs([self.top], writes=[("the workdir", self.tmp)], temp=()))
 
     def test_a_team_dir_in_a_temp_dir(self):
-        self.assertTrue(
-            self.checked(temp=None).startswith(f"team_dirs: {self.top} is in temp dir ")
-        )
+        with mock.patch("subprocess.run", return_value=SimpleNamespace(stdout="")):
+            self.assertTrue(
+                self.checked(temp=None).startswith(f"team_dirs: {self.top} is in temp dir ")
+            )
 
     def test_a_team_dir_overlapping_a_dir_the_run_can_write(self):
         inside, home = os.path.join(self.top, "w"), os.path.realpath(self.agent_pm)
