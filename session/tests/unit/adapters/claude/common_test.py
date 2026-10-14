@@ -582,6 +582,28 @@ class TranscriptTest(Base):
             self.launch(access=Access(cwd=cwd)).transcript, common.transcript(cwd, SID)
         )
 
+    def test_the_launch_transcript_follows_the_runs_config_dir(self):
+        given = {**CONFIG, "env": {"CLAUDE_CONFIG_DIR": "/given"}}
+        for launch in (self.launch, partial(tui_launch, self.work)):
+            for fields, root in (
+                ({"access": Access(env={"CLAUDE_CONFIG_DIR": "/access"})}, "/access"),
+                ({"env": {"CLAUDE_CONFIG_DIR": "/policy"}}, "/policy"),
+                (
+                    {
+                        "access": Access(env={"CLAUDE_CONFIG_DIR": "/access"}),
+                        "env": {"CLAUDE_CONFIG_DIR": "/policy"},
+                    },
+                    "/policy",
+                ),
+            ):
+                with self.subTest(launch=launch, fields=fields):
+                    made = launch(config=given, **fields)
+                    self.assertEqual(made.env["CLAUDE_CONFIG_DIR"], root)
+                    project = os.path.basename(os.path.dirname(made.transcript))
+                    self.assertEqual(
+                        made.transcript, os.path.join(root, "projects", project, f"{SID}.jsonl")
+                    )
+
 
 class ResumeTest(Base):
     def test_the_command_quoted(self):
@@ -638,6 +660,23 @@ class SessionStatusTest(Base):
     def test_a_transcript_is_resumable_with_its_mtime(self):
         self.write(self.path, 1000)
         self.assertEqual(self.status(), SessionStatus("yes", 1000.0, self.resume))
+
+    def test_the_runs_env_config_dir_holds_its_transcript_and_its_resume(self):
+        env = {"CLAUDE_CONFIG_DIR": os.path.join(self.tmp, "account"), "S": "s"}
+        path = self.common.transcript(self.work, SID, env)
+        self.assertTrue(path.startswith(env["CLAUDE_CONFIG_DIR"] + os.sep))
+        self.write(path, 3000)
+        resume = (
+            f"cd {shlex.quote(self.work)} && "
+            f"CLAUDE_CONFIG_DIR={shlex.quote(env['CLAUDE_CONFIG_DIR'])} claude --resume {SID}"
+        )
+        for recorded in ("", path):
+            with self.subTest(recorded=recorded):
+                self.assertEqual(
+                    self.common.session_status(SID, self.work, transcript=recorded, env=env),
+                    SessionStatus("yes", 3000.0, resume),
+                )
+        self.assertEqual(self.status(), SessionStatus("no", None, self.resume))
 
     def test_recorded_transcripts_cannot_escape_the_cwd_store_or_follow_symlinks(self):
         self.write(self.path, 1000)

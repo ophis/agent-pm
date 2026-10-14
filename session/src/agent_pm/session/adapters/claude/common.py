@@ -162,16 +162,18 @@ class ClaudeCommon:
     def env(self) -> dict[str, str]:
         return {k: v for k, v in self._env.items() if k not in LOCAL_ENV_VARS}
 
-    def config_dir(self) -> str:
+    def config_dir(self, env: Mapping[str, str] = MappingProxyType({})) -> str:
+        """`env`: the run's own, over the config's."""
         return (
-            self._env.get("CLAUDE_CONFIG_DIR")
+            env.get("CLAUDE_CONFIG_DIR")
+            or self._env.get("CLAUDE_CONFIG_DIR")
             or os.environ.get("CLAUDE_CONFIG_DIR")
             or os.path.expanduser("~/.claude")
         )
 
-    def transcript(self, cwd: str, sid: str) -> str:
+    def transcript(self, cwd: str, sid: str, env: Mapping[str, str] = MappingProxyType({})) -> str:
         project = re.sub(r"[^A-Za-z0-9]", "-", os.path.realpath(cwd))
-        return os.path.join(self.config_dir(), "projects", project, f"{sid}.jsonl")
+        return os.path.join(self.config_dir(env), "projects", project, f"{sid}.jsonl")
 
     def resume(
         self,
@@ -241,15 +243,16 @@ class ClaudeCommon:
             *(("--allowedTools", *allow) if allow else ()),
             *tail,
         )
+        merged = {
+            k: v
+            for k, v in {**env, **self.env(), **access.env, **spec.env}.items()
+            if k not in LOCAL_ENV_VARS
+        }
         return Launch(
             argv,
-            env={
-                k: v
-                for k, v in {**env, **self.env(), **access.env, **spec.env}.items()
-                if k not in LOCAL_ENV_VARS
-            },
+            env=merged,
             unset=self.UNSET,
-            transcript=self.transcript(cwd, sid),
+            transcript=self.transcript(cwd, sid, merged),
             resume=self.resume(cwd, sid, access.dirs, {**access.env, **spec.env}),
         )
 
@@ -288,12 +291,20 @@ class ClaudeCommon:
                 five_hour = _full(five_hour, resets)
         return Usage(five_hour, weekly)
 
-    def session_status(self, sid: str, cwd: str, *, transcript: str = "") -> SessionStatus:
+    def session_status(
+        self,
+        sid: str,
+        cwd: str,
+        *,
+        transcript: str = "",
+        env: Mapping[str, str] = MappingProxyType({}),
+    ) -> SessionStatus:
+        """`env`: the run's access and spec env; its CLAUDE_CONFIG_DIR, if any, goes in the resume."""
         try:
             self.uuid(sid)
         except ConfigError:
             return SessionStatus(Resumable.NO, None, "")
-        path = self.transcript(cwd, sid)
+        path = self.transcript(cwd, sid, env)
         root = os.path.realpath(os.path.dirname(path))
         if printable_abs(transcript):
             with contextlib.suppress(OSError):
@@ -321,4 +332,5 @@ class ClaudeCommon:
         for each in paths:
             with contextlib.suppress(OSError):
                 times.append(os.lstat(each).st_mtime)
-        return SessionStatus(resumable, max(times, default=None), self.resume(cwd, sid))
+        named = {k: v for k, v in env.items() if k == "CLAUDE_CONFIG_DIR"}
+        return SessionStatus(resumable, max(times, default=None), self.resume(cwd, sid, env=named))

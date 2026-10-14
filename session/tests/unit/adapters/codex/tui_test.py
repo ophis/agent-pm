@@ -45,6 +45,44 @@ HOOK = (
 )
 
 
+# Codex 0.162.1's own renders of its dialogs (openai/codex tui insta snapshots).
+DIALOG_SCREENS = {
+    "Trust this folder?": (
+        "  Folder access\n  /workspace/project\n\n"
+        "  Trust this folder? Codex can read, edit, and run files here,\n"
+        "  subject to your permission settings.\n\n"
+        "› 1. Trust and continue\n  2. Quit\n\n  enter continue · esc quit"
+    ),
+    "Config, hooks, and exec policies from untrusted folders stay disabled.": (
+        "  Folder access\n  /workspace/project\n\n"
+        "  Config, hooks, and exec policies from untrusted folders stay\n"
+        "  disabled. Trusted project folders can still contribute settings.\n\n"
+        "› 1. Open restricted\n  2. Back to Agent Command Center\n\n  enter continue · esc back"
+    ),
+    "Hooks need review": (
+        "\n  Hooks need review\n  2 hooks are new or changed.\n\n"
+        "› 1. Review hooks\n  2. Trust all and continue\n\n  enter confirm · esc skip"
+    ),
+    "Working directory · resume": (
+        "\n  Working directory · resume\n"
+        "  Session = latest cwd recorded in the resumed session\n\n"
+        "› 1. Use session directory (/work/session)\n  2. Use current directory (/work/current)"
+    ),
+    "This conversation is open in another app": (
+        "  🔒   This conversation is open in another app  r to retry\n"
+        "      Close it there and press R to continue here.\n\n"
+        "   r retry   f fork   ←/esc command center   ⌃c/q exit"
+    ),
+    "Sign in with ChatGPT to use Codex": (
+        "  Sign in with ChatGPT to use Codex as part of your paid plan\n"
+        "  or connect an API key for usage-based billing\n\n"
+        "> 1. Sign in with ChatGPT\n"
+        "     Usage included with Plus, Pro, Business, and Enterprise plans\n\n"
+        "  Press Enter to continue"
+    ),
+}
+
+
 class TuiTest(Base):
     def launch(self, *, resume=False, adapter=None):
         run = (adapter or self.adapter).tui()
@@ -477,6 +515,24 @@ class TuiTest(Base):
         self.assertIn("Working directory · resume", self.adapter.tui().dialogs)
         self.assertIn("This conversation is open in another app", self.adapter.tui().dialogs)
         self.assertIn("Sign in with ChatGPT to use Codex", self.adapter.tui().dialogs)
+
+    def test_each_dialog_shows_on_its_own_screen(self):
+        run = self.adapter.tui()
+        self.assertEqual(set(DIALOG_SCREENS), set(run.dialogs))
+        for dialog, screen in DIALOG_SCREENS.items():
+            with self.subTest(dialog=dialog):
+                self.assertEqual([d for d in run.dialogs if run.shows(d, screen)], [dialog])
+
+    def test_a_dialog_title_in_the_agents_output_is_no_dialog(self):
+        run = self.adapter.tui()
+        for dialog in run.dialogs:
+            screens = (
+                f"• Codex showed {dialog} at startup.\n\n› Ask Codex to do anything",
+                f"• Startup dialogs:\n\n  {dialog}\n\n› Ask Codex to do anything",
+            )
+            for screen in screens:
+                with self.subTest(dialog=dialog, screen=screen):
+                    self.assertFalse(run.shows(dialog, screen))
 
     def test_driver_flattened_limit_screen_keeps_header_and_reset(self):
         adapter = CodexAdapter({"env": {"TZ": "UTC"}})
@@ -1100,6 +1156,7 @@ class HookTest(Base):
             with (
                 self.subTest(call=call),
                 self.assertRaisesRegex(common.RecoveryError, "inside writable root"),
+                contextlib.redirect_stderr(io.StringIO()),
             ):
                 call()
         self.assertEqual(record.read_bytes(), copied.read_bytes())

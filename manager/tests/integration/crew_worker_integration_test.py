@@ -106,7 +106,8 @@ class DialogTest(LiveCrew):
     def test_the_codex_trust_dialog_at_start_is_said_on_crew_runs_stderr(self):
         fake_tui.install(self.server.bin)
         never, scenario = (os.path.join(self.root, n) for n in ("never", "w1.codex.json"))
-        steps = [{"kind": "screen", "text": "Trust this folder?"}, {"kind": "pause", "file": never}]
+        trust = "Trust this folder? Codex can read, edit, and run files here.\n\n› 1. Trust and continue"
+        steps = [{"kind": "screen", "text": trust}, {"kind": "pause", "file": never}]
         with open(scenario, "w", encoding="utf-8") as f:
             json.dump({"tui_turns": [steps]}, f)
         codex = {"FAKE_SCENARIO": scenario, "FAKE_LOG": os.path.join(self.root, "w1.codex.jsonl")}

@@ -92,16 +92,28 @@ def _hook_identity(value) -> tuple[str, str] | None:
     return identifier, os.path.realpath(path)
 
 
+# Each dialog's title, and the first option or instruction Codex renders under it.
+DIALOGS = MappingProxyType(
+    {
+        "Trust this folder?": "1. Trust and continue",
+        "Config, hooks, and exec policies from untrusted folders stay disabled.": "1. Open restricted",
+        "Hooks need review": "1. Review hooks",
+        "Working directory · resume": "1. Use session directory",
+        "This conversation is open in another app": "Close it there and press R to continue here.",
+        "Sign in with ChatGPT to use Codex": "1. Sign in with ChatGPT",
+    }
+)
+
+
+def _starts_line(text: str, screen: str) -> bool:
+    """`text` starts a line of `screen`, after the line's marks (`›`, `🔒`) and its wrapping."""
+    words = r"\s+".join(map(re.escape, text.split()))
+    return re.search(rf"^[^\w\n]*{words}", screen, re.M) is not None
+
+
 class CodexTui(Tui):
     hooks = MappingProxyType({label: HookKind(kind) for label, _, kind in HOOKS})
-    dialogs = (
-        "Trust this folder?",
-        "Config, hooks, and exec policies from untrusted folders stay disabled.",
-        "Hooks need review",
-        "Working directory · resume",
-        "This conversation is open in another app",
-        "Sign in with ChatGPT to use Codex",
-    )
+    dialogs = tuple(DIALOGS)
 
     def __init__(self, common: CodexCommon):
         self.common = common
@@ -205,6 +217,10 @@ class CodexTui(Tui):
 
     def blocked_reason(self, payload):
         return self.activity(payload)
+
+    def shows(self, dialog, screen):
+        """Its title and first option each start a line: the title quoted in output is no dialog."""
+        return _starts_line(dialog, screen) and _starts_line(DIALOGS[dialog], screen)
 
     def limit(self, screen):
         screen = screen.replace("’", "'")
