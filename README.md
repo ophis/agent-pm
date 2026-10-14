@@ -207,7 +207,7 @@ session/              the session: an Adapter per runtime, Modes, Hosts (tmux); 
 utils/                shared utilities
 manager/              cli.py, engine/crew.py, roster.py and events.py: commands and bookkeeping
 linear-orchestrator/  cli.py: router, run, promote; engine/: scheduling, client, log, ops, issues, run_comments, writeback
-tests/                repo-wide checks: guards.py (rules), checks.py (runner), case.py and suites
+tests/                repo-wide checks: guard_checks/ (rules), guard_data/ (each layer's exceptions), checks.py (runner), case.py and suites
 .github/              CI workflows and their helpers
 ```
 
@@ -288,5 +288,5 @@ Fake and real implementations share contract assertions.
 `.github/run_tests.py` resets HOME, temporary roots and Git configuration before supervision.
 `.github/isolation.py` installs interpreter audit hooks and unit PATH blockers for git, tmux,
 claude and codex. `tests/integration/unit_imports_integration_test.py` applies Ruff TID251 to unit
-imports. `tests/guards.py` requires the migration allowlist to remain empty; interpreter gates
+imports. The migration allowlist in `tests/guards.py` must remain empty; interpreter gates
 permit no unit exemptions. Run tests through these supervised entries.
