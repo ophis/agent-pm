@@ -364,7 +364,7 @@ class Start(Base):
         )
         self.assertEqual(
             sorted(os.listdir(self.work)),
-            ["delegate.json", "delegate.json.lock", "out.md", "run.jsonl"],
+            ["out.md", "run.jsonl"],
         )
 
     def test_a_destination_decides_the_url_and_each_saves_a_deliverable(self):
@@ -434,9 +434,7 @@ class Start(Base):
         self.assertEqual(
             (r.outcome.status, r.outcome.url, r.outcome.deliverable), ("done", "", "# Doc\n")
         )
-        self.assertEqual(
-            sorted(os.listdir(self.work)), ["delegate.json", "delegate.json.lock", "run.jsonl"]
-        )
+        self.assertEqual(sorted(os.listdir(self.work)), ["run.jsonl"])
 
     def test_a_stale_out_never_stands_for_the_deliverable(self):
         save_spy = self.spy_save()

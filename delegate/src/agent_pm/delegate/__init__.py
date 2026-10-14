@@ -16,9 +16,8 @@ from agent_pm.delegate.config import (
 from agent_pm.delegate.engine.base import Delegate
 from agent_pm.delegate.engine.config import module_roots, package_dirs
 from agent_pm.delegate.engine.drivers import AgentDriver, Driver
-from agent_pm.delegate.engine.harness_delegate import HarnessDelegate
 from agent_pm.delegate.engine.plan import configure, plan
-from agent_pm.delegate.engine.runner import IDLE_TIMEOUT
+from agent_pm.delegate.engine.runner import IDLE_TIMEOUT, execute
 from agent_pm.delegate.engine.types import (
     Begun,
     ConfigError,
@@ -41,8 +40,7 @@ PYTHONPATH: str = os.pathsep.join(module_roots())
 
 def run(run: RunConfig, spec: Spec, *, on_event=None, driver: Driver | SessionDriver) -> Result:
     owner_driver = AgentDriver(driver.session_cls) if isinstance(driver, SessionDriver) else driver
-    owner = HarnessDelegate.from_plan(plan(run, spec, driver=owner_driver), driver=owner_driver)
-    return owner.run(on_event)
+    return execute(plan(run, spec, driver=owner_driver), driver=owner_driver, on_event=on_event)
 
 
 __all__ = [

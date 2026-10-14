@@ -9,7 +9,7 @@ import tempfile
 from dataclasses import replace
 from unittest import mock
 
-from agent_pm.session import Access, ConfigError, Effort, Host, Mode, Spec, read_config
+from agent_pm.session import Access, ConfigError, DriverError, Effort, Host, Mode, Spec, read_config
 from agent_pm.session.engine.hosted import HostedSession
 from agent_pm.session.hosts.tmux import tmux_host
 
@@ -19,6 +19,52 @@ from session.tests.hosted_support import SID, fake_tmux
 
 
 class Preflight(Case):
+    def test_missing_claude_binary_is_config_error_for_preflight_and_driver_error_for_start(self):
+        self.session = HostedSession.configured(
+            adapters=read_config(local=os.devnull)["adapters"],
+            hosts=Host.parse_hosts({"tmux": HOSTS["tmux"], "default": "tmux"}),
+            tmux=self.tmux,
+        )
+        for name in (None, "named-worker"):
+            spec = Spec(
+                workdir=self.work,
+                runtime="claude",
+                mode=Mode.TUI,
+                sid=SID,
+                name=name,
+                events=self.events,
+                env={"PATH": os.path.join(self.home, "missing-bin")},
+            )
+            before = self.tree()
+            with self.subTest(name=name), self.no_runtime():
+                with self.assertRaises(ConfigError) as refusal:
+                    self.session.preflight(spec)
+                self.assertEqual(str(refusal.exception), "command not found: claude")
+                with self.assertRaises(DriverError) as failure:
+                    self.session.start(spec)
+                session_name = name if name is not None else f"claude-{SID[:8]}"
+                self.assertEqual(
+                    str(failure.exception),
+                    f"cannot start tui session {session_name}: command not found: claude",
+                )
+            self.unchanged(before)
+            self.tmux.events_file.assert_not_called()
+
+    def test_events_file_creation_failure_is_a_driver_error_before_any_session_state(self):
+        message = f"events file {self.events}: Permission denied"
+        self.tmux.events_file.side_effect = tmux_host.TuiError(message)
+        spec = self.spec(Mode.TUI, name="event-worker", events=self.events)
+        before = self.tree()
+        with self.no_runtime():
+            self.assertIsNone(self.session.preflight(spec))
+            with self.assertRaises(DriverError) as failure:
+                self.session.start(spec)
+        self.assertEqual(
+            str(failure.exception), f"cannot start tui session event-worker: {message}"
+        )
+        self.unchanged(before)
+        self.tmux.events_file.assert_called_once_with(self.events)
+
     def setUp(self):
         self.work = os.path.join(self.home, "absent-work")
         self.events = os.path.join(self.home, "absent-events")

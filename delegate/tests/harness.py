@@ -7,10 +7,11 @@ from agent_pm.delegate import Spec
 from agent_pm.delegate.engine.harness_delegate import HarnessDelegate
 from agent_pm.session import Exited, Reply
 
-from delegate.tests.case import Case
+from delegate.tests.case import REPO, Case
 from delegate.tests.fakes.harness_session import HarnessSession, RecordingHost
 from delegate.tests.replies import block
 from delegate.tests.unit.runs import DONE
+from utils.tests.sandbox import owned_directory
 
 SID = "0f8fad5b-d9cb-469f-a165-70867728950e"
 
@@ -23,10 +24,11 @@ class HarnessCase(Case):
         self.local = os.path.join(self.agent_pm, "config.local.toml")
         self.settings()
 
-    def settings(self, *, language="English", runtime="fake", default="agent"):
+    def settings(self, *, language="English", runtime="fake", default="agent", team_dirs=()):
         with open(self.local, "w", encoding="utf-8") as file:
             file.write(
                 f'[delegate]\nlanguage = "{language}"\n'
+                f"team_dirs = {json.dumps(list(team_dirs))}\n"
                 f'[delegate.roles.dummy-tester]\nruntime = "{runtime}"\n'
                 f'[session.hosts]\ndefault = "{default}"\n'
                 "[session.adapters.fake]\n"
@@ -38,6 +40,15 @@ class HarnessCase(Case):
                 "[session.hosts.changed]\n"
                 'implementation = "delegate.tests.fakes.harness_session:RecordingHost"\n'
             )
+
+    def team_dir(self):
+        team = owned_directory(
+            self,
+            os.environ.get("AGENT_PM_TEST_TMP", os.path.join(REPO, "work")),
+            prefix="harness-team-",
+        )
+        os.chmod(team, 0o755)
+        return os.path.realpath(team)
 
     def make(self, *, role="dummy-tester", spec=None, **kw):
         spec = spec or Spec(

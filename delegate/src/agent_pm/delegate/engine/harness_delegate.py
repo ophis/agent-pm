@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import fcntl
 import json
 import os
+import stat
 import sys
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, fields, is_dataclass, replace
@@ -105,24 +107,27 @@ class HarnessDelegate(Delegate):
         composer: Composer | None = None,
         driver: Driver | None = None,
     ):
-        self.composer = composer or Composer(
-            config=DelegateConfig(config.read_config()), team=spec.team
-        )
-        self._settings = thaw(self.composer.config.values)
-        self.session_cls = session_cls
-        self._configure()
-        agent_host = session_cls.host(host)
-        self._harness_override = harness_host if isinstance(harness_host, Host) else None
-        harness = (
-            harness_host
-            if isinstance(harness_host, Host)
-            else session_cls.host(
-                harness_host
-                or config.harness_host(self._settings, self._settings.get("hosts", {}))
-                or agent_host.name
+        try:
+            self.composer = composer or Composer(
+                config=DelegateConfig(config.read_config()), team=spec.team
             )
-        )
-        display = session_cls.display(display, host=agent_host.name)
+            self._settings = thaw(self.composer.config.values)
+            self.session_cls = session_cls
+            self._configure()
+            agent_host = session_cls.host(host)
+            self._harness_override = harness_host if isinstance(harness_host, Host) else None
+            harness = (
+                harness_host
+                if isinstance(harness_host, Host)
+                else session_cls.host(
+                    harness_host
+                    or config.harness_host(self._settings, self._settings.get("hosts", {}))
+                    or agent_host.name
+                )
+            )
+            display = session_cls.display(display, host=agent_host.name)
+        except (OSError, ValueError, SessionConfigError, DriverError) as error:
+            raise ConfigError(str(error)) from None
         self.driver = driver or AgentDriver(
             session_cls, settings=self._settings, display=display, host=agent_host.name
         )
@@ -147,7 +152,7 @@ class HarnessDelegate(Delegate):
         )
         try:
             self.driver.preflight(accepted.session)
-        except SessionConfigError as error:
+        except (SessionConfigError, DriverError) as error:
             raise ConfigError(str(error)) from None
         self.workdir = accepted.spec.workdir
         self._state = _State(
@@ -165,47 +170,18 @@ class HarnessDelegate(Delegate):
         )
         self._persist_new()
 
-    @classmethod
-    def from_plan(cls, accepted: Plan, *, driver: Driver) -> HarnessDelegate:
-        """Legacy accepted-plan constructor; TASK-375 removes it with delegate.run."""
-        owner = cls.__new__(cls)
-        owner.composer = Composer(team=accepted.spec.team)
-        owner._settings = thaw(owner.composer.config.values)
-        owner.session_cls = driver.session_cls if isinstance(driver, AgentDriver) else Session
-        owner.driver = driver
-        owner.workdir = accepted.spec.workdir
-        owner._harness_override = None
-        host = owner._settings["hosts"]["default"]
-        name = accepted.spec.name or f"{accepted.run.role}-{accepted.sid[:8]}"
-        owner._state = _State(
-            accepted.run.role,
-            accepted,
-            f"{owner.session_cls.__module__}:{owner.session_cls.__qualname__}",
-            host,
-            config.harness_host(owner._settings, owner._settings["hosts"]) or host,
-            None,
-            None,
-            name,
-            f"{name}-drive",
-            1,
-            {},
-        )
-        try:
-            driver.preflight(accepted.session)
-        except SessionConfigError as error:
-            raise ConfigError(str(error)) from None
-        owner._persist_new()
-        return owner
-
     def _persist_new(self) -> None:
-        os.makedirs(self.workdir, exist_ok=True)
-        with file_lock(self._path, own=True):
-            if read_regular(self._path, own=True) is not None:
-                previous = self._read()
-                if self._alive(previous):
-                    raise ConfigError(f"{self.workdir}: delegate is still alive")
-                self._state = replace(self._state, attempt=previous.attempt + 1)
-            self._save(self._state)
+        try:
+            os.makedirs(self.workdir, exist_ok=True)
+            with file_lock(self._path, own=True):
+                if read_regular(self._path, own=True) is not None:
+                    previous = self._read()
+                    if self._alive(previous):
+                        raise ConfigError(f"{self.workdir}: delegate is still alive")
+                    self._state = replace(self._state, attempt=previous.attempt + 1)
+                self._save(self._state)
+        except OSError as error:
+            raise ConfigError(str(error)) from None
 
     @property
     def _harness_host(self) -> Host:
@@ -310,18 +286,20 @@ class HarnessDelegate(Delegate):
         view = cls.__new__(cls)
         view.workdir = os.path.abspath(workdir)
         view._state = view._read()
-        view.composer = composer or Composer(
-            config=DelegateConfig(config.read_config()),
-            team=None if view._state.plan.spec.team is None else _team(view._state.plan.spec.team),
-        )
-        view._settings = thaw(view.composer.config.values)
         try:
+            view.composer = composer or Composer(
+                config=DelegateConfig(config.read_config()),
+                team=None
+                if view._state.plan.spec.team is None
+                else _team(view._state.plan.spec.team),
+            )
+            view._settings = thaw(view.composer.config.values)
             view.session_cls = session_cls or load_class(view._state.session_cls, Session)
             view._configure()
             view.session_cls.host(view._state.host)
             view.session_cls.host(view._state.harness_host)
             view._harness_override = None
-        except (ValueError, SessionConfigError, DriverError) as error:
+        except (OSError, ValueError, SessionConfigError, DriverError) as error:
             raise ConfigError(str(error)) from None
         view.driver = AgentDriver(
             view.session_cls,
@@ -364,6 +342,8 @@ class HarnessDelegate(Delegate):
             return self.session_cls.attach(state.agent_name, host=state.host)
         except DriverError:
             return None
+        except SessionConfigError as error:
+            raise ConfigError(str(error)) from None
 
     def _harness(self, state: _State) -> HostProcess | None:
         if not state.detached:
@@ -385,8 +365,29 @@ class HarnessDelegate(Delegate):
             return process is not None and process.alive()
         if state.completed:
             return False
+        if self._running():
+            return True
         agent = self._agent(state)
         return agent is not None and agent.state() == Liveness.LIVE
+
+    def _running(self) -> bool:
+        try:
+            descriptor = os.open(
+                self._path + ".run.lock", os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK
+            )
+        except FileNotFoundError:
+            return False
+        try:
+            opened = os.fstat(descriptor)
+            if not stat.S_ISREG(opened.st_mode) or opened.st_uid != os.getuid():
+                raise ConfigError(f"{self.workdir}: invalid delegate run lock")
+            try:
+                fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                return True
+            return False
+        finally:
+            os.close(descriptor)
 
     def alive(self) -> bool:
         return self._alive(self._read())
@@ -415,11 +416,10 @@ class HarnessDelegate(Delegate):
     def status(self) -> Status:
         state = self._read()
         agent = self._agent(state)
-        process = self._harness(state)
         word = (
             str(agent.state())
             if agent is not None
-            else ("live" if process is not None and process.alive() else "absent")
+            else ("live" if self._alive(state) else "absent")
         )
         return Status(
             state.agent_name,
@@ -480,26 +480,27 @@ class HarnessDelegate(Delegate):
         )
 
     def run(self, on_event: Callable[[Event], None] | None = None) -> Result:
-        with file_lock(self._path, own=True):
-            self._current()
-        callback = (
-            None
-            if self._state.callback is None
-            else EventCallback(self._state.callback, self.workdir)
-        )
+        with file_lock(self._path + ".run", own=True):
+            with file_lock(self._path, own=True):
+                self._current()
+            callback = (
+                None
+                if self._state.callback is None
+                else EventCallback(self._state.callback, self.workdir)
+            )
 
-        def emit(event: Event) -> None:
-            if isinstance(event, Finished):
-                with file_lock(self._path, own=True):
-                    state = self._current()
-                    self._state = replace(state, result=event.result, completed=True)
-                    self._save(self._state)
-            if on_event is not None:
-                on_event(event)
-            if callback is not None:
-                callback(event)
+            def emit(event: Event) -> None:
+                if isinstance(event, Finished):
+                    with file_lock(self._path, own=True):
+                        state = self._current()
+                        self._state = replace(state, result=event.result, completed=True)
+                        self._save(self._state)
+                if on_event is not None:
+                    on_event(event)
+                if callback is not None:
+                    callback(event)
 
-        return execute(self._state.plan, driver=self.driver, on_event=emit)
+            return execute(self._state.plan, driver=self.driver, on_event=emit)
 
     def _current(self) -> _State:
         state = self._read()

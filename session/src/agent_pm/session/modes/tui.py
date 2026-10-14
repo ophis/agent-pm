@@ -294,6 +294,10 @@ class _Start:
     def tags(self) -> dict[str, str]:
         return {"@sid": self.prepared.info.sid, "@runtime": self.prepared.spec.runtime or ""}
 
+    def validate(self, display: Display) -> None:
+        tags = {**self.tags, **({} if display is None else {"@display": display})}
+        self.store.host.validate_start(self.store.name, self.prepared.argv, self.prepared.env, tags)
+
 
 class TuiMode(RunningMode):
     """One tui session acting on its session's pane by id."""
@@ -327,7 +331,12 @@ class TuiMode(RunningMode):
         host=tmux_host,
         display: Display = None,
     ) -> Prepared:
-        return cls._prepare(spec, adapter, registry=registry, host=host, display=display).prepared
+        pending = cls._prepare(spec, adapter, registry=registry, host=host)
+        try:
+            pending.validate(display)
+        except TuiError as error:
+            raise ConfigError(str(error)) from error
+        return pending.prepared
 
     @classmethod
     def _prepare(
@@ -337,7 +346,6 @@ class TuiMode(RunningMode):
         *,
         registry: Registry,
         host=tmux_host,
-        display: Display = None,
     ) -> _Start:
         run = adapter.tui()
         if run is None:
@@ -362,10 +370,7 @@ class TuiMode(RunningMode):
         state = _state(prepared, run, tmux)
         if field := _bad(state):
             raise DriverError(f"tui session {name}: bad {field} {state.get(field)!r:.80}")
-        pending = _Start(prepared, run, store, settings, tmux)
-        tags = {**pending.tags, **({} if display is None else {"@display": display})}
-        host.validate_start(name, prepared.argv, prepared.env, tags)
-        return pending
+        return _Start(prepared, run, store, settings, tmux)
 
     @classmethod
     def start(
@@ -382,7 +387,7 @@ class TuiMode(RunningMode):
         gets done, blocked and dead lines; spec.protect gains the hook paths; display: its tmux
         option @display.
         """
-        pending = cls._prepare(spec, adapter, registry=registry, host=host, display=display)
+        pending = cls._prepare(spec, adapter, registry=registry, host=host)
         prepared, run, store, settings, tmux = (
             pending.prepared,
             pending.run,
@@ -393,8 +398,12 @@ class TuiMode(RunningMode):
         started = prepared.spec
         name = store.name
         tags = {**pending.tags, **({} if display is None else {"@display": display})}
-        if started.events is not None:
-            host.events_file(started.events)
+        try:
+            pending.validate(display)
+            if started.events is not None:
+                host.events_file(started.events)
+        except TuiError as error:
+            raise DriverError(f"cannot start tui session {name}: {error}") from error
 
         def launch() -> None:
             host.start(

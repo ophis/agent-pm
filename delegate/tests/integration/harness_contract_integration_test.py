@@ -1,19 +1,66 @@
 """The real HarnessDelegate runs the Delegate contract through process-free owned Sessions."""
 
-from agent_pm.delegate import Spec
+import json
+import subprocess
+import sys
+
+from agent_pm.delegate import Begun, Spec
+from agent_pm.delegate.composer.prompt import RESUME
 from agent_pm.delegate.engine.harness_delegate import HarnessDelegate
-from agent_pm.session import Liveness, Mode, NotDisplayable
+from agent_pm.session import Exited, Liveness, Mode, NotDisplayable, Reply
 from agent_pm.session import Spec as SessionSpec
 
+from delegate.tests.case import REPO, child_env
 from delegate.tests.contracts.delegate import DelegateContract
 from delegate.tests.fakes.harness_session import HarnessSession, RecordingHost, ShowingHost
 from delegate.tests.harness import SID, HarnessCase
+from delegate.tests.replies import block
+from delegate.tests.unit.runs import DONE
+
+CLASS_QUERIES = """import json, sys, unittest
+from agent_pm.delegate.engine.harness_delegate import HarnessDelegate
+from delegate.tests.contracts.delegate import DelegateContract
+from delegate.tests.fakes.harness_session import HarnessSession
+from delegate.tests.harness import HarnessCase
+
+class ClassQueries(DelegateContract, HarnessCase):
+    delegate_cls = HarnessDelegate
+    ROLE = "dummy-tester"
+    DISPLAYABLE = sys.argv[1] == "True"
+
+    def setUp(self):
+        super().setUp()
+        if self.DISPLAYABLE:
+            script = HarnessSession.script
+            HarnessSession.reset(displayable=True)
+            HarnessSession.script = script
+
+    def runTest(self):
+        DelegateContract.test_class_methods_answer_for_its_roles_and_refuse_an_unknown_one(self)
+
+result = unittest.TextTestRunner(verbosity=2).run(ClassQueries())
+print(json.dumps({"tests": result.testsRun, "displayable": ClassQueries.DISPLAYABLE}))
+sys.exit(not result.wasSuccessful())
+"""
 
 
 class HarnessContract(DelegateContract, HarnessCase):
     delegate_cls = HarnessDelegate
     ROLE = "dummy-tester"
     DISPLAYABLE = False
+
+    def test_class_methods_answer_for_its_roles_and_refuse_an_unknown_one(self):
+        result = subprocess.run(
+            [sys.executable, "-P", "-S", "-c", CLASS_QUERIES, str(self.DISPLAYABLE)],
+            cwd=self.home,
+            env=child_env(None, REPO),
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(json.loads(result.stdout), {"tests": 1, "displayable": self.DISPLAYABLE})
 
     def make(self, workdir, **kw):
         role = kw.pop("role", self.ROLE)
@@ -30,6 +77,43 @@ class HarnessContract(DelegateContract, HarnessCase):
         view.close()
         view.run()
         view.close()
+
+    def test_needs_input_continues_with_an_explicit_new_resume_construction(self):
+        workdir = self.workdir()
+        needed = {**DONE, "status": "needs_input", "questions": ["Which answer?"]}
+        HarnessSession.script = (Reply(block(needed)), Exited(0))
+        first = HarnessDelegate(
+            self.ROLE,
+            Spec("Hello.", workdir, sid=SID, runtime="fake", cwd=workdir),
+            session_cls=HarnessSession,
+            host="agent",
+            harness_host="harness",
+        )
+        seen = []
+        result = first.run(seen.append)
+        self.assertEqual(result.outcome.status, "needs_input")
+        self.assertEqual(seen[0], Begun(SID))
+        HarnessSession.script = (Reply(block(DONE)), Exited(0))
+        answer = "Continue with option B."
+        continued = HarnessDelegate(
+            self.ROLE,
+            Spec(answer, workdir, sid=SID, resume=True, runtime="fake", cwd=workdir),
+            session_cls=HarnessSession,
+            host="agent",
+            harness_host="harness",
+        )
+        self.addCleanup(continued.close)
+        seen = []
+        result = continued.run(seen.append)
+        self.assertEqual(result.returncode, 0)
+        self.assertEqual(result.outcome.status, "done")
+        self.assertEqual(seen[0], Begun(SID))
+        self.work = workdir
+        self.assertEqual(self.metadata()["attempt"], 2)
+        launched = HarnessSession.started[-1]["spec"]
+        self.assertEqual((launched.sid, launched.resume), (SID, True))
+        self.assertTrue(launched.prompt.startswith(RESUME))
+        self.assertTrue(launched.prompt.endswith("\n" + answer + "\n"))
 
 
 class ShowingHarnessContract(HarnessContract):

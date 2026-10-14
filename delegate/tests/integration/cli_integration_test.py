@@ -16,7 +16,6 @@ from agent_pm.delegate.engine.runner import FIX
 from agent_pm.session import Driver
 from agent_pm.utils import read_project
 
-from delegate.tests.integration.artifacts import DELEGATE_FILES
 from delegate.tests.integration.cli import (
     ASKING,
     CLI,
@@ -75,7 +74,7 @@ class NewRun(Integration):
                 {"kind": "end", "sid": SID, "rc": 0},
             ],
         )
-        self.assertEqual(set(os.listdir(self.work)), DELEGATE_FILES | {"out.md", "run.jsonl"})
+        self.assertEqual(set(os.listdir(self.work)), {"out.md", "run.jsonl"})
         self.assertTrue(os.path.isfile(self.transcript))
         (call,) = self.calls()
         self.assertEqual(

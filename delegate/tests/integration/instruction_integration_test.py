@@ -14,7 +14,6 @@ import unittest
 from agent_pm.delegate import composer
 
 from delegate.tests.case import Case
-from delegate.tests.integration.artifacts import DELEGATE_FILES
 from delegate.tests.skills.act_as import argv, head, prefix
 from utils.tests.case import local_section
 
@@ -78,7 +77,7 @@ class Instruction(Case):
         self.assertEqual(res.stderr, f"delegate: instruction delivered: {out}\n")
         with open(out, "rb") as f:
             self.assertEqual(f.read(), want)
-        self.assertEqual(set(os.listdir(self.work(role))), DELEGATE_FILES | {"prompt.md"})
+        self.assertEqual(set(os.listdir(self.work(role))), {"prompt.md"})
 
     def test_each_role_receives_the_composers_original_prompt(self):
         for role in ROLES:

@@ -1,5 +1,6 @@
 """HarnessDelegate plans before writing and persists its identity for durable views."""
 
+import json
 import os
 import stat
 import subprocess
@@ -22,6 +23,30 @@ from delegate.tests.fakes.harness_session import (
 from delegate.tests.harness import SID, HarnessCase
 from delegate.tests.replies import block, mark
 from delegate.tests.unit.runs import DONE
+
+USAGE_QUERY = """import io, json, unittest
+from unittest import mock
+from agent_pm.delegate.engine.harness_delegate import HarnessDelegate
+from agent_pm.session import Usage, Window
+from delegate.tests.fakes.harness_session import HarnessSession, RecordingHost
+from delegate.tests.fakes.usage import UsageAdapter
+case = unittest.TestCase()
+sentinel = Usage(Window(12.5, 1767225600.0), Window(37.0, None))
+probes = []
+for expected in (sentinel, None):
+    UsageAdapter.usage_result = expected
+    process = mock.Mock(stdout=io.StringIO("quota"))
+    process.communicate.return_value = ("quota", "")
+    with mock.patch("subprocess.Popen", return_value=process) as probe:
+        case.assertIs(HarnessDelegate.usage("dummy-tester"), expected)
+    case.assertEqual(probe.call_count, 1)
+    probes.append(probe.call_count)
+case.assertEqual(UsageAdapter.queried, ["role_usage", "role_usage"])
+case.assertEqual((UsageAdapter.starts, HarnessSession.started, RecordingHost.launches), ([], [], []))
+print(json.dumps({"queried": UsageAdapter.queried, "probes": probes,
+                  "starts": UsageAdapter.starts, "session_starts": HarnessSession.started,
+                  "launches": RecordingHost.launches}))
+"""
 
 
 def _close_child(child):
@@ -96,12 +121,15 @@ class Planning(HarnessCase):
         self.assertEqual(RecordingHost.launches, [])
 
     def test_protect_reaches_session_spec_with_delegate_package_dirs(self):
+        team = self.team_dir()
+        self.settings(team_dirs=(team,))
         custom = os.path.join(self.home, "protected")
         spec = Spec("input", self.work, cwd=self.work, runtime="fake", protect=(custom,))
         self.make(spec=spec).run()
         session = HarnessSession.started[0]["spec"]
         self.assertEqual(self.metadata()["spec"]["protect"], [custom])
         self.assertIn(custom, session.protect)
+        self.assertIn(os.path.realpath(team), session.protect)
         for name in ("delegate", "session", "utils"):
             path = os.path.realpath(os.path.join(REPO, name, "src", "agent_pm", name))
             self.assertIn(path, session.protect)
@@ -187,6 +215,8 @@ class Views(HarnessCase):
         self.assertEqual(self.metadata()["attempt"], 2)
 
     def test_resume_uses_attach_config_snapshot_and_preserves_protect(self):
+        team = self.team_dir()
+        self.settings(team_dirs=(team,))
         custom = os.path.join(self.home, "protected")
         self.make(
             spec=Spec(
@@ -199,9 +229,11 @@ class Views(HarnessCase):
                 protect=(custom,),
             )
         )
-        self.settings(language="French")
+        self.settings(language="French", team_dirs=(team,))
         view = HarnessDelegate.attach(self.work)
-        self.settings(language="German", runtime="changed-runtime", default="changed")
+        self.settings(
+            language="German", runtime="changed-runtime", default="changed", team_dirs=(team,)
+        )
         view.resume()
         view.close()
         view.run()
@@ -210,10 +242,43 @@ class Views(HarnessCase):
         self.assertIn("French", launched.prompt)
         self.assertNotIn("German", launched.prompt)
         self.assertIn(custom, launched.protect)
+        self.assertIn(os.path.realpath(team), launched.protect)
         for name in ("delegate", "session", "utils"):
             path = os.path.realpath(os.path.join(REPO, name, "src", "agent_pm", name))
             self.assertIn(path, launched.protect)
         self.assertEqual(self.metadata()["spec"]["protect"], [custom])
+
+
+class UsageQueries(HarnessCase):
+    def test_role_runtime_usage_preserves_sentinel_identity_and_none_without_starting(self):
+        self.settings(runtime="role_usage")
+        with open(self.local, "a", encoding="utf-8") as file:
+            file.write(
+                "[session.adapters.role_usage]\n"
+                'implementation = "delegate.tests.fakes.usage:UsageAdapter"\n'
+                'label = "role_usage"\n'
+                f"cwd = {json.dumps(self.home)}\n"
+            )
+        result = subprocess.run(
+            [sys.executable, "-P", "-S", "-c", USAGE_QUERY],
+            cwd=self.home,
+            env=child_env(None, REPO),
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(
+            json.loads(result.stdout),
+            {
+                "queried": ["role_usage", "role_usage"],
+                "probes": [1, 1],
+                "starts": [],
+                "session_starts": [],
+                "launches": [],
+            },
+        )
 
 
 class Completion(HarnessCase):
