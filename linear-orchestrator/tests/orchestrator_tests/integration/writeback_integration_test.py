@@ -90,7 +90,14 @@ class BegunAndProgress(Writeback):
         )
         self.assertEqual(self.comments(ID)[-1], (researcher, f"Research started: {PICK}"))
         self.assertEqual(self.ledger(ID), {SID: ["start"]})
-        self.assertEqual(self.problems(), [("sessions.M_UPDATE", HARNESS_EMAIL, "error")])
+        # not found: the session comment's first write, the start's lookup before its post
+        self.assertEqual(
+            self.problems(),
+            [
+                ("sessions.M_UPDATE", HARNESS_EMAIL, "error"),
+                ("linear.Q_COMMENT", researcher, "error"),
+            ],
+        )
 
     def test_a_changed_role_account_does_not_move_a_running_claim(self):
         self.claim(key=KEYS["pm"])

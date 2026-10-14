@@ -11,7 +11,7 @@ import os
 import re
 import subprocess
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass, fields
+from dataclasses import dataclass, fields, replace
 from datetime import datetime
 from traceback import format_exception
 
@@ -65,6 +65,9 @@ class Context:
     repos: Mapping[str, str]
     team: str
     target: tuple[str, str] | None
+    # look each comment step up by its client id before posting it, as on resume: its event may
+    # come again after the post landed and its ledger write was lost
+    redelivered: bool = False
 
 
 M_TITLE = (
@@ -121,17 +124,20 @@ def for_run(cfg, role, gql, spec: Spec):
 
 def for_claim(cfg, claim: Claim, gql, *, attempt: int) -> Context:
     """Writes as the claim's account, whatever the role's is now."""
-    return context(
-        cfg,
-        claim.role,
-        gql,
-        key=claim.key,
-        ident=claim.issue,
-        issue_id=claim.uuid,
-        sid=claim.sid,
-        resume=attempt > 1,
-        project=claim.project,
-        target=claim.target,
+    return replace(
+        context(
+            cfg,
+            claim.role,
+            gql,
+            key=claim.key,
+            ident=claim.issue,
+            issue_id=claim.uuid,
+            sid=claim.sid,
+            resume=attempt > 1,
+            project=claim.project,
+            target=claim.target,
+        ),
+        redelivered=True,
     )
 
 
@@ -222,9 +228,11 @@ def _step(ctx, step, call, cid=None):
     if step in _done(ctx):
         return None
     try:
-        # on resume an unledgered post may have landed with its ledger write lost
+        # on resume or redelivery an unledgered post may have landed with its ledger write lost
         found = (
-            cid is not None and ctx.resume and find_comment(ctx.gql, cid, ctx.issue_id) is not None
+            cid is not None
+            and (ctx.resume or ctx.redelivered)
+            and find_comment(ctx.gql, cid, ctx.issue_id) is not None
         )
         if not found:
             call()

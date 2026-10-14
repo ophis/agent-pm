@@ -1558,6 +1558,8 @@ CLAIM_KEY = "agent-pm-engineer-at-claim"
 
 STARTED, RESTARTED = "2026-10-14T09:00:00+08:00", "2026-10-14T10:00:00+08:00"
 
+LATER, LATEST = "2026-10-14T11:00:00+08:00", "2026-10-14T12:00:00+08:00"
+
 RESUME_COMMAND = f"cd /run && fake --resume {RUN_SID}"
 
 RUN_SESSION = ops.client_id(RUN_SID, "session")
@@ -1659,7 +1661,7 @@ class Events(RunCase):
         )
         info.start()
         self.addCleanup(info.stop)
-        self.now = iter((STARTED, RESTARTED))
+        self.now = iter((STARTED, RESTARTED, LATER, LATEST))
 
     def claim(self, sid=RUN_SID, **fields):
         runs.note(
@@ -1805,6 +1807,7 @@ class ProgressEvents(Events):
         self.assertEqual(
             self.linear.calls,
             [
+                (CLAIM_KEY, "find", {"c": ops.client_id(RUN_SID, "start")}),
                 (
                     CLAIM_KEY,
                     "comment",
@@ -1814,6 +1817,7 @@ class ProgressEvents(Events):
                         "b": "Build started: light-build: a tweak",
                     },
                 ),
+                (CLAIM_KEY, "find", {"c": ops.client_id(RUN_SID, digest)}),
                 (
                     CLAIM_KEY,
                     "comment",
@@ -1826,6 +1830,15 @@ class ProgressEvents(Events):
             ],
         )
         self.assertEqual(self.ledger(), {RUN_SID: {"steps": ["start", digest]}})
+
+    def test_a_redelivered_start_whose_ledger_write_was_lost_is_found_not_reposted(self):
+        start = delegate_event("progress", name="start", text="x")
+        with mock.patch.object(os, "replace", side_effect=OSError("disk full")):
+            self.assertFalse(self.deliver(start))
+        self.assertTrue(self.deliver(start))
+        posts = [v["c"] for _, op, v in self.linear.calls if op == "comment"]
+        self.assertEqual(posts, [ops.client_id(RUN_SID, "start")])
+        self.assertEqual(self.ledger()[RUN_SID]["steps"], ["start"])
 
     def test_a_resumed_attempt_finds_a_start_whose_ledger_write_was_lost(self):
         self.linear.comments[ops.client_id(RUN_SID, "start")] = {"body": "x", "service": CLAIM_KEY}
@@ -1899,6 +1912,7 @@ class FinishedEvents(Events):
             self.linear.calls[n:],
             [
                 (CLAIM_KEY, "read", {"i": UUID}),
+                (CLAIM_KEY, "find", {"c": ops.client_id(RUN_SID, "comment")}),
                 (
                     CLAIM_KEY,
                     "comment",
@@ -1930,6 +1944,29 @@ class FinishedEvents(Events):
         comments = [v for _, op, v in self.linear.calls if op == "comment" and v.get("i") == UUID]
         self.assertEqual(len(comments), 1)
         self.assertEqual(len(self.linear.writes("state")), 1)
+
+    def test_a_redelivered_outcome_whose_ledger_write_was_lost_completes_without_a_repost(self):
+        with mock.patch.object(os, "replace", side_effect=OSError("disk full")):
+            self.assertFalse(self.deliver(self.finished(outcome=outcome_data())))
+        self.assertEqual(self.linear.writes("state"), [])
+        self.assertTrue(self.deliver(self.finished(outcome=outcome_data())))
+        posts = [
+            v["c"]
+            for _, op, v in self.linear.calls
+            if op == "comment" and "i" in v and v["i"] == UUID
+        ]
+        self.assertEqual(posts, [ops.client_id(RUN_SID, "comment")])
+        self.assertEqual(len(self.linear.writes("state")), 1)
+        self.assertEqual(self.ledger()[RUN_SID]["steps"][-2:], ["move:in_review", "outcome"])
+
+    def test_a_valid_outcome_is_honored_on_a_nonzero_exit(self):
+        self.assertTrue(self.deliver(self.finished(1, outcome=outcome_data())))
+        self.assertEqual(self.linear.state, self.cfg.states["in_review"])
+        self.assertEqual(self.ledger()[RUN_SID]["steps"][-1], "outcome")
+        self.assertEqual(
+            self.linear.comments[RUN_SESSION]["body"],
+            session_body(f"done · #1 · {STARTED} → {RESTARTED} · exit 1"),
+        )
 
     def test_no_outcome_ends_the_session_and_leaves_the_issue_in_progress(self):
         self.assertTrue(self.deliver(delegate_event("begun")))
@@ -1998,9 +2035,6 @@ class LimitEvents(Events):
         self.addCleanup(time.tzset)
         self.addCleanup(tz.stop)
         time.tzset()
-        self.now = iter(
-            (STARTED, RESTARTED, "2026-10-14T11:00:00+08:00", "2026-10-14T12:00:00+08:00")
-        )
 
     def limited(self, attempt=1, resets_at=T):
         return self.finished(-9, limit={"resets_at": resets_at}, attempt=attempt)
@@ -2031,6 +2065,7 @@ class LimitEvents(Events):
         self.assertEqual(
             self.linear.calls[n:],
             [
+                (CLAIM_KEY, "find", {"c": ops.client_id(RUN_SID, "limit")}),
                 (
                     CLAIM_KEY,
                     "comment",
@@ -2048,6 +2083,28 @@ class LimitEvents(Events):
         )
         self.assertEqual(self.rows(), [self.row()])
         self.assertEqual(self.ledger()[RUN_SID]["steps"], ["limit", "limit-move:1", "limit-row:1"])
+
+    def test_an_outcome_with_a_limit_writes_both_and_moves_once(self):
+        both = self.finished(-9, outcome=outcome_data(), limit={"resets_at": None})
+        self.assertTrue(self.deliver(both))
+        self.assertEqual(
+            self.ledger()[RUN_SID]["steps"],
+            [
+                "comment",
+                f"attach:{PR}",
+                "move:in_review",
+                "outcome",
+                "limit",
+                "limit-move:1",
+                "limit-row:1",
+            ],
+        )
+        self.assertEqual(len(self.linear.writes("state")), 1)
+        self.assertEqual(self.rows(), [self.row(None)])
+        self.assertEqual(
+            self.linear.comments[RUN_SESSION]["body"],
+            session_body(f"done · #1 · {STARTED} → {RESTARTED} · exit -9"),
+        )
 
     def test_an_unknown_reset_time_says_so(self):
         self.assertTrue(self.deliver(self.limited(resets_at=None)))
