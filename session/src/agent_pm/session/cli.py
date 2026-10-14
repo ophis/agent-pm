@@ -196,17 +196,21 @@ def _keys(args) -> list[tuple[str, Record | None]]:
         raise UsageError(f"{args.cmd}: give session names or Records on stdin")
     else:
         found = []
-        for line in sys.stdin:
-            if line.strip():
-                try:
+        try:
+            for line in sys.stdin:
+                if line.strip():
                     record = Record.parse(line)
-                except ValueError as error:
-                    raise UsageError(f"{args.cmd}: stdin: {error}") from None
-                found.append((record.name, record))
+                    found.append((record.name, record))
+        except UnicodeDecodeError:
+            raise UsageError(f"{args.cmd}: stdin: not UTF-8") from None
+        except ValueError as error:
+            raise UsageError(f"{args.cmd}: stdin: {error}") from None
     names = [name for name, _ in found]
     if twice := sorted({name for name in names if names.count(name) > 1}):
         raise UsageError(f"{args.cmd}: {', '.join(twice)} given twice")
     for name, record in found:
+        if not _sessions(name, record):
+            raise UsageError(f"{name}: names no session")
         for session in _sessions(name, record):
             if not TAG.fullmatch(session):
                 raise UsageError(f"{name}: session {session!r:.80}: want [A-Za-z0-9_-]+")

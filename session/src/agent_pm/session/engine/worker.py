@@ -232,7 +232,17 @@ class Worker:
             raise DriverError(f"{self.state.name}: {workdir}: {error.strerror or error}") from None
 
     def check(self, *, prompt: str, resume: bool) -> None:
-        """A start's validation (Session.preflight): writes, closes and runs nothing."""
+        """A start's validation: its sid not another worker's, then Session.preflight; writes,
+        closes and runs nothing.
+        """
+        data = read_regular(os.path.join(self.state.workdir(), STATE_FILE), limit=STATE_MAX)
+        try:
+            saved = json.loads(data) if data else None
+        except (ValueError, RecursionError):
+            saved = None
+        owner = saved.get("name") if isinstance(saved, dict) else None
+        if owner not in (None, self.state.name):
+            raise ConfigError(f"sid {self.state.sid} is worker {owner}'s")
         self.session_cls.preflight(
             self.state.spec(prompt=prompt, resume=resume),
             display=self.state.display,

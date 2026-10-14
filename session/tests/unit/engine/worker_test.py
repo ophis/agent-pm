@@ -196,6 +196,15 @@ class LoadTest(Base):
             with self.subTest(sid=sid), self.assertRaises(ConfigError):
                 Worker.load("w1", sid=sid)
 
+    def test_a_start_with_another_workers_sid_is_refused_before_anything(self):
+        self.worker().start(prompt="", resume=False)
+        other = Worker(state(name="w2"), session_cls=self.session_cls)
+        with self.assertRaisesRegex(ConfigError, f"^sid {SID} is worker w1's$"):
+            other.check(prompt="", resume=True)
+        self.session_cls.preflight.assert_not_called()
+        Worker(state(), session_cls=self.session_cls).check(prompt="", resume=True)
+        self.session_cls.preflight.assert_called_once()
+
     def test_no_or_unreadable_state_is_not_a_worker(self):
         with self.assertRaisesRegex(DriverError, "^w1: not a worker"):
             Worker.load("w1")

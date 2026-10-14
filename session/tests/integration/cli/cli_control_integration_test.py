@@ -8,12 +8,13 @@ read and tile exit 1 saying so, status giving no attach command.
 
 import dataclasses
 import os
+import subprocess
 
 from agent_pm.session.engine.types import Launch
 from agent_pm.utils import Record, Status
 
 from session.tests import live_tmux
-from session.tests.cli_support import MANAGER, CliCase
+from session.tests.cli_support import COMMAND, MANAGER, CliCase
 from session.tests.contracts.host import program
 from session.tests.fakes.host import FakeHost
 
@@ -106,12 +107,14 @@ class StatusTest(ControlCase):
         w1 = self.done("w1")
         pane = self.server.pane_of("w1")
         line = w1.to_line() + "\n"
+        nowhere = dataclasses.replace(w1, name="w9", sessions=()).to_line() + "\n"
         for cmd in ("status", "show", "close", "attach-command"):
             for argv, stdin, stderr in (
                 (("w1", "w1"), None, f"{PROG}: {cmd}: w1 given twice\n"),
                 ((), line + line, f"{PROG}: {cmd}: w1 given twice\n"),
                 ((), line + "not json\n", f"{PROG}: {cmd}: stdin: Record line: not JSON"),
                 ((), line + '{"v": 1}\n', f"{PROG}: {cmd}: stdin: kind: missing\n"),
+                ((), line + nowhere, f"{PROG}: w9: names no session\n"),
             ):
                 with self.subTest(cmd=cmd, argv=argv, stdin=stdin):
                     result = self.session(cmd, *argv, stdin=stdin)
@@ -122,6 +125,19 @@ class StatusTest(ControlCase):
         self.assertEqual(self.server.pane_of("w1"), pane)
         self.assertEqual(self.status("w1"), [live("w1", "done")])
         self.assertEqual(len(self.calls("w1")), 1)
+
+    def test_stdin_that_is_not_utf_8_is_a_usage_error(self):
+        result = subprocess.run(
+            [COMMAND, "status"],
+            input=b"\xff\n",
+            capture_output=True,
+            env=self.env(),
+            cwd=self.cwd,
+            timeout=60,
+        )
+        self.assertEqual((result.returncode, result.stdout), (2, b""), result.stderr)
+        self.assertTrue(result.stderr.startswith(f"{PROG}: status: stdin: ".encode()))
+        self.assertEqual(len(result.stderr.splitlines()), 1, result.stderr)
 
 
 class ControlTest(ControlCase):

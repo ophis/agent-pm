@@ -312,6 +312,10 @@ def _tmux_key(key) -> str:
     """KeyPress → tmux's key name: modifiers as C-, M-, S-; PageUp, PageDown, space and ; renamed."""
     if not isinstance(key, KeyPress):
         raise ConfigError(f"key {key!r:.80}: want a KeyPress")
+    if len(key.key) == 1 and (
+        key.shift or key.ctrl and not (key.key.isascii() and key.key.isalpha())
+    ):
+        raise ConfigError(f"key {key}: tmux cannot send it")  # it would send the bare character
     prefixes = ("C-" * key.ctrl, "M-" * key.meta, "S-" * key.shift)
     return "".join(prefixes) + TMUX_KEYS.get(key.key, key.key)
 
