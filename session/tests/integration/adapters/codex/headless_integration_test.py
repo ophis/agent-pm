@@ -29,6 +29,7 @@ from agent_pm.session.engine.types import (
 
 from session.tests.case import REPO, Case, settings
 from session.tests.integration.adapters.codex import fake_codex
+from utils.tests.sandbox import git_run
 
 NATIVE = fake_codex.NATIVE
 
@@ -185,6 +186,7 @@ class HeadlessSessions(Case):
         launch = run.launch(
             dataclasses.replace(self.spec, sid=self.sid, prompt=prompt, resume=resume)
         )
+        run.commit()
         env = {key: value for key, value in os.environ.items() if key not in launch.unset}
         result = subprocess.run(
             launch.argv,
@@ -202,6 +204,41 @@ class HeadlessSessions(Case):
         self.assertEqual(entry["argv"], expected)
         self.assertEqual(entry["prompt"], prompt)
         self.assertEqual(entry["resume_id"], NATIVE if resume else None)
+
+
+class GitIsolationIntegrationTest(HeadlessSessions):
+    def check_start_and_resume(self, expected):
+        deployment = self.root / "deployment"
+        deployment.mkdir()
+        git_run("init", str(deployment), check=True)
+        git_env = {"GIT_DIR": str(deployment / ".git"), "GIT_WORK_TREE": str(deployment)}
+        self.config["adapters"]["codex"]["env"].update(git_env)
+        self.driver = Driver(**self.config)
+        spec = dataclasses.replace(
+            self.spec,
+            sid=self.sid,
+            env=git_env,
+            access=dataclasses.replace(self.spec.access, env=git_env),
+        )
+        self.scene(git_probe=True)
+        with mock.patch.dict(os.environ, git_env):
+            first = self.driver.start("codex", "headless", "first", spec)
+            self.assertEqual(self.drain(first)[-1], Exited(0))
+            again = self.driver.start("codex", "headless", "again", spec, resume=self.sid)
+            self.assertEqual(self.drain(again)[-1], Exited(0))
+        first_entry, resumed_entry = self.logged()
+        self.assertIsNone(first_entry["resume_id"])
+        self.assertEqual(resumed_entry["resume_id"], NATIVE)
+        for entry in (first_entry, resumed_entry):
+            self.assertEqual(entry["git_probe"], expected)
+            self.assertNotEqual(entry["git_probe"]["stdout"], str(deployment))
+
+    def test_start_and_resume_git_select_the_run_checkout(self):
+        git_run("init", str(self.cwd), check=True)
+        self.check_start_and_resume({"returncode": 0, "stdout": str(self.cwd)})
+
+    def test_start_and_resume_git_cannot_select_deployment_from_an_unrelated_cwd(self):
+        self.check_start_and_resume({"returncode": 128, "stdout": ""})
 
 
 class HeadlessEventsIntegrationTest(HeadlessSessions):

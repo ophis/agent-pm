@@ -20,7 +20,7 @@ from agent_pm.session.engine.types import (
     Usage,
     Window,
 )
-from agent_pm.utils import json_records, number, printable_abs, resume_command
+from agent_pm.utils import LOCAL_ENV_VARS, json_records, number, printable_abs, resume_command
 
 TABLE = "[adapters.claude]"
 NOT_LITERAL = "*?[]{}()\\,"
@@ -110,6 +110,7 @@ class ClaudeCommon:
         "CLAUDE_CODE_MESSAGING_TOKEN",
         "CLAUDE_PID",
         "CLAUDE_EFFORT",
+        *sorted(LOCAL_ENV_VARS),
     )
     # claude -p otherwise kills a workflow after 10 idle minutes.
     ENV = MappingProxyType({"CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS": "3600000"})
@@ -159,7 +160,7 @@ class ClaudeCommon:
         return value
 
     def env(self) -> dict[str, str]:
-        return dict(self._env)
+        return {k: v for k, v in self._env.items() if k not in LOCAL_ENV_VARS}
 
     def config_dir(self) -> str:
         return (
@@ -181,7 +182,11 @@ class ClaudeCommon:
     ) -> str:
         """`dirs`: the granted Access.dirs, each an --add-dir as at launch."""
         added = (arg for d in dirs for arg in ("--add-dir", d))
-        return resume_command(cwd, env, ("claude", *self.selector(sid, resume=True), *added))
+        return resume_command(
+            cwd,
+            {key: value for key, value in env.items() if key not in LOCAL_ENV_VARS},
+            ("claude", *self.selector(sid, resume=True), *added),
+        )
 
     @staticmethod
     def uuid(sid) -> str:
@@ -194,7 +199,6 @@ class ClaudeCommon:
         spec: Spec,
         settings: Mapping | None,
         *,
-        resume: bool = False,
         head: tuple[str, ...] = (),
         output: tuple[str, ...] = (),
         tail: tuple[str, ...] = (),
@@ -204,7 +208,8 @@ class ClaudeCommon:
         under the config's. --mcp-config keeps a project's .mcp.json that a --strict-mcp-config in
         spec.flags would drop.
         """
-
+        if any(flag.word == "--setting-sources" for flag in scan(spec.flags)):
+            raise ConfigError("--setting-sources is set by the Claude adapter: use Access.project")
         sid = spec.sid
         model, effort = self.model(spec.tier), self.effort(spec.effort)
         access = spec.access
@@ -216,7 +221,7 @@ class ClaudeCommon:
             *self.allow,
         )
         strict = any(flag.arg == "--strict-mcp-config" for flag in scan(spec.flags))
-        selection = self.selector(sid, resume=resume)
+        selection = self.selector(sid, resume=spec.resume)
         if not isinstance(sid, str):
             raise ConfigError(f"session ids are UUIDs, got {sid!r:.80}")
         argv = (
@@ -238,7 +243,11 @@ class ClaudeCommon:
         )
         return Launch(
             argv,
-            env={**env, **self.env(), **access.env, **spec.env},
+            env={
+                k: v
+                for k, v in {**env, **self.env(), **access.env, **spec.env}.items()
+                if k not in LOCAL_ENV_VARS
+            },
             unset=self.UNSET,
             transcript=self.transcript(cwd, sid),
             resume=self.resume(cwd, sid, access.dirs, {**access.env, **spec.env}),

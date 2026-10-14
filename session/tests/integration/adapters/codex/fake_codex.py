@@ -2,6 +2,7 @@ import argparse
 import json
 import os
 import select
+import subprocess
 import sys
 import time
 import uuid
@@ -76,6 +77,23 @@ def main():
     if resume and (state["native_id"] != resume or not session_path(resume).is_file()):
         raise RuntimeError("missing bound native session")
     scenario = json.loads(Path(os.environ["FAKE_SCENARIO"]).read_text())
+    probe = {}
+    if scenario.get("git_probe"):
+        result = subprocess.run(
+            [
+                "git",
+                "-c",
+                "core.fsmonitor=false",
+                "-c",
+                "core.hooksPath=/dev/null",
+                "rev-parse",
+                "--show-toplevel",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        probe["git_probe"] = {"returncode": result.returncode, "stdout": result.stdout.strip()}
     native = scenario.get("thread_id", resume or NATIVE)
     path = session_path(native)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -88,6 +106,7 @@ def main():
         stream.write(
             json.dumps(
                 {
+                    **probe,
                     "argv": args,
                     "cwd": os.getcwd(),
                     "prompt": prompt,

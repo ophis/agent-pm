@@ -6,20 +6,13 @@ from dataclasses import dataclass
 from types import MappingProxyType
 
 from agent_pm.session.engine.types import ConfigError, Effort, Tier
+from agent_pm.utils import environment_ok
 
 
 def _names(value, keys) -> bool:
     return isinstance(value, Mapping) and all(
         isinstance(k, str) and k in keys and isinstance(v, str) and v.strip() and v.isprintable()
         for k, v in value.items()
-    )
-
-
-def _environment(value) -> bool:
-    return (
-        isinstance(value, Mapping)
-        and all(isinstance(k, str) and k and "=" not in k and "\0" not in k for k in value)
-        and all(isinstance(v, str) and "\0" not in v for v in value.values())
     )
 
 
@@ -30,7 +23,7 @@ CHECKS = (
         lambda v: _names(v, tuple(Effort)),
         f"a table from effort ({', '.join(Effort)}) to a printable value",
     ),
-    ("env", _environment, "a table of environment names to strings without NUL"),
+    ("env", environment_ok, "a table of environment names to strings without NUL"),
 )
 
 

@@ -5,6 +5,7 @@ import json
 import os
 import shlex
 import stat
+import sys
 import time
 from dataclasses import replace
 from unittest import mock
@@ -18,10 +19,110 @@ from agent_pm.session.adapters.codex.common import (
     snapshot_data,
     validate_snapshot,
 )
-from agent_pm.session.engine.types import Access, ConfigError, SessionInfo, SessionStatus
+from agent_pm.session.engine.hosted import HostedSession
+from agent_pm.session.engine.types import Access, ConfigError, Mode, SessionInfo, SessionStatus
+from agent_pm.session.hosts.base import Host
 
 from session.tests.source_roots import PACKAGE_ROOTS
-from session.tests.unit.adapters.codex.support import CHILD, NATIVE, Base
+from session.tests.unit.adapters.codex.support import CHILD, NATIVE, Base, committed_headless
+
+
+class LaunchLifecycleTest(Base):
+    def configured(self):
+        return HostedSession.configured(
+            adapters={
+                "codex": {
+                    "implementation": "agent_pm.session.adapters.codex:CodexAdapter",
+                    **self.adapter.config,
+                }
+            },
+            hosts=Host.parse_hosts(
+                {
+                    "default": "tmux",
+                    "tmux": {"implementation": "agent_pm.session.hosts.tmux:TmuxHost"},
+                }
+            ),
+        )
+
+    def test_added_dirs_are_protected_before_preparation_in_both_codex_modes(self):
+        session = self.configured()
+        added = self.root / "added"
+        for mode in (Mode.HEADLESS, Mode.TUI):
+            spec = replace(
+                self.spec,
+                runtime="codex",
+                mode=mode,
+                flags=("--add-dir", str(added)),
+                protect=(str(added / "child"),),
+            )
+            with (
+                self.subTest(mode=mode),
+                mock.patch("subprocess.Popen") as popen,
+                self.assertRaisesRegex(ConfigError, "overlaps protected path"),
+            ):
+                session.start(spec)
+            popen.assert_not_called()
+            self.assertFalse((self.home / ".agent-pm").exists())
+            self.assertFalse((self.work / "run.jsonl").exists())
+
+    def test_resume_checks_saved_grants_without_rewriting_recovery(self):
+        self.prepare()
+        self.common.bind(str(self.work), self.spec.sid, NATIVE)
+        self.rollout()
+        before = self.record().read_bytes()
+        session = self.configured()
+        for mode in (Mode.HEADLESS, Mode.TUI):
+            spec = replace(
+                self.spec,
+                runtime="codex",
+                mode=mode,
+                resume=True,
+                access=Access(cwd=str(self.work / "clean")),
+                protect=(str(self.extra / "child"),),
+            )
+            with (
+                self.subTest(mode=mode),
+                self.assertRaisesRegex(ConfigError, "overlaps protected path"),
+            ):
+                session.start(spec)
+            self.assertEqual(self.record().read_bytes(), before)
+            self.assertFalse((self.work / "run.jsonl").exists())
+
+    def test_preparation_and_commands_are_pure_until_commit_in_both_modes(self):
+        for mode in ("headless", "tui"):
+            spec = replace(self.spec, sid=mode, prompt="hello")
+            run = self.adapter.headless() if mode == "headless" else self.adapter.tui()
+            with mock.patch("shutil.which", return_value="/protected/codex"):
+                if mode == "headless":
+                    run.launch(spec)
+                else:
+                    run.launch(
+                        spec,
+                        (sys.executable, "-I", "/protected/hook.py"),
+                        source_roots=PACKAGE_ROOTS,
+                    )
+            self.assertIsNone(self.common.load(spec.workdir, spec.sid))
+            run.commit()
+            self.assertIsNotNone(self.common.load(spec.workdir, spec.sid))
+
+    def test_invalid_launches_write_no_recovery_or_run_records(self):
+        for mode in ("headless", "tui"):
+            spec = replace(self.spec, sid=mode, prompt="bad\0prompt")
+            run = self.adapter.headless() if mode == "headless" else self.adapter.tui()
+            with (
+                self.subTest(mode=mode),
+                mock.patch("shutil.which", return_value="/protected/codex"),
+                self.assertRaises(ConfigError),
+            ):
+                if mode == "headless":
+                    run.launch(spec)
+                else:
+                    run.launch(
+                        spec,
+                        (sys.executable, "-I", "/protected/hook.py"),
+                        source_roots=PACKAGE_ROOTS,
+                    )
+            self.assertFalse((self.home / ".agent-pm").exists())
 
 
 class CommonTest(Base):
@@ -30,7 +131,7 @@ class CommonTest(Base):
         linked.symlink_to(self.extra, target_is_directory=True)
         spec = replace(self.spec, access=replace(self.spec.access, dirs=(str(linked),)))
         with mock.patch("os.path.realpath", wraps=os.path.realpath) as realpath:
-            state = self.common.prepare(spec, persist=False)
+            state = self.common.prepare(spec)
         self.assertEqual(state.snapshot.dirs, (str(self.extra),))
         self.assertIn(str(self.extra), state.writable_roots)
         self.assertEqual(realpath.call_args_list.count(mock.call(str(linked))), 1)
@@ -104,7 +205,7 @@ class CommonTest(Base):
         ):
             spec = dataclasses.replace(self.spec, **changed)
             with self.subTest(changed=changed), self.assertRaises(ConfigError) as caught:
-                self.common.prepare(spec, resume=False)
+                self.common.save(self.common.prepare(spec))
             self.assertEqual(str(caught.exception), message)
 
     def test_resume_uses_saved_effective_settings(self):
@@ -119,9 +220,9 @@ class CommonTest(Base):
             },
         )
         spec = dataclasses.replace(self.spec, access=Access(project=True), tier=None, effort=None)
-        resumed = other.common.prepare(spec, resume=True)
+        resumed = other.common.prepare(dataclasses.replace(spec, resume=True))
         self.assertEqual(resumed.snapshot, saved.snapshot)
-        launch = other.headless().launch(dataclasses.replace(spec, prompt="again", resume=True))
+        launch = committed_headless(other, dataclasses.replace(spec, prompt="again", resume=True))
         self.assertIn("gpt-test", launch.argv)
         self.assertIn("model_reasoning_effort=low", launch.argv)
         self.assertEqual(launch.env["CODEX_HOME"], str(self.codex_home))
@@ -134,7 +235,7 @@ class CommonTest(Base):
             self.spec, access=dataclasses.replace(self.spec.access, env=env)
         )
         adapter = CodexAdapter({**self.adapter.config, "env": {"PYTHONPATH": "/config", "K": "v"}})
-        launch = adapter.headless().launch(dataclasses.replace(self.spec, prompt="hi"))
+        launch = committed_headless(adapter, dataclasses.replace(self.spec, prompt="hi"))
         self.assertEqual((launch.env["PYTHONPATH"], launch.env["K"]), ("/a b;c", "v"))
         self.assertEqual(
             self.common.load(str(self.work), self.spec.sid).snapshot.env, {**env, "K": "v"}
@@ -142,7 +243,9 @@ class CommonTest(Base):
         state = self.common.bind(str(self.work), self.spec.sid, NATIVE)
         self.rollout()
         spec = dataclasses.replace(self.spec, access=Access())
-        resumed = adapter.headless().launch(dataclasses.replace(spec, prompt="again", resume=True))
+        resumed = committed_headless(
+            adapter, dataclasses.replace(spec, prompt="again", resume=True)
+        )
         self.assertEqual(resumed.env["PYTHONPATH"], "/a b;c")
         for command in (resumed.resume, self.common.resume_command(state)):
             q = shlex.quote
@@ -163,7 +266,7 @@ class CommonTest(Base):
                     sid=f"project-{saved}",
                     access=dataclasses.replace(self.spec.access, project=saved),
                 )
-                self.common.prepare(spec, resume=False)
+                self.common.save(self.common.prepare(spec))
                 self.common.bind(str(self.work), spec.sid, NATIVE)
                 path = self.rollout()
                 requested = dataclasses.replace(
@@ -222,20 +325,20 @@ class CommonTest(Base):
 
     def test_omitted_mapping_preserves_runtime_defaults(self):
         spec = dataclasses.replace(self.spec, tier=None, effort=None)
-        launch = self.adapter.headless().launch(dataclasses.replace(spec, prompt="hi"))
+        launch = committed_headless(self.adapter, dataclasses.replace(spec, prompt="hi"))
         self.assertNotIn("-m", launch.argv)
         self.assertFalse(any(x.startswith("model_reasoning_effort=") for x in launch.argv))
         self.assertIsNone(self.common.load(str(self.work), self.spec.sid).snapshot.model)
 
     def test_missing_recovery_and_session_fail_before_launch(self):
         with self.assertRaisesRegex(ConfigError, "missing.*state"):
-            self.common.prepare(self.spec, resume=True)
+            self.common.prepare(dataclasses.replace(self.spec, resume=True))
         self.prepare()
         with self.assertRaisesRegex(ConfigError, "missing.*ID"):
-            self.common.prepare(self.spec, resume=True)
+            self.common.prepare(dataclasses.replace(self.spec, resume=True))
         self.common.bind(str(self.work), self.spec.sid, NATIVE)
         with self.assertRaisesRegex(ConfigError, "missing.*file"):
-            self.common.prepare(self.spec, resume=True)
+            self.common.prepare(dataclasses.replace(self.spec, resume=True))
 
     def test_fifo_record_is_nonblocking(self):
         self.prepare()
@@ -244,7 +347,7 @@ class CommonTest(Base):
         os.mkfifo(path, 0o600)
         before = time.monotonic()
         with self.assertRaisesRegex(ConfigError, "unsafe"):
-            self.common.prepare(self.spec, resume=True)
+            self.common.prepare(dataclasses.replace(self.spec, resume=True))
         self.assertLess(time.monotonic() - before, 0.5)
 
     def test_record_type_mode_owner_size_and_json_guards(self):
@@ -281,9 +384,9 @@ class CommonTest(Base):
             *(
                 {"snapshot": {**snapshot_data(state.snapshot), "env": env}}
                 for env in (
-                    {"X;Y": "1"},
+                    {"X=Y": "1"},
                     {"A=B": "1"},
-                    {"1A": "1"},
+                    {"A\0": "1"},
                     {"": "1"},
                     {"A": 1},
                     {"A": "b\0"},
@@ -307,8 +410,10 @@ class CommonTest(Base):
     def test_store_outside_explicit_and_implicit_writable_roots(self):
         for grant in (self.home, self.home / ".agent-pm", self.root):
             with self.subTest(grant=grant), self.assertRaisesRegex(ConfigError, "writable"):
-                self.common.prepare(
-                    dataclasses.replace(self.spec, access=Access(dirs=(str(grant),))), resume=False
+                self.common.save(
+                    self.common.prepare(
+                        dataclasses.replace(self.spec, access=Access(dirs=(str(grant),)))
+                    )
                 )
         with (
             mock.patch.dict(os.environ, {"HOME": "/tmp/agent-pm-untrusted-home"}),
@@ -319,7 +424,7 @@ class CommonTest(Base):
     def test_configured_tmpdir_cannot_grant_store_on_fresh_prepare(self):
         adapter = CodexAdapter(self.adapter.config | {"env": {"TMPDIR": str(self.home)}})
         with self.assertRaisesRegex(ConfigError, "writable"):
-            adapter.common.prepare(self.spec, resume=False)
+            adapter.common.save(adapter.common.prepare(self.spec))
         self.assertFalse((self.home / ".agent-pm").exists())
 
     def test_configured_tmpdir_cannot_grant_store_on_resumed_prepare(self):
@@ -328,7 +433,9 @@ class CommonTest(Base):
         self.rollout()
         saved = self.record().read_bytes()
         adapter = CodexAdapter(self.adapter.config | {"env": {"TMPDIR": str(self.home)}})
-        self.assertEqual(adapter.common.prepare(self.spec, resume=True).native_id, NATIVE)
+        self.assertEqual(
+            adapter.common.prepare(dataclasses.replace(self.spec, resume=True)).native_id, NATIVE
+        )
         self.assertEqual(self.record().read_bytes(), saved)
 
     def test_store_parent_permissions_and_symlink_guard(self):
@@ -354,8 +461,10 @@ class CommonTest(Base):
             self.prepare()
         settings.rmdir()
         with self.assertRaisesRegex(ConfigError, "outside"):
-            self.common.prepare(
-                dataclasses.replace(self.spec, access=Access(cwd=str(self.extra))), resume=False
+            self.common.save(
+                self.common.prepare(
+                    dataclasses.replace(self.spec, access=Access(cwd=str(self.extra)))
+                )
             )
 
     def test_mapping_keys_and_values_name_the_table(self):
@@ -419,8 +528,8 @@ class CommonTest(Base):
             with self.subTest(cfg=cfg), self.assertRaises(ConfigError):
                 CodexAdapter({"tiers": {}, "efforts": {}, **cfg})
         adapter = CodexAdapter({"tiers": {}, "efforts": {}, "env": {"PROBE": "1"}})
-        launch = adapter.headless().launch(
-            dataclasses.replace(self.spec, tier=None, effort=None, prompt="hi")
+        launch = committed_headless(
+            adapter, dataclasses.replace(self.spec, tier=None, effort=None, prompt="hi")
         )
         self.assertEqual(launch.env["PROBE"], "1")
         self.assertEqual(launch.env["NO_COLOR"], "1")
@@ -435,7 +544,7 @@ class CommonTest(Base):
             ("efforts", dataclasses.replace(self.spec, tier=None)),
         ):
             with self.subTest(key=key), self.assertRaises(ConfigError) as caught:
-                CodexAdapter({}).headless().launch(dataclasses.replace(spec, prompt="hi"))
+                committed_headless(CodexAdapter({}), dataclasses.replace(spec, prompt="hi"))
             self.assertIn(f"[adapters.codex].{key}", str(caught.exception))
 
 
@@ -484,7 +593,7 @@ class EnvironmentTest(Base):
             },
         ):
             roots = adapter.writable_dirs(spec)
-            launch = adapter.headless().launch(dataclasses.replace(spec, prompt="hi"))
+            launch = committed_headless(adapter, dataclasses.replace(spec, prompt="hi"))
             state = adapter.common.load(spec.workdir, spec.sid)
             self.assertEqual(state.snapshot.env, {**configured, **access, **supplied})
             self.assertEqual(state.snapshot.codex_home, str(self.codex_home))
@@ -528,14 +637,14 @@ class EnvironmentTest(Base):
                 "CODEX_THREAD_ID": NATIVE,
             },
         ):
-            resumed = changed.common.prepare(spec, resume=True)
+            resumed = changed.common.prepare(dataclasses.replace(spec, resume=True))
             self.assertEqual(resumed.snapshot, saved.snapshot)
             roots = changed.writable_dirs(dataclasses.replace(spec, resume=True))
             self.assertIn(second_tmp, roots)
             self.assertNotIn(first_tmp, roots)
             self.assertNotIn(ignored_tmp, roots)
-            launch = changed.headless().launch(
-                dataclasses.replace(spec, prompt="again", resume=True)
+            launch = committed_headless(
+                changed, dataclasses.replace(spec, prompt="again", resume=True)
             )
             self.assertEqual(launch.env["CODEX_HOME"], str(self.codex_home))
             self.assertEqual(launch.env["PAGER"], "cat")
@@ -570,7 +679,7 @@ class WritableDirsTest(Base):
         self.assertFalse((self.home / ".agent-pm").exists())
         self.assertEqual(list(dirs[:3]), roots)
         self.assertEqual(len(set(dirs)), len(dirs))
-        launch = adapter.headless().launch(dataclasses.replace(self.spec, prompt="hi"))
+        launch = committed_headless(adapter, dataclasses.replace(self.spec, prompt="hi"))
         self.assertEqual(launch.env["CODEX_HOME"], str(home))
         self.assertEqual(
             adapter.common.load(str(self.work), self.spec.sid).writable_roots, tuple(roots)
@@ -611,7 +720,7 @@ class WritableDirsTest(Base):
         adapter = CodexAdapter(self.adapter.config)
         access = dataclasses.replace(self.spec.access, reads=(str(read),))
         spec = dataclasses.replace(self.spec, access=access)
-        argv = adapter.headless().launch(dataclasses.replace(spec, prompt="hi")).argv
+        argv = committed_headless(adapter, dataclasses.replace(spec, prompt="hi")).argv
         self.assertEqual(
             [argv[i + 1] for i, arg in enumerate(argv) if arg == "--add-dir"], [str(self.extra)]
         )
@@ -629,7 +738,7 @@ class WritableDirsTest(Base):
         spec = dataclasses.replace(self.spec, access=access)
         self.assertIn(
             "--add-dir",
-            self.adapter.headless().launch(dataclasses.replace(spec, prompt="hi")).argv,
+            committed_headless(self.adapter, dataclasses.replace(spec, prompt="hi")).argv,
         )
 
     def test_the_session_env_adds_no_writable_dir(self):
@@ -637,7 +746,7 @@ class WritableDirsTest(Base):
         spec = dataclasses.replace(self.spec, access=dataclasses.replace(self.spec.access, env=env))
         fresh = self.adapter.writable_dirs(self.spec)
         self.assertEqual(self.adapter.writable_dirs(spec), fresh)
-        self.common.prepare(spec, resume=False)
+        self.common.save(self.common.prepare(spec))
         self.assertEqual(self.adapter.writable_dirs(dataclasses.replace(spec, resume=True)), fresh)
 
     def test_a_resume_without_saved_state_is_refused(self):
@@ -656,16 +765,22 @@ class WritableDirsTest(Base):
         )
         self.assertNotIn(str(target), self.adapter.writable_dirs(self.spec))
         self.assertIn(str(target), adapter.writable_dirs(self.spec))
-        adapter.common.prepare(self.spec, resume=False)
+        adapter.common.save(adapter.common.prepare(self.spec))
         self.assertIn(
             str(target), adapter.writable_dirs(dataclasses.replace(self.spec, resume=True))
         )
 
-    def test_fresh_query_translates_path_errors_without_persistence(self):
-        spec = dataclasses.replace(self.spec, access=Access(dirs=("relative",)))
-        with self.assertRaisesRegex(ConfigError, "absolute path"):
+    def test_resume_query_translates_unsafe_recovery_without_writing_store(self):
+        spec = dataclasses.replace(self.spec, resume=True)
+        self.prepare()
+        path = self.record()
+        path.unlink()
+        os.mkfifo(path, 0o600)
+        with self.assertRaisesRegex(ConfigError, "unsafe"):
             self.adapter.writable_dirs(spec)
-        self.assertFalse((self.home / ".agent-pm").exists())
+        self.assertTrue(stat.S_ISFIFO(path.lstat().st_mode))
+        self.assertEqual(list(path.parent.iterdir()), [path])
+        self.assertFalse((self.work / "run.jsonl").exists())
 
 
 class SessionStatusTest(Base):
@@ -757,17 +872,17 @@ class SessionStatusTest(Base):
         os.mkfifo(path)
         before = time.monotonic()
         with self.assertRaisesRegex(ConfigError, "unsafe"):
-            self.common.prepare(self.spec, resume=True)
+            self.common.prepare(dataclasses.replace(self.spec, resume=True))
         self.assertLess(time.monotonic() - before, 0.5)
         path.unlink()
         path = self.rollout(cwd=str(self.extra))
         with self.assertRaisesRegex(ConfigError, "mismatched"):
-            self.common.prepare(self.spec, resume=True)
+            self.common.prepare(dataclasses.replace(self.spec, resume=True))
         path = self.rollout()
         duplicate = path.with_name("rollout-other-" + NATIVE + ".jsonl")
         duplicate.write_text(path.read_text())
         with self.assertRaisesRegex(ConfigError, "duplicate"):
-            self.common.prepare(self.spec, resume=True)
+            self.common.prepare(dataclasses.replace(self.spec, resume=True))
         duplicate.unlink()
         path.unlink()
         path.symlink_to(self.root / "absent")
@@ -798,11 +913,12 @@ class SessionStatusTest(Base):
         self.rollout()
         other = self.root / "other"
         other.mkdir()
-        self.common.prepare(
-            dataclasses.replace(
-                self.spec, workdir=str(other), access=Access(cwd=str(self.cwd), project=True)
-            ),
-            resume=False,
+        self.common.save(
+            self.common.prepare(
+                dataclasses.replace(
+                    self.spec, workdir=str(other), access=Access(cwd=str(self.cwd), project=True)
+                )
+            )
         )
         self.assertEqual(
             self.common.session_status(self.spec.sid, str(self.cwd)).resumable, "unknown"
@@ -822,7 +938,7 @@ class GrantTest(Base):
                     cwd=str(self.cwd), project=True, dirs=(str(record),) if granted else ()
                 ),
             )
-            state = self.common.prepare(spec, resume=False)
+            state = self.common.save(self.common.prepare(spec))
             with self.subTest(granted=granted):
                 self.assertEqual(str(record) in state.writable_roots, granted)
                 self.assertEqual(
@@ -831,7 +947,7 @@ class GrantTest(Base):
                 )
                 self.common.bind(str(record), spec.sid, NATIVE)
                 self.rollout()
-                resumed = self.common.prepare(spec, resume=True)
+                resumed = self.common.prepare(dataclasses.replace(spec, resume=True))
                 self.assertEqual(str(record) in resumed.writable_roots, granted)
                 self.assertEqual(
                     str(record)
@@ -842,7 +958,7 @@ class GrantTest(Base):
     def test_access_and_flag_roots_are_combined_and_resume_ignores_new_flags(self):
         added = self.root / "added"
         spec = dataclasses.replace(self.spec, flags=("--add-dir", str(added)))
-        state = self.common.prepare(spec, resume=False)
+        state = self.common.save(self.common.prepare(spec))
         expected = [
             str(self.cwd),
             str(self.codex_home),
@@ -853,7 +969,10 @@ class GrantTest(Base):
         self.common.bind(str(self.work), spec.sid, NATIVE)
         self.rollout()
         changed = dataclasses.replace(spec, flags=("--add-dir", "/changed"))
-        self.assertEqual(self.common.prepare(changed, resume=True).writable_roots, tuple(expected))
+        self.assertEqual(
+            self.common.prepare(dataclasses.replace(changed, resume=True)).writable_roots,
+            tuple(expected),
+        )
         self.assertNotIn(
             "/changed", self.adapter.writable_dirs(dataclasses.replace(changed, resume=True))
         )
@@ -871,7 +990,7 @@ class GrantTest(Base):
         spec = dataclasses.replace(
             self.spec, access=dataclasses.replace(self.spec.access, project=True)
         )
-        self.common.prepare(spec, resume=False)
+        self.common.save(self.common.prepare(spec))
 
 
 class SavedFlags(Base):
@@ -883,14 +1002,23 @@ class SavedFlags(Base):
                 self.common.load(str(self.work), self.spec.sid)
 
 
-GOOD = ({}, {"PYTHONPATH": "/a b;c", "_x1": ""})
+GOOD = (
+    {},
+    {
+        "PYTHONPATH": "/a b;c",
+        "_x1": "",
+        "A-B": "v",
+        "X;Y": "v",
+        "1A": "v",
+        "A B": "v",
+        "A\n": "v",
+        "Ä": "v",
+    },
+)
 BAD = (
-    {"X;Y": "a"},
     {"A=B": "a"},
-    {"1A": "a"},
+    {"A\0": "a"},
     {"": "a"},
-    {"A B": "a"},
-    {"A\n": "a"},
     {1: "a"},
     {"A": 1},
     {"A": None},
@@ -903,7 +1031,7 @@ BAD = (
 class SnapshotEnvTest(Base):
     def snapshot(self, **fields):
         return {
-            **snapshot_data(self.common.prepare(self.spec, persist=False, resume=False).snapshot),
+            **snapshot_data(self.common.prepare(self.spec).snapshot),
             **fields,
         }
 
@@ -911,6 +1039,7 @@ class SnapshotEnvTest(Base):
         for env in GOOD:
             with self.subTest(env=env):
                 self.assertEqual(Access(env=env).env, env)
+                self.assertEqual(CodexAdapter({"env": env}).config["env"], env)
                 self.assertEqual(validate_snapshot(self.snapshot(env=env)).env, env)
 
     def test_refuses_an_env_access_env_refuses(self):
@@ -925,7 +1054,7 @@ class SnapshotEnvTest(Base):
 
 class StoreRootTest(Base):
     def test_invalid_save_does_not_create_the_store(self):
-        state = self.common.prepare(self.spec, persist=False, resume=False)
+        state = self.common.prepare(self.spec)
         unsafe = replace(state, writable_roots=(*state.writable_roots, str(self.home)))
         with self.assertRaisesRegex(RecoveryError, "writable"):
             SessionStore().save(unsafe)
@@ -936,9 +1065,6 @@ class StoreRootTest(Base):
         store = SessionStore()
         operations = (
             lambda: store.directory(create=False),
-            lambda: store.create(
-                state.workdir, "preview", state.snapshot, state.writable_roots, persist=False
-            ),
             lambda: store.create(state.workdir, "new", state.snapshot, state.writable_roots),
             lambda: store.save(replace(state, sid="saved")),
             lambda: store.load(state.workdir, state.sid),
@@ -961,16 +1087,14 @@ class StoreRootTest(Base):
         other_home.mkdir()
         with mock.patch.dict(os.environ, {"HOME": str(other_home)}):
             self.assertIsNone(store.load(state.workdir, state.sid))
-            store.create(state.workdir, state.sid, state.snapshot, state.writable_roots)
+            store.save(store.create(state.workdir, state.sid, state.snapshot, state.writable_roots))
             self.assertEqual(store.load(state.workdir, state.sid), state)
             parent = other_home / ".agent-pm" / "core-new-sessions"
             target = other_home / "moved-store"
             parent.rename(target)
             parent.symlink_to(target, target_is_directory=True)
             with self.assertRaisesRegex(RecoveryError, "symlink"):
-                store.create(
-                    state.workdir, "preview", state.snapshot, state.writable_roots, persist=False
-                )
+                store.create(state.workdir, "preview", state.snapshot, state.writable_roots)
 
     def test_nonpersisted_prepare_rejects_a_symlinked_default_store(self):
         store = self.home / ".agent-pm" / "core-new-sessions" / "codex"
@@ -979,7 +1103,7 @@ class StoreRootTest(Base):
         target.mkdir(mode=0o700)
         store.symlink_to(target, target_is_directory=True)
         with self.assertRaisesRegex(ConfigError, "symlink"):
-            self.common.prepare(self.spec, persist=False)
+            self.common.prepare(self.spec)
         self.assertEqual(list(target.iterdir()), [])
 
 

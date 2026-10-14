@@ -1,8 +1,8 @@
 """A new runtime is one importable module plus one [adapters.<name>] table naming it as
-module.path:Class: a temp copy of session and utils, the fake adapter's package copied in outside
+module.path:Class: a temp copy of the session and utils packages, the fake adapter's package copied in outside
 them as module extension_runtime (a name unrelated to the runtime's) and its table appended to the
-copy's session/config.toml, nothing else changed, runs a headless session through Driver.start in a
-child Python whose PYTHONPATH is only the copy's src/ dirs and that module's dir. A table without its
+copy's agent_pm/session/config.toml, nothing else changed, runs a headless session through Driver.start in a
+child Python whose PYTHONPATH is only the copy's site directory and that module's dir. A table without its
 module, or a module without its table, fails there before anything starts.
 """
 
@@ -23,11 +23,10 @@ MODULE = "extension_runtime"
 # The child: configures the session from the copy's session config, starts runtime argv[2] headless
 # in workdir argv[1] and prints its events; a ConfigError exits 1, its text on stderr.
 CHILD = """import dataclasses, json, sys
-from agent_pm.session import Driver, ConfigError, Spec
+from agent_pm.session import Driver, ConfigError, Spec, read_config
 from agent_pm.session.engine import hosted
-from agent_pm.utils import read_project
 try:
-    driver = Driver.from_config(read_project("session"))
+    driver = Driver.from_config(read_config())
     handle = driver.start(sys.argv[2], "headless", "hello", Spec(workdir=sys.argv[1]))
 except ConfigError as e:
     sys.exit(f"ConfigError: {e}")
@@ -35,30 +34,42 @@ events = [[type(e).__name__, dataclasses.asdict(e)] for e in handle.events()]
 print(json.dumps({"sid": handle.sid, "events": events,
                   "files": [hosted.__file__, sys.modules["extension_runtime"].__file__]}))
 """
+PROTECTED_CHILD = """import sys
+from unittest import mock
+from agent_pm.session import Access, Driver, Spec, read_config
+adapter = Driver.from_config(read_config()).registry.adapter("codex")
+spec = Spec(workdir=sys.argv[1], sid="installed-layout", access=Access(cwd=sys.argv[1], project=True))
+with mock.patch("shutil.which", return_value="/protected/codex"):
+    launch = adapter.tui().launch(spec, (sys.executable, "-I", "/protected/hook.py"),
+                                  source_roots=(sys.argv[3],))
+print(launch.argv[-1])
+"""
 
 
 class ExtensionAdapterIntegration(Case):
     def setUp(self):
-        tmp = tempfile.TemporaryDirectory()
+        tmp = tempfile.TemporaryDirectory(dir=os.environ.get("AGENT_PM_TEST_TMP", REPO))
         self.addCleanup(tmp.cleanup)
         self.root = os.path.realpath(tmp.name)
-        self.src = os.path.join(self.root, "session", "src")
+        self.site = os.path.join(self.root, "site")
+        self.src = os.path.join(self.site, "agent_pm", "session")
         self.extensions = os.path.join(self.root, "extensions")
         self.package(MODULE)
         self.package("untabled")
         for project in PROJECTS:
             shutil.copytree(
-                os.path.join(REPO, project),
-                os.path.join(self.root, project),
+                os.path.join(REPO, project, "src", "agent_pm", project),
+                os.path.join(self.site, "agent_pm", project),
                 ignore=SKIP,
                 dirs_exist_ok=True,
             )
-        self.srcs = os.pathsep.join(
-            (*(os.path.join(self.root, p, "src") for p in PROJECTS), self.extensions)
-        )
-        self.config = os.path.join(self.root, "session", "config.toml")
+        self.srcs = os.pathsep.join((self.site, self.extensions))
+        self.config = os.path.join(self.src, "config.toml")
+        os.chmod(self.config, 0o600)
         self.home = os.path.join(self.root, "home")
         os.mkdir(self.home)
+        self.temp = os.path.join(self.root, "tmp")
+        os.mkdir(self.temp)
         self.work = os.path.join(self.root, "work")
         scenario = os.path.join(self.root, "scenario.json")
         with open(scenario, "w", encoding="utf-8") as f:
@@ -87,11 +98,14 @@ class ExtensionAdapterIntegration(Case):
         with open(self.config, "a", encoding="utf-8") as f:
             f.write("\n" + text)
 
-    def child(self, runtime: str) -> subprocess.CompletedProcess:
+    def child(self, runtime: str, script: str = CHILD) -> subprocess.CompletedProcess:
         return subprocess.run(
-            [*PY, "-c", CHILD, self.work, runtime],
+            [*PY, "-c", script, self.work, runtime, self.site],
             cwd=self.root,
-            env={**child_env({**os.environ, "HOME": self.home}), "PYTHONPATH": self.srcs},
+            env={
+                **child_env({**os.environ, "HOME": self.home, "TMPDIR": self.temp}),
+                "PYTHONPATH": self.srcs,
+            },
             stdin=subprocess.DEVNULL,
             capture_output=True,
             text=True,
@@ -122,6 +136,18 @@ class ExtensionAdapterIntegration(Case):
             [(e["kind"], e["sid"]) for e in written],
             [("session", data["sid"]), ("client_session", data["sid"])],
         )
+
+    def test_installed_codex_protects_packages_and_hook_namespace_without_site(self):
+        child = self.child("codex", PROTECTED_CHILD)
+        self.assertEqual(child.returncode, 0, child.stderr)
+        plan = json.loads(child.stdout)
+        namespace = os.path.join(self.site, "agent_pm")
+        self.assertTrue(
+            {namespace, os.path.join(namespace, "session"), os.path.join(namespace, "utils")}
+            <= set(plan["protect"])
+        )
+        self.assertNotIn(self.site, plan["protect"])
+        self.assertEqual(plan["import_roots"], [self.site])
 
     def test_a_table_without_its_module_fails_before_launch(self):
         self.table('[adapters.absent]\nimplementation = "absent_runtime:AbsentAdapter"\n')

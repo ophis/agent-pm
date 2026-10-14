@@ -39,6 +39,7 @@ from agent_pm.session.engine.types import (
 
 from session.tests.case import PY, Case, child_env
 from session.tests.integration.adapters.claude import fake_claude
+from utils.tests.sandbox import git
 
 WAIT = 20  # upper bound on any wait, in seconds
 IDLE = 0.5  # idle_timeout, in seconds
@@ -161,6 +162,45 @@ class Base(Case):
 
 
 class RunTest(Base):
+    def test_start_and_resume_git_select_the_run_checkout_not_the_parent_environment(self):
+        deployment = os.path.join(self.dir, "deployment")
+        project = os.path.join(self.dir, "project")
+        os.mkdir(deployment)
+        os.mkdir(project)
+        git("init", deployment)
+        git("init", project)
+        self.scenario(steps=[{"kind": "git"}])
+        for cwd, want in (
+            (project, {"returncode": 0, "stdout": project}),
+            (self.workdir, {"returncode": 128, "stdout": ""}),
+        ):
+            with (
+                self.subTest(cwd=cwd),
+                mock.patch.dict(
+                    os.environ,
+                    {"GIT_DIR": os.path.join(deployment, ".git"), "GIT_WORK_TREE": deployment},
+                ),
+            ):
+                spec = Spec(workdir=self.workdir, access=Access(cwd=cwd))
+                first = self.start(spec=spec)
+                self.assertEqual(self.drain(first)[-1], Exited(0))
+                again = self.start("more", spec=spec, resume=first.sid)
+                self.assertEqual(self.drain(again)[-1], Exited(0))
+                self.assertEqual(json.loads(first.reply), want)
+                self.assertEqual(json.loads(again.reply), want)
+
+    def test_start_and_resume_exclude_project_sources_unless_access_enables_them(self):
+        for project, sources in ((False, "user"), (True, "user,project,local")):
+            with self.subTest(project=project):
+                spec = Spec(workdir=self.workdir, access=Access(project=project))
+                first = self.start(spec=spec)
+                self.assertEqual(self.drain(first)[-1], Exited(0))
+                again = self.start("more", spec=spec, resume=first.sid)
+                self.assertEqual(self.drain(again)[-1], Exited(0))
+                for entry in self.logged()[-2:]:
+                    argv = entry["argv"]
+                    self.assertEqual(argv[argv.index("--setting-sources") + 1], sources)
+
     def test_a_run_streams_its_messages_to_exited_and_records_the_session(self):
         self.scenario(
             steps=["one", {"kind": "tool", "name": "Read"}, "two", "three"],

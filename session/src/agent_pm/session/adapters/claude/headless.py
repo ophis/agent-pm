@@ -33,7 +33,6 @@ class ClaudeHeadless(JsonHeadless):
             output=("--output-format", "stream-json", "--verbose"),
             tail=(*spec.flags, "--", spec.prompt),
             env=common.ENV,
-            resume=spec.resume,
         )
 
     def parse(self, record):

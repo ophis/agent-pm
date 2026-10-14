@@ -141,11 +141,6 @@ PACKAGE_CLIMB_ALLOWED = {
 }
 
 
-SESSION_NAMES_ALLOWED = {
-    (f"{SESSION_SRC}engine/config.py", "read_project"): "TASK-392",
-}
-
-
 ORCH_SESSION_CONTRACT = "linear_orchestrator reaches session only through delegate"
 
 
@@ -570,7 +565,7 @@ def session_names(repo: str) -> list[str]:
         f"{SESSION_SRC}{rel}: names {word}"
         for rel, text in _files(os.path.join(repo, SESSION_SRC), ".py")
         for word in forbidden
-        if word in text and (f"{SESSION_SRC}{rel}", word) not in SESSION_NAMES_ALLOWED
+        if word in text
     )
 
 
@@ -1212,9 +1207,14 @@ def package_top(repo: str) -> list[str]:
         path = os.path.join(repo, rel)
         have = {e for e in (os.listdir(path) if os.path.isdir(path) else ()) if e not in LEFTOVERS}
         found.update(f"{rel}/{e}: missing" for e in (TOP - {"cli.py"}) - have)
-        listed = TOP | SUBPACKAGES.get(project, set()) | ENTRY_MODULES.get(project, set())
+        listed = (
+            TOP
+            | {"config.toml"}
+            | SUBPACKAGES.get(project, set())
+            | ENTRY_MODULES.get(project, set())
+        )
         found.update(
-            f"{rel}/{e}: not __init__.py, cli.py, engine/, a listed subpackage or a listed entry"
+            f"{rel}/{e}: not __init__.py, cli.py, config.toml, engine/, a listed subpackage or a listed entry"
             " module"
             for e in have - listed
         )
@@ -1784,8 +1784,14 @@ def config_levels(repo: str) -> list[str]:
 
 def explicit_keys(repo: str) -> list[str]:
     real, examples, found = set(), {}, set()
-    for project in PROJECTS:
-        rel = f"{project}/config.toml"
+    for rel in (
+        path
+        for project, package in PROJECTS.items()
+        for path in (
+            f"{project}/config.toml",
+            f"{project}/src/{PKG}/{package}/config.toml",
+        )
+    ):
         path = os.path.join(repo, rel)
         if not os.path.isfile(path):
             continue

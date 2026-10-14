@@ -16,14 +16,17 @@ from session.tests import case
 from session.tests.case import SRC
 from session.tests.codex_tui import HOOK, PlanCase, ProtectCase
 from session.tests.source_roots import PACKAGE_ROOTS, source_roots_cases
-from session.tests.unit.adapters.codex.support import NATIVE, Base
+from session.tests.unit.adapters.codex.support import NATIVE, Base, committed_tui
 
 
 class StartPaths(Base):
     def test_import_roots_are_required_and_validated_without_spawning(self):
         with mock.patch("shutil.which", return_value="/protected/codex"):
-            launch = self.adapter.tui().launch(
-                dataclasses.replace(self.spec, prompt="prompt"), HOOK, source_roots=PACKAGE_ROOTS
+            launch = committed_tui(
+                self.adapter,
+                dataclasses.replace(self.spec, prompt="prompt"),
+                HOOK,
+                source_roots=PACKAGE_ROOTS,
             )
         data = json.loads(launch.argv[-1])
         missing = {key: value for key, value in data.items() if key != "import_roots"}
@@ -65,7 +68,11 @@ class ProtectPaths(ProtectCase):
                 protect=(str(link),),
             )
             data = self.launch(spec)
-            self.assertEqual(json.loads(data)["protect"], [*case.ROOTS, str(link)])
+            protected = json.loads(data)["protect"]
+            self.assertIn(str(link), protected)
+            for root in case.ROOTS:
+                self.assertIn(str(Path(root) / "agent_pm"), protected)
+                self.assertNotIn(root, protected)
             link.unlink()
             link.symlink_to(target)
             with (
@@ -109,7 +116,8 @@ class TuiPaths(Base):
             mock.patch("shutil.which", return_value="/protected/codex"),
             self.assertRaisesRegex(ConfigError, "rewrite|writable"),
         ):
-            self.adapter.tui().launch(
+            committed_tui(
+                self.adapter,
                 dataclasses.replace(self.spec, prompt="hi"),
                 (*HOOK[:2], str(link), *HOOK[3:]),
                 source_roots=PACKAGE_ROOTS,

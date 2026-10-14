@@ -18,6 +18,7 @@ from agent_pm.session.engine.types import (
     Usage,
 )
 from agent_pm.session.engine.types import Spec as BaseSpec
+from agent_pm.utils import LOCAL_ENV_VARS
 
 from session.tests.case import Case
 from session.tests.source_roots import PACKAGE_ROOTS
@@ -51,6 +52,7 @@ UNSET = (
     "CLAUDE_CODE_MESSAGING_TOKEN",
     "CLAUDE_PID",
     "CLAUDE_EFFORT",
+    *sorted(LOCAL_ENV_VARS),
 )
 
 PROBE = (

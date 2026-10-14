@@ -810,11 +810,27 @@ class ConfigurationRoot(ConfigFile, Case):
             '[delegate]\nlanguage = "French"\n'
             + local_section(role("engineer", "max_runs = 2"), "linear_orchestrator"),
         )
-        with mock.patch.object(builtins, "open", side_effect=open) as opened:
+        with (
+            mock.patch.object(builtins, "open", side_effect=open) as opened,
+            mock.patch.object(io, "open", side_effect=io.open) as resource_opened,
+        ):
             cfg = config.load(self.root, path=path, local=local, core=self.core_path)
-        projects = {os.path.join(os.path.dirname(root), "config.toml") for root in ROOTS}
+        projects = {
+            path
+            for root in ROOTS
+            for path in (
+                os.path.join(os.path.dirname(root), "config.toml"),
+                os.path.join(
+                    root, "agent_pm", os.path.basename(os.path.dirname(root)), "config.toml"
+                ),
+            )
+        }
         self.assertEqual(
-            {c.args[0] for c in opened.call_args_list if str(c.args[0]).endswith(".toml")}
+            {
+                str(c.args[0])
+                for c in [*opened.call_args_list, *resource_opened.call_args_list]
+                if str(c.args[0]).endswith(".toml")
+            }
             - projects,
             {path, local, self.core_path},
         )
@@ -825,10 +841,13 @@ class ConfigurationRoot(ConfigFile, Case):
         path, local = (os.path.join(self.dir, n) for n in ("config.toml", "config.local.toml"))
         write(path, PIPELINE)
         write(local, "")
-        with mock.patch.object(builtins, "open", side_effect=open) as opened:
+        with (
+            mock.patch.object(builtins, "open", side_effect=open) as opened,
+            mock.patch.object(io, "open", side_effect=io.open) as resource_opened,
+        ):
             config.load(self.root, path=path, local=local, core=self.core_path)
-        paths = [c.args[0] for c in opened.call_args_list]
-        session = os.path.join(REPO, "session", "config.toml")
+        paths = [str(c.args[0]) for c in [*opened.call_args_list, *resource_opened.call_args_list]]
+        session = os.path.join(REPO, "session", "src", "agent_pm", "session", "config.toml")
         self.assertEqual(
             [paths.count(p) for p in (path, self.core_path, session, local)], [1, 1, 3, 3], paths
         )

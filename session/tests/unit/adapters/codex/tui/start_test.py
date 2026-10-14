@@ -17,7 +17,7 @@ from agent_pm.session.adapters.codex.tui import start as tui_start
 from session.tests.case import Case
 from session.tests.codex_tui import HOOK, ROOTS_JSON, ProtectCase
 from session.tests.source_roots import PACKAGE_ROOTS
-from session.tests.unit.adapters.codex.support import Base
+from session.tests.unit.adapters.codex.support import Base, committed_tui
 
 DIRECTORY = pathlib.Path(tui_start.__file__).parent
 
@@ -84,8 +84,11 @@ class StartTest(Base):
                 self.subTest(hook=hook),
                 mock.patch("shutil.which", return_value="/protected/codex"),
             ):
-                launch = self.adapter.tui().launch(
-                    dataclasses.replace(spec, prompt="prompt"), hook, source_roots=PACKAGE_ROOTS
+                launch = committed_tui(
+                    self.adapter,
+                    dataclasses.replace(spec, prompt="prompt"),
+                    hook,
+                    source_roots=PACKAGE_ROOTS,
                 )
                 plan = tui.decode(json.loads(launch.argv[-1]))
                 catalog, _ = self.catalog()
@@ -106,6 +109,7 @@ class StartTest(Base):
             launch = run.launch(
                 dataclasses.replace(self.spec, prompt="prompt"), hook, source_roots=PACKAGE_ROOTS
             )
+        run.commit()
         before = {str(p): p.read_bytes() for p in self.home.rglob("*") if p.is_file()}
         with (
             contextlib.nullcontext(mock.Mock(return_value="hooks.state={exact}")) as trust,
@@ -127,7 +131,8 @@ class StartTest(Base):
         access = dataclasses.replace(self.spec.access, env={"PYTHONPATH": "/a b;c"})
         spec = dataclasses.replace(self.spec, access=access)
         with mock.patch("shutil.which", return_value="/protected/codex"):
-            launch = self.adapter.tui().launch(
+            launch = committed_tui(
+                self.adapter,
                 dataclasses.replace(spec, prompt="prompt"),
                 (sys.executable, "-I", "/protected/hook.py", "/protected/session", ROOTS_JSON),
                 source_roots=PACKAGE_ROOTS,
@@ -238,6 +243,7 @@ class StartTest(Base):
                 (sys.executable, "-I", "/protected/hook.py", "/protected/session", ROOTS_JSON),
                 source_roots=PACKAGE_ROOTS,
             )
+        run.commit()
         for signum in (tui_start.signal.SIGHUP, tui_start.signal.SIGTERM):
             with self.subTest(signum=signum):
                 proc = mock.Mock(pid=123)
@@ -265,7 +271,8 @@ class StartTest(Base):
 
     def test_wrapper_checks_effective_tmpdir_before_spawning(self):
         with mock.patch("shutil.which", return_value="/protected/codex"):
-            launch = self.adapter.tui().launch(
+            launch = committed_tui(
+                self.adapter,
                 dataclasses.replace(self.spec, prompt="hi"),
                 (sys.executable, "-I", "/protected/hook.py", "/protected/session", ROOTS_JSON),
                 source_roots=PACKAGE_ROOTS,

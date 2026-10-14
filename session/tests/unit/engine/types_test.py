@@ -41,6 +41,37 @@ class EnvironmentSources(Case):
         spec = Spec(workdir="/w", access=Access(env={"A": "1"}), env={"B": "2"})
         self.assertEqual((spec.access.env, dict(spec.env)), ({"A": "1"}, {"B": "2"}))
 
+    def test_every_input_accepts_exec_environment_names(self):
+        env = {"A-B": "a b", "1A": "", "X;Y": "value", "Ä": "value"}
+        for build in (
+            Access,
+            ProcessOptions,
+            lambda **fields: Spec(workdir="/w", **fields),
+            lambda **fields: Launch(("x",), **fields),
+        ):
+            with self.subTest(build=build):
+                self.assertEqual(dict(build(env=env).env), env)
+
+    def test_every_input_rejects_invalid_exec_names_and_values(self):
+        for env in (
+            {"": "secret"},
+            {"A=B": "secret"},
+            {"A\0": "secret"},
+            {"A": "secret\0"},
+            {1: "secret"},
+            {"A": 1},
+            None,
+        ):
+            for build in (
+                Access,
+                ProcessOptions,
+                lambda **fields: Spec(workdir="/w", **fields),
+                lambda **fields: Launch(("x",), **fields),
+            ):
+                with self.subTest(env=env, build=build), self.assertRaises(ConfigError) as caught:
+                    build(env=env)
+                self.assertNotIn("secret", str(caught.exception))
+
 
 class ProcessOptionsTest(Case):
     def test_options_own_an_immutable_copy_of_the_environment(self):
