@@ -868,6 +868,15 @@ class KeysTest(Case):
         with self.assertRaisesRegex(types.TuiError, r"^tmux: boom$"):
             tmux_host.keys("s", "Enter", proc=Tmux(fail={"send-keys"}))
 
+    def test_set_option_sets_a_user_option_of_the_targets_session(self):
+        fake = Tmux()
+        self.assertIsNone(tmux_host.set_option("%7", "@record", '{"v":1}', proc=fake))
+        self.assertEqual(fake.calls, [["tmux", "set-option", "-t", "%7", "@record", '{"v":1}']])
+        for name, value in (("record", "x"), ("@record", "x;"), ("@record", "a\nb")):
+            with self.subTest(name=name, value=value), self.assertRaises(types.TuiError):
+                tmux_host.set_option("%7", name, value, proc=fake)
+        self.assertEqual(len(fake.calls), 1)
+
     def test_press_names_the_keys_after_a_double_dash(self):
         fake = Tmux()
         self.assertIsNone(tmux_host.press("s", "-", "\\;", "C-c", proc=fake))

@@ -313,6 +313,17 @@ class HostContract:
         with self.assertRaises(DriverError):
             self.host.attach(name)
 
+    def test_publish_stores_the_record_attach_returns_and_needs_a_live_session(self):
+        name = self.fresh()
+        terminal = self.start("terminal", name, SLEEP)
+        self.assertIsNone(self.host.attach(name).record())
+        published = self.a_record(name)
+        terminal.publish(published)
+        self.assertEqual(self.host.attach(name).record(), published)
+        terminal.close()
+        with self.assertRaises(DriverError):
+            terminal.publish(published)
+
     def test_attach_of_an_unknown_name_raises_driver_error(self):
         with self.assertRaises(DriverError):
             self.host.attach(f"nope-{uuid.uuid4().hex[:12]}")

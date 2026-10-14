@@ -468,6 +468,23 @@ class DisplayableTest(Base):
             self.host.attach_command("a b")
 
 
+class PublishTest(Base):
+    def test_publish_sets_the_sessions_record_option_while_its_pane_is_its_own(self):
+        process = TmuxProcess("w1", PROCESS, tmux=self.tmux, control=self.control)
+        process.publish(LINE)
+        self.tmux.set_option.assert_called_once_with("%7", "@record", LINE.to_line())
+        self.assertEqual(process.token, self.control.path)
+        self.tmux.process.return_value = "9 $1 %7 9"
+        with self.assertRaisesRegex(DriverError, "^tmux session w1 is gone$"):
+            process.publish(LINE)
+        with self.assertRaises(ConfigError):
+            process.publish(LINE.to_line())
+        self.assertEqual(self.tmux.set_option.call_count, 1)
+
+    def test_reclaim_of_a_controller_outside_tmp_is_refused(self):
+        self.assertIsNone(self.host.reclaim(self.control.path))
+
+
 class DescendantsTest(Base):
     def test_the_matching_sessions_then_those_each_opened_transitively(self):
         self.tmux.listing.return_value = [

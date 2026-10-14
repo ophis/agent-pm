@@ -81,6 +81,20 @@ class TmuxProcess(HostProcess):
     def identity(self) -> str:
         return self._process
 
+    @property
+    def token(self) -> str | None:
+        return None if self._control is None else self._control.path
+
+    def publish(self, record: Record) -> None:
+        if not isinstance(record, Record):
+            raise ConfigError(f"record: want a Record, got {type(record).__name__}")
+        if not self._own():
+            raise DriverError(f"tmux session {self.name} is gone")
+        try:
+            self.tmux.set_option(self._pane, "@record", record.to_line())
+        except TuiError as error:
+            raise DriverError(f"tmux session {self.name}: {error}") from error
+
     def state(self) -> Liveness:
         try:
             own = self._own()
@@ -213,6 +227,54 @@ class TmuxProcess(HostProcess):
             return self.tmux.option(self._pane, key)
         except TuiError as e:
             raise DriverError(f"tmux session {self.name}: {e}") from None
+
+
+class TmuxGroup(HostProcess):
+    """A reclaimed process group whose tmux session may be gone: wait for it, kill it, close it."""
+
+    def __init__(self, control: ProcessControl) -> None:
+        self.name = os.path.basename(control.path)
+        self._control = control
+
+    @property
+    def token(self) -> str | None:
+        return self._control.path
+
+    def alive(self) -> bool:
+        try:
+            return self._control.live()
+        except OSError as error:
+            raise DriverError(f"process group {self.name}: {error}") from error
+
+    def wait_exit(self, timeout: float) -> bool:
+        deadline = time.monotonic() + timeout
+        while self.alive():
+            if time.monotonic() >= deadline:
+                return False
+            time.sleep(POLL)
+        return True
+
+    def kill(self) -> None:
+        try:
+            self._control.kill()
+        except OSError as error:
+            raise DriverError(f"process group {self.name}: {error}") from error
+        if not self.wait_exit(KILL_WAIT):
+            raise DriverError(f"process group {self.name}: did not exit")
+
+    def close(self) -> None:
+        try:
+            self._control.terminate()
+        except OSError as error:
+            raise DriverError(f"process group {self.name}: {error}") from error
+        if not self.wait_exit(KILL_WAIT):
+            self.kill()
+
+    def record(self) -> Record | None:
+        return None
+
+    def display(self) -> Display:
+        return None
 
 
 class TmuxTerminal(TmuxProcess, Terminal):
@@ -522,6 +584,18 @@ class TmuxHost(Host, Displayable):
         }:
             found |= grown
         return sorted(found)
+
+    def reclaim(self, token: str) -> TmuxGroup | None:
+        """A group-only handle on token's controller (a private /tmp/apm-group-* directory and
+        socket of this user's) while its group lives; else None.
+        """
+        if not isinstance(token, str):
+            return None
+        try:
+            control = ProcessControl.attach(token)
+            return TmuxGroup(control) if control.live() else None
+        except (OSError, ValueError):
+            return None
 
     def rows(self, display: Display = None) -> list[SessionRow]:
         names = set(self.list(display))

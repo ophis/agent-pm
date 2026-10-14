@@ -9,6 +9,7 @@ from unittest import mock
 from agent_pm.session import (
     ConfigError,
     Displayable,
+    DriverError,
     Host,
     HostProcess,
     Hosts,
@@ -68,6 +69,14 @@ class Abstract(Case):
 
 
 class HostDefaults(Case):
+    def test_a_host_reclaims_nothing_and_a_process_neither_publishes_nor_has_a_token(self):
+        self.assertIsNone(MinimalHost("m").reclaim("/tmp/apm-group-x"))
+        process = mock.create_autospec(HostProcess, instance=True)
+        process.name = "p"
+        self.assertIsNone(HostProcess.token.fget(process))
+        with self.assertRaisesRegex(DriverError, "^session p: its host cannot store a Record"):
+            HostProcess.publish(process, mock.sentinel.record)
+
     def test_descendants_are_its_listed_sessions_unless_it_knows_who_opened_whom(self):
         host = MinimalHost("m")
         with mock.patch.object(host, "list", return_value=["a", "b"]) as listed:

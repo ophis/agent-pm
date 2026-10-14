@@ -59,6 +59,17 @@ class HostProcess(ABC):
     def identity(self) -> str:
         return self.name
 
+    @property
+    def token(self) -> str | None:
+        """Opaque: its Host's reclaim(token) finds its process group once its session is gone;
+        None when it cannot.
+        """
+        return None
+
+    def publish(self, record: Record) -> None:
+        """Store `record` as the Record record() returns, after launch."""
+        raise DriverError(f"session {self.name}: its host cannot store a Record after launch")
+
     def session_identity(self) -> tuple[str | None, str | None]:
         """Private terminal sid and generation, independent of its published Record."""
         return None, None
@@ -179,6 +190,12 @@ class Host(ABC):
 
     def rows(self, display: Display = None) -> list[SessionRow]:
         return [self.attach(name).row() for name in self.list(display)]
+
+    def reclaim(self, token: str) -> HostProcess | None:
+        """The process group a HostProcess.token named while any of it lives, its session gone or
+        not; None otherwise. token is untrusted (read back from a file).
+        """
+        return None
 
     def descendants(self, display: Display = None) -> list[str]:
         """list(display)'s sessions and, where the Host knows who opened whom, the sessions they

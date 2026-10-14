@@ -137,6 +137,15 @@ class FakeProcess(HostProcess):
         line = self._own().get("record")
         return None if line is None else Record.parse(line)
 
+    def publish(self, record: Record) -> None:
+        meta = self._own()
+        if not meta:
+            raise DriverError(f"{self.name}: gone")
+        temporary = os.path.join(self.folder, "meta.json.tmp")
+        with open(temporary, "w", encoding="utf-8") as f:
+            json.dump({**meta, "record": record.to_line()}, f)
+        os.replace(temporary, os.path.join(self.folder, "meta.json"))
+
     def session_identity(self):
         metadata = self._own().get("metadata", {})
         return metadata.get("sid"), metadata.get("generation")
