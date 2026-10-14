@@ -875,8 +875,7 @@ class RouterArguments(Base):
 
     def test_unknown_flags_rejected(self):
         for argv in (
-            ["--help"],
-            ["-h"],
+            ["--help", "--now"],
             ["--prune", "x"],
             ["--gate", "new"],
             ["--now", "--issue", "TASK-1"],
@@ -911,7 +910,7 @@ class RouterArguments(Base):
         self.assertEqual((self.api.order, self.api.usage_calls), ([], []))
         self.assertEqual(
             router.USAGE,
-            "usage: python3 -P -m agent_pm.linear_orchestrator.cli router [--now] [--dry-run] [--issue ID] | --brake ROLE",
+            "usage: agent-pm-linear router [--now] [--dry-run] [--issue ID] | --brake ROLE",
         )
         for flag in ("--gate", "--tui", "--split", "--events", "--manager"):
             self.assertNotIn(flag, router.USAGE + router.__doc__)

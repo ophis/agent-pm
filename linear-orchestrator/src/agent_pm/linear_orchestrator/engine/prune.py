@@ -11,7 +11,8 @@ skipped):
 - archives every finished issue of the team assigned to the pm or engineer role account.
 
 Run inventory unknown: an error, and no issue is pruned. Each step is logged (event_log.log, src prune);
-a failure is logged and the rest goes on (run returns 3), but Unavailable is raised.
+a failure is logged and the rest goes on (run returns 3), but Unavailable is raised. Promote prunes
+after each of its ticks; `agent-pm-linear prune` (main, HELP) runs one alone.
 """
 
 import contextlib
@@ -20,16 +21,24 @@ import os
 import re
 import shutil
 import subprocess
-from datetime import timedelta
+import sys
+from datetime import UTC, datetime, timedelta
 
 from agent_pm.delegate import ConfigError as DelegateConfigError
 from agent_pm.delegate import DriverError
 from agent_pm.linear_orchestrator.engine import config, runs
+from agent_pm.linear_orchestrator.engine import log as event_log
+from agent_pm.linear_orchestrator.engine.client import linear_gql
 from agent_pm.linear_orchestrator.engine.config import CLONES
 from agent_pm.linear_orchestrator.engine.linear_run import LinearRun
-from agent_pm.linear_orchestrator.engine.log import log
-from agent_pm.linear_orchestrator.engine.ops import HISTORY, call, last_move
-from agent_pm.linear_orchestrator.engine.types import ISSUE_ID, LinearError, Unavailable
+from agent_pm.linear_orchestrator.engine.log import linear_error, log
+from agent_pm.linear_orchestrator.engine.ops import HISTORY, call, last_move, role_ids, team
+from agent_pm.linear_orchestrator.engine.types import (
+    ISSUE_ID,
+    ConfigError,
+    LinearError,
+    Unavailable,
+)
 from agent_pm.utils import GUARD, SHORT, GitError, common_dir, one_line, under
 from agent_pm.utils import run_git as git
 
@@ -49,6 +58,13 @@ Q_FINISHED = (
   pageInfo { hasNextPage endCursor } } }"""
 )
 M_ARCHIVE = "mutation($i: String!) { issueArchive(id: $i) { success } }"
+HELP = """usage: agent-pm-linear prune [--dry-run]
+
+One prune tick: close finished issues' recorded runs, delete their checkouts, archive them.
+--dry-run   Change nothing; print what would happen.
+--help      Print this; exit 0.
+Events go to orchestrator.jsonl (src prune). A config error or Linear unavailable exits 1, logged once
+a day; a failed step exits 1 after the rest; else 0. Bad arguments exit 2."""
 
 
 class Skip(Exception):
@@ -318,3 +334,36 @@ class Pruner:
                 self.rmdir_owners(ident, {parts[:-1] for parts in entries if len(parts) == 3})
             for common in sorted(commons):
                 self.clean_clone(ident, common)
+
+
+def main(argv, *, gql=linear_gql, now=None, config_path=None, pruner=Pruner):
+    if argv in (["--help"], ["-h"]):
+        print(HELP)
+        return 0
+    if any(a != "--dry-run" for a in argv):
+        print(HELP, file=sys.stderr)
+        return 2
+    dry = "--dry-run" in argv
+    os.environ["PATH"] = config.path()
+    try:
+        cfg = config.load(path=config_path)
+    except ConfigError as error:
+        config.report_error("prune", error, dry=dry)
+        return 1
+    event_log.use_logs(cfg.logs_dir)
+    gql = functools.partial(gql, service=cfg.harness_key)
+    try:
+        code = pruner(
+            gql,
+            now or datetime.now(UTC),
+            dry=dry,
+            work=cfg.runs_dir,
+            team=team(gql, cfg),
+            roles=role_ids(gql, cfg.roles),
+            cfg=cfg,
+        ).run()
+    except LinearError as e:
+        return event_log.config_error("prune", e, dry=dry)
+    except Unavailable as e:
+        return linear_error("prune", e, dry=dry)
+    return 1 if code else 0

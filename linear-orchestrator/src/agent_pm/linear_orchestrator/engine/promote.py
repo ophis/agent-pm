@@ -29,13 +29,16 @@ class Promotion:
     child: dict[str, Any] | None = None
 
 
-HELP = """Promote issues in Handoff to the next role.
+HELP = """usage: agent-pm-linear promote [--dry-run] [--now]
+
+Promote issues in Handoff to the next role.
 
 For each Handoff issue in a project, assigned to a role account whose [roles.<role>] in linear-orchestrator/config.toml has a next:
 create that role's issue in the same project, assigned to its account, in Todo with the source links and the
 human instructions, relate it, and move the source to Done.
 --dry-run   Change nothing; print what would happen.
 --now       Skip the 10-minute wait in Handoff (for a manual run).
+--help      Print this; exit 0.
 Needs Python 3.11+ (tomllib). Events go to orchestrator.jsonl (event_log.log, src promote); an idle run writes none; a
 config error or Linear unavailable exits 1, logged once a day (event_log.config_error, event_log.linear_error).
 
@@ -322,6 +325,9 @@ def run_prune(gql, now, promoter, pruner=None):
 
 
 def main(argv, gql=linear_gql, now=None, config_path=None, pruner=None):
+    if argv in (["--help"], ["-h"]):
+        print(HELP.strip())
+        return 0
     os.environ["PATH"] = config.path()
     if any(a not in ("--dry-run", "--now") for a in argv):
         print(HELP.strip(), file=sys.stderr)

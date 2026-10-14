@@ -24,10 +24,25 @@ class Commands(Case):
             cli.main(["--help"])
         self.assertEqual(raised.exception.code, 0)
         self.assertIn(
-            "{router,promote,run,status,show,close,attach-command,resume,writeback}",
+            "{router,promote,prune,run,status,show,close,attach-command,resume,writeback}",
             output.getvalue(),
         )
-        self.assertIn("legacy entry, replaced by TASK-374", output.getvalue())
+
+    def test_router_promote_and_prune_help_exits_0_naming_their_options(self):
+        for command, options in (
+            ("router", ("--now", "--dry-run", "--issue ID", "--brake ROLE")),
+            ("promote", ("--dry-run", "--now")),
+            ("prune", ("--dry-run",)),
+        ):
+            for flag in ("--help", "-h"):
+                with self.subTest(command=command, flag=flag):
+                    output, errors = io.StringIO(), io.StringIO()
+                    with redirect_stdout(output), redirect_stderr(errors):
+                        self.assertEqual(cli.main([command, flag]), 0)
+                    self.assertEqual(errors.getvalue(), "")
+                    self.assertIn(f"agent-pm-linear {command}", output.getvalue())
+                    for option in options:
+                        self.assertIn(option, output.getvalue())
 
     def test_missing_or_unknown_command_is_usage_error(self):
         for arguments in ([], ["outcome"], ["unknown"]):

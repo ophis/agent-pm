@@ -2,7 +2,7 @@
 the team's issues assigned to role accounts, then starts it through the outer (run.py in a detached
 Driver session).
 
-python3 -P -m agent_pm.linear_orchestrator.cli router [--now] [--dry-run] [--issue ID] | --brake ROLE
+agent-pm-linear router [--now] [--dry-run] [--issue ID] | --brake ROLE
 
 (no mode)     One scheduled tick: the hours check, then at most one agent run. Exits 1 a config error or Linear
               unavailable (config-error, linear-error: once a day), else 0.
@@ -13,7 +13,7 @@ python3 -P -m agent_pm.linear_orchestrator.cli router [--now] [--dry-run] [--iss
 --dry-run     With either: print the plan (a tick's with its usage checks); change nothing, start nothing; exit 0.
 --brake ROLE  Print ROLE's client usage; exit 0 if a deep-research round may start, 1 if not or unknown, 2 no such
               role.
-Bad arguments exit 2.
+--help        Print this; exit 0. Bad arguments exit 2.
 
 Events go to orchestrator.jsonl (event_log.log, src router); an idle tick writes none, a usage-blocked
 one only its usage-skip lines."""
@@ -76,7 +76,7 @@ SKEW = timedelta(minutes=5)
 CAP_COMMENT = "Tried 4 times without finishing; needs a look."
 INTERRUPTED = "The previous agent run was interrupted. Moving this issue back to the Todo queue."
 BUSY = "another router is running"
-USAGE = "usage: python3 -P -m agent_pm.linear_orchestrator.cli router [--now] [--dry-run] [--issue ID] | --brake ROLE"
+USAGE = "usage: agent-pm-linear router [--now] [--dry-run] [--issue ID] | --brake ROLE"
 FLAGS = {"--dry-run": "dry", "--now": "now"}
 RUN = ("-P", "-m", "agent_pm.linear_orchestrator.cli", "run")
 DONE = {"completed", "canceled", "duplicate"}
@@ -760,6 +760,9 @@ def main(
     gql = gql or linear_gql
     run = run or config.shell
     keychain = keychain or has_key
+    if argv in (["--help"], ["-h"]):
+        print(__doc__)
+        return 0
     opts = options(argv)
     if opts is None:
         print(USAGE, file=sys.stderr)
