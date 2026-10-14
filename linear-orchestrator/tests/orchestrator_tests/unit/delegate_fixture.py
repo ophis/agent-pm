@@ -2,13 +2,13 @@
 alive while api.live holds its harness name `agent-pm-<role>-<ID>`; a constructed run records
 (role, spec, options) in api.constructed (construct_error raises), its detach in api.detached
 (detach_error raises) with runs.jsonl's text then in api.runs_at_detach, and puts its name in
-api.live.
+api.live; its outcome is api.outcomes' for its issue.
 """
 
 import os
 from dataclasses import replace
 
-from agent_pm.delegate import ConfigError, Delegate, DriverError
+from agent_pm.delegate import ConfigError, Delegate, SessionError
 from agent_pm.linear_orchestrator.engine import runs
 from agent_pm.session import ConfigError as SessionConfigError
 from agent_pm.session import NoRecordedSession, SessionStatus
@@ -67,7 +67,7 @@ def provider(api, cfg):
 
         def alive(self):
             if api.live is None:
-                raise DriverError("agent runs unknown")
+                raise SessionError("agent runs unknown")
             return harness_name(self.entry.role, self.issue) in api.live
 
         def status(self):
@@ -77,7 +77,7 @@ def provider(api, cfg):
             )
 
         def outcome(self):
-            return None
+            return api.outcomes.get(self.issue)
 
         def show(self):
             return api.show(harness_name(self.entry.role, self.issue))

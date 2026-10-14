@@ -23,10 +23,10 @@ from agent_pm.session.engine.types import (
     Access,
     Activity,
     Blocked,
-    DriverError,
     Exited,
     IdleTimeout,
     Mode,
+    SessionError,
     SessionStatus,
     Spec,
     TurnEnd,
@@ -181,7 +181,7 @@ class TuiTest(Live):
         mode = os.stat(self.server.socket).st_mode
         os.chmod(self.server.socket, 0)
         self.addCleanup(os.chmod, self.server.socket, mode)
-        with self.assertRaisesRegex(DriverError, "^tmux sessions unknown: "):
+        with self.assertRaisesRegex(SessionError, "^tmux sessions unknown: "):
             self.session_cls.list("w.*")
         self.assertEqual(handle.state(), "unknown")
         stream.quiet(1.0)
@@ -297,7 +297,7 @@ class SameNameTest(Live):
                         )
                     )
                 )
-            except DriverError as e:
+            except SessionError as e:
                 results.append(e)
 
         def start(*args, **kwargs):

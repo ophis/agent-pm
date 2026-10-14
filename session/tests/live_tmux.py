@@ -13,7 +13,7 @@ import time
 from typing import NamedTuple
 from unittest import mock
 
-from session.tests.case import child_env
+from session.tests.case import PLUGIN_BIN, child_env
 from session.tests.grid import GridCheck
 from session.tests.integration.adapters.claude import fake_claude
 
@@ -99,7 +99,16 @@ class Server:
         self.bin = bin_dir if bin_dir is not None else os.path.join(self.root, "bin")
         os.mkdir(self.bin)
         self.path = fake_claude.install(
-            self.bin, tail=f"{os.path.dirname(self._program)}:/usr/bin:/bin"
+            self.bin,
+            tail=os.pathsep.join(
+                (
+                    PLUGIN_BIN,
+                    os.path.dirname(sys.executable),
+                    os.path.dirname(self._program),
+                    "/usr/bin",
+                    "/bin",
+                )
+            ),
         )
         self.program = os.path.join(self.bin, "tmux")
         launcher = (

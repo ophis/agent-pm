@@ -13,10 +13,10 @@ from agent_pm.session import (
     SIGNALS,
     ConfigError,
     Displayable,
-    DriverError,
     Host,
     HostProcess,
     Hosts,
+    SessionError,
     Terminal,
 )
 
@@ -81,7 +81,7 @@ class HostDefaults(Case):
         process = mock.create_autospec(HostProcess, instance=True)
         process.name = "p"
         self.assertIsNone(HostProcess.token.fget(process))
-        with self.assertRaisesRegex(DriverError, "^session p: its host cannot store a Record"):
+        with self.assertRaisesRegex(SessionError, "^session p: its host cannot store a Record"):
             HostProcess.publish(process, mock.sentinel.record)
 
     def test_descendants_are_its_listed_sessions_unless_it_knows_who_opened_whom(self):

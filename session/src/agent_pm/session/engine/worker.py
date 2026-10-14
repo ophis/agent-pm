@@ -23,10 +23,10 @@ from agent_pm.session.engine.types import (
     Access,
     Blocked,
     ConfigError,
-    DriverError,
     Exited,
     IdleTimeout,
     Mode,
+    SessionError,
     Spec,
 )
 from agent_pm.session.hosts.base import Displayable, HostProcess
@@ -159,14 +159,14 @@ def _private_dir(path: str) -> None:
     os.makedirs(path, 0o700, exist_ok=True)
     found = os.lstat(path)
     if not stat.S_ISDIR(found.st_mode) or found.st_uid != os.getuid():
-        raise DriverError(f"{path}: not a directory of yours")
+        raise SessionError(f"{path}: not a directory of yours")
     os.chmod(path, 0o700)
 
 
 def _read(path: str, what: str) -> bytes:
     data = read_regular(path, limit=STATE_MAX + 1, own=True)
     if data is None or len(data) > STATE_MAX:
-        raise DriverError(f"{what}: {path}: missing, not a regular file of yours, or too large")
+        raise SessionError(f"{what}: {path}: missing, not a regular file of yours, or too large")
     return data
 
 
@@ -201,9 +201,9 @@ class Worker:
         latest = None if latest is None else latest.decode(errors="replace").strip()
         if sid is None:
             if latest is None:
-                raise DriverError(f"{name}: not a worker")
+                raise SessionError(f"{name}: not a worker")
             if not SID.fullmatch(latest):
-                raise DriverError(f"{name}: not a worker: {BY_NAME}/{name} holds no session id")
+                raise SessionError(f"{name}: not a worker: {BY_NAME}/{name} holds no session id")
             sid = latest
         if given and latest not in (None, sid):
             raise ConfigError(f"sid {sid} is not worker {name}'s (its latest: {latest})")
@@ -211,10 +211,10 @@ class Worker:
         try:
             state = WorkerState.from_json(json.loads(data))
         except (ValueError, RecursionError, TypeError, ConfigError) as error:
-            raise DriverError(f"{name}: worker {sid}: bad {STATE_FILE}: {error}") from None
+            raise SessionError(f"{name}: worker {sid}: bad {STATE_FILE}: {error}") from None
         if (state.name, state.sid) != (name, sid):
             mismatch = f"sid {sid} is worker {state.name}'s, not {name}'s"
-            raise ConfigError(mismatch) if given else DriverError(f"{name}: {mismatch}")
+            raise ConfigError(mismatch) if given else SessionError(f"{name}: {mismatch}")
         return cls(state, **kw)
 
     @contextlib.contextmanager
@@ -226,7 +226,7 @@ class Worker:
             with file_lock(os.path.join(workdir, "worker"), own=True):
                 yield
         except OSError as error:
-            raise DriverError(f"{self.state.name}: {workdir}: {error.strerror or error}") from None
+            raise SessionError(f"{self.state.name}: {workdir}: {error.strerror or error}") from None
 
     def check(self, *, prompt: str, resume: bool) -> None:
         """Its sid not another worker's, then Session.preflight; no effects."""
@@ -246,7 +246,7 @@ class Worker:
 
     def start(self, *, prompt: str, resume: bool) -> Record:
         """Start its client, save its state, show it, watch it; then publish its Record and return
-        it. Its client exiting in the watch: DriverError with its last lines, its terminal kept,
+        it. Its client exiting in the watch: SessionError with its last lines, its terminal kept,
         no Record.
         """
         name = self.state.name
@@ -259,16 +259,16 @@ class Worker:
         host = self.session_cls.host(self.state.host)
         try:
             handle = host.attach(name)
-        except DriverError:  # it exited already: the watch reports it
+        except SessionError:  # it exited already: the watch reports it
             handle = None
         self.state = replace(self.state, token=None if handle is None else handle.token)
         try:
             self._save()
-        except (DriverError, OSError) as error:
-            with contextlib.suppress(DriverError, ConfigError):
+        except (SessionError, OSError) as error:
+            with contextlib.suppress(SessionError, ConfigError):
                 session.close()
             detail = error.strerror if isinstance(error, OSError) else error
-            raise DriverError(f"{name}: {detail}; start undone") from None
+            raise SessionError(f"{name}: {detail}; start undone") from None
         if session.displayable:
             self._show(session)
         self._watch(session)
@@ -292,7 +292,7 @@ class Worker:
     def restart(self) -> Record:
         session = self._session()
         if session is None:
-            raise DriverError(f"{self.state.name}: no session to restart; resume starts it")
+            raise SessionError(f"{self.state.name}: no session to restart; resume starts it")
         self.replace(session)
         return self._start_again()
 
@@ -300,7 +300,7 @@ class Worker:
         try:
             return self.start(prompt="", resume=True)
         except ConfigError as error:
-            raise DriverError(
+            raise SessionError(
                 f"{self.state.name}: old session closed, none started: {error}"
             ) from None
 
@@ -315,7 +315,7 @@ class Worker:
             return
         handle.kill()
         if not handle.wait_exit(WAIT):
-            raise DriverError(f"{name}: its old client did not exit; nothing started")
+            raise SessionError(f"{name}: its old client did not exit; nothing started")
 
     def _session(self) -> HostProcess | None:
         """Its Host's session of its name, refused if another's; None when absent."""
@@ -326,7 +326,7 @@ class Worker:
         handle = host.attach(name)
         sid, _ = handle.session_identity()
         if sid != self.state.sid:
-            raise DriverError(f"session {name} is not worker {self.state.sid} (its sid: {sid})")
+            raise SessionError(f"session {name} is not worker {self.state.sid} (its sid: {sid})")
         return handle
 
     def _group(self) -> HostProcess | None:
@@ -346,14 +346,14 @@ class Worker:
         try:
             self.say(f"session {name}: {session.attach_command()}")
             session.show(display=self.state.display)
-        except (DriverError, ConfigError) as error:
+        except (SessionError, ConfigError) as error:
             self.say(f"session {name}: not shown: {error}")
 
     def _watch(self, session: Session) -> None:
         deadline = self.clock() + EARLY
         for event in session.events():
             if isinstance(event, Exited):
-                raise DriverError(self._died(event.returncode))
+                raise SessionError(self._died(event.returncode))
             if isinstance(event, Blocked):
                 self.say(f"session {self.state.name}: waits on a dialog: {event.reason}")
                 return
@@ -367,7 +367,7 @@ class Worker:
             return head
         try:
             screen = host.screen(self.state.name, SCREEN_LINES)
-        except DriverError:
+        except SessionError:
             return head
         lines = [line for line in screen.splitlines() if line.strip()][-REPORT_LINES:]
         return "\n".join([f"{head}; its last lines:", *lines]) if lines else head

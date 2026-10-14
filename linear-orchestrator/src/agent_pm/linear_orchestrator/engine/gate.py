@@ -31,7 +31,7 @@ def exhausted(usage, max_5h=MAX_5H):
 def read_usage(role, cfg):
     try:
         return cfg.delegate_cls.usage(role, overlays=(cfg.core,))
-    except (delegate.ConfigError, delegate.DriverError):
+    except (delegate.ConfigError, delegate.SessionError):
         return None
 
 

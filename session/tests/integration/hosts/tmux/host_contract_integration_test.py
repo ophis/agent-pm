@@ -9,7 +9,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from agent_pm.session import DriverError
+from agent_pm.session import SessionError
 from agent_pm.session.hosts.tmux import TmuxHost
 
 from session.tests import live_tmux
@@ -44,6 +44,13 @@ class TmuxHostContractTest(HostContract, Case):
             return check()
 
         return super().poll(poked, what)
+
+    def assert_terminal_identity(self, env):
+        terminal = self.server.tmux("show-options", "-gv", "default-terminal")
+        self.assertEqual(terminal.returncode, 0, terminal.stderr)
+        self.assertEqual(env["TERM"], terminal.stdout.strip())
+        self.assertEqual(env["TMUX"].split(",")[0], self.server.socket)
+        self.assertRegex(env["TMUX_PANE"], r"\A%[0-9]+\Z")
 
     def test_list_without_a_display_names_every_detached_session_sorted(self):
         first, second = self.fresh(), self.fresh()
@@ -129,7 +136,7 @@ while True: time.sleep(1)
         killed = self.server.tmux("kill-session", "-t", f"={name}")
         self.assertEqual(killed.returncode, 0, killed.stderr)
         self.poll(lambda: name not in self.host.list(), f"{name} gone")
-        with self.assertRaises(DriverError):
+        with self.assertRaises(SessionError):
             self.host.attach(name)
         handle = TmuxHost("tmux").reclaim(token)
         self.assertIsNotNone(handle)
@@ -153,7 +160,7 @@ while True: time.sleep(1)
         process.close()
         self.assertFalse(process.alive())
         self.assertNotIn(name, self.host.list())
-        with self.assertRaises(DriverError):
+        with self.assertRaises(SessionError):
             self.host.attach(name)
 
     def test_a_forged_record_is_none(self):

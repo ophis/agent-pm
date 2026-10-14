@@ -1,5 +1,6 @@
 """The runs log (runs.jsonl): one durable JSON line per run event; its readers: start and resume
-lines as Entries, a sid's start row as its Claim, live limit rows (`limits`), `trim` to KEEP.
+lines as Entries, a sid's start row as its Claim, live limit rows (`limits`), `failed` rows (a new
+run that failed before its LinearRun) as Failures, `trim` to KEEP.
 """
 
 import json
@@ -7,7 +8,7 @@ import os
 from datetime import UTC, datetime, timedelta
 from typing import NamedTuple
 
-from agent_pm.linear_orchestrator.engine.types import UUID_RE, Claim
+from agent_pm.linear_orchestrator.engine.types import UUID_RE, Claim, ConfigError
 from agent_pm.utils import append_line, repo_slug, save, timestamp
 
 KEEP = timedelta(days=7)
@@ -21,7 +22,12 @@ class Entry(NamedTuple):
     sid: str
     role: str
     client: str
-    delegate_kind: str = "harness"
+    delegate_kind: str | None
+
+
+class Failure(NamedTuple):
+    ts: datetime
+    issue: str
 
 
 def note(path, kind, *, now=datetime.now, **fields):
@@ -46,11 +52,8 @@ def _client(d):
     return isinstance(d["client"], str) and d["client"] != ""
 
 
-def _delegate(d):
-    return (
-        isinstance(d.get("delegate_kind", "harness"), str)
-        and d.get("delegate_kind", "harness") != ""
-    )
+def _text(value):
+    return isinstance(value, str) and value != ""
 
 
 def parse_line(line):
@@ -60,7 +63,7 @@ def parse_line(line):
             d["kind"] in ("start", "resume")
             and all(isinstance(d[k], str) for k in ("issue", "sid", "role"))
             and _client(d)
-            and _delegate(d)
+            and ("delegate_kind" not in d or _text(d["delegate_kind"]))
         ):
             ts = datetime.fromisoformat(d["ts"]).astimezone(UTC)
             return Entry(
@@ -70,15 +73,11 @@ def parse_line(line):
                 d["sid"],
                 d["role"],
                 d["client"],
-                d.get("delegate_kind", "harness"),
+                d.get("delegate_kind"),
             )
     except ERRORS:
         pass
     return None
-
-
-def _text(value):
-    return isinstance(value, str) and value != ""
 
 
 CLAIMED = {
@@ -124,13 +123,32 @@ def claim(path, issue, sid) -> Claim:
 def _limit(line, now):
     try:
         d = json.loads(line)
-        if d["kind"] == "limit" and _client(d) and _delegate(d) and isinstance(d["resets_at"], str):
+        if (
+            d["kind"] == "limit"
+            and _client(d)
+            and _text(d["delegate_kind"])
+            and isinstance(d["resets_at"], str)
+        ):
             at = datetime.fromisoformat(d["resets_at"])
             if at.utcoffset() is not None and now < at <= now + KEEP:
-                return (d.get("delegate_kind", "harness"), d["client"]), at
+                return (d["delegate_kind"], d["client"]), at
     except ERRORS:
         pass
     return None
+
+
+def _failure(line):
+    try:
+        d = json.loads(line)
+        if d["kind"] == "failed" and isinstance(d["issue"], str):
+            return Failure(datetime.fromisoformat(d["ts"]).astimezone(UTC), d["issue"])
+    except ERRORS:
+        pass
+    return None
+
+
+def failures(path):
+    return [f for line in _lines(path) if (f := _failure(line))]
 
 
 def _lines(path):
@@ -171,6 +189,8 @@ def trim(path, now):
         if (e := parse_line(line))
         and (e.ts >= now - KEEP or e.sid == newest[e.issue].sid)
         or _limit(line, now)
+        or (f := _failure(line))
+        and f.ts >= now - KEEP
     ]
     if len(keep) < len(lines):
         save(path, "".join(keep))
@@ -181,6 +201,10 @@ def client_of(entries, sid):
     return next((e for e in mine if e.kind == "start"), min(mine, key=lambda e: e.ts)).client
 
 
-def delegate_of(entries, sid):
+def delegate_of(entries, sid) -> str:
+    """Raises ConfigError when a row of the sid has none."""
     mine = [e for e in entries if e.sid == sid]
-    return next((e for e in mine if e.kind == "start"), min(mine, key=lambda e: e.ts)).delegate_kind
+    first = next((e for e in mine if e.kind == "start"), min(mine, key=lambda e: e.ts))
+    if any(e.delegate_kind is None for e in mine):
+        raise ConfigError(f"{first.issue}: session {sid}'s runs.jsonl row has no delegate kind")
+    return first.delegate_kind

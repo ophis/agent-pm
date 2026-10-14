@@ -24,7 +24,6 @@ from agent_pm.session.engine.types import (
     Blocked,
     ClientBound,
     ConfigError,
-    DriverError,
     HookCallback,
     HookKind,
     Key,
@@ -35,6 +34,7 @@ from agent_pm.session.engine.types import (
     Paste,
     Prepared,
     Reply,
+    SessionError,
     SessionInfo,
     Spec,
     TurnEnd,
@@ -45,9 +45,8 @@ from agent_pm.session.hosts.tmux.types import TuiError
 from agent_pm.session.modes import tui, tui_hook
 
 from session.tests import fake_adapter
-from session.tests.case import SRC, Case
+from session.tests.case import PLUGIN_BIN, Case
 from session.tests.fakes.terminal import MemoryHost, ScreenHost
-from session.tests.source_roots import PACKAGE_ROOTS
 from session.tests.tmux_host_support import Base as TmuxBase
 
 NAME = "w1"
@@ -90,10 +89,9 @@ class ScanTui(fake_adapter.FakeTui):
 
     def __init__(self, adapter):
         super().__init__(adapter)
-        self.screens, self.launched, self.roots = [], {}, None
+        self.screens, self.launched = [], {}
 
-    def launch(self, spec, hook, *, source_roots):
-        self.roots = source_roots
+    def launch(self, spec, hook):
         return Launch(("/bin/run", *hook), **self.launched)
 
     def limit(self, screen):
@@ -293,7 +291,7 @@ class AttachTest(Base):
         process = mock.create_autospec(HostProcess, instance=True)
         process.record.return_value = self.process.record()
         self.host.processes[NAME] = process
-        with self.assertRaisesRegex(DriverError, "session w1 has no terminal"):
+        with self.assertRaisesRegex(SessionError, "session w1 has no terminal"):
             tui.TuiRuntime.attach(NAME, state, self.adapter, host=self.host)
         process.close.assert_not_called()
 
@@ -369,7 +367,7 @@ class AttachTest(Base):
         )
 
     def test_a_session_json_without_a_valid_identity_is_no_tui_session_before_host_access(self):
-        with self.assertRaises(DriverError) as caught:
+        with self.assertRaises(SessionError) as caught:
             tui.TuiRuntime.attach(NAME, self.state(cwd=""), self.adapter, host=self.host)
         path = os.path.join(self.dir, "session.json")
         self.assertEqual(str(caught.exception), f"no tui session w1: {path}: bad cwd")
@@ -398,7 +396,7 @@ class AttachTest(Base):
                         NAME, self.state(**{field: value}), self.adapter, host=self.host
                     ),
                 ):
-                    with self.assertRaises(DriverError) as caught:
+                    with self.assertRaises(SessionError) as caught:
                         call()
                     self.assertEqual(
                         str(caught.exception), f"no tui session w1: {path}: bad {field}"
@@ -455,12 +453,12 @@ class AttachTest(Base):
                 raise ConfigError("no recovery state")
 
         self.adapter.run = Unrestorable(self.adapter)
-        with self.assertRaises(DriverError) as caught:
+        with self.assertRaises(SessionError) as caught:
             self.attach(record("tool"))
         self.assertEqual(str(caught.exception), "no tui session w1: no recovery state")
         self.assertEqual(self.host.calls.mock_calls, [mock.call.list(None), mock.call.attach(NAME)])
         self.adapter.run = None
-        with self.assertRaises(DriverError) as caught:
+        with self.assertRaises(SessionError) as caught:
             self.attach()
         self.assertEqual(str(caught.exception), "no tui session w1: client 'fake' has no tui mode")
         self.assertEqual(self.host.calls.mock_calls, [])
@@ -477,14 +475,14 @@ class AttachTest(Base):
         for sid in ("other", None):
             with self.subTest(sid=sid):
                 self.host.create(NAME, sid)
-                with self.assertRaisesRegex(DriverError, r"\Ano tui session w1\Z"):
+                with self.assertRaisesRegex(SessionError, r"\Ano tui session w1\Z"):
                     self.attach()
         self.host.processes.clear()
-        with self.assertRaisesRegex(DriverError, r"\Ano tui session w1\Z"):
+        with self.assertRaisesRegex(SessionError, r"\Ano tui session w1\Z"):
             self.attach()
         self.host.calls.attach.assert_not_called()
         self.host.create(NAME, SID).calls.session_identity.return_value = (None, None)
-        with self.assertRaisesRegex(DriverError, r"\Ano tui session w1\Z"):
+        with self.assertRaisesRegex(SessionError, r"\Ano tui session w1\Z"):
             self.attach()
 
     def test_attach_checks_the_private_identity_of_its_captured_terminal(self):
@@ -492,7 +490,7 @@ class AttachTest(Base):
         old.calls.session_identity.side_effect = lambda: self.host.create(
             NAME, "other"
         ).session_identity()
-        with self.assertRaisesRegex(DriverError, r"\Ano tui session w1\Z"):
+        with self.assertRaisesRegex(SessionError, r"\Ano tui session w1\Z"):
             self.attach()
         self.host.calls.attach.assert_called_once_with(NAME)
 
@@ -524,6 +522,16 @@ class StartTest(Base):
         self.assertEqual(self.recorded, [])
         self.host.calls.terminal.assert_not_called()
 
+    def test_without_agent_pm_session_on_path_nothing_starts(self):
+        with (
+            mock.patch.dict(os.environ, {"PATH": "/usr/bin:/bin"}),
+            self.assertRaisesRegex(
+                ConfigError, f"tui session {NAME}: agent-pm-session is not on PATH"
+            ),
+        ):
+            self.start()
+        self.nothing_hosted()
+
     def nothing_hosted(self):
         self.host.calls.terminal.assert_not_called()
         self.host.calls.attach.assert_not_called()
@@ -554,7 +562,7 @@ class StartTest(Base):
             (
                 NAME,
                 Launch(
-                    ("/bin/run", *tui._Store(NAME, host=self.host).hook_argv(PACKAGE_ROOTS)),
+                    ("/bin/run", *tui._Store(NAME, host=self.host).hook_argv()),
                     cwd=self.tmp,
                     env=self.prepared.env,
                 ),
@@ -563,7 +571,6 @@ class StartTest(Base):
         self.assertEqual(call.kwargs["events"], self.events)
         self.assertEqual(call.kwargs["metadata"]["sid"], SID)
         self.assertEqual(call.kwargs["metadata"]["client"], "fake")
-        self.assertEqual(self.run.roots, PACKAGE_ROOTS)
         self.assertEqual(
             (mode.name, mode.prepared.info.sid, mode._store.dir), (NAME, SID, self.dir)
         )
@@ -598,8 +605,8 @@ class StartTest(Base):
         self.host.calls.list.side_effect = lambda _display: held.append(self.locked()) or []
         self.host.calls.terminal.side_effect = lambda *_args, **_kwargs: held.append(self.locked())
         self.start()
-        self.host.calls.terminal.side_effect = DriverError("host launch failed")
-        with self.assertRaisesRegex(DriverError, "host launch failed"):
+        self.host.calls.terminal.side_effect = SessionError("host launch failed")
+        with self.assertRaisesRegex(SessionError, "host launch failed"):
             self.start()
         self.assertEqual((held, self.locked()), ([True, True, True], False))
 
@@ -633,13 +640,25 @@ class StartTest(Base):
         self.run.launched = {"env": {"LAUNCH_SET": "1"}, "unset": ("LAUNCH_DROP",)}
         with mock.patch.dict(
             os.environ,
-            {"HOME": os.environ["HOME"], "INNER_ID": "i", "LAUNCH_DROP": "x", "KEEP": "k"},
+            {
+                "HOME": os.environ["HOME"],
+                "PATH": PLUGIN_BIN,
+                "INNER_ID": "i",
+                "LAUNCH_DROP": "x",
+                "KEEP": "k",
+            },
             clear=True,
         ):
             self.start()
         self.assertEqual(
             self.host.calls.terminal.call_args.args[1].env,
-            {"HOME": os.environ["HOME"], "KEEP": "k", "LAUNCH_SET": "1", "PWD": self.tmp},
+            {
+                "HOME": os.environ["HOME"],
+                "PATH": PLUGIN_BIN,
+                "KEEP": "k",
+                "LAUNCH_SET": "1",
+                "PWD": self.tmp,
+            },
         )
 
     def test_a_bad_name_given_or_made_from_the_sid_is_refused_before_host_launch_or_a_path(self):
@@ -667,10 +686,10 @@ class StartTest(Base):
         self.nothing_hosted()
 
     def test_an_unavailable_host_is_a_driver_error_with_nothing_started(self):
-        failure = DriverError("host unavailable")
+        failure = SessionError("host unavailable")
         self.host.calls.validate.side_effect = failure
         with self.assertRaisesRegex(
-            DriverError, rf"\Acannot start tui session {NAME}: host unavailable\Z"
+            SessionError, rf"\Acannot start tui session {NAME}: host unavailable\Z"
         ) as caught:
             self.start(events=None)
         self.assertIs(caught.exception.__cause__, failure)
@@ -695,8 +714,8 @@ class StartTest(Base):
         self,
     ):
         os.makedirs(os.path.join(self.root, "w2"))
-        self.host.calls.terminal.side_effect = DriverError("tmux: boom")
-        with self.assertRaises(DriverError) as caught:
+        self.host.calls.terminal.side_effect = SessionError("tmux: boom")
+        with self.assertRaises(SessionError) as caught:
             self.start()
         self.assertEqual(str(caught.exception), "cannot start tui session w1: tmux: boom")
         self.assertEqual(len(self.recorded), 1)
@@ -710,8 +729,8 @@ class StartTest(Base):
             os.mkdir(self.dir)
             open(os.path.join(self.dir, "theirs"), "w").close()
 
-        self.host.calls.terminal.side_effect = DriverError("tmux: boom")
-        with self.assertRaises(DriverError):
+        self.host.calls.terminal.side_effect = SessionError("tmux: boom")
+        with self.assertRaises(SessionError):
             self.start(record=swap)
         self.assertEqual(os.listdir(self.dir), ["theirs"])
 
@@ -732,9 +751,9 @@ class StartTest(Base):
                 self.assertFalse(self.locked())
 
     def test_a_terminal_acquisition_failure_leaves_no_session(self):
-        self.host.calls.terminal.side_effect = DriverError("terminal could not be acquired")
+        self.host.calls.terminal.side_effect = SessionError("terminal could not be acquired")
         with self.assertRaisesRegex(
-            DriverError, r"\Acannot start tui session w1: terminal could not be acquired\Z"
+            SessionError, r"\Acannot start tui session w1: terminal could not be acquired\Z"
         ):
             self.start()
         self.assertEqual(len(self.recorded), 1)
@@ -743,12 +762,12 @@ class StartTest(Base):
 
     def test_terminal_acquisition_failure_does_not_wait_for_its_held_lock(self):
         caught = []
-        self.host.calls.terminal.side_effect = DriverError("terminal could not be acquired")
+        self.host.calls.terminal.side_effect = SessionError("terminal could not be acquired")
 
         def start():
             try:
                 self.start()
-            except DriverError as error:
+            except SessionError as error:
                 caught.append(str(error))
 
         thread = threading.Thread(target=start, daemon=True)
@@ -797,7 +816,7 @@ class SnapshotTest(Base):
                 if ok:
                     self.assertEqual(tui.TuiRuntime.snapshot(NAME)["client"], client)
                 else:
-                    with self.assertRaises(DriverError) as caught:
+                    with self.assertRaises(SessionError) as caught:
                         tui.TuiRuntime.snapshot(NAME)
                     path = os.path.join(self.dir, "session.json")
                     self.assertEqual(
@@ -805,7 +824,7 @@ class SnapshotTest(Base):
                     )
 
     def test_missing_or_invalid_is_a_driver_error(self):
-        with self.assertRaisesRegex(DriverError, r"\Ano tui session w1: "):
+        with self.assertRaisesRegex(SessionError, r"\Ano tui session w1: "):
             tui.TuiRuntime.snapshot(NAME)
         bad = {
             "words": {"stop": "dead"},
@@ -823,7 +842,7 @@ class SnapshotTest(Base):
                 with self.subTest(field=field, missing=field not in state):
                     self.write_state(state)
                     with self.assertRaisesRegex(
-                        DriverError, rf"\Ano tui session w1: .*bad {field}"
+                        SessionError, rf"\Ano tui session w1: .*bad {field}"
                     ):
                         tui.TuiRuntime.snapshot(NAME)
         path = os.path.join(self.dir, "session.json")
@@ -836,13 +855,13 @@ class SnapshotTest(Base):
         ):
             with self.subTest(state=state):
                 self.write_state(state)
-                with self.assertRaises(DriverError) as caught:
+                with self.assertRaises(SessionError) as caught:
                     tui.TuiRuntime.snapshot(NAME)
                 self.assertEqual(str(caught.exception), f"no tui session w1: {path}: bad {field}")
         for data in (b"", b"[]", b"not json"):
             with self.subTest(data):
                 self.write_state(data)
-                with self.assertRaisesRegex(DriverError, r"\Ano tui session w1: "):
+                with self.assertRaisesRegex(SessionError, r"\Ano tui session w1: "):
                     tui.TuiRuntime.snapshot(NAME)
 
     def test_a_session_json_that_is_no_regular_file_is_refused_without_blocking(self):
@@ -871,7 +890,7 @@ class SnapshotTest(Base):
     def refused(self) -> bool:
         try:
             tui.TuiRuntime.snapshot(NAME)
-        except DriverError:
+        except SessionError:
             return True
         return False
 
@@ -970,7 +989,7 @@ class BoundTest(Base):
         self.host.create(NAME, SID)
         self.assertEqual(mode.state(), Liveness.ABSENT)
         for call in (lambda: mode.send("hi"), mode.screen):
-            with self.assertRaisesRegex(DriverError, r"\Atui session w1 is not running\Z"):
+            with self.assertRaisesRegex(SessionError, r"\Atui session w1 is not running\Z"):
                 call()
         mode._terminal.calls.send.assert_not_called()
         self.host.calls.screen.assert_not_called()
@@ -1007,7 +1026,7 @@ class SwapTest(Base):
             return True
 
         original.calls.alive.side_effect = replace
-        with self.assertRaisesRegex(DriverError, "terminal w1 is not running"):
+        with self.assertRaisesRegex(SessionError, "terminal w1 is not running"):
             mode.send("hi")
         self.host.processes[NAME].calls.send.assert_not_called()
         original.calls.send.assert_not_called()
@@ -1020,7 +1039,7 @@ class SwapTest(Base):
             return True
 
         mode._terminal.calls.alive.side_effect = replace
-        with self.assertRaises(DriverError):
+        with self.assertRaises(SessionError):
             mode.screen()
         self.host.calls.screen.assert_not_called()
 
@@ -1065,7 +1084,7 @@ class SendScreenTest(Base):
             mode._terminal.calls.send.call_args_list,
             [mock.call(Paste("hello")), mock.call(Key("Enter"))],
         )
-        with self.assertRaisesRegex(DriverError, r"\Ahost selected cannot display\Z"):
+        with self.assertRaisesRegex(SessionError, r"\Ahost selected cannot display\Z"):
             mode.screen()
         self.assertNotIn("screen", [call[0] for call in self.host.calls.mock_calls])
 
@@ -1096,7 +1115,7 @@ class SendScreenTest(Base):
         mode = self.started()
         mode._terminal.calls.alive.return_value = False
         for call in (lambda: mode.send("hi"), mode.screen):
-            with self.assertRaisesRegex(DriverError, r"\Atui session w1 is not running\Z"):
+            with self.assertRaisesRegex(SessionError, r"\Atui session w1 is not running\Z"):
                 call()
         mode._terminal.calls.send.assert_not_called()
         self.host.calls.screen.assert_not_called()
@@ -1108,8 +1127,8 @@ class SendScreenTest(Base):
             (self.host.calls.screen, mode.screen),
         ):
             with self.subTest(method=method):
-                method.side_effect = DriverError("host operation failed")
-                with self.assertRaisesRegex(DriverError, r"\Ahost operation failed\Z"):
+                method.side_effect = SessionError("host operation failed")
+                with self.assertRaisesRegex(SessionError, r"\Ahost operation failed\Z"):
                     call()
                 method.side_effect = None
 
@@ -1164,12 +1183,12 @@ class CloseStopTest(Base):
 
     def test_a_kill_that_fails_on_a_live_or_unknown_session_is_a_driver_error(self):
         mode = self.started()
-        mode._terminal.calls.close.side_effect = DriverError("host close failed")
+        mode._terminal.calls.close.side_effect = SessionError("host close failed")
         for state in (Liveness.LIVE, Liveness.UNKNOWN):
             with self.subTest(state=state):
                 mode._terminal.calls.state.return_value = state
                 with self.assertRaisesRegex(
-                    DriverError, r"\Acannot close tui session w1: host close failed\Z"
+                    SessionError, r"\Acannot close tui session w1: host close failed\Z"
                 ):
                     tui.TuiRuntime.close(NAME, host=self.host)
                 self.assertTrue(os.path.isdir(self.dir))
@@ -1405,7 +1424,7 @@ class ScanTest(Base):
         mode = self.started()
         for method in (mode._terminal.calls.activity, mode._terminal.calls.mark):
             with self.subTest(method=method):
-                method.side_effect = DriverError("host mark failed")
+                method.side_effect = SessionError("host mark failed")
                 self.assertEqual(
                     self.scans(mode, "Sign in", ""), [[Blocked("Sign in")], [Activity("")]]
                 )
@@ -1440,7 +1459,7 @@ class ScanTest(Base):
 
     def test_a_failed_read_is_no_event(self):
         mode = self.started()
-        self.host.calls.screen.side_effect = DriverError("tmux: gone")
+        self.host.calls.screen.side_effect = SessionError("tmux: gone")
         self.assertEqual(mode.poll(0), ([], False))
 
 
@@ -1485,13 +1504,23 @@ class PathsTest(Base):
         self.assertEqual(tui.TUI_DIR, "~/.agent-pm/tui")
         self.assertEqual(tui._Store(NAME, host=self.host).dir, self.dir)
 
-    def test_its_hook_argv_runs_tui_hook_isolated_on_its_dir(self):
-        hook = os.path.join(SRC["session"], "agent_pm", "session", "modes", "tui_hook.py")
-        argv = tui._Store(NAME, host=self.host).hook_argv(PACKAGE_ROOTS)
-        self.assertEqual(argv, (sys.executable, "-I", argv[2], self.dir, argv[4]))
-        self.assertEqual(json.loads(argv[4]), [SRC["session"], SRC["utils"]])
-        self.assertTrue(os.path.isabs(argv[2]))
-        self.assertTrue(os.path.samefile(argv[2], hook))
+    def test_its_hook_argv_runs_the_plugins_agent_pm_session_hook_on_its_dir(self):
+        self.assertEqual(
+            tui._Store(NAME, host=self.host).hook_argv(),
+            (os.path.join(PLUGIN_BIN, "agent-pm-session"), "hook", self.dir),
+        )
+
+    def test_its_hook_argv_names_the_command_its_current_path_finds(self):
+        other = os.path.join(self.tmp, "other plugin", "bin")
+        os.makedirs(other)
+        command = os.path.join(other, "agent-pm-session")
+        with open(command, "w", encoding="utf-8") as f:
+            f.write("#!/bin/sh\n")
+        os.chmod(command, 0o755)
+        with mock.patch.dict(os.environ, {"PATH": other + os.pathsep + os.environ["PATH"]}):
+            self.assertEqual(
+                tui._Store(NAME, host=self.host).hook_argv(), (command, "hook", self.dir)
+            )
 
 
 class PrepareTest(Base):
@@ -1590,12 +1619,12 @@ class PrepareTest(Base):
     def test_a_running_or_unknown_session_is_refused_with_nothing_made(self):
         for failure, message in (
             (None, "tui session w1 is running"),
-            (DriverError("host state unknown"), "host state unknown"),
+            (SessionError("host state unknown"), "host state unknown"),
         ):
             with self.subTest(failure=failure):
                 process = self.host.create(NAME, SID)
                 process.calls.alive.side_effect = failure
-                with self.assertRaisesRegex(DriverError, message):
+                with self.assertRaisesRegex(SessionError, message):
                     self.start()
                 self.assertNoSessionDir()
         self.assertEqual(self.recorded, [])
@@ -1613,7 +1642,7 @@ class PrepareTest(Base):
         ):
             with (
                 self.subTest(bad),
-                self.assertRaisesRegex(DriverError, f"\\Atui session w1: bad {bad}"),
+                self.assertRaisesRegex(SessionError, f"\\Atui session w1: bad {bad}"),
             ):
                 self.adapter.run = run(self.adapter)
                 self.adapter.run.launched = launched
@@ -1650,7 +1679,7 @@ class PrepareTest(Base):
                 make()
                 with (
                     mock.patch("os.getuid", return_value=uid if uid is not None else os.getuid()),
-                    self.assertRaisesRegex(DriverError, re.escape(self.root)),
+                    self.assertRaisesRegex(SessionError, re.escape(self.root)),
                 ):
                     self.start(events=None)
                 self.assertTrue(os.path.lexists(self.root))
@@ -1680,7 +1709,7 @@ class PrepareTest(Base):
             with self.subTest(case):
                 make()
                 with self.assertRaisesRegex(
-                    DriverError, rf"\A{re.escape(self.dir)}: not a directory\Z"
+                    SessionError, rf"\A{re.escape(self.dir)}: not a directory\Z"
                 ):
                     self.start()
                 self.assertTrue(os.path.lexists(self.dir))
@@ -1696,7 +1725,7 @@ class PrepareTest(Base):
                 open(os.path.join(path, "theirs"), "w").close()
             return real(path, mode, **kwargs)
 
-        with mock.patch("os.mkdir", racing), self.assertRaises(DriverError) as caught:
+        with mock.patch("os.mkdir", racing), self.assertRaises(SessionError) as caught:
             self.start()
         self.assertEqual(str(caught.exception), "tui session w1 is starting")
         self.assertEqual(os.listdir(self.dir), ["theirs"])
@@ -1706,7 +1735,7 @@ class PrepareTest(Base):
             mock.patch(
                 "tempfile.mkstemp", side_effect=OSError(errno.ENOSPC, "No space left on device")
             ),
-            self.assertRaisesRegex(DriverError, "No space left on device"),
+            self.assertRaisesRegex(SessionError, "No space left on device"),
         ):
             self.start()
         self.assertNoSessionDir()
@@ -1754,7 +1783,7 @@ class LockTest(Base):
             with self.subTest(case):
                 make()
                 with (
-                    self.assertRaisesRegex(DriverError, rf"\A{re.escape(path)}: "),
+                    self.assertRaisesRegex(SessionError, rf"\A{re.escape(path)}: "),
                     tui._Store(NAME, host=self.host)._locked(),
                 ):
                     pass
@@ -1801,12 +1830,12 @@ class TransportErrorTest(TmuxBase):
         os.mkdir(workdir)
 
         class Launchable(ScanTui):
-            def launch(self, spec, hook, *, source_roots):
+            def launch(self, spec, hook):
                 return Launch((sys.executable,))
 
         adapter = TuiAdapter({"tui": True})
         adapter.run = Launchable(adapter)
-        with self.assertRaises(DriverError) as caught:
+        with self.assertRaises(SessionError) as caught:
             tui.TuiRuntime.start(
                 Spec(workdir=workdir, name=NAME, client="fake", sid=SID),
                 adapter,
@@ -1820,6 +1849,6 @@ class TransportErrorTest(TmuxBase):
         self.controlled, self.kind = False, None
         self.tmux.listing.return_value = [{"name": NAME, "display": None}]
         self.tmux.kill.side_effect = TuiError("tmux: boom")
-        with self.assertRaises(DriverError) as caught:
+        with self.assertRaises(SessionError) as caught:
             tui.TuiRuntime.close(NAME, host=self.host)
         self.assertEqual(str(caught.exception), "cannot close tui session w1: tmux: boom")

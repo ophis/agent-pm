@@ -44,7 +44,7 @@ NAMES = (
     "NotDisplayable",
     "SessionStatusLog",
     "Usage",
-    "DriverError",
+    "SessionError",
     "ConfigError",
     "Spec",
     "Access",

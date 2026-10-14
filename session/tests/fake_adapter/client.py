@@ -4,12 +4,13 @@ Logs its argv, pid, cwd and env (PWD, FAKE_ENV, PYTHONPATH) as a JSON line, then
 a JSON list of steps (or {"steps": [...], "resume": [...]}: resume's run on --resume): {"out": obj}
 prints obj as JSON, {"raw": text} prints text, {"err": text} to stderr, {"sleep": s}, {"exit": n},
 {"hook": label, "payload": obj} runs HOOK + [label] with obj on stdin, {"read": true} reads a stdin
-line; then exits 0.
+line, {"run": argv} runs argv quietly and logs {ran, found (PATH's argv[0]), rc}; then exits 0.
 """
 
 import argparse
 import json
 import os
+import shutil
 import subprocess
 import sys
 import time
@@ -42,10 +43,10 @@ def main() -> int:
     steps = (
         scenario["resume"] if args.resume and "resume" in scenario else scenario.get("steps", [])
     )
-    return execute(steps, args.hook)
+    return execute(steps, args.hook, args.log)
 
 
-def execute(steps, hook):
+def execute(steps, hook, log):
     for step in steps:
         if "out" in step:
             print(json.dumps(step["out"]), flush=True)
@@ -63,6 +64,14 @@ def execute(steps, hook):
             )
         elif "read" in step:
             sys.stdin.readline()
+        elif "run" in step:
+            argv = step["run"]
+            done = subprocess.run(argv, capture_output=True, stdin=subprocess.DEVNULL)
+            with open(log, "a", encoding="utf-8") as f:
+                f.write(
+                    json.dumps({"ran": argv, "found": shutil.which(argv[0]), "rc": done.returncode})
+                    + "\n"
+                )
     return 0
 
 

@@ -14,7 +14,7 @@ from unittest import mock
 import agent_pm.delegate
 from agent_pm.delegate import Begun, ConfigError, Outcome, Result
 from agent_pm.delegate.engine import harness
-from agent_pm.session import SIGNALS, DriverError
+from agent_pm.session import SIGNALS, SessionError
 from agent_pm.utils import Stopped
 
 from delegate.tests.case import Case
@@ -118,8 +118,8 @@ class Entry(Case):
         self.assertEqual(self.owner.announced, [None])
 
     def test_another_exception_propagates_announcing_no_result(self):
-        with self.assertRaises(DriverError):
-            self.main(DriverError("host gone"))
+        with self.assertRaises(SessionError):
+            self.main(SessionError("host gone"))
         self.assertEqual(self.owner.announced, [None])
 
     def test_signals_are_unblocked_only_while_the_run_executes(self):

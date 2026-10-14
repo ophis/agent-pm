@@ -37,7 +37,6 @@ from agent_pm.session import (
     SIGNALS,
     Access,
     Displayable,
-    DriverError,
     Host,
     HostProcess,
     Launch,
@@ -48,6 +47,7 @@ from agent_pm.session import (
     Resumable,
     RunLog,
     Session,
+    SessionError,
     SessionStatus,
     SessionStatusLog,
     Usage,
@@ -176,7 +176,7 @@ class HarnessDelegate(Delegate):
             )
             display = session_cls.display(display, host=agent_host.name)
             events = harness.events_path(spec.events)
-        except (OSError, ValueError, SessionConfigError, DriverError) as error:
+        except (OSError, ValueError, SessionConfigError, SessionError) as error:
             raise ConfigError(str(error)) from None
         if harness.name not in hosts:
             raise ConfigError(
@@ -225,7 +225,7 @@ class HarnessDelegate(Delegate):
             harness.validate(
                 self._state.harness_name, self._harness_launch(self._state), display=display
             )
-        except (SessionConfigError, DriverError) as error:
+        except (SessionConfigError, SessionError) as error:
             raise ConfigError(str(error)) from None
 
     def _persist_new(self) -> None:
@@ -237,7 +237,7 @@ class HarnessDelegate(Delegate):
                     self._state = replace(self._state, attempt=self._replacing(payload))
                 try:
                     self.driver.preflight(self._state.plan.session)
-                except (SessionConfigError, DriverError) as error:
+                except (SessionConfigError, SessionError) as error:
                     raise ConfigError(str(error)) from None
                 self._save(self._state)
         except OSError as error:
@@ -258,7 +258,7 @@ class HarnessDelegate(Delegate):
         if agent is not None:
             try:
                 agent.close()
-            except DriverError as error:
+            except SessionError as error:
                 raise ConfigError(str(error)) from None
         return previous.attempt + 1 if previous.plan.sid == self._state.plan.sid else 1
 
@@ -404,7 +404,7 @@ class HarnessDelegate(Delegate):
             view.session_cls.host(view._state.host)
             view.session_cls.host(view._state.harness_host)
             view._harness_override = None
-        except (OSError, ValueError, SessionConfigError, DriverError) as error:
+        except (OSError, ValueError, SessionConfigError, SessionError) as error:
             raise ConfigError(str(error)) from None
         view.driver = AgentDriver(
             view.session_cls,
@@ -459,7 +459,7 @@ class HarnessDelegate(Delegate):
             return agent
         try:
             return self.session_cls.attach(state.agent_name, host=state.host)
-        except DriverError:
+        except SessionError:
             return None
         except SessionConfigError as error:
             raise ConfigError(str(error)) from None
@@ -475,7 +475,7 @@ class HarnessDelegate(Delegate):
                 else self.session_cls.host(host_name)
             )
             return host.attach(name)
-        except DriverError:
+        except SessionError:
             return None
         except SessionConfigError as error:
             raise ConfigError(str(error)) from None
@@ -566,8 +566,8 @@ class HarnessDelegate(Delegate):
         if process is not None:
             try:
                 process.close()
-            except DriverError as error:
-                raise DriverError(f"close {state.harness_name}: {error}") from error
+            except SessionError as error:
+                raise SessionError(f"close {state.harness_name}: {error}") from error
 
     def forget(self) -> None:
         self.store.remove()
@@ -743,14 +743,14 @@ class HarnessDelegate(Delegate):
 
     def _started(self, state: _State) -> None:
         """Tui: waits, outside the mutex, until the harness has this run's agent session live;
-        DriverError, its harness and agent session closed, when the harness ends first, a Host
+        SessionError, its harness and agent session closed, when the harness ends first, a Host
         fails or TUI_START_TIMEOUT passes. A same-named session of another sid is not this run's.
         """
         if state.plan.spec.mode != Mode.TUI:
             return
         deadline = time.monotonic() + TUI_START_TIMEOUT
         harness = agent = None
-        with contextlib.suppress(DriverError):
+        with contextlib.suppress(SessionError):
             while True:
                 agent = self._agent(state)
                 agent = agent if agent is not None and agent.sid == state.plan.sid else None
@@ -762,9 +762,9 @@ class HarnessDelegate(Delegate):
                 time.sleep(TUI_POLL)
         for session in (harness, agent):
             if session is not None:
-                with contextlib.suppress(DriverError):
+                with contextlib.suppress(SessionError):
                     session.close()
-        raise DriverError(f"tui session {state.agent_name} did not start")
+        raise SessionError(f"tui session {state.agent_name} did not start")
 
     def resume(self, *, mode: str | None = None) -> Record:
         """Continues in `mode` (headless or tui), else the recorded one; the new mode is recorded."""

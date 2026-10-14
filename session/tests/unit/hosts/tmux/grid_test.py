@@ -1,13 +1,10 @@
 """Grid selection, retile scheduling and bounded lock coordination."""
 
-import base64
 import contextlib
 import errno
 import io
-import json
 import os
 import re
-import sys
 import tempfile
 import time
 import unittest
@@ -18,17 +15,16 @@ from agent_pm.session.hosts.tmux import grid as grids
 from agent_pm.session.hosts.tmux import layout as layouts
 from agent_pm.session.hosts.tmux import placement, types
 
-from session.tests.case import SRC, Case
+from session.tests.case import PLUGIN_BIN, Case
 from session.tests.tmux_fixtures import (
     ATTACH,
+    COMMAND,
     HOSTS,
     INSIDE,
     MODE_HOOKS,
     OWN,
     PGREP,
-    PY,
     RETILE_ERROR,
-    SCRIPT,
     SESSIONS,
     SOCK,
     WATCH,
@@ -73,9 +69,6 @@ class GridOpenTest(Case):
                 ["tile", window, per_column]
             )
         )
-        for p in (unittest.mock.patch.object(sys, "executable", PY),):
-            p.start()
-            self.addCleanup(p.stop)
 
     def fake(
         self, windows, rows=(MGR,), own="mgr", clients=f"5 /dev/ttys004 %9 0 {SOCK}\n", **results
@@ -103,10 +96,10 @@ class GridOpenTest(Case):
     def show(self, fake, env=INSIDE, retile="all", **kw):
         """show s; retile all unless given, the mode whose hooks opened() asserts by default."""
         self.stderr = io.StringIO()
-        script = kw.pop("script", SCRIPT)
+        command = kw.pop("command", COMMAND)
         with environ(**env), which(), redirect_stderr(self.stderr):
             return placement.show(
-                "s", retile=retile, **kw, proc=fake, tile_window=self.tile, script=script
+                "s", retile=retile, **kw, proc=fake, tile_window=self.tile, command=command
             )
 
     def split(self, flag, pane, window="@1"):
@@ -358,35 +351,42 @@ class GridOpenTest(Case):
         self.assertEqual(self.show(fake), "tmux would misread '/tmp/a#b'" + WATCH)
         self.assertEqual(fake.calls[3:], [grid_read("%3"), mute("@1"), unmute("@1")])
 
-    def test_hooks_need_paths_tmux_takes_verbatim(self):
-        for target, name, bad in (
-            (sys, "executable", "/a b/python3"),
-            (sys, "executable", "/a#b/python3"),
-            (sys, "executable", "/a/python3;"),
-            (sys, "executable", "/a/pythön"),
-            (sys, "executable", ""),
-            (sys, "executable", None),
-            (None, "script", "/a'b/tmux_host.py"),
-            (None, "script", "/a$(x)/tmux_host.py"),
+    def test_hooks_need_a_command_tmux_takes_verbatim(self):
+        for bad in (
+            "/a b/agent-pm-session",
+            "/a#b/agent-pm-session",
+            "/a/agent-pm-session;",
+            "/a/agënt-pm-session",
+            "/a'b/agent-pm-session",
+            "/a$(x)/agent-pm-session",
         ):
-            with (
-                self.subTest(name=name, bad=bad),
-                (
-                    unittest.mock.patch.object(target, name, bad)
-                    if target is not None
-                    else contextlib.nullcontext()
-                ),
-            ):
+            with self.subTest(bad=bad):
                 fake = self.fake({"%3": self.NEW})
-                self.assertIsNone(self.show(fake, **({"script": bad} if target is None else {})))
+                self.assertIsNone(self.show(fake, command=bad))
                 self.assertEqual(
                     fake.calls[-4:],
                     [*record("mgr", "%20"), grid_set("@1", "%3", hooks=False), ["tile", "@1", 3]],
                 )
                 self.assertEqual(
                     self.stderr.getvalue(),
-                    ATTACH + f"tui: show: grid: hooks: {bad or ''}: tmux would misread it\n",
+                    ATTACH + f"tui: show: grid: hooks: {bad}: tmux would misread it\n",
                 )
+
+    def test_hooks_run_the_agent_pm_session_path_finds_else_none(self):
+        found = os.path.join(PLUGIN_BIN, "agent-pm-session")
+        fake = self.fake({"%3": self.NEW})
+        self.assertIsNone(self.show(fake, {**INSIDE, "PATH": PLUGIN_BIN}, command=None))
+        self.assertEqual(fake.calls[-2], grid_set("@1", "%3", command=found))
+        fake = self.fake({"%3": self.NEW})
+        self.assertIsNone(self.show(fake, {**INSIDE, "PATH": "/usr/bin:/bin"}, command=None))
+        self.assertEqual(
+            fake.calls[-4:],
+            [*record("mgr", "%20"), grid_set("@1", "%3", hooks=False), ["tile", "@1", 3]],
+        )
+        self.assertEqual(
+            self.stderr.getvalue(),
+            ATTACH + "tui: show: grid: hooks: agent-pm-session is not on PATH\n",
+        )
 
     def test_retile_modes(self):
         # None: the default, open-close
@@ -410,14 +410,13 @@ class GridOpenTest(Case):
     def test_retile_modes_with_a_hook_path_tmux_would_misread(self):
         # all and open-close: the notice, no hook set, the others unset; off: no hook to set, no
         # notice
-        notice = "tui: show: grid: hooks: /a b/python3: tmux would misread it\n"
-        with unittest.mock.patch.object(sys, "executable", "/a b/python3"):
-            for retile, printed in (("all", notice), ("open-close", notice), ("off", "")):
-                with self.subTest(retile=retile):
-                    fake = self.fake({"%3": self.NEW})
-                    self.assertIsNone(self.show(fake, retile=retile))
-                    self.assertEqual(fake.calls[6:], opening_commands(retile=retile, hooks=False))
-                    self.assertEqual(self.stderr.getvalue(), ATTACH + printed)
+        notice = "tui: show: grid: hooks: /a b/agent-pm-session: tmux would misread it\n"
+        for retile, printed in (("all", notice), ("open-close", notice), ("off", "")):
+            with self.subTest(retile=retile):
+                fake = self.fake({"%3": self.NEW})
+                self.assertIsNone(self.show(fake, retile=retile, command="/a b/agent-pm-session"))
+                self.assertEqual(fake.calls[6:], opening_commands(retile=retile, hooks=False))
+                self.assertEqual(self.stderr.getvalue(), ATTACH + printed)
 
     def test_bad_retile_raises_before_tmux(self):
         for bad in ("x", True, 1, ""):
@@ -426,7 +425,7 @@ class GridOpenTest(Case):
                 for call in (
                     lambda *, bad=bad, fake=fake: self.show(fake, retile=bad),
                     lambda *, bad=bad, fake=fake: placement.open_pane(
-                        "s", retile=bad, proc=fake, script=placement.__file__
+                        "s", retile=bad, proc=fake, command=COMMAND
                     ),
                 ):
                     with self.assertRaisesRegex(
@@ -459,7 +458,7 @@ class GridOpenTest(Case):
                 for call in (
                     lambda *, bad=bad, fake=fake: self.show(fake, per_column=bad),
                     lambda *, bad=bad, fake=fake: placement.open_pane(
-                        "s", per_column=bad, proc=fake, script=placement.__file__
+                        "s", per_column=bad, proc=fake, command=COMMAND
                     ),
                 ):
                     with self.assertRaisesRegex(
@@ -467,15 +466,6 @@ class GridOpenTest(Case):
                     ):
                         call()
                 self.assertEqual(fake.calls, [])
-
-
-class EntryRootsTest(Case):
-    def test_the_hook_argument_is_url_safe_base64_of_the_json_package_roots(self):
-        encoded = grids.entry_roots()
-        self.assertRegex(encoded, r"\A[A-Za-z0-9_=-]+\Z")
-        self.assertEqual(
-            json.loads(base64.urlsafe_b64decode(encoded)), [SRC["session"], SRC["utils"]]
-        )
 
 
 class RetileTest(Case):
@@ -999,13 +989,10 @@ class TileCoordinationTest(TileFixture):
             grids.tile("@3", proc=fake)
         self.assertEqual(fake.calls, [self.SOCKET])
         fake = self.fake(*self.WIDE)
-        with (
-            unittest.mock.patch.object(sys, "executable", PY),
-        ):
-            self.assertRegex(
-                grids.configure("@3", "%0", per_column=3, retile="all", proc=fake, script=SCRIPT),
-                want,
-            )
+        self.assertRegex(
+            grids.configure("@3", "%0", per_column=3, retile="all", proc=fake, command=COMMAND),
+            want,
+        )
         self.assertEqual(fake.calls, [grid_set("@3", "%0"), self.SOCKET])
         self.assertFalse(os.path.lexists(self.sock + "-target"))
 
@@ -1094,10 +1081,7 @@ class TileCoordinationTest(TileFixture):
             fake = self.tile(*self.WIDE, tiles=recent)
         self.assertEqual(fake.calls[4], self.TEARDOWN)
         del fake.calls[:]
-        with (
-            unittest.mock.patch.object(sys, "executable", PY),
-            contextlib.nullcontext(unittest.mock.Mock()) as tile,
-        ):
+        with contextlib.nullcontext(unittest.mock.Mock()) as tile:
             self.assertIsNone(
                 grids.configure(
                     "@3",
@@ -1105,7 +1089,7 @@ class TileCoordinationTest(TileFixture):
                     per_column=3,
                     retile="off",
                     proc=fake,
-                    script=SCRIPT,
+                    command=COMMAND,
                     tile_window=tile,
                 )
             )

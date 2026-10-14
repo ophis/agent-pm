@@ -1,5 +1,6 @@
 """Case, every session test's base; session settings (HOSTS, configured); child helpers
-(PY, child_env); this tree's import roots (REPO, SRC, ROOTS); SPAWNS, the calls that start a process.
+(PY, child_env); this tree's import roots (REPO, SRC, ROOTS), PLUGIN_BIN (first on PATH); SPAWNS, the
+calls that start a process.
 """
 
 import os
@@ -16,9 +17,15 @@ from agent_pm.session.hosts.tmux import TmuxHost
 from utils.tests.sandbox import clean_env, project_roots
 
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-ROOTS = project_roots(REPO)
-SRC = {os.path.basename(os.path.dirname(r)).replace("-", "_"): r for r in ROOTS}
+BUNDLE = os.environ.get("AGENT_PM_SESSION_BUNDLE")
+ROOTS = (BUNDLE,) if BUNDLE else project_roots(REPO)
+SRC = (
+    dict.fromkeys(("session", "utils"), BUNDLE)
+    if BUNDLE
+    else {os.path.basename(os.path.dirname(r)).replace("-", "_"): r for r in ROOTS}
+)
 RUN_WITH = os.pathsep.join(os.path.relpath(root, REPO) for root in ROOTS)
+PLUGIN_BIN = os.path.join(REPO, "bin")
 PY = (sys.executable, "-P", "-S")
 SPAWNS = ("subprocess.Popen", "os.fork", "os.posix_spawn", "os.posix_spawnp")
 HOSTS = {"tmux": {"implementation": "agent_pm.session.hosts.tmux:TmuxHost"}}
@@ -58,7 +65,12 @@ class Case(unittest.TestCase):
             tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as self.home,
             mock.patch.dict(
                 os.environ,
-                {**clean_env(None, *ROOTS), "HOME": self.home, "TUI_ATTACH_PREFIX": ""},
+                {
+                    **clean_env(None, *ROOTS),
+                    "HOME": self.home,
+                    "TUI_ATTACH_PREFIX": "",
+                    "PATH": os.pathsep.join((PLUGIN_BIN, os.environ.get("PATH", os.defpath))),
+                },
                 clear=True,
             ),
         ):

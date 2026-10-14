@@ -12,11 +12,11 @@ import uuid
 from agent_pm.session import NotDisplayable, Session
 from agent_pm.session.engine.types import (
     ConfigError,
-    DriverError,
     Exited,
     Liveness,
     Reply,
     Resumable,
+    SessionError,
     SessionInfo,
     SessionRow,
     SessionStatus,
@@ -122,14 +122,14 @@ class FakeSession(Session):
         sid = spec.sid or str(uuid.uuid4())
         name = spec.name or f"{spec.client}-{sid[:8]}"
         if name in cls.live:
-            raise DriverError(f"session {name} is live")
+            raise SessionError(f"session {name} is live")
         cls.live[name] = cls(spec, sid, name, display=display)
         return cls.live[name]
 
     @classmethod
     def attach(cls, name, *, host=None, idle_timeout=None) -> FakeSession:
         if name not in cls.live:
-            raise DriverError(f"no session {name}")
+            raise SessionError(f"no session {name}")
         return cls.live[name]
 
     @classmethod

@@ -23,9 +23,9 @@ def committed_headless(adapter: CodexAdapter, spec: Spec) -> Launch:
     return launch
 
 
-def committed_tui(adapter: CodexAdapter, spec: Spec, hook, *, source_roots) -> Launch:
+def committed_tui(adapter: CodexAdapter, spec: Spec, hook) -> Launch:
     run = adapter.tui()
-    launch = run.launch(spec, hook, source_roots=source_roots)
+    launch = run.launch(spec, hook)
     run.commit()
     return launch
 

@@ -120,9 +120,9 @@ class InnerAdapter(fake_adapter.FakeAdapter):
 
 
 class InnerTui(fake_adapter.FakeTui):
-    def launch(self, spec: Spec, hook, *, source_roots: tuple[str, ...]):
+    def launch(self, spec: Spec, hook):
         LAUNCHED.append(spec)
-        launch = super().launch(spec, hook, source_roots=source_roots)
+        launch = super().launch(spec, hook)
         env = {**spec.env, "LAUNCH_SET": "1"}
         return dataclasses.replace(launch, env=env, unset=("LAUNCH_DROP",))
 
@@ -145,8 +145,8 @@ class EnvRun(fake_adapter.FakeHeadless):
 
 
 class EnvTui(fake_adapter.FakeTui):
-    def launch(self, spec: Spec, hook, *, source_roots: tuple[str, ...]):
-        launch = super().launch(spec, hook, source_roots=source_roots)
+    def launch(self, spec: Spec, hook):
+        launch = super().launch(spec, hook)
         return dataclasses.replace(launch, env={**spec.access.env, **spec.env})
 
 

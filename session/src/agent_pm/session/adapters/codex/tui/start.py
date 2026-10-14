@@ -1,5 +1,6 @@
-"""Codex startup run with Python -I and one bounded JSON object argument."""
-# Start JSON fields: tui.FIELDS; import_roots is mandatory (unique absolute source dirs).
+"""Codex startup, run as `python -P -s -m` this module with one bounded JSON object argument
+(tui.FIELDS).
+"""
 
 from __future__ import annotations
 
@@ -12,6 +13,10 @@ import signal
 import sys
 import time
 from collections.abc import Mapping
+
+from agent_pm.session.adapters.codex import common, tui
+from agent_pm.session.adapters.codex.common import app_server
+from agent_pm.session.adapters.codex.tui import HOOKS
 
 ANSWER_MAX = 64 << 20
 
@@ -37,48 +42,6 @@ def _decode_launch_data(argv):
         raise StartError("Codex tui launch: invalid launch fields")
     return data
 
-
-def _import_roots(value):
-    # This runs before bootstrap, when only the standard library is available.
-    if (
-        not isinstance(value, list)
-        or not value
-        or any(
-            not isinstance(path, str)
-            or not path.isprintable()
-            or not os.path.isabs(path)
-            or not os.path.isdir(path)
-            for path in value
-        )
-        or len(set(value)) != len(value)
-    ):
-        raise StartError("Codex tui launch: invalid import roots")
-    return value
-
-
-def _bootstrap(argv):
-    data = _decode_launch_data(argv)
-    roots = _import_roots(data.get("import_roots"))
-    sys.path[:] = [*roots, *(path for path in sys.path if path not in roots)]
-    return data
-
-
-if __name__ == "__main__":
-    try:
-        launch_data = _bootstrap(sys.argv[1:])
-    except StartError as exc:
-        print(f"codex tui: {exc}", file=sys.stderr)
-        sys.exit(1)
-
-try:
-    from agent_pm.session.adapters.codex import common, tui
-    from agent_pm.session.adapters.codex.common import app_server
-    from agent_pm.session.adapters.codex.tui import HOOKS
-except ImportError as exc:
-    if __name__ != "__main__":
-        raise
-    print(f"codex tui: cannot import session packages: {exc}", file=sys.stderr)
-    sys.exit(1)
 
 HASH = re.compile(r"sha256:[0-9a-f]{64}")
 
@@ -260,8 +223,10 @@ def _start(plan: tui.LaunchPlan, termination, trust):
     env = {
         key: value
         for key, value in {**os.environ, "CODEX_HOME": state.snapshot.codex_home}.items()
-        if key not in common.LOCAL_ENV_VARS
+        if key not in common.LOCAL_ENV_VARS and key != "PYTHONPATH"
     }
+    if plan.pythonpath is not None:
+        env["PYTHONPATH"] = plan.pythonpath
     cwd = state.snapshot.cwd
     termination.check()
     trusted_state = trust(
@@ -316,4 +281,9 @@ def _listed_hooks(result, cwd):
 
 
 if __name__ == "__main__":
+    try:
+        launch_data = _decode_launch_data(sys.argv[1:])
+    except StartError as exc:
+        print(f"codex tui: {exc}", file=sys.stderr)
+        sys.exit(1)
     sys.exit(main(launch_data))

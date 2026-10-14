@@ -14,7 +14,7 @@ import time
 import uuid
 from unittest import mock
 
-from agent_pm.session import Displayable, DriverError, Host, Mode, NotDisplayable, Spec
+from agent_pm.session import Displayable, Host, Mode, NotDisplayable, SessionError, Spec
 from agent_pm.session.engine.hosted_session import HostedSession
 from agent_pm.session.engine.types import Key, KeyPress, Launch, Paste
 from agent_pm.utils import Record
@@ -24,6 +24,7 @@ from session.tests.case import PY, REPO, child_env
 from session.tests.modules import adapter_loader
 
 OTHER_DISPLAY = "elsewhere:1.2"
+TERMINAL_IDENTITY = ("TMUX", "TMUX_PANE", "TERM")
 DEADLINE = 10
 POLL = 0.05
 PUT = (
@@ -108,7 +109,7 @@ class HostContract:
         return name
 
     def forget(self, name: str) -> None:
-        with contextlib.suppress(DriverError):
+        with contextlib.suppress(SessionError):
             self.host.attach(name).close()
 
     def env(self, **extra: str) -> dict[str, str]:
@@ -186,10 +187,23 @@ class HostContract:
         terminal.press(tuple(map(KeyPress.parse, PRESSED)))
         self.poll(lambda: read(out) == RECEIVED.hex(), f"{RECEIVED!r} in {out}")
 
-    def test_the_program_gets_the_supplied_environment_verbatim(self):
-        for kind in ("detach", "terminal"):
-            with self.subTest(kind=kind):
-                self.check_environment(kind)
+    def test_a_detached_program_gets_the_supplied_environment_verbatim(self):
+        got, env = self.check_environment("detach")
+        self.assertEqual(got, env, f"program env: {got!r}")
+
+    def test_a_terminal_program_gets_the_hosts_terminal_identity_and_the_rest_verbatim(self):
+        got, env = self.check_environment("terminal")
+        self.assertEqual(
+            {key: value for key, value in got.items() if key not in TERMINAL_IDENTITY},
+            {key: value for key, value in env.items() if key not in TERMINAL_IDENTITY},
+            f"program env: {got!r}",
+        )
+        for key in TERMINAL_IDENTITY:
+            self.assertNotEqual(got.get(key), env[key], key)
+        self.assert_terminal_identity(got)
+
+    def assert_terminal_identity(self, env: dict[str, str]) -> None:
+        """The Host's own TERMINAL_IDENTITY values in a terminal program's `env`."""
 
     def check_environment(self, kind):
         name, out = self.fresh(), self.file("env")
@@ -224,10 +238,10 @@ class HostContract:
             for entry in self.poll(lambda: read(out), f"env in {out}").split("\0")
             if entry
         )
-        self.assertEqual(got, env, f"program env: {got!r}")
         with open(gate, "w", encoding="utf-8"):
             pass
         self.assertTrue(process.wait_exit(DEADLINE))
+        return got, env
 
     def test_a_foreign_display_is_kept_and_listed_only_under_itself(self):
         name = self.fresh()
@@ -316,7 +330,7 @@ class HostContract:
         process.close()
         self.assertFalse(process.alive())
         self.assertNotIn(name, self.host.list())
-        with self.assertRaises(DriverError):
+        with self.assertRaises(SessionError):
             self.host.attach(name)
 
     def test_publish_stores_the_record_attach_returns_and_needs_a_live_session(self):
@@ -327,18 +341,18 @@ class HostContract:
         terminal.publish(published)
         self.assertEqual(self.host.attach(name).record(), published)
         terminal.close()
-        with self.assertRaises(DriverError):
+        with self.assertRaises(SessionError):
             terminal.publish(published)
 
     def test_attach_of_an_unknown_name_raises_driver_error(self):
-        with self.assertRaises(DriverError):
+        with self.assertRaises(SessionError):
             self.host.attach(f"nope-{uuid.uuid4().hex[:12]}")
 
     def test_a_live_name_is_refused(self):
         name = self.fresh()
         process = self.start("detach", name, SLEEP)
         for kind in ("detach", "terminal"):
-            with self.subTest(kind=kind), self.assertRaises(DriverError):
+            with self.subTest(kind=kind), self.assertRaises(SessionError):
                 self.start(kind, name, SLEEP)
         self.assertTrue(process.alive())
 

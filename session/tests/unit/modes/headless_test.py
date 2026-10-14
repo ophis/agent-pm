@@ -14,13 +14,14 @@ from agent_pm.session.adapters.base import Adapter
 from agent_pm.session.engine.types import (
     Access,
     ConfigError,
-    DriverError,
     Launch,
     Prepared,
+    SessionError,
     SessionInfo,
     Spec,
 )
 
+from session.tests.case import PLUGIN_BIN
 from session.tests.headless_support import NOTHING, SID, HeadlessCase, StubAdapter, StubRun
 from utils.tests.process_fixtures import DEVNULL
 
@@ -80,7 +81,7 @@ class TuiOnly(Base):
             (self.mode.screen, "screen: tui mode only"),
             (lambda: self.mode.screen(5), "screen: tui mode only"),
         ):
-            with self.subTest(message=message), self.assertRaises(DriverError) as caught:
+            with self.subTest(message=message), self.assertRaises(SessionError) as caught:
                 call()
             self.assertEqual(str(caught.exception), message)
 
@@ -108,7 +109,15 @@ class Start(Base):
             {"inner": {"implementation": "agent_pm.session.adapters.inner:InnerAdapter"}}
         )
         with (
-            mock.patch.dict(os.environ, {"HM_UNSET": "x", "HM_ID": "i", "HM_KEEP": "k"}),
+            mock.patch.dict(
+                os.environ,
+                {
+                    "HM_UNSET": "x",
+                    "HM_ID": "i",
+                    "HM_KEEP": "k",
+                    "PATH": os.pathsep.join((PLUGIN_BIN, os.environ["PATH"])),
+                },
+            ),
             self.faked() as calls,
         ):
             prepared = self.start(StubAdapter(launch), access=Access(project=True), prompt="hi")
@@ -208,7 +217,7 @@ class Start(Base):
                 self.recorded = []
                 with (
                     mock.patch("subprocess.Popen", side_effect=error) as popen,
-                    self.assertRaises(DriverError) as caught,
+                    self.assertRaises(SessionError) as caught,
                 ):
                     self.start()
                 self.assertEqual(str(caught.exception), f"cannot start {sys.executable}: {error}")
@@ -223,7 +232,7 @@ class Start(Base):
                 proc = mock.Mock(stdout=io.StringIO(), stderr=io.StringIO())
                 with (
                     mock.patch("subprocess.Popen", return_value=proc) as popen,
-                    self.assertRaises(DriverError) as caught,
+                    self.assertRaises(SessionError) as caught,
                 ):
                     self.start(adapter)
                 self.assertEqual(str(caught.exception), f"cannot start {sys.executable}: {error}")

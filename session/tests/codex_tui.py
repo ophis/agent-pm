@@ -10,7 +10,6 @@ from agent_pm.session.adapters.codex.common.types import Snapshot
 from agent_pm.session.adapters.codex.tui import HookPlan, LaunchPlan
 
 from session.tests.case import SRC, Case
-from session.tests.source_roots import PACKAGE_ROOTS
 from session.tests.unit.adapters.codex.support import Base, committed_tui
 
 ROOTS_JSON = json.dumps([SRC["session"], SRC["utils"]])
@@ -21,10 +20,7 @@ class LaunchCase(Base):
     def launch(self, spec, *, resume=False):
         with mock.patch("shutil.which", return_value="/protected/codex"):
             return committed_tui(
-                self.adapter,
-                dataclasses.replace(spec, prompt="prompt", resume=resume),
-                HOOK,
-                source_roots=PACKAGE_ROOTS,
+                self.adapter, dataclasses.replace(spec, prompt="prompt", resume=resume), HOOK
             ).argv[-1]
 
 
@@ -57,12 +53,12 @@ class PlanCase(Case):
             selection=("resume", "saved-native"),
             prompt="prompt\nwith Unicode: 字",
             hook=HookPlan(
-                (os.path.realpath(sys.executable), "-I", "/protected/mode hook.py", "/session dir"),
-                (SRC["session"], SRC["utils"]),
+                (os.path.realpath(sys.executable), "-I", "/protected/mode hook.py", "/session dir")
             ),
             workdir="/work",
             sid="caller-id",
             store="/private-state/recovery/codex",
+            pythonpath=None,
         )
         self.frontend = (
             "/protected/codex",

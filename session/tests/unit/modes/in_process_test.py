@@ -16,9 +16,9 @@ from agent_pm.session.adapters.base import Adapter, InProcess
 from agent_pm.session.engine.types import (
     Access,
     ConfigError,
-    DriverError,
     Prepared,
     Reply,
+    SessionError,
     SessionInfo,
     Spec,
     Stderr,
@@ -357,7 +357,7 @@ class Start(Base):
             mock.patch(
                 "threading.Thread.start", side_effect=RuntimeError("can't start new thread")
             ),
-            self.assertRaises(DriverError) as caught,
+            self.assertRaises(SessionError) as caught,
         ):
             self.start(StubAdapter(lambda *args: calls.append(args) or []))
         self.assertEqual(
@@ -389,7 +389,7 @@ class Start(Base):
             (self.mode.screen, "screen: tui mode only"),
             (lambda: self.mode.screen(5), "screen: tui mode only"),
         ):
-            with self.subTest(message=message), self.assertRaises(DriverError) as caught:
+            with self.subTest(message=message), self.assertRaises(SessionError) as caught:
                 call()
             self.assertEqual(str(caught.exception), message)
 

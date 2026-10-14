@@ -12,7 +12,6 @@ import subprocess
 import sys
 
 from agent_pm.session.hosts.tmux.grid import (
-    ENTRY,
     GRID_BUSY,
     GRID_PANES,
     GRID_ROW,
@@ -68,7 +67,7 @@ def show(
     opener: str | None = None,
     per_column: int | None = None,
     retile: str | None = None,
-    script: str = ENTRY,
+    command: str | None = None,
     proc=subprocess.run,
     tile_window=None,
 ) -> str | None:
@@ -84,7 +83,7 @@ def show(
             opener=opener,
             per_column=per_column,
             retile=retile,
-            script=script,
+            command=command,
             proc=proc,
             tile_window=tile_window,
         )
@@ -103,7 +102,7 @@ def open_pane(
     opener: str | None = None,
     per_column: int | None = None,
     retile: str | None = None,
-    script: str = ENTRY,
+    command: str | None = None,
     proc=subprocess.run,
     tile_window=None,
 ) -> str | None:
@@ -168,7 +167,7 @@ def open_pane(
     return configure(
         window,
         manager,
-        script=script,
+        command=command,
         proc=proc,
         tile_window=tile_window,
         per_column=PER_COLUMN if per_column is None else per_column,

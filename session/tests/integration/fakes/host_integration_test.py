@@ -6,7 +6,7 @@ import os
 import unittest
 from unittest import mock
 
-from agent_pm.session import DriverError
+from agent_pm.session import SessionError
 from agent_pm.session.engine.types import Key, Launch, Liveness, Paste, Word
 
 from session.tests.case import Case
@@ -42,11 +42,11 @@ class FakeHostOnly(Case):
 
     def test_send_refuses_an_unknown_key_and_an_ended_terminal(self):
         terminal = self.host.terminal("w1", Launch(tuple(program(SLEEP)), cwd=self.home))
-        with self.assertRaises(DriverError):
+        with self.assertRaises(SessionError):
             terminal.send(Key("F13"))
         terminal.kill()
         for action in (Paste("x"), Key("Enter")):
-            with self.subTest(action=action), self.assertRaises(DriverError):
+            with self.subTest(action=action), self.assertRaises(SessionError):
                 terminal.send(action)
 
     def test_a_retained_terminal_keeps_its_exit_status_and_generation_identity(self):

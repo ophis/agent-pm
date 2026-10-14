@@ -5,7 +5,7 @@ Host to display on.
 import inspect
 import unittest
 
-from agent_pm.session import Displayable, DriverError, Hosts, Mode, NotDisplayable, Session, Usage
+from agent_pm.session import Displayable, Hosts, Mode, NotDisplayable, Session, SessionError, Usage
 from agent_pm.session.engine.types import ConfigError, Exited, Reply, Spec, TurnEnd
 
 from session.tests.case import Case
@@ -73,7 +73,7 @@ class Scripted(Case):
     def test_a_live_name_is_refused_until_closed(self):
         cls = FakeSession.scripted()
         first = self.start(cls, name="w1")
-        with self.assertRaises(DriverError):
+        with self.assertRaises(SessionError):
             self.start(cls, name="w1")
         first.close()
         self.assertEqual(first.state(), "absent")
@@ -88,7 +88,7 @@ class Scripted(Case):
         two.stop()
         self.assertEqual([row.name for row in cls.list()], ["w1"])
         for name in ("w2", "nope"):
-            with self.subTest(name=name), self.assertRaises(DriverError):
+            with self.subTest(name=name), self.assertRaises(SessionError):
                 cls.attach(name)
 
     def test_it_cannot_display(self):

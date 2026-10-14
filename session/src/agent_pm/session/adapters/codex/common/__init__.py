@@ -22,7 +22,6 @@ from types import MappingProxyType
 from typing import Literal, overload
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-import agent_pm.utils
 from agent_pm.session.adapters.codex.common import app_server
 from agent_pm.session.adapters.codex.common.types import (
     NativeMetadata,
@@ -32,6 +31,7 @@ from agent_pm.session.adapters.codex.common.types import (
 )
 from agent_pm.session.adapters.common import check_config, scan, split_flags
 from agent_pm.session.engine.types import (
+    COMMAND,
     ConfigError,
     Launch,
     Resumable,
@@ -41,7 +41,13 @@ from agent_pm.session.engine.types import (
     Usage,
     Window,
 )
-from agent_pm.utils import LOCAL_ENV_VARS, environment_ok, module_roots, number, resume_command
+from agent_pm.utils import (
+    LOCAL_ENV_VARS,
+    STATE,
+    environment_ok,
+    number,
+    resume_command,
+)
 
 TABLE = "[adapters.codex]"
 LIMIT_PREFIXES = (
@@ -79,7 +85,7 @@ _SESSION_KEYS = frozenset({"version", "workdir", "sid", "snapshot", "native_id",
 
 _MAX_SESSION_BYTES = 64 * 1024
 
-RESUME = os.path.join(os.path.dirname(os.path.abspath(__file__)), "resume.py")
+STORE = f"{STATE}/sessions/codex"  # under HOME, resolved per operation
 
 
 class RecoveryError(Exception):
@@ -548,9 +554,7 @@ class SessionStore:
         return (
             self._root
             if self._root is not None
-            else os.path.join(
-                os.path.realpath(os.path.expanduser("~")), ".agent-pm", "core-new-sessions", "codex"
-            )
+            else os.path.join(os.path.realpath(os.path.expanduser("~")), STORE.removeprefix("~/"))
         )
 
     @overload
@@ -991,10 +995,35 @@ class CodexCommon:
         return Launch(argv, env=self.environment(snapshot, interactive=True), cwd=snapshot.cwd)
 
     def resume_command(self, state: SessionState) -> str:
-        """A reference to the stored launch, which resume.py execs; it never holds env values."""
-        roots = json.dumps(module_roots(sys.modules[__name__], agent_pm.utils))
-        argv = (sys.executable, "-I", RESUME, roots, self.store.root, state.workdir, state.sid)
+        """A reference to the stored launch, which resume_main execs; it never holds env values."""
+        argv = (COMMAND, "client-resume", "codex", self.store.root, state.workdir, state.sid)
         return resume_command(state.snapshot.cwd, {}, (*argv, _native_id(state)))
+
+    def resume_main(self, argv) -> int:
+        """resume_command's run (STORE WORKDIR SID NATIVE): execs the stored resume with the
+        environment its recovery state keeps; 1 and one stderr line when it cannot.
+        """
+        try:
+            store, workdir, sid, native = argv
+        except ValueError:
+            print("codex resume: expected STORE WORKDIR SID NATIVE", file=sys.stderr)
+            return 1
+        try:
+            state = SessionStore(store).load(workdir, sid)
+            if state is None:
+                raise ConfigError(f"missing Codex recovery state for run ID {sid!r} in {store}")
+            if state.native_id != native:
+                raise ConfigError(
+                    f"recovery state for run ID {sid!r} is bound to native ID "
+                    f"{state.native_id!r}, not {native!r}"
+                )
+            launch = self.resume_launch(state)
+            os.chdir(launch.cwd)
+            os.execvpe(launch.argv[0], launch.argv, {**os.environ, **launch.env})
+        except (ConfigError, RecoveryError, OSError) as exc:
+            print(f"codex resume: {exc}", file=sys.stderr)
+            return 1
+        return 0
 
     @_recover
     def lookup(self, sid: str, cwd: str) -> SessionState | None:

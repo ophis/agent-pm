@@ -12,7 +12,6 @@ from collections.abc import Mapping, Sequence
 from agent_pm.session.engine.types import (
     ActivityState,
     ConfigError,
-    DriverError,
     HookCallback,
     Hosts,
     Key,
@@ -20,6 +19,7 @@ from agent_pm.session.engine.types import (
     Launch,
     Liveness,
     Paste,
+    SessionError,
     SessionRow,
     TuiSettings,
     Word,
@@ -65,7 +65,7 @@ class HostProcess(ABC):
         return None
 
     def publish(self, record: Record) -> None:
-        raise DriverError(f"session {self.name}: its host cannot store a Record after launch")
+        raise SessionError(f"session {self.name}: its host cannot store a Record after launch")
 
     def session_identity(self) -> tuple[str | None, str | None]:
         """Private terminal sid and generation, independent of its published Record."""
@@ -117,7 +117,7 @@ class Terminal(HostProcess):
 class Host(ABC):
     """settings: [hosts.<name>] minus implementation. Launch.env is passed verbatim;
     on exit, events gets `exited <rc>` / `dead`.
-    attach: a Terminal, unknown → DriverError. list: sorted display
+    attach: a Terminal, unknown → SessionError. list: sorted display
     matches ("" none). display: completed in the caller's process.
     """
 
@@ -202,7 +202,7 @@ class Host(ABC):
             try:
                 append_line(events, "", own=True)
             except OSError as error:
-                raise DriverError(f"events file {events}: {error.strerror}") from error
+                raise SessionError(f"events file {events}: {error.strerror}") from error
         return events
 
     def hook_callback(self, name: str, metadata: Mapping[str, str]) -> HookCallback | None:
@@ -251,4 +251,4 @@ class Displayable(ABC):
     def layout(self, *, display: Display = None) -> str | None: ...
 
     @abstractmethod
-    def tile(self, window: str) -> None: ...
+    def tile(self, window: str, *, wait: bool = True, if_panes_changed: bool = False) -> None: ...

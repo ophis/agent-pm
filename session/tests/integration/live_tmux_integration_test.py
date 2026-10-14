@@ -11,7 +11,7 @@ import unittest
 from unittest import mock
 
 from session.tests import live_tmux
-from session.tests.case import Case
+from session.tests.case import PLUGIN_BIN, Case
 
 
 class Live(Case):
@@ -51,7 +51,16 @@ class Env(Live):
         self.assertEqual(
             env,
             {
-                "PATH": f"{root}/bin:{tmux}:/usr/bin:/bin",
+                "PATH": os.pathsep.join(
+                    (
+                        f"{root}/bin",
+                        PLUGIN_BIN,
+                        os.path.dirname(sys.executable),
+                        tmux,
+                        "/usr/bin",
+                        "/bin",
+                    )
+                ),
                 "HOME": self.home,
                 "PYTHONUTF8": "1",
                 "TMUX_TMPDIR": root,

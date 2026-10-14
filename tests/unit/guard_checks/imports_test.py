@@ -3,7 +3,7 @@ from pathlib import Path
 from tests import guards
 from tests.case import REPO
 from tests.guard_checks import imports
-from tests.guard_data import IMPORT_BOOTSTRAPS, STANDALONE
+from tests.guard_data import STANDALONE
 from tests.guard_data.linear_orchestrator import ORCH_PKG, ORCH_SESSION_CONTRACT, ORCH_SRC
 from tests.guard_data.session import SESSION_SRC, TMUX_HOST
 from tests.guard_samples import PKG, Sample
@@ -31,8 +31,8 @@ class OrchestratorSessionImports(Sample):
 
     def test_formerly_allowed_module_fails(self):
         self.assertEqual(
-            self.check("engine/run_comments.py", "from agent_pm.session import DriverError\n"),
-            [self.message("engine/run_comments.py", "DriverError")],
+            self.check("engine/run_comments.py", "from agent_pm.session import SessionError\n"),
+            [self.message("engine/run_comments.py", "SessionError")],
         )
 
     def test_a_new_module_fails_however_it_imports(self):
@@ -261,74 +261,15 @@ class PrivateImports(Sample):
 
 
 class ImportHygiene(Sample):
-    def test_bootstrap_owners_may_prepend_roots_in_their_startup_function(self):
-        root = self.tree(
-            {
-                path: (
-                    f"import sys\ndef {function}(roots):\n"
-                    "    sys.path[:] = [*roots, *(path for path in sys.path if path not in roots)]\n"
-                )
-                for path, function in IMPORT_BOOTSTRAPS.items()
-            }
-        )
-        self.assertEqual(imports.import_hygiene(root), [])
-
-    def test_bootstrap_permission_does_not_cover_other_scopes(self):
+    def test_no_startup_bootstrap_may_change_search_paths(self):
         assignment = "sys.path[:] = [*roots, *(path for path in sys.path if path not in roots)]"
-        for path, function in IMPORT_BOOTSTRAPS.items():
+        script = f"import sys\ndef _bootstrap(roots):\n    {assignment}\ndef main(roots):\n    {assignment}\n"
+        for path in (f"{SESSION_SRC}modes/tui_hook.py", "tests/other.py"):
             with self.subTest(path=path):
-                root = self.tree(
-                    {
-                        path: (
-                            f"import sys\n{assignment}\ndef {function}(roots):\n"
-                            f"    {assignment}\n"
-                            f"    def nested():\n        {assignment}\n"
-                            f"def other(roots):\n    {assignment}\n"
-                            f"class Other:\n    def {function}(self, roots):\n"
-                            f"        {assignment}\n"
-                        )
-                    }
-                )
                 self.assertEqual(
-                    imports.import_hygiene(root),
-                    sorted(f"{path}:{line}: sys.path mutation" for line in (2, 6, 8, 11)),
+                    imports.import_hygiene(self.tree({path: script})),
+                    [f"{path}:3: sys.path mutation", f"{path}:5: sys.path mutation"],
                 )
-
-    def test_bootstrap_permission_covers_only_one_root_prefix_assignment(self):
-        for path, function in IMPORT_BOOTSTRAPS.items():
-            with self.subTest(path=path):
-                root = self.tree(
-                    {
-                        path: (
-                            f"import sys\ndef {function}(roots):\n"
-                            "    sys.path[:] = [*roots, *(path for path in sys.path if path not in roots)]\n"
-                            "    sys.path[:] = [*roots, *(path for path in sys.path if path not in roots)]\n"
-                            "    sys.path[:0] = ['arbitrary']\n    sys.path[:] = roots\n"
-                            "    sys.path[0:0] = roots\n    sys.path[:False] = roots\n"
-                            "    sys.path.append(roots)\n    sys.path.insert(0, roots)\n"
-                            "    sys.path = roots\n    sys.path += roots\n"
-                        )
-                    }
-                )
-                self.assertEqual(
-                    imports.import_hygiene(root),
-                    sorted(f"{path}:{line}: sys.path mutation" for line in range(4, 13)),
-                )
-
-    def test_named_bootstrap_functions_in_other_files_cannot_change_search_paths(self):
-        assignment = "sys.path[:] = [*roots, *(path for path in sys.path if path not in roots)]"
-        root = self.tree(
-            {
-                "tests/other.py": (
-                    f"import sys\ndef _bootstrap(roots):\n    {assignment}\n"
-                    f"def main(roots):\n    {assignment}\n"
-                )
-            }
-        )
-        self.assertEqual(
-            imports.import_hygiene(root),
-            ["tests/other.py:3: sys.path mutation", "tests/other.py:5: sys.path mutation"],
-        )
 
     def test_any_sys_path_mutation(self):
         root = self.tree(
@@ -370,18 +311,12 @@ class ImportHygiene(Sample):
 
 
 class StandaloneImports(Sample):
-    def test_tui_hook_bootstraps_package_imports(self):
+    def test_tui_hook_uses_package_imports(self):
         path = f"{SESSION_SRC}modes/tui_hook.py"
         self.assertNotIn(path, STANDALONE)
-        self.assertEqual(IMPORT_BOOTSTRAPS[path], "_bootstrap")
 
     def test_tmux_host_uses_package_imports(self):
         self.assertNotIn(TMUX_HOST, STANDALONE)
-
-    def test_tmux_command_bootstraps_supplied_package_roots(self):
-        path = f"{SESSION_SRC}hosts/tmux/entry.py"
-        self.assertNotIn(path, STANDALONE)
-        self.assertEqual(IMPORT_BOOTSTRAPS[path], "_bootstrap")
 
     def found(self, source):
         files = dict.fromkeys(STANDALONE, source)

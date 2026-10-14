@@ -23,12 +23,12 @@ from agent_pm.delegate.event.reply import marks
 from agent_pm.session import (
     Activity,
     Blocked,
-    DriverError,
     Exited,
     IdleTimeout,
     LimitHit,
     Mode,
     Reply,
+    SessionError,
     TurnFailed,
 )
 from agent_pm.session import ConfigError as SessionConfigError
@@ -222,7 +222,7 @@ class TuiPolicy(Base):
         self.assertIn(f"delegate: tui session {NAME}: tmux attach -t '={NAME}'\n", self.err)
 
     def test_a_failed_show_is_printed_and_the_run_goes_on(self):
-        for failure in (DriverError(f"no tmux session {NAME}"), SessionConfigError("bad split")):
+        for failure in (SessionError(f"no tmux session {NAME}"), SessionConfigError("bad split")):
             with self.subTest(failure=failure):
                 self.fresh()
                 self.driver.display = "mgr"
@@ -309,7 +309,7 @@ class TuiPolicy(Base):
         r = self.faked(turn(START, block(INVALID)), turn(block(INVALID)))
         self.assertEqual(r, Result(0, None, f"invalid outcome: {INVALID_ERROR}"))
         self.assertEqual(self.handle.calls, [("send", FIX.format(error=INVALID_ERROR))])
-        r = self.faked(turn(START, block(INVALID)), fail=DriverError("gone"))
+        r = self.faked(turn(START, block(INVALID)), fail=SessionError("gone"))
         self.assertEqual(
             r, Result(1, None, f"invalid outcome: {INVALID_ERROR}; resume failed: gone")
         )
@@ -359,7 +359,7 @@ class TuiPolicy(Base):
         self.assertEqual(self.kinds(), ["input", "progress", "result", "end"])
 
     def test_a_failed_nudge_is_printed_and_counts_as_the_nudge(self):
-        r = self.faked(*[STOP] * (1 + STOP_LIMIT), fail=DriverError("no pane"))
+        r = self.faked(*[STOP] * (1 + STOP_LIMIT), fail=SessionError("no pane"))
         self.assertEqual((r, self.handle.calls), (GAVE_UP, [("send", NUDGE)]))
         self.assertIn("delegate: tui: no pane\n", self.err)
         self.assertIn("nudge", self.kinds())
@@ -430,7 +430,7 @@ class TuiPolicy(Base):
             with self.subTest(error=error):
                 self.fresh()
                 with self.assertRaises(type(error)) as cm:
-                    self.faked(turn(START), on_event=raise_, stop_fail=DriverError("gone"))
+                    self.faked(turn(START), on_event=raise_, stop_fail=SessionError("gone"))
                 self.assertIs(cm.exception, error)
                 self.assertEqual(
                     (self.handle.calls, self.err.count("delegate: tui: gone\n")), ([("stop",)], 1)
@@ -440,7 +440,7 @@ class TuiPolicy(Base):
                 )
 
     def test_a_failed_stop_is_printed_and_never_replaces_the_limit_or_stale_out_result(self):
-        gone = DriverError("gone")
+        gone = SessionError("gone")
         r = self.faked(LimitHit(None), stop_fail=gone)
         self.assertEqual(r, Result(0, None, "usage limit; reset time unknown", Limit(None)))
         self.assertEqual(
@@ -462,7 +462,7 @@ class TuiPolicy(Base):
 
     def test_a_driver_failure_at_start_is_the_result_and_a_client_without_tui_a_config_error(self):
         os.makedirs(self.work)
-        with mock.patch.object(self.driver, "start", side_effect=DriverError("no tmux")):
+        with mock.patch.object(self.driver, "start", side_effect=SessionError("no tmux")):
             self.assertEqual(self.go(mode="tui"), Result(1, None, "tui: no tmux"))
         self.fresh()
         self.configure_fake()
@@ -471,7 +471,7 @@ class TuiPolicy(Base):
         self.assertEqual(str(cm.exception), "client 'fake' does not support tui mode")
 
     def test_a_failed_start_is_recorded_in_the_workdir(self):
-        with mock.patch.object(self.driver, "start", side_effect=DriverError("no tmux")):
+        with mock.patch.object(self.driver, "start", side_effect=SessionError("no tmux")):
             self.assertEqual(self.go(mode="tui"), Result(1, None, "tui: no tmux"))
         self.assertEqual(self.kinds(), ["input", "result", "end"])
 
@@ -484,7 +484,7 @@ class TuiPolicy(Base):
             composition=composition,
         )
         with (
-            mock.patch.object(self.driver, "start", side_effect=DriverError("no tmux")),
+            mock.patch.object(self.driver, "start", side_effect=SessionError("no tmux")),
             redirect_stderr(io.StringIO()),
             self.assertRaises(FileNotFoundError),
         ):

@@ -13,7 +13,6 @@ from agent_pm.session.engine.types import (
     ActivityState,
     Blocked,
     ConfigError,
-    DriverError,
     Effort,
     Exited,
     Hosts,
@@ -27,6 +26,7 @@ from agent_pm.session.engine.types import (
     NotDisplayable,
     Reply,
     Resumable,
+    SessionError,
     SessionEvent,
     SessionInfo,
     SessionRow,
@@ -83,6 +83,6 @@ __all__ = [
     "Stderr",
     "TurnEnd",
     "TurnFailed",
-    "DriverError",
+    "SessionError",
     "ConfigError",
 ]

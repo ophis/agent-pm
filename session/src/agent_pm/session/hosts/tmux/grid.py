@@ -2,10 +2,8 @@
 
 from __future__ import annotations
 
-import base64
 import contextlib
 import fcntl
-import json
 import os
 import re
 import stat
@@ -13,7 +11,7 @@ import subprocess
 import sys
 import time
 
-import agent_pm.utils
+from agent_pm.session.engine.types import COMMAND
 from agent_pm.session.hosts.tmux.layout import (
     grid_layout,
     grid_tree,
@@ -37,17 +35,9 @@ from agent_pm.session.hosts.tmux.types import (
     Retile,
     TuiError,
 )
-from agent_pm.utils import module_roots
+from agent_pm.utils import command_path
 
 WINDOW = re.compile(r"@[0-9]+")
-
-
-ENTRY = os.path.join(os.path.dirname(os.path.abspath(__file__)), "entry.py")
-
-
-def entry_roots() -> str:
-    roots = module_roots(sys.modules[__name__], agent_pm.utils)
-    return base64.urlsafe_b64encode(json.dumps(roots).encode()).decode()
 
 
 PER_COLUMN = 3
@@ -120,12 +110,13 @@ def configure(
     *,
     per_column: int,
     retile: Retile,
-    script: str = ENTRY,
+    command: str | None = None,
     proc=subprocess.run,
     tile_window=None,
 ) -> str | None:
-    """Sets the grid options and retile's hooks (none when tmux would misread a path), then tiles
-    unless off. None or the failure.
+    """Sets the grid options and retile's hooks running `command tile` (None: COMMAND where PATH
+    finds it; no hooks without one, or when tmux would misread its path), then tiles unless off.
+    None or the failure.
     """
     args = [
         "set-option",
@@ -150,19 +141,27 @@ def configure(
         GRID_BUSY,
     ]
     mode = RETILE_HOOKS[retile]
-    paths = (sys.executable or "", os.path.abspath(script))
-    bad = [p for p in paths if not HOOK_PATH.fullmatch(p)] if mode else []
-    if bad:
-        print(f"tui: show: grid: hooks: {bad[0]}: tmux would misread it", file=sys.stderr)
+    command = command_path(COMMAND) if command is None else command
+    problem = (
+        None
+        if not mode
+        else f"{COMMAND} is not on PATH"
+        if command is None
+        else None
+        if HOOK_PATH.fullmatch(command)
+        else f"{command}: tmux would misread it"
+    )
+    if problem:
+        print(f"tui: show: grid: hooks: {problem}", file=sys.stderr)
     flags = "--no-wait --if-panes-changed" if retile == Retile.OPEN_CLOSE else "--no-wait"
     hook = (
         f"if-shell -F '#{{==:#{{{GRID_BUSY}}},{window}}}' '' "
-        f"\"run-shell -b '{paths[0]} -I {paths[1]} {entry_roots()} tile {flags} {window} >/dev/null 2>&1 || true'\""
+        f"\"run-shell -b '{command} tile {flags} {window} >/dev/null 2>&1 || true'\""
     )
     for name in GRID_HOOKS:
         if name not in mode:
             args += [";", "set-hook", "-u", "-w", "-t", window, name]
-        elif not bad:
+        elif not problem:
             args += [";", "set-hook", "-w", "-t", window, name, hook]
     try:
         checked(args, proc)

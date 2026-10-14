@@ -22,7 +22,7 @@ from agent_pm.delegate.engine.harness_delegate import EVENTS_ENV, SID_ENV, Harne
 from agent_pm.delegate.engine.runner import report, say
 from agent_pm.delegate.engine.types import Begun, ConfigError, Preview, Spec
 from agent_pm.session import ConfigError as SessionConfigError
-from agent_pm.session import DriverError, Mode, NotDisplayable
+from agent_pm.session import Mode, NotDisplayable, SessionError
 from agent_pm.utils import Once, answer_keys
 
 LIST_PARAMS = RunParams(input="", out="/agent-pm-list/work/out.md", workdir="/agent-pm-list/work")
@@ -159,7 +159,7 @@ def _detach(delegate_cls: type[HarnessDelegate], role: str, spec: Spec, placemen
     """Prints the run's Record line once its listed sessions are live."""
     try:
         record = delegate_cls(role, spec, **placement).detach()
-    except (DriverError, OSError) as e:
+    except (SessionError, OSError) as e:
         say(f"delegate: {e}")
         return 1
     say(f"delegate: session {record.sid}")
@@ -290,7 +290,7 @@ def _query(a: argparse.Namespace, delegate_cls: type[HarnessDelegate], sid: str 
         reply,
         single=single,
         usage=(ConfigError, SessionConfigError),
-        failures=(DriverError, OSError),
+        failures=(SessionError, OSError),
         prog="delegate",
         out=sys.stdout,
         err=sys.stderr,

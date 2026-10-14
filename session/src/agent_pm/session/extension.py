@@ -11,7 +11,6 @@ from agent_pm.session.engine.types import (
     Blocked,
     ClientBound,
     ConfigError,
-    DriverError,
     Effort,
     Exited,
     HookCall,
@@ -29,6 +28,7 @@ from agent_pm.session.engine.types import (
     Paste,
     Reply,
     Resumable,
+    SessionError,
     SessionEvent,
     SessionInfo,
     SessionRow,
@@ -91,6 +91,6 @@ __all__ = [
     "Record",
     "Display",
     "ConfigError",
-    "DriverError",
+    "SessionError",
     "NotDisplayable",
 ]

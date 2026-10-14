@@ -24,7 +24,6 @@ from agent_pm.session.engine.types import (
     TurnFailed,
 )
 
-from session.tests.source_roots import PACKAGE_ROOTS
 from session.tests.unit.adapters.claude.support import (
     CEILING,
     CONFIG,
@@ -497,7 +496,7 @@ class TuiPayloadTest(Base):
 
     def test_it_binds_the_sid_it_launched_or_restored_once(self):
         launched = ClaudeAdapter({}).tui()
-        launched.launch(Spec(workdir=self.work, sid=SID), HOOK, source_roots=PACKAGE_ROOTS)
+        launched.launch(Spec(workdir=self.work, sid=SID), HOOK)
         for run in (launched, self.run):
             with self.subTest(run=run):
                 self.assertEqual(
@@ -535,7 +534,7 @@ class TuiPayloadTest(Base):
 class StopFailureTest(Base):
     def launched(self):
         run = ClaudeAdapter({}).tui()
-        run.launch(Spec(workdir=self.work, sid=SID), HOOK, source_roots=PACKAGE_ROOTS)
+        run.launch(Spec(workdir=self.work, sid=SID), HOOK)
         return run
 
     def test_typed_errors(self):
@@ -603,11 +602,11 @@ class TranscriptTest(Base):
         self.addCleanup(patch.stop)
         self.run = ClaudeAdapter({}).tui()
         spec = Spec(workdir=self.work, sid=SID)
-        self.path = self.run.launch(spec, HOOK, source_roots=PACKAGE_ROOTS).transcript
+        self.path = self.run.launch(spec, HOOK).transcript
 
     def launched(self, **spec):
         run = ClaudeAdapter({}).tui()
-        run.launch(Spec(workdir=self.work, sid=SID, **spec), HOOK, source_roots=PACKAGE_ROOTS)
+        run.launch(Spec(workdir=self.work, sid=SID, **spec), HOOK)
         return run
 
     def append(self, *records, end="\n"):

@@ -11,6 +11,7 @@ from agent_pm.session.hosts.tmux import iterm, placement, transport, types
 from session.tests.case import Case
 from session.tests.tmux_fixtures import (
     ATTACH,
+    COMMAND,
     HOSTS,
     INSIDE,
     ITERM,
@@ -53,9 +54,7 @@ class PaneAnchorTest(PaneFixture):
                 self.assertEqual(self.stderr.getvalue(), ATTACH)
         fake, err = FakeTmux(results={"osascript": (0, "ok NEW")}), io.StringIO()
         with environ(**ITERM), which(), redirect_stderr(err):
-            self.assertIsNone(
-                placement.open_pane("s", split="below", proc=fake, script=placement.__file__)
-            )
+            self.assertIsNone(placement.open_pane("s", split="below", proc=fake, command=COMMAND))
         self.assertEqual(
             (fake.calls[:2], err.getvalue()), ([PGREP, osa("below", "id", "s", "ABC")], "")
         )
@@ -363,7 +362,7 @@ class ShowTest(Case):
     def show(self, fake, template=None, env=None, session="s", **kw):
         self.stderr = io.StringIO()
         with environ(**(env or {})), which(), redirect_stderr(self.stderr):
-            return placement.show(session, template, proc=fake, script=placement.__file__, **kw)
+            return placement.show(session, template, proc=fake, command=COMMAND, **kw)
 
     def test_attach_line_then_the_template(self):
         fake = FakeTmux()
@@ -441,7 +440,7 @@ class ContainerTest(Case):
     def show(self, fake, env=ENV):
         self.stderr = io.StringIO()
         with environ(**env), which(), redirect_stderr(self.stderr):
-            return placement.show("s", proc=fake, script=placement.__file__)
+            return placement.show("s", proc=fake, command=COMMAND)
 
     def test_first_pane_a_tmux_split_right_of_the_callers(self):
         fake = self.fake(self.PGREPS[0])
@@ -832,9 +831,7 @@ class StackTest(Case):
     def show(self, fake, env=INSIDE, **kw):
         self.stderr = io.StringIO()
         with environ(**env), which(), redirect_stderr(self.stderr):
-            return placement.show(
-                "s", kw.pop("template", None), **kw, proc=fake, script=placement.__file__
-            )
+            return placement.show("s", kw.pop("template", None), **kw, proc=fake, command=COMMAND)
 
     def expected_row(self, number, name, pane, opener="cmd"):
         return f"${number}", name, opener, pane, SOCK

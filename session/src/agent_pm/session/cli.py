@@ -14,7 +14,6 @@ its keys in order; a failed key gets one stderr line and no stdout line, and the
 from __future__ import annotations
 
 import argparse
-import json
 import os
 import re
 import sys
@@ -26,25 +25,25 @@ import agent_pm.utils
 from agent_pm.session.engine.base import Session
 from agent_pm.session.engine.config import read_config
 from agent_pm.session.engine.types import (
+    COMMAND,
     TAG,
     ActivityState,
     ConfigError,
-    DriverError,
     Hosts,
     KeyPress,
     NotDisplayable,
+    SessionError,
     SessionInfo,
     SessionRow,
 )
 from agent_pm.session.engine.worker import Worker
 from agent_pm.session.hosts.base import Displayable, Host
 from agent_pm.session.modes import tui_hook
-from agent_pm.session.modes.base import START_SID
+from agent_pm.session.modes.base import EVENTS, START_SID
 from agent_pm.session.modes.tui import TuiRuntime
 from agent_pm.utils import Record, Status, module_roots
 
-PROG = "agent-pm-session"
-EVENTS = "AGENT_PM_EVENTS"
+PROG = COMMAND
 GONE = "gone"
 HEADER = "name\tstate\tclient\tsid\tdisplay"
 
@@ -163,11 +162,25 @@ def _parser(hosts: Hosts | None) -> argparse.ArgumentParser:
     p.add_argument("--lines", type=_lines, metavar="N", help="the last N lines, with history")
     p = sub.add_parser("tile", help="lay out a window's sessions (the default Host's)")
     p.add_argument("window", help="the window, as its Host names it")
+    p.add_argument(
+        "--no-wait", action="store_true", help="return at once while another tile runs (hooks)"
+    )
+    p.add_argument(
+        "--if-panes-changed",
+        action="store_true",
+        help="only when the window's panes changed since its last tile (hooks)",
+    )
     sub.add_parser(
         "hook",
         help="a tui client's hook call (its hook config runs it)",
         description="DIR LABEL, the hook's payload on stdin; never fails, never prints stdout.",
     )
+    p = sub.add_parser(
+        "client-resume",
+        help="resume a client's own session (its session info's resume command runs this)",
+    )
+    p.add_argument("client")
+    p.add_argument("arguments", nargs=argparse.REMAINDER)
     return ap
 
 
@@ -238,7 +251,7 @@ def _cwd(name: str) -> str | None:
     """Tui session `name`'s cwd as its start recorded it; None for any other session."""
     try:
         info = SessionInfo.from_fields(TuiRuntime.snapshot(name))
-    except DriverError:
+    except SessionError:
         return None
     return None if info is None else info.cwd
 
@@ -264,7 +277,7 @@ def _carried(name: str, record: Record | None, hosts: Hosts) -> tuple[str, ...]:
         found = host.attach(session).record()
         have = None if found is None else found.sid
         if found is None or have != record.sid:
-            raise DriverError(
+            raise SessionError(
                 f"session {session} carries sid {have or 'none'}, not the Record's {record.sid}"
             )
     return sessions
@@ -305,7 +318,7 @@ def _batch(args, hosts: Hosts) -> int:
         except NotDisplayable as error:
             _say(str(error))
             failed = 1
-        except (ConfigError, DriverError, OSError) as error:
+        except (ConfigError, SessionError, OSError) as error:
             _say(f"{PROG}: {name}: {error}")
             failed = 1
     return failed
@@ -337,7 +350,7 @@ def _ls(args, hosts: Hosts) -> int:
         for host, name in sorted(_listed(args, hosts), key=lambda found: found[1]):
             try:
                 record = host.attach(name).record()
-            except DriverError:
+            except SessionError:
                 if name in host.list():
                     raise
                 continue
@@ -418,22 +431,20 @@ def _run(args, flags: list[str], hosts: Hosts, start_sid: str | None) -> int:
             print(text)
     elif cmd == "read":
         print(_shown(args.name, hosts).screen(args.name, args.lines))
+    elif cmd == "client-resume":
+        return Session.client_resume(args.client, args.arguments)
     else:
         host = Session.host()
         if not isinstance(host, Displayable):
             raise NotDisplayable(f"session {args.window}: host {host.name} cannot display")
-        host.tile(args.window)
+        host.tile(args.window, wait=not args.no_wait, if_panes_changed=args.if_panes_changed)
     return 0
 
 
 def main(argv: list[str] | None = None) -> int:
     argv = sys.argv[1:] if argv is None else list(argv)
     if argv[:1] == ["hook"]:
-        if len(argv) == 3:
-            roots = module_roots(agent_pm.session, agent_pm.utils)
-            tui_hook.run([argv[1], json.dumps(list(roots)), argv[2]], sys.stdin)
-        else:
-            tui_hook.say(f"usage: {PROG} hook <session dir> <label>")
+        tui_hook.run(argv[1:], sys.stdin, roots=module_roots(agent_pm.session, agent_pm.utils))
         return 0
     start_sid = os.environ.get(START_SID) or None
     flags: list[str] = []
@@ -456,7 +467,7 @@ def main(argv: list[str] | None = None) -> int:
     except ConfigError as error:
         _say(f"{PROG}: {error}")
         return 2
-    except (DriverError, OSError) as error:
+    except (SessionError, OSError) as error:
         _say(f"{PROG}: {error}")
         return 1
 
