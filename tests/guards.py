@@ -121,6 +121,9 @@ OBJECT_EXPORTS_ALLOWED = {
     ("agent_pm.delegate", "plan"): "Legacy plan forwarding; 356-14 (FR-27) deletes",
     ("agent_pm.delegate", "run"): "FR-13 forwarding wrapper; 356-14 (FR-27) deletes",
     ("agent_pm.delegate", "harness_host"): "Legacy Host configuration; 356-14 (FR-27) deletes",
+    ("agent_pm.delegate", "CONFIG"): "Legacy config path computed at import (os.path.join)",
+    ("agent_pm.delegate", "PYTHONPATH"): "Legacy import roots computed at import (os.pathsep.join)",
+    ("agent_pm.delegate", "STATUSES"): "Legacy tuple(OutcomeStatus) copy of the enum's values",
     ("agent_pm.delegate.composer", "team"): "FR-46 forwarding wrapper; 356-14 (FR-27) deletes",
     ("agent_pm.delegate.composer", "team_dirs"): "FR-46 forwarding wrapper; 356-14 (FR-27) deletes",
     ("agent_pm.delegate.composer", "index"): "FR-46 forwarding wrapper; 356-14 (FR-27) deletes",
@@ -147,6 +150,8 @@ OBJECT_EXPORTS_ALLOWED = {
     ): "FR-46 forwarding wrapper; 356-14 (FR-27) deletes",
     ("agent_pm.delegate.composer", "access"): "FR-46 forwarding wrapper; 356-14 (FR-27) deletes",
     ("agent_pm.delegate.composer", "render"): "FR-46 forwarding wrapper; 356-14 (FR-27) deletes",
+    ("agent_pm.delegate.composer", "DELIVERABLE"): "Legacy workdir path computed at import",
+    ("agent_pm.delegate.composer", "TEAM"): "Legacy team path computed at import (os.path.join)",
     (f"{PKG}.{SESSION}", "read_config"): "TASK-389 layer-owned configuration entry point",
     (f"{PKG}.{SESSION}", "close"): "FR-4 forwarding wrapper; 356-14 (FR-27) deletes",
     (f"{PKG}.{SESSION}", "sessions"): "FR-4 forwarding wrapper; 356-14 (FR-27) deletes",
@@ -851,7 +856,7 @@ def object_exports(repo: str) -> list[str]:
             else:
                 found.add(f"{rel}: __all__ exports function {name} (FR-44)")
         found.update(
-            f"{pkg}: {name}: allowlisted but not an exported function (FR-44)"
+            f"{pkg}: {name}: allowlisted but not an exported function or value (FR-44)"
             for pkg, name in OBJECT_EXPORTS_ALLOWED.keys() - seen
             if pkg == package
         )
@@ -1046,21 +1051,9 @@ def _definitions(module, tree, modules, definitions, origins, *, package):
 def _constant_value(node, bound, definitions):
     if _is_literal(node) or definitions.get(_dotted(node, bound)) == "constant":
         return True
-    if isinstance(node, ast.BinOp):
-        return all(_constant_value(part, bound, definitions) for part in (node.left, node.right))
-    if not isinstance(node, ast.Call):
-        return False
-    return _dotted(node.func, bound) in {
-        "builtins.tuple",
-        "builtins.frozenset",
-        "os.path.join",
-        "os.path.dirname",
-        "os.path.abspath",
-        "os.path.realpath",
-        "os.path.normpath",
-        "os.path.expanduser",
-        "os.pathsep.join",
-    }
+    return isinstance(node, ast.BinOp) and all(
+        _constant_value(part, bound, definitions) for part in (node.left, node.right)
+    )
 
 
 GENERICS = frozenset(
@@ -1070,19 +1063,14 @@ GENERICS = frozenset(
 
 
 def _assigned_kind(node, name):
-    """function (a lambda); constant (a literal, or an ALL_CAPS tuple, list or set of literals and
-    dotted names); alias (annotated TypeAlias, a union or a subscripted generic); else value.
+    """Kind of a value _constant_value rejects: function (a lambda); constant (an ALL_CAPS tuple,
+    list or set of literals and dotted names); alias (annotated TypeAlias, a union or a subscripted
+    generic); else value, whatever its annotation (a call such as tuple() or os.path.join() too).
     """
     value = node.value
     if isinstance(value, ast.Lambda):
         return "function"
-    if (
-        isinstance(node, ast.AnnAssign)
-        and isinstance(node.annotation, ast.Name)
-        and node.annotation.id in {"str", "int", "float", "bool", "bytes"}
-    ):
-        return "constant"
-    if _is_literal(value) or name.isupper() and _references(value):
+    if name.isupper() and _references(value):
         return "constant"
     if _name(getattr(node, "annotation", None)).endswith("TypeAlias") or _typing(value):
         return "alias"
