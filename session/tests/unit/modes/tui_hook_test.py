@@ -647,26 +647,47 @@ class SecurityTest(HookBase):
 
     def test_foreign_callback_files_are_rejected_before_any_package_code(self):
         files, imported = self.callback_package()
-        original = os.lstat
+        script = """import os, runpy, sys, types, unittest.mock
+path, rejected, *arguments = sys.argv[1:]
+original = os.lstat
+def foreign_owner(filename):
+    info = original(filename)
+    return types.SimpleNamespace(
+        st_mode=info.st_mode,
+        st_uid=os.getuid() + 1 if filename == rejected else info.st_uid,
+    )
+sys.argv = [path, *arguments]
+with unittest.mock.patch("os.lstat", foreign_owner):
+    try:
+        runpy.run_path(path, run_name="__main__")
+    except SystemExit as error:
+        assert error.code == 0
+assert "callback_package" not in sys.modules
+"""
         for rejected in files:
-
-            def foreign_owner(path, rejected=rejected):
-                info = original(path)
-                return types.SimpleNamespace(
-                    st_mode=info.st_mode,
-                    st_uid=os.getuid() + 1 if path == rejected else info.st_uid,
+            with self.subTest(path=rejected):
+                result = subprocess.run(
+                    [
+                        sys.executable,
+                        "-I",
+                        "-c",
+                        script,
+                        HOOK,
+                        rejected,
+                        self.dir,
+                        json.dumps([self.root]),
+                        "stop",
+                    ],
+                    input=b"{}",
+                    capture_output=True,
+                    env=self.env,
+                    timeout=60,
+                    check=True,
                 )
-
-            with (
-                self.subTest(path=rejected),
-                unittest.mock.patch.object(sys, "path", [self.root, *sys.path]),
-                unittest.mock.patch("os.lstat", foreign_owner),
-                self.assertRaisesRegex(tui_hook.HookError, "not a regular file owned by you"),
-            ):
-                tui_hook.load_adapter(self.state["adapter_hook"], [self.root])
-            self.assertFalse(os.path.exists(imported))
-            self.assertNotIn("callback_package", sys.modules)
-            self.assertNothingWritten()
+                self.assertEqual(result.stdout, b"")
+                self.assertError(result.stderr.decode(), "not a regular file owned by you")
+                self.assertFalse(os.path.exists(imported))
+                self.assertNothingWritten()
 
     def test_owned_callback_package_imports_after_the_complete_chain_is_checked(self):
         _, imported = self.callback_package()
@@ -693,13 +714,26 @@ class SecurityTest(HookBase):
         _, imported = self.callback_package()
         source = os.path.join(self.root, "source")
         os.makedirs(os.path.join(source, "callback_package"))
-        with (
-            unittest.mock.patch.object(sys, "path", [source, self.root, *sys.path]),
-            self.assertRaisesRegex(tui_hook.HookError, "module outside source roots"),
-        ):
-            tui_hook.load_adapter(self.state["adapter_hook"], [source])
+        script = """import runpy, sys
+path, *arguments = sys.argv[1:]
+sys.argv = [path, *arguments]
+try:
+    runpy.run_path(path, run_name="__main__")
+except SystemExit as error:
+    assert error.code == 0
+assert "callback_package" not in sys.modules
+"""
+        result = subprocess.run(
+            [sys.executable, "-c", script, HOOK, self.dir, json.dumps([source]), "stop"],
+            input=b"{}",
+            capture_output=True,
+            env={**self.env, "PYTHONPATH": self.root},
+            timeout=60,
+            check=True,
+        )
+        self.assertEqual(result.stdout, b"")
+        self.assertError(result.stderr.decode(), "module outside source roots")
         self.assertFalse(os.path.exists(imported))
-        self.assertNotIn("callback_package", sys.modules)
         self.assertNothingWritten()
 
     def test_bad_arguments_write_nothing(self):
