@@ -218,6 +218,15 @@ class OneFinished(CallbackCase):
                         "instruction": None,
                     },
                 )
+                with open(os.path.join(self.work, "run.jsonl"), encoding="utf-8") as file:
+                    crashes = [row for row in map(json.loads, file) if row["kind"] == "run_error"]
+                if isinstance(error, Stopped):
+                    self.assertEqual(crashes, [])
+                else:
+                    [crash] = crashes
+                    self.assertEqual(crash["error"], stopped[1])
+                    self.assertTrue(crash["traceback"].startswith("Traceback"), crash)
+                    self.assertTrue(crash["traceback"].endswith("RuntimeError: boom\n  now\n"))
 
     def test_an_on_event_raising_on_finished_leaves_the_callbacks_one_real_finished(self):
         failure = RuntimeError("observer failed")

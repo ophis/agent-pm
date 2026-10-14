@@ -7,6 +7,7 @@ import json
 import os
 import sys
 import time
+import traceback
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, fields, is_dataclass, replace
 
@@ -30,6 +31,7 @@ from agent_pm.delegate.engine.types import (
     Preview,
     Result,
     Spec,
+    Stopped,
 )
 from agent_pm.delegate.event.types import Outcome
 from agent_pm.session import (
@@ -43,6 +45,7 @@ from agent_pm.session import (
     Liveness,
     Mode,
     NotDisplayable,
+    RunLog,
     Session,
     SessionStatus,
     SessionStatusLog,
@@ -577,7 +580,8 @@ class HarnessDelegate(Delegate):
     def run(self, on_event: Callable[[Event], None] | None = None) -> Result:
         """Each event goes to the callback, then `on_event`; a Finished is stored first. A run that
         raises before its Finished stores and calls back a stopped one (not to `on_event`), then
-        re-raises.
+        re-raises; any raise but a signal's Stopped is also a run.jsonl run_error row with its
+        traceback.
         """
         state = self._state
         if state.events is not None and not state.detached and state.plan.spec.mode != Mode.TUI:
@@ -615,6 +619,13 @@ class HarnessDelegate(Delegate):
             except BaseException as error:
                 if not finished:
                     ended = stopped(error)
+                    if not isinstance(error, Stopped):
+                        RunLog(self.workdir).note(
+                            "run_error",
+                            error=ended.error,
+                            traceback="".join(traceback.format_exception(error)),
+                            best_effort=True,
+                        )
                     try:
                         self._complete(ended)
                     except (ConfigError, OSError) as failure:
