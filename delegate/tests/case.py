@@ -10,8 +10,7 @@ from unittest import mock
 
 import agent_pm
 from agent_pm.delegate.engine.drivers import AgentDriver
-from agent_pm.session import Driver
-from agent_pm.utils import read_project
+from agent_pm.session import Driver, read_config
 
 from session.tests.case import settings
 from utils.tests.sandbox import clean_env, project_roots
@@ -28,7 +27,7 @@ def committed(local: str = os.devnull) -> dict:
     """The session config's [adapters], `local` merged (default none), even under
     Case.configure_session.
     """
-    return read_project("session", local=local)["adapters"]
+    return read_config(local=local)["adapters"]
 
 
 class Case(unittest.TestCase):

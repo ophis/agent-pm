@@ -1,5 +1,5 @@
 """
-utils/config_file.py: load, merge, read_project (levels, ownership, the one local file), unset,
+utils/config_file.py: load, merge, read_resources (layers, ownership, the one local file), unset,
 freeze and thaw.
 """
 
@@ -19,7 +19,6 @@ from agent_pm.utils.config_file import (
     freeze,
     load,
     merge,
-    read_project,
     read_resources,
     thaw,
     unset,
@@ -72,7 +71,6 @@ class ConfigFileTest(Case):
 SESSION = '[hosts]\ndefault = "tmux"\n[hosts.tmux]\nstatus_line = false\n'
 DELEGATE = 'client = "a"\nshow = ""\nteam_dirs = []\n[roles.pm]\ntier = 2\n[roles.pm.output]\ntype = "local"\n'
 ORCH = 'team = ""\nwork_dir = "~/w"\n[roles.pm]\naccount = ""\nmax_runs = 3\n[core.roles.pm]\ngate = "g"\n'
-MANAGER = 'client = "m"\n'
 
 
 class FrozenTables(Case):
@@ -101,240 +99,11 @@ class FrozenTables(Case):
         self.assertIsNot(thaw(source)["a"]["l"], source["a"]["l"])
 
 
-class Projects(Case):
-    """A temp root of session/, delegate/, linear-orchestrator/ and manager/ config.toml (utils has
-    none) and this test's ~/.agent-pm/config.local.toml.
-    """
-
-    def setUp(self):
-        tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(tmp.cleanup)
-        self.root = tmp.name
-        for project, text in (
-            ("session", SESSION),
-            ("delegate", DELEGATE),
-            ("linear-orchestrator", ORCH),
-            ("manager", MANAGER),
-        ):
-            self.write(project, text)
-
-    def write(self, project, text):
-        os.makedirs(os.path.join(self.root, project), exist_ok=True)
-        with open(os.path.join(self.root, project, "config.toml"), "w", encoding="utf-8") as f:
-            f.write(text)
-
-    def local(self, text):
-        with open(os.path.join(self.agent_pm, "config.local.toml"), "w", encoding="utf-8") as f:
-            f.write(text)
-
-    def read(self, name, **kw):
-        return read_project(name, root=self.root, **kw)
-
-    def test_the_paths(self):
-        self.assertEqual(config_file.LOCAL, "~/.agent-pm/config.local.toml")
-        self.assertEqual(config_file.ROOT, REPO)
-        self.assertEqual(
-            config_file.LEVELS,
-            (("utils", "session"), ("delegate",), ("linear-orchestrator",), ("manager",)),
-        )
-
-    def test_each_project_reads_the_levels_at_or_below_it_a_higher_key_winning(self):
-        session = {"hosts": {"default": "tmux", "tmux": {"status_line": False}}}
-        delegate = {
-            **session,
-            "client": "a",
-            "show": "",
-            "team_dirs": [],
-            "roles": {"pm": {"tier": 2, "output": {"type": "local"}}},
-        }
-        orch = {
-            **delegate,
-            "team": "",
-            "work_dir": "~/w",
-            "roles": {"pm": {"tier": 2, "output": {"type": "local"}, "account": "", "max_runs": 3}},
-            "core": {"roles": {"pm": {"gate": "g"}}},
-        }
-        self.assertEqual(self.read("utils"), session)
-        self.assertEqual(self.read("session"), session)
-        self.assertEqual(self.read("delegate"), delegate)
-        self.assertEqual(self.read("linear-orchestrator"), orch)
-        self.assertEqual(self.read("manager"), {**orch, "client": "m"})
-
-    def test_local_goes_over_all_tables_merging_and_lists_replaced_whole(self):
-        self.local(
-            '[session.hosts.tmux]\nstatus_line = true\n[delegate]\nclient = "b"\nteam_dirs = ["~/t"]\n[delegate.roles.pm]\ntier = 1\n[linear_orchestrator]\nteam = "T"\n[linear_orchestrator.roles.pm]\naccount = "pm@x"\n[manager]\nclient = "b"\n'
-        )
-        found = self.read("linear-orchestrator")
-        self.assertEqual(
-            (found["client"], found["team_dirs"], found["team"], found["hosts"]["tmux"]),
-            ("b", ["~/t"], "T", {"status_line": True}),
-        )
-        self.assertEqual(
-            found["roles"]["pm"],
-            {"tier": 1, "output": {"type": "local"}, "account": "pm@x", "max_runs": 3},
-        )
-        self.assertEqual(self.read("manager")["client"], "b")
-
-    def test_a_project_takes_only_the_local_keys_owned_at_or_below_it(self):
-        self.local(
-            '[session.hosts.tmux]\nstatus_line = true\n[delegate]\nshow = "none"\n[delegate.roles.pm]\ncwd = "/p"\n[delegate.roles.new]\ntier = 3\n[delegate.roles.pm.output]\ntype = "github"\n[linear_orchestrator]\nteam = "T"\n[linear_orchestrator.core.roles.pm]\ncwd = "/c"\n[linear_orchestrator.roles.pm]\naccount = "pm@x"\n[linear_orchestrator.roles.new]\naccount = "n@x"\nmax_runs = 2\n'
-        )
-        session, delegate = self.read("session"), self.read("delegate")
-        self.assertEqual(session["hosts"]["tmux"], {"status_line": True})
-        self.assertEqual(set(session), {"hosts"})
-        self.assertEqual(
-            delegate["roles"],
-            {"pm": {"tier": 2, "output": {"type": "github"}, "cwd": "/p"}, "new": {"tier": 3}},
-        )
-        self.assertEqual(
-            (delegate["show"], "team" in delegate, "core" in delegate), ("none", False, False)
-        )
-        orch = self.read("linear-orchestrator")
-        self.assertEqual(orch["roles"]["new"], {"account": "n@x", "max_runs": 2, "tier": 3})
-        self.assertEqual(orch["core"]["roles"]["pm"], {"gate": "g", "cwd": "/c"})
-
-    def test_own_is_the_projects_file_and_the_local_keys_it_owns(self):
-        self.local(
-            '[delegate]\nclient = "b"\n[delegate.roles.pm]\ncwd = "/p"\ntier = 1\nunknown_field = "typo"\n[delegate.roles.pm.output]\ntype = "github"\n[linear_orchestrator]\nteam = "T"\n[linear_orchestrator.roles.pm]\naccount = "pm@x"\nunknown_field = "typo"\n[linear_orchestrator.roles.new]\nmax_runs = 2\n[manager]\nclient = "b"\n'
-        )
-        self.assertEqual(
-            self.read("linear-orchestrator", own=True),
-            {
-                "team": "T",
-                "work_dir": "~/w",
-                "roles": {
-                    "pm": {"account": "pm@x", "max_runs": 3, "unknown_field": "typo"},
-                    "new": {"max_runs": 2},
-                },
-                "core": {"roles": {"pm": {"gate": "g"}}},
-            },
-        )
-        found = self.read("delegate", own=True)
-        self.assertEqual(
-            found["roles"],
-            {"pm": {"tier": 1, "output": {"type": "github"}, "cwd": "/p", "unknown_field": "typo"}},
-        )
-        self.assertNotIn("hosts", found)
-        self.assertEqual(self.read("manager", own=True), {"client": "b"})
-
-    def test_own_still_rejects_an_unknown_top_level_key_in_a_supplied_local_section(self):
-        self.local('[delegate]\nunknown_field = "typo"\n')
-        for name in ("delegate", "linear-orchestrator"):
-            with (
-                self.subTest(name=name),
-                self.assertRaisesRegex(
-                    ConfigFileError, r"unknown key 'unknown_field' in \[delegate\]"
-                ),
-            ):
-                self.read(name, own=True)
-
-    def test_a_local_top_level_key_no_project_has_is_refused_at_run_time(self):
-        self.local("[session]\nbogus = 1\n")
-        for name in ("session", "delegate", "manager"):
-            with (
-                self.subTest(name),
-                self.assertRaisesRegex(
-                    ValueError,
-                    (r"^~/.agent-pm/config.local.toml: unknown key 'bogus' in \[session\]$"),
-                ),
-            ):
-                self.read(name)
-
-    def test_a_renamed_local_key_is_refused_naming_its_new_key(self):
-        old, hint = "runtime", "; renamed to 'client'"
-        self.local(f'[delegate]\n{old} = "codex"\n')
-        with self.assertRaises(ConfigFileError) as cm:
-            self.read("delegate")
-        self.assertEqual(
-            str(cm.exception),
-            f"~/.agent-pm/config.local.toml: unknown key {old!r} in [delegate]{hint}",
-        )
-
-    def test_a_new_table_under_a_known_one_is_taken_as_its_owners(self):
-        self.local('[session.hosts.other]\nimplementation = "a.b:C"\n[session.adapters]\n')
-        with self.assertRaisesRegex(ValueError, r"unknown key 'adapters' in \[session\]"):
-            self.read("session")
-        self.local('[session.hosts.other]\nimplementation = "a.b:C"\n')
-        self.assertEqual(self.read("session")["hosts"]["other"], {"implementation": "a.b:C"})
-
-    def test_no_local_file_and_no_config_file_are_empty(self):
-        os.remove(os.path.join(self.root, "manager", "config.toml"))
-        self.assertEqual(self.read("manager"), self.read("linear-orchestrator"))
-        self.assertEqual(
-            self.read("utils"), {"hosts": {"default": "tmux", "tmux": {"status_line": False}}}
-        )
-
-    def test_a_missing_own_config_or_given_path_is_an_os_error(self):
-        own = os.path.join(self.root, "delegate", "config.toml")
-        os.remove(own)
-        for name, kw in (("delegate", {}), ("session", {"path": own})):
-            with self.subTest(name), self.assertRaisesRegex(FileNotFoundError, f"{own}: missing"):
-                self.read(name, **kw)
-        self.assertIn("work_dir", self.read("linear-orchestrator"))
-
-    def test_a_directory_as_own_config_is_an_os_error(self):
-        own = os.path.join(self.root, "delegate", "config.toml")
-        os.remove(own)
-        os.mkdir(own)
-        with self.assertRaisesRegex(OSError, f"{own}: missing"):
-            self.read("delegate")
-
-    def test_a_new_empty_local_table_is_dropped(self):
-        self.local("[delegate.roles.ghost]\n")
-        self.assertNotIn("ghost", self.read("linear-orchestrator").get("roles", {}))
-        self.assertNotIn("ghost", self.read("delegate").get("roles", {}))
-
-    def test_a_name_that_is_not_a_project_is_refused(self):
-        for name in ("core", "tests", "", "linear_orchestrator", "../delegate"):
-            with (
-                self.subTest(name),
-                self.assertRaisesRegex(ValueError, f"project {name!r}: want one of"),
-            ):
-                self.read(name)
-
-    def test_a_key_in_two_same_level_projects_is_refused(self):
-        self.write("utils", "[hosts]\nx = 1\n")
-        with self.assertRaisesRegex(
-            ValueError, "session/config.toml: hosts is also a same-level project's"
-        ):
-            self.read("delegate")
-
-    def test_path_stands_in_for_the_projects_own_file(self):
-        other = os.path.join(self.root, "other.toml")
-        with open(other, "w", encoding="utf-8") as f:
-            f.write('client = "z"\nlanguage = "x"\n')
-        self.local('[delegate]\nlanguage = "y"\n')
-        found = self.read("delegate", path=other)
-        self.assertEqual((found["client"], found["language"], "roles" in found), ("z", "y", False))
-
-    def test_an_explicit_local_file(self):
-        local = os.path.join(self.root, "mine.toml")
-        with open(local, "w", encoding="utf-8") as f:
-            f.write('[delegate]\nclient = "q"\n')
-        self.assertEqual(self.read("delegate", local=local)["client"], "q")
-
-    def test_devnull_remains_an_empty_explicit_project_file(self):
-        self.assertEqual(self.read("delegate", path=os.devnull), self.read("session"))
-
-    def test_malformed_files_propagate(self):
-        self.local("x = [\n")
-        with self.assertRaises(tomllib.TOMLDecodeError):
-            self.read("delegate")
-
-
 class Resources(Case):
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         self.root = tmp.name
-        for project, text in (
-            ("session", SESSION),
-            ("delegate", DELEGATE),
-            ("linear-orchestrator", ORCH),
-        ):
-            folder = Path(self.root, project)
-            folder.mkdir()
-            (folder / "config.toml").write_text(text)
         self.package = "config_fixture_" + Path(self.root).name.replace("-", "_")
         for section, text in (
             ("session", SESSION),
@@ -478,16 +247,12 @@ class Resources(Case):
                 self.assertRaisesRegex(ConfigFileError, rf"move it under \[{section}\]"),
             ):
                 read_resources(self.resources)
-            with self.assertRaisesRegex(ConfigFileError, rf"move it under \[{section}\]"):
-                read_project("linear-orchestrator", root=self.root)
 
     def test_flat_migration_hints_match_key_paths_and_never_choose_utils(self):
         unrelated = DELEGATE + '[clients.writer]\naccount = ""\n'
         Path(self.root, self.package, "delegate", "config.toml").write_text(unrelated)
-        Path(self.root, "delegate", "config.toml").write_text(unrelated)
         extra = 'harness_key = ""\n' + ORCH
         Path(self.root, self.package, "linear_orchestrator", "config.toml").write_text(extra)
-        Path(self.root, "linear-orchestrator", "config.toml").write_text(extra)
         for text, key, hint in (
             (
                 'harness_key = "secret-service"\n',
@@ -512,31 +277,20 @@ class Resources(Case):
             ),
         ):
             self.local(text)
-            for read in (
-                lambda: read_resources(self.resources),
-                lambda: read_project("linear-orchestrator", root=self.root),
-            ):
-                with (
-                    self.subTest(text=text, read=read),
-                    self.assertRaises(ConfigFileError) as caught,
-                ):
-                    read()
-                self.assertEqual(
-                    str(caught.exception),
-                    f"~/.agent-pm/config.local.toml: unknown key {key!r}: flat local configuration; {hint}",
-                )
-                self.assertNotIn("[utils]", str(caught.exception))
+            with self.subTest(text=text), self.assertRaises(ConfigFileError) as caught:
+                read_resources(self.resources)
+            self.assertEqual(
+                str(caught.exception),
+                f"~/.agent-pm/config.local.toml: unknown key {key!r}: flat local configuration; {hint}",
+            )
+            self.assertNotIn("[utils]", str(caught.exception))
 
     def test_a_flat_key_without_a_supplied_owner_does_not_name_another_layer(self):
         self.local('harness_key = "linear-harness"\n')
         expected = "~/.agent-pm/config.local.toml: unknown key 'harness_key': flat local configuration; no supplied layer has it; move it under its owning layer's section"
-        for read in (
-            lambda: read_resources(self.resources[:1]),
-            lambda: read_project("session", root=self.root),
-        ):
-            with self.subTest(read=read), self.assertRaises(ConfigFileError) as caught:
-                read()
-            self.assertEqual(str(caught.exception), expected)
+        with self.assertRaises(ConfigFileError) as caught:
+            read_resources(self.resources[:1])
+        self.assertEqual(str(caught.exception), expected)
 
     def test_unknown_top_level_keys_and_non_table_sections_are_errors(self):
         for text, error in (
@@ -552,15 +306,11 @@ class Resources(Case):
 
     def test_supplied_non_table_sections_are_checked_before_flat_keys(self):
         self.local('harness_key = "unprovided"\nsession = 1\n')
-        for read in (
-            lambda: read_resources(self.resources[:1]),
-            lambda: read_project("session", root=self.root),
-        ):
-            with self.subTest(read=read), self.assertRaises(ConfigFileError) as caught:
-                read()
-            self.assertEqual(
-                str(caught.exception), "~/.agent-pm/config.local.toml: [session]: want a table"
-            )
+        with self.assertRaises(ConfigFileError) as caught:
+            read_resources(self.resources[:1])
+        self.assertEqual(
+            str(caught.exception), "~/.agent-pm/config.local.toml: [session]: want a table"
+        )
 
     def test_nested_keys_are_passed_to_their_owner(self):
         self.local(
@@ -587,13 +337,53 @@ class Resources(Case):
             read_resources(self.resources[:1])["adapters"]["other"]["env"], {"CUSTOM": "value"}
         )
 
-    def test_package_location_wins_over_legacy_location(self):
-        folder = Path(self.root, "session", "src", "agent_pm", "session")
-        folder.mkdir(parents=True)
-        (folder / "config.toml").write_text('[hosts]\ndefault = "packaged"\n')
-        self.assertEqual(read_project("session", root=self.root)["hosts"], {"default": "packaged"})
-        (folder / "config.toml").unlink()
-        self.assertEqual(read_project("session", root=self.root)["hosts"]["default"], "tmux")
+    def test_the_local_file(self):
+        self.assertEqual(config_file.LOCAL, "~/.agent-pm/config.local.toml")
+        local = Path(self.root, "mine.toml")
+        local.write_text('[delegate]\nclient = "q"\n')
+        self.assertEqual(read_resources(self.resources[:2], local=str(local))["client"], "q")
+
+    def test_local_goes_over_every_table_merging_and_lists_replaced_whole(self):
+        self.local(
+            '[session.hosts.tmux]\nstatus_line = true\n[delegate]\nclient = "b"\nteam_dirs = ["~/t"]\n[delegate.roles.pm]\ntier = 1\n[linear_orchestrator]\nteam = "T"\n[linear_orchestrator.roles.pm]\naccount = "pm@x"\n'
+        )
+        found = read_resources(self.resources)
+        self.assertEqual(
+            (found["client"], found["team_dirs"], found["team"], found["hosts"]["tmux"]),
+            ("b", ["~/t"], "T", {"status_line": True}),
+        )
+        self.assertEqual(
+            found["roles"]["pm"],
+            {"tier": 1, "output": {"type": "local"}, "account": "pm@x", "max_runs": 3},
+        )
+
+    def test_a_renamed_local_key_is_refused_naming_its_new_key(self):
+        self.local('[delegate]\nruntime = "codex"\n')
+        with self.assertRaises(ConfigFileError) as caught:
+            read_resources(self.resources[:2])
+        self.assertEqual(
+            str(caught.exception),
+            "~/.agent-pm/config.local.toml: unknown key 'runtime' in [delegate]; renamed to 'client'",
+        )
+
+    def test_a_new_table_under_a_known_one_is_taken_as_its_owners(self):
+        self.local('[session.hosts.other]\nimplementation = "a.b:C"\n[session.adapters]\n')
+        with self.assertRaisesRegex(ConfigFileError, r"unknown key 'adapters' in \[session\]"):
+            read_resources(self.resources[:1])
+        self.local('[session.hosts.other]\nimplementation = "a.b:C"\n')
+        self.assertEqual(
+            read_resources(self.resources[:1])["hosts"]["other"], {"implementation": "a.b:C"}
+        )
+
+    def test_a_new_empty_local_table_is_dropped(self):
+        self.local("[delegate.roles.ghost]\n")
+        self.assertNotIn("ghost", read_resources(self.resources)["roles"])
+        self.assertNotIn("ghost", read_resources(self.resources[:2])["roles"])
+
+    def test_a_malformed_local_file_propagates(self):
+        self.local("x = [\n")
+        with self.assertRaises(tomllib.TOMLDecodeError):
+            read_resources(self.resources[:2])
 
 
 class Unset(Case):

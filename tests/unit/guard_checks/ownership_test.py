@@ -3,7 +3,6 @@ from tests.guard_checks import commands, exports, ownership
 from tests.guard_data import LEGACY_HOST_NAMES
 from tests.guard_data.delegate import CONFIG_FILE
 from tests.guard_data.session import ADAPTERS_HOME, SESSION_SRC
-from tests.guard_data.utils import CONFIG_LEVELS
 from tests.guard_samples import PKG, Sample
 
 OPKG = "src/agent_pm/linear_orchestrator"
@@ -148,7 +147,6 @@ class Standalone(Sample):
                 "session/tests/a_test.py": "import agent_pm.linear_orchestrator\n",
                 "linear-orchestrator/b.py": "import agent_pm.linear_orchestrator\n",
                 "tests/c.py": "import agent_pm.linear_orchestrator\n",
-                CONFIG_LEVELS: ('LEVELS = (("linear-orchestrator",),)\n# linear-orchestrator\n'),
             }
         )
         self.assertEqual(
@@ -159,7 +157,6 @@ class Standalone(Sample):
                 f"{team}/roles/r.md:2: names linear_orchestrator",
                 f"manager/{PKG}/manager/z.py:1: names linear-orchestrator",
                 f"session/{PKG}/session/x.py:1: names linear_orchestrator",
-                f"{CONFIG_LEVELS}:2: names linear-orchestrator",
                 f"utils/{PKG}/utils/y.py:1: names linear_orchestrator",
             ],
         )

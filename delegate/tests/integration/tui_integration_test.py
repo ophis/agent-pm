@@ -17,8 +17,7 @@ from unittest import mock
 
 from agent_pm.delegate import Progress, Spec, composer, run
 from agent_pm.delegate.engine.runner import FIX, NUDGE, STOP_LIMIT
-from agent_pm.session import Driver
-from agent_pm.utils import read_project
+from agent_pm.session import Driver, read_config
 
 from delegate.tests.integration.cli import DONE, SID, UNSAVED, UNSAVED_ERROR
 from delegate.tests.replies import block, mark, prompt
@@ -75,7 +74,7 @@ class TuiRun(tui_live.Live):
                 },
             )
         )
-        self.driver = Driver.from_config(read_project("session"))
+        self.driver = Driver.from_config(read_config())
 
     def go(self, on_event=None, **scenario):
         """run() with the fake playing `scenario`, failing past WAIT s; self.seen gets each
@@ -209,7 +208,7 @@ class TurnEnds(TuiRun):
 class Idle(TuiRun):
     def test_no_event_for_the_idle_timeout_gives_up_the_session_left_open(self):
         clock = Ahead()
-        self.driver = Driver.from_config(read_project("session"), clock=clock.monotonic)
+        self.driver = Driver.from_config(read_config(), clock=clock.monotonic)
 
         def later(event):
             if isinstance(event, Progress):  # from here each clock read is past the idle timeout

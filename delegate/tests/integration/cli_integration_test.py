@@ -14,8 +14,7 @@ from unittest import mock
 
 from agent_pm.delegate.composer.prompt import RESUME
 from agent_pm.delegate.engine.runner import FIX
-from agent_pm.session import Driver
-from agent_pm.utils import read_project
+from agent_pm.session import Driver, read_config
 
 from delegate.tests.integration.cli import (
     ASKING,
@@ -375,7 +374,7 @@ class UsageLimit(Integration):
         )
         self.assertFalse(os.path.exists(self.out))
         self.assertEqual(len(self.calls()), 1)
-        self.driver = Driver.from_config(read_project("session"))
+        self.driver = Driver.from_config(read_config())
         with mock.patch.dict(os.environ, {"CLAUDE_CONFIG_DIR": self.config}):
             self.assertEqual(
                 self.driver.session_status("claude", SID, self.proj, workdir=self.work).resumable,
