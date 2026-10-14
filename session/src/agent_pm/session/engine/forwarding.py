@@ -56,7 +56,7 @@ def close(name: str) -> None:
     """Kills tui session `name` on the configured default Host (absent is fine), then removes its
     session dir.
     """
-    tui.TuiMode.close(tui.checked_name(name), host=HostedSession.host())
+    HostedSession.retire(name)
 
 
 def _on(tmux) -> Callable[[type[Host], str, Mapping], Host]:

@@ -1,0 +1,338 @@
+"""Worker, a plain tui session agent-pm-session starts by name (FR-20): its state, WorkerState, in
+~/.agent-pm/workers/<sid>/worker.json (dir 0700, file 0600; by-name/<name> holds the sid its latest
+start used), its Record kept on its Host only once its early watch passes (EARLY s without its
+runtime exiting). resume is idempotent; restart and resume first retire the old session, then wait
+for its runtime's process group to exit: WAIT s, else kill it and wait again; still there, nothing
+starts (FR-36). Callers hold locked() around start, resume and restart: one worker starts once.
+"""
+
+from __future__ import annotations
+
+import contextlib
+import json
+import os
+import re
+import stat
+import sys
+import time
+from collections.abc import Callable, Iterator, Mapping
+from dataclasses import dataclass, field, replace
+from types import MappingProxyType
+
+from agent_pm.session.engine.base import Session
+from agent_pm.session.engine.types import (
+    TAG,
+    Access,
+    Blocked,
+    ConfigError,
+    DriverError,
+    Exited,
+    IdleTimeout,
+    Mode,
+    Spec,
+)
+from agent_pm.session.hosts.base import Displayable, HostProcess
+from agent_pm.utils import (
+    CONFIG_NAME,
+    STATE,
+    Display,
+    Record,
+    file_lock,
+    printable_abs,
+    read_regular,
+    save,
+)
+
+SID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
+WORKERS = f"{STATE}/workers"
+BY_NAME = "by-name"
+STATE_FILE = "worker.json"
+STATE_MAX = 64 << 10
+VERSION = 1
+EARLY = 5
+WAIT = 10
+REPORT_LINES = 20
+COMMAND = "agent-pm-session"
+KIND = "worker"
+
+
+def _say(text: str) -> None:
+    print(text, file=sys.stderr)
+
+
+def _text(value) -> bool:
+    return isinstance(value, str) and value != "" and value.isprintable()
+
+
+@dataclass(frozen=True)
+class WorkerState:
+    """What a worker's resume replays: its runtime, cwd, flags, env, events, Host and display, and
+    its last launch's Host token (HostProcess.token).
+    """
+
+    name: str
+    sid: str
+    runtime: str
+    cwd: str
+    host: str
+    flags: tuple[str, ...] = ()
+    env: Mapping[str, str] = field(default_factory=dict)
+    events: str | None = None
+    display: Display = None
+    token: str | None = None
+
+    def __post_init__(self):
+        checks = {
+            "name": isinstance(self.name, str) and TAG.fullmatch(self.name) is not None,
+            "sid": isinstance(self.sid, str) and SID.fullmatch(self.sid) is not None,
+            "runtime": isinstance(self.runtime, str) and CONFIG_NAME.fullmatch(self.runtime),
+            "cwd": printable_abs(self.cwd),
+            "host": isinstance(self.host, str) and CONFIG_NAME.fullmatch(self.host),
+            "flags": isinstance(self.flags, tuple)
+            and all(isinstance(flag, str) and "\0" not in flag for flag in self.flags),
+            "env": isinstance(self.env, Mapping)
+            and all(
+                isinstance(key, str)
+                and key
+                and "=" not in key
+                and "\0" not in key
+                and isinstance(value, str)
+                and value.isprintable()
+                for key, value in self.env.items()
+            ),
+            "events": self.events is None or printable_abs(self.events),
+            "display": self.display is None or _text(self.display),
+            "token": self.token is None or _text(self.token),
+        }
+        if bad := [name for name, ok in checks.items() if not ok]:
+            raise ConfigError(f"worker {bad[0]}: {getattr(self, bad[0])!r:.80} is not valid")
+        object.__setattr__(self, "env", MappingProxyType(dict(self.env)))
+
+    @classmethod
+    def from_json(cls, data) -> WorkerState:
+        names = {"version", *(name for name in cls.__dataclass_fields__)}
+        if not isinstance(data, dict) or set(data) != names or data["version"] != VERSION:
+            raise ConfigError(f"want version {VERSION} with exactly {', '.join(sorted(names))}")
+        if not isinstance(data["flags"], list) or not isinstance(data["env"], dict):
+            raise ConfigError("flags: want a list; env: want an object")
+        fields = {k: v for k, v in data.items() if k != "version"}
+        return cls(**{**fields, "flags": tuple(data["flags"])})
+
+    def to_json(self) -> str:
+        data = {name: getattr(self, name) for name in self.__dataclass_fields__}
+        data.update(version=VERSION, flags=list(self.flags), env=dict(self.env))
+        return json.dumps(data, indent=2, sort_keys=True) + "\n"
+
+    def workdir(self) -> str:
+        return os.path.join(os.path.abspath(os.path.expanduser(WORKERS)), self.sid)
+
+    def record(self) -> Record:
+        return Record(
+            v=1,
+            kind=KIND,
+            name=self.name,
+            sessions=(self.name,),
+            sid=self.sid,
+            workdir=self.workdir(),
+            ctl=(COMMAND,),
+            resume=(COMMAND, "resume", self.name),
+            display=self.display,
+            detail=self.runtime,
+        )
+
+    def spec(self, *, prompt: str, resume: bool) -> Spec:
+        return Spec(
+            workdir=self.workdir(),
+            access=Access(cwd=self.cwd, project=True),
+            sid=self.sid,
+            name=self.name,
+            protect=(os.path.realpath(os.path.expanduser(WORKERS)),),
+            runtime=self.runtime,
+            mode=Mode.TUI,
+            prompt=prompt,
+            resume=resume,
+            events=self.events,
+            flags=self.flags,
+            env=self.env,
+        )
+
+
+def _private_dir(path: str) -> None:
+    os.makedirs(path, 0o700, exist_ok=True)
+    found = os.lstat(path)
+    if not stat.S_ISDIR(found.st_mode) or found.st_uid != os.getuid():
+        raise DriverError(f"{path}: not a directory of yours")
+    os.chmod(path, 0o700)
+
+
+def _read(path: str, what: str) -> bytes:
+    data = read_regular(path, limit=STATE_MAX + 1, own=True)
+    if data is None or len(data) > STATE_MAX:
+        raise DriverError(f"{what}: {path}: missing, not a regular file of yours, or too large")
+    return data
+
+
+class Worker:
+    """One worker's state and its runs on session_cls (configured by the caller)."""
+
+    def __init__(
+        self,
+        state: WorkerState,
+        *,
+        session_cls: type[Session] = Session,
+        say: Callable[[str], None] = _say,
+        clock: Callable[[], float] = time.monotonic,
+    ) -> None:
+        self.state, self.session_cls, self.say, self.clock = state, session_cls, say, clock
+
+    @classmethod
+    def load(cls, name: str, *, sid: str | None = None, **kw) -> Worker:
+        """Worker `name`'s state: sid's (given, e.g. by AGENT_PM_SID), else its latest start's."""
+        if not isinstance(name, str) or not TAG.fullmatch(name):
+            raise ConfigError(f"name must match [A-Za-z0-9_-]+, got {name!r:.80}")
+        root = os.path.abspath(os.path.expanduser(WORKERS))
+        given = sid is not None
+        if sid is None:
+            pointer = _read(os.path.join(root, BY_NAME, name), f"{name}: not a worker")
+            sid = pointer.decode(errors="replace").strip()
+            if not SID.fullmatch(sid):
+                raise DriverError(f"{name}: not a worker: {BY_NAME}/{name} holds no session id")
+        elif not isinstance(sid, str) or not SID.fullmatch(sid):
+            raise ConfigError(f"sid {sid!r:.80}: want a session id")
+        data = _read(os.path.join(root, sid, STATE_FILE), f"{name}: no worker {sid}")
+        try:
+            state = WorkerState.from_json(json.loads(data))
+        except (ValueError, RecursionError, TypeError, ConfigError) as error:
+            raise DriverError(f"{name}: worker {sid}: bad {STATE_FILE}: {error}") from None
+        if (state.name, state.sid) != (name, sid):
+            mismatch = f"sid {sid} is worker {state.name}'s, not {name}'s"
+            raise ConfigError(mismatch) if given else DriverError(f"{name}: {mismatch}")
+        return cls(state, **kw)
+
+    @contextlib.contextmanager
+    def locked(self) -> Iterator[None]:
+        workdir = self.state.workdir()
+        try:
+            _private_dir(os.path.dirname(workdir))
+            _private_dir(workdir)
+            with file_lock(os.path.join(workdir, "worker"), own=True):
+                yield
+        except OSError as error:
+            raise DriverError(f"{self.state.name}: {workdir}: {error.strerror or error}") from None
+
+    def start(self, *, prompt: str, resume: bool) -> Record:
+        """Start its runtime, save its state, show it, watch it; then publish its Record and return
+        it. Its runtime exiting in the watch: DriverError with its last lines, its terminal kept,
+        no Record.
+        """
+        name = self.state.name
+        session = self.session_cls.start(
+            self.state.spec(prompt=prompt, resume=resume),
+            display=self.state.display,
+            host=self.state.host,
+            idle_timeout=EARLY,
+        )
+        host = self.session_cls.host(self.state.host)
+        try:
+            handle = host.attach(name)
+        except DriverError:  # it exited already: the watch reports it
+            handle = None
+        self.state = replace(self.state, token=None if handle is None else handle.token)
+        try:
+            self._save()
+        except (DriverError, OSError) as error:
+            with contextlib.suppress(DriverError, ConfigError):
+                session.close()
+            detail = error.strerror if isinstance(error, OSError) else error
+            raise DriverError(f"{name}: {detail}; start undone") from None
+        if session.displayable:
+            self._show(session)
+        self._watch(session)
+        record = self.state.record()
+        (host.attach(name) if handle is None else handle).publish(record)
+        return record
+
+    def resume(self) -> Record:
+        """Its Record, starting nothing, while its session lives; else a resumed start."""
+        handle = self._handle()
+        if handle is not None and handle.alive():
+            record = handle.record()
+            if record is None or record.sid != self.state.sid:
+                record = self.state.record()
+                handle.publish(record)
+            return record
+        self.replace(handle)
+        return self.start(prompt="", resume=True)
+
+    def restart(self) -> Record:
+        if self.state.name not in self.session_cls.host(self.state.host).list():
+            raise DriverError(f"{self.state.name}: no session to restart; resume starts it")
+        self.replace(self._handle())
+        return self.start(prompt="", resume=True)
+
+    def replace(self, handle: HostProcess | None) -> None:
+        """Retire its session and close `handle` (its old process group, absent is fine), then wait
+        for that group: WAIT s, else kill it and wait again.
+        """
+        name = self.state.name
+        self.session_cls.retire(name, host=self.state.host)
+        if handle is None:
+            return
+        handle.close()
+        if handle.wait_exit(WAIT):
+            return
+        handle.kill()
+        if not handle.wait_exit(WAIT):
+            raise DriverError(f"{name}: its old runtime did not exit; nothing started")
+
+    def _handle(self) -> HostProcess | None:
+        """Its Host's session of its name (not another's), else its token's surviving group."""
+        host = self.session_cls.host(self.state.host)
+        name = self.state.name
+        if name in host.list():
+            handle = host.attach(name)
+            sid, _ = handle.session_identity()
+            if sid is not None and sid != self.state.sid:
+                raise DriverError(f"session {name} is not worker {self.state.sid} (its sid: {sid})")
+            return handle
+        return None if self.state.token is None else host.reclaim(self.state.token)
+
+    def _save(self) -> None:
+        root = os.path.dirname(self.state.workdir())
+        save(os.path.join(self.state.workdir(), STATE_FILE), self.state.to_json(), own=True)
+        _private_dir(os.path.join(root, BY_NAME))
+        save(os.path.join(root, BY_NAME, self.state.name), self.state.sid + "\n", own=True)
+
+    def _show(self, session: Session) -> None:
+        name = self.state.name
+        try:
+            self.say(f"session {name}: {session.attach_command()}")
+            command = session.show(display=self.state.display)
+        except (DriverError, ConfigError) as error:
+            self.say(f"session {name}: not shown: {error}")
+            return
+        if command is not None:
+            self.say(f"session {name}: not shown; attach with {command}")
+
+    def _watch(self, session: Session) -> None:
+        deadline = self.clock() + EARLY
+        for event in session.events():
+            if isinstance(event, Exited):
+                raise DriverError(self._died(event.returncode))
+            if isinstance(event, Blocked):
+                self.say(f"session {self.state.name}: waits on a dialog: {event.reason}")
+                return
+            if isinstance(event, IdleTimeout) or self.clock() >= deadline:
+                return
+
+    def _died(self, code: int) -> str:
+        head = f"{self.state.name}: {self.state.runtime} exited {code} at once"
+        host = self.session_cls.host(self.state.host)
+        if not isinstance(host, Displayable):
+            return head
+        try:
+            screen = host.screen(self.state.name, REPORT_LINES)
+        except DriverError:
+            return head
+        lines = [line for line in screen.splitlines() if line.strip()][-REPORT_LINES:]
+        return "\n".join([f"{head}; its last lines:", *lines]) if lines else head

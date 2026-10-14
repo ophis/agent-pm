@@ -333,6 +333,10 @@ class HostedSession(Session):
         return session
 
     @classmethod
+    def retire(cls, name: str, *, host: str | None = None) -> None:
+        tui.TuiMode.close(tui.checked_name(name), host=cls.host(host))
+
+    @classmethod
     def list(
         cls, match: str | None = None, *, display: Display = None
     ) -> builtins.list[SessionRow]:
