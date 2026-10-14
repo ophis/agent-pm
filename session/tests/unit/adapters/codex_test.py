@@ -25,7 +25,7 @@ FIVE, WEEK = Window(62, 2000), Window(41, 4000)
 class SessionStatusTest(Base):
     def test_adapter_inspects_binding_session_and_descendant_by_cwd(self):
         self.prepare()
-        self.common.bind(str(self.work), self.spec.sid, NATIVE)
+        state = self.common.bind(str(self.work), self.spec.sid, NATIVE)
         self.rollout()
         self.rollout(CHILD, parent=NATIVE, stamp=300)
         info = self.adapter.session_status(
@@ -35,9 +35,10 @@ class SessionStatusTest(Base):
         )
         self.assertIsInstance(info, SessionStatus)
         self.assertEqual((info.resumable, info.last_active), ("yes", 300))
-        self.assertIn("codex resume", info.resume_command)
+        self.assertEqual(self.common.resume_launch(state).argv[:2], ("codex", "resume"))
+        self.assertEqual(info.resume_command, self.common.resume_command(state))
         self.assertIn(NATIVE, info.resume_command)
-        self.assertIn("CODEX_HOME=", info.resume_command)
+        self.assertNotIn("CODEX_HOME=", info.resume_command)
 
     def test_status_validates_a_recorded_transcript_and_rebuilds_resume(self):
         self.prepare()

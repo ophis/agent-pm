@@ -415,6 +415,58 @@ class HeadlessEventsIntegrationTest(HeadlessSessions):
         )
 
 
+class ResumeReferenceIntegrationTest(HeadlessSessions):
+    def test_fake_credentials_stay_out_of_public_text_and_replay_on_resume(self):
+        secrets = {"CFG_TOKEN": "cfg-1", "ACCESS_TOKEN": "access-2", "SPEC_TOKEN": "spec-3"}
+        config = self.config["adapters"]["codex"]
+        self.config["adapters"]["codex"] = {
+            **config,
+            "env": {**config["env"], "CFG_TOKEN": "cfg-1"},
+        }
+        spec = dataclasses.replace(
+            self.spec,
+            sid="secret-run",
+            env={"SPEC_TOKEN": "spec-3"},
+            access=dataclasses.replace(self.spec.access, env={"ACCESS_TOKEN": "access-2"}),
+        )
+        handle = Driver(**self.config).start("codex", "headless", "hello", spec)
+        self.drain(handle)
+        resume = handle.info().resume
+        status = self.driver.session_status(
+            "codex", "secret-run", str(self.cwd), workdir=str(self.work)
+        )
+        log = (self.work / "run.jsonl").read_text(encoding="utf-8")
+        for text in (resume, status.resume_command, log):
+            for value in secrets.values():
+                self.assertNotIn(value, text)
+        self.assertEqual(status.resume_command, resume)
+        record = self.root / "resumed.json"
+        recorder = self.root / "recorder.py"
+        recorder.write_text(
+            "import json, os, sys\n"
+            "with open(os.environ['RESUME_RECORD'], 'w') as f:\n"
+            "    json.dump({'argv': sys.argv[1:], 'cwd': os.getcwd(), 'env': dict(os.environ)}, f)\n"
+        )
+        (self.bin / "codex").write_text(
+            f'#!/bin/sh\nexec {shlex.quote(sys.executable)} {shlex.quote(str(recorder))} "$@"\n'
+        )
+        result = subprocess.run(
+            ["/bin/sh", "-c", resume],
+            env={**os.environ, "RESUME_RECORD": str(record)},
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        resumed = json.loads(record.read_text(encoding="utf-8"))
+        self.assertEqual((resumed["argv"][0], resumed["argv"][-1]), ("resume", NATIVE))
+        self.assertEqual(os.path.realpath(resumed["cwd"]), str(self.cwd))
+        env = resumed["env"]
+        self.assertEqual({key: env.get(key) for key in secrets}, secrets)
+        self.assertEqual(env["CODEX_HOME"], str(self.codex_home))
+
+
 class HeadlessLaunchIntegrationTest(HeadlessSessions):
     def test_fixture_cleanup_removes_owned_home_outside_writable_roots(self):
         self.assertNotEqual(
