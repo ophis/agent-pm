@@ -35,8 +35,8 @@ class CallbackTest(Case):
             "environment": {"TMUX_TMPDIR": self.home},
         }
 
-    def run_callback(self, identity):
-        response = "" if identity is None else f"%3\t{identity}\n"
+    def run_callback(self, identity, process="4242 $3 %3 4343"):
+        response = "" if identity is None else f"{process}\t{identity}\n"
         with (
             mock.patch.dict(
                 os.environ,
@@ -65,13 +65,27 @@ class CallbackTest(Case):
                     "-p",
                     "-t",
                     "=w1:",
-                    "#{pane_id}\t#{@sid}\t#{@generation}",
+                    "#{@process}\t#{@sid}\t#{@generation}",
                 ],
                 [self.executable, "set-option", "-t", "%3", "@state", "working"],
             ],
         )
         for call in run.call_args_list:
             self.assertEqual(call.kwargs["env"], {"TMUX_TMPDIR": self.home, "KEEP": "value"})
+
+    def test_callback_marks_the_pane_its_launch_recorded(self):
+        run = self.run_callback("sid\tgeneration", process="1 $1 %9 42")
+        self.assertEqual(
+            run.call_args_list[1].args[0],
+            [self.executable, "set-option", "-t", "%9", "@state", "working"],
+        )
+
+    def test_a_missing_or_malformed_process_marks_nothing(self):
+        for process in ("", "%9", "1 $1 %9", "1 $1 %9 42;"):
+            with self.subTest(process=process):
+                self.assertEqual(
+                    self.run_callback("sid\tgeneration", process=process).call_count, 1
+                )
 
     def test_a_reused_name_even_with_the_same_sid_is_never_marked(self):
         for identity in ("sid\tnext-generation", "other\tgeneration", "", None):
