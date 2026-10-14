@@ -17,7 +17,7 @@ class ConfigOnce(Sample):
     def test_load_and_use_logs_outside_an_entry_main(self):
         root = self.tree(
             {
-                f"{OPKG}/engine/run.py": "from agent_pm.linear_orchestrator.engine import config\nfrom agent_pm.linear_orchestrator.engine import log as linear\ndef main():\n    config.load()\n    linear.use_logs(None)\n\ndef inner():\n    config.load()\n",
+                f"{OPKG}/engine/prune.py": "from agent_pm.linear_orchestrator.engine import config\nfrom agent_pm.linear_orchestrator.engine import log as linear\ndef main():\n    config.load()\n    linear.use_logs(None)\n\ndef inner():\n    config.load()\n",
                 f"{OPKG}/engine/writeback.py": (
                     "from agent_pm.linear_orchestrator.engine import config\nfrom agent_pm.linear_orchestrator.engine.log import use_logs\n\ndef main():\n    config.load()\n    use_logs(None)\n"
                 ),
@@ -31,7 +31,7 @@ class ConfigOnce(Sample):
             configuration.config_once(self.wrap_orchestrator(root)),
             [
                 f"{OPKG}/engine/promote.py:5: {self.LOAD}",
-                f"{OPKG}/engine/run.py:8: {self.LOAD}",
+                f"{OPKG}/engine/prune.py:8: {self.LOAD}",
                 f"{OPKG}/engine/writeback.py:5: {self.LOAD}",
                 f"{OPKG}/engine/writeback.py:6: {self.USE_LOGS}",
                 f"src/run.py:4: {self.LOAD}",
@@ -68,7 +68,7 @@ class ConfigOnce(Sample):
 
     def test_the_real_entries_calls_outside_an_entry(self):
         files = {}
-        for name in ("run.py", "promote.py"):
+        for name in ("promote.py", "prune.py"):
             with open(
                 os.path.join(ORCH_ROOT, "agent_pm", "linear_orchestrator", "engine", name),
                 encoding="utf-8",

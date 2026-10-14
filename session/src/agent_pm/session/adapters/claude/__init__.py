@@ -3,6 +3,8 @@ rest is ClaudeCommon's.
 """
 
 import os
+from collections.abc import Mapping
+from types import MappingProxyType
 
 from agent_pm.session.adapters.base import Adapter
 from agent_pm.session.adapters.claude.common import ClaudeCommon, added_dirs
@@ -55,8 +57,8 @@ class ClaudeAdapter(Adapter):
     def usage(self, output):
         return self.common.parse_usage(output)
 
-    def session_status(self, info: SessionInfo):
-        return self.common.session_status(info.sid, info.cwd, transcript=info.transcript)
+    def session_status(self, info: SessionInfo, *, env: Mapping[str, str] = MappingProxyType({})):
+        return self.common.session_status(info.sid, info.cwd, transcript=info.transcript, env=env)
 
     def writable_dirs(self, spec: Spec):
         cwd = spec.access.cwd or spec.workdir

@@ -117,13 +117,13 @@ def _session_line(workdir: str) -> Callable[[SessionInfo], None]:
     return record
 
 
-def _resumable(adapter: Callable[[], Adapter], info: SessionInfo) -> SessionStatus:
+def _resumable(adapter: Callable[[], Adapter], info: SessionInfo, spec: Spec) -> SessionStatus:
     if error := sid_error(info.sid):
         raise ConfigError(error)
     if not printable_abs(info.cwd):
         raise ConfigError(f"cwd must be a printable absolute path, got {info.cwd!r:.80}")
     try:
-        return adapter().session_status(info)
+        return adapter().session_status(info, env={**spec.access.env, **spec.env})
     except OSError:
         return SessionStatus(Resumable.UNKNOWN, None, "")
 
@@ -438,7 +438,7 @@ class HostedSession(Session):
             raise SessionError(f"inspect session {sid}: {error}") from error
         if info is None:
             raise NoRecordedSession(f"no recorded session {sid} in {spec.workdir}")
-        return _resumable(lambda: setup.registry.adapter(client), info)
+        return _resumable(lambda: setup.registry.adapter(client), info, spec)
 
     def events(self) -> Iterator[SessionEvent | Stderr | IdleTimeout]:
         last = self._clock()
@@ -553,7 +553,7 @@ class HostedSession(Session):
             self.stop()
 
     def session_status(self) -> SessionStatus:
-        return _resumable(lambda: self._adapter, self.info())
+        return _resumable(lambda: self._adapter, self.info(), self._running.prepared.spec)
 
     def record(self) -> Record | None:
         name = self._tui()

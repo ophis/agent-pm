@@ -1,10 +1,11 @@
-"""A Linear issue's run, owned and recovered through its recorded Delegate implementation."""
+"""A Linear issue's run, owned and recovered through its recorded Delegate implementation; its
+harness calls `agent-pm-linear writeback --issue ID --workdir <workdir>` on each event.
+"""
 
 from __future__ import annotations
 
 import os
 import re
-from collections.abc import Sequence
 from dataclasses import replace
 
 from agent_pm.delegate import Delegate, Spec
@@ -31,7 +32,6 @@ class LinearRun:
         display: Display = None,
         delegate_kind: str | None = None,
         delegate_cls: type | None = None,
-        callback: Sequence[str] | None = None,
     ):
         self._identity(issue, sid)
         self.issue, self.sid = issue, sid
@@ -53,7 +53,7 @@ class LinearRun:
                 cwd=workdir,
             ),
             display=display,
-            callback=callback,
+            callback=["agent-pm-linear", "writeback", "--issue", issue, "--workdir", workdir],
             overlays=(cfg.core,),
         )
 
@@ -88,7 +88,7 @@ class LinearRun:
         view.issue, view.sid = issue, latest.sid
         view.delegate_kind = runs.delegate_of(entries, latest.sid)
         provider = delegate_cls or cls._provider(cfg, view.delegate_kind)
-        view.delegate = provider.attach(cfg.run_dir(issue))
+        view.delegate = provider.attach(cfg.run_dir(issue), sid=latest.sid)
         return view
 
     def _record(self, record: Record) -> Record:
@@ -125,6 +125,9 @@ class LinearRun:
 
     def close(self) -> None:
         self.delegate.close()
+
+    def forget(self) -> None:
+        self.delegate.forget()
 
     def attach_command(self) -> str | None:
         return self.delegate.attach_command()

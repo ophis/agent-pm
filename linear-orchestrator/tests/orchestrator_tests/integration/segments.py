@@ -269,8 +269,8 @@ class Segment(TmuxFlow):
 
     def launch(self, ident, role, script, *, resumed):
         """router.py --issue ident with script behind a new gate, until its fake_claude waits there
-        and run.py's session comment says running; returns the runs.jsonl line, fake_claude's call
-        and the events since.
+        and write-back has its session comment saying running; returns the runs.jsonl line,
+        fake_claude's call and the events since.
         """
         if self.pending:
             self.fail(
@@ -300,9 +300,12 @@ class Segment(TmuxFlow):
 
         call = live_tmux.wait(started, TIMEOUT, "the fake claude's start")[0]
         live_tmux.wait(
-            lambda: self.session_status(ident, line["sid"]) == "running",
+            lambda: (
+                self.session_status(ident, line["sid"]) == "running"
+                and line["sid"] in self.ledger(ident)
+            ),
             TIMEOUT,
-            f"{line['sid']}'s session comment to say running",
+            f"{line['sid']}'s session comment to say running, ledgered",
         )
         logged = self.logged()[events:]
         self.assertEqual(
@@ -354,9 +357,9 @@ class Segment(TmuxFlow):
                 if state == "in_review" and HUMAN not in want.subscribers:
                     changes["subscribers"] = [HUMAN]
                 changes.update(state=state, history=[("in_progress", state, account)])
-            if p.resumed:
-                posts = [s for s in ("start", "comment") if s in steps and s not in ledgered]
-                self.expect_problem(*[lookup(account)] * len(posts))
+            # write-back looks each comment step up before posting it: its event may come again
+            posts = [s for s in ("start", "comment") if s in steps and s not in ledgered]
+            self.expect_problem(*[lookup(account)] * len(posts))
             self.expect(p.ident, comments=comments, ledger={p.sid: steps}, **changes)
 
     def backlog_issue(self, role, title, description, labels=()):
@@ -440,6 +443,7 @@ class Segment(TmuxFlow):
                 ident,
                 state="in_progress",
                 history=[("todo", "in_progress", HARNESS_EMAIL)],
+                ledger={sid: []},  # Begun: its session comment's attempt, no step yet
             )
             self.expect_session(ident, sid, "running")
             self.expect_problem(FIRST_WRITE)

@@ -628,20 +628,31 @@ class SessionStore:
             return validated
 
     def lookup(self, sid: str, cwd: str) -> SessionState | None:
+        """An unreadable state file is skipped with a stderr line; with no match it is raised, as
+        it may be this run's.
+        """
         operation = _StoreOperation(self.root)
         cwd = absolute_path(cwd, "cwd")
         directory = operation.directory(create=False)
         if directory is None:
             return None
-        matches = []
+        matches, skipped = [], []
         with os.scandir(directory) as entries:
             for entry in entries:
                 if entry.name.endswith(".json"):
-                    state = operation.read(entry.path)
+                    try:
+                        state = operation.read(entry.path)
+                    except RecoveryError as exc:
+                        named = str(exc) if entry.path in str(exc) else f"{entry.path}: {exc}"
+                        print(f"codex recovery: {named}", file=sys.stderr)
+                        skipped.append(exc)
+                        continue
                     if state is not None and state.sid == sid and state.snapshot.cwd == cwd:
                         matches.append(state)
         if len(matches) > 1:
             raise RecoveryError(f"ambiguous Codex binding for run ID {sid!r} in {cwd}")
+        if not matches and skipped:
+            raise skipped[0]
         return matches[0] if matches else None
 
 

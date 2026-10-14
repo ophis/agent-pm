@@ -8,7 +8,7 @@ from pathlib import Path
 from unittest import mock
 
 from agent_pm.manager import Crew, Spec, State
-from agent_pm.manager.engine.crew import HERE
+from agent_pm.manager.engine.crew import DESCENDANTS
 from agent_pm.manager.engine.roster import Roster
 
 from manager.tests.cli_case import CliCase
@@ -110,7 +110,7 @@ class CliTest(CliCase):
         native_run = subprocess.run
 
         def run(argv, **options):
-            if tuple(argv) == HERE:
+            if tuple(argv) == DESCENDANTS:
                 return subprocess.CompletedProcess(argv, 1, "", "listing unavailable")
             return native_run(argv, **options)
 

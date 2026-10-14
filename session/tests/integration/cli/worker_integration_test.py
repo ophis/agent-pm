@@ -141,7 +141,8 @@ class DialogTest(WorkerCase):
         never, scenario, events = (
             os.path.join(root, name) for name in ("never", "w1.codex.json", "events")
         )
-        steps = [{"kind": "screen", "text": "Trust this folder?"}, {"kind": "pause", "file": never}]
+        trust = "Trust this folder? Codex can read, edit, and run files here.\n\n› 1. Trust and continue"
+        steps = [{"kind": "screen", "text": trust}, {"kind": "pause", "file": never}]
         with open(scenario, "w", encoding="utf-8") as f:
             json.dump({"tui_turns": [steps]}, f)
         res = self.session(

@@ -241,6 +241,19 @@ class InspectTest(Base):
         ):
             self.assertEqual(self.inspect(spec), SessionStatus("unknown", None, ""))
 
+    def test_inspection_gives_the_adapter_the_specs_launch_env(self):
+        spec = dataclasses.replace(
+            self.recorded(), access=Access(env={"A": "access", "B": "access"}), env={"B": "spec"}
+        )
+        with mock.patch.object(
+            ProbeAdapter,
+            "session_status",
+            autospec=True,
+            return_value=SessionStatus("no", None, ""),
+        ) as status:
+            self.inspect(spec)
+        self.assertEqual(status.call_args.kwargs["env"], {"A": "access", "B": "spec"})
+
     def test_an_unknown_client_is_the_registrys_config_error(self):
         spec = self.recorded("nope")
         with self.assertRaises(ConfigError) as caught:
@@ -1419,6 +1432,19 @@ class TuiStartTest(HostedTuiBase):
         with self.assertRaisesRegex(ConfigError, r"\[adapters\.probe\]"):
             self.tui(client="probe", name="w2")
         self.assertEqual(other.calls.mock_calls, [])
+
+    def test_a_started_sessions_status_gives_the_adapter_its_launch_env(self):
+        self.configure("probe", tui=True)
+        spec = self.spec(access=Access(env={"A": "access"}), env={"B": "spec"})
+        session = self.tui(client="probe", name="w1", spec=spec)
+        with mock.patch.object(
+            ProbeAdapter,
+            "session_status",
+            autospec=True,
+            return_value=SessionStatus("no", None, ""),
+        ) as status:
+            session.session_status()
+        self.assertEqual(status.call_args.kwargs["env"], {"A": "access", "B": "spec"})
 
 
 class SessionEnvTest(HostedEnvBase):

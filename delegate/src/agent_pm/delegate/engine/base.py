@@ -17,7 +17,8 @@ class Delegate(ABC):
 
     @classmethod
     @abstractmethod
-    def attach(cls, record_or_workdir: Record | str) -> Delegate: ...
+    def attach(cls, record_or_workdir: Record | str, *, sid: str | None = None) -> Delegate:
+        """The run's view; ConfigError when `sid` is given and the run is another session's."""
 
     @classmethod
     @abstractmethod
@@ -60,6 +61,12 @@ class Delegate(ABC):
 
     @abstractmethod
     def close(self) -> None: ...
+
+    @abstractmethod
+    def forget(self) -> None:
+        """Deletes the run's state, so attach raises ConfigError; its workdir stays. Idempotent;
+        ConfigError while the run is running.
+        """
 
     @abstractmethod
     def session_info(self) -> SessionStatus: ...

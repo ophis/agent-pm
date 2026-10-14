@@ -1,6 +1,7 @@
 """HarnessDelegate names its harness session in a Host's close failure; its harness environment
 holds no launcher variable; preview and instruct write no state; owner overlays shape its run;
-resume continues a run in the mode it records or in the one it is given.
+resume continues a run in the mode it records or in the one it is given, and a run whose process
+died, its tui agent session left open, at once.
 """
 
 import json
@@ -10,7 +11,9 @@ from unittest import mock
 from agent_pm.delegate import ConfigError, Result, Spec
 from agent_pm.delegate.composer import Composer, RunParams
 from agent_pm.delegate.engine.harness_delegate import HarnessDelegate
-from agent_pm.session import Exited, Liveness, Reply, SessionError
+from agent_pm.delegate.engine.state import RunState
+from agent_pm.session import Exited, Liveness, Mode, Reply, SessionError
+from agent_pm.session import Spec as SessionSpec
 
 from delegate.tests.fakes.harness_session import HarnessSession, RecordingHost, harness_launches
 from delegate.tests.harness import SID, HarnessCase
@@ -28,6 +31,29 @@ class CloseTest(HarnessCase):
         ):
             HarnessDelegate.attach(record).close()
         self.assertEqual(str(caught.exception), f"close {name}: tmux: boom")
+
+
+class ForgetTest(HarnessCase):
+    def setUp(self):
+        super().setUp()
+        self.state = os.path.join(self.agent_pm, "delegates")
+
+    def test_forget_deletes_the_runs_state_dir_files_and_keeps_its_workdir(self):
+        view = HarnessDelegate.attach(self.make().detach())
+        view.close()
+        self.assertTrue(os.path.isfile(self.state_record()))
+        view.forget()
+        self.assertEqual(os.listdir(self.state), [])
+        self.assertTrue(os.path.isfile(os.path.join(self.work, "delegate.json")))
+        view.forget()
+        self.assertEqual(os.listdir(self.state), [])
+
+    def test_a_run_holding_its_run_lock_is_refused_and_keeps_its_files(self):
+        view = HarnessDelegate.attach(self.make().detach())
+        view.close()
+        with RunState(self.work).run_lock(), self.assertRaisesRegex(ConfigError, "running"):
+            view.forget()
+        self.assertTrue(os.path.isfile(self.state_record()))
 
 
 class PreviewTest(HarnessCase):
@@ -210,3 +236,40 @@ class ResumeModeTest(HarnessCase):
         self.assertEqual(self.metadata(), before)
         self.assertEqual(len(harness_launches()), launches)
         self.assertEqual(HarnessSession.live[before["agent_name"]].state(), Liveness.LIVE)
+
+
+class CrashTest(HarnessCase):
+    def crashed(self):
+        """A tui run whose process died mid-run: no outcome stored, no run lock held, its agent
+        session left live as the run started it.
+        """
+        spec = Spec("input", self.work, mode="tui", client="fake", sid=SID, cwd=self.work)
+        self.make(spec=spec)
+        state = self.metadata()
+        agent = SessionSpec(
+            workdir=self.work, client="fake", mode=Mode.TUI, sid=SID, name=state["agent_name"]
+        )
+        HarnessSession.start(agent, host=state["host"])
+        return HarnessDelegate.attach(self.work, session_cls=HarnessSession), state["agent_name"]
+
+    def test_a_tui_run_whose_process_died_is_not_alive(self):
+        view, name = self.crashed()
+        self.assertEqual(HarnessSession.live[name].state(), Liveness.LIVE)
+        self.assertFalse(view.alive())
+        self.assertFalse(view.status().alive)
+
+    def test_resume_closes_the_left_agent_session_and_launches_the_next_attempt(self):
+        view, name = self.crashed()
+        left = HarnessSession.live[name]
+        launches = len(harness_launches())
+        record = view.resume()
+        self.assertEqual(len(harness_launches()), launches + 1)
+        self.assertEqual(left.state(), Liveness.ABSENT)
+        self.assertEqual(record.sid, SID)
+        self.assertEqual(self.metadata()["attempt"], 2)
+
+    def test_the_status_of_an_agent_session_another_process_started_comes_from_its_plan(self):
+        view, _name = self.crashed()
+        self.assertEqual(view.session_info(), HarnessSession.history)
+        (inspected,) = HarnessSession.inspected
+        self.assertEqual((inspected.sid, inspected.mode, inspected.client), (SID, "tui", "fake"))

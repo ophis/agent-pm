@@ -32,7 +32,7 @@ class ExtensionDelegate(FakeDelegate):
 
 class NewDefault(ExtensionDelegate):
     @classmethod
-    def attach(cls, record_or_workdir):
+    def attach(cls, record_or_workdir, *, sid=None):
         raise AssertionError("saved provider was replaced by new default")
 """
 

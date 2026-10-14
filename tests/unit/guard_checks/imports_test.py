@@ -49,13 +49,112 @@ class OrchestratorSessionImports(Sample):
                     [self.message("engine/promote.py", "RunLog")],
                 )
 
-    def test_pyproject_ignored_imports_cannot_grow(self):
+    def test_pyproject_ignores_no_imports(self):
         config = Path(REPO, "pyproject.toml").read_text()
-        edge = '    "agent_pm.linear_orchestrator.engine.prune -> agent_pm.session",\n'
-        config = config.replace("ignore_imports = [\n", "ignore_imports = [\n" + edge, 1)
+        contract = f'name = "{ORCH_SESSION_CONTRACT}"\n'
+        self.assertIn(contract, config)
+        edge = (
+            'ignore_imports = ["agent_pm.linear_orchestrator.engine.prune -> agent_pm.session"]\n'
+        )
+        config = config.replace(contract, contract + edge, 1)
         self.assertEqual(
-            self.check("engine/run.py", "", config),
-            [f"pyproject.toml: {ORCH_SESSION_CONTRACT!r} must ignore exactly ORCH_SESSION_IMPORTS"],
+            self.check("engine/prune.py", "", config),
+            [f"pyproject.toml: {ORCH_SESSION_CONTRACT!r} must ignore no imports"],
+        )
+
+
+class OrchestratorImports(Sample):
+    """FR-3: linear_orchestrator imports only the standard library, itself, agent_pm.utils and the
+    names delegate's __all__ exports; no other package imports it.
+    """
+
+    DELEGATE = "from agent_pm.delegate.engine.base import Delegate\nclass HarnessDelegate: pass\n"
+    DELEGATE_INIT = DELEGATE + '__all__ = ["Delegate", "ConfigError"]\n'
+
+    def check(self, files):
+        root = self.tree({f"delegate/{PKG}/delegate/__init__.py": self.DELEGATE_INIT, **files})
+        return imports.orchestrator_imports(root)
+
+    def orchestrator(self, sample, module="engine/prune.py"):
+        return self.check({f"linear-orchestrator/{ORCH_SRC}{module}": sample})
+
+    def test_the_real_tree_is_clean(self):
+        self.assertEqual(imports.orchestrator_imports(REPO), [])
+
+    def test_exported_delegate_names_utils_itself_and_the_standard_library_pass(self):
+        for sample in (
+            "from agent_pm.delegate import Delegate, ConfigError as DelegateConfigError\n",
+            "import agent_pm.delegate as d\nd.Delegate.usage('x')\n",
+            "from agent_pm import delegate\ndelegate.ConfigError\n",
+            "from agent_pm.utils import Record\nimport agent_pm.utils\n",
+            "import os.path\nfrom collections.abc import Mapping\nimport __future__\n",
+            "from agent_pm.linear_orchestrator.engine import runs\nfrom . import log\n",
+        ):
+            with self.subTest(sample=sample):
+                self.assertEqual(self.orchestrator(sample), [])
+
+    def test_names_outside_delegates_all_and_other_packages_fail(self):
+        rel = f"linear-orchestrator/{ORCH_SRC}engine/prune.py"
+        for sample, name in (
+            (
+                "from agent_pm.delegate import HarnessDelegate\n",
+                "agent_pm.delegate.HarnessDelegate",
+            ),
+            ("from agent_pm.delegate import composer\n", "agent_pm.delegate.composer"),
+            (
+                "from agent_pm.delegate.composer import Composer\n",
+                "agent_pm.delegate.composer",
+            ),
+            (
+                "import agent_pm.delegate as d\nd.composer.Composer()\n",
+                "agent_pm.delegate.composer",
+            ),
+            (
+                "import agent_pm.delegate.engine.base\n",
+                "agent_pm.delegate.engine",
+            ),
+            ("from agent_pm.session import Session\n", "agent_pm.session"),
+            ("from agent_pm import manager\n", "agent_pm.manager"),
+            ("from agent_pm.utils.files import save\n", "agent_pm.utils.files"),
+            ("import requests\n", "requests"),
+            (
+                "def f():\n    from agent_pm.delegate.engine import harness\n",
+                "agent_pm.delegate.engine",
+            ),
+        ):
+            with self.subTest(sample=sample):
+                self.assertEqual(self.orchestrator(sample), [f"{rel}: imports {name} (FR-3)"])
+
+    def test_no_other_package_imports_linear_orchestrator(self):
+        for project, package in (
+            ("manager", "manager"),
+            ("delegate", "delegate"),
+            ("session", "session"),
+            ("utils", "utils"),
+        ):
+            for sample in (
+                "from agent_pm.linear_orchestrator import LinearRun\n",
+                "import agent_pm.linear_orchestrator.engine.runs\n",
+                "from agent_pm import linear_orchestrator\n",
+                "import agent_pm\nagent_pm.linear_orchestrator.LinearRun\n",
+            ):
+                rel = f"{project}/{PKG}/{package}/engine/sample.py"
+                with self.subTest(rel=rel, sample=sample):
+                    self.assertEqual(
+                        self.check({rel: sample}),
+                        [f"{rel}: imports agent_pm.linear_orchestrator (FR-3)"],
+                    )
+
+    def test_tests_trees_are_out_of_scope(self):
+        sample = "from agent_pm.delegate.composer import Composer\n"
+        self.assertEqual(
+            self.check(
+                {
+                    "linear-orchestrator/tests/orchestrator_tests/sample.py": sample,
+                    "manager/tests/sample.py": "from agent_pm import linear_orchestrator\n",
+                }
+            ),
+            [],
         )
 
 

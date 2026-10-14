@@ -1,7 +1,9 @@
-"""CLI command selection and usage failures."""
+"""CLI command selection and usage failures; the launchd jobs that run router and promote."""
 
 import io
 import json
+import os
+import plistlib
 from contextlib import redirect_stderr, redirect_stdout
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -10,7 +12,7 @@ from unittest import mock
 from agent_pm.linear_orchestrator import cli
 from agent_pm.linear_orchestrator.engine import runs
 from agent_pm.utils import Record, Status
-from orchestrator_tests.case import Case
+from orchestrator_tests.case import REPO, Case
 from orchestrator_tests.linear_run_case import SID, ReadyDelegate, RunCase
 from orchestrator_tests.unit.streams import Stderr
 
@@ -24,10 +26,25 @@ class Commands(Case):
             cli.main(["--help"])
         self.assertEqual(raised.exception.code, 0)
         self.assertIn(
-            "{router,promote,run,status,show,close,attach-command,resume,writeback}",
+            "{router,promote,prune,status,show,close,attach-command,resume,writeback}",
             output.getvalue(),
         )
-        self.assertIn("legacy entry, replaced by TASK-374", output.getvalue())
+
+    def test_router_promote_and_prune_help_exits_0_naming_their_options(self):
+        for command, options in (
+            ("router", ("--now", "--dry-run", "--issue ID", "--brake ROLE")),
+            ("promote", ("--dry-run", "--now")),
+            ("prune", ("--dry-run",)),
+        ):
+            for flag in ("--help", "-h"):
+                with self.subTest(command=command, flag=flag):
+                    output, errors = io.StringIO(), io.StringIO()
+                    with redirect_stdout(output), redirect_stderr(errors):
+                        self.assertEqual(cli.main([command, flag]), 0)
+                    self.assertEqual(errors.getvalue(), "")
+                    self.assertIn(f"agent-pm-linear {command}", output.getvalue())
+                    for option in options:
+                        self.assertIn(option, output.getvalue())
 
     def test_missing_or_unknown_command_is_usage_error(self):
         for arguments in ([], ["outcome"], ["unknown"]):
@@ -37,6 +54,67 @@ class Commands(Case):
                     cli.main(arguments)
                 self.assertEqual(raised.exception.code, 2)
                 self.assertIn("agent-pm-linear", output.getvalue())
+
+
+DEPLOY = "/Users/francis/playground/agent-pm"
+LOG = "/Users/francis/.agent-pm/logs/orchestrator.jsonl"
+JOBS = {"router": ["--now"], "promote": []}
+
+
+def plist(job):
+    with open(
+        os.path.join(REPO, "linear-orchestrator", "launchd", f"com.ophis.agent-pm.{job}.plist"),
+        "rb",
+    ) as f:
+        return plistlib.load(f)
+
+
+class LaunchdJobs(Case):
+    def test_each_job_runs_its_command_from_the_deploy_checkout(self):
+        self.assertTrue(os.access(os.path.join(REPO, "bin", "agent-pm-linear"), os.X_OK))
+        for job, flags in JOBS.items():
+            with self.subTest(job=job):
+                job_plist = plist(job)
+                self.assertEqual(job_plist["Label"], f"com.ophis.agent-pm.{job}")
+                self.assertEqual(
+                    job_plist["ProgramArguments"],
+                    [f"{DEPLOY}/bin/agent-pm-linear", job, *flags],
+                )
+
+    def test_path_finds_claude_tmux_and_homebrew_python_before_the_system_one(self):
+        for job in JOBS:
+            with self.subTest(job=job):
+                path = plist(job)["EnvironmentVariables"]["PATH"].split(":")
+                self.assertEqual(
+                    path,
+                    [
+                        "/Users/francis/.local/bin",
+                        "/opt/homebrew/bin",
+                        "/usr/bin",
+                        "/bin",
+                        "/usr/sbin",
+                        "/sbin",
+                    ],
+                )
+
+    def test_output_goes_to_the_orchestrator_log(self):
+        for job in JOBS:
+            with self.subTest(job=job):
+                job_plist = plist(job)
+                self.assertEqual(
+                    {job_plist["StandardOutPath"], job_plist["StandardErrorPath"]}, {LOG}
+                )
+
+    def test_router_ticks_on_the_half_hour_and_leaves_its_detached_runs_alive(self):
+        router = plist("router")
+        self.assertEqual(router["StartCalendarInterval"], [{"Minute": 0}, {"Minute": 30}])
+        self.assertTrue(router["AbandonProcessGroup"])
+        self.assertNotIn("StartInterval", router)
+
+    def test_promote_runs_every_5_minutes(self):
+        promote = plist("promote")
+        self.assertEqual(promote["StartInterval"], 300)
+        self.assertNotIn("StartCalendarInterval", promote)
 
 
 class Queries(RunCase):

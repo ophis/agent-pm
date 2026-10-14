@@ -1,15 +1,18 @@
 """The orchestrator's integration flows: the test's HOME with both local files ([task_labels]
 included), FakeLinear over HTTP through test-only transport with the harness, role and human
-accounts and the task label group, fake_claude as `claude`, run, promote and router as `python3 -P
--m` subprocesses, and readers of Linear, the logs and a run's files. TmuxFlow adds a private tmux
-server for the sessions and fake_gh as `gh` with REPO a bare repo.
+accounts and the task label group, fake_claude as `claude`, a launch (router.outer), promote and
+router as `python3 -P` subprocesses, and readers of Linear, the logs and a run's files. TmuxFlow adds a private tmux
+server for the runs' harness and agent sessions, fake_gh as `gh` with REPO a bare repo, and
+`agent-pm-linear` as entry.py under the fake transport, the harness's write-back callback.
 """
 
 import copy
 import json
 import os
+import shlex
 import shutil
 import subprocess
+import sys
 import tempfile
 import tomllib
 from urllib.parse import quote
@@ -24,9 +27,9 @@ from session.tests import live_tmux
 from session.tests.integration.adapters.claude import fake_claude
 from utils.tests.case import local_section
 
-RUN, PROMOTE, ROUTER = (
-    (os.path.join(os.path.dirname(__file__), "entry.py"), n) for n in ("run", "promote", "router")
-)
+ENTRY = os.path.join(os.path.dirname(__file__), "entry.py")
+
+LAUNCH, PROMOTE, ROUTER = ((ENTRY, n) for n in ("launch", "promote", "router"))
 
 LIGHT_RESEARCH = "00000000-0000-4000-8000-000000000021"
 
@@ -74,18 +77,15 @@ GUARD = (
 )
 
 
-def steps(*names, mode="new", end=0, found=(), tuis=()):
-    """orchestrator.jsonl's lines of run.py's run ID, SID: launch, its tui lines, write-back steps,
-    end.
-    """
+def steps(*names, end=0, found=(), more=()):
+    """orchestrator.jsonl's lines of the run ID, SID's write-back: its steps, `more`, its end."""
     return [
-        f"run launch {ID} mode={mode} sid={SID}",
-        *tuis,
         *(
             f"writeback step {ID} sid={SID} step={s}" + (" found=true" if s in found else "")
             for s in names
         ),
-        f"run end {ID} sid={SID} exit={end}",
+        *more,
+        f"writeback end {ID} sid={SID} exit={end}",
     ]
 
 
@@ -115,13 +115,7 @@ class Flow(Case):
         self.runs_dir, self.logs = os.path.join(state, "work"), os.path.join(state, "logs")
         with open(os.path.join(self.agent_pm, "config.local.toml"), "w") as f:
             f.write(
-                local_section(
-                    (run_fixtures.local(state) + TASK_LABELS).replace(
-                        "agent_pm.delegate.engine.harness_delegate:HarnessDelegate",
-                        "orchestrator_tests.integration.legacy_run_delegate:LegacyRunDelegate",
-                    ),
-                    "linear_orchestrator",
-                )
+                local_section(run_fixtures.local(state) + TASK_LABELS, "linear_orchestrator")
                 + "\n"
                 + run_fixtures.CORE_LOCAL
             )
@@ -254,7 +248,7 @@ class TmuxFlow(Flow):
     github.com.
     """
 
-    SHIMS = ("claude", "gh")
+    SHIMS = ("claude", "gh", "agent-pm-linear")
 
     def setUp(self):
         super().setUp()
@@ -268,6 +262,12 @@ class TmuxFlow(Flow):
         fake_gh.git_shim(self.bin, self.home)
         self.gh_scenario, self.gh = os.path.join(self.root, "gh.json"), copy.deepcopy(GH)
         self.write_gh()
+        with open(callback := os.path.join(self.bin, "agent-pm-linear"), "w") as f:
+            f.write(
+                f"#!/bin/sh\nPYTHONPATH={shlex.quote(self.env()['PYTHONPATH'])} "
+                f'exec {shlex.quote(sys.executable)} -P -s {shlex.quote(ENTRY)} "$@"\n'
+            )
+        os.chmod(callback, 0o755)
         self.guard()
 
     def base(self):
@@ -295,29 +295,31 @@ class TmuxFlow(Flow):
         return f"https://github.com/{DOCS}/blob/{BRANCH}/{quote(path)}"
 
     @staticmethod
-    def driver(role, ident):
-        return f"agent-pm-{role}-{ident}"
+    def harness(role, ident, sid):
+        return f"{role}-{ident}-{sid[:8]}-drive"
 
     def live(self, session):
         return self.server.tmux("has-session", "-t", f"={session}").returncode == 0
 
     def wait_end(self, sid, ident, ends=1, role="engineer", timeout=TIMEOUT):
-        """Until orchestrator.jsonl holds `ends` run end lines of sid and the detached session of role
-        and ident is gone; else fails with the tails of orchestrator.jsonl and the run's run.jsonl.
+        """Until orchestrator.jsonl holds `ends` write-back end lines of sid and the run's harness
+        session is gone; else fails with the tails of orchestrator.jsonl and the run's run.jsonl.
         """
-        driver = self.driver(role, ident)
+        harness = self.harness(role, ident, sid)
 
         def ended():
             try:
                 events = self.logged()
             except ValueError:  # a line half appended
                 return False
-            end = ("run", "end", sid)
+            end = ("writeback", "end", sid)
             n = sum((e["src"], e["kind"], e.get("sid")) == end for e in events)
-            return n >= ends and not self.live(driver)
+            return n >= ends and not self.live(harness)
 
         try:
-            live_tmux.wait(ended, timeout, f"run.py's end #{ends} of {sid} and {driver} gone")
+            live_tmux.wait(
+                ended, timeout, f"the write-back end #{ends} of {sid} and {harness} gone"
+            )
         except AssertionError as e:
             timed_out = str(e)
         else:

@@ -7,13 +7,9 @@ file and sid a launcher gives in $AGENT_PM_EVENTS and $AGENT_PM_SID, a needs_inp
 `run --resume --sid --input --detach` (refused while the run lives) whose outcome a
 `resume WORKDIR` then leaves alone. Ports main's
 tests/integration/core/drive_tui_integration_test.py
-test_detach_from_the_manager. Not ported, as role entries are TASK-356: its
-test_detach_events_default (the manager directory's events file needs roster) and main's
-manager/tests/integration/crew_integration_test.py Roster role-run cases:
-test_killed_role_run_gone_then_recovered, test_stop_a_role_run_by_its_tui_session,
-test_a_role_run_ended_on_needs_input_is_waiting_and_left_alone_by_attach_resume, the role parts of
-test_stop_all_stops_what_mgr_opened_and_only_that and
-test_a_lost_tmux_server_comes_back_by_attach_resume_but_a_stopped_worker.
+test_detach_from_the_manager. Its test_detach_events_default and main's
+manager/tests/integration/crew_integration_test.py role-run cases run through agent-pm-crew in
+manager/tests/integration/crew_*_integration_test.py.
 """
 
 import json

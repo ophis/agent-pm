@@ -7,7 +7,7 @@ from functools import partial
 
 from agent_pm.delegate import ConfigError as DelegateConfigError
 from agent_pm.delegate import DelegateEvent, SessionError
-from agent_pm.linear_orchestrator.engine import client, promote, router, run, runs, writeback
+from agent_pm.linear_orchestrator.engine import client, promote, prune, router, runs, writeback
 from agent_pm.linear_orchestrator.engine import log as event_log
 from agent_pm.linear_orchestrator.engine.config import load
 from agent_pm.linear_orchestrator.engine.gate import Gate
@@ -18,13 +18,18 @@ from agent_pm.utils import Record, answer_keys
 
 def main(argv=None):
     arguments = sys.argv[1:] if argv is None else argv
-    legacy = {"router": router.main, "promote": promote.main, "run": run.main}
-    if arguments and arguments[0] in legacy:
-        return legacy[arguments[0]](arguments[1:])
+    # each parses its own options and --help
+    entries = {
+        "router": (router.main, "claim or resume an issue's agent run: a tick, --issue or --brake"),
+        "promote": (promote.main, "promote Handoff issues to the next role, then prune"),
+        "prune": (prune.main, "clean up finished issues' runs and checkouts, then archive"),
+    }
+    if arguments and arguments[0] in entries:
+        return entries[arguments[0]][0](arguments[1:])
     parser = argparse.ArgumentParser(prog="agent-pm-linear")
     commands = parser.add_subparsers(dest="command", required=True)
-    for command in legacy:
-        commands.add_parser(command, help="legacy entry, replaced by TASK-374")
+    for command, (_, text) in entries.items():
+        commands.add_parser(command, help=text)
     for command in ("status", "show", "close", "attach-command", "resume"):
         query = commands.add_parser(command)
         query.add_argument("keys", nargs="*", metavar="ISSUE", help="omit: Records on stdin")

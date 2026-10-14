@@ -1,19 +1,35 @@
 """Orchestrator prune behavior at its dependency boundaries."""
 
+import io
+import json
 import os
 import shutil
+from contextlib import redirect_stderr, redirect_stdout
 from functools import partial
 from unittest import mock
 
-from agent_pm.delegate import ConfigError, SessionError
-from agent_pm.linear_orchestrator.engine import config, ops, prune
-from agent_pm.linear_orchestrator.engine.types import LinearError
-from agent_pm.utils import temp_dirs
+from agent_pm.delegate import ConfigError, Delegate, SessionError, Spec
+from agent_pm.linear_orchestrator.engine import config, ops, prune, runs
+from agent_pm.linear_orchestrator.engine import log as event_log
+from agent_pm.linear_orchestrator.engine.types import Docs, LinearError
+from agent_pm.utils import load_class, temp_dirs
 from orchestrator_tests.case import Case
-from orchestrator_tests.prune_fixtures import NOW, ROLES, TEAM_OBJ, PruneScenario, gql_for, write
+from orchestrator_tests.prune_fixtures import (
+    NOW,
+    ROLES,
+    TEAM_OBJ,
+    Git,
+    PruneDelegate,
+    PruneScenario,
+    gql_for,
+    write,
+)
 from orchestrator_tests.unit import promote_fixtures as tp
 from orchestrator_tests.unit.board_ids import STATES as IDS_BY_KEY
-from orchestrator_tests.unit.run_fixtures import HARNESS, logged
+from orchestrator_tests.unit.run_fixtures import CORE_LOCAL, HARNESS, logged, show
+
+from delegate.tests.fakes.harness_session import HarnessSession
+from delegate.tests.harness import HarnessCase
 
 A, B = "engineer-TASK-7-0b6f2c1e", "dummy-tester-TASK-7-7c1d9e2f"
 SID = "0b6f2c1e-6d0a-4c1b-9a51-3f1f6b0e2a7d"
@@ -501,8 +517,45 @@ class RetentionCleanup(PruneScenario):
             gql_for({"TASK-7": ("Done", [(30, "Done")]), "TASK-70": ("In Progress", [])}),
             dry=True,
         )
-        self.assertEqual((code, out), (0, f"prune-plan TASK-7 session={SID} what=close the run"))
+        self.assertEqual(
+            (code, out),
+            (0, f"prune-plan TASK-7 session={SID} what=close the run and forget its state"),
+        )
         self.assertEqual(self.api.order, [])
+        PruneDelegate.attach(self.cfg.run_dir("TASK-7"))
+
+    def test_a_closed_finished_run_is_forgotten_and_its_workdir_kept(self):
+        self.record("TASK-7", SID, [A])
+        code, out = self.prune(gql_for({"TASK-7": ("Done", [(30, "Done")])}))
+        self.assertEqual((code, out), (0, f"prune-closed TASK-7 session={SID}"))
+        with self.assertRaises(ConfigError):
+            PruneDelegate.attach(self.cfg.run_dir("TASK-7"))
+        self.assertTrue(os.path.isdir(self.cfg.run_dir("TASK-7")))
+
+    def test_a_failed_close_or_an_unfinished_issue_keeps_the_runs_state(self):
+        self.record("TASK-7", SID, [A])
+        self.record("TASK-8", OTHER_SID, [B])
+        self.api.errors = {A: SessionError("boom")}
+        gql = gql_for({"TASK-7": ("Done", [(30, "Done")]), "TASK-8": ("Done", [(2, "Done")])})
+        self.assertEqual(self.prune(gql)[0], 3)
+        for ident in ("TASK-7", "TASK-8"):
+            with self.subTest(ident=ident):
+                PruneDelegate.attach(self.cfg.run_dir(ident))
+
+    def test_a_failed_forget_is_counted_after_the_close(self):
+        self.record("TASK-7", SID, [A])
+        with mock.patch.object(PruneDelegate, "forget", side_effect=ConfigError("run is running")):
+            code, out = self.prune(gql_for({"TASK-7": ("Done", [(30, "Done")])}))
+        self.assertEqual(
+            (code, out.splitlines()),
+            (
+                3,
+                [
+                    f"prune-closed TASK-7 session={SID}",
+                    f"prune-error TASK-7 session={SID} error=ConfigError: run is running",
+                ],
+            ),
+        )
 
     def test_sessions_unknown_prune_no_issue_but_archive(self):
         for dry, archived in (
@@ -636,6 +689,134 @@ class RetentionCleanup(PruneScenario):
         self.outage(
             "issueArchive", issues, [(prune.M_ARCHIVE, {"service": HARNESS, "i": "id-TASK-1"})]
         )
+
+
+class PruneCommand(PruneScenario):
+    """agent-pm-linear prune: one prune tick alone, as promote's tick runs it."""
+
+    def command(self, prune_gql, *argv):
+        write(
+            os.path.join(self.agent_pm, "config.local.toml"),
+            f'[linear_orchestrator]\nwork_dir = "{self.root}"\n' + CORE_LOCAL,
+        )
+        path = os.path.join(self.root, "config.toml")
+        write(path, tp.CONFIG)
+        fake = tp.FakeLinear()
+
+        def gql(query, **v):
+            board = query not in (prune.Q_ISSUE, prune.Q_FINISHED, prune.M_ARCHIVE)
+            return (fake if board else prune_gql)(query, **v)
+
+        before, out, err = len(logged(self.logs)), io.StringIO(), io.StringIO()
+        with redirect_stdout(out), redirect_stderr(err):
+            code = prune.main(list(argv), gql=gql, now=NOW, config_path=path, pruner=self.pruner)
+        lines = err.getvalue().splitlines()
+        copies = [json.loads(line) for line in lines if line.startswith("{")]
+        said = "\n".join(show(e) for e in logged(self.logs)[before:] + copies)
+        rest = "".join(f"{line}\n" for line in lines if not line.startswith("{"))
+        return code, out.getvalue(), rest, said
+
+    def test_a_tick_deletes_finished_checkouts_and_archives(self):
+        clone = self.mkc("TASK-49", "src", "o", "repo")
+        gql = gql_for({"TASK-49": ("Done", [(30, "Done")])}, owners={"TASK-49": "u-pm"})
+        self.assertEqual(self.command(gql)[:3], (0, "", ""))
+        self.assertFalse(os.path.exists(clone))
+        self.assertEqual(gql.archived, ["id-TASK-49"])
+        self.assertOutsideKept()
+
+    def test_a_dry_run_plans_and_changes_nothing(self):
+        clone = self.mkc("TASK-49", "src", "o", "repo")
+        gql = gql_for({"TASK-49": ("Done", [(30, "Done")])}, owners={"TASK-49": "u-pm"})
+        code, out, err, said = self.command(gql, "--dry-run")
+        self.assertEqual((code, out, err), (0, "", ""))
+        self.assertTrue(os.path.isdir(os.path.join(clone, ".git")))
+        self.assertEqual(gql.archived, [])
+        self.assertEqual(
+            said.splitlines(),
+            [
+                "prune-plan entry=TASK-49/src/o/repo what=delete the clone",
+                "prune-plan TASK-49 what=archive",
+            ],
+        )
+
+    def test_a_failed_step_exits_1_after_the_rest(self):
+        def down(query, **v):
+            if query == prune.Q_ISSUE:
+                raise LinearError("linear api error: down")
+            return gql_for({})(query, **v)
+
+        self.mkc("TASK-49", "src", "o", "repo")
+        code, _, _, said = self.command(down)
+        self.assertEqual(code, 1)
+        self.assertIn("prune-error TASK-49 error=Linear: LinearError: linear api error: down", said)
+
+    def test_other_arguments_are_a_usage_error(self):
+        for argv in (["--now"], ["TASK-1"], ["--dry-run", "x"]):
+            with self.subTest(argv=argv):
+                code, out, err, said = self.command(gql_for({}), *argv)
+                self.assertEqual((code, out, said), (2, "", ""))
+                self.assertIn("agent-pm-linear prune", err)
+
+
+HARNESS_DELEGATE = load_class("agent_pm.delegate.engine.harness_delegate:HarnessDelegate", Delegate)
+
+
+class StateDir(HarnessCase):
+    """FR-26: a pruned run's real HarnessDelegate state leaves the State dir."""
+
+    def test_pruning_a_finished_run_deletes_its_state_dir_files_and_keeps_its_workdir(self):
+        cfg = config.Config(
+            team="",
+            states={},
+            human_members=(),
+            harness_key="",
+            task_label_group="",
+            task_labels={},
+            roles={},
+            project_repos={},
+            local_clones={},
+            work_dir=os.path.join(self.home, "pipeline"),
+            docs=Docs("", "", {}),
+            stages={},
+            delegate_kind="harness",
+            delegates={"harness": HARNESS_DELEGATE},
+            core={},
+        )
+        event_log.use_logs(cfg.logs_dir)
+        self.work = cfg.run_dir("TASK-7")
+        spec = Spec("Echo input.", self.work, task="echo", sid=SID, cwd=self.work, client="fake")
+        HARNESS_DELEGATE(
+            "dummy-tester",
+            spec,
+            session_cls=HarnessSession,
+            host="agent",
+            harness_host="harness",
+        ).detach()
+        runs.note(
+            cfg.runs_log,
+            "start",
+            issue="TASK-7",
+            sid=SID,
+            role="dummy-tester",
+            client="fake",
+            delegate_kind="harness",
+        )
+        state = os.path.join(self.agent_pm, "delegates")
+        self.assertTrue(os.listdir(state))
+        code = prune.Pruner(
+            gql_for({"TASK-7": ("Done", [(30, "Done")])}),
+            NOW,
+            dry=False,
+            run=Git(),
+            work=cfg.runs_dir,
+            cfg=cfg,
+            team=TEAM_OBJ,
+            roles=ROLES,
+            writable=(cfg.runs_dir,),
+        ).run()
+        self.assertEqual(code, 0)
+        self.assertEqual(os.listdir(state), [])
+        self.assertTrue(os.path.isdir(self.work))
 
 
 class CloneConfiguration(Case):
