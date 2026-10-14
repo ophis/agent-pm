@@ -79,7 +79,7 @@ class WrappersTest(TuiBase):
 
 
 class SpecMappingTest(TuiBase):
-    """Driver.start puts its arguments on the one Spec its Runner and Adapter read (resume=X: sid=X,
+    """Driver.start puts its arguments on the one Spec its Runtime and Adapter read (resume=X: sid=X,
     resume=True); idle_timeout goes beside the Spec.
     """
 

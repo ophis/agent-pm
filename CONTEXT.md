@@ -45,23 +45,23 @@ The component that assembles principles, role and input into a prompt (no task t
 
 **Session layer**:
 The component that runs a prompt on the client and mode its caller names, through that client's adapter: it starts or resumes the session, sends messages (tui only), times inactivity, and passes events and replies up without interpreting them; the same for every client. In code: `session/src/agent_pm/session/`; its users import `agent_pm.session`, Adapters and Hosts written outside it `agent_pm.session.extension`.
-_Avoid_: facade, runtime, harness
+_Avoid_: facade, runtime (a Mode's class), harness
 
 **Client**:
 The agent program a session runs (Claude Code, Codex, a test fake), named by its `[adapters.<name>]` table. In code: `Spec.client`, the run key `client`, `--client` and records' `client` field.
-_Avoid_: runtime (an execution environment), agent (a role's run)
+_Avoid_: runtime (a Mode's class), agent (a role's run)
 
 **Adapter**:
 The code that wraps one client (Claude Code, Codex) for the session layer: its launch per mode, hooks, reply reading and message sending; everything client-specific lives in it. In code: `session/src/agent_pm/session/adapters/`.
 _Avoid_: client (what it wraps), backend, vehicle
 
 **Mode**:
-How the session layer hosts a client: headless (e.g. `claude -p`, on a pipe, ends when it exits), tui (its interactive command in a tmux session, ends when its caller stops it) or in_process (the Adapter's run inside the caller's process, no process started, ends when the run returns). In code: `Mode` (`mode = headless/tui/in_process`), the Delegate CLI's `--mode`; its Runner runs it.
-_Avoid_: runner (the class that runs it)
+How the session layer hosts a client: headless (e.g. `claude -p`, on a pipe, ends when it exits), tui (its interactive command in a tmux session, ends when its caller stops it) or in_process (the Adapter's run inside the caller's process, no process started, ends when the run returns). In code: `Mode` (`mode = headless/tui/in_process`), the Delegate CLI's `--mode`; its Runtime runs it.
+_Avoid_: runtime (the class that runs it)
 
-**Runner**:
-The session layer class that runs a session in one Mode: starts the client's process or thread (a tui one can also attach to a live session), polls its events, sends to it and stops it. In code: the ABC `Runner` (`session/src/agent_pm/session/modes/base.py`) and `HeadlessRunner`, `TuiRunner` and `InProcessRunner` (`modes/`).
-_Avoid_: mode (the value it runs)
+**Runtime**:
+The session layer class that runs a session in one Mode: starts the client's process or thread (a tui one can also attach to a live session), polls its events, sends to it and stops it. In code: the ABC `Runtime` (`session/src/agent_pm/session/modes/base.py`) and `HeadlessRuntime`, `TuiRuntime` and `InProcessRuntime` (`modes/`).
+_Avoid_: mode (the value it runs), runner
 
 **Session**:
 One client session the session layer runs from a Spec, in a Mode, on a Host, known by its sid. In code: the ABC `Session` (`session/src/agent_pm/session/engine/base.py`) and its one concrete class, `HostedSession` (`engine/hosted_session.py`).

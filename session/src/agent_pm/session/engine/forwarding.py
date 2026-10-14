@@ -152,7 +152,7 @@ class Driver:
         events: str | None = None,
         idle_timeout: float | None = None,
     ) -> Handle:
-        """spec.sid: its id (None: resume, else a new one); tui: as TuiRunner.start says."""
+        """spec.sid: its id (None: resume, else a new one); tui: as TuiRuntime.start says."""
         if mode not in tuple(Mode):
             raise ConfigError(f"mode must be one of {', '.join(Mode)}, got {mode!r}")
         if resume is not None and not (isinstance(resume, str) and resume):
@@ -219,7 +219,7 @@ class Driver:
         return self.session_cls.list(match)
 
     def close(self, name: str) -> None:
-        tui.TuiRunner.close(name, host=self.session_cls.host())
+        tui.TuiRuntime.close(name, host=self.session_cls.host())
 
     def layout(self, split: str | None = None, split_from: str | None = None) -> str | None:
         """Legacy layout completion, retained until TASK-375."""

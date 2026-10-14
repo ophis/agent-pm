@@ -242,8 +242,8 @@ class SourceSuppressions(Sample):
         for other in (
             "other",
             "Other._pump",
-            "HeadlessRunner.other",
-            "HeadlessRunner._pump.nested",
+            "HeadlessRuntime.other",
+            "HeadlessRuntime._pump.nested",
         ):
             with self.subTest(other):
                 source = self.scoped(scope, [comment]) + self.scoped(other, [comment])

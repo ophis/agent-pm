@@ -1,1 +1,1 @@
-"""HostedSession's Runners, one module per Mode."""
+"""HostedSession's Runtimes, one module per Mode."""

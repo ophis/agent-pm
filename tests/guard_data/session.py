@@ -77,12 +77,12 @@ NOQA_ALLOWED = {
     (
         f"{SESSION_SRC}modes/headless.py",
         "BLE001",
-        "HeadlessRunner._pump",
+        "HeadlessRuntime._pump",
     ): "Forward failures to the caller thread.",
     (
         f"{SESSION_SRC}modes/in_process.py",
         "BLE001",
-        "InProcessRunner._pump",
+        "InProcessRuntime._pump",
     ): "Forward failures to the caller thread.",
     (
         f"{SESSION_SRC}modes/tui_hook.py",

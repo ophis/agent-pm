@@ -3,7 +3,7 @@ import tempfile
 
 from agent_pm.session.adapters.base import Adapter, JsonHeadless
 from agent_pm.session.engine.types import Launch, Prepared, Reply, Spec, Stderr
-from agent_pm.session.modes.headless import HeadlessRunner
+from agent_pm.session.modes.headless import HeadlessRuntime
 
 from session.tests.case import Case
 from session.tests.fakes.terminal import MemoryHost
@@ -56,7 +56,7 @@ class HeadlessCase(Case):
 
     def start(self, adapter=None, display=None, **fields) -> Prepared:
         spec = Spec(**{"workdir": self.dir, "sid": SID, "client": "stub", **fields})
-        self.mode = HeadlessRunner.start(
+        self.mode = HeadlessRuntime.start(
             spec,
             adapter or StubAdapter(),
             registry=self.driver.registry,

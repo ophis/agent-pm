@@ -1,4 +1,4 @@
-"""The headless Runner: a Headless's command on pipes, leading its own process group; two daemon
+"""The headless Runtime: a Headless's command on pipes, leading its own process group; two daemon
 threads pump its events and Stderr lines into one queue, and the session ends at both pipes' EOF.
 stop() kills the whole group, so a grandchild holding the pipes dies too; every wait is bounded.
 """
@@ -23,11 +23,11 @@ from agent_pm.session.engine.types import (
     Stderr,
 )
 from agent_pm.session.hosts.base import Host
-from agent_pm.session.modes.base import Runner, identity_drop
+from agent_pm.session.modes.base import Runtime, identity_drop
 from agent_pm.utils import STOP_WAIT, Display, kill_group
 
 
-class HeadlessRunner(Runner):
+class HeadlessRuntime(Runtime):
     kind = Mode.HEADLESS
     stop_wait = STOP_WAIT
 

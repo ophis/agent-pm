@@ -199,11 +199,11 @@ class WrappersTest(TuiBase):
                 (lambda: sessions("("), lambda: HostedSession.list("(")),
                 (
                     lambda: close("a b"),
-                    lambda: tui.TuiRunner.close("a b", host=self.session.host()),
+                    lambda: tui.TuiRuntime.close("a b", host=self.session.host()),
                 ),
                 (
                     lambda: self.driver.close("a b"),
-                    lambda: tui.TuiRunner.close("a b", host=self.session.host()),
+                    lambda: tui.TuiRuntime.close("a b", host=self.session.host()),
                 ),
             )
             for index, (wrapper, target) in enumerate(pairs):

@@ -150,7 +150,7 @@ source_modules = ["utils.tests"]
 forbidden_modules = ["tests", "agent_pm.manager", "agent_pm.linear_orchestrator", "agent_pm.delegate", "agent_pm.session", "manager.tests", "orchestrator_tests", "delegate.tests", "session.tests"]
 
 [[tool.importlinter.contracts]]
-name = "Runners do not import the session API"
+name = "Runtimes do not import the session API"
 type = "forbidden"
 source_modules = ["agent_pm.session.modes"]
 forbidden_modules = ["agent_pm.session.engine.base", "agent_pm.session.engine.hosted_session", "agent_pm.session.engine.forwarding"]

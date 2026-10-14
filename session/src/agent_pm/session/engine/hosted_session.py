@@ -47,7 +47,7 @@ from agent_pm.session.engine.types import (
 )
 from agent_pm.session.hosts.base import Displayable, Host
 from agent_pm.session.modes import headless, in_process, tui
-from agent_pm.session.modes.base import Runner, child_env
+from agent_pm.session.modes.base import Runtime, child_env
 from agent_pm.utils import (
     STATE,
     Display,
@@ -75,8 +75,9 @@ POLL = 0.5
 PROBE_DIR = f"{STATE}/probe"
 PROBE_TIMEOUT = 120
 UNCONFIGURED = "session not configured: call Session.configure first"
-MODES: dict[Mode, type[Runner]] = {
-    mode.kind: mode for mode in (headless.HeadlessRunner, tui.TuiRunner, in_process.InProcessRunner)
+MODES: dict[Mode, type[Runtime]] = {
+    mode.kind: mode
+    for mode in (headless.HeadlessRuntime, tui.TuiRuntime, in_process.InProcessRuntime)
 }
 
 HostFactory = Callable[[type[Host], str, Mapping], Host]
@@ -169,7 +170,7 @@ class HostedSession(Session):
         spec: Spec,
         *,
         info: SessionInfo,
-        running: Runner,
+        running: Runtime,
         host: Host,
         idle_timeout: float | None = None,
         adapter: Adapter,
@@ -238,7 +239,7 @@ class HostedSession(Session):
         client, mode = _request(spec, idle_timeout)
         adapter = setup.registry.adapter(client)
         spec = replace(spec, sid=spec.sid or str(uuid.uuid4()))
-        Runner.check_protection(spec, adapter)
+        Runtime.check_protection(spec, adapter)
         on = cls.host(host)
         on.validate_display(display)
         MODES[mode].preflight(
@@ -263,10 +264,10 @@ class HostedSession(Session):
         client, mode = _request(spec, idle_timeout)
         adapter = setup.registry.adapter(client)
         spec = replace(spec, sid=spec.sid or str(uuid.uuid4()))
-        Runner.check_protection(spec, adapter)
+        Runtime.check_protection(spec, adapter)
         on = cls.host(host)
         on.validate_display(display)
-        name = tui.TuiRunner.resolve_name(spec) if mode == Mode.TUI else spec.name
+        name = tui.TuiRuntime.resolve_name(spec) if mode == Mode.TUI else spec.name
 
         def check_name(name: str) -> None:
             if any(
@@ -309,12 +310,12 @@ class HostedSession(Session):
         tui.checked_name(name)
         _idle(idle_timeout)
         on = cls.host(host)
-        state = tui.TuiRunner.snapshot(name)
+        state = tui.TuiRuntime.snapshot(name)
         try:
             adapter = setup.registry.adapter(state["client"])
         except ConfigError as e:
             raise DriverError(f"no tui session {name}: {e}") from None
-        running = tui.TuiRunner.attach(name, state, adapter, host=on)
+        running = tui.TuiRuntime.attach(name, state, adapter, host=on)
         session = cls(
             state["client"],
             Mode.TUI,
@@ -334,7 +335,7 @@ class HostedSession(Session):
 
     @classmethod
     def retire(cls, name: str, *, host: str | None = None) -> None:
-        tui.TuiRunner.close(tui.checked_name(name), host=cls.host(host))
+        tui.TuiRuntime.close(tui.checked_name(name), host=cls.host(host))
 
     @classmethod
     def list(
@@ -551,8 +552,8 @@ class HostedSession(Session):
     def close(self) -> None:
         """Close its owned client and retire its state."""
         running = self._running
-        if isinstance(running, tui.TuiRunner):
-            tui.TuiRunner.close(running.name, host=running.host)
+        if isinstance(running, tui.TuiRuntime):
+            tui.TuiRuntime.close(running.name, host=running.host)
         else:
             self.stop()
 

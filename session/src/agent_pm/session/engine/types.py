@@ -380,7 +380,7 @@ class SessionInfo:
 
 @dataclass(frozen=True)
 class Prepared:
-    """A Runner's start, fixed before it starts: the Spec as started, its SessionInfo, argv and
+    """A Runtime's start, fixed before it starts: the Spec as started, its SessionInfo, argv and
     child env (in_process, or a tui session attached: none).
     """
 
@@ -553,7 +553,7 @@ class KeyPress:
 
 
 class DriverError(Exception):
-    """A failed start, or a call its Runner lacks."""
+    """A failed start, or a call its Runtime lacks."""
 
 
 class NoRecordedSession(DriverError):
