@@ -2,7 +2,8 @@
 status, show (exit 1: one cannot display) and close answer for the Records on stdin (a bad line:
 exit 2) from <dir>/sessions.json (name → alive, state, outcome, displayable, display; an unknown
 name is gone); start NAME [--display D] and resume NAME print the Record, resume of a live one
-starting nothing. Each call goes to <dir>/calls.jsonl.
+starting nothing. Start honors AGENT_PM_SID or creates a UUID; resume preserves the saved sid and
+rejects an environment mismatch. Each call goes to <dir>/calls.jsonl.
 """
 
 import argparse
@@ -10,6 +11,7 @@ import json
 import os
 import shlex
 import sys
+import uuid
 
 from agent_pm.utils import files
 from agent_pm.utils.record import Record, RecordError, Status
@@ -19,7 +21,14 @@ SCRIPT = os.path.abspath(__file__)
 PYTHONPATH = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(SCRIPT))), "src")
 SESSIONS = "sessions.json"
 CALLS = "calls.jsonl"
-GONE = {"alive": False, "state": "gone", "outcome": None, "displayable": False, "display": None}
+GONE = {
+    "alive": False,
+    "state": "gone",
+    "outcome": None,
+    "displayable": False,
+    "display": None,
+    "sid": None,
+}
 
 
 def install(bin_dir: str, state_dir: str) -> str:
@@ -79,17 +88,28 @@ def _start(state_dir: str, args, call: dict) -> int:
     sessions = _sessions(state_dir)
     session = _session(sessions, args.name)
     display = args.display if args.sub == "start" else session["display"]
+    supplied = os.environ.get("AGENT_PM_SID")
+    if args.sub == "resume":
+        sid = session["sid"]
+        if sid is None:
+            print(f"{COMMAND}: {args.name}: no sid to resume", file=sys.stderr)
+            return 2
+        if supplied is not None and supplied != sid:
+            print(f"{COMMAND}: {args.name}: AGENT_PM_SID does not match saved sid", file=sys.stderr)
+            return 2
+    else:
+        sid = str(uuid.uuid4()) if supplied is None else supplied
     resume = (COMMAND, "resume", args.name)
     try:
         record = Record(
-            1, "fake", args.name, (args.name,), None, None, (COMMAND,), resume, display, None
+            1, "fake", args.name, (args.name,), sid, None, (COMMAND,), resume, display, None
         )
     except RecordError as e:
         print(f"{COMMAND}: {e}", file=sys.stderr)
         return 2
     call["names"] = [args.name]
     if args.sub == "start" or not session["alive"]:
-        live = {"alive": True, "state": "working", "outcome": None, "display": display}
+        live = {"alive": True, "state": "working", "outcome": None, "display": display, "sid": sid}
         sessions[args.name] = {**session, **live}
         _save(state_dir, sessions)
     print(record.to_line())

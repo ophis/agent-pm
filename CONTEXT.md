@@ -5,7 +5,7 @@ An unattended pipeline that runs role agents on tasks, in five layers (README �
 ## Language
 
 **Layer**:
-One project of the stack and its package, `<project>/src/agent_pm/<package>/`; each layer calls only the next lower one, through its public package (temporary TASK-371/372 exceptions: AGENTS.md › Import rules).
+One project of the stack and its package, `<project>/src/agent_pm/<package>/`; import and command boundaries: `AGENTS.md` › Import rules.
 _Avoid_: level (a config override level)
 
 **Role**:
@@ -41,7 +41,7 @@ The component that turns a role, an optional task and free-text input into an ag
 The component that assembles principles, role and input into a prompt (no task text: the agent run reads its task file) and resolves the role's run config.
 
 **Driver**:
-The component that runs a prompt on the agent runtime and mode its caller (the delegate, or a crew manager for a generic worker) names, through that runtime's adapter: it starts or resumes the session, sends messages (tui only), times inactivity, and passes events and replies up without interpreting them; the same for every runtime. In code: `session/src/agent_pm/session/` (`engine/api.py`, `modes/`).
+The component that runs a prompt on the agent runtime and mode its session-layer caller names, through that runtime's adapter: it starts or resumes the session, sends messages (tui only), times inactivity, and passes events and replies up without interpreting them; the same for every runtime. In code: `session/src/agent_pm/session/` (`engine/api.py`, `modes/`).
 _Avoid_: facade, runtime, harness
 
 **Adapter**:
@@ -97,11 +97,11 @@ The core run keys the Linear orchestrator adds to its own agent runs, in `linear
 The top layer: the commander session you talk to (`/agent-pm:manage`) and its crew. In code: `manager/src/agent_pm/manager/`.
 
 **Crew**:
-A manager's workers and the commands that start, show, follow and stop them. In code: `manager/src/agent_pm/manager/engine/crew.py`.
+A manager's command executor. It owns a Roster, starts opaque argv and uses each Record's control and resume commands. In code: `manager/src/agent_pm/manager/engine/crew.py`; command entry: `manager/src/agent_pm/manager/cli.py`.
 
 **Roster**:
-A manager's list of what it started (workers, role runs, pipelines), with its events cursor: `~/.agent-pm/managers/<name>/roster.json`. In code: `manager/src/agent_pm/manager/engine/roster.py`.
+A manager's ledger of launch intents and Records, entry states, holder lease and events cursor: `~/.agent-pm/managers/<name>/roster.json`. It alone writes the ledger and manages event rotation. In code: `manager/src/agent_pm/manager/engine/roster.py` and `events.py`.
 
 **Worker**:
-A plain tui session a manager starts through its crew, in its own `~/.agent-pm/workers/<sid>/`; no role, no task.
+A Session-owned plain tui session, with its state in `~/.agent-pm/workers/<sid>/`; no role, no task.
 _Avoid_: subagent

@@ -83,3 +83,25 @@ class Units(Case):
                         "agent_pm.delegate." + source, "agent_pm.delegate.team.tools.helper"
                     )
                 )
+
+    def test_manager_units_keep_commands_out_of_bookkeeping(self):
+        for source, target in (
+            ("engine.crew", "engine.roster"),
+            ("engine.holder", "engine.roster"),
+            ("engine.roster", "engine.events"),
+            ("engine.crew", "engine.types"),
+            ("cli", "engine.crew"),
+        ):
+            self.assertFalse(
+                self.rejected("agent_pm.manager." + source, "agent_pm.manager." + target)
+            )
+        for source, target in (
+            ("engine.roster", "engine.crew"),
+            ("engine.roster", "engine.holder"),
+            ("engine.holder", "agent_pm.session"),
+            ("cli", "engine.roster"),
+            ("engine.crew", "agent_pm.session"),
+            ("engine.roster", "agent_pm.delegate"),
+        ):
+            imported = target if target.startswith("agent_pm.") else "agent_pm.manager." + target
+            self.assertTrue(self.rejected("agent_pm.manager." + source, imported))

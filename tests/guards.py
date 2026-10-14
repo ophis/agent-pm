@@ -504,6 +504,168 @@ def session_names(repo: str) -> list[str]:
     )
 
 
+def manager_commands(repo: str) -> list[str]:
+    found = []
+    rel = "manager/src/agent_pm/manager/engine/crew.py"
+    path = os.path.join(repo, rel)
+    if not os.path.isfile(path):
+        return []
+    with open(path, encoding="utf-8") as source:
+        tree = ast.parse(source.read(), rel)
+    allowed = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Tuple | ast.List):
+            values = [v.value if isinstance(v, ast.Constant) else None for v in node.elts]
+            if values == [SESSION_COMMAND, "ls", "--here", "--records"]:
+                allowed.add(id(node.elts[0]))
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.Constant)
+            and isinstance(node.value, str)
+            and node.value.startswith(COMMAND)
+            and id(node) not in allowed
+        ):
+            found.append(f"{rel}:{node.lineno}: hardcoded layer command {node.value}")
+    return sorted(found)
+
+
+def manager_sid(repo: str) -> list[str]:
+    rel = "manager/src/agent_pm/manager/engine/crew.py"
+    path = os.path.join(repo, rel)
+    if not os.path.isfile(path):
+        return []
+    with open(path, encoding="utf-8") as source:
+        tree = ast.parse(source.read(), rel)
+    found = []
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr in {"get", "getenv"}
+            and node.args
+            and isinstance(node.args[0], ast.Constant)
+            and node.args[0].value == "AGENT_PM_SID"
+        ) or (
+            isinstance(node, ast.Subscript)
+            and isinstance(node.ctx, ast.Load)
+            and isinstance(node.slice, ast.Constant)
+            and node.slice.value == "AGENT_PM_SID"
+        ):
+            found.append(f"{rel}:{node.lineno}: reads inherited AGENT_PM_SID")
+    return sorted(found)
+
+
+def manager_lease(repo: str) -> list[str]:
+    rel = "manager/src/agent_pm/manager/engine/roster.py"
+    path = os.path.join(repo, rel)
+    if not os.path.isfile(path):
+        return []
+    with open(path, encoding="utf-8") as source:
+        tree = ast.parse(source.read(), rel)
+    return sorted(
+        f"{rel}:{node.lineno}: lease liveness callback"
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Attribute) and node.attr == "_alive"
+    )
+
+
+def manager_display(repo: str) -> list[str]:
+    found = set()
+    base = "manager/src/agent_pm/manager/"
+    forbidden = re.compile(
+        r"(?<![a-zA-Z0-9_])(?:pane|opener|split_from)(?![a-zA-Z0-9_])|--split|@record"
+    )
+    for rel, text in _files(os.path.join(repo, base), ".py"):
+        tree = ast.parse(text, rel)
+        for node in ast.walk(tree):
+            value = (
+                node.id
+                if isinstance(node, ast.Name)
+                else node.attr
+                if isinstance(node, ast.Attribute)
+                else node.arg
+                if isinstance(node, ast.arg)
+                else node.value
+                if isinstance(node, ast.Constant) and isinstance(node.value, str)
+                else ""
+            )
+            if forbidden.search(value):
+                found.add(f"{base}{rel}:{node.lineno}: interprets display {value!r}")
+    return sorted(found)
+
+
+def manager_exports(repo: str) -> list[str]:
+    base = "manager/src/agent_pm/manager/__init__.py"
+    path = os.path.join(repo, base)
+    if not os.path.isfile(path):
+        return []
+    with open(path, encoding="utf-8") as source:
+        tree = ast.parse(source.read(), base)
+    exports = next(
+        (
+            n.value
+            for n in tree.body
+            if isinstance(n, ast.Assign)
+            and any(isinstance(t, ast.Name) and t.id == "__all__" for t in n.targets)
+        ),
+        None,
+    )
+    if exports is None:
+        return [f"{base}: missing __all__"]
+    try:
+        names = ast.literal_eval(exports)
+    except (ValueError, TypeError):
+        return [f"{base}:{exports.lineno}: __all__ must be a literal sequence of names"]
+    if not isinstance(names, list | tuple) or not all(isinstance(name, str) for name in names):
+        return [f"{base}:{exports.lineno}: __all__ must be a literal sequence of names"]
+    modules = _source_modules(repo, ("manager", "utils"))
+    definitions = {}
+    for project in ("manager", "utils"):
+        for rel, text in _files(os.path.join(repo, project, "src"), ".py"):
+            module = rel.removesuffix(".py").replace("/", ".").removesuffix(".__init__")
+            for node in ast.parse(text).body:
+                if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+                    definitions[f"{module}.{node.name}"] = "function"
+                elif isinstance(node, ast.ClassDef):
+                    definitions[f"{module}.{node.name}"] = "class"
+                elif isinstance(node, ast.Assign | ast.AnnAssign):
+                    targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+                    if isinstance(node.value, ast.Lambda):
+                        kind = "function"
+                    else:
+                        try:
+                            ast.literal_eval(node.value)
+                        except (ValueError, TypeError):
+                            continue
+                        kind = "constant"
+                    for target in targets:
+                        if isinstance(target, ast.Name):
+                            definitions[f"{module}.{target.id}"] = kind
+    found = []
+    for name in names:
+        original = f"agent_pm.manager.{name}"
+        resolved = _resolve_boundary(original, modules)
+        kind = definitions.get(original) or definitions.get(resolved)
+        if kind is None and "." not in resolved:
+            kind = definitions.get(f"agent_pm.manager.{resolved}")
+        if kind is None:
+            module, _, member = resolved.rpartition(".")
+            if module.split(".")[0] in sys.stdlib_module_names:
+                value = getattr(importlib.import_module(module), member, None)
+                kind = (
+                    "class" if isinstance(value, type) else "function" if callable(value) else None
+                )
+        if kind == "function":
+            found.append(f"{base}:{exports.lineno}: exports function {name}")
+        elif (
+            kind != "class"
+            and kind != "constant"
+            and (not name.isupper() or resolved in modules or resolved in sys.stdlib_module_names)
+        ):
+            found.append(f"{base}:{exports.lineno}: exports nonconstant {name}")
+    return sorted(found)
+
+
 def literal_imports(repo: str) -> list[str]:
     """Literal dynamic imports obey the same contracts as normal imports."""
     config = os.path.join(repo, "pyproject.toml")
@@ -935,7 +1097,8 @@ def _data_type(node, bound):
         == "dataclasses.dataclass"
         for decorator in node.decorator_list
     ) or any(
-        _dotted(base, bound) in {"typing.NamedTuple", "enum.Enum", "typing.TypedDict"}
+        _dotted(base, bound)
+        in {"typing.NamedTuple", "enum.Enum", "enum.StrEnum", "typing.TypedDict"}
         for base in node.bases
     )
 
@@ -1004,6 +1167,7 @@ def _type_kinds(tree, bound):
         "typing.NamedTuple": "data",
         "typing.TypedDict": "data",
         "enum.Enum": "data",
+        "enum.StrEnum": "data",
         "typing.Protocol": "protocol",
         "abc.ABC": "abstract",
     }

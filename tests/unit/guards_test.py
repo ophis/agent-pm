@@ -776,6 +776,7 @@ class SharedTypes(Sample):
         for source in (
             "from typing import NamedTuple\nclass A(NamedTuple):\n    value: int\n",
             "from enum import Enum\nclass A(Enum):\n    value = 1\n",
+            "from enum import StrEnum\nclass A(StrEnum):\n    value = 'one'\n",
             "from typing import TypedDict\nclass A(TypedDict):\n    value: int\n",
         ):
             with self.subTest(source=source):
@@ -866,6 +867,11 @@ class TypesOnly(Sample):
 
     def found(self, source, name="types.py"):
         return guards.types_only(self.tree({f"{self.HOME}/{name}": source}))
+
+    def test_strenum_is_a_data_type(self):
+        self.assertEqual(
+            self.found("from enum import StrEnum\nclass State(StrEnum):\n    LIVE = 'live'\n"), []
+        )
 
     def test_top_level_sync_and_async_functions_are_reported(self):
         self.assertEqual(
@@ -1693,4 +1699,97 @@ class StatusLogFormat(Sample):
             [
                 f"session/{PKG}/session/hosts/tmux_external/x.py:1: status log line format outside session/engine/status_log.py or hosts/tmux/tmux_host.py"
             ],
+        )
+
+
+class ManagerBoundaries(Sample):
+    def test_only_orphan_listing_is_hardcoded(self):
+        base = "manager/src/agent_pm/manager/engine/crew.py"
+        root = self.tree(
+            {
+                base: 'LS = ("agent-pm-session", "ls", "--here", "--records")\nBAD = ["agent-pm-session", "status"]\n'
+            }
+        )
+        self.assertEqual(
+            guards.manager_commands(root), [f"{base}:2: hardcoded layer command agent-pm-session"]
+        )
+
+    def test_display_is_opaque(self):
+        base = "manager/src/agent_pm/manager/engine/crew.py"
+        root = self.tree({base: 'def f(pane): return "@opener"\n'})
+        self.assertEqual(len(guards.manager_display(root)), 2)
+        clean = self.tree({base: 'def f(display): return display.split(":")\n'})
+        self.assertEqual(guards.manager_display(clean), [])
+
+    def test_exports_require_all_and_reject_reexported_functions(self):
+        base = "manager/src/agent_pm/manager/"
+        root = self.tree(
+            {
+                base
+                + "__init__.py": 'from agent_pm.manager.engine.crew import f\n__all__ = ["f"]\n',
+                base + "engine/crew.py": "def f(): pass\n",
+            }
+        )
+        self.assertEqual(guards.manager_exports(root), [f"{base}__init__.py:2: exports function f"])
+        missing = self.tree({base + "__init__.py": ""})
+        self.assertEqual(guards.manager_exports(missing), [f"{base}__init__.py: missing __all__"])
+        clean = self.tree(
+            {
+                base + "__init__.py": 'class Crew: pass\n__all__ = ["Crew"]\n',
+                "utils/src/agent_pm/utils/__init__.py": 'def f(): pass\n__all__ = ["f"]\n',
+            }
+        )
+        self.assertEqual(guards.manager_exports(clean), [])
+
+    def test_function_aliases_lambdas_stdlib_and_modules_are_not_exports(self):
+        base = "manager/src/agent_pm/manager/__init__.py"
+        root = self.tree(
+            {
+                base: 'from os import getcwd as CWD\nimport os as OS\ndef f(): pass\ng = f\nLAMBDA = lambda: 0\n__all__ = ["CWD", "OS", "g", "LAMBDA"]\n'
+            }
+        )
+        self.assertEqual(
+            guards.manager_exports(root),
+            [
+                f"{base}:6: exports function CWD",
+                f"{base}:6: exports function LAMBDA",
+                f"{base}:6: exports function g",
+                f"{base}:6: exports nonconstant OS",
+            ],
+        )
+        clean = self.tree(
+            {base: 'from pathlib import Path\nVALUE = "one"\n__all__ = ["Path", "VALUE"]\n'}
+        )
+        self.assertEqual(guards.manager_exports(clean), [])
+
+    def test_exports_require_a_literal_sequence_of_names(self):
+        base = "manager/src/agent_pm/manager/__init__.py"
+        for source in ("__all__ = discover()\n", "__all__ = [1]\n"):
+            self.assertEqual(
+                guards.manager_exports(self.tree({base: source})),
+                [f"{base}:1: __all__ must be a literal sequence of names"],
+            )
+
+    def test_crew_never_reads_an_inherited_sid(self):
+        base = "manager/src/agent_pm/manager/engine/crew.py"
+        for source in (
+            'import os\nx = os.getenv("AGENT_PM_SID")\n',
+            'import os\nx = os.environ.get("AGENT_PM_SID")\n',
+            'import os\nx = os.environ["AGENT_PM_SID"]\n',
+        ):
+            self.assertEqual(
+                guards.manager_sid(self.tree({base: source})),
+                [f"{base}:2: reads inherited AGENT_PM_SID"],
+            )
+        self.assertEqual(guards.manager_sid(self.tree({base: 'env = {"AGENT_PM_SID": sid}\n'})), [])
+
+    def test_roster_has_no_session_liveness_callback(self):
+        base = "manager/src/agent_pm/manager/engine/roster.py"
+        self.assertEqual(
+            guards.manager_lease(
+                self.tree(
+                    {base: 'class Roster:\n    def probe(self): return self._alive("manager")\n'}
+                )
+            ),
+            [f"{base}:2: lease liveness callback"],
         )

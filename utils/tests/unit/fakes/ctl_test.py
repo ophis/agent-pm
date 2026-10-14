@@ -5,6 +5,7 @@ for the Records on its stdin, prints a Record for start and resume, and logs eac
 import os
 import subprocess
 import unittest
+import uuid
 
 from agent_pm.utils.record import Record, Status
 
@@ -12,9 +13,9 @@ from utils.tests.case import Case
 from utils.tests.fakes import ctl
 
 
-def record(name, display=None):
+def record(name, display=None, *, sid=None):
     resume = ("fake-ctl", "resume", name)
-    return Record(1, "fake", name, (name,), None, None, ("fake-ctl",), resume, display, None)
+    return Record(1, "fake", name, (name,), sid, None, ("fake-ctl",), resume, display, None)
 
 
 def lines(*records):
@@ -27,6 +28,7 @@ class FakeCtl(Case):
         self.state = os.path.join(self.home, "ctl state")
         self.ctl = ctl.install(self.bin, self.state)
         self.env = {k: v for k, v in os.environ.items() if not k.startswith("PYTHON")}
+        self.env.pop("AGENT_PM_SID", None)
         self.env["PATH"] = os.pathsep.join((self.bin, os.environ.get("PATH", os.defpath)))
 
     def call(self, *argv, stdin=""):
@@ -46,11 +48,34 @@ class FakeCtl(Case):
 
     def test_start_prints_one_record_whose_ctl_and_resume_name_fake_ctl(self):
         self.assertEqual(self.ctl, "fake-ctl")
-        self.assertEqual(self.start("w1", "--display", "d"), record("w1", "d"))
+        started = self.start("w1", "--display", "d")
+        self.assertEqual(started, record("w1", "d", sid=started.sid))
+        self.assertEqual(str(uuid.UUID(started.sid)), started.sid)
         self.assertEqual(
             self.status(record("w1")),
             [Status(name="w1", alive=True, state="working", outcome=None, attach=None)],
         )
+
+    def test_start_honors_environment_sid_and_resume_keeps_it(self):
+        sid = str(uuid.uuid4())
+        self.env["AGENT_PM_SID"] = sid
+        started = self.start("w1", "--display", "d")
+        self.assertEqual(started.sid, sid)
+        ctl.set_session(self.state, "w1", alive=False)
+        resumed = self.call(*started.resume)
+        self.assertEqual((resumed.returncode, Record.parse(resumed.stdout)), (0, started))
+        self.env.pop("AGENT_PM_SID")
+        resumed = self.call(*started.resume)
+        self.assertEqual((resumed.returncode, Record.parse(resumed.stdout)), (0, started))
+
+    def test_resume_rejects_a_sid_that_differs_from_its_saved_identity(self):
+        started = self.start("w1")
+        ctl.set_session(self.state, "w1", alive=False)
+        self.env["AGENT_PM_SID"] = str(uuid.uuid4())
+        refused = self.call(*started.resume)
+        self.assertEqual((refused.returncode, refused.stdout), (2, ""))
+        self.assertIn("does not match saved sid", refused.stderr)
+        self.assertFalse(self.status(started)[0].alive)
 
     def test_status_prints_one_line_per_record_and_an_unknown_name_is_gone(self):
         self.start("w1")
