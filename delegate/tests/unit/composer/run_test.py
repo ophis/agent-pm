@@ -5,6 +5,7 @@ trusted_dirs, bind and the access intent (the old driver's access tests, less th
 
 import inspect
 import os
+import shlex
 import tempfile
 from dataclasses import fields, replace
 from unittest import mock
@@ -317,6 +318,24 @@ class Access(Fake):
                         project=False,
                     ),
                 )
+
+    def test_role_team_fills_paths_as_is_and_only_placeholder_words_are_quoted(self):
+        found, top = self.team_dir({"roles/poet.md": POET, "tasks/verse.md": VERSE})
+        self.work = os.path.join(self.tmp, "w o'rk")
+        intent = self.intent(
+            role="poet",
+            found=found,
+            read=["{{role_team}}"],
+            write=["{{role_team}}/out"],
+            commands=["python3 -P {{role_team}}/tools/t.py *", "echo 'a b' {{workdir}}"],
+        )
+        self.assertEqual((intent.reads[1:], intent.writes), ((top,), (f"{top}/out",)))
+        self.assertEqual(
+            intent.commands,
+            (f"python3 -P {top}/tools/t.py *", f"echo 'a b' {shlex.quote(self.work)}"),
+        )
+        writer = self.intent(commands=["python3 -P {{role_team}}/tools/t.py *"])
+        self.assertEqual(writer.commands, (f"python3 -P {self.root}/tools/t.py *",))
 
     def test_a_dir_to_read_and_write_is_only_in_dirs_also_through_a_symlink(self):
         shared, link = os.path.join(self.tmp, "shared"), os.path.join(self.tmp, "link")

@@ -702,6 +702,26 @@ class TeamDirChecks(Fake):
             "chmod go-w it",
         )
 
+    def test_its_tools_tree_is_checked_by_real_path_for_temp_and_overlap_only(self):
+        work = os.path.realpath(os.path.join(self.tmp, "work"))
+        os.makedirs(os.path.join(work, "bin"))
+        self.write(work, {"bin/t.py": ""})
+        self.write(self.top, {"tools/own.py": "", "tools/sub/x.py": ""})
+        link = self.path("tools/sub/t.py")
+        os.symlink(os.path.join(work, "bin", "t.py"), link)
+        os.symlink(self.path("tools"), self.path("tools/sub/loop"))
+        os.chmod(self.path("tools/own.py"), 0o666)
+        check_team_dirs([self.top], writes=[], temp=())
+        shown = f"{link} ({work}/bin/t.py)"
+        self.assertEqual(
+            self.checked([("the workdir", work)]),
+            f"team_dirs: {shown} overlaps the workdir {work}: the agent run can write there",
+        )
+        self.assertEqual(
+            self.checked(temp=[work]),
+            f"team_dirs: {shown} is in temp dir {work}: any process can write there",
+        )
+
 
 class Kinds(Case):
     def test_team_kind_is_a_str_enum_in_the_team_dir_order(self):

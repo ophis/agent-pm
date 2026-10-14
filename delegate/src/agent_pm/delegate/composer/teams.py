@@ -88,6 +88,12 @@ def tasks_dir(team: Team, role: str) -> str | None:
     )
 
 
+def role_team(team: Team, role: str) -> str:
+    """The team root holding the role's charter: its team dir, else the team root."""
+    path = lookup(team, "roles", role)
+    return os.path.dirname(os.path.dirname(path)) if path and team.custom(path) else team.root
+
+
 def used(team: Team, role: str, templates: Sequence[str] = ()) -> list[str]:
     paths = [lookup(team, "roles", role)]
     paths += [lookup(team, "tasks", t) for t in index(role, team)]
@@ -291,13 +297,7 @@ def check_team_dirs(
     temps, me = temp_dirs() if temp is None else temp, os.getuid()
     for d in map(os.path.realpath, dirs):
         for path in team_paths(d):
-            real = os.path.realpath(path)
-            shown = path if real == path else f"{path} ({real})"
-            if t := under(real, temps):
-                raise ConfigError(
-                    f"team_dirs: {shown} is in temp dir {t}: any process can write there"
-                )
-            check_overlap(shown, real, writes)
+            shown = out_of_reach(path, temps, writes)
             try:
                 st = os.stat(path)
             except OSError as e:
@@ -310,6 +310,8 @@ def check_team_dirs(
                 raise ConfigError(
                     f"team_dirs: {shown} is owned by uid {st.st_uid}, not you (uid {me}): chown it"
                 )
+        for path in tool_paths(d):
+            out_of_reach(path, temps, writes)
         for parent in Path(d).parents:
             try:
                 st = os.stat(parent)
@@ -323,6 +325,34 @@ def check_team_dirs(
                 raise ConfigError(
                     f"team_dirs: {d}'s parent dir {parent} is owned by uid {st.st_uid}, not you or root: they could replace the team dir"
                 )
+
+
+def out_of_reach(path: str, temps: Sequence[str], writes: Sequence[tuple[str, str]]) -> str:
+    """`path` as an error shows it, once its real path is in no temp dir and no dir the run writes."""
+    real = os.path.realpath(path)
+    shown = path if real == path else f"{path} ({real})"
+    if t := under(real, temps):
+        raise ConfigError(f"team_dirs: {shown} is in temp dir {t}: any process can write there")
+    check_overlap(shown, real, writes)
+    return shown
+
+
+def tool_paths(d: str) -> list[str]:
+    """Each path of d's tools/ tree, a linked dir followed once by its real path."""
+    paths, seen, todo = [], set(), [os.path.join(d, "tools")]
+    while todo:
+        path = todo.pop()
+        if not os.path.lexists(path) or (real := os.path.realpath(path)) in seen:
+            continue
+        seen.add(real)
+        paths.append(path)
+        if os.path.isdir(path):
+            try:
+                names = sorted(os.listdir(path), reverse=True)
+            except OSError as e:
+                raise ConfigError(f"{path}: {e.strerror}") from None
+            todo += [os.path.join(path, n) for n in names]
+    return paths
 
 
 def team_paths(d: str) -> list[str]:

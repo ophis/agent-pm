@@ -17,6 +17,7 @@ import os
 import re
 from collections.abc import Mapping
 
+from agent_pm.delegate.composer import run as runs
 from agent_pm.delegate.composer import teams
 from agent_pm.delegate.composer.base import (
     CODE_SPAN,
@@ -49,6 +50,7 @@ PARAMETERS = {
     "<Workdir>": "workdir",
     "<tasks>": "tasks",
     "<team>": "team",
+    "<role team>": "role_team",
     "<gate>": "gate",
     "<out-repo>": "output.repo",
     "<out-branch>": "output.branch",
@@ -105,6 +107,9 @@ def render(run: RunConfig, params: RunParams, *, team: Team | None = None) -> st
     own = _unique((RESUME if params.resume else "") + "\n".join(joined) + "\n# Input\n")
     if teams.used(team, run.role, run.templates):
         _check_prompt(team, run, own, dict(parts))
+    for command in runs.approved(run, params.workdir, team):
+        if command.quoted:
+            own = own.replace(command.text, command.rule.removesuffix(" *"))
     return own + f"\n{params.input.strip()}\n"
 
 
@@ -249,6 +254,7 @@ def _parameters(run: RunConfig, params: RunParams, texts: Mapping[str, str], tea
         "workdir": _code(os.path.abspath(params.workdir)),
         "tasks": _code(teams.tasks_path(run.role, team)),
         "team": _code(team.root),
+        "role_team": _code(teams.role_team(team, run.role)),
         "gate": _code(run.gate or "none"),
     }
     values |= {

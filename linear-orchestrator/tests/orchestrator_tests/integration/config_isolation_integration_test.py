@@ -357,10 +357,13 @@ class PackagedDeployments(ConfigFile, Case):
             'print(\'{"type":"rate_limit_event","rate_limit_info":{"unifiedWindows":{}}}\')\n'
         )
         fake.chmod(0o700)
+        shutil.copytree(Path(REPO) / "bin", self.deployment / "bin")
+        env = self.environment()
+        env["PATH"] = os.pathsep.join((str(self.deployment / "bin"), env["PATH"]))
         result = subprocess.run(
             shlex.split(gate),
             cwd=self.dir,
-            env={**self.environment(), "AGENT_PM_PATH": str(fake_bin)},
+            env={**env, "AGENT_PM_PATH": str(fake_bin)},
             capture_output=True,
             text=True,
             timeout=60,

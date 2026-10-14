@@ -5,6 +5,7 @@ config as one.
 """
 
 import os
+import shlex
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import replace
 
@@ -19,10 +20,11 @@ from agent_pm.delegate.composer.teams import (
     misnamed_error,
     no_charter,
     role_tables,
+    role_team,
     tasks_path,
     team_or_default,
 )
-from agent_pm.delegate.composer.types import ConfigError, Intent, RunConfig, Team
+from agent_pm.delegate.composer.types import ApprovedCommand, ConfigError, Intent, RunConfig, Team
 from agent_pm.delegate.config import CONFIG
 from agent_pm.utils import LOCAL
 
@@ -45,6 +47,7 @@ RUN_KEYS = frozenset(
 )
 OUTPUT_KEYS = frozenset({"type", "repo", "branch", "dir", "host"})
 OLD_KEYS = frozenset({"default_task", "tasks"})
+NAMES = {"workdir": "<Workdir>", "team": "<team>", "role_team": "<role team>"}
 
 
 def run_key(layer: Mapping, role: str, key: str):
@@ -134,10 +137,11 @@ def access(
     if not isinstance(cwd, str) or not os.path.isabs(cwd):
         raise ConfigError(f"cwd must be an absolute path, got {cwd!r:.80}")
     team, workdir = team_or_default(team), os.path.abspath(workdir)
+    roots = {"team": team.root, "role_team": role_team(team, run.role)}
     paths = {"read": [], "write": []}
     for key, entries in (("read", run.read), ("write", run.write)):
         for entry in entries:
-            p = bind(fill(entry, {"team": team.root}, key), repo_dir)
+            p = bind(fill(entry, roots, key), repo_dir)
             if p and p not in paths[key]:
                 paths[key].append(p)
     dirs = [workdir] if os.path.realpath(cwd) != os.path.realpath(workdir) else []
@@ -147,9 +151,7 @@ def access(
         if (real := os.path.realpath(p)) not in seen:
             seen.add(real)
             reads.append(p)
-    commands = tuple(
-        fill(c, {"workdir": workdir, "team": team.root}, "commands") for c in run.commands
-    )
+    commands = tuple(c.rule for c in approved(run, workdir, team))
     return Intent(
         dirs=tuple(dirs),
         reads=tuple(reads),
@@ -160,6 +162,26 @@ def access(
         cwd=cwd,
         project=project,
     )
+
+
+def approved(run: RunConfig, workdir: str, team: Team) -> tuple[ApprovedCommand, ...]:
+    """Each requested command, its words holding a placeholder shell-quoted once filled, so a path
+    with a space stays one argument; the prompt writes a quoted one as approved.
+    """
+    values = {"workdir": os.path.abspath(workdir), "team": team.root}
+    values["role_team"] = role_team(team, run.role)
+    out = []
+    for command in run.commands:
+        words = [(word, fill(word, values, "commands")) for word in command.split(" ")]
+        quoted = [shlex.quote(new) if new != word else word for word, new in words]
+        out.append(
+            ApprovedCommand(
+                text=fill(command, NAMES, "commands").removesuffix(" *"),
+                rule=" ".join(quoted),
+                quoted=quoted != [new for _, new in words],
+            )
+        )
+    return tuple(out)
 
 
 def _check(cfg: Mapping) -> None:
