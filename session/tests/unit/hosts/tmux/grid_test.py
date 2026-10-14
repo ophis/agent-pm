@@ -578,7 +578,7 @@ class TileApplicationTest(TileFixture):
 
     def test_no_op_when_the_layouts_cells_match(self):
         fake = self.tile(self.THREE, ["%0", "%1", "%2", "%3"], self.W3)
-        self.assertEqual(fake.calls, [self.SOCKET, self.READ, self.PANES, SESSIONS])
+        self.assertEqual(fake.calls, [self.SOCKET, self.READ, self.PANES, SESSIONS, self.UNMUTE])
         # the target's cells in another tree: a pass over the target would move them, but none
         # follows a no-op
         layout = dump(
@@ -586,7 +586,7 @@ class TileApplicationTest(TileFixture):
         )
         rows = [("$2", "w1", "old1", "%1"), ("$3", "w2", "old3", "%2"), ("$4", "w3", "w1", "%3")]
         fake = self.tile(layout, ["%0", "%2", "%1", "%3"], rows, n="1", size=(200, 50))
-        self.assertEqual(fake.calls, [self.SOCKET, self.READ, self.PANES, SESSIONS])
+        self.assertEqual(fake.calls, [self.SOCKET, self.READ, self.PANES, SESSIONS, self.UNMUTE])
 
     def test_an_already_laid_out_window_records_its_pane_set_alone(self):
         # @grid-panes unset, junk or another set: set alone (pane ids in numeric order), so a later
@@ -607,10 +607,11 @@ class TileApplicationTest(TileFixture):
                 with self.subTest(recorded=recorded, if_panes_changed=flag):
                     fake = self.tile(layout, panes, recorded=recorded, if_panes_changed=flag)
                     self.assertEqual(
-                        fake.calls, [self.SOCKET, self.READ, self.PANES, SESSIONS, record]
+                        fake.calls,
+                        [self.SOCKET, self.READ, self.PANES, SESSIONS, record, self.UNMUTE],
                     )
         fake = self.tile(layout, panes)
-        self.assertEqual(fake.calls, [self.SOCKET, self.READ, self.PANES, SESSIONS])
+        self.assertEqual(fake.calls, [self.SOCKET, self.READ, self.PANES, SESSIONS, self.UNMUTE])
         with self.assertRaisesRegex(types.TuiError, "^tmux: boom$"):
             self.tile(layout, panes, recorded="", fail=("set-option",))
 
@@ -618,7 +619,7 @@ class TileApplicationTest(TileFixture):
         # a drag or resize keeps the pane set: no pass, nothing sent; without the flag the drag
         # snaps back
         fake = self.tile(*self.WIDE, if_panes_changed=True)
-        self.assertEqual(fake.calls, [self.SOCKET, self.READ, self.PANES])
+        self.assertEqual(fake.calls, [self.SOCKET, self.READ, self.PANES, self.UNMUTE])
         fake = self.tile(*self.WIDE)
         self.assertEqual(
             fake.calls,
@@ -649,7 +650,7 @@ class TileApplicationTest(TileFixture):
         for kw in ({"zoomed": "1"}, {"manager": ""}):
             with self.subTest(**kw):
                 fake = self.tile(*self.WIDE, recorded="", **kw, if_panes_changed=True)
-                self.assertEqual(fake.calls, [self.SOCKET, self.READ])
+                self.assertEqual(fake.calls, [self.SOCKET, self.READ, self.UNMUTE])
         fake = self.tile(
             dump("160x48,0,0[160x16,0,0,1,160x15,0,17,2,160x15,0,33,3]"),
             ["%1", "%2", "%3"],
@@ -657,11 +658,13 @@ class TileApplicationTest(TileFixture):
             recorded="%0 %1 %2 %3",
             if_panes_changed=True,
         )
-        self.assertEqual(fake.calls, [self.SOCKET, self.READ, self.PANES, self.TEARDOWN])
+        self.assertEqual(
+            fake.calls, [self.SOCKET, self.READ, self.PANES, self.TEARDOWN, self.UNMUTE]
+        )
         fake = self.tile(
             "bogus", ["%0", "%1", "%2", "%3"], self.W3, recorded="", if_panes_changed=True
         )
-        self.assertEqual(fake.calls, [self.SOCKET, self.READ, self.PANES])
+        self.assertEqual(fake.calls, [self.SOCKET, self.READ, self.PANES, self.UNMUTE])
 
     def test_a_state_needing_several_passes_gets_its_fixed_point_at_once(self):
         # 200x50, orphans of gone openers in an old layout: 2 and 3 passes each, a pass over the
@@ -709,7 +712,9 @@ class TileApplicationTest(TileFixture):
                 )
                 after = [leaf.pane for leaf in layouts.leaf_cells(layouts.parse_layout(want))]
                 fake = self.tile(dump(want), after, rows, n=n, size=(200, 50))
-                self.assertEqual(fake.calls, [self.SOCKET, self.READ, self.PANES, SESSIONS])
+                self.assertEqual(
+                    fake.calls, [self.SOCKET, self.READ, self.PANES, SESSIONS, self.UNMUTE]
+                )
 
     def test_the_pass_only_reads_and_returns_grid_tiles_as_read_with_what_to_send(self):
         split = "2cc7,160x48,0,0{79x48,0,0,0,80x48,80,0[80x8,80,0,1,80x7,80,9,4,80x15,80,17,2,80x15,80,33,3]}"
@@ -753,11 +758,11 @@ class TileApplicationTest(TileFixture):
         )
         self.assertNotIn("pane_dead", repr(fake.calls))
 
-    def test_zoomed_or_no_grid_window_only_reads_it(self):
+    def test_zoomed_or_no_grid_window_is_read_then_unmuted(self):
         for kw in ({"zoomed": "1"}, {"manager": ""}):
             with self.subTest(**kw):
                 fake = self.tile(*self.WIDE, **kw)
-                self.assertEqual(fake.calls, [self.SOCKET, self.READ])
+                self.assertEqual(fake.calls, [self.SOCKET, self.READ, self.UNMUTE])
 
     def test_teardown_when_the_manager_is_gone_invalid_or_alone(self):
         for manager, layout, panes in (
@@ -772,7 +777,9 @@ class TileApplicationTest(TileFixture):
         ):
             with self.subTest(manager=manager, panes=panes):
                 fake = self.tile(layout, panes, self.W3, manager=manager)
-                self.assertEqual(fake.calls, [self.SOCKET, self.READ, self.PANES, self.TEARDOWN])
+                self.assertEqual(
+                    fake.calls, [self.SOCKET, self.READ, self.PANES, self.TEARDOWN, self.UNMUTE]
+                )
 
     def test_nothing_changed_when_the_layout_is_unreadable_or_not_the_windows_panes(self):
         four = ["%0", "%1", "%2", "%3"]
@@ -787,13 +794,13 @@ class TileApplicationTest(TileFixture):
         ):
             with self.subTest(layout=layout, panes=panes):
                 fake = self.tile(layout, panes, self.W3)
-                self.assertEqual(fake.calls, [self.SOCKET, self.READ, self.PANES])
+                self.assertEqual(fake.calls, [self.SOCKET, self.READ, self.PANES, self.UNMUTE])
 
     def test_too_small_nothing_changed(self):
         # three cells side by side, 4 high: a column of three needs 5
         layout = dump("160x4,0,0{79x4,0,0,0,80x4,80,0{26x4,80,0,1,26x4,107,0,2,26x4,134,0,3}}")
         fake = self.tile(layout, ["%0", "%1", "%2", "%3"], self.W3, size=(160, 4))
-        self.assertEqual(fake.calls, [self.SOCKET, self.READ, self.PANES, SESSIONS])
+        self.assertEqual(fake.calls, [self.SOCKET, self.READ, self.PANES, SESSIONS, self.UNMUTE])
 
     def test_a_later_pass_too_small_keeps_the_last_that_fits(self):
         layout = dump(
@@ -920,7 +927,9 @@ class TileApplicationTest(TileFixture):
                 want = layouts.render_layout(grid(4, per_column)) if per_column else None
                 self.assertEqual(
                     fake.calls[4:],
-                    self.applied(["tmux", "select-layout", "-t", "@3", want]) if want else [],
+                    self.applied(["tmux", "select-layout", "-t", "@3", want])
+                    if want
+                    else [self.UNMUTE],
                 )
 
 
@@ -1039,7 +1048,7 @@ class TileCoordinationTest(TileFixture):
             fake.calls[4:], self.applied(self.WIDE_SENT, "990001 999998 999999 1000000 1000000")
         )
         fake = self.tile(self.THREE, ["%0", "%1", "%2", "%3"], self.W3, tiles=tiles)
-        self.assertEqual(fake.calls, [self.SOCKET, self.READ, self.PANES, SESSIONS])
+        self.assertEqual(fake.calls, [self.SOCKET, self.READ, self.PANES, SESSIONS, self.UNMUTE])
 
     def test_more_than_tile_limit_re_tiles_in_tile_window_tear_the_grid_down(self):
         self.assertEqual((grids.TILE_LIMIT, grids.TILE_WINDOW), (50, 10))
@@ -1059,6 +1068,7 @@ class TileCoordinationTest(TileFixture):
                         SESSIONS,
                         self.TEARDOWN,
                         ["tmux", "display-message", "-d", "10000", "-t", "@3", line],
+                        self.UNMUTE,
                     ],
                 )
                 self.assertEqual(err.getvalue(), line + "\n")

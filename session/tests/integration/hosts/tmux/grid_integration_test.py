@@ -594,6 +594,39 @@ class SettleTest(Live):
         self.tmux("select-layout", "-t", self.window, "even-vertical")
         self.settled()
 
+    def busy(self) -> str:
+        return self.window_option(MANAGER, tmux_model.GRID_BUSY)
+
+    def test_a_tile_holding_the_lock_clears_a_stale_busy_on_each_early_return(self):
+        self.grid_up()
+        grid = self.settled()
+        panes = self.pane_set(MANAGER)
+        for case, unset, flags in (
+            ("laid out, pane set recorded", (), ()),
+            ("laid out, pane set unrecorded", (tmux_model.GRID_PANES_SET,), ()),
+            ("pane set unchanged", (), ("--if-panes-changed",)),
+        ):
+            with self.subTest(case):
+                for option in unset:
+                    self.tmux("set-option", "-u", "-w", "-t", self.window, option)
+                self.tmux("set-option", "-w", "-t", self.window, tmux_model.GRID_BUSY, self.window)
+                self.tui("tile", *flags, self.window)
+                self.assertEqual(self.busy(), "")
+                self.assertEqual(self.window_option(MANAGER, tmux_model.GRID_PANES_SET), panes)
+                self.assertEqual(self.steady(self.layout()), grid)
+
+    def test_a_tile_without_the_lock_leaves_busy_alone(self):
+        self.grid_up()
+        self.settled()
+        self.tmux("set-option", "-w", "-t", self.window, tmux_model.GRID_BUSY, self.window)
+        socket = self.tmux("display-message", "-p", "-t", self.window, "#{socket_path}")
+        with grids._grid_lock(socket, self.window, wait=False) as held:
+            self.assertTrue(held)
+            self.tui("tile", "--no-wait", self.window)
+            self.assertEqual(self.busy(), self.window)
+        self.tui("tile", "--no-wait", self.window)
+        self.assertEqual(self.busy(), "")
+
     def test_fiftieth_retile_keeps_grid_and_fifty_first_hook_trips_breaker(self):
         self.grid_up()
         self.settled()
