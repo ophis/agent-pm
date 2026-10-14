@@ -14,7 +14,7 @@ permissions:
 
 env:
   IMPORT_LINTER_VERSION: "2.15"
-  PYTHONPATH: ${{ github.workspace }}/manager/src:${{ github.workspace }}/linear-orchestrator/src:${{ github.workspace }}/delegate/src:${{ github.workspace }}/session/src:${{ github.workspace }}/utils/src:${{ github.workspace }}/linear-orchestrator/tests
+  PYTHONPATH: ${{ github.workspace }}:${{ github.workspace }}/.github:${{ github.workspace }}/manager/src:${{ github.workspace }}/linear-orchestrator/src:${{ github.workspace }}/delegate/src:${{ github.workspace }}/session/src:${{ github.workspace }}/utils/src:${{ github.workspace }}/linear-orchestrator/tests
   PYTHONDONTWRITEBYTECODE: "1"
 
 jobs:

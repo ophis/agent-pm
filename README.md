@@ -220,7 +220,7 @@ A run's `read` dirs and its role's tasks dir are never `--add-dir`: no runtime i
 ## Tests
 
 ```bash
-export PYTHONPATH=delegate/src:session/src:utils/src:manager/src:linear-orchestrator/src:linear-orchestrator/tests   # from the repo root
+export PYTHONPATH=.:.github:delegate/src:session/src:utils/src:manager/src:linear-orchestrator/src:linear-orchestrator/tests   # from the repo root
 ```
 
 Run Lint checks with the pinned tool versions in `.github/workflows/test.yml`:
@@ -244,3 +244,16 @@ Run project and repository unit tests with `python3 .github/run_tests.py Unit --
 shards with `python3 .github/integration_jobs.py <1–8>`. CI runs Lint, Unit and eight integration
 shards; Lint also runs the repository integration tests with its pinned tools installed. Its
 required `CI` job succeeds only when every dependency succeeds.
+
+Unit tests exercise pure logic with fake objects and recorded output. They start no processes,
+connect to no sockets, and write only inside the runner's temporary directory. Integration tests
+exercise real tools through `utils/tests/sandbox.py`: controlled Python import roots, clean Git
+environments and temporary repositories. Tmux uses the private servers in
+`session/tests/live_tmux.py`; its explicit socket or `TMUX_TMPDIR` must resolve inside the sandbox.
+Fake and real implementations share contract assertions.
+
+`.github/run_tests.py` resets HOME, temporary roots and Git configuration before supervision.
+`.github/isolation.py` installs interpreter audit hooks and unit PATH blockers for git, tmux,
+claude and codex. `tests/integration/unit_imports_integration_test.py` applies Ruff TID251 to unit
+imports. `tests/guards.py` owns the temporary migration allowlist; Phase B removes the remaining
+session exceptions after TASK-365 and TASK-386 merge. Run tests through these supervised entries.

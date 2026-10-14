@@ -5,13 +5,19 @@ import json
 import os
 import subprocess
 import sys
+import sysconfig
 import tempfile
 import time
 import unittest
 from pathlib import Path
 
+import isolation
+
+from utils.tests.sandbox import clean_env
+
 STATE = "RUN_TESTS_STATE"
 TAIL = 40
+GATE = None
 
 
 def escape(text, *, prop=False):
@@ -36,6 +42,9 @@ class AnnotatingResult(unittest.TextTestResult):
         self.failed = []
 
     def startTest(self, test):
+        self.guard = GATE.test(test) if GATE else None
+        if self.guard:
+            self.guard.__enter__()
         self.started = time.monotonic()
         append(STATE, f"start {test.id()}\n")
         super().startTest(test)
@@ -46,6 +55,8 @@ class AnnotatingResult(unittest.TextTestResult):
             json.dumps({"test": test.id(), "seconds": time.monotonic() - self.started}) + "\n",
         )
         super().stopTest(test)
+        if self.guard:
+            self.guard.__exit__(None, None, None)
 
     def addFailure(self, test, err):
         super().addFailure(test, err)
@@ -116,9 +127,28 @@ def supervise(title):
     with tempfile.TemporaryDirectory() as tmp:
         state = os.path.join(tmp, "state")
         open(state, "w").close()
+        repo = Path(__file__).resolve().parents[1]
+        roots = [
+            repo,
+            repo / ".github",
+            repo / "linear-orchestrator/tests",
+            *sorted(repo.glob("*/src")),
+            sysconfig.get_path("purelib"),
+            sysconfig.get_path("platlib"),
+        ]
+        env = clean_env(os.environ, *roots)
+        env.update(
+            HOME=tmp,
+            TMPDIR=tmp,
+            TMUX_TMPDIR=tmp,
+            TUI_ATTACH_PREFIX="",
+            AGENT_PM_TEST_SANDBOX=tmp,
+            AGENT_PM_TEST_TMP=tmp,
+        )
+        isolation.blockers(Path(tmp) / "blocked-bin")
         with subprocess.Popen(
-            [sys.executable, "-X", "faulthandler", *sys.orig_argv[1:]],
-            env={**os.environ, STATE: state},
+            [sys.executable, "-P", "-S", "-X", "faulthandler", *sys.orig_argv[1:]],
+            env={**env, STATE: state},
             stderr=subprocess.PIPE,
             text=True,
             errors="replace",
@@ -180,6 +210,7 @@ def unit_directories(root):
 
 
 def main(argv):
+    global GATE
     if len(argv) < 2:
         sys.exit("usage: run_tests.py <title> <start dir>... | <title> --unit")
     title, *directories = argv
@@ -187,6 +218,10 @@ def main(argv):
     if code is not None:
         return code
     root = Path.cwd()
+    GATE = isolation.install(root)
+    GATE.unit = directories == ["--unit"] or any(
+        "unit" in Path(path).parts or path == ".github" for path in directories
+    )
     return run(
         discover(root, unit_directories(root) if directories == ["--unit"] else directories), title
     )

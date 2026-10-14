@@ -103,6 +103,9 @@ def main(argv):
     code = None if argv == ["--check"] else run_tests.supervise(title)
     if code is not None:
         return code
+    if argv != ["--check"]:
+        run_tests.GATE = run_tests.isolation.install(ROOT)
+        run_tests.GATE.unit = False
     split = check(ROOT, JOBS, json.loads(DURATIONS.read_text()), WORKFLOW.read_text())
     if argv == ["--check"]:
         print(

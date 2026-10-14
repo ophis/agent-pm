@@ -15,6 +15,40 @@ from agent_pm.utils.config_file import LEVELS
 
 from tests.import_policy import violation
 
+UNIT_ISOLATION_ALLOWED = {
+    "delegate/tests/unit/cli_test.py": "TASK-385 migration",
+    "delegate/tests/unit/engine/plan_test.py": "TASK-385 migration",
+    "delegate/tests/unit/engine/runner_test.py": "TASK-385 migration",
+    "delegate/tests/unit/skills/act_as_test.py": "TASK-385 migration",
+    "delegate/tests/unit/team/tools/repo_test.py": "TASK-385 migration",
+    "linear-orchestrator/tests/orchestrator_tests/unit/engine/config_test.py": "TASK-385 migration",
+    "linear-orchestrator/tests/orchestrator_tests/unit/engine/prune_test.py": "TASK-385 migration",
+    "linear-orchestrator/tests/orchestrator_tests/unit/engine/router_test.py": "TASK-385 migration",
+    "linear-orchestrator/tests/orchestrator_tests/unit/engine/target_test.py": "TASK-385 migration",
+    "linear-orchestrator/tests/orchestrator_tests/unit/linear/linear_test.py": "TASK-385 migration",
+    "linear-orchestrator/tests/orchestrator_tests/unit/linear/sessions_test.py": "TASK-385 migration",
+    "linear-orchestrator/tests/orchestrator_tests/unit/outage.py": "TASK-385 migration",
+    "manager/tests/unit/cli_test.py": "TASK-385 migration",
+    "manager/tests/unit/engine/crew_test.py": "TASK-385 migration",
+    "manager/tests/unit/engine/events_test.py": "TASK-385 migration",
+    "manager/tests/unit/engine/holder_test.py": "TASK-385 migration",
+    "manager/tests/unit/engine/roster_test.py": "TASK-385 migration",
+    "session/tests/unit/adapters/codex/tui_hook_test.py": "TASK-385 migration",
+    "session/tests/unit/adapters/codex/tui_start_test.py": "TASK-385 migration",
+    "session/tests/unit/engine/api_test.py": "TASK-385 migration",
+    "session/tests/unit/fakes/host_test.py": "TASK-385 migration",
+    "session/tests/unit/hosts/tmux/tmux_host_test.py": "TASK-385 migration",
+    "session/tests/unit/modes/headless_test.py": "TASK-385 migration",
+    "session/tests/unit/modes/tui_hook_test.py": "TASK-385 migration",
+    "session/tests/unit/modes/tui_test.py": "TASK-385 migration",
+    "tests/unit/guards_test.py": "TASK-385 migration",
+    "utils/tests/unit/fakes/ctl_test.py": "TASK-385 migration",
+    "utils/tests/unit/git_test.py": "TASK-385 migration",
+    "utils/tests/unit/paths_test.py": "TASK-385 migration",
+    "utils/tests/unit/shell_test.py": "TASK-385 migration",
+}
+
+
 RUNTIME = re.compile(r"claude|codex|print_prompt", re.I)
 
 
@@ -1004,9 +1038,17 @@ def standalone(repo: str) -> list[str]:
 
 
 def standalone_imports(repo: str) -> list[str]:
+    return _stdlib_imports(repo, STANDALONE)
+
+
+def test_gate_imports(repo: str) -> list[str]:
+    return _stdlib_imports(repo, {".github/isolation.py", "utils/tests/sandbox.py"})
+
+
+def _stdlib_imports(repo, paths):
     found = []
     standard = sys.stdlib_module_names | {"__future__", "builtins"}
-    for rel in sorted(STANDALONE):
+    for rel in sorted(paths):
         path = os.path.join(repo, rel)
         if not os.path.isfile(path):
             found.append(f"{rel}: missing standalone script")
@@ -1241,6 +1283,14 @@ def unit_test_modules(repo: str) -> list[str]:
                     test = os.path.relpath(os.path.join(top, name), repo)
                     found.append(f"{test}: missing source module {source}.py")
     return sorted(found)
+
+
+def unit_isolation_allowlist(repo: str) -> list[str]:
+    return [
+        f"{path}: missing unit isolation exception"
+        for path in sorted(UNIT_ISOLATION_ALLOWED)
+        if not os.path.isfile(os.path.join(repo, path))
+    ]
 
 
 def shared_types(repo: str) -> list[str]:
