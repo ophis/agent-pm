@@ -1,18 +1,52 @@
 """Workers through `agent-pm-crew run -- agent-pm-session start` (FR-17, FR-20) on the real
 commands (manager/tests/live_crew.py): the worker's Record and entry, a gone worker's crew resume,
-a live one's no-op, and main's crew_integration_test.py dialog waits (C:429, C:528) on this entry.
+a live one's no-op, main's crew_integration_test.py dialog waits (C:429, C:528) on this entry,
+and main's test_client_flag_starts_its_worker_and_a_restart_waits_for_the_old_one (FR-36).
 """
 
 import glob
 import json
 import os
+import shlex
+import sys
 
 from agent_pm.manager import State
 
 from manager.tests.live_crew import MANAGER, LiveCrew, has_pair, logged
+from session.tests.integration.adapters.claude import fake_claude
 from session.tests.integration.adapters.codex import fake_tui
 
 PERMISSION = {"kind": "hook", "event": "PermissionRequest", "tool_name": "Edit"}
+EXTRA = (
+    '[session.adapters.ext]\nimplementation = "agent_pm.session.adapters.claude:ClaudeAdapter"\n'
+)
+# A client ignoring SIGHUP and SIGTERM: logs its start (and any earlier start still running), runs
+# the fake claude with both restored, outlives it by LINGER s, logs its exit.
+LINGERING = """import json, os, signal, subprocess, sys, time
+LINGER = 1
+log, fake = sys.argv[1], sys.argv[2]
+for each in (signal.SIGHUP, signal.SIGTERM):
+    signal.signal(each, signal.SIG_IGN)
+def running(pid):
+    stat = subprocess.run(["ps", "-o", "stat=", "-p", str(pid)], capture_output=True, text=True,
+                          env={"PATH": os.defpath, "LC_ALL": "C"}).stdout.strip()
+    return bool(stat) and not stat.startswith("Z")
+def note(what, **more):
+    with open(log, "a") as f:
+        f.write(json.dumps({"what": what, "pid": os.getpid(), "argv": sys.argv[3:], **more}) + "\\n")
+try:
+    with open(log) as f:
+        before = [json.loads(line)["pid"] for line in f]
+except FileNotFoundError:
+    before = []
+note("start", running=sorted(p for p in set(before) if running(p)))
+def restored():
+    for each in (signal.SIGHUP, signal.SIGTERM):
+        signal.signal(each, signal.SIG_DFL)
+subprocess.call([sys.executable, "-I", fake, *sys.argv[3:]], preexec_fn=restored)
+time.sleep(LINGER)
+note("exit")
+"""
 
 
 class WorkerTest(LiveCrew):
@@ -80,3 +114,33 @@ class DialogTest(LiveCrew):
         self.assertIn("session w1: waits on a dialog: Trust this folder?", res.stderr.splitlines())
         self.wait_event("w1", "blocked")
         self.assertEqual(self.server.option("w1", "@state"), "blocked")
+
+
+class RestartTest(LiveCrew):
+    def test_client_flag_starts_its_worker_and_a_restart_waits_for_the_old_one(self):
+        with open(os.path.join(self.agent_pm, "config.local.toml"), "w", encoding="utf-8") as f:
+            f.write(EXTRA)
+        script, log = (os.path.join(self.root, n) for n in ("lingering.py", "lingering.jsonl"))
+        with open(script, "w", encoding="utf-8") as f:
+            f.write(LINGERING)
+        os.makedirs(self.spies)
+        q = shlex.quote
+        with open(os.path.join(self.spies, "claude"), "w", encoding="utf-8") as f:
+            f.write(
+                f"#!/bin/sh\nexec {q(sys.executable)} -I {q(script)} {q(log)} "
+                f'{q(fake_claude.__file__)} "$@"\n'
+            )
+        os.chmod(os.path.join(self.spies, "claude"), 0o755)
+        record = self.record(self.worker("w1", client="ext"))
+        self.assertEqual((record.detail, self.roster()["w1"].record), ("ext", record))
+        self.wait_event("w1", "done")
+        (begun,) = logged(log)
+        self.assertEqual(begun["what"], "start")
+        restarted = self.record(self.session("restart", "w1", **self.scene("w1")))
+        self.assertEqual((restarted.sid, restarted.detail), (record.sid, "ext"))
+        _, ended, resumed = self.until(
+            lambda: len(logged(log)) == 3 and logged(log), "the new start"
+        )
+        self.assertEqual((ended["what"], ended["pid"]), ("exit", begun["pid"]))
+        self.assertEqual((resumed["what"], resumed["running"]), ("start", []))
+        self.assertTrue(has_pair(resumed["argv"], "--resume", record.sid), resumed["argv"])
