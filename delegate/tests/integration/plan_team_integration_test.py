@@ -118,4 +118,3 @@ class Configures(Base):
             pass
         self.assertTrue(process.wait_exit(10))
         self.assertEqual(FakeHost("spare", {"root": "~/spare"}).list(), [])
-

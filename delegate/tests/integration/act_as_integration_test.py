@@ -4,8 +4,8 @@ import os
 import subprocess
 
 from agent_pm.delegate import composer
-from agent_pm.delegate.engine.application import listing
 from agent_pm.delegate.composer import RunParams
+from agent_pm.delegate.engine.application import listing
 
 from delegate.tests.case import Case
 from delegate.tests.skills.act_as import argv, command

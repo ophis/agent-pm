@@ -15,7 +15,7 @@ from agent_pm.delegate.engine import detach, harness
 from agent_pm.delegate.engine.runner import STOP_LIMIT
 from agent_pm.session import SIGNALS, ConfigError, DriverError
 
-from delegate.tests.unit.engine.application_case import DRIVER, SID, SPLIT, TUI, Base
+from delegate.tests.application_case import DRIVER, SID, SPLIT, TUI, Base
 from delegate.tests.unit.runs import STOP, FakeHandle
 
 DONE_RESULT = Result(0, Outcome("done", "t", "s"))

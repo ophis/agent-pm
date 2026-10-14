@@ -1,12 +1,51 @@
-"""Command-line fixture over the engine application's configured fake runtime."""
+"""Shared fixtures for unit and integration coverage."""
 
 import io
 from contextlib import redirect_stderr, redirect_stdout
 from unittest import mock
 
 from agent_pm.delegate import cli
+from agent_pm.session import ConfigError
 
-from delegate.tests.unit.engine.application_case import Base as ApplicationCase
+from delegate.tests.application_case import Base as ApplicationCase
+from session.tests import fake_adapter
+
+KEYS = {
+    "runtime",
+    "mode",
+    "sid",
+    "resume",
+    "cwd",
+    "project",
+    "dirs",
+    "reads",
+    "commands",
+    "tier",
+    "effort",
+    "prompt",
+}
+
+
+HEADS = [
+    "researcher  local  built-in",
+    "pm  local  built-in",
+    "engineer  pull-request  built-in",
+    "dummy-tester  local  built-in",
+]
+
+
+class RefusingAdapter(fake_adapter.InProcessFakeAdapter):
+    def in_process(self):
+        return RefusingRun(self)
+
+
+class RefusingRun(fake_adapter.FakeInProcess):
+    def __init__(self, adapter):
+        super().__init__(adapter)
+        self.refusal = ConfigError("refused by check")
+
+    def check(self, spec):
+        raise self.refusal
 
 
 class Base(ApplicationCase):

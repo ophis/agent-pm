@@ -25,4 +25,3 @@ class ActAs(Case):
         self.assertIn("agent_pm.delegate.cli prompt --role", command(3))
         for option in ("--runtime", "--mode", "--detach", "--sid", "--resume"):
             self.assertNotIn(option, command(3))
-

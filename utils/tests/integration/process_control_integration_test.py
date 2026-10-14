@@ -8,10 +8,12 @@ import sys
 import tempfile
 import time
 from pathlib import Path
+from unittest import mock
 
 from agent_pm.utils import ProcessControl
 
 from utils.tests.case import Case
+from utils.tests.sandbox import clean_env
 
 
 class ProcessControlTest(Case):
@@ -30,7 +32,7 @@ class ProcessControlTest(Case):
             )
             started = time.monotonic()
             process = subprocess.Popen(
-                control.command(), stdout=subprocess.PIPE, stderr=subprocess.PIPE
+                control.command(), stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=clean_env()
             )
             self.addCleanup(control.remove)
             self.addCleanup(process.communicate, timeout=15)
@@ -64,7 +66,9 @@ class ProcessControlTest(Case):
             )
             command = control.command()
             control.cancel()
-            result = subprocess.run(command, capture_output=True, timeout=10, check=False)
+            result = subprocess.run(
+                command, capture_output=True, timeout=10, check=False, env=clean_env()
+            )
             self.assertEqual(result.returncode, 1)
             self.assertFalse(marker.exists())
             self.assertFalse(os.path.exists(control.path))
@@ -80,7 +84,7 @@ class ProcessControlTest(Case):
         env = {"ONE": "a b", "TWO": ""}
         control = ProcessControl.prepare(["/usr/bin/env"], os.getcwd(), env=env)
         process = subprocess.Popen(
-            control.command(), stdout=subprocess.PIPE, stderr=subprocess.PIPE
+            control.command(), stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=clean_env()
         )
         self.addCleanup(control.remove)
         self.addCleanup(process.communicate, timeout=10)
@@ -100,7 +104,7 @@ class ProcessControlTest(Case):
             control.command(),
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            env={"INHERITED": "controller", "UNRELATED": "excluded"},
+            env=clean_env({"INHERITED": "controller", "UNRELATED": "excluded"}),
         )
         self.addCleanup(control.remove)
         self.addCleanup(process.communicate, timeout=10)
@@ -115,7 +119,7 @@ class ProcessControlTest(Case):
     def test_exec_failure_is_reported_without_a_startup_timeout(self):
         control = ProcessControl.prepare(["/no-such-task366-program"], os.getcwd())
         process = subprocess.Popen(
-            control.command(), stdout=subprocess.PIPE, stderr=subprocess.PIPE
+            control.command(), stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=clean_env()
         )
         self.addCleanup(control.remove)
         self.addCleanup(process.communicate, timeout=10)
@@ -131,6 +135,7 @@ class ProcessControlTest(Case):
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             start_new_session=True,
+            env=clean_env(),
         )
 
         def cleanup():
@@ -201,3 +206,26 @@ class ProcessControlTest(Case):
             while os.path.exists(control.path):
                 self.assertLess(time.monotonic(), deadline)
                 time.sleep(0.02)
+
+
+class ControllerAttachmentTest(Case):
+    def test_attach_during_teardown_reports_ended_without_contacting_a_socket(self):
+        control = ProcessControl.prepare(["program"], "/")
+        self.addCleanup(control.remove)
+        for removed in (False, True):
+            with self.subTest(directory_removed=removed):
+                if removed:
+                    control.remove()
+                attached = ProcessControl.attach(control.path)
+                with mock.patch("socket.socket") as socket:
+                    self.assertFalse(attached.running())
+                    self.assertFalse(attached.live())
+                    attached.kill()
+                    socket.assert_not_called()
+
+    def test_an_existing_untrusted_directory_is_not_an_ended_controller(self):
+        control = ProcessControl.prepare(["program"], "/")
+        self.addCleanup(control.remove)
+        os.chmod(control.path, 0o755)
+        with self.assertRaises(PermissionError):
+            ProcessControl.attach(control.path)

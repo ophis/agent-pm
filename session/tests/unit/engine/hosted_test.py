@@ -66,6 +66,7 @@ from session.tests.hosted_support import (
     listed,
 )
 from session.tests.source_roots import PACKAGE_ROOTS
+from utils.tests.sandbox import owned_directory
 
 UNCONFIGURED = "session not configured: call Session.configure first"
 FAKE_HOSTS = {"fake": {"implementation": "session.tests.fakes.host:FakeHost"}}
@@ -187,7 +188,7 @@ class InspectTest(Base):
 
 class HistoricalRecordTest(Case):
     def setUp(self):
-        directory = self.enterContext(tempfile.TemporaryDirectory(dir=REPO))
+        directory = owned_directory(self, os.environ.get("AGENT_PM_TEST_TMP", REPO))
         self.root = Path(directory).resolve()
         self.enterContext(mock.patch.dict(os.environ, {"HOME": str(self.root)}))
         self.work = self.root / "work"

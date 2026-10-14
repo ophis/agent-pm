@@ -20,10 +20,11 @@ from agent_pm.session.engine.types import Key, Paste
 from agent_pm.session.hosts.tmux import tmux_host
 from agent_pm.utils import Display, ProcessControl, Record, import_roots
 
+from utils.tests.sandbox import clean_env
+
 NAME = re.compile(r"[A-Za-z0-9_-]+\Z")
 KEYS = {"Enter": "\n", "Escape": "\x1b", "Tab": "\t"}
 SUPERVISOR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "supervisor.py")
-PYTHONPATH = os.pathsep.join(import_roots())
 START_TIMEOUT = 10
 POLL = 0.05
 
@@ -184,11 +185,11 @@ class FakeHost(Host):
             with open(os.path.join(folder, file), "w", encoding="utf-8") as f:
                 json.dump(data, f)
         events = os.path.abspath(events) if events else ""
-        own = {k: v for k, v in os.environ.items() if not k.startswith("PYTHON")}
+        own = clean_env(None, *import_roots())
         with open(os.path.join(folder, "output"), "ab") as output:
             supervisor = subprocess.Popen(
                 [sys.executable, "-P", "-S", SUPERVISOR, folder, events],
-                env={**own, "PYTHONPATH": PYTHONPATH},
+                env=own,
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.DEVNULL,
                 stderr=output,

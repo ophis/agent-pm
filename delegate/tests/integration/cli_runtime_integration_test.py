@@ -10,8 +10,9 @@ from unittest import mock
 from agent_pm.delegate import Outcome, Result, composer
 from agent_pm.delegate.composer.prompt import RESUME
 
+from delegate.tests.application_case import SID
 from delegate.tests.case import PY, child_env
-from delegate.tests.cli import SID, Base
+from delegate.tests.cli_case import Base
 from delegate.tests.replies import block
 from delegate.tests.unit.runs import DONE, START, limit, said
 

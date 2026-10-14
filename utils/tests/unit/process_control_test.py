@@ -3,7 +3,6 @@
 import json
 import os
 import signal
-import subprocess
 from unittest import mock
 
 from agent_pm.utils.process_control import ProcessControl, _Group
@@ -37,7 +36,9 @@ class GroupTest(Case):
             mock.patch("os.waitpid", return_value=(4242, 0)) as reap,
             mock.patch(
                 "subprocess.run",
-                return_value=subprocess.CompletedProcess([], 0, "4242 4242 Z\n4343 4242 S\n"),
+                return_value=mock.Mock(
+                    returncode=0, stdout="4242 4242 Z\n4343 4242 S\n", stderr=""
+                ),
             ) as ps,
         ):
             self.assertEqual(group.receive(), [{"started": True}, {"rc": 0}])
@@ -73,7 +74,8 @@ class GroupTest(Case):
         with (
             mock.patch("os.killpg", side_effect=[PermissionError, None]) as killpg,
             mock.patch(
-                "subprocess.run", return_value=subprocess.CompletedProcess([], 0, "4343 4242 S\n")
+                "subprocess.run",
+                return_value=mock.Mock(returncode=0, stdout="4343 4242 S\n", stderr=""),
             ),
         ):
             with self.assertRaises(PermissionError):
@@ -84,8 +86,13 @@ class GroupTest(Case):
 
 
 class ControlTest(Case):
+    def control(self):
+        path = os.path.join(self.home, "controller")
+        os.mkdir(path, 0o700)
+        return ProcessControl(path)
+
     def test_a_signal_forwarding_socket_error_does_not_end_the_pane(self):
-        control = ProcessControl.prepare(["program"], "/")
+        control = self.control()
         self.addCleanup(control.remove)
         read, write = os.pipe()
         os.write(write, b"0\n")
@@ -111,7 +118,7 @@ class ControlTest(Case):
         socket.return_value.__enter__.return_value.connect.assert_called_once()
 
     def test_losing_the_pane_during_startup_cancels_before_any_launch_request(self):
-        control = ProcessControl.prepare(["program"], "/")
+        control = self.control()
         self.addCleanup(control.remove)
         with mock.patch("os.getppid", return_value=1), mock.patch("select.select") as poll:
             self.assertFalse(control._await_start(mock.Mock(), parent=4242))
@@ -120,7 +127,7 @@ class ControlTest(Case):
         poll.assert_not_called()
 
     def test_losing_the_pane_sends_term_once_and_keeps_ownership_through_slow_cleanup(self):
-        control = ProcessControl.prepare(["program"], "/")
+        control = self.control()
         self.addCleanup(control.remove)
         control.accepted = True
         clock = [0.0]
@@ -156,7 +163,7 @@ class ControlTest(Case):
         self.assertGreaterEqual(clock[0], 7)
 
     def test_background_membership_probes_back_off_while_requests_remain_responsive(self):
-        control = ProcessControl.prepare(["program"], "/")
+        control = self.control()
         self.addCleanup(control.remove)
         control.accepted = True
         clock, probes = [0.0], []
@@ -179,22 +186,8 @@ class ControlTest(Case):
         self.assertLessEqual(len(probes), 11)
         self.assertGreaterEqual(probes[-1] - probes[-2], 1)
 
-    def test_attach_during_teardown_reports_ended_without_contacting_a_socket(self):
-        control = ProcessControl.prepare(["program"], "/")
-        self.addCleanup(control.remove)
-        for removed in (False, True):
-            with self.subTest(directory_removed=removed):
-                if removed:
-                    control.remove()
-                attached = ProcessControl.attach(control.path)
-                with mock.patch("socket.socket") as socket:
-                    self.assertFalse(attached.running())
-                    self.assertFalse(attached.live())
-                    attached.kill()
-                    socket.assert_not_called()
-
     def test_a_query_during_directory_removal_reports_ended(self):
-        control = ProcessControl.prepare(["program"], "/")
+        control = self.control()
         self.addCleanup(control.remove)
         socket_path = os.path.join(control.path, "control")
         with open(socket_path, "w"):
@@ -214,7 +207,7 @@ class ControlTest(Case):
             connection.connect.assert_called_once()
 
     def test_a_denied_socket_stat_does_not_retire_the_generation(self):
-        control = ProcessControl.prepare(["program"], "/")
+        control = self.control()
         self.addCleanup(control.remove)
         original = os.stat
 
@@ -230,15 +223,8 @@ class ControlTest(Case):
                 control.live()
         self.assertFalse(control.ended)
 
-    def test_an_existing_untrusted_directory_is_not_an_ended_controller(self):
-        control = ProcessControl.prepare(["program"], "/")
-        self.addCleanup(control.remove)
-        os.chmod(control.path, 0o755)
-        with self.assertRaises(PermissionError):
-            ProcessControl.attach(control.path)
-
     def test_a_completed_generation_never_contacts_or_signals_a_reused_group(self):
-        control = ProcessControl.prepare(["program"], "/")
+        control = self.control()
         self.addCleanup(control.remove)
         with open(os.path.join(control.path, "done.json"), "w") as stream:
             json.dump({"rc": 0}, stream)

@@ -43,7 +43,8 @@ class ControlTest(Case):
     def process(self):
         folder = Path(self.home, "session")
         folder.mkdir()
-        control = ProcessControl.prepare(["tool"], self.home)
+        control = ProcessControl(str(Path(self.home, "controller")))
+        Path(control.path).mkdir(mode=0o700)
         self.addCleanup(control.remove)
         Path(folder, "meta.json").write_text(json.dumps({"id": "first", "control": control.path}))
         return FakeProcess("mine", str(folder)), control

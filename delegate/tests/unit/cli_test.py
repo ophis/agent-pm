@@ -4,32 +4,31 @@ import errno
 import io
 import json
 import os
-import signal
 import types
 import uuid
-from pathlib import Path
 from contextlib import redirect_stderr, redirect_stdout
+from pathlib import Path
 from unittest import mock
 
-from agent_pm.delegate import Begun, Outcome, Result, cli, composer
+from agent_pm.delegate import cli, composer
 from agent_pm.delegate.composer import RunParams
 from agent_pm.delegate.composer.prompt import RESUME
 from agent_pm.delegate.engine.runner import STOP_LIMIT
-from agent_pm.session import ConfigError, DriverError
+from agent_pm.session import DriverError
 
-from delegate.tests.case import Case, committed
-from delegate.tests.cli import (
-    DONE_RESULT,
+from delegate.tests.application_case import DRIVER, SID, SPLIT, TUI
+from delegate.tests.case import PY, Case, committed
+from delegate.tests.cli_case import (
     HEADS,
     KEYS,
+    Base,
     RefusingAdapter,
 )
 from delegate.tests.replies import block
-from delegate.tests.unit.cli_case import Base
-from delegate.tests.unit.engine.application_case import DRIVER, SID, SPLIT, TUI
 from delegate.tests.unit.runs import DONE, START, STOP, FakeHandle, no_child, turn
 from session.tests import fake_adapter
 from session.tests.modules import adapter_loader
+from utils.tests.case import local_section
 
 
 class Detach(Base):

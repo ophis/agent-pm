@@ -647,6 +647,16 @@ class AttachCommandTest(TuiBase):
 
 
 class DetachTest(TuiBase):
+    def setUp(self):
+        super().setUp()
+        allocate = tempfile.mkdtemp
+
+        def private(**kw):
+            self.assertEqual(kw, {"prefix": "apm-group-", "dir": "/tmp"})
+            return allocate(prefix=kw["prefix"], dir=self.dir)
+
+        self.enterContext(mock.patch("tempfile.mkdtemp", side_effect=private))
+
     def test_the_default_host_runs_argv_with_the_signals_blocked_the_opener_its_display(self):
         def detached(_name, _argv, **kw):
             control = ProcessControl(kw["control"])
