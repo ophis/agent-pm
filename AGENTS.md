@@ -10,13 +10,14 @@
 - A project's `config.toml` holds only its keys, each a real line (a local-only one its empty default, its comment saying what empty means); a `# local:` line only shows a value for `~/.agent-pm/config.local.toml` (`tests/guards.py` `explicit_keys`). Layer sections and merge rules: `utils/src/agent_pm/utils/config_file.py`'s docstring.
 - Identify Linear entities by id, never name; a role's `account` (an email) is the exception.
 - Linear's lists can lag a just-made state change: re-read an issue's state before acting on it (`linear-orchestrator/src/agent_pm/linear_orchestrator/engine/ops.py:move` does).
-- Tmux implementation: `session/src/agent_pm/session/hosts/tmux/tmux_host.py`. `/agent-pm:tmux`: removed, rebuilt by TASK-356.
+- Tmux implementation: `session/src/agent_pm/session/hosts/tmux/` (`TmuxHost` and the `Tmux` it holds: `host.py`). `/agent-pm:tmux`: removed, rebuilt by TASK-356.
+- The session's public interface is frozen: `tests/guards.py` `session_interface_snapshot` (who may change `tests/session_interface.json`: its docstring).
 - Keep `<work_dir>/logs/runs.jsonl` (README › Operating).
 - A `[local_clones]` clone must not move: that breaks its worktrees. Run `git -C <new path> worktree repair`, then update the entry.
 
 ## Import rules
 
-Layer contracts live in `pyproject.toml` and run with `lint-imports`: manager > linear_orchestrator > delegate > session > utils. Manager imports only itself and utils; it reaches other layers through commands. Cross-layer imports use the lower layer's public package. Orchestration reaches session only through delegate; the only remaining direct imports are the modules and names in `tests/guards.py`'s `ORCH_SESSION_IMPORTS`, and TASK-394 removes them. Project tests may import their project and lower layers, never the root `tests` package or a higher project.
+Layer contracts live in `pyproject.toml` and run with `lint-imports`: manager > linear_orchestrator > delegate > session > utils. Manager imports only itself and utils; it reaches other layers through commands. Cross-layer imports use the lower layer's public package. Orchestration reaches session through Delegate, except the legacy launch in `engine/router.py` and `engine/run.py` until TASK-374; `tests/guards.py`'s `ORCH_SESSION_IMPORTS` pins those remaining imports. Project tests may import their project and lower layers, never the root `tests` package or a higher project.
 
 Session and Delegate internal units use the longest matching package; their dependency rules and shared-module purity are declared in `pyproject.toml`'s unit contracts. Session owns no config reader, reply-protocol tag or team text; `tests/guards.py` enforces those names and literal dynamic imports.
 

@@ -14,6 +14,7 @@ from agent_pm.session.engine.types import (
     Blocked,
     ClientBound,
     ConfigError,
+    HookCallback,
     HookKind,
     Launch,
     LimitHit,
@@ -632,7 +633,8 @@ class TranscriptTest(Base):
         size = os.path.getsize(self.path)
         run = self.launched(resume=True)
         self.assertEqual(
-            run.hook_state(), {"adapter_state": {"transcript": self.path, "start": size}}
+            run.hook_callback(),
+            HookCallback(ClaudeTui.__module__, {"transcript": self.path, "start": size}),
         )
         self.assertEqual(run.observe(), [])
         self.append(PROMPT, said("m3", text("Z")))
@@ -646,7 +648,8 @@ class TranscriptTest(Base):
         run.restore(Spec(workdir=self.work, sid=SID), {"transcript": self.path, "start": size})
         self.assertEqual(run.observe(), [Reply("Y")])
         self.assertEqual(
-            run.hook_state(), {"adapter_state": {"transcript": self.path, "start": size}}
+            run.hook_callback(),
+            HookCallback(ClaudeTui.__module__, {"transcript": self.path, "start": size}),
         )
 
     def test_a_bad_cursor_is_refused(self):

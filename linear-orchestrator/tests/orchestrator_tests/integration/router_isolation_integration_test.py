@@ -1,9 +1,8 @@
 """Real Git and interpreter contracts in the test sandbox."""
 
 import os
-from dataclasses import replace
 
-from agent_pm.linear_orchestrator.engine import config, target
+from agent_pm.linear_orchestrator.engine import target
 from agent_pm.utils import GUARD, SHORT
 from orchestrator_tests.router_fixtures import (
     DESIGN_LISTING,
@@ -59,7 +58,7 @@ class RunLaunching(OuterBase):
 
     def test_a_resume_over_a_clone_checkout_keeps_its_repo(self):
         self.local_clone()
-        cfg = replace(config.load(path=self.config_path), driver=self.api)
+        cfg = self.cfg()
         os.makedirs(
             os.path.join(target.checkout(ID, "Ophis", "Agent-PM", work=cfg.runs_dir), ".git")
         )

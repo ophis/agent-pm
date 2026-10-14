@@ -17,7 +17,16 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from agent_pm.session.adapters.base import Tui
 from agent_pm.session.adapters.claude.common import ClaudeCommon
-from agent_pm.session.engine.types import ConfigError, HookKind, LimitHit, Reply, Spec, TurnFailed
+from agent_pm.session.engine.types import (
+    ConfigError,
+    HookCall,
+    HookCallback,
+    HookKind,
+    LimitHit,
+    Reply,
+    Spec,
+    TurnFailed,
+)
 from agent_pm.utils import number, read_regular
 
 TAIL = 4 << 20
@@ -89,8 +98,8 @@ class ClaudeTui(Tui):
         self.start = self.offset = _size(launch.transcript)
         return launch
 
-    def hook_state(self):
-        return {"adapter_state": {"transcript": self.transcript, "start": self.start}}
+    def hook_callback(self):
+        return HookCallback(__name__, {"transcript": self.transcript, "start": self.start})
 
     def restore(self, spec, state):
         self.sid = spec.sid or ""
@@ -181,6 +190,11 @@ class ClaudeTui(Tui):
             return []
         self.limited = True
         return [LimitHit(resets)]
+
+
+def on_hook(call: HookCall) -> dict:
+    """Journals the payload as is: the callback carries the transcript cursor's start."""
+    return call.payload
 
 
 def _first(payload: dict, *keys: str) -> str:

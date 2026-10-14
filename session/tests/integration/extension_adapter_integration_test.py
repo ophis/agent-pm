@@ -15,7 +15,7 @@ import unittest
 
 from session.tests import fake_adapter
 from session.tests.case import PY, REPO, Case, child_env
-from session.tests.codex_tui import INTERPRETER_ROOTS
+from session.tests.codex_tui import INTERPRETER_PATHS, INTERPRETER_ROOTS, SITE_PACKAGES
 
 TIMEOUT = 60  # seconds
 SKIP = shutil.ignore_patterns("__pycache__")
@@ -35,12 +35,16 @@ events = [[type(e).__name__, dataclasses.asdict(e)] for e in handle.events()]
 print(json.dumps({"sid": handle.sid, "events": events,
                   "files": [hosted.__file__, sys.modules["extension_runtime"].__file__]}))
 """
-PROTECTED_CHILD = """import sys
+PROTECTED_CHILD = f"""import sys
 from unittest import mock
 from agent_pm.session import Access, Driver, Spec, read_config
 adapter = Driver.from_config(read_config()).registry.adapter("codex")
 spec = Spec(workdir=sys.argv[1], sid="installed-layout", access=Access(cwd=sys.argv[1], project=True))
-with mock.patch("shutil.which", return_value="/protected/codex"):
+with (
+    mock.patch("shutil.which", return_value="/protected/codex"),
+    mock.patch("sysconfig.get_path", side_effect={INTERPRETER_PATHS!r}.__getitem__),
+    mock.patch("site.getsitepackages", return_value={list(SITE_PACKAGES)!r}),
+):
     launch = adapter.tui().launch(spec, (sys.executable, "-I", "/protected/hook.py"),
                                   source_roots=(sys.argv[3],))
 print(launch.argv[-1])

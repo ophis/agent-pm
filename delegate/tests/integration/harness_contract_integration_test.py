@@ -192,8 +192,8 @@ class Ownership(HarnessCase):
         self.assertEqual(
             set(ShowingHost.shown),
             {
-                (self.metadata()["agent_name"], "target"),
-                (self.metadata()["harness_name"], "target"),
+                (self.metadata()["agent_name"], "target", None),
+                (self.metadata()["harness_name"], "target", None),
             },
         )
 

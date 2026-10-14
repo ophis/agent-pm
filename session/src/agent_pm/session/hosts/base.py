@@ -7,14 +7,16 @@ from __future__ import annotations
 import os
 import signal
 from abc import ABC, abstractmethod
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 
 from agent_pm.session.engine.types import (
     ActivityState,
     ConfigError,
     DriverError,
+    HookCallback,
     Hosts,
     Key,
+    KeyPress,
     Launch,
     Liveness,
     Paste,
@@ -58,6 +60,13 @@ class HostProcess(ABC):
     def identity(self) -> str:
         return self.name
 
+    @property
+    def token(self) -> str | None:
+        return None
+
+    def publish(self, record: Record) -> None:
+        raise DriverError(f"session {self.name}: its host cannot store a Record after launch")
+
     def session_identity(self) -> tuple[str | None, str | None]:
         """Private terminal sid and generation, independent of its published Record."""
         return None, None
@@ -82,8 +91,7 @@ class HostProcess(ABC):
             None if receipt is None else receipt.sid,
             None if receipt is None else receipt.kind,
             ActivityState.WORKING if self.alive() else ActivityState.DEAD,
-            None,
-            None,
+            self.display(),
             None,
             None,
             own=False,
@@ -101,6 +109,9 @@ class Terminal(HostProcess):
 
     @abstractmethod
     def send(self, action: Paste | Key) -> None: ...
+
+    @abstractmethod
+    def press(self, keys: Sequence[KeyPress]) -> None: ...
 
 
 class Host(ABC):
@@ -175,6 +186,14 @@ class Host(ABC):
     def rows(self, display: Display = None) -> list[SessionRow]:
         return [self.attach(name).row() for name in self.list(display)]
 
+    def reclaim(self, token: str) -> HostProcess | None:
+        """An untrusted token's live process group, else None."""
+        return None
+
+    def descendants(self, display: Display = None) -> list[str]:
+        """list(display) and, transitively, those they opened."""
+        return self.list(display)
+
     def events_path(self, events: str | None) -> str | None:
         return None if events is None else os.path.abspath(events)
 
@@ -186,8 +205,8 @@ class Host(ABC):
                 raise DriverError(f"events file {events}: {error.strerror}") from error
         return events
 
-    def hook_state(self, name: str, metadata: Mapping[str, str]) -> dict:
-        return {}
+    def hook_callback(self, name: str, metadata: Mapping[str, str]) -> HookCallback | None:
+        return None
 
     def protected_paths(self) -> tuple[str, ...]:
         return ()
@@ -215,10 +234,15 @@ class Host(ABC):
 
 
 class Displayable(ABC):
-    """show: None once shown, else an attach command; layout: display completed once its display destination is found."""
+    """show: None once shown, else an attach command; command: a shell command the Host runs to
+    show it instead, `{{session}}` the session name; layout: display completed once its display
+    destination is found.
+    """
 
     @abstractmethod
-    def show(self, name: str, *, display: Display = None) -> str | None: ...
+    def show(
+        self, name: str, *, display: Display = None, command: str | None = None
+    ) -> str | None: ...
 
     @abstractmethod
     def attach_command(self, name: str) -> str: ...

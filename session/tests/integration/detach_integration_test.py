@@ -16,7 +16,8 @@ from unittest import mock
 
 from agent_pm.session import SIGNALS
 from agent_pm.session.engine.types import ConfigError, DriverError, Launch
-from agent_pm.session.hosts.tmux import tmux_host
+from agent_pm.session.hosts.tmux.host import Tmux
+from agent_pm.session.hosts.tmux.types import TuiError
 
 from session.tests import live_tmux
 from session.tests.case import Case
@@ -61,7 +62,7 @@ class DetachTest(Case):
     def test_the_child_runs_with_the_signals_blocked_its_session_live_until_it_exits(self):
         self.assertIsNone(self.detach("d1", opener=MANAGER))
         self.assertEqual([r.name for r in self.driver.sessions("d1")], ["d1"])
-        tmux_host.detach("d0", Launch(tuple(self.argv("d0")), self.server.env(), cwd=self.dir))
+        Tmux().detach("d0", Launch(tuple(self.argv("d0")), self.server.env(), cwd=self.dir))
         signals = {int(s) for s in SIGNALS}
         self.assertLessEqual(signals, self.blocked("d1"))
         self.assertEqual(signals & self.blocked("d0"), set())
@@ -93,11 +94,9 @@ class DetachTest(Case):
         missing = os.path.join(self.dir, "missing")
         with self.assertRaises(ConfigError):
             self.driver.detach("d1", self.argv("d1"), missing, self.server.env())
-        with self.assertRaisesRegex(tmux_host.TuiError, "^session d2 did not start$"):
-            tmux_host.detach(
-                "d2",
-                Launch(tuple(self.argv("d2")), self.server.env(), cwd=missing),
-                sleep=lambda seconds: time.sleep(seconds / 10),
+        with self.assertRaisesRegex(TuiError, "^session d2 did not start$"):
+            Tmux(sleep=lambda seconds: time.sleep(seconds / 10)).detach(
+                "d2", Launch(tuple(self.argv("d2")), self.server.env(), cwd=missing)
             )
         live_tmux.wait(self.gone, what="no session left")
 

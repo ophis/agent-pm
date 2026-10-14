@@ -20,6 +20,7 @@ from agent_pm.session.engine.types import (
     Blocked,
     ClientBound,
     ConfigError,
+    HookCallback,
     HookKind,
     Key,
     Launch,
@@ -120,11 +121,11 @@ class Tui(ABC):
     def commit(self) -> None:
         return None
 
-    def hook_state(self) -> dict:
-        return {}
+    def hook_callback(self) -> HookCallback | None:
+        return None
 
     def restore(self, spec: Spec, state: Mapping) -> None:
-        """On attach, before hook_events; state: hook_state()'s adapter_state."""
+        """On attach, before hook_events; state: hook_callback()'s state."""
         return None
 
     @abstractmethod

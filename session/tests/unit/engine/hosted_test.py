@@ -38,6 +38,7 @@ from agent_pm.session.engine.types import (
     Hosts,
     IdleTimeout,
     Key,
+    KeyPress,
     Mode,
     Paste,
     Reply,
@@ -63,6 +64,7 @@ from session.tests.hosted_support import (
     LAUNCHED,
     PYTHONPATH,
     SID,
+    WAIT,
     Base,
     HostedEnvBase,
     HostedTuiBase,
@@ -70,6 +72,7 @@ from session.tests.hosted_support import (
     fake_tmux,
 )
 from session.tests.source_roots import PACKAGE_ROOTS
+from session.tests.threads import capture_errors
 from utils.tests.sandbox import owned_directory
 
 UNCONFIGURED = "session not configured: call Session.configure first"
@@ -129,10 +132,12 @@ class ConfiguredTest(Case):
             later.host()
         self.assertEqual(str(caught.exception), UNCONFIGURED)
 
-    def test_an_unconfigured_class_refuses_each_class_method_but_list(self):
+    def test_an_unconfigured_class_refuses_each_class_method(self):
         fresh = type("Fresh", (HostedSession,), {})
         spec = Spec(workdir=self.home, runtime="fake", mode=Mode.HEADLESS)
         for name, call in (
+            ("list", fresh.list),
+            ("list display ''", lambda: fresh.list(display="")),
             ("start", lambda: fresh.start(spec)),
             ("attach", lambda: fresh.attach("w1")),
             ("inspect", lambda: fresh.inspect(spec)),
@@ -146,7 +151,6 @@ class ConfiguredTest(Case):
             with self.subTest(name=name), self.assertRaises(ConfigError) as caught:
                 call()
             self.assertEqual(str(caught.exception), UNCONFIGURED)
-        self.assertEqual(fresh.list(display=""), [])
 
     def test_configure_takes_parsed_hosts_only(self):
         with self.assertRaises(ConfigError) as caught:
@@ -544,6 +548,11 @@ class InProcessTest(Base):
     def logged(self) -> list[dict]:
         with open(self.log, encoding="utf-8") as f:
             return [json.loads(line) for line in f]
+
+    def test_an_in_process_session_has_no_terminal_to_press_keys_into(self):
+        session, _ = self.run_in_process()
+        with self.assertRaisesRegex(DriverError, "^press: a in_process session has no terminal$"):
+            session.press((KeyPress("Escape"),))
 
     def test_a_spec_started_in_process_yields_reply_turn_end_then_exited_fr_12(self):
         self.steps(
@@ -1170,14 +1179,13 @@ class ListTest(HostedTuiBase):
         first = self.host.create("w2", SID)
         second = self.host.create("w1", "other")
         first.calls.row.return_value = SessionRow(
-            "w2", SID, "fake", ActivityState.DONE, None, None, "shown", "bye", own=False
+            "w2", SID, "fake", ActivityState.DONE, None, "shown", "bye", own=False
         )
         second.calls.row.return_value = SessionRow(
             "w1",
             "other",
             "unknown-runtime",
             ActivityState.WORKING,
-            None,
             None,
             None,
             None,
@@ -1232,15 +1240,14 @@ class ListTest(HostedTuiBase):
     def test_a_row_is_frozen_with_these_fields(self):
         self.assertEqual(
             [f.name for f in dataclasses.fields(SessionRow)],
-            ["name", "sid", "runtime", "state", "pane", "opener", "shown", "last_lines", "own"],
+            ["name", "sid", "runtime", "state", "display", "shown", "last_lines", "own"],
         )
         found = SessionRow(
             name="w1",
             sid=None,
             runtime=None,
             state="working",
-            pane=None,
-            opener=None,
+            display=None,
             shown=None,
             last_lines=None,
             own=False,
@@ -1359,11 +1366,16 @@ class TuiStartTest(HostedTuiBase):
         self.host.calls.show.return_value = None
         self.assertIsNone(session.show())
         self.assertIsNone(session.show(display="other/right/m1"))
+        self.assertIsNone(session.show(command="open {{session}}"))
         with self.assertRaises(TypeError):
             session.show("other/right/m1")
         self.assertEqual(
             self.host.calls.show.call_args_list,
-            [mock.call("w1", display="mgr/below"), mock.call("w1", display="other/right/m1")],
+            [
+                mock.call("w1", display="mgr/below", command=None),
+                mock.call("w1", display="other/right/m1", command=None),
+                mock.call("w1", display="mgr/below", command="open {{session}}"),
+            ],
         )
 
     def test_its_record_is_its_hosts(self):
@@ -1710,11 +1722,17 @@ class MultipleHostsTest(HostedTuiBase):
         incumbent = self.host.attach("w1")
         incumbent.calls.alive.return_value = False
         incumbent.calls.returncode.return_value = 7
+        launches_at_close = []
+        incumbent.calls.close.side_effect = lambda: launches_at_close.append(
+            self.host.calls.terminal.call_count
+        )
         replacement = self.tui(name="w1", sid=SID)
         current = self.host.attach("w1")
         self.assertIsNot(current, incumbent)
         self.assertNotEqual(incumbent.identity, current.identity)
         incumbent.calls.close.assert_called_once_with()
+        self.assertEqual(launches_at_close, [1])
+        self.assertEqual(self.host.calls.terminal.call_count, 2)
         self.assertEqual(self.session.attach("w1").record(), replacement.record())
 
     def test_another_hosts_listing_failure_propagates_before_launch(self):
@@ -1740,6 +1758,68 @@ class MultipleHostsTest(HostedTuiBase):
         )
         self.assertIs(self.session.host(), self.other)
         self.assertEqual([row.name for row in self.session.list()], ["w1", "w2"])
+
+    def test_simultaneous_hosts_cannot_overwrite_the_first_sessions_state(self):
+        entered, checked, release = (threading.Event() for _ in range(3))
+        sessions, refusals, errors = {}, {}, []
+        lookups = []
+
+        def launch(*_args, **_kwargs):
+            entered.set()
+            if not release.wait(WAIT):
+                raise AssertionError("first launch was not released")
+
+        def listing(_display):
+            if threading.current_thread() is later and not lookups:
+                lookups.append("second checked first host before its terminal existed")
+                checked.set()
+                return []
+            return None
+
+        def start(host):
+            try:
+                sessions[host] = self.session.start(
+                    Spec(
+                        workdir=os.path.join(self.dir, host),
+                        runtime="fake",
+                        mode=Mode.TUI,
+                        sid=SID,
+                        name="shared",
+                    ),
+                    host=host,
+                )
+            except DriverError as error:
+                refusals[host] = str(error)
+
+        first = threading.Thread(target=start, args=("tmux",), daemon=True)
+        later = threading.Thread(target=start, args=("second",), daemon=True)
+        self.host.calls.terminal.side_effect = launch
+        self.host.calls.list.side_effect = listing
+        with contextlib.ExitStack() as stack:
+            for thread in (first, later):
+                stack.enter_context(capture_errors(thread, errors.append))
+            try:
+                first.start()
+                self.assertTrue(entered.wait(WAIT), "first terminal launch did not begin")
+                original = tui.TuiMode.snapshot("shared")
+                later.start()
+                self.assertTrue(checked.wait(WAIT), "second start did not check the first Host")
+            finally:
+                release.set()
+                first.join(WAIT)
+                if later.ident is not None:
+                    later.join(WAIT)
+                for session in sessions.values():
+                    self.addCleanup(session.stop)
+        self.assertFalse(first.is_alive())
+        self.assertFalse(later.is_alive())
+        self.assertEqual(errors, [])
+        self.assertEqual(set(sessions), {"tmux"})
+        self.assertEqual(refusals, {"second": "session shared exists"})
+        self.other.calls.terminal.assert_not_called()
+        self.assertFalse(os.path.exists(os.path.join(self.dir, "second")))
+        self.assertEqual(tui.TuiMode.snapshot("shared"), original)
+        self.assertEqual(self.session.attach("shared").record(), sessions["tmux"].record())
 
 
 class ChecksTest(Base):

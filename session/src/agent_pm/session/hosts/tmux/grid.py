@@ -200,7 +200,8 @@ def tile(
 ) -> None:
     """Lays out grid window `window` under its _grid_lock (no wait: nothing while another tile holds
     it), its hooks muted by @grid-busy. if_panes_changed: no pass on an unchanged pane set. Over
-    TILE_LIMIT re-tiles in TILE_WINDOW s, the grid is torn down.
+    TILE_LIMIT re-tiles in TILE_WINDOW s, the grid is torn down. Holding the lock, every exit unsets
+    @grid-busy, a stale one too; without it, tile leaves @grid-busy alone.
     """
     if not WINDOW.fullmatch(window):
         raise TuiError(f"invalid window id {window!r}: want {WINDOW.pattern}")
@@ -209,34 +210,32 @@ def tile(
         "\n"
     )
     with _grid_lock(socket, window, wait=wait) as held:
-        found = (
-            _grid_pass(window, per_column, proc, if_panes_changed=if_panes_changed)
-            if held
-            else None
-        )
-        if found is None:
-            return
-        swaps, layout, tiles, panes = found
-        if layout is None:
-            checked(["set-option", "-w", "-t", window, GRID_PANES_SET, panes], proc)
-            return
-        now = int(time.monotonic() * 1000)
-        times = [
-            t
-            for t in (int(s) for s in tiles.split() if re.fullmatch(r"[0-9]{1,15}", s))
-            if now - TILE_WINDOW * 1000 < t <= now
-        ] + [now]
-        if len(times) > TILE_LIMIT:
-            _grid_down(window, proc)
-            line = (
-                f"tui: grid {window}: auto re-tiling stopped: {len(times)} re-tiles in {TILE_WINDOW} s; the next "
-                "worker that opens rebuilds it"
-            )
-            with contextlib.suppress(TuiError):
-                run(["display-message", "-d", "10000", "-t", window, line], proc)
-            print(line, file=sys.stderr)
+        if not held:
             return
         try:
+            found = _grid_pass(window, per_column, proc, if_panes_changed=if_panes_changed)
+            if found is None:
+                return
+            swaps, layout, tiles, panes = found
+            if layout is None:
+                checked(["set-option", "-w", "-t", window, GRID_PANES_SET, panes], proc)
+                return
+            now = int(time.monotonic() * 1000)
+            times = [
+                t
+                for t in (int(s) for s in tiles.split() if re.fullmatch(r"[0-9]{1,15}", s))
+                if now - TILE_WINDOW * 1000 < t <= now
+            ] + [now]
+            if len(times) > TILE_LIMIT:
+                _grid_down(window, proc)
+                line = (
+                    f"tui: grid {window}: auto re-tiling stopped: {len(times)} re-tiles in {TILE_WINDOW} s; the next "
+                    "worker that opens rebuilds it"
+                )
+                with contextlib.suppress(TuiError):
+                    run(["display-message", "-d", "10000", "-t", window, line], proc)
+                print(line, file=sys.stderr)
+                return
             checked(
                 [
                     "set-option",
@@ -289,6 +288,8 @@ def _grid_pass(
         .stdout.rstrip("\n")
         .split("\t", 7)
     )
+    if not fields[0]:  # tmux formats a missing window's fields empty, exit 0
+        raise TuiError(f"can't find window: {window}")
     if len(fields) != 8 or fields[2] != "0" or not fields[4]:
         return None
     width, height, _, layout, manager, n, recorded, tiles = fields

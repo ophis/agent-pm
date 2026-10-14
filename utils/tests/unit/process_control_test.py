@@ -1,5 +1,6 @@
 """Process group ownership lasts until the controller reaps its own anchor."""
 
+import io
 import json
 import os
 import signal
@@ -255,6 +256,38 @@ class ControlTest(Case):
         self.assertLessEqual(len(probes), 11)
         self.assertGreaterEqual(probes[-1] - probes[-2], 1)
 
+    def test_a_launch_that_fails_before_a_start_retry_is_answered_waits_for_its_acceptance(self):
+        for accepting in (b"started\n", b"kill\n", b"signal 15\n"):
+            with self.subTest(accepting=accepting):
+                control = self.control()
+                self.addCleanup(control.remove)
+                group = mock.Mock(returncode=None, eof=False)
+                group.live.return_value = False
+
+                def receive(group=group):
+                    if group.returncode is not None:
+                        return []
+                    group.returncode = 1
+                    return [{"error": "No such file or directory", "errno": 2}]
+
+                group.receive.side_effect = receive
+                clients = [Connection(b"start\n"), Connection(accepting)]
+                listener = mock.Mock()
+                listener.accept.side_effect = [(client, None) for client in clients]
+                with (
+                    mock.patch("select.select", return_value=([listener], [], [])),
+                    mock.patch("signal.signal"),
+                    mock.patch("signal.pthread_sigmask"),
+                ):
+                    self.assertEqual(control._serve(listener, group, None), 1)
+                self.assertEqual(
+                    [json.loads(client.answer) for client in clients],
+                    [{"live": True}, {"live": False}],
+                )
+                with open(os.path.join(control.path, "done.json")) as stream:
+                    self.assertEqual(json.load(stream), {"rc": 1})
+                control.remove()
+
     def test_a_query_during_directory_removal_reports_ended(self):
         control = self.control()
         self.addCleanup(control.remove)
@@ -303,3 +336,25 @@ class ControlTest(Case):
             self.assertFalse(control.live())
             socket.assert_not_called()
             killpg.assert_not_called()
+
+
+class Connection:
+    """One accepted control connection: its command, then the answer the controller sends."""
+
+    def __init__(self, command: bytes):
+        self.command, self.answer = command, b""
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_):
+        return None
+
+    def settimeout(self, _seconds):
+        return None
+
+    def makefile(self, _mode):
+        return io.BytesIO(self.command)
+
+    def sendall(self, data: bytes):
+        self.answer += data

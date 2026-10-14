@@ -13,14 +13,13 @@ import sys
 import time
 import uuid
 from collections import deque
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from typing import Any, ClassVar, cast
 
 from agent_pm.session.adapters.base import Adapter
 from agent_pm.session.adapters.registry import Registry, settings
 from agent_pm.session.engine.base import Session
-from agent_pm.session.engine.config import read_config
 from agent_pm.session.engine.records import RunLog
 from agent_pm.session.engine.types import (
     Blocked,
@@ -30,6 +29,7 @@ from agent_pm.session.engine.types import (
     Exited,
     Hosts,
     IdleTimeout,
+    KeyPress,
     Liveness,
     Mode,
     NoRecordedSession,
@@ -55,10 +55,10 @@ from agent_pm.utils import (
     load_class,
     module_roots,
     printable_abs,
+    probe,
     sid_error,
     thaw,
 )
-from agent_pm.utils import probe as run_probe
 
 
 def _request(spec: Spec, idle_timeout: float | None) -> tuple[str, Mode]:
@@ -193,7 +193,7 @@ class HostedSession(Session):
         adapters: Mapping,
         hosts: Hosts,
         class_loader=load_class,
-        probe=run_probe,
+        probe=probe,
         clock: Callable[[], float] = time.monotonic,
         host_factory: HostFactory | None = None,
     ) -> None:
@@ -333,6 +333,10 @@ class HostedSession(Session):
         return session
 
     @classmethod
+    def retire(cls, name: str, *, host: str | None = None) -> None:
+        tui.TuiMode.close(tui.checked_name(name), host=cls.host(host))
+
+    @classmethod
     def list(
         cls, match: str | None = None, *, display: Display = None
     ) -> builtins.list[SessionRow]:
@@ -343,11 +347,9 @@ class HostedSession(Session):
             pattern = None if match is None else re.compile(match)
         except re.error as error:
             raise ConfigError(f"match {match!r:.80}: {error}") from None
+        setup = cls._config()
         if display == "":
             return []
-        if cls._setup is None:
-            return cls.configured(**settings(read_config())).list(match, display=display)
-        setup = cls._config()
         return sorted(
             (
                 row
@@ -511,6 +513,9 @@ class HostedSession(Session):
     def send(self, text: str) -> None:
         self._running.send(text)
 
+    def press(self, keys: Sequence[KeyPress]) -> None:
+        self._running.press(tuple(keys))
+
     def state(self) -> Liveness:
         return self._running.state()
 
@@ -565,11 +570,11 @@ class HostedSession(Session):
     def displayable(self) -> bool:
         return self._tui() is not None and isinstance(self._host, Displayable)
 
-    def show(self, *, display: Display = None) -> str | None:
+    def show(self, *, display: Display = None, command: str | None = None) -> str | None:
         host, name = self._shown("show")
         if display is None:
             display = self._host.attach(name).display()
-        return host.show(name, display=display)
+        return host.show(name, display=display, command=command)
 
     def attach_command(self) -> str:
         host, name = self._shown("attach_command")

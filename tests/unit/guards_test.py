@@ -1,5 +1,6 @@
 import ast
 import importlib
+import json
 import os
 import sys
 from pathlib import Path
@@ -759,26 +760,16 @@ class OrchestratorSessionImports(Sample):
         module = f"{guards.ORCH_PKG}.{rel.removesuffix('.py').replace('/', '.')}"
         return (
             f"linear-orchestrator/{guards.ORCH_SRC}{rel}: {module} imports {name} from "
-            "agent_pm.session; go through agent_pm.delegate (TASK-394 removes this list)"
+            "agent_pm.session; go through agent_pm.delegate"
         )
 
-    def test_pinned_names_and_removals_pass(self):
-        for sample in (
-            "from agent_pm.session import SIGNALS, DriverError\n"
-            "from agent_pm.session import ConfigError as SessionConfigError\n",
-            "from agent_pm.session import DriverError\n",
-            "from agent_pm import delegate\n",
-        ):
-            with self.subTest(sample=sample):
-                self.assertEqual(self.check("engine/run.py", sample), [])
+    def test_delegate_import_passes(self):
+        self.assertEqual(self.check("engine/run.py", "from agent_pm import delegate\n"), [])
 
-    def test_an_extra_name_in_an_allowed_module_fails(self):
+    def test_formerly_allowed_module_fails(self):
         self.assertEqual(
-            self.check(
-                "engine/run_comments.py",
-                "from agent_pm.session import ConfigError, DriverError, SessionStatus\n",
-            ),
-            [self.message("engine/run_comments.py", "SessionStatus")],
+            self.check("engine/run_comments.py", "from agent_pm.session import DriverError\n"),
+            [self.message("engine/run_comments.py", "DriverError")],
         )
 
     def test_a_new_module_fails_however_it_imports(self):
@@ -795,15 +786,14 @@ class OrchestratorSessionImports(Sample):
                     [self.message("engine/promote.py", "Driver")],
                 )
 
-    def test_pyproject_must_ignore_exactly_the_pinned_modules(self):
+    def test_pyproject_ignored_imports_cannot_grow(self):
         config = Path(REPO, "pyproject.toml").read_text()
-        edge = f'    "{guards.ORCH_PKG}.engine.prune -> agent_pm.session",\n'
-        self.assertIn(edge, config)
+        edge = '    "agent_pm.linear_orchestrator.engine.prune -> agent_pm.session",\n'
+        config = config.replace("ignore_imports = [\n", "ignore_imports = [\n" + edge, 1)
         self.assertEqual(
-            self.check("engine/run.py", "", config.replace(edge, "")),
+            self.check("engine/run.py", "", config),
             [
-                f"pyproject.toml: {guards.ORCH_SESSION_CONTRACT!r} must ignore exactly "
-                "ORCH_SESSION_IMPORTS"
+                f"pyproject.toml: {guards.ORCH_SESSION_CONTRACT!r} must ignore exactly ORCH_SESSION_IMPORTS"
             ],
         )
 
@@ -905,14 +895,12 @@ class SourceSuppressions(Sample):
     def test_the_real_inventory_has_matching_comments(self):
         self.assertEqual(guards.source_suppressions(REPO), [])
 
-    def test_hook_suppression_is_only_at_the_main_boundary(self):
+    def test_hook_suppression_is_only_at_the_hook_run_boundary(self):
         path = "session/src/agent_pm/session/modes/tui_hook.py"
-        reason = guards.NOQA_ALLOWED[path, "BLE001", "__main__"]
+        reason = guards.NOQA_ALLOWED[path, "BLE001", "run"]
         comment = f"# noqa: BLE001  # {reason}"
         self.assertEqual(
-            self.found(
-                {path: self.scoped("__main__", [comment]) + self.scoped("other", [comment])}
-            ),
+            self.found({path: self.scoped("run", [comment]) + self.scoped("other", [comment])}),
             [f"{path}:4: suppression BLE001 in other is not allowed"],
         )
 
@@ -1800,6 +1788,7 @@ class RunSpecSerialization(Sample):
         self.assertEqual(
             guards.types_only(self.tree({path: source})),
             [
+                f"{path}:6: Spec.from_argv: business method in types module",
                 f"{path}:7: Spec.run: business method in types module",
             ],
         )
@@ -1906,9 +1895,9 @@ class OrchestratorLayout(Sample):
         self.assertEqual(
             guards.orchestrator_session_imports(root),
             [
-                f"{guards.ORCH_PROJECT}/{OPKG}/engine/new.py: {guards.ORCH_PKG}.engine.new imports Driver from agent_pm.session; go through agent_pm.delegate (TASK-394 removes this list)",
-                f"{guards.ORCH_PROJECT}/{OPKG}/engine/ops.py: {guards.ORCH_PKG}.engine.ops imports DriverError from agent_pm.session; go through agent_pm.delegate (TASK-394 removes this list)",
-                f"{guards.ORCH_PROJECT}/{OPKG}/engine/router.py: {guards.ORCH_PKG}.engine.router imports Session from agent_pm.session; go through agent_pm.delegate (TASK-394 removes this list)",
+                f"{guards.ORCH_PROJECT}/{OPKG}/engine/new.py: {guards.ORCH_PKG}.engine.new imports Driver from agent_pm.session; go through agent_pm.delegate",
+                f"{guards.ORCH_PROJECT}/{OPKG}/engine/ops.py: {guards.ORCH_PKG}.engine.ops imports DriverError from agent_pm.session; go through agent_pm.delegate",
+                f"{guards.ORCH_PROJECT}/{OPKG}/engine/router.py: {guards.ORCH_PKG}.engine.router imports Session from agent_pm.session; go through agent_pm.delegate",
             ],
         )
 
@@ -2662,14 +2651,17 @@ class LegacyHostNames(Sample):
 
     def test_a_removed_name_or_file_is_stale(self):
         files = self.baseline()
-        path = f"{guards.SESSION_SRC}engine/types.py"
-        files[path] = "pane = None\n"
+        path = f"{guards.SESSION_SRC}engine/forwarding.py"
+        files[path] = files[path].replace("\nopener = None", "\n").replace("\n\n", "\n")
         self.assertEqual(
             guards.legacy_host_names(self.tree(files)),
-            [f"{path}: opener: expected 1 legacy occurrences, found 0 (TASK-369)"],
+            [f"{path}: opener: expected 4 legacy occurrences, found 0 (TASK-375)"],
         )
         del files[path]
-        self.assertEqual(len(guards.legacy_host_names(self.tree(files))), 2)
+        self.assertEqual(
+            len(guards.legacy_host_names(self.tree(files))),
+            len([key for key in guards.LEGACY_HOST_NAMES if key[0] == path]),
+        )
 
     def test_new_names_and_other_modules_have_no_exemption(self):
         files = self.baseline()
@@ -3174,3 +3166,57 @@ class UnitIsolation(Sample):
                 guards.unit_isolation_allowlist(root),
                 [f"{root}/tests/guards.py: unit isolation allowlist must remain empty"],
             )
+
+
+class SessionInterfaceSnapshot(Sample):
+    def snapshot(self) -> dict:
+        with open(os.path.join(REPO, guards.SESSION_INTERFACE), encoding="utf-8") as f:
+            return json.load(f)
+
+    def checked(self, snapshot) -> list[str]:
+        return guards.session_interface_snapshot(
+            self.tree({guards.SESSION_INTERFACE: json.dumps(snapshot)})
+        )
+
+    def test_the_repository_matches_its_snapshot(self):
+        self.assertEqual(guards.session_interface_snapshot(REPO), [])
+
+    def test_the_snapshot_covers_both_entry_modules_and_their_signatures(self):
+        snapshot = self.snapshot()
+        self.assertEqual(
+            guards.SESSION_INTERFACE_MODULES, ("agent_pm.session", "agent_pm.session.extension")
+        )
+        self.assertEqual(
+            snapshot["agent_pm.session.extension.Host.terminal"],
+            "def(self:POSITIONAL_OR_KEYWORD, name:POSITIONAL_OR_KEYWORD, "
+            "launch:POSITIONAL_OR_KEYWORD, display:KEYWORD_ONLY=None, events:KEYWORD_ONLY=None, "
+            "record:KEYWORD_ONLY=None, metadata:KEYWORD_ONLY=None)",
+        )
+        self.assertIn("agent_pm.session.Session.show", snapshot)
+
+    def test_a_changed_removed_or_added_export_or_signature_fails(self):
+        key = "agent_pm.session.Session.show"
+        snapshot = self.snapshot()
+        have = snapshot[key]
+        for changed, want in (
+            (
+                {**snapshot, key: "def(self:POSITIONAL_OR_KEYWORD)"},
+                f"{guards.SESSION_INTERFACE}: {key}: def(self:POSITIONAL_OR_KEYWORD) -> {have}",
+            ),
+            (
+                {k: v for k, v in snapshot.items() if k != key},
+                f"{guards.SESSION_INTERFACE}: {key}: absent -> {have}",
+            ),
+            (
+                {**snapshot, "agent_pm.session.Gone": "def()"},
+                f"{guards.SESSION_INTERFACE}: agent_pm.session.Gone: def() -> absent",
+            ),
+        ):
+            with self.subTest(want=want):
+                self.assertEqual(self.checked(changed), [want])
+
+    def test_a_missing_snapshot_fails(self):
+        self.assertEqual(
+            guards.session_interface_snapshot(self.tree({"README.md": ""})),
+            [f"{guards.SESSION_INTERFACE}: missing"],
+        )

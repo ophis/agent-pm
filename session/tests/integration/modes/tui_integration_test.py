@@ -1,5 +1,6 @@
 """Tui cleanup retires hook paths and closes arbitrary Host processes."""
 
+import json
 import os
 import subprocess
 import tempfile
@@ -8,6 +9,8 @@ from pathlib import Path
 from unittest import mock
 
 from agent_pm.session.engine.types import Spec
+from agent_pm.session.hosts.tmux import TmuxHost
+from agent_pm.session.hosts.tmux.host import Tmux
 from agent_pm.session.modes import tui
 
 from session.tests import fake_adapter
@@ -72,6 +75,50 @@ class RawSessionCloseTest(Live):
         self.assertNotEqual(self.server.tmux("has-session", "-t", f"={name}").returncode, 0)
         self.assertFalse(folder.exists())
         self.driver.close(name)
+
+
+class PollCostTest(Live):
+    def test_a_quiet_poll_of_a_live_terminal_runs_five_tmux_commands(self):
+        commands = []
+
+        def counted(argv, **kwargs):
+            commands.append(argv[1])
+            return subprocess.run(argv, **kwargs)
+
+        host = TmuxHost("tmux", tmux=Tmux(proc=counted))
+        scenario = self.config["adapters"]["fake"]["scenario"]
+        os.makedirs(self.workdir)
+        with open(scenario, "w") as f:
+            json.dump([{"read": True}], f)
+        mode = tui.TuiMode.start(
+            Spec(
+                workdir=self.workdir,
+                name=NAME,
+                runtime="fake",
+                sid=SID,
+                prompt="hello",
+                events=self.events,
+            ),
+            self.driver.registry.adapter("fake"),
+            registry=self.driver.registry,
+            record=lambda _info: None,
+            host=host,
+        )
+        self.addCleanup(tui.TuiMode.close, NAME, host=host)
+        while mode.poll(0)[0]:
+            pass
+        commands.clear()
+        self.assertEqual(mode.poll(0), ([], False))
+        self.assertEqual(
+            commands,
+            [
+                "display-message",
+                "display-message",
+                "display-message",
+                "capture-pane",
+                "display-message",
+            ],
+        )
 
 
 if __name__ == "__main__":
