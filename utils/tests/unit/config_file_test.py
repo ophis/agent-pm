@@ -492,12 +492,24 @@ class Resources(Case):
             ("[delegate]\nunknown_field = 1\n", r"unknown key 'unknown_field' in \[delegate\]"),
             (
                 "session = 1\n",
-                r"unknown key 'session': flat local configuration; move it under one of \[session\], \[delegate\], \[linear_orchestrator\]",
+                r"^~/.agent-pm/config.local.toml: \[session\]: want a table$",
             ),
         ):
             self.local(text)
             with self.subTest(text=text), self.assertRaisesRegex(ConfigFileError, error):
                 read_resources(self.resources)
+
+    def test_supplied_non_table_sections_are_checked_before_flat_keys(self):
+        self.local('harness_key = "unprovided"\nsession = 1\n')
+        for read in (
+            lambda: read_resources(self.resources[:1]),
+            lambda: read_project("session", root=self.root),
+        ):
+            with self.subTest(read=read), self.assertRaises(ConfigFileError) as caught:
+                read()
+            self.assertEqual(
+                str(caught.exception), "~/.agent-pm/config.local.toml: [session]: want a table"
+            )
 
     def test_nested_keys_are_passed_to_their_owner(self):
         self.local(

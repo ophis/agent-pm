@@ -126,6 +126,9 @@ def _layered(
     configs: Mapping[str, dict], known: Mapping[str, tuple[dict, dict]], *, local: str, own=None
 ) -> dict:
     found = _load(os.path.expanduser(local))
+    for section in configs:
+        if section in found and not isinstance(found[section], dict):
+            raise ConfigFileError(f"{local}: [{section}]: want a table")
     keys = {key for tables in known.values() for table in tables for key in table}
     if flat := sorted(
         key for key, value in found.items() if not isinstance(value, dict) or key in keys
@@ -149,8 +152,6 @@ def _layered(
     for section, config in configs.items():
         schema = merge(schema, merge(*known[section]))
         overlay = found.get(section, {})
-        if not isinstance(overlay, dict):
-            raise ConfigFileError(f"{local}: [{section}]: want a table")
         checked = {}
         for keys, value in _leaves(overlay, ()):
             if keys[0] not in schema:
