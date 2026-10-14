@@ -7,11 +7,10 @@ import sys
 import time
 from dataclasses import replace
 
-import agent_pm.delegate
 from agent_pm.delegate import Begun, ConfigError, Finished, Limit, Outcome, Progress, Spec
 from agent_pm.delegate.engine.harness_delegate import HarnessDelegate
 from agent_pm.session import Exited, LimitHit, Reply
-from agent_pm.utils import Record, package_dirs
+from agent_pm.utils import Record
 
 from delegate.tests.case import REPO, child_env
 from delegate.tests.fakes.harness_session import (
@@ -103,7 +102,8 @@ class Planning(HarnessCase):
         session = HarnessSession.started[0]["spec"]
         self.assertEqual(self.metadata()["spec"]["protect"], [custom])
         self.assertIn(custom, session.protect)
-        for path in package_dirs(agent_pm.delegate):
+        for name in ("delegate", "session", "utils"):
+            path = os.path.realpath(os.path.join(REPO, name, "src", "agent_pm", name))
             self.assertIn(path, session.protect)
 
     def test_constructor_keeps_its_config_snapshot_when_local_file_changes(self):
@@ -210,7 +210,8 @@ class Views(HarnessCase):
         self.assertIn("French", launched.prompt)
         self.assertNotIn("German", launched.prompt)
         self.assertIn(custom, launched.protect)
-        for path in package_dirs(agent_pm.delegate):
+        for name in ("delegate", "session", "utils"):
+            path = os.path.realpath(os.path.join(REPO, name, "src", "agent_pm", name))
             self.assertIn(path, launched.protect)
         self.assertEqual(self.metadata()["spec"]["protect"], [custom])
 

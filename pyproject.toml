@@ -183,7 +183,7 @@ dependencies = [
     "agent_pm.delegate.composer -> agent_pm.delegate.event agent_pm.delegate.config agent_pm.delegate.engine.config agent_pm.session agent_pm.utils",
     "agent_pm.delegate.event -> agent_pm.delegate.config agent_pm.delegate.engine.config agent_pm.utils",
     "agent_pm.delegate.config -> agent_pm.utils",
-    "agent_pm.delegate.engine.config -> agent_pm.delegate.config agent_pm.utils",
+    "agent_pm.delegate.engine.config -> agent_pm.delegate.config agent_pm.session agent_pm.utils",
     "agent_pm.delegate.team.tools -> agent_pm.delegate.config agent_pm.delegate.engine.config agent_pm.utils",
 ]
 

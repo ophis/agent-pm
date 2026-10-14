@@ -14,6 +14,7 @@ from agent_pm.delegate import config
 from agent_pm.delegate.composer import Composer, DelegateConfig, RunConfig, Team, teams
 from agent_pm.delegate.engine.base import Delegate
 from agent_pm.delegate.engine.callback import EventCallback
+from agent_pm.delegate.engine.config import package_dirs
 from agent_pm.delegate.engine.drivers import AgentDriver, Driver
 from agent_pm.delegate.engine.plan import plan
 from agent_pm.delegate.engine.runner import execute
@@ -51,7 +52,6 @@ from agent_pm.utils import (
     file_lock,
     import_env,
     load_class,
-    package_dirs,
     read_regular,
     save,
     thaw,
@@ -141,7 +141,7 @@ class HarnessDelegate(Delegate):
                 accepted.session,
                 name=name if spec.mode == "tui" else None,
                 protect=tuple(
-                    dict.fromkeys((*spec.protect, *package_dirs(config), *self.composer.team.dirs))
+                    dict.fromkeys((*spec.protect, *package_dirs(), *self.composer.team.dirs))
                 ),
             ),
         )
@@ -563,7 +563,11 @@ class HarnessDelegate(Delegate):
                     ),
                     protect=tuple(
                         dict.fromkeys(
-                            (*spec.protect, *package_dirs(config), *self.composer.team.dirs)
+                            (
+                                *spec.protect,
+                                *package_dirs(),
+                                *self.composer.team.dirs,
+                            )
                         )
                     ),
                 ),
