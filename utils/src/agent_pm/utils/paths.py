@@ -5,6 +5,7 @@ projects' import roots.
 import contextlib
 import os
 import subprocess
+import sys
 import tempfile
 from types import ModuleType
 
@@ -38,7 +39,10 @@ def package_dirs(*packages: ModuleType) -> tuple[str, ...]:
 
 
 def overlaps(a: str, b: str) -> bool:
-    """Real paths overlap when equal or either contains the other, including missing suffixes."""
+    """Real paths overlap when equal or either contains the other, including missing suffixes.
+
+    PermissionError from stat propagates so inaccessible paths fail closed.
+    """
     paths = tuple(os.path.realpath(os.path.expanduser(p)) for p in (a, b))
     identities = tuple(_path_identity(p) for p in paths)
     for path, other in zip(paths, reversed(identities), strict=True):
@@ -57,6 +61,9 @@ def _path_identity(path: str) -> tuple[int, int, tuple[str, ...]]:
     while True:
         try:
             info = os.stat(path)
+            # Darwin's _PC_CASE_SENSITIVE is absent from Python's pathconf_names.
+            if missing and sys.platform == "darwin" and os.pathconf(path, 11) == 0:
+                missing = [part.casefold() for part in missing]
             return info.st_dev, info.st_ino, tuple(reversed(missing))
         except (FileNotFoundError, NotADirectoryError):
             missing.append(os.path.basename(path))

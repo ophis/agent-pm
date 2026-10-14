@@ -195,6 +195,56 @@ class PackageDirectories(Case):
 
 
 class Overlaps(Case):
+    def test_native_missing_suffixes_respect_filesystem_case_behavior(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            parent = root / "parent"
+            parent.mkdir()
+            insensitive = (root / "PARENT").exists()
+            self.assertEqual(overlaps(str(parent / "new"), str(parent / "NEW")), insensitive)
+            self.assertEqual(
+                overlaps(str(parent / "new"), str(parent / "NEW" / "child")), insensitive
+            )
+            self.assertEqual(
+                overlaps(str(parent / "NEW" / "child"), str(parent / "new")), insensitive
+            )
+            self.assertFalse(overlaps(str(parent / "new"), str(parent / "other")))
+
+    def test_missing_suffix_case_matches_the_ancestors_filesystem(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            parent = root / "parent"
+            parent.mkdir()
+            for sensitive in (0, 1):
+                with (
+                    self.subTest(sensitive=sensitive),
+                    mock.patch("sys.platform", "darwin"),
+                    mock.patch("os.pathconf", return_value=sensitive) as pathconf,
+                ):
+                    for a, b, expected in (
+                        (parent / "new", parent / "NEW", sensitive == 0),
+                        (parent / "new", parent / "NEW" / "Child", sensitive == 0),
+                        (parent / "NEW" / "Child", parent / "new", sensitive == 0),
+                        (parent / "new" / "child", parent / "NEW" / "CHILD", sensitive == 0),
+                        (parent / "new", parent / "other", False),
+                    ):
+                        with self.subTest(a=a, b=b):
+                            self.assertEqual(overlaps(str(a), str(b)), expected)
+                    self.assertTrue(pathconf.call_args_list)
+                    self.assertTrue(
+                        all(call.args == (str(parent), 11) for call in pathconf.call_args_list)
+                    )
+
+    def test_stat_permission_errors_propagate(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            error = PermissionError("inaccessible ancestor")
+            with (
+                mock.patch("os.stat", side_effect=error),
+                self.assertRaisesRegex(PermissionError, "^inaccessible ancestor$") as caught,
+            ):
+                overlaps(os.path.join(temporary, "missing"), temporary)
+            self.assertIs(caught.exception, error)
+
     def test_case_aliases_use_filesystem_identity_even_with_missing_suffixes(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary).resolve()
