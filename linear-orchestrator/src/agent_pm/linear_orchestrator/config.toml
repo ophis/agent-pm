@@ -25,6 +25,13 @@ work_dir = "~/.agent-pm"
 # local: task_label_group = "00000000-0000-0000-0000-000000000000"
 # local: work_dir = "~/.agent-pm"
 
+# Delegate implementations; default selects new runs. Recorded kinds select existing runs.
+[delegates]
+default = "harness"
+
+[delegates.harness]
+implementation = "agent_pm.delegate.engine.harness_delegate:HarnessDelegate"
+
 # The team's workflow states the code uses.
 #   <state>  local, required for each of todo, in_progress, in_review, handoff, done, canceled: its Linear state id
 [states]

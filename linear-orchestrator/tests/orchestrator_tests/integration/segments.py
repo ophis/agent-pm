@@ -279,6 +279,9 @@ class Segment(TmuxFlow):
         self.n_gates += 1
         gate = os.path.join(self.root, f"gate-{self.n_gates}")
         self.scene(script.steps, gate=gate)
+        had_prior = any(
+            row["issue"] == ident and row["kind"] in ("start", "resume") for row in self.runs()
+        )
         calls, events, lines = len(agent_calls(self.calls())), len(self.logged()), len(self.runs())
         res = self.router("--issue", ident)
         if res.returncode != 0:
@@ -308,7 +311,7 @@ class Segment(TmuxFlow):
                 for e in logged
                 if e.get("issue") == ident and e["kind"].startswith("tui-")
             ],
-            [],
+            [("router", "tui-closed")] if had_prior and not resumed else [],
         )
         self.texts.update(script.texts)
         self.pending = Pending(ident, role, line["sid"], script, gate, resumed)

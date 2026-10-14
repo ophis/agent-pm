@@ -3,9 +3,7 @@ kind (render).
 """
 
 import fnmatch
-import functools
 import json
-import os
 import re
 from dataclasses import dataclass
 from urllib.parse import quote, unquote
@@ -14,7 +12,7 @@ from agent_pm.linear_orchestrator.engine import config, issues
 from agent_pm.linear_orchestrator.engine.config import TASKS
 from agent_pm.linear_orchestrator.engine.target import pr_title
 from agent_pm.linear_orchestrator.engine.types import InputError
-from agent_pm.utils import SHORT, err_text, parse_time, sh
+from agent_pm.utils import SHORT, err_text, parse_time
 
 
 @dataclass(frozen=True)
@@ -120,7 +118,7 @@ def _listed(run, docs, ident, dir_):
 
 
 def gather(issue, role, docs, *, run=None) -> Sources:
-    run = run or functools.partial(sh, env={**os.environ, "PATH": config.path()})
+    run = run or config.shell
     kind = TASKS[role].kind
     links = _links(issue, docs)
     path = None

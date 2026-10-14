@@ -1,18 +1,17 @@
 """Session comments: an agent run's one Linear comment (`Run <sid> · …`), posted by the harness
 account under its session id (`client_id(sid, "session")`), numbered `#<seq>`; repair rewrites it
-when a late write left an older one. status: a session's SessionStatus at its recorded cwd.
+when a late write left an older one. Resume commands come from the owned run view.
 """
 
 import re
 import threading
 
+from agent_pm.delegate import ConfigError, DriverError
 from agent_pm.linear_orchestrator.engine import ops
 from agent_pm.linear_orchestrator.engine.types import (
     UUID_RE,
     LinearError,
 )
-from agent_pm.session import ConfigError as SessionConfigError
-from agent_pm.session import DriverError
 from agent_pm.utils import one_line, timestamp
 
 URL = "https://agent-pm.invalid/run/"
@@ -36,25 +35,21 @@ def is_comment(comment):
     )
 
 
-def base(*, sid, workdir, runtime, started_at, driver):
+def base(*, sid, workdir, runtime, started_at, info):
     return {
         "sid": sid,
         "workdir": workdir,
         "runtime": runtime,
         "started_at": started_at,
         "seq": 0,
-        "driver": driver,
+        "info": info,
     }
-
-
-def status(workdir, runtime, sid, *, driver):
-    return driver.session_status(runtime, sid, workdir, workdir=workdir)
 
 
 def command(rec):
     try:
-        st = status(rec["workdir"], rec["runtime"], rec["sid"], driver=rec["driver"])
-    except (SessionConfigError, DriverError):
+        st = rec["info"]()
+    except (ConfigError, DriverError):
         return None
     return st.resume_command if st.resumable != "unknown" and st.resume_command else None
 
@@ -146,13 +141,3 @@ def repair(issue, issue_id, rec, *, gql, limit=LIMIT):
     if seq and int(seq[1]) >= rec["last"] and seq[2] == rec["started_at"]:
         return None
     return write(gql, rec["sid"], issue, _text(rec), limit=limit)
-
-
-def close_tuis(driver, names):
-    for name in names:
-        try:
-            driver.close(name)
-        except (SessionConfigError, DriverError) as error:
-            yield name, one_line(error)
-        else:
-            yield name, None

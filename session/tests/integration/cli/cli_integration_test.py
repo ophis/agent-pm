@@ -1,0 +1,218 @@
+"""bin/agent-pm-session as installed, run from an unrelated cwd with no PYTHONPATH (Q01): --help's
+subcommands and each configured Host's display help; usage errors exit 2 on stderr alone and start
+nothing; no default runtime (D1); the runtime sees the wrapper's bin dir first on PATH and gets
+arguments with spaces verbatim. Its config (Q02): a local overlay is honoured; a bad config or an
+unknown runtime exits 2 with the reason on stderr before anything starts.
+"""
+
+import os
+import re
+import shlex
+
+from agent_pm.session.hosts.tmux import TmuxHost
+
+from session.tests.case import REPO
+from session.tests.cli_support import MANAGER, CliCase
+
+SUBCOMMANDS = [
+    "start",
+    "restart",
+    "resume",
+    "reply",
+    "status",
+    "show",
+    "close",
+    "attach-command",
+    "ls",
+    "send",
+    "read",
+    "tile",
+    "hook",
+]
+DISPLAY_HELP = "display (--display D), per configured Host:\n"
+PROG = "agent-pm-session"
+
+
+def subcommands(help_text: str) -> list[str]:
+    block = help_text.split("positional arguments:\n", 1)[1].split("\n\n", 1)[0]
+    return re.findall(r"^    (\S+)", block, re.M)
+
+
+class SessionCliCase(CliCase):
+    def sessions(self) -> list[str]:
+        result = self.server.tmux("list-sessions", "-F", "#{session_name}")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        return sorted(result.stdout.split())
+
+    def assert_nothing_started(self) -> None:
+        self.assertEqual(self.sessions(), [MANAGER])
+        self.assertFalse(os.path.exists(os.path.join(self.agent_pm, "workers")))
+        self.assertEqual(self.calls("w1"), [])
+
+    def assert_refused(self, result, stderr: str) -> None:
+        """Exit 2, stdout empty, stderr exactly `stderr`, nothing started."""
+        self.assertEqual((result.returncode, result.stdout), (2, ""), result.stderr)
+        self.assertEqual(result.stderr, stderr)
+        self.assert_nothing_started()
+
+    def assert_usage_error(self, result, message: str) -> None:
+        """argparse's refusal: its usage, then `message` as the last stderr line; exit 2."""
+        self.assertEqual((result.returncode, result.stdout), (2, ""), result.stderr)
+        self.assertTrue(result.stderr.startswith(f"usage: {PROG}"), result.stderr)
+        self.assertEqual(result.stderr.splitlines()[-1], message)
+        self.assert_nothing_started()
+
+    def start_w1(self):
+        return self.session(
+            "start", "w1", "--runtime", "claude", "--cwd", self.cwd, **self.scene("w1")
+        )
+
+
+class HelpTest(SessionCliCase):
+    ATTACH = False
+
+    def elsewhere(self) -> str:
+        path = os.path.join(self.root, "elsewhere")
+        os.mkdir(path)
+        return path
+
+    def test_help_from_an_unrelated_cwd_lists_every_subcommand_and_the_tmux_display_help(self):
+        self.assertNotIn("PYTHONPATH", self.env())
+        result = self.ok(self.session("--help", cwd=self.elsewhere()))
+        self.assertEqual(result.stderr, "")
+        self.assertTrue(result.stdout.startswith(f"usage: {PROG} [-h] COMMAND ..."), result.stdout)
+        self.assertEqual(subcommands(result.stdout), SUBCOMMANDS)
+        tmux = TmuxHost("tmux").display_help()
+        self.assertTrue(tmux)
+        self.assertTrue(result.stdout.endswith(f"{DISPLAY_HELP}  tmux: {tmux}\n"), result.stdout)
+
+    def test_help_gives_a_second_configured_hosts_display_line_too(self):
+        self.fake_host()
+        result = self.ok(self.session("--help", cwd=self.elsewhere(), module=True))
+        tmux = TmuxHost("tmux").display_help()
+        self.assertEqual(subcommands(result.stdout), SUBCOMMANDS)
+        self.assertTrue(
+            result.stdout.endswith(f"{DISPLAY_HELP}  tmux: {tmux}\n  fake: as given\n"),
+            result.stdout,
+        )
+
+
+class UsageTest(SessionCliCase):
+    ATTACH = False
+
+    def test_a_bad_command_line_exits_2_on_stderr_alone_and_starts_nothing(self):
+        for argv, message in (
+            (
+                ("bogus", "w1"),
+                f"{PROG}: error: argument COMMAND: invalid choice: 'bogus' (choose from "
+                + ", ".join(f"'{cmd}'" for cmd in SUBCOMMANDS)
+                + ")",
+            ),
+            (
+                ("start",),
+                f"{PROG} start: error: the following arguments are required: name, --runtime",
+            ),
+            (("read",), f"{PROG} read: error: the following arguments are required: name"),
+            (
+                ("ls", "--display", "x", "--here"),
+                f"{PROG} ls: error: argument --here: not allowed with argument --display",
+            ),
+        ):
+            with self.subTest(argv=argv):
+                self.assert_usage_error(self.session(*argv), message)
+
+    def test_descendants_without_here_and_records_exits_2(self):
+        for argv in (
+            ("--descendants",),
+            ("--here", "--descendants"),
+            ("--records", "--descendants"),
+        ):
+            with self.subTest(argv=argv):
+                result = self.session("ls", *argv)
+                self.assert_refused(result, f"{PROG}: ls: --descendants needs --here --records\n")
+
+    def test_start_has_no_default_runtime_d1(self):
+        result = self.session("start", "w1", "--cwd", self.cwd, **self.scene("w1"))
+        self.assert_usage_error(
+            result, f"{PROG} start: error: the following arguments are required: --runtime"
+        )
+
+
+class RuntimeEnvTest(SessionCliCase):
+    def path_logging_claude(self) -> tuple[str, str]:
+        """A bin dir whose `claude` appends its PATH to a log, then runs the fake; (dir, log)."""
+        bin_dir = os.path.join(self.root, "path-bin")
+        os.mkdir(bin_dir)
+        log = os.path.join(self.root, "path.log")
+        claude = os.path.join(bin_dir, "claude")
+        with open(claude, "w", encoding="utf-8") as f:
+            f.write(
+                f"#!/bin/sh\nprintf '%s\\n' \"$PATH\" >> {shlex.quote(log)}\n"
+                f'exec {shlex.quote(os.path.join(self.server.bin, "claude"))} "$@"\n'
+            )
+        os.chmod(claude, 0o755)
+        return bin_dir, log
+
+    def test_the_runtime_gets_the_wrappers_bin_first_on_path_and_spaced_arguments_verbatim(self):
+        bin_dir, log = self.path_logging_claude()
+        caller = os.pathsep.join((bin_dir, self.env()["PATH"]))
+        self.assertNotIn(os.path.join(REPO, "bin"), caller.split(os.pathsep))
+        record = self.record(
+            self.start("w1", "--", "--model", "big  model", prompt="a b  c", PATH=caller)
+        )
+        self.assertEqual(record.detail, "claude")
+        with open(log, encoding="utf-8") as f:
+            (path,) = f.read().splitlines()
+        self.assertEqual(
+            path.split(os.pathsep), [os.path.join(REPO, "bin"), *caller.split(os.pathsep)]
+        )
+        (call,) = self.calls("w1")
+        self.assertEqual(call["argv"][-4:], ["--model", "big  model", "--", "a b  c"])
+
+
+class ConfigTest(SessionCliCase):
+    ATTACH = False
+
+    def test_a_local_overlay_sets_the_tmux_hosts_status_line(self):
+        self.record(self.start("w0"))
+        self.assertEqual(self.server.option("w0", "status"), "off")
+        self.local_config("[session.hosts.tmux]\nstatus_line = true\n")
+        self.record(self.start("w1"))
+        self.assertEqual(self.server.option("w1", "status"), "on")
+
+    def test_a_bad_config_exits_2_with_its_reason_before_anything_starts(self):
+        local = "~/.agent-pm/config.local.toml"
+        for text, reason in (
+            (
+                "status_line = true\n",
+                f"{local}: unknown key 'status_line': flat local configuration; no supplied "
+                "layer has it; move it under its owning layer's section",
+            ),
+            ("[session]\nbogus = 1\n", f"{local}: unknown key 'bogus' in [session]"),
+            ('[session.hosts]\ndefault = "nope"\n', "[hosts] default: want one of tmux"),
+        ):
+            with self.subTest(config=text):
+                self.local_config(text)
+                self.assert_refused(self.start_w1(), f"{PROG}: config: {reason}\n")
+
+    def test_malformed_toml_exits_2_with_its_reason_before_anything_starts(self):
+        self.local_config("[session\n")
+        result = self.start_w1()
+        self.assertEqual((result.returncode, result.stdout), (2, ""), result.stderr)
+        self.assertRegex(result.stderr, rf"\A{PROG}: config: \S[^\n]*\(at line 1, column \d+\)\n\Z")
+        self.assert_nothing_started()
+
+    def test_an_unknown_runtime_exits_2_before_anything_starts(self):
+        result = self.session("start", "w1", "--runtime", "nope", "--cwd", self.cwd)
+        self.assert_refused(
+            result, f"{PROG}: no [adapters.nope] table in the configured adapters\n"
+        )
+
+    def test_an_unimportable_host_implementation_exits_2_before_anything_starts(self):
+        self.local_config('[session.hosts.tmux]\nimplementation = "nope.mod:Nope"\n')
+        result = self.start_w1()
+        self.assertEqual((result.returncode, result.stdout), (2, ""), result.stderr)
+        self.assertNotIn("Traceback", result.stderr)
+        self.assertEqual(len(result.stderr.splitlines()), 1, result.stderr)
+        self.assertIn("[hosts.tmux].implementation", result.stderr)
+        self.assert_nothing_started()

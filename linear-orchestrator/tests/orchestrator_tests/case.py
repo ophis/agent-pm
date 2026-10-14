@@ -47,7 +47,7 @@ class Case(unittest.TestCase):
             ExitStack() as stack,
         ):
             if ".unit." in self.id():
-                stack.enter_context(mock.patch("subprocess.run", _getconf))
+                stack.enter_context(mock.patch("subprocess.run", system_probe))
             log.use_logs(None)
             self.agent_pm = os.path.join(self.home, ".agent-pm")
             os.mkdir(self.agent_pm)
@@ -82,12 +82,14 @@ def child_env(base=None, *extra: str) -> dict[str, str]:
     return clean_env(base, *ROOTS, *extra)
 
 
-def _getconf(argv, *_args, **_kwargs):
+def system_probe(argv, *_args, **_kwargs):
     if argv == ["getconf", "DARWIN_USER_TEMP_DIR"]:
         return SimpleNamespace(stdout="")
     if "rev-parse" in argv and "--show-toplevel" in argv:
         cwd = argv[argv.index("-C") + 1] if "-C" in argv else _kwargs.get("cwd", REPO)
-        inside = os.path.commonpath((os.path.realpath(cwd), REPO)) == REPO
+        inside = os.path.commonpath(
+            (os.path.realpath(cwd), os.path.realpath(REPO))
+        ) == os.path.realpath(REPO)
         return subprocess.CompletedProcess(
             argv,
             0 if inside else 128,

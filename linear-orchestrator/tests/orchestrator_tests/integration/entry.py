@@ -3,7 +3,8 @@
 import os
 import sys
 
-from agent_pm.linear_orchestrator.engine import config, promote, router, run
+from agent_pm import delegate
+from agent_pm.linear_orchestrator.engine import promote, router, run
 from agent_pm.session import Driver
 from orchestrator_tests.integration.fake_transport import install
 
@@ -31,7 +32,7 @@ def main(argv):
     entry, *arguments = argv
     with install(os.environ["FAKE_LINEAR_TRANSPORT"]):
         if entry == "router":
-            settings = config.load().driver
+            settings = delegate.configure()
             driver = DetachedDriver(
                 adapters=settings.registry.settings.adapters,
                 hosts=settings.registry.settings.hosts,

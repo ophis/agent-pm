@@ -17,13 +17,15 @@
 
 ## Import rules
 
-Layer contracts live in `pyproject.toml` and run with `lint-imports`: manager > linear_orchestrator > delegate > session > utils. Manager imports only itself and utils; it reaches other layers through commands. Cross-layer imports use the lower layer's public package. Orchestration reaches session only through delegate; the only remaining direct imports are the modules and names in `tests/guards.py`'s `ORCH_SESSION_IMPORTS`, and TASK-394 removes them. Project tests may import their project and lower layers, never the root `tests` package or a higher project.
+Layer contracts live in `pyproject.toml` and run with `lint-imports`: manager > linear_orchestrator > delegate > session > utils. Manager imports only itself and utils; it reaches other layers through commands. Cross-layer imports use the lower layer's public package. Orchestration reaches session through Delegate, except the legacy launch in `engine/router.py` and `engine/run.py` until TASK-374; `tests/guards.py`'s `ORCH_SESSION_IMPORTS` pins those remaining imports. Project tests may import their project and lower layers, never the root `tests` package or a higher project.
 
 Session and Delegate internal units use the longest matching package; their dependency rules and shared-module purity are declared in `pyproject.toml`'s unit contracts. Session owns no config reader, reply-protocol tag or team text; `tests/guards.py` enforces those names and literal dynamic imports.
 
 Repository design rules live in `tests/guards.py`: namespace and subsystem placement, unit test placement, shared types, runtime ownership, configuration and import side effects. A helper used by one file stays there as a private function; otherwise, a helper independent of its layer's own classes goes in `utils/`. Shared data types live in their layer's types module; standalone scripts keep theirs local. The `standalone_imports` guard owns their inventory and enforces standard-library-only imports.
 
 Python suppressions require a matching entry in `tests/guards.py`'s `NOQA_ALLOWED`; Pylint disables are paired with block-scoped enables.
+
+Vulture scans only the five `src` trees, so code only tests use is dead: delete it. A name it cannot see used goes in `.github/vulture_whitelist.py` (rules: its docstring).
 
 ## Domain docs
 

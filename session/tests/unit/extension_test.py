@@ -38,6 +38,8 @@ TYPES = {
             "HookCall",
             "Paste",
             "Key",
+            "KeyPress",
+            "NamedKey",
             "ClientBound",
             "SessionEvent",
             "Activity",

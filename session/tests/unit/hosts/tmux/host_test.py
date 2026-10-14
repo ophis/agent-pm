@@ -19,7 +19,7 @@ from pathlib import Path
 from unittest import mock
 
 from agent_pm.session import ConfigError, Displayable, DriverError, Host, Launch, Terminal
-from agent_pm.session.engine.types import ActivityState, Key, Paste, SessionRow
+from agent_pm.session.engine.types import ActivityState, Key, KeyPress, Paste, SessionRow
 from agent_pm.session.hosts.base import SIGNALS
 from agent_pm.session.hosts.tmux import TmuxHost, transport, types
 from agent_pm.session.hosts.tmux.host import (
@@ -363,6 +363,33 @@ class TerminalTest(Base):
             ],
         )
 
+    def test_press_translates_every_key_then_sends_them_in_one_tmux_call(self):
+        self.active()
+        terminal = TmuxTerminal("t1", PROCESS, tmux=self.tmux, control=self.control)
+        notation = ("Escape", "3", "PageUp", "PageDown", " ", ";", "C-M-S-Up", "-", "BTab", "C-c")
+        terminal.press(tuple(map(KeyPress.parse, notation)))
+        self.tmux.press.assert_called_once_with(
+            "%7", "Escape", "3", "PPage", "NPage", "Space", "\\;", "C-M-S-Up", "-", "BTab", "C-c"
+        )
+
+    def test_a_key_it_cannot_translate_sends_none_of_the_keys(self):
+        self.active()
+        terminal = TmuxTerminal("t1", PROCESS, tmux=self.tmux, control=self.control)
+        for bad in ("Up", KeyPress.parse("C-1"), KeyPress.parse("C-/"), KeyPress.parse("S-a")):
+            with self.subTest(bad=bad), self.assertRaises(ConfigError):
+                terminal.press((KeyPress("Up"), bad))
+        self.tmux.press.assert_not_called()
+        terminal.press((KeyPress.parse("C-c"), KeyPress.parse("S-Up"), KeyPress.parse("M-1")))
+        self.tmux.press.assert_called_once_with("%7", "C-c", "S-Up", "M-1")
+
+    def test_a_press_following_a_paste_waits_for_paste_delivery(self):
+        self.active()
+        terminal = TmuxTerminal("t1", PROCESS, tmux=self.tmux, control=self.control)
+        with mock.patch("time.sleep") as sleep:
+            terminal.send(Paste("a b"))
+            terminal.press((KeyPress("Enter"),))
+        sleep.assert_called_once_with(self.tmux.PAUSE)
+
     def test_terminal_launch_has_a_controller_identity_and_keeps_its_metadata(self):
         events = os.path.join(self.dir, "events")
         launch = Launch((self.tool, "a b"), cwd=self.dir, env={"PATH": "/bin", "TERM": "exact"})
@@ -496,11 +523,48 @@ class DisplayableTest(Base):
             self.host.attach_command("a b")
 
 
+class PublishTest(Base):
+    def test_publish_sets_the_sessions_record_option_while_its_pane_is_its_own(self):
+        process = TmuxProcess("w1", PROCESS, tmux=self.tmux, control=self.control)
+        process.publish(LINE)
+        self.tmux.set_option.assert_called_once_with("%7", "@record", LINE.to_line())
+        self.assertEqual(process.token, self.control.path)
+        self.tmux.process.return_value = "9 $1 %7 9"
+        with self.assertRaisesRegex(DriverError, "^tmux session w1 is gone$"):
+            process.publish(LINE)
+        with self.assertRaises(ConfigError):
+            process.publish(LINE.to_line())
+        self.assertEqual(self.tmux.set_option.call_count, 1)
+
+    def test_reclaim_of_a_controller_outside_tmp_is_refused(self):
+        self.assertIsNone(self.host.reclaim(self.control.path))
+
+
+class DescendantsTest(Base):
+    def test_the_matching_sessions_then_those_each_opened_transitively(self):
+        self.tmux.listing.return_value = [
+            listed("a", opener="mgr", display="mgr"),
+            listed("b", opener="a", display="a/below"),
+            listed("c", opener="b", display="b"),
+            listed("d", opener="d", display="d"),
+            listed("x", opener="other", display="other"),
+        ]
+        self.assertEqual(self.host.list("mgr"), ["a"])
+        self.assertEqual(self.host.descendants("mgr"), ["a", "b", "c"])
+        self.assertEqual(self.host.descendants("other"), ["x"])
+        self.assertEqual(self.host.descendants(""), [])
+
+    def test_a_tmux_failure_is_a_driver_error(self):
+        self.tmux.listing.side_effect = [[listed("a", opener="mgr", display="mgr")], None]
+        with self.assertRaisesRegex(DriverError, "tmux failed"):
+            self.host.descendants("mgr")
+
+
 class RowsTest(Base):
     def test_a_row_per_listed_session_in_its_order(self):
         self.tmux.listing.return_value = [
             listed("mgr"),
-            listed("w1", sid=SID, runtime="fake", state="done", pane="%3", opener="mgr", shown="m"),
+            listed("w1", sid=SID, runtime="fake", state="done", display="mgr/below", shown="m"),
             listed("w2", sid="a/b", runtime="Fake", state="blocked", shown=""),
             listed("w3", runtime="x-y", state="dead"),
             listed("w4", runtime="fake", state="done", dead=True, last_lines="bye"),
@@ -518,8 +582,7 @@ class RowsTest(Base):
                     sid=None,
                     runtime=None,
                     state="working",
-                    pane=None,
-                    opener=None,
+                    display=None,
                     shown=None,
                     last_lines=None,
                     own=True,
@@ -529,8 +592,7 @@ class RowsTest(Base):
                     sid=SID,
                     runtime="fake",
                     state="done",
-                    pane="%3",
-                    opener="mgr",
+                    display="mgr/below",
                     shown="m",
                     last_lines=None,
                     own=False,
@@ -540,8 +602,7 @@ class RowsTest(Base):
                     sid=None,
                     runtime=None,
                     state="blocked",
-                    pane=None,
-                    opener=None,
+                    display=None,
                     shown="",
                     last_lines=None,
                     own=False,
@@ -551,8 +612,7 @@ class RowsTest(Base):
                     sid=None,
                     runtime=None,
                     state="working",
-                    pane=None,
-                    opener=None,
+                    display=None,
                     shown=None,
                     last_lines=None,
                     own=False,
@@ -562,8 +622,7 @@ class RowsTest(Base):
                     sid=None,
                     runtime="fake",
                     state="dead",
-                    pane=None,
-                    opener=None,
+                    display=None,
                     shown=None,
                     last_lines="bye",
                     own=False,
@@ -573,8 +632,7 @@ class RowsTest(Base):
                     sid=None,
                     runtime="fake9_",
                     state="working",
-                    pane=None,
-                    opener=None,
+                    display=None,
                     shown=None,
                     last_lines=None,
                     own=False,

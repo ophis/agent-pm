@@ -20,8 +20,15 @@ ONCE = ("src", "kind", "issue", "entry", "reason")
 WINDOW = timedelta(hours=24)
 
 
-def log(src, kind, issue=None, *, once=False, dry=False, now=datetime.now, **fields):
-    _log(_line(src, kind, issue, now=now, **fields), LOGS_DIR, once=once, dry=dry, now=now)
+def log(src, kind, issue=None, *, once=False, dry=False, quiet=False, now=datetime.now, **fields):
+    _log(
+        _line(src, kind, issue, now=now, **fields),
+        LOGS_DIR,
+        once=once,
+        dry=dry,
+        quiet=quiet,
+        now=now,
+    )
 
 
 def _line(src, kind, issue=None, *, now=datetime.now, **fields):
@@ -38,7 +45,7 @@ def _line(src, kind, issue=None, *, now=datetime.now, **fields):
     }
 
 
-def _log(line, logs, *, once, dry, now=datetime.now):
+def _log(line, logs, *, once, dry, quiet=False, now=datetime.now):
     path, key = os.path.join(logs, "orchestrator.jsonl") if logs else None, _key(line)
     if once and not dry and path and key in _recent_keys(path, now=now):
         return
@@ -50,7 +57,7 @@ def _log(line, logs, *, once, dry, now=datetime.now):
     except OSError:
         pass
     try:
-        if dry or sys.stderr.isatty():
+        if dry or not quiet and sys.stderr.isatty():
             print(printable(text), file=sys.stderr, flush=True)
     except OSError:  # a gone tmux pane's EIO
         pass

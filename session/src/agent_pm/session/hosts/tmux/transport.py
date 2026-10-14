@@ -217,6 +217,25 @@ def keys(target: str, *names: str, proc=subprocess.run) -> None:
     checked(["send-keys", "-t", target, *names], proc)
 
 
+def press(target: str, *names: str, proc=subprocess.run) -> None:
+    """Presses tmux key names after `--` (a `-` key is no flag); `;` must come escaped (`\\;`)."""
+    target = address(target)
+    for name in names:
+        if not name or name.endswith(";") and not name.endswith("\\;"):
+            raise TuiError(f"tmux would misread {name!r}")
+    checked(["send-keys", "-t", target, "--", *names], proc)
+
+
+def set_option(target: str, name: str, value: str, *, proc=subprocess.run) -> None:
+    """Sets user option `name` of target's session."""
+    target = address(target)
+    if not USER_OPTION.fullmatch(name):
+        raise TuiError(f"option {name!r}: want {USER_OPTION.pattern}")
+    if value.endswith(";") or "\n" in value:
+        raise TuiError(f"tmux would misread {value!r:.80}")
+    checked(["set-option", "-t", target, name, value], proc)
+
+
 def option(target: str, name: str, *, proc=subprocess.run) -> str | None:
     """None when unset or the target absent."""
     target = address(target)

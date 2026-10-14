@@ -54,6 +54,12 @@ class MemoryTerminal(Terminal):
             raise DriverError(f"terminal {self.name} is not running")
         self.calls.send(action)
 
+    def press(self, keys):
+        keys = tuple(keys)
+        if not self.alive():
+            raise DriverError(f"terminal {self.name} is not running")
+        self.calls.press(keys)
+
     def close(self):
         self.calls.close()
         if self._own():
@@ -86,8 +92,7 @@ class MemoryTerminal(Terminal):
             self.metadata.get("sid") if receipt is None else receipt.sid,
             self.metadata.get("runtime") if receipt is None else receipt.kind,
             ActivityState.WORKING if self.alive() else ActivityState.DEAD,
-            None,
-            None,
+            self.display(),
             None,
             None,
             own=receipt is not None or self.metadata.get("sid") is not None,

@@ -3,6 +3,7 @@
 import dataclasses
 import json
 import os
+import re
 import shlex
 import stat
 import sys
@@ -12,6 +13,7 @@ from unittest import mock
 
 from agent_pm.session.adapters.codex import CodexAdapter
 from agent_pm.session.adapters.codex.common import (
+    RESUME,
     NativeMetadata,
     RecoveryError,
     SessionStore,
@@ -249,16 +251,11 @@ class CommonTest(Base):
             adapter, dataclasses.replace(spec, prompt="again", resume=True)
         )
         self.assertEqual(resumed.env["PYTHONPATH"], "/a b;c")
-        for command in (resumed.resume, self.common.resume_command(state)):
-            q = shlex.quote
-            self.assertTrue(
-                command.startswith(
-                    f"cd {q(str(self.cwd))} && PYTHONPATH='/a b;c' K=v "
-                    f"CODEX_HOME={q(str(self.codex_home))} codex resume "
-                ),
-                command,
-            )
-            self.assertEqual(shlex.split(command)[3], "PYTHONPATH=/a b;c")
+        self.assertEqual(resumed.resume, self.common.resume_command(state))
+        env = self.common.resume_launch(state).env
+        self.assertEqual(
+            (env["PYTHONPATH"], env["K"], env["CODEX_HOME"]), ("/a b;c", "v", str(self.codex_home))
+        )
 
     def test_both_modes_resume_with_saved_project_and_transcript(self):
         for saved in (False, True):
@@ -316,14 +313,16 @@ class CommonTest(Base):
         with mock.patch("os.stat", side_effect=PermissionError("denied")):
             self.assertEqual(self.adapter.session_metadata(resolved), resolved)
 
-    def test_metadata_resume_carries_the_session_env(self):
+    def test_metadata_resume_replays_the_session_env(self):
         access = dataclasses.replace(self.spec.access, env={"PYTHONPATH": "/a b;c"})
         self.spec = dataclasses.replace(self.spec, access=access)
         self.prepare()
-        self.common.bind(str(self.work), self.spec.sid, NATIVE)
+        state = self.common.bind(str(self.work), self.spec.sid, NATIVE)
         info = SessionInfo(self.spec.sid, str(self.cwd), project=False, transcript="", resume="")
         resume = self.adapter.session_metadata(info).resume
-        self.assertEqual(shlex.split(resume)[3], "PYTHONPATH=/a b;c")
+        self.assertEqual(resume, self.common.resume_command(state))
+        self.assertNotIn("/a b;c", resume)
+        self.assertEqual(self.common.resume_launch(state).env["PYTHONPATH"], "/a b;c")
 
     def test_omitted_mapping_preserves_runtime_defaults(self):
         spec = dataclasses.replace(self.spec, tier=None, effort=None)
@@ -1175,3 +1174,57 @@ class CodecTest(Base):
             with self.subTest(parent=parent, origin=origin):
                 metadata = read_metadata(str(path)).metadata
                 self.assertEqual(metadata, NativeMetadata(NATIVE, str(self.cwd), expected))
+
+
+SECRETS = {"CFG_TOKEN": "cfg-secret-1", "ACCESS_TOKEN": "access-secret-2", "SPEC_TOKEN": "spec-3"}
+
+
+class ResumeReferenceTest(Base):
+    def setUp(self):
+        super().setUp()
+        self.adapter = CodexAdapter({**self.adapter.config, "env": {"CFG_TOKEN": "cfg-secret-1"}})
+        self.common = self.adapter.common
+        self.spec = dataclasses.replace(
+            self.spec,
+            flags=("-s", "danger-full-access"),
+            env={"SPEC_TOKEN": "spec-3"},
+            access=dataclasses.replace(self.spec.access, env={"ACCESS_TOKEN": "access-secret-2"}),
+        )
+
+    def bound(self):
+        self.prepare()
+        return self.common.bind(str(self.work), self.spec.sid, NATIVE)
+
+    def assert_public(self, text):
+        for value in SECRETS.values():
+            self.assertNotIn(value, text)
+        assigned = [w for w in shlex.split(text) if re.match(r"[A-Za-z_][A-Za-z0-9_]*=", w)]
+        self.assertEqual(assigned, [], text)
+        self.assertNotIn("danger-full-access", text)
+
+    def test_reference_names_store_locators_and_no_values(self):
+        command = self.common.resume_command(self.bound())
+        locators = [SessionStore().root, str(self.work), self.spec.sid, NATIVE]
+        argv = [sys.executable, "-I", RESUME, json.dumps(list(PACKAGE_ROOTS)), *locators]
+        self.assertEqual(command, f"cd {shlex.quote(str(self.cwd))} && {shlex.join(argv)}")
+        self.assert_public(command)
+        info = SessionInfo(self.spec.sid, str(self.cwd), project=False, transcript="", resume="")
+        self.assertEqual(self.adapter.session_metadata(info).resume, command)
+        status = self.common.session_status(self.spec.sid, str(self.cwd))
+        self.assertEqual(status.resume_command, command)
+
+    def test_resumed_launches_publish_the_reference(self):
+        state = self.bound()
+        self.rollout()
+        resumed = dataclasses.replace(self.spec, prompt="again", resume=True)
+        with mock.patch("shutil.which", return_value="/fake/codex"):
+            launches = {
+                "headless": self.adapter.headless().launch(resumed),
+                "tui": self.adapter.tui().launch(
+                    resumed, ("/fake/hook",), source_roots=PACKAGE_ROOTS
+                ),
+            }
+        for mode, launch in launches.items():
+            with self.subTest(mode):
+                self.assertEqual(launch.resume, self.common.resume_command(state))
+                self.assert_public(launch.resume)

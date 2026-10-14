@@ -304,6 +304,28 @@ class KeysTest(Case):
         with self.assertRaisesRegex(types.TuiError, r"^tmux: boom$"):
             transport.keys("s", "Enter", proc=FakeTmux(fail={"send-keys"}))
 
+    def test_set_option_sets_a_user_option_of_the_targets_session(self):
+        fake = FakeTmux()
+        self.assertIsNone(transport.set_option("%7", "@record", '{"v":1}', proc=fake))
+        self.assertEqual(fake.calls, [["tmux", "set-option", "-t", "%7", "@record", '{"v":1}']])
+        for name, value in (("record", "x"), ("@record", "x;"), ("@record", "a\nb")):
+            with self.subTest(name=name, value=value), self.assertRaises(types.TuiError):
+                transport.set_option("%7", name, value, proc=fake)
+        self.assertEqual(len(fake.calls), 1)
+
+    def test_press_names_the_keys_after_a_double_dash(self):
+        fake = FakeTmux()
+        self.assertIsNone(transport.press("s", "-", "\\;", "C-c", proc=fake))
+        self.assertEqual(fake.calls, [["tmux", "send-keys", "-t", "=s:", "--", "-", "\\;", "C-c"]])
+
+    def test_press_refuses_an_empty_name_or_an_unescaped_semicolon(self):
+        for name in ("", ";", "C-;"):
+            with self.subTest(name=name):
+                fake = FakeTmux()
+                with self.assertRaisesRegex(types.TuiError, "^tmux would misread"):
+                    transport.press("s", "Escape", name, proc=fake)
+                self.assertEqual(fake.calls, [])
+
 
 class ReadTest(Case):
     def test_visible_pane_or_last_lines(self):
