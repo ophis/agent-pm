@@ -17,6 +17,7 @@ from session.tests.tmux_fixtures import (
     captured,
     expected_row,
     listed,
+    panes,
     tabbed,
 )
 
@@ -43,7 +44,7 @@ class ListingTest(Case):
             tabbed(
                 ("200", "/dev/ttys4", "w2"), ("100", "/dev/ttys9", "w2"), ("5", "/dev/ttys1", "mgr")
             ),
-            tabbed(("0", "/dev/ttys4", "mgr"), ("0", "/dev/ttys2", "w2")),
+            panes(("0", "/dev/ttys4", "mgr"), ("0", "/dev/ttys2", "w2")),
             (0, "a\nlast\n\n"),
         )
         self.assertEqual(
@@ -77,10 +78,10 @@ class ListingTest(Case):
 
     def test_a_name_failing_NAME_or_a_row_tmux_split_wrongly_is_dropped(self):
         got, fake = self.listing(
-            (0, "".join(f"{n}\t0\t\t\t\t\t\t\n" for n in ("a b", "", "%1", "x;", "#{x}", "ok")))
+            (0, "".join(f"{n}\t0\t\t\t\t\t\t\t\n" for n in ("a b", "", "%1", "x;", "#{x}", "ok")))
         )
         self.assertEqual(got, [expected_row("ok")])
-        got, _ = self.listing((0, "w1\t0\ts\tid\t\t\t\t\t\nw2\t0\nw3\t0\t\t\t\t\t\t\n"))
+        got, _ = self.listing((0, "w1\t0\ts\tid\t\t\t\t\t\t\nw2\t0\nw3\t0\t\t\t\t\t\t\t\n"))
         self.assertEqual(got, [expected_row("w3")])
         forged = listed(("w4", "0", "", "", "", "", "", "mgr\tx"), ("w5", "0"))
         got, _ = self.listing(forged)
@@ -153,6 +154,40 @@ class ListingTest(Case):
         )
         self.assertEqual(fake.calls[2:], [captured(n) for n in ("d1", "d2", "d3", "d4", "d5")])
 
+    def test_a_launched_session_reads_its_own_pane_whichever_pane_is_active(self):
+        got, fake = self.listing(
+            listed(
+                ("w1", "0", *[""] * 6, "4242 $1 %7 4343"),
+                ("w2", "1", *[""] * 6, "4242 $2 %8 4344"),
+                ("w3", "0", *[""] * 6, "4242 $3 %9 4345"),
+                ("w4", "1", *[""] * 6, "4242 $4 %x 4346"),
+                ("mgr", "1"),
+            ),
+            panes=panes(
+                ("1", "", "w1", "%7"),
+                ("0", "/dev/ttys1", "w1", "%10"),
+                ("0", "/dev/ttys2", "w2", "%8"),
+                ("1", "", "w2", "%11"),
+                ("0", "/dev/ttys3", "w3", "%12"),
+            ),
+            capture=lambda argv: {"%7": (0, "agent\n"), "=mgr:": (0, "manager\n")}[
+                argv[argv.index("-t") + 1]
+            ],
+        )
+        self.assertEqual(
+            [(r["name"], r["dead"], r["last_lines"]) for r in got],
+            [
+                ("mgr", True, "manager"),
+                ("w1", True, "agent"),
+                ("w2", False, None),
+                ("w3", True, None),
+                ("w4", None, None),
+            ],
+        )
+        self.assertEqual(
+            fake.calls, [LISTING, ALL_CLIENTS, HOST_PANES, captured("mgr"), captured("%7")]
+        )
+
     def test_shown_by_the_most_recent_client_in_its_host_session(self):
         names = ("a", "b", "c", "d", "e", "f", "g", "h", "i")
         got, fake = self.listing(
@@ -172,7 +207,7 @@ class ListingTest(Case):
                 ("7", "/dev/host"),
                 ("7", "/dev/host", "zz"),
             ),
-            tabbed(
+            panes(
                 ("0", "/dev/host", "host"),
                 ("0", "/dev/bad", "bad name"),
                 ("1", "/dev/gone", "host2"),
@@ -194,7 +229,7 @@ class ListingTest(Case):
         )
         self.assertEqual(fake.calls, [LISTING, ALL_CLIENTS, HOST_PANES])
 
-    def test_host_panes_only_when_a_listed_session_has_a_client(self):
+    def test_host_panes_only_when_a_listed_session_has_a_client_or_a_launch(self):
         for clients, match, want in (
             ((0, ""), None, [expected_row("mgr"), expected_row("w1")]),
             (tabbed(("7", "/dev/host", "w1")), re.compile("mgr"), [expected_row("mgr")]),
@@ -203,6 +238,9 @@ class ListingTest(Case):
                 got, fake = self.listing(listed(("mgr", "0"), ("w1", "0")), clients, match=match)
                 self.assertEqual(got, want)
                 self.assertEqual(fake.calls, [LISTING, ALL_CLIENTS])
+        got, fake = self.listing(listed(("w1", "0", *[""] * 6, "4242 $1 %7 4343")))
+        self.assertEqual(got, [expected_row("w1", dead=True)])
+        self.assertEqual(fake.calls, [LISTING, ALL_CLIENTS, HOST_PANES])
 
     def test_match_fullmatches_before_any_capture(self):
         sessions = listed(("w1", "1"), ("w10", "1"), ("mgr", "1"), ("xw1", "0"))
