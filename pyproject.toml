@@ -76,6 +76,21 @@ forbidden_modules = ["agent_pm.delegate.*", "agent_pm.session.*", "agent_pm.util
 allow_indirect_imports = true
 
 [[tool.importlinter.contracts]]
+name = "linear_orchestrator reaches session only through delegate"
+type = "forbidden"
+source_modules = ["agent_pm.linear_orchestrator"]
+forbidden_modules = ["agent_pm.session"]
+allow_indirect_imports = true
+# TASK-394 deletes this list; tests/guards.py's ORCH_SESSION_IMPORTS pins each module's names.
+ignore_imports = [
+    "agent_pm.linear_orchestrator.engine.config -> agent_pm.session",
+    "agent_pm.linear_orchestrator.engine.prune -> agent_pm.session",
+    "agent_pm.linear_orchestrator.engine.router -> agent_pm.session",
+    "agent_pm.linear_orchestrator.engine.run -> agent_pm.session",
+    "agent_pm.linear_orchestrator.linear.sessions -> agent_pm.session",
+]
+
+[[tool.importlinter.contracts]]
 name = "linear_orchestrator tests respect layer ownership"
 type = "forbidden"
 source_modules = ["orchestrator_tests"]
