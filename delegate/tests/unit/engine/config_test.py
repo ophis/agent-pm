@@ -127,6 +127,17 @@ class TrustedDirsTest(Case):
 
 
 class Shipped(Case):
+    def test_public_config_reader_supports_local_and_path_overrides(self):
+        from_config = os.path.join(self.home, "delegate.toml")
+        local = os.path.join(self.home, "local.toml")
+        with open(from_config, "w") as stream:
+            stream.write('language = "base"\n')
+        with open(local, "w") as stream:
+            stream.write('[delegate]\nlanguage = "local"\n')
+        found = agent_pm.delegate.read_config(local=local, path=from_config)
+        self.assertEqual(found["language"], "local")
+        self.assertIn("hosts", found)
+
     def test_config_comments_name_skills_by_slash_command(self):
         with open(CONFIG) as f:
             self.assertEqual(generic_names("\n".join(re.findall(r"#.*", f.read()))), [])
