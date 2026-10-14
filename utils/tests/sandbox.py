@@ -1,12 +1,43 @@
 """Standard-library test isolation, child environments and owned process cleanup."""
 
+import atexit
 import os
 import shlex
 import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 from pathlib import Path
+
+_TMUX_DIRECTORIES: dict[int, str] = {}
+_TMUX_LOCK = threading.Lock()
+
+
+def _after_fork():
+    global _TMUX_LOCK
+    _TMUX_LOCK = threading.Lock()
+    _TMUX_DIRECTORIES.clear()
+
+
+os.register_at_fork(after_in_child=_after_fork)
+
+
+def _remove_tmux_directory(pid, directory):
+    if os.getpid() == pid:
+        shutil.rmtree(directory, ignore_errors=True)
+
+
+def _tmux_directory():
+    pid = os.getpid()
+    with _TMUX_LOCK:
+        if pid not in _TMUX_DIRECTORIES:
+            sandbox = os.environ.get("AGENT_PM_TEST_SANDBOX") or None
+            directory = tempfile.mkdtemp(prefix="tmux-", dir=sandbox)
+            if sandbox is None:
+                atexit.register(_remove_tmux_directory, pid, directory)
+            _TMUX_DIRECTORIES[pid] = directory
+        return _TMUX_DIRECTORIES[pid]
 
 
 def clean_env(base=None, *import_roots):
@@ -18,6 +49,7 @@ def clean_env(base=None, *import_roots):
         and key not in {"TMUX", "TMUX_PANE", "TMUX_TMPDIR"}
     }
     env.update(GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM="1")
+    env["TMUX_TMPDIR"] = _tmux_directory()
     env["GIT_CEILING_DIRECTORIES"] = os.pathsep.join(
         dict.fromkeys(
             os.path.dirname(os.path.abspath(source[key]))

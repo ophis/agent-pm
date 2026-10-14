@@ -138,10 +138,10 @@ class Flow(Case):
 
     def env(self):
         return {
+            **child_env({}, WORKTREE, os.path.dirname(os.path.dirname(os.path.dirname(__file__)))),
             # prune lists tmux sessions: a private dir (or base()'s server), never the developer's
             "TMUX_TMPDIR": self.root,
             **self.base(),
-            **child_env({}, WORKTREE, os.path.dirname(os.path.dirname(os.path.dirname(__file__)))),
             "TZ": "UTC",
             "AGENT_PM_PATH": self.bin,
             "CLAUDE_CONFIG_DIR": os.path.join(self.root, "claude-config"),

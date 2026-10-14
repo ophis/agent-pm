@@ -1,13 +1,16 @@
 """Exercise irreversible audit hooks in disposable interpreters before real state is reached."""
 
 import json
+import os
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 import unittest
 from pathlib import Path
 
+from session.tests import live_tmux
 from tests.case import REPO, Case
 from utils.tests.sandbox import clean_env
 
@@ -96,8 +99,129 @@ del os.environ["GIT_DIR"]
 print(json.dumps(sorted(blocked)))
 """
 
+CLEAN_ENV_SCRIPT = """import json, tempfile, threading
+from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
+from utils.tests.sandbox import clean_env
+
+barrier = threading.Barrier(8)
+def allocate():
+    barrier.wait(timeout=5)
+    env = clean_env({"TMUX": "/outside,1,0", "TMUX_TMPDIR": "/outside",
+                     "AGENT_PM_TEST_SANDBOX": "/outside"})
+    assert "TMUX" not in env
+    return env["TMUX_TMPDIR"]
+with ThreadPoolExecutor(max_workers=8) as executor:
+    futures = [executor.submit(allocate) for _ in range(8)]
+    directories = [future.result() for future in futures]
+assert len(set(directories)) == 1, directories
+directory = Path(directories[0])
+assert clean_env()["TMUX_TMPDIR"] == str(directory)
+assert directory.is_dir()
+assert list(directory.iterdir()) == []
+assert directory.stat().st_mode & 0o777 == 0o700
+print(json.dumps({"directory": str(directory), "system": tempfile.gettempdir()}))
+"""
+
 
 class SandboxGates(Case):
+    def test_clean_env_children_cannot_reach_the_parents_private_default_tmux_server(self):
+        server = live_tmux.Server(self, self.home)
+        server.start("parent")
+        before = server.tmux("ls")
+        self.assertEqual(before.returncode, 0, before.stderr)
+        self.assertIn("parent:", before.stdout)
+        env = clean_env({**server.env(), **server.inside("parent")})
+        directory = Path(env["TMUX_TMPDIR"])
+        self.assertNotIn("TMUX", env)
+        self.assertNotIn("TMUX_PANE", env)
+        self.assertNotEqual(directory, Path(server.root))
+        self.assertEqual(
+            directory.parent.resolve(),
+            Path(os.environ.get("AGENT_PM_TEST_SANDBOX") or tempfile.gettempdir()).resolve(),
+        )
+        self.assertTrue(directory.is_dir())
+        self.assertEqual(list(directory.iterdir()), [])
+        child = subprocess.run(["tmux", "ls"], env=env, capture_output=True, text=True, timeout=10)
+        self.assertNotEqual(child.returncode, 0, child.stderr)
+        self.assertEqual(child.stdout, "")
+        after = server.tmux("ls")
+        self.assertEqual(after.returncode, 0, after.stderr)
+        self.assertEqual(after.stdout, before.stdout)
+
+    def test_clean_env_reuses_a_process_directory_and_respects_its_cleanup_owner(self):
+        sandbox = Path(self.home, "owned")
+        sandbox.mkdir()
+        for mode in ("sandbox", "fallback"):
+            with self.subTest(mode=mode):
+                env = clean_env(None, REPO)
+                if mode == "sandbox":
+                    env["AGENT_PM_TEST_SANDBOX"] = str(sandbox)
+                else:
+                    env.pop("AGENT_PM_TEST_SANDBOX", None)
+                directories = []
+                for index in range(2):
+                    proc = subprocess.run(
+                        [sys.executable, "-P", "-S", "-c", CLEAN_ENV_SCRIPT],
+                        env=env,
+                        capture_output=True,
+                        text=True,
+                        timeout=10,
+                    )
+                    self.assertEqual(proc.returncode, 0, proc.stderr)
+                    found = json.loads(proc.stdout)
+                    directory = Path(found["directory"])
+                    self.assertNotIn(directory, directories)
+                    directories.append(directory)
+                    if mode == "sandbox":
+                        self.assertEqual(directory.parent.resolve(), sandbox.resolve())
+                        self.assertTrue(directory.is_dir())
+                        self.assertEqual(list(directory.iterdir()), [])
+                        self.assertEqual(len(list(sandbox.iterdir())), index + 1)
+                    else:
+                        self.assertEqual(
+                            directory.parent.resolve(), Path(found["system"]).resolve()
+                        )
+                        self.assertFalse(directory.exists())
+
+    def test_forked_clean_env_children_cannot_remove_the_parents_fallback_directory(self):
+        script = """import json, os, sys
+from pathlib import Path
+from utils.tests.sandbox import clean_env
+
+parent = Path(clean_env()["TMUX_TMPDIR"])
+reader, writer = os.pipe()
+pid = os.fork()
+if pid == 0:
+    os.close(reader)
+    child = Path(clean_env()["TMUX_TMPDIR"])
+    assert child != parent
+    assert child.is_dir()
+    os.write(writer, str(child).encode())
+    os.close(writer)
+    sys.exit(0)
+os.close(writer)
+with os.fdopen(reader) as stream:
+    child = Path(stream.read())
+_, status = os.waitpid(pid, 0)
+assert os.waitstatus_to_exitcode(status) == 0, status
+assert not child.exists(), child
+assert parent.is_dir(), parent
+assert clean_env()["TMUX_TMPDIR"] == str(parent)
+print(json.dumps(str(parent)))
+"""
+        env = clean_env(None, REPO)
+        env.pop("AGENT_PM_TEST_SANDBOX", None)
+        proc = subprocess.run(
+            [sys.executable, "-P", "-S", "-c", script],
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertFalse(Path(json.loads(proc.stdout)).exists())
+
     def test_violations_after_the_last_stop_test_fail_the_run_with_their_origin(self):
         script = """import json, os, sys, threading, unittest
 from pathlib import Path
