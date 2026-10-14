@@ -1,7 +1,9 @@
 """The pm to engineer flow over router.py --issue, the run's detached harness and its write-back, and
 promote.py: a PRD issue becomes an ENG issue; a rework starts a new session; a failed run is not
 promoted; a Linear outage relating the child is retried; a run without an outcome resumes its
-session; a lost transcript (resumable no) sends the issue back to Todo for a new session.
+session; an attended run (router.py --tui) that gives up is resumed headless by a router.py run
+without --tui, its TUI closed first (main's test_b6); a lost transcript (resumable no) sends the
+issue back to Todo for a new session.
 """
 
 import os
@@ -9,7 +11,7 @@ import re
 import unittest
 from urllib.parse import unquote
 
-from agent_pm.linear_orchestrator.engine import issues, ops
+from agent_pm.linear_orchestrator.engine import config, issues, ops
 from orchestrator_tests.integration import fake_linear
 from orchestrator_tests.integration.flow_fixtures import HARNESS_EMAIL
 from orchestrator_tests.integration.segments import BUILD, REPORT, Segment
@@ -116,6 +118,16 @@ class PmToEngineer(Segment):
             ],
             [ident],
         )
+
+    def test_b6_an_attended_run_that_gives_up_is_resumed_headless(self):
+        ident = self.pm_ready()
+        sid = self.claim(ident, "pm", self.agent_script("pm", "none", ident), tui=True)
+        self.agent_run()
+        self.resume(ident, "pm", sid, self.agent_script("pm", "done", ident))
+        self.assertFalse(self.live(config.tui_name("pm", ident, sid)))
+        self.agent_run()
+        self.handoff(ident, BUILD)
+        self.promote(ident, "pm", "engineer")
 
     def test_b7_a_lost_transcript_starts_a_new_session(self):
         ident = self.pm_ready()
