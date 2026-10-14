@@ -532,6 +532,7 @@ class TuiLaunchIntegrationTest(Live):
         self.assertEqual(self.attach("last"), [[self.sid, "live", "second"], ["third", 0], "third"])
         self.assertEqual(stream.until(TurnEnd), [Activity(), TurnEnd("third")])
         self.assertEqual(self.lines(4), ["w1 blocked", "w1 done", "w1 done", "w1 done"])
+        live_tmux.wait(lambda: len(self.hooks()) == 8, WAIT, what="all hook results logged")
         (call,) = self.calls()
         self.assertEqual(
             call["argv"][:5],
