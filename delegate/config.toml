@@ -141,6 +141,7 @@ harness_host = ""
 # [policy.<runtime>]  a role run's flags and env, the Delegate's (README.md › Runtime policy); in claude's
 #                     --settings, this core's own plugin (<plugin>@<marketplace>) stays off, the user's others load
 [policy.claude]
+env = {} # Empty adds no environment variables.
 flags = [
   "--permission-mode",
   "auto",
@@ -150,4 +151,5 @@ flags = [
 ]
 
 [policy.codex]
+env = {} # Empty adds no environment variables.
 flags = ["-s", "danger-full-access", "-c", 'approval_policy="on-request"', "-c", 'approvals_reviewer="auto_review"']
