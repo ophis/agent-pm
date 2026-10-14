@@ -31,6 +31,7 @@ from agent_pm.session.engine.types import (
     IdleTimeout,
     Liveness,
     Mode,
+    NoRecordedSession,
     NotDisplayable,
     Reply,
     Resumable,
@@ -397,7 +398,7 @@ class HostedSession(Session):
         except OSError as error:
             raise DriverError(f"inspect session {sid}: {error}") from error
         if info is None:
-            raise DriverError(f"no recorded session {sid} in {spec.workdir}")
+            raise NoRecordedSession(f"no recorded session {sid} in {spec.workdir}")
         return _resumable(lambda: setup.registry.adapter(runtime), sid, info.cwd)
 
     def events(self) -> Iterator[SessionEvent | Stderr | IdleTimeout]:

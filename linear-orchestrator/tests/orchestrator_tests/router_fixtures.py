@@ -384,6 +384,18 @@ class Base(run_fixtures.Base):
     def touch(self, sid, minutes_ago):
         # the session's transcript, last written minutes_ago
         at = (NOW - timedelta(minutes=minutes_ago)).timestamp()
+        entry = next(
+            (
+                json.loads(line)
+                for line in reversed(self.lines)
+                if json.loads(line).get("sid") == self.sid(sid)
+            ),
+            None,
+        )
+        if entry is not None:
+            self.api.records[self.sid(sid)] = {
+                "cwd": os.path.join(self.work, "work", entry["issue"])
+            }
         self.api.statuses[self.sid(sid)] = SessionStatus("yes", at, f"resume {sid}")
 
     def write_runs(self):
@@ -532,6 +544,7 @@ class OuterBase(TickBase):
         self.gql = Gql(issue=node(comments=[USER_NOTE]))
         self.run_ = FakeRun(ENG_RUN)
         self.missing, self.keychain_calls = set(), []
+        self.api.records[SID] = {"cwd": self.rd}
 
     def keychain(self, service):
         self.keychain_calls.append(service)

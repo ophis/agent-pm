@@ -35,6 +35,7 @@ __all__ = [
     "Liveness",
     "Mode",
     "NotDisplayable",
+    "NoRecordedSession",
     "Paste",
     "Prepared",
     "Reply",
@@ -416,6 +417,10 @@ class Key:
 
 class DriverError(Exception):
     """A failed start, or a call its Mode lacks."""
+
+
+class NoRecordedSession(DriverError):
+    """The requested sid has no durable session record in its workdir."""
 
 
 class NotDisplayable(DriverError):

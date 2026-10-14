@@ -12,7 +12,7 @@ from agent_pm.linear_orchestrator.engine.types import (
 )
 from agent_pm.linear_orchestrator.linear import linear
 from agent_pm.session import ConfigError as SessionConfigError
-from agent_pm.session import DriverError
+from agent_pm.session import DriverError, NoRecordedSession, Resumable, SessionStatus
 
 URL = "https://agent-pm.invalid/run/"
 LIMIT = 10
@@ -48,7 +48,10 @@ def base(*, sid, workdir, runtime, started_at, driver):
 
 
 def status(workdir, runtime, sid, *, driver):
-    return driver.session_status(runtime, sid, workdir, workdir=workdir)
+    try:
+        return driver.session_status(runtime, sid, workdir, workdir=workdir)
+    except NoRecordedSession:
+        return SessionStatus(Resumable.NO, None, "")
 
 
 def command(rec):

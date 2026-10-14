@@ -14,7 +14,7 @@ import tempfile
 import threading
 from unittest import mock
 
-from agent_pm.session import Host, NotDisplayable
+from agent_pm.session import Host, NoRecordedSession, NotDisplayable
 from agent_pm.session.adapters import common as selection
 from agent_pm.session.adapters.base import Adapter
 from agent_pm.session.engine import hosted
@@ -145,7 +145,7 @@ class InspectTest(Base):
 
     def test_a_sid_without_a_record_is_an_error_without_starting_a_process(self):
         spec = Spec(workdir=self.workdir, runtime="probe", sid=SID)
-        with self.assertRaisesRegex(DriverError, "no recorded session"):
+        with self.assertRaisesRegex(NoRecordedSession, "no recorded session"):
             self.inspect(spec)
         self.assertFalse(os.path.exists(self.workdir))
 

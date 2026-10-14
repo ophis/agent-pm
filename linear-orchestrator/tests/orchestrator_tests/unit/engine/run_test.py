@@ -120,6 +120,7 @@ class Case(Base):
         self.handlers, self.order = {}, []
         self.delegate = FakeRun(self.order)
         self.api = FakeApi(self.order, lambda: self.gql)
+        self.api.records[SID] = {"cwd": self.rd}
         for p in (
             mock.patch.object(signal, "signal", lambda s, h: self.handlers.__setitem__(s, h)),
             mock.patch.object(signal, "pthread_sigmask"),
@@ -357,6 +358,20 @@ class RunExecution(Case):
         self.assertIn("direct cause", records[0]["traceback"])
         self.assertIn("RuntimeError: failed run", records[0]["traceback"])
         self.assertEqual(self.gql.calls, [*created(ended("interrupted", 1, seq=1)), REPAIR])
+
+    def test_an_unrecorded_launch_failure_has_no_resume_command(self):
+        self.api.records.clear()
+        self.delegate = FakeRun(self.order, error=delegate.ConfigError("launch failed"))
+        self.assertEqual(self.main(), 0)
+        body = f"Run {SID} · {ended('interrupted', 1, seq=1)}"
+        self.assertEqual(
+            self.gql.calls,
+            [
+                ("update", HARNESS, {"c": SESSION, "b": body}),
+                ("comment", HARNESS, {"c": SESSION, "i": ID, "b": body}),
+                REPAIR,
+            ],
+        )
 
     def test_system_exit_preserves_its_integer_code_in_the_log_and_session_comment(self):
         for code, expected in ((7, 7), (0, 0), ("stopped", 1), (None, 1)):
