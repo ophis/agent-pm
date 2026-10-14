@@ -1,11 +1,11 @@
-"""Delegate refusal types and retained wrapper startup-result semantics."""
+"""Delegate refusal types and a start's DriverError as the run's result."""
 
 import os
 import subprocess
 import sys
 from unittest import mock
 
-from agent_pm.delegate import ConfigError, Finished, Result, Spec, run
+from agent_pm.delegate import ConfigError, Finished, Result, Spec
 from agent_pm.delegate.composer import Composer
 from agent_pm.delegate.engine.drivers import AgentDriver
 from agent_pm.delegate.engine.harness_delegate import HarnessDelegate
@@ -15,6 +15,7 @@ from agent_pm.session import DriverError
 from delegate.tests.case import REPO, child_env
 from delegate.tests.fakes.harness_session import HarnessSession
 from delegate.tests.harness import HarnessCase
+from delegate.tests.runner import executed
 
 
 class PlacementSession(HarnessSession):
@@ -78,10 +79,10 @@ class Refusals(HarnessCase):
                     action()
         self.assertEqual(self.metadata(), before)
 
-    def test_legacy_wrapper_keeps_start_driver_error_result_and_one_finished(self):
+    def test_a_start_driver_error_is_the_result_with_one_finished(self):
         events = []
         spec = Spec("input", self.work, task="echo", mode="tui", cwd=self.work, name="agent")
-        result = run(
+        result = executed(
             Composer().resolve("dummy-tester", "echo"),
             spec,
             driver=AgentDriver(MissingTmuxSession),

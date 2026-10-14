@@ -76,7 +76,7 @@ class Base(Case):
         self.out = os.path.join(self.work, "out.md")
         self.addCleanup(os.chdir, os.getcwd())
         os.chdir(self.tmp)
-        self.driver_dependencies = {
+        self.session_dependencies = {
             "class_loader": adapter_loader({"agent_pm.session.adapters.fake": fake_adapter})
         }
         self.configure_fake()

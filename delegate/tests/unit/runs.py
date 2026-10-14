@@ -47,7 +47,7 @@ STOP = turn("Working.")
 
 
 class FakeHandle:
-    """agent_pm.session.Handle as the Delegate uses it: events() goes on through `events` across
+    """agent_pm.session.Session as the Delegate uses it: events() goes on through `events` across
     calls, up to an Exited (none left: AssertionError); send (raising `fail`) and stop (raising
     `stop_fail`) recorded in `calls`; show's commands (raising `show_fail`) in `shown`. start: the
     Delegate Driver's stand-in.

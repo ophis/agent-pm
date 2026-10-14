@@ -111,11 +111,3 @@ class Composer:
         temp: Sequence[str] | None = None,
     ) -> None:
         teams.check_team_dirs(self.team.dirs, writes=writes, temp=temp)
-
-    @staticmethod
-    def check_overlap(shown: str, real: str, writes: Sequence[tuple[str, str]]) -> None:
-        teams.check_overlap(shown, real, writes)
-
-    @staticmethod
-    def team_paths(directory: str) -> list[str]:
-        return teams.team_paths(directory)

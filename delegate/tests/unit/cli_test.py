@@ -10,8 +10,9 @@ from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest import mock
 
-from agent_pm.delegate import ConfigError, Outcome, Spec, cli, composer
-from agent_pm.delegate.composer import RunParams
+from agent_pm.delegate import ConfigError, Outcome, Spec, cli
+from agent_pm.delegate.composer import Composer, RunParams
+from agent_pm.delegate.composer.base import TEAM
 from agent_pm.delegate.composer.prompt import RESUME
 from agent_pm.delegate.engine.harness_delegate import HarnessDelegate
 from agent_pm.delegate.engine.runner import STOP_LIMIT
@@ -182,7 +183,7 @@ class DryRun(Base):
         )
         self.assertEqual(
             (shown["dirs"], shown["reads"], shown["commands"]),
-            ([self.work], [os.path.join(composer.TEAM, "tasks")], []),
+            ([self.work], [os.path.join(TEAM, "tasks")], []),
         )
         self.assertIn("**Your task**: `echo` (`<tasks>/echo.md`).", shown["prompt"])
         self.assertTrue(shown["prompt"].endswith("\n# Input\n\nHello.\n"))
@@ -221,7 +222,7 @@ class InProcess(Base):
         super().setUp()
         refusing = types.ModuleType("agent_pm.session.adapters.refusing")
         refusing.RefusingAdapter = RefusingAdapter
-        self.driver_dependencies = {
+        self.session_dependencies = {
             "class_loader": adapter_loader(
                 {"agent_pm.session.adapters.fake": fake_adapter, refusing.__name__: refusing}
             )
@@ -356,7 +357,7 @@ class List(Base):
         self.assertEqual((code, err), (0, ""))
         lines = out.splitlines()
         self.assertEqual([line for line in lines if not line.startswith("  ")], HEADS)
-        echo = composer.index("dummy-tester")["echo"]
+        echo = Composer().index("dummy-tester")["echo"]
         self.assertTrue(
             out.endswith(f"\ndummy-tester  local  built-in\n  echo: {echo}  [built-in]\n"), out
         )
@@ -560,8 +561,9 @@ class Prompt(Case):
         Path(self.agent_pm, "config.local.toml").write_text(
             local_section('[hosts]\ndefault = "missing"\n', "session"), encoding="utf-8"
         )
-        config = composer.resolve("dummy-tester", "echo")
-        expected = composer.render(
+        composition = Composer()
+        config = composition.resolve("dummy-tester", "echo")
+        expected = composition.render(
             config, RunParams(input="Hello.\n", out=self.out, workdir=self.work)
         )
         with mock.patch("subprocess.Popen", side_effect=AssertionError("session started")):

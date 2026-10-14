@@ -2,16 +2,15 @@
 
 import json
 import os
-import sys
 import unittest
 from unittest import mock
 
-from agent_pm.delegate import composer, configure
+from agent_pm.delegate.composer import teams
+from agent_pm.delegate.composer.base import TEAM
 from agent_pm.utils import temp_dirs, under
 
 from delegate.tests.case import REPO
 from delegate.tests.plans import TASKS, TASKS_PARAM, Base, write_team
-from session.tests.fakes.host import FakeHost
 from utils.tests.sandbox import owned_directory
 
 TEAMS = os.path.join(REPO, "work")
@@ -30,7 +29,7 @@ class CustomTeam(Base):
         os.chmod(self.team, 0o755)
         write_team(self.team)
         self.tasks = os.path.join(self.team, "tasks")
-        self.found = composer.team(composer.TEAM, [self.team])
+        self.found = teams.team(TEAM, [self.team])
 
     def read_unadded(self, role, task, reads, **kw):
         """
@@ -88,33 +87,12 @@ class CustomTeam(Base):
                         "agent run can write there",
                     )
 
-
-class Configures(Base):
-    def test_configures_driver_detaches_on_the_harness_host_not_the_default(self):
-        fake = 'implementation = "session.tests.fakes.host:FakeHost"\n'
-        self.local(
-            f'[hosts]\ndefault = "spare"\n[hosts.spare]\n{fake}root = "~/spare"\n'
-            f'[hosts.fake]\n{fake}[delegates]\nharness_host = "fake"\n'
-        )
-        driver = configure()
-        gate = os.path.join(self.tmp, "finish")
-        driver.detach(
-            "d1",
-            [
-                sys.executable,
-                "-I",
-                "-c",
-                "import os, sys, time\nwhile not os.path.exists(sys.argv[1]): time.sleep(0.01)",
-                gate,
-            ],
-            self.tmp,
-            {},
-            opener="mgr",
-        )
-        process = FakeHost("fake").attach("d1")
-        self.addCleanup(process.close)
-        self.assertEqual(process.display(), "mgr")
-        with open(gate, "w", encoding="utf-8"):
-            pass
-        self.assertTrue(process.wait_exit(10))
-        self.assertEqual(FakeHost("spare", {"root": "~/spare"}).list(), [])
+    def test_one_overlapping_a_dir_the_clients_policy_adds_is_refused(self):
+        for client in ("claude", "codex"):
+            with self.subTest(client=client):
+                self.local(f"[policy.{client}]\nflags = {json.dumps(['--add-dir', self.team])}\n")
+                self.assertEqual(
+                    self.refused("poet", "verse", team=self.found, client=client),
+                    f"team_dirs: {self.team} overlaps a dir {client} can write {self.team}: the "
+                    "agent run can write there",
+                )

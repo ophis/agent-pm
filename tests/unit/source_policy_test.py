@@ -7,7 +7,8 @@ import tempfile
 from pathlib import Path
 
 from agent_pm.delegate import composer
-from agent_pm.delegate.engine.config import CONFIG
+from agent_pm.delegate.composer import Composer
+from agent_pm.delegate.config import CONFIG
 from agent_pm.delegate.event.outcome import SCHEMA
 
 from delegate.tests.unit.composer.prompts import composed
@@ -70,9 +71,10 @@ class DelegatePolicy(Case):
             )
 
     def test_no_ticket_id_but_the_format_examples(self):
-        self.assertEqual(tickets(composer.TEAM), {})
+        team = Composer().team.root
+        self.assertEqual(tickets(team), {})
         for rel, examples in TICKET_EXAMPLES.items():
-            with open(os.path.join(composer.TEAM, rel)) as f:
+            with open(os.path.join(team, rel)) as f:
                 text = f.read()
             for example in examples:
                 self.assertEqual(text.count(example), 1, (rel, example))

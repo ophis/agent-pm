@@ -76,13 +76,15 @@ def plan(
     driver: Driver | SessionDriver,
     composition: Composer | None = None,
 ) -> Plan:
-    return planning.plan(run, spec, driver=_owned(driver), composition=composition)
+    return planning.plan(
+        run, spec, driver=_owned(driver), composition=composition or Composer(team=spec.team)
+    )
 
 
 def run(run: RunConfig, spec: Spec, *, on_event=None, driver: Driver | SessionDriver) -> Result:
     """A session run makes its workdir; a refused start removes it again while still empty."""
     owner_driver = _owned(driver)
-    accepted = planning.plan(run, spec, driver=owner_driver)
+    accepted = planning.plan(run, spec, driver=owner_driver, composition=Composer(team=spec.team))
     if not owner_driver.session_based:
         return execute(accepted, driver=owner_driver, on_event=on_event)
     workdir = accepted.spec.workdir

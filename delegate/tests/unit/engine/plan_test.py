@@ -1,6 +1,6 @@
 """delegate/engine/plan.py: main's drive_test Cwd cases (place); plan's refusals, Access, Spec, sid and
-prompt; main's team dir checks (TeamRuns), for a custom team and for the configured team dirs,
-Codex's own writable dirs included, read dirs (the tasks dir among them) never added nor counted.
+prompt; its team dirs, the Composer's, refused in a temp dir, the client's writable dirs asked only
+with team dirs (their overlap cases: plan_team_integration_test.py).
 """
 
 import io
@@ -12,14 +12,16 @@ from dataclasses import replace
 from types import SimpleNamespace
 from unittest import mock
 
-from agent_pm.delegate import PYTHONPATH, ConfigError, composer, configure, plan
-from agent_pm.delegate.composer import RunConfig, RunParams
+from agent_pm.delegate import ConfigError, module_roots
+from agent_pm.delegate.composer import Composer, RunConfig, RunParams, teams
+from agent_pm.delegate.composer.base import TEAM
 from agent_pm.delegate.composer.prompt import RESUME
 from agent_pm.delegate.engine.drivers import AgentDriver
-from agent_pm.delegate.engine.plan import place
+from agent_pm.delegate.engine.plan import place, plan
 from agent_pm.delegate.event.reply import OUTCOME, PROGRESS
-from agent_pm.session import Access, note
+from agent_pm.session import Access, RunLog
 
+from delegate.tests.case import packaged
 from delegate.tests.plans import SID, TASKS, Base, write_team
 from delegate.tests.unit.engine.instruction import CLIENTS, GITHUB, ROLES, InstructionCase
 from utils.tests.case import local_section
@@ -41,20 +43,6 @@ class Configures(Base):
         self.assertEqual(got.spec.client, "fake")
         self.assertNotIn("driver", vars(got))
 
-    def test_configure_hands_the_driver_the_parsed_hosts_and_the_harness_host(self):
-        for text, want in (("", None), ('[delegates]\nharness_host = "tmux"\n', "tmux")):
-            with self.subTest(text=text):
-                self.local(text)
-                driver = configure()
-                self.assertEqual(driver.harness_host, want)
-                self.assertEqual(driver.registry.settings.default_host, "tmux")
-
-    def test_configure_refuses_a_bad_hosts_table_as_the_session_configs(self):
-        self.local('[hosts]\ndefault = "nope"\n')
-        with self.assertRaises(ConfigError) as caught:
-            configure()
-        self.assertEqual(str(caught.exception), "session config: [hosts] default: want one of tmux")
-
 
 class Cwd(Base):
     """place: the run's cwd and whether its project settings load."""
@@ -70,13 +58,14 @@ class Cwd(Base):
         `trusted`.
         """
         self.local(f"trusted_dirs = {json.dumps(list(trusted))}\n")
-        err = io.StringIO()
+        composition, err = Composer(), io.StringIO()
         with redirect_stderr(err):
             got = place(
-                replace(composer.resolve("researcher"), cwd=key),
+                replace(composition.resolve("researcher"), cwd=key),
                 self.work,
                 resume_sid=resume,
                 cwd=cwd,
+                trusted=composition.trusted_dirs(),
             )
         return got, err.getvalue()
 
@@ -137,10 +126,9 @@ class Cwd(Base):
                 self.placed(*trusted, cwd=self.other, key=key)
             self.assertEqual(str(cm.exception), want)
 
-    def test_a_resume_runs_in_the_cwd_and_project_of_its_session_record(self):
+    def test_a_resume_runs_in_the_cwd_and_project_of_its_recorded_session(self):
         os.makedirs(self.work)
-        note(
-            self.work,
+        RunLog(self.work).note(
             "session",
             sid=SID,
             cwd=self.trusted,
@@ -168,7 +156,7 @@ class Cwd(Base):
             self.placed(self.trusted, resume=SID)
         self.assertEqual(str(cm.exception), f"cwd {self.other} is no longer in trusted_dirs")
 
-    def test_a_resume_without_its_session_record_runs_in_the_workdir(self):
+    def test_a_resume_without_its_recorded_session_runs_in_the_workdir(self):
         self.assertEqual(
             self.placed(self.trusted, cwd=self.trusted, resume=SID), ((self.work, False), "")
         )
@@ -208,7 +196,7 @@ class Cwd(Base):
 
 class Refusals(Base):
     def test_each_refusal_names_its_cause_and_nothing_is_written(self):
-        tasks = ", ".join(composer.index("researcher"))
+        tasks = ", ".join(Composer().index("researcher"))
         nobody = RunConfig(
             role="nope",
             tier=2,
@@ -247,7 +235,7 @@ class Planned(Base):
 
     def test_the_access_is_the_intents_with_the_gate_last_and_its_env(self):
         command, gate = f"x --dir {self.work}/src *", "python3 /u/usage.py *"
-        env = {"PYTHONPATH": PYTHONPATH}
+        env = {"PYTHONPATH": os.pathsep.join(module_roots())}
         for keys, commands, want in (
             (self.KEYS | {"gate": gate}, (command, gate), env),
             (self.KEYS | {"gate": ""}, (command,), env),
@@ -262,7 +250,7 @@ class Planned(Base):
                         commands=commands,
                         cwd=self.work,
                         project=False,
-                        reads=(TASKS, composer.TEAM),
+                        reads=(TASKS, TEAM),
                         env=want,
                     ),
                 )
@@ -272,7 +260,7 @@ class Planned(Base):
         access = got.session.access
         self.assertEqual(
             (access.cwd, access.project, access.dirs, access.reads),
-            (os.getcwd(), False, (self.work,), (TASKS, composer.TEAM)),
+            (os.getcwd(), False, (self.work,), (TASKS, TEAM)),
         )
         self.assertEqual(err, notice(os.getcwd()))
 
@@ -361,10 +349,8 @@ class Planned(Base):
         self.assertEqual(os.listdir(self.work), [])
 
 
-class ConfiguredTeamDirs(Base):
-    """No team given: the built-in team, and the local `team_dirs` (a team dir in a temp dir)
-    checked only for overlap.
-    """
+class TeamDirs(Base):
+    """A team dir in a temp dir, the local `team_dirs` or the run's team: the Composer's team."""
 
     def setUp(self):
         super().setUp()
@@ -372,64 +358,28 @@ class ConfiguredTeamDirs(Base):
         write_team(self.team)
         self.local(f"team_dirs = {json.dumps([self.team])}\n")
 
-    def test_one_overlapping_what_the_run_can_write_is_refused(self):
-        inside = os.path.join(self.team, "w")
-        for kw, what in (
-            ({"workdir": inside}, f"the workdir {inside}"),
-            ({"cwd": self.tmp}, f"the cwd {self.tmp}"),
-            ({"keys": {"write": [inside]}}, f"write dir {inside} {inside}"),
-        ):
-            with self.subTest(what=what):
-                self.assertEqual(
-                    self.refused(**kw),
-                    f"team_dirs: {self.team} overlaps {what}: the agent run can write there",
-                )
-
-    def test_a_read_dir_overlapping_one_is_read_unadded(self):
-        for read in (self.tmp, os.path.join(self.team, "tasks")):
-            with self.subTest(read=read):
-                access = self.planned(keys={"read": [read]})[0].session.access
-                self.assertEqual((access.dirs, access.reads), ((), (TASKS, read)))
-
-    def test_one_overlapping_codex_home_is_refused(self):
-        for home in (os.path.join(self.team, "codex"), self.tmp):
-            with self.subTest(home=home), mock.patch.dict(os.environ, {"CODEX_HOME": home}):
-                self.assertEqual(
-                    self.refused(client="codex"),
-                    f"team_dirs: {self.team} overlaps a dir codex can write {home}: the agent "
-                    "run can write there",
-                )
-
     def test_the_clients_dirs_are_asked_with_the_runs_spec_only_when_there_are_team_dirs(self):
+        self.local("")
         with mock.patch.object(self.driver, "writable_dirs", return_value=()) as asked:
             got = self.planned(sid=SID, resume=True)[0]
-            asked.assert_called_once_with(replace(got.session, prompt=""))
-            asked.reset_mock()
-            self.local("")
-            self.planned(client="codex")
-            asked.assert_not_called()
+        asked.assert_not_called()
+        self.local(f"team_dirs = {json.dumps([self.team])}\n")
+        with (
+            mock.patch.object(self.driver, "writable_dirs", return_value=()) as asked,
+            mock.patch("subprocess.run", return_value=SimpleNamespace(stdout="")),
+        ):
+            self.refused(sid=SID, resume=True)
+        asked.assert_called_once_with(replace(got.session, prompt=""))
 
-    def test_a_symlink_in_one_is_checked_by_its_real_path(self):
-        tasks, moved = os.path.join(self.team, "tasks"), os.path.join(self.work, "team-tasks")
-        os.makedirs(self.work)
-        os.rename(tasks, moved)
-        os.symlink(moved, tasks)
-        self.assertEqual(
-            self.refused(),
-            f"team_dirs: {tasks} ({moved}) overlaps the workdir {self.work}: the agent "
-            "run can write there",
-        )
-
-    def test_a_bad_or_unset_team_dirs_changes_nothing(self):
-        base = self.planned(sid=SID)[0]
-        for text in ("team_dirs = []\n", 'team_dirs = "x"\n', ""):
-            with self.subTest(text=text):
-                self.local(text)
-                self.assertEqual(self.planned(sid=SID)[0], base)
+    def test_configured_it_is_the_runs_team_refused_in_a_temp_dir(self):
+        with mock.patch("subprocess.run", return_value=SimpleNamespace(stdout="")):
+            self.assertTrue(
+                self.refused("poet", "verse").startswith(f"team_dirs: {self.team} is in temp dir ")
+            )
 
     def test_given_as_the_runs_team_it_is_refused_in_a_temp_dir(self):
         with mock.patch("subprocess.run", return_value=SimpleNamespace(stdout="")):
-            found = composer.team(composer.TEAM, [self.team])
+            found = teams.team(TEAM, [self.team])
             self.assertTrue(
                 self.refused("poet", "verse", team=found).startswith(
                     f"team_dirs: {self.team} is in temp dir "
@@ -504,17 +454,17 @@ class InstructionPlans(InstructionCase):
             for role in ROLES:
                 with self.subTest(github=bool(local), role=role):
                     first, *others = (
-                        plan(*args, driver=self.driver)
+                        plan(*args, driver=self.driver, composition=Composer())
                         for args in (
                             self.given(role, client=client, mode=mode) for client, mode in CLIENTS
                         )
                     )
                     for p in others:
                         self.assertEqual((p.run.output, p.prompt), (first.run.output, first.prompt))
-                    agent = AgentDriver(configure().session_cls)
+                    agent = AgentDriver(packaged())
                     for client, mode in CLIENTS:
                         run, spec = self.given(role, client=client, mode=mode)
-                        got = plan(run, spec, driver=agent)
+                        got = plan(run, spec, driver=agent, composition=Composer())
                         self.assertEqual(
                             (got.run.output, got.prompt), (first.run.output, first.prompt)
                         )
@@ -522,9 +472,9 @@ class InstructionPlans(InstructionCase):
                             (got.session.flags, dict(got.session.env)),
                             Policy.SHIPPED[client or run.client],
                         )
-        self.assertEqual(composer.resolve("researcher").output["type"], "github")
+        self.assertEqual(Composer().resolve("researcher").output["type"], "github")
 
-    def test_agent_plans_apply_client_policy_and_check_its_writable_dirs(self):
+    def test_agent_plans_apply_client_policy(self):
         team = os.path.join(self.tmp, "team")
         write_team(team)
         local = os.path.join(self.agent_pm, "config.local.toml")
@@ -537,25 +487,13 @@ class InstructionPlans(InstructionCase):
                 with open(local, "w", encoding="utf-8") as stream:
                     stream.write(local_section(policy, "delegate"))
                 run, spec = self.given("researcher", client=client)
-                agent = AgentDriver(configure().session_cls)
+                agent = AgentDriver(packaged())
                 got, instruction = (
-                    plan(run, spec, driver=agent),
-                    plan(run, spec, driver=self.driver),
+                    plan(run, spec, driver=agent, composition=Composer()),
+                    plan(run, spec, driver=self.driver, composition=Composer()),
                 )
                 self.assertEqual((got.session.flags, dict(got.session.env)), (tuple(flags), env))
                 self.assertEqual(
                     (instruction.session.flags, dict(instruction.session.env)), ((), {})
                 )
                 self.assertEqual(got.prompt, instruction.prompt)
-                with open(local, "w", encoding="utf-8") as stream:
-                    stream.write(
-                        local_section(f"team_dirs = {json.dumps([team])}\n{policy}", "delegate")
-                    )
-                self.assertEqual(plan(run, spec, driver=self.driver).prompt, instruction.prompt)
-                with self.assertRaises(ConfigError) as caught:
-                    plan(run, spec, driver=agent)
-                self.assertEqual(
-                    str(caught.exception),
-                    f"team_dirs: {team} overlaps a dir {client} can write {team}: the agent "
-                    "run can write there",
-                )

@@ -3,7 +3,8 @@
 import os
 import tempfile
 
-from agent_pm.delegate import Spec, composer
+from agent_pm.delegate import Spec
+from agent_pm.delegate.composer import Composer
 from agent_pm.delegate.engine.drivers import InstructionDriver
 
 from delegate.tests.case import Case
@@ -36,4 +37,4 @@ class InstructionCase(Case):
             **kw,
         }
         self.driver = InstructionDriver()
-        return composer.resolve(role), Spec(INPUT, work, **kw)
+        return Composer().resolve(role), Spec(INPUT, work, **kw)
