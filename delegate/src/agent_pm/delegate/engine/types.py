@@ -100,6 +100,18 @@ class Plan:
 
 
 @dataclass(frozen=True)
+class Preview:
+    """A construction's plan and placement; agent None outside tui mode."""
+
+    plan: Plan
+    agent: str | None
+    harness: str
+    host: str
+    harness_host: str
+    callback: tuple[str, ...] | None
+
+
+@dataclass(frozen=True)
 class Limit:
     """resets_at: epoch seconds or None."""
 

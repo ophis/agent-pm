@@ -21,7 +21,7 @@ import tempfile
 import unittest
 
 from delegate.tests.case import PYTHONPATH, Case
-from delegate.tests.integration.cli import ASKING, CLI, DONE, SID
+from delegate.tests.integration.cli import ASKING, DONE, RUN, SID
 from delegate.tests.replies import block, mark, running
 from session.tests import live_tmux
 from session.tests.integration.adapters.claude import fake_claude
@@ -67,7 +67,7 @@ class Detach(Case):
             **{fake_claude.ENV: self.scenario},
             **(self.server.inside(inside) if inside else {}),
         )
-        argv = [*CLI, "--role", ROLE, "--input", "Hello.", "--out", self.out, "--workdir"]
+        argv = [*RUN, "--role", ROLE, "--input", "Hello.", "--out", self.out, "--workdir"]
         argv += [self.work, "--sid", SID, "--detach", "--events", events or self.events, *extra]
         return subprocess.run(
             argv,

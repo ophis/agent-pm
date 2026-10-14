@@ -16,7 +16,8 @@ ROLES = ["researcher", "pm", "engineer", "dummy-tester"]
 class ActAs(Case):
     def test_the_rule_is_step_1s_command_and_step_3_runs_its_python(self):
         self.assertEqual(RULE.search(text())[1], command(1))
-        self.assertEqual(head(), command(1).removesuffix(" --list"))
+        self.assertTrue(command(1).endswith(" -m agent_pm.delegate.cli run --list"), command(1))
+        self.assertEqual(head(), command(1).removesuffix(" run --list"))
 
     def test_step_4s_prefix_is_step_1s(self):
         self.assertEqual(prefix(), command(1).partition(" python3 ")[0])
