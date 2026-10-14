@@ -258,7 +258,7 @@ class ClaudeCommon:
         save(_state_path(self.store, cwd, sid), json.dumps(state), own=True, durable=True)
 
     def resume_main(self, argv) -> int:
-        """resume()'s run (STORE CWD SID): execs `claude --resume SID` with the saved dirs and env
+        """resume()'s run (STORE CWD SID): execs claude resuming SID with the saved dirs and env
         over this environment, in CWD; 1 and one stderr line when it cannot.
         """
         try:
