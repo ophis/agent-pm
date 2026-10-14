@@ -1,6 +1,8 @@
 """Session behavior tests with caller-owned dependencies."""
 
+import contextlib
 import dataclasses
+import io
 import json
 import os
 import re
@@ -341,7 +343,7 @@ class CommonTest(Base):
                 self.edit_record(**fields)
                 with self.assertRaises(ConfigError):
                     self.common.load(str(self.work), self.spec.sid)
-                with self.assertRaises(ConfigError):
+                with self.assertRaises(ConfigError), contextlib.redirect_stderr(io.StringIO()):
                     self.common.lookup(self.spec.sid, str(self.cwd))
 
     def test_store_outside_explicit_and_implicit_writable_roots(self):
@@ -744,9 +746,23 @@ class SessionStatusTest(Base):
         self.rollout()
         path = self.record()
         path.write_text("not json")
-        self.assertEqual(
-            self.common.session_status(self.spec.sid, str(self.cwd)).resumable, "unknown"
-        )
+        with contextlib.redirect_stderr(io.StringIO()):
+            status = self.common.session_status(self.spec.sid, str(self.cwd))
+        self.assertEqual(status.resumable, "unknown")
+
+    def test_a_bad_recovery_file_hides_no_other_run(self):
+        self.bound()
+        self.rollout()
+        bad = self.record().with_name("0" * 64 + ".json")
+        bad.write_text("not json")
+        bad.chmod(0o600)
+        with contextlib.redirect_stderr(io.StringIO()) as err:
+            found = self.common.session_status(self.spec.sid, str(self.cwd))
+            unrecorded = self.common.session_status("unrecorded", str(self.cwd))
+        self.assertEqual(found.resumable, "yes")
+        self.assertEqual(unrecorded.resumable, "unknown")
+        line = f"codex recovery: malformed recovery state: {bad}"
+        self.assertEqual(err.getvalue().splitlines(), [line, line])
 
     def test_a_missing_recorded_transcript_is_no_without_discovery_fallback(self):
         self.bound()

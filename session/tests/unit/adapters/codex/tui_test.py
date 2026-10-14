@@ -1156,6 +1156,7 @@ class HookTest(Base):
             with (
                 self.subTest(call=call),
                 self.assertRaisesRegex(common.RecoveryError, "inside writable root"),
+                contextlib.redirect_stderr(io.StringIO()),
             ):
                 call()
         self.assertEqual(record.read_bytes(), copied.read_bytes())
