@@ -1124,6 +1124,38 @@ class AttendedEntry(OuterBase):
         self.assertEqual(self.entry("--now", "--tui", "--events", self.events), 0, self.err)
         self.assertEqual((self.api.detached, self.out), ([], ""))
 
+    def test_a_new_run_takes_the_launchers_session_id(self):
+        launch = "5b1f9a0e-2c3d-4e5f-8a7b-9c0d1e2f3a4b"
+        for argv in (("--issue", ID), ("--now",)):
+            with self.subTest(argv=argv):
+                self.lines, self.todo["state"] = [], "Todo"
+                env = {router.SID_ENV: launch}
+                rc = self.entry(*argv, "--tui", "--events", self.events, env=env)
+                self.assertEqual(rc, 0, self.err)
+                self.assertEqual(self.last_run()[:3], ("start", ID, launch))
+                self.assertEqual((self.launched()[0].sid, self.record().sid), (launch, launch))
+
+    def test_a_resume_of_another_session_than_the_launchers_exits_2_starting_nothing(self):
+        launch = "5b1f9a0e-2c3d-4e5f-8a7b-9c0d1e2f3a4b"
+        self.todo["state"] = "In Progress"
+        self.resumable(ID, SID, 60, role="engineer")
+        for argv in (("--issue", ID), ("--now",)):
+            with self.subTest(argv=argv):
+                env = {router.SID_ENV: launch}
+                rc = self.entry(*argv, "--tui", "--events", self.events, env=env)
+                self.assertEqual(rc, 2)
+                self.assertEqual(
+                    self.err,
+                    f"router.py: ${router.SID_ENV} {launch} differs from {ID}'s run {SID}\n",
+                )
+                self.assertEqual((self.api.detached, self.out), ([], ""))
+                self.assertEqual(self.state, self.before())
+
+    def test_a_bad_launcher_session_id_exits_2_before_any_linear_call(self):
+        rc = self.entry("--issue", ID, "--tui", "--events", self.events, env={router.SID_ENV: "x"})
+        self.assertEqual((rc, self.err), (2, f"router.py: bad ${router.SID_ENV}: x\n"))
+        self.assertEqual((self.fake.queries, self.api.tui_checks, self.out), ([], [], ""))
+
     def test_a_live_run_is_refused_with_its_attach_command(self):
         for argv, rc in ((("--issue", ID), 1), (("--dry-run", "--issue", ID), 0)):
             with self.subTest(argv=argv):

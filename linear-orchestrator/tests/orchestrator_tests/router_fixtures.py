@@ -521,7 +521,7 @@ class TickBase(Base):
         env=None,
     ):
         # outer: main's run and keychain; main then starts through its own outer
-        # env: the caller's variables over PATH; $AGENT_PM_EVENTS only when env gives it
+        # env: the caller's variables over PATH; a launcher's events file and sid only from env
         self.api.live = None if live is None else list(live)
         recorded = {json.loads(line)["issue"] for line in self.lines}
         for name in live or ():
@@ -548,7 +548,8 @@ class TickBase(Base):
             mock.patch.dict(os.environ, {"PATH": "/usr/bin:/bin"}),
             self.log_dir(again=again),
         ):
-            os.environ.pop(router.EVENTS_ENV, None)
+            for key in (router.EVENTS_ENV, router.SID_ENV):
+                os.environ.pop(key, None)
             os.environ.update(env or {})
             rc = router.main(
                 list(argv),

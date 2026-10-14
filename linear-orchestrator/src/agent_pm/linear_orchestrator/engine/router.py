@@ -19,7 +19,9 @@ agent-pm-linear router [--now] [--dry-run] [--issue ID] [--tui [--display D] [--
               FILE (no place to show the TUI, a D its Host cannot use, FILE not writable). A run it starts or
               resumes prints its Record line on stdout, its sessions and attach command on stderr. launchd
               never passes it: a tick resumes a run headless.
---brake ROLE  Print ROLE's client usage; exit 0 if a deep-research round may start, 1 if not or unknown, 2 no such
+
+$AGENT_PM_SID (agent-pm-crew run's), read once and removed, is a new run's session id; a resume of
+another session exits 2, starting nothing.--brake ROLE  Print ROLE's client usage; exit 0 if a deep-research round may start, 1 if not or unknown, 2 no such
               role.
 --help        Print this; exit 0. Bad arguments exit 2.
 
@@ -65,6 +67,7 @@ from agent_pm.linear_orchestrator.engine.runs import (
 )
 from agent_pm.linear_orchestrator.engine.types import (
     ISSUE_ID,
+    UUID_RE,
     ConfigError,
     InputError,
     Invalid,
@@ -89,7 +92,7 @@ USAGE = (
 )
 FLAGS = {"--dry-run": "dry", "--now": "now", "--tui": "tui"}
 VALUED = {"--issue": "issue", "--display": "display", "--events": "events"}
-EVENTS_ENV = "AGENT_PM_EVENTS"
+EVENTS_ENV, SID_ENV = "AGENT_PM_EVENTS", "AGENT_PM_SID"
 DONE = {"completed", "canceled", "duplicate"}
 UNREADABLE = "(unreadable)"
 RELATIONS = "inverseRelations(first: 50) { nodes { type issue { identifier state { type } } } }"
@@ -710,7 +713,18 @@ class Held:
         self.write({"usage-skip"} if blocked else self.WAIT)
 
 
-def choose(board, gate, live_ids, full, counts):
+def other_sid(spec, launch_sid):
+    """Whether the run resumes a session other than the launcher's `launch_sid`, said."""
+    if launch_sid is None or spec.sid == launch_sid:
+        return False
+    print(
+        f"router.py: ${SID_ENV} {launch_sid} differs from {spec.issue}'s run {spec.sid}",
+        file=sys.stderr,
+    )
+    return True
+
+
+def choose(board, gate, live_ids, full, counts, *, new_sid):
     for issue, sid in board.recover(live_ids):
         if not board.available(issue, full):
             continue
@@ -727,10 +741,10 @@ def choose(board, gate, live_ids, full, counts):
         board.say("skip", reason="nothing claimed")
         return None
     issue, task, _, client = taken
-    return Spec.from_issue(issue, mode="new", sid=str(uuid.uuid4()), task=task, client=client)
+    return Spec.from_issue(issue, mode="new", sid=new_sid, task=task, client=client)
 
 
-def tick(opts, cfg, gql, *, start, clock=datetime.now, hour=None):
+def tick(opts, cfg, gql, *, start, clock=datetime.now, hour=None, launch_sid=None):
     now = clock().astimezone(UTC)
     hour = now.astimezone().hour if hour is None else hour
     dry, runs = opts["dry"], cfg.runs_log
@@ -764,14 +778,18 @@ def tick(opts, cfg, gql, *, start, clock=datetime.now, hour=None):
         with Held(dry) as walk:
             gate = Gate(runs, now, dry=dry, say=walk, cfg=cfg)
             board = Board(gql, entries, cfg, now=now, dry=dry, gate=gate, say=walk)
-            spec = choose(board, gate, {i for ids in live.values() for i in ids}, full, counts)
+            live_ids = {i for ids in live.values() for i in ids}
+            new_sid = launch_sid or str(uuid.uuid4())
+            spec = choose(board, gate, live_ids, full, counts, new_sid=new_sid)
+            if spec is not None and spec.mode == "resume" and other_sid(spec, launch_sid):
+                return 2
             if spec is None or dry:
                 return 0
             walk.write()  # the outer logs past the walk
             return start_run(start, begin(cfg, spec), walk)
 
 
-def run_issue(opts, cfg, gql, start, *, clock=datetime.now):
+def run_issue(opts, cfg, gql, start, *, clock=datetime.now, launch_sid=None):
     now = clock().astimezone(UTC)
     ident, dry, runs = opts["issue"], opts["dry"], cfg.runs_log
     stop = 0 if dry else 1
@@ -801,12 +819,14 @@ def run_issue(opts, cfg, gql, start, *, clock=datetime.now):
             spec = Spec.from_issue(
                 issue, mode="resume", sid=sid, task=None, client=client_of(entries, sid)
             )
+            if other_sid(spec, launch_sid):
+                return 2
         elif board.is_blocked(ident) or not (taken := board.take(ident)):
             return stop
         else:
             issue, task, _, client = taken
             spec = Spec.from_issue(
-                issue, mode="new", sid=str(uuid.uuid4()), task=task, client=client
+                issue, mode="new", sid=launch_sid or str(uuid.uuid4()), task=task, client=client
             )
         if dry:
             return 0
@@ -885,6 +905,10 @@ def main(
     if opts["issue"] is not None and not re.fullmatch(ISSUE_ID, opts["issue"]):
         print(f"router.py: bad issue id: {opts['issue']}", file=sys.stderr)
         return 2
+    launch_sid = os.environ.pop(SID_ENV, "") or None
+    if launch_sid is not None and not UUID_RE.fullmatch(launch_sid):
+        print(f"router.py: bad ${SID_ENV}: {launch_sid}", file=sys.stderr)
+        return 2
     os.environ["PATH"] = config.path()
     try:
         cfg = config.load(path=config_path)
@@ -912,7 +936,7 @@ def main(
         )
     try:
         if opts["issue"]:
-            return run_issue(opts, cfg, gql, start, clock=now)
+            return run_issue(opts, cfg, gql, start, clock=now, launch_sid=launch_sid)
         return tick(
             opts,
             cfg,
@@ -920,6 +944,7 @@ def main(
             hour=hour,
             start=start,
             clock=now,
+            launch_sid=launch_sid,
         )
     except LinearError as e:
         return event_log.config_error("router", e, dry=opts["dry"])
