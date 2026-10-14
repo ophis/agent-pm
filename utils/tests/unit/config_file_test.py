@@ -430,12 +430,47 @@ class Resources(Case):
             with self.assertRaisesRegex(ConfigFileError, rf"move it under \[{section}\]"):
                 read_project("linear-orchestrator", root=self.root)
 
+    def test_flat_migration_hints_match_key_paths_and_never_choose_utils(self):
+        extra = 'harness_key = ""\n' + ORCH
+        Path(self.root, self.package, "linear_orchestrator", "config.toml").write_text(extra)
+        Path(self.root, "linear-orchestrator", "config.toml").write_text(extra)
+        for text, key, target in (
+            ('harness_key = "secret-service"\n', "harness_key", "[linear_orchestrator]"),
+            (
+                '[roles.engineer]\naccount = "engineer@x"\n',
+                "roles.engineer.account",
+                "[linear_orchestrator]",
+            ),
+            (
+                'unknown_key = "x"\n',
+                "unknown_key",
+                "one of [session], [delegate], [linear_orchestrator]",
+            ),
+            ('runtime = "x"\n', "runtime", "[delegate]"),
+            ("[hosts.tmux]\nstatus_line = true\n", "hosts.tmux.status_line", "[session]"),
+        ):
+            self.local(text)
+            for read in (
+                lambda: read_resources(self.resources),
+                lambda: read_project("linear-orchestrator", root=self.root),
+            ):
+                with (
+                    self.subTest(text=text, read=read),
+                    self.assertRaises(ConfigFileError) as caught,
+                ):
+                    read()
+                self.assertEqual(
+                    str(caught.exception),
+                    f"~/.agent-pm/config.local.toml: unknown key {key!r}: flat local configuration; move it under {target}",
+                )
+                self.assertNotIn("[utils]", str(caught.exception))
+
     def test_unknown_top_level_keys_and_non_table_sections_are_errors(self):
         for text, error in (
             ("[delegate]\nunknown_field = 1\n", r"unknown key 'unknown_field' in \[delegate\]"),
             (
                 "session = 1\n",
-                r"unknown key 'session': flat local configuration; move it under \[session\]",
+                r"unknown key 'session': flat local configuration; move it under one of \[session\], \[delegate\], \[linear_orchestrator\]",
             ),
         ):
             self.local(text)

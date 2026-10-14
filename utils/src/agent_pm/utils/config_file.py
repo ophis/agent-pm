@@ -131,10 +131,19 @@ def _layered(
         key for key, value in found.items() if not isinstance(value, dict) or key in keys
     ):
         key = flat[0]
-        candidates = [p for p, table in known.items() if any(key in schema for schema in table)]
-        target = candidates[0] if candidates else next(iter(configs), "session")
+        path, _ = next(_leaves({key: found[key]}, ()))
+        schemas = {p: merge(*tables) for p, tables in known.items() if p != "utils" and any(tables)}
+        targets = _flat_sections(path, schemas) or list(schemas)
+        sections = ", ".join(f"[{p}]" for p in targets)
+        hint = (
+            sections
+            if len(targets) == 1
+            else f"one of {sections}"
+            if targets
+            else "a supplied layer section"
+        )
         raise ConfigFileError(
-            f"{local}: unknown key {key!r}: flat local configuration; move it under [{target}]"
+            f"{local}: unknown key {'.'.join(path)!r}: flat local configuration; move it under {hint}"
         )
     schema, out = {}, {}
     for section, config in configs.items():
@@ -157,6 +166,18 @@ def _layered(
         elif section == own:
             out = merge(config, checked)
     return out
+
+
+def _flat_sections(keys: tuple, schemas: Mapping[str, dict]) -> list[str]:
+    having = [p for p, table in schemas.items() if keys[0] in table]
+    exact = [p for p in having if _has(schemas[p], keys)]
+    shaped = [
+        p
+        for p in having
+        if any(len(k) == len(keys) and k[-1] == keys[-1] for k, _ in _leaves(schemas[p], ()))
+    ]
+    suffix = [p for p in having if any(_has(schemas[p], keys[i:]) for i in range(1, len(keys)))]
+    return exact or shaped or suffix or having
 
 
 def unset(cfg: Mapping, keys: tuple[str, ...]) -> list[str]:
