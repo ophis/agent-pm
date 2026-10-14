@@ -180,7 +180,7 @@ class FakeDelegate(Delegate):
         with contextlib.suppress(FileNotFoundError):
             os.remove(os.path.join(self.workdir, FILE))
 
-    def resume(self):
+    def resume(self, *, mode=None):
         state = _load(self.workdir)
         if not (state["alive"] or state["outcome"]):
             state = _update(self.workdir, alive=True, starts=state["starts"] + 1)

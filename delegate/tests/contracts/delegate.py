@@ -117,6 +117,15 @@ class DelegateContract:
         self.assertEqual((first.sid, first.sessions), (record.sid, record.sessions))
         self.assertTrue(view.alive())
 
+    def test_resume_in_a_given_mode_starts_them_once_with_the_same_sid(self):
+        record, _ = self.detached()
+        self.end(record)
+        view = self.delegate_cls.attach(record)
+        resumed = view.resume(mode="headless")
+        self.assertEqual(resumed.sid, record.sid)
+        self.assertEqual(view.resume(mode="headless"), resumed)
+        self.assertTrue(view.alive())
+
     def test_resume_after_a_valid_outcome_starts_nothing_and_returns_the_record(self):
         record, _ = self.detached()
         self.finish(record)

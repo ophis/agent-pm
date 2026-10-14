@@ -129,7 +129,7 @@ def provider(api, cfg):
         def forget(self):
             raise AssertionError("scenario must not forget")
 
-        def resume(self):
+        def resume(self, *, mode=None):
             raise AssertionError("legacy launcher owns this scenario")
 
     return ScenarioDelegate

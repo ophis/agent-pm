@@ -899,7 +899,7 @@ class View:
     def attach_command(self):
         return self.command
 
-    def resume(self):
+    def resume(self, *, mode=None):
         return record(self.name)
 
 
