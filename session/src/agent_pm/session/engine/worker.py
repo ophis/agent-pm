@@ -155,6 +155,10 @@ class WorkerState:
         )
 
 
+def _detail(error: SessionError | OSError) -> object:
+    return error.strerror if isinstance(error, OSError) else error
+
+
 def _private_dir(path: str) -> None:
     os.makedirs(path, 0o700, exist_ok=True)
     found = os.lstat(path)
@@ -229,15 +233,7 @@ class Worker:
             raise SessionError(f"{self.state.name}: {workdir}: {error.strerror or error}") from None
 
     def check(self, *, prompt: str, resume: bool) -> None:
-        """Its sid not another worker's, then Session.preflight; no effects."""
-        data = read_regular(os.path.join(self.state.workdir(), STATE_FILE), limit=STATE_MAX)
-        try:
-            saved = json.loads(data) if data else None
-        except (ValueError, RecursionError):
-            saved = None
-        owner = saved.get("name") if isinstance(saved, dict) else None
-        if owner not in (None, self.state.name):
-            raise ConfigError(f"sid {self.state.sid} is worker {owner}'s")
+        """Session.preflight of its start; no effects."""
         self.session_cls.preflight(
             self.state.spec(prompt=prompt, resume=resume),
             display=self.state.display,
@@ -245,17 +241,29 @@ class Worker:
         )
 
     def start(self, *, prompt: str, resume: bool) -> Record:
-        """Start its client, save its state, show it, watch it; then publish its Record and return
-        it. Its client exiting in the watch: SessionError with its last lines, its terminal kept,
-        no Record.
+        """Claim its sid, save its state, start its client, save its token, show it, watch it;
+        then publish its Record and return it. A failed save or start puts its files back. Its
+        client exiting in the watch: SessionError with its last lines, its terminal kept, no Record.
         """
         name = self.state.name
-        session = self.session_cls.start(
-            self.state.spec(prompt=prompt, resume=resume),
-            display=self.state.display,
-            host=self.state.host,
-            idle_timeout=EARLY,
-        )
+        self._claim()
+        before = self._saved()
+        self.state = replace(self.state, token=None)
+        try:
+            self._save()
+        except (SessionError, OSError) as error:
+            self._put_back(before)
+            raise SessionError(f"{name}: {_detail(error)}; nothing started") from None
+        try:
+            session = self.session_cls.start(
+                self.state.spec(prompt=prompt, resume=resume),
+                display=self.state.display,
+                host=self.state.host,
+                idle_timeout=EARLY,
+            )
+        except (SessionError, ConfigError):
+            self._put_back(before)
+            raise
         host = self.session_cls.host(self.state.host)
         try:
             handle = host.attach(name)
@@ -267,8 +275,8 @@ class Worker:
         except (SessionError, OSError) as error:
             with contextlib.suppress(SessionError, ConfigError):
                 session.close()
-            detail = error.strerror if isinstance(error, OSError) else error
-            raise SessionError(f"{name}: {detail}; start undone") from None
+            self._put_back(before)
+            raise SessionError(f"{name}: {_detail(error)}; start undone") from None
         if session.displayable:
             self._show(session)
         self._watch(session)
@@ -335,11 +343,46 @@ class Worker:
             return None
         return self.session_cls.host(self.state.host).reclaim(self.state.token)
 
+    def _claim(self) -> None:
+        data = read_regular(os.path.join(self.state.workdir(), STATE_FILE), limit=STATE_MAX)
+        try:
+            saved = json.loads(data) if data else None
+        except (ValueError, RecursionError):
+            saved = None
+        owner = saved.get("name") if isinstance(saved, dict) else None
+        if owner not in (None, self.state.name):
+            raise ConfigError(f"sid {self.state.sid} is worker {owner}'s")
+
+    def _files(self) -> tuple[str, str]:
+        workdir = self.state.workdir()
+        latest = os.path.join(os.path.dirname(workdir), BY_NAME, self.state.name)
+        return os.path.join(workdir, STATE_FILE), latest
+
+    def _saved(self) -> tuple[bytes | None, bytes | None]:
+        state, latest = self._files()
+        limit = STATE_MAX + 1
+        return read_regular(state, limit=limit, own=True), read_regular(
+            latest, limit=limit, own=True
+        )
+
     def _save(self) -> None:
-        root = os.path.dirname(self.state.workdir())
-        save(os.path.join(self.state.workdir(), STATE_FILE), self.state.to_json(), own=True)
-        _private_dir(os.path.join(root, BY_NAME))
-        save(os.path.join(root, BY_NAME, self.state.name), self.state.sid + "\n", own=True)
+        state, latest = self._files()
+        save(state, self.state.to_json(), own=True)
+        _private_dir(os.path.dirname(latest))
+        save(latest, self.state.sid + "\n", own=True)
+
+    def _put_back(self, before: tuple[bytes | None, bytes | None]) -> None:
+        """Its own files as `before` (None: removed); the pointer only while it names its sid."""
+        state, latest = self._files()
+        mine = read_regular(latest, limit=STATE_MAX, own=True) == f"{self.state.sid}\n".encode()
+        for path, data in [(state, before[0]), *([(latest, before[1])] if mine else [])]:
+            if read_regular(path, limit=0, own=True) is None:
+                continue
+            with contextlib.suppress(OSError):
+                if data is None:
+                    os.unlink(path)
+                else:
+                    save(path, data, own=True)
 
     def _show(self, session: Session) -> None:
         name = self.state.name
