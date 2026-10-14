@@ -19,7 +19,7 @@ class Flag:
 
 
 def split_flags(flags: Sequence[str]) -> tuple[list[str], list[str]]:
-    index = flags.index("--") if "--" in flags else len(flags)
+    index = max((flag.end for flag in scan(flags)), default=0)
     return list(flags[:index]), list(flags[index:])
 
 

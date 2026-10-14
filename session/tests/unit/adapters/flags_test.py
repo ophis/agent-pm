@@ -70,7 +70,14 @@ class FlagsTest(Case):
         flags = ("--verbose", "--", "--resume", "--", "prompt")
         self.assertEqual([flag.arg for flag in scan(flags)], ["--verbose"])
         self.assertEqual(split_flags(flags), (["--verbose"], ["--", "--resume", "--", "prompt"]))
-        self.assertEqual(split_flags(()), ([], []))
+        for words, expected in (
+            ((), ([], [])),
+            (("--", "literal"), ([], ["--", "literal"])),
+            (("--verbose",), (["--verbose"], [])),
+            (("--verbose", "--"), (["--verbose"], ["--"])),
+        ):
+            with self.subTest(words=words):
+                self.assertEqual(split_flags(words), expected)
 
     def test_selection_retains_short_names_and_skips_option_values(self):
         for flag in ("-r", "-rsession", "-r=session", "--resume=session"):
