@@ -534,7 +534,9 @@ def deliver(cfg, issue: str, workdir: str, event: DelegateEvent, *, gql, now=tim
         ok = _limited(ctx, cfg.runs_log, claim, attempt, event.limit["resets_at"]) and ok
     elif outcome is None:
         log("writeback", "no-outcome", ctx.ident, sid=ctx.sid, error=event.error or "no result")
-    return session(end=(event.returncode, outcome, event.limit is not None)) and ok
+    ended = session(end=(event.returncode, outcome, event.limit is not None))
+    log("writeback", "end", ctx.ident, sid=ctx.sid, exit=event.returncode)
+    return ended and ok
 
 
 def limit(ctx, resets_at: float | None) -> bool:

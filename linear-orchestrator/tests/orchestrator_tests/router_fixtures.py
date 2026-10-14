@@ -12,6 +12,7 @@ from dataclasses import replace
 from datetime import UTC, datetime, timedelta, timezone
 from unittest import mock
 
+from agent_pm.delegate import Spec as DelegateSpec
 from agent_pm.linear_orchestrator.engine import (
     config,
     inputs,
@@ -103,6 +104,12 @@ RECHECK = (
 
 
 NO = SessionStatus("no", None, "")
+
+
+RESUME = ["ts", "kind", "issue", "sid", "role", "client", "delegate_kind"]
+
+
+START = [*RESUME, "uuid", "project", "target", "key"]
 
 
 def ago(**kw):
@@ -538,7 +545,6 @@ class TickBase(Base):
                 config_path=self.config_path,
                 hour=hour,
                 gql=fake,
-                driver=self.api,
                 delegate_cls=delegate_cls,
                 start=self.start,
                 **outer or {},
@@ -553,11 +559,20 @@ class TickBase(Base):
         return self.unmap("".join(f"{line}\n" for line in self.lines))
 
     def last_run(self):
+        """runs.jsonl's last row, a start or resume row."""
         entry = json.loads(self.state.splitlines()[-1])
-        self.assertEqual(
-            list(entry), ["ts", "kind", "issue", "sid", "role", "client", "delegate_kind"]
-        )
+        self.assertEqual(list(entry), START if entry["kind"] == "start" else RESUME)
         return entry["kind"], entry["issue"], entry["sid"], entry["role"], entry["client"]
+
+    def raw_runs(self):
+        with open(self.runs, encoding="utf-8") as f:
+            return f.read()
+
+    def launched_run(self):
+        """The run the tick handed to its start, as last_run's row would show it."""
+        a = self.start.launches[-1]
+        role = config.role_for(self.cfg().roles, a.assignee)
+        return "start" if a.mode == "new" else "resume", a.issue, self.unmap(a.sid), role, a.client
 
     def launched(self):
         (launch,) = self.start.launches
@@ -581,6 +596,10 @@ class OuterBase(TickBase):
         return service not in self.missing
 
     def outer(self, *, assignee=ENGINEER, task=None, mode="new", ident=ID, sid=SID, client="a"):
+        """router.outer on a Spec; a resume's run is recorded first, as Recover finds it."""
+        if mode == "resume" and not os.path.exists(self.runs):
+            role = config.role_for(self.cfg().roles, assignee) or "engineer"
+            runs.note(self.runs, "start", issue=ident, sid=sid, role=role, client=client)
         a = Spec(
             uuid=UUID,
             input="",
@@ -601,25 +620,39 @@ class OuterBase(TickBase):
                 gql=functools.partial(self.gql, service=HARNESS),
                 run=self.run_,
                 keychain=self.keychain,
-                driver=self.api,
+                now=lambda: NOW,
             )
         self.err = err.getvalue()
         return rc
 
     def detached(self, role="engineer"):
-        name, argv, cwd, env = self.api.detached[-1]
-        self.assertEqual((name, cwd), (f"agent-pm-{role}-{ID}", self.rd))
-        expected = {
-            **os.environ,
-            "PATH": config.path(),
-            "PYTHONPATH": config.pythonpath(),
-        }
-        self.assertEqual(set(env), set(expected))
-        for key, value in expected.items():
-            self.assertTrue(env[key] == value, key)
-        return argv
+        """The Delegate Spec of the last detached run, after its role, workdir and options."""
+        found, spec, options = self.api.detached[-1]
+        self.assertEqual((found, spec.workdir), (role, self.rd))
+        self.assertEqual(
+            options,
+            {
+                "display": None,
+                "callback": ["agent-pm-linear", "writeback", "--issue", ID, "--workdir", self.rd],
+                "overlays": (self.cfg().core,),
+            },
+        )
+        return spec
+
+    def expected(
+        self, role="engineer", *, task=None, sid=SID, client="a", resume=False, text=INPUT
+    ):
+        return DelegateSpec(
+            text,
+            self.rd,
+            task=task,
+            client=client,
+            sid=sid,
+            resume=resume,
+            name=f"{role}-{ID}-{sid[:8]}",
+            out=os.path.join(self.rd, "out.md"),
+            cwd=self.rd,
+        )
 
     def input(self, **kw):
-        last = self.detached(**kw)[-1]
-        self.assertTrue(last.startswith("--input="), last[:40])
-        return last.removeprefix("--input=")
+        return self.detached(**kw).input

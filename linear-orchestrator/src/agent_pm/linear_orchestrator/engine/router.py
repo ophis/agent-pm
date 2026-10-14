@@ -1,6 +1,7 @@
 """Router: the Linear orchestrator's scheduler. Decides which agent run starts or resumes among
-the team's issues assigned to role accounts, then starts it through the outer (run.py in a detached
-Driver session).
+the team's issues assigned to role accounts, then only triggers it: outer prepares its input, writes
+its runs.jsonl row and detaches its LinearRun, whose Delegate's harness calls `agent-pm-linear
+writeback` on each event; the router exits while the run goes on.
 
 agent-pm-linear router [--now] [--dry-run] [--issue ID] | --brake ROLE
 
@@ -9,7 +10,7 @@ agent-pm-linear router [--now] [--dry-run] [--issue ID] | --brake ROLE
   --now       Skip the 01:00-06:59 hours check.
 --issue ID    Start or resume only this issue, without the hours, max_runs and usage gates. Exits 1 a config error,
               Linear unavailable, agent runs unknown, a live agent run of the issue or nothing started, else the
-              outer's code: 0 started or bounced, 1 the start failed, 2 a config error of the issue, 3 transient.
+              outer's code: 0 detached or bounced, 1 the launch failed, 2 a config error of the issue, 3 transient.
 --dry-run     With either: print the plan (a tick's with its usage checks); change nothing, start nothing; exit 0.
 --brake ROLE  Print ROLE's client usage; exit 0 if a deep-research round may start, 1 if not or unknown, 2 no such
               role.
@@ -65,8 +66,6 @@ from agent_pm.linear_orchestrator.engine.types import (
     Transient,
     Unavailable,
 )
-from agent_pm.session import ConfigError as SessionConfigError
-from agent_pm.session import DriverError
 from agent_pm.utils import one_line, parse_time
 
 STALE = timedelta(hours=2)
@@ -78,7 +77,6 @@ INTERRUPTED = "The previous agent run was interrupted. Moving this issue back to
 BUSY = "another router is running"
 USAGE = "usage: agent-pm-linear router [--now] [--dry-run] [--issue ID] | --brake ROLE"
 FLAGS = {"--dry-run": "dry", "--now": "now"}
-RUN = ("-P", "-m", "agent_pm.linear_orchestrator.cli", "run")
 DONE = {"completed", "canceled", "duplicate"}
 UNREADABLE = "(unreadable)"
 RELATIONS = "inverseRelations(first: 50) { nodes { type issue { identifier state { type } } } }"
@@ -438,28 +436,46 @@ class Board:
         return taken, task, role, client
 
 
-def begin(cfg, spec: Spec, *, role, now=datetime.now):
-    entries = parse_log(cfg.runs_log)
-    if spec.mode == "new" and spec.issue in latest(entries):
+def begin(cfg, spec: Spec) -> Spec:
+    """A new run of an issue with a recorded run closes that run first (its retained TUI)."""
+    if spec.mode == "new" and spec.issue in latest(parse_log(cfg.runs_log)):
         try:
             LinearRun.attach(spec.issue, cfg=cfg).close()
         except (ConfigError, delegate.ConfigError, delegate.DriverError) as error:
             log("router", "tui-error", spec.issue, msg=one_line(error))
         else:
             log("router", "tui-closed", spec.issue)
-    kind = "resume" if spec.mode == "resume" else "start"
-    delegate_kind = cfg.delegate_kind if spec.mode == "new" else delegate_of(entries, spec.sid)
+    return spec
+
+
+def record(cfg, spec: Spec, *, role, target, now) -> str:
+    """The run's runs.jsonl row, before its launch: a start row holds the claim's context (issue
+    uuid, project, target, the role's key), which its write-back reads; returns its Delegate kind.
+    """
+    if spec.mode == "new":
+        kind, claim = (
+            cfg.delegate_kind,
+            {
+                "uuid": spec.uuid,
+                "project": spec.project,
+                "target": target,
+                "key": cfg.roles[role].key,
+            },
+        )
+    else:
+        kind, claim = delegate_of(parse_log(cfg.runs_log), spec.sid), {}
     note(
         cfg.runs_log,
-        kind,
+        "start" if spec.mode == "new" else "resume",
         issue=spec.issue,
         sid=spec.sid,
         role=role,
         client=spec.client,
-        delegate_kind=delegate_kind,
+        delegate_kind=kind,
         now=now,
+        **claim,
     )
-    return spec
+    return kind
 
 
 def fail(ident, kind, reason, rc):
@@ -467,7 +483,8 @@ def fail(ident, kind, reason, rc):
     return rc
 
 
-def outer(a, cfg, *, gql, run, keychain, driver):
+def outer(a, cfg, *, gql, run, keychain, now=datetime.now):
+    """Prepares the issue's input, records the run, then detaches its LinearRun."""
     os.environ["PATH"] = config.path()
     if reason := a.identity_error():
         print(f"router.py: {reason}", file=sys.stderr)
@@ -482,11 +499,9 @@ def outer(a, cfg, *, gql, run, keychain, driver):
         return fail(a.issue, "config-error", f"no Keychain item for role key {key}", 2)
     if a.mode == "resume":
         try:
-            st = driver.session_status(
-                a.client, a.sid, cfg.run_dir(a.issue), workdir=cfg.run_dir(a.issue)
-            )
+            st = LinearRun.attach(a.issue, cfg=cfg, sid=a.sid).session_info()
             why = None if st.resumable == "yes" else st.resumable
-        except (SessionConfigError, DriverError) as e:
+        except (ConfigError, delegate.ConfigError, delegate.DriverError) as e:
             why = one_line(e)
         if why:
             return fail(a.issue, "transient", f"session {a.sid} not resumable ({why})", 3)
@@ -538,25 +553,27 @@ def outer(a, cfg, *, gql, run, keychain, driver):
             target=repo,
             docs=cfg.docs,
         ).replace("\x00", "")
-        # a lone surrogate would fail execve
+        # a lone surrogate cannot be encoded
         text = text.encode("utf-8", "replace").decode()
     except OSError as e:
         log("router", "launch-error", a.issue, error=f"input: {one_line(e)}")
         return 1
-    spec = replace(a, input=text, target=f"{repo.owner}/{repo.name}" if build and repo else None)
-    env = dict(os.environ)
-    if roots := config.pythonpath():
-        env["PYTHONPATH"] = roots
-    else:
-        env.pop("PYTHONPATH", None)
+    slug = f"{repo.owner}/{repo.name}" if build and repo else None
+    kind = record(cfg, a, role=role, target=slug, now=now)
     try:
-        driver.detach(
-            config.driver_name(role, a.issue),
-            [sys.executable, *RUN, *spec.to_argv()],
-            cwd=rd,
-            env=env,
-        )
-    except (SessionConfigError, DriverError) as e:
+        LinearRun(
+            a.issue,
+            text,
+            rd,
+            cfg=cfg,
+            role=role,
+            sid=a.sid,
+            task=a.task,
+            client=a.client,
+            resume=a.mode == "resume",
+            delegate_kind=kind,
+        ).detach()
+    except (ConfigError, delegate.ConfigError, delegate.DriverError) as e:
         log("router", "launch-error", a.issue, error=one_line(e))
         return 1
     return 0
@@ -620,17 +637,15 @@ def choose(board, gate, live_ids, full, counts):
             board.role(issue), issue["identifier"], key=(delegate_of(board.entries, sid), client)
         ):
             board.plan(("resume", issue, sid), counts)
-            return Spec.from_issue(
-                issue, mode="resume", sid=sid, task=None, client=client
-            ), board.role(issue)
+            return Spec.from_issue(issue, mode="resume", sid=sid, task=None, client=client)
     if not (queue := board.queue(full)):
         return None
     board.plan(("new", len(queue)), counts)
     if not (taken := board.take(full=full)):
         board.say("skip", reason="nothing claimed")
         return None
-    issue, task, role, client = taken
-    return Spec.from_issue(issue, mode="new", sid=str(uuid.uuid4()), task=task, client=client), role
+    issue, task, _, client = taken
+    return Spec.from_issue(issue, mode="new", sid=str(uuid.uuid4()), task=task, client=client)
 
 
 def tick(opts, cfg, gql, *, start, clock=datetime.now, hour=None):
@@ -667,13 +682,11 @@ def tick(opts, cfg, gql, *, start, clock=datetime.now, hour=None):
         with Held(dry) as walk:
             gate = Gate(runs, now, dry=dry, say=walk, cfg=cfg)
             board = Board(gql, entries, cfg, now=now, dry=dry, gate=gate, say=walk)
-            run = choose(board, gate, {i for ids in live.values() for i in ids}, full, counts)
-            if run is None or dry:
+            spec = choose(board, gate, {i for ids in live.values() for i in ids}, full, counts)
+            if spec is None or dry:
                 return 0
-            spec, role = run
             walk.write()  # the outer logs past the walk
-            a = begin(cfg, spec, role=role, now=clock)
-            return start_run(start, a, walk)
+            return start_run(start, begin(cfg, spec), walk)
 
 
 def run_issue(opts, cfg, gql, start, *, clock=datetime.now):
@@ -690,7 +703,7 @@ def run_issue(opts, cfg, gql, start, *, clock=datetime.now):
         if live is None:
             print("router.py: agent runs unknown; try again", file=sys.stderr)
             return stop
-        if role := next((r for r, ids in live.items() if ident in ids), None):
+        if any(ident in ids for ids in live.values()):
             attach = LinearRun.attach(ident, cfg=cfg).attach_command()
             print(f"router.py: {ident} has a live agent run: {attach}", file=sys.stderr)
             return stop
@@ -706,17 +719,16 @@ def run_issue(opts, cfg, gql, start, *, clock=datetime.now):
             spec = Spec.from_issue(
                 issue, mode="resume", sid=sid, task=None, client=client_of(entries, sid)
             )
-            role = board.role(issue)
         elif board.is_blocked(ident) or not (taken := board.take(ident)):
             return stop
         else:
-            issue, task, role, client = taken
+            issue, task, _, client = taken
             spec = Spec.from_issue(
                 issue, mode="new", sid=str(uuid.uuid4()), task=task, client=client
             )
         if dry:
             return 0
-        return start(begin(cfg, spec, role=role, now=clock))
+        return start(begin(cfg, spec))
 
 
 def brake(role, cfg):
@@ -754,7 +766,6 @@ def main(
     run=None,
     keychain=None,
     start=None,
-    driver=None,
     delegate_cls=None,
 ):
     gql = gql or linear_gql
@@ -787,14 +798,7 @@ def main(
         return brake(role, cfg)
     gql = functools.partial(gql, service=cfg.harness_key)
     if start is None:
-        try:
-            driver = driver or delegate.configure()
-        except delegate.ConfigError as error:
-            config.report_error("router", ConfigError(str(error), cfg.logs_dir), dry=opts["dry"])
-            return 1
-        start = functools.partial(
-            outer, cfg=cfg, gql=gql, run=run, keychain=keychain, driver=driver
-        )
+        start = functools.partial(outer, cfg=cfg, gql=gql, run=run, keychain=keychain, now=now)
     try:
         if opts["issue"]:
             return run_issue(opts, cfg, gql, start, clock=now)

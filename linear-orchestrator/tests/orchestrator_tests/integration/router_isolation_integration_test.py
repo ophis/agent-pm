@@ -1,5 +1,6 @@
 """Real Git and interpreter contracts in the test sandbox."""
 
+import json
 import os
 
 from agent_pm.linear_orchestrator.engine import target
@@ -52,9 +53,8 @@ class RunLaunching(OuterBase):
             with self.subTest(who=who_):
                 self.run_.table = [(listing, ok("[]"))]
                 self.assertEqual(self.outer(assignee=who_), 0)
-                argv = self.detached(role)
-                self.assertNotIn("--target", argv)
-                self.assertEqual(argv[-1].splitlines()[1], f"Repo: {clone}")
+                self.assertEqual(self.detached(role).input.splitlines()[1], f"Repo: {clone}")
+                self.assertIsNone(json.loads(self.raw_runs().splitlines()[-1])["target"])
 
     def test_a_resume_over_a_clone_checkout_keeps_its_repo(self):
         self.local_clone()

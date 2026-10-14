@@ -550,12 +550,7 @@ class RunTui(Case):
     def prepare_cleanup(self, *extra):
         cfg = config.load()
         event_log.use_logs(cfg.logs_dir)
-        return router.begin(
-            cfg,
-            RunSpec.from_argv(self.argv(*extra)),
-            role="engineer",
-            now=lambda: datetime.fromisoformat(NOW),
-        )
+        return router.begin(cfg, RunSpec.from_argv(self.argv(*extra)))
 
     def test_selected_recorded_run_closes_all_owned_sessions_before_new_run(self):
         for extra in ((), ("--tui",)):

@@ -22,8 +22,8 @@ def _answer(value):
 class FakeApi:
     """`live` None: the sessions unknown (sessions raises DriverError); `statuses` (per sid, default
     resumable yes), `usages` (per client, default LOW) and `shown`: a value or an exception to
-    raise; `records`: session_record's per sid; detach raises `detach_error`, else its name goes
-    live. `order` logs the sessions, close, show and detach calls.
+    raise; `records`: session_record's per sid. `order` logs the sessions, close, show and detach
+    calls; `constructed`, `detached` and their errors: delegate_fixture's.
     """
 
     def __init__(self, order=None, gql=None):
@@ -31,7 +31,8 @@ class FakeApi:
         self.gql = gql
         self.live, self.errors, self.shown, self.info = [], {}, None, []
         self.statuses, self.records, self.usages = {}, {}, {}
-        self.usage_calls, self.detached, self.detach_error = [], [], None
+        self.usage_calls, self.constructed, self.detached, self.runs_at_detach = [], [], [], []
+        self.construct_error = self.detach_error = None
 
     def sessions(self, match=None):
         self.order.append(("sessions", match))
@@ -66,14 +67,6 @@ class FakeApi:
     def usage(self, client):
         self.usage_calls.append(client)
         return _answer(self.usages.get(client, LOW))
-
-    def detach(self, name, argv, cwd, env, *, opener=None):
-        self.order.append(("detach", name))
-        self.detached.append((name, list(argv), cwd, dict(env)))
-        if self.detach_error is not None:
-            raise self.detach_error
-        if self.live is not None:
-            self.live.append(name)
 
     def attach_command(self, name):
         return f"attach {name}"

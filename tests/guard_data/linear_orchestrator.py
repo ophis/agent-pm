@@ -20,7 +20,6 @@ ORCH_FILES = f"{ORCH_PROJECT}/{ORCH_SRC}"
 ORCH_SESSION_CONTRACT = "linear_orchestrator reaches session only through delegate"
 
 ORCH_SESSION_IMPORTS = {
-    f"{ORCH_PKG}.engine.router": {"ConfigError", "DriverError"},  # until TASK-374
     f"{ORCH_PKG}.engine.run": {"ConfigError", "DriverError", "SIGNALS"},  # until TASK-374
 }
 

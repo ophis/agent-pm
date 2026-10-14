@@ -278,7 +278,8 @@ class ExecutablePath(Case):
                     "read": [],
                     "kept": [],
                     "path": (
-                        "/later/bin:/opt/homebrew/bin:/later/.local/bin:/usr/local/bin:/usr/bin:/bin"
+                        f"/later/bin:{os.path.join(REPO, 'bin')}:/opt/homebrew/bin:"
+                        "/later/.local/bin:/usr/local/bin:/usr/bin:/bin"
                     ),
                 },
             )

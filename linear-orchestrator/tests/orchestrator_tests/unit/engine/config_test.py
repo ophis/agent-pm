@@ -741,9 +741,13 @@ class ExecutablePath(Case):
         with mock.patch.dict(os.environ, {**rest, "HOME": home, **env}, clear=True):
             return config.path()
 
-    def test_agent_pm_path_goes_in_front_empty_or_unset_is_the_default(self):
+    def test_agent_pm_path_then_this_installations_bin_then_the_default(self):
+        installed = os.path.join(REPO, "bin")
+        self.assertTrue(os.path.isfile(os.path.join(installed, "agent-pm-linear")))
         for home in (self.home, os.path.join(self.home, "other")):
-            default = f"/opt/homebrew/bin:{home}/.local/bin:/usr/local/bin:/usr/bin:/bin"
+            default = (
+                f"{installed}:/opt/homebrew/bin:{home}/.local/bin:/usr/local/bin:/usr/bin:/bin"
+            )
             for env, front in (
                 ({"AGENT_PM_PATH": "/fakes/bin:/more"}, "/fakes/bin:/more:"),
                 ({}, ""),
@@ -791,7 +795,6 @@ class TuiSessionNames(Case):
         for role_name in ("engineer", "dummy-tester", "pm2"):
             with self.subTest(role=role_name):
                 self.assertEqual(config.tui_prefix(role_name, ID), f"{role_name}-{ID}-")
-        self.assertEqual(config.driver_name("pm", ID), f"agent-pm-pm-{ID}")
 
     def test_a_prefix_outside_the_contract(self):
         for role_name, ident in (

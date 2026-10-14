@@ -1,4 +1,4 @@
-"""The pm to engineer flow over router.py --issue, run.py in its detached Driver session and
+"""The pm to engineer flow over router.py --issue, the run's detached harness and its write-back, and
 promote.py: a PRD issue becomes an ENG issue; a rework starts a new session; a failed run is not
 promoted; a Linear outage relating the child is retried; a run without an outcome resumes its
 session; a lost transcript (resumable no) sends the issue back to Todo for a new session.
@@ -109,7 +109,11 @@ class PmToEngineer(Segment):
         self.handoff(ident, BUILD)
         self.promote(ident, "pm", "engineer")
         self.assertEqual(
-            [e["issue"] for e in self.logged() if (e["src"], e["kind"]) == ("run", "no-outcome")],
+            [
+                e["issue"]
+                for e in self.logged()
+                if (e["src"], e["kind"]) == ("writeback", "no-outcome")
+            ],
             [ident],
         )
 

@@ -219,6 +219,7 @@ class OrchestratorLayout(Sample):
             [
                 f"{ORCH_PROJECT}/{OPKG}/engine/new.py: {ORCH_PKG}.engine.new imports Driver from agent_pm.session; go through agent_pm.delegate",
                 f"{ORCH_PROJECT}/{OPKG}/engine/ops.py: {ORCH_PKG}.engine.ops imports DriverError from agent_pm.session; go through agent_pm.delegate",
+                f"{ORCH_PROJECT}/{OPKG}/engine/router.py: {ORCH_PKG}.engine.router imports DriverError from agent_pm.session; go through agent_pm.delegate",
                 f"{ORCH_PROJECT}/{OPKG}/engine/router.py: {ORCH_PKG}.engine.router imports Session from agent_pm.session; go through agent_pm.delegate",
             ],
         )

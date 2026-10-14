@@ -1,8 +1,8 @@
-"""router.py as a subprocess on the Driver: run.py in its detached session on a private tmux server,
-fake_claude as client claude, FakeLinear over HTTP. A claim runs to In Review; a crash or a Linear
-failure mid write-back resumes the same session; a Linear outage stops a tick and --issue; a tick's
-usage gate; a long description reaches the run; a SIGTERM'd run.py ends its run; the researcher's
-gate runs on a session's PYTHONPATH.
+"""router.py as a subprocess: it detaches the run's LinearRun, whose harness runs on a private tmux
+server and calls back agent-pm-linear writeback; fake_claude as client claude, FakeLinear over HTTP.
+A claim runs to In Review; a crash or a Linear failure mid write-back resumes the same session; a
+Linear outage stops a tick and --issue; a tick's usage gate; a long description reaches the run; a
+SIGTERM'd harness ends its run and its agent; the researcher's gate runs on a session's PYTHONPATH.
 """
 
 import contextlib
@@ -19,9 +19,9 @@ from orchestrator_tests.integration.flow_fixtures import (
     ACCOUNTS,
     HARNESS_EMAIL,
     HUMAN,
+    KEYS,
     PROJECT,
     REPO,
-    RUN,
     TIMEOUT,
     Flow,
     TmuxFlow,
@@ -54,6 +54,7 @@ HARNESS_OPS = {
     "linear.Q_COMMENT",
 }
 ENGINEER_OPS = {
+    "linear.Q_COMMENT",
     "linear.M_COMMENT_ID",
     "writeback.Q_ATTACHED",
     "linear.M_SUBSCRIBE",
@@ -61,6 +62,34 @@ ENGINEER_OPS = {
     "linear.Q_ISSUE_STATE",
     "linear.M_STATE",
 }
+
+
+# write-back looks each of the run's comments (start, outcome) up before posting it: its event may
+# come again (TASK-409); not found is the fake's error
+LOOKUPS = [lookup(ENGINEER)] * 2
+
+
+HARNESS_MODULE = "-m agent_pm.delegate.engine.harness"
+
+
+def ancestor(pid):
+    """pid's parent and its command line."""
+    res = subprocess.run(
+        ["ps", "-o", "ppid=", "-p", str(pid)],
+        capture_output=True,
+        text=True,
+        timeout=TIMEOUT,
+        check=True,
+    )
+    parent = int(res.stdout)
+    res = subprocess.run(
+        ["ps", "-o", "command=", "-p", str(parent)],
+        capture_output=True,
+        text=True,
+        timeout=TIMEOUT,
+        check=True,
+    )
+    return parent, res.stdout
 
 
 def gone(pid):
@@ -142,13 +171,17 @@ class Router(TmuxFlow):
                     "role": "engineer",
                     "client": "claude",
                     "delegate_kind": "harness",
+                    "uuid": self.issue(ID)["id"],
+                    "project": PROJECT["id"],
+                    "target": REPO,
+                    "key": KEYS["engineer"],
                 }
             ],
         )
         lines = self.input(sid).splitlines()
         self.assertIn(f"Repo: {REPO}", lines)
         self.assertIn(f"Branch: {BRANCH}", lines)
-        self.assertEqual(self.problems(), [FIRST_WRITE])
+        self.assertEqual(self.problems(), [FIRST_WRITE, *LOOKUPS])
         self.assertEqual(
             {(r.op, r.account) for r in self.requests()},
             {(op, HARNESS_EMAIL) for op in HARNESS_OPS} | {(op, ENGINEER) for op in ENGINEER_OPS},
@@ -165,29 +198,18 @@ class Router(TmuxFlow):
         live_tmux.wait(
             lambda: "start" in self.ledger(ID).get(sid, []), TIMEOUT, "write-back's start step"
         )
-        driver = self.driver("engineer", ID)
+        harness = self.harness("engineer", ID, sid)
         [agent] = self.started()
-        parent = subprocess.run(
-            ["ps", "-o", "ppid=", "-p", str(agent["pid"])],
-            capture_output=True,
-            text=True,
-            timeout=TIMEOUT,
-            check=True,
-        )
-        run_pid = int(parent.stdout)
-        command = subprocess.run(
-            ["ps", "-o", "command=", "-p", str(run_pid)],
-            capture_output=True,
-            text=True,
-            timeout=TIMEOUT,
-            check=True,
-        )
-        self.assertIn(f"{RUN[0]} {RUN[1]} ", command.stdout)
-        self.assertIn(f"--sid={sid} ", command.stdout)
-        os.kill(run_pid, signal.SIGKILL)
+        pid, command = agent["pid"], ""
+        for _ in range(4):  # the agent's nearest harness ancestor
+            pid, command = ancestor(pid)
+            if HARNESS_MODULE in command:
+                break
+        self.assertIn(f"{HARNESS_MODULE} {self.runs_dir}/{ID}", command)
+        os.kill(pid, signal.SIGKILL)
         with contextlib.suppress(ProcessLookupError):
             os.kill(agent["pid"], signal.SIGKILL)
-        live_tmux.wait(lambda: not self.live(driver), TIMEOUT, f"{driver} to end")
+        live_tmux.wait(lambda: not self.live(harness), TIMEOUT, f"{harness} to end")
         self.assertEqual(self.state(ID), "in_progress")
         [(author, session)] = [c for c in self.comments(ID) if c[1].startswith(f"Run {sid} · ")]
         self.assertEqual(author, HARNESS_EMAIL)
@@ -211,7 +233,7 @@ class Router(TmuxFlow):
             if v["b"].startswith("Build started")
         ]
         self.assertEqual(len(started), 1)
-        self.assertEqual(self.problems(), [FIRST_WRITE, lookup(ENGINEER)])
+        self.assertEqual(self.problems(), [FIRST_WRITE, *LOOKUPS])
 
     def test_a_linear_failure_mid_write_back_resumes_the_session(self):
         self.fake.fail("linear.M_STATE", "503", account=ENGINEER)
@@ -242,7 +264,9 @@ class Router(TmuxFlow):
         ]
         self.assertEqual(len(ready), 1)
         self.assertEqual(len(self.sent("writeback.M_ATTACH", ENGINEER)), 1)
-        self.assertEqual(self.problems(), [FIRST_WRITE, ("linear.M_STATE", ENGINEER, "503")])
+        self.assertEqual(
+            self.problems(), [FIRST_WRITE, *LOOKUPS, ("linear.M_STATE", ENGINEER, "503")]
+        )
 
     def outage(self, *argv):
         self.fake.fail("linear.Q_TEAM", "503")
@@ -317,12 +341,12 @@ class Router(TmuxFlow):
             lambda: "start" in self.ledger(ID).get(sid, []), TIMEOUT, "write-back's start step"
         )
         [agent] = self.started()
-        driver = self.driver("engineer", ID)
-        pane = self.server.tmux("list-panes", "-t", f"={driver}", "-F", "#{pane_pid}")
+        harness = self.harness("engineer", ID, sid)
+        pane = self.server.tmux("list-panes", "-t", f"={harness}", "-F", "#{pane_pid}")
         self.assertEqual(pane.returncode, 0, pane.stderr)
         os.kill(int(pane.stdout), signal.SIGTERM)
         self.wait_end(sid, ID)
-        [end] = [e for e in self.logged() if (e["src"], e["kind"]) == ("run", "end")]
+        [end] = [e for e in self.logged() if (e["src"], e["kind"]) == ("writeback", "end")]
         self.assertEqual((end["issue"], end["exit"]), (ID, 128 + signal.SIGTERM))
         [delegate_end] = [record for record in self.records(ID) if record["kind"] == "end"]
         self.assertEqual((delegate_end["sid"], delegate_end["rc"]), (sid, 128 + signal.SIGTERM))
@@ -337,16 +361,6 @@ class Gate(Flow):
     SHIMS = ("claude", "python3")
 
     def test_the_researchers_gate_on_a_sessions_core_only_pythonpath(self):
-        local = os.path.join(self.agent_pm, "config.local.toml")
-        with open(local) as stream:
-            settings = stream.read()
-        with open(local, "w") as stream:
-            stream.write(
-                settings.replace(
-                    "orchestrator_tests.integration.legacy_run_delegate:LegacyRunDelegate",
-                    "agent_pm.delegate.engine.harness_delegate:HarnessDelegate",
-                )
-            )
         shim = os.path.join(self.bin, "python3")
         with open(shim, "w") as f:
             f.write(f'#!/bin/sh\nexec {shlex.quote(sys.executable)} "$@"\n')

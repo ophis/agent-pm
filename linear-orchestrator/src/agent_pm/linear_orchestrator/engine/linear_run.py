@@ -1,10 +1,11 @@
-"""A Linear issue's run, owned and recovered through its recorded Delegate implementation."""
+"""A Linear issue's run, owned and recovered through its recorded Delegate implementation; its
+harness calls `agent-pm-linear writeback --issue ID --workdir <workdir>` on each event.
+"""
 
 from __future__ import annotations
 
 import os
 import re
-from collections.abc import Sequence
 from dataclasses import replace
 
 from agent_pm.delegate import Delegate, Spec
@@ -26,10 +27,10 @@ class LinearRun:
         task: str | None = None,
         client: str | None = None,
         mode: str = "headless",
+        resume: bool = False,
         display: Display = None,
         delegate_kind: str | None = None,
         delegate_cls: type | None = None,
-        callback: Sequence[str] | None = None,
     ):
         self._identity(issue, sid)
         self.issue, self.sid = issue, sid
@@ -43,13 +44,14 @@ class LinearRun:
                 task=task,
                 client=client,
                 sid=sid,
+                resume=resume,
                 mode=mode,
                 name=f"{role}-{issue}-{sid[:8]}",
                 out=os.path.join(workdir, "out.md"),
                 cwd=workdir,
             ),
             display=display,
-            callback=callback,
+            callback=["agent-pm-linear", "writeback", "--issue", issue, "--workdir", workdir],
             overlays=(cfg.core,),
         )
 

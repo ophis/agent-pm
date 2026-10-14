@@ -243,21 +243,6 @@ class Spec:
             )
         return cls(**vars(parser.parse_args(argv)))
 
-    def to_argv(self) -> list[str]:
-        argv = []
-        for item in fields(self):
-            value = vars(self)[item.name]
-            if value is None or value is False:
-                continue
-            option = "--" + item.name.replace("_", "-")
-            if value is True:
-                argv.append(option)
-            elif item.name in ("uuid", "target"):
-                argv.extend((option, value))
-            else:
-                argv.append(f"{option}={value}")
-        return argv
-
     def identity_error(self) -> str | None:
         if not re.fullmatch(ISSUE_ID, self.issue) or not UUID_RE.fullmatch(self.sid):
             return f"bad issue or session id: {self.issue} {self.sid}"
