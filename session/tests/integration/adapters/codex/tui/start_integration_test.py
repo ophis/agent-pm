@@ -198,8 +198,6 @@ print(json.dumps([
             tui_start._bootstrap([" " * (tui_start.ANSWER_MAX + 1)])
         decode.assert_not_called()
 
-
-class StartTest(Base):
     def test_bootstrap_reports_lone_surrogate_as_one_line_and_failure_status(self):
         code = """import runpy, sys
 sys.argv = [sys.argv[1], chr(0xD800)]
@@ -218,6 +216,7 @@ runpy.run_path(sys.argv[0], run_name="__main__")
         )
 
 
+class StartTest(Base):
     def test_shared_schema_preserves_hooks_in_isolated_scripts_and_adapter(self):
         expected = (
             ("SessionStart", "sessionStart", "activity"),
