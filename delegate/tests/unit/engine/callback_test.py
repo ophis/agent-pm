@@ -6,7 +6,6 @@ callback_error row.
 import json
 import os
 import signal
-import subprocess
 from dataclasses import asdict
 from unittest import mock
 
@@ -25,6 +24,7 @@ from agent_pm.utils import Stopped
 
 from delegate.tests.case import Case
 from delegate.tests.harness import SID
+from utils.tests.process_fixtures import DEVNULL, PIPE, TimeoutExpired
 
 RUN = {"sid": SID, "attempt": 3}
 ARGV = ("writeback", "--issue", "A B")
@@ -139,7 +139,7 @@ class Delivery(Case):
         self.assertEqual(tuple(argv), ARGV)
         self.assertEqual(
             (kwargs["cwd"], kwargs["stdin"], kwargs["stdout"], kwargs["process_group"]),
-            (self.state, subprocess.PIPE, subprocess.DEVNULL, 0),
+            (self.state, PIPE, DEVNULL, 0),
         )
         self.assertNotIn("shell", kwargs)
         _, given, timeout = communicate
@@ -154,7 +154,7 @@ class Delivery(Case):
             (
                 (7, ["communicate", "exit"], "callback exited 7"),
                 (
-                    subprocess.TimeoutExpired(list(ARGV), CALLBACK_TIMEOUT),
+                    TimeoutExpired(list(ARGV), CALLBACK_TIMEOUT),
                     ["communicate", "killpg", "wait", "exit"],
                     f"callback timed out after {CALLBACK_TIMEOUT} s",
                 ),
