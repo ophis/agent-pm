@@ -106,7 +106,7 @@ class Gate:
             self.command(executable, argv, cwd, os.environ if env is None else env)
         elif event in {"os.exec", "os.posix_spawn"}:
             executable, argv, env = args
-            self.command(executable, argv, None, env)
+            self.command(executable, argv, None, os.environ if env is None else env)
         elif event == "os.system":
             self.fail("shell launch cannot verify private tool arguments")
         elif event == "open" and self.unit:

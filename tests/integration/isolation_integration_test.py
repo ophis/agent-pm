@@ -74,6 +74,16 @@ sys.audit("subprocess.Popen", "tmux", ["tmux", "-S", str(sandbox / "socket"), "l
 sys.audit("subprocess.Popen", "tmux", ["tmux", "ls"], None, {"TMUX_TMPDIR": str(sandbox)})
 sys.audit("subprocess.Popen", "tmux", ["tmux", "capture-pane", "-p", "-S", "-40"], None, {"TMUX_TMPDIR": str(sandbox)})
 sys.audit("subprocess.Popen", "git", ["git", "status"], None, {"GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1"})
+sys.audit("os.exec", "tmux", ["tmux", "-S", str(sandbox / "socket"), "ls"], None)
+sys.audit("os.exec", "git", ["git", "status"], None)
+os.environ["GIT_DIR"] = str(marker)
+try:
+    sys.audit("os.exec", "git", ["git", "status"], None)
+except RuntimeError as error:
+    assert "git requires clean environment" in str(error)
+else:
+    raise AssertionError("exec inherited unsafe Git environment")
+del os.environ["GIT_DIR"]
 print(json.dumps(sorted(blocked)))
 """
 
