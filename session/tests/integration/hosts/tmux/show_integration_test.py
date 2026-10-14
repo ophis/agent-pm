@@ -81,7 +81,6 @@ class ShowTest(Case):
         self.assertEqual(self.server.tmux("has-session", "-t", "=mgr").returncode, 0)
 
     def test_nested_display_uses_the_private_socket_with_restricted_path(self):
-        os.symlink(self.server.program, os.path.join(self.server.bin, "tmux"))
         self.environment["PATH"] = self.server.bin
         self.assertIsNone(self.show())
         self.assert_visible_private_attach()

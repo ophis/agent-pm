@@ -154,7 +154,19 @@ class SandboxGates(Case):
         )
         self.assertTrue(directory.is_dir())
         self.assertEqual(list(directory.iterdir()), [])
-        child = subprocess.run(["tmux", "ls"], env=env, capture_output=True, text=True, timeout=10)
+        child = subprocess.run(
+            [
+                sys.executable,
+                "-I",
+                "-c",
+                "import subprocess, sys; raise SystemExit(subprocess.call([sys.argv[1], 'ls']))",
+                shutil.which("tmux"),
+            ],
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
         self.assertNotEqual(child.returncode, 0, child.stderr)
         self.assertEqual(child.stdout, "")
         after = server.tmux("ls")
