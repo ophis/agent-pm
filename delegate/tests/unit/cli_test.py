@@ -137,6 +137,36 @@ class Detach(Base):
                 Detaching.failure = failure
                 self.assertEqual(self.detaches(), (code, "", f"delegate: {failure}\n"))
 
+    def test_on_event_is_split_once_into_the_callback_argv_never_a_shell(self):
+        code, out, err = self.detaches("--on-event", "writeback --issue 'A B' $X;rm *")
+        self.assertEqual((code, out), (0, RECORD.to_line() + "\n"), err)
+        ((_, _, placement),) = Detaching.made
+        self.assertEqual(placement, {"callback": ("writeback", "--issue", "A B", "$X;rm", "*")})
+
+    def test_an_unusable_on_event_exits_2_and_constructs_nothing(self):
+        for extra in (
+            ("--on-event", "writeback 'A B"),
+            ("--on-event", ""),
+            ("--on-event", " \t "),
+            ("--on-event", "a", "--on-event", "b"),
+        ):
+            with self.subTest(extra=extra):
+                code, out, err = self.detaches(*extra)
+                self.assertEqual((code, out), (2, ""))
+                self.assertIn("--on-event", err)
+        self.assertEqual(
+            self.runs("--on-event", "writeback"),
+            (2, "", "delegate: --on-event needs --detach\n"),
+        )
+        self.assertEqual(Detaching.made, [])
+
+    def test_a_dry_run_shows_the_callback_argv_and_writes_nothing(self):
+        self.detaching = False
+        code, out, err = self.detaches("--dry-run", "--on-event", "writeback --issue 'A B'")
+        self.assertEqual(code, 0, err)
+        self.assertEqual(json.loads(out)["callback"], ["writeback", "--issue", "A B"])
+        self.assertEqual((self.launches(), os.path.exists(self.work)), ([], False))
+
     def test_dry_run_adds_the_session_names_and_the_events_file(self):
         self.detaching = False
         for mode, tui in (("headless", None), ("tui", TUI)):

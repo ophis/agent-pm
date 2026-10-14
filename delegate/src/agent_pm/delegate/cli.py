@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """agent-pm-delegate: run a role on HarnessDelegate, deliver its prompt, or query its runs.
-`run --detach` starts the run's harness and prints the run's Record line on stdout.
+`run --detach` starts the run's harness and prints the run's Record line on stdout;
+`--on-event CMD` makes the harness deliver each event to CMD (split once, never a shell).
 
 Exits 0 on success, 2 on usage or config errors, 1 on other failures.
 """
@@ -8,6 +9,7 @@ Exits 0 on success, 2 on usage or config errors, 1 on other failures.
 import argparse
 import json
 import os
+import shlex
 import sys
 from collections.abc import Sequence
 from dataclasses import asdict
@@ -82,6 +84,13 @@ def _run_options(ap: argparse.ArgumentParser) -> None:
     ap.add_argument("--mode", choices=[m.value for m in Mode], default=Mode.HEADLESS.value)
     ap.add_argument("--detach", action="store_true", help="run in a harness session of its own")
     ap.add_argument("--events", metavar="FILE", help="--detach: the run's events file")
+    ap.add_argument(
+        "--on-event",
+        action=Once,
+        type=_command,
+        metavar="CMD",
+        help="--detach: the command each event's JSON line goes to on stdin",
+    )
     ap.add_argument("--dry-run", action="store_true")
 
 
@@ -110,13 +119,14 @@ def _run(
         say(f"delegate: {e}")
         return 2
     spec = spec_of(a, sys.stdin.read() if a.input == "-" else a.input)
+    placement = {} if a.on_event is None else {"callback": a.on_event}
     try:
         if a.dry_run:
-            shown = _shown(delegate_cls.preview(a.role, spec), a)
+            shown = _shown(delegate_cls.preview(a.role, spec, **placement), a)
             print(json.dumps(shown, ensure_ascii=False, indent=1))
             return 0
         if a.detach:
-            return _detach(delegate_cls, a.role, spec)
+            return _detach(delegate_cls, a.role, spec, placement)
         result = delegate_cls(a.role, spec).run(_begun)
     except ConfigError as e:
         say(f"delegate: {e}")
@@ -124,10 +134,10 @@ def _run(
     return report(result, a.out)[0]
 
 
-def _detach(delegate_cls: type[HarnessDelegate], role: str, spec: Spec) -> int:
+def _detach(delegate_cls: type[HarnessDelegate], role: str, spec: Spec, placement: dict) -> int:
     """Prints the run's Record line once its listed sessions are live."""
     try:
-        record = delegate_cls(role, spec).detach()
+        record = delegate_cls(role, spec, **placement).detach()
     except (DriverError, OSError) as e:
         say(f"delegate: {e}")
         return 1
@@ -159,10 +169,22 @@ def _check(a: argparse.Namespace) -> None:
         raise ConfigError("--resume needs --sid")
     if a.events is not None and not a.detach:
         raise ConfigError("--events needs --detach")
+    if a.on_event is not None and not a.detach:
+        raise ConfigError("--on-event needs --detach")
     if a.detach and a.events is None:
         raise ConfigError("--detach needs --events")
     if a.detach and a.out == "-":
         raise ConfigError("--detach needs --out PATH")
+
+
+def _command(text: str) -> tuple[str, ...]:
+    try:
+        argv = tuple(shlex.split(text))
+    except ValueError as error:
+        raise argparse.ArgumentTypeError(str(error)) from None
+    if not argv:
+        raise argparse.ArgumentTypeError("empty command")
+    return argv
 
 
 def _begun(event) -> None:
