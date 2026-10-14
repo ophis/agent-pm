@@ -121,9 +121,15 @@ class UsageTest(SessionCliCase):
             with self.subTest(argv=argv):
                 self.assert_usage_error(self.session(*argv), message)
 
-    def test_descendants_without_here_exits_2(self):
-        result = self.session("ls", "--descendants")
-        self.assert_refused(result, f"{PROG}: ls: --descendants needs --here\n")
+    def test_descendants_without_here_and_records_exits_2(self):
+        for argv in (
+            ("--descendants",),
+            ("--here", "--descendants"),
+            ("--records", "--descendants"),
+        ):
+            with self.subTest(argv=argv):
+                result = self.session("ls", *argv)
+                self.assert_refused(result, f"{PROG}: ls: --descendants needs --here --records\n")
 
     def test_start_has_no_default_runtime_d1(self):
         result = self.session("start", "w1", "--cwd", self.cwd, **self.scene("w1"))

@@ -142,7 +142,7 @@ class IdentityTest(RecordCase):
         res = self.session("resume", "w1", AGENT_PM_SID=w2.sid, **self.scene("w1"))
         self.assertEqual(
             (res.returncode, res.stdout, res.stderr),
-            (2, "", f"agent-pm-session: sid {w2.sid} is worker w2's, not w1's\n"),
+            (2, "", f"agent-pm-session: sid {w2.sid} is not worker w1's (its latest: {w1.sid})\n"),
         )
         self.assertFalse(self.live("w1"))
         self.assertEqual(len(self.calls("w1")), 1)

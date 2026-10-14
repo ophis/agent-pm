@@ -177,6 +177,17 @@ class ControlTest(ControlCase):
         self.shows("w1", f"={MANAGER}:")
         self.assertEqual(len(self.calls("w1")), 1)
 
+    def test_a_key_its_host_refuses_fails_alone_and_the_batch_goes_on(self):
+        w1, w2 = self.done("w1"), self.done("w2")
+        self.tmux("kill-pane", "-t", self.server.pane_of("w2"))
+        bad = dataclasses.replace(w1, display="a/b/c/d")
+        res = self.session("show", stdin=lines(bad, w2))
+        self.assertEqual((res.returncode, res.stdout), (1, ""), res.stderr)
+        self.assertEqual(
+            res.stderr, f"{PROG}: w1: display 'a/b/c/d': not <opener>[/<split>[/<split_from>]]\n"
+        )
+        self.shows("w2", f"={MANAGER}:")
+
 
 class NotDisplayableTest(ControlCase):
     def setUp(self):

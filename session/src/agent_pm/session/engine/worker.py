@@ -207,10 +207,9 @@ class Worker:
             if not SID.fullmatch(latest):
                 raise DriverError(f"{name}: not a worker: {BY_NAME}/{name} holds no session id")
             sid = latest
-        state_file = os.path.join(root, sid, STATE_FILE)
-        if given and latest not in (None, sid) and not os.path.lexists(state_file):
+        if given and latest not in (None, sid):
             raise ConfigError(f"sid {sid} is not worker {name}'s (its latest: {latest})")
-        data = _read(state_file, f"{name}: no worker {sid}")
+        data = _read(os.path.join(root, sid, STATE_FILE), f"{name}: no worker {sid}")
         try:
             state = WorkerState.from_json(json.loads(data))
         except (ValueError, RecursionError, TypeError, ConfigError) as error:
@@ -282,14 +281,22 @@ class Worker:
             return record
         self.check(prompt="", resume=True)
         self.replace(session or self._group())
-        return self.start(prompt="", resume=True)
+        return self._start_again()
 
     def restart(self) -> Record:
         session = self._session()
         if session is None:
             raise DriverError(f"{self.state.name}: no session to restart; resume starts it")
         self.replace(session)
-        return self.start(prompt="", resume=True)
+        return self._start_again()
+
+    def _start_again(self) -> Record:
+        try:
+            return self.start(prompt="", resume=True)
+        except ConfigError as error:
+            raise DriverError(
+                f"{self.state.name}: old session closed, none started: {error}"
+            ) from None
 
     def replace(self, handle: HostProcess | None) -> None:
         """Retire its session and close `handle` (its old process group, absent is fine), then wait
@@ -314,7 +321,7 @@ class Worker:
             return None
         handle = host.attach(name)
         sid, _ = handle.session_identity()
-        if sid is not None and sid != self.state.sid:
+        if sid != self.state.sid:
             raise DriverError(f"session {name} is not worker {self.state.sid} (its sid: {sid})")
         return handle
 

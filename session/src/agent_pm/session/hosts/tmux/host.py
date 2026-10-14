@@ -587,15 +587,16 @@ class TmuxHost(Host, Displayable):
 
     def reclaim(self, token: str) -> TmuxGroup | None:
         """A group-only handle on token's controller (a private /tmp/apm-group-* directory and
-        socket of this user's) while its group lives; else None.
+        socket of this user's) while its group lives; else None; DriverError if it cannot tell.
         """
         if not isinstance(token, str):
             return None
         try:
             control = ProcessControl.attach(token)
-            return TmuxGroup(control) if control.live() else None
         except (OSError, ValueError):
             return None
+        group = TmuxGroup(control)
+        return group if group.alive() else None
 
     def rows(self, display: Display = None) -> list[SessionRow]:
         names = set(self.list(display))

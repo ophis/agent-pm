@@ -109,7 +109,6 @@ class ListingTest(ListingCase):
         self.assertEqual((w1.display, w2.display), (MANAGER, "w1"))
         self.assertEqual(self.ls("--here", "--records"), lines(w1))
         self.assertEqual(self.ls("--here", "--records", "--descendants"), lines(w1, w2))
-        self.assertEqual(self.ls("--here", "--descendants"), table(row(w1), row(w2)))
         self.assertEqual(self.ls("--here", "--records", inside="w1"), lines(w2))
 
 

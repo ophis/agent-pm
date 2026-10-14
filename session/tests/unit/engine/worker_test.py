@@ -186,6 +186,12 @@ class LoadTest(Base):
             Worker.load("w2", sid=SID)
         with self.assertRaisesRegex(ConfigError, f"^sid {OTHER} is not worker w1's"):
             Worker.load("w1", sid=OTHER)
+        Worker(state(sid=OTHER), session_cls=self.session_cls).start(prompt="", resume=False)
+        self.assertEqual(Worker.load("w1", sid=OTHER).state.sid, OTHER)
+        with self.assertRaisesRegex(
+            ConfigError, f"^sid {SID} is not worker w1's .its latest: {OTHER}"
+        ):
+            Worker.load("w1", sid=SID)
         for sid in ("..", SID.upper()):
             with self.subTest(sid=sid), self.assertRaises(ConfigError):
                 Worker.load("w1", sid=sid)
@@ -266,10 +272,14 @@ class ResumeTest(Base):
         self.assertEqual(self.calls(), ["preflight"])
 
     def test_another_sessions_name_is_never_closed(self):
-        self.handle.session_identity.return_value = (OTHER, "g")
-        with self.assertRaisesRegex(DriverError, f"^session w1 is not worker {SID}"):
-            self.worker().resume()
-        self.assertEqual(self.calls(), [])
+        for identity in ((OTHER, "g"), (None, None)):
+            with self.subTest(identity=identity):
+                self.handle.session_identity.return_value = identity
+                with self.assertRaisesRegex(DriverError, f"^session w1 is not worker {SID}"):
+                    self.worker().resume()
+                with self.assertRaisesRegex(DriverError, f"^session w1 is not worker {SID}"):
+                    self.worker().restart()
+                self.assertEqual(self.calls(), [])
 
 
 class RestartTest(Base):
@@ -278,6 +288,19 @@ class RestartTest(Base):
         self.handle.wait_exit.return_value = True
         self.worker().restart()
         self.assertEqual(self.calls(), ["retire", "close", "wait_exit", "start", "publish"])
+
+    def test_a_start_refused_once_the_old_session_is_gone_is_no_longer_a_config_error(self):
+        self.handle.alive.return_value = True
+        self.handle.wait_exit.return_value = True
+        self.session_cls.start.side_effect = ConfigError("unknown runtime claude")
+        for call in ("restart", "resume"):
+            with self.subTest(call=call):
+                if call == "resume":
+                    self.handle.alive.return_value = False
+                with self.assertRaisesRegex(
+                    DriverError, "^w1: old session closed, none started: unknown runtime claude$"
+                ):
+                    getattr(self.worker(), call)()
 
     def test_no_session_is_refused_untouched(self):
         self.host.list.return_value = []

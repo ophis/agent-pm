@@ -116,9 +116,6 @@ def _parser(hosts: Hosts | None) -> argparse.ArgumentParser:
         help="set in its environment; repeatable, the last of a NAME wins",
     )
     p.add_argument("--display", metavar="D", help="where its Host shows it (see below)")
-    p.add_argument(
-        "--events", metavar="FILE", help="its hook events' file (default: $AGENT_PM_EVENTS)"
-    )
     for cmd, text in (
         ("restart", "restart a worker's session in place; print its Record"),
         ("resume", "print a live worker's Record, else resume it; print its Record"),
@@ -147,7 +144,7 @@ def _parser(hosts: Hosts | None) -> argparse.ArgumentParser:
     p.add_argument(
         "--descendants",
         action="store_true",
-        help="with --here: also those they opened, transitively",
+        help="with --here --records: also those they opened, transitively (stop-all)",
     )
     p = sub.add_parser(
         "send",
@@ -272,7 +269,7 @@ def _batch(args, hosts: Hosts) -> int:
         except NotDisplayable as error:
             _say(str(error))
             failed = 1
-        except (DriverError, OSError) as error:
+        except (ConfigError, DriverError, OSError) as error:
             _say(f"{PROG}: {name}: {error}")
             failed = 1
     return failed
@@ -298,8 +295,8 @@ def _row(row: SessionRow) -> str:
 
 
 def _ls(args, hosts: Hosts) -> int:
-    if args.descendants and not args.here:
-        raise UsageError("ls: --descendants needs --here")
+    if args.descendants and not (args.here and args.records):
+        raise UsageError("ls: --descendants needs --here --records")
     if args.records:
         for host, name in sorted(_listed(args, hosts), key=lambda found: found[1]):
             try:
@@ -328,7 +325,7 @@ def _start(args, flags: list[str], hosts: Hosts, start_sid: str | None) -> int:
     cwd = os.path.abspath(args.cwd or os.getcwd())
     if not os.path.isdir(cwd):
         raise UsageError(f"--cwd {cwd}: not a directory")
-    events = args.events or os.environ.get(EVENTS) or None
+    events = os.environ.get(EVENTS) or None
     worker = Worker.new(
         name=args.name,
         sid=args.resume or start_sid or str(uuid.uuid4()),
