@@ -102,9 +102,9 @@ Codex must be 0.156.0 or later: agent-pm starts Codex sessions with `--no-daemon
 
 Requires the `claude` CLI, Python 3.11+ (stdlib only), tmux 3.3+ (tui runs), `git` and `gh` logged in (checkouts, the `github` and `pull-request` destinations), the `autopilot` plugin (plus `superpowers` for `build`), GitHub and the web; `osascript`, `pgrep` and a running iTerm2 only for the default iTerm2 split. Nothing checks them: a missing one fails the agent run. Agent runs load your user settings (`~/.claude/CLAUDE.md`, skills, permissions, plugins but `agent-pm`) and no MCP servers; a trusted cwd adds its project settings, `CLAUDE.md`, skills and `.mcp.json` (`delegate/src/agent_pm/delegate/config.toml`'s `cwd` and `trusted_dirs`).
 
-- `/agent-pm:tmux`: removed, rebuilt by [TASK-356](https://linear.app/ophis-workgroup/issue/TASK-356).
-- `ctmux <name>` (`manager/skills/tmux/scripts/ctmux`): the commander's tmux session `<name>`, attached through iTerm2's tmux integration (`-CC`). A new session's shell runs under `agent-pm-crew hold --manager=<name>`, which holds that manager's lease while the shell lives: start the commander's client in it. `agent-pm-crew` must be on the tmux server's PATH. `ctmux --install` copies the script to `~/.agent-pm/bin/ctmux` and prints that path.
-- `/agent-pm:manage`: coordinate the commander session through Crew; command guidance: `manager/skills/manage/SKILL.md`.
+- `/agent-pm:tmux`: launch and direct workers, role runs and pipeline runs through Crew and the four `bin/` commands: `manager/skills/tmux/SKILL.md`.
+- `ctmux <name>` (`manager/skills/tmux/scripts/ctmux`): the commander's tmux session (`/agent-pm:tmux` › Start). `agent-pm-crew` must be on the tmux server's PATH. `ctmux --install` copies the script to `~/.agent-pm/bin/ctmux` and prints that path.
+- `/agent-pm:manage`: the commander's guidelines, coordinating through Crew (commands: `/agent-pm:tmux`): `manager/skills/manage/SKILL.md`.
 - `/agent-pm:act-as <role>[:<task>] <input>`: run a core role in this conversation, on that task or one it picks: `delegate/skills/act-as/SKILL.md`.
 - Your own roles, tasks, templates and tools, outside the plugin: `delegate/src/agent_pm/delegate/config.toml`'s `team_dirs` comment; `agent-pm-delegate run --list` (`delegate/src/agent_pm/delegate/cli.py`) lists every role and task.
 
