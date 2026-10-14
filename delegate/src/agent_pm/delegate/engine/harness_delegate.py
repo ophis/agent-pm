@@ -354,6 +354,7 @@ class HarnessDelegate(Delegate):
         cls,
         record_or_workdir: Record | str,
         *,
+        sid: str | None = None,
         session_cls: type[Session] | None = None,
         composer: Composer | None = None,
     ) -> HarnessDelegate:
@@ -368,6 +369,8 @@ class HarnessDelegate(Delegate):
         view.workdir = os.path.abspath(workdir)
         view.store = RunState(view.workdir)
         view._state = view._read()
+        if sid is not None and sid != view._state.plan.sid:
+            raise ConfigError(f"sid {sid} is not the run's (its sid: {view._state.plan.sid})")
         try:
             view.composer = composer or Composer(
                 config=DelegateConfig(config.read_config()),

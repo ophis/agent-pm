@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """agent-pm-delegate: run a role on HarnessDelegate, deliver its prompt, or query its runs.
-`run --detach` starts the run's harness and prints the run's Record line on stdout.
+`run --detach` starts the run's harness and prints the run's Record line on stdout. AGENT_PM_SID,
+read once here, is the sid `resume` must find recorded.
 
 Exits 0 on success, 2 on usage or config errors, 1 on other failures.
 """
@@ -49,11 +50,12 @@ def main(
     prompt = commands.add_parser("prompt", help="write a role's prompt as an instruction file")
     _common_options(prompt)
     a = parser.parse_args(argv)
+    start_sid = os.environ.get("AGENT_PM_SID") or None
     if a.command == "run":
         return _run(a, run, argv[1:], delegate_cls)
     if a.command == "prompt":
         return _prompt(a, prompt, delegate_cls)
-    return _query(a, delegate_cls)
+    return _query(a, delegate_cls, start_sid)
 
 
 def _common_options(ap: argparse.ArgumentParser) -> None:
@@ -219,12 +221,14 @@ def _prompt(
     return 0
 
 
-def _query(a: argparse.Namespace, delegate_cls: type[HarnessDelegate]) -> int:
+def _query(
+    a: argparse.Namespace, delegate_cls: type[HarnessDelegate], start_sid: str | None
+) -> int:
     single = a.command in ("outcome", "resume", "attach-command")
     keys = ([] if a.keys is None else [a.keys]) if single else a.keys
 
     def viewed(key):
-        view = delegate_cls.attach(key)
+        view = delegate_cls.attach(key, sid=start_sid if a.command == "resume" else None)
         if single:
             return "", view
         status = view.status()
