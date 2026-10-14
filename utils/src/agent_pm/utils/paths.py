@@ -1,4 +1,4 @@
-"""The repo ROOT, the state root STATE, path normalization, containment and writable temp roots."""
+"""The state root STATE, path normalization, containment and writable temp roots."""
 
 import contextlib
 import os
@@ -9,7 +9,6 @@ import tempfile
 from collections.abc import Sequence
 from types import ModuleType
 
-ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), *[os.pardir] * 4))
 STATE = "~/.agent-pm"
 
 
