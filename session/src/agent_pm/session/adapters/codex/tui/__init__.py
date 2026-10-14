@@ -151,8 +151,6 @@ class CodexTui(Tui):
             protect(self.state, dependencies, effective_env, added)
         except RecoveryError as exc:
             raise ConfigError(str(exc)) from exc
-        if not resume:
-            self.state = common.save(self.state)
         plan = LaunchPlan(
             exe,
             self.common.selector(self.native, resume=resume),
@@ -163,12 +161,16 @@ class CodexTui(Tui):
             store,
             (*protected_roots, *spec.protect),
         )
-        return Launch(
+        try:
+            encoded = encode(plan)
+        except ValueError as exc:
+            raise ConfigError(str(exc)) from exc
+        launch = Launch(
             (
                 os.path.realpath(sys.executable),
                 "-I",
                 os.path.join(DIRECTORY, "start.py"),
-                encode(plan),
+                encoded,
             ),
             env=env,
             unset=common.UNSET,
@@ -177,6 +179,9 @@ class CodexTui(Tui):
             transcript=common.transcript(self.state) if resume else "",
             resume=common.resume_command(self.state) if resume else "",
         )
+        if not resume:
+            self.state = common.save(self.state)
+        return launch
 
     def hook_state(self) -> dict:
         return {
@@ -281,11 +286,18 @@ def decode(data: object) -> LaunchPlan:
         raise ValueError("Codex tui launch: invalid prompt")
     if not isinstance(data["sid"], str):
         raise ValueError("Codex tui launch: invalid recovery identity")
+    roots = _strs(data["import_roots"], absolute=True)
+    if (
+        not roots
+        or len(set(roots)) != len(roots)
+        or not all(path.isprintable() and os.path.isdir(path) for path in roots)
+    ):
+        raise ValueError("Codex tui launch: invalid import roots")
     return LaunchPlan(
         executable,
         selection,
         prompt,
-        HookPlan(hook, tuple(data["import_roots"])),
+        HookPlan(hook, roots),
         workdir,
         data["sid"],
         store,
@@ -295,9 +307,14 @@ def decode(data: object) -> LaunchPlan:
 
 def encode(plan: LaunchPlan) -> str:
     data = asdict(plan)
-    data["hook"] = plan.hook.argv
-    data["import_roots"] = plan.hook.import_roots
-    return json.dumps(data, ensure_ascii=False)
+    data["selection"] = list(plan.selection)
+    data["hook"] = list(plan.hook.argv)
+    data["import_roots"] = list(plan.hook.import_roots)
+    data["protect"] = list(plan.protect)
+    decode(data)
+    encoded = json.dumps(data, ensure_ascii=False)
+    encoded.encode("utf-8")
+    return encoded
 
 
 def commands(plan: HookPlan) -> Mapping[str, str]:

@@ -160,6 +160,40 @@ class TuiTest(Base):
         self.assertEqual(resumed.env["PYTHONPATH"], "/a b;c")
         self.assertEqual(shlex.split(resumed.resume)[3], "PYTHONPATH=/a b;c")
 
+    def test_invalid_launch_plan_saves_no_recovery_state(self):
+        with (
+            mock.patch("shutil.which", return_value="/protected/codex"),
+            self.assertRaisesRegex(ConfigError, "invalid prompt"),
+        ):
+            self.adapter.tui().launch(
+                dataclasses.replace(self.spec, prompt="invalid\0prompt"),
+                HOOK,
+                source_roots=PACKAGE_ROOTS,
+            )
+        self.assertIsNone(self.common.load(str(self.work), self.spec.sid))
+        self.assertFalse((self.home / ".agent-pm").exists())
+
+    def test_invalid_launch_inputs_leave_no_state_directory(self):
+        for prompt, hook, roots in (
+            ("surrogate\ud800", HOOK, PACKAGE_ROOTS),
+            ("hi", (), PACKAGE_ROOTS),
+            ("hi", ("relative-hook",), PACKAGE_ROOTS),
+            ("hi", HOOK, ()),
+            ("hi", HOOK, (*PACKAGE_ROOTS, PACKAGE_ROOTS[0])),
+            ("hi", HOOK, ("relative-root",)),
+            ("hi", HOOK, (str(self.root / "missing"),)),
+        ):
+            with (
+                self.subTest(prompt=prompt, hook=hook, roots=roots),
+                mock.patch("shutil.which", return_value="/protected/codex"),
+                self.assertRaises(ConfigError),
+            ):
+                self.adapter.tui().launch(
+                    dataclasses.replace(self.spec, prompt=prompt), hook, source_roots=roots
+                )
+            self.assertIsNone(self.common.load(str(self.work), self.spec.sid))
+            self.assertFalse((self.home / ".agent-pm").exists())
+
     def test_resume_failure_happens_before_command(self):
         with (
             mock.patch("shutil.which") as which,
