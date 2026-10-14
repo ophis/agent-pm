@@ -133,6 +133,8 @@ account = "engineer@example.com"
 max_runs = 1
 ```
 
+The run key `runtime` is renamed to `client`: set `client` wherever a local file sets `runtime` (`[delegate]`, `[delegate.roles.<role>]`, `[linear_orchestrator.core]` and its role tables); a `runtime` key left there is a config error naming `client`. `--runtime` options are `--client`, and `runs.jsonl` rows, worker states and tmux sessions recorded with `runtime` are not read.
+
 ## Using the board
 
 ```mermaid
