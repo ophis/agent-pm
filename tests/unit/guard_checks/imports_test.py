@@ -3,59 +3,10 @@ from pathlib import Path
 from tests import guards
 from tests.case import REPO
 from tests.guard_checks import imports
-from tests.guard_data import DELEGATE_SESSION_FORWARDING_ALLOWED, IMPORT_BOOTSTRAPS, STANDALONE
+from tests.guard_data import IMPORT_BOOTSTRAPS, STANDALONE
 from tests.guard_data.linear_orchestrator import ORCH_PKG, ORCH_SESSION_CONTRACT, ORCH_SRC
 from tests.guard_data.session import SESSION_SRC, TMUX_HOST
 from tests.guard_samples import PKG, Sample
-
-
-class DelegateSessionForwarding(Sample):
-    BASE = "delegate/src/agent_pm/delegate/"
-
-    def references(self, sample, rel="engine/runner.py"):
-        root = self.tree({self.BASE + rel: sample})
-        return [
-            item
-            for item in imports.delegate_session_forwarding(root)
-            if item.startswith(self.BASE + rel + ":")
-            and "allowlisted but no forwarding reference" not in item
-        ]
-
-    def test_session_wrappers_are_rejected_even_when_aliased(self):
-        for wrapper in ("Driver", "Handle", "close", "note", "session_record", "sessions"):
-            for sample in (
-                f"from agent_pm.session import {wrapper} as old\nold()\n",
-                f"import agent_pm.session as s\ns.{wrapper}()\n",
-                f"from agent_pm import session as s\nold = s.{wrapper}\nold()\n",
-                f"from agent_pm.session.engine.forwarding import {wrapper} as old\nold()\n",
-            ):
-                with self.subTest(wrapper=wrapper, sample=sample):
-                    self.assertTrue(self.references(sample))
-
-    def test_object_methods_and_delegate_own_driver_pass(self):
-        sample = (
-            "from agent_pm.session import Session, RunLog\n"
-            "from agent_pm.delegate.engine.drivers import Driver\n"
-            "Session.attach('name').close()\nRunLog('workdir').note('kind')\nDriver()\n"
-        )
-        self.assertEqual(self.references(sample), [])
-
-    def test_compatibility_exception_is_exact_and_expires(self):
-        public = self.BASE + "__init__.py", "agent_pm.session.Driver"
-        self.assertEqual(set(DELEGATE_SESSION_FORWARDING_ALLOWED), {public})
-        self.assertIn("configure()", DELEGATE_SESSION_FORWARDING_ALLOWED[public])
-        self.assertIn("356-14", DELEGATE_SESSION_FORWARDING_ALLOWED[public])
-        sample = (
-            "from agent_pm.session import Driver as SessionDriver\nSessionDriver.from_config({})\n"
-        )
-        self.assertEqual(self.references(sample, "__init__.py"), [])
-        for rel in ("engine/plan.py", "cli.py"):
-            with self.subTest(rel=rel):
-                self.assertTrue(self.references(sample, rel))
-        found = imports.delegate_session_forwarding(self.tree({}))
-        self.assertEqual(
-            found, [f"{public[0]}: {public[1]}: allowlisted but no forwarding reference (FR-34)"]
-        )
 
 
 class OrchestratorSessionImports(Sample):
@@ -86,16 +37,16 @@ class OrchestratorSessionImports(Sample):
 
     def test_a_new_module_fails_however_it_imports(self):
         for sample in (
-            "from agent_pm.session import Driver\n",
-            "import agent_pm.session as s\ns.Driver()\n",
-            "from agent_pm import session\nsession.Driver()\n",
-            "import agent_pm.session\nagent_pm.session.Driver.run()\n",
-            "def f():\n    from agent_pm.session import Driver\n",
+            "from agent_pm.session import RunLog\n",
+            "import agent_pm.session as s\ns.RunLog()\n",
+            "from agent_pm import session\nsession.RunLog()\n",
+            "import agent_pm.session\nagent_pm.session.RunLog.note()\n",
+            "def f():\n    from agent_pm.session import RunLog\n",
         ):
             with self.subTest(sample=sample):
                 self.assertEqual(
                     self.check("engine/promote.py", sample),
-                    [self.message("engine/promote.py", "Driver")],
+                    [self.message("engine/promote.py", "RunLog")],
                 )
 
     def test_pyproject_ignored_imports_cannot_grow(self):
@@ -154,9 +105,13 @@ class LiteralImports(Sample):
 
     def test_lower_internals_and_pure_config_imports_are_rejected(self):
         self.assertEqual(
-            self.check("__import__('agent_pm.session.engine.api')", "delegate", "engine/probe.py"),
+            self.check(
+                "__import__('agent_pm.session.engine.hosted_session')",
+                "delegate",
+                "engine/probe.py",
+            ),
             [
-                "delegate/src/agent_pm/delegate/engine/probe.py:1: imports agent_pm.session.engine.api"
+                "delegate/src/agent_pm/delegate/engine/probe.py:1: imports agent_pm.session.engine.hosted_session"
             ],
         )
         self.assertEqual(

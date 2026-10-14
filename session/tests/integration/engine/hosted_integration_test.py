@@ -129,7 +129,7 @@ class SessionTest(Base):
 
 class TuiStartTest(TuiBase):
     def test_a_start_builds_only_its_clients_adapter_once(self):
-        built, load = [], self.driver_dependencies["class_loader"]
+        built, load = [], self.session_dependencies["class_loader"]
 
         def counted(path, base):
             found = load(path, base)
@@ -143,7 +143,7 @@ class TuiStartTest(TuiBase):
 
             return Counted
 
-        self.driver_dependencies = {**self.driver_dependencies, "class_loader": counted}
+        self.session_dependencies = {**self.session_dependencies, "class_loader": counted}
         self.configure(tui=True)
         for start in (self.run_once, lambda: self.tui(name="w1")):
             with self.subTest(start=start):

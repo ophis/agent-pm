@@ -20,6 +20,7 @@ from orchestrator_tests.case import REPO, ROOTS, Case
 from orchestrator_tests.config_fixtures import (
     BASE,
     CORE_LOCAL,
+    HARNESS_DELEGATE,
     PIPELINE,
     SID,
     SLUG,
@@ -39,8 +40,6 @@ P1, P2 = "a0000000-0000-4000-8000-000000000031", "b0000000-0000-4000-8000-000000
 
 
 STATES_LINE = HEADER[HEADER.index("states = ") : HEADER.index("task_label_group")]
-
-LABEL = ("linear-orchestrator/config.toml", "core")
 
 
 def missing(keys):
@@ -440,14 +439,7 @@ class ConfigurationLoading(ConfigFile, Case):
         )
         self.assertEqual(
             {r: x.run for r, x in cfg.roles.items()},
-            {
-                r: delegate.resolve_run(
-                    r,
-                    overlays=(overlay,),
-                    label=LABEL,
-                )
-                for r in roles
-            },
+            {r: HARNESS_DELEGATE.resolve(r, overlays=(overlay,)) for r in roles},
         )
 
     def test_a_config_error_carries_the_log_dir_once_work_dir_is_valid(self):
@@ -828,7 +820,7 @@ class RunnableRoles(ConfigFile, Case):
         self.assertEqual(list(roles), ["researcher", "pm", "engineer"])
         self.assertEqual(
             {r: x.tasks for r, x in roles.items()},
-            {r: tuple(delegate.task_index(r)) for r in roles},
+            {r: tuple(HARNESS_DELEGATE.roles()[r]) for r in roles},
         )
         roles = self.runs(HEADER + role("engineer") + role("researcher", "max_runs = 3"))
         self.assertEqual(
@@ -895,7 +887,8 @@ class RunnableRoles(ConfigFile, Case):
 
     def test_clones_match_core(self):
         self.assertEqual(config.CLONES, ("src", "publish"))
-        with open(delegate.CONFIG) as f:
+        packaged = files("agent_pm.delegate").joinpath("config.toml")
+        with packaged.open() as f:
             dirs = re.findall(r"--dir \{\{workdir\}\}/([^\s\"]+)", f.read())
         self.assertTrue(dirs)
         self.assertEqual(set(dirs), {config.CLONES[0]})
@@ -914,7 +907,7 @@ class RunnableRoles(ConfigFile, Case):
         ) as f:
             self.assertIn(f"`<Workdir>/{config.CLONES[1]}`", f.read())
         self.assertEqual(
-            delegate.CONFIG,
+            str(packaged),
             os.path.join(REPO, "delegate", "src", "agent_pm", "delegate", "config.toml"),
         )
 

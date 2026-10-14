@@ -215,12 +215,6 @@ class HostedSession(Session):
         return own
 
     @classmethod
-    def _rebound(cls, **collaborators) -> type[HostedSession]:
-        own = cast("type[HostedSession]", type(cls.__name__, (cls,), {"__module__": __name__}))
-        own._setup = replace(cls._config(), built={}, **collaborators)
-        return own
-
-    @classmethod
     def _config(cls) -> _Setup:
         if cls._setup is None:
             raise ConfigError(UNCONFIGURED)

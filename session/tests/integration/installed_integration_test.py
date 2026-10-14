@@ -27,9 +27,10 @@ MODULE = "installed_client"
 CHILD = """import json, sys
 sys.path.insert(0, sys.argv[1])
 import agent_pm.session, agent_pm.utils
-from agent_pm.session import Driver, Spec, read_config
+from agent_pm.session import Session, Spec, read_config
 config = read_config()
-handle = Driver.from_config(config).start("fake", "headless", "hello", Spec(workdir=sys.argv[2]))
+Session.configure_from(config)
+handle = Session.start(Spec(workdir=sys.argv[2], client="fake", mode="headless", prompt="hello"))
 print(json.dumps({"config": config, "events": [type(e).__name__ for e in handle.events()],
                   "files": [agent_pm.session.__file__, agent_pm.utils.__file__]}))
 """

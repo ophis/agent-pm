@@ -1,7 +1,7 @@
 """A new client is one importable module plus one [adapters.<name>] table naming it as
 module.path:Class: a temp copy of the session and utils packages, the fake adapter's package copied in outside
 them as module extension_client (a name unrelated to the client's) and its table appended to the
-copy's agent_pm/session/config.toml, nothing else changed, runs a headless session through Driver.start in a
+copy's agent_pm/session/config.toml, nothing else changed, runs a headless session through Session.start in a
 child Python whose PYTHONPATH is only the copy's site directory and that module's dir. A table without its
 module, or a module without its table, fails there before anything starts.
 """
@@ -23,11 +23,13 @@ MODULE = "extension_client"
 # The child: configures the session from the copy's session config, starts client argv[2] headless
 # in workdir argv[1] and prints its events; a ConfigError exits 1, its text on stderr.
 CHILD = """import dataclasses, json, sys
-from agent_pm.session import Driver, ConfigError, Spec, read_config
+from agent_pm.session import ConfigError, Mode, Session, Spec, read_config
 from agent_pm.session.engine import hosted_session
 try:
-    driver = Driver.from_config(read_config())
-    handle = driver.start(sys.argv[2], "headless", "hello", Spec(workdir=sys.argv[1]))
+    Session.configure_from(read_config())
+    handle = Session.start(
+        Spec(workdir=sys.argv[1], client=sys.argv[2], mode=Mode.HEADLESS, prompt="hello")
+    )
 except ConfigError as e:
     sys.exit(f"ConfigError: {e}")
 events = [[type(e).__name__, dataclasses.asdict(e)] for e in handle.events()]
@@ -36,8 +38,10 @@ print(json.dumps({"sid": handle.sid, "events": events,
 """
 INSTALLED_CHILD = """import sys
 from unittest import mock
-from agent_pm.session import Access, Driver, Spec, read_config
-adapter = Driver.from_config(read_config()).registry.adapter("codex")
+from agent_pm.session import Access, Spec, read_config
+from agent_pm.session.engine.hosted_session import HostedSession
+HostedSession.configure_from(read_config())
+adapter = HostedSession._config().registry.adapter("codex")
 spec = Spec(workdir=sys.argv[1], sid="installed-layout", access=Access(cwd=sys.argv[1], project=True))
 with mock.patch("shutil.which", return_value="/protected/codex"):
     launch = adapter.tui().launch(spec, (sys.executable, "-I", "/protected/hook.py"),

@@ -6,9 +6,10 @@ from contextlib import contextmanager
 from pathlib import Path
 from unittest import mock
 
-from agent_pm.delegate.composer import TEAM, RunParams, Team
+from agent_pm.delegate.composer import RunParams, Team
+from agent_pm.delegate.composer.base import TEAM
 from agent_pm.delegate.composer.teams import catalog
-from agent_pm.delegate.engine.config import CONFIG, read_config
+from agent_pm.delegate.config import CONFIG, read_config
 
 ROOT = "/corpus/team"
 CUSTOM = "/corpus/custom"

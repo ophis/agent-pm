@@ -7,7 +7,8 @@ import subprocess
 from datetime import datetime
 from unittest import mock
 
-from agent_pm.delegate import Outcome, Result, composer
+from agent_pm.delegate import Outcome, Result
+from agent_pm.delegate.composer import Composer
 from agent_pm.delegate.composer.prompt import RESUME
 
 from delegate.tests.case import PY, child_env
@@ -178,7 +179,7 @@ class DryRun(Base):
     def test_the_client_defaults_to_the_roles_in_the_config(self):
         code, out, _ = self.runs("--dry-run", client=None)
         self.assertEqual(
-            (code, json.loads(out)["client"]), (0, composer.resolve("dummy-tester").client)
+            (code, json.loads(out)["client"]), (0, Composer().resolve("dummy-tester").client)
         )
         self.local('client = "fake"\n')
         code, _, err = self.runs(client=None)

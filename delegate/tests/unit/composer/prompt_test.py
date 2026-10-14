@@ -10,7 +10,6 @@ import re
 import tempfile
 from dataclasses import replace
 
-from agent_pm.delegate import composer
 from agent_pm.delegate.composer import Composer, ConfigError, RunParams
 from agent_pm.delegate.composer.base import TEAM, anchor, fill
 from agent_pm.delegate.composer.prompt import (
@@ -22,6 +21,7 @@ from agent_pm.delegate.composer.prompt import (
     reference_errors,
     render,
 )
+from agent_pm.delegate.composer.run import resolve
 from agent_pm.delegate.composer.teams import index, team
 from agent_pm.delegate.config import CONFIG, read_config
 
@@ -891,8 +891,8 @@ class Acceptance(Case):
             with open(config, "w") as f:
                 f.write(cfg.replace('\nlanguage = "English"\n', "\n"))
             for role in roles():
-                run = composer.resolve(role, config=config, local=os.devnull)
-                prompt = composer.render(run, RUN)
+                run = resolve(role, config=config, local=os.devnull)
+                prompt = render(run, RUN)
                 self.assertEqual(run.language, "", role)
                 self.assertNotIn(LANGUAGE_RULE, prompt, role)
                 self.assertNotIn("are in English", prompt, role)
@@ -966,7 +966,7 @@ class Real(RealConfig):
             prompt, run = composed(role)
             prompt = expanded(prompt)
             for cmd in run.commands:
-                cmd = fill(cmd, {"workdir": RUN.workdir, "team": composer.TEAM}, role)
+                cmd = fill(cmd, {"workdir": RUN.workdir, "team": TEAM}, role)
                 cmd = cmd.removesuffix(" *")
                 self.assertIn(f"`{cmd}", prompt, role)
 
@@ -976,7 +976,7 @@ class Real(RealConfig):
             for value in (RUN.workdir, RULE):
                 self.assertEqual(prompt.count(value), 1, (role, task, value))
             for root in ROOTS:
-                self.assertNotIn(root, prompt.replace(composer.TEAM, "<team>"), (role, task))
+                self.assertNotIn(root, prompt.replace(TEAM, "<team>"), (role, task))
             self.assertEqual(rule(prompt, "Commands"), [COMMANDS_RULE], (role, task))
 
     def test_every_researcher_run_names_the_gate_default_none(self):

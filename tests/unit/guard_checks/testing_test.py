@@ -223,9 +223,9 @@ class TestBoundaries(Sample):
 
     def test_aliases_cannot_hide_own_module_mutation(self):
         prefixes = (
-            "import agent_pm.session.engine.api as module\n",
-            "from agent_pm.session.engine import api as module\n",
-            "import agent_pm.session.engine.api as first\nmodule = first\n",
+            "import agent_pm.session.engine.hosted_session as module\n",
+            "from agent_pm.session.engine import hosted_session as module\n",
+            "import agent_pm.session.engine.hosted_session as first\nmodule = first\n",
         )
         calls = (
             "patch.object(module, 'start')",
@@ -265,10 +265,13 @@ class TestBoundaries(Sample):
                 )
 
     def test_multiple_and_own_dictionary_patches_have_exact_diagnostics(self):
-        prefix = "from unittest.mock import patch\nimport agent_pm.session.engine.api as api\n"
+        prefix = "from unittest.mock import patch\nimport agent_pm.session.engine.hosted_session as hosted\n"
         for statement, reason in (
-            ("patch.multiple('agent_pm.session.engine.api', start=object())", "shipped code patch"),
-            ("patch.dict(api.MODES, {})", "shipped dictionary patch"),
+            (
+                "patch.multiple('agent_pm.session.engine.hosted_session', start=object())",
+                "shipped code patch",
+            ),
+            ("patch.dict(hosted.MODES, {})", "shipped dictionary patch"),
         ):
             with self.subTest(statement=statement):
                 self.assertEqual(

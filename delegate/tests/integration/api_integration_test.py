@@ -1,6 +1,7 @@
-"""delegate.run in process over session/tests/integration/adapters/claude/fake_claude.py (on PATH as
-`claude`, the session config's Adapter table), HOME and CLAUDE_CONFIG_DIR temp: the callback order
-over a real process (FR-17), the fix resume (FR-21), a usage limit (FR-58).
+"""A run planned and executed in process over
+session/tests/integration/adapters/claude/fake_claude.py (on PATH as `claude`, the session config's
+Adapter table), HOME and CLAUDE_CONFIG_DIR temp: the callback order over a real process (FR-17), the
+fix resume (FR-21), a usage limit (FR-58).
 """
 
 import io
@@ -11,13 +12,15 @@ import unittest
 from contextlib import redirect_stderr
 from unittest import mock
 
-from agent_pm.delegate import Begun, Finished, Limit, Progress, Spec, composer, run
+from agent_pm.delegate import Begun, Finished, Limit, Progress, Spec
+from agent_pm.delegate.composer import Composer
+from agent_pm.delegate.engine.drivers import AgentDriver
 from agent_pm.delegate.engine.runner import FIX
-from agent_pm.session import Driver, read_config
 
-from delegate.tests.case import Case
+from delegate.tests.case import Case, packaged
 from delegate.tests.integration.cli import DONE, RESETS, SID, UNSAVED, UNSAVED_ERROR
 from delegate.tests.replies import block, mark, option, prompt, running
+from delegate.tests.runner import executed
 from session.tests.integration.adapters.claude import fake_claude
 
 
@@ -45,16 +48,16 @@ class Base(Case):
                 },
             )
         )
-        self.driver = Driver.from_config(read_config())
+        self.driver = AgentDriver(packaged())
 
     def go(self, steps, **scenario):
-        """run() with the fake's `steps`; self.events gets each callback."""
+        """executed() with the fake's `steps`; self.events gets each callback."""
         with open(self.scenario, "w") as f:
             json.dump({"steps": steps, **scenario, "log": self.log}, f)
         self.events = []
         with redirect_stderr(io.StringIO()):
-            return run(
-                composer.resolve("dummy-tester"),
+            return executed(
+                Composer().resolve("dummy-tester"),
                 Spec(
                     "Hello.",
                     self.work,

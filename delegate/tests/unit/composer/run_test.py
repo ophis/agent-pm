@@ -9,8 +9,8 @@ import tempfile
 from dataclasses import fields, replace
 from unittest import mock
 
-from agent_pm.delegate import composer
 from agent_pm.delegate.composer import ConfigError, RunConfig, RunParams
+from agent_pm.delegate.composer.base import TEAM
 from agent_pm.delegate.composer.run import (
     RUN_KEYS,
     access,
@@ -19,7 +19,8 @@ from agent_pm.delegate.composer.run import (
     resolve,
     trusted_dirs,
 )
-from agent_pm.delegate.composer.teams import role_tables, team
+from agent_pm.delegate.composer.teams import catalog as team_catalog
+from agent_pm.delegate.composer.teams import index, role_tables, team
 from agent_pm.delegate.composer.types import Intent
 from agent_pm.delegate.config import read_config
 from agent_pm.session import Effort
@@ -140,8 +141,8 @@ class BadRead(Fake):
         found, c, lf = team(self.root), self.config, self.local_file
         calls = {
             "resolve": lambda: resolve("writer", team=found, config=c, local=lf),
-            "index": lambda: composer.index("nobody", found, c, lf),
-            "catalog": lambda: composer.catalog(found, c, lf),
+            "index": lambda: index("nobody", found, c, lf),
+            "catalog": lambda: team_catalog(found, c, lf),
             "role_tables": lambda: role_tables(c, lf),
             "trusted_dirs": lambda: trusted_dirs(c, lf),
         }
@@ -735,7 +736,7 @@ class Client(Fake):
 
     def test_a_read_config_given_is_used_reading_no_file(self):
         cfg = read_config()
-        want = (resolve("pm"), trusted_dirs(), composer.index("pm"))
+        want = (resolve("pm"), trusted_dirs(), index("pm"))
         original = open
 
         def opened(path, *args, **kwargs):
@@ -747,7 +748,7 @@ class Client(Fake):
             got = (
                 resolve("pm", cfg=cfg),
                 trusted_dirs(cfg=cfg),
-                composer.index("pm", cfg=cfg),
+                index("pm", cfg=cfg),
             )
         self.assertEqual(got, want)
 
@@ -790,14 +791,14 @@ class Real(RealConfig):
                 '[delegate]\nusers = ["octocat"]\ntrusted_dirs = ["~/data-repo"]\nlanguage = "French"\n[session.hosts.tmux]\nworkers_per_column = 2\ngrid_retile = "off"\n[linear_orchestrator]\nteam = "T"\n[linear_orchestrator.roles.pm]\naccount = "pm@x"\n'
             )
         for role, task in role_tasks():
-            run = composer.resolve(role, task)
+            run = resolve(role, task)
             self.assertEqual((run.task, run.language), (task, "French"))
 
     def test_a_task_from_another_roles_index_is_an_error(self):
         with self.assertRaisesRegex(
-            composer.ConfigError, "task 'deep-research' is not one of engineer's tasks"
+            ConfigError, "task 'deep-research' is not one of engineer's tasks"
         ):
-            composer.resolve("engineer", "deep-research")
+            resolve("engineer", "deep-research")
 
     def test_pm_engineer_and_researcher_runs(self):
         researcher = (
@@ -838,9 +839,9 @@ class Real(RealConfig):
     def test_a_run_reads_the_team_root_when_its_text_names_a_method(self):
         named = []
         for role in roles():
-            with open(os.path.join(composer.TEAM, "roles", f"{role}.md")) as f:
+            with open(os.path.join(TEAM, "roles", f"{role}.md")) as f:
                 text = f.read() + "".join(task_text(t) for t in catalog()[role])
             if "<team>/methods/" in text:
                 named.append(role)
-                self.assertIn("{{team}}", composer.resolve(role).read, role)
+                self.assertIn("{{team}}", resolve(role).read, role)
         self.assertEqual(named, ["researcher"])

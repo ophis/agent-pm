@@ -59,7 +59,7 @@ class HeadlessCase(Case):
         self.mode = HeadlessRuntime.start(
             spec,
             adapter or StubAdapter(),
-            registry=self.driver.registry,
+            registry=self.session_cls._config().registry,
             record=self.recorded.append,
             host=MemoryHost(),
             display=display,

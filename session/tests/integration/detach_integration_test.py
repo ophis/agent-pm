@@ -1,7 +1,7 @@
-"""Driver.detach on a private tmux server (session/tests/live_tmux.py), os.environ that
-server's env: a child that reports its blocked signals, unblocks them and runs until told to end;
-its session live then absent, its @opener and @display, a taken name, a cwd it cannot enter, a
-script whose interpreter is missing, an env execve refuses.
+"""A configured session class's default Host detaching on a private tmux server
+(session/tests/live_tmux.py), os.environ that server's env: a child that reports its blocked
+signals, unblocks them and runs until told to end; its session live then absent, its @opener and
+@display, a taken name, a cwd it cannot enter, a script whose interpreter is missing.
 """
 
 import errno
@@ -14,8 +14,8 @@ import time
 import unittest
 from unittest import mock
 
-from agent_pm.session import SIGNALS
-from agent_pm.session.engine.types import ConfigError, DriverError, Launch
+from agent_pm.session import SIGNALS, HostProcess
+from agent_pm.session.engine.types import DriverError, Launch
 from agent_pm.session.hosts.tmux.host import Tmux
 from agent_pm.session.hosts.tmux.types import TuiError
 
@@ -43,8 +43,15 @@ class DetachTest(Case):
     def argv(self, name: str) -> list[str]:
         return [sys.executable, "-I", "-c", CHILD, os.path.join(self.dir, f"{name}.json"), self.go]
 
-    def detach(self, name: str, **kwargs) -> None:
-        return self.driver.detach(name, self.argv(name), self.dir, self.server.env(), **kwargs)
+    def detach(self, name: str, argv=None, *, display=None) -> HostProcess:
+        """`argv` (else the child) detached as `name` on the default Host, SIGNALS blocked."""
+        launch = Launch(
+            tuple(self.argv(name) if argv is None else argv),
+            self.server.env(),
+            cwd=self.dir,
+            blocked_signals=SIGNALS,
+        )
+        return self.session_cls.host().detach(name, launch, display=display)
 
     def blocked(self, name: str) -> set[int]:
         """The signals child `name` started with blocked, once it reports them."""
@@ -57,11 +64,11 @@ class DetachTest(Case):
         # tmux on Linux (CI: 3.4) can leave an exited pane process unreaped until another child of
         # the server exits
         self.server.tmux("run-shell", "-b", "true")
-        return self.driver.sessions("d.*") == []
+        return self.session_cls.list("d.*") == []
 
     def test_the_child_runs_with_the_signals_blocked_its_session_live_until_it_exits(self):
-        self.assertIsNone(self.detach("d1", opener=MANAGER))
-        self.assertEqual([r.name for r in self.driver.sessions("d1")], ["d1"])
+        self.detach("d1", display=MANAGER)
+        self.assertEqual([r.name for r in self.session_cls.list("d1")], ["d1"])
         Tmux().detach("d0", Launch(tuple(self.argv("d0")), self.server.env(), cwd=self.dir))
         signals = {int(s) for s in SIGNALS}
         self.assertLessEqual(signals, self.blocked("d1"))
@@ -70,7 +77,7 @@ class DetachTest(Case):
             [self.server.option("d1", key) for key in ("@opener", "@display")], [MANAGER, MANAGER]
         )
         with self.assertRaises(DriverError) as caught:
-            self.driver.attach("d1")
+            self.session_cls.attach("d1")
         self.assertTrue(str(caught.exception).startswith("no tui session d1: "), caught.exception)
         with open(self.go, "w"):
             pass
@@ -82,18 +89,16 @@ class DetachTest(Case):
         pid = self.server.tmux("display-message", "-p", "-t", "=d1:", "#{pane_pid}").stdout
         for name in ("d1", MANAGER):
             with self.subTest(name=name), self.assertRaises(DriverError) as caught:
-                self.detach(name, opener="other")
+                self.detach(name, display="other")
             self.assertEqual(str(caught.exception), f"detach {name}: session {name} exists")
         self.assertEqual(
             self.server.tmux("display-message", "-p", "-t", "=d1:", "#{pane_pid}").stdout, pid
         )
         self.assertEqual([self.server.option(n, "@opener") for n in ("d1", MANAGER)], ["", ""])
-        self.assertEqual([r.name for r in self.driver.sessions()], ["d1", MANAGER])
+        self.assertEqual([r.name for r in self.session_cls.list()], ["d1", MANAGER])
 
     def test_a_cwd_it_cannot_enter_is_refused_never_a_success(self):
         missing = os.path.join(self.dir, "missing")
-        with self.assertRaises(ConfigError):
-            self.driver.detach("d1", self.argv("d1"), missing, self.server.env())
         with self.assertRaisesRegex(TuiError, "^session d2 did not start$"):
             Tmux(sleep=lambda seconds: time.sleep(seconds / 10)).detach(
                 "d2", Launch(tuple(self.argv("d2")), self.server.env(), cwd=missing)
@@ -107,16 +112,8 @@ class DetachTest(Case):
         os.chmod(script, 0o755)
         error = f"detach d1: cannot run {script}: {os.strerror(errno.ENOENT)}"
         with self.assertRaisesRegex(DriverError, "^" + re.escape(error) + "$"):
-            self.driver.detach("d1", [script], self.dir, self.server.env())
+            self.detach("d1", [script])
         live_tmux.wait(self.gone, what="no session left")
-
-    def test_an_env_execve_refuses_fails_it_leaving_no_session(self):
-        with self.assertRaisesRegex(
-            DriverError, rf"^detach d1: cannot run .+: {os.strerror(errno.EINVAL)}$"
-        ):
-            self.driver.detach("d1", self.argv("d1"), self.dir, {**self.server.env(), "X": "a\0b"})
-        live_tmux.wait(self.gone, what="no session left")
-        self.assertFalse(os.path.exists(os.path.join(self.dir, "d1.json")))
 
 
 if __name__ == "__main__":

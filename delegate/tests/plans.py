@@ -7,7 +7,10 @@ import tempfile
 from contextlib import redirect_stderr
 from dataclasses import replace
 
-from agent_pm.delegate import ConfigError, Spec, composer, plan
+from agent_pm.delegate import ConfigError, Spec
+from agent_pm.delegate.composer import Composer
+from agent_pm.delegate.composer.base import TEAM
+from agent_pm.delegate.engine.plan import plan
 
 from delegate.tests.case import Case, committed
 from delegate.tests.unit.composer.teams import POET, VERSE
@@ -18,7 +21,7 @@ from utils.tests.case import local_section
 SID = "11111111-2222-3333-4444-555555555555"
 
 
-TASKS = os.path.join(composer.TEAM, "tasks")
+TASKS = os.path.join(TEAM, "tasks")
 
 
 TASKS_PARAM = re.compile(r"\n- `<tasks>`: `([^`]+)`\n")
@@ -48,7 +51,7 @@ class Base(Case):
         self.tmp = os.path.realpath(tmp.name)
         self.work = os.path.join(self.tmp, "work")
         self.out = os.path.join(self.work, "out.md")
-        self.driver_dependencies = {
+        self.session_dependencies = {
             "class_loader": adapter_loader({"agent_pm.session.adapters.fake": fake_adapter})
         }
         self.local("")
@@ -77,11 +80,15 @@ class Base(Case):
         kw = {"client": "fake", "mode": "headless", "out": self.out, "input": "Research X.", **kw}
         workdir = kw.pop("workdir", self.work)
         kw.setdefault("cwd", workdir)
-        run = run or replace(composer.resolve(role, team=team), **(keys or {}))
+        composition = Composer(team=team)
+        run = run or replace(composition.resolve(role), **(keys or {}))
         err = io.StringIO()
         with redirect_stderr(err):
             got = plan(
-                run, Spec(kw.pop("input"), workdir, task=task, team=team, **kw), driver=self.driver
+                run,
+                Spec(kw.pop("input"), workdir, task=task, team=team, **kw),
+                driver=self.driver,
+                composition=composition,
             )
         return got, err.getvalue()
 

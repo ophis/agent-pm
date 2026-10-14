@@ -187,7 +187,7 @@ class Base(Case):
         mode = tui.TuiRuntime.start(
             spec,
             self.adapter,
-            registry=self.driver.registry,
+            registry=self.session_cls._config().registry,
             record=record or self.recorded.append,
             host=self.host,
         )
@@ -534,7 +534,7 @@ class StartTest(Base):
         mode = tui.TuiRuntime.start(
             Spec(workdir=self.tmp, name=NAME, client="fake", sid=SID),
             self.adapter,
-            registry=self.driver.registry,
+            registry=self.session_cls._config().registry,
             record=self.recorded.append,
             host=self.host,
             display="opaque-location",
@@ -626,7 +626,7 @@ class StartTest(Base):
         self.host.calls.terminal.assert_called_once()
 
     def test_its_child_env_drops_adapter_identities_then_takes_the_launch_env(self):
-        self.driver_dependencies = {"class_loader": lambda _path, _base: IdentityAdapter}
+        self.session_dependencies = {"class_loader": lambda _path, _base: IdentityAdapter}
         self.configure_session(
             {"inner": {"implementation": "agent_pm.session.adapters.inner:InnerAdapter"}}
         )
@@ -1810,7 +1810,7 @@ class TransportErrorTest(TmuxBase):
             tui.TuiRuntime.start(
                 Spec(workdir=workdir, name=NAME, client="fake", sid=SID),
                 adapter,
-                registry=self.driver.registry,
+                registry=self.session_cls._config().registry,
                 record=lambda _info: None,
                 host=self.host,
             )

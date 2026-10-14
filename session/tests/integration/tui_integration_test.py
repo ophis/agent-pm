@@ -1,9 +1,9 @@
-"""HostedSession's tui mode, through the Driver wrapper, end to end on a private tmux server (session/tests/live_tmux.py),
+"""HostedSession's tui mode end to end on a private tmux server (session/tests/live_tmux.py),
 os.environ that server's env: the fake adapter's Tui (session/tests/fake_adapter/) started with no
 pane, its hook steps as events and events-file lines, send, the idle timer and its Blocked pause,
-attach from another process, stop, a client's own exit, close, sessions while tmux's state is
-unknown, an old Handle once its name is another session's, two starts of one name at once, and a
-start while another process closes the name.
+attach from another process, stop, a client's own exit, retire, list while tmux's state is
+unknown, an old session once its name is another session's, two starts of one name at once, and a
+start while another process retires the name.
 """
 
 import contextlib
@@ -26,6 +26,7 @@ from agent_pm.session.engine.types import (
     DriverError,
     Exited,
     IdleTimeout,
+    Mode,
     SessionStatus,
     Spec,
     TurnEnd,
@@ -40,37 +41,40 @@ from session.tests.tui_support import DIALOG, IDLE, MANAGER, SID, WAIT, Live, St
 # Another process: attaches by name, sends text, prints [sid, state, reply, its first event but
 # IdleTimeout, reply].
 ATTACH = """import importlib.util, json, sys
-fake, config, name, text = sys.argv[1:]
+fake, adapters, name, text = sys.argv[1:]
 spec = importlib.util.spec_from_file_location("agent_pm.session.adapters.fake", fake)
 module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(module)
-from agent_pm.session import IdleTimeout, Driver
+from agent_pm.session import Host, IdleTimeout
+from agent_pm.session.engine.hosted_session import HostedSession
 from agent_pm.utils import load_class
 def adapter_class(path, base):
     return module.FakeAdapter if path == "agent_pm.session.adapters.fake:FakeAdapter" else load_class(path, base)
-driver = Driver(**json.loads(config), class_loader=adapter_class)
-handle = driver.attach(name)
+hosts = Host.parse_hosts({"default": "tmux", "tmux": {"implementation": "agent_pm.session.hosts.tmux:TmuxHost"}})
+session_cls = HostedSession.configured(adapters=json.loads(adapters), hosts=hosts, class_loader=adapter_class)
+handle = session_cls.attach(name)
 before = [handle.sid, handle.state(), handle.reply]
 handle.send(text)
 event = next(e for e in handle.events() if not isinstance(e, IdleTimeout))
 print(json.dumps([*before, repr(event), handle.reply]))
 """
-CLOSE = "import sys; from agent_pm.session import Driver; Driver(adapters={}, hosts={'tmux': {'implementation': 'agent_pm.session.hosts.tmux:TmuxHost'}}, default_host='tmux').close(sys.argv[1])"
+CLOSE = "import sys; from agent_pm.session import Host, Session; Session.configure(adapters={}, hosts=Host.parse_hosts({'default': 'tmux', 'tmux': {'implementation': 'agent_pm.session.hosts.tmux:TmuxHost'}})); Session.retire(sys.argv[1])"
 SLOW_CLOSE = """import sys, time, shutil
 from unittest import mock
-from agent_pm.session import Driver
+from agent_pm.session import Host, Session
 remove = shutil.rmtree
 def slow(*args, **kwargs):
     open(sys.argv[2], "w").close()
     time.sleep(1)
     remove(*args, **kwargs)
 with mock.patch("shutil.rmtree", slow):
-    driver = Driver(
+    Session.configure(
         adapters={},
-        hosts={"tmux": {"implementation": "agent_pm.session.hosts.tmux:TmuxHost"}},
-        default_host="tmux",
+        hosts=Host.parse_hosts(
+            {"default": "tmux", "tmux": {"implementation": "agent_pm.session.hosts.tmux:TmuxHost"}}
+        ),
     )
-    driver.close(sys.argv[1])
+    Session.retire(sys.argv[1])
 """
 
 
@@ -112,7 +116,7 @@ class TuiTest(Live):
         stream.quiet(3 * IDLE)
 
         res = subprocess.run(
-            [*PY, "-c", ATTACH, fake_adapter.__file__, json.dumps(self.config), "w1", "more"],
+            [*PY, "-c", ATTACH, fake_adapter.__file__, json.dumps(self.adapters), "w1", "more"],
             env=self.server.child_env(),
             capture_output=True,
             text=True,
@@ -127,29 +131,27 @@ class TuiTest(Live):
 
         handle.stop()
         self.assertEqual(stream.until_exited(), [Exited(-signal.SIGHUP)])
-        self.assertEqual(self.driver.sessions("w1"), [])
-        self.assertFalse(os.path.lexists(tui._Store("w1", host=self.driver.session_cls.host()).dir))
+        self.assertEqual(self.session_cls.list("w1"), [])
+        self.assertFalse(os.path.lexists(tui._Store("w1", host=self.session_cls.host()).dir))
 
     def test_inspect_an_ended_tui_session_after_its_pane_and_store_are_removed(self):
-        self.config["adapters"]["fake"]["implementation"] = (
-            "agent_pm.session.adapters.fake:InspectAdapter"
-        )
-        self.driver = self.driven()
+        self.adapters["fake"]["implementation"] = "agent_pm.session.adapters.fake:InspectAdapter"
+        self.session_cls = self.fake_session()
         session = self.start("historical", {"exit": 3}, sid=SID)
         stream = Stream(self, session)
         self.assertEqual(stream.next(poke=self.poke), Exited(3))
         info = session.info()
         session.close()
-        self.assertEqual(self.driver.sessions("historical"), [])
+        self.assertEqual(self.session_cls.list("historical"), [])
         self.assertFalse(
-            os.path.lexists(tui._Store("historical", host=self.driver.session_cls.host()).dir)
+            os.path.lexists(tui._Store("historical", host=self.session_cls.host()).dir)
         )
         with contextlib.ExitStack() as stack:
             starts = [
                 stack.enter_context(mock.patch(target, side_effect=AssertionError(target)))
                 for target in SPAWNS
             ]
-            status = self.driver.session_cls.inspect(
+            status = self.session_cls.inspect(
                 Spec(workdir=self.workdir, client="fake", sid=SID, access=Access(cwd=self.dir))
             )
         self.assertEqual(
@@ -165,11 +167,11 @@ class TuiTest(Live):
         self.assertEqual(stream.next(poke=self.poke), Exited(3))
         self.lines("w2 done", "w2 dead")
         self.assertEqual(
-            (handle.state(), [r.state for r in self.driver.sessions("w2")]), ("live", ["dead"])
+            (handle.state(), [r.state for r in self.session_cls.list("w2")]), ("live", ["dead"])
         )
-        self.driver.close("w2")
-        self.assertEqual((handle.state(), self.driver.sessions("w2")), ("absent", []))
-        self.assertFalse(os.path.lexists(tui._Store("w2", host=self.driver.session_cls.host()).dir))
+        self.session_cls.retire("w2")
+        self.assertEqual((handle.state(), self.session_cls.list("w2")), ("absent", []))
+        self.assertFalse(os.path.lexists(tui._Store("w2", host=self.session_cls.host()).dir))
 
     def test_an_unreachable_server_is_unknown_and_no_end(self):
         if os.getuid() == 0:
@@ -180,11 +182,11 @@ class TuiTest(Live):
         os.chmod(self.server.socket, 0)
         self.addCleanup(os.chmod, self.server.socket, mode)
         with self.assertRaisesRegex(DriverError, "^tmux sessions unknown: "):
-            self.driver.sessions("w.*")
+            self.session_cls.list("w.*")
         self.assertEqual(handle.state(), "unknown")
         stream.quiet(1.0)
         os.chmod(self.server.socket, mode)
-        self.assertEqual([r.name for r in self.driver.sessions("w3")], ["w3"])
+        self.assertEqual([r.name for r in self.session_cls.list("w3")], ["w3"])
         handle.stop()
         self.assertEqual(stream.until_exited(), [Exited(-signal.SIGHUP)])
 
@@ -206,11 +208,11 @@ class SplitTest(Live):
         other = added.stdout.strip()
         self.assertEqual(self.active("w5"), other)
 
-        attached = self.driver.attach("w5")
+        attached = self.session_cls.attach("w5")
         attached.send("ping")
         self.lines("w5 done")
         self.assertNotIn("ping", self.server.tmux("capture-pane", "-p", "-t", other).stdout)
-        host = self.driver.session_cls.host()
+        host = self.session_cls.host()
         status = host.attach("w5")
         self.assertEqual(
             (status.identity.split(" ")[2], status.alive(), status.activity()),
@@ -237,7 +239,7 @@ class SameNameTest(Live):
         self.addCleanup(patch.stop)
 
     def old(self, name: str) -> tuple[Session, Iterator]:
-        """Session `name`'s Handle and its events() past its turn's end."""
+        """Session `name` and its events() past its turn's end."""
         handle = self.start(
             name, {"hook": "stop", "payload": {"last_message": "r1"}}, {"read": True}
         )
@@ -248,7 +250,7 @@ class SameNameTest(Live):
 
     def renewed(self, name: str, old: Session, events: Iterator) -> None:
         """`name` started again showing DIALOG, with an events file of its own: old's events end,
-        never scanning it; old.stop() leaves it; the new Handle gets Blocked and the blocked line.
+        never scanning it; old.stop() leaves it; the new session gets Blocked and the blocked line.
         """
         mine = os.path.join(self.dir, "events-new")
         new = self.start(name, {"raw": DIALOG}, {"read": True}, events=mine)
@@ -271,7 +273,7 @@ class SameNameTest(Live):
         self.renewed("w4", old, events)
 
     def test_two_starts_of_one_name_at_once_make_one_session_its_dir_kept(self):
-        with open(self.config["adapters"]["fake"]["scenario"], "w") as f:
+        with open(self.adapters["fake"]["scenario"], "w") as f:
             json.dump([{"read": True}], f)
         tmux = Tmux()
         real, order, second, first_done = (
@@ -285,7 +287,15 @@ class SameNameTest(Live):
         def run():
             try:
                 results.append(
-                    self.driver.start("fake", "tui", "hello", Spec(workdir=self.workdir, name="w6"))
+                    self.session_cls.start(
+                        Spec(
+                            workdir=self.workdir,
+                            name="w6",
+                            client="fake",
+                            mode=Mode.TUI,
+                            prompt="hello",
+                        )
+                    )
                 )
             except DriverError as e:
                 results.append(e)
@@ -303,11 +313,13 @@ class SameNameTest(Live):
             finally:
                 first_done.set()
 
-        self.driver.host = type(
-            "HostProxy",
-            (),
-            {"__getattr__": lambda _, key: start if key == "start" else getattr(tmux, key)},
-        )()
+        self.session_cls = self.fake_session(
+            host=type(
+                "HostProxy",
+                (),
+                {"__getattr__": lambda _, key: start if key == "start" else getattr(tmux, key)},
+            )()
+        )
         run()
         threads[0].join(WAIT)
         handle, error = sorted(results, key=lambda result: isinstance(result, Exception))
@@ -315,7 +327,7 @@ class SameNameTest(Live):
         self.assertEqual(tui.TuiRuntime.snapshot("w6")["sid"], handle.sid)
         self.assertEqual(str(error), "tui session w6 is running; tmux attach -t '=w6'")
         self.assertEqual(
-            (handle.state(), os.listdir(tui._Store("w6", host=self.driver.session_cls.host()).dir)),
+            (handle.state(), os.listdir(tui._Store("w6", host=self.session_cls.host()).dir)),
             ("live", ["session.json"]),
         )
 

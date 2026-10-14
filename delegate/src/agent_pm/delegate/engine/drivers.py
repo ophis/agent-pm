@@ -4,7 +4,7 @@ import os
 from abc import ABC, abstractmethod
 from collections.abc import Mapping
 
-from agent_pm.delegate.engine import config
+from agent_pm.delegate import config
 from agent_pm.delegate.engine.types import ConfigError, DriverSpec, Instruction
 from agent_pm.session import ConfigError as SessionConfigError
 from agent_pm.session import Mode, Session, Spec

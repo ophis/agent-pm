@@ -1,8 +1,7 @@
 import os
 import re
 
-from agent_pm.delegate import composer
-from agent_pm.delegate.composer.base import outline
+from agent_pm.delegate.composer.base import TEAM, outline
 from agent_pm.delegate.composer.teams import START
 from agent_pm.utils import unfenced
 
@@ -33,7 +32,7 @@ from delegate.tests.unit.composer.teams import INTRO
 
 class Acceptance(Case):
     def test_each_requested_command_runs_the_teams_repo_tool(self):
-        self.assertTrue(os.path.isfile(os.path.join(composer.TEAM, "tools", "repo.py")))
+        self.assertTrue(os.path.isfile(os.path.join(TEAM, "tools", "repo.py")))
         for role in roles():
             for command in composed(role)[1].commands:
                 self.assertTrue(
@@ -89,7 +88,7 @@ class Shipped(Case):
         }
         self.assertEqual(set(roles()), set(defaults))
         for role, default in defaults.items():
-            with open(os.path.join(composer.TEAM, "roles", f"{role}.md")) as f:
+            with open(os.path.join(TEAM, "roles", f"{role}.md")) as f:
                 text = f.read()
             self.assertTrue(
                 text.split("\n## ")[1].startswith(f"Tasks\n\n{INTRO.format(default)}- `"), role
@@ -123,7 +122,7 @@ class Shipped(Case):
         )
 
     def test_the_engineer_charter_has_six_sections_and_autopilot_adds_its_lines_verbatim(self):
-        with open(os.path.join(composer.TEAM, "roles", "engineer.md")) as f:
+        with open(os.path.join(TEAM, "roles", "engineer.md")) as f:
             charter = f.read()
         heads = [path[1] for _, path, _, heading in outline(charter) if heading and len(path) == 2]
         self.assertEqual(
@@ -306,11 +305,9 @@ class Real(RealConfig):
 
     def test_deep_research_falls_back_to_both_method_files_the_researcher_names(self):
         prompt, _ = composed("researcher")
-        self.assertEqual(parameters(prompt)["<team>"], f"`{composer.TEAM}`")
+        self.assertEqual(parameters(prompt)["<team>"], f"`{TEAM}`")
         for name in ("deep-research", "ultracode"):
-            self.assertTrue(
-                os.path.isfile(os.path.join(composer.TEAM, "methods", f"{name}.md")), name
-            )
+            self.assertTrue(os.path.isfile(os.path.join(TEAM, "methods", f"{name}.md")), name)
             self.assertIn(f"`<team>/methods/{name}.md`", prompt)
         for phrase in (
             "No such tool → follow the deep-research method ([Researcher › Methods](#methods)).",

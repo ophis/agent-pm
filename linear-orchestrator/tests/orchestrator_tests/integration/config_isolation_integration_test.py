@@ -17,6 +17,7 @@ from orchestrator_tests.case import ORCH_ROOT, PY, REPO, Case, child_env
 from orchestrator_tests.config_fixtures import (
     CORE_TABLES,
     CORE_TOP,
+    HARNESS_DELEGATE,
     HTTPS,
     IMPORT_ALONE,
     PIPELINE,
@@ -196,19 +197,16 @@ class TeamDirectoryIsolation(ConfigFile, Case):
 
     def seen(self):
         cfg = self.load(PIPELINE)
-        pm = cfg.roles["pm"]
-        return pm, delegate.plan(
-            pm.run,
-            delegate.Spec(
-                "x",
-                self.work,
-                client="claude",
-                sid=SID,
-                out=os.path.join(self.work, "out.md"),
-                cwd=self.work,
-            ),
-            driver=delegate.configure(),
+        spec = delegate.Spec(
+            "x",
+            self.work,
+            client="claude",
+            sid=SID,
+            out=os.path.join(self.work, "out.md"),
+            cwd=self.work,
         )
+        plan = HARNESS_DELEGATE.preview("pm", spec, overlays=(cfg.core,)).plan
+        return cfg.roles["pm"], plan.session, plan.run
 
     def test_team_dirs_change_no_orchestrator_run(self):
         before = self.seen()
