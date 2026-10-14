@@ -8,7 +8,7 @@ from datetime import datetime
 from unittest import mock
 
 from agent_pm.delegate import Begun, ConfigError, Finished, Limit, Progress, Result, plan, run
-from agent_pm.delegate.engine.runner import FIX, IDLE_TIMEOUT, NUDGE, POLICIES, STOP_LIMIT
+from agent_pm.delegate.engine.runner import FIX, NUDGE, POLICIES, STOP_LIMIT
 from agent_pm.delegate.event.reply import marks
 from agent_pm.session import Activity, Blocked, DriverError, Exited, IdleTimeout, LimitHit, Mode
 
@@ -76,13 +76,10 @@ class InProcess(Base):
         )
 
     def test_silence_longer_than_the_idle_timeout_is_recorded_and_the_run_goes_on(self):
-        start = self.driver.start
-        with mock.patch.object(
-            self.driver,
-            "start",
-            side_effect=lambda *a, **kw: start(*a, **{**kw, "idle_timeout": 0.3}),
-        ):
-            r = self.go({"sleep": 1.0}, said(START, block(DONE)))
+        self.write(
+            os.path.join(self.agent_pm, "config.local.toml"), "[delegate]\nidle_timeout = 0.3\n"
+        )
+        r = self.go({"sleep": 1.0}, said(START, block(DONE)))
         self.assertEqual(r.outcome.status, "done")
         idle = [e for e in self.records() if e["kind"] == "idle"]
         self.assertTrue(idle)
@@ -161,7 +158,7 @@ class TuiPolicy(Base):
                         args[0].session.events,
                     ),
                     (
-                        {"idle_timeout": IDLE_TIMEOUT},
+                        {"idle_timeout": 7200},
                         self.events[0].sid,
                         want[1],
                         want[0]["resume"] is not None,
@@ -255,7 +252,7 @@ class TuiPolicy(Base):
         )
 
     def test_an_idle_timeout_gives_up_and_leaves_the_session(self):
-        r = self.faked(turn(START), IdleTimeout(IDLE_TIMEOUT))
+        r = self.faked(turn(START), IdleTimeout(7200))
         self.assertEqual((r, self.handle.calls), (GAVE_UP, [("send", NUDGE)]))
         self.assertIn(f"delegate: no event for 2 h; {LEFT_OPEN}", self.err)
         self.assertEqual(
@@ -263,7 +260,7 @@ class TuiPolicy(Base):
         )
         self.assertEqual(
             (self.last("idle")["seconds"], self.last("give_up")["reason"]),
-            (IDLE_TIMEOUT, "no event for 2 h"),
+            (7200, "no event for 2 h"),
         )
 
     def test_hours_of_activity_or_blocked_without_an_idle_timeout_never_give_up(self):
@@ -387,7 +384,7 @@ class TuiPolicy(Base):
     def test_headless_turn_ends_never_nudge_and_an_idle_timeout_is_only_recorded(self):
         r = self.faked(
             *[STOP] * (2 + STOP_LIMIT),
-            IdleTimeout(IDLE_TIMEOUT),
+            IdleTimeout(7200),
             turn(START, block(DONE)),
             Exited(0),
             mode="headless",
@@ -397,7 +394,7 @@ class TuiPolicy(Base):
         args, given = self.started.call_args
         self.assertEqual(
             (given, args[0].session.sid, args[0].session.resume, args[0].session.events),
-            ({"idle_timeout": IDLE_TIMEOUT}, self.events[0].sid, False, None),
+            ({"idle_timeout": 7200}, self.events[0].sid, False, None),
         )
 
 

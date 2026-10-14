@@ -16,7 +16,7 @@ from contextlib import redirect_stderr
 from unittest import mock
 
 from agent_pm.delegate import Progress, Spec, composer, run
-from agent_pm.delegate.engine.runner import FIX, IDLE_TIMEOUT, NUDGE, STOP_LIMIT
+from agent_pm.delegate.engine.runner import FIX, NUDGE, STOP_LIMIT
 from agent_pm.session import Driver
 from agent_pm.utils import read_project
 
@@ -203,7 +203,7 @@ class Idle(TuiRun):
 
         def later(event):
             if isinstance(event, Progress):  # read at turn 1's end, the last event
-                clock.by += IDLE_TIMEOUT + 1
+                clock.by += 7200 + 1
 
         result = self.go(later, steps=[START], background=1)
         self.assertEqual(result, GAVE_UP)
@@ -211,7 +211,7 @@ class Idle(TuiRun):
         self.assertEqual(self.kinds(), [*TURN_1, "idle", "give_up", "result", "end"])
         self.assertEqual(
             (self.last("idle")["seconds"], self.last("give_up")["reason"]),
-            (IDLE_TIMEOUT, "no event for 2 h"),
+            (7200, "no event for 2 h"),
         )
         self.assertEqual(self.users(), [])
         self.left_open()

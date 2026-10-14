@@ -8,12 +8,74 @@ from agent_pm.delegate import ConfigError, Finished, Spec, composer, plan, run
 from agent_pm.delegate.engine.drivers import AgentDriver, Driver, InstructionDriver
 from agent_pm.delegate.engine.types import DriverSpec, Instruction
 from agent_pm.session import ConfigError as SessionConfigError
-from agent_pm.session import Session
+from agent_pm.session import IdleTimeout, Session
 from agent_pm.session import Spec as StartSpec
 
 from delegate.tests.case import Case
 from delegate.tests.fakes.session import SessionClass
-from delegate.tests.unit.runs import no_child
+from delegate.tests.replies import block
+from delegate.tests.unit.runs import DONE, START, no_child, turn
+
+
+class IdleTimeoutConfig(Case):
+    def local(self, text):
+        with open(os.path.join(self.agent_pm, "config.local.toml"), "w") as stream:
+            stream.write(text)
+
+    def test_default_global_and_role_values_reach_the_session_in_every_mode(self):
+        for text, expected in (
+            ("", 7200),
+            ("[delegate]\nidle_timeout = 14400\n", 14400),
+            (
+                "[delegate]\nidle_timeout = 14400\n[delegate.roles.dummy-tester]\nidle_timeout = 0.3\n",
+                0.3,
+            ),
+        ):
+            for mode in ("tui", "headless", "in_process"):
+                with self.subTest(text=text, mode=mode), no_child():
+                    self.local(text)
+                    session_cls = SessionClass.scripted(turn(START, block(DONE)))
+                    result = run(
+                        composer.resolve("dummy-tester"),
+                        Spec("input", self.home, mode=mode, cwd=self.home),
+                        driver=AgentDriver(session_cls),
+                    )
+                    self.assertEqual(result.outcome.status, "done")
+                    self.assertEqual(
+                        [call["idle_timeout"] for call in session_cls.started], [expected]
+                    )
+
+    def test_configured_tui_idle_timeout_gives_up(self):
+        self.local("[delegate.roles.dummy-tester]\nidle_timeout = 30\n")
+        session_cls = SessionClass.scripted(IdleTimeout(30))
+        with no_child():
+            result = run(
+                composer.resolve("dummy-tester"),
+                Spec("input", self.home, mode="tui", cwd=self.home),
+                driver=AgentDriver(session_cls),
+            )
+        self.assertIsNone(result.outcome)
+        self.assertEqual(session_cls.started[0]["idle_timeout"], 30)
+        self.assertTrue(session_cls.live)
+
+    def test_invalid_global_and_role_local_values_raise_delegate_config_error(self):
+        for table in ("delegate", "delegate.roles.dummy-tester"):
+            for value in (
+                "0",
+                "-1",
+                "true",
+                "false",
+                '"7200"',
+                '""',
+                "[]",
+                "{seconds = 30}",
+                "nan",
+                "inf",
+            ):
+                with self.subTest(table=table, value=value):
+                    self.local(f"[{table}]\nidle_timeout = {value}\n")
+                    with self.assertRaisesRegex(ConfigError, "idle_timeout must be"):
+                        composer.resolve("dummy-tester")
 
 
 class Drivers(Case):
