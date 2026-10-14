@@ -4,6 +4,7 @@ resume); `deliver`, one DelegateEvent's write-back; bounce, the router's repo-ch
 """
 
 import contextlib
+import fcntl
 import functools
 import hashlib
 import json
@@ -78,6 +79,7 @@ Q_ATTACHED = "query($i: String!) { issue(id: $i) { attachments(first: 50) { node
 Q_ID = "query($i: String!) { issue(id: $i) { id team { id } } }"
 
 LEDGER = "writeback.json"
+LOCK = "writeback.lock"
 MAX_FILE = 1_000_000
 PLAN_MARK = "RESUME: phase="
 FOOTER = "Answer in a comment, then move this issue back to Todo."
@@ -217,6 +219,28 @@ def _ledger(ctx):
         return {}
     valid = isinstance(data, dict) and all(_entry(v) for v in data.values())
     return data if valid else {}
+
+
+@contextlib.contextmanager
+def _exclusive(ctx):
+    """The run's write-back lock, held while a callback or Recover writes back: yields False,
+    logged, when it cannot be opened.
+    """
+    try:
+        fd = os.open(
+            os.path.join(ctx.workdir, LOCK),
+            os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK,
+            0o600,
+        )
+    except OSError as e:
+        _error(ctx, "lock", e)
+        yield False
+        return
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        yield True
+    finally:
+        os.close(fd)
 
 
 def _done(ctx):
@@ -522,6 +546,12 @@ def deliver(cfg, issue: str, workdir: str, event: DelegateEvent, *, gql, now=tim
         raise ConfigError(f"{issue}: role {claim.role!r} has no write-back")
     outcome = None if event.outcome is None else _outcome(event.outcome)
     ctx = for_claim(cfg, claim, gql, attempt=attempt)
+    with _exclusive(ctx) as held:
+        return held and _deliver(ctx, cfg, claim, event, outcome, gql=gql, now=now)
+
+
+def _deliver(ctx, cfg, claim, event, outcome, *, gql, now) -> bool:
+    attempt = event.attempt
     session = functools.partial(_session, ctx, cfg, claim.client, attempt, gql=gql, now=now)
     if event.kind == "begun":
         return session()

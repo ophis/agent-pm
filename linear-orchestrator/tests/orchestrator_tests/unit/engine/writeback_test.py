@@ -5,6 +5,7 @@ import json
 import os
 import shutil
 import tempfile
+import threading
 import time
 from dataclasses import replace
 from datetime import UTC, datetime
@@ -2136,3 +2137,44 @@ class LimitEvents(Events):
         self.assertTrue(self.deliver(self.limited()))
         self.assertEqual(self.linear.calls[n:], [])
         self.assertEqual(self.rows(), [self.row()])
+
+    # a callback and Recover writing back one run at once: each step once, none lost
+    def racing(self, module, name, event):
+        """On module.name's first call, delivers event on another thread and gives it half a
+        second before the call goes on; that delivery's results and thread.
+        """
+        real, results, threads = getattr(module, name), [], []
+
+        def first(*args, **kwargs):
+            if not threads:
+                threads.append(threading.Thread(target=lambda: results.append(self.deliver(event))))
+                threads[0].start()
+                threads[0].join(0.5)
+            return real(*args, **kwargs)
+
+        patched = mock.patch.object(module, name, first)
+        patched.start()
+        self.addCleanup(patched.stop)
+        return results, threads
+
+    def test_a_redelivered_limit_records_one_row(self):
+        results, threads = self.racing(writeback.runs, "note_limit", self.limited())
+        self.assertTrue(self.deliver(self.limited()))
+        threads[0].join()
+        self.assertEqual(results, [True])
+        self.assertEqual(self.rows(), [self.row()])
+        self.assertEqual(self.ledger()[RUN_SID]["steps"], ["limit", "limit-move:1", "limit-row:1"])
+        limit = ops.client_id(RUN_SID, "limit")
+        self.assertEqual(len([v for _, v in self.linear.writes("comment") if v["c"] == limit]), 1)
+
+    def test_two_writers_lose_no_step(self):
+        one, two = (delegate_event("progress", name="build", text=t) for t in ("one", "two"))
+        results, threads = self.racing(writeback, "save", two)
+        self.assertTrue(self.deliver(one))
+        threads[0].join()
+        self.assertEqual(results, [True])
+        digest = {t: hashlib.sha256(t.encode()).hexdigest()[:12] for t in ("one", "two")}
+        self.assertEqual(
+            self.ledger()[RUN_SID]["steps"],
+            [f"progress:build:{digest['one']}", f"progress:build:{digest['two']}"],
+        )
