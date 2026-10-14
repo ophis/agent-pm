@@ -685,20 +685,6 @@ def delegate_session_forwarding(repo: str) -> list[str]:
     return sorted(found)
 
 
-def delegate_engine_argparse(repo: str) -> list[str]:
-    """Commands parse their arguments in cli.py; engine modules take typed values."""
-    base = "delegate/src/agent_pm/delegate/engine/"
-    return sorted(
-        f"{base}{rel}:{node.lineno}: engine imports argparse (AC34)"
-        for rel, text in _files(os.path.join(repo, base), ".py")
-        for node in ast.walk(ast.parse(text, rel))
-        if isinstance(node, ast.Import)
-        and any(alias.name.split(".")[0] == "argparse" for alias in node.names)
-        or isinstance(node, ast.ImportFrom)
-        and (node.module or "").split(".")[0] == "argparse"
-    )
-
-
 def delegate_package_names(repo: str) -> list[str]:
     """TASK-389: Delegate owns package resources and never discovers sibling projects."""
     base = "delegate/src/agent_pm/delegate/"

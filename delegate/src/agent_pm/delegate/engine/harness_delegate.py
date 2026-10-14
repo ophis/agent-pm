@@ -554,6 +554,8 @@ class HarnessDelegate(Delegate):
             state = self._current()
             if self._alive(state):
                 return self._record(state)
+            if state.completed:
+                raise ConfigError(f"{self.workdir}: delegate run already completed")
             state = replace(state, outer={} if outer is None else outer.copy())
             return self._detach(state)
 

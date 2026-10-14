@@ -265,6 +265,15 @@ class Views(HarnessCase):
         with open(path, "rb") as file:
             self.assertEqual((file.read(), len(HarnessSession.started)), (before, starts))
 
+    def test_a_completed_object_refuses_to_detach_launching_nothing(self):
+        delegate = self.make()
+        delegate.run()
+        launched = list(RecordingHost.launches)
+        with self.assertRaises(ConfigError) as caught:
+            delegate.detach()
+        self.assertEqual(str(caught.exception), f"{self.work}: delegate run already completed")
+        self.assertEqual(RecordingHost.launches, launched)
+
     def test_completed_session_info_uses_public_history_without_starting(self):
         delegate = self.make()
         delegate.run()

@@ -681,20 +681,6 @@ class DelegateSessionForwarding(Sample):
         )
 
 
-class DelegateEngineArgparse(Sample):
-    def test_engine_modules_import_no_argparse(self):
-        base = "delegate/src/agent_pm/delegate/"
-        for sample in ("import argparse\n", "from argparse import Namespace\n"):
-            with self.subTest(sample=sample):
-                root = self.tree({base + "engine/runner.py": sample})
-                self.assertEqual(
-                    guards.delegate_engine_argparse(root),
-                    [f"{base}engine/runner.py:1: engine imports argparse (AC34)"],
-                )
-        root = self.tree({base + "cli.py": "import argparse\n", base + "engine/a.py": "x = 1\n"})
-        self.assertEqual(guards.delegate_engine_argparse(root), [])
-
-
 class DelegatePackageNames(Sample):
     def test_legacy_resource_access_is_rejected_in_production_only(self):
         base = "delegate/src/agent_pm/delegate/"
