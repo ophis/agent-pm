@@ -1,0 +1,141 @@
+"""Role runs through `agent-pm-crew run -- agent-pm-delegate run … --detach` (FR-18, FR-22, FR-35)
+on the real commands (manager/tests/live_crew.py). Ports main's test_detach_events_default,
+test_killed_role_run_gone_then_recovered, test_stop_a_role_run_by_its_tui_session and
+test_a_role_run_ended_on_needs_input_is_waiting_and_left_alone_by_attach_resume.
+"""
+
+import json
+
+from agent_pm.manager import State
+from agent_pm.utils import Record
+
+from delegate.tests.integration.cli import ASKING, DONE
+from delegate.tests.replies import block, mark
+from manager.tests.live_crew import MANAGER, ROLE, LiveCrew, has_pair, logged
+from session.tests import live_tmux
+
+START = mark("start", "echoing")
+
+
+class RoleCase(LiveCrew):
+    def started(self, name: str, *, mode: str = "tui", **kw) -> Record:
+        """crew run `name` -- a role run; its Record, checked, and its entry live."""
+        record = self.record(self.role(name, mode=mode, **kw))
+        tui = f"{ROLE}-{record.sid[:8]}"
+        work = self.workdir(name)
+        self.assertEqual(
+            (record.kind, record.name, record.sessions, record.workdir, record.ctl, record.resume),
+            (
+                "role",
+                tui,
+                (f"{tui}-drive", tui) if mode == "tui" else (f"{tui}-drive",),
+                work,
+                ("agent-pm-delegate",),
+                ("agent-pm-delegate", "resume", work),
+            ),
+        )
+        entry = self.roster()[name]
+        self.assertEqual((entry.state, entry.record, entry.sid), (State.LIVE, record, record.sid))
+        return record
+
+    def words(self, name: str) -> list[list[str]]:
+        return [
+            line.split(" ")[2:]
+            for line in live_tmux.events(self.events)
+            if line.split(" ")[1] == name
+        ]
+
+    def killed(self, name: str, record: Record) -> None:
+        """Kills tui role run `name`'s sessions after its first turn; attach then says gone."""
+        harness, tui = record.sessions
+        self.wait_event(tui, "done")
+        self.kill(harness)
+        if self.live(tui):  # the harness, stopping, may close it first
+            self.kill(tui)
+        self.until(lambda: ["outcome", "error"] in self.words(harness), "the harness's outcome")
+        out = self.ok(self.crew("attach")).stdout.splitlines()
+        self.assertIn(f"resume: agent-pm-crew resume --manager mgr {name}", out)
+        self.assertEqual(self.roster()[name].state, State.GONE)
+        self.assertTrue(self.gone(harness, tui))
+
+
+class RoleTest(RoleCase):
+    def test_detach_events_default(self):
+        record = self.started("r", steps=[START], turns=[[block(DONE)]])
+        harness, tui = record.sessions
+        self.wait_event(harness, "exited")
+        self.assertEqual(self.words(tui), [["done"], ["done"]])
+        self.assertEqual(self.words(harness), [["outcome", "done"], ["exited", "0"]])
+        self.ok(self.crew("attach"))
+        self.assertEqual(self.roster()["r"].state, State.DONE)
+
+    def test_killed_role_run_gone_then_recovered(self):
+        record = self.started("r", steps=[START])
+        harness, tui = record.sessions
+        self.killed("r", record)
+        turns = self.words(tui).count(["done"])
+        resumed = self.record(self.crew("resume", "r", **self.scene("r", [START])))
+        self.assertEqual(
+            (resumed.sid, resumed.sessions, resumed.display),
+            (record.sid, record.sessions, record.display),
+        )
+        self.assertTrue(record.display.startswith(MANAGER), record.display)
+        self.until(lambda: self.live(harness, tui), "the harness and the tui back")
+        self.until(
+            lambda: live_tmux.assert_grid(self, self.server, MANAGER, [[tui]]),
+            f"the grid [[{tui}]]",
+        )
+        self.assertTrue(has_pair(logged(self.log("r"))[-1]["argv"], "--resume", record.sid))
+        self.wait_event(tui, "done", turns + 1)
+        entries = self.roster()
+        self.assertEqual(list(entries), ["r"])
+        self.assertEqual((entries["r"].state, entries["r"].record), (State.LIVE, resumed))
+
+    def test_a_gone_role_run_resumed_by_hand_is_live_at_the_next_attach(self):
+        record = self.started("r", steps=[START])
+        self.killed("r", record)
+        work = self.workdir("r")
+        hand = self.record(
+            self.call("agent-pm-delegate", "resume", work, **self.scene("r", [START]))
+        )
+        self.assertEqual(hand.sid, record.sid)
+        self.ok(self.crew("attach"))
+        entry = self.roster()["r"]
+        self.assertEqual((entry.state, entry.record), (State.LIVE, record))
+
+    def test_stop_a_role_run_by_its_tui_session(self):
+        self.record(self.worker("w1"))
+        record = self.started("r", steps=[START])
+        harness, tui = record.sessions
+        calls = {
+            command: self.spy(command) for command in ("agent-pm-session", "agent-pm-delegate")
+        }
+        self.ok(self.crew("attach"))
+        for log in calls.values():
+            with open(log, encoding="utf-8") as f:
+                self.assertEqual(
+                    [c for c in f.read().splitlines() if c.startswith("status")], ["status"]
+                )
+        self.assertEqual(self.ok(self.crew("stop", tui)).stdout, "")
+        self.until(lambda: self.gone(harness, tui), f"{harness} and {tui} gone")
+        self.assertEqual(list(self.roster()), ["w1"])
+        self.assertTrue(self.live("w1"))
+
+    def test_a_role_run_ended_on_needs_input_is_waiting_and_left_alone(self):
+        record = self.started("r", steps=[block(ASKING)], mode="headless")
+        (harness,) = record.sessions
+        self.wait_event(harness, "exited")
+        for _ in range(2):
+            self.ok(self.crew("attach"))
+            self.assertEqual(self.roster()["r"].state, State.WAITING)
+        outcome = json.loads(
+            self.ok(self.call("agent-pm-delegate", "outcome", self.workdir("r"))).stdout
+        )
+        self.assertEqual(outcome["questions"], ASKING["questions"])
+        starts = len(logged(self.log("r")))
+        res = self.crew("resume", "r")
+        self.assertEqual((res.returncode, res.stdout), (1, ""), res.stderr)
+        self.assertIn("only gone entries can resume (state waiting)", res.stderr)
+        self.assertEqual(len(logged(self.log("r"))), starts)
+        self.assertTrue(self.gone(harness))
+        self.assertEqual(self.roster()["r"].state, State.WAITING)
