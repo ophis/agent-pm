@@ -1,4 +1,6 @@
-"""Encode Delegate events and deliver each line to the configured callback command."""
+"""Encode Delegate events, stamped with their run's sid and attempt, and deliver each line to the
+configured callback command.
+"""
 
 import subprocess
 from collections.abc import Sequence
@@ -10,19 +12,21 @@ from agent_pm.session import RunLog
 
 
 class EventCallback:
-    def __init__(self, command: Sequence[str], workdir: str):
+    def __init__(self, command: Sequence[str], workdir: str, *, sid: str, attempt: int):
         self.command = tuple(command)
         self.workdir = workdir
+        self.sid, self.attempt = sid, attempt
 
-    @staticmethod
-    def encode(event: Event) -> DelegateEvent:
+    def encode(self, event: Event) -> DelegateEvent:
+        run = {"sid": self.sid, "attempt": self.attempt}
         if isinstance(event, Begun):
-            return DelegateEvent("begun", sid=event.sid)
+            return DelegateEvent("begun", **run)
         if isinstance(event, Progress):
-            return DelegateEvent("progress", name=event.name, text=event.text)
+            return DelegateEvent("progress", **run, name=event.name, text=event.text)
         result = event.result
         return DelegateEvent(
             "finished",
+            **run,
             returncode=result.returncode,
             outcome=None if result.outcome is None else asdict(result.outcome),
             error=result.error,

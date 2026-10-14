@@ -7,8 +7,18 @@ import subprocess
 import sys
 import time
 from dataclasses import replace
+from unittest import mock
 
-from agent_pm.delegate import Begun, ConfigError, Finished, Limit, Outcome, Progress, Spec
+from agent_pm.delegate import (
+    Begun,
+    ConfigError,
+    DelegateEvent,
+    Finished,
+    Limit,
+    Outcome,
+    Progress,
+    Spec,
+)
 from agent_pm.delegate.engine.harness_delegate import HarnessDelegate
 from agent_pm.session import ConfigError as SessionConfigError
 from agent_pm.session import Exited, LimitHit, Liveness, Reply, Usage, Window
@@ -314,7 +324,7 @@ class Views(HarnessCase):
         record = view.resume()
         self.assertTrue(view.alive())
         self.assertEqual(view.resume(), record)
-        self.assertEqual(self.metadata()["attempt"], 2)
+        self.assertEqual(self.metadata()["attempt"], 3)
 
     def test_resume_uses_attach_config_snapshot_and_preserves_protect(self):
         team = self.team_dir()
@@ -515,6 +525,28 @@ class Completion(HarnessCase):
         self.assertEqual(len(seen), 1)
         self.assertIsInstance(seen[0], Begun)
         self.assertFalse(HarnessSession.live)
+
+
+class Attempts(HarnessCase):
+    def test_resume_counts_an_attempt_and_its_run_stamps_it(self):
+        callback = ["record"]
+        record = self.make(callback=callback).detach()
+        self.assertEqual(self.metadata()["attempt"], 1)
+        self.stop(record)
+        view = HarnessDelegate.attach(self.work)
+        view.resume()
+        self.assertEqual(self.metadata()["attempt"], 2)
+        view.resume()
+        self.assertEqual(self.metadata()["attempt"], 2)
+        with mock.patch(
+            "subprocess.run", return_value=subprocess.CompletedProcess(callback, 0)
+        ) as run:
+            HarnessDelegate.attach(self.work).run()
+        stamps = {
+            (event.sid, event.attempt)
+            for event in (DelegateEvent.parse(c.kwargs["input"]) for c in run.call_args_list)
+        }
+        self.assertEqual(stamps, {(SID, 2)})
 
 
 class ConcurrentResume(HarnessCase):

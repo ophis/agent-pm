@@ -1,6 +1,6 @@
 """DelegateEvent v1, the callback line: one JSON line per harness event on a callback's stdin,
-holding only its kind's fields. A wire object: outcome and limit stay plain dicts (an Outcome's and
-a Limit's fields).
+holding its run's sid and attempt and its kind's fields. A wire object: outcome and limit stay plain
+dicts (an Outcome's and a Limit's fields).
 """
 
 import json
@@ -16,9 +16,9 @@ class DelegateEventKind(StrEnum):
 
 
 _FIELDS: dict[str, tuple[str, ...]] = {
-    DelegateEventKind.BEGUN: ("sid",),
-    DelegateEventKind.PROGRESS: ("name", "text"),
-    DelegateEventKind.FINISHED: ("returncode", "outcome", "error", "limit"),
+    DelegateEventKind.BEGUN: ("sid", "attempt"),
+    DelegateEventKind.PROGRESS: ("sid", "attempt", "name", "text"),
+    DelegateEventKind.FINISHED: ("sid", "attempt", "returncode", "outcome", "error", "limit"),
 }
 _KIND = f"kind: want one of {', '.join(DelegateEventKind)}"
 
@@ -40,6 +40,7 @@ def _number(value) -> bool:
 class DelegateEvent:
     kind: str
     sid: str | None = None
+    attempt: int | None = None
     name: str | None = None
     text: str | None = None
     returncode: int | None = None
@@ -55,14 +56,15 @@ class DelegateEvent:
                     ok=getattr(self, each.name) == each.default,
                     message=f"{each.name}: not a {self.kind} field",
                 )
-        if self.kind == DelegateEventKind.BEGUN:
-            _check(
-                ok=isinstance(self.sid, str) and self.sid != "", message="sid: want a non-empty str"
-            )
-        elif self.kind == DelegateEventKind.PROGRESS:
+        _check(ok=isinstance(self.sid, str) and self.sid != "", message="sid: want a non-empty str")
+        _check(
+            ok=type(self.attempt) is int and self.attempt >= 1,
+            message="attempt: want an int >= 1",
+        )
+        if self.kind == DelegateEventKind.PROGRESS:
             for field in ("name", "text"):
                 _check(ok=isinstance(getattr(self, field), str), message=f"{field}: want a str")
-        else:
+        elif self.kind == DelegateEventKind.FINISHED:
             _check(ok=type(self.returncode) is int, message="returncode: want an int")
             outcome, limit = (self.outcome, self.limit)
             _check(

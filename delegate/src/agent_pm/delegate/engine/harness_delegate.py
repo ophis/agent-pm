@@ -539,7 +539,12 @@ class HarnessDelegate(Delegate):
             callback = (
                 None
                 if self._state.callback is None
-                else EventCallback(self._state.callback, self.workdir)
+                else EventCallback(
+                    self._state.callback,
+                    self.workdir,
+                    sid=self._state.plan.sid,
+                    attempt=self._state.attempt,
+                )
             )
 
             def emit(event: Event) -> None:
@@ -600,7 +605,7 @@ class HarnessDelegate(Delegate):
 
     def resume(self) -> Record:
         with file_lock(self._path, own=True):
-            state = self._current()
+            state = self._state = self._read()
             if self._alive(state) or state.result is not None and state.result.outcome is not None:
                 return self._record(state)
             agent = self._agent(state)
@@ -641,7 +646,9 @@ class HarnessDelegate(Delegate):
                 self.driver.preflight(accepted.session)
             except SessionConfigError as error:
                 raise ConfigError(str(error)) from None
-            state = replace(state, plan=accepted, completed=False, result=None)
+            state = replace(
+                state, plan=accepted, completed=False, result=None, attempt=state.attempt + 1
+            )
             return self._detach(state)
 
 
