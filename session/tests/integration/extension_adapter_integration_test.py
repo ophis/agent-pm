@@ -65,6 +65,7 @@ class ExtensionAdapterIntegration(Case):
             )
         self.srcs = os.pathsep.join((self.site, self.extensions))
         self.config = os.path.join(self.src, "config.toml")
+        os.chmod(self.config, 0o600)
         self.home = os.path.join(self.root, "home")
         os.mkdir(self.home)
         self.temp = os.path.join(self.root, "tmp")
