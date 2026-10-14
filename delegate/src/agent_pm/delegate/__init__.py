@@ -20,6 +20,7 @@ from agent_pm.delegate.engine.runner import IDLE_TIMEOUT, run
 from agent_pm.delegate.engine.types import (
     Begun,
     ConfigError,
+    DriverSpec,
     Event,
     Finished,
     Instruction,
@@ -45,6 +46,7 @@ __all__ = [
     "run",
     "Result",
     "Driver",
+    "DriverSpec",
     "Instruction",
     "Limit",
     "Outcome",
