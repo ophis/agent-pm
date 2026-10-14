@@ -56,6 +56,7 @@ from agent_pm.utils.paths import (
 )
 from agent_pm.utils.process_control import ProcessControl
 from agent_pm.utils.record import Display, Record, Status, json_records, number
+from agent_pm.utils.registry import CONFIG_NAME
 from agent_pm.utils.registry import PATH as CLASS_PATH
 from agent_pm.utils.registry import load as load_class
 from agent_pm.utils.shell import (
@@ -75,6 +76,7 @@ from agent_pm.utils.text import one_line, parse_time, printable, sid_error, time
 
 __all__ = [
     "CLASS_PATH",
+    "CONFIG_NAME",
     "Checkouts",
     "ConfigFileError",
     "ConfinedFileError",

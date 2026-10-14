@@ -4,16 +4,35 @@ them.
 
 from __future__ import annotations
 
-import re
+import os
 import signal
 from abc import ABC, abstractmethod
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping
 
-from agent_pm.session.engine.types import ConfigError, Hosts, Key, Paste
-from agent_pm.utils import CLASS_PATH, Display, Record, thaw
+from agent_pm.session.engine.types import (
+    ActivityState,
+    ConfigError,
+    DriverError,
+    Hosts,
+    Key,
+    Launch,
+    Liveness,
+    Paste,
+    SessionRow,
+    TuiSettings,
+    Word,
+)
+from agent_pm.utils import (
+    CLASS_PATH,
+    CONFIG_NAME,
+    Display,
+    Record,
+    append_line,
+    printable_abs,
+    thaw,
+)
 
-NAME = re.compile(r"[a-z][a-z0-9_]*\Z")
-SIGNALS = (signal.SIGHUP, signal.SIGTERM, signal.SIGINT)  # detach blocks them until argv unblocks
+SIGNALS = (signal.SIGHUP, signal.SIGTERM, signal.SIGINT)
 
 
 class HostProcess(ABC):
@@ -35,6 +54,41 @@ class HostProcess(ABC):
     @abstractmethod
     def kill(self) -> None: ...
 
+    @property
+    def identity(self) -> str:
+        return self.name
+
+    def session_identity(self) -> tuple[str | None, str | None]:
+        """Private terminal sid and generation, independent of its published Record."""
+        return None, None
+
+    def state(self) -> Liveness:
+        return Liveness.LIVE if self.alive() else Liveness.ABSENT
+
+    def returncode(self) -> int | None:
+        return None if self.alive() else -signal.SIGHUP
+
+    def activity(self) -> Word | None:
+        return None
+
+    def mark(self, word: Word, events: str | None) -> None:
+        """Optional activity metadata for a terminal's status display."""
+        return None
+
+    def row(self) -> SessionRow:
+        receipt = self.record()
+        return SessionRow(
+            self.name,
+            None if receipt is None else receipt.sid,
+            None if receipt is None else receipt.kind,
+            ActivityState.WORKING if self.alive() else ActivityState.DEAD,
+            None,
+            None,
+            None,
+            None,
+            own=False,
+        )
+
     @abstractmethod
     def record(self) -> Record | None: ...
 
@@ -50,8 +104,8 @@ class Terminal(HostProcess):
 
 
 class Host(ABC):
-    """settings: [hosts.<name>] minus implementation. detach/terminal: caller env with the Host's
-    terminal keys replacing the caller's, PWD=cwd; on exit, events gets `exited <rc>` / `dead`.
+    """settings: [hosts.<name>] minus implementation. Launch.env is passed verbatim;
+    on exit, events gets `exited <rc>` / `dead`.
     attach: a Terminal, unknown → DriverError. list: sorted display
     matches ("" none). display: completed in the caller's process.
     """
@@ -76,7 +130,7 @@ class Host(ABC):
                 raise ConfigError(f"[hosts] {key!r}: want a string key")
             if not isinstance(value, Mapping):
                 raise ConfigError(f"[hosts] {key}: want default or a [hosts.<name>] table")
-            if not NAME.match(key):
+            if not CONFIG_NAME.match(key):
                 raise ConfigError(f"[hosts.{key}]: want a name matching [a-z][a-z0-9_]*")
             implementation = value.get("implementation")
             if not isinstance(implementation, str) or not CLASS_PATH.fullmatch(implementation):
@@ -91,9 +145,7 @@ class Host(ABC):
     def detach(
         self,
         name: str,
-        argv: Sequence[str],
-        cwd: str,
-        env: Mapping[str, str],
+        launch: Launch,
         *,
         display: Display = None,
         events: str | None = None,
@@ -104,14 +156,15 @@ class Host(ABC):
     def terminal(
         self,
         name: str,
-        argv: Sequence[str],
-        cwd: str,
-        env: Mapping[str, str],
+        launch: Launch,
         *,
         display: Display = None,
         events: str | None = None,
         record: Record | None = None,
-    ) -> Terminal: ...
+        metadata: Mapping[str, str] | None = None,
+    ) -> Terminal:
+        """metadata carries private sid/runtime/generation separately from the published Record."""
+        ...
 
     @abstractmethod
     def attach(self, name: str) -> HostProcess: ...
@@ -119,7 +172,42 @@ class Host(ABC):
     @abstractmethod
     def list(self, display: Display = None) -> list[str]: ...
 
+    def rows(self, display: Display = None) -> list[SessionRow]:
+        return [self.attach(name).row() for name in self.list(display)]
+
+    def events_path(self, events: str | None) -> str | None:
+        return None if events is None else os.path.abspath(events)
+
+    def prepare_events(self, events: str | None) -> str | None:
+        if events is not None:
+            try:
+                append_line(events, "", own=True)
+            except OSError as error:
+                raise DriverError(f"events file {events}: {error.strerror}") from error
+        return events
+
+    def hook_state(self, name: str, metadata: Mapping[str, str]) -> dict:
+        return {}
+
+    def protected_paths(self) -> tuple[str, ...]:
+        return ()
+
+    def tui_settings(self) -> TuiSettings:
+        return TuiSettings()
+
+    def validate(self, name: str, launch: Launch, *, display: Display = None) -> None:
+        self.validate_display(display)
+        if not launch.argv:
+            raise ConfigError("no command")
+        if not printable_abs(launch.cwd):
+            raise ConfigError(f"cwd must be a printable absolute path, got {launch.cwd!r:.80}")
+
+    def validate_display(self, value: Display) -> None:
+        if value is not None and not isinstance(value, str):
+            raise ConfigError(f"display {value!r:.80}: want text")
+
     def display(self, value: Display) -> Display:
+        self.validate_display(value)
         return value
 
     def display_help(self) -> str:
@@ -127,9 +215,7 @@ class Host(ABC):
 
 
 class Displayable(ABC):
-    """show: None once shown, else an attach command; layout: display completed once the pane it
-    goes beside is found.
-    """
+    """show: None once shown, else an attach command; layout: display completed once its display destination is found."""
 
     @abstractmethod
     def show(self, name: str, *, display: Display = None) -> str | None: ...
@@ -138,7 +224,7 @@ class Displayable(ABC):
     def attach_command(self, name: str) -> str: ...
 
     @abstractmethod
-    def screen(self, name: str, lines: int | None = None) -> str: ...
+    def screen(self, name: str | HostProcess, lines: int | None = None) -> str: ...
 
     @abstractmethod
     def layout(self, *, display: Display = None) -> str | None: ...

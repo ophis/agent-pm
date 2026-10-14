@@ -17,7 +17,6 @@ from session.tests.case import Case
 from session.tests.contracts.host import EXIT_7, SLEEP, HostContract, gone, read
 
 MANAGER = "mgr"
-TERMINAL = "TmuxHost.terminal comes with TASK-368"
 
 
 class TmuxHostContractTest(HostContract, Case):
@@ -30,6 +29,9 @@ class TmuxHostContractTest(HostContract, Case):
         patch.start()
         self.addCleanup(patch.stop)
         super().setUp()
+
+    def creator_env(self):
+        return {**super().creator_env(), "TMUX_TMPDIR": self.server.root}
 
     def make_host(self):
         return TmuxHost("tmux")
@@ -51,11 +53,6 @@ class TmuxHostContractTest(HostContract, Case):
             "COLORTERM": "truecolor",
         }
 
-    def start(self, kind, name, code, *args, **kw):
-        if kind == "terminal":
-            self.skipTest(TERMINAL)
-        return super().start(kind, name, code, *args, **kw)
-
     def poll(self, check, what: str):
         def poked():
             # tmux on Linux (CI: 3.4) can leave a dead pane's process unreaped, so no pane-died,
@@ -64,9 +61,6 @@ class TmuxHostContractTest(HostContract, Case):
             return check()
 
         return super().poll(poked, what)
-
-    def test_a_terminal_started_by_another_process_is_alive_here_and_takes_a_paste(self):
-        self.skipTest(TERMINAL)
 
     def test_list_without_a_display_names_every_detached_session_sorted(self):
         first, second = self.fresh(), self.fresh()

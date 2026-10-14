@@ -1,9 +1,4 @@
-"""A runtime and a Host written outside the session package, from its public modules alone
-(agent_pm.session.extension, agent_pm.session). OutsideAdapter: headless runs this Python printing
-`<prompt>` then `done`, one line each, read by its own events (no record parsing); in_process
-replies the prompt. OutsideHost: each process a child of this process, its Record and Display kept
-in memory; no terminal.
-"""
+"""External Adapter and Host implementations using only public extension imports."""
 
 import subprocess
 import sys
@@ -92,14 +87,18 @@ class OutsideHost(Host):
         super().__init__(name, settings)
         self.processes: dict[str, OutsideProcess] = {}
 
-    def detach(self, name, argv, cwd, env, *, display=None, events=None, record=None):
+    def detach(self, name, launch, *, display=None, events=None, record=None):
         child = subprocess.Popen(
-            argv, cwd=cwd, env=dict(env), stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL
+            launch.argv,
+            cwd=launch.cwd,
+            env=dict(launch.env),
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
         )
         self.processes[name] = OutsideProcess(name, child, display, record)
         return self.processes[name]
 
-    def terminal(self, name, argv, cwd, env, *, display=None, events=None, record=None):
+    def terminal(self, name, launch, *, display=None, events=None, record=None, metadata=None):
         raise DriverError(f"host {self.name} has no terminals")
 
     def attach(self, name):

@@ -128,7 +128,7 @@ class TuiTest(Live):
         handle.stop()
         self.assertEqual(stream.until_exited(), [Exited(-signal.SIGHUP)])
         self.assertEqual(self.driver.sessions("w1"), [])
-        self.assertFalse(os.path.lexists(tui._Store("w1").dir))
+        self.assertFalse(os.path.lexists(tui._Store("w1", host=self.driver.session_cls.host()).dir))
 
     def test_inspect_an_ended_tui_session_after_its_pane_and_store_are_removed(self):
         self.config["adapters"]["fake"]["implementation"] = (
@@ -141,7 +141,9 @@ class TuiTest(Live):
         info = session.info()
         session.close()
         self.assertEqual(self.driver.sessions("historical"), [])
-        self.assertFalse(os.path.lexists(tui._Store("historical").dir))
+        self.assertFalse(
+            os.path.lexists(tui._Store("historical", host=self.driver.session_cls.host()).dir)
+        )
         with contextlib.ExitStack() as stack:
             starts = [
                 stack.enter_context(mock.patch(target, side_effect=AssertionError(target)))
@@ -167,7 +169,7 @@ class TuiTest(Live):
         )
         self.driver.close("w2")
         self.assertEqual((handle.state(), self.driver.sessions("w2")), ("absent", []))
-        self.assertFalse(os.path.lexists(tui._Store("w2").dir))
+        self.assertFalse(os.path.lexists(tui._Store("w2", host=self.driver.session_cls.host()).dir))
 
     def test_an_unreachable_server_is_unknown_and_no_end(self):
         if os.getuid() == 0:
@@ -272,7 +274,8 @@ class SameNameTest(Live):
         self.assertEqual(tui.TuiMode.snapshot("w6")["sid"], handle.sid)
         self.assertEqual(str(error), "tui session w6 is running; tmux attach -t '=w6'")
         self.assertEqual(
-            (handle.state(), os.listdir(tui._Store("w6").dir)), ("live", ["session.json"])
+            (handle.state(), os.listdir(tui._Store("w6", host=self.driver.session_cls.host()).dir)),
+            ("live", ["session.json"]),
         )
 
     def test_a_restart_after_a_close_from_another_process(self):

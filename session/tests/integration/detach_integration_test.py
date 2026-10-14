@@ -15,7 +15,7 @@ import unittest
 from unittest import mock
 
 from agent_pm.session import SIGNALS
-from agent_pm.session.engine.types import ConfigError, DriverError
+from agent_pm.session.engine.types import ConfigError, DriverError, Launch
 from agent_pm.session.hosts.tmux import tmux_host
 
 from session.tests import live_tmux
@@ -61,7 +61,7 @@ class DetachTest(Case):
     def test_the_child_runs_with_the_signals_blocked_its_session_live_until_it_exits(self):
         self.assertIsNone(self.detach("d1", opener=MANAGER))
         self.assertEqual([r.name for r in self.driver.sessions("d1")], ["d1"])
-        tmux_host.detach("d0", self.argv("d0"), cwd=self.dir, env=self.server.env())
+        tmux_host.detach("d0", Launch(tuple(self.argv("d0")), self.server.env(), cwd=self.dir))
         signals = {int(s) for s in SIGNALS}
         self.assertLessEqual(signals, self.blocked("d1"))
         self.assertEqual(signals & self.blocked("d0"), set())
@@ -96,10 +96,8 @@ class DetachTest(Case):
         with self.assertRaisesRegex(tmux_host.TuiError, "^session d2 did not start$"):
             tmux_host.detach(
                 "d2",
-                self.argv("d2"),
+                Launch(tuple(self.argv("d2")), self.server.env(), cwd=missing),
                 sleep=lambda seconds: time.sleep(seconds / 10),
-                cwd=missing,
-                env=self.server.env(),
             )
         live_tmux.wait(self.gone, what="no session left")
 

@@ -1,8 +1,4 @@
-"""modes/tui.py: its start from a Spec (checks, a fresh session dir with session.json under the
-name's lock, one session line, then the tmux session), attach (a restored Tui replaying the hook
-log), polling hook records and the pane, send, screen, stop and close, and the store owning a
-session's files and lock, over a fake tmux module.
-"""
+"""Tui mode behavior through nonspawning Host and Terminal boundaries."""
 
 import errno
 import fcntl
@@ -31,6 +27,7 @@ from agent_pm.session.engine.types import (
     Key,
     Launch,
     LimitHit,
+    Liveness,
     Mode,
     Paste,
     Prepared,
@@ -39,13 +36,15 @@ from agent_pm.session.engine.types import (
     TurnEnd,
     Word,
 )
+from agent_pm.session.hosts.base import HostProcess
 from agent_pm.session.hosts.tmux import tmux_host
 from agent_pm.session.modes import tui, tui_hook
 
 from session.tests import fake_adapter
 from session.tests.case import SRC, Case
+from session.tests.fakes.terminal import MemoryHost, ScreenHost
 from session.tests.source_roots import PACKAGE_ROOTS
-from session.tests.tui_support import TMUX, fake_host
+from session.tests.tmux_host_support import Base as TmuxBase
 
 NAME = "w1"
 
@@ -152,7 +151,7 @@ class Base(Case):
         self.addCleanup(tmp.cleanup)
         self.tmp = os.path.realpath(tmp.name)
         self.events = os.path.join(self.home, "events")
-        self.host = fake_host()
+        self.host = ScreenHost(protected=("/host/tool",), hook={"host_state": {"selected": True}})
         self.log = []
         self.clock = Clock(self.log)
         for patch in (
@@ -191,14 +190,11 @@ class Base(Case):
         self.prepared = mode.prepared
         return mode
 
-    def started(self) -> tui.TuiMode:
-        """A TuiMode started (the session absent) on pane %1, the host's calls cleared, its status
-        RUNNING.
-        """
-        self.host.status.return_value, self.host.pane.return_value = None, "%1"
+    def started(self):
+        self.host.processes.clear()
         mode = self.start()
-        self.host.reset_mock()
-        self.host.status.return_value = tmux_host.PaneStatus.RUNNING
+        self.host.calls.reset_mock()
+        mode._terminal.calls.reset_mock()
         return mode
 
     def append(self, *lines) -> None:
@@ -208,6 +204,10 @@ class Base(Case):
                 f.write(line if isinstance(line, bytes) else (json.dumps(line) + "\n").encode())
 
     def state(self, **changes) -> dict:
+        process = self.host.processes.get(NAME)
+        generation = (
+            None if process is None else process.session_identity()[1]
+        ) or "fixture-generation"
         return {
             "runtime": "fake",
             "sid": SID,
@@ -218,7 +218,9 @@ class Base(Case):
             "resume": "",
             "events": self.events,
             "words": WORDS,
-            "tmux_path": TMUX,
+            "generation": generation,
+            "host": self.host.name,
+            "host_state": {"selected": True},
             **changes,
         }
 
@@ -252,7 +254,16 @@ class Keys(ScanTui):
 class AttachTest(Base):
     def setUp(self):
         super().setUp()
-        self.host.option.side_effect = lambda _name, key: {"@sid": SID}.get(key)
+        self.process = self.host.create(NAME, SID)
+
+    def test_a_nonterminal_host_process_cannot_be_attached_as_tui(self):
+        state = self.state()
+        process = mock.create_autospec(HostProcess, instance=True)
+        process.record.return_value = self.process.record()
+        self.host.processes[NAME] = process
+        with self.assertRaisesRegex(DriverError, "session w1 has no terminal"):
+            tui.TuiMode.attach(NAME, state, self.adapter, host=self.host)
+        process.close.assert_not_called()
 
     def attach(self, *lines, adapter=None) -> tui.TuiMode:
         """TuiMode.attach of self.adapter (else `adapter`) on a session dir with session.json and
@@ -260,9 +271,12 @@ class AttachTest(Base):
         """
         self.write_state(self.state())
         self.append(*lines)
-        self.host.reset_mock()
+        self.host.calls.reset_mock()
         return tui.TuiMode.attach(
-            NAME, tui.TuiMode.snapshot(NAME), adapter or self.adapter, host=self.host
+            NAME,
+            tui.TuiMode.snapshot(NAME),
+            adapter or self.adapter,
+            host=self.host,
         )
 
     def test_its_replay_bound_and_the_next_record_from_the_files_end(self):
@@ -290,9 +304,7 @@ class AttachTest(Base):
                 Blocked(""),
             ),
         )
-        self.assertEqual(
-            self.host.mock_calls, [mock.call.pane(NAME), mock.call.option("%1", "@sid")]
-        )
+        self.assertEqual(self.host.calls.mock_calls, [mock.call.list(None), mock.call.attach(NAME)])
         self.append(partial[7:], record("stop", session_id="n2", last_message="r3"))
         self.assertEqual(mode.poll(0), ([Activity("next"), TurnEnd("r3", 0)], False))
 
@@ -313,12 +325,12 @@ class AttachTest(Base):
             ),
         )
 
-    def test_a_session_json_without_a_valid_identity_is_no_tui_session_before_tmux(self):
+    def test_a_session_json_without_a_valid_identity_is_no_tui_session_before_host_access(self):
         with self.assertRaises(DriverError) as caught:
             tui.TuiMode.attach(NAME, self.state(cwd=""), self.adapter, host=self.host)
         path = os.path.join(self.dir, "session.json")
         self.assertEqual(str(caught.exception), f"no tui session w1: {path}: bad cwd")
-        self.assertEqual(self.host.mock_calls, [])
+        self.assertEqual(self.host.calls.mock_calls, [])
 
     def test_an_identity_is_refused_alike_in_session_json_and_run_jsonl(self):
         """SessionInfo.from_fields decodes both; the hook reads none of these keys."""
@@ -348,7 +360,7 @@ class AttachTest(Base):
                     self.assertEqual(
                         str(caught.exception), f"no tui session w1: {path}: bad {field}"
                     )
-        self.assertEqual(self.host.mock_calls, [])
+        self.assertEqual(self.host.calls.mock_calls, [])
 
     def test_no_records_yet(self):
         mode = self.attach()
@@ -400,99 +412,56 @@ class AttachTest(Base):
         with self.assertRaises(DriverError) as caught:
             self.attach(record("tool"))
         self.assertEqual(str(caught.exception), "no tui session w1: no recovery state")
-        self.assertEqual(
-            self.host.mock_calls, [mock.call.pane(NAME), mock.call.option("%1", "@sid")]
-        )
+        self.assertEqual(self.host.calls.mock_calls, [mock.call.list(None), mock.call.attach(NAME)])
         self.adapter.run = None
         with self.assertRaises(DriverError) as caught:
             self.attach()
         self.assertEqual(str(caught.exception), "no tui session w1: runtime 'fake' has no tui mode")
-        self.assertEqual(self.host.mock_calls, [])
+        self.assertEqual(self.host.calls.mock_calls, [])
 
-    def test_marked_blocked_is_its_panes_state(self):
-        self.host.pane.return_value = "%7"
-        for state, blocked in (
-            ("blocked", True),
-            ("working", False),
-            (None, False),
-            (tmux_host.TuiError("tmux: denied"), False),
-        ):
+    def test_marked_blocked_is_its_terminals_activity(self):
+        mode = self.attach()
+        for state, blocked in ((Word.BLOCKED, True), (Word.WORKING, False), (None, False)):
             with self.subTest(state=state):
-
-                def option(target, key, *, state=state):
-                    if (target, key) == ("%7", "@state") and isinstance(state, Exception):
-                        raise state
-                    return {("%7", "@sid"): SID, ("%7", "@state"): state}.get((target, key))
-
-                self.host.option.side_effect = option
-                mode = self.attach()
+                self.process.calls.activity.return_value = state
                 self.assertIs(mode.marked_blocked(), blocked)
-                self.host.option.assert_called_with("%7", "@state")
+        self.assertEqual(self.process.calls.activity.call_count, 3)
 
     def test_another_sid_absent_or_unknown_is_no_tui_session(self):
-        for found in ("other", None, tmux_host.TuiError("tmux: denied")):
-            with self.subTest(found=found):
-                self.host.option.side_effect = (
-                    found
-                    if isinstance(found, Exception)
-                    else lambda _name, _key, *, found=found: found
-                )
-                with self.assertRaises(DriverError) as caught:
-                    self.attach()
-                self.assertEqual(str(caught.exception), "no tui session w1")
-        self.host.option.side_effect = lambda _name, key: {"@sid": SID}.get(key)
-        for pane in (None, tmux_host.TuiError("tmux: denied")):
-            with self.subTest(pane=pane):
-                self.host.pane.return_value = pane
-                self.host.pane.side_effect = pane if isinstance(pane, Exception) else None
+        for sid in ("other", None):
+            with self.subTest(sid=sid):
+                self.host.create(NAME, sid)
                 with self.assertRaisesRegex(DriverError, r"\Ano tui session w1\Z"):
                     self.attach()
-                self.host.option.assert_not_called()
+        self.host.processes.clear()
+        with self.assertRaisesRegex(DriverError, r"\Ano tui session w1\Z"):
+            self.attach()
+        self.host.calls.attach.assert_not_called()
+        self.host.create(NAME, SID).calls.session_identity.return_value = (None, None)
+        with self.assertRaisesRegex(DriverError, r"\Ano tui session w1\Z"):
+            self.attach()
 
-    def test_it_reads_the_sid_of_the_pane_it_took_so_a_pane_swapped_in_is_never_bound(self):
-        live = {"%7": SID}  # pane -> its session's @sid; the one pane holds the name
-
-        def then_swap(answer):
-            def call(*args):
-                found = answer(*args)
-                if self.host.pane.call_count + self.host.option.call_count == 1:
-                    live.clear()
-                    live["%8"] = SID  # a new session under the name
-                return found
-
-            return call
-
-        self.host.pane.side_effect = then_swap(lambda _name: next(iter(live)))
-        self.host.option.side_effect = then_swap(
-            lambda target, _key: live.get(next(iter(live)) if target == NAME else target)
-        )
-        try:
-            bound = self.attach()._pane
-        except DriverError as e:
-            bound = str(e)
-        self.assertEqual(bound, "no tui session w1")
-        self.assertEqual(
-            self.host.mock_calls, [mock.call.pane(NAME), mock.call.option("%7", "@sid")]
-        )
+    def test_attach_checks_the_private_identity_of_its_captured_terminal(self):
+        old = self.process
+        old.calls.session_identity.side_effect = lambda: self.host.create(
+            NAME, "other"
+        ).session_identity()
+        with self.assertRaisesRegex(DriverError, r"\Ano tui session w1\Z"):
+            self.attach()
+        self.host.calls.attach.assert_called_once_with(NAME)
 
     def test_an_attached_session_is_live_and_marks_dialogs_on_its_events_file(self):
-        self.host.pane.return_value = "%7"
         mode = self.attach()
-        self.host.status.return_value = tmux_host.PaneStatus.RUNNING
-        self.host.read.return_value = "Sign in"
+        self.host.calls.screen.return_value = "Sign in"
         self.assertEqual(mode.poll(0), ([Blocked("Sign in")], False))
-        self.host.mark.assert_called_once_with("blocked", self.events, pane="%7")
+        self.process.calls.mark.assert_called_once_with(Word.BLOCKED, self.events)
         mode.stop()
-        self.host.kill.assert_called_once_with("%7")
+        self.process.calls.close.assert_called_once_with()
 
-    def test_an_attached_session_ends_once_another_pane_holds_its_name(self):
-        self.host.pane.return_value = "%7"
+    def test_an_attached_session_ends_once_another_terminal_holds_its_name(self):
         mode = self.attach()
-        self.host.status.return_value, self.host.pane.return_value = (
-            tmux_host.PaneStatus.RUNNING,
-            "%8",
-        )
-        self.host.read.return_value = "Sign in"
+        self.host.create(NAME, SID)
+        self.host.calls.screen.return_value = "Sign in"
         self.assertEqual(mode.poll(0), ([], True))
         self.assertEqual((self.run.screens, mode.returncode(0)), ([], -signal.SIGHUP))
 
@@ -507,104 +476,84 @@ class StartTest(Base):
             self.start(run=Conflict(self.adapter))
         self.assertNoSessionDir()
         self.assertEqual(self.recorded, [])
-        self.host.start.assert_not_called()
+        self.host.calls.terminal.assert_not_called()
 
     def nothing_hosted(self):
-        """No tmux call but the checks', no path made, no session line."""
-        self.assertEqual(
-            [
-                c
-                for c in self.host.mock_calls
-                if c[0] not in ("validate_events", "validate_start", "tmux_path")
-            ],
-            [],
-        )
+        self.host.calls.terminal.assert_not_called()
+        self.host.calls.attach.assert_not_called()
         self.assertFalse(os.path.lexists(self.root))
         self.assertEqual(self.recorded, [])
 
-    def test_a_display_is_kept_as_its_tmux_option(self):
-        tui.TuiMode.start(
+    def test_display_and_private_identity_are_separate_from_the_host_receipt(self):
+        mode = tui.TuiMode.start(
             Spec(workdir=self.tmp, name=NAME, runtime="fake", sid=SID),
             self.adapter,
             registry=self.driver.registry,
             record=self.recorded.append,
             host=self.host,
-            display="mgr/below",
+            display="opaque-location",
         )
-        self.assertEqual(
-            self.host.start.call_args.kwargs["tags"],
-            {"@sid": SID, "@runtime": "fake", "@display": "mgr/below"},
-        )
+        call = self.host.calls.terminal.call_args
+        self.assertEqual(call.kwargs["display"], "opaque-location")
+        self.assertIsNone(call.kwargs["record"])
+        self.assertEqual(call.kwargs["metadata"]["sid"], SID)
+        self.assertEqual(call.kwargs["metadata"]["runtime"], "fake")
+        self.assertEqual(mode._terminal.display(), "opaque-location")
 
-    def test_starts_the_session_tagged_with_its_sid_and_runtime_per_the_tui_settings(self):
-        self.configure_session({}, tmux={"status_line": True})
+    def test_the_selected_host_receives_the_launch_and_identity_receipt(self):
         mode = self.start()
+        call = self.host.calls.terminal.call_args
         self.assertEqual(
-            [c[0] for c in self.host.mock_calls],
-            [
-                "validate_events",
-                "tmux_path",
-                "validate_start",
-                "events_file",
-                "status",
-                "start",
-                "pane",
-            ],
-        )
-        (call,) = self.host.start.call_args_list
-        self.assertEqual(
-            call,
-            mock.call(
+            call.args,
+            (
                 NAME,
-                ["/bin/run", *tui._Store(NAME).hook_argv(PACKAGE_ROOTS)],
-                events=self.events,
-                status_line=True,
-                tags={"@sid": SID, "@runtime": "fake"},
-                cwd=self.tmp,
-                env=dict(self.prepared.env),
+                Launch(
+                    ("/bin/run", *tui._Store(NAME, host=self.host).hook_argv(PACKAGE_ROOTS)),
+                    cwd=self.tmp,
+                    env=self.prepared.env,
+                ),
             ),
         )
+        self.assertEqual(call.kwargs["events"], self.events)
+        self.assertEqual(call.kwargs["metadata"]["sid"], SID)
+        self.assertEqual(call.kwargs["metadata"]["runtime"], "fake")
         self.assertEqual(self.run.roots, PACKAGE_ROOTS)
         self.assertEqual(
-            (mode.name, mode.prepared.info.sid, mode.prepared.spec.events, mode._store.dir),
-            (NAME, SID, self.events, self.dir),
+            (mode.name, mode.prepared.info.sid, mode._store.dir), (NAME, SID, self.dir)
         )
         self.assertEqual(stat.S_IMODE(os.stat(self.events).st_mode), 0o600)
-        self.configure_session({})
+        mode.stop()
         self.start(events=None)
-        self.assertEqual(
-            {
-                k: v
-                for k, v in self.host.start.call_args.kwargs.items()
-                if k in ("events", "status_line")
-            },
-            {"events": None, "status_line": False},
-        )
+        self.assertIsNone(self.host.calls.terminal.call_args.kwargs["events"])
 
-    def test_one_session_line_between_session_json_and_tmux_under_the_names_lock(self):
+    def test_one_session_line_between_session_json_and_terminal_launch_under_the_names_lock(self):
         lines = []
 
         def record(info):
             lines.append(
-                (info, tui.TuiMode.snapshot(NAME)["sid"], self.host.start.called, self.locked())
+                (
+                    info,
+                    tui.TuiMode.snapshot(NAME)["sid"],
+                    self.host.calls.terminal.called,
+                    self.locked(),
+                )
             )
 
         self.start(record=record)
         self.assertEqual(lines, [(self.prepared.info, SID, False, True)])
-        self.host.start.assert_called_once()
+        self.host.calls.terminal.assert_called_once()
         self.assertEqual(
             self.prepared.info,
             SessionInfo(sid=SID, cwd=self.tmp, project=False, transcript="", resume=""),
         )
 
-    def test_the_names_lock_is_held_from_session_dir_to_tmux(self):
+    def test_the_names_lock_is_held_from_session_dir_to_terminal_launch(self):
         held = []
-        self.host.status.side_effect = self.host.start.side_effect = lambda *_a, **_k: held.append(
-            self.locked()
-        )
+        self.host.calls.list.side_effect = lambda _display: held.append(self.locked()) or []
+        self.host.calls.terminal.side_effect = lambda *_args, **_kwargs: held.append(self.locked())
         self.start()
-        self.host.start.side_effect = tmux_host.TuiError("tmux: boom")
-        with self.assertRaises(DriverError):
+        self.host.calls.terminal.side_effect = DriverError("host launch failed")
+        with self.assertRaisesRegex(DriverError, "host launch failed"):
             self.start()
         self.assertEqual((held, self.locked()), ([True, True, True], False))
 
@@ -612,17 +561,19 @@ class StartTest(Base):
         self.start(protect=("/c",))
         self.assertEqual(
             (self.prepared.spec.name, self.prepared.spec.protect),
-            (NAME, ("/c", TMUX, self.events, self.root)),
+            (NAME, ("/c", "/host/tool", self.events, self.root)),
         )
         mode = self.start(name=None, events=None)
         self.assertEqual(
             (mode.name, self.prepared.spec.name, self.prepared.spec.protect),
-            ("fake-0f8fad5b", "fake-0f8fad5b", (TMUX, self.root)),
+            ("fake-0f8fad5b", "fake-0f8fad5b", ("/host/tool", self.root)),
         )
-        self.assertEqual(self.host.start.call_args.args[0], "fake-0f8fad5b")
+        self.assertEqual(self.host.calls.terminal.call_args.args[0], "fake-0f8fad5b")
 
     def test_added_hook_paths_reject_overlapping_cwd_and_grants_before_launch(self):
-        for protected, field in itertools.product((TMUX, self.events, self.root), ("cwd", "dirs")):
+        for protected, field in itertools.product(
+            ("/host/tool", self.events, self.root), ("cwd", "dirs")
+        ):
             for path in (protected, os.path.dirname(protected), os.path.join(protected, "child")):
                 access = Access(cwd=path) if field == "cwd" else Access(dirs=(path,))
                 with (
@@ -632,7 +583,7 @@ class StartTest(Base):
                     self.start(access=access)
                 self.assertEqual(self.recorded, [])
                 self.assertNoSessionDir()
-        self.host.start.assert_not_called()
+        self.host.calls.terminal.assert_not_called()
 
     def test_its_child_env_drops_adapter_identities_then_takes_the_launch_env(self):
         self.driver_dependencies = {"class_loader": lambda _path, _base: IdentityAdapter}
@@ -647,11 +598,11 @@ class StartTest(Base):
         ):
             self.start()
         self.assertEqual(
-            self.host.start.call_args.kwargs["env"],
+            self.host.calls.terminal.call_args.args[1].env,
             {"HOME": os.environ["HOME"], "KEEP": "k", "LAUNCH_SET": "1", "PWD": self.tmp},
         )
 
-    def test_a_bad_name_given_or_made_from_the_sid_is_refused_before_tmux_or_a_path(self):
+    def test_a_bad_name_given_or_made_from_the_sid_is_refused_before_host_launch_or_a_path(self):
         for name in BAD_NAMES:
             with self.subTest(name=name), self.assertRaises(ConfigError) as caught:
                 self.start(name=name)
@@ -665,39 +616,32 @@ class StartTest(Base):
             with self.subTest(fields=fields), self.assertRaises(ConfigError) as caught:
                 self.start(**fields)
             self.assertEqual(str(caught.exception), message)
-        self.assertEqual(self.host.mock_calls, [])
+        self.assertEqual(self.host.calls.mock_calls, [])
         self.nothing_hosted()
 
     def test_a_bad_events_file_is_refused(self):
-        os.mkdir(self.events)
-        sharp = os.path.join(self.tmp, "a#b")
-        for bad, message in (
-            (self.events, f"events file {self.events}: Is a directory"),
-            (sharp, f"events file {sharp}: tmux would misread it"),
-        ):
-            with self.subTest(bad=bad), self.assertRaises(ConfigError) as caught:
-                self.start(events=bad)
-            self.assertEqual(str(caught.exception), message)
+        self.host.calls.validate.side_effect = ConfigError("events destination refused")
+        with self.assertRaisesRegex(ConfigError, "events destination refused"):
+            self.start()
+        self.host.calls.validate.assert_called_once()
         self.nothing_hosted()
 
-    def test_no_tmux_on_path_is_a_driver_error_with_nothing_started(self):
-        self.host.tmux_path.return_value = None
-        with self.assertRaises(DriverError) as caught:
+    def test_an_unavailable_host_is_a_driver_error_with_nothing_started(self):
+        failure = DriverError("host unavailable")
+        self.host.calls.validate.side_effect = failure
+        with self.assertRaisesRegex(
+            DriverError, rf"\Acannot start tui session {NAME}: host unavailable\Z"
+        ) as caught:
             self.start(events=None)
-        self.assertEqual(str(caught.exception), "tmux not found")
-        self.assertEqual(self.host.mock_calls, [mock.call.tmux_path()])
+        self.assertIs(caught.exception.__cause__, failure)
+        self.host.calls.validate.assert_called_once()
         self.nothing_hosted()
 
-    def test_a_bad_tui_setting_or_no_tui_mode_is_refused_before_anything(self):
-        self.configure_session({}, tmux={"status_line": "yes"})
-        with self.assertRaises(ConfigError) as caught:
-            self.start()
-        self.assertEqual(str(caught.exception), "status_line: want true or false")
+    def test_an_unsupported_tui_mode_is_refused_before_anything(self):
         self.adapter.run = None
-        with self.assertRaises(ConfigError) as caught:
+        with self.assertRaisesRegex(ConfigError, "runtime 'fake' does not support tui mode"):
             self.start()
-        self.assertEqual(str(caught.exception), "runtime 'fake' does not support tui mode")
-        self.assertEqual(self.host.mock_calls, [])
+        self.assertEqual(self.host.calls.mock_calls, [])
         self.nothing_hosted()
 
     def test_session_selection_flags_are_refused_before_launch(self):
@@ -707,18 +651,18 @@ class StartTest(Base):
         self.assertEqual(str(caught.exception), "--resume: picks the session; use sid= or resume=")
         self.nothing_hosted()
 
-    def test_a_failed_tmux_start_is_a_driver_error_after_the_session_line_removing_only_its_dir(
+    def test_a_failed_host_start_is_a_driver_error_after_the_session_line_removing_only_its_dir(
         self,
     ):
         os.makedirs(os.path.join(self.root, "w2"))
-        self.host.start.side_effect = tmux_host.TuiError("tmux: boom")
+        self.host.calls.terminal.side_effect = DriverError("tmux: boom")
         with self.assertRaises(DriverError) as caught:
             self.start()
         self.assertEqual(str(caught.exception), "cannot start tui session w1: tmux: boom")
         self.assertEqual(len(self.recorded), 1)
         self.assertNoSessionDir()
         self.assertEqual(sorted(os.listdir(self.root)), ["w1.lock", "w2"])
-        self.host.kill.assert_not_called()
+        self.host.calls.attach.assert_not_called()
 
     def test_a_failed_start_keeps_a_dir_it_did_not_make(self):
         def swap(_info):
@@ -726,64 +670,63 @@ class StartTest(Base):
             os.mkdir(self.dir)
             open(os.path.join(self.dir, "theirs"), "w").close()
 
-        self.host.start.side_effect = tmux_host.TuiError("tmux: boom")
+        self.host.calls.terminal.side_effect = DriverError("tmux: boom")
         with self.assertRaises(DriverError):
             self.start(record=swap)
         self.assertEqual(os.listdir(self.dir), ["theirs"])
 
-    def test_a_failed_record_or_a_start_failing_without_a_tmux_error_leaves_its_dir(self):
+    def test_a_failed_record_or_a_start_failing_without_a_driver_error_leaves_its_dir(self):
         def fail(_info):
             raise OSError("disk full")
 
         for record, failure in ((fail, None), (None, ValueError("boom"))):
             with self.subTest(failure=failure):
-                self.host.reset_mock()
-                self.host.start.side_effect = failure
+                self.host.calls.reset_mock()
+                self.host.calls.terminal.side_effect = failure
                 with self.assertRaises(OSError if failure is None else ValueError):
                     self.start(record=record)
                 self.assertEqual(os.listdir(self.dir), ["session.json"])
-                self.assertEqual(len(self.host.start.mock_calls), 0 if failure is None else 1)
+                self.assertEqual(
+                    len(self.host.calls.terminal.mock_calls), 0 if failure is None else 1
+                )
                 self.assertFalse(self.locked())
 
-    def test_a_pane_it_cannot_take_closes_the_session(self):
-        self.host.pane.side_effect = tmux_host.TuiError("tmux: boom")
-        with self.assertRaises(DriverError) as caught:
+    def test_a_terminal_acquisition_failure_leaves_no_session(self):
+        self.host.calls.terminal.side_effect = DriverError("terminal could not be acquired")
+        with self.assertRaisesRegex(
+            DriverError, r"\Acannot start tui session w1: terminal could not be acquired\Z"
+        ):
             self.start()
-        self.assertEqual(str(caught.exception), "cannot start tui session w1: tmux: boom")
-        self.host.kill.assert_called_once_with(NAME)
+        self.assertEqual(len(self.recorded), 1)
+        self.assertEqual(self.host.processes, {})
         self.assertNoSessionDir()
 
-    def test_a_pane_it_cannot_take_closes_without_waiting_for_the_names_lock_it_holds(self):
+    def test_terminal_acquisition_failure_does_not_wait_for_its_held_lock(self):
         caught = []
-        self.host.pane.side_effect = tmux_host.TuiError("tmux: boom")
+        self.host.calls.terminal.side_effect = DriverError("terminal could not be acquired")
 
         def start():
             try:
                 self.start()
-            except DriverError as e:
-                caught.append(str(e))
+            except DriverError as error:
+                caught.append(str(error))
 
         thread = threading.Thread(target=start, daemon=True)
         thread.start()
         thread.join(5)
-        self.assertEqual(caught, ["cannot start tui session w1: tmux: boom"])
-        self.host.kill.assert_called_once_with(NAME)
+        self.assertFalse(thread.is_alive())
+        self.assertEqual(caught, ["cannot start tui session w1: terminal could not be acquired"])
+        self.assertEqual(self.host.processes, {})
         self.assertNoSessionDir()
 
     def test_start_returns_its_session_live_at_once_with_its_prepared(self):
-        mode = tui.TuiMode.start(
-            Spec(workdir=self.tmp, name=NAME, runtime="fake", sid=SID),
-            self.adapter,
-            registry=self.driver.registry,
-            record=self.recorded.append,
-            host=self.host,
-        )
+        mode = self.start(events=None)
         self.assertIsInstance(mode, tui.TuiMode)
         self.assertEqual((mode.prepared.info, mode.prepared.spec.name), (self.recorded[0], NAME))
-        self.host.status.return_value = tmux_host.PaneStatus.RUNNING
-        self.assertEqual((mode.state(), mode.poll(0)), ("live", ([], False)))
+        self.assertEqual((mode.state(), mode.poll(0)), (Liveness.LIVE, ([], False)))
+        process = mode._terminal
         mode.stop()
-        self.host.kill.assert_called_once_with("%1")
+        process.calls.close.assert_called_once_with()
         self.assertEqual((mode.poll(0), mode.returncode(0)), (([], True), -signal.SIGHUP))
 
 
@@ -830,7 +773,7 @@ class SnapshotTest(Base):
             "sid": "a/b",
             "runtime": "Fake",
             "workdir": "rel",
-            "tmux_path": "tmux",
+            "generation": "",
         }
         for field, value in bad.items():
             for state in (
@@ -894,34 +837,32 @@ class SnapshotTest(Base):
 
 
 class BoundTest(Base):
-    """A begun Mode is its pane's (%1): another pane under its name, or stop(), ends it."""
+    """A mode keeps its Terminal generation when the Host reuses a name."""
 
-    def test_another_pane_under_the_name_ends_it_at_once_unscanned_unmarked_and_unread(self):
-        for status in (tmux_host.PaneStatus.RUNNING, 3):
-            with self.subTest(status=status):
+    def test_another_terminal_under_the_name_ends_it_at_once_unscanned_unmarked_and_unread(self):
+        for code in (None, 3):
+            with self.subTest(code=code):
                 mode = self.started()
-                self.host.status.return_value, self.host.pane.return_value = status, "%2"
-                self.host.read.return_value = "Sign in LIMIT 9"
-                self.log.clear()
-                self.assertEqual(mode.poll(5), ([], True))
-                self.assertEqual(
-                    (self.run.screens, self.log, mode.returncode(0)), ([], [], -signal.SIGHUP)
-                )
-                self.host.mark.assert_not_called()
+                process = mode._terminal
+                process.calls.returncode.return_value = code
+                self.host.create(NAME, SID)
+                self.host.calls.screen.return_value = "Sign in LIMIT 9"
+                self.assertEqual(mode.poll(0), ([], True))
+                self.assertEqual((self.run.screens, mode.returncode(0)), ([], -signal.SIGHUP))
+                process.calls.mark.assert_not_called()
+                self.host.calls.screen.assert_not_called()
                 self.append(record("tool"))
-                self.host.reset_mock()
-                self.assertEqual(mode.poll(5), ([], True))
-                self.assertEqual(self.host.mock_calls, [])
+                self.assertEqual(mode.poll(0), ([], True))
 
-    def test_records_under_another_pane_are_never_read(self):
+    def test_records_under_another_terminal_are_never_read(self):
         mode = self.started()
-        self.host.pane.return_value = "%2"
+        self.host.create(NAME, SID)
         self.append(record("stop", last_message="theirs"))
         self.assertEqual(mode.poll(5), ([], True))
         mode = self.started()
 
         def theirs():
-            self.host.pane.return_value = "%2"
+            self.host.create(NAME, SID)
             self.append(record("stop", last_message="theirs"))
 
         self.clock.actions.append((self.clock.now + 0.25, theirs))
@@ -932,242 +873,238 @@ class BoundTest(Base):
         mode.stop()
         os.mkdir(self.dir)
         self.append(record("tool"))
-        self.host.reset_mock()
+        self.host.calls.reset_mock()
         self.assertEqual((mode.poll(5), mode.returncode(5)), (([], True), -signal.SIGHUP))
-        self.assertEqual((self.host.mock_calls, self.log), ([], []))
+        self.assertEqual((self.host.calls.mock_calls, self.log), ([], []))
         mode = self.started()
-        self.host.status.return_value = 3
+        mode._terminal.calls.returncode.return_value = 3
         self.assertEqual(mode.poll(0), ([], True))
         mode.stop()
         self.assertEqual(mode.returncode(0), 3)
 
-    def test_stop_kills_its_pane_while_it_holds_the_name_the_name_when_tmux_fails(self):
-        for holder, kills, removed in (
-            ("%1", [mock.call("%1")], True),
-            ("%2", [], False),
-            (tmux_host.TuiError("tmux: boom"), [mock.call(NAME)], True),
-        ):
-            with self.subTest(holder=holder):
+    def test_stop_closes_only_the_generation_still_holding_its_name(self):
+        for replacement in (False, True):
+            with self.subTest(replacement=replacement):
                 mode = self.started()
-                self.host.pane.return_value = holder
-                self.host.pane.side_effect = holder if isinstance(holder, Exception) else None
+                original = mode._terminal
+                if replacement:
+                    current = self.host.create(NAME, SID)
                 mode.stop()
-                self.assertEqual(
-                    (self.host.kill.call_args_list, os.path.isdir(self.dir)), (kills, not removed)
-                )
+                self.assertEqual(original.calls.close.call_count, int(not replacement))
+                self.assertEqual(os.path.isdir(self.dir), replacement)
                 self.assertEqual(mode.poll(0), ([], True))
-                self.host.pane.side_effect = None
+                if replacement:
+                    self.assertIs(self.host.processes[NAME], current)
+                    current.calls.close.assert_not_called()
 
-    def test_stop_with_the_name_absent_kills_nothing_as_a_new_server_may_reuse_its_pane_id(self):
+    def test_stop_with_the_name_absent_never_closes_a_stale_terminal(self):
         mode = self.started()
-        self.host.pane.return_value = None
-        self.host.status.side_effect = lambda target: (
-            tmux_host.PaneStatus.RUNNING if target == "%1" else None
-        )
+        self.host.processes.clear()
         mode.stop()
-        self.assertEqual(self.host.mock_calls, [mock.call.pane(NAME)])
+        self.assertEqual(self.host.calls.mock_calls, [mock.call.list(None)])
+        mode._terminal.calls.close.assert_not_called()
         self.assertNoSessionDir()
         self.assertEqual((mode.poll(0), mode.returncode(0)), (([], True), -signal.SIGHUP))
 
     def test_stop_checks_the_holder_and_closes_under_the_names_lock(self):
-        held = []
-        for holder, closed in (("%1", True), ("%2", False)):
-            with self.subTest(holder=holder):
-                self.host.pane.side_effect = self.host.kill.side_effect = None
+        for replacement in (False, True):
+            with self.subTest(replacement=replacement):
                 mode = self.started()
-                held.clear()
-                self.host.pane.side_effect = lambda _name, *, holder=holder: (
-                    held.append(self.locked()) or holder
+                if replacement:
+                    self.host.create(NAME, SID)
+                held = []
+                self.host.calls.list.side_effect = lambda _display, *, held=held: (
+                    held.append(self.locked()) or [NAME]
                 )
-                self.host.kill.side_effect = lambda _name: held.append(self.locked())
+                mode._terminal.calls.close.side_effect = lambda *, held=held: held.append(
+                    self.locked()
+                )
                 mode.stop()
-                self.assertEqual((held, self.locked()), ([True] * (1 + closed), False))
+                self.assertEqual(
+                    (held, self.locked()), ([True] * (1 + 2 * int(not replacement)), False)
+                )
+                self.host.calls.list.side_effect = None
 
-    def test_another_pane_under_the_name_is_absent_to_state_send_and_screen(self):
+    def test_another_terminal_under_the_name_is_absent_to_state_send_and_screen(self):
         mode = self.started()
-        self.host.pane.return_value = "%2"
-        self.assertEqual(mode.state(), "absent")
+        self.host.create(NAME, SID)
+        self.assertEqual(mode.state(), Liveness.ABSENT)
         for call in (lambda: mode.send("hi"), mode.screen):
             with self.assertRaisesRegex(DriverError, r"\Atui session w1 is not running\Z"):
                 call()
-        self.host.paste.assert_not_called()
-        self.host.read.assert_not_called()
+        mode._terminal.calls.send.assert_not_called()
+        self.host.calls.screen.assert_not_called()
         self.assertEqual((mode.poll(0), mode.returncode(0)), (([], True), -signal.SIGHUP))
 
-    def test_with_no_pane_bound_it_reads_no_screen_and_stops_killing_nothing(self):
-        self.host.pane.return_value = None  # start found no pane
-        mode = self.start()
-        self.host.status.return_value = tmux_host.PaneStatus.RUNNING
+    def test_an_absent_terminal_is_not_scanned_or_closed(self):
+        mode = self.started()
+        self.host.processes.clear()
         self.assertEqual(mode.poll(0), ([], True))
         mode.stop()
-        self.host.read.assert_not_called()
-        self.host.kill.assert_not_called()
+        self.host.calls.screen.assert_not_called()
+        mode._terminal.calls.close.assert_not_called()
         self.assertNoSessionDir()
 
-    def test_its_pane_unknown_is_no_scan_and_no_end(self):
+    def test_an_unknown_terminal_is_not_scanned_or_ended(self):
         mode = self.started()
-        self.host.pane.side_effect = tmux_host.TuiError("tmux: boom")
-        self.host.read.return_value = "Sign in"
+        mode._terminal.calls.state.return_value = Liveness.UNKNOWN
+        self.host.calls.screen.return_value = "Sign in"
         self.assertEqual(mode.poll(0), ([], False))
         self.assertEqual(
-            (self.run.screens, mode.returncode(0), mode.state()), ([], None, "unknown")
+            (self.run.screens, mode.returncode(0), mode.state()), ([], None, Liveness.UNKNOWN)
         )
 
 
 class SwapTest(Base):
-    """A new session takes the name right after the Mode's pane check: every later call targets its
-    pane (%1), so none reaches the new pane (%2).
-    """
+    """Operations on a captured Terminal never reach its replacement."""
 
-    def swapped(self, screen: str = "") -> list:
-        """After started(): the next pane(NAME) answers %1, then %2 holds the name and %1 is gone
-        (absent to status and option, a TuiError to the rest). Returns (call, pane) for each call
-        that reached a pane.
-        """
-        holder, reached = ["%1"], []
-
-        def at(target):
-            return holder[0] if target in (NAME, holder[0]) else None
-
-        def check(_name):
-            found, holder[0] = holder[0], "%2"
-            return found
-
-        def act(method, result):
-            def call(target, *_args):
-                pane = at(target)
-                if pane is None and method != "option":
-                    raise tmux_host.TuiError(f"tmux: can't find pane: {target}")
-                if pane is not None:
-                    reached.append((method, pane))
-                return result
-
-            return call
-
-        self.host.pane.side_effect = check
-        self.host.status.side_effect = lambda target: (
-            tmux_host.PaneStatus.RUNNING if at(target) else None
-        )
-        for method, result in (
-            ("paste", None),
-            ("keys", None),
-            ("read", screen),
-            ("option", None),
-            ("kill", None),
-        ):
-            getattr(self.host, method).side_effect = act(method, result)
-        return reached
-
-    def error(self, call) -> str | None:
-        try:
-            call()
-        except DriverError as e:
-            return str(e)
-        return None
-
-    def test_send_never_types_into_the_new_pane(self):
+    def test_send_never_types_into_the_replacement_terminal(self):
         mode = self.started()
-        reached = self.swapped()
-        self.assertEqual(
-            (self.error(lambda: mode.send("hi")), reached),
-            ("send to tui session w1: tmux: can't find pane: %1", []),
-        )
+        original = mode._terminal
 
-    def test_screen_never_reads_the_new_pane(self):
-        mode = self.started()
-        reached = self.swapped()
-        self.assertEqual(
-            (self.error(mode.screen), reached),
-            ("screen of tui session w1: tmux: can't find pane: %1", []),
-        )
+        def replace():
+            self.host.create(NAME, SID)
+            return True
 
-    def test_poll_reads_and_marks_by_its_pane_only(self):
+        original.calls.alive.side_effect = replace
+        with self.assertRaisesRegex(DriverError, "terminal w1 is not running"):
+            mode.send("hi")
+        self.host.processes[NAME].calls.send.assert_not_called()
+        original.calls.send.assert_not_called()
+
+    def test_screen_never_reads_the_replacement_terminal(self):
         mode = self.started()
-        reached = self.swapped("Sign in")
-        self.assertEqual((mode.poll(0), mode.poll(0)), (([Blocked("Sign in")], False), ([], True)))
-        self.assertEqual(reached, [("read", "%1")])
-        self.host.mark.assert_called_once_with("blocked", self.events, pane="%1")
+
+        def replace():
+            self.host.create(NAME, SID)
+            return True
+
+        mode._terminal.calls.alive.side_effect = replace
+        with self.assertRaises(DriverError):
+            mode.screen()
+        self.host.calls.screen.assert_not_called()
+
+    def test_a_screen_callback_replacement_never_receives_the_old_mark(self):
+        mode = self.started()
+        original = mode._terminal
+
+        def replace(_name, _lines):
+            self.host.create(NAME, SID)
+            return "Sign in"
+
+        self.host.calls.screen.side_effect = replace
+        self.assertEqual((mode.poll(0), mode.poll(0)), (([], True), ([], True)))
+        self.assertEqual(self.run.screens, [])
+        original.calls.mark.assert_not_called()
+        self.host.processes[NAME].calls.mark.assert_not_called()
 
     def test_stop_never_kills_the_new_session(self):
         mode = self.started()
-        reached = self.swapped()
+        original = mode._terminal
+
+        def swap():
+            self.host.create(NAME, SID)
+
+        original.calls.close.side_effect = swap
         mode.stop()
-        self.assertEqual((reached, os.path.isdir(self.dir)), ([], False))
-        self.host.kill.assert_called_once_with("%1")
+        self.assertIsNot(self.host.processes[NAME], original)
+        self.host.processes[NAME].calls.close.assert_not_called()
+        self.assertNoSessionDir()
 
 
 class SendScreenTest(Base):
-    def test_send_pastes_and_presses_the_runs_keys_waiting_pause_after_a_paste(self):
+    def test_a_nondisplayable_selected_host_runs_without_screen_scanning(self):
+        self.host = MemoryHost("selected")
         mode = self.started()
-        self.host.paste.side_effect = lambda *args: self.log.append(("paste", *args))
-        self.host.keys.side_effect = lambda *args: self.log.append(("keys", *args))
+        self.assertIs(mode.host, self.host)
+        self.assertEqual(mode.poll(0), ([], False))
+        self.append(record("stop", last_message="reply"))
+        self.assertEqual(mode.poll(0), ([TurnEnd("reply", 0)], False))
+        mode.send("hello")
+        self.assertEqual(
+            mode._terminal.calls.send.call_args_list,
+            [mock.call(Paste("hello")), mock.call(Key("Enter"))],
+        )
+        with self.assertRaisesRegex(DriverError, r"\Ahost selected cannot display\Z"):
+            mode.screen()
+        self.assertNotIn("screen", [call[0] for call in self.host.calls.mock_calls])
+
+    def test_send_preserves_the_adapter_actions_at_the_terminal_boundary(self):
+        mode = self.started()
         mode.send("hi\nthere")
         self.assertEqual(
-            self.log,
-            [("paste", "%1", "hi\nthere"), ("sleep", tmux_host.PAUSE), ("keys", "%1", "Enter")],
+            mode._terminal.calls.send.call_args_list,
+            [mock.call(Paste("hi\nthere")), mock.call(Key("Enter"))],
         )
-        self.log.clear()
+        mode._terminal.calls.send.reset_mock()
         mode.run = Keys(self.run.adapter)
         mode.send("a")
         self.assertEqual(
-            self.log,
+            mode._terminal.calls.send.call_args_list,
             [
-                ("keys", "%1", "Escape"),
-                ("paste", "%1", "a"),
-                ("sleep", tmux_host.PAUSE),
-                ("keys", "%1", "Enter"),
-                ("keys", "%1", "Enter"),
-                ("paste", "%1", "b"),
-                ("sleep", tmux_host.PAUSE),
-                ("keys", "%1", "Tab"),
+                mock.call(Key("Escape")),
+                mock.call(Paste("a")),
+                mock.call(Key("Enter")),
+                mock.call(Key("Enter")),
+                mock.call(Paste("b")),
+                mock.call(Key("Tab")),
             ],
         )
+        self.assertEqual(self.log, [])
 
     def test_send_or_screen_to_a_session_not_running_is_refused(self):
         mode = self.started()
-        for status in (0, -9, None, tmux_host.PaneStatus.UNKNOWN):
-            for call in (lambda: mode.send("hi"), mode.screen):
-                with self.subTest(status=status):
-                    self.host.status.return_value = status
-                    with self.assertRaises(DriverError) as caught:
-                        call()
-                    self.assertEqual(str(caught.exception), "tui session w1 is not running")
-        self.host.paste.assert_not_called()
-        self.host.read.assert_not_called()
+        mode._terminal.calls.alive.return_value = False
+        for call in (lambda: mode.send("hi"), mode.screen):
+            with self.assertRaisesRegex(DriverError, r"\Atui session w1 is not running\Z"):
+                call()
+        mode._terminal.calls.send.assert_not_called()
+        self.host.calls.screen.assert_not_called()
 
-    def test_a_tmux_error_is_a_driver_error(self):
+    def test_terminal_and_display_errors_propagate(self):
         mode = self.started()
         for method, call in (
-            ("paste", lambda: mode.send("hi")),
-            ("keys", lambda: mode.send("hi")),
-            ("read", mode.screen),
+            (mode._terminal.calls.send, lambda: mode.send("hi")),
+            (self.host.calls.screen, mode.screen),
         ):
-            with self.subTest(method):
-                getattr(self.host, method).side_effect = tmux_host.TuiError("tmux: boom")
-                with self.assertRaisesRegex(DriverError, r"\A.*tui session w1: tmux: boom\Z"):
+            with self.subTest(method=method):
+                method.side_effect = DriverError("host operation failed")
+                with self.assertRaisesRegex(DriverError, r"\Ahost operation failed\Z"):
                     call()
-                getattr(self.host, method).side_effect = None
+                method.side_effect = None
 
-    def test_screen_reads_the_pane(self):
+    def test_screen_uses_the_selected_displayable_host(self):
         mode = self.started()
-        self.host.read.return_value = "a\nb"
+        self.host.calls.screen.return_value = "a\nb"
         self.assertEqual((mode.screen(), mode.screen(5)), ("a\nb", "a\nb"))
-        self.assertEqual(self.host.read.call_args_list, [mock.call("%1", None), mock.call("%1", 5)])
+        self.assertEqual(
+            self.host.calls.screen.call_args_list,
+            [mock.call(mode._terminal, None), mock.call(mode._terminal, 5)],
+        )
 
 
 class CloseStopTest(Base):
+    def test_close_accepts_a_nonterminal_host_process_and_removes_mode_state(self):
+        self.write_state(self.state())
+        process = mock.create_autospec(HostProcess, instance=True)
+        self.host.processes[NAME] = process
+        tui.TuiMode.close(NAME, host=self.host)
+        process.close.assert_called_once_with()
+        self.assertNoSessionDir()
+
     def test_close_kills_the_session_and_removes_its_dir(self):
-        self.started()
+        mode = self.started()
         self.append(record("tool"))
         tui.TuiMode.close(NAME, host=self.host)
-        self.assertEqual(self.host.mock_calls, [mock.call.kill(NAME)])
+        mode._terminal.calls.close.assert_called_once_with()
+        self.assertEqual(self.host.processes, {})
         self.assertNoSessionDir()
         self.assertTrue(os.path.isdir(self.root))
 
     def test_close_kills_and_removes_under_the_names_lock(self):
-        self.started()
+        mode = self.started()
         held, remove = [], shutil.rmtree
-        self.host.kill.side_effect = lambda _name: held.append(self.locked())
+        mode._terminal.calls.close.side_effect = lambda: held.append(self.locked())
         with mock.patch.object(
             shutil,
             "rmtree",
@@ -1178,22 +1115,23 @@ class CloseStopTest(Base):
         self.assertNoSessionDir()
 
     def test_close_of_an_absent_session_removes_its_dir(self):
-        self.started()
-        self.host.kill.side_effect = tmux_host.TuiError("tmux: can't find session: w1")
-        self.host.status.return_value = None
+        mode = self.started()
+        self.host.processes.clear()
         tui.TuiMode.close(NAME, host=self.host)
+        mode._terminal.calls.close.assert_not_called()
         self.assertNoSessionDir()
         tui.TuiMode.close(NAME, host=self.host)
 
     def test_a_kill_that_fails_on_a_live_or_unknown_session_is_a_driver_error(self):
-        self.started()
-        self.host.kill.side_effect = tmux_host.TuiError("tmux: boom")
-        for status in (tmux_host.PaneStatus.RUNNING, tmux_host.PaneStatus.UNKNOWN, 0):
-            with self.subTest(status=status):
-                self.host.status.return_value = status
-                with self.assertRaises(DriverError) as caught:
+        mode = self.started()
+        mode._terminal.calls.close.side_effect = DriverError("host close failed")
+        for state in (Liveness.LIVE, Liveness.UNKNOWN):
+            with self.subTest(state=state):
+                mode._terminal.calls.state.return_value = state
+                with self.assertRaisesRegex(
+                    DriverError, r"\Acannot close tui session w1: host close failed\Z"
+                ):
                     tui.TuiMode.close(NAME, host=self.host)
-                self.assertEqual(str(caught.exception), "cannot close tui session w1: tmux: boom")
                 self.assertTrue(os.path.isdir(self.dir))
 
     def test_close_never_follows_a_symlink(self):
@@ -1209,8 +1147,9 @@ class CloseStopTest(Base):
         self.assertEqual(os.listdir(target), ["keep"])
 
     def test_stop_closes_the_session(self):
-        self.start().stop()
-        self.host.kill.assert_called_once_with("%1")
+        mode = self.start()
+        mode.stop()
+        mode._terminal.calls.close.assert_called_once_with()
         self.assertNoSessionDir()
 
 
@@ -1233,7 +1172,7 @@ class PollTest(Base):
             mode.poll(0.5), ([ClientBound("n2"), Blocked("perm"), Activity("")], False)
         )
         self.assertFalse(hasattr(mode, "bound"))
-        self.assertEqual(self.host.mock_calls, [mock.call.pane(NAME)] * 2)
+        self.assertEqual(self.host.calls.mock_calls, [])
         self.assertEqual(self.log, [])
 
     def test_a_partial_last_line_waits_for_its_end(self):
@@ -1271,16 +1210,16 @@ class PollTest(Base):
                 self.assertEqual(mode.poll(0), ([], False))
             os.unlink(self.hooks)
 
-    def test_empty_poll_checks_status_and_pane_then_waits_in_slices(
-        self,
-    ):
+    def test_empty_poll_checks_the_terminal_and_waits_in_slices(self):
         mode = self.started()
         self.assertEqual(mode.poll(0.5), ([], False))
+        self.assertEqual(self.host.calls.mock_calls, [mock.call.screen(mode._terminal, None)])
+        mode._terminal.calls.returncode.assert_called_once_with()
+        mode._terminal.calls.alive.assert_called_once_with()
         self.assertEqual(
-            self.host.mock_calls,
-            [mock.call.status(NAME), mock.call.read("%1"), mock.call.pane(NAME)],
+            {call[0] for call in mode._terminal.calls.mock_calls}, {"state", "returncode", "alive"}
         )
-        self.assertTrue(all(0 < s <= 0.1 for _, s in self.log), self.log)
+        self.assertTrue(all(0 < seconds <= 0.1 for _, seconds in self.log), self.log)
         self.assertAlmostEqual(self.clock.now, 0.5)
 
     def test_a_record_while_waiting_returns_at_once(self):
@@ -1290,30 +1229,31 @@ class PollTest(Base):
         self.assertAlmostEqual(self.clock.now, 0.3)
 
     def test_dead_or_absent_drains_the_records_then_ends(self):
-        for status, code in ((3, 3), (-15, -15), (0, 0), (None, -signal.SIGHUP)):
-            with self.subTest(status=status):
+        for code in (3, -15, 0, -signal.SIGHUP):
+            with self.subTest(code=code):
                 mode = self.started()
+                process = mode._terminal
 
-                def ended(_name, status=status):
-                    self.append(record("stop", last_message="last"))  # written before the pane died
-                    return status
+                def ended(*, code=code):
+                    self.append(record("stop", last_message="last"))
+                    if code == -signal.SIGHUP:
+                        self.host.processes.clear()
+                    return code
 
-                self.host.status.side_effect = ended
+                process.calls.returncode.side_effect = ended
                 self.assertEqual(mode.poll(0.5), ([TurnEnd("last", 0)], True))
-                self.host.read.assert_not_called()
-                self.host.status.side_effect = AssertionError("status after the end")
+                self.host.calls.screen.assert_not_called()
                 self.assertEqual(mode.returncode(1), code)
-                self.host.status.side_effect = None
 
     def test_unknown_keeps_waiting_with_no_scan(self):
         mode = self.started()
-        self.host.status.return_value = tmux_host.PaneStatus.UNKNOWN
+        mode._terminal.calls.state.return_value = Liveness.UNKNOWN
         self.assertEqual(mode.poll(0.2), ([], False))
-        self.host.read.assert_not_called()
+        self.host.calls.screen.assert_not_called()
 
     def test_exact_events_per_poll_over_a_session(self):
         mode = self.started()
-        self.host.read.side_effect = ["", "Sign in", "Sign in", "x", "LIMIT 9", "x"]
+        self.host.calls.screen.side_effect = ["", "Sign in", "Sign in", "x", "LIMIT 9", "x"]
         script = [
             [record("tool", session_id="n1")],
             [],
@@ -1344,11 +1284,25 @@ class PollTest(Base):
 
 
 class ScanTest(Base):
+    def test_a_hook_arriving_during_capture_precedes_the_limit_seen_on_screen(self):
+        mode = self.started()
+
+        def capture(_terminal, _lines):
+            self.append(record("tool", tool="submitted"))
+            self.host.calls.screen.side_effect = None
+            self.host.calls.screen.return_value = "LIMIT 100"
+            return "LIMIT 100"
+
+        self.host.calls.screen.side_effect = capture
+        self.assertEqual(mode.poll(0), ([Activity("submitted")], False))
+        self.assertEqual(mode.poll(0), ([LimitHit(100.0)], False))
+        self.assertEqual(mode.poll(0), ([], False))
+
     def scans(self, mode, *screens) -> list:
         """mode.poll's events for each screen in turn."""
         found = []
         for screen in screens:
-            self.host.read.return_value = screen
+            self.host.calls.screen.return_value = screen
             found.append(mode.poll(0)[0])
         return found
 
@@ -1372,36 +1326,33 @@ class ScanTest(Base):
             ],
         )
 
-    def test_a_dialog_marks_the_pane_blocked_unless_it_is(self):
+    def test_a_dialog_marks_the_terminal_blocked_unless_it_is(self):
         mode = self.started()
-        self.host.option.return_value = "done"
+        mode._terminal.calls.activity.return_value = Word.DONE
         self.scans(mode, "Sign in Trust this folder?")
-        self.assertEqual(
-            self.host.mock_calls[3:],
-            [mock.call.option("%1", "@state"), mock.call.mark("blocked", self.events, pane="%1")],
-        )
-        self.host.reset_mock()
-        self.host.option.return_value = "blocked"
+        mode._terminal.calls.mark.assert_called_once_with(Word.BLOCKED, self.events)
+        mode._terminal.calls.mark.reset_mock()
+        mode._terminal.calls.activity.return_value = Word.BLOCKED
         self.scans(mode, "", "Sign in")
-        self.host.mark.assert_not_called()
+        mode._terminal.calls.mark.assert_not_called()
 
-    def test_a_name_with_no_pane_is_absent_unscanned(self):
+    def test_an_absent_name_is_not_scanned(self):
         mode = self.started()
-        self.host.pane.return_value = None
-        self.host.read.return_value = "Sign in"
+        self.host.processes.clear()
+        self.host.calls.screen.return_value = "Sign in"
         self.assertEqual(mode.poll(0), ([], True))
         self.assertEqual((self.run.screens, mode.returncode(0)), ([], -signal.SIGHUP))
-        self.host.mark.assert_not_called()
+        mode._terminal.calls.mark.assert_not_called()
 
     def test_a_failed_mark_still_yields_the_dialog(self):
         mode = self.started()
-        for method in ("option", "mark"):
-            with self.subTest(method):
-                getattr(self.host, method).side_effect = tmux_host.TuiError("tmux: boom")
+        for method in (mode._terminal.calls.activity, mode._terminal.calls.mark):
+            with self.subTest(method=method):
+                method.side_effect = DriverError("host mark failed")
                 self.assertEqual(
                     self.scans(mode, "Sign in", ""), [[Blocked("Sign in")], [Activity("")]]
                 )
-                getattr(self.host, method).side_effect = None
+                method.side_effect = None
 
     def test_a_limit_is_one_event_per_appearance_its_reset_changing_or_not(self):
         mode = self.started()
@@ -1412,58 +1363,54 @@ class ScanTest(Base):
 
     def test_a_failed_read_is_no_event(self):
         mode = self.started()
-        self.host.read.side_effect = tmux_host.TuiError("tmux: gone")
+        self.host.calls.screen.side_effect = DriverError("tmux: gone")
         self.assertEqual(mode.poll(0), ([], False))
 
 
 class ReturncodeStateTest(Base):
     def test_returncode_maps_the_status(self):
-        for status, code in (
-            (0, 0),
-            (2, 2),
-            (-9, -9),
-            (None, -signal.SIGHUP),
-            (tmux_host.PaneStatus.RUNNING, None),
-            (tmux_host.PaneStatus.UNKNOWN, None),
+        for state, code in (
+            (Liveness.LIVE, 0),
+            (Liveness.LIVE, 2),
+            (Liveness.LIVE, -9),
+            (Liveness.ABSENT, -signal.SIGHUP),
+            (Liveness.LIVE, None),
+            (Liveness.UNKNOWN, None),
         ):
-            with self.subTest(status=status):
+            with self.subTest(state=state, code=code):
                 mode = self.started()
-                self.host.status.return_value = status
+                mode._terminal.calls.state.return_value = state
+                mode._terminal.calls.returncode.return_value = code
                 self.assertEqual(mode.returncode(0), code)
 
     def test_returncode_waits_its_timeout_in_slices_while_running(self):
         mode = self.started()
-        self.clock.actions.append((0.25, lambda: setattr(self.host.status, "return_value", 4)))
+        self.clock.actions.append(
+            (0.25, lambda: setattr(mode._terminal.calls.returncode, "return_value", 4))
+        )
         self.assertEqual(mode.returncode(5), 4)
         self.assertAlmostEqual(self.clock.now, 0.3)
-        self.host.status.return_value = tmux_host.PaneStatus.RUNNING
         mode = self.started()
         self.clock.now = 0
         self.assertIsNone(mode.returncode(0.35))
         self.assertAlmostEqual(self.clock.now, 0.35)
 
     def test_state_maps_the_status(self):
-        for status, state in (
-            (tmux_host.PaneStatus.RUNNING, "live"),
-            (0, "live"),
-            (-15, "live"),
-            (None, "absent"),
-            (tmux_host.PaneStatus.UNKNOWN, "unknown"),
-        ):
-            with self.subTest(status=status):
+        for state in Liveness:
+            with self.subTest(state=state):
                 mode = self.started()
-                self.host.status.return_value = status
+                mode._terminal.calls.state.return_value = state
                 self.assertEqual(mode.state(), state)
 
 
 class PathsTest(Base):
     def test_a_sessions_dir_is_under_tui_dir_in_home(self):
         self.assertEqual(tui.TUI_DIR, "~/.agent-pm/tui")
-        self.assertEqual(tui._Store(NAME).dir, self.dir)
+        self.assertEqual(tui._Store(NAME, host=self.host).dir, self.dir)
 
     def test_its_hook_argv_runs_tui_hook_isolated_on_its_dir(self):
         hook = os.path.join(SRC["session"], "agent_pm", "session", "modes", "tui_hook.py")
-        argv = tui._Store(NAME).hook_argv(PACKAGE_ROOTS)
+        argv = tui._Store(NAME, host=self.host).hook_argv(PACKAGE_ROOTS)
         self.assertEqual(argv, (sys.executable, "-I", argv[2], self.dir, argv[4]))
         self.assertEqual(json.loads(argv[4]), [SRC["session"], SRC["utils"]])
         self.assertTrue(os.path.isabs(argv[2]))
@@ -1545,27 +1492,31 @@ class PrepareTest(Base):
         )
 
     def test_a_dead_or_absent_session_is_prepared(self):
-        for status in (0, 2, -15, None):
-            with self.subTest(status=status):
-                self.host.status.return_value = status
+        for code in (0, 2, -15, None):
+            with self.subTest(code=code):
+                self.host.processes.clear()
+                previous = self.host.create(NAME, SID) if code is not None else None
+                if previous is not None:
+                    previous.calls.alive.return_value = False
+                    previous.calls.returncode.return_value = code
                 self.start()
                 self.assertTrue(os.path.isfile(os.path.join(self.dir, "session.json")))
 
     def test_a_running_or_unknown_session_is_refused_with_nothing_made(self):
-        for status, message in (
-            (tmux_host.PaneStatus.RUNNING, "tui session w1 is running; tmux attach -t '=w1'"),
-            (tmux_host.PaneStatus.UNKNOWN, "tui session w1: its tmux state is unknown"),
+        for failure, message in (
+            (None, "tui session w1 is running"),
+            (DriverError("host state unknown"), "host state unknown"),
         ):
-            with self.subTest(status=status):
-                self.host.status.return_value = status
-                with self.assertRaises(DriverError) as caught:
+            with self.subTest(failure=failure):
+                process = self.host.create(NAME, SID)
+                process.calls.alive.side_effect = failure
+                with self.assertRaisesRegex(DriverError, message):
                     self.start()
-                self.assertEqual(str(caught.exception), message)
                 self.assertNoSessionDir()
         self.assertEqual(self.recorded, [])
-        self.host.start.assert_not_called()
+        self.host.calls.terminal.assert_not_called()
 
-    def test_a_bad_session_state_is_refused_before_tmux_or_a_path(self):
+    def test_a_bad_session_state_is_refused_before_host_launch_or_a_path(self):
         class BadLabel(ScanTui):
             hooks = {"a b": HookKind.TURN_END}
 
@@ -1585,8 +1536,8 @@ class PrepareTest(Base):
         self.assertEqual(
             [
                 c
-                for c in self.host.mock_calls
-                if c[0] not in ("validate_events", "validate_start", "tmux_path")
+                for c in self.host.calls.mock_calls
+                if c[0] not in ("protected_paths", "hook_state", "validate")
             ],
             [],
         )
@@ -1624,7 +1575,7 @@ class PrepareTest(Base):
                 self.assertTrue(os.path.lexists(self.root))
                 (os.rmdir if case == "another user's" else os.unlink)(self.root)
         self.assertEqual((os.listdir(target), stat.S_IMODE(os.stat(target).st_mode)), ([], 0o755))
-        self.host.start.assert_not_called()
+        self.host.calls.terminal.assert_not_called()
 
     def test_an_old_session_dir_is_replaced(self):
         os.makedirs(os.path.join(self.dir, "sub"))
@@ -1685,24 +1636,24 @@ class PrepareTest(Base):
 class LockTest(Base):
     def test_a_0600_lock_file_per_name_in_tui_dir_held_till_the_block_ends(self):
         os.rmdir(self.agent_pm)
-        with tui._Store(NAME)._locked():
+        with tui._Store(NAME, host=self.host)._locked():
             self.assertTrue(self.locked())
-            with tui._Store("w2")._locked():
+            with tui._Store("w2", host=self.host)._locked():
                 self.assertTrue(self.locked("w2"))
             self.assertFalse(self.locked("w2"))
         self.assertFalse(self.locked())
         self.assertEqual(stat.S_IMODE(os.lstat(os.path.join(self.root, "w1.lock")).st_mode), 0o600)
         self.assertEqual(stat.S_IMODE(os.lstat(self.root).st_mode), 0o700)
-        self.assertEqual(self.host.mock_calls, [])
+        self.assertEqual(self.host.calls.mock_calls, [])
 
     def test_a_second_holder_waits_for_the_first(self):
         entered = threading.Event()
 
         def second():
-            with tui._Store(NAME)._locked():
+            with tui._Store(NAME, host=self.host)._locked():
                 entered.set()
 
-        with tui._Store(NAME)._locked():
+        with tui._Store(NAME, host=self.host)._locked():
             thread = threading.Thread(target=second)
             thread.start()
             self.assertFalse(entered.wait(0.2))
@@ -1723,7 +1674,7 @@ class LockTest(Base):
                 make()
                 with (
                     self.assertRaisesRegex(DriverError, rf"\A{re.escape(path)}: "),
-                    tui._Store(NAME)._locked(),
+                    tui._Store(NAME, host=self.host)._locked(),
                 ):
                     pass
                 (os.rmdir if case == "directory" else os.unlink)(path)
@@ -1737,7 +1688,8 @@ class StoreTest(Base):
             if not name.startswith("_")
         }
         self.assertEqual(
-            sorted(found), ["close", "holder", "hook_argv", "read", "records", "start", "stop"]
+            sorted(found),
+            ["close", "holder", "hook_argv", "process", "read", "records", "start", "stop"],
         )
         for name, parameters in found.items():
             with self.subTest(name=name):
@@ -1749,7 +1701,7 @@ class StoreTest(Base):
                 self.assertFalse(hasattr(tui, gone))
 
     def test_records_are_whole_lines_from_an_offset_and_the_offset_past_them(self):
-        store = tui._Store(NAME)
+        store = tui._Store(NAME, host=self.host)
         self.assertEqual(store.records(0), ([], 0))
         os.makedirs(self.dir)
         first = (json.dumps(record("tool", tool="t")) + "\n").encode()
@@ -1758,3 +1710,35 @@ class StoreTest(Base):
         self.assertEqual(found, [("tool", {"tool": "t"}), ("stop", {})])
         self.assertEqual(store.records(len(first)), ([("stop", {})], end))
         self.assertEqual(store.records(end), ([], end))
+
+
+class TransportErrorTest(TmuxBase):
+    def test_real_host_launch_keeps_the_modes_exact_error_prefix(self):
+        self.tmux.tmux_path.return_value = self.tool
+        self.tmux.start.side_effect = tmux_host.TuiError("tmux: boom")
+        workdir = os.path.join(self.dir, "work")
+        os.mkdir(workdir)
+
+        class Launchable(ScanTui):
+            def launch(self, spec, hook, *, source_roots):
+                return Launch((sys.executable,))
+
+        adapter = TuiAdapter({"tui": True})
+        adapter.run = Launchable(adapter)
+        with self.assertRaises(DriverError) as caught:
+            tui.TuiMode.start(
+                Spec(workdir=workdir, name=NAME, runtime="fake", sid=SID),
+                adapter,
+                registry=self.driver.registry,
+                record=lambda _info: None,
+                host=self.host,
+            )
+        self.assertEqual(str(caught.exception), "cannot start tui session w1: tmux: boom")
+
+    def test_real_host_close_keeps_the_modes_exact_error_prefix(self):
+        self.controlled, self.kind = False, None
+        self.tmux.listing.return_value = [{"name": NAME, "display": None}]
+        self.tmux.kill.side_effect = tmux_host.TuiError("tmux: boom")
+        with self.assertRaises(DriverError) as caught:
+            tui.TuiMode.close(NAME, host=self.host)
+        self.assertEqual(str(caught.exception), "cannot close tui session w1: tmux: boom")

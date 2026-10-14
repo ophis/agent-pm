@@ -6,6 +6,8 @@ import importlib
 import inspect
 import re
 
+CONFIG_NAME = re.compile(r"[a-z][a-z0-9_]*\Z")
+
 PATH = re.compile(r"[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*:[A-Za-z_]\w*\Z")
 
 

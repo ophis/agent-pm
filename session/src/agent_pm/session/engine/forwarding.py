@@ -4,6 +4,7 @@ HostedSession class, session_cls.
 
 from __future__ import annotations
 
+import errno
 import os
 import time
 from collections.abc import Callable, Mapping, Sequence
@@ -11,11 +12,14 @@ from dataclasses import replace
 
 from agent_pm.session.adapters import registry
 from agent_pm.session.engine.base import Session
+from agent_pm.session.engine.config import read_config
 from agent_pm.session.engine.hosted import HostedSession
 from agent_pm.session.engine.records import RunLog
 from agent_pm.session.engine.types import (
     ConfigError,
+    DriverError,
     Hosts,
+    Launch,
     Mode,
     NoRecordedSession,
     NotDisplayable,
@@ -25,7 +29,7 @@ from agent_pm.session.engine.types import (
     Spec,
     Usage,
 )
-from agent_pm.session.hosts.base import Displayable, Host
+from agent_pm.session.hosts.base import SIGNALS, Displayable, Host
 from agent_pm.session.hosts.tmux import TmuxHost, tmux_host
 from agent_pm.session.modes import tui
 from agent_pm.utils import load_class, printable_abs
@@ -51,7 +55,7 @@ def sessions(match: str | None = None) -> list[SessionRow]:
 
 def close(name: str) -> None:
     """Kills tui session `name` (absent is fine), then removes its session dir."""
-    tui.TuiMode.close(name)
+    Driver.from_config(read_config()).close(name)
 
 
 def _on(tmux) -> Callable[[type[Host], str, Mapping], Host]:
@@ -67,8 +71,8 @@ def _opener(display) -> str | None:
 
 
 class Driver:
-    """hosts: parsed Hosts, else [hosts.<name>] tables parsed once with default_host; host: the tmux
-    module of its Modes and TmuxHost; harness_host: the [hosts.<name>] detach runs on.
+    """hosts: parsed configuration or tables with default_host; host: the execution transport;
+    harness_host selects where detached runs live.
     """
 
     def __init__(
@@ -110,7 +114,6 @@ class Driver:
 
     def _collaborators(self) -> dict:
         return dict(
-            tmux=self.host,
             probe=self.probe,
             clock=time.monotonic if self.clock is None else self.clock,
             host_factory=_on(self.host),
@@ -214,12 +217,10 @@ class Driver:
         return self.session_cls.list(match)
 
     def close(self, name: str) -> None:
-        tui.TuiMode.close(name, host=self.host)
+        tui.TuiMode.close(name, host=self.session_cls.host())
 
     def layout(self, split: str | None = None, split_from: str | None = None) -> str | None:
-        """show()'s opener once the pane it goes beside (split_from's, else the caller's) is found;
-        None only with split_from.
-        """
+        """Legacy layout completion, retained until TASK-375."""
         return _opener(self.session_cls.layout(display=TmuxHost.fold(None, split, split_from)))
 
     def attach_command(self, name: str) -> str:
@@ -235,9 +236,7 @@ class Driver:
         *,
         opener: str | None = None,
     ) -> None:
-        """Runs argv in new session `name` on the harness_host Host (None: the default), the opener
-        its display, SIGNALS blocked until argv unblocks them; returns once argv has exec'd.
-        """
+        """Runs argv on the selected harness Host and returns once argv has executed."""
         tui.checked_name(name)
         if (
             not isinstance(argv, (list, tuple))
@@ -250,7 +249,13 @@ class Driver:
         if not os.path.isdir(cwd):
             raise ConfigError(f"cwd must be an existing directory, got {cwd!r:.80}")
         display = TmuxHost.fold(opener, None, None)
-        self.session_cls.host(self.harness_host).detach(name, argv, cwd, env, display=display)
+        try:
+            launch = Launch(tuple(argv), cwd=cwd, env=env, blocked_signals=SIGNALS)
+        except ConfigError as error:
+            raise DriverError(
+                f"detach {name}: cannot run {argv[0]}: {os.strerror(errno.EINVAL)}"
+            ) from error
+        self.session_cls.host(self.harness_host).detach(name, launch, display=display)
 
     def _shown(self) -> Displayable:
         host = self.session_cls.host()

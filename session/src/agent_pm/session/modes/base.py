@@ -24,7 +24,6 @@ from agent_pm.session.engine.types import (
     Spec,
     Stderr,
 )
-from agent_pm.session.hosts.tmux import tmux_host
 from agent_pm.utils import Display, overlaps
 
 
@@ -63,7 +62,7 @@ class RunningMode(ABC):
         adapter: Adapter,
         *,
         registry: Registry,
-        host=tmux_host,
+        host=None,
         display: Display = None,
     ) -> Prepared:
         raise NotImplementedError
@@ -77,11 +76,12 @@ class RunningMode(ABC):
         *,
         registry: Registry,
         record: Callable[[SessionInfo], None],
-        host=tmux_host,
+        host=None,
         display: Display = None,
+        check_name: Callable[[str], None] | None = None,
     ) -> Self:
         """The session started; spec.sid set; registry: tui settings and identity_drop; host: the
-        tmux module; display: a tui session's, kept as given (other Modes refuse one).
+        selected execution Host; display: a tui session's, kept as given (other Modes refuse one).
         """
 
     @abstractmethod

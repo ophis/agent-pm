@@ -27,12 +27,11 @@ class AttachmentBase(Base):
 
 
 class AttachListTest(AttachmentBase):
-    def test_a_tui_session_without_a_controller_keeps_pane_based_handling(self):
-        self.kind, self.controlled = None, False
-        process = self.host.attach("tui")
-        self.assertTrue(process.alive())
-        process.close()
-        self.tmux.kill.assert_called_once_with("%7")
+    def test_a_terminal_without_a_controller_is_refused(self):
+        self.kind, self.controlled = "terminal", False
+        with self.assertRaisesRegex(DriverError, "tmux session tui: missing @control"):
+            self.host.attach("tui")
+        self.tmux.kill.assert_not_called()
         self.socket.assert_not_called()
 
     def test_attach_during_controller_teardown_returns_an_ended_handle(self):
@@ -181,18 +180,18 @@ class ProcessTest(AttachmentBase):
         with self.assertRaisesRegex(DriverError, "^tmux session d1: tmux failed$"):
             process.alive()
 
-    def test_close_kills_its_group_then_its_panes_session_absent_is_fine(self):
+    def test_close_terminates_its_group_after_closing_its_pane_absent_is_fine(self):
         self.active({"live": False})
         process = self.host.attach("d1")
         process.close()
-        self.connection.sendall.assert_called_once_with(b"kill\n")
+        self.connection.sendall.assert_called_once_with(b"signal 15\n")
         self.killpg.assert_not_called()
         self.tmux.kill.assert_called_once_with("%7")
         self.tmux.kill.side_effect = TuiError("tmux: can't find pane: %7")
         self.tmux.process.side_effect = [PROCESS, None]
         process.close()
         self.tmux.process.side_effect = None
-        with self.assertRaisesRegex(DriverError, "^close d1: tmux: can't find pane: %7$"):
+        with self.assertRaisesRegex(DriverError, "^tmux: can't find pane: %7$"):
             process.close()
 
     def test_after_its_pane_ends_wait_exit_waits_for_its_group_and_kill_ends_it(self):

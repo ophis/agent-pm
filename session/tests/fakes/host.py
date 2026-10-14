@@ -16,8 +16,8 @@ import time
 import uuid
 
 from agent_pm.session import DriverError, Host, HostProcess, Terminal
-from agent_pm.session.engine.types import Key, Paste
-from agent_pm.session.hosts.tmux import tmux_host
+from agent_pm.session.engine.status_log import SessionStatusLog
+from agent_pm.session.engine.types import Key, Launch, Liveness, Paste, Word
 from agent_pm.utils import Display, ProcessControl, Record, import_roots
 
 from utils.tests.sandbox import clean_env
@@ -60,6 +60,30 @@ class FakeProcess(HostProcess):
     def alive(self) -> bool:
         return bool(self._own()) and _read(self.folder, "rc") is None and self._live_group()
 
+    @property
+    def identity(self) -> str:
+        return self._id
+
+    def state(self) -> Liveness:
+        return Liveness.LIVE if self._own() else Liveness.ABSENT
+
+    def returncode(self) -> int | None:
+        if not self._own():
+            return -signal.SIGHUP
+        value = _read(self.folder, "rc")
+        return None if value is None else int(value)
+
+    def activity(self) -> Word | None:
+        value = _read(self.folder, "activity") if self._own() else None
+        return Word(value) if value in tuple(Word) else None
+
+    def mark(self, word: Word, events: str | None) -> None:
+        if self._own():
+            with open(os.path.join(self.folder, "activity"), "w", encoding="utf-8") as stream:
+                stream.write(word)
+            if events:
+                SessionStatusLog(events).write(self.name, word)
+
     def wait_exit(self, timeout: float) -> bool:
         deadline = time.monotonic() + timeout
         while self.alive() or self._live_group():
@@ -85,6 +109,10 @@ class FakeProcess(HostProcess):
     def record(self) -> Record | None:
         line = self._own().get("record")
         return None if line is None else Record.parse(line)
+
+    def session_identity(self):
+        metadata = self._own().get("metadata", {})
+        return metadata.get("sid"), metadata.get("generation")
 
     def display(self) -> Display:
         return self._own().get("display")
@@ -126,14 +154,20 @@ class FakeHost(Host):
     def root(self) -> str:
         return os.path.expanduser(self.settings.get("root", "~/.agent-pm/fake-host"))
 
-    def detach(self, name, argv, cwd, env, *, display=None, events=None, record=None):
-        return self._start(
-            "detach", name, argv, cwd, env, display=display, events=events, record=record
-        )
+    def detach(self, name, launch: Launch, *, display=None, events=None, record=None):
+        return self._start("detach", name, launch, display=display, events=events, record=record)
 
-    def terminal(self, name, argv, cwd, env, *, display=None, events=None, record=None):
+    def terminal(
+        self, name, launch: Launch, *, display=None, events=None, record=None, metadata=None
+    ):
         return self._start(
-            "terminal", name, argv, cwd, env, display=display, events=events, record=record
+            "terminal",
+            name,
+            launch,
+            display=display,
+            events=events,
+            record=record,
+            metadata=metadata,
         )
 
     def attach(self, name: str) -> FakeProcess:
@@ -154,7 +188,8 @@ class FakeHost(Host):
             and (display is None or meta.get("display") == display)
         ]
 
-    def _start(self, kind, name, argv, cwd, env, *, display, events, record):
+    def _start(self, kind, name, launch: Launch, *, display, events, record, metadata=None):
+        argv, cwd, env = launch.argv, launch.cwd, launch.env
         if not isinstance(name, str) or not NAME.fullmatch(name):
             raise ValueError(f"name: want [A-Za-z0-9_-]+, not {name!r}")
         if not (isinstance(argv, list | tuple) and argv and all(isinstance(a, str) for a in argv)):
@@ -169,8 +204,6 @@ class FakeHost(Host):
             previous.close()
         shutil.rmtree(folder, ignore_errors=True)
         os.makedirs(folder, mode=0o700)
-        env = {key: value for key, value in env.items() if key not in tmux_host.TERMINAL_KEYS}
-        env["PWD"] = os.path.abspath(cwd)
         control = ProcessControl.prepare(argv, cwd, env=env)
         meta = {
             "control": control.path,
@@ -180,6 +213,7 @@ class FakeHost(Host):
             "cwd": cwd,
             "display": display,
         }
+        meta["metadata"] = dict(metadata or {})
         meta["record"] = None if record is None else record.to_line()
         for file, data in (("meta.json", meta), ("env.json", dict(env))):
             with open(os.path.join(folder, file), "w", encoding="utf-8") as f:

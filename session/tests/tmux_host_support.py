@@ -16,13 +16,11 @@ PROCESS = "4242 $3 %7 4343"
 
 
 def fake_tmux() -> mock.Mock:
-    """tmux_host autospecced, its constants, attach_command and events_file real: status RUNNING,
-    listing [], opener "mgr", option None, detach and process PROCESS.
-    """
+    """Recorded transport with real validation and command formatting."""
     tmux = mock.create_autospec(tmux_host)
-    for name in ("PaneStatus", "TuiError"):
+    for name in ("PaneStatus", "TuiError", "Retile"):
         setattr(tmux, name, getattr(tmux_host, name))
-    for name in ("attach_command", "events_file"):
+    for name in ("attach_command", "events_file", "validate_events", "validate_start"):
         getattr(tmux, name).side_effect = getattr(tmux_host, name)
     tmux.status.return_value = tmux_host.PaneStatus.RUNNING
     tmux.listing.return_value = []
@@ -37,6 +35,8 @@ class Base(Case):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         self.dir = os.path.realpath(tmp.name)
+        self.tool = os.path.join(self.dir, "tool")
+        Path(self.tool).touch(mode=0o700)
         self.tmux = fake_tmux()
         self.host = TmuxHost("tmux", {"workers_per_column": 2}, tmux=self.tmux)
         self.killpg = self.enterContext(
@@ -55,11 +55,21 @@ class Base(Case):
             else self.tmux.option.return_value
         )
         self.tmux.detach.side_effect = self.detached
+        self.tmux.start.side_effect = self.terminal_started
         self.socket = self.enterContext(mock.patch("socket.socket"))
         self.connection = self.socket.return_value.__enter__.return_value
         self.connection.makefile.return_value.__enter__.return_value.readline.return_value = (
             b'{"live": true}\n'
         )
+        allocate = tempfile.mkdtemp
+
+        def private(*args, **kw):
+            if args:
+                return allocate(*args, **kw)
+            self.assertEqual(kw, {"prefix": "apm-group-", "dir": "/tmp"})
+            return allocate(prefix=kw["prefix"], dir=self.dir)
+
+        self.enterContext(mock.patch("tempfile.mkdtemp", side_effect=private))
 
     def controller(self):
         path = os.path.join(self.dir, "controller")
@@ -76,6 +86,10 @@ class Base(Case):
         self.addCleanup(self.control.remove)
         Path(self.control.path, "started.json").write_text('{"started": true}')
         return PROCESS
+
+    def terminal_started(self, *_args, **kw):
+        self.kind = "terminal"
+        self.detached(control=kw["tags"]["@control"])
 
     def active(self, *responses):
         self.controlled = True

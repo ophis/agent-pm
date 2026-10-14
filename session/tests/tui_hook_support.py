@@ -29,8 +29,18 @@ def state(root: str, events) -> dict:
         "resume": "",
         "events": events,
         "words": dict(WORDS),
-        "tmux_path": os.path.join(root, "bin", "tmux"),
+        "host_hook": "agent_pm.session.hosts.tmux.hook",
+        "host_state": {
+            "executable": os.path.join(root, "bin", "tmux"),
+            "target": "w1",
+            "generation": uuid.uuid4().hex,
+            "environment": {"TMUX_TMPDIR": root},
+        },
     }
+
+
+def identity(value: dict) -> str:
+    return f"{value['sid']}\t{value['host_state']['generation']}"
 
 
 def write_state(folder: str, value) -> None:

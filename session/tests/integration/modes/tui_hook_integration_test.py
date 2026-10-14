@@ -15,12 +15,21 @@ from agent_pm.session.modes import tui_hook
 
 from session.tests.case import SRC, Case
 from session.tests.source_roots import source_roots_cases
-from session.tests.tui_hook_support import HOOK, SOURCE_ROOTS, WORDS, install, state, write_state
+from session.tests.tui_hook_support import (
+    HOOK,
+    SOURCE_ROOTS,
+    WORDS,
+    identity,
+    install,
+    state,
+    write_state,
+)
 
 PANE = "%3"
 LINE = r"\A[0-9]{2}:[0-9]{2}:[0-9]{2} w1 %s\n\Z"  # one event line
 TS = r"\A\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}[+-]\d\d:\d\d\Z"
 MISSING = object()
+LOOKUP = ["display-message", "-p", "-t", "=w1:", "#{pane_id}\t#{@sid}\t#{@generation}"]
 TMUX = """#!{python} -I
 import json, os, sys
 with open(os.environ["TMUX_LOG"], "a") as f:
@@ -28,7 +37,10 @@ with open(os.environ["TMUX_LOG"], "a") as f:
 if os.environ.get("TMUX_FAIL"):
     sys.exit("boom\\nagain")
 if sys.argv[1] == "display-message":
-    print("w1")
+    if "pane_id" in sys.argv[-1]:
+        print("" if os.environ.get("TMUX_TARGET_ABSENT") else "%3\\t" + os.environ["TMUX_TARGET_IDENTITY"])
+    else:
+        print("w1")
 """
 DECOY = """#!{python} -I
 open({log!r}, "a").close()
@@ -59,6 +71,7 @@ class HookBase(Case):
             "HOME": self.root,
         }
         self.state = state(self.root, self.events)
+        self.env["TMUX_TARGET_IDENTITY"] = identity(self.state)
         write_state(self.dir, self.state)
 
     def hook(self, label, payload=None, args=None, **env):
@@ -177,11 +190,14 @@ runpy.run_path(path, run_name="__main__")
 
 class ErrorLoggingTest(HookBase):
     def test_package_import_failures_keep_a_traceback_and_one_error_line(self):
-        package = os.path.join(self.root, "agent_pm")
+        package = os.path.join(self.root, "broken_package")
         os.mkdir(package)
         initializer = os.path.join(package, "__init__.py")
         with open(initializer, "w") as file:
             file.write('raise RuntimeError("first\\nsecond")\n')
+        with open(os.path.join(package, "callback.py"), "w") as file:
+            file.write("def on_hook(*args): pass\n")
+        write_state(self.dir, {**self.state, "adapter_hook": "broken_package.callback"})
         self.assertEqual(self.hook("stop"), "tui_hook: RuntimeError: first second\n")
         with open(os.path.join(self.dir, "hook.log")) as file:
             trace = file.read()
@@ -258,7 +274,7 @@ with mock.patch("builtins.open", side_effect=open_file):
         self.assertEqual(self.hook("stop", {"text": "success"}), "")
         self.assertFalse(os.path.lexists(os.path.join(self.dir, "hook.log")))
         self.assertEqual(self.records()[0]["payload"], {"text": "success"})
-        self.assertEqual(self.calls()[0], ["set-option", "-t", PANE, "@state", "done"])
+        self.assertEqual(self.calls()[:2], [LOOKUP, ["set-option", "-t", PANE, "@state", "done"]])
         self.assertRegex(self.lines(), LINE % "done")
 
 
@@ -341,15 +357,91 @@ class PayloadTest(HookBase):
             file.write("value = 1\n")
         os.symlink(callback, os.path.join(self.root, "linked.py"))
         os.mkdir(os.path.join(self.root, "namespace"))
-        for name in ("relative.py/", callback, "absent", "namespace", "sys", "linked", "adapter"):
-            with self.subTest(module=name):
-                self.state["adapter_hook"] = name
-                write_state(self.dir, self.state)
-                self.assertError(self.hook("stop"), "adapter")
+        for kind in ("adapter_hook", "host_hook"):
+            for name in (
+                "relative.py/",
+                callback,
+                "absent",
+                "namespace",
+                "sys",
+                "linked",
+                "adapter",
+            ):
+                with self.subTest(kind=kind, module=name):
+                    write_state(self.dir, {**self.state, kind: name})
+                    self.assertError(self.hook("stop"), kind.split("_")[0])
         self.assertNothingWritten()
 
 
 class RecordsTest(HookBase):
+    def test_host_callback_observes_the_journal_and_receives_the_mode_payload(self):
+        callback = os.path.join(self.root, "host_callback.py")
+        seen = os.path.join(self.root, "seen.jsonl")
+        with open(callback, "w") as file:
+            file.write(f"""import json
+def on_hook(word, payload, state):
+    with open({self.hooks!r}) as journal:
+        record = json.loads(journal.readlines()[-1])
+    assert record["payload"] == payload
+    with open({seen!r}, "a") as output:
+        output.write(json.dumps([word, payload, state["host_state"]]) + "\\n")
+""")
+        write_state(
+            self.dir, {**self.state, "host_hook": "host_callback", "host_state": {"key": 3}}
+        )
+        payload = {"text": "x" * 5000}
+        for label in ("tool", "stop", "other"):
+            self.assertEqual(self.hook(label, payload), "")
+        with open(seen) as file:
+            observed = [json.loads(line) for line in file]
+        self.assertEqual(
+            observed,
+            [
+                ["working", {"text": "x" * 4096}, {"key": 3}],
+                ["done", payload, {"key": 3}],
+            ],
+        )
+        self.assertEqual(len(self.records()), 3)
+        self.assertEqual(self.calls(), [])
+
+    def test_two_synchronized_writers_keep_every_complete_journal_record(self):
+        script = """import io, json, sys
+folder, encoded, writer = sys.argv[1:]
+sys.path[:0] = json.loads(encoded)
+from agent_pm.session.modes import tui_hook
+print("ready", flush=True)
+sys.stdin.buffer.read(1)
+for number in range(20):
+    payload = json.dumps({"writer": writer, "number": number}).encode()
+    tui_hook.main([folder, encoded, "other"], io.BytesIO(payload))
+"""
+        processes = []
+        for writer in ("first", "second"):
+            process = subprocess.Popen(
+                [sys.executable, "-I", "-c", script, self.dir, SOURCE_ROOTS, writer],
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                env=self.env,
+            )
+            self.addCleanup(process.kill)
+            self.addCleanup(process.wait)
+            self.assertEqual(process.stdout.readline(), b"ready\n")
+            processes.append(process)
+        for process in processes:
+            process.stdin.write(b"x")
+            process.stdin.flush()
+        for process in processes:
+            stdout, stderr = process.communicate(timeout=10)
+            self.assertEqual((process.returncode, stdout, stderr), (0, b"", b""))
+        records = self.records()
+        self.assertEqual(len(records), 40)
+        self.assertEqual(
+            {(r["payload"]["writer"], r["payload"]["number"]) for r in records},
+            {(writer, number) for writer in ("first", "second") for number in range(20)},
+        )
+        self.assertEqual(self.calls(), [])
+
     def test_each_call_appends_one_record_line_ts_label_payload(self):
         payload = {"session_id": "s1", "text": "a\nb\u2028c\U0001f600", "n": [1, None, True, 2.5]}
         self.assertEqual(self.hook("stop", payload), "")
@@ -369,7 +461,7 @@ class RecordsTest(HookBase):
             with self.subTest(label):
                 self.reset()
                 self.assertEqual(self.hook(label), "")
-                calls = [["set-option", "-t", PANE, "@state", word]]
+                calls = [LOOKUP, ["set-option", "-t", PANE, "@state", word]]
                 if word == "working":
                     self.assertEqual(self.lines(), "")
                 else:
@@ -383,6 +475,7 @@ class RecordsTest(HookBase):
         self.assertEqual(
             self.calls(),
             [
+                LOOKUP,
                 ["set-option", "-t", PANE, "@state", "blocked"],
                 ["display-message", "-p", "-t", PANE, "#S"],
             ],
@@ -397,7 +490,7 @@ class RecordsTest(HookBase):
         os.chmod(plain, 0o644)
         for tmux in (plain, os.path.join(self.root, "bin"), os.path.join(self.root, "missing")):
             with self.subTest(tmux):
-                write_state(self.dir, {**self.state, "tmux_path": tmux})
+                write_state(self.dir, {**self.state, "host_state": {"executable": tmux}})
                 self.assertError(self.hook("stop"), tmux)
         self.assertEqual([r["label"] for r in self.records()], ["stop"] * 3)
         self.assertEqual((self.calls(), self.lines()), ([], ""))
@@ -416,15 +509,28 @@ class RecordsTest(HookBase):
             with self.subTest(label):
                 self.reset()
                 self.assertEqual(self.hook(label), "")
-                self.assertEqual(self.calls(), [["set-option", "-t", PANE, "@state", word]])
+                self.assertEqual(self.calls(), [LOOKUP, ["set-option", "-t", PANE, "@state", word]])
         self.assertEqual(self.lines(), "")
         self.assertEqual(len(self.records()), 3)
 
-    def test_no_tmux_pane_records_and_marks_nothing(self):
+    def test_target_lookup_works_without_runtime_pane_environment(self):
         for pane in (None, ""):
             self.assertEqual(self.hook("stop", TMUX_PANE=pane), "")
         self.assertEqual(len(self.records()), 2)
-        self.assertEqual((self.calls(), self.lines()), ([], ""))
+        self.assertEqual(
+            self.calls(),
+            [
+                LOOKUP,
+                ["set-option", "-t", PANE, "@state", "done"],
+                ["display-message", "-p", "-t", PANE, "#S"],
+            ]
+            * 2,
+        )
+
+    def test_missing_target_journals_without_marking(self):
+        self.assertEqual(self.hook("stop", TMUX_TARGET_ABSENT="1"), "")
+        self.assertEqual(len(self.records()), 1)
+        self.assertEqual((self.calls(), self.lines()), ([LOOKUP], ""))
 
     def test_valid_edge_states_are_accepted(self):
         write_state(
@@ -445,6 +551,73 @@ class RecordsTest(HookBase):
 
 
 class SecurityTest(HookBase):
+    def test_invalid_arguments_and_roots_drain_a_large_pipe_before_exiting(self):
+        data = b'{"data":"' + b"x" * (2 << 20) + b'"}'
+        for arguments in ([], [self.dir, "not-json", "stop"]):
+            with self.subTest(arguments=arguments):
+                process = subprocess.Popen(
+                    [sys.executable, "-I", HOOK, *arguments],
+                    stdin=subprocess.PIPE,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    env=self.env,
+                )
+                self.addCleanup(process.kill)
+                self.addCleanup(process.wait)
+                with process.stdin as stream:
+                    self.assertEqual(stream.write(data), len(data))
+                process.stdin = None
+                stdout, stderr = process.communicate(timeout=10)
+                self.assertEqual((process.returncode, stdout), (0, b""))
+                self.assertError(stderr.decode(), "tui_hook")
+        self.assertNothingWritten()
+
+    def test_foreign_callback_is_checked_before_the_session_package_initializer(self):
+        package = os.path.join(self.root, "agent_pm")
+        os.mkdir(package)
+        marker = os.path.join(self.root, "package-imported")
+        with open(os.path.join(package, "__init__.py"), "w") as file:
+            file.write(f"open({marker!r}, 'w').close()\n")
+        callback = os.path.join(package, "callback.py")
+        with open(callback, "w") as file:
+            file.write("def on_hook(*args): pass\n")
+        script = """import os, runpy, sys, types, unittest.mock
+path, rejected, *arguments = sys.argv[1:]
+original = os.lstat
+def foreign_owner(filename):
+    info = original(filename)
+    return types.SimpleNamespace(st_mode=info.st_mode,
+        st_uid=os.getuid() + 1 if filename == rejected else info.st_uid)
+sys.argv = [path, *arguments]
+with unittest.mock.patch("os.lstat", foreign_owner):
+    runpy.run_path(path, run_name="__main__")
+"""
+        for kind in ("adapter_hook", "host_hook"):
+            with self.subTest(kind=kind):
+                write_state(self.dir, {**self.state, kind: "agent_pm.callback"})
+                result = subprocess.run(
+                    [
+                        sys.executable,
+                        "-I",
+                        "-c",
+                        script,
+                        HOOK,
+                        callback,
+                        self.dir,
+                        json.dumps([self.root, *json.loads(SOURCE_ROOTS)]),
+                        "stop",
+                    ],
+                    input=b"{}",
+                    capture_output=True,
+                    env=self.env,
+                    timeout=10,
+                    check=True,
+                )
+                self.assertEqual(result.stdout, b"")
+                self.assertError(result.stderr.decode(), "not a regular file owned by you")
+                self.assertFalse(os.path.exists(marker))
+                self.assertNothingWritten()
+
     def callback_package(self):
         folder = os.path.join(self.root, "callback_package", "nested")
         os.makedirs(folder)
@@ -771,7 +944,6 @@ for _ in range(2):
             "events": ("", "events", "/a\nb", 1, []),
             "sid": ("", "a/b", "a\tb", 1, None),
             "workdir": ("", "rel", "/a\x00b", None),
-            "tmux_path": ("", "tmux", "bin/tmux", "/a\nb", None, 1),
         }
         self.assertEqual(set(bad), set(tui_hook.SESSION_STATE))
         for field, values in bad.items():
@@ -785,7 +957,7 @@ for _ in range(2):
                     self.assertNothingWritten()
 
     def test_identity_keys_neither_it_nor_its_adapter_hook_reads_go_unchecked(self):
-        """SessionInfo.from_fields is their one decoder; the hook reads words, events, tmux_path,
+        """SessionInfo.from_fields is their one decoder; the hook reads words and events,
         and a codex adapter_hook workdir and sid.
         """
         unread = {

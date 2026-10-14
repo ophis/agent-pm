@@ -6,6 +6,7 @@ import os
 import shutil
 import stat
 import subprocess
+import sys
 import unittest
 from unittest import mock
 
@@ -100,6 +101,86 @@ class Env(Live):
             timeout=30,
         )
         self.assertEqual(res.stdout, "mgr\n", res.stderr)
+
+
+class FixtureGuard(Live):
+    def test_parent_calls_require_a_registered_fixture_socket(self):
+        wrong = self.home
+        for argv, env in (
+            (["tmux", "ls"], None),
+            (["tmux", "ls"], self.server.env(TMUX_TMPDIR=wrong)),
+            (["tmux", "ls"], self.server.env(TMUX=wrong + "/socket,1,0")),
+            (["tmux", "-S", wrong + "/socket", "ls"], self.server.env()),
+            (["tmux", "-S"], self.server.env()),
+            (["tmux", "-S" + self.server.socket, "ls"], self.server.env()),
+            (["tmux", "-Lother", "ls"], self.server.env()),
+        ):
+            with (
+                self.subTest(argv=argv, env=env),
+                self.assertRaisesRegex(RuntimeError, "live_tmux"),
+            ):
+                subprocess.run(argv, env=env, capture_output=True, text=True, timeout=30)
+
+    def test_explicit_socket_needs_no_inherited_environment(self):
+        self.server.start("mgr")
+        result = subprocess.run(
+            [self.server.program, "-S", self.server.socket, "ls", "-F", "#{session_name}"],
+            env={},
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        self.assertEqual((result.returncode, result.stdout), (0, "mgr\n"), result.stderr)
+
+    def test_multiple_registered_servers_remain_independent(self):
+        with mock.patch.dict(os.environ, self.server.env(), clear=True):
+            other = live_tmux.Server(self, self.home)
+        self.server.start("first")
+        other.start("second")
+        self.assertEqual(self.ok("ls", "-F", "#{session_name}"), "first")
+        self.assertEqual(other.tmux("ls", "-F", "#{session_name}").stdout, "second\n")
+
+    def child(self, code, *args):
+        self.assertEqual(self.server.program, os.path.join(self.server.bin, "tmux"))
+        return subprocess.run(
+            [sys.executable, "-I", "-c", code, self.server.program, *args],
+            env=self.server.env(),
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+
+    def test_nested_python_inherits_the_fixture_server(self):
+        self.server.start("mgr")
+        result = self.child(
+            "import subprocess, sys; raise SystemExit(subprocess.call([sys.argv[1], 'ls', '-F', '#{session_name}']))"
+        )
+        self.assertEqual((result.returncode, result.stdout), (0, "mgr\n"), result.stderr)
+
+    def test_nested_python_uses_an_explicit_socket_without_inherited_environment(self):
+        self.server.start("mgr")
+        result = self.child(
+            "import subprocess, sys; raise SystemExit(subprocess.call([sys.argv[1], '-S', sys.argv[2], 'ls', '-F', '#{session_name}'], env={}))",
+            self.server.socket,
+        )
+        self.assertEqual((result.returncode, result.stdout), (0, "mgr\n"), result.stderr)
+
+    def test_nested_python_cannot_drop_the_private_selector(self):
+        result = self.child(
+            "import os, subprocess, sys; env = dict(os.environ); env.pop('TMUX_TMPDIR'); "
+            "raise SystemExit(subprocess.call([sys.argv[1], 'ls'], env=env))"
+        )
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertIn("live_tmux", result.stderr)
+
+    def test_nested_python_cannot_replace_the_private_selector(self):
+        result = self.child(
+            "import os, subprocess, sys; env = dict(os.environ, TMUX_TMPDIR=sys.argv[2]); "
+            "raise SystemExit(subprocess.call([sys.argv[1], 'ls'], env=env))",
+            self.home,
+        )
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertIn("live_tmux", result.stderr)
 
 
 class Client(Live):

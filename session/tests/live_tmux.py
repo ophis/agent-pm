@@ -1,7 +1,6 @@
-"""Per-test private tmux servers: only -S reaches one, and env() has no TMUX, TMUX_PANE,
-ITERM_SESSION_ID or TERM_PROGRAM. No tmux: the test skips.
-"""
+"""Private tmux fixtures with checked socket selectors, inherited launchers and cleanup."""
 
+import inspect
 import os
 import resource
 import select
@@ -12,6 +11,7 @@ import tempfile
 import threading
 import time
 from typing import NamedTuple
+from unittest import mock
 
 from session.tests.case import child_env
 from session.tests.grid import GridCheck
@@ -26,6 +26,58 @@ HEADROOM = 256
 PANES = "#{pane_id} #{pane_left} #{pane_top} #{pane_width} #{pane_height}"
 
 
+_SOCKETS: set[str] = set()
+_PROGRAMS: dict[str, str] = {}
+
+
+def _require_socket(argv, env, sockets):
+    if isinstance(argv, (str, bytes)):
+        raise RuntimeError("live_tmux: expected a command argument list")
+    socket = None
+    index = 1
+    while index < len(argv):
+        option = os.fsdecode(argv[index])
+        if not option.startswith("-") or option in {"-", "--"}:
+            break
+        if option in {"-S", "-f"}:
+            index += 1
+            if index == len(argv) or not argv[index]:
+                raise RuntimeError("live_tmux: missing " + option + " value")
+            if option == "-S":
+                if socket is not None:
+                    raise RuntimeError("live_tmux: duplicate -S selector")
+                socket = os.fsdecode(argv[index])
+        elif option not in {"-u", "-v", "-q", "-2", "-C", "-CC", "-D", "-N", "-V", "-h"}:
+            raise RuntimeError("live_tmux: unsupported global option " + option)
+        index += 1
+    if socket is None:
+        socket = env.get("TMUX", "").partition(",")[0]
+        if not socket:
+            directory = env.get("TMUX_TMPDIR", "")
+            if not directory:
+                raise RuntimeError("live_tmux: missing private TMUX_TMPDIR or -S selector")
+            socket = os.path.join(directory, f"tmux-{os.getuid()}", "default")
+    if not os.path.isabs(socket) or os.path.realpath(socket) not in sockets:
+        raise RuntimeError("live_tmux: tmux requires a registered fixture socket")
+
+
+def _guard_popen():
+    popen = subprocess.Popen
+
+    class GuardedPopen(popen):
+        def __init__(self, *args, **kwargs):
+            argv = args[0] if args else kwargs["args"]
+            executable = kwargs.get("executable") or (
+                argv if isinstance(argv, (str, bytes)) else argv[0]
+            )
+            if os.path.basename(os.fsdecode(executable)) == "tmux":
+                env = kwargs.get("env")
+                _require_socket(argv, os.environ if env is None else env, _SOCKETS)
+            super().__init__(*args, **kwargs)
+
+    return mock.patch("subprocess.Popen", new=GuardedPopen)
+
+
 class Client(NamedTuple):
     proc: subprocess.Popen
     master: int
@@ -36,9 +88,10 @@ class Client(NamedTuple):
 class Server:
     def __init__(self, case, home: str, *, bin_dir: str | None = None):
         self.case, self.home, self.size, self.clients = case, home, (200, 50), []
-        self.program = shutil.which("tmux")
-        if self.program is None:
+        program = shutil.which("tmux")
+        if program is None:
             case.skipTest("tmux not installed")
+        self._program = _PROGRAMS.get(os.path.realpath(program), program)
         self.root = os.path.realpath(tempfile.mkdtemp())
         case.addCleanup(shutil.rmtree, self.root, ignore_errors=True)
         os.mkdir(os.path.join(self.root, f"tmux-{os.getuid()}"), 0o700)
@@ -46,8 +99,24 @@ class Server:
         self.bin = bin_dir if bin_dir is not None else os.path.join(self.root, "bin")
         os.mkdir(self.bin)
         self.path = fake_claude.install(
-            self.bin, tail=f"{os.path.dirname(self.program)}:/usr/bin:/bin"
+            self.bin, tail=f"{os.path.dirname(self._program)}:/usr/bin:/bin"
         )
+        self.program = os.path.join(self.bin, "tmux")
+        launcher = (
+            f"#!{sys.executable} -I\nimport os, sys\n"
+            + inspect.getsource(_require_socket)
+            + f"\ntry: _require_socket(['tmux', *sys.argv[1:]], os.environ, {{{self.socket!r}}})\n"
+            + "except RuntimeError as error: print(error, file=sys.stderr); raise SystemExit(2)\n"
+            + f"os.execv({self._program!r}, [{self._program!r}, '-S', {self.socket!r}, *sys.argv[1:]])\n"
+        )
+        with open(self.program, "w", encoding="utf-8") as stream:
+            stream.write(launcher)
+        os.chmod(self.program, 0o700)
+        _SOCKETS.add(self.socket)
+        _PROGRAMS[os.path.realpath(self.program)] = self._program
+        case.enterContext(_guard_popen())
+        case.addCleanup(_PROGRAMS.pop, os.path.realpath(self.program))
+        case.addCleanup(_SOCKETS.discard, self.socket)
         case.addCleanup(self._close_clients)
         case.addCleanup(self.kill)
         if len(os.fsencode(self.socket)) > SOCKET_MAX:
@@ -63,7 +132,12 @@ class Server:
         }
 
     def child_env(self) -> dict[str, str]:
-        return {**child_env(), "TMUX_TMPDIR": self.root}
+        env = child_env()
+        return {
+            **env,
+            "PATH": self.bin + os.pathsep + env.get("PATH", os.defpath),
+            "TMUX_TMPDIR": self.root,
+        }
 
     def start(self, manager: str, width: int = 200, height: int = 50) -> None:
         """Capped (RLIMIT_NPROC) at the user's processes plus HEADROOM against a fork loop."""
@@ -82,7 +156,7 @@ class Server:
         cap = cap if hard == resource.RLIM_INFINITY else min(cap, hard)
         subprocess.run(
             [
-                self.program,
+                self._program,
                 "-u",
                 "-S",
                 self.socket,
@@ -109,7 +183,7 @@ class Server:
         master, slave = os.openpty()
         try:
             proc = subprocess.Popen(
-                [self.program, "-S", self.socket, "-CC", "attach", "-t", f"={session}"],
+                [self._program, "-S", self.socket, "-CC", "attach", "-t", f"={session}"],
                 stdin=slave,
                 stdout=slave,
                 stderr=slave,
@@ -158,7 +232,7 @@ class Server:
     def tmux(self, *args: str) -> subprocess.CompletedProcess:
         # -u: without locale or TMUX, tmux prints tabs and non-ASCII as "_"
         return subprocess.run(
-            [self.program, "-u", "-S", self.socket, *args],
+            [self._program, "-u", "-S", self.socket, *args],
             env=self.env(),
             capture_output=True,
             text=True,

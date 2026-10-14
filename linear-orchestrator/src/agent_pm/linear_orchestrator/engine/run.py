@@ -76,7 +76,8 @@ def inner(a, cfg, *, gql, run=delegate.run, now=timestamp):
     os.environ["PATH"] = config.path()
     for sig in (signal.SIGTERM, signal.SIGHUP, signal.SIGINT):
         signal.signal(sig, _stop)
-    signal.pthread_sigmask(signal.SIG_UNBLOCK, SIGNALS)  # session.detach blocked them until now
+    # Driver.detach explicitly keeps these blocked through exec and imports.
+    signal.pthread_sigmask(signal.SIG_UNBLOCK, SIGNALS)
     role = _run_role(a, cfg)
     if role is None:
         return 1

@@ -8,8 +8,8 @@ from dataclasses import dataclass
 
 from agent_pm.session.adapters.base import Adapter
 from agent_pm.session.engine.types import ConfigError, Hosts, TuiSettings
-from agent_pm.session.hosts.base import NAME, Host
-from agent_pm.session.hosts.tmux import tmux_host
+from agent_pm.session.hosts.base import Host
+from agent_pm.utils import CONFIG_NAME as NAME
 from agent_pm.utils import freeze, thaw
 from agent_pm.utils import load_class as load
 
@@ -49,17 +49,9 @@ class Registry:
         return sorted(self.settings.adapters)
 
     def tui(self) -> TuiSettings:
-        table = self.settings.hosts.get(tmux_host.HOST, {})
-        line, per, retile = (table.get(k) for k in TUI_KEYS)
-        if line is not None and not isinstance(line, bool):
-            raise ConfigError("status_line: want true or false")
-        if per is not None and (
-            isinstance(per, bool) or not isinstance(per, int) or not 1 <= per <= 9999
-        ):
-            raise ConfigError("workers_per_column: want an integer from 1 to 9999")
-        if retile is not None and retile not in tuple(tmux_host.Retile):
-            raise ConfigError(f"grid_retile: want one of {', '.join(tmux_host.Retile)}")
-        return TuiSettings(bool(line), per, retile)
+        table = thaw(self.settings.hosts[self.settings.default_host])
+        kind = self.class_loader(table.pop("implementation"), Host)
+        return kind(self.settings.default_host, table).tui_settings()
 
     def _table(self, name: str) -> Mapping:
         if not isinstance(name, str) or not NAME.match(name):

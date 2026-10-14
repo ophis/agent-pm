@@ -65,9 +65,10 @@ class _Group:
         return cls(pid, read)
 
     @staticmethod
-    def _anchor(channel, argv, cwd, **options):
+    def _anchor(channel, argv, cwd, *, blocked_signals=(), **options):
         try:
             os.setpgid(0, 0)
+            signal.pthread_sigmask(signal.SIG_BLOCK, blocked_signals)
             for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
                 signal.signal(sig, lambda *_: None)
             if os.isatty(0):
@@ -190,6 +191,7 @@ class ProcessControl:
         *,
         env: Mapping[str, str] | None = None,
         inherit_env: Sequence[str] = (),
+        blocked_signals: Sequence[int] = (),
     ) -> ProcessControl:
         """Persist the launch; inherit_env replaces explicit entries with controller values."""
         path = tempfile.mkdtemp(prefix="apm-group-", dir="/tmp")
@@ -199,6 +201,8 @@ class ProcessControl:
                 launch["env"] = dict(env)
             if inherit_env:
                 launch["inherit_env"] = list(inherit_env)
+            if blocked_signals:
+                launch["blocked_signals"] = list(blocked_signals)
             _write(os.path.join(path, "launch.json"), launch)
             _write(os.path.join(path, "lock"), {})
         except BaseException:
@@ -241,7 +245,8 @@ class ProcessControl:
             if time.monotonic() >= deadline:
                 raise TimeoutError("process controller did not start")
             if os.path.exists(os.path.join(self.path, "control")):
-                self._request("start")
+                with contextlib.suppress(ConnectionRefusedError):
+                    self._request("start")
             time.sleep(POLL)
         self._request("started")
         if "error" in message:
@@ -262,6 +267,9 @@ class ProcessControl:
 
     def kill(self) -> None:
         self._request("kill")
+
+    def terminate(self) -> None:
+        self._request(f"signal {signal.SIGTERM}")
 
     def _request(self, command: str) -> bool:
         if (
@@ -370,7 +378,12 @@ class ProcessControl:
                             },
                             **{key: os.environ[key] for key in inherited if key in os.environ},
                         }
-                    group = _Group.launch(launch["argv"], launch["cwd"], **options)
+                    group = _Group.launch(
+                        launch["argv"],
+                        launch["cwd"],
+                        blocked_signals=launch.get("blocked_signals", ()),
+                        **options,
+                    )
                     fcntl.flock(lock, fcntl.LOCK_UN)
                 if detached:
                     os.setsid()

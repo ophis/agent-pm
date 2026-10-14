@@ -37,7 +37,9 @@ from agent_pm.session.engine.types import (
     Exited,
     Hosts,
     IdleTimeout,
+    Key,
     Mode,
+    Paste,
     Reply,
     SessionInfo,
     SessionRow,
@@ -48,23 +50,23 @@ from agent_pm.session.engine.types import (
     Usage,
     Window,
 )
-from agent_pm.session.hosts.tmux import TmuxHost, tmux_host
+from agent_pm.session.hosts.tmux import TmuxHost
 from agent_pm.session.modes import tui
+from agent_pm.utils import Record
 
 from session.tests import fake_adapter
 from session.tests.case import HOSTS, REPO, SPAWNS, Case
 from session.tests.fakes.host import FakeHost
+from session.tests.fakes.terminal import MemoryHost, ScreenHost
 from session.tests.hosted_support import (
     LAUNCHED,
     PYTHONPATH,
     SID,
-    TMUX,
     Base,
-    EnvBase,
+    HostedEnvBase,
+    HostedTuiBase,
     ProbeAdapter,
-    TuiBase,
     fake_tmux,
-    listed,
 )
 from session.tests.source_roots import PACKAGE_ROOTS
 from utils.tests.sandbox import owned_directory
@@ -349,14 +351,30 @@ class HostTest(Case):
         self.assertEqual(loaded, [("agent_pm.session.hosts.tmux:TmuxHost", Host)])
 
 
-class DisplayTest(TuiBase):
+class DisplayTest(HostedTuiBase):
+    def test_a_non_tmux_host_accepts_an_opaque_display_ending_in_semicolon(self):
+        self.assertEqual(self.session.display("opaque;"), "opaque;")
+        session = self.tui(name="w1", display="opaque;")
+        self.assertEqual(self.host.calls.terminal.call_args.kwargs["display"], "opaque;")
+        self.assertEqual(session.name, "w1")
+
     def test_display_is_completed_by_its_host(self):
-        self.host.opener.return_value = "mgr"
-        self.assertEqual(self.session.display("/below"), "mgr/below")
-        self.assertEqual(self.session.display(None, host="tmux"), "mgr")
-        self.assertEqual(self.session.display("foreign value"), "foreign value")
+        for value, completed in (
+            ("/below", "mgr/below"),
+            (None, "mgr"),
+            ("foreign value", "foreign value"),
+        ):
+            self.host.calls.display.return_value = completed
+            self.assertEqual(self.session.display(value, host="tmux"), completed)
+        self.assertEqual(
+            self.host.calls.display.call_args_list,
+            [mock.call("/below"), mock.call(None), mock.call("foreign value")],
+        )
 
     def test_a_display_not_printable_or_ending_in_a_semicolon_is_refused(self):
+        transport = fake_tmux(self)
+        selected = TmuxHost("tmux", tmux=transport)
+        self.session = self.session._rebound(host_factory=lambda *_args: selected)
         for bad in ("a\tb", "a\nb", "x;"):
             for name, call in (
                 ("display", lambda bad=bad: self.session.display(bad)),
@@ -369,12 +387,13 @@ class DisplayTest(TuiBase):
                     str(caught.exception),
                     f"display {bad!r}: want printable text not ending in ;",
                 )
-        self.nothing_hosted()
+        self.assertEqual(transport.mock_calls, [])
+        self.assertFalse(os.path.lexists(self.root))
 
     def test_layout_is_the_default_hosts_completed_display(self):
-        self.host.opener.return_value = "mgr"
+        self.host.calls.layout.return_value = "mgr/below"
         self.assertEqual(self.session.layout(display="/below"), "mgr/below")
-        self.assertEqual(self.host.mock_calls, [mock.call.anchor(None), mock.call.opener()])
+        self.assertEqual(self.host.calls.mock_calls, [mock.call.layout(display="/below")])
 
     def test_layout_without_a_displayable_default_host_is_none(self):
         configured = HostedSession.configured(adapters={}, hosts=parsed(FAKE_HOSTS, "fake"))
@@ -386,9 +405,9 @@ class DisplayTest(TuiBase):
 
     def test_a_tui_start_stores_its_display_as_given(self):
         self.tui(name="w1", display="mgr/below")
-        self.assertEqual(self.host.start.call_args.kwargs["tags"]["@display"], "mgr/below")
+        self.assertEqual(self.host.calls.terminal.call_args.kwargs["display"], "mgr/below")
         self.tui(name="w2")
-        self.assertNotIn("@display", self.host.start.call_args.kwargs["tags"])
+        self.assertIsNone(self.host.calls.terminal.call_args.kwargs["display"])
 
     def test_a_display_is_tui_only(self):
         self.refused(ConfigError, "display: tui mode only", lambda: self.start(display="mgr/below"))
@@ -926,7 +945,7 @@ class UsageTest(Base):
             self.session.usage("nope")
 
 
-class ProtectionTest(TuiBase):
+class ProtectionTest(HostedTuiBase):
     def test_every_mode_refuses_cwd_and_grants_in_both_directions_on_start_and_resume(self):
         protected = os.path.join(self.dir, "protected")
         paths = (protected, os.path.join(protected, "child"), self.dir)
@@ -994,6 +1013,7 @@ class ProtectionTest(TuiBase):
                     resume=resume,
                 )
             self.assertEqual(session.info().cwd, sibling)
+            session.stop()
 
 
 class WritableDirsTest(Base):
@@ -1041,116 +1061,50 @@ class WritableDirsTest(Base):
         self.assertIsInstance(caught.exception.__cause__, PermissionError)
 
 
-class ListTest(TuiBase):
+class ListTest(HostedTuiBase):
     def test_a_row_per_listed_session_in_its_order(self):
-        self.host.listing.return_value = [
-            listed("mgr"),
-            listed("w1", sid=SID, runtime="fake", state="done", pane="%3", opener="mgr", shown="m"),
-            listed("w2", sid="a/b", runtime="Fake", state="blocked", shown=""),
-            listed("w3", runtime="x-y", state="dead"),
-            listed("w4", runtime="fake", state="done", dead=True, last_lines="bye"),
-            listed("w5", runtime="fake9_", state="other", dead=None),
-        ]
-        self.host.own_session.return_value = "mgr"
-        rows = self.session.list()
-        self.assertEqual([type(r.state) for r in rows], [ActivityState] * 6)
-        row = SessionRow
-        self.assertEqual(
-            rows,
-            [
-                row(
-                    name="mgr",
-                    sid=None,
-                    runtime=None,
-                    state="working",
-                    pane=None,
-                    opener=None,
-                    shown=None,
-                    last_lines=None,
-                    own=True,
-                ),
-                row(
-                    name="w1",
-                    sid=SID,
-                    runtime="fake",
-                    state="done",
-                    pane="%3",
-                    opener="mgr",
-                    shown="m",
-                    last_lines=None,
-                    own=False,
-                ),
-                row(
-                    name="w2",
-                    sid=None,
-                    runtime=None,
-                    state="blocked",
-                    pane=None,
-                    opener=None,
-                    shown="",
-                    last_lines=None,
-                    own=False,
-                ),
-                row(
-                    name="w3",
-                    sid=None,
-                    runtime=None,
-                    state="working",
-                    pane=None,
-                    opener=None,
-                    shown=None,
-                    last_lines=None,
-                    own=False,
-                ),
-                row(
-                    name="w4",
-                    sid=None,
-                    runtime="fake",
-                    state="dead",
-                    pane=None,
-                    opener=None,
-                    shown=None,
-                    last_lines="bye",
-                    own=False,
-                ),
-                row(
-                    name="w5",
-                    sid=None,
-                    runtime="fake9_",
-                    state="working",
-                    pane=None,
-                    opener=None,
-                    shown=None,
-                    last_lines=None,
-                    own=False,
-                ),
-            ],
+        first = self.host.create("w2", SID)
+        second = self.host.create("w1", "other")
+        first.calls.row.return_value = SessionRow(
+            "w2", SID, "fake", ActivityState.DONE, None, None, "shown", "bye", own=False
         )
-        self.assertEqual(self.host.mock_calls, [mock.call.listing(None), mock.call.own_session()])
+        second.calls.row.return_value = SessionRow(
+            "w1",
+            "other",
+            "unknown-runtime",
+            ActivityState.WORKING,
+            None,
+            None,
+            None,
+            None,
+            own=False,
+        )
+        self.assertEqual(self.session.list(), [second.row(), first.row()])
+        self.host.calls.list.assert_called_once_with(None)
 
     def test_display_keeps_the_sessions_stored_with_it_and_empty_none(self):
-        self.host.listing.return_value = [
-            listed("w1", display="mgr/below"),
-            listed("w2", display="mgr"),
-            listed("w3"),
-        ]
+        for name, display in (("w1", "mgr/below"), ("w2", "mgr"), ("w3", None)):
+            self.host.create(
+                name,
+                receipt=Record(
+                    1, "fake", name, (name,), None, None, ("ctl",), ("resume",), display, None
+                ),
+            )
         self.assertEqual([r.name for r in self.session.list(display="mgr/below")], ["w1"])
         self.assertEqual([r.name for r in self.session.list(display=None)], ["w1", "w2", "w3"])
-        self.host.reset_mock()
+        self.host.calls.reset_mock()
         self.assertEqual(self.session.list(display=""), [])
-        self.assertEqual(self.host.mock_calls, [])
+        self.assertEqual(self.host.calls.mock_calls, [])
 
     def test_match_is_compiled_for_the_listing_to_fullmatch(self):
-        self.assertEqual(self.session.list(r"w[0-9]+"), [])
-        ((pattern,),) = [c.args for c in self.host.listing.call_args_list]
-        self.assertEqual(pattern.pattern, r"w[0-9]+")
-        self.assertEqual(
-            [n for n in ("w1", "w12", "xw1", "w1x") if pattern.fullmatch(n)], ["w1", "w12"]
-        )
+        for name in ("w1", "w12", "xw1", "w1x"):
+            self.host.create(name)
+        self.assertEqual([r.name for r in self.session.list(r"w[0-9]+")], ["w1", "w12"])
+        self.host.calls.list.assert_called_once_with(None)
 
     def test_no_server_is_no_rows_without_reading_tmux_pane(self):
         self.assertEqual(self.session.list(), [])
-        self.host.own_session.assert_not_called()
+        self.assertEqual(self.host.calls.mock_calls, [mock.call.list(None)])
 
     def test_a_non_str_or_invalid_match_is_refused(self):
         for bad, message in (
@@ -1165,15 +1119,11 @@ class ListTest(TuiBase):
         self.nothing_hosted()
 
     def test_tmux_failing_or_a_bad_tmux_pane_is_a_driver_error_never_no_rows(self):
-        self.host.listing.return_value = None
-        with self.assertRaises(DriverError) as caught:
-            self.session.list()
-        self.assertEqual(str(caught.exception), "tmux sessions unknown: tmux failed")
-        self.host.listing.return_value = [listed("w1")]
-        self.host.own_session.side_effect = tmux_host.TuiError("bad $TMUX_PANE 'x'")
-        with self.assertRaises(DriverError) as caught:
-            self.session.list()
-        self.assertEqual(str(caught.exception), "tmux sessions unknown: bad $TMUX_PANE 'x'")
+        for message in ("host listing unavailable", "host display unavailable"):
+            self.host.calls.list.side_effect = DriverError(message)
+            with self.subTest(message=message), self.assertRaises(DriverError) as caught:
+                self.session.list()
+            self.assertEqual(str(caught.exception), message)
 
     def test_a_row_is_frozen_with_these_fields(self):
         self.assertEqual(
@@ -1195,7 +1145,7 @@ class ListTest(TuiBase):
             found.state = "done"
 
 
-class TuiStartTest(TuiBase):
+class TuiStartTest(HostedTuiBase):
     def test_binds_the_adapter_session_selector_for_new_and_resumed_sessions(self):
         self.configure(
             tables={"claude": {"implementation": "agent_pm.session.adapters.claude:ClaudeAdapter"}}
@@ -1203,7 +1153,7 @@ class TuiStartTest(TuiBase):
         for resumed, word in ((False, "--session-id"), (True, "--resume")):
             with self.subTest(resumed=resumed):
                 self.tui(runtime="claude", name=f"w{resumed}", sid=SID, resume=resumed)
-                argv = self.host.start.call_args.args[1]
+                argv = self.host.calls.terminal.call_args.args[1].argv
                 self.assertEqual(tuple(argv[:3]), ("claude", word, SID))
 
     def test_effective_project_override_reaches_info_record_and_tui_state(self):
@@ -1226,28 +1176,11 @@ class TuiStartTest(TuiBase):
 
     def test_prepares_the_session_dir_records_the_session_then_begins_it_tagged_with_no_pane(self):
         order = []
-
-        def status(_name):
-            order.append(("status", os.path.exists(RunLog(self.workdir).path)))
-
-        self.host.status.side_effect = status
-        self.host.start.side_effect = lambda *_a, **_k: order.append(
-            ("start", [e["kind"] for e in self.written()])
+        self.host.calls.terminal.side_effect = lambda *_args, **_kwargs: order.append(
+            [e["kind"] for e in self.written()]
         )
         session = self.tui(name="w1", sid=SID, events=self.events)
-        self.assertEqual(order, [("status", False), ("start", ["session"])])
-        self.assertEqual(
-            [c[0] for c in self.host.mock_calls],
-            [
-                "validate_events",
-                "tmux_path",
-                "validate_start",
-                "events_file",
-                "status",
-                "start",
-                "pane",
-            ],
-        )
+        self.assertEqual(order, [["session"]])
         self.assertEqual(
             (session.name, session.sid, session.runtime, session.mode), ("w1", SID, "fake", "tui")
         )
@@ -1255,130 +1188,125 @@ class TuiStartTest(TuiBase):
             session.info(),
             SessionInfo(sid=SID, cwd=self.workdir, project=False, transcript="", resume=""),
         )
-        (call,) = self.host.start.call_args_list
+        (call,) = self.host.calls.terminal.call_args_list
         self.assertEqual(call.args[0], "w1")
-        hook = tui._Store("w1").hook_argv(PACKAGE_ROOTS)
-        self.assertEqual(call.args[1][-(1 + len(hook)) :], ["hello", *hook])
-        self.assertEqual(call.kwargs["cwd"], self.workdir)
+        hook = tui._Store("w1", host=self.host).hook_argv(PACKAGE_ROOTS)
+        launch = call.args[1]
+        self.assertEqual(launch.argv[-(1 + len(hook)) :], ("hello", *hook))
+        self.assertEqual(launch.cwd, self.workdir)
+        self.assertEqual(call.kwargs["events"], self.events)
+        self.assertIsNone(call.kwargs["display"])
+        self.assertIsNone(call.kwargs["record"])
+        self.assertIsNone(session.record())
+        self.assertEqual(call.kwargs["metadata"]["sid"], SID)
+        self.assertEqual(call.kwargs["metadata"]["runtime"], "fake")
         self.assertEqual(
-            {k: v for k, v in call.kwargs.items() if k not in ("cwd", "env")},
-            {
-                "events": self.events,
-                "status_line": False,
-                "tags": {"@sid": SID, "@runtime": "fake"},
-            },
+            call.kwargs["metadata"]["generation"], tui.TuiMode.snapshot("w1")["generation"]
         )
-        self.assertEqual(call.kwargs["env"]["PWD"], self.workdir)
+        self.assertEqual(launch.env["PWD"], self.workdir)
         self.assertEqual(stat.S_IMODE(os.stat(self.events).st_mode), 0o600)
         self.assertEqual(
             {
                 k: v
                 for k, v in tui.TuiMode.snapshot("w1").items()
-                if k in ("runtime", "sid", "events", "words", "tmux_path")
+                if k in ("runtime", "sid", "events", "words", "host")
             },
             {
                 "runtime": "fake",
                 "sid": SID,
                 "events": self.events,
                 "words": {"stop": "done", "ask": "blocked", "tool": "working"},
-                "tmux_path": TMUX,
+                "host": "tmux",
             },
         )
 
     def test_state_send_stop_and_screen_are_the_tui_modes_attach_command_its_hosts(self):
         session = self.tui(name="w1")
+        terminal = self.host.processes["w1"]
         self.assertTrue(session.displayable)
-        self.host.status.return_value = tmux_host.PaneStatus.RUNNING
-        self.host.read.return_value = "pane text"
+        self.host.calls.screen.return_value = "pane text"
+        self.host.calls.attach_command.return_value = "terminal attach w1"
         self.assertEqual((session.state(), session.screen(5)), ("live", "pane text"))
-        self.host.read.assert_called_once_with("%1", 5)
-        self.assertEqual(session.attach_command(), "tmux attach -t '=w1'")
+        self.host.calls.screen.assert_called_once_with(terminal, 5)
+        self.assertEqual(session.attach_command(), "terminal attach w1")
         session.send("hi")
-        self.host.paste.assert_called_once_with("%1", "hi")
-        self.host.keys.assert_called_once_with("%1", "Enter")
+        self.assertEqual(
+            terminal.calls.send.call_args_list, [mock.call(Paste("hi")), mock.call(Key("Enter"))]
+        )
         session.stop()
-        self.host.kill.assert_called_once_with("%1")
+        terminal.calls.close.assert_called_once_with()
         self.assertFalse(os.path.lexists(os.path.join(self.root, "w1")))
 
     def test_send_and_screen_refuse_a_dead_pane(self):
         session = self.tui(name="w1")
+        terminal = self.host.processes["w1"]
         for code in (2, -15):
-            self.host.status.return_value = code
+            terminal.calls.alive.return_value = False
+            terminal.calls.returncode.return_value = code
             for call in (lambda: session.send("more"), session.screen):
-                with self.subTest(code=code, call=call):
-                    with self.assertRaises(DriverError) as caught:
-                        call()
-                    self.assertEqual(str(caught.exception), "tui session w1 is not running")
-        for unused in (self.host.paste, self.host.keys, self.host.read):
-            unused.assert_not_called()
+                with self.subTest(code=code, call=call), self.assertRaises(DriverError) as caught:
+                    call()
+                self.assertEqual(str(caught.exception), "tui session w1 is not running")
+        terminal.calls.send.assert_not_called()
+        self.host.calls.screen.assert_not_called()
 
     def test_show_opens_it_at_the_display_given_else_its_stored_one(self):
         session = self.tui(name="w1", display="mgr/below")
-        self.host.status.return_value = tmux_host.PaneStatus.RUNNING
-        self.host.open_pane.return_value = None
-        self.host.option.side_effect = lambda _target, key: {"@display": "mgr/below"}.get(key)
+        self.host.calls.show.return_value = None
         self.assertIsNone(session.show())
         self.assertIsNone(session.show(display="other/right/m1"))
         with self.assertRaises(TypeError):
             session.show("other/right/m1")
         self.assertEqual(
-            [c.kwargs for c in self.host.open_pane.call_args_list],
-            [
-                {
-                    "split": "below",
-                    "split_from": None,
-                    "opener": "mgr",
-                    "per_column": None,
-                    "retile": None,
-                },
-                {
-                    "split": "right",
-                    "split_from": "m1",
-                    "opener": "other",
-                    "per_column": None,
-                    "retile": None,
-                },
-            ],
+            self.host.calls.show.call_args_list,
+            [mock.call("w1", display="mgr/below"), mock.call("w1", display="other/right/m1")],
         )
 
     def test_its_record_is_its_hosts(self):
         session = self.tui(name="w1")
-        self.host.status.return_value = tmux_host.PaneStatus.RUNNING
-        self.assertIsNone(session.record())
-        self.host.option.assert_called_with("%1", "@record")
+        terminal = self.host.processes["w1"]
+        self.assertEqual(session.record(), terminal.record())
+        terminal.calls.record.assert_called()
 
     def test_close_kills_it_by_name_and_removes_its_dir(self):
         session = self.tui(name="w1")
-        self.host.reset_mock()
+        terminal = self.host.processes["w1"]
+        self.host.calls.reset_mock()
         session.close()
-        self.assertEqual(self.host.mock_calls, [mock.call.kill("w1")])
+        terminal.calls.close.assert_called_once_with()
+        self.assertEqual(self.host.calls.mock_calls, [mock.call.list(None), mock.call.attach("w1")])
         self.assertFalse(os.path.lexists(os.path.join(self.root, "w1")))
 
     def test_a_session_keeps_its_adapter_and_tmux_when_its_class_is_configured_again(self):
         self.configure("probe", tui=True)
-        session, other = self.tui(runtime="probe", name="w1"), fake_tmux()
-        self.session.configure(adapters={}, hosts=parsed(HOSTS, "tmux"), tmux=other)
-        self.host.reset_mock()
+        session, other = self.tui(runtime="probe", name="w1"), ScreenHost("other")
+        terminal = self.host.processes["w1"]
+        self.session.configure(
+            adapters={},
+            hosts=parsed(HOSTS, "tmux"),
+            host_factory=lambda _kind, _name, _settings: other,
+        )
+        self.host.calls.reset_mock()
         self.assertEqual(
             session.session_status(),
             SessionStatus("yes", 1.5, f"probe {session.sid} {self.workdir}"),
         )
         session.close()
-        self.assertEqual(self.host.mock_calls, [mock.call.kill("w1")])
+        terminal.calls.close.assert_called_once_with()
         self.assertFalse(os.path.lexists(os.path.join(self.root, "w1")))
         with self.assertRaisesRegex(ConfigError, r"\[adapters\.probe\]"):
             self.tui(runtime="probe", name="w2")
-        self.assertEqual(other.mock_calls, [])
+        self.assertEqual(other.calls.mock_calls, [])
 
 
-class SessionEnvTest(EnvBase):
+class SessionEnvTest(HostedEnvBase):
     def test_a_tui_session_gets_it(self):
         self.tui(runtime="env", name="w1", spec=self.spec(access=self.access))
-        (call,) = self.host.start.call_args_list
-        self.assertEqual(call.kwargs["env"]["PYTHONPATH"], PYTHONPATH)
+        (call,) = self.host.calls.terminal.call_args_list
+        self.assertEqual(call.args[1].env["PYTHONPATH"], PYTHONPATH)
 
 
-class AttachTest(TuiBase):
+class AttachTest(HostedTuiBase):
     def started(self, *hooked, start=True) -> None:
         """Tui session w1 started (sid SID; start False: already) on pane %1, then a hooks.jsonl
         record per (label, payload) in `hooked`, its @sid SID; the host's calls cleared.
@@ -1390,10 +1318,7 @@ class AttachTest(TuiBase):
                 json.dumps({"ts": "", "label": label, "payload": payload}) + "\n"
                 for label, payload in hooked
             )
-        self.host.option.side_effect = lambda target, key: (
-            SID if (target, key) == ("%1", "@sid") else None
-        )
-        self.host.reset_mock()
+        self.host.calls.reset_mock()
 
     def test_a_session_with_its_reply_and_next_records_events(self):
         self.started(("tool", {"session_id": "n1"}), ("stop", {"last_message": "r1"}))
@@ -1408,12 +1333,8 @@ class AttachTest(TuiBase):
             SessionInfo(sid=SID, cwd=self.workdir, project=False, transcript="", resume=""),
         )
         self.assertEqual(
-            self.host.mock_calls,
-            [
-                mock.call.pane("w1"),
-                mock.call.option("%1", "@sid"),
-                mock.call.option("%1", "@state"),
-            ],
+            self.host.calls.mock_calls,
+            [mock.call.list(None), mock.call.attach("w1")],
         )
         with open(os.path.join(self.root, "w1", "hooks.jsonl"), "a") as f:
             f.write(
@@ -1432,9 +1353,8 @@ class AttachTest(TuiBase):
             ((("ask", {}), ("other", {})), None, True),
         ):
             with self.subTest(hooked=hooked):
-                self.host.status.return_value = None
+                self.host.processes.clear()
                 live = self.tui(name="w1", sid=SID, events=self.events)
-                self.host.status.return_value = tmux_host.PaneStatus.RUNNING
                 self.started(*hooked, start=False)
                 if hooked:
                     events = live.events()
@@ -1520,14 +1440,10 @@ class AttachTest(TuiBase):
             ((("ask", {}), ("stop", {})), "working", (IdleTimeout(1), 1)),
         ):
             with self.subTest(hooked=hooked, state=state):
-                self.host.status.return_value = None
+                self.host.processes.clear()
                 self.started(*hooked)
-                options = {"@sid": SID, "@state": state}
-                self.host.option.side_effect = lambda _target, key, *, options=options: options[key]
-                self.host.status.return_value, self.host.read.return_value = (
-                    tmux_host.PaneStatus.RUNNING,
-                    "",
-                )
+                self.host.processes["w1"].calls.activity.return_value = state
+                self.host.calls.screen.return_value = ""
                 now[0] = 0.0
 
                 failure = AssertionError("no event")
@@ -1572,7 +1488,11 @@ class AttachTest(TuiBase):
         self.started()
         for found in ("other", None):
             with self.subTest(found=found), self.assertRaises(DriverError) as caught:
-                self.host.option.side_effect = lambda _name, _key, *, found=found: found
+                terminal = self.host.processes["w1"]
+                terminal.calls.session_identity.return_value = (
+                    found,
+                    tui.TuiMode.snapshot("w1")["generation"],
+                )
                 self.session.attach("w1")
             self.assertEqual(str(caught.exception), "no tui session w1")
 
@@ -1586,7 +1506,7 @@ class AttachTest(TuiBase):
         with self.assertRaises(DriverError) as caught:
             self.session.attach("w1")
         self.assertEqual(str(caught.exception), f"no tui session w1: {path}: bad cwd")
-        self.host.pane.assert_not_called()
+        self.host.calls.attach.assert_not_called()
 
     def test_a_runtime_without_tui_or_a_registry_error_is_a_driver_error(self):
         self.started()
@@ -1599,7 +1519,123 @@ class AttachTest(TuiBase):
                 self.session.attach("w1")
             self.assertEqual(str(caught.exception), message)
             self.configure_session({})
-        self.host.option.assert_not_called()
+        self.host.calls.attach.assert_not_called()
+
+
+class MultipleHostsTest(HostedTuiBase):
+    def setUp(self):
+        super().setUp()
+        self.other = MemoryHost("second")
+        self.hosts = {"tmux": self.host, "second": self.other}
+        tables = {
+            name: {"implementation": "session.tests.fakes.terminal:MemoryHost"}
+            for name in self.hosts
+        }
+        self.session.configure(
+            adapters=self.session._config().registry.settings.adapters,
+            hosts=parsed(tables, "tmux"),
+            class_loader=self.driver_dependencies["class_loader"],
+            host_factory=lambda _kind, name, _settings: self.hosts[name],
+        )
+
+    def test_start_and_attach_use_the_named_host(self):
+        session = self.tui(name="w1", sid=SID, host="second")
+        self.host.calls.terminal.assert_not_called()
+        self.other.calls.terminal.assert_called_once()
+        self.assertIs(self.session.host("second"), self.other)
+        attached = self.session.attach("w1", host="second")
+        self.assertEqual((attached.sid, attached.name), (session.sid, session.name))
+        self.assertFalse(attached.displayable)
+        with self.assertRaises(DriverError):
+            self.session.attach("w1")
+
+    def test_list_combines_all_hosts_sorted_and_passes_the_display_unchanged(self):
+        for host, name, display in (
+            (self.host, "z1", "elsewhere:1.2"),
+            (self.other, "a1", "elsewhere:1.2"),
+            (self.other, "b1", "other"),
+        ):
+            host.create(
+                name,
+                receipt=Record(
+                    1, "fake", name, (name,), None, None, ("ctl",), ("resume",), display, None
+                ),
+            )
+        self.assertEqual([row.name for row in self.session.list()], ["a1", "b1", "z1"])
+        self.assertEqual(
+            [row.name for row in self.session.list(display="elsewhere:1.2")], ["a1", "z1"]
+        )
+        self.assertEqual([row.name for row in self.session.list(r"a.*")], ["a1"])
+        for host in self.hosts.values():
+            self.assertIn(mock.call("elsewhere:1.2"), host.calls.list.call_args_list)
+
+    def test_start_refuses_a_name_owned_by_another_configured_host(self):
+        self.other.create("w1", SID)
+        with self.assertRaisesRegex(DriverError, "session w1 exists"):
+            self.tui(name="w1")
+        self.host.calls.terminal.assert_not_called()
+        self.assertFalse(os.path.exists(RunLog(self.workdir).path))
+
+    def test_an_automatic_name_cannot_replace_another_hosts_session(self):
+        incumbent = self.other.create("fake-0f8fad5b", SID)
+        with self.assertRaisesRegex(DriverError, "^session fake-0f8fad5b exists$"):
+            self.tui(sid=SID, events=self.events)
+        self.host.calls.terminal.assert_not_called()
+        self.assertIs(self.other.attach("fake-0f8fad5b"), incumbent)
+        self.assertFalse(os.path.exists(self.workdir))
+        self.assertFalse(os.path.exists(self.events))
+        self.assertFalse(os.path.exists(self.root))
+
+    def test_dead_names_on_another_host_remain_reserved(self):
+        for name, resolved in (("w1", "w1"), (None, "fake-0f8fad5b")):
+            incumbent = self.other.create(resolved, SID)
+            incumbent.calls.alive.return_value = False
+            incumbent.calls.returncode.return_value = 7
+            with (
+                self.subTest(name=name),
+                self.assertRaisesRegex(DriverError, f"^session {resolved} exists$"),
+            ):
+                self.tui(name=name, sid=SID)
+            self.assertIs(self.other.attach(resolved), incumbent)
+        self.host.calls.terminal.assert_not_called()
+        self.assertFalse(os.path.exists(self.workdir))
+        self.assertFalse(os.path.exists(self.root))
+
+    def test_a_dead_name_on_the_selected_host_can_be_replaced(self):
+        self.tui(name="w1", sid=SID)
+        incumbent = self.host.attach("w1")
+        incumbent.calls.alive.return_value = False
+        incumbent.calls.returncode.return_value = 7
+        replacement = self.tui(name="w1", sid=SID)
+        current = self.host.attach("w1")
+        self.assertIsNot(current, incumbent)
+        self.assertNotEqual(incumbent.identity, current.identity)
+        incumbent.calls.close.assert_called_once_with()
+        self.assertEqual(self.session.attach("w1").record(), replacement.record())
+
+    def test_another_hosts_listing_failure_propagates_before_launch(self):
+        failure = DriverError("second Host listing unavailable")
+        self.other.calls.list.side_effect = failure
+        for name in (None, "w1"):
+            with self.subTest(name=name), self.assertRaises(DriverError) as caught:
+                self.tui(name=name, sid=SID)
+            self.assertIs(caught.exception, failure)
+        self.host.calls.terminal.assert_not_called()
+        self.assertFalse(os.path.exists(self.workdir))
+        self.assertFalse(os.path.exists(self.root))
+
+    def test_list_still_scans_other_hosts_after_the_default_changes(self):
+        self.host.create("w1")
+        self.other.create("w2")
+        setup = self.session._config()
+        self.session.configure(
+            adapters=setup.registry.settings.adapters,
+            hosts=Hosts("second", setup.hosts.tables),
+            class_loader=self.driver_dependencies["class_loader"],
+            host_factory=lambda _kind, name, _settings: self.hosts[name],
+        )
+        self.assertIs(self.session.host(), self.other)
+        self.assertEqual([row.name for row in self.session.list()], ["w1", "w2"])
 
 
 class ChecksTest(Base):

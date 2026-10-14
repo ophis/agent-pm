@@ -207,6 +207,18 @@ class Tui(Detach):
 
 
 class Headless(Detach):
+    def test_sigterm_immediately_after_detach_exits_stopped_with_one_outcome(self):
+        self.assertEqual(
+            self.server.tmux("set-option", "-wg", "remain-on-exit", "on").returncode, 0
+        )
+        res = self.detach(steps=[START])
+        self.said(res, tui=False)
+        shown = self.server.tmux("display-message", "-p", "-t", f"={DRIVER}:", "#{pane_pid}")
+        os.kill(int(shown.stdout), signal.SIGTERM)
+        dead = ("display-message", "-p", "-t", f"={DRIVER}:", "#{pane_dead} #{pane_dead_status}")
+        self.until(lambda: self.server.tmux(*dead).stdout == "1 143\n", "Stopped exit 143")
+        self.assertEqual(shape(live_tmux.events(self.events)), ["outcome error"])
+
     def test_done_one_outcome_line_the_driver_session_gone(self):
         res = self.detach(steps=[START, block(DONE)])
         self.said(res, tui=False)

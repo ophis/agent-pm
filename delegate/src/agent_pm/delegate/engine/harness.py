@@ -1,4 +1,6 @@
-"""The detached Delegate process, loaded from its authenticated per-launch invocation."""
+"""The detached Delegate process, loaded from its authenticated per-launch invocation.
+Driver.detach blocks SIGNALS through exec; main unblocks them after installing its handlers.
+"""
 
 import argparse
 import hashlib

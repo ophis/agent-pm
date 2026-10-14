@@ -17,6 +17,40 @@ from utils.tests.sandbox import clean_env
 
 
 class ProcessControlTest(Case):
+    def test_requested_signals_wait_for_the_programs_handler_even_immediately_after_start(self):
+        signals = (signal.SIGHUP, signal.SIGTERM, signal.SIGINT)
+        control = ProcessControl.prepare(
+            [
+                sys.executable,
+                "-I",
+                "-c",
+                "import signal, time\n"
+                "print(sorted(signal.pthread_sigmask(signal.SIG_BLOCK, ())), flush=True)\n"
+                "time.sleep(0.3)\n"
+                "def stopped(signum, frame):\n"
+                "    print('stopped', signum, flush=True)\n"
+                "    raise SystemExit(128 + signum)\n"
+                "signal.signal(signal.SIGTERM, stopped)\n"
+                "signal.pthread_sigmask(signal.SIG_UNBLOCK, (signal.SIGTERM,))\n"
+                "time.sleep(60)\n",
+            ],
+            os.getcwd(),
+            blocked_signals=signals,
+        )
+        process = subprocess.Popen(
+            control.command(), stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=clean_env()
+        )
+        self.addCleanup(control.remove)
+        self.addCleanup(process.communicate, timeout=10)
+        self.addCleanup(control.kill)
+        control.wait_started()
+        control.terminate()
+        out, err = process.communicate(timeout=10)
+        self.assertEqual(
+            (process.returncode, out.decode().splitlines(), err),
+            (143, [str(sorted(signals)), f"stopped {signal.SIGTERM}"], b""),
+        )
+
     def test_a_missing_caller_expires_without_starting_the_program(self):
         with tempfile.TemporaryDirectory() as folder:
             marker = Path(folder, "must-not-start")

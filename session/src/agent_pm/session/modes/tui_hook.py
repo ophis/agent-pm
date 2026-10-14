@@ -1,10 +1,6 @@
-"""Each tui hook runs `<python> -I tui_hook.py <session dir> <roots JSON> <label>` with JSON on stdin. Checks
-session.json, runs its optional adapter_hook to bind runtime identity, appends {"ts", "label",
-"payload"} to hooks.jsonl, then marks the pane with the label's word (tmux_host.mark) using
-session.json's tmux_path, never PATH. Payload strs are cut to CUT chars unless the word is done.
-The entry script bootstraps package imports from the supplied roots before loading shared types
-and adapter callbacks. Never stdout, always exits 0. Failures append a full traceback to hook.log
-when writable and report one stderr line.
+"""A standalone tui hook drains stdin, checks callback sources, binds runtime identity,
+and appends one hooks.jsonl record before notifying its optional Host callback.
+Never stdout, always exits 0; failures retain a traceback and one stderr line.
 """
 
 from __future__ import annotations
@@ -12,7 +8,6 @@ from __future__ import annotations
 import fcntl
 import importlib
 import importlib.machinery
-import importlib.util
 import json
 import os
 import re
@@ -36,10 +31,6 @@ LABEL = re.compile(r"[A-Za-z0-9_.-]{1,64}")
 STATE = "session.json"
 
 HOOKS = "hooks.jsonl"
-
-TMUX_HOST = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "hosts/tmux/tmux_host.py"
-)
 
 
 def _abs(value) -> bool:
@@ -92,33 +83,46 @@ SESSION_STATE = {  # what this hook or an adapter_hook reads
     "events": lambda v: v is None or _abs(v),
     "sid": lambda v: isinstance(v, str) and v != "" and v.isprintable() and "/" not in v,
     "workdir": _abs,
-    "tmux_path": _abs,
 }
 
 
-def main(argv: list[str], stdin, *, load_host=None) -> None:
+def _prepare(argv: list[str]):
+    folder, roots, label = _bootstrap(argv)
+    path = os.path.join(folder, STATE)
+    state = _read_state(path, ValueError)
+    _check_callbacks(state, path, ValueError)
+    for kind in ("adapter", "host"):
+        if name := state.get(kind + "_hook"):
+            _check_module(name, roots, kind + " hook", ValueError)
+    _check_module("agent_pm.session.engine.types", roots, "shared types", ValueError)
+    return folder, label, state
+
+
+def main(argv: list[str], stdin) -> None:
     payload = read_payload(stdin)
     try:
-        folder, roots, label = _bootstrap(argv)
+        folder, label, state = _prepare(argv)
     except ValueError as error:
         raise HookError(str(error)) from None
-    state = read_state(os.path.join(folder, STATE))
+    _dispatch(folder, label, payload, state)
+
+
+def _dispatch(folder, label, payload, state):
+    _validate_state(state, os.path.join(folder, STATE), HookError)
     if "adapter_hook" in state:
-        adapter = load_adapter(state["adapter_hook"], roots)
+        adapter = _load_callback(state["adapter_hook"], "adapter hook")
         if adapter.on_hook(label, payload, state) is False:
             return
     word = state["words"].get(label)
+    host = (
+        _load_callback(state["host_hook"], "host hook") if word and "host_hook" in state else None
+    )
     if word != Word.DONE:
         payload = cut(payload)
     stamp = datetime.now().astimezone().isoformat(timespec="milliseconds")
     append(os.path.join(folder, HOOKS), {"ts": stamp, "label": label, "payload": payload})
-    if word:
-        tmux = check_tmux(state["tmux_path"])
-        tmux_host = (load_tmux_host if load_host is None else load_host)()
-        try:
-            tmux_host.mark(word, state["events"], tmux=tmux)
-        except tmux_host.TuiError as e:
-            raise HookError(str(e)) from None
+    if host is not None:
+        host.on_hook(word, payload, state)
 
 
 def read_payload(stream) -> dict:
@@ -151,6 +155,13 @@ def read_state(path: str, *, error: type[Exception] | None = None) -> dict:
     SESSION_STATE; else `error`.
     """
     error = HookError if error is None else error
+    state = _read_state(path, error)
+    _validate_state(state, path, error)
+    _check_callbacks(state, path, error)
+    return state
+
+
+def _read_state(path, error):
     try:
         fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
         try:
@@ -172,57 +183,55 @@ def read_state(path: str, *, error: type[Exception] | None = None) -> dict:
         state = None
     if not isinstance(state, dict):
         raise error(f"{path}: not a JSON object")
-    for field, check in SESSION_STATE.items():
-        if field not in state or not check(state[field]):
-            raise error(f"{path}: bad {field}")
-    if "adapter_hook" in state and (
-        not isinstance(state["adapter_hook"], str)
-        or not all(part.isidentifier() for part in state["adapter_hook"].split("."))
-    ):
-        raise error(f"{path}: bad adapter_hook")
-    if "adapter_state" in state and not isinstance(state["adapter_state"], dict):
-        raise error(f"{path}: bad adapter_state")
     return state
 
 
-def load_adapter(name: str, roots: list[str]):
+def _validate_state(state, path, error):
+    for field, check in SESSION_STATE.items():
+        if field not in state or not check(state[field]):
+            raise error(f"{path}: bad {field}")
+
+
+def _check_callbacks(state, path, error):
+    for kind in ("adapter", "host"):
+        hook, data = kind + "_hook", kind + "_state"
+        if hook in state and (
+            not isinstance(state[hook], str)
+            or not state[hook]
+            or not all(part.isidentifier() for part in state[hook].split("."))
+        ):
+            raise error(f"{path}: bad {hook}")
+        if data in state and not isinstance(state[data], dict):
+            raise error(f"{path}: bad {data}")
+
+
+def _check_module(name: str, roots: list[str], kind: str, error):
     paths = sys.path
     parts = name.split(".")
     for index in range(len(parts)):
         # A segment lookup needs no loaded parent, including for namespace packages.
         spec = importlib.machinery.PathFinder.find_spec(parts[index], paths)
         if spec is None or (spec.origin is None and index == len(parts) - 1):
-            raise HookError(f"adapter hook {name}: cannot find Python module")
+            raise error(f"{kind} {name}: cannot find Python module")
         if spec.origin is not None:
             if not any(
                 os.path.commonpath((root, spec.origin)) == os.path.normpath(root) for root in roots
             ):
-                raise HookError(f"adapter hook {name}: module outside source roots")
+                raise error(f"{kind} {name}: module outside source roots")
             try:
                 info = os.lstat(spec.origin)
-            except OSError as error:
-                raise HookError(f"adapter hook {name}: {error.strerror}") from error
+            except OSError as failure:
+                raise error(f"{kind} {name}: {failure.strerror}") from failure
             if not stat.S_ISREG(info.st_mode) or info.st_uid not in (0, os.getuid()):
-                raise HookError(f"adapter hook {name}: not a regular file owned by you or root")
+                raise error(f"{kind} {name}: not a regular file owned by you or root")
         paths = list(spec.submodule_search_locations or ())
+
+
+def _load_callback(name: str, kind: str):
     module = importlib.import_module(name)
     if not callable(getattr(module, "on_hook", None)):
-        raise HookError(f"adapter hook {name}: missing on_hook callback")
+        raise HookError(f"{kind} {name}: missing on_hook callback")
     return module
-
-
-def check_tmux(path: str) -> str:
-    try:
-        st = os.stat(path)
-    except OSError as e:
-        raise HookError(f"tmux {path}: {e.strerror}") from None
-    if (
-        not stat.S_ISREG(st.st_mode)
-        or st.st_uid not in (0, os.getuid())
-        or not os.access(path, os.X_OK)
-    ):
-        raise HookError(f"tmux {path}: not a regular executable file owned by you or root")
-    return path
 
 
 def cut(value):
@@ -256,24 +265,15 @@ def append(path: str, record: dict) -> None:
         raise HookError(f"{path}: short write")
 
 
-def load_tmux_host():
-    """Load the host by path, without changing the search path or caching the host module."""
-    spec = importlib.util.spec_from_file_location("tmux_host", TMUX_HOST)
-    if spec is None or spec.loader is None:
-        raise HookError(f"{TMUX_HOST}: cannot load Python module")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
-
-
 if __name__ == "__main__":
     types_loaded = False
     try:
-        _bootstrap(sys.argv[1:])
+        payload = read_payload(sys.stdin.buffer)
+        folder, label, state = _prepare(sys.argv[1:])
         from agent_pm.session.engine.types import HookError, Word
 
         types_loaded = True
-        main(sys.argv[1:], sys.stdin.buffer)
+        _dispatch(folder, label, payload, state)
     except Exception as e:  # noqa: BLE001  # the hook must never fail the client runtime
         if len(sys.argv) > 1 and _abs(sys.argv[1]):
             with (

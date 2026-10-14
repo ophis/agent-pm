@@ -5,6 +5,7 @@ from __future__ import annotations
 import fcntl
 import json
 import os
+import signal
 import stat
 import sys
 from collections.abc import Callable, Mapping, Sequence
@@ -29,14 +30,17 @@ from agent_pm.delegate.engine.types import (
     Plan,
     Result,
     Spec,
+    Stopped,
 )
 from agent_pm.delegate.event.types import Outcome
 from agent_pm.session import (
+    SIGNALS,
     Access,
     Displayable,
     DriverError,
     Host,
     HostProcess,
+    Launch,
     Liveness,
     NotDisplayable,
     Session,
@@ -466,7 +470,10 @@ class HarnessDelegate(Delegate):
             agent.close()
         process = self._harness(state)
         if process is not None:
-            process.close()
+            try:
+                process.close()
+            except DriverError as error:
+                raise DriverError(f"close {state.harness_name}: {error}") from error
 
     def session_info(self) -> SessionStatus:
         state = self._read()
@@ -516,9 +523,18 @@ class HarnessDelegate(Delegate):
         environment.update(import_env(config, session_package, utils_package))
         self._harness_host.detach(
             state.harness_name,
-            [sys.executable, "-P", "-m", "agent_pm.delegate.engine.harness_delegate", self.workdir],
-            state.plan.session.access.cwd or self.workdir,
-            environment,
+            Launch(
+                (
+                    sys.executable,
+                    "-P",
+                    "-m",
+                    "agent_pm.delegate.engine.harness_delegate",
+                    self.workdir,
+                ),
+                cwd=state.plan.session.access.cwd or self.workdir,
+                env=environment,
+                blocked_signals=SIGNALS,
+            ),
             display=state.display,
             events=state.plan.spec.events,
             record=record,
@@ -581,6 +597,23 @@ class HarnessDelegate(Delegate):
             return self._detach(state)
 
 
+def _stop(signum, _frame):
+    signal.pthread_sigmask(signal.SIG_BLOCK, SIGNALS)
+    raise Stopped(128 + signum)
+
+
+def main(argv: list[str]) -> int:
+    owner = HarnessDelegate.attach(argv[0])
+    for signum in SIGNALS:
+        signal.signal(signum, _stop)
+    try:
+        signal.pthread_sigmask(signal.SIG_UNBLOCK, SIGNALS)
+        return owner.run().returncode
+    except Stopped as stopped:
+        return stopped.code
+    finally:
+        signal.pthread_sigmask(signal.SIG_BLOCK, SIGNALS)
+
+
 if __name__ == "__main__":
-    owner = HarnessDelegate.attach(sys.argv[1])
-    sys.exit(owner.run().returncode)
+    sys.exit(main(sys.argv[1:]))

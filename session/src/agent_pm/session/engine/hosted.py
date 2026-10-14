@@ -19,9 +19,9 @@ from typing import Any, ClassVar, cast
 from agent_pm.session.adapters.base import Adapter
 from agent_pm.session.adapters.registry import Registry, settings
 from agent_pm.session.engine.base import Session
+from agent_pm.session.engine.config import read_config
 from agent_pm.session.engine.records import RunLog
 from agent_pm.session.engine.types import (
-    ActivityState,
     Blocked,
     ClientBound,
     ConfigError,
@@ -43,11 +43,8 @@ from agent_pm.session.engine.types import (
     Stderr,
     TurnEnd,
     Usage,
-    Word,
 )
-from agent_pm.session.hosts.base import NAME, Displayable, Host
-from agent_pm.session.hosts.tmux import tmux_host
-from agent_pm.session.hosts.tmux.tmux_host import TuiError
+from agent_pm.session.hosts.base import Displayable, Host
 from agent_pm.session.modes import headless, in_process, tui
 from agent_pm.session.modes.base import RunningMode, child_env
 from agent_pm.utils import (
@@ -62,9 +59,8 @@ from agent_pm.utils import (
 from agent_pm.utils import probe as run_probe
 
 
-def _request(spec: Spec, display: Display, idle_timeout: float | None) -> tuple[str, Mode]:
+def _request(spec: Spec, idle_timeout: float | None) -> tuple[str, Mode]:
     _idle(idle_timeout)
-    _displayed(display)
     if not isinstance(spec, Spec):
         raise ConfigError(f"spec: want a Spec, got {type(spec).__name__}")
     runtime, mode = spec.runtime, spec.mode
@@ -93,7 +89,6 @@ class _Setup:
     registry: Registry
     hosts: Hosts
     class_loader: Callable[..., Any]
-    tmux: Any
     probe: Callable[..., str | None]
     clock: Callable[[], float]
     host_factory: HostFactory
@@ -111,39 +106,12 @@ def _idle(idle_timeout) -> None:
         )
 
 
-def _displayed(display) -> None:
-    if why := tmux_host.display_error(display):
-        raise ConfigError(why)
-
-
 def _session_line(workdir: str) -> Callable[[SessionInfo], None]:
     def record(info: SessionInfo) -> None:
         os.makedirs(workdir, exist_ok=True)
         RunLog(workdir).note("session", **info.persisted())
 
     return record
-
-
-def _activity(found: Mapping) -> ActivityState:
-    if found["dead"]:
-        return ActivityState.DEAD
-    state = found["state"]
-    return ActivityState(state) if state in (Word.DONE, Word.BLOCKED) else ActivityState.WORKING
-
-
-def _row(found: Mapping, own: str | None) -> SessionRow:
-    sid, runtime = found["sid"], found["runtime"]
-    return SessionRow(
-        name=found["name"],
-        sid=None if sid_error(sid) else sid,
-        runtime=runtime if isinstance(runtime, str) and NAME.match(runtime) else None,
-        state=_activity(found),
-        pane=found["pane"],
-        opener=found["opener"],
-        shown=found["shown"],
-        last_lines=found["last_lines"],
-        own=found["name"] == own,
-    )
 
 
 def _resumable(adapter: Callable[[], Adapter], info: SessionInfo) -> SessionStatus:
@@ -206,18 +174,15 @@ class HostedSession(Session):
         adapters: Mapping,
         hosts: Hosts,
         class_loader=load_class,
-        tmux=tmux_host,
         probe=run_probe,
         clock: Callable[[], float] = time.monotonic,
         host_factory: HostFactory | None = None,
     ) -> None:
-        """tmux: the module its Modes and list() use; host_factory(cls, name, settings) -> Host."""
+        """host_factory(cls, name, settings) builds a configured Host."""
         if not isinstance(hosts, Hosts):
             raise ConfigError("hosts: want parsed Hosts (Host.parse_hosts)")
         registry = Registry(adapters=adapters, hosts=hosts, class_loader=class_loader)
-        cls._setup = _Setup(
-            registry, hosts, class_loader, tmux, probe, clock, host_factory or _built
-        )
+        cls._setup = _Setup(registry, hosts, class_loader, probe, clock, host_factory or _built)
 
     @classmethod
     def configure_from(cls, config: Mapping, *, hosts: Hosts | None = None) -> None:
@@ -242,10 +207,6 @@ class HostedSession(Session):
         return cls._setup
 
     @classmethod
-    def _tmux(cls):
-        return tmux_host if cls._setup is None else cls._setup.tmux
-
-    @classmethod
     def preflight(
         cls,
         spec: Spec,
@@ -255,16 +216,17 @@ class HostedSession(Session):
         idle_timeout: float | None = None,
     ) -> None:
         setup = cls._config()
-        runtime, mode = _request(spec, display, idle_timeout)
+        runtime, mode = _request(spec, idle_timeout)
         adapter = setup.registry.adapter(runtime)
         spec = replace(spec, sid=spec.sid or str(uuid.uuid4()))
         RunningMode.check_protection(spec, adapter)
-        cls.host(host)
+        on = cls.host(host)
+        on.validate_display(display)
         MODES[mode].preflight(
             spec,
             adapter,
             registry=setup.registry,
-            host=setup.tmux,
+            host=on,
             display=display,
         )
 
@@ -279,18 +241,32 @@ class HostedSession(Session):
     ) -> HostedSession:
         """spec.sid: its id, else a new one; display: kept by its Host."""
         setup = cls._config()
-        runtime, mode = _request(spec, display, idle_timeout)
+        runtime, mode = _request(spec, idle_timeout)
         adapter = setup.registry.adapter(runtime)
         spec = replace(spec, sid=spec.sid or str(uuid.uuid4()))
         RunningMode.check_protection(spec, adapter)
         on = cls.host(host)
+        on.validate_display(display)
+        name = tui.TuiMode.resolve_name(spec) if mode == Mode.TUI else spec.name
+
+        def check_name(name: str) -> None:
+            if any(
+                name in cls.host(configured).list()
+                for configured in setup.hosts.tables
+                if cls.host(configured) is not on
+            ):
+                raise DriverError(f"session {name} exists")
+
+        if name is not None:
+            check_name(name)
         running = MODES[mode].start(
             spec,
             adapter,
             registry=setup.registry,
             record=_session_line(spec.workdir),
-            host=setup.tmux,
+            host=on,
             display=display,
+            check_name=check_name,
         )
         return cls(
             runtime,
@@ -308,7 +284,7 @@ class HostedSession(Session):
         cls, name: str, *, host: str | None = None, idle_timeout: float | None = None
     ) -> HostedSession:
         """Tui session `name`, from any process; its hook log replayed into its reply (see reply)
-        and blocked, blocked too while its pane is marked so.
+        and blocked, blocked too while its terminal is marked so.
         """
         setup = cls._config()
         tui.checked_name(name)
@@ -319,7 +295,7 @@ class HostedSession(Session):
             adapter = setup.registry.adapter(state["runtime"])
         except ConfigError as e:
             raise DriverError(f"no tui session {name}: {e}") from None
-        running = tui.TuiMode.attach(name, state, adapter, host=setup.tmux)
+        running = tui.TuiMode.attach(name, state, adapter, host=on)
         session = cls(
             state["runtime"],
             Mode.TUI,
@@ -341,26 +317,27 @@ class HostedSession(Session):
     def list(
         cls, match: str | None = None, *, display: Display = None
     ) -> builtins.list[SessionRow]:
-        """Tmux sessions fullmatching `match`, stored with `display` if given ("": none)."""
+        """All configured Hosts' sessions fullmatching `match`, filtered by their displays."""
         if match is not None and not isinstance(match, str):
             raise ConfigError(f"match must be a regular expression, got {match!r:.80}")
         try:
             pattern = None if match is None else re.compile(match)
-        except re.error as e:
-            raise ConfigError(f"match {match!r:.80}: {e}") from None
+        except re.error as error:
+            raise ConfigError(f"match {match!r:.80}: {error}") from None
         if display == "":
             return []
-        tmux = cls._tmux()
-        found = tmux.listing(pattern)
-        if found is None:
-            raise DriverError("tmux sessions unknown: tmux failed")
-        if display is not None:
-            found = [f for f in found if f.get("display") == display]
-        try:
-            own = tmux.own_session() if found else None
-        except TuiError as e:
-            raise DriverError(f"tmux sessions unknown: {e}") from None
-        return [_row(f, own) for f in found]
+        if cls._setup is None:
+            return cls.configured(**settings(read_config())).list(match, display=display)
+        setup = cls._config()
+        return sorted(
+            (
+                row
+                for name in setup.hosts.tables
+                for row in cls.host(name).rows(display)
+                if pattern is None or pattern.fullmatch(row.name)
+            ),
+            key=lambda row: row.name,
+        )
 
     @classmethod
     def usage(cls, runtime: str) -> Usage | None:
@@ -385,7 +362,7 @@ class HostedSession(Session):
     @classmethod
     def layout(cls, *, display: Display = None) -> str | None:
         on = cls.host()
-        _displayed(display)
+        on.validate_display(display)
         return on.layout(display=display) if isinstance(on, Displayable) else None
 
     @classmethod
@@ -406,7 +383,7 @@ class HostedSession(Session):
     @classmethod
     def display(cls, value: Display = None, *, host: str | None = None) -> Display:
         on = cls.host(host)
-        _displayed(value)
+        on.validate_display(value)
         return on.display(value)
 
     @classmethod
@@ -543,7 +520,7 @@ class HostedSession(Session):
         return self._reply
 
     def close(self) -> None:
-        """tui: as the close(name) wrapper (FR-4), on the tmux it started on; else stop()."""
+        """Close its owned runtime and retire its state."""
         running = self._running
         if isinstance(running, tui.TuiMode):
             tui.TuiMode.close(running.name, host=running.host)
@@ -572,7 +549,7 @@ class HostedSession(Session):
         return host.attach_command(name)
 
     def screen(self, lines: int | None = None) -> str:
-        """Its mode's read, which refuses a pane no longer running."""
+        """Its mode's read, which refuses a terminal no longer running."""
         self._shown("screen")
         return self._running.screen(lines)
 

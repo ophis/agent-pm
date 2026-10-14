@@ -11,6 +11,7 @@ import sys
 import sysconfig
 import tokenize
 import tomllib
+from collections import Counter
 
 from agent_pm.utils.config_file import LEVELS
 
@@ -156,16 +157,13 @@ OBJECT_EXPORTS_ALLOWED = {
 
 IMPORT_BOOTSTRAPS = {
     f"{SESSION_SRC}adapters/codex/tui/start.py": "_bootstrap",
+    f"{SESSION_SRC}hosts/tmux/entry.py": "_bootstrap",
     f"{SESSION_SRC}modes/tui_hook.py": "_bootstrap",
 }
 
 
 STANDALONE = frozenset({"utils/src/agent_pm/utils/process_control.py"}) | frozenset(
-    f"{SESSION_SRC}{path}"
-    for path in (
-        "hosts/tmux/tmux_host.py",
-        "adapters/codex/common/app_server.py",
-    )
+    f"{SESSION_SRC}{path}" for path in ("adapters/codex/common/app_server.py",)
 )
 
 
@@ -280,7 +278,10 @@ OPTION_TUPLES_ALLOWED = {
     (f"{SESSION_SRC}adapters/registry.py", "TUI_KEYS"): "the [hosts.tmux] keys tui() reads",
     (f"{SESSION_SRC}adapters/claude/tui.py", "MONTHS"): "month names, indexed by month",
     (f"{SESSION_SRC}adapters/claude/tui.py", "WEEKDAYS"): "weekday names, indexed by weekday",
-    (TMUX_HOST, "GRID_HOOKS"): "tmux hook names the grid sets and unsets together",
+    (
+        f"{SESSION_SRC}hosts/tmux/grid.py",
+        "GRID_HOOKS",
+    ): "tmux hook names the grid sets and unsets together",
     (
         f"delegate/src/{PKG}/delegate/event/outcome.py",
         "SAVES_DELIVERABLE",
@@ -301,6 +302,26 @@ STATUS_LOG_HOME = f"{SESSION_SRC}engine/status_log.py"
 
 
 STATUS_LOG_CLOCK = "%H:%M:%S"
+
+
+TMUX_HOME = f"{SESSION_SRC}hosts/tmux/"
+
+
+DISPLAY_NAMES = re.compile(
+    r"(?<![a-zA-Z0-9])(?:pane|opener|split_from)(?![a-zA-Z0-9])|--split|@record|@pane"
+)
+
+
+LEGACY_HOST_NAMES = {
+    (f"{SESSION_SRC}engine/forwarding.py", "TmuxHost"): (6, "TASK-375"),
+    (f"{SESSION_SRC}engine/forwarding.py", "tmux"): (4, "TASK-375"),
+    (f"{SESSION_SRC}engine/forwarding.py", "tmux_host"): (3, "TASK-375"),
+    (f"{SESSION_SRC}engine/forwarding.py", "_opener"): (2, "TASK-375"),
+    (f"{SESSION_SRC}engine/forwarding.py", "opener"): (4, "TASK-375"),
+    (f"{SESSION_SRC}engine/forwarding.py", "split_from"): (4, "TASK-375"),
+    (f"{SESSION_SRC}engine/types.py", "pane"): (1, "TASK-369"),
+    (f"{SESSION_SRC}engine/types.py", "opener"): (1, "TASK-369"),
+}
 
 
 COMMAND_SRC = (
@@ -463,6 +484,26 @@ def _strings(tree):
         for n in ast.walk(tree)
         if isinstance(n, ast.Constant) and isinstance(n.value, str)
     )
+
+
+def _code_words(text, tree):
+    words = {
+        (*token.start, token.string)
+        for token in tokenize.generate_tokens(io.StringIO(text).readline)
+        if token.type == tokenize.NAME
+    }
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            words.add((node.lineno, node.col_offset, node.value))
+        elif isinstance(node, ast.Name):
+            words.add((node.lineno, node.col_offset, node.id))
+        elif (
+            isinstance(node, ast.Attribute)
+            and node.end_lineno is not None
+            and node.end_col_offset is not None
+        ):
+            words.add((node.end_lineno, node.end_col_offset - len(node.attr), node.attr))
+    yield from ((line, value) for line, _, value in sorted(words))
 
 
 def _boundary_name(node, aliases):
@@ -1415,13 +1456,48 @@ def adapters_key(repo: str) -> list[str]:
 def tmux_calls(repo: str) -> list[str]:
     found = set()
     for rel, text in _lower_files(repo, ".py"):
-        if rel != TMUX_HOST:
+        if rel.startswith(TMUX_HOME):
+            continue
+        tree = ast.parse(text, rel)
+        if rel.startswith(SESSION_SRC):
             found.update(
-                f'{rel}:{line}: str constant "tmux"'
-                for line, s in _strings(ast.parse(text, rel))
-                if s == "tmux"
+                f"{rel}:{line}: tmux outside session/hosts/tmux/"
+                for line, value in _code_words(text, tree)
+                if "tmux" in value.lower() and (rel, value) not in LEGACY_HOST_NAMES
+            )
+        else:
+            found.update(
+                f'{rel}:{line}: str constant "tmux"' for line, s in _strings(tree) if s == "tmux"
             )
     return sorted(found)
+
+
+def session_display(repo: str) -> list[str]:
+    found = set()
+    for rel, text in _lower_files(repo, ".py", skip=TMUX_HOME):
+        if not (rel.startswith((SESSION_SRC, f"utils/src/{PKG}/utils/")) or rel == CONFIG_FILE):
+            continue
+        found.update(
+            f"{rel}:{line}: interprets display {value!r}"
+            for line, value in _code_words(text, ast.parse(text, rel))
+            if DISPLAY_NAMES.search(value) and (rel, value) not in LEGACY_HOST_NAMES
+        )
+    return sorted(found)
+
+
+def legacy_host_names(repo: str) -> list[str]:
+    counts = Counter()
+    for rel in sorted({path for path, _ in LEGACY_HOST_NAMES}):
+        path = os.path.join(repo, rel)
+        if os.path.isfile(path):
+            with open(path, encoding="utf-8") as source:
+                text = source.read()
+            counts.update((rel, value) for _, value in _code_words(text, ast.parse(text, rel)))
+    return sorted(
+        f"{rel}: {value}: expected {count} legacy occurrences, found {counts[rel, value]} ({ticket})"
+        for (rel, value), (count, ticket) in LEGACY_HOST_NAMES.items()
+        if counts[rel, value] != count
+    )
 
 
 def status_log_format(repo: str) -> list[str]:
@@ -1429,9 +1505,9 @@ def status_log_format(repo: str) -> list[str]:
     for top in PROJECTS:
         for rel, text in _files(os.path.join(repo, top, "src"), ".py"):
             rel = f"{top}/src/{rel}"
-            if rel not in (STATUS_LOG_HOME, TMUX_HOST):
+            if rel != STATUS_LOG_HOME:
                 found.update(
-                    f"{rel}:{line}: status log line format outside session/engine/status_log.py or hosts/tmux/tmux_host.py"
+                    f"{rel}:{line}: status log line format outside session/engine/status_log.py"
                     for line, s in _strings(ast.parse(text, rel))
                     if STATUS_LOG_CLOCK in s
                 )

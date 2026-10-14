@@ -1,5 +1,5 @@
-"""The tui Mode: a Tui's command in a tmux session; events from the hook records tui_hook.py
-appends to its session dir, and from its pane.
+"""The tui Mode: an Adapter command on a Host terminal; events from the hook records
+appended to its session directory and from its terminal.
 """
 
 import contextlib
@@ -11,6 +11,7 @@ import stat
 import sys
 import tempfile
 import time
+import uuid
 from collections.abc import Callable, Iterable, Iterator, Mapping
 from dataclasses import dataclass, replace
 from typing import Self
@@ -20,6 +21,7 @@ import agent_pm.utils
 from agent_pm.session.adapters.base import Adapter, Tui
 from agent_pm.session.adapters.registry import Registry
 from agent_pm.session.engine.types import (
+    TAG,
     Activity,
     Blocked,
     ClientBound,
@@ -27,22 +29,20 @@ from agent_pm.session.engine.types import (
     DriverError,
     HookError,
     HookKind,
+    Launch,
     Liveness,
     Mode,
-    Paste,
     Prepared,
     SessionEvent,
     SessionInfo,
     Spec,
     Stderr,
-    TuiSettings,
     Word,
 )
-from agent_pm.session.hosts.base import NAME
-from agent_pm.session.hosts.tmux import tmux_host
-from agent_pm.session.hosts.tmux.tmux_host import PaneStatus, TuiError
+from agent_pm.session.hosts.base import Displayable, Host, HostProcess, Terminal
 from agent_pm.session.modes import tui_hook
 from agent_pm.session.modes.base import RunningMode, identity_drop
+from agent_pm.utils import CONFIG_NAME as NAME
 from agent_pm.utils import STATE, Display, json_records, module_roots, read_regular
 
 TUI_DIR = f"{STATE}/tui"
@@ -55,25 +55,12 @@ SLICE = 0.1
 
 
 def checked_name(name) -> str:
-    if not isinstance(name, str) or not tmux_host.NAME.fullmatch(name):
+    if not isinstance(name, str) or not TAG.fullmatch(name):
         raise ConfigError(f"name must match [A-Za-z0-9_-]+, got {name!r:.80}")
     return name
 
 
-def _events(events: str | None, *, host=tmux_host) -> str | None:
-    if events is None:
-        return None
-    try:
-        return host.validate_events(events)
-    except TuiError as e:
-        raise ConfigError(str(e)) from None
-
-
-def _exit(status) -> int | None:
-    return -signal.SIGHUP if status is None else status if isinstance(status, int) else None
-
-
-def _state(prepared: Prepared, run: Tui, tmux: str) -> dict:
+def _state(prepared: Prepared, run: Tui, host: Host, metadata: Mapping[str, str]) -> dict:
     spec = prepared.spec
     return {
         "runtime": spec.runtime,
@@ -81,7 +68,9 @@ def _state(prepared: Prepared, run: Tui, tmux: str) -> dict:
         **prepared.info.persisted(),
         "events": spec.events,
         "words": {label: WORDS[kind] for label, kind in run.hooks.items() if kind in WORDS},
-        "tmux_path": tmux,
+        "host": host.name,
+        "generation": metadata["generation"],
+        **host.hook_state(spec.name or "", metadata),
         **run.hook_state(),
     }
 
@@ -91,6 +80,9 @@ def _bad(state: Mapping) -> str | None:
     for field, check in tui_hook.SESSION_STATE.items():
         if field not in state or not check(state[field]):
             return field
+    generation = state.get("generation")
+    if not isinstance(generation, str) or not generation.isprintable() or not generation:
+        return "generation"
     runtime = state.get("runtime")
     if not isinstance(runtime, str) or not NAME.match(runtime):
         return "runtime"
@@ -107,10 +99,20 @@ def _translated(
     return [event for label, payload in records for event in run.hook_events(label, payload)]
 
 
+def _read_state(name: str, path: str) -> dict:
+    try:
+        state = tui_hook.read_state(path, error=HookError)
+    except HookError as e:
+        raise DriverError(f"no tui session {name}: {e}") from None
+    if field := _bad(state):
+        raise DriverError(f"no tui session {name}: {path}: bad {field}")
+    return state
+
+
 class _Store:
     """Tui session `name`'s dir and lock under TUI_DIR; what changes them takes the lock."""
 
-    def __init__(self, name: str, *, host=tmux_host) -> None:
+    def __init__(self, name: str, *, host: Host) -> None:
         self.name, self.host = checked_name(name), host
         self.root = os.path.expanduser(TUI_DIR)
         self.dir = os.path.join(self.root, name)
@@ -126,13 +128,7 @@ class _Store:
         )
 
     def read(self) -> dict:
-        try:
-            state = tui_hook.read_state(self.state_file, error=HookError)
-        except HookError as e:
-            raise DriverError(f"no tui session {self.name}: {e}") from None
-        if field := _bad(state):
-            raise DriverError(f"no tui session {self.name}: {self.state_file}: bad {field}")
-        return state
+        return _read_state(self.name, self.state_file)
 
     def records(self, offset: int) -> tuple[list[tuple[str, dict]], int]:
         """hooks.jsonl's whole records from byte `offset`; the offset past them."""
@@ -145,55 +141,47 @@ class _Store:
                 found.append((label, payload))
         return found, offset + end
 
+    def process(self) -> HostProcess | None:
+        if self.name not in self.host.list():
+            return None
+        return self.host.attach(self.name)
+
     def holder(self) -> str | None:
-        """The pane under the name (None: absent, UNKNOWN: tmux failed)."""
-        try:
-            return self.host.pane(self.name)
-        except TuiError:
-            return PaneStatus.UNKNOWN
+        process = self.process()
+        return None if process is None else process.identity
 
     def start(
-        self, state: dict, commit: Callable[[], None], launch: Callable[[], None]
-    ) -> str | None:
-        """Under the lock: a fresh dir, commit(), launch() (a TuiError removes the dir), its
-        pane (failing: closed).
-        """
+        self,
+        state: dict,
+        commit: Callable[[], None],
+        launch: Callable[[], Terminal],
+        *,
+        check_name: Callable[[str], None] | None = None,
+    ) -> Terminal:
         if field := _bad(state):
             raise DriverError(f"tui session {self.name}: bad {field} {state.get(field)!r:.80}")
         with self._locked():
+            if check_name is not None:
+                check_name(self.name)
             made = self._make(state)
             try:
                 commit()
-            except ConfigError:
+                return launch()
+            except (ConfigError, DriverError):
                 self._unmake(made)
                 raise
-            try:
-                launch()
-            except TuiError as e:
-                self._unmake(made)
-                raise DriverError(f"cannot start tui session {self.name}: {e}") from e
-            try:
-                return self.host.pane(self.name)
-            except TuiError as e:
-                self._close()
-                raise DriverError(f"cannot start tui session {self.name}: {e}") from e
 
     def close(self) -> None:
         with self._locked():
             self._close()
 
-    def stop(self, pane: str | None) -> None:
-        """Under the lock, unless another pane holds the name: kills `pane`'s session (the name
-        absent: none; tmux failing: the name's), removes the dir.
-        """
+    def stop(self, identity: str) -> None:
         with self._locked():
             holder = self.holder()
             if holder is None:
                 self._drop()
-            elif holder == PaneStatus.UNKNOWN:
+            elif holder == identity:
                 self._close()
-            elif holder == pane:
-                self._close(pane)
 
     @contextlib.contextmanager
     def _locked(self) -> Iterator[None]:
@@ -224,13 +212,16 @@ class _Store:
 
     def _make(self, state: dict) -> os.stat_result:
         """A fresh dir with session.json, unless the session runs or is unknown; the dir's stat."""
-        status = self.host.status(self.name)
-        if status == PaneStatus.RUNNING:
-            raise DriverError(
-                f"tui session {self.name} is running; {self.host.attach_command(self.name)}"
-            )
-        if status == PaneStatus.UNKNOWN:
-            raise DriverError(f"tui session {self.name}: its tmux state is unknown")
+        process = self.process()
+        if process is not None:
+            if process.alive():
+                hint = (
+                    f"; {self.host.attach_command(self.name)}"
+                    if isinstance(self.host, Displayable)
+                    else ""
+                )
+                raise DriverError(f"tui session {self.name} is running{hint}")
+            process.close()
         folder = self.dir
         try:
             if os.path.lexists(folder):
@@ -253,12 +244,13 @@ class _Store:
             raise DriverError(f"{folder}: {e.strerror or e}") from None
         return made
 
-    def _close(self, pane: str | None = None) -> None:
+    def _close(self) -> None:
         try:
-            self.host.kill(pane or self.name)
-        except TuiError as e:
-            if self.host.status(pane or self.name) is not None:
-                raise DriverError(f"cannot close tui session {self.name}: {e}") from None
+            process = self.process()
+            if process is not None:
+                process.close()
+        except DriverError as error:
+            raise DriverError(f"cannot close tui session {self.name}: {error}") from error
         self._drop()
 
     def _drop(self) -> None:
@@ -273,7 +265,7 @@ class _Store:
         except FileNotFoundError:
             return
         if stat.S_ISDIR(st.st_mode) and (made is None or os.path.samestat(st, made)):
-            # A hook may outlive its pane; retire its public path before deleting files.
+            # A hook may outlive its terminal; retire its public path before deleting files.
             with tempfile.TemporaryDirectory(dir=self.root, prefix=".closed-") as retired:
                 os.rename(self.dir, retired)
 
@@ -287,37 +279,43 @@ class _Start:
     prepared: Prepared
     run: Tui
     store: _Store
-    settings: TuiSettings
-    tmux: str
-
-    @property
-    def tags(self) -> dict[str, str]:
-        return {"@sid": self.prepared.info.sid, "@runtime": self.prepared.spec.runtime or ""}
+    state: dict
+    metadata: Mapping[str, str]
 
     def validate(self, display: Display) -> None:
-        tags = {**self.tags, **({} if display is None else {"@display": display})}
-        self.store.host.validate_start(self.store.name, self.prepared.argv, self.prepared.env, tags)
+        self.store.host.validate(self.store.name, self.launch, display=display)
+
+    @property
+    def launch(self) -> Launch:
+        return Launch(self.prepared.argv, env=self.prepared.env, cwd=self.prepared.info.cwd)
 
 
 class TuiMode(RunningMode):
-    """One tui session acting on its session's pane by id."""
+    """One tui session holding its terminal generation."""
 
     kind = Mode.TUI
+
+    @staticmethod
+    def resolve_name(spec: Spec) -> str:
+        if spec.sid is None:
+            raise ConfigError("sid: missing")
+        return checked_name(f"{spec.runtime}-{spec.sid[:8]}" if spec.name is None else spec.name)
 
     def __init__(
         self,
         prepared: Prepared,
         run: Tui,
-        pane: str | None,
+        terminal: Terminal,
         store: _Store,
+        generation: str,
         *,
         offset: int = 0,
         replayed: tuple[SessionEvent | Stderr | ClientBound, ...] = (),
     ) -> None:
-        """pane: the one it took; offset: its hook log's next record."""
+        """offset: its hook log's next record."""
         super().__init__(prepared)
-        self.name, self.run, self.host, self._pane = store.name, run, store.host, pane
-        self._store, self._replayed = store, replayed
+        self.name, self.run, self.host, self._terminal = store.name, run, store.host, terminal
+        self._store, self._replayed, self._generation = store, replayed, generation
         self._offset, self._dialogs, self._limit, self._code = offset, frozenset(), None, None
         self._live, self._gone = True, False
 
@@ -328,13 +326,13 @@ class TuiMode(RunningMode):
         adapter: Adapter,
         *,
         registry: Registry,
-        host=tmux_host,
+        host: Host,
         display: Display = None,
     ) -> Prepared:
-        pending = cls._prepare(spec, adapter, registry=registry, host=host)
+        pending = cls._prepare(spec, adapter, registry=registry, host=host, display=display)
         try:
             pending.validate(display)
-        except TuiError as error:
+        except DriverError as error:
             raise ConfigError(str(error)) from error
         return pending.prepared
 
@@ -345,33 +343,33 @@ class TuiMode(RunningMode):
         adapter: Adapter,
         *,
         registry: Registry,
-        host=tmux_host,
+        host: Host,
+        display: Display,
     ) -> _Start:
         run = adapter.tui()
         if run is None:
             raise cls._unsupported(spec)
-        settings = registry.tui()
-        if spec.sid is None:
-            raise ConfigError("sid: missing")
-        name = checked_name(f"{spec.runtime}-{spec.sid[:8]}" if spec.name is None else spec.name)
-        events = _events(spec.events, host=host)
-        tmux = host.tmux_path()
-        if tmux is None:
-            raise DriverError("tmux not found")
+        name = cls.resolve_name(spec)
+        events = host.events_path(spec.events)
         cls._selected(spec, adapter)
         drop = identity_drop(registry)
         store = _Store(name, host=host)
-        hooks = (tmux, *([events] if events else []), store.root)
+        hooks = (*host.protected_paths(), *([events] if events else []), store.root)
         spec = replace(spec, name=name, events=events, protect=(*spec.protect, *hooks))
         cls.check_protection(spec, adapter)
         spec = cls._noted(spec, adapter)
         roots = module_roots(agent_pm.session, agent_pm.utils)
         hook = store.hook_argv(roots)
         prepared = cls._launched(spec, lambda s: run.launch(s, hook, source_roots=roots), drop)
-        state = _state(prepared, run, tmux)
+        metadata = {
+            "sid": prepared.info.sid,
+            "runtime": spec.runtime or "session",
+            "generation": uuid.uuid4().hex,
+        }
+        state = _state(prepared, run, host, metadata)
         if field := _bad(state):
             raise DriverError(f"tui session {name}: bad {field} {state.get(field)!r:.80}")
-        return _Start(prepared, run, store, settings, tmux)
+        return _Start(prepared, run, store, state, metadata)
 
     @classmethod
     def start(
@@ -381,57 +379,48 @@ class TuiMode(RunningMode):
         *,
         registry: Registry,
         record: Callable[[SessionInfo], None],
-        host=tmux_host,
+        host: Host,
         display: Display = None,
+        check_name: Callable[[str], None] | None = None,
     ) -> Self:
-        """tmux session spec.name, else <runtime>-<sid[:8]>, refused when running; spec.events
-        gets done, blocked and dead lines; spec.protect gains the hook paths; display: its tmux
-        option @display.
-        """
-        pending = cls._prepare(spec, adapter, registry=registry, host=host)
-        prepared, run, store, settings, tmux = (
-            pending.prepared,
-            pending.run,
-            pending.store,
-            pending.settings,
-            pending.tmux,
-        )
-        started = prepared.spec
-        name = store.name
-        tags = {**pending.tags, **({} if display is None else {"@display": display})}
+        """Start the Adapter's terminal with its hook journal committed before execution."""
+        pending = cls._prepare(spec, adapter, registry=registry, host=host, display=display)
+        prepared, run, store = pending.prepared, pending.run, pending.store
         try:
             pending.validate(display)
-            if started.events is not None:
-                host.events_file(started.events)
-        except TuiError as error:
-            raise DriverError(f"cannot start tui session {name}: {error}") from error
+            host.prepare_events(prepared.spec.events)
+        except DriverError as error:
+            raise DriverError(f"cannot start tui session {store.name}: {error}") from error
 
-        def launch() -> None:
-            host.start(
-                name,
-                list(prepared.argv),
-                events=started.events,
-                status_line=settings.status_line,
-                tags=tags,
-                cwd=prepared.info.cwd,
-                env=dict(prepared.env),
-            )
+        def launch() -> Terminal:
+            try:
+                return host.terminal(
+                    store.name,
+                    pending.launch,
+                    display=display,
+                    events=prepared.spec.events,
+                    metadata=pending.metadata,
+                )
+            except DriverError as error:
+                raise DriverError(f"cannot start tui session {store.name}: {error}") from error
 
         def commit() -> None:
             run.commit()
             record(prepared.info)
 
-        pane = store.start(_state(prepared, run, tmux), commit, launch)
-        return cls(prepared, run, pane, store)
+        terminal = store.start(pending.state, commit, launch, check_name=check_name)
+        return cls(prepared, run, terminal, store, pending.state["generation"])
 
     @classmethod
     def snapshot(cls, name: str) -> dict:
         """Tui session `name`'s session.json as start wrote it; else DriverError."""
-        return _Store(name).read()
+        return _read_state(
+            checked_name(name), os.path.join(os.path.expanduser(TUI_DIR), name, tui_hook.STATE)
+        )
 
     @classmethod
-    def attach(cls, name: str, state: Mapping, adapter: Adapter, *, host=tmux_host) -> Self:
-        """Tui session `name` from its snapshot() if its pane is tagged with its sid; a fresh Tui
+    def attach(cls, name: str, state: Mapping, adapter: Adapter, *, host: Host) -> Self:
+        """Tui session `name` from its snapshot() if its terminal is tagged with its sid; a fresh Tui
         restored, replays its hook log; events from the next record.
         """
         store = _Store(name, host=host)
@@ -446,12 +435,10 @@ class TuiMode(RunningMode):
             raise DriverError(
                 f"no tui session {name}: runtime {state['runtime']!r} has no tui mode"
             )
-        try:
-            pane = host.pane(name)
-            tagged = None if pane is None else host.option(pane, "@sid")
-        except TuiError:
-            tagged = pane = None
-        if tagged != info.sid:
+        terminal = store.process()
+        if terminal is not None and not isinstance(terminal, Terminal):
+            raise DriverError(f"session {name} has no terminal")
+        if terminal is None or terminal.session_identity() != (info.sid, state["generation"]):
             raise DriverError(f"no tui session {name}")
         spec = Spec(
             workdir=state["workdir"],
@@ -470,14 +457,15 @@ class TuiMode(RunningMode):
         return cls(
             Prepared(spec, info),
             run,
-            pane,
+            terminal,
             store,
+            state["generation"],
             offset=offset,
             replayed=(*replayed,),
         )
 
     @classmethod
-    def close(cls, name: str, *, host=tmux_host) -> None:
+    def close(cls, name: str, *, host: Host) -> None:
         """Kills tui session `name` (absent is fine), removes its dir; under its lock."""
         _Store(name, host=host).close()
 
@@ -487,57 +475,32 @@ class TuiMode(RunningMode):
         return self._replayed
 
     def marked_blocked(self) -> bool:
-        """Its pane's @state is blocked (a dialog it showed); tmux failing: False."""
-        try:
-            return self.host.option(self._pane, "@state") == Word.BLOCKED
-        except TuiError:
-            return False
+        return self._terminal.activity() == Word.BLOCKED
 
     def poll(self, timeout: float) -> tuple[list[SessionEvent | Stderr | ClientBound], bool]:
-        """New records' events, else a pane scan, else a wait of `timeout` s; ended at once after
-        stop() or once another pane holds the name.
-        """
         found = self._read()
         if not found and not self._gone:
-            status = self.host.status(self.name)
-            try:
-                screen = (
-                    self.host.read(self._pane)
-                    if status == PaneStatus.RUNNING and self._pane
-                    else None
-                )
-            except TuiError:
-                screen = None
-            if (code := _exit(status := self._own(status))) is not None:
-                self._code = code
-                return self._read(), True
-            if status == PaneStatus.RUNNING and screen is not None:
-                found = self._scan(screen)
+            state = self._terminal.state()
+            if state != Liveness.UNKNOWN:
+                code = self._terminal.returncode()
+                if state == Liveness.ABSENT:
+                    code = -signal.SIGHUP
+                if code is not None:
+                    self._code = code
+                    final = self._read()
+                    self._end()
+                    return final, True
+                if self._terminal.alive() and isinstance(self.host, Displayable):
+                    with contextlib.suppress(DriverError):
+                        screen = self.host.screen(self._terminal)
+                        found = self._read()
+                        if not found and not self._gone:
+                            found = self._scan(screen)
         deadline = time.monotonic() + timeout
         while not found and not self._gone and (left := deadline - time.monotonic()) > 0:
             time.sleep(min(SLICE, left))
             found = self._read()
         return found, self._gone
-
-    def _holder(self) -> str | None:
-        """Another pane under the name ends it."""
-        holder = self._store.holder()
-        if holder not in (self._pane, None, PaneStatus.UNKNOWN):
-            self._end()
-        return holder
-
-    def _own(self, status):
-        """None unless its own pane holds the name."""
-        if status is None or status == PaneStatus.UNKNOWN:
-            return status
-        holder = self._holder()
-        return (
-            holder
-            if holder == PaneStatus.UNKNOWN
-            else status
-            if holder and holder == self._pane
-            else None
-        )
 
     def _end(self) -> None:
         self._gone = True
@@ -546,11 +509,20 @@ class TuiMode(RunningMode):
     def _read(self) -> list[SessionEvent | Stderr | ClientBound]:
         if self._gone:
             return []
-        records, end = self._store.records(self._offset)
-        if end > self._offset:
-            self._holder()  # lines under another pane are its session's
-        if self._gone:
+        if self._terminal.state() == Liveness.ABSENT:
+            replacement = self._store.process()
+            if replacement is not None and replacement.identity != self._terminal.identity:
+                self._end()
+                return []
+        try:
+            current = self._store.read()
+        except DriverError:
+            self._end()
             return []
+        if current["generation"] != self._generation:
+            self._end()
+            return []
+        records, end = self._store.records(self._offset)
         self._offset = end
         return _translated(self.run, records)
 
@@ -573,15 +545,16 @@ class TuiMode(RunningMode):
         return found
 
     def _mark_blocked(self) -> None:
-        with contextlib.suppress(tmux_host.TuiError):
-            if self.host.option(self._pane, "@state") != Word.BLOCKED:
-                self.host.mark(Word.BLOCKED, self.prepared.spec.events, pane=self._pane)
+        with contextlib.suppress(DriverError):
+            if self._terminal.activity() != Word.BLOCKED:
+                self._terminal.mark(Word.BLOCKED, self.prepared.spec.events)
 
     def returncode(self, timeout: float) -> int | None:
-        """The dead pane's status, -SIGHUP once gone; None while it runs after up to `timeout` s."""
         deadline = time.monotonic() + timeout
         while self._code is None:
-            self._code = _exit(self._own(self.host.status(self.name)))
+            self._code = self._terminal.returncode()
+            if self._terminal.state() == Liveness.ABSENT:
+                self._code = -signal.SIGHUP
             if self._code is None:
                 if (left := deadline - time.monotonic()) <= 0:
                     return None
@@ -589,40 +562,26 @@ class TuiMode(RunningMode):
         return self._code
 
     def state(self) -> Liveness:
-        status = self._own(self.host.status(self.name))
-        if status is None:
-            return Liveness.ABSENT
-        return Liveness.UNKNOWN if status == PaneStatus.UNKNOWN else Liveness.LIVE
+        return self._terminal.state()
 
     def send(self, text: str) -> None:
         self._running()
-        last = None
-        try:
-            for item in self.run.submit(text):
-                if isinstance(item, Paste):
-                    self.host.paste(self._pane, item.text)
-                else:
-                    if isinstance(last, Paste):
-                        time.sleep(tmux_host.PAUSE)
-                    self.host.keys(self._pane, item.name)
-                last = item
-        except TuiError as e:
-            raise DriverError(f"send to tui session {self.name}: {e}") from e
+        for action in self.run.submit(text):
+            self._terminal.send(action)
 
     def screen(self, lines: int | None = None) -> str:
         self._running()
-        try:
-            return self.host.read(self._pane, lines)
-        except TuiError as e:
-            raise DriverError(f"screen of tui session {self.name}: {e}") from e
+        if not isinstance(self.host, Displayable):
+            raise DriverError(f"host {self.host.name} cannot display")
+        return self.host.screen(self._terminal, lines)
 
     def _running(self) -> None:
-        if self._own(self.host.status(self.name)) != PaneStatus.RUNNING:
+        if not self._terminal.alive():
             raise DriverError(f"tui session {self.name} is not running")
 
     def stop(self) -> None:
         """Once; then ends (returncode: the code seen, else -SIGHUP)."""
         if self._live:
-            self._store.stop(self._pane)
+            self._store.stop(self._terminal.identity)
         self._live = False
         self._end()

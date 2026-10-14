@@ -10,7 +10,6 @@ import json
 import os
 import signal
 import tempfile
-import uuid
 from pathlib import Path
 from unittest import mock
 
@@ -33,7 +32,6 @@ from agent_pm.session.engine.types import (
     Exited,
     Hosts,
     IdleTimeout,
-    Mode,
     SessionStatus,
     Usage,
     Window,
@@ -45,7 +43,6 @@ from agent_pm.utils import ProcessControl, probe
 
 from session.tests.case import HOSTS, Case
 from session.tests.hosted_support import (
-    LAUNCHED,
     NO_PANE,
     OPENERS,
     PLACEMENTS,
@@ -198,8 +195,11 @@ class WrappersTest(TuiBase):
                     lambda: log.session(SID).persisted(),
                 ),
                 (lambda: sessions("("), lambda: HostedSession.list("(")),
-                (lambda: close("a b"), lambda: tui.TuiMode.close("a b")),
-                (lambda: self.driver.close("a b"), lambda: tui.TuiMode.close("a b")),
+                (lambda: close("a b"), lambda: tui.TuiMode.close("a b", host=self.session.host())),
+                (
+                    lambda: self.driver.close("a b"),
+                    lambda: tui.TuiMode.close("a b", host=self.session.host()),
+                ),
             )
             for index, (wrapper, target) in enumerate(pairs):
                 with self.subTest(index=index):
@@ -207,14 +207,6 @@ class WrappersTest(TuiBase):
             note(d, "x", a=1)
             self.assertEqual([(e["kind"], e.get("a")) for e in log.read()][-1], ("x", 1))
             self.assertIsNone(session_record(d, "other"))
-
-    def test_start_and_attach_give_sessions_of_the_session_class(self):
-        session = drive(self, mode="tui", name="w1", sid=SID)
-        self.assertIsInstance(session, self.driver.session_cls)
-        self.host.option.side_effect = lambda target, key: (
-            SID if (target, key) == ("%1", "@sid") else None
-        )
-        self.assertIsInstance(self.driver.attach("w1"), self.driver.session_cls)
 
 
 class DriverConfigurationTest(Case):
@@ -245,7 +237,7 @@ class DriverConfigurationTest(Case):
         self.assertIs(host.tmux, tmux)
         self.assertEqual((driver.host, driver.probe, driver.clock), (tmux, probe, clock))
         setup = driver.session_cls._config()
-        self.assertEqual((setup.tmux, setup.probe, setup.clock), (tmux, probe, clock))
+        self.assertEqual((setup.probe, setup.clock), (probe, clock))
 
     def test_configure_is_concrete_and_refuses_bad_input(self):
         with self.assertRaisesRegex(ConfigError, r"\Ahosts: want a mapping"):
@@ -303,45 +295,6 @@ class StartTest(Base):
             "sid 's1' differs from resume 'r1'",
             lambda: drive(self, sid="s1", resume="r1"),
         )
-
-
-class SpecMappingTest(TuiBase):
-    """Driver.start puts its arguments on the one Spec its Mode and Adapter read (resume=X: sid=X,
-    resume=True); idle_timeout goes beside the Spec.
-    """
-
-    def setUp(self):
-        super().setUp()
-        LAUNCHED.clear()
-
-    def test_runtime_mode_prompt_resume_and_events_reach_the_adapters_spec_idle_timeout_not(self):
-        session = drive(
-            self,
-            runtime="inner",
-            mode="tui",
-            name="w1",
-            prompt="hi",
-            resume=SID,
-            events=self.events,
-            idle_timeout=5,
-        )
-        drive(self, runtime="inner", mode="tui", name="w2", sid=SID)
-        first, second = LAUNCHED
-        self.assertEqual(
-            (first.runtime, first.mode, first.prompt, first.sid, first.resume, first.events),
-            ("inner", Mode.TUI, "hi", SID, True, self.events),
-        )
-        self.assertFalse(hasattr(first, "idle_timeout"))
-        self.assertEqual((session.runtime, session.mode, session.sid), ("inner", "tui", SID))
-        self.assertEqual(
-            (second.prompt, second.sid, second.resume, second.events),
-            ("hello", SID, False, None),
-        )
-
-    def test_neither_sid_nor_resume_gives_a_new_sid_and_no_resume(self):
-        drive(self, runtime="inner", mode="tui", name="w1")
-        (spec,) = LAUNCHED
-        self.assertEqual((uuid.UUID(spec.sid).version, spec.resume), (4, False))
 
 
 class WritableDirsTest(Base):
@@ -472,25 +425,6 @@ class AssignedTest(TuiBase):
     started before keep theirs.
     """
 
-    def test_a_host_assigned_starts_lists_and_closes_its_later_sessions(self):
-        old, new = self.host, fake_tmux()
-        before = drive(self, mode="tui", name="w1")
-        self.driver.host = new
-        drive(self, mode="tui", name="w2")
-        new.listing.return_value = [listed("w2")]
-        self.assertEqual([row.name for row in self.driver.sessions()], ["w2"])
-        self.driver.close("w2")
-        self.assertEqual(
-            [[c.args[0] for c in tmux.start.call_args_list] for tmux in (old, new)],
-            [["w1"], ["w2"]],
-        )
-        self.assertEqual(new.kill.call_args_list, [mock.call("w2")])
-        self.assertEqual(self.driver.attach_command("w2"), "tmux attach -t '=w2'")
-        new.status.reset_mock()
-        before.state()
-        new.status.assert_not_called()
-        old.status.assert_called_with("w1")
-
     def test_a_probe_assigned_serves_later_usage(self):
         first, second = mock.Mock(return_value="7"), mock.Mock(return_value="9")
         self.driver_dependencies = {**self.driver_dependencies, "probe": first}
@@ -512,35 +446,6 @@ class AssignedTest(TuiBase):
 
 
 class CloseTest(TuiBase):
-    def test_close_and_attach_then_close_leave_the_same_state_fr_4(self):
-        """FR-4: Session.attach(n).close() and close(n) each kill tmux session n alone and remove
-        its session dir.
-        """
-        self.host.option.side_effect = lambda target, key: (
-            SID if (target, key) == ("%1", "@sid") else None
-        )
-        found = {}
-        for name, close_it in (
-            ("w1", lambda: self.session.attach("w1").close()),
-            ("w2", lambda: self.driver.close("w2")),
-        ):
-            with self.subTest(name=name):
-                self.tui(name=name, sid=SID)
-                self.host.reset_mock()
-                close_it()
-                found[name] = [c for c in self.host.mock_calls if c[0] == "kill"]
-                self.assertFalse(os.path.lexists(os.path.join(self.root, name)))
-                self.assertTrue(os.path.isdir(self.root))
-        self.assertEqual(found, {"w1": [mock.call.kill("w1")], "w2": [mock.call.kill("w2")]})
-
-    def test_kills_the_session_and_removes_its_dir(self):
-        self.tui(name="w1")
-        self.host.reset_mock()
-        self.driver.close("w1")
-        self.assertEqual(self.host.mock_calls, [mock.call.kill("w1")])
-        self.assertFalse(os.path.lexists(os.path.join(self.root, "w1")))
-        self.assertTrue(os.path.isdir(self.root))
-
     def test_a_bad_name_is_refused_before_tmux_or_a_path(self):
         self.name_refused(self.driver.close)
 
@@ -668,6 +573,8 @@ class AttachCommandTest(TuiBase):
 class DetachTest(TuiBase):
     def setUp(self):
         super().setUp()
+        self.tool = os.path.join(self.dir, "tool")
+        Path(self.tool).touch(mode=0o700)
         allocate = tempfile.mkdtemp
 
         def private(**kw):
@@ -688,26 +595,24 @@ class DetachTest(TuiBase):
         self.host.process.return_value = "4242 $3 %7 4343"
         self.host.option.return_value = None
         env = {"PATH": "/bin", "TMUX": "x"}
-        self.assertIsNone(self.driver.detach("d1", ["tool", "a b"], self.dir, env, opener="mgr"))
+        self.assertIsNone(self.driver.detach("d1", [self.tool, "a b"], self.dir, env, opener="mgr"))
         control = ProcessControl(self.host.detach.call_args.kwargs["control"])
         self.assertEqual(
             json.loads(Path(control.path, "launch.json").read_text()),
             {
-                "argv": ["tool", "a b"],
+                "argv": [self.tool, "a b"],
                 "cwd": self.dir,
                 "env": env,
-                "inherit_env": [*tmux_host.TERMINAL_KEYS, "PWD"],
+                "blocked_signals": list(SIGNALS),
             },
         )
         self.assertEqual(
             self.host.mock_calls,
             [
+                mock.call.validate_start("d1", (self.tool, "a b"), env, {}),
                 mock.call.detach(
                     "d1",
-                    control.command(),
-                    cwd=self.dir,
-                    env=env,
-                    block=SIGNALS,
+                    engine_types.Launch(tuple(control.command()), cwd=self.dir, env=env),
                     opener="mgr",
                     display="mgr",
                     events=None,
@@ -716,7 +621,7 @@ class DetachTest(TuiBase):
                 ),
             ],
         )
-        self.driver.detach("d2", ("tool",), self.dir, env)
+        self.driver.detach("d2", (self.tool,), self.dir, env)
         self.assertEqual(
             {k: self.host.detach.call_args.kwargs[k] for k in ("opener", "display")},
             {"opener": None, "display": None},
@@ -748,5 +653,5 @@ class DetachTest(TuiBase):
     def test_a_tmux_failure_is_a_driver_error(self):
         self.host.detach.side_effect = tmux_host.TuiError("session d1 exists")
         with self.assertRaises(DriverError) as caught:
-            self.driver.detach("d1", ["tool"], self.dir, {})
+            self.driver.detach("d1", [self.tool], self.dir, {})
         self.assertEqual(str(caught.exception), "detach d1: session d1 exists")
