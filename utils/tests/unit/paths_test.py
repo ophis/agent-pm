@@ -195,6 +195,29 @@ class PackageDirectories(Case):
 
 
 class Overlaps(Case):
+    def test_case_aliases_use_filesystem_identity_even_with_missing_suffixes(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            parent = root / "parent"
+            parent.mkdir()
+            variant = root / "PARENT"
+            native_stat = os.stat
+
+            def case_stat(path, *args, **kwargs):
+                return native_stat(str(path).replace(str(variant), str(parent), 1), *args, **kwargs)
+
+            with mock.patch("os.stat", side_effect=case_stat):
+                for a, b, expected in (
+                    (parent, variant, True),
+                    (parent, variant / "missing" / "child", True),
+                    (variant / "missing" / "child", parent, True),
+                    (parent / "missing", variant / "missing" / "child", True),
+                    (parent / "missing", variant / "other", False),
+                    (parent, root / "parent-other", False),
+                ):
+                    with self.subTest(a=a, b=b):
+                        self.assertEqual(overlaps(str(a), str(b)), expected)
+
     def test_equality_both_directions_siblings_and_missing_suffixes(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary).resolve()

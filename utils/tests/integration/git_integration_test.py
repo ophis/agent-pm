@@ -6,7 +6,7 @@ import tempfile
 from pathlib import Path
 from unittest import mock
 
-from agent_pm.utils import GUARD, LOCAL_ENV_VARS, Checkouts, find_checkouts
+from agent_pm.utils import GUARD, LOCAL_ENV_VARS, Checkouts, find_checkouts, overlaps
 
 from utils.tests.case import Case
 
@@ -116,3 +116,16 @@ class CheckoutDiscovery(Case):
         self.assertEqual(result.roots, ())
         self.assertIsNotNone(result.error)
         self.assertIn(str(self.outer), result.error)
+
+    def test_case_aliases_overlap_and_discover_the_same_checkout(self):
+        variant = self.root / "OUTER"
+        if not variant.exists():
+            self.skipTest("requires a case-insensitive filesystem")
+        self.assertTrue(os.path.samefile(self.outer, variant))
+        self.assertTrue(overlaps(str(self.outer), str(variant / "missing" / "child")))
+        self.assertTrue(overlaps(str(variant / "missing"), str(self.outer / "missing" / "child")))
+        self.assertFalse(overlaps(str(variant / "missing"), str(self.outer / "other")))
+        result = self.search(variant / "missing")
+        self.assertIsNone(result.error)
+        self.assertEqual(len(result.roots), 1)
+        self.assertTrue(os.path.samefile(result.roots[0], self.outer))

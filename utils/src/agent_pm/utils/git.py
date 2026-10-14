@@ -81,9 +81,9 @@ def find_checkouts(
                 if inside != "true" or not os.path.isabs(top):
                     return Checkouts(tuple(roots), f"{current}: invalid git rev-parse output")
                 root = os.path.realpath(top)
-                if marker and root != current:
+                if marker and not os.path.samefile(root, current):
                     return Checkouts(tuple(roots), f"{current}: invalid .git metadata")
-                if root not in roots:
+                if not any(os.path.samefile(root, previous) for previous in roots):
                     roots.append(root)
             elif not (
                 not marker

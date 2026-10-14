@@ -372,3 +372,30 @@ class CheckoutSearch(Case):
                     self.inner, runner=lambda *_args, output=output: ok(output), timeout=7
                 )
                 self.assertIn("invalid git rev-parse output", result.error)
+
+    def test_case_aliases_accept_metadata_and_deduplicate_by_filesystem_identity(self):
+        os.mkdir(os.path.join(self.inner, ".git"))
+        os.mkdir(os.path.join(self.inner, "child"))
+        variant = os.path.join(self.root, "INNER")
+        native_stat, native_lstat = os.stat, os.lstat
+
+        def case_stat(path, *args, **kwargs):
+            return native_stat(str(path).replace(variant, self.inner, 1), *args, **kwargs)
+
+        def case_lstat(path, *args, **kwargs):
+            return native_lstat(str(path).replace(variant, self.inner, 1), *args, **kwargs)
+
+        def runner(argv, _timeout, _env):
+            current = argv[argv.index("-C") + 1]
+            if current == os.path.join(variant, "child"):
+                return ok(f"true\n{variant}\n")
+            if current == variant:
+                return ok(f"true\n{self.inner}\n")
+            return self.runner(argv, _timeout, _env)
+
+        with (
+            unittest.mock.patch("os.stat", side_effect=case_stat),
+            unittest.mock.patch("os.lstat", side_effect=case_lstat),
+        ):
+            result = find_checkouts(os.path.join(variant, "child"), runner=runner, timeout=7)
+        self.assertEqual(result, Checkouts((variant, self.root)))
