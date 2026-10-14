@@ -8,6 +8,7 @@ import tempfile
 import types
 import unittest
 from importlib._bootstrap_external import _NamespacePath
+from pathlib import Path
 from unittest import mock
 
 import agent_pm
@@ -15,6 +16,7 @@ from agent_pm.delegate import IMPORT_ROOTS
 
 from tests import guards
 from tests.case import REPO, Case
+from utils.tests.sandbox import owned_directory
 
 CASES = (
     "tests",
@@ -24,6 +26,21 @@ CASES = (
     "linear-orchestrator/tests",
     "manager/tests",
 )
+
+
+class SandboxFixtures(Case):
+    def test_an_owned_directory_refuses_a_symlink_root_before_making_directories(self):
+        root, target = Path(self.home, "linked"), Path(self.home, "target")
+        target.mkdir()
+        root.symlink_to(target, target_is_directory=True)
+        with (
+            mock.patch("os.makedirs") as mkdir,
+            self.assertRaisesRegex(AssertionError, "test fixture root contains a symlink"),
+        ):
+            owned_directory(self, root, prefix="team-")
+        mkdir.assert_not_called()
+        self.assertEqual(list(target.iterdir()), [])
+
 
 RUN_WITH = os.pathsep.join(
     f"{p}/src" for p in ("delegate", "linear-orchestrator", "manager", "session", "utils")

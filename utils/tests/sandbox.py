@@ -2,8 +2,10 @@
 
 import os
 import shlex
+import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 
@@ -59,6 +61,16 @@ def reap(proc, timeout=10):
     if proc.poll() is None:
         proc.kill()
     proc.wait(timeout=timeout)
+
+
+def owned_directory(case, root, *, prefix="fixture-"):
+    root = os.path.abspath(root)
+    if os.path.realpath(root) != root:
+        case.fail(f"{root}: test fixture root contains a symlink")
+    os.makedirs(root, exist_ok=True)
+    path = tempfile.mkdtemp(dir=root, prefix=prefix)
+    case.addCleanup(shutil.rmtree, path, ignore_errors=True)
+    return path
 
 
 def python_path(bin_dir, tail=None):

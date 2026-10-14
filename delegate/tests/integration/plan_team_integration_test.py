@@ -2,9 +2,7 @@
 
 import json
 import os
-import shutil
 import sys
-import tempfile
 import unittest
 from unittest import mock
 
@@ -14,8 +12,9 @@ from agent_pm.utils import temp_dirs, under
 from delegate.tests.case import REPO
 from delegate.tests.plans import TASKS, TASKS_PARAM, Base, write_team
 from session.tests.fakes.host import FakeHost
+from utils.tests.sandbox import owned_directory
 
-TEAMS = REPO
+TEAMS = os.path.join(REPO, "work")
 IN_TEMP = under(os.path.realpath(TEAMS), temp_dirs()) is not None
 
 
@@ -27,8 +26,7 @@ class CustomTeam(Base):
 
     def setUp(self):
         super().setUp()
-        self.team = os.path.realpath(tempfile.mkdtemp(dir=TEAMS, prefix="task385-team-"))
-        self.addCleanup(shutil.rmtree, self.team, ignore_errors=True)
+        self.team = owned_directory(self, TEAMS, prefix="team-")
         os.chmod(self.team, 0o755)
         write_team(self.team)
         self.tasks = os.path.join(self.team, "tasks")
