@@ -20,6 +20,7 @@ from unittest import mock
 from agent_pm.session import Session
 from agent_pm.session.engine.records import RunLog
 from agent_pm.session.engine.types import (
+    Access,
     Activity,
     Blocked,
     DriverError,
@@ -130,9 +131,14 @@ class TuiTest(Live):
         self.assertFalse(os.path.lexists(tui._Store("w1").dir))
 
     def test_inspect_an_ended_tui_session_after_its_pane_and_store_are_removed(self):
+        self.config["adapters"]["fake"]["implementation"] = (
+            "agent_pm.session.adapters.fake:InspectAdapter"
+        )
+        self.driver = self.driven()
         session = self.start("historical", {"exit": 3}, sid=SID)
         stream = Stream(self, session)
         self.assertEqual(stream.next(poke=self.poke), Exited(3))
+        info = session.info()
         session.close()
         self.assertEqual(self.driver.sessions("historical"), [])
         self.assertFalse(os.path.lexists(tui._Store("historical").dir))
@@ -142,9 +148,11 @@ class TuiTest(Live):
                 for target in SPAWNS
             ]
             status = self.driver.session_cls.inspect(
-                Spec(workdir=self.workdir, runtime="fake", sid=SID)
+                Spec(workdir=self.workdir, runtime="fake", sid=SID, access=Access(cwd=self.dir))
             )
-        self.assertEqual(status, SessionStatus("unknown", None, ""))
+        self.assertEqual(
+            status, SessionStatus("yes", 1.5, f"{SID} {info.cwd} {info.transcript} {info.resume}")
+        )
         for start in starts:
             start.assert_not_called()
 

@@ -460,6 +460,7 @@ class ProcessTest(Base):
         self.assertEqual(self.connection.sendall.call_count, 3)
 
     def test_a_handle_never_acts_on_a_later_pane_of_its_name(self):
+        self.active({"live": False})
         process = self.host.attach("d1")
         for later in (None, "4242 $4 %9 5555", "9999 $3 %7 4343", "4242 $3 %7 5555"):
             with self.subTest(later=later):
@@ -475,6 +476,9 @@ class ProcessTest(Base):
                 self.tmux.kill.assert_not_called()
                 self.tmux.process.assert_called_with("%7")
         self.killpg.assert_not_called()
+        self.connection.connect.assert_called_once_with(
+            os.path.join(os.path.realpath(self.control.path), "control")
+        )
 
     def test_a_tmux_failure_reading_metadata_is_a_driver_error(self):
         process = self.host.attach("d1")
