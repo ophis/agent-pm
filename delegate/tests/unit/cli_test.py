@@ -861,7 +861,7 @@ class Configures(Base):
             ),
             (
                 "[delegates]\nkind = 1\n",
-                "delegate: config: ~/.agent-pm/config.local.toml: unknown key 'kind' in [delegate.delegates]",
+                "delegate: delegate config: [delegates] kind: the delegate takes only harness_host",
             ),
         ):
             with self.subTest(text):

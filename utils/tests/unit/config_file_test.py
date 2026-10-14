@@ -179,7 +179,6 @@ class Projects(Case):
         self.local(
             '[session.hosts.tmux]\nstatus_line = true\n[delegate]\nshow = "none"\n[delegate.roles.pm]\ncwd = "/p"\n[delegate.roles.new]\ntier = 3\n[delegate.roles.pm.output]\ntype = "github"\n[linear_orchestrator]\nteam = "T"\n[linear_orchestrator.core.roles.pm]\ncwd = "/c"\n[linear_orchestrator.roles.pm]\naccount = "pm@x"\n[linear_orchestrator.roles.new]\naccount = "n@x"\nmax_runs = 2\n'
         )
-        self.write("delegate", 'cwd = ""\n' + DELEGATE)
         session, delegate = self.read("session"), self.read("delegate")
         self.assertEqual(session["hosts"]["tmux"], {"status_line": True})
         self.assertEqual(set(session), {"hosts"})
@@ -196,16 +195,15 @@ class Projects(Case):
 
     def test_own_is_the_projects_file_and_the_local_keys_it_owns(self):
         self.local(
-            '[delegate]\nruntime = "b"\n[delegate.roles.pm]\ncwd = "/p"\ntier = 1\n[delegate.roles.pm.output]\ntype = "github"\n[linear_orchestrator]\nteam = "T"\n[linear_orchestrator.roles.pm]\naccount = "pm@x"\n[linear_orchestrator.roles.new]\nmax_runs = 2\n[manager]\nruntime = "b"\n'
+            '[delegate]\nruntime = "b"\n[delegate.roles.pm]\ncwd = "/p"\ntier = 1\nunknown_field = "typo"\n[delegate.roles.pm.output]\ntype = "github"\n[linear_orchestrator]\nteam = "T"\n[linear_orchestrator.roles.pm]\naccount = "pm@x"\nunknown_field = "typo"\n[linear_orchestrator.roles.new]\nmax_runs = 2\n[manager]\nruntime = "b"\n'
         )
-        self.write("delegate", 'cwd = ""\n' + DELEGATE)
         self.assertEqual(
             self.read("linear-orchestrator", own=True),
             {
                 "team": "T",
                 "work_dir": "~/w",
                 "roles": {
-                    "pm": {"account": "pm@x", "max_runs": 3},
+                    "pm": {"account": "pm@x", "max_runs": 3, "unknown_field": "typo"},
                     "new": {"max_runs": 2},
                 },
                 "core": {"roles": {"pm": {"gate": "g"}}},
@@ -214,18 +212,18 @@ class Projects(Case):
         found = self.read("delegate", own=True)
         self.assertEqual(
             found["roles"],
-            {"pm": {"tier": 1, "output": {"type": "github"}, "cwd": "/p"}},
+            {"pm": {"tier": 1, "output": {"type": "github"}, "cwd": "/p", "unknown_field": "typo"}},
         )
         self.assertNotIn("hosts", found)
         self.assertEqual(self.read("manager", own=True), {"runtime": "b"})
 
-    def test_own_still_rejects_an_unknown_field_in_a_supplied_local_section(self):
-        self.local('[delegate.roles.pm]\nunknown_field = "typo"\n')
+    def test_own_still_rejects_an_unknown_top_level_key_in_a_supplied_local_section(self):
+        self.local('[delegate]\nunknown_field = "typo"\n')
         for name in ("delegate", "linear-orchestrator"):
             with (
                 self.subTest(name=name),
                 self.assertRaisesRegex(
-                    ConfigFileError, r"unknown key 'unknown_field' in \[delegate.roles.pm\]"
+                    ConfigFileError, r"unknown key 'unknown_field' in \[delegate\]"
                 ),
             ):
                 self.read(name, own=True)
@@ -243,7 +241,6 @@ class Projects(Case):
                 self.read(name)
 
     def test_a_new_table_under_a_known_one_is_taken_as_its_owners(self):
-        self.write("session", SESSION + 'implementation = "default.module:Host"\n')
         self.local('[session.hosts.other]\nimplementation = "a.b:C"\n[session.adapters]\n')
         with self.assertRaisesRegex(ValueError, r"unknown key 'adapters' in \[session\]"):
             self.read("session")
@@ -368,8 +365,7 @@ class Resources(Case):
 
     def test_upper_packaged_values_override_lower_local_values(self):
         self.local('[delegate.roles.pm]\naccount = "not-known-at-this-layer"\n')
-        with self.assertRaisesRegex(ConfigFileError, "unknown key 'account'"):
-            read_resources(self.resources)
+        self.assertEqual(read_resources(self.resources)["roles"]["pm"]["account"], "")
         self.local('[delegate]\nruntime = "lower-local"\n[delegate.roles.pm]\ntier = 1\n')
         Path(self.root, self.package, "linear_orchestrator", "config.toml").write_text(
             ORCH.replace('account = ""', 'tier = 3\naccount = ""')
@@ -420,22 +416,30 @@ class Resources(Case):
             with self.assertRaisesRegex(ConfigFileError, rf"move it under \[{section}\]"):
                 read_project("linear-orchestrator", root=self.root)
 
-    def test_unknown_nested_keys_and_non_table_sections_are_errors(self):
-        cases = (
-            (
-                "[delegate.roles.pm]\nunknown_field = 1\n",
-                r"unknown key 'unknown_field' in \[delegate.roles.pm\]",
-            ),
-            (
-                "[delegate.roles.pm.unknown]\ntier = 1\n",
-                r"unknown key 'tier' in \[delegate.roles.pm.unknown\]",
-            ),
+    def test_unknown_top_level_keys_and_non_table_sections_are_errors(self):
+        for text, error in (
+            ("[delegate]\nunknown_field = 1\n", r"unknown key 'unknown_field' in \[delegate\]"),
             ("session = 1\n", r"\[session\]: want a table"),
-        )
-        for text, error in cases:
+        ):
             self.local(text)
             with self.subTest(text=text), self.assertRaisesRegex(ConfigFileError, error):
                 read_resources(self.resources)
+
+    def test_nested_keys_are_passed_to_their_owner(self):
+        self.local(
+            "[delegate.roles.pm]\nunknown_field = 1\n[delegate.roles.pm.unknown]\ntier = 1\n"
+        )
+        self.assertEqual(
+            read_resources(self.resources)["roles"]["pm"],
+            {
+                "tier": 2,
+                "output": {"type": "local"},
+                "unknown_field": 1,
+                "unknown": {"tier": 1},
+                "account": "",
+                "max_runs": 3,
+            },
+        )
 
     def test_empty_table_schema_supports_new_named_instances(self):
         Path(self.root, self.package, "session", "config.toml").write_text(

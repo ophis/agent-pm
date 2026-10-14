@@ -4,12 +4,11 @@ table, with no package for it, resolve, compose and list the catalog in a child 
 """
 
 import os
-import textwrap
 import unittest
 
 from agent_pm.delegate.composer.prompt import RETURN
 
-from delegate.tests.case import REPO, ROOTS
+from delegate.tests.case import ROOTS
 from delegate.tests.integration.composer import child
 
 BANNER = "Extension handover."
@@ -20,28 +19,6 @@ LOCAL = (
 
 
 class ExtensionRuntime(child.Case):
-    def setUp(self):
-        super().setUp()
-        self.session_file = os.path.join(REPO, "session", "config.toml")
-        self.schema = os.path.join(self.root, "session.toml")
-        with open(self.session_file) as stream:
-            default = stream.read()
-        with open(self.schema, "w") as stream:
-            stream.write(
-                default
-                + '\n[adapters.extension]\nimplementation = "extension_runtime:ExtensionAdapter"\ntier = 4\nbanner = ""\n'
-            )
-
-    def child(self, code, *args):
-        setup = f"""from unittest import mock
-opened = open
-session_file = {self.session_file!r}
-schema = {self.schema!r}
-with mock.patch("builtins.open", side_effect=lambda path, *args, **kwargs: opened(schema if path == session_file else path, *args, **kwargs)):
-{textwrap.indent(code, "    ")}
-"""
-        return super().child(setup, *args)
-
     def test_its_runtime_resolves_composes_and_the_catalog_lists_every_role(self):
         self.local(LOCAL)
         got = self.compose("dummy-tester", "echo")

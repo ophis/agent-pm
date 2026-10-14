@@ -553,7 +553,7 @@ class Validate(Fake):
         self.local('[roles.editor]\nmodel = "opus"\n')
         self.assertEqual(
             self.refused("editor"),
-            f"config: {self.local_file}: unknown key 'model' in [delegate.roles.editor]",
+            "unknown key 'model' in roles.editor",
         )
 
     def test_config_errors_come_before_a_missing_charter_or_task_file(self):
@@ -619,18 +619,18 @@ class OwnedKeys(Fake):
             (
                 '[roles.writer]\nmodel = "m"\n',
                 {},
-                f"config: {self.local_file}: unknown key 'model' in [delegate.roles.writer]",
+                "unknown key 'model' in roles.writer",
             ),
             ('[roles.writer]\nteam_dirs = ["/x"]\n', {}, "unknown key 'team_dirs' in roles.writer"),
             (
                 "[output]\ntypo = 1\n",
                 {},
-                f"config: {self.local_file}: unknown key 'typo' in [delegate.output]",
+                "unknown key 'typo' in output",
             ),
             (
                 "[roles.editor.output]\ntypo = 1\n",
                 {},
-                f"config: {self.local_file}: unknown key 'typo' in [delegate.roles.editor.output]",
+                "unknown key 'typo' in roles.editor.output",
             ),
             ('output = "local"\n', {}, "output must be a table"),
             ('[roles.writer]\noutput = "local"\n', {}, "roles.writer.output must be a table"),
@@ -657,7 +657,7 @@ class OwnedKeys(Fake):
             (
                 '[roles.writer]\nshow = "none"\n',
                 {},
-                f"config: {self.local_file}: unknown key 'show' in [delegate.roles.writer]",
+                "unknown key 'show' in roles.writer",
             ),
             ("", {"show": ""}, "run overlay: unknown key 'show' in [overlay]"),
             (

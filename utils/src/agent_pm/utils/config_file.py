@@ -3,8 +3,8 @@
 Tables merge key by key; higher values and whole lists replace lower values. Each layer's local
 section overlays its file before the next layer. Sections use the package's final name, with
 hyphens replaced by underscores. Only supplied layers are read and validated against their own
-and lower files. A leaf is known by its dotted key, a same-depth dynamic table key, or a suffix
-under a known table. Flat local keys are rejected. Explicit paths replace files while retaining
+and lower files. Unknown top-level keys are rejected; nested tables are validated by their
+owners. Flat local keys are rejected. Explicit paths replace files while retaining
 the defaults as their validation schema. Missing optional repository files contribute no keys.
 """
 
@@ -134,20 +134,18 @@ def _layered(
         raise ConfigFileError(
             f"{local}: unknown key {key!r}: flat local configuration; move it under [{target}]"
         )
-    schema, out, schemas = {}, {}, []
+    schema, out = {}, {}
     for section, config in configs.items():
-        schemas.extend(known[section])
         schema = merge(schema, merge(*known[section]))
         overlay = found.get(section, {})
         if not isinstance(overlay, dict):
             raise ConfigFileError(f"{local}: [{section}]: want a table")
         checked = {}
         for keys, value in _leaves(overlay, ()):
-            if not any(_known_key(s, keys) for s in (schema, *schemas)):
-                if value == {} and keys[0] in schema:
-                    continue
-                table = ".".join((section, *keys[:-1]))
-                raise ConfigFileError(f"{local}: unknown key {keys[-1]!r} in [{table}]")
+            if keys[0] not in schema:
+                raise ConfigFileError(f"{local}: unknown key {keys[0]!r} in [{section}]")
+            if value == {}:
+                continue
             table = checked
             for key in keys[:-1]:
                 table = table.setdefault(key, {})
@@ -157,22 +155,6 @@ def _layered(
         elif section == own:
             out = merge(config, checked)
     return out
-
-
-def _known_key(schema: Mapping, keys: tuple) -> bool:
-    if not keys or keys[0] not in schema:
-        return False
-    leaves = list(_leaves(schema, ()))
-    return (
-        _has(schema, keys)
-        or any(len(k) == len(keys) and k[0] == keys[0] and k[-1] == keys[-1] for k, _ in leaves)
-        or any(len(k) == len(keys) and k[0] == keys[0] for k, _ in leaves)
-        and any(_has(schema, keys[i:]) for i in range(1, len(keys)))
-        or any(
-            value == {} and len(keys) >= len(k) and keys[0] == k[0] and keys[len(k) - 1] == k[-1]
-            for k, value in leaves
-        )
-    )
 
 
 def unset(cfg: Mapping, keys: tuple[str, ...]) -> list[str]:
