@@ -2,6 +2,7 @@
 params, its Team and a run's access intent.
 """
 
+import math
 import os
 from collections.abc import Mapping
 from dataclasses import dataclass, field
@@ -41,8 +42,18 @@ class RunConfig:
     language: str = ""
     cwd: str = ""
     role_title: str = ""
+    idle_timeout: float = 7200
 
     def __post_init__(self):
+        if (
+            isinstance(self.idle_timeout, bool)
+            or not isinstance(self.idle_timeout, (int, float))
+            or not math.isfinite(self.idle_timeout)
+            or self.idle_timeout <= 0
+        ):
+            raise ConfigError(
+                f"idle_timeout must be a positive finite number of seconds, got {self.idle_timeout!r}"
+            )
         if type(self.tier) is not int or not 1 <= self.tier <= 4:
             raise ConfigError(f"tier must be an integer 1–4, got {self.tier!r}")
         try:

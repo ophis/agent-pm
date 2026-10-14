@@ -46,7 +46,6 @@ from agent_pm.session import (
 )
 from agent_pm.utils import holds, printable, save
 
-IDLE_TIMEOUT = 2 * 60 * 60  # seconds
 STOP_LIMIT = 3
 FIX = (
     "The outcome block in your last reply is invalid: {error}. Fix it: end your reply with one corrected "
@@ -71,7 +70,7 @@ class Headless:
     def start(self, p: Plan, name: str | None = None, events: str | None = None) -> Session:
         handle = self.driver.start(
             replace(p.driver_spec, session=replace(p.session, name=name, events=events)),
-            idle_timeout=IDLE_TIMEOUT,
+            idle_timeout=p.run.idle_timeout,
         )
         if isinstance(handle, Instruction):
             raise ConfigError("session driver returned an Instruction")
@@ -80,7 +79,7 @@ class Headless:
     def fix(self, handle: Session, p: Plan, text: str) -> Session:
         resumed = self.driver.start(
             replace(p.driver_spec, session=replace(p.session, prompt=text, resume=True)),
-            idle_timeout=IDLE_TIMEOUT,
+            idle_timeout=p.run.idle_timeout,
         )
         if isinstance(resumed, Instruction):
             raise ConfigError("session driver returned an Instruction")

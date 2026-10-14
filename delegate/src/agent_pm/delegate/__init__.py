@@ -17,7 +17,7 @@ from agent_pm.delegate.engine.base import Delegate
 from agent_pm.delegate.engine.config import module_roots, package_dirs
 from agent_pm.delegate.engine.drivers import AgentDriver, Driver
 from agent_pm.delegate.engine.plan import configure, plan
-from agent_pm.delegate.engine.runner import IDLE_TIMEOUT, execute
+from agent_pm.delegate.engine.runner import execute
 from agent_pm.delegate.engine.types import (
     Begun,
     ConfigError,
@@ -65,7 +65,6 @@ __all__ = [
     "Progress",
     "Finished",
     "Event",
-    "IDLE_TIMEOUT",
     "STATUSES",
     "OutcomeStatus",
     "Delegate",

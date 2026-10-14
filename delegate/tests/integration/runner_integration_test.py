@@ -15,7 +15,7 @@ from unittest import mock
 
 from agent_pm.delegate import Begun, ConfigError, Finished, Limit, Progress, Result
 from agent_pm.delegate.engine import runner
-from agent_pm.delegate.engine.runner import FIX, IDLE_TIMEOUT
+from agent_pm.delegate.engine.runner import FIX
 from agent_pm.delegate.engine.types import Stopped
 from agent_pm.utils import printable
 
@@ -155,14 +155,10 @@ class Fix(Base):
 
 class Idle(Base):
     def test_silence_longer_than_the_idle_timeout_is_recorded_and_the_run_goes_on(self):
-        self.assertEqual(IDLE_TIMEOUT, 2 * 60 * 60)
-        start = self.driver.start
-        with mock.patch.object(
-            self.driver,
-            "start",
-            side_effect=lambda *a, **kw: start(*a, **{**kw, "idle_timeout": 0.3}),
-        ):
-            r = self.go({"sleep": 1.0}, said(START, block(DONE)))
+        self.write(
+            os.path.join(self.agent_pm, "config.local.toml"), "[delegate]\nidle_timeout = 0.3\n"
+        )
+        r = self.go({"sleep": 1.0}, said(START, block(DONE)))
         self.assertEqual(r.outcome.status, "done")
         idle = [e for e in self.records() if e["kind"] == "idle"]
         self.assertTrue(idle)

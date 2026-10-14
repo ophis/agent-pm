@@ -22,6 +22,8 @@
 #   language        the language reports and PRDs are written in (one line); "" → no rule: the model's default
 #   cwd             the dir the agent run starts in (absolute or ~ path); "" → the caller's current directory
 #                   (the orchestrator's runs: the workdir). A resume reuses its recorded one (<workdir>/run.jsonl)
+#   idle_timeout    positive finite seconds without a session event; omitted → 7200 (2 hours). In tui mode the run
+#                   gives up, leaving the session open; other modes record the idle event and continue
 #   users           local, global only: GitHub logins whose PR comments are the user's; [] → the gh login
 #   trusted_dirs    local, global only: dirs you trust (absolute or ~ path, matched by real path); [] → none. A cwd
 #                   that is one or under one loads its project settings; any other, user settings only, with a stderr
@@ -52,6 +54,7 @@ write = []
 commands = []
 gate = ""
 cwd = ""
+idle_timeout = 7200
 users = []
 trusted_dirs = []
 team_dirs = []
@@ -96,7 +99,7 @@ host = ""
 #                 they are approved. {{workdir}} is the agent run's workdir, {{team}} core's team/ dir; [] → none
 #   gate          a usage-gate command the researcher runs before a costly step (deep research: before a second
 #                 round); its approval follows the runtime's Adapter; "" → none (the orchestrator's overlay sets it)
-#   <run key>     tier, effort, runtime, language, cwd or [output], for that role
+#   <run key>     tier, effort, runtime, language, cwd, idle_timeout or [output], for that role
 
 # ── Researcher ──────────────────────────────────────────
 [roles.researcher]

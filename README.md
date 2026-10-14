@@ -188,6 +188,8 @@ rm -rf ~/.agent-pm/logs/runs.log ~/.agent-pm/logs/router.log ~/.agent-pm/logs/pr
 
 ### Attended runs
 
+A `tui` run gives up after no session event for `idle_timeout` seconds (default `7200`, 2 hours), leaving the session open. Set it in `~/.agent-pm/config.local.toml` under `[delegate]` globally or `[delegate.roles.<role>]` for one role; details: `delegate/src/agent_pm/delegate/config.toml`'s `idle_timeout` comment.
+
 The old router's `--tui` is gone; the new router gains it in [TASK-332](https://linear.app/ophis-workgroup/issue/TASK-332).
 
 ## Layout
