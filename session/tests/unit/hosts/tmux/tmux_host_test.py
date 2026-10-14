@@ -30,7 +30,7 @@ from agent_pm.session.hosts.tmux.tmux_host import TuiError
 from session.tests.case import Case
 from utils.tests.process_fixtures import DEVNULL, TimeoutExpired
 
-RUNTIME = re.compile(r"claude|codex|print_prompt", re.I)
+RUNTIME = re.compile(r"claude|codex", re.I)
 
 FORMAT = "#{pane_dead} #{pane_dead_status} #{pane_dead_signal}"
 

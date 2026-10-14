@@ -1947,13 +1947,6 @@ class RuntimeNames(Sample):
             ],
         )
 
-    def test_print_prompt_is_a_runtime_name(self):
-        root = self.tree({f"delegate/{PKG}/delegate/x.py": 'RUNTIME = "print_prompt"\n'})
-        self.assertEqual(
-            guards.runtime_names(root),
-            [f"delegate/{PKG}/delegate/x.py:1: runtime name print_prompt"],
-        )
-
     def test_policy_runtime_tables_are_exempt(self):
         root = self.tree(
             {"delegate/config.toml": "[policy.claude]\nflags = []\n[policy.codex]\nflags = []\n"}
@@ -1971,16 +1964,6 @@ class RuntimeNames(Sample):
             }
         )
         self.assertEqual(guards.runtime_names(root), ["delegate/config.toml:4: runtime name codex"])
-
-    def test_toml_print_prompt_table_header_and_implementation_line_are_exempt(self):
-        root = self.tree(
-            {
-                "delegate/config.toml": (
-                    '# [adapters.print_prompt]  act-as\'s runtime\n[adapters.print_prompt]\nimplementation = "agent_pm.session.adapters.print_prompt:PrintPromptAdapter"\n'
-                )
-            }
-        )
-        self.assertEqual(guards.runtime_names(root), [])
 
     def test_toml_implementation_line_is_exempt_only_as_module_path_class(self):
         root = self.tree(

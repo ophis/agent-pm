@@ -20,7 +20,7 @@ from tests.import_policy import violation
 UNIT_ISOLATION_ALLOWED = {}
 
 
-RUNTIME = re.compile(r"claude|codex|print_prompt", re.I)
+RUNTIME = re.compile(r"claude|codex", re.I)
 
 
 TOML_CODE = re.compile(r"""(?:[^#"']|"(?:\\.|[^"\\])*"|'[^']*')*""")
