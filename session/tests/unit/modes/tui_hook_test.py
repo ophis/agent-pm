@@ -7,6 +7,7 @@ import json
 import os
 import re
 import stat
+import subprocess
 import sys
 import tempfile
 import types
@@ -32,12 +33,9 @@ class InProcess(Case):
         self.events = os.path.join(self.root, "events")
         self.tmux = install(os.path.join(self.root, "bin"), "")
         write_state(self.dir, state(self.root, self.events))
-        self.fake = types.SimpleNamespace(mark=unittest.mock.Mock(), TuiError=Exception)
+        self.mark = unittest.mock.Mock(return_value=subprocess.CompletedProcess([], 0, "", ""))
 
     def faked(self, uid=None, mode=None, *, executable=True):
-        """main on a tool record, tmux_host the fake; os.stat and os.access of the tmux faked: owner
-        uid, st_mode mode (None: the real ones), whether executable.
-        """
         real_stat, real_access = os.stat, os.access
 
         def fake_stat(path, *args, **kwargs):
@@ -55,17 +53,21 @@ class InProcess(Case):
         with (
             unittest.mock.patch("os.stat", fake_stat),
             unittest.mock.patch("os.access", fake_access),
+            unittest.mock.patch("subprocess.run", self.mark),
+            unittest.mock.patch.dict(os.environ, {"TMUX_PANE": "%3"}),
         ):
-            tui_hook.main(
-                [self.dir, SOURCE_ROOTS, "tool"], io.BytesIO(b"{}"), load_host=lambda: self.fake
-            )
+            tui_hook.main([self.dir, SOURCE_ROOTS, "tool"], io.BytesIO(b"{}"))
 
     def test_a_tmux_of_yours_or_roots_marks(self):
         for uid in (os.getuid(), 0):
             with self.subTest(uid=uid):
-                self.fake.mark.reset_mock()
+                self.mark.reset_mock()
                 self.faked(uid=uid)
-                self.fake.mark.assert_called_once_with("working", self.events, tmux=self.tmux)
+                self.assertEqual(
+                    self.mark.call_args.args[0],
+                    [self.tmux, "set-option", "-t", "%3", "@state", "working"],
+                )
+                self.assertEqual(self.mark.call_count, 1)
 
     def test_a_foreign_non_regular_or_non_executable_tmux_is_refused_after_the_record(self):
         for case, kwargs in (
@@ -78,24 +80,24 @@ class InProcess(Case):
                 self.assertRaisesRegex(tui_hook.HookError, re.escape(self.tmux)),
             ):
                 self.faked(**kwargs)
-        self.fake.mark.assert_not_called()
+        self.mark.assert_not_called()
         with open(os.path.join(self.dir, "hooks.jsonl"), "rb") as f:
             self.assertEqual(len(f.read().splitlines()), 3)
 
     def test_one_write_under_an_exclusive_flock_then_the_mark(self):
-        fake = self.fake
         calls = unittest.mock.Mock()
         with (
             unittest.mock.patch("fcntl.flock", wraps=fcntl.flock) as flock,
             unittest.mock.patch("os.write", wraps=os.write) as write,
+            unittest.mock.patch("subprocess.run", self.mark),
+            unittest.mock.patch.dict(os.environ, {"TMUX_PANE": "%3"}),
         ):
             calls.attach_mock(flock, "flock")
             calls.attach_mock(write, "write")
-            calls.attach_mock(fake.mark, "mark")
+            calls.attach_mock(self.mark, "mark")
             tui_hook.main(
                 [self.dir, SOURCE_ROOTS, "tool"],
                 io.BytesIO(b'{"tool_name": "Bash"}'),
-                load_host=lambda: fake,
             )
         with open(os.path.join(self.dir, "hooks.jsonl"), "rb") as f:
             data = f.read()
@@ -105,7 +107,13 @@ class InProcess(Case):
             [
                 unittest.mock.call.flock(fd, fcntl.LOCK_EX),
                 unittest.mock.call.write(fd, data),
-                unittest.mock.call.mark("working", self.events, tmux=self.tmux),
+                unittest.mock.call.mark(
+                    [self.tmux, "set-option", "-t", "%3", "@state", "working"],
+                    capture_output=True,
+                    text=True,
+                    stdin=subprocess.DEVNULL,
+                    timeout=5,
+                ),
             ],
         )
         self.assertEqual(json.loads(data)["payload"], {"tool_name": "Bash"})
@@ -122,19 +130,6 @@ class InProcess(Case):
                         tui_hook.read_state(path)
                 self.assertEqual(len(os.listdir("/dev/fd")), before)
             (os.rmdir if os.path.isdir(path) else os.unlink)(path)
-
-    def test_tmux_host_is_loaded_by_its_path_with_no_sys_path_change(self):
-        path, modules = list(sys.path), set(sys.modules)
-        module = tui_hook.load_tmux_host()
-        self.assertEqual(
-            os.path.realpath(module.__file__),
-            os.path.realpath(
-                os.path.join(SRC["session"], "agent_pm", "session", "hosts", "tmux", "tmux_host.py")
-            ),
-        )
-        self.assertTrue(callable(module.mark))
-        self.assertEqual(sys.path, path)
-        self.assertNotIn("tmux_host", set(sys.modules) - modules)
 
 
 class Standalone(Case):
