@@ -260,10 +260,15 @@ class ClaudeCommon:
 
     @staticmethod
     def parse_usage(output: str) -> Usage | None:
-        info = None
+        """A successful probe without a rate_limit_event reports no windows."""
+        evented, info, succeeded = False, None, False
         for record in json_records(output.splitlines()):
             if record.get("type") == "rate_limit_event":
-                info = record.get("rate_limit_info")
+                evented, info = True, record.get("rate_limit_info")
+            elif record.get("type") == "result":
+                succeeded = record.get("is_error") is False
+        if not evented:
+            return Usage(None, None) if succeeded else None
         if not isinstance(info, dict):
             return None
         windows = info.get("unifiedWindows")
