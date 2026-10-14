@@ -84,6 +84,50 @@ class CommonDir(Case):
             f.write(f"gitdir: {a}/sym \n")
         self.assertEqual(common_dir(wt), other)
 
+    def test_a_commondir_symlink_is_followed(self):
+        wt = self.add()
+        admin = git("-C", wt, "rev-parse", "--path-format=absolute", "--git-dir")
+        path = os.path.join(admin, "commondir")
+        target = path + "-target"
+        os.rename(path, target)
+        os.symlink(target, path)
+        self.assertEqual(common_dir(wt), os.path.join(self.clone, ".git"))
+
+    def test_a_file_replaced_by_a_fifo_at_open_is_rejected_without_waiting(self):
+        wt = self.add()
+        admin = git("-C", wt, "rev-parse", "--path-format=absolute", "--git-dir")
+        open_file = os.open
+        for path in (os.path.join(wt, ".git"), os.path.join(admin, "commondir")):
+            with self.subTest(path=path):
+                backup = path + "-backup"
+
+                def replace(file, flags, *args, target=path, **kwargs):
+                    if file == target:
+                        self.assertTrue(flags & os.O_NONBLOCK)
+                        os.rename(target, target + "-backup")
+                        os.mkfifo(target)
+                    return open_file(file, flags, *args, **kwargs)
+
+                with unittest.mock.patch("os.open", side_effect=replace):
+                    self.assertIsNone(common_dir(wt))
+                os.unlink(path)
+                os.rename(backup, path)
+
+    def test_a_git_file_replaced_by_a_symlink_at_open_is_rejected(self):
+        wt = self.add()
+        path = os.path.join(wt, ".git")
+        target = path + "-target"
+        open_file = os.open
+
+        def replace(file, flags, *args, **kwargs):
+            if file == path:
+                os.rename(path, target)
+                os.symlink(target, path)
+            return open_file(file, flags, *args, **kwargs)
+
+        with unittest.mock.patch("os.open", side_effect=replace):
+            self.assertIsNone(common_dir(wt))
+
     def test_no_worktree_names_no_clone(self):
         wt = self.add()
         plain, linked, junk, orphan, bare = (
@@ -129,7 +173,7 @@ class Retry(Case):
 
         with unittest.mock.patch.object(agent_pm.utils.git.time, "sleep") as sleep:
             try:
-                return agent_pm.utils.git.git(run, "/w", *args), calls, sleep
+                return agent_pm.utils.git.git("/w", *args, run=run), calls, sleep
             except RuntimeError as e:
                 return e, calls, sleep
 
@@ -172,9 +216,9 @@ class Retry(Case):
     def test_pre_options_go_before_the_worktree_and_the_timeout_is_passed(self):
         seen = []
         agent_pm.utils.git.git(
-            lambda argv, t: seen.append((argv, t)) or ok(),
             "/w",
             "status",
+            run=lambda argv, t: seen.append((argv, t)) or ok(),
             timeout=9,
             pre=("-c", "a=b"),
         )

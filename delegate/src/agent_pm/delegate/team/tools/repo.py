@@ -148,7 +148,7 @@ def check_branch(branch: str) -> None:
 
 def registered(run: Runner, at: str) -> dict[str, str | None]:
     found, path = {}, None
-    for line in git(run, at, "worktree", "list", "--porcelain").splitlines():
+    for line in git(at, "worktree", "list", "--porcelain", run=run).splitlines():
         if line.startswith("worktree "):
             path = os.path.realpath(line[len("worktree ") :])
             found[path] = None
@@ -177,9 +177,11 @@ def worktree(
     symlinks = "true" if clone is not None and clone in links else "false"
     wt, exists = place(repo, base, clone, slug, run=run)
     if exists and clone and os.path.isfile(os.path.join(wt, ".git")):
-        index = git(run, wt, "rev-parse", "--path-format=absolute", "--git-path", "index").strip()
+        index = git(
+            wt, "rev-parse", "--path-format=absolute", "--git-path", "index", run=run
+        ).strip()
         if not os.path.isfile(index):  # its checkout never finished: it holds nothing
-            git(run, clone, "worktree", "remove", "--force", wt, timeout=LONG)
+            git(clone, "worktree", "remove", "--force", wt, run=run, timeout=LONG)
             exists = False
         else:
             found = run(
@@ -202,20 +204,20 @@ def worktree(
     # An explicit refspec without the configured map: a mirror-style remote.origin.fetch can't move
     # local branches.
     if exists:
-        git(run, wt, *FETCH, timeout=LONG)
+        git(wt, *FETCH, run=run, timeout=LONG)
     elif clone is not None:
-        git(run, clone, *FETCH, timeout=LONG)
+        git(clone, *FETCH, run=run, timeout=LONG)
     else:
         clone_repo(repo, wt, run=run)
     at = clone if clone is not None and not exists else wt
-    if add or git(run, wt, "branch", "--show-current").strip() != branch:
+    if add or git(wt, "branch", "--show-current", run=run).strip() != branch:
         trees, mine = registered(run, at), os.path.realpath(wt)
         busy = [p for p, b in trees.items() if b == branch and p != mine]
         if busy:
             raise Invalid(f"{branch} is checked out in {busy[0]}")
-        if git(run, at, "branch", "--list", branch).strip():
+        if git(at, "branch", "--list", branch, run=run).strip():
             opts, start = [], branch
-        elif git(run, at, "ls-remote", "--heads", "origin", f"refs/heads/{branch}").strip():
+        elif git(at, "ls-remote", "--heads", "origin", f"refs/heads/{branch}", run=run).strip():
             opts, start = ["--track", "-b", branch], f"origin/{branch}"
         else:
             opts, start = ["--no-track", "-b", branch], f"origin/{onto}"
@@ -229,10 +231,9 @@ def worktree(
                 ).stdout.strip()
                 != "true"
             ):
-                git(run, clone, "config", "extensions.worktreeConfig", "true")
+                git(clone, "config", "extensions.worktreeConfig", "true", run=run)
             force = ["--force"] if mine in trees else []
             git(
-                run,
                 clone,
                 "worktree",
                 "add",
@@ -241,17 +242,18 @@ def worktree(
                 *opts,
                 wt,
                 start,
+                run=run,
                 timeout=LONG,
             )
             try:
-                git(run, wt, "config", "--worktree", "core.symlinks", symlinks)
-                git(run, wt, "reset", "-q", "--hard", timeout=LONG)
+                git(wt, "config", "--worktree", "core.symlinks", symlinks, run=run)
+                git(wt, "reset", "-q", "--hard", run=run, timeout=LONG)
             except (GitError, subprocess.TimeoutExpired):
                 run(["git", "-C", clone, "worktree", "remove", "--force", wt], LONG)
                 raise
         else:
-            git(run, wt, "checkout", *opts, start, timeout=LONG)
-    commit = git(run, wt, "rev-parse", "HEAD").strip()
+            git(wt, "checkout", *opts, start, run=run, timeout=LONG)
+    commit = git(wt, "rev-parse", "HEAD", run=run).strip()
     if not SHA.fullmatch(commit):
         raise RepoCommandError(f"git rev-parse HEAD: {commit[:80]!r}")
     return {
@@ -314,7 +316,7 @@ def status(
         raise Invalid(f"{wt} missing: run worktree first")
     docs = plan_docs(wt, branch)
     since = (
-        git(run, wt, "log", "-1", "--format=%cI", "--", *[d["path"] for d in docs]).strip()
+        git(wt, "log", "-1", "--format=%cI", "--", *[d["path"] for d in docs], run=run).strip()
         if docs
         else ""
     )
