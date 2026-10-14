@@ -14,6 +14,7 @@ from agent_pm.session.engine.types import (
     Usage,
     Window,
 )
+from agent_pm.utils import LOCAL_ENV_VARS
 
 from session.tests.case import SPAWNS, Case
 from session.tests.source_roots import PACKAGE_ROOTS
@@ -60,13 +61,37 @@ class ModelEffortTest(Base):
         )
 
 
+class SettingSourcesTest(Base):
+    def test_session_flags_cannot_override_access_project_in_either_mode(self):
+        for flags in (
+            ("--setting-sources", "user,project,local"),
+            ("--setting-sources=user,project,local",),
+        ):
+            for resume in (False, True):
+                spec = Spec(workdir=self.work, sid=SID, flags=flags, resume=resume)
+                adapter = ClaudeAdapter({})
+                for launch in (
+                    lambda adapter=adapter, spec=spec: adapter.headless().launch(spec),
+                    lambda adapter=adapter, spec=spec: adapter.tui().launch(
+                        spec, HOOK, source_roots=PACKAGE_ROOTS
+                    ),
+                ):
+                    with self.subTest(flags=flags, resume=resume):
+                        self.refused(
+                            launch,
+                            "--setting-sources is set by the Claude adapter: use Access.project",
+                        )
+
+
 class ReadRulesTest(Base):
     def modes(self, *, resume=False, config=None, **access):
         spec = Spec(workdir=self.work, sid=SID, access=Access(**access), prompt="hi", resume=resume)
         adapter = ClaudeAdapter({} if config is None else config)
         return (
-            lambda: adapter.headless().launch(spec),
-            lambda: adapter.tui().launch(spec, HOOK, source_roots=PACKAGE_ROOTS),
+            lambda adapter=adapter, spec=spec: adapter.headless().launch(spec),
+            lambda adapter=adapter, spec=spec: adapter.tui().launch(
+                spec, HOOK, source_roots=PACKAGE_ROOTS
+            ),
         )
 
     def both(self, *, resume=False, config=None, **access) -> list[tuple[str, ...]]:
@@ -150,6 +175,28 @@ class ReadRulesTest(Base):
 
 
 class EnvTest(Base):
+    def test_repository_selection_environment_is_removed_from_every_launch_source(self):
+        git_env = dict.fromkeys(LOCAL_ENV_VARS, "/deployment")
+        config = {"env": {**git_env, "KEEP": "configured"}}
+        for resume in (False, True):
+            spec = Spec(
+                workdir=self.work,
+                sid=SID,
+                resume=resume,
+                access=Access(env=git_env),
+                env=git_env,
+            )
+            adapter = ClaudeAdapter(config)
+            for launch in (
+                adapter.headless().launch(spec),
+                adapter.tui().launch(spec, HOOK, source_roots=PACKAGE_ROOTS),
+                adapter.usage_probe(),
+            ):
+                with self.subTest(resume=resume, argv=launch.argv):
+                    self.assertTrue(set(launch.unset) >= LOCAL_ENV_VARS)
+                    self.assertFalse(LOCAL_ENV_VARS & launch.env.keys())
+                    self.assertEqual(launch.env["KEEP"], "configured")
+
     def test_headless_defaults_overlaid_by_the_config_env_tui_only_the_config_env(self):
         self.assertEqual(ClaudeCommon({}).env(), {})
         config = {"env": {"K": "v", "CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS": "1"}}

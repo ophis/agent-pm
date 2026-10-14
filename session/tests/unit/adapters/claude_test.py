@@ -16,6 +16,7 @@ from agent_pm.session.engine.types import (
     Usage,
     Window,
 )
+from agent_pm.utils import LOCAL_ENV_VARS
 
 from session.tests.unit.adapters.claude.support import (
     CEILING,
@@ -90,6 +91,10 @@ class ConfigTest(Base):
                 self.assertIn("[adapters.claude].env", str(caught.exception))
                 self.assertNotIn("SECRET", str(caught.exception))
 
+    def test_accepts_exec_environment_names(self):
+        env = {"A-B": "", "1A": "v", "X;Y": "v", "A B": "v", "Ä": "v"}
+        self.assertEqual(ClaudeAdapter({"env": env}).config["env"], env)
+
     def test_setting_sources_in_flags_is_refused(self):
         for flags in (
             ["--setting-sources"],
@@ -106,7 +111,7 @@ class ConfigTest(Base):
         adapter = ClaudeAdapter({})
         self.assertEqual(
             (adapter.session_env, adapter.identity_env, adapter.child_defaults),
-            ("CLAUDECODE", UNSET, {}),
+            ("CLAUDECODE", tuple(key for key in UNSET if key not in LOCAL_ENV_VARS), {}),
         )
 
 

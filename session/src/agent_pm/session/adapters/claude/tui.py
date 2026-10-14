@@ -73,7 +73,7 @@ class ClaudeTui(Tui):
         }
         tail = ("--", spec.prompt) if spec.prompt else ()
         settings, flags = common.merged(spec.flags, hooks)
-        return common.launch(spec, settings, tail=(*flags, *tail), resume=spec.resume)
+        return common.launch(spec, settings, tail=(*flags, *tail))
 
     def restore(self, spec, state):
         self.sid = spec.sid or ""

@@ -8,6 +8,7 @@ Scenario: the JSON object in $FAKE_CLAUDE_SCENARIO's file (bad: exit 1):
 - steps: a string is assistant text; {"kind": "tool", "name": N} is a tool_use (interactive: then
 PostToolUse). In print, {"kind": "limit", "resets_at": T} is a rejected rate_limit_event, then LIMIT
 with error "rate_limit". {"kind": "write", "path": P, "text": T} writes T to P (relative to cwd).
+{"kind": "git"} replies with git rev-parse --show-toplevel's stdout and exit code.
 Interactive {"kind": "limit"|"dialog", "text": S} prints S, then ends the turn without Stop or reads
 another line. Other steps: {"kind": "hook", "event": E, ...}; {"kind": "sleep", "seconds": X}.
 - turns: interactive steps of turn 2 on.
@@ -68,6 +69,7 @@ def _text(value) -> bool:
 
 
 PRINT = {
+    "git": {},
     "tool": {"name": _text},
     "limit": {"resets_at": lambda v: v is None or _number(v)},
     "write": {"path": lambda v: _text(v) and v != "", "text": _text},
@@ -378,6 +380,23 @@ def printed(s, a, journal, parent):
             os.makedirs(os.path.dirname(os.path.abspath(step["path"])), exist_ok=True)
             with open(step["path"], "w", encoding="utf-8") as f:
                 f.write(step["text"])
+        elif step["kind"] == "git":
+            result = subprocess.run(
+                [
+                    "git",
+                    "-c",
+                    "core.fsmonitor=false",
+                    "-c",
+                    "core.hooksPath=/dev/null",
+                    "rev-parse",
+                    "--show-toplevel",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            last = json.dumps({"returncode": result.returncode, "stdout": result.stdout.strip()})
+            journal.assistant([{"type": "text", "text": last}])
         else:
             resets = {} if step["resets_at"] is None else {"resetsAt": step["resets_at"]}
             journal.say(

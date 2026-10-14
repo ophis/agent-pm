@@ -9,6 +9,7 @@ from agent_pm.session.adapters.claude.common import ClaudeCommon, added_dirs
 from agent_pm.session.adapters.claude.headless import ClaudeHeadless
 from agent_pm.session.adapters.claude.tui import ClaudeTui
 from agent_pm.session.engine.types import SessionInfo, Spec
+from agent_pm.utils import LOCAL_ENV_VARS
 
 
 class ClaudeAdapter(Adapter):
@@ -36,7 +37,7 @@ class ClaudeAdapter(Adapter):
     keys = frozenset({"flags", "allow", "tiers", "efforts", "env"})
     runtime_note = ClaudeCommon.NOTE
     session_env = "CLAUDECODE"
-    identity_env = ClaudeCommon.UNSET
+    identity_env = tuple(key for key in ClaudeCommon.UNSET if key not in LOCAL_ENV_VARS)
 
     def __init__(self, config):
         super().__init__(config)
