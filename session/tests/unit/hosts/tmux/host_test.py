@@ -346,6 +346,18 @@ class AttachListTest(Base):
 
 
 class ProcessTest(Base):
+    def test_close_after_controller_death_kills_only_its_captured_pane(self):
+        self.active()
+        process = self.host.attach("d1")
+        self.connection.connect.side_effect = ConnectionRefusedError
+        process.close()
+        self.tmux.kill.assert_called_once_with("%7")
+        self.tmux.kill.reset_mock()
+        self.tmux.process.return_value = "4242 $4 %9 5555"
+        process.close()
+        self.tmux.kill.assert_not_called()
+        self.killpg.assert_not_called()
+
     def test_record_is_the_stored_line_parsed_else_none(self):
         process = self.host.attach("d1")
         for stored, want in (

@@ -89,7 +89,13 @@ class TmuxProcess(HostProcess):
         if self._control is None:
             self._close_pane()
             return
-        self._kill_group()
+        try:
+            self._kill_group()
+        except DriverError as error:
+            if not isinstance(error.__cause__, ConnectionRefusedError | ConnectionResetError):
+                raise
+            self._close_pane()
+            return
         deadline = time.monotonic() + KILL_WAIT
         while self._group_live():
             if time.monotonic() >= deadline:
