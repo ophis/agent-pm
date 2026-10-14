@@ -308,7 +308,7 @@ def run_prune(gql, now, promoter, pruner=None):
             work=promoter.cfg.runs_dir,
             team=promoter.team,
             roles=promoter.roles,
-            driver=promoter.cfg.driver,
+            cfg=promoter.cfg,
         ).run()
     except Unavailable as e:
         linear_error("prune", e, dry=promoter.dry)

@@ -8,7 +8,7 @@ from unittest import mock
 
 from agent_pm.linear_orchestrator.engine import log, types
 from agent_pm.linear_orchestrator.engine.types import ConfigError, LinearError
-from agent_pm.utils import one_line, timestamp
+from agent_pm.utils import one_line
 from orchestrator_tests.case import Case
 from orchestrator_tests.unit.clock import logs_at
 from orchestrator_tests.unit.linear_fixtures import (
@@ -22,13 +22,8 @@ class Helpers(Case):
         for bad in ("task-7", "7-ENG", "ENG-", "ENG-7 "):
             self.assertIsNone(re.fullmatch(types.ISSUE_ID, bad), bad)
 
-    def test_one_line(self):
-        self.assertEqual(one_line("a\n\n  b\tc "), "a b c")
-        self.assertEqual(one_line(RuntimeError("two\nlines")), "RuntimeError: two lines")
+    def test_application_exception_text(self):
         self.assertEqual(one_line(LinearError("api error")), "LinearError: api error")
-
-    def test_stamp_is_local_time_in_seconds(self):
-        self.assertRegex(timestamp(), r"\A\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d[+-]\d\d:\d\d\Z")
 
 
 class Log(Logs):

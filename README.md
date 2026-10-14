@@ -28,6 +28,7 @@ flowchart TB
   subgraph LO[agent_pm.linear_orchestrator]
     R["engine/router.py<br>pick · usage gate"]
     RU["engine/run.py<br>one run · write-back"]
+    LR["engine/linear_run.py<br>Delegate ownership · queries"]
     PP["engine/promote.py → prune.py"]
     LC["engine/config.py<br>[core] overlay"]
   end
@@ -59,8 +60,10 @@ flowchart TB
   HU -.-> W
   R -.->|detached session| RU
   RU -->|agent_pm.delegate| D
-  LC -->|agent_pm.delegate| C
-  LO -->|"legacy agent_pm.session imports"| DR
+  R --> LR
+  LR -->|agent_pm.delegate| D
+  LC -->|"Delegate class methods"| D
+  R & RU -->|"legacy launch until TASK-374"| DR
   W -.-> CC
   D --> C
   D -->|agent_pm.session| SE
@@ -150,7 +153,7 @@ flowchart LR
 
 ### Task labels
 
-The issue's label in the `Tasks` label group names one of the assignee role's tasks by its id, through `[task_labels]`, so renaming a label keeps working: the agent run does exactly that task. No such label → the agent run picks one from its role's task index (`delegate/src/agent_pm/delegate/team/roles/<role>.md` › Tasks: what each task does, when to use it, how heavy; unsure → the default it names), and its start comment names the pick and why. A label not in `[task_labels]`, a task not the role's, or several task labels → no agent run, no attempt counted: the router subscribes you, moves the issue to In Review and comments why; fix the label, move it back to Todo. To upgrade a Light Research issue, swap in the Deep Research label, comment the claims to verify and move it back to Todo: the next agent run is `deep-research`, with the earlier report in its input. A resumed agent run keeps its session's task whatever the labels say (`<work_dir>/logs/runs.jsonl` keeps only the role); an interrupted agent run whose logged role is not the assignee's goes to In Review with a comment.
+The issue's label in the `Tasks` label group names one of the assignee role's tasks by its id, through `[task_labels]`, so renaming a label keeps working: the agent run does exactly that task. No such label → the agent run picks one from its role's task index (`delegate/src/agent_pm/delegate/team/roles/<role>.md` › Tasks: what each task does, when to use it, how heavy; unsure → the default it names), and its start comment names the pick and why. A label not in `[task_labels]`, a task not the role's, or several task labels → no agent run, no attempt counted: the router subscribes you, moves the issue to In Review and comments why; fix the label, move it back to Todo. To upgrade a Light Research issue, swap in the Deep Research label, comment the claims to verify and move it back to Todo: the next agent run is `deep-research`, with the earlier report in its input. A resumed agent run keeps its session's task whatever the labels say; an interrupted agent run whose logged role is not the assignee's goes to In Review with a comment.
 
 **Upgrade** from task-level config: a role table holding `default_task` or `tasks` stops agent runs with a config error naming its new table. Drop `default_task`; move the keys of `config.local.toml`'s `[delegate.roles.<role>.tasks.<task>]` to `[delegate.roles.<role>]` and of its `[delegate.clients.<name>.roles.<role>.tasks.<task>]` to `[delegate.clients.<name>.roles.<role>]` (e.g. `[delegate.clients.skill.roles.<role>.output]`), of its `[linear_orchestrator.core.roles.<role>.tasks.<task>]` to `[linear_orchestrator.core.roles.<role>]`. Then do Operating's Upgrade too.
 
@@ -176,7 +179,7 @@ tmux attach -t '=agent-pm-<role>-<ID>'                       # watch one agent r
 | Log | Contents |
 |---|---|
 | `<work_dir>/logs/orchestrator.jsonl` | Every router, promote, prune, run and write-back event, one JSON object a line: `ts`, `src`, `kind`, then `issue` when it has one. An idle tick writes none; the same skip, config-load error or Linear outage (`linear-error`: a 5xx, rate limit, timeout or network error; the run stops, the next retries), once a day |
-| `<work_dir>/logs/runs.jsonl` | Agent run start/resume lines of the last 7 days: keep it, resume and Recover read it |
+| `<work_dir>/logs/runs.jsonl` | Start/resume rows from the last 7 days, every issue's latest session rows regardless of age, and unexpired usage limits. Rows record Delegate kind and runtime; legacy rows use the fixed `harness` registration. Keep it: resume and Recover read it |
 
 An agent run's workdir `<work_dir>/work/<ID>/` holds `run.jsonl` (its record: input, sessions, progress, outcome; headless, the client's stderr), `writeback.json` (the write-back steps done) and, for a `local` or `orchestrator` destination, `out.md` (the deliverable); `src/`, `publish/` and `tmp/` are workspaces (Finish). Documents are published from the agent run's clone in `publish/`: `git pull` your own docs clone to see them. Each session gets a `Run <sid>` comment on its issue, holding `cd <cwd> && claude --resume <sid>`: to open the session, first move the issue out of In Progress, or the router may resume it once idle 30 minutes. Moving `<work_dir>` or a run's cwd breaks resuming its in-progress agent runs.
 

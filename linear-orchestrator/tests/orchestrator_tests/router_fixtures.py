@@ -14,6 +14,7 @@ from unittest import mock
 
 from agent_pm.linear_orchestrator.engine import (
     config,
+    gate,
     inputs,
     ops,
     router,
@@ -26,6 +27,7 @@ from orchestrator_tests.unit.board_ids import ACCOUNTS, HEADER, TEAM, team_node
 from orchestrator_tests.unit.board_ids import STATES as IDS_BY_KEY
 from orchestrator_tests.unit.board_ids import role as role_table
 from orchestrator_tests.unit.clock import logs_at
+from orchestrator_tests.unit.delegate_fixture import provider
 from orchestrator_tests.unit.fake_api import FakeApi
 from orchestrator_tests.unit.run_fixtures import (
     ENGINEER,
@@ -416,9 +418,13 @@ class Base(run_fixtures.Base):
         self.mark = len(logged(self.logs))
         return logs_at(self.logs)
 
+    def cfg(self):
+        cfg = config.load(path=self.config_path)
+        return replace(cfg, delegates={**cfg.delegates, cfg.delegate_kind: provider(self.api, cfg)})
+
     def board(self, fake, use, *, dry=False, gate=False, again=False):
         self.write_runs()
-        cfg = replace(config.load(path=self.config_path), driver=self.api)
+        cfg = self.cfg()
         err = io.StringIO()
         with redirect_stderr(err), self.log_dir(again=again):
             out = use(
@@ -428,7 +434,7 @@ class Base(run_fixtures.Base):
                     cfg,
                     now=NOW,
                     dry=dry,
-                    gate=router.Gate(self.runs, NOW, dry=dry, driver=self.api) if gate else None,
+                    gate=gate.Gate(self.runs, NOW, dry=dry, cfg=cfg) if gate else None,
                 )
             )
         self.raw, self.err = err.getvalue(), self.unmap(err.getvalue())
@@ -500,6 +506,19 @@ class TickBase(Base):
     ):
         # outer: main's run and keychain; main then starts through its own outer
         self.api.live = None if live is None else list(live)
+        recorded = {json.loads(line)["issue"] for line in self.lines}
+        for name in live or ():
+            found = re.fullmatch(r"agent-pm-([a-z][a-z0-9-]*)-([A-Z][A-Z0-9]*-\d+)", name)
+            if found and found[2] not in recorded:
+                self.add(kind="start", ident=found[2], sid=f"live:{name}", minutes_ago=10, role=found[1])
+                recorded.add(found[2])
+        if live is None and not self.lines:
+            self.add(kind="start", ident="TASK-0", sid="unknown", minutes_ago=10)
+        try:
+            delegate_cls = self.cfg().delegate_cls
+        except config.ConfigError:
+            delegate_cls = None
+
         self.api.order, self.api.usage_calls, self.api.info = [], [], []
         self.start = None if outer else start or Start()
         self.write_runs()
@@ -516,6 +535,7 @@ class TickBase(Base):
                 hour=hour,
                 gql=fake,
                 driver=self.api,
+                delegate_cls=delegate_cls,
                 start=self.start,
                 **outer or {},
             )
@@ -530,7 +550,9 @@ class TickBase(Base):
 
     def last_run(self):
         entry = json.loads(self.state.splitlines()[-1])
-        self.assertEqual(list(entry), ["ts", "kind", "issue", "sid", "role", "runtime"])
+        self.assertEqual(
+            list(entry), ["ts", "kind", "issue", "sid", "role", "runtime", "delegate_kind"]
+        )
         return entry["kind"], entry["issue"], entry["sid"], entry["role"], entry["runtime"]
 
     def launched(self):
@@ -566,7 +588,7 @@ class OuterBase(TickBase):
             mode=mode,
             runtime=runtime,
         )
-        cfg = replace(config.load(path=self.config_path), driver=self.api)
+        cfg = self.cfg()
         err = io.StringIO()
         with redirect_stderr(err), self.log_dir(again=True):
             rc = router.outer(
@@ -575,6 +597,7 @@ class OuterBase(TickBase):
                 gql=functools.partial(self.gql, service=HARNESS),
                 run=self.run_,
                 keychain=self.keychain,
+                driver=self.api,
             )
         self.err = err.getvalue()
         return rc

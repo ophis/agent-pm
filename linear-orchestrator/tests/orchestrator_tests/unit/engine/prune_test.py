@@ -5,9 +5,9 @@ import shutil
 from functools import partial
 from unittest import mock
 
+from agent_pm.delegate import ConfigError, DriverError
 from agent_pm.linear_orchestrator.engine import config, ops, prune
 from agent_pm.linear_orchestrator.engine.types import LinearError
-from agent_pm.session import ConfigError, DriverError
 from agent_pm.utils import temp_dirs
 from orchestrator_tests.case import Case
 from orchestrator_tests.prune_fixtures import NOW, ROLES, TEAM_OBJ, PruneScenario, gql_for, write
@@ -16,6 +16,8 @@ from orchestrator_tests.unit.board_ids import STATES as IDS_BY_KEY
 from orchestrator_tests.unit.run_fixtures import HARNESS, logged
 
 A, B = "engineer-TASK-7-0b6f2c1e", "dummy-tester-TASK-7-7c1d9e2f"
+SID = "0b6f2c1e-6d0a-4c1b-9a51-3f1f6b0e2a7d"
+OTHER_SID = "7c1d9e2f-0a3b-4c5d-8e6f-1a2b3c4d5e6f"
 
 
 class RepositoryCleanup(PruneScenario):
@@ -82,7 +84,7 @@ class RepositoryCleanup(PruneScenario):
         )
         self.assertEqual(self.prune(gql), (0, ""))
         self.assertTrue(os.path.isdir(path) and os.path.isdir(busy))
-        self.assertEqual(self.api.order, [("sessions", None)])
+        self.assertEqual(self.api.order, [])
 
     def test_unknown_finish_time_skipped(self):
         path = self.mkc("TASK-49", "src", "o", "repo")
@@ -331,7 +333,7 @@ class RetentionCleanup(PruneScenario):
             NOW,
             dry=False,
             work=self.work,
-            driver=self.api,
+            cfg=self.cfg,
             team=TEAM_OBJ,
             roles=ROLES,
         )
@@ -441,47 +443,39 @@ class RetentionCleanup(PruneScenario):
         self.assertIn("prune-error error=archive: Linear: LinearError: linear api error: down", out)
         self.assertFalse(os.path.lexists(clone))
 
-    def test_a_live_tui_session_alone_makes_a_candidate_closed_when_finished_24h(self):
-        self.api.live = [A, B, "engineer-TASK-8-aaaaaaaa"]
+    def test_recorded_run_alone_closes_all_owned_sessions_when_finished(self):
+        self.record("TASK-7", SID, [B, A])
+        self.record("TASK-8", OTHER_SID, ["other-host-agent"])
         gql = gql_for(
             {"TASK-7": ("Done", [(24, "Done")]), "TASK-8": ("In Progress", [(30, "In Progress")])}
         )
         code, out = self.prune(gql)
         self.assertEqual(code, 0)
-        self.assertEqual(
-            out.splitlines(),
-            [f"prune-closed TASK-7 session={B}", f"prune-closed TASK-7 session={A}"],
-        )
+        self.assertEqual(out.splitlines(), [f"prune-closed TASK-7 session={SID}"])
         self.assertEqual(gql.calls.count(prune.Q_ISSUE), 2)
         self.assertEqual(self.closed(), [B, A])
+        again = gql_for({"TASK-7": ("Done", [(24, "Done")]), "TASK-8": ("In Progress", [])})
+        self.prune(again)
+        self.assertEqual(self.closed(), [B, A])
 
-    def test_only_names_of_the_contract_make_candidates_and_get_closed(self):
-        others = [
-            "agent-pm-engineer-TASK-7",
-            "Engineer-TASK-8-aaaaaaaa",
-            "engineer-build-7c1d9e2f",
-            "notes",
-        ]
-        self.api.live = [*others, A, "engineer-TASK-70-bbbbbbbb"]
-        gql = gql_for(
-            {"TASK-7": ("Done", [(30, "Done")]), "TASK-70": ("In Progress", [(30, "In Progress")])}
-        )
-        code, out = self.prune(gql)
-        self.assertEqual((code, out.splitlines()), (0, [f"prune-closed TASK-7 session={A}"]))
-        self.assertEqual(self.closed(), [A])
+    def test_unrecorded_matching_names_never_make_candidates(self):
+        self.api.live = [A, "agent-pm-engineer-TASK-7", "notes"]
+        gql = gql_for({"TASK-7": ("Done", [(30, "Done")])})
+        self.assertEqual(self.prune(gql), (0, ""))
+        self.assertEqual(self.closed(), [])
+        self.assertNotIn(prune.Q_ISSUE, gql.calls)
 
-    def test_only_configured_roles_tui_sessions_make_candidates_and_get_closed(self):
-        self.api.live = ["designer-TASK-7-0c0c0c0c", A, "designer-TASK-9-0d0d0d0d"]
-        done = ("Done", [(30, "Done")])
-        gql = gql_for({"TASK-7": done, "TASK-9": done})
-        code, out = self.prune(gql)
-        self.assertEqual((code, out.splitlines()), (0, [f"prune-closed TASK-7 session={A}"]))
+    def test_only_recorded_configured_roles_make_candidates(self):
+        self.record("TASK-7", SID, [A])
+        self.record("TASK-9", OTHER_SID, ["designer-agent"], role="designer")
+        gql = gql_for(dict.fromkeys(("TASK-7", "TASK-9"), ("Done", [(30, "Done")])))
+        self.assertEqual(self.prune(gql), (0, f"prune-closed TASK-7 session={SID}"))
         self.assertEqual(self.closed(), [A])
         self.assertEqual(gql.calls.count(prune.Q_ISSUE), 1)
 
     def test_clone_and_session_issue_queried_once_sessions_first(self):
         clone = self.mkc("TASK-7", "src", "o", "repo")
-        self.api.live = [A]
+        self.record("TASK-7", SID, [A])
         seen, close = [], self.api.close
         gql = gql_for({"TASK-7": ("Canceled", [(30, "Canceled")])})
         with mock.patch.object(
@@ -492,7 +486,7 @@ class RetentionCleanup(PruneScenario):
         self.assertEqual(
             out.splitlines(),
             [
-                f"prune-closed TASK-7 session={A}",
+                f"prune-closed TASK-7 session={SID}",
                 "prune-removed entry=TASK-7/src/o/repo what=clone",
             ],
         )
@@ -500,26 +494,15 @@ class RetentionCleanup(PruneScenario):
         self.assertEqual(gql.calls.count(prune.Q_ISSUE), 1)
         self.assertFalse(os.path.lexists(clone))
 
-    def test_dry_run_plans_each_live_session_and_kills_none(self):
-        self.api.live = [A, B, "engineer-TASK-70-bbbbbbbb"]
+    def test_dry_run_plans_recorded_run_and_closes_none(self):
+        self.record("TASK-7", SID, [B, A])
+        self.record("TASK-70", OTHER_SID, ["other-host-agent"])
         code, out = self.prune(
-            gql_for(
-                {
-                    "TASK-7": ("Done", [(30, "Done")]),
-                    "TASK-70": ("In Progress", [(30, "In Progress")]),
-                }
-            ),
+            gql_for({"TASK-7": ("Done", [(30, "Done")]), "TASK-70": ("In Progress", [])}),
             dry=True,
         )
-        self.assertEqual(code, 0)
-        self.assertEqual(
-            out.splitlines(),
-            [
-                f"prune-plan TASK-7 session={B} what=close the tui session",
-                f"prune-plan TASK-7 session={A} what=close the tui session",
-            ],
-        )
-        self.assertEqual(self.api.order, [("sessions", None)])
+        self.assertEqual((code, out), (0, f"prune-plan TASK-7 session={SID} what=close the run"))
+        self.assertEqual(self.api.order, [])
 
     def test_sessions_unknown_prune_no_issue_but_archive(self):
         for dry, archived in (
@@ -530,33 +513,66 @@ class RetentionCleanup(PruneScenario):
                 self.fresh()
                 self.api.order.clear()
                 kept = [self.mkc("TASK-49", "src", "o", "repo"), self.mkc("TASK-49", "publish")]
-                self.api.live = None
+                self.record("TASK-49", SID, [A])
+                os.unlink(os.path.join(self.cfg.run_dir("TASK-49"), "delegate.json"))
                 gql = gql_for({"TASK-49": ("Done", [(30, "Done")])}, owners={"TASK-49": "u-pm"})
                 code, out = self.prune(gql, dry=dry)
                 self.assertEqual(
                     (code, out.splitlines()),
-                    (3, ["prune-error error=tui sessions unknown", archived]),
+                    (3, ["prune-error error=run inventory unknown", archived]),
                 )
                 self.assertTrue(all(os.path.isdir(os.path.join(p, ".git")) for p in kept))
                 self.assertNotIn(prune.Q_ISSUE, gql.calls)
                 self.assertEqual(gql.archived, [] if dry else ["id-TASK-49"])
-                self.assertEqual(self.api.order, [("sessions", None)])
+                self.assertEqual(self.api.order, [])
 
     def test_close_failure_counted(self):
         for error in (DriverError("boom"), ConfigError("bad name")):
             with self.subTest(error=type(error).__name__):
                 self.api.order.clear()
-                self.api.live, self.api.errors = [A, B], {B: error}
+                self.record("TASK-7", SID, [B, A])
+                self.api.errors = {B: error}
                 code, out = self.prune(gql_for({"TASK-7": ("Done", [(30, "Done")])}))
                 self.assertEqual(code, 3)
                 self.assertEqual(
                     out.splitlines(),
                     [
-                        f"prune-error TASK-7 session={B} error={type(error).__name__}: {error}",
-                        f"prune-closed TASK-7 session={A}",
+                        f"prune-error TASK-7 session={SID} error={type(error).__name__}: {error}",
                     ],
                 )
                 self.assertEqual(self.closed(), [B, A])
+
+    def test_close_failure_still_closes_other_runs_and_deletes_workspace(self):
+        clone = self.mkc("TASK-7", "src", "o", "repo")
+        self.record("TASK-7", SID, [B, A])
+        self.api.errors = {B: DriverError("boom")}
+        code, out = self.prune(gql_for({"TASK-7": ("Done", [(30, "Done")])}))
+        self.assertEqual(code, 3)
+        self.assertEqual(self.closed(), [B, A])
+        self.assertFalse(os.path.exists(clone))
+        self.assertEqual(
+            out.splitlines(),
+            [
+                f"prune-error TASK-7 session={SID} error=DriverError: boom",
+                "prune-removed entry=TASK-7/src/o/repo what=clone",
+            ],
+        )
+
+    def test_failed_run_close_does_not_stop_another_finished_issue(self):
+        self.record("TASK-7", SID, [A])
+        self.record("TASK-8", OTHER_SID, ["other-host-agent"])
+        self.api.errors = {A: DriverError("boom")}
+        gql = gql_for(dict.fromkeys(("TASK-7", "TASK-8"), ("Done", [(30, "Done")])))
+        code, out = self.prune(gql)
+        self.assertEqual(code, 3)
+        self.assertEqual(self.closed(), [A, "other-host-agent"])
+        self.assertEqual(
+            out.splitlines(),
+            [
+                f"prune-error TASK-7 session={SID} error=DriverError: boom",
+                f"prune-closed TASK-8 session={OTHER_SID}",
+            ],
+        )
 
     def test_promote_tick_archives_with_its_roles(self):
         gql = gql_for({"TASK-1": ("Done", [(30, "Done")])}, owners={"TASK-1": "u-pm"})
@@ -565,12 +581,12 @@ class RetentionCleanup(PruneScenario):
         self.assertIn("prune-archived TASK-1", out)
         self.assertEqual(self.user_queries, len(tp.ROLE))
 
-    def test_promote_tick_lists_and_closes_sessions_through_the_fake_driver(self):
-        self.api.live = [A]
+    def test_promote_tick_closes_recorded_runs_through_the_delegate(self):
+        self.record("TASK-7", SID, [A])
         code, _, out = self.tick(gql_for({"TASK-7": ("Done", [(30, "Done")])}))
         self.assertEqual(code, 0)
-        self.assertIn(f"prune-closed TASK-7 session={A}", out)
-        self.assertEqual(self.api.order, [("sessions", None), ("close", A)])
+        self.assertIn(f"prune-closed TASK-7 session={SID}", out)
+        self.assertEqual(self.api.order, [("close", A)])
 
     def test_prune_failure_leaves_handoff_alone(self):
         clone = self.mkc("TASK-49", "src", "o", "repo")

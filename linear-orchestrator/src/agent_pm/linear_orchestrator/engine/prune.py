@@ -1,7 +1,6 @@
 """Prune, for each issue Done or Canceled at least 24 hours ago (its latest move into either; unknown:
 skipped):
-- closes its live TUI sessions of a configured role (session.close) before its checkouts go, since a
-  left-open agent may work in one;
+- closes its recorded run through LinearRun before its checkouts go;
 - deletes <work_dir>/work/<ID>/src/<owner>/*, publish and tmp, each a real directory inside its own
   folder, a src or publish entry only as a clone or worktree (.git a directory or a file),
   uncommitted work included;
@@ -11,7 +10,7 @@ skipped):
   filters or hooks, never runs outside auto mode's review);
 - archives every finished issue of the team assigned to the pm or engineer role account.
 
-TUI sessions unknown: an error, and no issue is pruned. Each step is logged (event_log.log, src prune);
+Run inventory unknown: an error, and no issue is pruned. Each step is logged (event_log.log, src prune);
 a failure is logged and the rest goes on (run returns 3), but Unavailable is raised.
 """
 
@@ -23,13 +22,15 @@ import shutil
 import subprocess
 from datetime import timedelta
 
-from agent_pm.linear_orchestrator.engine import config, run_comments
+from agent_pm.delegate import ConfigError as DelegateConfigError
+from agent_pm.delegate import DriverError
+from agent_pm.linear_orchestrator.engine import config, runs
 from agent_pm.linear_orchestrator.engine.config import CLONES
+from agent_pm.linear_orchestrator.engine.linear_run import LinearRun
 from agent_pm.linear_orchestrator.engine.log import log
 from agent_pm.linear_orchestrator.engine.ops import HISTORY, call, last_move
 from agent_pm.linear_orchestrator.engine.types import ISSUE_ID, LinearError, Unavailable
-from agent_pm.session import DriverError
-from agent_pm.utils import GUARD, SHORT, GitError, common_dir, one_line, sh, under
+from agent_pm.utils import GUARD, SHORT, GitError, common_dir, one_line, under
 from agent_pm.utils import run_git as git
 
 QUARANTINE = timedelta(hours=24)
@@ -55,13 +56,13 @@ class Skip(Exception):
 
 
 class Pruner:
-    def __init__(self, gql, now, *, dry, run=None, work, team, roles, driver, writable=None):
+    def __init__(self, gql, now, *, dry, run=None, work, team, roles, cfg, writable=None):
         self.gql, self.now, self.dry, self.work = gql, now, dry, work
         self.team, self.roles = team, roles
-        self.run_git = run or functools.partial(sh, env={**os.environ, "PATH": config.path()})
-        self.driver = driver
+        self.run_git = run or config.shell
+        self.cfg = cfg
         self.writable = config.writable(work) if writable is None else writable
-        self.errors, self.tuis = 0, {}
+        self.errors, self.views = 0, {}
         self.say = functools.partial(log, "prune", dry=dry)
 
     def error(self, issue=None, **fields):
@@ -195,28 +196,33 @@ class Pruner:
             with contextlib.suppress(OSError):
                 os.rmdir(os.path.join(self.work, ident, *owner))
 
-    def live_tuis(self):
+    def inventory(self):
         try:
-            names = [row.name for row in self.driver.sessions()]
-        except DriverError:
+            found = {}
+            for ident, entry in runs.latest(runs.parse_log(self.cfg.runs_log)).items():
+                if entry.role not in self.roles.values():
+                    continue
+                view = LinearRun.attach(ident, cfg=self.cfg, sid=entry.sid)
+                if view.status().state == "unknown":
+                    return None
+                found[ident] = view
+        except (config.ConfigError, DelegateConfigError, DriverError, OSError, ValueError):
             return None
-        roles, found = set(self.roles.values()), {}
-        for name in names:
-            if (m := config.tui_issue(name)) and m[0] in roles:
-                found.setdefault(m[1], []).append(name)
         return found
 
     def close_sessions(self, ident):
-        names = sorted(self.tuis.get(ident, ()))
-        if self.dry:
-            for name in names:
-                self.say("prune-plan", ident, session=name, what="close the tui session")
+        view = self.views.get(ident)
+        if view is None:
             return
-        for name, error in run_comments.close_tuis(self.driver, names):
-            if error:
-                self.error(ident, session=name, error=error)
-            else:
-                self.say("prune-closed", ident, session=name)
+        if self.dry:
+            self.say("prune-plan", ident, session=view.sid, what="close the run")
+            return
+        try:
+            view.close()
+        except (config.ConfigError, DelegateConfigError, DriverError, OSError, ValueError) as error:
+            self.error(ident, session=view.sid, error=one_line(error))
+        else:
+            self.say("prune-closed", ident, session=view.sid)
 
     def finished_issues(self, finished):
         ids = [uid for uid, role in self.roles.items() if role in ARCHIVE_ROLES]
@@ -264,10 +270,10 @@ class Pruner:
 
     def run(self):
         finished = {self.team.states["done"], self.team.states["canceled"]}
-        found = self.live_tuis()
-        self.tuis = found or {}
+        found = self.inventory()
+        self.views = found or {}
         if found is None:
-            self.error(error="tui sessions unknown")
+            self.error(error="run inventory unknown")
         else:
             try:
                 idents = [
@@ -278,7 +284,7 @@ class Pruner:
                 ]
             except OSError:
                 idents = []
-            for ident in sorted(set(idents) | set(self.tuis)):
+            for ident in sorted(set(idents) | set(self.views)):
                 self.prune_issue(ident, finished)
         self.archive(finished)
         return 3 if self.errors else 0

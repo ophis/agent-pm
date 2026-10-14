@@ -1,16 +1,16 @@
 """Run comments: one comment written by its session id,
 numbered `#<seq>`, repaired at the end after a late write; the resume command is the Driver's
-session_status."""
+view session_info."""
 
 import threading
 import time
 from datetime import datetime
 from unittest import mock
 
-from agent_pm.delegate import Outcome
+from agent_pm.delegate import ConfigError, Outcome
 from agent_pm.linear_orchestrator.engine import ops, run_comments
 from agent_pm.linear_orchestrator.engine.types import LinearError, Stopped
-from agent_pm.session import ConfigError, SessionStatus
+from agent_pm.session import SessionStatus
 from agent_pm.utils import timestamp
 from orchestrator_tests import case
 from orchestrator_tests.process_fixtures import CalledProcessError
@@ -37,7 +37,7 @@ NOT_FOUND = LinearError("linear api error: [{'message': 'Entity not found: Comme
 
 def record(driver, started_at=T1):
     return run_comments.base(
-        sid=SID, workdir=WORKDIR, runtime=RUNTIME, started_at=started_at, driver=driver
+        sid=SID, workdir=WORKDIR, runtime=RUNTIME, started_at=started_at, info=driver.session_status
     )
 
 
@@ -147,7 +147,7 @@ class Record(Case):
                 "runtime": RUNTIME,
                 "started_at": T1,
                 "seq": 0,
-                "driver": self.api,
+                "info": self.api.session_status,
             },
         )
 
@@ -319,7 +319,7 @@ class Command(Case):
                 self.info.reset_mock()
                 self.assertEqual(run_comments.command(self.record()), CMD)
                 self.session.assert_not_called()
-                self.info.assert_called_once_with(RUNTIME, SID, WORKDIR, workdir=WORKDIR)
+                self.info.assert_called_once_with()
 
     def test_built_fresh_each_time_never_read_from_the_record(self):
         rec = self.record()
@@ -343,25 +343,6 @@ class Command(Case):
                 rec = self.record()
                 self.assertIsNone(run_comments.command(rec))
                 self.assertEqual(run_comments.body(rec), f"Run {SID} · running · #1 · {T1}")
-
-
-class Status(Case):
-    def test_status_passes_the_run_directory_without_reading_session_records(self):
-        st = SessionStatus("no", 5.0, "")
-        self.info.return_value = st
-        for entry in (None, {"kind": "session", "cwd": "/data/r"}):
-            with self.subTest(entry=entry):
-                self.session.return_value = entry
-                self.info.reset_mock()
-                self.assertIs(run_comments.status(WORKDIR, "rt", SID, driver=self.api), st)
-                self.session.assert_not_called()
-                self.info.assert_called_once_with("rt", SID, WORKDIR, workdir=WORKDIR)
-
-    def test_errors_propagate(self):
-        self.info.side_effect = ConfigError("bad")
-        with self.assertRaises(ConfigError):
-            run_comments.status(WORKDIR, RUNTIME, SID, driver=self.api)
-        self.session.assert_not_called()
 
 
 class Failure(Case):

@@ -6,11 +6,12 @@ yields JSON objects from text or byte lines.
 
 import json
 import math
+import sys
 from collections.abc import Callable, Iterable, Iterator, Sequence
 from dataclasses import asdict, dataclass, fields
 from typing import Self, TextIO, TypeVar
 
-from agent_pm.utils.text import printable
+from agent_pm.utils.text import one_line, printable
 
 Display = str | None
 T = TypeVar("T")
@@ -197,3 +198,43 @@ def number(value) -> float | None:
     except OverflowError:
         return None
     return value if math.isfinite(value) else None
+
+
+def query_inputs(keys: Sequence[str], lines: Iterable[str]) -> tuple[str | Record, ...]:
+    if "-" in keys and tuple(keys) != ("-",):
+        raise ValueError("stdin cannot be combined with keys")
+    inputs = (
+        tuple(Record.parse(line) for line in lines if line.strip())
+        if not keys or tuple(keys) == ("-",)
+        else tuple(keys)
+    )
+    if not inputs:
+        raise ValueError("provide keys or Records on stdin")
+    names = [item.name if isinstance(item, Record) else item for item in inputs]
+    if len(set(names)) != len(names):
+        raise ValueError("query names must be unique")
+    return inputs
+
+
+def query_batch(
+    inputs: Sequence[str | Record],
+    operation: Callable[[str | Record], str | None],
+    *,
+    configuration_errors: tuple[type[Exception], ...],
+    operational_errors: tuple[type[Exception], ...],
+) -> int:
+    result = 0
+    for item in inputs:
+        name = item.name if isinstance(item, Record) else item
+        try:
+            line = operation(item)
+        except configuration_errors as error:
+            print(f"{name}: {one_line(str(error))}", file=sys.stderr)
+            result = 2
+        except operational_errors as error:
+            print(f"{name}: {one_line(str(error))}", file=sys.stderr)
+            result = max(result, 1)
+        else:
+            if line is not None:
+                print(line)
+    return result

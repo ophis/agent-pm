@@ -49,7 +49,7 @@ Options: `agent-pm-crew --help` and `agent-pm-crew <command> --help`. When using
 - The user naming a worker with a task assigns it that task; it never means stop the worker.
 - Once a worker's work is done and nothing in its main view awaits the user's review or answer (including an open PR the user hasn't reviewed), the user's standing permission authorizes stopping its Crew entry (Crew commands).
 - Once a worker's or role run's work is completely done (PR merged or abandoned), clean its work dir: `git worktree remove` its worktrees, then clean the remaining `src/` and temp files per Safety; keep the logs (`run.jsonl`, transcripts).
-- Pull the default branch only while `tmux ls` shows no `agent-pm-*` driver session: a scheduled router may have started one.
+- Pull the default branch only while `tmux ls` shows no driver session: legacy `agent-pm-<role>-<ID>` or `<role>-<ID>-<sid8>-drive`; a scheduled router may have started one.
 
 ## Babysitting
 

@@ -3,7 +3,6 @@
 import io
 import json
 import os
-import re
 import signal
 from contextlib import redirect_stderr
 from datetime import UTC, datetime
@@ -11,7 +10,7 @@ from unittest import mock
 
 from agent_pm import delegate
 from agent_pm.delegate import Begun, Finished, Limit, Outcome, Progress, Result, Spec
-from agent_pm.linear_orchestrator.engine import config, ops, run, run_comments, writeback
+from agent_pm.linear_orchestrator.engine import config, ops, run, run_comments, runs, writeback
 from agent_pm.linear_orchestrator.engine import log as event_log
 from agent_pm.linear_orchestrator.engine.types import Spec as RunSpec
 from agent_pm.linear_orchestrator.engine.types import Stopped
@@ -34,6 +33,8 @@ from orchestrator_tests.unit.run_fixtures import (
     logged,
 )
 
+from delegate.tests.fakes.delegate import FakeDelegate
+
 RUNTIME = "claude"
 
 PR = "https://github.com/Ophis/Agent-PM/pull/7"
@@ -49,8 +50,6 @@ NOW = "2026-10-04T10:00:00+08:00"
 CMD = f"resume {SID}"
 
 TUI = f"engineer-{ID}-{SID[:8]}"
-
-MATCH = re.escape(f"engineer-{ID}-") + ".*"
 
 T = datetime(2026, 10, 11, 10, 0, tzinfo=UTC).timestamp()
 
@@ -113,6 +112,31 @@ class FakeRun:
         return self.result
 
 
+class CleanupDelegate(FakeDelegate):
+    owners = {}
+    ROLES = {
+        "engineer": {"build": "", "light-build": ""},
+        "researcher": {"deep-research": "", "light-research": ""},
+        "pm": {"product-design": ""},
+    }
+
+    @classmethod
+    def resolve(cls, role, task=None, *, overlays=()):
+        return delegate.resolve_run(role, task, overlays=overlays)
+
+    def close(self):
+        owner = self.owners[self.workdir]
+        failed = None
+        for name in owner.cleanup_sessions:
+            try:
+                owner.api.close(name)
+            except DriverError as error:
+                failed = error
+        if failed:
+            raise failed
+        super().close()
+
+
 class Case(Base):
     def setUp(self):
         super().setUp()
@@ -126,6 +150,23 @@ class Case(Base):
         ):
             p.start()
             self.addCleanup(p.stop)
+
+    def record_cleanup(self, sessions, *, issue=ID):
+        self.cleanup_sessions = sessions
+        workdir = os.path.join(self.work, "work", issue)
+        CleanupDelegate.owners[workdir] = self
+        self.addCleanup(CleanupDelegate.owners.pop, workdir, None)
+        CleanupDelegate("engineer", Spec("", workdir, sid=SID)).detach()
+        runs.note(self.runs, "start", issue=issue, sid=SID, role="engineer", runtime=RUNTIME)
+        with open(self.local) as stream:
+            text = stream.read()
+        self.write(
+            self.local,
+            text.replace(
+                "agent_pm.delegate.engine.harness_delegate:HarnessDelegate",
+                "orchestrator_tests.unit.engine.run_test:CleanupDelegate",
+            ),
+        )
 
     def argv(
         self,
@@ -496,46 +537,57 @@ class RunTui(Case):
         f"agent-pm-engineer-{ID}",
     ]
 
-    def test_old_tuis_of_this_role_and_issue_close_before_the_run(self):
+    def test_selected_recorded_run_closes_all_owned_sessions_before_new_run(self):
         for extra in ((), ("--tui",)):
             with self.subTest(extra=extra):
-                self.gql, self.api.live = Gql(), [*self.MINE, *self.OTHER]
+                self.record_cleanup([*self.MINE, "owned-harness-on-another-host"])
+                self.api.live = [*self.MINE, *self.OTHER]
+                self.gql = Gql()
                 self.order.clear()
-                n = len(self.said())
-                self.assertEqual(self.main(*extra), 0)
+                before = len(self.said())
+                self.assertEqual(self.main(*extra), 0, (self.said(), self.err))
                 self.assertEqual(
                     self.order[:4],
-                    [
-                        ("sessions", MATCH),
-                        *(("close", x) for x in self.MINE),
-                        "run",
-                    ],
+                    [*(("close", x) for x in self.cleanup_sessions), "run"],
                 )
                 self.assertEqual(
-                    self.said()[n : n + 3],
-                    [
-                        f"run launch TASK-7 mode=new sid={SID}",
-                        *(f"run tui-closed TASK-7 session={x}" for x in self.MINE),
-                    ],
+                    self.said()[before : before + 2],
+                    [f"run launch TASK-7 mode=new sid={SID}", "run tui-closed TASK-7"],
+                )
+                self.assertFalse(
+                    any(o[0] == "sessions" for o in self.order if isinstance(o, tuple))
                 )
 
-    def test_an_unknown_listing_is_logged_and_the_run_goes_on(self):
-        self.api.live = None
-        self.assertEqual(self.main(), 0)
-        self.assertEqual(self.said()[1], "run tui-error TASK-7 msg=tmux sessions unknown")
-        self.assertEqual(self.order[:2], [("sessions", MATCH), "run"])
+    def test_unrecorded_matching_sessions_remain_untouched(self):
+        self.api.live = [*self.MINE, *self.OTHER]
+        self.assertEqual(self.main(), 0, (self.said(), self.err))
+        self.assertEqual(self.order, ["run"])
+        self.assertEqual(self.said()[0], f"run launch TASK-7 mode=new sid={SID}")
 
-    def test_a_close_error_is_logged_and_the_others_still_close(self):
-        self.api.live = self.MINE
-        self.api.errors = {self.MINE[0]: DriverError("kill failed")}
-        self.assertEqual(self.main(), 0)
+    def test_other_recorded_issue_remains_untouched(self):
+        self.record_cleanup(["unrelated-agent"], issue="TASK-70")
+        self.assertEqual(self.main(), 0, (self.said(), self.err))
+        self.assertEqual(self.order, ["run"])
+        self.assertFalse(any("tui-" in line for line in self.said()))
+
+    def test_unknown_recorded_view_logs_error_and_the_run_goes_on(self):
+        self.record_cleanup(self.MINE)
+        os.unlink(os.path.join(self.rd, "delegate.json"))
+        self.assertEqual(self.main(), 0, (self.said(), self.err))
+        self.assertEqual(self.order, ["run"])
         self.assertEqual(
-            self.said()[1:3],
-            [
-                f"run tui-error TASK-7 session={self.MINE[0]} msg=DriverError: kill failed",
-                f"run tui-closed TASK-7 session={self.MINE[1]}",
-            ],
+            self.said()[1], f"run tui-error TASK-7 msg=ConfigError: {self.rd!r}: no delegate.json"
         )
+
+    def test_close_error_logs_and_other_owned_sessions_close_before_run(self):
+        self.record_cleanup(self.MINE)
+        self.api.errors = {self.MINE[0]: DriverError("kill failed")}
+        self.done(Progress("start", "x"))
+        self.assertEqual(self.main(), 0, (self.said(), self.err))
+        self.assertEqual(self.order[:3], [*(("close", x) for x in self.MINE), "run"])
+        self.assertEqual(self.said()[1], "run tui-error TASK-7 msg=DriverError: kill failed")
+        self.assertIn(f"writeback step TASK-7 sid={SID} step=move:in_review", self.said())
+        self.assertEqual(self.gql.calls[-2:], [*updated(ended("done", 0)), REPAIR])
 
     def test_tui_runs_in_the_delegates_tui_mode_and_shows_its_session_once_begun(self):
         self.api.shown = "attach-command"
@@ -632,6 +684,7 @@ class RunUsageLimits(Case):
                         "sid": SID,
                         "runtime": RUNTIME,
                         "resets_at": writeback.local_time(at),
+                        "delegate_kind": "harness",
                     },
                 )
 
@@ -642,6 +695,7 @@ class RunUsageLimits(Case):
         self.assertEqual(
             self.said()[1:],
             [
+                f"run tui-error TASK-7 msg=IsADirectoryError: [Errno 21] Is a directory: '{self.runs}'",
                 f"run end TASK-7 sid={SID} exit=-9",
                 f"writeback step TASK-7 sid={SID} step=limit",
                 (

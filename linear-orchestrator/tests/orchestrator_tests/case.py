@@ -87,7 +87,7 @@ def _getconf(argv, *_args, **_kwargs):
         return SimpleNamespace(stdout="")
     if "rev-parse" in argv and "--show-toplevel" in argv:
         cwd = argv[argv.index("-C") + 1] if "-C" in argv else _kwargs.get("cwd", REPO)
-        inside = os.path.commonpath((os.path.realpath(cwd), REPO)) == REPO
+        inside = os.path.commonpath((os.path.realpath(cwd), os.path.realpath(REPO))) == os.path.realpath(REPO)
         return subprocess.CompletedProcess(
             argv,
             0 if inside else 128,
