@@ -1,5 +1,6 @@
 """FakeHost's standalone supervisor: program output and terminal input stay in the session dir;
-ProcessControl owns the process group, while exited/dead events and rc track the program.
+ProcessControl owns the process group, while exited/dead events and rc track the program. It exits
+when serve() retires its controller.
 """
 
 import contextlib

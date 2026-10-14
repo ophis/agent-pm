@@ -292,15 +292,21 @@ class FakeHost(Host):
                 start_new_session=True,
             )
         threading.Thread(target=supervisor.wait, daemon=True).start()
-        deadline = time.monotonic() + START_TIMEOUT
-        while _read(folder, "pid") is None and not os.path.isfile(
-            os.path.join(control.path, "started.json")
-        ):
-            if supervisor.returncode is not None or time.monotonic() > deadline:
+        try:
+            deadline = time.monotonic() + START_TIMEOUT
+            while _read(folder, "pid") is None and not os.path.isfile(
+                os.path.join(control.path, "started.json")
+            ):
+                if supervisor.returncode is not None or time.monotonic() > deadline:
+                    tail = (_read(folder, "output") or "").strip().rpartition("\n")[2]
+                    raise DriverError(f"{self.name} session {name} did not start: {tail}")
+                time.sleep(POLL)
+            control.wait_started()
+        except BaseException:
+            with contextlib.suppress(OSError):
+                control.cancel()
+            if supervisor.returncode is None:
                 with contextlib.suppress(ProcessLookupError):
                     os.killpg(supervisor.pid, signal.SIGKILL)
-                tail = (_read(folder, "output") or "").strip().rpartition("\n")[2]
-                raise DriverError(f"{self.name} session {name} did not start: {tail}")
-            time.sleep(POLL)
-        control.wait_started()
+            raise
         return KINDS[kind](name, folder, meta=meta)
