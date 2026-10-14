@@ -13,7 +13,9 @@ from tests.guard_samples import PKG, Sample, fixtures, test_suites
 OPKG = "src/agent_pm/linear_orchestrator"
 
 
-UNLISTED = "not __init__.py, cli.py, engine/, a listed subpackage or a listed entry module"
+UNLISTED = (
+    "not __init__.py, cli.py, config.toml, engine/, a listed subpackage or a listed entry module"
+)
 
 
 class PackageClimbs(Sample):
@@ -466,19 +468,20 @@ class EventObjectExports(Sample):
 
 
 class SessionNames(Sample):
-    def test_configuration_forwarding_exemption_names_its_owner(self):
-        self.assertEqual(
-            guards.SESSION_NAMES_ALLOWED,
-            {
-                (guards.SESSION_SRC + "engine/config.py", "read_project"): "TASK-392",
-            },
-        )
-
     def test_layer_owned_config_entry_can_forward_to_utils(self):
+        root = self.tree(
+            {guards.SESSION_SRC + "engine/config.py": "from agent_pm.utils import read_resources\n"}
+        )
+        self.assertEqual(guards.session_names(root), [])
+
+    def test_layer_owned_config_entry_cannot_read_repository_configuration(self):
         root = self.tree(
             {guards.SESSION_SRC + "engine/config.py": "from agent_pm.utils import read_project\n"}
         )
-        self.assertEqual(guards.session_names(root), [])
+        self.assertEqual(
+            guards.session_names(root),
+            [guards.SESSION_SRC + "engine/config.py: names read_project"],
+        )
 
     def test_config_readers_protocol_and_team_names_are_rejected(self):
         root = self.tree(
@@ -1586,6 +1589,15 @@ class NamespacePackage(Sample):
 
 
 class PackageTop(Sample):
+    def test_package_config_resource_is_allowed(self):
+        files = {
+            path: text
+            for project in guards.PROJECTS
+            for path, text in self.package(project, "__init__.py", "engine/x.py").items()
+        }
+        files[guards.SESSION_SRC + "config.toml"] = ""
+        self.assertEqual(guards.package_top(self.tree(files)), [])
+
     def package(self, project, *entries):
         sub = guards.PROJECTS[project]
         return {f"{project}/{PKG}/{sub}/{e}": "" for e in entries}
@@ -1908,6 +1920,25 @@ class ConfigLevels(Sample):
 
 
 class ExplicitKeys(Sample):
+    def test_packaged_defaults_supply_keys_for_local_examples(self):
+        root = self.tree(
+            {
+                guards.SESSION_SRC + "config.toml": "[hosts.tmux]\nstatus_line = false\n",
+                "delegate/config.toml": "# local: [session.hosts.tmux]\n# local: status_line = true\n",
+            }
+        )
+        self.assertEqual(guards.explicit_keys(root), [])
+
+    def test_packaged_defaults_reject_commented_only_keys(self):
+        rel = guards.SESSION_SRC + "config.toml"
+        root = self.tree(
+            {rel: "[hosts.tmux]\nx = 1\n# local: [hosts.tmux]\n# local: status_line = true\n"}
+        )
+        self.assertEqual(
+            guards.explicit_keys(root),
+            [f"{rel}: `# local:` key hosts.tmux.status_line has no real line"],
+        )
+
     def test_an_example_with_a_real_line_its_shape_suffix_or_empty_table_passes(self):
         root = self.tree(
             {

@@ -18,12 +18,12 @@ import unittest
 from unittest import mock
 
 import agent_pm.session.hosts.tmux
-from agent_pm.session import Driver, Host, Hosts, Spec
+from agent_pm.session import Driver, Host, Hosts, Spec, read_config
 from agent_pm.session.adapters import registry
 from agent_pm.session.adapters.base import Adapter
 from agent_pm.session.adapters.claude import ClaudeAdapter
 from agent_pm.session.engine.types import ConfigError
-from agent_pm.utils import load_class, read_project
+from agent_pm.utils import load_class
 
 from session.tests import fake_adapter
 from session.tests.case import HOSTS, Case, settings
@@ -277,7 +277,7 @@ class SettingsTest(Base):
     def test_the_session_config_with_the_local_file_on_top(self):
         with open(os.path.join(self.agent_pm, "config.local.toml"), "w") as f:
             f.write("[session.hosts.tmux]\nstatus_line = true\n")
-        found = registry.settings(read_project("session"))
+        found = registry.settings(read_config())
         self.assertEqual(sorted(found["adapters"]), ["claude", "codex"])
         self.assertEqual(found["hosts"].default, "tmux")
         self.driver = Driver(**found)
@@ -533,7 +533,7 @@ SID = "0f8fad5b-d9cb-469f-a165-70867728950e"
 
 
 def committed() -> dict:
-    return registry.settings(read_project("session", local=os.devnull))["adapters"]
+    return registry.settings(read_config(local=os.devnull))["adapters"]
 
 
 class Committed(Case):

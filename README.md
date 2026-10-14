@@ -204,7 +204,7 @@ tests/                repo-wide checks: guards.py (rules), checks.py (runner), c
 
 The Delegate's `Driver`, `AgentDriver` and `InstructionDriver` live in `delegate/src/agent_pm/delegate/engine/drivers.py`; definitions: `CONTEXT.md` › Driver.
 
-Each project holds `src/agent_pm/<its package>/` (one PEP 420 namespace package `agent_pm` over the five `src/` roots), `tests/` and `config.toml`. Each module's docstring states its behaviour.
+Each project holds `src/agent_pm/<its package>/` (one PEP 420 namespace package `agent_pm` over the five `src/` roots) and `tests/`. Session defaults live in `session/src/agent_pm/session/config.toml`; other configured projects keep `config.toml` at their project roots. Each module's docstring states its behaviour.
 
 ## Runtime policy
 
