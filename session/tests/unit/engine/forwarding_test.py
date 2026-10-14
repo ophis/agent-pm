@@ -390,6 +390,25 @@ class SessionStatusTest(Base):
             "session", sid="s1", cwd=self.dir, project=False, transcript="", resume=""
         )
 
+    def test_an_unrecorded_sid_is_not_resumable_for_the_deprecated_wrapper(self):
+        absent = os.path.join(self.dir, "no-record")
+        for workdir in (self.workdir, absent):
+            with self.subTest(workdir=workdir):
+                self.assertEqual(
+                    self.driver.session_status("probe", "missing", self.dir, workdir=workdir),
+                    SessionStatus("no", None, ""),
+                )
+        self.assertFalse(os.path.exists(absent))
+
+    def test_an_adapter_driver_error_is_not_mapped_to_missing_record(self):
+        error = DriverError("inspection refused")
+        with (
+            mock.patch.object(ProbeAdapter, "session_status", side_effect=error),
+            self.assertRaises(DriverError) as caught,
+        ):
+            self.driver.session_status("probe", "s1", self.dir, workdir=self.workdir)
+        self.assertIs(caught.exception, error)
+
     def test_the_adapters_session_status(self):
         self.assertEqual(
             self.driver.session_status("probe", "s1", self.dir, workdir=self.workdir),

@@ -4,7 +4,6 @@ import re
 
 from agent_pm.session import (
     DriverError,
-    NoRecordedSession,
     SessionRow,
     SessionStatus,
     Usage,
@@ -58,7 +57,7 @@ class FakeApi:
         entry = self.session_record(workdir, sid)
         self.info.append((runtime, sid, entry["cwd"] if entry else cwd))
         if entry is None:
-            raise NoRecordedSession(f"no recorded session {sid} in {workdir}")
+            return SessionStatus("no", None, "")
         return _answer(self.statuses.get(sid, SessionStatus("yes", None, f"resume {sid}")))
 
     def session_record(self, workdir, sid):
