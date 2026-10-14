@@ -1241,9 +1241,10 @@ def shared_types(repo: str) -> list[str]:
             for node in tree.body
             if isinstance(node, ast.ClassDef) and _data_type(node, bound)
         }
+        packages = {module for module, (rel, _) in trees.items() if rel.endswith("__init__.py")}
         for module, (rel, tree) in trees.items():
             if not rel.endswith("__init__.py"):
-                found += _type_uses(project, rel, module, tree, data)
+                found += _type_uses(project, rel, module, tree, data, packages)
     return sorted(found)
 
 
@@ -1422,7 +1423,7 @@ def _builds(method, args):
     )
 
 
-def _type_uses(project, rel, module, tree, data):
+def _type_uses(project, rel, module, tree, data, packages):
     package, bound, used = module.split(".")[:-1], {}, []
     for node in ast.walk(tree):
         if isinstance(node, ast.ImportFrom):
@@ -1447,6 +1448,7 @@ def _type_uses(project, rel, module, tree, data):
             if key in data
             and (source := key.rpartition(".")[0]) != module
             and not source.endswith(".types")
+            and not (source in packages and module.startswith(source + "."))
         }
     )
 
