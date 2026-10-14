@@ -3,19 +3,23 @@
 import dataclasses
 import json
 import os
+import shutil
 import tempfile
 import threading
 import types
+from pathlib import Path
 from unittest import mock
 
-from agent_pm.session import Session
+from agent_pm.session import Host, Session
 from agent_pm.session.engine import types as engine_types
+from agent_pm.session.engine.hosted import HostedSession
 from agent_pm.session.engine.records import RunLog
 from agent_pm.session.engine.types import Access, ConfigError, Exited, Launch, Spec
 from agent_pm.session.hosts.tmux import tmux_host
 
 from session.tests import fake_adapter
 from session.tests.case import Case
+from session.tests.fakes.terminal import ScreenHost
 from session.tests.modules import adapter_loader
 from session.tests.threads import capture_errors
 
@@ -284,7 +288,7 @@ def drive(case, runtime="fake", mode="headless", prompt="hello", spec=None, **kw
     return session
 
 
-def fake_tmux() -> mock.Mock:
+def fake_tmux(case=None) -> mock.Mock:
     """Recorded tmux responses; defaults: status None, listing [], pane %1, PAUSE 0."""
     host = mock.create_autospec(tmux_host)
     for name in ("PaneStatus", "NAME", "OPENER", "Split", "TuiError"):
@@ -298,10 +302,27 @@ def fake_tmux() -> mock.Mock:
     host.status.return_value = None
     host.listing.return_value = []
     host.own_session.return_value = None
-    host.option.return_value = None
+    tags = {}
+    host.option.side_effect = lambda _target, key: tags.get(key)
     host.pane.return_value = "%1"
     host.detach.return_value = host.process.return_value = "1 $1 %1 4242"
     host.tmux_path.return_value = TMUX
+
+    def started(_name, _launch, **kw):
+        tags.update(kw["tags"])
+        if case is not None:
+            case.addCleanup(shutil.rmtree, tags["@control"], ignore_errors=True)
+        host.listing.return_value.append(listed(_name))
+        host.status.return_value = 0
+        for file, payload in (("started.json", {"started": True}), ("done.json", {"rc": 0})):
+            Path(tags["@control"], file).write_text(json.dumps(payload))
+
+    def killed(_target):
+        host.listing.return_value = []
+        host.status.return_value = None
+
+    host.start.side_effect = started
+    host.kill.side_effect = killed
     return host
 
 
@@ -312,7 +333,7 @@ class TuiBase(Base):
         super().setUp()
         self.root = os.path.join(os.path.dirname(self.probe_dir), "tui")
         self.events = os.path.join(self.dir, "events")
-        self.host = fake_tmux()
+        self.host = fake_tmux(self)
         self.driver_dependencies = {**self.driver_dependencies, "host": self.host}
         self.configure(tui=True)
 
@@ -344,6 +365,46 @@ class EnvBase(TuiBase):
         self.configure("env", probe={"argv": ("probe-cmd",)})
         self.enterContext(mock.patch.dict(os.environ, {"PYTHONPATH": "/parent"}))
         self.access = Access(commands=("git",), env={"PYTHONPATH": PYTHONPATH})
+
+
+class HostedTuiBase(TuiBase):
+    def setUp(self):
+        super().setUp()
+        self.host = ScreenHost("tmux")
+        self.boundary = True
+        self.driver_dependencies = {
+            name: value for name, value in self.driver_dependencies.items() if name != "host"
+        }
+        self.configure(tui=True)
+
+    def configure_session(self, adapters, tmux=None):
+        if not getattr(self, "boundary", False):
+            super().configure_session(adapters, tmux)
+            return
+        hosts = Host.parse_hosts(
+            {
+                "default": "tmux",
+                "tmux": {
+                    "implementation": "session.tests.fakes.terminal:ScreenHost",
+                    **(tmux or {}),
+                },
+            }
+        )
+        chosen = self.host
+        self.session = HostedSession.configured(
+            adapters=adapters,
+            hosts=hosts,
+            host_factory=lambda _kind, _name, _settings: chosen,
+            **self.driver_dependencies,
+        )
+
+    def nothing_hosted(self):
+        self.assertEqual(self.host.calls.mock_calls, [])
+        self.assertFalse(os.path.lexists(self.root))
+
+
+class HostedEnvBase(EnvBase, HostedTuiBase):
+    pass
 
 
 def listed(name, **fields) -> dict:

@@ -12,13 +12,14 @@ from pathlib import Path
 from unittest import mock
 
 from agent_pm.session import ConfigError, Displayable, DriverError, Host, Launch, Terminal
-from agent_pm.session.engine.types import Paste
+from agent_pm.session.engine.types import ActivityState, Paste, SessionRow
 from agent_pm.session.hosts.base import SIGNALS
 from agent_pm.session.hosts.tmux import TmuxHost, tmux_host, types
 from agent_pm.session.hosts.tmux.host import TmuxProcess
 from agent_pm.utils import ProcessControl, load_class
 
 from session.tests.case import Case
+from session.tests.hosted_support import SID, listed
 from session.tests.tmux_host_support import LINE, PROCESS, Base
 
 TuiError = types.TuiError
@@ -385,3 +386,94 @@ class DisplayableTest(Base):
             self.host.screen("w1")
         with self.assertRaisesRegex(DriverError, "^no tmux session 'a b'$"):
             self.host.attach_command("a b")
+
+
+class RowsTest(Base):
+    def test_a_row_per_listed_session_in_its_order(self):
+        self.tmux.listing.return_value = [
+            listed("mgr"),
+            listed("w1", sid=SID, runtime="fake", state="done", pane="%3", opener="mgr", shown="m"),
+            listed("w2", sid="a/b", runtime="Fake", state="blocked", shown=""),
+            listed("w3", runtime="x-y", state="dead"),
+            listed("w4", runtime="fake", state="done", dead=True, last_lines="bye"),
+            listed("w5", runtime="fake9_", state="other", dead=None),
+        ]
+        self.tmux.own_session.return_value = "mgr"
+        rows = self.host.rows()
+        self.assertEqual([type(r.state) for r in rows], [ActivityState] * 6)
+        row = SessionRow
+        self.assertEqual(
+            rows,
+            [
+                row(
+                    name="mgr",
+                    sid=None,
+                    runtime=None,
+                    state="working",
+                    pane=None,
+                    opener=None,
+                    shown=None,
+                    last_lines=None,
+                    own=True,
+                ),
+                row(
+                    name="w1",
+                    sid=SID,
+                    runtime="fake",
+                    state="done",
+                    pane="%3",
+                    opener="mgr",
+                    shown="m",
+                    last_lines=None,
+                    own=False,
+                ),
+                row(
+                    name="w2",
+                    sid=None,
+                    runtime=None,
+                    state="blocked",
+                    pane=None,
+                    opener=None,
+                    shown="",
+                    last_lines=None,
+                    own=False,
+                ),
+                row(
+                    name="w3",
+                    sid=None,
+                    runtime=None,
+                    state="working",
+                    pane=None,
+                    opener=None,
+                    shown=None,
+                    last_lines=None,
+                    own=False,
+                ),
+                row(
+                    name="w4",
+                    sid=None,
+                    runtime="fake",
+                    state="dead",
+                    pane=None,
+                    opener=None,
+                    shown=None,
+                    last_lines="bye",
+                    own=False,
+                ),
+                row(
+                    name="w5",
+                    sid=None,
+                    runtime="fake9_",
+                    state="working",
+                    pane=None,
+                    opener=None,
+                    shown=None,
+                    last_lines=None,
+                    own=False,
+                ),
+            ],
+        )
+        self.assertEqual(
+            self.tmux.mock_calls,
+            [mock.call.listing(), mock.call.listing(), mock.call.own_session()],
+        )

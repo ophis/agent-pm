@@ -314,7 +314,7 @@ DISPLAY_NAMES = re.compile(
 
 LEGACY_HOST_NAMES = {
     (f"{SESSION_SRC}engine/forwarding.py", "TmuxHost"): (6, "TASK-375"),
-    (f"{SESSION_SRC}engine/forwarding.py", "tmux"): (5, "TASK-375"),
+    (f"{SESSION_SRC}engine/forwarding.py", "tmux"): (4, "TASK-375"),
     (f"{SESSION_SRC}engine/forwarding.py", "tmux_host"): (3, "TASK-375"),
     (f"{SESSION_SRC}engine/forwarding.py", "_opener"): (2, "TASK-375"),
     (f"{SESSION_SRC}engine/forwarding.py", "opener"): (4, "TASK-375"),
