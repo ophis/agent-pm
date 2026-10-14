@@ -3,6 +3,7 @@ session/tests/integration/adapters/claude/fake_claude.py, CodexIntegration over
 session/tests/integration/adapters/codex/fake_codex.py, their outcomes.
 """
 
+import contextlib
 import json
 import os
 import re
@@ -148,6 +149,10 @@ class Integration(Runs):
         return proc
 
     def reap(self, proc: subprocess.Popen) -> None:
+        # Check before poll/reap, while the leader still pins its process-group id.
+        if proc.returncode is None:
+            with contextlib.suppress(ProcessLookupError):
+                os.killpg(proc.pid, signal.SIGKILL)
         reap(proc)
         proc.communicate(timeout=10)
 
