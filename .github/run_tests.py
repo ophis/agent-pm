@@ -14,7 +14,7 @@ from pathlib import Path
 
 import isolation
 
-from utils.tests.sandbox import clean_env
+from utils.tests.sandbox import clean_env, stop_tmux_servers
 
 STATE = "RUN_TESTS_STATE"
 TAIL = 40
@@ -177,25 +177,7 @@ def supervise(title):
                     sys.stderr.write(line)
                     tail.append(line)
         finally:
-            for root, directories, files in os.walk(tmp):
-                directory = Path(root)
-                directories[:] = [
-                    name for name in directories if not (directory / name).is_symlink()
-                ]
-                if directory.name != f"tmux-{os.getuid()}":
-                    continue
-                for name in sorted(files):
-                    socket = directory / name
-                    if socket.is_symlink() or not socket.is_socket():
-                        continue
-                    subprocess.run(
-                        ["tmux", "-S", str(socket), "kill-server"],
-                        env=clean_env(env),
-                        stdout=subprocess.DEVNULL,
-                        stderr=subprocess.DEVNULL,
-                        timeout=10,
-                        check=False,
-                    )
+            stop_tmux_servers(tmp, clean_env(env))
         with open(state, encoding="utf-8") as file:
             lines = file.read().splitlines()
     code = 128 - child.returncode if child.returncode < 0 else child.returncode

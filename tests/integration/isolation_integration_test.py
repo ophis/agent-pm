@@ -266,6 +266,55 @@ print(json.dumps(str(second)))
                 directory = Path(json.loads(proc.stdout))
                 self.assertEqual(directory.exists(), mode == "sandbox")
 
+    def test_fallback_cleanup_stops_owned_servers_and_skips_linked_servers(self):
+        kept = live_tmux.Server(self, self.home)
+        kept.start("kept")
+        script = """import json, os, subprocess, sys
+from pathlib import Path
+from utils.tests.sandbox import clean_env
+
+env = clean_env()
+directory = Path(env["TMUX_TMPDIR"])
+pids = []
+for label in ("default", "named"):
+    command = ["tmux"] + ([] if label == "default" else ["-L", label])
+    subprocess.run([*command, "-f", os.devnull, "new-session", "-d", "sleep 300"], env=env, check=True)
+    pids.append(subprocess.check_output([*command, "display-message", "-p", "#{pid}"], env=env, text=True).strip())
+socket = Path(sys.argv[1])
+(directory / "linked-directory").symlink_to(socket.parent, target_is_directory=True)
+sockets = directory / f"tmux-{os.getuid()}"
+(sockets / "linked-socket").symlink_to(socket)
+(sockets / "regular-file").write_text("not a socket")
+print(json.dumps({"directory": str(directory), "pids": pids}))
+"""
+        env = clean_env(None, REPO)
+        env.pop("AGENT_PM_TEST_SANDBOX", None)
+        env["TMPDIR"] = owned_directory(self, os.path.realpath("/tmp"), prefix="fallback-")
+        proc = subprocess.run(
+            [sys.executable, "-P", "-S", "-c", script, kept.socket],
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        found = json.loads(proc.stdout)
+        self.assertFalse(Path(found["directory"]).exists())
+        self.assertEqual(len(found["pids"]), 2)
+        for pid in found["pids"]:
+            deadline = time.monotonic() + 3
+            while True:
+                state = subprocess.run(
+                    ["ps", "-p", pid, "-o", "stat="], capture_output=True, text=True, timeout=5
+                )
+                if state.returncode == 1 or state.stdout.strip().startswith("Z"):
+                    break
+                if time.monotonic() >= deadline:
+                    self.fail(f"fallback tmux server {pid} remains live: {state.stdout}")
+                time.sleep(0.01)
+        after = kept.tmux("has-session", "-t", "=kept")
+        self.assertEqual(after.returncode, 0, after.stderr)
+
     def test_violations_after_the_last_stop_test_fail_the_run_with_their_origin(self):
         script = """import json, os, sys, threading, unittest
 from pathlib import Path

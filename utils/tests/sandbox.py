@@ -24,7 +24,8 @@ os.register_at_fork(after_in_child=_after_fork)
 
 
 def _remove_tmux_directory(pid, directory):
-    if os.getpid() == pid:
+    if os.getpid() == pid and os.path.isdir(directory) and not os.path.islink(directory):
+        stop_tmux_servers(directory, clean_env())
         shutil.rmtree(directory, ignore_errors=True)
 
 
@@ -61,6 +62,28 @@ def clean_env(base=None, *import_roots):
     if import_roots:
         env["PYTHONPATH"] = os.pathsep.join(map(str, import_roots))
     return env
+
+
+def stop_tmux_servers(root, env):
+    if Path(root).is_symlink():
+        return
+    for path, directories, files in os.walk(root):
+        directory = Path(path)
+        directories[:] = [name for name in directories if not (directory / name).is_symlink()]
+        if directory.name != f"tmux-{os.getuid()}":
+            continue
+        for name in sorted(files):
+            socket = directory / name
+            if socket.is_symlink() or not socket.is_socket():
+                continue
+            subprocess.run(
+                ["tmux", "-S", str(socket), "kill-server"],
+                env=env,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=10,
+                check=False,
+            )
 
 
 def git_run(*argv, cwd=None, env=None, **kwargs):
