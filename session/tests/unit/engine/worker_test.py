@@ -4,6 +4,8 @@ FR-36 replace ladder (no process, no tmux; files only under the test's HOME).
 
 import json
 import os
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from unittest import mock
 
 from agent_pm.session import ConfigError, Host, HostProcess, Mode, SessionError
@@ -16,6 +18,15 @@ from session.tests.case import Case
 
 SID = "0f8fad5b-d9cb-469f-a165-70867728950e"
 OTHER = "1f8fad5b-d9cb-469f-a165-70867728950e"
+
+
+class Killed(BaseException):
+    """The start's process dying: no handler runs."""
+
+
+def read(path: str) -> bytes:
+    with open(path, "rb") as f:
+        return f.read()
 
 
 def state(**fields) -> WorkerState:
@@ -33,6 +44,14 @@ def state(**fields) -> WorkerState:
             **fields,
         }
     )
+
+
+def state_path() -> str:
+    return os.path.join(state().workdir(), worker.STATE_FILE)
+
+
+def pointer() -> str:
+    return os.path.join(os.path.dirname(state().workdir()), worker.BY_NAME, "w1")
 
 
 class Base(Case):
@@ -165,13 +184,62 @@ class StartTest(Base):
         )
         self.handle.publish.assert_called_once()
 
-    def test_a_state_it_cannot_save_undoes_the_start(self):
-        pointer = os.path.join(os.path.dirname(state().workdir()), worker.BY_NAME, "w1")
-        os.makedirs(pointer, 0o700)
+    def test_its_state_is_saved_before_its_client_starts(self):
+        seen = []
+
+        def launch(*_, **__):
+            seen.append(Worker.load("w1").state)
+            return self.session
+
+        self.session_cls.start.side_effect = launch
+        self.worker(token="/tmp/apm-group-0").start(prompt="", resume=False)
+        self.assertEqual(seen, [state()])
+
+    def test_a_start_killed_after_its_client_starts_is_resumed(self):
+        self.host.attach.side_effect = Killed
+        with self.assertRaises(Killed):
+            self.worker().start(prompt="", resume=False)
+        self.host.attach.side_effect = None
+        self.handle.alive.return_value = True
+        found = Worker.load("w1", session_cls=self.session_cls).resume()
+        self.assertEqual(found, state().record())
+        self.handle.publish.assert_called_once_with(found)
+
+    def test_a_failed_start_puts_back_the_state_and_latest_start_it_found(self):
+        Worker(state(sid=OTHER), session_cls=self.session_cls).start(prompt="", resume=False)
+        self.session_cls.start.side_effect = SessionError("tui session w1 is running")
+        with self.assertRaisesRegex(SessionError, "^tui session w1 is running$"):
+            self.worker().start(prompt="", resume=False)
+        self.assertFalse(os.path.exists(state_path()))
+        self.assertEqual(Worker.load("w1").state.sid, OTHER)
+        self.session_cls.start.side_effect = None
+        self.worker().start(prompt="", resume=False)
+        kept = read(state_path())
+        self.session_cls.start.side_effect = ConfigError("unknown client claude")
+        with self.assertRaises(ConfigError):
+            self.worker(flags=()).start(prompt="", resume=True)
+        self.assertEqual(read(state_path()), kept)
+        self.assertEqual(Worker.load("w1").state.sid, SID)
+
+    def test_a_state_it_cannot_save_starts_nothing(self):
+        os.makedirs(pointer(), 0o700)
+        with self.assertRaisesRegex(SessionError, "^w1: not a regular file; nothing started$"):
+            self.worker().start(prompt="", resume=False)
+        self.session_cls.start.assert_not_called()
+        self.assertFalse(os.path.exists(state_path()))
+
+    def test_a_token_it_cannot_save_undoes_the_start(self):
+        def launch(*_, **__):
+            os.remove(pointer())
+            os.mkdir(pointer(), 0o700)
+            return self.session
+
+        self.session_cls.start.side_effect = launch
         with self.assertRaisesRegex(SessionError, "^w1: not a regular file; start undone$"):
             self.worker().start(prompt="", resume=False)
         self.session.close.assert_called_once_with()
         self.handle.publish.assert_not_called()
+        self.assertFalse(os.path.exists(state_path()))
 
 
 class LoadTest(Base):
@@ -195,12 +263,38 @@ class LoadTest(Base):
 
     def test_a_start_with_another_workers_sid_is_refused_before_anything(self):
         self.worker().start(prompt="", resume=False)
-        other = Worker(state(name="w2"), session_cls=self.session_cls)
         with self.assertRaisesRegex(ConfigError, f"^sid {SID} is worker w1's$"):
-            other.check(prompt="", resume=True)
-        self.session_cls.preflight.assert_not_called()
-        Worker(state(), session_cls=self.session_cls).check(prompt="", resume=True)
-        self.session_cls.preflight.assert_called_once()
+            self.worker(name="w2").start(prompt="", resume=True)
+        self.session_cls.start.assert_called_once()
+        self.assertEqual(Worker.load("w1").state, state(token="/tmp/apm-group-1"))
+        with self.assertRaisesRegex(SessionError, "^w2: not a worker"):
+            Worker.load("w2")
+
+    def test_of_two_starts_claiming_one_sid_at_once_only_the_first_starts(self):
+        launching, go = threading.Event(), threading.Event()
+
+        def launch(*_, **__):
+            launching.set()
+            go.wait(10)
+            return self.session
+
+        def run(each: Worker) -> Record:
+            with each.locked():
+                return each.start(prompt="", resume=False)
+
+        self.session_cls.start.side_effect = launch
+        first, second = self.worker(), self.worker(name="w2")
+        first.check(prompt="", resume=False)
+        with ThreadPoolExecutor(2) as pool:
+            started = pool.submit(run, first)
+            self.assertTrue(launching.wait(10))
+            second.check(prompt="", resume=False)
+            refused = pool.submit(run, second)
+            go.set()
+            self.assertEqual(started.result(10).name, "w1")
+            with self.assertRaisesRegex(ConfigError, f"^sid {SID} is worker w1's$"):
+                refused.result(10)
+        self.session_cls.start.assert_called_once()
 
     def test_no_or_unreadable_state_is_not_a_worker(self):
         with self.assertRaisesRegex(SessionError, "^w1: not a worker"):

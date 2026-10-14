@@ -65,6 +65,9 @@ LOG = logging.getLogger("session")
 
 Parts = tuple[str | None, str | None, str | None]
 TMUX_KEYS = {NamedKey.PAGE_UP: "PPage", NamedKey.PAGE_DOWN: "NPage", " ": "Space", ";": "\\;"}
+# tmux 3.4 (CI) and 3.5+ both send these as the same C0 or DEL byte; other punctuation and digits
+# lose Ctrl, send nothing or differ between them
+CTRL_PUNCTUATION = frozenset(" /?@[\\]^_")
 
 
 HANDOVER_TIMEOUT = 10
@@ -867,10 +870,10 @@ def _tmux_key(key) -> str:
     """KeyPress → tmux's key name: modifiers as C-, M-, S-; PageUp, PageDown, space and ; renamed."""
     if not isinstance(key, KeyPress):
         raise ConfigError(f"key {key!r:.80}: want a KeyPress")
-    if len(key.key) == 1 and (
-        key.shift or key.ctrl and not (key.key.isascii() and key.key.isalpha())
-    ):
-        raise ConfigError(f"key {key}: tmux cannot send it")  # it would send the bare character
+    char = len(key.key) == 1
+    letter = key.key.isascii() and key.key.isalpha()
+    if char and (key.shift or key.ctrl and not (letter or key.key in CTRL_PUNCTUATION)):
+        raise ConfigError(f"key {key}: tmux cannot send it")  # it would lose its modifier
     prefixes = ("C-" * key.ctrl, "M-" * key.meta, "S-" * key.shift)
     return "".join(prefixes) + TMUX_KEYS.get(key.key, key.key)
 

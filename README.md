@@ -2,7 +2,7 @@
 
 [![test](https://github.com/ophis/agent-pm/actions/workflows/test.yml/badge.svg?branch=main)](https://github.com/ophis/agent-pm/actions/workflows/test.yml?query=branch%3Amain) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-Runs Claude agents unattended from a Linear board. Each Linear project is a product; an issue's assignee, a role account, is its stage. Each role works up to `max_runs` issues at once, handing its output back for your review; once you approve, the next role takes it. The core runs a role, which picks its task unless given one, and is a Claude Code plugin you can use alone (Install); the Linear orchestrator runs it from the board (Setup). Their code: Layout; local headless Codex role runs: Client policy. Developers: `AGENTS.md`.
+Runs Claude agents unattended from a Linear board. Each Linear project is a product; an issue's assignee, a role account, is its stage. Each role works up to `max_runs` issues at once, handing its output back for your review; once you approve, the next role takes it. The core runs a role, which picks its task unless given one, and is a Claude Code and Codex plugin you can use alone (Install); the Linear orchestrator runs it from the board (Setup). Their code: Layout; local headless Codex role runs: Client policy. Developers: `AGENTS.md`.
 
 ```mermaid
 flowchart LR
@@ -91,11 +91,20 @@ Solid arrow: an import, the only direction allowed, or a file read (`reads`); it
 
 Before upgrading, close running agent-pm sessions: earlier sessions lack generation-scoped terminal controllers.
 
-`/plugin marketplace add ophis/agent-pm`, then `/plugin install agent-pm@agent-pm` (a private repo: your git credentials). Requires the `claude` CLI, Python 3.11+ (stdlib only), tmux 3.3+ (tui runs), `git` and `gh` logged in (checkouts, the `github` and `pull-request` destinations), the `autopilot` plugin (plus `superpowers` for `build`), GitHub and the web; `osascript`, `pgrep` and a running iTerm2 only for the default iTerm2 split. Nothing checks them: a missing one fails the agent run. Agent runs load your user settings (`~/.claude/CLAUDE.md`, skills, permissions, plugins but `agent-pm`) and no MCP servers; a trusted cwd adds its project settings, `CLAUDE.md`, skills and `.mcp.json` (`delegate/src/agent_pm/delegate/config.toml`'s `cwd` and `trusted_dirs`).
+Each client that uses agent-pm installs the plugin itself and manages its version (a private repo: your git credentials):
 
-- `/agent-pm:tmux`: removed, rebuilt by [TASK-356](https://linear.app/ophis-workgroup/issue/TASK-356).
-- `ctmux <name>` (`manager/skills/tmux/scripts/ctmux`): the commander's tmux session `<name>`, attached through iTerm2's tmux integration (`-CC`). A new session's shell runs under `agent-pm-crew hold --manager=<name>`, which holds that manager's lease while the shell lives: start the commander's client in it. `agent-pm-crew` must be on the tmux server's PATH. `ctmux --install` copies the script to `~/.agent-pm/bin/ctmux` and prints that path.
-- `/agent-pm:manage`: coordinate the commander session through Crew; command guidance: `manager/skills/manage/SKILL.md`.
+| Client | Install |
+|---|---|
+| Claude Code | `/plugin marketplace add ophis/agent-pm`, then `/plugin install agent-pm@agent-pm` |
+| Codex | `codex plugin marketplace add ophis/agent-pm`, then `codex plugin add agent-pm@agent-pm` |
+
+Codex must be 0.156.0 or later: agent-pm starts Codex sessions with `--no-daemon`, which earlier Codex rejects at start.
+
+Requires the `claude` CLI, Python 3.11+ (stdlib only), tmux 3.3+ (tui runs), `git` and `gh` logged in (checkouts, the `github` and `pull-request` destinations), the `autopilot` plugin (plus `superpowers` for `build`), GitHub and the web; `osascript`, `pgrep` and a running iTerm2 only for the default iTerm2 split. Nothing checks them: a missing one fails the agent run. Agent runs load your user settings (`~/.claude/CLAUDE.md`, skills, permissions, plugins but `agent-pm`) and no MCP servers; a trusted cwd adds its project settings, `CLAUDE.md`, skills and `.mcp.json` (`delegate/src/agent_pm/delegate/config.toml`'s `cwd` and `trusted_dirs`).
+
+- `/agent-pm:tmux`: launch and direct workers, role runs and pipeline runs through Crew and the four `bin/` commands: `manager/skills/tmux/SKILL.md`.
+- `ctmux <name>` (`manager/skills/tmux/scripts/ctmux`): the commander's tmux session (`/agent-pm:tmux` › Start). `agent-pm-crew` must be on the tmux server's PATH. `ctmux --install` copies the script to `~/.agent-pm/bin/ctmux` and prints that path.
+- `/agent-pm:manage`: the commander's guidelines, coordinating through Crew (commands: `/agent-pm:tmux`): `manager/skills/manage/SKILL.md`.
 - `/agent-pm:act-as <role>[:<task>] <input>`: run a core role in this conversation, on that task or one it picks: `delegate/skills/act-as/SKILL.md`.
 - Your own roles, tasks, templates and tools, outside the plugin: `delegate/src/agent_pm/delegate/config.toml`'s `team_dirs` comment; `agent-pm-delegate run --list` (`delegate/src/agent_pm/delegate/cli.py`) lists every role and task.
 
