@@ -1,7 +1,8 @@
 """agent-pm-session's batch commands through bin/agent-pm-session on a private tmux server: status
 answers each name or stdin Record in order (Q11); a duplicate or bad input refuses the whole batch
 before any action; show, close and attach-command by name and by stdin Record, show placing a
-session by its own display or by a Record's, close repeatable and only for the named (Q12); on a
+session by its own display or by a Record's, close repeatable and only for the named (Q12), show
+and close refusing a Record whose sid the session's @record does not carry; on a
 Host that cannot display (session.tests.fakes.host:FakeHost, the module entry) show, attach-command,
 read and tile exit 1 saying so, status giving no attach command.
 """
@@ -9,6 +10,7 @@ read and tile exit 1 saying so, status giving no attach command.
 import dataclasses
 import os
 import subprocess
+import uuid
 
 from agent_pm.session.engine.types import Launch
 from agent_pm.utils import Record, Status
@@ -164,6 +166,26 @@ class ControlTest(ControlCase):
             self.status("w1", "w2", "w3"),
             [gone("w1"), gone("w2"), live("w3", "done")],
         )
+
+    def test_close_and_show_refuse_a_record_whose_sid_its_session_does_not_carry(self):
+        w1 = self.done("w1")
+        pid = self.calls("w1")[0]["pid"]
+        pane = self.server.pane_of("w1")
+        self.tmux("kill-pane", "-t", pane)
+        reused = dataclasses.replace(w1, sid=str(uuid.uuid4()))
+        for verb in ("show", "close"):
+            with self.subTest(verb=verb):
+                res = self.session(verb, stdin=lines(reused))
+                self.assertEqual((res.returncode, res.stdout), (1, ""), res.stderr)
+                self.assertEqual(
+                    res.stderr,
+                    f"{PROG}: w1: session w1 carries sid {w1.sid}, not the Record's {reused.sid}\n",
+                )
+        self.assertEqual(self.sessions(), [MANAGER, "w1"])
+        self.assertTrue(pid_alive(pid))
+        self.assertEqual(self.server.pane_of("w1"), pane)
+        self.assert_printed(self.session("close", stdin=lines(w1)), "")
+        self.assertEqual(self.sessions(), [MANAGER])
 
     def shows(self, name: str, window: str) -> None:
         """name's @pane is in `window` and runs a client of name."""
