@@ -22,8 +22,8 @@
 #   language        the language reports and PRDs are written in (one line); "" → no rule: the model's default
 #   cwd             the dir the agent run starts in (absolute or ~ path); "" → the caller's current directory
 #                   (the orchestrator's runs: the workdir). A resume reuses its recorded one (<workdir>/run.jsonl)
-#   idle_timeout    positive finite seconds without a session event; omitted → 7200 (2 hours). In tui mode the run
-#                   gives up, leaving the session open; other modes record the idle event and continue
+#   idle_timeout    positive finite seconds without a session event. In tui mode the run gives up, leaving the
+#                   session open; other modes record the idle event and continue
 #   users           local, global only: GitHub logins whose PR comments are the user's; [] → the gh login
 #   trusted_dirs    local, global only: dirs you trust (absolute or ~ path, matched by real path); [] → none. A cwd
 #                   that is one or under one loads its project settings; any other, user settings only, with a stderr

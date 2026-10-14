@@ -48,21 +48,24 @@ class IdleTimeoutConfig(Case):
     def test_configured_tui_idle_timeout_gives_up(self):
         self.local("[delegate.roles.dummy-tester]\nidle_timeout = 30\n")
         session_cls = SessionClass.scripted(IdleTimeout(30))
+        sid = "0f8fad5b-d9cb-469f-a165-70867728950e"
         with no_child():
             result = run(
                 composer.resolve("dummy-tester"),
-                Spec("input", self.home, mode="tui", cwd=self.home),
+                Spec("input", self.home, mode="tui", cwd=self.home, sid=sid),
                 driver=AgentDriver(session_cls),
             )
         self.assertIsNone(result.outcome)
         self.assertEqual(session_cls.started[0]["idle_timeout"], 30)
-        self.assertTrue(session_cls.live)
+        self.assertEqual(list(session_cls.live), ["claude-0f8fad5b"])
 
     def test_invalid_global_and_role_local_values_raise_delegate_config_error(self):
         for table in ("delegate", "delegate.roles.dummy-tester"):
             for value in (
                 "0",
                 "-1",
+                "-0.5",
+                "1" + "0" * 400,
                 "true",
                 "false",
                 '"7200"',

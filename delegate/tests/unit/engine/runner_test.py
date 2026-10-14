@@ -274,6 +274,13 @@ class TuiPolicy(Base):
             (7200, "no event for 2 h"),
         )
 
+    def test_the_give_up_reason_shows_the_timeout_in_seconds_minutes_or_hours(self):
+        for seconds, shown in ((30, "30 s"), (90, "1.5 min"), (600, "10 min"), (5400, "1.5 h")):
+            with self.subTest(seconds=seconds):
+                self.fresh()
+                self.faked(turn(START), IdleTimeout(seconds))
+                self.assertEqual(self.last("give_up")["reason"], f"no event for {shown}")
+
     def test_hours_of_activity_or_blocked_without_an_idle_timeout_never_give_up(self):
         now = [0.0]
 

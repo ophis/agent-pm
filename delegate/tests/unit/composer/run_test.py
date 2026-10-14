@@ -200,6 +200,7 @@ class Access(Fake):
                 "effort": "high",
                 "runtime": "a",
                 "output": {"type": "local"},
+                "idle_timeout": 60,
                 **kw,
             }
         )

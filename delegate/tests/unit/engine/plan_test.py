@@ -217,7 +217,12 @@ class Refusals(Base):
     def test_each_refusal_names_its_cause_and_nothing_is_written(self):
         tasks = ", ".join(composer.index("researcher"))
         nobody = RunConfig(
-            role="nope", tier=2, effort="high", runtime="fake", output={"type": "local"}
+            role="nope",
+            tier=2,
+            effort="high",
+            runtime="fake",
+            output={"type": "local"},
+            idle_timeout=60,
         )
         for kw, want in (
             ({"mode": "x"}, "mode must be one of headless, tui, in_process, got 'x'"),
