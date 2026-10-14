@@ -1,17 +1,36 @@
-"""Claude Code interactive launches, merged hooks, transcript replies and native usage limits."""
+"""Claude Code interactive launches, merged hooks, transcript replies and native usage limits.
+Each new main-thread assistant text in the transcript since launch is one Reply, read from a cursor;
+a turn end's text that lands later is not repeated. A usage limit comes from StopFailure or the
+transcript's API error, once a turn, never from the screen.
+"""
 
 import json
+import os
 import re
 import shlex
+import stat
 import time
+from collections.abc import Sequence
 from datetime import datetime, timedelta
 from types import MappingProxyType
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from agent_pm.session.adapters.base import Tui
 from agent_pm.session.adapters.claude.common import ClaudeCommon
-from agent_pm.session.engine.types import HookKind, LimitHit, Spec
-from agent_pm.utils import read_regular
+from agent_pm.session.engine.types import (
+    ClientBound,
+    ConfigError,
+    HookCall,
+    HookCallback,
+    HookKind,
+    LimitHit,
+    Reply,
+    SessionEvent,
+    Spec,
+    TurnEnd,
+    TurnFailed,
+)
+from agent_pm.utils import number, read_regular
 
 TAIL = 4 << 20
 LIMIT = re.compile(r"You've hit your ((?:[\w']+ ){0,3})limit|Usage limit reached")
@@ -21,6 +40,7 @@ WHEN = re.compile(
     ),
     re.I,
 )
+TRUST = re.compile(r"^\W*Quick safety check\b", re.M)  # the dialog's title starts its line
 ZONE = re.compile(r"[A-Za-z0-9_+-]+(/[A-Za-z0-9_+-]+){0,2}")
 MONTHS = (
     "january",
@@ -43,6 +63,7 @@ class ClaudeTui(Tui):
     hooks = MappingProxyType(
         {
             "Stop": HookKind.TURN_END,
+            "StopFailure": HookKind.TURN_FAILED,
             "PermissionRequest": HookKind.BLOCKED,
             "Notification": HookKind.BLOCKED,
             "PostToolUse": HookKind.ACTIVITY,
@@ -58,6 +79,9 @@ class ClaudeTui(Tui):
     def __init__(self, common: ClaudeCommon):
         self.common = common
         self.sid = ""
+        self.transcript, self.start, self.offset = "", 0, 0
+        self.last = self.unseen = ""  # the turn's newest text; its turn end's text not yet read
+        self.limited = False  # this turn's LimitHit given
 
     def launch(self, spec: Spec, hook, *, source_roots: tuple[str, ...]):
         common = self.common
@@ -73,25 +97,98 @@ class ClaudeTui(Tui):
         }
         tail = ("--", spec.prompt) if spec.prompt else ()
         settings, flags = common.merged(spec.flags, hooks)
-        return common.launch(spec, settings, tail=(*flags, *tail))
+        launch = common.launch(spec, settings, tail=(*flags, *tail))
+        self.transcript = launch.transcript
+        self.start = self.offset = _size(launch.transcript)
+        return launch
+
+    def hook_callback(self):
+        return HookCallback(__name__, {"transcript": self.transcript, "start": self.start})
 
     def restore(self, spec, state):
         self.sid = spec.sid or ""
+        path, start = state.get("transcript"), state.get("start")
+        if not (
+            isinstance(path, str) and os.path.isabs(path) and type(start) is int and start >= 0
+        ):
+            raise ConfigError("claude tui state: bad transcript cursor")
+        self.transcript, self.start, self.offset = path, start, start
+
+    def observe(self):
+        self.offset = min(self.offset, _size(self.transcript))
+        data = read_regular(self.transcript, offset=self.offset) or b""
+        end = data.rfind(b"\n") + 1
+        self.offset += end
+        return [reply for line in data[:end].split(b"\n") for reply in self._record(line)]
+
+    def replay(self, records):
+        """Ends in the latest turn's state, not the oldest's: no LimitHit given live yet (the replay
+        gives none), and a Stop since the hook log's last prompt leaves its text unseen unless it is
+        the transcript's newest.
+        """
+        found: list[SessionEvent | ClientBound] = [*self.observe()]
+        newest, ended = self.last, None
+        for label, payload in records:
+            events = self.hook_events(label, payload)
+            found += events
+            if label == "UserPromptSubmit":
+                ended = None
+            ended = next((e.reply for e in events if isinstance(e, TurnEnd)), ended)
+        self.limited = False
+        self.last = newest if ended is None else ""
+        self.unseen = ended if ended and ended.strip() and ended != newest else ""
+        return found
+
+    def _record(self, line: bytes) -> Sequence[Reply | LimitHit]:
+        try:
+            record = json.loads(line)
+        except (ValueError, RecursionError):
+            return []
+        if not isinstance(record, dict) or record.get("isSidechain") is True:
+            return []
+        message = record.get("message")
+        content = message.get("content") if isinstance(message, dict) else None
+        if record.get("type") == "user":
+            if isinstance(content, str) or _texts(content):  # a prompt: a new turn
+                self.last = self.unseen = ""
+                self.limited = False
+            return []
+        if record.get("type") != "assistant":
+            return []
+        if record.get("isApiErrorMessage") is True:
+            if record.get("error") != "rate_limit":
+                return []
+            quota = record.get("quotaLimits")
+            quota = quota if isinstance(quota, dict) else {}
+            resets = number(quota.get("resetsAt")) if quota.get("status") == "rejected" else None
+            if resets is None:
+                resets = _resets_in("\n".join(_texts(content)))
+            return self._limit(resets)
+        text = "\n".join(_texts(content))
+        if not text.strip():
+            return []
+        if self.unseen and text.strip() == self.unseen.strip():
+            self.unseen = ""
+            return []
+        self.last = text
+        return [Reply(text)]
 
     def session_id(self, payload):
         """The sid it launched or restored: its native id."""
         return self.sid if super().session_id(payload) else ""
 
     def reply(self, payload):
-        message = payload.get("last_assistant_message")
-        if isinstance(message, str):
-            return message
-        path = payload.get("transcript_path")
-        try:
-            data = read_regular(path, limit=TAIL, tail=True) if isinstance(path, str) else None
-        except ValueError:  # a NUL or a lone surrogate in the path
-            data = None
-        return _last_text(data or b"")
+        text = payload.get("last_assistant_message")
+        if not isinstance(text, str):
+            path = payload.get("transcript_path")
+            try:
+                data = read_regular(path, limit=TAIL, tail=True) if isinstance(path, str) else None
+            except ValueError:  # a NUL or a lone surrogate in the path
+                data = None
+            text = _last_text(data or b"")
+        self.unseen = text if text.strip() and text != self.last else ""
+        self.last = ""
+        return text
 
     def pending(self, payload):
         tasks = payload.get("background_tasks")
@@ -103,19 +200,52 @@ class ClaudeTui(Tui):
     def blocked_reason(self, payload):
         return _first(payload, "tool_name", "message")
 
-    def limit(self, screen):
-        screen = " ".join(screen.split())
-        found = [m for m in LIMIT.finditer(screen) if m[1] != "fast "]
-        if not found:
-            return None
-        at = screen.find("resets ", found[-1].end())
-        when = WHEN.match(screen, at + len("resets ")) if at >= 0 else None
-        return LimitHit(None if when is None else _resets(when))
+    def failure(self, payload):
+        """StopFailure's typed error: rate_limit is the usage limit, any other a failed turn."""
+        error = _first(payload, "error") or "unknown"
+        if error == "rate_limit":
+            return self._limit(_resets_in(_first(payload, "last_assistant_message")))
+        return [TurnFailed(error, _first(payload, "error_details", "last_assistant_message"))]
+
+    def shows(self, dialog, screen):
+        if dialog != "Quick safety check":
+            return super().shows(dialog, screen)
+        return bool(TRUST.search(screen)) and super().shows("Yes, I trust this folder", screen)
+
+    def _limit(self, resets: float | None) -> list[LimitHit]:
+        if self.limited:
+            return []
+        self.limited = True
+        return [LimitHit(resets)]
+
+
+def on_hook(call: HookCall) -> dict:
+    """Journals the payload as is: the callback carries the transcript cursor's start."""
+    return call.payload
 
 
 def _first(payload: dict, *keys: str) -> str:
     values = (payload.get(key) for key in keys)
     return next((value for value in values if isinstance(value, str) and value), "")
+
+
+def _size(path: str) -> int:
+    """A regular file's size; 0 for anything else."""
+    try:
+        info = os.lstat(path)
+    except (OSError, ValueError):
+        return 0
+    return info.st_size if stat.S_ISREG(info.st_mode) else 0
+
+
+def _texts(content) -> list[str]:
+    if not isinstance(content, list):
+        return []
+    return [
+        b["text"]
+        for b in content
+        if isinstance(b, dict) and b.get("type") == "text" and isinstance(b.get("text"), str)
+    ]
 
 
 def _last_text(data: bytes) -> str:
@@ -136,11 +266,7 @@ def _last_text(data: bytes) -> str:
         content = message.get("content") if isinstance(message, dict) else None
         if not isinstance(message, dict) or not isinstance(content, list):
             continue
-        blocks = [
-            b["text"]
-            for b in content
-            if isinstance(b, dict) and b.get("type") == "text" and isinstance(b.get("text"), str)
-        ]
+        blocks = _texts(content)
         mid = message.get("id")
         mid = mid if isinstance(mid, str) and mid else object()
         if last is None:
@@ -151,6 +277,15 @@ def _last_text(data: bytes) -> str:
         else:
             texts = blocks + texts
     return "\n".join(texts)
+
+
+def _resets_in(message: str) -> float | None:
+    """When the last usage-limit notice in `message` (no fast-mode one) says it resets."""
+    message = " ".join(message.split())
+    found = [m for m in LIMIT.finditer(message) if m[1] != "fast "]
+    at = message.find("resets ", found[-1].end()) if found else -1
+    when = WHEN.match(message, at + len("resets ")) if at >= 0 else None
+    return None if when is None else _resets(when)
 
 
 def _index(word: str, names: tuple[str, ...]) -> int | None:

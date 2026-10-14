@@ -43,6 +43,7 @@ from agent_pm.session.engine.types import (
     Spec,
     Stderr,
     TurnEnd,
+    TurnFailed,
     Usage,
     Window,
 )
@@ -96,6 +97,7 @@ __all__ = [
     "Reply",
     "Stderr",
     "TurnEnd",
+    "TurnFailed",
     "DriverError",
     "ConfigError",
 ]
