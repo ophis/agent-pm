@@ -13,6 +13,7 @@ from agent_pm.session.engine.types import (
     ActivityState,
     ConfigError,
     DriverError,
+    HookCallback,
     Hosts,
     Key,
     Launch,
@@ -186,8 +187,8 @@ class Host(ABC):
                 raise DriverError(f"events file {events}: {error.strerror}") from error
         return events
 
-    def hook_state(self, name: str, metadata: Mapping[str, str]) -> dict:
-        return {}
+    def hook_callback(self, name: str, metadata: Mapping[str, str]) -> HookCallback | None:
+        return None
 
     def protected_paths(self) -> tuple[str, ...]:
         return ()

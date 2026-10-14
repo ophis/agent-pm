@@ -187,7 +187,7 @@ class Standalone(Case):
                 else:
                     names.add("." * node.level + (node.module or "").split(".")[0])
         self.assertLessEqual(names, set(sys.stdlib_module_names))
-        self.assertEqual(shared, [["HookError", "Word"], ["HookError", "Word"]])
+        self.assertEqual(shared, [["HookCall", "HookError", "Word"]] * 2)
 
     def test_no_runtime_name(self):
         self.assertEqual(RUNTIME.findall(self.source), [])

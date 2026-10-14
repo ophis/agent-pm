@@ -23,6 +23,7 @@ from agent_pm.session.engine.types import (
     ClientBound,
     ConfigError,
     DriverError,
+    HookCallback,
     HookKind,
     Key,
     Launch,
@@ -151,7 +152,9 @@ class Base(Case):
         self.addCleanup(tmp.cleanup)
         self.tmp = os.path.realpath(tmp.name)
         self.events = os.path.join(self.home, "events")
-        self.host = ScreenHost(protected=("/host/tool",), hook={"host_state": {"selected": True}})
+        self.host = ScreenHost(
+            protected=("/host/tool",), hook=HookCallback("fake_host_hook", {"selected": True})
+        )
         self.log = []
         self.clock = Clock(self.log)
         for patch in (
@@ -220,7 +223,7 @@ class Base(Case):
             "words": WORDS,
             "generation": generation,
             "host": self.host.name,
-            "host_state": {"selected": True},
+            "host_hook": {"module": "fake_host_hook", "state": {"selected": True}, "roots": []},
             **changes,
         }
 
@@ -386,7 +389,8 @@ class AttachTest(Base):
         self.assertEqual(len(polled), 6)
 
     def test_a_fresh_tui_is_restored_once_with_its_adapter_state_before_its_records(self):
-        for extra, kept in (({"adapter_state": {"store": "/s"}}, {"store": "/s"}), ({}, {})):
+        restored = {"module": "fake_adapter_hook", "state": {"store": "/s"}, "roots": []}
+        for extra, kept in (({"adapter_hook": restored}, {"store": "/s"}), ({}, {})):
             with self.subTest(extra=extra):
                 adapter = FreshAdapter({"tui": True})
                 self.write_state(self.state(**extra))
@@ -1537,7 +1541,7 @@ class PrepareTest(Base):
             [
                 c
                 for c in self.host.calls.mock_calls
-                if c[0] not in ("protected_paths", "hook_state", "validate")
+                if c[0] not in ("protected_paths", "hook_callback", "validate")
             ],
             [],
         )

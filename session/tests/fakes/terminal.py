@@ -100,7 +100,7 @@ class MemoryHost(Host):
         self.calls = mock.Mock()
         self.processes = {}
         self.serial = 0
-        self.protected, self.hook = protected, {} if hook is None else hook
+        self.protected, self.hook = protected, hook
         self.calls.list.return_value = None
         self.calls.display.return_value = None
 
@@ -123,8 +123,8 @@ class MemoryHost(Host):
         self.calls.protected_paths()
         return self.protected
 
-    def hook_state(self, name, metadata):
-        self.calls.hook_state(name, metadata)
+    def hook_callback(self, name, metadata):
+        self.calls.hook_callback(name, metadata)
         return self.hook
 
     def display(self, value):

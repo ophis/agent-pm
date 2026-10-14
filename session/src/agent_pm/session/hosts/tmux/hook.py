@@ -7,18 +7,18 @@ import stat
 import subprocess
 
 from agent_pm.session.engine.status_log import SessionStatusLog
-from agent_pm.session.engine.types import HookError
+from agent_pm.session.engine.types import HookCall, HookError
 from agent_pm.session.hosts.tmux import transport
 from agent_pm.session.hosts.tmux.types import TuiError
 
 MARK_TIMEOUT = 5
 
 
-def on_hook(word, _payload, state):
-    saved = state.get("host_state", {})
+def on_hook(word: str, call: HookCall) -> None:
+    saved = call.state
     executable = saved.get("executable")
     if not isinstance(executable, str) or not os.path.isabs(executable):
-        raise HookError("host_state: bad executable")
+        raise HookError("host state: bad executable")
     try:
         info = os.stat(executable)
     except OSError as error:
@@ -31,15 +31,15 @@ def on_hook(word, _payload, state):
         raise HookError(f"tmux {executable}: not a regular executable file owned by you or root")
     target, generation = saved.get("target"), saved.get("generation")
     if not isinstance(target, str) or not transport.NAME.fullmatch(target):
-        raise HookError("host_state: bad target")
+        raise HookError("host state: bad target")
     if not isinstance(generation, str) or not generation:
-        raise HookError("host_state: bad generation")
+        raise HookError("host state: bad generation")
     selectors = saved.get("environment")
     if not isinstance(selectors, dict) or any(
         key not in ("TMUX", "TMUX_TMPDIR") or not isinstance(value, str) or "\0" in value
         for key, value in selectors.items()
     ):
-        raise HookError("host_state: bad environment")
+        raise HookError("host state: bad environment")
     environment = {
         key: value for key, value in os.environ.items() if key not in ("TMUX", "TMUX_TMPDIR")
     }
@@ -73,9 +73,9 @@ def on_hook(word, _payload, state):
         pane, sid, actual_generation = fields
         if not transport.PANE.fullmatch(pane):
             return
-        if sid != state["sid"] or actual_generation != generation:
+        if sid != call.sid or actual_generation != generation:
             return
-        mark(word, state["events"], pane=pane, tmux=executable, proc=run)
+        mark(word, call.events, pane=pane, tmux=executable, proc=run)
     except subprocess.TimeoutExpired:
         raise HookError(f"tmux: timed out after {MARK_TIMEOUT} s") from None
     except OSError as error:

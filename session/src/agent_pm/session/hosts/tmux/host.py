@@ -25,6 +25,7 @@ from agent_pm.session.engine.types import (
     ActivityState,
     ConfigError,
     DriverError,
+    HookCallback,
     Key,
     Launch,
     Liveness,
@@ -908,10 +909,10 @@ class TmuxHost(Host, Displayable):
         except TuiError as error:
             raise ConfigError(str(error)) from error
 
-    def hook_state(self, name: str, metadata: Mapping[str, str]) -> dict:
-        return {
-            "host_hook": "agent_pm.session.hosts.tmux.hook",
-            "host_state": {
+    def hook_callback(self, name: str, metadata: Mapping[str, str]) -> HookCallback:
+        return HookCallback(
+            hook.__name__,
+            {
                 "executable": self._executable(),
                 "target": name,
                 "generation": metadata["generation"],
@@ -921,7 +922,7 @@ class TmuxHost(Host, Displayable):
                     if key in ("TMUX", "TMUX_TMPDIR")
                 },
             },
-        }
+        )
 
     def _executable(self) -> str:
         path = self.tmux.tmux_path()

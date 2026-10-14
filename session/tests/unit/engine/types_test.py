@@ -395,3 +395,31 @@ class Binding(Case):
         self.assertNotIn(ClientBound, typing.get_args(engine_types.SessionEvent))
         self.assertFalse(hasattr(engine_types, "SessionBound"))
         self.assertNotIn("ClientBound", session.__all__)
+
+
+class HookCallbackTest(Case):
+    def test_its_fields_are_the_session_json_descriptor(self):
+        callback = engine_types.HookCallback("pkg.hooks", {"store": "/s"}, roots=("/opt/ext",))
+        self.assertEqual(
+            callback.fields(),
+            {"module": "pkg.hooks", "state": {"store": "/s"}, "roots": ["/opt/ext"]},
+        )
+        self.assertEqual(
+            engine_types.HookCallback("pkg").fields(), {"module": "pkg", "state": {}, "roots": []}
+        )
+
+    def test_a_bad_module_state_or_root_is_refused(self):
+        for kwargs, message in (
+            ({"module": "pkg/hooks"}, "hook callback module 'pkg/hooks': want a dotted name"),
+            ({"module": ""}, "hook callback module '': want a dotted name"),
+            ({"module": "p", "state": []}, "hook callback state: want a mapping"),
+            ({"module": "p", "roots": ("rel",)}, ROOTS),
+            ({"module": "p", "roots": ["/a"]}, ROOTS),
+            ({"module": "p", "roots": ("/a", "/a")}, ROOTS),
+        ):
+            with self.subTest(kwargs=kwargs), self.assertRaises(ConfigError) as caught:
+                engine_types.HookCallback(**kwargs)
+            self.assertEqual(str(caught.exception), message)
+
+
+ROOTS = "hook callback roots: want distinct printable absolute paths"

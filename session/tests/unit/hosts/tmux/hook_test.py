@@ -9,6 +9,7 @@ import unittest.mock
 from contextlib import ExitStack
 from unittest import mock
 
+from agent_pm.session.engine.types import HookCall
 from agent_pm.session.hosts.tmux import hook, types
 
 from session.tests.case import Case
@@ -28,14 +29,10 @@ class CallbackTest(Case):
             pass
         os.chmod(self.executable, 0o700)
         self.state = {
-            "events": None,
-            "sid": "sid",
-            "host_state": {
-                "executable": self.executable,
-                "target": "w1",
-                "generation": "generation",
-                "environment": {"TMUX_TMPDIR": self.home},
-            },
+            "executable": self.executable,
+            "target": "w1",
+            "generation": "generation",
+            "environment": {"TMUX_TMPDIR": self.home},
         }
 
     def run_callback(self, identity):
@@ -54,7 +51,7 @@ class CallbackTest(Case):
                 ],
             ) as run,
         ):
-            hook.on_hook("working", {}, self.state)
+            hook.on_hook("working", HookCall("tool", {}, "sid", self.home, None, self.state))
         return run
 
     def test_callback_uses_the_saved_selector_for_lookup_and_mark(self):

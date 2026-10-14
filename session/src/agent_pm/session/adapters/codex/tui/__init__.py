@@ -30,7 +30,15 @@ from agent_pm.session.adapters.codex.common import (
 )
 from agent_pm.session.adapters.codex.common.types import Snapshot
 from agent_pm.session.adapters.common import scan, split_flags
-from agent_pm.session.engine.types import ConfigError, HookKind, Launch, LimitHit, Spec
+from agent_pm.session.engine.types import (
+    ConfigError,
+    HookCall,
+    HookCallback,
+    HookKind,
+    Launch,
+    LimitHit,
+    Spec,
+)
 from agent_pm.utils import import_roots, package_dirs
 
 PASSED = ("-c", "--enable", "--disable")
@@ -198,11 +206,8 @@ class CodexTui(Tui):
     def commit(self) -> None:
         self.state = self.common.commit(self.state)
 
-    def hook_state(self) -> dict:
-        return {
-            "adapter_hook": __name__,
-            "adapter_state": {"store": self.store},
-        }
+    def hook_callback(self) -> HookCallback:
+        return HookCallback(__name__, {"store": self.store})
 
     def restore(self, spec, state):
         """The launching CodexTui's store, recovery state and native id, from the store it named."""
@@ -408,14 +413,7 @@ def bind(label, value, workdir, sid, *, root=None):
     return True
 
 
-def on_hook(label, payload, state):
-    if not bind(
-        label,
-        payload,
-        state["workdir"],
-        state["sid"],
-        root=state["adapter_state"]["store"],
-    ):
-        return False
-    payload["hook_event_name"] = label
-    return True
+def on_hook(call: HookCall) -> dict | None:
+    if not bind(call.label, call.payload, call.workdir, call.sid, root=call.state["store"]):
+        return None
+    return {**call.payload, "hook_event_name": call.label}

@@ -70,8 +70,14 @@ def _state(prepared: Prepared, run: Tui, host: Host, metadata: Mapping[str, str]
         "words": {label: WORDS[kind] for label, kind in run.hooks.items() if kind in WORDS},
         "host": host.name,
         "generation": metadata["generation"],
-        **host.hook_state(spec.name or "", metadata),
-        **run.hook_state(),
+        **{
+            key: callback.fields()
+            for key, callback in (
+                ("adapter_hook", run.hook_callback()),
+                ("host_hook", host.hook_callback(spec.name or "", metadata)),
+            )
+            if callback is not None
+        },
     }
 
 
@@ -453,7 +459,7 @@ class TuiMode(RunningMode):
             events=state["events"],
         )
         try:
-            run.restore(spec, state.get("adapter_state", {}))
+            run.restore(spec, state["adapter_hook"]["state"] if "adapter_hook" in state else {})
         except ConfigError as e:
             raise DriverError(f"no tui session {name}: {e}") from None
         records, offset = store.records(0)
