@@ -2,6 +2,8 @@ import json
 import os
 import uuid
 
+from agent_pm.utils import Record
+
 from session.tests.case import SRC
 
 HOOK = os.path.join(SRC["session"], "agent_pm", "session", "modes", "tui_hook.py")
@@ -30,8 +32,29 @@ def state(root: str, events) -> dict:
         "events": events,
         "words": dict(WORDS),
         "host_hook": "agent_pm.session.hosts.tmux.hook",
-        "host_state": {"executable": os.path.join(root, "bin", "tmux")},
+        "host_state": {
+            "executable": os.path.join(root, "bin", "tmux"),
+            "target": "w1",
+            "generation": uuid.uuid4().hex,
+            "environment": {"TMUX_TMPDIR": root},
+        },
     }
+
+
+def receipt(value: dict) -> Record:
+    saved = value["host_state"]
+    return Record(
+        1,
+        "fake",
+        saved["target"],
+        (saved["target"],),
+        value["sid"],
+        None,
+        ("ctl",),
+        ("resume",),
+        None,
+        saved["generation"],
+    )
 
 
 def write_state(folder: str, value) -> None:

@@ -15,12 +15,21 @@ from agent_pm.session.modes import tui_hook
 
 from session.tests.case import SRC, Case
 from session.tests.source_roots import source_roots_cases
-from session.tests.tui_hook_support import HOOK, SOURCE_ROOTS, WORDS, install, state, write_state
+from session.tests.tui_hook_support import (
+    HOOK,
+    SOURCE_ROOTS,
+    WORDS,
+    install,
+    receipt,
+    state,
+    write_state,
+)
 
 PANE = "%3"
 LINE = r"\A[0-9]{2}:[0-9]{2}:[0-9]{2} w1 %s\n\Z"  # one event line
 TS = r"\A\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}[+-]\d\d:\d\d\Z"
 MISSING = object()
+LOOKUP = ["display-message", "-p", "-t", "=w1:", "#{pane_id}\t#{@record}"]
 TMUX = """#!{python} -I
 import json, os, sys
 with open(os.environ["TMUX_LOG"], "a") as f:
@@ -28,7 +37,10 @@ with open(os.environ["TMUX_LOG"], "a") as f:
 if os.environ.get("TMUX_FAIL"):
     sys.exit("boom\\nagain")
 if sys.argv[1] == "display-message":
-    print("w1")
+    if "pane_id" in sys.argv[-1]:
+        print("" if os.environ.get("TMUX_TARGET_ABSENT") else "%3\\t" + os.environ["TMUX_TARGET_RECORD"])
+    else:
+        print("w1")
 """
 DECOY = """#!{python} -I
 open({log!r}, "a").close()
@@ -59,6 +71,7 @@ class HookBase(Case):
             "HOME": self.root,
         }
         self.state = state(self.root, self.events)
+        self.env["TMUX_TARGET_RECORD"] = receipt(self.state).to_line()
         write_state(self.dir, self.state)
 
     def hook(self, label, payload=None, args=None, **env):
@@ -261,7 +274,7 @@ with mock.patch("builtins.open", side_effect=open_file):
         self.assertEqual(self.hook("stop", {"text": "success"}), "")
         self.assertFalse(os.path.lexists(os.path.join(self.dir, "hook.log")))
         self.assertEqual(self.records()[0]["payload"], {"text": "success"})
-        self.assertEqual(self.calls()[0], ["set-option", "-t", PANE, "@state", "done"])
+        self.assertEqual(self.calls()[:2], [LOOKUP, ["set-option", "-t", PANE, "@state", "done"]])
         self.assertRegex(self.lines(), LINE % "done")
 
 
@@ -448,7 +461,7 @@ for number in range(20):
             with self.subTest(label):
                 self.reset()
                 self.assertEqual(self.hook(label), "")
-                calls = [["set-option", "-t", PANE, "@state", word]]
+                calls = [LOOKUP, ["set-option", "-t", PANE, "@state", word]]
                 if word == "working":
                     self.assertEqual(self.lines(), "")
                 else:
@@ -462,6 +475,7 @@ for number in range(20):
         self.assertEqual(
             self.calls(),
             [
+                LOOKUP,
                 ["set-option", "-t", PANE, "@state", "blocked"],
                 ["display-message", "-p", "-t", PANE, "#S"],
             ],
@@ -495,15 +509,28 @@ for number in range(20):
             with self.subTest(label):
                 self.reset()
                 self.assertEqual(self.hook(label), "")
-                self.assertEqual(self.calls(), [["set-option", "-t", PANE, "@state", word]])
+                self.assertEqual(self.calls(), [LOOKUP, ["set-option", "-t", PANE, "@state", word]])
         self.assertEqual(self.lines(), "")
         self.assertEqual(len(self.records()), 3)
 
-    def test_no_tmux_pane_records_and_marks_nothing(self):
+    def test_target_lookup_works_without_runtime_pane_environment(self):
         for pane in (None, ""):
             self.assertEqual(self.hook("stop", TMUX_PANE=pane), "")
         self.assertEqual(len(self.records()), 2)
-        self.assertEqual((self.calls(), self.lines()), ([], ""))
+        self.assertEqual(
+            self.calls(),
+            [
+                LOOKUP,
+                ["set-option", "-t", PANE, "@state", "done"],
+                ["display-message", "-p", "-t", PANE, "#S"],
+            ]
+            * 2,
+        )
+
+    def test_missing_target_journals_without_marking(self):
+        self.assertEqual(self.hook("stop", TMUX_TARGET_ABSENT="1"), "")
+        self.assertEqual(len(self.records()), 1)
+        self.assertEqual((self.calls(), self.lines()), ([LOOKUP], ""))
 
     def test_valid_edge_states_are_accepted(self):
         write_state(

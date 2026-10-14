@@ -5,11 +5,13 @@ import stat
 import subprocess
 
 from agent_pm.session.engine.types import HookError
-from agent_pm.session.hosts.tmux import tmux_host
+from agent_pm.session.hosts.tmux import tmux_host, transport
+from agent_pm.utils import Record
 
 
 def on_hook(word, _payload, state):
-    executable = state.get("host_state", {}).get("executable")
+    saved = state.get("host_state", {})
+    executable = saved.get("executable")
     if not isinstance(executable, str) or not os.path.isabs(executable):
         raise HookError("host_state: bad executable")
     try:
@@ -22,7 +24,50 @@ def on_hook(word, _payload, state):
         or not os.access(executable, os.X_OK)
     ):
         raise HookError(f"tmux {executable}: not a regular executable file owned by you or root")
+    target, generation = saved.get("target"), saved.get("generation")
+    if not isinstance(target, str) or not transport.NAME.fullmatch(target):
+        raise HookError("host_state: bad target")
+    if not isinstance(generation, str) or not generation:
+        raise HookError("host_state: bad generation")
+    selectors = saved.get("environment")
+    if not isinstance(selectors, dict) or any(
+        key not in ("TMUX", "TMUX_TMPDIR") or not isinstance(value, str) or "\0" in value
+        for key, value in selectors.items()
+    ):
+        raise HookError("host_state: bad environment")
+    environment = {
+        key: value for key, value in os.environ.items() if key not in ("TMUX", "TMUX_TMPDIR")
+    }
+    environment.update(selectors)
+
+    def run(argv, **options):
+        return subprocess.run(argv, env=environment, **options)
+
     try:
-        tmux_host.mark(word, state["events"], tmux=executable, proc=subprocess.run)
+        result = run(
+            [executable, "display-message", "-p", "-t", f"={target}:", "#{pane_id}\t#{@record}"],
+            capture_output=True,
+            text=True,
+            stdin=subprocess.DEVNULL,
+            timeout=tmux_host.MARK_TIMEOUT,
+        )
+        if result.returncode:
+            if transport.absent(result):
+                return
+            raise HookError(f"tmux: {transport.error(result)}")
+        pane, separator, line = result.stdout.strip().partition("\t")
+        if not separator or not transport.PANE.fullmatch(pane):
+            return
+        try:
+            receipt = Record.parse(line)
+        except ValueError:
+            return
+        if receipt.detail != generation or receipt.name != target or receipt.sid != state["sid"]:
+            return
+        tmux_host.mark(word, state["events"], pane=pane, tmux=executable, proc=run)
+    except subprocess.TimeoutExpired:
+        raise HookError(f"tmux: timed out after {tmux_host.MARK_TIMEOUT} s") from None
+    except OSError as error:
+        raise HookError(f"tmux: {error}") from error
     except tmux_host.TuiError as error:
         raise HookError(str(error)) from None

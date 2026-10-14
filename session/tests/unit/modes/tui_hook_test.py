@@ -18,7 +18,7 @@ from agent_pm.session.engine import types as engine_types
 from agent_pm.session.modes import tui_hook
 
 from session.tests.case import SRC, Case
-from session.tests.tui_hook_support import HOOK, SOURCE_ROOTS, install, state, write_state
+from session.tests.tui_hook_support import HOOK, SOURCE_ROOTS, install, receipt, state, write_state
 
 RUNTIME = re.compile(r"claude|codex", re.I)
 
@@ -32,8 +32,15 @@ class InProcess(Case):
         os.mkdir(self.dir, 0o700)
         self.events = os.path.join(self.root, "events")
         self.tmux = install(os.path.join(self.root, "bin"), "")
-        write_state(self.dir, state(self.root, self.events))
-        self.mark = unittest.mock.Mock(return_value=subprocess.CompletedProcess([], 0, "", ""))
+        self.state = state(self.root, self.events)
+        write_state(self.dir, self.state)
+        self.lookup = f"%3\t{receipt(self.state).to_line()}\n"
+        self.mark = unittest.mock.Mock(
+            side_effect=[
+                subprocess.CompletedProcess([], 0, self.lookup, ""),
+                subprocess.CompletedProcess([], 0, "", ""),
+            ]
+        )
 
     def faked(self, uid=None, mode=None, *, executable=True):
         real_stat, real_access = os.stat, os.access
@@ -54,20 +61,23 @@ class InProcess(Case):
             unittest.mock.patch("os.stat", fake_stat),
             unittest.mock.patch("os.access", fake_access),
             unittest.mock.patch("subprocess.run", self.mark),
-            unittest.mock.patch.dict(os.environ, {"TMUX_PANE": "%3"}),
         ):
             tui_hook.main([self.dir, SOURCE_ROOTS, "tool"], io.BytesIO(b"{}"))
 
     def test_a_tmux_of_yours_or_roots_marks(self):
         for uid in (os.getuid(), 0):
             with self.subTest(uid=uid):
-                self.mark.reset_mock()
+                self.mark.reset_mock(side_effect=True)
+                self.mark.side_effect = [
+                    subprocess.CompletedProcess([], 0, self.lookup, ""),
+                    subprocess.CompletedProcess([], 0, "", ""),
+                ]
                 self.faked(uid=uid)
                 self.assertEqual(
                     self.mark.call_args.args[0],
                     [self.tmux, "set-option", "-t", "%3", "@state", "working"],
                 )
-                self.assertEqual(self.mark.call_count, 1)
+                self.assertEqual(self.mark.call_count, 2)
 
     def test_a_foreign_non_regular_or_non_executable_tmux_is_refused_after_the_record(self):
         for case, kwargs in (
@@ -90,7 +100,6 @@ class InProcess(Case):
             unittest.mock.patch("fcntl.flock", wraps=fcntl.flock) as flock,
             unittest.mock.patch("os.write", wraps=os.write) as write,
             unittest.mock.patch("subprocess.run", self.mark),
-            unittest.mock.patch.dict(os.environ, {"TMUX_PANE": "%3"}),
         ):
             calls.attach_mock(flock, "flock")
             calls.attach_mock(write, "write")
@@ -108,11 +117,34 @@ class InProcess(Case):
                 unittest.mock.call.flock(fd, fcntl.LOCK_EX),
                 unittest.mock.call.write(fd, data),
                 unittest.mock.call.mark(
+                    [self.tmux, "display-message", "-p", "-t", "=w1:", "#{pane_id}\t#{@record}"],
+                    capture_output=True,
+                    text=True,
+                    stdin=subprocess.DEVNULL,
+                    timeout=5,
+                    env={
+                        **{
+                            key: value
+                            for key, value in os.environ.items()
+                            if key not in ("TMUX", "TMUX_TMPDIR")
+                        },
+                        "TMUX_TMPDIR": self.root,
+                    },
+                ),
+                unittest.mock.call.mark(
                     [self.tmux, "set-option", "-t", "%3", "@state", "working"],
                     capture_output=True,
                     text=True,
                     stdin=subprocess.DEVNULL,
                     timeout=5,
+                    env={
+                        **{
+                            key: value
+                            for key, value in os.environ.items()
+                            if key not in ("TMUX", "TMUX_TMPDIR")
+                        },
+                        "TMUX_TMPDIR": self.root,
+                    },
                 ),
             ],
         )
