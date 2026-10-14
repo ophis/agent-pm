@@ -10,13 +10,10 @@ import shutil
 import subprocess
 import tempfile
 import unittest
-from unittest import mock
 
-from agent_pm.delegate import Spec
-from agent_pm.delegate.engine.harness_delegate import HarnessDelegate
 from agent_pm.utils import Record
 
-from delegate.tests.case import PYTHONPATH, REPO, Case
+from delegate.tests.case import PY, PYTHONPATH, REPO, Case
 from delegate.tests.integration.cli import DONE, RUN, SID
 from delegate.tests.replies import block, mark
 from delegate.tests.unit.runs import said
@@ -30,6 +27,15 @@ HARNESS = f"{TUI}-drive"
 START = mark("start", "echoing")
 WAIT = 60  # seconds: a run
 KEPT = f'implementation = "{__name__}:KeptLaunch"\n'
+# HarnessDelegate configures the shared session classes: in a child, so no test does in-process.
+INJECTED = f"""import sys
+from agent_pm.delegate import Spec
+from agent_pm.delegate.engine.harness_delegate import HarnessDelegate
+from {__name__} import KeptLaunch
+role, work, sid, events, cwd = sys.argv[1:]
+spec = Spec("Hello.", work, mode="tui", sid=sid, events=events, cwd=cwd)
+print(HarnessDelegate(role, spec, harness_host=KeptLaunch("fake")).detach().to_line())
+"""
 
 
 class KeptLaunch(FakeHost):
@@ -107,9 +113,17 @@ class HarnessHosts(Case):
     def test_an_injected_fake_host_runs_the_harness_while_tmux_runs_the_agent(self):
         self.configure(f"[session.hosts.fake]\n{KEPT}")
         self.steps([START], turns=[[block(DONE)]])
-        spec = Spec("Hello.", self.work, mode="tui", sid=SID, events=self.events, cwd=self.proj)
-        with mock.patch.dict(os.environ, self.env(), clear=True):
-            record = HarnessDelegate(ROLE, spec, harness_host=KeptLaunch("fake")).detach()
+        res = subprocess.run(
+            [*PY, "-c", INJECTED, ROLE, self.work, SID, self.events, self.proj],
+            cwd=self.proj,
+            env=self.env(os.pathsep.join((PYTHONPATH, REPO))),
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            timeout=WAIT,
+        )
+        self.assertEqual(res.returncode, 0, res.stderr)
+        record = Record.parse(res.stdout)
         self.assertEqual(record.sessions, (HARNESS, TUI))
         self.assertTrue(self.live(TUI))
         self.assertFalse(self.live(HARNESS))

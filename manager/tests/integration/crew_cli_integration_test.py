@@ -3,7 +3,6 @@
 import json
 import os
 import shlex
-import shutil
 import subprocess
 from pathlib import Path
 from unittest import mock
@@ -12,7 +11,7 @@ from agent_pm.manager import Crew, Roster, Spec, State
 from agent_pm.utils import Record, Status
 
 from manager.tests import fake_session
-from manager.tests.case import REPO, Case, child_env, with_ctl
+from manager.tests.case import Case, child_env, with_ctl
 from utils.tests.fakes import ctl
 
 
@@ -36,17 +35,6 @@ class Commands(Case):
         self.crew_bin = self.plugin_root()
         fake_session.install(os.path.dirname(self.crew_bin), self.sessions)
         self.directory = os.path.join(self.agent_pm, "managers", "mgr")
-
-    def plugin_root(self) -> str:
-        """This tree's projects under a plugin root whose bin/ holds only agent-pm-crew: the
-        launcher puts its own bin/ first on PATH, so the fake agent-pm-session beside it wins over
-        the real one.
-        """
-        root = os.path.join(self.home, "plugin")
-        os.makedirs(os.path.join(root, "bin"))
-        for project in ("utils", "session", "delegate", "manager"):
-            os.symlink(os.path.join(REPO, project), os.path.join(root, project))
-        return shutil.copy(os.path.join(REPO, "bin", "agent-pm-crew"), os.path.join(root, "bin"))
 
     def invoke(self, *argv, clean=False):
         env = dict(os.environ)

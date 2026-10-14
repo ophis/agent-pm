@@ -6,14 +6,14 @@ import subprocess
 from pathlib import Path
 
 from manager.tests import fake_session
-from manager.tests.case import REPO, Case, child_env
+from manager.tests.case import Case, child_env
 
 
 class PathsAndArguments(Case):
     def setUp(self):
         self.command = self.setup_ctl()
         fake_session.install(self.bin_dir, os.path.join(self.home, "session-list"))
-        self.crew_bin = os.path.join(REPO, "bin", "agent-pm-crew")
+        self.crew_bin = self.plugin_root()
         self.env = {
             key: value
             for key, value in os.environ.items()
