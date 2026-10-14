@@ -74,10 +74,13 @@ class Base(Case):
         control_socket.bind(os.path.join(self.control.path, "control"))
         self.addCleanup(control_socket.close)
         self.completed(self.control.path)
-        self.controlled = False
+        self.controlled = True
+        self.kind = "detach"
         self.tmux.option.side_effect = lambda _pane, key: (
             self.control.path
             if key == "@control" and self.controlled
+            else self.kind
+            if key == "@kind"
             else self.tmux.option.return_value
         )
         self.tmux.detach.side_effect = self.detached
@@ -251,7 +254,23 @@ class DetachTest(Base):
 
 
 class AttachListTest(Base):
+    def test_a_tui_session_without_a_controller_keeps_pane_based_handling(self):
+        self.kind, self.controlled = None, False
+        process = self.host.attach("tui")
+        self.assertTrue(process.alive())
+        process.close()
+        self.tmux.kill.assert_called_once_with("%7")
+        self.socket.assert_not_called()
+
+    def test_a_pre_upgrade_session_is_refused_immediately(self):
+        self.controlled = False
+        with self.assertRaisesRegex(DriverError, "tmux session d1: missing @control"):
+            self.host.attach("d1")
+        self.socket.assert_not_called()
+        self.tmux.kill.assert_not_called()
+
     def test_a_pane_cannot_redirect_control_to_an_arbitrary_directory_or_socket(self):
+        self.controlled = False
         sentinel = Path(self.dir, "keep")
         sentinel.write_text("owned data")
         for path in (self.dir, "/tmp", os.path.join(self.dir, "control")):
@@ -351,6 +370,7 @@ class ProcessTest(Base):
         self.tmux.option.assert_called_with("%7", "@display")
 
     def test_alive_while_running_wait_exit_until_not(self):
+        self.active({"live": False})
         process = self.host.attach("d1")
         self.tmux.status.side_effect = [
             tmux_host.PaneStatus.RUNNING,
@@ -363,6 +383,7 @@ class ProcessTest(Base):
         self.assertFalse(process.alive())
         self.tmux.status.side_effect = None
         self.tmux.status.return_value = tmux_host.PaneStatus.RUNNING
+        process = self.host.attach("d1")
         self.assertFalse(process.wait_exit(0))
         self.tmux.status.return_value = tmux_host.PaneStatus.UNKNOWN
         with self.assertRaisesRegex(DriverError, "^tmux session d1: tmux failed$"):

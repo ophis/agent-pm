@@ -325,7 +325,13 @@ def detach(
         raise TuiError(
             f"invalid opener {opener!r}: want a tmux session name or $ITERM_SESSION_ID's value"
         )
-    named = {"@opener": opener, "@display": display, "@record": record, "@control": control}
+    named = {
+        "@kind": "detach",
+        "@opener": opener,
+        "@display": display,
+        "@record": record,
+        "@control": control,
+    }
     tag_options = _tags(session, {k: v for k, v in named.items() if v is not None})
     exited = []
     if events is not None:

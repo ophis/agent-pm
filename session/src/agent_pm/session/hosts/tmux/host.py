@@ -50,10 +50,15 @@ class TmuxProcess(HostProcess):
         self._process = process
         _, _, self._pane, _ = process.split(" ")
         path = self._option("@control") if control is None else None
-        try:
-            self._control = (
-                control if control is not None else ProcessControl.attach(path) if path else None
+        if control is None and self._option("@kind") == "detach" and not path:
+            raise DriverError(
+                f"tmux session {name}: missing @control; close sessions before upgrading"
             )
+        try:
+            if control is not None:
+                self._control = control
+            else:
+                self._control = ProcessControl.attach(path) if path else None
         except OSError as error:
             raise DriverError(f"tmux session {name}: invalid @control: {error}") from error
 
@@ -81,12 +86,18 @@ class TmuxProcess(HostProcess):
             raise DriverError(f"process group {self.name}: did not exit")
 
     def close(self) -> None:
+        if self._control is None:
+            self._close_pane()
+            return
         self._kill_group()
         deadline = time.monotonic() + KILL_WAIT
         while self._group_live():
             if time.monotonic() >= deadline:
                 raise DriverError(f"process group {self.name}: did not exit")
             time.sleep(POLL)
+        self._close_pane()
+
+    def _close_pane(self) -> None:
         if not self._own():
             return
         try:
@@ -118,11 +129,13 @@ class TmuxProcess(HostProcess):
             raise DriverError(f"process group {self.name}: {error}") from error
 
     def _kill_group(self) -> None:
-        if self._control is not None:
-            try:
-                self._control.kill()
-            except OSError as error:
-                raise DriverError(f"process group {self.name}: {error}") from error
+        if self._control is None:
+            self._close_pane()
+            return
+        try:
+            self._control.kill()
+        except OSError as error:
+            raise DriverError(f"process group {self.name}: {error}") from error
 
     def _option(self, key: str) -> str | None:
         if not self._own():
