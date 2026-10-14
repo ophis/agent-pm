@@ -3,6 +3,7 @@
 import json
 import os
 import shlex
+import shutil
 import subprocess
 from dataclasses import replace
 from pathlib import Path
@@ -33,9 +34,19 @@ class Commands(Case):
     def setUp(self):
         self.command = self.setup_ctl()
         self.sessions = os.path.join(self.home, "session-list")
-        fake_session.install(self.bin_dir, self.sessions)
-        self.crew_bin = os.path.join(REPO, "bin", "agent-pm-crew")
+        self.crew_bin = self.plugin_root()
+        fake_session.install(os.path.dirname(self.crew_bin), self.sessions)
         self.directory = os.path.join(self.agent_pm, "managers", "mgr")
+
+    def plugin_root(self) -> str:
+        """This tree's projects under a plugin root whose bin/ holds only agent-pm-crew: Crew puts
+        its own bin/ first on PATH, so the fake agent-pm-session beside it wins over the real one.
+        """
+        root = os.path.join(self.home, "plugin")
+        os.makedirs(os.path.join(root, "bin"))
+        for project in ("utils", "session", "delegate", "manager"):
+            os.symlink(os.path.join(REPO, project), os.path.join(root, project))
+        return shutil.copy(os.path.join(REPO, "bin", "agent-pm-crew"), os.path.join(root, "bin"))
 
     def invoke(self, *argv, clean=False):
         env = dict(os.environ)

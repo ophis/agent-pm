@@ -52,6 +52,7 @@ VERSION = 1
 EARLY = 5
 WAIT = 10
 REPORT_LINES = 20
+SCREEN_LINES = 2000
 COMMAND = "agent-pm-session"
 KIND = "worker"
 
@@ -362,7 +363,7 @@ class Worker:
         if not isinstance(host, Displayable):
             return head
         try:
-            screen = host.screen(self.state.name, REPORT_LINES)
+            screen = host.screen(self.state.name, SCREEN_LINES)
         except DriverError:
             return head
         lines = [line for line in screen.splitlines() if line.strip()][-REPORT_LINES:]

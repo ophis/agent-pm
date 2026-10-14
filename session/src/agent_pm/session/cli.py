@@ -128,7 +128,7 @@ def _parser(hosts: Hosts | None) -> argparse.ArgumentParser:
         ("close", "close each session; absent is fine"),
         ("attach-command", "print each session's attach command"),
     ):
-        p = sub.add_parser(cmd, help=text, description=f"{text}: NAMEs, else Records on stdin.")
+        p = sub.add_parser(cmd, help=text, description=f"{text}: names, else Records on stdin.")
         p.add_argument("names", nargs="*", type=_name, metavar="NAME")
     p = sub.add_parser(
         "ls",
