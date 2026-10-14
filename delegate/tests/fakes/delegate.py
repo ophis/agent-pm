@@ -3,6 +3,7 @@
 stand for its sessions ending, without and with an outcome.
 """
 
+import contextlib
 import json
 import os
 import uuid
@@ -174,6 +175,10 @@ class FakeDelegate(Delegate):
 
     def session_info(self):
         return SessionStatus("yes", None, "")
+
+    def forget(self):
+        with contextlib.suppress(FileNotFoundError):
+            os.remove(os.path.join(self.workdir, FILE))
 
     def resume(self):
         state = _load(self.workdir)

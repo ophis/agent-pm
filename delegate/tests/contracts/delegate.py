@@ -92,6 +92,17 @@ class DelegateContract:
         self.assertFalse(view.alive())
         self.assertFalse(self.delegate_cls.attach(record).alive())
 
+    def test_forget_after_close_deletes_the_run_keeps_its_workdir_and_is_idempotent(self):
+        workdir = self.workdir()
+        record = self.make(workdir).detach()
+        view = self.delegate_cls.attach(record)
+        view.close()
+        view.forget()
+        view.forget()
+        with self.assertRaises(ConfigError):
+            self.delegate_cls.attach(workdir)
+        self.assertTrue(os.path.isdir(workdir))
+
     def test_resume_after_its_sessions_ended_starts_them_once_with_the_same_sid(self):
         record, _ = self.detached()
         self.end(record)

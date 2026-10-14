@@ -51,6 +51,15 @@ class RunState:
         with file_lock(f"{self.base}.run", own=True):
             yield
 
+    def remove(self) -> None:
+        """Deletes these files, the mutex last; ConfigError while a run holds the run lock."""
+        with self.mutex():
+            if self.running():
+                raise ConfigError(f"{self.workdir}: delegate run is running")
+            for path in (self.record, f"{self.base}.run.lock", f"{self.base}.lock"):
+                with contextlib.suppress(FileNotFoundError):
+                    os.unlink(path)
+
     def running(self) -> bool:
         """Whether a run holds the run lock."""
         try:
