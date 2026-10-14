@@ -8,18 +8,29 @@ import sys
 import time
 from dataclasses import replace
 
+import agent_pm.delegate
 from agent_pm.delegate import Begun, ConfigError, Finished, Limit, Spec
 from agent_pm.delegate.engine.harness_delegate import HarnessDelegate
 from agent_pm.session import Exited, LimitHit, Reply
 from agent_pm.utils import Record, package_dirs
 
-import agent_pm.delegate
 from delegate.tests.case import Case, child_env
-from delegate.tests.fakes.harness_session import FailingSession, HarnessSession, PersistentSession, RecordingHost
+from delegate.tests.fakes.harness_session import (
+    FailingSession,
+    HarnessSession,
+    PersistentSession,
+    RecordingHost,
+)
 from delegate.tests.replies import block
 from delegate.tests.unit.runs import DONE
 
 SID = "0f8fad5b-d9cb-469f-a165-70867728950e"
+
+
+def _close_child(child):
+    if child.poll() is None:
+        child.kill()
+    child.communicate(timeout=10)
 
 
 class HarnessCase(Case):
@@ -55,7 +66,7 @@ class HarnessCase(Case):
             return json.load(file)
 
     def stop(self, record):
-        for (host, name), process in RecordingHost.processes.items():
+        for (_host, name), process in RecordingHost.processes.items():
             if name in record.sessions:
                 process.close()
 
@@ -135,6 +146,15 @@ class Planning(HarnessCase):
         for path in package_dirs(agent_pm.delegate):
             self.assertIn(path, session.protect)
 
+    def test_constructor_keeps_its_config_snapshot_when_local_file_changes(self):
+        delegate = self.make(spec=Spec("input", self.work, task="echo", cwd=self.work, sid=SID))
+        self.settings(language="French", runtime="another-runtime")
+        delegate.run()
+        launched = HarnessSession.started[-1]["spec"]
+        self.assertEqual(launched.runtime, "fake")
+        self.assertIn("English", launched.prompt)
+        self.assertNotIn("French", launched.prompt)
+
 
 class Views(HarnessCase):
     def test_attach_keeps_identity_after_default_runtime_and_rules_change(self):
@@ -178,7 +198,7 @@ class Views(HarnessCase):
         for status in ("done", "needs_input", "failed"):
             with self.subTest(status=status):
                 self.work = os.path.join(self.home, status)
-                data = dict(DONE, status=status)
+                data: dict = dict(DONE, status=status)
                 if status == "needs_input":
                     data["questions"] = ["Continue?"]
                 HarnessSession.script = (Reply(block(data)), Exited(0))
@@ -206,21 +226,52 @@ class Views(HarnessCase):
         self.assertEqual(view.resume(), record)
         self.assertEqual(self.metadata()["attempt"], 2)
 
+    def test_resume_uses_attach_config_snapshot_and_preserves_protect(self):
+        custom = os.path.join(self.home, "protected")
+        self.make(
+            spec=Spec(
+                "input",
+                self.work,
+                task="echo",
+                cwd=self.work,
+                runtime="fake",
+                sid=SID,
+                protect=(custom,),
+            )
+        )
+        self.settings(language="French")
+        view = HarnessDelegate.attach(self.work)
+        self.settings(language="German", runtime="changed-runtime", default="changed")
+        view.resume()
+        view.close()
+        view.run()
+        launched = HarnessSession.started[-1]["spec"]
+        self.assertEqual((launched.sid, launched.runtime), (SID, "fake"))
+        self.assertIn("French", launched.prompt)
+        self.assertNotIn("German", launched.prompt)
+        self.assertIn(custom, launched.protect)
+        for path in package_dirs(agent_pm.delegate):
+            self.assertIn(path, launched.protect)
+        self.assertEqual(self.metadata()["spec"]["protect"], [custom])
+
 
 class Completion(HarnessCase):
     def test_every_returned_result_has_one_last_finished_event(self):
-        for script in ((Reply(block(DONE)), Exited(0)),
-                       (Reply("no outcome"), Exited(0)),
-                       (Exited(7),),
-                       (LimitHit(1767225600.0), Exited(0))):
+        for script in (
+            (Reply(block(DONE)), Exited(0)),
+            (Reply("no outcome"), Exited(0)),
+            (Exited(7),),
+            (LimitHit(1767225600.0), Exited(0)),
+        ):
             with self.subTest(script=script):
                 self.work = os.path.join(self.home, f"completion-{len(HarnessSession.started)}")
                 HarnessSession.script = script
                 seen = []
                 result = self.make().run(seen.append)
                 self.assertIsInstance(seen[0], Begun)
-                self.assertEqual([event for event in seen if isinstance(event, Finished)],
-                                 [Finished(result)])
+                self.assertEqual(
+                    [event for event in seen if isinstance(event, Finished)], [Finished(result)]
+                )
                 self.assertEqual(seen[-1], Finished(result))
                 if isinstance(script[0], LimitHit):
                     self.assertIsNone(result.outcome)
@@ -229,9 +280,11 @@ class Completion(HarnessCase):
 
     def test_spawn_failure_is_finished_without_begun(self):
         FailingSession.reset()
-        delegate = HarnessDelegate("dummy-tester", Spec("input", self.work, cwd=self.work,
-                                                         runtime="fake"),
-                                   session_cls=FailingSession)
+        delegate = HarnessDelegate(
+            "dummy-tester",
+            Spec("input", self.work, cwd=self.work, runtime="fake"),
+            session_cls=FailingSession,
+        )
         seen = []
         result = delegate.run(seen.append)
         self.assertEqual(result.returncode, 1)
@@ -257,10 +310,14 @@ class Completion(HarnessCase):
 
 class ConcurrentResume(HarnessCase):
     def test_two_processes_resume_once_and_return_the_same_record(self):
-        delegate = HarnessDelegate("dummy-tester", Spec("input", self.work, cwd=self.work,
-                                                         runtime="fake", sid=SID),
-                                   session_cls=PersistentSession,
-                                   host="agent", harness_host="harness", display="opaque")
+        delegate = HarnessDelegate(
+            "dummy-tester",
+            Spec("input", self.work, cwd=self.work, runtime="fake", sid=SID),
+            session_cls=PersistentSession,
+            host="agent",
+            harness_host="harness",
+            display="opaque",
+        )
         code = (
             "import os, sys, time\n"
             "from agent_pm.delegate.engine.harness_delegate import HarnessDelegate\n"
@@ -269,13 +326,19 @@ class ConcurrentResume(HarnessCase):
             "print(HarnessDelegate.attach(sys.argv[1]).resume().to_line())\n"
         )
         ready, gate = os.path.join(self.home, "ready-"), os.path.join(self.home, "go")
-        children = [subprocess.Popen([sys.executable, "-P", "-S", "-c", code,
-                                      self.work, ready, gate], cwd=self.home,
-                                     env=child_env(), stdout=subprocess.PIPE,
-                                     stderr=subprocess.PIPE, encoding="utf-8")
-                    for _ in range(2)]
+        children = [
+            subprocess.Popen(
+                [sys.executable, "-P", "-S", "-c", code, self.work, ready, gate],
+                cwd=self.home,
+                env=child_env(),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                encoding="utf-8",
+            )
+            for _ in range(2)
+        ]
         for child in children:
-            self.addCleanup(child.kill if child.poll() is None else lambda: None)
+            self.addCleanup(_close_child, child)
         deadline = time.monotonic() + 10
         while not all(os.path.exists(ready + str(child.pid)) for child in children):
             self.assertLess(time.monotonic(), deadline, "resume children did not reach barrier")

@@ -552,6 +552,18 @@ class DelegateObjectExports(Sample):
                 ):
                     self.assertEqual(len(self.exports(package, source, ["BAD"])), 1)
 
+    def test_nested_arithmetic_paths_and_immutable_enum_values_are_constants(self):
+        source = (
+            "import os\nfrom enum import StrEnum\n"
+            "class Choice(StrEnum):\n    A = 'a'\n"
+            "TIMEOUT = 2 * 60 * 60\n"
+            "PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'team')\n"
+            "CHOICES = tuple(Choice)\n"
+        )
+        for package in self.LEGACY:
+            with self.subTest(package=package):
+                self.assertEqual(self.exports(package, source, ["TIMEOUT", "PATH", "CHOICES"]), [])
+
 
 class DelegateSessionForwarding(Sample):
     BASE = "delegate/src/agent_pm/delegate/"
@@ -1844,7 +1856,13 @@ class PackageTop(Sample):
                 "session", "__init__.py", "extension.py", "engine/x.py", "modes/x.py", "extra.py"
             ),
             **self.package(
-                "delegate", "__init__.py", "cli.py", "engine/x.py", "team/x.py", "misc/x.py"
+                "delegate",
+                "__init__.py",
+                "cli.py",
+                "config.py",
+                "engine/x.py",
+                "team/x.py",
+                "misc/x.py",
             ),
             **self.package(guards.ORCH_PROJECT, "__init__.py", "engine/x.py", "config.toml"),
             **self.package("manager", "__init__.py", "engine/crew.py", "engine/roster.py", "y.py"),
@@ -2177,7 +2195,7 @@ class ExplicitKeys(Sample):
     def test_an_example_with_a_real_line_its_shape_suffix_or_empty_table_passes(self):
         root = self.tree(
             {
-                "delegate/config.toml": (
+                "delegate/src/agent_pm/delegate/config.toml": (
                     'cwd = ""\n# local: cwd = "/x"\n[output]\ntype = "local"\ndir = ""\n[roles.a.output]\ntype = "x"\n# local: [roles.b]\n# local: cwd = "/y"\n# local: [roles.b.output]\n# local: dir = "d"\n'
                 ),
                 f"{guards.ORCH_PROJECT}/{OPKG}/config.toml": (
@@ -2210,7 +2228,7 @@ class ExplicitKeys(Sample):
                 "session/config.toml": (
                     "[hosts.tmux]\nx = 1\n# local: [hosts.tmux]\n# local: status_line = true\n"
                 ),
-                "delegate/config.toml": (
+                "delegate/src/agent_pm/delegate/config.toml": (
                     '# local: team_dirs = ["~/t"]\n[roles.a]\nt = 1\n# local: [roles.a]\n# local: [roles.a.deep]\n# local: y = 2\n'
                 ),
                 "manager/config.toml": "# local: [bad\n",
@@ -2220,8 +2238,8 @@ class ExplicitKeys(Sample):
         self.assertEqual(
             [f for f in found if not f.startswith("manager/")],
             [
-                "delegate/config.toml: `# local:` key roles.a.deep.y has no real line",
-                "delegate/config.toml: `# local:` key team_dirs has no real line",
+                "delegate/src/agent_pm/delegate/config.toml: `# local:` key roles.a.deep.y has no real line",
+                "delegate/src/agent_pm/delegate/config.toml: `# local:` key team_dirs has no real line",
                 "session/config.toml: `# local:` key hosts.tmux.status_line has no real line",
             ],
         )
@@ -2283,7 +2301,7 @@ class Standalone(Sample):
         team = f"delegate/{PKG}/delegate/team"
         root = self.tree(
             {
-                "delegate/config.toml": "# see ../linear-orchestrator/\n",
+                "delegate/src/agent_pm/delegate/config.toml": "# see ../linear-orchestrator/\n",
                 f"{team}/roles/r.md": (
                     "x\nRun agent_pm.linear_orchestrator.engine.run, not linear-orchestrator\n"
                 ),
@@ -2305,7 +2323,7 @@ class Standalone(Sample):
         self.assertEqual(
             guards.standalone(root),
             [
-                "delegate/config.toml:1: names linear-orchestrator",
+                "delegate/src/agent_pm/delegate/config.toml:1: names linear-orchestrator",
                 f"{team}/roles/r.md:2: names linear-orchestrator",
                 f"{team}/roles/r.md:2: names linear_orchestrator",
                 f"manager/{PKG}/manager/z.py:1: names linear-orchestrator",
@@ -2329,7 +2347,9 @@ class RuntimeNames(Sample):
 
     def test_policy_runtime_tables_are_exempt(self):
         root = self.tree(
-            {"delegate/config.toml": "[policy.claude]\nflags = []\n[policy.codex]\nflags = []\n"}
+            {
+                "delegate/src/agent_pm/delegate/config.toml": "[policy.claude]\nflags = []\n[policy.codex]\nflags = []\n"
+            }
         )
         self.assertEqual(guards.runtime_names(root), [])
 
@@ -2340,23 +2360,29 @@ class RuntimeNames(Sample):
     def test_toml_table_header_implementation_line_and_comments_are_exempt(self):
         root = self.tree(
             {
-                "delegate/config.toml": '# codex in a comment\n[adapters.codex]\nimplementation = "agent_pm.session.adapters.codex:CodexAdapter"  # codex\nkey = "x # codex"\n'
+                "delegate/src/agent_pm/delegate/config.toml": '# codex in a comment\n[adapters.codex]\nimplementation = "agent_pm.session.adapters.codex:CodexAdapter"  # codex\nkey = "x # codex"\n'
             }
         )
-        self.assertEqual(guards.runtime_names(root), ["delegate/config.toml:4: runtime name codex"])
+        self.assertEqual(
+            guards.runtime_names(root),
+            ["delegate/src/agent_pm/delegate/config.toml:4: runtime name codex"],
+        )
 
     def test_toml_implementation_line_is_exempt_only_as_module_path_class(self):
         root = self.tree(
             {
-                "delegate/config.toml": 'implementation = "codex"\nimplementation = "my.codex:Codex"\n'
+                "delegate/src/agent_pm/delegate/config.toml": 'implementation = "codex"\nimplementation = "my.codex:Codex"\n'
             }
         )
-        self.assertEqual(guards.runtime_names(root), ["delegate/config.toml:1: runtime name codex"])
+        self.assertEqual(
+            guards.runtime_names(root),
+            ["delegate/src/agent_pm/delegate/config.toml:1: runtime name codex"],
+        )
 
     def test_toml_runtime_line_is_exempt_under_any_table(self):
         root = self.tree(
             {
-                "delegate/config.toml": 'runtime = "codex"\n[roles.x]\nruntime = "codex"\n[roles.y]\nruntime = "codex"  # note\n'
+                "delegate/src/agent_pm/delegate/config.toml": 'runtime = "codex"\n[roles.x]\nruntime = "codex"\n[roles.y]\nruntime = "codex"  # note\n'
             }
         )
         self.assertEqual(guards.runtime_names(root), [])
@@ -2364,14 +2390,17 @@ class RuntimeNames(Sample):
     def test_toml_name_in_a_key_value_elsewhere(self):
         root = self.tree(
             {
-                "delegate/config.toml": (
+                "delegate/src/agent_pm/delegate/config.toml": (
                     '[adapters.codex]\nimplementation = "agent_pm.session.adapters.codex:CodexAdapter"\n[roles.pm]\nmodel = "codex"\nruntime = ["codex"]\nruntime = "codex\nruntime = "codex" x\n'
                 )
             }
         )
         self.assertEqual(
             guards.runtime_names(root),
-            [f"delegate/config.toml:{n}: runtime name codex" for n in (4, 5, 6, 7)],
+            [
+                f"delegate/src/agent_pm/delegate/config.toml:{n}: runtime name codex"
+                for n in (4, 5, 6, 7)
+            ],
         )
 
 
@@ -2461,7 +2490,7 @@ class PythonCommands(Sample):
         team = f"delegate/{PKG}/delegate/team"
         root = self.tree(
             {
-                "delegate/config.toml": 'commands = ["python3 x.py", "python3 -m agent_pm.x"]\n# python3 -P {{team}}/tools/repo.py\ngate = "python3 -P {{team}}/x.py"\n',
+                "delegate/src/agent_pm/delegate/config.toml": 'commands = ["python3 x.py", "python3 -m agent_pm.x"]\n# python3 -P {{team}}/tools/repo.py\ngate = "python3 -P {{team}}/x.py"\n',
                 f"{guards.ORCH_PROJECT}/{OPKG}/config.toml": 'gate = "python3 -P -m agent_pmx.y"\n',
                 "delegate/skills/a/SKILL.md": "Run `python3.11 x.py`.\n- Bash(python -P -m agent_pm.delegate.cli --list)\n",
                 "manager/skills/b/SKILL.md": "Run `python3 y.py`.\n",
@@ -2473,9 +2502,9 @@ class PythonCommands(Sample):
         self.assertEqual(
             guards.python_commands(root),
             [
-                'delegate/config.toml:1: python command "python3 -m agent_pm.x"',
-                'delegate/config.toml:1: python command "python3 x.py"',
-                'delegate/config.toml:3: python command "python3 -P {{team}}/x.py"',
+                'delegate/src/agent_pm/delegate/config.toml:1: python command "python3 -m agent_pm.x"',
+                'delegate/src/agent_pm/delegate/config.toml:1: python command "python3 x.py"',
+                'delegate/src/agent_pm/delegate/config.toml:3: python command "python3 -P {{team}}/x.py"',
                 'delegate/skills/a/SKILL.md:1: python command "python3.11 x.py"',
                 f'{team}/roles/r.md:1: python command "python3 -P agent_pm.x"',
                 f'{team}/roles/r.md:2: python command "python3 -I -m agent_pm.x"',

@@ -1,6 +1,7 @@
 """Driver delivers an instruction or starts a Session through its injected class."""
 
 import os
+from collections.abc import Mapping
 from abc import ABC, abstractmethod
 
 from agent_pm.delegate.engine import config
@@ -31,12 +32,17 @@ class Driver(ABC):
 
 
 class AgentDriver(Driver):
-    def __init__(self, session_cls: type[Session]):
+    def __init__(
+        self, session_cls: type[Session], *, settings: Mapping | None = None,
+        display: Display = None, host: str | None = None,
+    ):
         self.session_cls = session_cls
+        self.settings = settings
+        self.display, self.host = display, host
 
     def policy(self, runtime: str) -> tuple[tuple[str, ...], dict[str, str]]:
         try:
-            flags, env = config.policy(runtime)
+            flags, env = config.policy(runtime, self.settings)
             self.session_cls.validate_policy(flags=tuple(flags), env=env)
             return tuple(flags), dict(env)
         except (OSError, ValueError, SessionConfigError) as error:
@@ -51,7 +57,10 @@ class AgentDriver(Driver):
         idle_timeout: float | None = None,
     ) -> Session:
         return self.session_cls.start(
-            spec.session, display=display, host=host, idle_timeout=idle_timeout
+            spec.session,
+            display=self.display if display is None else display,
+            host=self.host if host is None else host,
+            idle_timeout=idle_timeout
         )
 
     def writable_dirs(self, spec: Spec) -> tuple[str, ...]:

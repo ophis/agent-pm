@@ -176,14 +176,15 @@ dependencies = [
 name = "Delegate units and shared modules follow the main import rules"
 type = "units"
 container = "agent_pm.delegate"
-units = ["agent_pm.delegate", "agent_pm.delegate.composer", "agent_pm.delegate.event", "agent_pm.delegate.engine.config", "agent_pm.delegate.team.tools"]
+units = ["agent_pm.delegate", "agent_pm.delegate.composer", "agent_pm.delegate.event", "agent_pm.delegate.config", "agent_pm.delegate.engine.config", "agent_pm.delegate.team.tools"]
 unimported_units = ["agent_pm.delegate.team.tools"]
 dependencies = [
-    "agent_pm.delegate -> agent_pm.delegate.composer agent_pm.delegate.event agent_pm.delegate.engine.config agent_pm.session agent_pm.utils",
-    "agent_pm.delegate.composer -> agent_pm.delegate.event agent_pm.delegate.engine.config agent_pm.session agent_pm.utils",
-    "agent_pm.delegate.event -> agent_pm.delegate.engine.config agent_pm.utils",
-    "agent_pm.delegate.engine.config -> agent_pm.utils",
-    "agent_pm.delegate.team.tools -> agent_pm.delegate.engine.config agent_pm.utils",
+    "agent_pm.delegate -> agent_pm.delegate.composer agent_pm.delegate.event agent_pm.delegate.config agent_pm.delegate.engine.config agent_pm.session agent_pm.utils",
+    "agent_pm.delegate.composer -> agent_pm.delegate.event agent_pm.delegate.config agent_pm.delegate.engine.config agent_pm.session agent_pm.utils",
+    "agent_pm.delegate.event -> agent_pm.delegate.config agent_pm.delegate.engine.config agent_pm.utils",
+    "agent_pm.delegate.config -> agent_pm.utils",
+    "agent_pm.delegate.engine.config -> agent_pm.delegate.config agent_pm.utils",
+    "agent_pm.delegate.team.tools -> agent_pm.delegate.config agent_pm.delegate.engine.config agent_pm.utils",
 ]
 
 [[tool.importlinter.contracts]]

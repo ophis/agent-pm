@@ -6,6 +6,7 @@ import os
 from agent_pm.session import (
     Displayable,
     DriverError,
+    Exited,
     Host,
     HostProcess,
     Liveness,
@@ -104,7 +105,9 @@ class ShowingHost(RecordingHost, Displayable):
 
 
 class HarnessSession(FakeSession):
+    name: str
     hosts: dict[str, RecordingHost] = {}
+    host_names: dict[str, str] = {}
     attached: list[tuple[str, str | None]] = []
     inspected: list = []
     history = SessionStatus(Resumable.YES, None, "")
@@ -112,6 +115,7 @@ class HarnessSession(FakeSession):
     @classmethod
     def reset(cls, *, displayable=False):
         cls.started, cls.live, cls.attached, cls.inspected = [], {}, [], []
+        cls.host_names = {}
         RecordingHost.processes, RecordingHost.launches, ShowingHost.shown = {}, [], []
         kind = ShowingHost if displayable else RecordingHost
         cls.hosts = {name: kind(name) for name in ("agent", "harness", "changed")}
@@ -127,10 +131,9 @@ class HarnessSession(FakeSession):
     @classmethod
     def start(cls, spec, *, display=None, host=None, idle_timeout=None):
         session = super().start(spec, display=display, host=host, idle_timeout=idle_timeout)
-        session.host_name = host or "agent"
-        cls.host(session.host_name).detach(
-            session.name, ["fake-agent"], spec.workdir, {}, display=display
-        )
+        name = spec.name or f"{spec.runtime}-{session.sid[:8]}"
+        cls.host_names[name] = host or "agent"
+        cls.host(host).detach(name, ["fake-agent"], spec.workdir, {}, display=display)
         return session
 
     @classmethod
@@ -138,7 +141,7 @@ class HarnessSession(FakeSession):
         cls.attached.append((name, host))
         cls.host(host)
         session = super().attach(name, host=host, idle_timeout=idle_timeout)
-        if session.host_name != (host or "agent"):
+        if cls.host_names[name] != (host or "agent"):
             raise DriverError(f"no {host} session {name}")
         return session
 
@@ -149,24 +152,30 @@ class HarnessSession(FakeSession):
 
     @property
     def displayable(self):
-        return isinstance(self.host(self.host_name), Displayable)
+        return isinstance(self.host(self.host_names[self.name]), Displayable)
 
     def show(self, *, display=None):
-        host = self.host(self.host_name)
+        host = self.host(self.host_names[self.name])
         if not isinstance(host, Displayable):
             raise NotDisplayable(f"host {host.name} cannot display")
         return host.show(self.name, display=display)
 
     def attach_command(self):
-        host = self.host(self.host_name)
+        host = self.host(self.host_names[self.name])
         if not isinstance(host, Displayable):
             raise NotDisplayable(f"host {host.name} cannot display")
         return host.attach_command(self.name)
 
     def stop(self):
         self._state = Liveness.ABSENT
-        self.host(self.host_name).attach(self.name).close()
+        self.host(self.host_names[self.name]).attach(self.name).close()
         super().stop()
+
+    def events(self):
+        for event in super().events():
+            if isinstance(event, Exited) and self.mode != "tui":
+                self.stop()
+            yield event
 
 
 class DiskProcess(HostProcess):

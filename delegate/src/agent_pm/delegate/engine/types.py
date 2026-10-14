@@ -2,7 +2,9 @@
 
 from dataclasses import dataclass
 
-from agent_pm.delegate.composer import ConfigError, RunConfig, RunParams, Team
+import os
+
+from agent_pm.delegate.composer import DELIVERABLE, ConfigError, RunConfig, RunParams, Team
 from agent_pm.delegate.event.types import Outcome
 from agent_pm.session import Spec as SessionSpec
 from agent_pm.utils import Stopped as Stopped
@@ -57,13 +59,26 @@ class Plan:
 
     spec: Spec
     session: SessionSpec
-    prompt: str
     run: RunConfig
-    params: RunParams
+
+    @property
+    def prompt(self) -> str:
+        return self.session.prompt
+
+    @property
+    def params(self) -> RunParams:
+        return RunParams(
+            input=self.spec.input,
+            out=self.spec.out or self.driver_spec.out,
+            workdir=self.spec.workdir,
+            resume=self.spec.resume,
+        )
 
     @property
     def driver_spec(self) -> DriverSpec:
-        return DriverSpec(self.session, self.params.out)
+        return DriverSpec(
+            self.session, self.spec.out or os.path.join(self.spec.workdir, DELIVERABLE)
+        )
 
     @property
     def runtime(self) -> str:

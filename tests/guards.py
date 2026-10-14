@@ -77,8 +77,9 @@ SUBPACKAGES = {
 
 ENTRY_MODULES = {
     SESSION: {"extension.py"},
+    "delegate": {"config.py"},
     ORCH_PROJECT: {"config.toml"},
-}  # public modules besides __init__.py
+}
 
 
 LOWER = tuple(p for p in PROJECTS if p != ORCH_PROJECT)
@@ -343,7 +344,7 @@ HANDOFF = re.compile(r"Handoff from|## (?:Source|Instructions|Comments)")
 HANDOFF_HOME = f"{ORCH_SRC}engine/issues.py"
 
 
-COMMAND_FILES = ("delegate/config.toml", f"{ORCH_PROJECT}/{ORCH_SRC}config.toml")
+COMMAND_FILES = ("delegate/src/agent_pm/delegate/config.toml", f"{ORCH_PROJECT}/{ORCH_SRC}config.toml")
 
 
 COMMAND_DOCS = ("delegate/skills/", "manager/skills/", f"delegate/src/{PKG}/delegate/team/")
@@ -989,15 +990,31 @@ def _definitions(module, tree, modules, definitions, origins, *, package):
                         definitions[reference]
                         if reference
                         else "constant"
-                        if isinstance(node.value, ast.BinOp)
-                        and all(
-                            _is_literal(part) or definitions.get(_dotted(part, bound)) == "constant"
-                            for part in (node.value.left, node.value.right)
-                        )
+                        if _constant_value(node.value, bound, definitions)
                         else _assigned_kind(node, target.id)
                     )
                     bound[target.id] = key
     modules[module] = bound
+
+
+def _constant_value(node, bound, definitions):
+    if _is_literal(node) or definitions.get(_dotted(node, bound)) == "constant":
+        return True
+    if isinstance(node, ast.BinOp):
+        return all(_constant_value(part, bound, definitions) for part in (node.left, node.right))
+    if not isinstance(node, ast.Call):
+        return False
+    return _dotted(node.func, bound) in {
+        "builtins.tuple",
+        "builtins.frozenset",
+        "os.path.join",
+        "os.path.dirname",
+        "os.path.abspath",
+        "os.path.realpath",
+        "os.path.normpath",
+        "os.path.expanduser",
+        "os.pathsep.join",
+    }
 
 
 GENERICS = frozenset(

@@ -2,12 +2,12 @@
 
 from agent_pm.delegate import Spec
 from agent_pm.delegate.engine.harness_delegate import HarnessDelegate
-from agent_pm.session import Liveness, NotDisplayable
+from agent_pm.session import Liveness, Mode, NotDisplayable
 from agent_pm.session import Spec as SessionSpec
 
 from delegate.tests.contracts.delegate import DelegateContract
 from delegate.tests.fakes.harness_session import HarnessSession, RecordingHost, ShowingHost
-from delegate.tests.integration.harness_integration_test import HarnessCase, SID
+from delegate.tests.integration.harness_integration_test import SID, HarnessCase
 
 
 class HarnessContract(DelegateContract, HarnessCase):
@@ -65,7 +65,11 @@ class Ownership(HarnessCase):
         record = delegate.detach()
         HarnessSession.start(
             SessionSpec(
-                self.work, runtime="fake", mode="tui", sid=SID, name=self.metadata()["agent_name"]
+                workdir=self.work,
+                runtime="fake",
+                mode=Mode.TUI,
+                sid=SID,
+                name=self.metadata()["agent_name"],
             ),
             host="agent",
             display="target",

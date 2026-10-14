@@ -12,7 +12,7 @@ from datetime import datetime
 from pathlib import Path
 
 from agent_pm.delegate.composer import RunConfig
-from agent_pm.delegate.engine.drivers import AgentDriver, Driver
+from agent_pm.delegate.engine.drivers import Driver
 from agent_pm.delegate.engine.plan import plan
 from agent_pm.delegate.engine.types import (
     Begun,
@@ -32,7 +32,6 @@ from agent_pm.delegate.event.outcome import read as read_outcome
 from agent_pm.delegate.event.reply import OUTCOME, marks, outcome_block
 from agent_pm.delegate.event.types import InvalidOutcome, Outcome
 from agent_pm.session import ConfigError as SessionConfigError
-from agent_pm.session import Driver as SessionDriver
 from agent_pm.session import (
     DriverError,
     Exited,
@@ -40,10 +39,10 @@ from agent_pm.session import (
     LimitHit,
     Mode,
     Reply,
+    RunLog,
     Session,
     Stderr,
     TurnEnd,
-    note,
 )
 from agent_pm.utils import holds, printable, save
 
@@ -156,23 +155,33 @@ def run(
     spec: Spec,
     *,
     on_event: Callable[[Event], None] | None = None,
-    driver: Driver | SessionDriver,
+    driver: Driver,
 ) -> Result:
-    """on_event gets Begun once, a Progress per mark line and Finished only with a valid outcome;
-    its exception stops the session and propagates.
-    """
-    if isinstance(driver, SessionDriver):
-        driver = AgentDriver(driver.session_cls)
-    p = plan(run, spec, driver=driver)
+    return execute(plan(run, spec, driver=driver), driver=driver, on_event=on_event)
+
+
+def execute(
+    p: Plan,
+    *,
+    driver: Driver,
+    on_event: Callable[[Event], None] | None = None,
+) -> Result:
+    """Run an accepted plan; every returned Result has one final Finished event."""
+    emit = on_event or (lambda _event: None)
     if not driver.session_based:
         instruction = driver.start(p.driver_spec)
         if isinstance(instruction, Instruction):
-            return Result(0, None, instruction=instruction.path)
+            result = Result(0, None, instruction=instruction.path)
+            emit(Finished(result))
+            return result
         raise ConfigError("instruction driver returned a Session")
-    attempts = _Attempts(p, on_event or (lambda _event: None), driver)
+    attempts = _Attempts(p, emit, driver)
     try:
         result = attempts.result()
+        attempts.on_event(Finished(result))
     except BaseException as e:
+        if attempts.handle is not None:
+            attempts.stop(attempts.handle)
         if not attempts.refused:
             text = " ".join(str(e).split())
             attempts.close(
@@ -208,10 +217,11 @@ class _Attempts:
         )
         self.workdir = p.spec.workdir
         self.seen: set[str] = set()
+        self.handle: Session | None = None
         self.refused = False  # the Driver refused the start: nothing to close
 
     def note(self, kind: str, **fields) -> None:
-        note(self.workdir, kind, **fields)
+        RunLog(self.workdir).note(kind, **fields)
 
     def close(self, result: dict, rc: int) -> None:
         """Best effort: an OSError is printed."""
@@ -225,6 +235,7 @@ class _Attempts:
         p = self.plan
         try:
             handle = self.policy.start(p)
+            self.handle = handle
         except SessionConfigError as e:
             self.refused = True
             raise ConfigError(str(e)) from None
@@ -256,6 +267,7 @@ class _Attempts:
                     say(f"delegate: invalid outcome: {e}; resuming once")
                     try:
                         handle = self.policy.fix(handle, p, FIX.format(error=e))
+                        self.handle = handle
                     except (SessionConfigError, DriverError) as failed:
                         return Result(1, None, f"invalid outcome: {e}; resume failed: {failed}")
                     fixed = True
@@ -360,5 +372,4 @@ class _Attempts:
             print("delegate: missing progress mark: start", file=sys.stderr, flush=True)
             self.note("missing", name="start")
         result = Result(rc, outcome, f"the client exited {rc}" if rc else "")
-        self.on_event(Finished(result))
         return result

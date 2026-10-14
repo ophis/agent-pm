@@ -31,7 +31,7 @@ import subprocess
 import sys
 from datetime import datetime
 
-from agent_pm.delegate.engine.config import CONFIG, trusted_dirs
+from agent_pm.delegate.config import CONFIG, read_config, trusted_dirs
 from agent_pm.utils import (
     LOCAL,
     LONG,
@@ -45,7 +45,6 @@ from agent_pm.utils import (
     checkout,
     err_text,
     origin,
-    read_project,
     redact,
     resolve,
     sh,
@@ -436,7 +435,7 @@ def main(
         p.add_argument("repo")
     a = ap.parse_args(argv)
     try:
-        cfg = read_project("delegate", path=config, local=local)
+        cfg = read_config(path=config, local=local)
         users = cfg.get("users", [])
         if not isinstance(users, list) or any(not isinstance(user, str) for user in users):
             raise ValueError("users: want a list of strings")

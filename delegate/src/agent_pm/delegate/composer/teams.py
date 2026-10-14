@@ -11,9 +11,9 @@ from pathlib import Path
 
 from agent_pm.delegate.composer.base import METHOD, PLACEHOLDER, TEAM, read_text, title_of
 from agent_pm.delegate.composer.types import ConfigError, Team
-from agent_pm.delegate.engine.config import CONFIG
+from agent_pm.delegate.config import CONFIG, read_config
 from agent_pm.delegate.event import PROGRESS
-from agent_pm.utils import LOCAL, read_project, temp_dirs, under, unfenced
+from agent_pm.utils import LOCAL, temp_dirs, under, unfenced
 from agent_pm.utils import load_config as load
 
 START = re.compile(rf"^\s*\[{PROGRESS}:start\] \S", re.M)
@@ -117,12 +117,16 @@ def team_dirs(config: str = CONFIG, local: str = LOCAL) -> tuple[str, ...]:
     try:
         own, value = (
             load(config).get("team_dirs"),
-            read_project("delegate", path=config, local=local).get("team_dirs"),
+            read_config(path=config, local=local).get("team_dirs"),
         )
     except (OSError, ValueError) as e:
         raise ConfigError(f"config: {e}") from None
     if own:
         raise ConfigError(f"team_dirs: set it in {local}, not {os.path.basename(config)}")
+    return configured_dirs(value)
+
+
+def configured_dirs(value) -> tuple[str, ...]:
     if value is None:
         return ()
     if not isinstance(value, list):
@@ -247,7 +251,7 @@ def config_of(config: str, local: str, cfg: Mapping | None = None) -> Mapping:
     if cfg is not None:
         return cfg
     try:
-        return read_project("delegate", path=config, local=local)
+        return read_config(path=config, local=local)
     except (OSError, ValueError) as e:
         raise ConfigError(f"config: {e}") from None
 

@@ -1,4 +1,4 @@
-"""delegate/src/agent_pm/delegate/engine/config.py: its paths; harness_host(), a read delegate
+"""delegate/src/agent_pm/delegate/config.py: its resources; harness_host(), a read delegate
 config's [delegates] harness_host checked against Host.parse_hosts' names (their cases:
 session/tests/unit/hosts/base_test.py); policy()'s shape (plan's Policy cases: through plan) and
 trusted_dirs().
@@ -10,19 +10,17 @@ import tomllib
 import unittest
 from unittest import mock
 
-import agent_pm.delegate.engine.config
+from agent_pm import delegate
 from agent_pm.delegate.composer.run import check_old_keys
-from agent_pm.delegate.engine.config import (
+from agent_pm.delegate.config import (
     CONFIG,
-    DELEGATE,
-    IMPORT_ROOTS,
-    PYTHONPATH,
     harness_host,
     policy,
+    read_config,
     trusted_dirs,
 )
 from agent_pm.session import Host
-from agent_pm.utils import read_project
+from agent_pm.session import read_config as read_session_config
 
 from delegate.tests import case
 from delegate.tests.case import Case
@@ -57,18 +55,27 @@ class PathsTest(Case):
             os.path.realpath(os.path.join(root, "agent_pm", name))
             for root, name in zip(roots, ("delegate", "session", "utils"), strict=True)
         )
-        self.assertEqual(agent_pm.delegate.module_roots(), roots)
-        self.assertEqual(agent_pm.delegate.package_dirs(), dirs)
+        self.assertEqual(delegate.module_roots(), roots)
+        self.assertEqual(delegate.package_dirs(), dirs)
 
-    def test_the_delegate_dir_holds_the_config_and_the_roots_are_every_projects_src(self):
-        self.assertEqual(DELEGATE, os.path.join(case.REPO, "delegate"))
-        self.assertEqual(CONFIG, os.path.join(DELEGATE, "config.toml"))
+    def test_config_is_a_resource_inside_the_delegate_package(self):
+        self.assertEqual(
+            CONFIG,
+            os.path.join(case.REPO, "delegate", "src", "agent_pm", "delegate", "config.toml"),
+        )
         self.assertTrue(os.path.isfile(CONFIG))
-        self.assertFalse(hasattr(agent_pm.delegate.engine.config, "LOCAL"))
-        self.assertEqual((IMPORT_ROOTS, PYTHONPATH), (case.ROOTS, case.PYTHONPATH))
+
+    def test_defaults_read_outside_the_repository_with_lower_layer_settings(self):
+        self.addCleanup(os.chdir, os.getcwd())
+        os.chdir(self.home)
+        found = read_config(local=os.devnull)
+        with open(CONFIG, "rb") as stream:
+            own = tomllib.load(stream)
+        self.assertEqual(found["language"], own["language"])
+        self.assertEqual(found["hosts"], read_session_config(local=os.devnull)["hosts"])
 
     def test_the_delegate_reads_no_hosts_or_adapters(self):
-        found = read_project("delegate")
+        found = read_config()
         self.assertEqual(found["delegates"], {"harness_host": ""})
         with open(CONFIG, "rb") as f:
             self.assertEqual({"hosts", "adapters"} & set(tomllib.load(f)), set())
@@ -89,8 +96,8 @@ class HarnessHostTest(Case):
         self.assertEqual(harness_host(parsed('[delegates]\nharness_host = "b_2"\n'), HOSTS), "b_2")
 
     def test_the_committed_config_has_no_harness_host(self):
-        hosts = Host.parse_hosts(read_project("session")["hosts"]).tables
-        self.assertIsNone(harness_host(read_project("delegate"), hosts))
+        hosts = Host.parse_hosts(read_session_config()["hosts"]).tables
+        self.assertIsNone(harness_host(read_config(), hosts))
 
     def test_delegates_takes_only_harness_host(self):
         self.refused(
@@ -145,7 +152,7 @@ class Shipped(Case):
             stream.write('language = "base"\n')
         with open(local, "w") as stream:
             stream.write('[delegate]\nlanguage = "local"\n')
-        found = agent_pm.delegate.read_config(local=local, path=from_config)
+        found = delegate.read_config(local=local, path=from_config)
         self.assertEqual(found["language"], "local")
         self.assertIn("hosts", found)
 

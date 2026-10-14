@@ -2,6 +2,7 @@
 session from the Driver, read from its replies' progress marks and outcome block.
 """
 
+import os
 import sys
 
 import agent_pm.session as session
@@ -11,10 +12,10 @@ from agent_pm.delegate.composer import RunConfig, trusted_dirs
 from agent_pm.delegate.composer import index as task_index
 from agent_pm.delegate.composer import resolve as resolve_run
 from agent_pm.delegate.engine.base import Delegate
-from agent_pm.delegate.engine.config import (
+from agent_pm.delegate.engine.harness_delegate import HarnessDelegate
+
+from agent_pm.delegate.config import (
     CONFIG,
-    IMPORT_ROOTS,
-    PYTHONPATH,
     harness_host,
     read_config,
 )
@@ -46,6 +47,8 @@ def package_dirs() -> tuple[str, ...]:
     return utils.package_dirs(sys.modules[__name__], session, utils)
 
 
+PYTHONPATH: str = os.pathsep.join(module_roots())
+
 __all__ = [
     "ConfigError",
     "ComposerConfigError",
@@ -75,7 +78,6 @@ __all__ = [
     "RunConfig",
     "DelegateEvent",
     "CONFIG",
-    "IMPORT_ROOTS",
     "PYTHONPATH",
     "harness_host",
     "module_roots",

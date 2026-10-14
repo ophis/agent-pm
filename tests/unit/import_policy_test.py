@@ -79,7 +79,7 @@ class Units(Case):
                 )
 
     def test_shared_modules_cannot_reach_future_engine_modules(self):
-        for source in ("engine.config", "event.reply", "team.tools.repo"):
+        for source in ("config", "engine.config", "event.reply", "team.tools.repo"):
             with self.subTest(source=source):
                 self.assertTrue(
                     self.rejected("agent_pm.delegate." + source, "agent_pm.delegate.engine.future")
@@ -92,6 +92,11 @@ class Units(Case):
             self.rejected("agent_pm.delegate.team.tools.repo", "agent_pm.delegate.engine.config")
         )
         self.assertTrue(self.rejected("agent_pm.delegate.engine.config", "agent_pm.delegate.event"))
+        self.assertTrue(self.rejected("agent_pm.delegate.config", "agent_pm.delegate.event"))
+        self.assertTrue(self.rejected("agent_pm.delegate.config", "agent_pm.session"))
+        self.assertFalse(
+            self.rejected("agent_pm.delegate.engine.config", "agent_pm.delegate.config")
+        )
 
     def test_tools_are_not_imported_by_production_modules(self):
         self.assertTrue(
