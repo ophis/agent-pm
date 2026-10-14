@@ -10,6 +10,7 @@ import os
 import re
 import stat
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 
 from agent_pm.utils import Record, Status
 
@@ -102,6 +103,21 @@ class IdentityTest(RecordCase):
         self.assertEqual(live_tmux.events(self.events), [])
         (dumped,) = logged(dump)
         self.assertNotIn("AGENT_PM_SID", dumped["env"])
+
+    def test_of_two_starts_claiming_one_sid_at_once_one_starts_the_other_exits_2(self):
+        names = ("w1", "w2")
+        with ThreadPoolExecutor(2) as pool:
+            results = list(pool.map(lambda name: self.start(name, AGENT_PM_SID=GIVEN), names))
+        codes = [res.returncode for res in results]
+        self.assertEqual(sorted(codes), [0, 2], [res.stderr for res in results])
+        won, lost = (0, 1) if codes[0] == 0 else (1, 0)
+        self.assertEqual(self.record(results[won]), self.expected(names[won], GIVEN))
+        self.assertEqual(
+            (results[lost].stdout, results[lost].stderr),
+            ("", f"agent-pm-session: sid {GIVEN} is worker {names[won]}'s\n"),
+        )
+        self.assertFalse(self.live(names[lost]))
+        self.assertEqual(self.calls(names[lost]), [])
 
     def test_without_agent_pm_sid_each_start_gets_a_fresh_session_id(self):
         sids = [self.record(self.start(name)).sid for name in ("w1", "w2")]
