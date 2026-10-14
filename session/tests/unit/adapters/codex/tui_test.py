@@ -1080,7 +1080,7 @@ class HookTest(Base):
     def test_authoritative_store_still_rejects_actual_writable_store(self):
         state = self.prepare()
         record = self.record()
-        unsafe = self.cwd / ".private-state" / "core-new-sessions" / "codex"
+        unsafe = self.cwd / ".private-state" / "sessions" / "codex"
         for directory in (unsafe.parent.parent, unsafe.parent, unsafe):
             directory.mkdir(mode=0o700, exist_ok=True)
         copied = unsafe / record.name

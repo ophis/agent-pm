@@ -140,6 +140,12 @@ max_runs = 1
 
 The run key `runtime` is renamed to `client`: set `client` wherever a local file sets `runtime` (`[delegate]`, `[delegate.roles.<role>]`, `[linear_orchestrator.core]` and its role tables); a `runtime` key left there is a config error naming `client`. `--runtime` options are `--client`, and `runs.jsonl` rows, worker states and tmux sessions recorded with `runtime` are not read.
 
+Codex recovery records live in `~/.agent-pm/sessions/codex`; `~/.agent-pm/core-new-sessions/codex` is not read. When upgrading, close running Codex TUI sessions, then move the old directory once:
+
+```bash
+mkdir -m 700 -p ~/.agent-pm/sessions && mv ~/.agent-pm/core-new-sessions/codex ~/.agent-pm/sessions/ && rmdir ~/.agent-pm/core-new-sessions
+```
+
 ## Using the board
 
 ```mermaid

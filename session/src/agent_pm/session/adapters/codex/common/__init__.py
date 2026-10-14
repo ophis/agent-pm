@@ -41,7 +41,14 @@ from agent_pm.session.engine.types import (
     Usage,
     Window,
 )
-from agent_pm.utils import LOCAL_ENV_VARS, environment_ok, module_roots, number, resume_command
+from agent_pm.utils import (
+    LOCAL_ENV_VARS,
+    STATE,
+    environment_ok,
+    module_roots,
+    number,
+    resume_command,
+)
 
 TABLE = "[adapters.codex]"
 LIMIT_PREFIXES = (
@@ -78,6 +85,8 @@ _SESSION_VERSION = 1
 _SESSION_KEYS = frozenset({"version", "workdir", "sid", "snapshot", "native_id", "writable_roots"})
 
 _MAX_SESSION_BYTES = 64 * 1024
+
+STORE = f"{STATE}/sessions/codex"  # under HOME, resolved per operation
 
 RESUME = os.path.join(os.path.dirname(os.path.abspath(__file__)), "resume.py")
 
@@ -394,6 +403,23 @@ def _state_data(fd: int, path: str):
     return data
 
 
+def _recovery_paths(snapshot: Snapshot) -> list[str]:
+    return [
+        snapshot.cwd,
+        snapshot.codex_home,
+        *snapshot.dirs,
+        *(absolute_path(path, "dir") for path in added_dirs(snapshot.flags, snapshot.cwd)),
+    ]
+
+
+def _check_grants(state: SessionState) -> None:
+    for path in _recovery_paths(state.snapshot):
+        if not any(inside(path, grant) for grant in state.writable_roots):
+            raise RecoveryError(
+                f"invalid Codex recovery writable grants: no recorded root covers {path}"
+            )
+
+
 class _StoreOperation:
     def __init__(self, root: str):
         canonical = absolute_path(root, "store")
@@ -418,19 +444,8 @@ class _StoreOperation:
         return os.path.join(self.root, digest + ".json")
 
     def _validate_recovery(self, state: SessionState) -> None:
-        snapshot = state.snapshot
-        paths = [
-            snapshot.cwd,
-            snapshot.codex_home,
-            *snapshot.dirs,
-            *(absolute_path(path, "dir") for path in added_dirs(snapshot.flags, snapshot.cwd)),
-        ]
-        check_writable_roots(self.root, paths)
-        for path in paths:
-            if not any(inside(path, grant) for grant in state.writable_roots):
-                raise RecoveryError(
-                    f"invalid Codex recovery writable grants: no recorded root covers {path}"
-                )
+        check_writable_roots(self.root, _recovery_paths(state.snapshot))
+        _check_grants(state)
 
     def _read(self, path: str) -> dict | None:
         _check_ancestors(path)
@@ -458,12 +473,24 @@ class _StoreOperation:
         data = self._read(path)
         return None if data is None else self._validated_state(path, data, workdir, sid)
 
-    def read(self, path: str) -> SessionState | None:
-        data = self._read(path)
-        if data is None:
+    def readable(self, path: str) -> SessionState | None:
+        """The record at `path`, the store's location unchecked; None when absent or unreadable."""
+        try:
+            data = self._read(path)
+            if data is None:
+                return None
+            workdir, sid = session_identity(data.get("workdir"), data.get("sid"))
+            state = _state(data, workdir, sid)
+            if path != self._path(workdir, sid):
+                return None
+            _check_grants(state)
+        except RecoveryError:
             return None
-        workdir, sid = session_identity(data.get("workdir"), data.get("sid"))
-        return self._validated_state(path, data, workdir, sid)
+        return state
+
+    def located(self, state: SessionState) -> None:
+        """The store is outside every path the record's session may write."""
+        check_writable_roots(self.root, [*_recovery_paths(state.snapshot), *state.writable_roots])
 
     @contextmanager
     def locked(self, timeout: float | None = None):
@@ -548,9 +575,7 @@ class SessionStore:
         return (
             self._root
             if self._root is not None
-            else os.path.join(
-                os.path.realpath(os.path.expanduser("~")), ".agent-pm", "core-new-sessions", "codex"
-            )
+            else os.path.join(os.path.realpath(os.path.expanduser("~")), STORE.removeprefix("~/"))
         )
 
     @overload
@@ -630,8 +655,11 @@ class SessionStore:
         with os.scandir(directory) as entries:
             for entry in entries:
                 if entry.name.endswith(".json"):
-                    state = operation.read(entry.path)
-                    if state is not None and state.sid == sid and state.snapshot.cwd == cwd:
+                    state = operation.readable(entry.path)
+                    if state is None:
+                        continue
+                    operation.located(state)
+                    if state.sid == sid and state.snapshot.cwd == cwd:
                         matches.append(state)
         if len(matches) > 1:
             raise RecoveryError(f"ambiguous Codex binding for run ID {sid!r} in {cwd}")

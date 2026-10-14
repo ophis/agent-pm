@@ -9,6 +9,7 @@ import stat
 import sys
 import time
 from dataclasses import replace
+from pathlib import Path
 from unittest import mock
 
 from agent_pm.session.adapters.codex import CodexAdapter
@@ -341,8 +342,7 @@ class CommonTest(Base):
                 self.edit_record(**fields)
                 with self.assertRaises(ConfigError):
                     self.common.load(str(self.work), self.spec.sid)
-                with self.assertRaises(ConfigError):
-                    self.common.lookup(self.spec.sid, str(self.cwd))
+                self.assertIsNone(self.common.lookup(self.spec.sid, str(self.cwd)))
 
     def test_store_outside_explicit_and_implicit_writable_roots(self):
         for grant in (self.home, self.home / ".agent-pm", self.root):
@@ -738,15 +738,13 @@ class SessionStatusTest(Base):
         path.unlink()
         self.assertEqual(self.common.session_status(self.spec.sid, str(self.cwd)).resumable, "no")
 
-    def test_inspection_missing_malformed_unsafe_and_ambiguous(self):
+    def test_a_missing_or_unreadable_record_is_no(self):
         self.assertEqual(self.common.session_status(self.spec.sid, str(self.cwd)).resumable, "no")
         self.bound()
         self.rollout()
         path = self.record()
         path.write_text("not json")
-        self.assertEqual(
-            self.common.session_status(self.spec.sid, str(self.cwd)).resumable, "unknown"
-        )
+        self.assertEqual(self.common.session_status(self.spec.sid, str(self.cwd)).resumable, "no")
 
     def test_a_missing_recorded_transcript_is_no_without_discovery_fallback(self):
         self.bound()
@@ -990,6 +988,70 @@ class SnapshotEnvTest(Base):
 
 
 class StoreRootTest(Base):
+    def test_records_live_in_sessions_codex_under_the_state_directory(self):
+        state = self.prepare()
+        store = self.home / ".agent-pm" / "sessions" / "codex"
+        self.assertEqual(SessionStore().root, str(store))
+        self.assertEqual([path.parent for path in store.parent.parent.rglob("*.json")], [store])
+        self.assertEqual(SessionStore().load(state.workdir, state.sid), state)
+
+    def test_a_record_only_in_the_old_directory_is_neither_read_nor_moved(self):
+        state = self.common.prepare(self.spec)
+        old = self.home / ".agent-pm" / "core-new-sessions" / "codex"
+        SessionStore(str(old)).save(state)
+        before = {path: path.read_bytes() for path in old.iterdir()}
+        store = SessionStore()
+        self.assertIsNone(store.load(state.workdir, state.sid))
+        self.assertIsNone(store.lookup(state.sid, state.snapshot.cwd))
+        self.assertIsNone(self.common.load(state.workdir, state.sid))
+        self.assertEqual({path: path.read_bytes() for path in old.iterdir()}, before)
+        self.assertFalse((self.home / ".agent-pm" / "sessions").exists())
+
+    def test_lookup_skips_unrelated_unreadable_records(self):
+        state = self.prepare()
+        store = Path(SessionStore().root)
+        other = self.common.prepare(dataclasses.replace(self.spec, sid="other-id"))
+        SessionStore().save(other)
+        broken = next(path for path in store.glob("*.json") if path != self.record_of(state))
+        broken.write_text(json.dumps({**json.loads(broken.read_text()), "version": 99}))
+        (store / "garbage.json").write_text("not json")
+        (store / "empty.json").write_text("")
+        for path in store.glob("*.json"):
+            path.chmod(0o600)
+        self.assertEqual(SessionStore().lookup(state.sid, state.snapshot.cwd), state)
+        self.assertEqual(self.common.lookup(state.sid, state.snapshot.cwd), state)
+        self.assertIsNone(SessionStore().lookup("other-id", state.snapshot.cwd))
+
+    def test_direct_reads_of_an_unreadable_record_still_fail(self):
+        state = self.prepare()
+        self.record().write_text("not json")
+        with self.assertRaises(RecoveryError):
+            SessionStore().load(state.workdir, state.sid)
+        with self.assertRaises(RecoveryError):
+            SessionStore().bind(state.workdir, state.sid, NATIVE)
+
+    def test_lookup_still_refuses_two_valid_bindings(self):
+        self.prepare()
+        other = self.root / "other"
+        other.mkdir()
+        self.common.save(
+            self.common.prepare(
+                dataclasses.replace(
+                    self.spec, workdir=str(other), access=Access(cwd=str(self.cwd), project=True)
+                )
+            )
+        )
+        (Path(SessionStore().root) / "garbage.json").write_text("not json")
+        with self.assertRaisesRegex(RecoveryError, "ambiguous"):
+            SessionStore().lookup(self.spec.sid, str(self.cwd))
+
+    def record_of(self, state):
+        return next(
+            path
+            for path in Path(SessionStore().root).glob("*.json")
+            if json.loads(path.read_text()).get("sid") == state.sid
+        )
+
     def test_invalid_save_does_not_create_the_store(self):
         state = self.common.prepare(self.spec)
         unsafe = replace(state, writable_roots=(*state.writable_roots, str(self.home)))
@@ -1026,7 +1088,7 @@ class StoreRootTest(Base):
             self.assertIsNone(store.load(state.workdir, state.sid))
             store.save(store.create(state.workdir, state.sid, state.snapshot, state.writable_roots))
             self.assertEqual(store.load(state.workdir, state.sid), state)
-            parent = other_home / ".agent-pm" / "core-new-sessions"
+            parent = other_home / ".agent-pm" / "sessions"
             target = other_home / "moved-store"
             parent.rename(target)
             parent.symlink_to(target, target_is_directory=True)
@@ -1034,7 +1096,7 @@ class StoreRootTest(Base):
                 store.create(state.workdir, "preview", state.snapshot, state.writable_roots)
 
     def test_nonpersisted_prepare_rejects_a_symlinked_default_store(self):
-        store = self.home / ".agent-pm" / "core-new-sessions" / "codex"
+        store = self.home / ".agent-pm" / "sessions" / "codex"
         target = self.root / "store-target"
         store.parent.mkdir(parents=True, mode=0o700)
         target.mkdir(mode=0o700)

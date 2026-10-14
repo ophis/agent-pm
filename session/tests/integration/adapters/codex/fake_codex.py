@@ -68,9 +68,7 @@ def main():
     stdin_eof = bool(ready) and os.read(sys.stdin.fileno(), 1) == b""
     if not stdin_eof:
         raise RuntimeError("stdin was not closed")
-    records = list(
-        (Path(os.environ["HOME"]) / ".agent-pm" / "core-new-sessions" / "codex").glob("*.json")
-    )
+    records = list((Path(os.environ["HOME"]) / ".agent-pm" / "sessions" / "codex").glob("*.json"))
     if len(records) != 1:
         raise RuntimeError("expected one durable launch snapshot")
     state = json.loads(records[0].read_text())
