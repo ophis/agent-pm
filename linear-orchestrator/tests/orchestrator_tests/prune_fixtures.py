@@ -6,9 +6,11 @@ import os
 import shutil
 import tempfile
 from contextlib import redirect_stderr, redirect_stdout
+from dataclasses import replace
 from datetime import timedelta
 
-from agent_pm.linear_orchestrator.engine import log, ops, promote, prune
+from agent_pm.delegate import ConfigError, DriverError, Spec
+from agent_pm.linear_orchestrator.engine import config, log, ops, promote, prune, runs
 from agent_pm.linear_orchestrator.engine.types import LinearError
 from orchestrator_tests.case import Case
 from orchestrator_tests.unit import promote_fixtures as tp
@@ -17,6 +19,8 @@ from orchestrator_tests.unit.board_ids import TEAM, team_node
 from orchestrator_tests.unit.fake_api import FakeApi
 from orchestrator_tests.unit.outage import FAILURES, FIELDS, failing
 from orchestrator_tests.unit.run_fixtures import CORE_LOCAL, logged, show
+
+from delegate.tests.fakes.delegate import FakeDelegate
 
 NOW = tp.NOW
 
@@ -104,6 +108,25 @@ class Git:
         raise AssertionError(f"git ran: {argv}")
 
 
+class PruneDelegate(FakeDelegate):
+    owners = {}
+
+    @classmethod
+    def attach(cls, record_or_workdir):
+        view = super().attach(record_or_workdir)
+        view.owner = cls.owners[view.workdir]
+        return view
+
+    def close(self):
+        self.owner.close(self.workdir)
+        super().close()
+
+    def status(self):
+        if self.owner.unknown:
+            raise DriverError("sessions unknown")
+        return super().status()
+
+
 class PruneScenario(Case):
     def setUp(self):
         self.root = os.path.realpath(tempfile.mkdtemp())
@@ -115,7 +138,56 @@ class PruneScenario(Case):
         write(os.path.join(self.outside, "keep"), "x")
         self.logs = os.path.join(self.root, "logs")
         self.api = FakeApi()
+        self.sessions = {}
+        self.closed_runs = set()
+        self.unknown = False
+        self.cfg = config.Config(
+            team=TEAM,
+            states=dict(IDS_BY_KEY),
+            human_members=(),
+            harness_key="harness",
+            task_label_group="",
+            task_labels={},
+            roles={},
+            project_repos={},
+            local_clones={},
+            work_dir=self.root,
+            protect=(),
+            docs=config.Docs("", "", {}),
+            stages={},
+            delegate_kind="harness",
+            delegates={"harness": PruneDelegate},
+            core={},
+        )
         log.use_logs(self.logs)
+
+    def record(self, ident, sid, sessions, role="engineer"):
+        workdir = self.cfg.run_dir(ident)
+        PruneDelegate("dummy", Spec("", workdir, sid=sid)).detach()
+        PruneDelegate.owners[workdir] = self
+        self.addCleanup(PruneDelegate.owners.pop, workdir, None)
+        self.sessions[workdir] = sessions
+        runs.note(
+            self.cfg.runs_log,
+            "start",
+            issue=ident,
+            sid=sid,
+            role=role,
+            runtime="fake",
+        )
+
+    def close(self, workdir):
+        if workdir in self.closed_runs:
+            return
+        failed = None
+        for name in self.sessions[workdir]:
+            try:
+                self.api.close(name)
+            except (ConfigError, DriverError) as error:
+                failed = error
+        if failed:
+            raise failed
+        self.closed_runs.add(workdir)
 
     def closed(self):
         return [c[1] for c in self.api.order if c[0] == "close"]
@@ -143,7 +215,7 @@ class PruneScenario(Case):
                 dry=dry,
                 run=git or Git(),
                 work=self.work,
-                driver=self.api,
+                cfg=self.cfg,
                 team=TEAM_OBJ,
                 roles=ROLES,
                 writable=writable,
@@ -197,9 +269,8 @@ class PruneScenario(Case):
         return (code, fake.issues["DR-1"]["state"], "\n".join(show(e) for e in self.events))
 
     def pruner(self, *args, **kwargs):
-        # promote passes driver= at call time, overriding a partial's: the real Driver lists and
-        # closes the developer's tmux sessions.
-        return prune.Pruner(*args, **{**kwargs, "run": Git(), "driver": self.api})
+        cfg = replace(kwargs["cfg"], delegates={"harness": PruneDelegate})
+        return prune.Pruner(*args, **{**kwargs, "run": Git(), "cfg": cfg})
 
     def outage(self, op, issues, failed):
         for name, error in FAILURES.items():

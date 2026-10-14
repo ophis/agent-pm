@@ -4,11 +4,13 @@ child; the tick's prune closes a finished issue's TUI session on a private tmux 
 checkouts and archives it.
 """
 
+import json
 import os
 import unittest
 from datetime import UTC, datetime, timedelta
 
-from agent_pm.linear_orchestrator.engine import ops
+from agent_pm import delegate
+from agent_pm.linear_orchestrator.engine import ops, runs
 from orchestrator_tests.integration import fake_linear
 from orchestrator_tests.integration.flow_fixtures import (
     ACCOUNTS,
@@ -20,6 +22,7 @@ from orchestrator_tests.integration.flow_fixtures import (
     TmuxFlow,
 )
 
+from delegate.tests.fakes.delegate import FakeDelegate
 from utils.tests.sandbox import git_run
 
 SOURCE, TITLE = "TASK-12", "Session registries in agent harnesses"
@@ -166,6 +169,24 @@ class Promote(Tick):
         self.assert_requests(WRITES, [("promote.Q_HANDOFF", HARNESS_EMAIL, "503")])
 
 
+class PruneSessionDelegate(FakeDelegate):
+    ROLES = {
+        "engineer": {"build": "", "light-build": ""},
+        "researcher": {"deep-research": "", "light-research": ""},
+        "pm": {"product-design": ""},
+    }
+
+    @classmethod
+    def resolve(cls, role, task=None, *, overlays=()):
+        return delegate.resolve_run(role, task, overlays=overlays)
+
+    def close(self):
+        with open(os.path.join(self.workdir, "delegate.json")) as stream:
+            state = json.load(stream)
+        delegate.configure().session_cls.host().attach(state["name"]).close()
+        super().close()
+
+
 class Prune(Tick, TmuxFlow):
     def git_init(self, path):
         res = git_run(
@@ -208,9 +229,30 @@ class Prune(Tick, TmuxFlow):
         made = self.server.tmux("new-session", "-d", "-s", TUI, "cat", "-")
         self.assertEqual(made.returncode, 0, made.stderr)
         self.assertTrue(self.live(TUI))
+        sid = "0123abcd-1234-4567-89ab-0123456789ab"
+        workdir = os.path.join(self.runs_dir, DONE)
+        PruneSessionDelegate("engineer", delegate.Spec("", workdir, sid=sid, name=TUI)).detach()
+        runs.note(
+            os.path.join(self.logs, "runs.jsonl"),
+            "start",
+            issue=DONE,
+            sid=sid,
+            role="engineer",
+            runtime="claude",
+        )
+        local = os.path.join(self.agent_pm, "config.local.toml")
+        with open(local) as stream:
+            text = stream.read()
+        with open(local, "w") as stream:
+            stream.write(
+                text.replace(
+                    "orchestrator_tests.integration.legacy_run_delegate:LegacyRunDelegate",
+                    "orchestrator_tests.integration.promote_integration_test:PruneSessionDelegate",
+                )
+            )
 
         self.tick()
-        self.assertEqual([p for p in gone if os.path.lexists(p)], [])
+        self.assertEqual([p for p in gone if os.path.lexists(p)], [], self.events())
         self.assertFalse(self.live(TUI))
         self.assertTrue(os.path.isdir(os.path.join(kept, ".git")))
         self.assertEqual([self.issue(i)["archived"] for i in (DONE, OPEN)], [True, False])
@@ -220,7 +262,7 @@ class Prune(Tick, TmuxFlow):
         self.assertEqual(
             self.events(),
             [
-                {"src": "prune", "kind": "prune-closed", "issue": DONE, "session": TUI},
+                {"src": "prune", "kind": "prune-closed", "issue": DONE, "session": sid},
                 *(
                     {"src": "prune", "kind": "prune-removed", "entry": f"{DONE}/{e}", "what": w}
                     for e, w in removed

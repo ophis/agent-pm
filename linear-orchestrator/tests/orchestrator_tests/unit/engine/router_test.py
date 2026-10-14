@@ -2,16 +2,19 @@
 
 import contextlib
 import fcntl
+import functools
 import io
 import json
 import os
 import re
 import sys
 from contextlib import redirect_stderr, redirect_stdout
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from unittest import mock
 
 from agent_pm.linear_orchestrator.engine import config, inputs, issues, ops, router, runs
+from agent_pm.linear_orchestrator.engine import gate as quota
 from agent_pm.linear_orchestrator.engine.types import LinearError, Spec, Unavailable
 from agent_pm.session import ConfigError, DriverError, SessionStatus, Window
 from agent_pm.session import Usage as SessionUsage
@@ -83,7 +86,7 @@ HUMANS = 'human_members = ["me@x.com"]\n'
 
 FULL = ["agent-pm-researcher-TASK-5", "agent-pm-pm-TASK-6", "agent-pm-engineer-TASK-7"]
 
-SESSIONS = [("sessions", re.escape("agent-pm-") + ".*")]
+SESSIONS = []
 
 
 TASK_LABELS = f'[task_labels]\nlight-research = "{LIGHT}"\ndeep-research = "{DEEP}"\nproduct-design = "{ORPHAN_LABEL}"\n'
@@ -145,6 +148,9 @@ def inner(*args, text=INPUT):
         *args,
         f"--input={text}",
     ]
+
+
+SAY = functools.partial(router.log, "router")
 
 
 class Moved(FakeLinear):
@@ -737,7 +743,7 @@ class RouterEntry(OuterBase):
             self.detached(),
             inner("--target", "Ophis/Agent-PM", *forwarded(sid=sid, mode="resume")),
         )
-        self.assertEqual((self.api.info, self.api.usage_calls), ([("a", sid, self.rd)] * 2, ["a"]))
+        self.assertEqual((self.api.info, self.api.usage_calls), ([("a", sid, self.rd)] * 2, []))
 
     def test_the_outers_lines_follow_the_ticks_plan(self):
         self.todo["state"], self.fake.node = "In Progress", None
@@ -755,12 +761,13 @@ class RouterEntry(OuterBase):
     def test_a_live_run_is_refused(self):
         for role in ("engineer", "pm"):
             with self.subTest(role=role):
+                self.lines = []
                 self.assertEqual(self.entry("--issue", ID, live=[f"agent-pm-{role}-{ID}"]), 1)
                 self.assertEqual(
                     self.err,
                     f"router.py: {ID} has a live agent run: attach agent-pm-{role}-{ID}\n",
                 )
-                self.assertEqual((self.api.order, self.state), (SESSIONS, ""))
+                self.assertEqual((self.api.order, self.state), (SESSIONS, self.before()))
         self.assertEqual((self.fake.queries, self.api.detached), ([], []))
 
     def test_nothing_started_exits_1_without_a_start_line(self):
@@ -795,6 +802,25 @@ class RouterEntry(OuterBase):
                     (self.todo["state"], self.state, self.api.order), (state, "", SESSIONS)
                 )
         self.assertEqual(self.api.detached, [])
+
+    def test_a_bad_session_config_exits_1_as_a_logged_config_error(self):
+        with open(self.local, "a") as f:
+            f.write('\n[session.hosts]\ndefault = "absent"\n')
+        with redirect_stderr(io.StringIO()), self.log_dir(again=True):
+            rc = router.main(
+                ["--now"],
+                now=lambda: NOW,
+                config_path=self.config_path,
+                hour=2,
+                gql=self.fake,
+                run=self.run_,
+                keychain=self.keychain,
+            )
+        self.assertEqual(rc, 1)
+        self.assertEqual(
+            self.said(), ["config-error reason=session config: [hosts] default: want one of tmux"]
+        )
+        self.assertEqual(self.fake.mutations, [])
 
     def test_a_config_error_exits_1_logged_once_a_day_and_printed_on_a_terminal(self):
         for text, reason in (
@@ -943,6 +969,7 @@ class RouterLocking(TickBase):
                     ["--brake", "researcher"],
                     config_path=self.config_path,
                     driver=self.api,
+                    delegate_cls=self.cfg().delegate_cls,
                 )
             self.assertEqual((rc, out.getvalue()), (0, "five_hour=10% weekly=10%\n"))
         self.assertEqual(fake.mutations, [])
@@ -1023,17 +1050,17 @@ class RuntimeUsage(Base):
 
     def gate(self):
         self.write_runs()
-        return router.Gate(self.runs, NOW, dry=False, driver=self.api)
+        return quota.Gate(self.runs, NOW, dry=False, cfg=self.cfg())
 
     def test_a_usage_probe_defect_is_not_unknown_usage(self):
         error = AttributeError("adapter defect")
         self.api.usages["a"] = error
         with self.assertRaises(AttributeError) as caught:
-            router.read_usage("a", driver=self.api)
+            quota.read_usage("researcher", self.cfg())
         self.assertIs(caught.exception, error)
 
     def test_thresholds(self):
-        self.assertEqual((router.MAX_5H, router.BRAKE_5H, router.MAX_WEEK), (90, 80, 100))
+        self.assertEqual((quota.MAX_5H, quota.BRAKE_5H, quota.MAX_WEEK), (90, 80, 100))
         rows = (
             (reading(89.9, 99.9), None),
             (reading(90, 10), "reason=usage usage=five_hour=90% weekly=10%"),
@@ -1050,7 +1077,7 @@ class RuntimeUsage(Base):
             with self.subTest(value=value):
                 self.api.usages = {"a": value}
                 with redirect_stderr(io.StringIO()), self.log_dir(again=False):
-                    self.assertEqual(self.gate().blocked("a", "TASK-1"), why is not None)
+                    self.assertEqual(self.gate().blocked("researcher", "TASK-1"), why is not None)
                 self.raw = ""
                 self.assertEqual(self.said(), [f"usage-skip TASK-1 runtime=a {why}"] if why else [])
 
@@ -1059,9 +1086,18 @@ class RuntimeUsage(Base):
         with redirect_stderr(io.StringIO()), self.log_dir(again=False):
             gate = self.gate()
             got = [
-                gate.blocked(r, i) for r, i in (("a", "TASK-1"), ("b", "TASK-2"), ("a", "TASK-3"))
+                gate.blocked(r, i)
+                for r, i in (("researcher", "TASK-1"), ("pm", "TASK-2"), ("engineer", "TASK-3"))
             ]
         self.assertEqual((got, self.api.usage_calls), ([True, False, True], ["a", "b"]))
+
+    def test_usage_cache_does_not_cross_ticks(self):
+        self.api.usages = {"a": reading(95)}
+        with redirect_stderr(io.StringIO()), self.log_dir(again=False):
+            self.assertTrue(self.gate().blocked("researcher", "TASK-1"))
+            self.api.usages = {"a": reading(10)}
+            self.assertFalse(self.gate().blocked("researcher", "TASK-1"))
+        self.assertEqual(self.api.usage_calls, ["a", "a"])
 
     def test_summary(self):
         rows = (
@@ -1071,7 +1107,7 @@ class RuntimeUsage(Base):
             (reading(89.94, None), "five_hour=89.94% weekly=none"),
         )
         for usage, out in rows:
-            self.assertEqual(router.summary(usage), out)
+            self.assertEqual(quota.summary(usage), out)
 
 
 class ClaimUsageGates(Base):
@@ -1209,13 +1245,14 @@ class RunBrake(Base):
                 ["--brake", role],
                 config_path=self.config_path,
                 driver=self.api,
+                delegate_cls=self.cfg().delegate_cls,
             )
             self.path = os.environ["PATH"]
         self.err = err.getvalue()
         return rc, out.getvalue()
 
     def test_blocks_at_brake_5h(self):
-        self.assertEqual(router.BRAKE_5H, 80)
+        self.assertEqual(quota.BRAKE_5H, 80)
         rows = (
             (reading(70), 0, "five_hour=70% weekly=10%"),
             (reading(79.9, 99.9), 0, "five_hour=79.9% weekly=99.9%"),
@@ -1273,7 +1310,7 @@ class ScheduledUsageGates(TickBase):
         self.assertEqual(self.last_run(), ("resume", "TASK-1", claimed.sid, "researcher", "a"))
         self.assertEqual(
             (self.api.info, self.api.usage_calls),
-            ([("a", claimed.sid, os.path.join(self.work, "work", "TASK-1"))], ["a"]),
+            ([("a", claimed.sid, os.path.join(self.work, "work", "TASK-1"))], []),
         )
 
     def test_a_blocked_resume_candidate_lets_a_claim_start(self):
@@ -2041,7 +2078,7 @@ class RunStartRecords(Base):
         stamp = datetime.fromisoformat("2026-10-09T00:26:33-04:00").astimezone().isoformat()
         got = [
             router.begin(
-                path,
+                replace(self.cfg(), work_dir=self.tmp),
                 Spec.from_issue(found, mode=mode, sid="s1", task=task, runtime="a"),
                 role="researcher",
                 now=lambda: datetime.fromisoformat(stamp),
@@ -2053,7 +2090,7 @@ class RunStartRecords(Base):
                 f.read(),
                 "".join(
                     f'{{"ts": "{stamp}", "kind": "{kind}", "issue": "TASK-1", '
-                    '"sid": "s1", "role": "researcher", "runtime": "a"}\n'
+                    '"sid": "s1", "role": "researcher", "runtime": "a", "delegate_kind": "harness"}\n'
                     for kind in ("start", "resume")
                 ),
             )
@@ -2193,7 +2230,8 @@ class ExplicitIssueRuns(TickBase):
                 self.assertEqual(self.tick(fake, *argv, live=None), 0 if dry else 1)
                 self.assertEqual(self.err, "router.py: agent runs unknown; try again\n")
                 self.assertEqual(
-                    (fake.queries, self.start.launches, self.state, self.said()), ([], [], "", [])
+                    (fake.queries, self.start.launches, self.state, self.said()),
+                    ([], [], self.before(), []),
                 )
 
     def test_a_live_agent_run_is_refused_with_its_attach_command(self):
@@ -2212,7 +2250,7 @@ class ExplicitIssueRuns(TickBase):
                     )
                     self.assertEqual(
                         (fake.queries, self.api.order, self.state, self.start.launches),
-                        ([], SESSIONS, "", []),
+                        ([], SESSIONS, self.before(), []),
                     )
 
     def test_in_progress_resumes_inside_recovers_time_windows(self):
@@ -2439,12 +2477,15 @@ class TickRecords(TickScenario):
 
     def test_trim_runs_before_plan(self):
         self.add(kind="start", ident="TASK-8", sid="old", minutes_ago=60 * 24 * 8)
+        self.add(kind="start", ident="TASK-8", sid="latest", minutes_ago=60 * 24 * 8 - 1)
         self.tick(FakeLinear([]))
-        self.assertNotIn("TASK-8", self.state)
+        self.assertNotIn('"sid": "old"', self.state)
+        self.assertIn('"sid": "latest"', self.state)
 
     def test_trim_failure_continues(self):
         fake = FakeLinear([issue("TASK-1", "Todo", "researcher")])
         self.add(kind="start", ident="TASK-8", sid="old", minutes_ago=60 * 24 * 8)
+        self.add(kind="start", ident="TASK-8", sid="latest", minutes_ago=60)
         with mock.patch.object(os, "replace", side_effect=OSError("disk")):
             self.tick(fake)
         self.assertIn("skip reason=trim failed error=OSError: disk", self.said())
@@ -3085,7 +3126,7 @@ class ClaimRechecks(Base):
         self.assertEqual(self.said(), ["pick TASK-1 queue=1", "claim TASK-1 role=pm runtime=b"])
         self.assertEqual(self.api.usage_calls, ["b"])
         a = router.begin(
-            self.runs,
+            self.cfg(),
             Spec.from_issue(taken, mode="new", sid="s1", task=task, runtime=runtime),
             role=role,
         )
@@ -3137,7 +3178,7 @@ class ClaimRechecks(Base):
         )
         self.assertEqual(self.claim(fake), f"TASK-1 https://linear.app/x/TASK-1 {PD}")
         a = router.begin(
-            self.runs,
+            self.cfg(),
             Spec.from_issue(self.taken[0], mode="new", sid="s1", task=None, runtime="a"),
             role="researcher",
         )
@@ -3211,35 +3252,82 @@ class LiveLimits(Base):
 
 
 class SessionInventory(Base):
-    def test_exact_names_of_the_roles(self):
+    def test_only_recorded_alive_runs_count_once(self):
         self.api.live = [
             "agent-pm-engineer-TASK-2",
             "agent-pm-engineer-TASK-10",
             "agent-pm-researcher-TASK-1",
             "agent-pm-pm-TASK-6",
-            "agent-pm-pm-lead-TASK-4",
-            "agent-pm-engineer",
-            "agent-pm-engineer-TASK-1x",
-            "agent-pm-engineer-task-3",
-            "agent-pm-engineer-TASK-",
-            "agent-pm-ghost-TASK-5",
             "engineer-TASK-7-0b6f2c1e",
             "other",
         ]
+        for ident, role in (
+            ("TASK-1", "researcher"),
+            ("TASK-2", "engineer"),
+            ("TASK-6", "pm"),
+            ("TASK-7", "engineer"),
+        ):
+            self.add(kind="start", ident=ident, sid=ident, minutes_ago=60, role=role)
+        self.add(kind="resume", ident="TASK-2", sid="TASK-2", minutes_ago=30, role="engineer")
+        self.write_runs()
         self.assertEqual(
-            router.live_sessions(["researcher", "pm", "pm-lead", "engineer"], driver=self.api),
+            router.live_sessions(self.cfg(), runs.parse_log(self.runs), say=SAY),
             {
                 "researcher": ["TASK-1"],
                 "pm": ["TASK-6"],
-                "pm-lead": ["TASK-4"],
-                "engineer": ["TASK-10", "TASK-2"],
+                "engineer": ["TASK-2"],
             },
         )
-        self.assertEqual(self.api.order, SESSIONS)
+        self.assertEqual(self.api.order, [])
 
-    def test_unknown_sessions_are_none(self):
+    def test_unknown_recorded_run_is_not_treated_as_inactive(self):
+        self.add(kind="start", ident="TASK-1", sid="unknown", minutes_ago=60)
+        self.write_runs()
         self.api.live = None
-        self.assertIsNone(router.live_sessions(["researcher", "engineer"], driver=self.api))
+        with redirect_stderr(io.StringIO()), self.log_dir(again=False):
+            self.assertIsNone(router.live_sessions(self.cfg(), runs.parse_log(self.runs), say=SAY))
+        self.raw = ""
+        self.assertEqual(self.said(), [])
+
+    def test_removed_legacy_kind_is_not_reinterpreted_as_current_default(self):
+        self.add(kind="start", ident="TASK-1", sid="old", minutes_ago=60)
+        self.write_runs()
+        cfg = self.cfg()
+        cfg = replace(cfg, delegate_kind="replacement", delegates={"replacement": cfg.delegate_cls})
+        with redirect_stderr(io.StringIO()), self.log_dir(again=False):
+            self.assertEqual(
+                router.live_sessions(cfg, runs.parse_log(self.runs), say=SAY),
+                {"researcher": [], "pm": [], "engineer": []},
+            )
+        self.raw = ""
+        self.assertEqual(
+            self.said(),
+            [
+                "recover-skip TASK-1 sid=old reason=ConfigError: delegate kind 'harness' is no longer configured"
+            ],
+        )
+
+
+class RetainedLiveRuns(TickBase):
+    def test_eight_day_live_run_counts_on_second_tick(self):
+        self.add(kind="start", ident="TASK-1", sid="old", minutes_ago=8 * 24 * 60)
+        before = self.before()
+        for again in (False, True):
+            with self.subTest(again=again):
+                fake = self.fake(issue("TASK-2", "Todo", "researcher"))
+                self.assertEqual(
+                    self.tick(fake, live=["agent-pm-researcher-TASK-1"], again=again), 0
+                )
+                self.assertEqual(
+                    (self.start.launches, fake.mutations, self.state), ([], [], before)
+                )
+
+    def test_retained_tui_of_ended_run_does_not_fill_capacity(self):
+        self.add(kind="start", ident="TASK-1", sid="ended", minutes_ago=60)
+        self.tick(
+            self.fake(issue("TASK-2", "Todo", "researcher")), live=["researcher-TASK-1-aaaaaaaa"]
+        )
+        self.assertEqual(self.launched_runs(), [("TASK-2", "new")])
 
 
 class ScheduledRuns(TickScenario):
@@ -3250,7 +3338,7 @@ class ScheduledRuns(TickScenario):
                 self.assertEqual(self.tick(fake, hour=hour), 0)
                 self.assertEqual(len(self.start.launches), int(ran))
                 self.assertEqual(self.said() == [], not ran)
-                self.assertEqual(self.api.order == [], not ran)
+                self.assertEqual(self.api.order, [])
 
     def test_launchd_path_replaced(self):
         self.tick(FakeLinear([]))
@@ -3287,7 +3375,7 @@ class ScheduledRuns(TickScenario):
         self.assertEqual(
             self.state,
             f'{{"ts": "{stamp}", "kind": "start", "issue": "TASK-1", '
-            f'"sid": "{launch.sid}", "role": "researcher", "runtime": "a"}}\n',
+            f'"sid": "{launch.sid}", "role": "researcher", "runtime": "a", "delegate_kind": "harness"}}\n',
         )
         self.assertEqual(
             sorted(os.listdir(os.path.dirname(self.runs))),
@@ -3370,7 +3458,7 @@ class ScheduledRuns(TickScenario):
             issue("TASK-2", "Todo", "engineer", priority=2, project=PD),
             issue("TASK-3", "Todo", "engineer", priority=3, project=PD),
         )
-        self.resumable("TASK-1", "a", 60)
+        self.resumable("TASK-1", "a", 60, "engineer")
         self.tick(fake, live=["agent-pm-engineer-TASK-1"])
         self.assertEqual(
             self.said(),
@@ -3431,7 +3519,9 @@ class ScheduledRuns(TickScenario):
         )
         for ident in ("TASK-1", "TASK-3", "TASK-4"):
             for m in (390, 380, 370, 360):
-                self.add(kind="start", ident=ident, sid=f"{ident}-{m}", minutes_ago=m)
+                self.add(
+                    kind="start", ident=ident, sid=f"{ident}-{m}", minutes_ago=m, role="engineer"
+                )
         self.tick(fake, live=["agent-pm-engineer-TASK-1"])
         self.assertEqual(
             self.said(),

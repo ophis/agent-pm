@@ -760,26 +760,16 @@ class OrchestratorSessionImports(Sample):
         module = f"{guards.ORCH_PKG}.{rel.removesuffix('.py').replace('/', '.')}"
         return (
             f"linear-orchestrator/{guards.ORCH_SRC}{rel}: {module} imports {name} from "
-            "agent_pm.session; go through agent_pm.delegate (TASK-394 removes this list)"
+            "agent_pm.session; go through agent_pm.delegate"
         )
 
-    def test_pinned_names_and_removals_pass(self):
-        for sample in (
-            "from agent_pm.session import SIGNALS, DriverError\n"
-            "from agent_pm.session import ConfigError as SessionConfigError\n",
-            "from agent_pm.session import DriverError\n",
-            "from agent_pm import delegate\n",
-        ):
-            with self.subTest(sample=sample):
-                self.assertEqual(self.check("engine/run.py", sample), [])
+    def test_delegate_import_passes(self):
+        self.assertEqual(self.check("engine/run.py", "from agent_pm import delegate\n"), [])
 
-    def test_an_extra_name_in_an_allowed_module_fails(self):
+    def test_formerly_allowed_module_fails(self):
         self.assertEqual(
-            self.check(
-                "engine/run_comments.py",
-                "from agent_pm.session import ConfigError, DriverError, SessionStatus\n",
-            ),
-            [self.message("engine/run_comments.py", "SessionStatus")],
+            self.check("engine/run_comments.py", "from agent_pm.session import DriverError\n"),
+            [self.message("engine/run_comments.py", "DriverError")],
         )
 
     def test_a_new_module_fails_however_it_imports(self):
@@ -796,15 +786,14 @@ class OrchestratorSessionImports(Sample):
                     [self.message("engine/promote.py", "Driver")],
                 )
 
-    def test_pyproject_must_ignore_exactly_the_pinned_modules(self):
+    def test_pyproject_ignored_imports_cannot_grow(self):
         config = Path(REPO, "pyproject.toml").read_text()
-        edge = f'    "{guards.ORCH_PKG}.engine.prune -> agent_pm.session",\n'
-        self.assertIn(edge, config)
+        edge = '    "agent_pm.linear_orchestrator.engine.prune -> agent_pm.session",\n'
+        config = config.replace("ignore_imports = [\n", "ignore_imports = [\n" + edge, 1)
         self.assertEqual(
-            self.check("engine/run.py", "", config.replace(edge, "")),
+            self.check("engine/run.py", "", config),
             [
-                f"pyproject.toml: {guards.ORCH_SESSION_CONTRACT!r} must ignore exactly "
-                "ORCH_SESSION_IMPORTS"
+                f"pyproject.toml: {guards.ORCH_SESSION_CONTRACT!r} must ignore exactly ORCH_SESSION_IMPORTS"
             ],
         )
 
@@ -1799,6 +1788,7 @@ class RunSpecSerialization(Sample):
         self.assertEqual(
             guards.types_only(self.tree({path: source})),
             [
+                f"{path}:6: Spec.from_argv: business method in types module",
                 f"{path}:7: Spec.run: business method in types module",
             ],
         )
@@ -1905,9 +1895,9 @@ class OrchestratorLayout(Sample):
         self.assertEqual(
             guards.orchestrator_session_imports(root),
             [
-                f"{guards.ORCH_PROJECT}/{OPKG}/engine/new.py: {guards.ORCH_PKG}.engine.new imports Driver from agent_pm.session; go through agent_pm.delegate (TASK-394 removes this list)",
-                f"{guards.ORCH_PROJECT}/{OPKG}/engine/ops.py: {guards.ORCH_PKG}.engine.ops imports DriverError from agent_pm.session; go through agent_pm.delegate (TASK-394 removes this list)",
-                f"{guards.ORCH_PROJECT}/{OPKG}/engine/router.py: {guards.ORCH_PKG}.engine.router imports Session from agent_pm.session; go through agent_pm.delegate (TASK-394 removes this list)",
+                f"{guards.ORCH_PROJECT}/{OPKG}/engine/new.py: {guards.ORCH_PKG}.engine.new imports Driver from agent_pm.session; go through agent_pm.delegate",
+                f"{guards.ORCH_PROJECT}/{OPKG}/engine/ops.py: {guards.ORCH_PKG}.engine.ops imports DriverError from agent_pm.session; go through agent_pm.delegate",
+                f"{guards.ORCH_PROJECT}/{OPKG}/engine/router.py: {guards.ORCH_PKG}.engine.router imports Session from agent_pm.session; go through agent_pm.delegate",
             ],
         )
 

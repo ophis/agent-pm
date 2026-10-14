@@ -237,7 +237,14 @@ class Undone(Run):
         limit = f"writeback step {ID} sid={SID} step=limit"
         self.assertEqual(self.said(), [*steps("start", end=-9), limit])
         self.assertEqual(self.records(ID)[-3]["kind"], "limit")
-        note = {"kind": "limit", "issue": ID, "sid": SID, "runtime": "claude", "resets_at": RESETS}
+        note = {
+            "kind": "limit",
+            "issue": ID,
+            "sid": SID,
+            "runtime": "claude",
+            "resets_at": RESETS,
+            "delegate_kind": "harness",
+        }
         self.assertEqual(self.runs(), [note])
         self.assertEqual(self.state(ID), "in_review")
 

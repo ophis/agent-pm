@@ -37,7 +37,7 @@ from agent_pm.delegate.event import DelegateEvent
 from agent_pm.delegate.event.types import STATUSES, InvalidOutcome, Outcome, OutcomeStatus
 from agent_pm.session import ConfigError as SessionConfigError
 from agent_pm.session import Driver as SessionDriver
-from agent_pm.session import Host
+from agent_pm.session import DriverError, Host, NotDisplayable
 from agent_pm.session import read_config as read_session_config
 from agent_pm.utils import LOCAL
 
@@ -110,6 +110,8 @@ __all__ = [
     "run",
     "Result",
     "Driver",
+    "DriverError",
+    "NotDisplayable",
     "DriverSpec",
     "Instruction",
     "Limit",
