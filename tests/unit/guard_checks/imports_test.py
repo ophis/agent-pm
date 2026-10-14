@@ -279,11 +279,6 @@ class StandaloneImports(Sample):
     def test_tmux_host_uses_package_imports(self):
         self.assertNotIn(TMUX_HOST, STANDALONE)
 
-    def test_tmux_command_bootstraps_supplied_package_roots(self):
-        path = f"{SESSION_SRC}hosts/tmux/entry.py"
-        self.assertNotIn(path, STANDALONE)
-        self.assertEqual(IMPORT_BOOTSTRAPS[path], "_bootstrap")
-
     def found(self, source):
         files = dict.fromkeys(STANDALONE, source)
         return imports.standalone_imports(self.tree(files))

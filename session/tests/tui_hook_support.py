@@ -136,7 +136,7 @@ class HookBase(Case):
         return res.stderr.decode()
 
     def callback(self, module: str, state: dict | None = None) -> dict:
-        """descriptor() of a callback in self.root, declaring it."""
+        """Its descriptor, self.root declared."""
         return descriptor(module, state, (self.root,))
 
     def assertError(self, err, text):

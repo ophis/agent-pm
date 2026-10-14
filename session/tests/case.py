@@ -1,6 +1,6 @@
 """Case, every session test's base; session settings (HOSTS, configured); child helpers
-(PY, child_env); this tree's import roots (REPO, SRC, ROOTS) and PLUGIN_BIN, first on its PATH; SPAWNS,
-the calls that start a process.
+(PY, child_env); this tree's import roots (REPO, SRC, ROOTS), PLUGIN_BIN (first on PATH); SPAWNS, the
+calls that start a process.
 """
 
 import os

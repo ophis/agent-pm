@@ -130,7 +130,7 @@ class ShowingHost(RecordingHost, Displayable):
     def layout(self, *, display=None):
         return None
 
-    def tile(self, window):
+    def tile(self, window, *, wait=True, if_panes_changed=False):
         return None
 
 

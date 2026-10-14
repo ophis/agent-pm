@@ -183,5 +183,5 @@ class ScreenHost(MemoryHost, Displayable):
     def layout(self, *, display=None):
         return self.calls.layout(display=display)
 
-    def tile(self, window):
-        self.calls.tile(window)
+    def tile(self, window, *, wait=True, if_panes_changed=False):
+        self.calls.tile(window, wait=wait, if_panes_changed=if_panes_changed)

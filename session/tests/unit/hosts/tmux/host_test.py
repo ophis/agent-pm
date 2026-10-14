@@ -548,7 +548,14 @@ class DisplayableTest(Base):
         self.assertEqual(self.host.screen("w1", 5), "text")
         self.tmux.read.assert_called_once_with("w1", 5)
         self.host.tile("@1")
-        self.tmux.tile.assert_called_once_with("@1")
+        self.host.tile("@2", wait=False, if_panes_changed=True)
+        self.assertEqual(
+            self.tmux.tile.call_args_list,
+            [
+                unittest.mock.call("@1", wait=True, if_panes_changed=False),
+                unittest.mock.call("@2", wait=False, if_panes_changed=True),
+            ],
+        )
         self.tmux.read.side_effect = TuiError("tmux: boom")
         with self.assertRaisesRegex(SessionError, "^tmux session w1: tmux: boom$"):
             self.host.screen("w1")

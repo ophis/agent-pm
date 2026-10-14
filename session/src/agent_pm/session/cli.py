@@ -160,6 +160,14 @@ def _parser(hosts: Hosts | None) -> argparse.ArgumentParser:
     p.add_argument("--lines", type=_lines, metavar="N", help="the last N lines, with history")
     p = sub.add_parser("tile", help="lay out a window's sessions (the default Host's)")
     p.add_argument("window", help="the window, as its Host names it")
+    p.add_argument(
+        "--no-wait", action="store_true", help="return at once while another tile runs (hooks)"
+    )
+    p.add_argument(
+        "--if-panes-changed",
+        action="store_true",
+        help="only when the window's panes changed since its last tile (hooks)",
+    )
     sub.add_parser(
         "hook",
         help="a tui client's hook call (its hook config runs it)",
@@ -389,7 +397,7 @@ def _run(args, flags: list[str], hosts: Hosts, start_sid: str | None) -> int:
         host = Session.host()
         if not isinstance(host, Displayable):
             raise NotDisplayable(f"session {args.window}: host {host.name} cannot display")
-        host.tile(args.window)
+        host.tile(args.window, wait=not args.no_wait, if_panes_changed=args.if_panes_changed)
     return 0
 
 

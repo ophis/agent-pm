@@ -6,7 +6,6 @@ import io
 import os
 import re
 import subprocess
-import sys
 import tempfile
 import time
 from unittest import mock
@@ -18,14 +17,14 @@ from agent_pm.session.hosts.tmux import grid as tmux_model
 from agent_pm.session.hosts.tmux.host import Tmux
 
 from session.tests import live_tmux
-from session.tests.case import Case
+from session.tests.case import PLUGIN_BIN, Case
 from session.tests.processes import reject_command
 
 MANAGER = "mgr"
 
 TIMEOUT = 60
 
-TUI = tmux_model.ENTRY
+COMMAND = os.path.join(PLUGIN_BIN, "agent-pm-session")
 
 IGNORED = "tui: show: grid: --split/--split-from ignored"
 
@@ -93,9 +92,9 @@ class Live(Case):
         return res.stdout.removesuffix("\n")
 
     def tui(self, *args: str) -> None:
-        """The tmux command line (entry.py), run from inside the manager's pane."""
+        """agent-pm-session, run from inside the manager's pane."""
         res = subprocess.run(
-            [sys.executable, "-I", TUI, tmux_model.entry_roots(), *args],
+            [COMMAND, *args],
             env=self.server.env(**self.server.inside(MANAGER)),
             cwd=self.cwd,
             capture_output=True,
@@ -571,7 +570,7 @@ class SettleTest(Live):
         env = self.server.env(**self.server.inside(MANAGER))
         tiles = [
             subprocess.Popen(
-                [sys.executable, "-I", TUI, tmux_model.entry_roots(), "tile", *flag, self.window],
+                [COMMAND, "tile", *flag, self.window],
                 env=env,
                 cwd=self.cwd,
                 stdin=subprocess.DEVNULL,

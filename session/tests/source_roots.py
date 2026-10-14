@@ -1,4 +1,4 @@
-"""This tree's session and utils source roots."""
+"""Session and utils roots."""
 
 from session.tests.case import SRC
 

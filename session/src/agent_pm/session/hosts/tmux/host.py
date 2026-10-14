@@ -561,8 +561,8 @@ class Tmux:
     def run_command(self, session: str, template: str) -> str | None:
         return placement.run_command(session, template, proc=self.proc)
 
-    def tile(self, window: str) -> None:
-        grid.tile(window, proc=self.proc)
+    def tile(self, window: str, *, wait: bool = True, if_panes_changed: bool = False) -> None:
+        grid.tile(window, wait=wait, if_panes_changed=if_panes_changed, proc=self.proc)
 
     def mark(self, word: str, events: str | None, *, pane: str) -> None:
         hook.mark(word, events, pane=pane, proc=self.proc)
@@ -1264,9 +1264,9 @@ class TmuxHost(Host, Displayable):
             ) from None
         return self.fold(opener, split, split_from)
 
-    def tile(self, window: str) -> None:
+    def tile(self, window: str, *, wait: bool = True, if_panes_changed: bool = False) -> None:
         try:
-            self.tmux.tile(window)
+            self.tmux.tile(window, wait=wait, if_panes_changed=if_panes_changed)
         except TuiError as e:
             raise SessionError(f"tile {window}: {e}") from None
 
