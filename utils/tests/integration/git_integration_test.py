@@ -55,6 +55,16 @@ class CheckoutDiscovery(Case):
         alias.symlink_to(inner)
         self.assertEqual(self.search(alias / "missing"), self.search(inner))
 
+    def test_bare_repositories_are_skipped_without_losing_the_containing_checkout(self):
+        for bare, expected in (
+            (self.root / "bare", Checkouts(())),
+            (self.outer / "bare", Checkouts((str(self.outer),))),
+        ):
+            self.git("init", "-q", "--bare", str(bare))
+            with self.subTest(bare=bare):
+                self.assertEqual(self.search(bare), expected)
+                self.assertEqual(self.search(bare / "objects" / "missing"), expected)
+
     def test_submodule_discovers_its_superproject(self):
         source = self.root / "source"
         self.git("init", "-q", str(source))
