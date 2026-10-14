@@ -128,7 +128,7 @@ class Live(tui_live.Live):
 
     def closed(self, handle: Session) -> None:
         self.assertEqual((handle.state(), self.driver.sessions(handle.name)), ("absent", []))
-        self.assertFalse(os.path.lexists(tui._Store(handle.name).dir))
+        self.assertFalse(os.path.lexists(tui._Store(handle.name, host=self.driver.session_cls.host()).dir))
 
 
 class TurnsTest(Live):
@@ -149,7 +149,7 @@ class TurnsTest(Live):
         argv = self.calls()[0]["argv"]
         self.assertEqual((argv[argv.index("--session-id") + 1], argv[-2:]), (SID, ["--", "hello"]))
         hooks = json.loads(argv[argv.index("--settings") + 1])["hooks"]
-        hook = tui._Store("w1").hook_argv(PACKAGE_ROOTS)
+        hook = tui._Store("w1", host=self.driver.session_cls.host()).hook_argv(PACKAGE_ROOTS)
         self.assertEqual(
             {label: entries[0]["hooks"][0]["command"] for label, entries in hooks.items()},
             {label: shlex.join((*hook, label)) for label in ClaudeTui.hooks},

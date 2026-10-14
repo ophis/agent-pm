@@ -37,6 +37,7 @@ from agent_pm.session import (
     DriverError,
     Host,
     HostProcess,
+    Launch,
     Liveness,
     NotDisplayable,
     Session,
@@ -516,9 +517,17 @@ class HarnessDelegate(Delegate):
         environment.update(import_env(config, session_package, utils_package))
         self._harness_host.detach(
             state.harness_name,
-            [sys.executable, "-P", "-m", "agent_pm.delegate.engine.harness_delegate", self.workdir],
-            state.plan.session.access.cwd or self.workdir,
-            environment,
+            Launch(
+                (
+                    sys.executable,
+                    "-P",
+                    "-m",
+                    "agent_pm.delegate.engine.harness_delegate",
+                    self.workdir,
+                ),
+                cwd=state.plan.session.access.cwd or self.workdir,
+                env=environment,
+            ),
             display=state.display,
             events=state.plan.spec.events,
             record=record,

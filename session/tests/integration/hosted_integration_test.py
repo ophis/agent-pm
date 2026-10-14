@@ -29,7 +29,7 @@ class CloseTest(Live):
             found[name] = (
                 handle.state(),
                 self.driver.sessions(name),
-                os.path.lexists(tui._Store(name).dir),
+                os.path.lexists(tui._Store(name, host=self.driver.session_cls.host()).dir),
             )
         self.assertEqual(found, {"w1": ("absent", [], False), "w2": ("absent", [], False)})
         self.assertEqual([row.name for row in self.driver.sessions()], [MANAGER])
@@ -41,7 +41,7 @@ class CloseTest(Live):
         self.assertEqual(sessions("w.*"), HostedSession.list("w.*"))
         close("w3")
         self.assertEqual(HostedSession.list("w.*"), [])
-        self.assertFalse(os.path.lexists(tui._Store("w3").dir))
+        self.assertFalse(os.path.lexists(tui._Store("w3", host=self.driver.session_cls.host()).dir))
 
 
 class DisplayTest(Live):

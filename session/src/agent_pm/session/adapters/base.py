@@ -143,7 +143,7 @@ class Tui(ABC):
         return native if isinstance(native, str) else ""
 
     def limit(self, screen: str) -> LimitHit | None:
-        """The runtime's usage-limit message on the visible pane `screen`; None: none shown."""
+        """The runtime's usage-limit message on the visible terminal `screen`; None: none shown."""
         return None
 
     def submit(self, text: str) -> tuple[Paste | Key, ...]:

@@ -16,7 +16,7 @@ from unittest import mock
 
 from agent_pm.session import Displayable, DriverError, Host, Mode, NotDisplayable, Spec
 from agent_pm.session.engine.hosted import HostedSession
-from agent_pm.session.engine.types import Key, Paste
+from agent_pm.session.engine.types import Key, Launch, Paste
 from agent_pm.utils import Record
 
 from session.tests import fake_adapter
@@ -53,11 +53,11 @@ LEAVE = (
     "put(f'{os.getpid()} {child.pid}')\n"
 )
 CHILD = """import json, sys
-from agent_pm.session import Host
+from agent_pm.session import Host, Launch
 from agent_pm.utils import load_class
 path, host, settings, name, argv, cwd, env = sys.argv[1:]
 load_class(path, Host)(host, json.loads(settings)).terminal(
-    name, json.loads(argv), cwd, json.loads(env)
+    name, Launch(tuple(json.loads(argv)), cwd=cwd, env=json.loads(env))
 )
 """
 
@@ -105,8 +105,13 @@ class HostContract:
     def env(self, **extra: str) -> dict[str, str]:
         return {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "HOME": self.home, **extra}
 
+    def creator_env(self) -> dict[str, str]:
+        return child_env(None, REPO)
+
     def start(self, kind: str, name: str, code: str, *args: str, **kw):
-        return getattr(self.host, kind)(name, program(code, *args), self.home, self.env(), **kw)
+        return getattr(self.host, kind)(
+            name, Launch(tuple(program(code, *args)), cwd=self.home, env=self.env()), **kw
+        )
 
     def file(self, label: str) -> str:
         return os.path.join(self.home, f"{label}-{uuid.uuid4().hex[:8]}")
@@ -156,7 +161,12 @@ class HostContract:
         terminal.send(Key("Enter"))
         self.poll(lambda: (read(out) or "").rstrip("\r\n") == "hello host", f"line in {out}")
 
-    def test_the_program_gets_only_the_given_env_with_its_own_terminal_context(self):
+    def test_the_program_gets_the_supplied_environment_verbatim(self):
+        for kind in ("detach", "terminal"):
+            with self.subTest(kind=kind):
+                self.check_environment(kind)
+
+    def check_environment(self, kind):
         name, out = self.fresh(), self.file("env")
         gate = self.file("finish")
         env = self.env(
@@ -167,19 +177,21 @@ class HostContract:
             PWD="/wrong-directory",
         )
         with mock.patch.dict(os.environ, {"HOST_CONTRACT_CREATOR_ONLY": "1"}):
-            process = self.host.detach(
+            process = getattr(self.host, kind)(
                 name,
-                [
-                    "/usr/bin/perl",
-                    "-e",
-                    'open(my $out, ">", $ARGV[0]) or die $!; '
-                    'print $out map { "$_=$ENV{$_}\\0" } keys %ENV; close($out); '
-                    "select(undef, undef, undef, 0.01) until -e $ARGV[1];",
-                    out,
-                    gate,
-                ],
-                self.home,
-                env,
+                Launch(
+                    (
+                        "/usr/bin/perl",
+                        "-e",
+                        'open(my $out, ">", $ARGV[0]) or die $!; '
+                        'print $out map { "$_=$ENV{$_}\\0" } keys %ENV; close($out); '
+                        "select(undef, undef, undef, 0.01) until -e $ARGV[1];",
+                        out,
+                        gate,
+                    ),
+                    cwd=self.home,
+                    env=env,
+                ),
             )
         self.addCleanup(process.close)
         got = dict(
@@ -187,12 +199,7 @@ class HostContract:
             for entry in self.poll(lambda: read(out), f"env in {out}").split("\0")
             if entry
         )
-        expected = {
-            key: value for key, value in env.items() if key not in {"TMUX", "TMUX_PANE", "TERM"}
-        }
-        self.assertEqual(
-            got, {**expected, **self.terminal_env(name), "PWD": self.home}, f"program env: {got!r}"
-        )
+        self.assertEqual(got, env, f"program env: {got!r}")
         with open(gate, "w", encoding="utf-8"):
             pass
         self.assertTrue(process.wait_exit(DEADLINE))
@@ -225,28 +232,39 @@ class HostContract:
         self.assertIsNone(self.host.attach(name).record())
 
     def test_kill_ends_the_program_and_its_child_process(self):
-        name, pids = self.fresh(), self.file("pids")
-        process = self.start("detach", name, SPAWN, pids)
-        own, child = map(int, self.poll(lambda: read(pids), f"pids in {pids}").split())
-        self.assertFalse(process.wait_exit(0.2))
-        process.kill()
-        self.poll(lambda: gone(own) and gone(child), f"end of {own} and {child}")
-        self.assertFalse(process.alive())
+        for kind in ("detach", "terminal"):
+            with self.subTest(kind=kind):
+                name, pids = self.fresh(), self.file("pids")
+                process = self.start(kind, name, SPAWN, pids)
+                own, child = map(
+                    int, self.poll(lambda pids=pids: read(pids), f"pids in {pids}").split()
+                )
+                self.assertFalse(process.wait_exit(0.2))
+                process.kill()
+                self.poll(
+                    lambda own=own, child=child: gone(own) and gone(child),
+                    f"end of {own} and {child}",
+                )
+                self.assertFalse(process.alive())
 
     def test_a_child_its_ended_program_left_is_waited_for_until_kill_or_close_ends_it(self):
-        for end in ("kill", "close"):
-            with self.subTest(end=end):
-                self.left_child_ended_by(end)
+        for kind in ("detach", "terminal"):
+            for end in ("kill", "close"):
+                with self.subTest(kind=kind, end=end):
+                    self.left_child_ended_by(end, kind)
 
-    def left_child_ended_by(self, end: str) -> None:
+    def left_child_ended_by(self, end: str, kind: str) -> None:
         name, pids, events = self.fresh(), self.file("pids"), self.file("events")
-        process = self.start("detach", name, LEAVE, pids, events=events)
+        process = self.start(kind, name, LEAVE, pids, events=events)
         self.addCleanup(process.kill)
-        own, child = map(int, self.poll(lambda: read(pids), f"pids in {pids}").split())
+        own, child = map(int, self.poll(lambda pids=pids: read(pids), f"pids in {pids}").split())
         self.poll(lambda: gone(own), f"end of {own}")
         self.poll(lambda: not process.alive(), f"{name} no longer running its program")
-        self.event(events, name, "exited 0")
-        self.poll(lambda: name not in self.host.list(), f"{name} session removed")
+        self.event(events, name, "exited 0" if kind == "detach" else "dead")
+        if kind == "detach":
+            self.poll(lambda: name not in self.host.list(), f"{name} session removed")
+        else:
+            self.assertIn(name, self.host.list())
         self.assertFalse(process.wait_exit(0.3))
         self.assertFalse(gone(child))
         getattr(process, end)()
@@ -304,7 +322,7 @@ class HostContract:
                 self.home,
                 json.dumps(self.env()),
             ],
-            env=child_env(None, REPO),
+            env=self.creator_env(),
             capture_output=True,
             text=True,
             timeout=DEADLINE * 3,

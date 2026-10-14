@@ -106,7 +106,7 @@ class Tier(StrEnum):
 
 
 class Word(StrEnum):
-    """A tui hook's mark for its pane's activity."""
+    """A tui hook's mark for its terminal's activity."""
 
     DONE = "done"
     BLOCKED = "blocked"
@@ -114,7 +114,7 @@ class Word(StrEnum):
 
 
 class ActivityState(StrEnum):
-    """A listed session's activity: its pane's Word, dead once its pane died."""
+    """A listed session's activity: its terminal's Word, dead once it exited."""
 
     WORKING = Word.WORKING.value
     DONE = Word.DONE.value
@@ -142,7 +142,7 @@ def _string_tuple(value) -> bool:
 
 @dataclass(frozen=True)
 class TuiSettings:
-    """tmux's status line, a grid's panes per column, when it re-tiles."""
+    """A terminal display's status line and grid preferences."""
 
     status_line: bool = False
     per_column: int | None = None

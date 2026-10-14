@@ -9,6 +9,7 @@ from agent_pm.session import (
     Exited,
     Host,
     HostProcess,
+    Launch,
     Liveness,
     NotDisplayable,
     Resumable,
@@ -49,16 +50,16 @@ class RecordingHost(Host):
     processes: dict[tuple[str, str], RecordingProcess] = {}
     launches: list[dict] = []
 
-    def detach(self, name, argv, cwd, env, *, display=None, events=None, record=None):
+    def detach(self, name, launch, *, display=None, events=None, record=None):
         process = RecordingProcess(name, display=display, record=record)
         self.processes[self.name, name] = process
         self.launches.append(
             {
                 "host": self.name,
                 "name": name,
-                "argv": argv,
-                "cwd": cwd,
-                "env": env,
+                "argv": list(launch.argv),
+                "cwd": launch.cwd,
+                "env": dict(launch.env),
                 "display": display,
                 "events": events,
                 "record": record,
@@ -66,7 +67,7 @@ class RecordingHost(Host):
         )
         return process
 
-    def terminal(self, name, argv, cwd, env, *, display=None, events=None, record=None):
+    def terminal(self, name, launch, *, display=None, events=None, record=None):
         raise NotImplementedError("HarnessSession owns its terminal without a process")
 
     def attach(self, name):
@@ -134,7 +135,7 @@ class HarnessSession(SessionClass):
         session = super().start(spec, display=display, host=host, idle_timeout=idle_timeout)
         name = spec.name or f"{spec.runtime}-{session.sid[:8]}"
         cls.host_names[name] = host or "agent"
-        cls.host(host).detach(name, ["fake-agent"], spec.workdir, {}, display=display)
+        cls.host(host).detach(name, Launch(("fake-agent",), cwd=spec.workdir), display=display)
         return session
 
     @classmethod
@@ -213,7 +214,7 @@ class DiskHost(RecordingHost):
     def path(self, name):
         return os.path.join(self.root(), f"{self.name}-{name}.json")
 
-    def detach(self, name, argv, cwd, env, *, display=None, events=None, record=None):
+    def detach(self, name, launch, *, display=None, events=None, record=None):
         path = self.path(name)
         save(
             path,
@@ -223,7 +224,7 @@ class DiskHost(RecordingHost):
         )
         append_line(
             os.path.join(self.root(), "launches.jsonl"),
-            json.dumps({"host": self.name, "name": name, "argv": argv}),
+            json.dumps({"host": self.name, "name": name, "argv": list(launch.argv)}),
         )
         return DiskProcess(name, path)
 
