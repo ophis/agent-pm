@@ -9,6 +9,7 @@ import signal
 import subprocess
 import time
 import unittest
+from datetime import UTC, datetime, timedelta
 
 from agent_pm.linear_orchestrator.engine.router import BUSY, LIVE
 from orchestrator_tests.integration.flow_fixtures import (
@@ -30,7 +31,7 @@ from delegate.tests.replies import block, mark, option
 from session.tests import live_tmux
 
 ENGINEER = ACCOUNTS["engineer"]
-ID, OTHER = "TASK-7", "TASK-8"
+ID, OTHER, SOURCE = "TASK-7", "TASK-8", "TASK-12"
 STARTED, READY = "Building the session registry.", "Added the session registry."
 PR = f"https://github.com/{REPO}/pull/1"
 START = mark("start", STARTED)
@@ -274,6 +275,47 @@ class Refusals(Parity):
         [bounce] = [line for line in self.routed() if line.startswith(f"router bounce {ID} ")]
         self.assertTrue(bounce.endswith(f"{REPO}: no push permission"), bounce)
         self.assertIn(f"router launch {ID} exit=0", self.routed())
+
+    def test_a_promoted_issue_whose_target_check_fails_returns_to_its_source(self):
+        """v1 writeback.bounce of an issue promoted from a Handoff source in the team: the
+        source is unarchived, gets the `Repo check failed:` comment and goes Done → In Review;
+        the issue gets it too and is Canceled; no agent run.
+        """
+        now, pm = datetime.now(UTC), self.ids[ACCOUNTS["pm"]]
+        self.fake.issue(
+            "PRD: Session registry",
+            identifier=SOURCE,
+            state="in_progress",
+            assignee=pm,
+            project=PROJECT,
+        )
+        self.fake.move(SOURCE, "in_review", actor=pm, at=now - timedelta(minutes=40))
+        self.fake.comment(SOURCE, self.ids[HUMAN], "Build it.", at=now - timedelta(minutes=30))
+        self.fake.move(SOURCE, "handoff", actor=self.ids[HUMAN], at=now - timedelta(minutes=20))
+        res = self.promote()
+        self.assertEqual((res.returncode, res.stdout, res.stderr), (0, "", ""), self.said())
+        [child] = [
+            line.rpartition(" to=")[2]
+            for line in self.said()
+            if line.startswith(f"promote promote {SOURCE} ")
+        ]
+        self.assertEqual(self.state(SOURCE), "done")
+        self.gh["repos"][REPO]["permissions"]["push"] = False
+        self.write_gh()
+        self.scene([START, DONE], rate_limit=usage(0.5))
+        self.tick()
+        self.assert_nothing_started()
+        self.assertEqual((self.state(SOURCE), self.state(child)), ("in_review", "canceled"))
+        self.assertEqual(self.history(SOURCE)[-1], ("done", "in_review", ENGINEER))
+        self.assertEqual(self.history(child)[-1], ("in_progress", "canceled", ENGINEER))
+        for ident in (SOURCE, child):
+            with self.subTest(ident):
+                author, body = self.comments(ident)[-1]
+                self.assertEqual(author, ENGINEER)
+                self.assertTrue(body.startswith("Repo check failed: "), body)
+                self.assertIn(f"{REPO}: no push permission", body)
+                self.assertIn(f"move {SOURCE} to Handoff again", body)
+        self.assertIn(HUMAN, self.subscribers(SOURCE))
 
     def test_bad_task_labels_send_their_issues_to_in_review_unclaimed(self):
         """v1 CLAUDE.md › Architecture and v1 router_test.test_fr7_invalid_label_goes_to_review:

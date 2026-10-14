@@ -629,6 +629,15 @@ class PrintMode(Case):
                 {"returncode": 3, "stdout": os.path.realpath(self.proj) + "\n", "stderr": "oops"},
             )
 
+    def test_a_run_step_that_cannot_start_records_why_in_a_new_directory(self):
+        missing = os.path.join(self.root, "no-such-command")
+        self.scene(steps=[{"kind": "run", "argv": [missing], "path": "sub/ran.json"}, "After."])
+        self.assertEqual(self.result(self.run_fake(*ARGS)), "After.")
+        with open(os.path.join(self.proj, "sub", "ran.json"), encoding="utf-8") as f:
+            ran = json.load(f)
+        self.assertEqual((ran["returncode"], ran["stdout"]), (None, ""))
+        self.assertIn(missing, ran["stderr"])
+
     def test_resume_steps_replace_steps_only_on_a_resume(self):
         self.scene(steps=["First."], resume=["Again."])
         self.assertEqual(self.result(self.run_fake(*ARGS)), "First.")
