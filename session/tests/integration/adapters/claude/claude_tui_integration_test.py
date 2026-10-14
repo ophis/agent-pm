@@ -27,6 +27,7 @@ from agent_pm.session.engine.types import (
     Exited,
     IdleTimeout,
     LimitHit,
+    Reply,
     Spec,
     TurnEnd,
 )
@@ -69,6 +70,17 @@ print(json.dumps([*before, repr(event), handle.reply]))
 """
 
 
+class HookStream(Stream):
+    """A Stream without Replies, whose timing against the hook events varies: the hook and screen
+    events alone.
+    """
+
+    def _drain(self, handle):
+        for event in handle.events():
+            if not isinstance(event, Reply):
+                self.queue.put(event)
+
+
 class Live(tui_live.Live):
     def setUp(self):
         super().setUp()
@@ -107,11 +119,11 @@ class Live(tui_live.Live):
         self.addCleanup(handle.stop)
         return handle
 
-    def stream(self, handle: Session) -> Stream:
-        """handle's Stream; at cleanup the handle stops and the thread ends, so it never polls a
-        later test's server.
+    def stream(self, handle: Session, *, replies: bool = False) -> Stream:
+        """handle's Stream (a HookStream unless `replies`); at cleanup the handle stops and the
+        thread ends, so it never polls a later test's server.
         """
-        stream = Stream(self, handle)
+        stream = (Stream if replies else HookStream)(self, handle)
         self.addCleanup(handle.stop)
         return stream
 
@@ -174,6 +186,39 @@ class TurnsTest(Live):
             (handle.state(), [r.name for r in self.driver.sessions("w1")], self.panes()),
             ("live", ["w1"], 1),
         )
+
+
+def delivered(events: list) -> list[str]:
+    """The texts a turn's events deliver: each Reply, then its TurnEnd's unless that repeats the
+    last Reply.
+    """
+    texts = [e.text for e in events if isinstance(e, Reply)]
+    end = events[-1].reply
+    return [*texts, end] if end and texts[-1:] != [end] else texts
+
+
+class RepliesTest(Live):
+    def until_turn_end(self, stream: Stream) -> list:
+        found = [stream.next(idle=False)]
+        while not isinstance(found[-1], TurnEnd):
+            found.append(stream.next(idle=False))
+        return found
+
+    def test_each_text_of_a_turn_is_delivered_once(self):
+        steps = ["Start: go.", {"kind": "tool", "name": "Bash"}, "Middle.", "Done."]
+        handle = self.start("w1", scenario={"steps": steps})
+        events = self.until_turn_end(self.stream(handle, replies=True))
+        self.assertEqual(delivered(events), ["Start: go.", "Middle.", "Done."])
+        self.assertIn(Activity("Bash"), events)
+
+    def test_a_resumed_session_delivers_only_its_new_texts(self):
+        first = self.start("w1", scenario={"steps": ["One."]}, sid=SID)
+        stream = self.stream(first, replies=True)
+        self.assertEqual(delivered(self.until_turn_end(stream)), ["One."])
+        self.driver.close("w1")
+        again = self.start("w1", "again", scenario={"steps": ["Two."]}, resume=SID)
+        events = self.until_turn_end(self.stream(again, replies=True))
+        self.assertEqual(delivered(events), ["Two."])
 
 
 class BlockedTest(Live):

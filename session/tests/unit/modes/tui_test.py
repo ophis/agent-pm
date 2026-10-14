@@ -31,6 +31,7 @@ from agent_pm.session.engine.types import (
     Mode,
     Paste,
     Prepared,
+    Reply,
     SessionInfo,
     Spec,
     TurnEnd,
@@ -246,6 +247,18 @@ class Base(Case):
         return False
 
 
+class Observing(ScanTui):
+    """A ScanTui whose observe() hands out its `records` once."""
+
+    def __init__(self, adapter):
+        super().__init__(adapter)
+        self.records = []
+
+    def observe(self):
+        found, self.records = self.records, []
+        return found
+
+
 class Keys(ScanTui):
     def submit(self, text):
         return Key("Escape"), Paste(text), Key("Enter"), Key("Enter"), Paste("b"), Key("Tab")
@@ -307,6 +320,17 @@ class AttachTest(Base):
         self.assertEqual(self.host.calls.mock_calls, [mock.call.list(None), mock.call.attach(NAME)])
         self.append(partial[7:], record("stop", session_id="n2", last_message="r3"))
         self.assertEqual(mode.poll(0), ([Activity("next"), TurnEnd("r3", 0)], False))
+
+    def test_runtime_records_come_before_the_hook_events_attached_and_live(self):
+        run = self.adapter.run = Observing(self.adapter)
+        run.records = [Reply("before")]
+        mode = self.attach(record("stop", last_message="r1"))
+        self.assertEqual(mode.replayed, (Reply("before"), TurnEnd("r1", 0)))
+        run.records = [Reply("late")]
+        self.append(record("tool", tool="t"))
+        self.assertEqual(mode.poll(0), ([Reply("late"), Activity("t")], False))
+        run.records = [Reply("alone")]
+        self.assertEqual(mode.poll(0), ([Reply("alone")], False))
 
     def test_its_prepared_is_session_jsons_spec_and_identity(self):
         mode = self.attach()

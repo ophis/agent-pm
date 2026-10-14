@@ -302,8 +302,8 @@ class HostedSession(Session):
     def attach(
         cls, name: str, *, host: str | None = None, idle_timeout: float | None = None
     ) -> HostedSession:
-        """Tui session `name`, from any process; its hook log replayed into its reply (see reply)
-        and blocked, blocked too while its terminal is marked so.
+        """Tui session `name`, from any process; its runtime record and hook log replayed into its
+        reply (see reply) and blocked, blocked too while its terminal is marked so.
         """
         setup = cls._config()
         tui.checked_name(name)
@@ -503,7 +503,10 @@ class HostedSession(Session):
             self._reply = event.text
         elif isinstance(event, TurnEnd) and (event.reply or replayed):
             self._reply = event.reply
-        self._blocked = isinstance(event, Blocked) or self._blocked and isinstance(event, Stderr)
+        # a runtime record's Reply can land after the block it preceded
+        self._blocked = (
+            isinstance(event, Blocked) or self._blocked and isinstance(event, (Stderr, Reply))
+        )
 
     def send(self, text: str) -> None:
         self._running.send(text)
@@ -539,7 +542,7 @@ class HostedSession(Session):
     @property
     def reply(self) -> str | None:
         """The latest Reply or non-empty TurnEnd text, None before; attached, its hook log's last
-        TurnEnd reply, even "", comes first.
+        TurnEnd reply, even "", comes first, else its runtime record's newest text.
         """
         return self._reply
 

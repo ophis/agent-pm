@@ -13,9 +13,11 @@ from agent_pm.session.engine.types import (
     Activity,
     Blocked,
     ClientBound,
+    ConfigError,
     HookKind,
     Launch,
     LimitHit,
+    Reply,
     Spec,
     TurnEnd,
     TurnFailed,
@@ -349,8 +351,8 @@ class TuiPayloadTest(Base):
     def setUp(self):
         super().setUp()
         self.run = ClaudeAdapter({}).tui()
-        self.run.restore(Spec(workdir=self.work, sid=SID), {})
         self.path = os.path.join(self.tmp, "t.jsonl")
+        self.run.restore(Spec(workdir=self.work, sid=SID), {"transcript": self.path, "start": 0})
 
     def transcript(self, *records):
         with open(self.path, "w", encoding="utf-8") as f:
@@ -543,3 +545,171 @@ class StopFailureTest(Base):
         self.assertEqual(
             run.hook_events("Stop", {"last_assistant_message": "done"}), [TurnEnd("done", 0)]
         )
+
+
+PROMPT = {"type": "user", "message": {"content": "go on"}}
+
+RESULT = {"type": "user", "message": {"content": [{"type": "tool_result", "content": "ok"}]}}
+
+
+class TranscriptTest(Base):
+    def setUp(self):
+        super().setUp()
+        patch = mock.patch.dict(os.environ, {"CLAUDE_CONFIG_DIR": os.path.join(self.tmp, "c")})
+        patch.start()
+        self.addCleanup(patch.stop)
+        self.run = ClaudeAdapter({}).tui()
+        spec = Spec(workdir=self.work, sid=SID)
+        self.path = self.run.launch(spec, HOOK, source_roots=PACKAGE_ROOTS).transcript
+
+    def launched(self, **spec):
+        run = ClaudeAdapter({}).tui()
+        run.launch(Spec(workdir=self.work, sid=SID, **spec), HOOK, source_roots=PACKAGE_ROOTS)
+        return run
+
+    def append(self, *records, end="\n"):
+        os.makedirs(os.path.dirname(self.path), exist_ok=True)
+        with open(self.path, "a", encoding="utf-8") as f:
+            f.write(end.join(r if isinstance(r, str) else json.dumps(r) for r in records) + end)
+
+    def test_pre_tool_text_is_a_reply_once(self):
+        self.append(PROMPT, said("m1", text("start: go")), said("m1", tool("Bash")))
+        self.assertEqual(self.run.observe(), [Reply("start: go")])
+        self.assertEqual(
+            self.run.hook_events("PostToolUse", {"tool_name": "Bash"}), [Activity("Bash")]
+        )
+        self.append(RESULT)
+        self.assertEqual(self.run.observe(), [])
+
+    def test_each_message_once_then_the_turn_end(self):
+        self.append(
+            PROMPT,
+            said("m1", text("A")),
+            said("m1", tool("Bash")),
+            RESULT,
+            said("m2", text("B")),
+            said("m2", tool("Read")),
+            RESULT,
+        )
+        self.assertEqual(self.run.observe(), [Reply("A"), Reply("B")])
+        self.append(said("m3", text("C")))
+        self.assertEqual(self.run.observe(), [Reply("C")])
+        self.assertEqual(
+            self.run.hook_events("Stop", {"last_assistant_message": "C"}), [TurnEnd("C", 0)]
+        )
+        self.assertEqual(self.run.observe(), [])
+
+    def test_a_late_final_text_is_not_repeated(self):
+        self.append(PROMPT, said("m1", text("A")), said("m1", tool("Bash")), RESULT)
+        self.assertEqual(self.run.observe(), [Reply("A")])
+        self.assertEqual(
+            self.run.hook_events("Stop", {"last_assistant_message": "C"}), [TurnEnd("C", 0)]
+        )
+        self.append(said("m2", text("B")), said("m2", tool("Read")), RESULT)
+        self.assertEqual(self.run.observe(), [Reply("B")])
+        self.append(said("m3", text("C")))
+        self.assertEqual(self.run.observe(), [])
+        self.append(PROMPT, said("m4", text("C")), said("m5", text("D")))
+        self.assertEqual(self.run.observe(), [Reply("C"), Reply("D")])
+
+    def test_a_turn_end_already_delivered_leaves_nothing_unseen(self):
+        self.append(PROMPT, said("m1", text("C")))
+        self.assertEqual(self.run.observe(), [Reply("C")])
+        self.assertEqual(
+            self.run.hook_events("Stop", {"last_assistant_message": "C"}), [TurnEnd("C", 0)]
+        )
+        self.append(said("m2", text("C")))
+        self.assertEqual(self.run.observe(), [Reply("C")])
+
+    def test_a_resumed_transcript_starts_at_launch(self):
+        self.append(PROMPT, said("m1", text("X")), said("m2", text("Y")))
+        size = os.path.getsize(self.path)
+        run = self.launched(resume=True)
+        self.assertEqual(
+            run.hook_state(), {"adapter_state": {"transcript": self.path, "start": size}}
+        )
+        self.assertEqual(run.observe(), [])
+        self.append(PROMPT, said("m3", text("Z")))
+        self.assertEqual(run.observe(), [Reply("Z")])
+
+    def test_a_restored_cursor_reads_from_its_start(self):
+        self.append(PROMPT, said("m1", text("X")))
+        size = os.path.getsize(self.path)
+        self.append(said("m2", text("Y")))
+        run = ClaudeAdapter({}).tui()
+        run.restore(Spec(workdir=self.work, sid=SID), {"transcript": self.path, "start": size})
+        self.assertEqual(run.observe(), [Reply("Y")])
+        self.assertEqual(
+            run.hook_state(), {"adapter_state": {"transcript": self.path, "start": size}}
+        )
+
+    def test_a_bad_cursor_is_refused(self):
+        for state in (
+            {},
+            {"transcript": self.path},
+            {"start": 0},
+            {"transcript": "t.jsonl", "start": 0},
+            {"transcript": 1, "start": 0},
+            {"transcript": self.path, "start": -1},
+            {"transcript": self.path, "start": True},
+            {"transcript": self.path, "start": "0"},
+        ):
+            with (
+                self.subTest(state=state),
+                self.assertRaisesRegex(ConfigError, "transcript cursor"),
+            ):
+                ClaudeAdapter({}).tui().restore(Spec(workdir=self.work, sid=SID), state)
+
+    def test_a_partial_line_waits_for_its_newline(self):
+        self.append(PROMPT)
+        line = json.dumps(said("m1", text("A")))
+        self.append(line[:10], end="")
+        self.assertEqual(self.run.observe(), [])
+        self.append(line[10:])
+        self.assertEqual(self.run.observe(), [Reply("A")])
+        self.assertEqual(self.run.observe(), [])
+
+    def test_a_shorter_transcript_moves_the_cursor_to_its_end(self):
+        self.append(PROMPT, said("m1", text("A")))
+        self.assertEqual(self.run.observe(), [Reply("A")])
+        with open(self.path, "w", encoding="utf-8") as f:
+            f.write(json.dumps(PROMPT) + "\n")
+        self.assertEqual(self.run.observe(), [])
+        self.append(said("m2", text("B")))
+        self.assertEqual(self.run.observe(), [Reply("B")])
+
+    def test_no_transcript_is_nothing(self):
+        self.assertEqual(self.run.observe(), [])
+        os.makedirs(self.path)
+        self.assertEqual(self.run.observe(), [])
+
+    def test_only_main_assistant_text_is_a_reply(self):
+        self.append(
+            PROMPT,
+            {**said("s1", text("side")), "isSidechain": True},
+            {
+                **said("e1", text("API Error: 500")),
+                "isApiErrorMessage": True,
+                "error": "server_error",
+            },
+            said("m1", {"type": "thinking", "thinking": "hm"}),
+            said("m1", tool("Bash")),
+            said("m2", text("  \n ")),
+            said("m3", text(1), {"type": "text"}),
+            {"type": "assistant", "message": "x"},
+            {"type": "assistant", "message": {"content": "x"}},
+            {"type": "user", "message": said("m4", text("u"))},
+            "not json",
+            "[1]",
+            said("m5", text("one"), tool("Read"), text("two")),
+        )
+        self.assertEqual(self.run.observe(), [Reply("one\ntwo")])
+
+    def test_attach_order_keeps_a_late_final_text_unrepeated(self):
+        self.append(PROMPT, said("m1", text("A")))
+        run = ClaudeAdapter({}).tui()
+        run.restore(Spec(workdir=self.work, sid=SID), {"transcript": self.path, "start": 0})
+        replayed = [*run.observe(), *run.hook_events("Stop", {"last_assistant_message": "C"})]
+        self.assertEqual(replayed, [Reply("A"), TurnEnd("C", 0)])
+        self.append(said("m2", text("C")))
+        self.assertEqual(run.observe(), [])

@@ -143,6 +143,9 @@ class Tui(ABC):
         native = payload.get("session_id")
         return native if isinstance(native, str) else ""
 
+    def observe(self) -> list[SessionEvent]:  # its runtime's own record, since the last call
+        return []
+
     def failure(self, payload: dict) -> list[TurnFailed | LimitHit]:
         return [TurnFailed("unknown")]
 

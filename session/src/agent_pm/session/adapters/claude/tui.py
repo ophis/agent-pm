@@ -1,8 +1,13 @@
-"""Claude Code interactive launches, merged hooks, transcript replies and native usage limits."""
+"""Claude Code interactive launches, merged hooks, transcript replies and native usage limits.
+Each new main-thread assistant text in the transcript since launch is one Reply, read from a cursor;
+a turn end's text that lands later is not repeated.
+"""
 
 import json
+import os
 import re
 import shlex
+import stat
 import time
 from datetime import datetime, timedelta
 from types import MappingProxyType
@@ -10,7 +15,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from agent_pm.session.adapters.base import Tui
 from agent_pm.session.adapters.claude.common import ClaudeCommon
-from agent_pm.session.engine.types import HookKind, LimitHit, Spec, TurnFailed
+from agent_pm.session.engine.types import ConfigError, HookKind, LimitHit, Reply, Spec, TurnFailed
 from agent_pm.utils import read_regular
 
 TAIL = 4 << 20
@@ -59,6 +64,8 @@ class ClaudeTui(Tui):
     def __init__(self, common: ClaudeCommon):
         self.common = common
         self.sid = ""
+        self.transcript, self.start, self.offset = "", 0, 0
+        self.last = self.unseen = ""  # the turn's newest text; its turn end's text not yet read
 
     def launch(self, spec: Spec, hook, *, source_roots: tuple[str, ...]):
         common = self.common
@@ -74,25 +81,70 @@ class ClaudeTui(Tui):
         }
         tail = ("--", spec.prompt) if spec.prompt else ()
         settings, flags = common.merged(spec.flags, hooks)
-        return common.launch(spec, settings, tail=(*flags, *tail))
+        launch = common.launch(spec, settings, tail=(*flags, *tail))
+        self.transcript = launch.transcript
+        self.start = self.offset = _size(launch.transcript)
+        return launch
+
+    def hook_state(self):
+        return {"adapter_state": {"transcript": self.transcript, "start": self.start}}
 
     def restore(self, spec, state):
         self.sid = spec.sid or ""
+        path, start = state.get("transcript"), state.get("start")
+        if not (
+            isinstance(path, str) and os.path.isabs(path) and type(start) is int and start >= 0
+        ):
+            raise ConfigError("claude tui state: bad transcript cursor")
+        self.transcript, self.start, self.offset = path, start, start
+
+    def observe(self):
+        self.offset = min(self.offset, _size(self.transcript))
+        data = read_regular(self.transcript, offset=self.offset) or b""
+        end = data.rfind(b"\n") + 1
+        self.offset += end
+        return [reply for line in data[:end].split(b"\n") for reply in self._record(line)]
+
+    def _record(self, line: bytes) -> list[Reply]:
+        try:
+            record = json.loads(line)
+        except (ValueError, RecursionError):
+            return []
+        if not isinstance(record, dict) or record.get("isSidechain") is True:
+            return []
+        message = record.get("message")
+        content = message.get("content") if isinstance(message, dict) else None
+        if record.get("type") == "user":
+            if isinstance(content, str) or _texts(content):  # a prompt: a new turn
+                self.last = self.unseen = ""
+            return []
+        if record.get("type") != "assistant" or record.get("isApiErrorMessage") is True:
+            return []
+        text = "\n".join(_texts(content))
+        if not text.strip():
+            return []
+        if self.unseen and text.strip() == self.unseen.strip():
+            self.unseen = ""
+            return []
+        self.last = text
+        return [Reply(text)]
 
     def session_id(self, payload):
         """The sid it launched or restored: its native id."""
         return self.sid if super().session_id(payload) else ""
 
     def reply(self, payload):
-        message = payload.get("last_assistant_message")
-        if isinstance(message, str):
-            return message
-        path = payload.get("transcript_path")
-        try:
-            data = read_regular(path, limit=TAIL, tail=True) if isinstance(path, str) else None
-        except ValueError:  # a NUL or a lone surrogate in the path
-            data = None
-        return _last_text(data or b"")
+        text = payload.get("last_assistant_message")
+        if not isinstance(text, str):
+            path = payload.get("transcript_path")
+            try:
+                data = read_regular(path, limit=TAIL, tail=True) if isinstance(path, str) else None
+            except ValueError:  # a NUL or a lone surrogate in the path
+                data = None
+            text = _last_text(data or b"")
+        self.unseen = text if text.strip() and text != self.last else ""
+        self.last = ""
+        return text
 
     def pending(self, payload):
         tasks = payload.get("background_tasks")
@@ -123,6 +175,25 @@ def _first(payload: dict, *keys: str) -> str:
     return next((value for value in values if isinstance(value, str) and value), "")
 
 
+def _size(path: str) -> int:
+    """A regular file's size; 0 for anything else."""
+    try:
+        info = os.lstat(path)
+    except (OSError, ValueError):
+        return 0
+    return info.st_size if stat.S_ISREG(info.st_mode) else 0
+
+
+def _texts(content) -> list[str]:
+    if not isinstance(content, list):
+        return []
+    return [
+        b["text"]
+        for b in content
+        if isinstance(b, dict) and b.get("type") == "text" and isinstance(b.get("text"), str)
+    ]
+
+
 def _last_text(data: bytes) -> str:
     """The text blocks of the last assistant message with text, over its records sharing one
     message.id.
@@ -141,11 +212,7 @@ def _last_text(data: bytes) -> str:
         content = message.get("content") if isinstance(message, dict) else None
         if not isinstance(message, dict) or not isinstance(content, list):
             continue
-        blocks = [
-            b["text"]
-            for b in content
-            if isinstance(b, dict) and b.get("type") == "text" and isinstance(b.get("text"), str)
-        ]
+        blocks = _texts(content)
         mid = message.get("id")
         mid = mid if isinstance(mid, str) and mid else object()
         if last is None:

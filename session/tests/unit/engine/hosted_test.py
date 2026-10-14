@@ -47,6 +47,7 @@ from agent_pm.session.engine.types import (
     Spec,
     Stderr,
     TurnEnd,
+    TurnFailed,
     Usage,
     Window,
 )
@@ -892,6 +893,31 @@ class EventsOverAModeTest(Case):
                 IdleTimeout(1),
                 Exited(0),
             ],
+        )
+
+    def test_a_reply_keeps_a_session_blocked(self):
+        session = self.session(
+            (0, [Blocked("ask")], False),
+            (0.5, [Reply("r")], False),
+            (3, [Activity()], False),
+            (4.5, [], True),
+            idle_timeout=1,
+        )
+        self.assertEqual(
+            self.events(session),
+            [Blocked("ask"), Reply("r"), Activity(), IdleTimeout(1), Exited(0)],
+        )
+
+    def test_a_failed_turn_ends_a_block(self):
+        session = self.session(
+            (0, [Blocked("ask")], False),
+            (0.5, [TurnFailed("overloaded")], False),
+            (2, [], True),
+            idle_timeout=1,
+        )
+        self.assertEqual(
+            self.events(session),
+            [Blocked("ask"), TurnFailed("overloaded"), IdleTimeout(1), Exited(0)],
         )
 
     def test_an_exception_from_the_mode_stops_it_then_propagates(self):
