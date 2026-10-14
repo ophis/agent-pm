@@ -520,7 +520,7 @@ class HarnessDelegate(Delegate):
         return Record(
             1,
             state.outer.get("kind", "role"),
-            state.agent_name,
+            state.outer.get("name", state.agent_name),
             sessions,
             state.plan.sid,
             self.workdir,

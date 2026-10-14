@@ -39,6 +39,21 @@ class CloseTest(HarnessCase):
         self.assertEqual(str(caught.exception), f"close {name}: tmux: boom")
 
 
+class OuterTest(HarnessCase):
+    def test_the_hosts_record_is_the_one_detach_returns_named_by_the_outer_starter(self):
+        outer = {
+            "kind": "pipeline",
+            "name": "TASK-1",
+            "ctl": ("agent-pm-linear",),
+            "resume": ("agent-pm-linear", "resume", "TASK-1"),
+        }
+        spec = Spec("input", self.work, mode="tui", client="fake", sid=SID, cwd=self.work)
+        record = self.make(spec=spec).detach(outer=outer)
+        stored = RecordingHost.processes["agent", self.metadata()["harness_name"]].record()
+        self.assertEqual((record.name, stored), ("TASK-1", record))
+        self.assertEqual(HarnessDelegate.attach(record).resume(), record)
+
+
 class ForgetTest(HarnessCase):
     def setUp(self):
         super().setUp()

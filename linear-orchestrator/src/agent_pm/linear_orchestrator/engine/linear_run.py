@@ -112,6 +112,7 @@ class LinearRun:
             self.delegate.detach(
                 outer={
                     "kind": "pipeline",
+                    "name": self.issue,
                     "ctl": ("agent-pm-linear",),
                     "resume": ("agent-pm-linear", "resume", self.issue),
                 }

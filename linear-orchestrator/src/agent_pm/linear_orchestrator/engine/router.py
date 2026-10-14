@@ -19,11 +19,12 @@ agent-pm-linear router [--now] [--dry-run] [--issue ID] [--tui [--display D] [--
               FILE (no place to show the TUI, a D its Host cannot use, FILE not writable). A run it starts or
               resumes prints its Record line on stdout, its sessions and attach command on stderr. launchd
               never passes it: a tick resumes a run headless.
-
-$AGENT_PM_SID (agent-pm-crew run's), read once and removed, is a new run's session id; a resume of
-another session exits 2, starting nothing.--brake ROLE  Print ROLE's client usage; exit 0 if a deep-research round may start, 1 if not or unknown, 2 no such
+--brake ROLE  Print ROLE's client usage; exit 0 if a deep-research round may start, 1 if not or unknown, 2 no such
               role.
 --help        Print this; exit 0. Bad arguments exit 2.
+
+$AGENT_PM_SID (agent-pm-crew run's), read once and removed, is a new run's session id; a resume of
+another session exits 2, starting nothing.
 
 Events go to orchestrator.jsonl (event_log.log, src router); an idle tick writes none, a usage-blocked
 one only its usage-skip lines."""

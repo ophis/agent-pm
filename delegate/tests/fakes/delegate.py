@@ -123,17 +123,18 @@ class FakeDelegate(Delegate):
         _update(workdir, alive=False, outcome=asdict(cls.outcome_result))
 
     def _record(self, state: dict) -> Record:
+        name = state["name"]
         outer = {
             "kind": "role",
+            "name": name,
             "ctl": ["agent-pm-delegate"],
             "resume": ["agent-pm-delegate", "resume", self.workdir],
             **state["outer"],
         }
-        name = state["name"]
         return Record(
             1,
             outer["kind"],
-            name,
+            outer["name"],
             (name,),
             state["sid"],
             self.workdir,

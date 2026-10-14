@@ -15,6 +15,7 @@ from agent_pm.utils import Record, Status
 NO_ROLE = "no-such-role"
 OUTER = {
     "kind": "pipeline",
+    "name": "TASK-1",
     "ctl": ("agent-pm-linear",),
     "resume": ("agent-pm-linear", "resume", "TASK-1"),
 }
@@ -64,9 +65,11 @@ class DelegateContract:
             self.assertEqual(os.path.realpath(path), os.path.realpath(workdir))
         self.assertTrue(record.sessions)
 
-    def test_detach_takes_the_outer_starters_kind_ctl_and_resume(self):
+    def test_detach_takes_the_outer_starters_kind_name_ctl_and_resume(self):
         record, _ = self.detached(OUTER)
-        self.assertEqual((record.kind, record.ctl, record.resume), tuple(OUTER.values()))
+        self.assertEqual(
+            (record.kind, record.name, record.ctl, record.resume), tuple(OUTER.values())
+        )
 
     def test_attach_by_record_or_workdir_views_the_live_run(self):
         record, workdir = self.detached()
