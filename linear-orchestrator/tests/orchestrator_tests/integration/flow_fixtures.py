@@ -204,7 +204,7 @@ class Flow(Case):
         """Each sid's write-back steps."""
         try:
             with open(os.path.join(self.runs_dir, ident, "writeback.json")) as f:
-                return {sid: entry["steps"] for sid, entry in json.load(f).items()}
+                return {sid: entry.get("steps", []) for sid, entry in json.load(f).items()}
         except FileNotFoundError:
             return {}
 

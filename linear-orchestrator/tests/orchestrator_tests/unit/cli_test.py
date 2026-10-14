@@ -11,7 +11,7 @@ from agent_pm.linear_orchestrator import cli
 from agent_pm.linear_orchestrator.engine import runs
 from agent_pm.utils import Record, Status
 from orchestrator_tests.case import Case
-from orchestrator_tests.linear_run_case import ReadyDelegate, RunCase
+from orchestrator_tests.linear_run_case import SID, ReadyDelegate, RunCase
 from orchestrator_tests.unit.streams import Stderr
 
 from delegate.tests.fakes.delegate import FakeDelegate
@@ -24,7 +24,8 @@ class Commands(Case):
             cli.main(["--help"])
         self.assertEqual(raised.exception.code, 0)
         self.assertIn(
-            "{router,promote,run,status,show,close,attach-command,resume}", output.getvalue()
+            "{router,promote,run,status,show,close,attach-command,resume,writeback}",
+            output.getvalue(),
         )
         self.assertIn("legacy entry, replaced by TASK-374", output.getvalue())
 
@@ -159,3 +160,48 @@ class Queries(RunCase):
         self.assertEqual(result, 2)
         self.assertEqual(Status.parse(output).name, "TASK-1")
         self.assertEqual(errors, "agent-pm-linear: TASK-8: TASK-8: no recorded run\n")
+
+
+class WritebackUsage(RunCase):
+    def call(self, arguments, stdin):
+        stdout, stderr = io.StringIO(), Stderr(tty=False)
+        with (
+            redirect_stdout(stdout),
+            redirect_stderr(stderr),
+            mock.patch("sys.stdin", io.StringIO(stdin)),
+        ):
+            result = cli.main(arguments)
+        return result, stdout.getvalue(), stderr.getvalue()
+
+    def test_missing_options_are_usage_errors(self):
+        for arguments in (["writeback"], ["writeback", "--issue", "TASK-1"]):
+            with self.subTest(arguments=arguments):
+                with redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as raised:
+                    cli.main(arguments)
+                self.assertEqual(raised.exception.code, 2)
+
+    def test_what_is_not_one_writable_event_exits_2_without_output(self):
+        begun = json.dumps({"v": 1, "kind": "begun", "sid": SID, "attempt": 1})
+        other = "9c1d2e3f-4a5b-4c6d-8e7f-a0b1c2d3e4f5"
+        workdir = self.cfg.run_dir("TASK-1")
+        for name, stdin, workdir_arg, error in (
+            ("no event", "", workdir, "want one DelegateEvent line"),
+            ("two events", begun + "\n" + begun + "\n", workdir, "want one DelegateEvent line"),
+            ("not JSON", "{\n", workdir, "not JSON"),
+            (
+                "another version",
+                begun.replace('"v":1', '"v":2').replace('"v": 1', '"v": 2'),
+                workdir,
+                "v: want 1",
+            ),
+            ("an unknown kind", begun.replace("begun", "ended"), workdir, "kind: want one of"),
+            ("no start row", begun.replace(SID, other) + "\n", workdir, "no start row"),
+            ("another workdir", begun + "\n", self.cfg.run_dir("TASK-2"), "--workdir"),
+        ):
+            with self.subTest(name):
+                result, output, errors = self.call(
+                    ["writeback", "--issue", "TASK-1", "--workdir", workdir_arg], stdin
+                )
+                self.assertEqual((result, output), (2, ""))
+                self.assertIn("agent-pm-linear writeback: ", errors)
+                self.assertIn(error, errors)

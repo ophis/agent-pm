@@ -10,17 +10,29 @@ from dataclasses import replace
 from datetime import UTC, datetime
 from unittest import mock
 
-from agent_pm.delegate import STATUSES, Begun, Finished, Outcome, Progress, Result
+from agent_pm.delegate import STATUSES, Begun, DelegateEvent, Finished, Outcome, Progress, Result
 from agent_pm.linear_orchestrator.engine import (
     config,
     issues,
     log,
     ops,
+    run_comments,
     runs,
     writeback,
 )
-from agent_pm.linear_orchestrator.engine.types import Invalid, Issue, LinearError, Stopped
+from agent_pm.linear_orchestrator.engine.linear_run import LinearRun
+from agent_pm.linear_orchestrator.engine.types import (
+    Claim,
+    ConfigError,
+    Invalid,
+    Issue,
+    LinearError,
+    Stopped,
+)
+from agent_pm.session import SessionStatus
 from orchestrator_tests.case import Case
+from orchestrator_tests.linear_run_case import SID as RUN_SID
+from orchestrator_tests.linear_run_case import ReadyDelegate, RunCase
 from orchestrator_tests.unit import board_ids, run_fixtures
 from orchestrator_tests.unit.clock import logs_at
 from orchestrator_tests.unit.run_fixtures import logged, show
@@ -581,6 +593,7 @@ class WritebackContext(run_fixtures.Base):
                     cfg,
                     "engineer",
                     gql,
+                    key=cfg.roles["engineer"].key,
                     ident=ID,
                     issue_id=UUID,
                     sid=SID,
@@ -1537,3 +1550,317 @@ class ResumedComments(Base):
                 self.assertEqual(gql.calls, [READ, sub(HUMANS[0]), sub(HUMANS[1]), find("comment")])
                 self.assertEqual(self.lines()[-1], f"step-error {ID} step=comment error={error}")
                 self.no_ledger(ctx)
+
+
+RUN_ISSUE = "TASK-1"
+
+CLAIM_KEY = "agent-pm-engineer-at-claim"
+
+STARTED, RESTARTED = "2026-10-14T09:00:00+08:00", "2026-10-14T10:00:00+08:00"
+
+RESUME_COMMAND = f"cd /run && fake --resume {RUN_SID}"
+
+RUN_SESSION = ops.client_id(RUN_SID, "session")
+
+CLAIM = Claim(
+    issue=RUN_ISSUE,
+    sid=RUN_SID,
+    role="engineer",
+    uuid=UUID,
+    project="p1",
+    target=("ophis", "agent-pm"),
+    key=CLAIM_KEY,
+    client="fake",
+    delegate_kind="fake",
+)
+
+EVENT_OPS = {
+    run_comments.M_UPDATE: "update",
+    ops.M_COMMENT_ID: "comment",
+    ops.Q_COMMENT: "find",
+    ops.Q_ISSUE_STATE: "reread",
+    ops.M_STATE: "state",
+    ops.M_SUBSCRIBE: "subscribe",
+    writeback.Q_ATTACHED: "read",
+    writeback.M_TITLE: "title",
+    writeback.M_ATTACH: "attach",
+}
+
+EVENT_FIELDS = {
+    "comment": "commentCreate",
+    "update": "commentUpdate",
+    "state": "issueUpdate",
+    "subscribe": "issueSubscribe",
+    "title": "issueUpdate",
+    "attach": "attachmentLinkURL",
+}
+
+
+class Linear:
+    """Linear for one issue: its comments by client id, its state; each call as (service, op,
+    variables).
+    """
+
+    def __init__(self, state, fail=lambda _op, _v: None):
+        self.calls, self.comments, self.state, self.fail = [], {}, state, fail
+
+    def __call__(self, query, *, service, timeout=None, **v):
+        op = EVENT_OPS[query]
+        self.calls.append((service, op, v))
+        if (error := self.fail(op, v)) is not None:
+            raise error
+        found = self.comments.get(v.get("c"))
+        if op == "update":
+            if found is None:
+                raise NOT_FOUND
+            found["body"] = v["b"]
+        elif op == "comment":
+            self.comments[v["c"]] = {"body": v["b"], "service": service}
+        elif op == "find":
+            if found is None:
+                raise NOT_FOUND
+            mine = {"isMe": found["service"] == service}
+            return {"comment": {"body": found["body"], "issue": {"id": UUID}, "user": mine}}
+        elif op == "reread":
+            return {"issue": {"state": {"id": self.state}}}
+        elif op == "state":
+            self.state = v["s"]
+        elif op == "read":
+            return {"issue": {"attachments": {"nodes": []}}}
+        return {EVENT_FIELDS[op]: {"success": True}}
+
+    def writes(self, op):
+        return [(service, v) for service, o, v in self.calls if o == op]
+
+
+def delegate_event(kind, attempt=1, sid=RUN_SID, **fields):
+    return DelegateEvent(kind, sid=sid, attempt=attempt, **fields)
+
+
+class Events(RunCase):
+    def setUp(self):
+        super().setUp()
+        log.use_logs(self.cfg.logs_dir)
+        self.workdir = self.cfg.run_dir(RUN_ISSUE)
+        LinearRun(
+            RUN_ISSUE,
+            "Echo input.",
+            self.workdir,
+            cfg=self.cfg,
+            role="engineer",
+            sid=RUN_SID,
+            client="fake",
+            delegate_kind="fake",
+        ).detach()
+        self.claim()
+        self.linear = Linear(self.cfg.states["in_progress"])
+        info = mock.patch.object(
+            ReadyDelegate, "session_info", return_value=SessionStatus("yes", None, RESUME_COMMAND)
+        )
+        info.start()
+        self.addCleanup(info.stop)
+        self.now = iter((STARTED, RESTARTED))
+
+    def claim(self, sid=RUN_SID, **fields):
+        runs.note(
+            self.cfg.runs_log,
+            "start",
+            issue=RUN_ISSUE,
+            sid=sid,
+            role="engineer",
+            client="fake",
+            delegate_kind="fake",
+            uuid=UUID,
+            project="p1",
+            target="ophis/agent-pm",
+            key=CLAIM_KEY,
+            **fields,
+        )
+
+    def deliver(self, e, *, workdir=None, issue=RUN_ISSUE):
+        return writeback.deliver(
+            self.cfg,
+            issue,
+            workdir or self.workdir,
+            e,
+            gql=self.linear,
+            now=lambda: next(self.now),
+        )
+
+    def ledger(self):
+        with open(os.path.join(self.workdir, writeback.LEDGER)) as f:
+            return json.load(f)
+
+    def said(self):
+        return [f"{e['src']} {show(e)}" for e in logged()]
+
+
+class ForClaim(RunCase):
+    def test_writes_as_the_claims_key_not_the_configured_one(self):
+        calls = []
+
+        def services(query, *, service, **variables):
+            calls.append((service, query, variables))
+            return {}
+
+        self.assertNotEqual(self.cfg.roles["engineer"].key, CLAIM_KEY)
+        ctx = writeback.for_claim(self.cfg, CLAIM, services, attempt=1)
+        ctx.gql("query", i=UUID)
+        self.assertEqual(calls, [(CLAIM_KEY, "query", {"i": UUID})])
+        self.assertEqual(
+            (ctx.ident, ctx.issue_id, ctx.sid, ctx.role, ctx.project, ctx.target, ctx.workdir),
+            (
+                RUN_ISSUE,
+                UUID,
+                RUN_SID,
+                "engineer",
+                "p1",
+                ("ophis", "agent-pm"),
+                self.cfg.run_dir(RUN_ISSUE),
+            ),
+        )
+
+    def test_a_later_attempt_is_a_resume(self):
+        for attempt, resume in ((1, False), (2, True), (3, True)):
+            with self.subTest(attempt=attempt):
+                ctx = writeback.for_claim(self.cfg, CLAIM, Linear(""), attempt=attempt)
+                self.assertIs(ctx.resume, resume)
+
+
+class BegunEvents(Events):
+    def test_posts_the_running_session_comment_as_the_harness_and_records_its_start(self):
+        self.assertTrue(self.deliver(delegate_event("begun")))
+        body = f"Run {RUN_SID} · running · #1 · {STARTED}\n\n```\n{RESUME_COMMAND}\n```"
+        harness = self.cfg.harness_key
+        self.assertEqual(
+            self.linear.calls,
+            [
+                (harness, "update", {"c": RUN_SESSION, "b": body}),
+                (harness, "comment", {"c": RUN_SESSION, "i": RUN_ISSUE, "b": body}),
+            ],
+        )
+        self.assertEqual(
+            self.ledger(), {RUN_SID: {"attempts": {"1": {"started_at": STARTED, "seq": 1}}}}
+        )
+
+    def test_the_same_begun_twice_writes_once(self):
+        self.assertTrue(self.deliver(delegate_event("begun")))
+        n = len(self.linear.calls)
+        self.assertTrue(self.deliver(delegate_event("begun")))
+        self.assertEqual(self.linear.calls[n:], [])
+        self.assertEqual(
+            self.ledger()[RUN_SID]["attempts"], {"1": {"started_at": STARTED, "seq": 1}}
+        )
+
+    def test_a_later_attempt_has_its_own_start(self):
+        self.assertTrue(self.deliver(delegate_event("begun")))
+        self.assertTrue(self.deliver(delegate_event("begun", attempt=2)))
+        body = f"Run {RUN_SID} · running · #1 · {RESTARTED}\n\n```\n{RESUME_COMMAND}\n```"
+        self.assertEqual(
+            self.linear.writes("update")[-1], (self.cfg.harness_key, {"c": RUN_SESSION, "b": body})
+        )
+        self.assertEqual(
+            self.ledger()[RUN_SID]["attempts"],
+            {"1": {"started_at": STARTED, "seq": 1}, "2": {"started_at": RESTARTED, "seq": 1}},
+        )
+
+    def test_a_failed_write_keeps_the_start_and_a_retry_posts(self):
+        self.linear.fail = lambda _op, _v: LinearError("linear api error: down")
+        self.assertFalse(self.deliver(delegate_event("begun")))
+        self.assertEqual(
+            self.ledger()[RUN_SID]["attempts"], {"1": {"started_at": STARTED, "seq": 0}}
+        )
+        self.assertIn(
+            f"writeback registry-error {RUN_ISSUE} sid={RUN_SID} error=LinearError: linear api error: down",
+            self.said(),
+        )
+        self.linear.fail = lambda _op, _v: None
+        self.assertTrue(self.deliver(delegate_event("begun")))
+        self.assertEqual(
+            self.linear.comments[RUN_SESSION]["body"],
+            f"Run {RUN_SID} · running · #1 · {STARTED}\n\n```\n{RESUME_COMMAND}\n```",
+        )
+        self.assertEqual(
+            self.ledger()[RUN_SID]["attempts"], {"1": {"started_at": STARTED, "seq": 1}}
+        )
+
+
+class ProgressEvents(Events):
+    def test_start_and_marks_post_once_as_the_claims_account(self):
+        self.assertTrue(
+            self.deliver(delegate_event("progress", name="start", text="light-build: a tweak"))
+        )
+        self.assertTrue(
+            self.deliver(delegate_event("progress", name="start", text="light-build: a tweak"))
+        )
+        self.assertTrue(self.deliver(delegate_event("progress", name="tests", text="12 passing")))
+        self.assertTrue(self.deliver(delegate_event("progress", name="tests", text="12 passing")))
+        digest = "progress:tests:" + hashlib.sha256(b"12 passing").hexdigest()[:12]
+        self.assertEqual(
+            self.linear.calls,
+            [
+                (
+                    CLAIM_KEY,
+                    "comment",
+                    {
+                        "c": ops.client_id(RUN_SID, "start"),
+                        "i": UUID,
+                        "b": "Build started: light-build: a tweak",
+                    },
+                ),
+                (
+                    CLAIM_KEY,
+                    "comment",
+                    {
+                        "c": ops.client_id(RUN_SID, digest),
+                        "i": UUID,
+                        "b": "Progress (tests): 12 passing",
+                    },
+                ),
+            ],
+        )
+        self.assertEqual(self.ledger(), {RUN_SID: {"steps": ["start", digest]}})
+
+    def test_a_resumed_attempt_finds_a_start_whose_ledger_write_was_lost(self):
+        self.linear.comments[ops.client_id(RUN_SID, "start")] = {"body": "x", "service": CLAIM_KEY}
+        self.assertTrue(self.deliver(delegate_event("progress", attempt=2, name="start", text="x")))
+        self.assertEqual(
+            self.linear.calls, [(CLAIM_KEY, "find", {"c": ops.client_id(RUN_SID, "start")})]
+        )
+
+    def test_a_failed_post_is_false(self):
+        self.linear.fail = lambda op, _v: (
+            LinearError("linear api error: down") if op == "comment" else None
+        )
+        self.assertFalse(self.deliver(delegate_event("progress", name="start", text="x")))
+        self.assertFalse(os.path.exists(os.path.join(self.workdir, writeback.LEDGER)))
+
+
+class RefusedEvents(Events):
+    def test_what_cannot_be_written_raises_before_any_write(self):
+        other = "9c1d2e3f-4a5b-4c6d-8e7f-a0b1c2d3e4f5"
+        for name, kwargs, e, error in (
+            (
+                "another workdir",
+                {"workdir": self.cfg.run_dir("TASK-2")},
+                delegate_event("begun"),
+                ConfigError,
+            ),
+            ("a bad issue id", {"issue": "../x"}, delegate_event("begun"), ConfigError),
+            ("no start row", {}, delegate_event("begun", sid=other), ValueError),
+        ):
+            with self.subTest(name), self.assertRaises(error):
+                self.deliver(e, **kwargs)
+        self.assertEqual(self.linear.calls, [])
+        self.assertFalse(os.path.exists(os.path.join(self.workdir, writeback.LEDGER)))
+
+    def test_a_claimed_role_without_write_back_raises(self):
+        other = "9c1d2e3f-4a5b-4c6d-8e7f-a0b1c2d3e4f5"
+        runs.note(
+            self.cfg.runs_log,
+            "start",
+            **{**vars(replace(CLAIM, sid=other, role="dummy")), "target": None, "uuid": UUID},
+        )
+        with self.assertRaisesRegex(ConfigError, "dummy"):
+            self.deliver(delegate_event("begun", sid=other))
+        self.assertEqual(self.linear.calls, [])
