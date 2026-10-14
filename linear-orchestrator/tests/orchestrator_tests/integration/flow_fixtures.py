@@ -3,7 +3,8 @@ included), FakeLinear over HTTP through test-only transport with the harness, ro
 accounts and the task label group, fake_claude as `claude`, a launch (router.outer), promote and
 router as `python3 -P` subprocesses, and readers of Linear, the logs and a run's files. TmuxFlow adds a private tmux
 server for the runs' harness and agent sessions, fake_gh as `gh` with REPO a bare repo, and
-`agent-pm-linear` as entry.py under the fake transport, the harness's write-back callback.
+`agent-pm-linear` as entry.py under the fake transport, the harness's write-back callback. BinFlow
+runs router and promote as bin/agent-pm-linear by absolute path, as launchd does (FR-25, FR-29).
 """
 
 import copy
@@ -28,6 +29,12 @@ from session.tests.integration.adapters.claude import fake_claude
 from utils.tests.case import local_section
 
 ENTRY = os.path.join(os.path.dirname(__file__), "entry.py")
+
+BIN = os.path.join(WORKTREE, "bin", "agent-pm-linear")
+
+TESTS = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+FAKE_PYTHON = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fake_python.py")
 
 LAUNCH, PROMOTE, ROUTER = ((ENTRY, n) for n in ("launch", "promote", "router"))
 
@@ -75,6 +82,11 @@ GUARD = (
     "from agent_pm.linear_orchestrator.engine import config\n"
     "print(json.dumps({n: shutil.which(n, path=config.path()) for n in sys.argv[1:]}))"
 )
+
+
+def usage(five_hour):
+    """fake_claude's rate_limit_info at five_hour utilization."""
+    return {"status": "allowed", "unifiedWindows": {"five_hour": {"utilization": five_hour}}}
 
 
 def steps(*names, end=0, found=(), more=()):
@@ -335,3 +347,65 @@ class TmuxFlow(Flow):
                 ]
             )
         )
+
+
+class BinFlow(TmuxFlow):
+    """bin/agent-pm-linear by absolute path with a launchd-like PATH and no PYTHONPATH; its python3
+    is fake_python.py: this interpreter under the fake Linear transport with the test roots its
+    fakes import, the only command added to PATH. The harness calls this installation's
+    `agent-pm-linear` back.
+    """
+
+    def setUp(self):
+        super().setUp()
+        os.unlink(os.path.join(self.bin, "agent-pm-linear"))
+        self.python = os.path.join(self.root, "python")
+        os.mkdir(self.python)
+        with open(shim := os.path.join(self.python, "python3"), "w") as f:
+            f.write(
+                f'#!/bin/sh\nPYTHONPATH="$PYTHONPATH:{TESTS}:{WORKTREE}" '
+                f'exec {shlex.quote(sys.executable)} -P -s {shlex.quote(FAKE_PYTHON)} "$@"\n'
+            )
+        os.chmod(shim, 0o755)
+
+    def bin_env(self):
+        env = {k: v for k, v in self.env().items() if k != "PYTHONPATH"}
+        env.update(PATH=f"{self.python}:/usr/bin:/bin", AGENT_PM_PATH=f"{self.bin}:{self.python}")
+        return env
+
+    def start(self, *argv):
+        """bin/agent-pm-linear argv, running: the test reads its output with communicate()."""
+        proc = subprocess.Popen(
+            [BIN, *argv],
+            cwd=self.root,
+            env=self.bin_env(),
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+
+        def stop():
+            if proc.poll() is None:
+                proc.kill()
+                proc.communicate()
+
+        self.addCleanup(stop)
+        return proc
+
+    def linear(self, *argv):
+        return subprocess.run(
+            [BIN, *argv],
+            cwd=self.root,
+            env=self.bin_env(),
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            timeout=TIMEOUT,
+        )
+
+    def router(self, *argv):
+        return self.linear("router", *argv)
+
+    def promote(self, *argv):
+        return self.linear("promote", *argv)
