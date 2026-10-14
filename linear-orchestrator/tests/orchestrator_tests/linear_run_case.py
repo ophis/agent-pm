@@ -1,9 +1,13 @@
 """Configured fake run fixtures, shared by LinearRun and CLI tests."""
 
+import json
+from dataclasses import replace
+
 from agent_pm.linear_orchestrator.engine import config, runs
 from agent_pm.linear_orchestrator.engine.linear_run import LinearRun
 from agent_pm.session import Usage
 from orchestrator_tests.case import Case
+from orchestrator_tests.config_fixtures import PIPELINE, ConfigFile
 
 from delegate.tests.fakes.delegate import FakeDelegate
 
@@ -11,6 +15,12 @@ SID = "1234abcd-0000-4000-8000-000000000000"
 
 
 class ReadyDelegate(FakeDelegate):
+    ROLES = {
+        **FakeDelegate.ROLES,
+        "researcher": {"deep-research": "research", "light-research": "research"},
+        "pm": {"product-design": "design"},
+        "engineer": {"build": "build", "light-build": "build"},
+    }
     usage_result = Usage(None, None)
     usage_calls = []
 
@@ -19,27 +29,43 @@ class ReadyDelegate(FakeDelegate):
         cls.usage_calls.append(role)
         return super().usage(role)
 
-
-class RunCase(Case):
-    def setUp(self):
-        ReadyDelegate.usage_calls = []
-        self.cfg = config.Config(
-            team="team",
-            states={},
-            human_members=(),
-            harness_key="fake",
-            task_label_group="labels",
-            task_labels={},
-            roles={},
-            project_repos={},
-            local_clones={},
-            work_dir=self.home,
-            protect=("/protected/package", "/protected/checkout"),
-            docs=config.Docs("", "", {}),
-            stages={},
-            delegate_kind="fake",
-            delegates={"fake": ReadyDelegate, "harness": ReadyDelegate},
+    @classmethod
+    def resolve(cls, role, task=None, *, overlays=()):
+        resolved = super().resolve(role, task, overlays=overlays)
+        return (
+            resolved
+            if role == "dummy"
+            else replace(
+                resolved,
+                output={
+                    "type": "github",
+                    "repo": "acme/notes",
+                    "branch": "main",
+                    "dir": role + "/",
+                },
+            )
         )
+
+
+class RunCase(ConfigFile, Case):
+    def setUp(self):
+        super().setUp()
+        ReadyDelegate.usage_calls = []
+        self.configure()
+
+    def configure(self, default="fake"):
+        pipeline = "\n".join(
+            line for line in PIPELINE.splitlines() if not line.startswith("delegates = ")
+        )
+        self.local(
+            f"work_dir = {json.dumps(self.dir + '/state')}\n"
+            + pipeline
+            + f'\n[delegates]\ndefault = "{default}"\n'
+            + '[delegates.fake]\nimplementation = "orchestrator_tests.linear_run_case:ReadyDelegate"\n'
+            + '[delegates.harness]\nimplementation = "orchestrator_tests.linear_run_case:ReadyDelegate"\n'
+            + '[delegates.other]\nimplementation = "orchestrator_tests.linear_run_case:ReadyDelegate"\n'
+        )
+        self.cfg = config.load()
 
     def start(self, issue="TASK-1", *, sid=SID, delegate_cls=None, display=None):
         owner = LinearRun(

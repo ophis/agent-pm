@@ -297,7 +297,6 @@ class Promoter:
 
 
 def run_prune(gql, now, promoter, pruner=None):
-    # a failure, even an ImportError, is logged
     try:
         if pruner is None:
             pruner = Pruner

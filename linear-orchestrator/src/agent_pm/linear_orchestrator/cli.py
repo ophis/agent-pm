@@ -16,7 +16,7 @@ from agent_pm.linear_orchestrator.engine.types import ConfigError
 from agent_pm.utils import Record, query_batch, query_inputs
 
 
-def main(argv=None, *, cfg=None):
+def main(argv=None):
     arguments = sys.argv[1:] if argv is None else argv
     legacy = {"router": router.main, "promote": promote.main, "run": run.main}
     if arguments and arguments[0] in legacy:
@@ -31,7 +31,7 @@ def main(argv=None, *, cfg=None):
     args = parser.parse_args(arguments)
     try:
         inputs = query_inputs(args.keys, sys.stdin)
-        cfg = load() if cfg is None else cfg
+        cfg = load()
     except (ConfigError, DelegateConfigError, ValueError, OSError) as error:
         print(f"agent-pm-linear: {error}", file=sys.stderr)
         return 2

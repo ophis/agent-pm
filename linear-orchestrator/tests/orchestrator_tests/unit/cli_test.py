@@ -3,7 +3,6 @@
 import io
 import json
 from contextlib import redirect_stderr, redirect_stdout
-from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest import mock
@@ -47,7 +46,7 @@ class Queries(RunCase):
             redirect_stderr(stderr),
             mock.patch("sys.stdin", io.StringIO(stdin)),
         ):
-            result = cli.main(arguments, cfg=self.cfg)
+            result = cli.main(arguments)
         return result, stdout.getvalue(), stderr.getvalue()
 
     def test_status_for_two_issue_keys_or_stdin_records_has_two_ordered_lines(self):
@@ -96,11 +95,7 @@ class Queries(RunCase):
     def test_config_drift_never_probes_and_recorded_limits_still_block(self):
         self.start()
         FakeDelegate.end(self.cfg.run_dir("TASK-1"))
-        self.cfg = replace(
-            self.cfg,
-            delegate_kind="other",
-            delegates={**self.cfg.delegates, "other": ReadyDelegate},
-        )
+        self.configure(default="other")
         runs.note_limit(
             self.cfg.runs_log,
             issue="TASK-1",
@@ -119,11 +114,7 @@ class Queries(RunCase):
     def test_config_drift_without_a_limit_resumes_and_logs_without_probe(self):
         self.start()
         FakeDelegate.end(self.cfg.run_dir("TASK-1"))
-        self.cfg = replace(
-            self.cfg,
-            delegate_kind="other",
-            delegates={**self.cfg.delegates, "other": ReadyDelegate},
-        )
+        self.configure(default="other")
         result, output, errors = self.call(["resume", "TASK-1"])
         self.assertEqual((result, errors), (0, ""))
         self.assertEqual(Record.parse(output).name, "TASK-1")
