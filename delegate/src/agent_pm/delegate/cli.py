@@ -116,20 +116,24 @@ def _run(
             print(json.dumps(shown, ensure_ascii=False, indent=1))
             return 0
         if a.detach:
-            record = delegate_cls(a.role, spec).detach()
-        else:
-            result = delegate_cls(a.role, spec).run(_begun)
+            return _detach(delegate_cls, a.role, spec)
+        result = delegate_cls(a.role, spec).run(_begun)
     except ConfigError as e:
         say(f"delegate: {e}")
         return 2
-    except DriverError as e:
+    return report(result, a.out)[0]
+
+
+def _detach(delegate_cls: type[HarnessDelegate], role: str, spec: Spec) -> int:
+    """Prints the run's Record line once its listed sessions are live."""
+    try:
+        record = delegate_cls(role, spec).detach()
+    except (DriverError, OSError) as e:
         say(f"delegate: {e}")
         return 1
-    if a.detach:
-        say(f"delegate: session {record.sid}")
-        print(record.to_line(), flush=True)
-        return 0
-    return report(result, a.out)[0]
+    say(f"delegate: session {record.sid}")
+    print(record.to_line(), flush=True)
+    return 0
 
 
 def spec_of(a, text: str) -> Spec:

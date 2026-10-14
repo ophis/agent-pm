@@ -33,11 +33,13 @@ from agent_pm.session import (
     Launch,
     LimitHit,
     Liveness,
+    Mode,
     Reply,
     Usage,
     Window,
 )
 from agent_pm.session import ConfigError as SessionConfigError
+from agent_pm.session import Spec as SessionSpec
 from agent_pm.utils import Record
 
 from delegate.tests.case import REPO, SRC, child_env
@@ -747,6 +749,27 @@ class TuiStart(HarnessCase):
         harness = RecordingHost.processes["harness", f"dummy-tester-{SID[:8]}-drive"]
         self.assertFalse(harness.alive())
 
+    def test_an_unrelated_live_tui_of_the_same_name_does_not_stand_for_this_run(self):
+        spec = Spec("input", self.work, mode="tui", runtime="fake", sid=SID, name="X")
+        delegate = self.make(spec=spec, host="agent", harness_host="harness")
+        other = "22222222-0000-4000-8000-000000000000"
+        HarnessSession.start(
+            SessionSpec(workdir=self.home, runtime="fake", mode=Mode.TUI, sid=other, name="X"),
+            host="agent",
+        )
+        RecordingHost.harness_starts_agent = False
+        clock = iter((0.0, 1.0, 31.0))
+        with (
+            mock.patch("time.monotonic", side_effect=lambda: next(clock)),
+            mock.patch("time.sleep"),
+            self.assertRaises(DriverError) as caught,
+        ):
+            delegate.detach()
+        self.assertEqual(str(caught.exception), "tui session X did not start")
+        self.assertEqual([launch["name"] for launch in harness_launches()], ["X-drive"])
+        self.assertEqual(HarnessSession.live["X"].sid, other)
+        self.assertEqual(HarnessSession.live["X"].state(), Liveness.LIVE)
+
     def test_a_headless_detach_waits_for_nothing(self):
         RecordingHost.harness_starts_agent = False
         with mock.patch("time.sleep", side_effect=AssertionError("waited")):
@@ -1039,6 +1062,8 @@ class Corrupt(HarnessCase):
             ('{"version": 1, "attempt": 6}', 7),
             ('{"attempt": true}', 1),
             ('{"attempt": 0}', 1),
+            ('{"version": 1, "attempt": 2, "spec": null}', 3),
+            ('{"version": 1, "attempt": 3, "spec": "x"}', 4),
         ):
             with self.subTest(text=text):
                 self.work = os.path.join(self.home, f"corrupt-{attempt}-{len(text)}")

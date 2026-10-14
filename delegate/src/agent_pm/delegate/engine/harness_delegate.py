@@ -352,7 +352,7 @@ class HarnessDelegate(Delegate):
             )
             if type(state.attempt) is not int or state.attempt < 1:
                 raise ValueError("invalid attempt")
-        except (KeyError, TypeError, ValueError, SessionConfigError) as error:
+        except (AttributeError, KeyError, TypeError, ValueError, SessionConfigError) as error:
             raise ConfigError(f"{self.workdir}: invalid delegate.json: {error}") from None
         else:
             return state
@@ -678,30 +678,40 @@ class HarnessDelegate(Delegate):
             raise ConfigError(f"outer: {error}") from None
         with self.store.mutex():
             previous = self._current()
-            if self._alive(previous):
+            if previous.detached and self._alive(previous):
                 return self._record(previous)
             if previous.completed:
                 raise ConfigError(f"{self.workdir}: delegate run already completed")
+            if self.store.running():
+                raise ConfigError(f"{self.workdir}: delegate is still alive")
             record = self._launch(previous, replace(previous, outer=given))
         self._started(self._state)
         return record
 
     def _started(self, state: _State) -> None:
-        """Tui: waits, outside the mutex, until the harness has the agent session live; DriverError,
-        both closed, when the harness ends first or TUI_START_TIMEOUT passes.
+        """Tui: waits, outside the mutex, until the harness has this run's agent session live;
+        DriverError, its harness and agent session closed, when the harness ends first, a Host
+        fails or TUI_START_TIMEOUT passes. A same-named session of another sid is not this run's.
         """
         if state.plan.spec.mode != Mode.TUI:
             return
         deadline = time.monotonic() + TUI_START_TIMEOUT
-        while (agent := self._agent(state)) is None or agent.state() != Liveness.LIVE:
-            harness = self._harness(state)
-            if harness is None or not harness.alive() or time.monotonic() >= deadline:
-                for session in (harness, agent):
-                    if session is not None:
-                        with contextlib.suppress(DriverError):
-                            session.close()
-                raise DriverError(f"tui session {state.agent_name} did not start")
-            time.sleep(TUI_POLL)
+        harness = agent = None
+        with contextlib.suppress(DriverError):
+            while True:
+                agent = self._agent(state)
+                agent = agent if agent is not None and agent.sid == state.plan.sid else None
+                if agent is not None and agent.state() == Liveness.LIVE:
+                    return
+                harness = self._harness(state)
+                if harness is None or not harness.alive() or time.monotonic() >= deadline:
+                    break
+                time.sleep(TUI_POLL)
+        for session in (harness, agent):
+            if session is not None:
+                with contextlib.suppress(DriverError):
+                    session.close()
+        raise DriverError(f"tui session {state.agent_name} did not start")
 
     def resume(self) -> Record:
         with self.store.mutex():

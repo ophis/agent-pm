@@ -131,6 +131,7 @@ class Detach(Base):
             (ConfigError(f"{self.work}: delegate is still alive"), 2),
             (DriverError(f"detach {HARNESS}: duplicate session"), 1),
             (DriverError(f"tui session {TUI} did not start"), 1),
+            (OSError("No space left on device"), 1),
         ):
             with self.subTest(failure=failure):
                 Detaching.failure = failure
