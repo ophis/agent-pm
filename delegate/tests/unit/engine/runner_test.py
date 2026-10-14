@@ -21,7 +21,17 @@ from agent_pm.delegate import (
 )
 from agent_pm.delegate.engine.runner import FIX, NUDGE, POLICIES, STOP_LIMIT, execute
 from agent_pm.delegate.event.reply import marks
-from agent_pm.session import Activity, Blocked, DriverError, Exited, IdleTimeout, LimitHit, Mode
+from agent_pm.session import (
+    Activity,
+    Blocked,
+    DriverError,
+    Exited,
+    IdleTimeout,
+    LimitHit,
+    Mode,
+    Reply,
+    TurnFailed,
+)
 
 from delegate.tests.replies import bare, block
 from delegate.tests.runner import INVALID, INVALID_ERROR, LEFT_OPEN, PENDING, SID, Base
@@ -322,6 +332,28 @@ class TuiPolicy(Base):
         self.assertEqual(
             (self.handle.calls, self.kinds()), ([("stop",)], ["input", "limit", "result", "end"])
         )
+
+    def test_a_failed_turn_ends_the_run_without_a_nudge_and_leaves_the_session(self):
+        for failed, error in (
+            (TurnFailed("overloaded", "529"), "the client's turn failed: overloaded (529)"),
+            (
+                TurnFailed("authentication_failed"),
+                "the client's turn failed: authentication_failed",
+            ),
+            (TurnFailed("billing_error", "low"), "the client's turn failed: billing_error (low)"),
+        ):
+            with self.subTest(failed=failed):
+                self.fresh()
+                r = self.faked(Reply(START), failed, STOP)
+                self.assertEqual((r, self.handle.calls), (Result(0, None, error), []))
+                self.assertEqual(
+                    self.kinds(), ["input", "progress", "turn_failed", "result", "end"]
+                )
+                self.assertEqual(
+                    bare(self.last("turn_failed")),
+                    {"kind": "turn_failed", "error": failed.error, "detail": failed.detail},
+                )
+                self.assertEqual([type(e) for e in self.events], [Begun, Progress, Finished])
 
     def test_a_session_exiting_without_an_outcome_is_the_error(self):
         for events, result in (

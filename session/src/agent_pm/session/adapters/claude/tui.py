@@ -10,7 +10,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from agent_pm.session.adapters.base import Tui
 from agent_pm.session.adapters.claude.common import ClaudeCommon
-from agent_pm.session.engine.types import HookKind, LimitHit, Spec
+from agent_pm.session.engine.types import HookKind, LimitHit, Spec, TurnFailed
 from agent_pm.utils import read_regular
 
 TAIL = 4 << 20
@@ -43,6 +43,7 @@ class ClaudeTui(Tui):
     hooks = MappingProxyType(
         {
             "Stop": HookKind.TURN_END,
+            "StopFailure": HookKind.TURN_FAILED,
             "PermissionRequest": HookKind.BLOCKED,
             "Notification": HookKind.BLOCKED,
             "PostToolUse": HookKind.ACTIVITY,
@@ -103,14 +104,18 @@ class ClaudeTui(Tui):
     def blocked_reason(self, payload):
         return _first(payload, "tool_name", "message")
 
+    def failure(self, payload):
+        """StopFailure's typed error: rate_limit is the usage limit, any other a failed turn."""
+        error = _first(payload, "error") or "unknown"
+        if error == "rate_limit":
+            return [LimitHit(_resets_in(_first(payload, "last_assistant_message")))]
+        return [TurnFailed(error, _first(payload, "error_details", "last_assistant_message"))]
+
     def limit(self, screen):
         screen = " ".join(screen.split())
-        found = [m for m in LIMIT.finditer(screen) if m[1] != "fast "]
-        if not found:
+        if not any(m[1] != "fast " for m in LIMIT.finditer(screen)):
             return None
-        at = screen.find("resets ", found[-1].end())
-        when = WHEN.match(screen, at + len("resets ")) if at >= 0 else None
-        return LimitHit(None if when is None else _resets(when))
+        return LimitHit(_resets_in(screen))
 
 
 def _first(payload: dict, *keys: str) -> str:
@@ -151,6 +156,15 @@ def _last_text(data: bytes) -> str:
         else:
             texts = blocks + texts
     return "\n".join(texts)
+
+
+def _resets_in(message: str) -> float | None:
+    """When the last usage-limit notice in `message` (no fast-mode one) says it resets."""
+    message = " ".join(message.split())
+    found = [m for m in LIMIT.finditer(message) if m[1] != "fast "]
+    at = message.find("resets ", found[-1].end()) if found else -1
+    when = WHEN.match(message, at + len("resets ")) if at >= 0 else None
+    return None if when is None else _resets(when)
 
 
 def _index(word: str, names: tuple[str, ...]) -> int | None:

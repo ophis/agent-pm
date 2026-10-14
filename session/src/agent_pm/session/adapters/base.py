@@ -32,6 +32,7 @@ from agent_pm.session.engine.types import (
     Spec,
     Stderr,
     TurnEnd,
+    TurnFailed,
     Usage,
 )
 from agent_pm.utils import json_records, thaw
@@ -142,6 +143,9 @@ class Tui(ABC):
         native = payload.get("session_id")
         return native if isinstance(native, str) else ""
 
+    def failure(self, payload: dict) -> list[TurnFailed | LimitHit]:
+        return [TurnFailed("unknown")]
+
     def limit(self, screen: str) -> LimitHit | None:
         """The runtime's usage-limit message on the visible terminal `screen`; None: none shown."""
         return None
@@ -158,6 +162,8 @@ class Tui(ABC):
         kind = self.hooks.get(label)
         if kind == HookKind.TURN_END:
             found.append(TurnEnd(self.reply(payload), self.pending(payload)))
+        elif kind == HookKind.TURN_FAILED:
+            found.extend(self.failure(payload))
         elif kind == HookKind.BLOCKED:
             found.append(Blocked(self.blocked_reason(payload)))
         elif kind == HookKind.ACTIVITY:

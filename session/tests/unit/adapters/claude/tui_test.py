@@ -4,6 +4,7 @@ import json
 import os
 import re
 import shlex
+from unittest import mock
 
 from agent_pm.session.adapters.claude import ClaudeAdapter
 from agent_pm.session.adapters.claude.tui import ClaudeTui
@@ -14,8 +15,10 @@ from agent_pm.session.engine.types import (
     ClientBound,
     HookKind,
     Launch,
+    LimitHit,
     Spec,
     TurnEnd,
+    TurnFailed,
 )
 
 from session.tests.source_roots import PACKAGE_ROOTS
@@ -27,6 +30,7 @@ from session.tests.unit.adapters.claude.support import (
     MATCHER,
     NAME,
     NOT_WAITING,
+    NOW,
     SID,
     TUI_HOOKS,
     TUI_SETTINGS,
@@ -35,6 +39,7 @@ from session.tests.unit.adapters.claude.support import (
     WANT_SETTINGS,
     Base,
     ClaudeCommon,
+    epoch,
     said,
     text,
     tool,
@@ -486,3 +491,55 @@ class TuiPayloadTest(Base):
 
     def test_the_trust_dialog(self):
         self.assertEqual(ClaudeTui.dialogs, ("Quick safety check",))
+
+
+class StopFailureTest(Base):
+    def launched(self):
+        run = ClaudeAdapter({}).tui()
+        run.launch(Spec(workdir=self.work, sid=SID), HOOK, source_roots=PACKAGE_ROOTS)
+        return run
+
+    def test_typed_errors(self):
+        limit = "You've hit your session limit · resets 3pm (America/Los_Angeles)"
+        rows = (
+            (
+                {"error": "overloaded", "error_details": "529", "last_assistant_message": "x"},
+                [TurnFailed("overloaded", "529")],
+            ),
+            (
+                {"error": "authentication_failed", "last_assistant_message": "Please run /login"},
+                [TurnFailed("authentication_failed", "Please run /login")],
+            ),
+            (
+                {"error": "billing_error", "error_details": "Credit balance is too low"},
+                [TurnFailed("billing_error", "Credit balance is too low")],
+            ),
+            ({"error": "server_error", "error_details": 5}, [TurnFailed("server_error")]),
+            (
+                {"error": "rate_limit", "last_assistant_message": limit},
+                [LimitHit(epoch("2026-10-11 15:00"))],
+            ),
+            (
+                {"error": "rate_limit", "last_assistant_message": "API Error: Rate limit reached"},
+                [LimitHit(None)],
+            ),
+            ({"error": "rate_limit"}, [LimitHit(None)]),
+            ({}, [TurnFailed("unknown")]),
+            ({"error": 3, "error_details": ""}, [TurnFailed("unknown")]),
+            (
+                {"error": "", "last_assistant_message": "API Error"},
+                [TurnFailed("unknown", "API Error")],
+            ),
+        )
+        for payload, events in rows:
+            with self.subTest(payload=payload), mock.patch("time.time", return_value=NOW):
+                self.assertEqual(self.launched().hook_events("StopFailure", payload), events)
+
+    def test_a_failure_is_not_sticky(self):
+        run = self.launched()
+        self.assertEqual(
+            run.hook_events("StopFailure", {"error": "overloaded"}), [TurnFailed("overloaded")]
+        )
+        self.assertEqual(
+            run.hook_events("Stop", {"last_assistant_message": "done"}), [TurnEnd("done", 0)]
+        )

@@ -48,6 +48,7 @@ from agent_pm.utils import STATE, Display, json_records, module_roots, read_regu
 TUI_DIR = f"{STATE}/tui"
 WORDS = {
     HookKind.TURN_END: Word.DONE,
+    HookKind.TURN_FAILED: Word.DONE,
     HookKind.BLOCKED: Word.BLOCKED,
     HookKind.ACTIVITY: Word.WORKING,
 }

@@ -1464,6 +1464,7 @@ class PrepareTest(Base):
             tui.WORDS,
             {
                 HookKind.TURN_END: Word.DONE,
+                HookKind.TURN_FAILED: Word.DONE,
                 HookKind.BLOCKED: Word.BLOCKED,
                 HookKind.ACTIVITY: Word.WORKING,
             },
@@ -1476,6 +1477,7 @@ class PrepareTest(Base):
         class Labels(ScanTui):
             hooks = {
                 "end": HookKind.TURN_END,
+                "fail": HookKind.TURN_FAILED,
                 "perm": HookKind.BLOCKED,
                 "note": HookKind.BLOCKED,
                 "use": HookKind.ACTIVITY,
@@ -1487,7 +1489,13 @@ class PrepareTest(Base):
             tui.TuiMode.snapshot(NAME),
             self.state(
                 events=None,
-                words={"end": "done", "perm": "blocked", "note": "blocked", "use": "working"},
+                words={
+                    "end": "done",
+                    "fail": "done",
+                    "perm": "blocked",
+                    "note": "blocked",
+                    "use": "working",
+                },
             ),
         )
 
