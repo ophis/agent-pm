@@ -487,6 +487,7 @@ print(json.dumps({"code": code, "state": state.read_text()}))
         env = clean_env(None, REPO, str(Path(REPO, ".github")))
         env["TMPDIR"] = os.environ["AGENT_PM_TEST_SANDBOX"]
         env.pop("RUN_TESTS_STATE", None)
+        env.pop("GITHUB_STEP_SUMMARY", None)
         proc = subprocess.run(
             [
                 sys.executable,
@@ -502,7 +503,10 @@ print(json.dumps({"code": code, "state": state.read_text()}))
             text=True,
             timeout=15,
         )
-        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(proc.returncode, 1, proc.stderr)
+        leaks = [line for line in proc.stdout.splitlines() if "leaked after the run: " in line]
+        self.assertEqual(len(leaks), 1, proc.stdout)
+        self.assertEqual(leaks[0].count("tmux server "), 4, leaks[0])
         pids = json.loads(marker.read_text())
         self.assertEqual(set(pids), {"default", "named", "other", "clean_env"})
         for pid in pids.values():

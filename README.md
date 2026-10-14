@@ -284,6 +284,7 @@ exercise real tools through `utils/tests/sandbox.py`: controlled Python import r
 environments and temporary repositories. Tmux uses the private servers in
 `session/tests/live_tmux.py`; its explicit socket or `TMUX_TMPDIR` must resolve inside the sandbox.
 `AGENT_PM_CONTROL_ROOT` puts ProcessControl directories in the sandbox; the gate fails one outside it.
+A supervised run fails when a process naming its sandbox, or a sandbox tmux server, outlives it.
 Fake and real implementations share contract assertions.
 
 `.github/run_tests.py` resets HOME, temporary roots and Git configuration before supervision.
