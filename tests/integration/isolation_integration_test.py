@@ -60,6 +60,9 @@ bad = [
     ("tmux", ["tmux", "ls"], {}),
     ("tmux", ["tmux", "-S", str(marker), "ls"], {}),
     ("tmux", ["tmux", "-S" + str(marker), "ls"], {"TMUX_TMPDIR": str(sandbox)}),
+    ("tmux", ["tmux", "-uS", str(marker), "ls"], {"TMUX_TMPDIR": str(sandbox)}),
+    ("tmux", ["tmux", "-uS" + str(marker), "ls"], {"TMUX_TMPDIR": str(sandbox)}),
+    ("tmux", ["tmux", "-uL../../outside", "ls"], {"TMUX_TMPDIR": str(sandbox)}),
     ("tmux", ["tmux", "ls"], {"TMUX_TMPDIR": str(sandbox), "TMUX": str(marker) + ",1,0"}),
     ("git", ["git", "status"], {"GIT_DIR": str(marker)}),
 ]
@@ -71,6 +74,9 @@ for exe, argv, env in bad:
     else:
         raise AssertionError("integration tool escaped")
 sys.audit("subprocess.Popen", "tmux", ["tmux", "-S", str(sandbox / "socket"), "ls"], None, {})
+sys.audit("subprocess.Popen", "tmux", ["tmux", "-uS", str(sandbox / "socket"), "ls"], None, {})
+sys.audit("subprocess.Popen", "tmux", ["tmux", "-uS" + str(sandbox / "socket"), "ls"], None, {})
+sys.audit("subprocess.Popen", "tmux", ["tmux", "-uLprivate", "ls"], None, {"TMUX_TMPDIR": str(sandbox)})
 sys.audit("subprocess.Popen", "tmux", ["tmux", "ls"], None, {"TMUX_TMPDIR": str(sandbox)})
 sys.audit("subprocess.Popen", "tmux", ["tmux", "capture-pane", "-p", "-S", "-40"], None, {"TMUX_TMPDIR": str(sandbox)})
 sys.audit("subprocess.Popen", "git", ["git", "status"], None, {"GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1"})

@@ -139,32 +139,33 @@ class Gate:
         if name == "tmux":
             if isinstance(argv, str):
                 self.fail("tmux requires a private socket")
-            options = []
+            socket = None
+            label = None
             index = 1
-            while index < len(argv) and argv[index].startswith("-"):
-                option = argv[index]
-                options.append(option)
-                if option in {"-S", "-L", "-f", "-T"}:
-                    index += 1
-                    if index < len(argv):
-                        options.append(argv[index])
+            while index < len(argv):
+                option = os.fsdecode(argv[index])
+                if not option.startswith("-") or option in {"-", "--"}:
+                    break
+                for offset, flag in enumerate(option[1:], 2):
+                    if flag not in "SLfTc":
+                        continue
+                    value = option[offset:]
+                    if not value:
+                        index += 1
+                        value = os.fsdecode(argv[index]) if index < len(argv) else ""
+                    if flag == "S":
+                        socket = value
+                    elif flag == "L":
+                        label = value
+                    break
                 index += 1
-            attached = next(
-                (option[2:] for option in options if option.startswith("-S") and len(option) > 2),
-                None,
-            )
-            if attached is not None:
-                socket = attached
-            elif "-S" in options:
-                index = options.index("-S") + 1
-                socket = options[index] if index < len(options) else ""
-            else:
+            if socket is None:
                 directory = env.get("TMUX_TMPDIR", "")
                 if not directory or not self.inside(directory):
                     self.fail("tmux requires a private TMUX_TMPDIR or -S socket")
-                socket = env.get("TMUX", "").split(",")[0] or os.path.join(
-                    directory, f"tmux-{os.getuid()}", "default"
-                )
+                socket = (
+                    env.get("TMUX", "").split(",")[0] if label is None else ""
+                ) or os.path.join(directory, f"tmux-{os.getuid()}", label or "default")
             if not socket or not self.inside(socket):
                 self.fail("tmux socket outside test sandbox")
         if name == "git":
