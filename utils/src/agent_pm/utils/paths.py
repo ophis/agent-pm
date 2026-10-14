@@ -26,6 +26,23 @@ def module_roots(*packages: ModuleType) -> tuple[str, ...]:
     return tuple(dict.fromkeys(roots))
 
 
+def package_dirs(*packages: ModuleType) -> tuple[str, ...]:
+    """Each package's own resource directory, independent of its shared import root."""
+    found = []
+    for package in packages:
+        path = package.__file__
+        if path is None:
+            raise ValueError(f"{package.__name__}: package has no source file")
+        found.append(os.path.realpath(os.path.dirname(path)))
+    return tuple(dict.fromkeys(found))
+
+
+def overlaps(a: str, b: str) -> bool:
+    """Real paths overlap when equal or either contains the other, including missing suffixes."""
+    a, b = (os.path.realpath(os.path.expanduser(p)) for p in (a, b))
+    return os.path.commonpath((a, b)) in (a, b)
+
+
 def real_dirs(paths, label: str) -> frozenset[str]:
     if not isinstance(paths, list):
         raise ValueError(f"{label}: want a list of local paths")

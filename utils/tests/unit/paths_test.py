@@ -13,6 +13,8 @@ from unittest import mock
 from agent_pm.utils.paths import (
     import_roots,
     module_roots,
+    overlaps,
+    package_dirs,
     printable_abs,
     real_dirs,
     temp_dirs,
@@ -166,3 +168,47 @@ class ModuleRootsTest(Case):
         package.__file__ = None
         with self.assertRaisesRegex(ValueError, "package has no source file"):
             module_roots(package)
+
+
+class PackageDirectories(Case):
+    def test_installed_packages_protect_only_their_own_directories(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            site = os.path.realpath(temporary)
+            session = ModuleType("agent_pm.session")
+            session.__file__ = os.path.join(site, "agent_pm", "session", "__init__.py")
+            utils = ModuleType("agent_pm.utils")
+            utils.__file__ = os.path.join(site, "agent_pm", "utils", "__init__.py")
+            self.assertEqual(
+                package_dirs(session, utils, session),
+                (
+                    os.path.join(site, "agent_pm", "session"),
+                    os.path.join(site, "agent_pm", "utils"),
+                ),
+            )
+            self.assertEqual(module_roots(session, utils), (site,))
+
+    def test_namespace_packages_without_a_file_are_rejected(self):
+        package = ModuleType("namespace")
+        package.__file__ = None
+        with self.assertRaisesRegex(ValueError, "package has no source file"):
+            package_dirs(package)
+
+
+class Overlaps(Case):
+    def test_equality_both_directions_siblings_and_missing_suffixes(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            parent = root / "parent"
+            parent.mkdir()
+            alias = root / "alias"
+            alias.symlink_to(parent)
+            for a, b, expected in (
+                (parent, parent, True),
+                (parent, parent / "new" / "child", True),
+                (parent / "new" / "child", parent, True),
+                (parent, root / "parent-other", False),
+                (alias / "new", parent / "new" / "child", True),
+                (parent / "new-a", parent / "new-b", False),
+            ):
+                with self.subTest(a=a, b=b):
+                    self.assertEqual(overlaps(str(a), str(b)), expected)
