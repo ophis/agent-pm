@@ -98,6 +98,7 @@ def main(argv: list[str], stdin, *, load_host=None) -> None:
 
 
 def _source_roots(encoded: str) -> list[str]:
+    # This runs before package imports, when only the standard library is available.
     try:
         roots = json.loads(encoded)
     except (ValueError, RecursionError):
@@ -194,8 +195,8 @@ def load_adapter(name: str, roots: list[str]):
                 info = os.lstat(spec.origin)
             except OSError as error:
                 raise HookError(f"adapter hook {name}: {error.strerror}") from error
-            if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid():
-                raise HookError(f"adapter hook {name}: not a regular file owned by you")
+            if not stat.S_ISREG(info.st_mode) or info.st_uid not in (0, os.getuid()):
+                raise HookError(f"adapter hook {name}: not a regular file owned by you or root")
         paths = list(spec.submodule_search_locations or ())
     module = importlib.import_module(name)
     if not callable(getattr(module, "on_hook", None)):

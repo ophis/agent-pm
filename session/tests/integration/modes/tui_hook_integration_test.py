@@ -516,6 +516,49 @@ assert "callback_package" not in sys.modules
         with open(imported) as file:
             self.assertEqual(file.read(), "imported\n" * 3)
 
+    def test_root_owned_callback_package_imports_after_the_complete_chain_is_checked(self):
+        files, imported = self.callback_package()
+        script = """import json, os, runpy, sys, types, unittest.mock
+path, encoded_files, *arguments = sys.argv[1:]
+files = json.loads(encoded_files)
+original = os.lstat
+def root_owner(filename):
+    info = original(filename)
+    return types.SimpleNamespace(
+        st_mode=info.st_mode,
+        st_uid=0 if filename in files else info.st_uid,
+    )
+sys.argv = [path, *arguments]
+with unittest.mock.patch("os.lstat", root_owner):
+    try:
+        runpy.run_path(path, run_name="__main__")
+    except SystemExit as error:
+        assert error.code == 0
+"""
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-I",
+                "-c",
+                script,
+                HOOK,
+                json.dumps(files),
+                self.dir,
+                json.dumps([self.root]),
+                "stop",
+            ],
+            input=b"{}",
+            capture_output=True,
+            env=self.env,
+            timeout=60,
+            check=True,
+        )
+        self.assertEqual((result.stdout, result.stderr), (b"", b""))
+        self.assertEqual(self.records()[0]["payload"], {"callback_imported": True})
+        with open(imported) as file:
+            self.assertEqual(file.read(), "imported\n" * 3)
+
+
     def test_nested_namespace_callback_imports_from_supplied_roots(self):
         sources = [os.path.join(self.root, name) for name in ("left", "right")]
         for source in sources:
