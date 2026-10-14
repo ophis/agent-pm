@@ -546,7 +546,7 @@ class DisplayableTest(Base):
         self.assertEqual(self.host.attach_command("w1"), "tmux attach -t '=w1'")
         self.tmux.read.return_value = "text"
         self.assertEqual(self.host.screen("w1", 5), "text")
-        self.tmux.read.assert_called_once_with("w1", 5)
+        self.tmux.read.assert_called_once_with("%7", 5)
         self.host.tile("@1")
         self.host.tile("@2", wait=False, if_panes_changed=True)
         self.assertEqual(
@@ -561,6 +561,23 @@ class DisplayableTest(Base):
             self.host.screen("w1")
         with self.assertRaisesRegex(SessionError, "^no tmux session 'a b'$"):
             self.host.attach_command("a b")
+
+    def test_screen_of_a_name_reads_its_launched_pane_else_its_active_one(self):
+        self.tmux.read.return_value = "text"
+        self.recorded = None
+        self.assertEqual(self.host.screen("w1"), "text")
+        self.tmux.read.assert_called_once_with("w1", None)
+        self.recorded = "4242 $3 %x 4343"
+        with self.assertRaisesRegex(
+            SessionError, "^tmux session w1: bad @process '4242 \\$3 %x 4343'$"
+        ):
+            self.host.screen("w1")
+        self.tmux.option.side_effect = TuiError("tmux: lost server")
+        with self.assertRaisesRegex(SessionError, "^tmux session w1: tmux: lost server$"):
+            self.host.screen("w1")
+        self.assertEqual(self.tmux.read.call_count, 1)
+        with self.assertRaisesRegex(SessionError, "^no tmux session 'a b'$"):
+            self.host.screen("a b")
 
 
 class PublishTest(Base):

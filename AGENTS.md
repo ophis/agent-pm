@@ -1,5 +1,7 @@
 # AGENTS.md
 
+Test boundaries and commands: README.md › Tests.
+
 ## Gotchas
 
 - This file never loads in an agent run outside a trusted cwd (README › Install). An agent run reaches only its cwd, `<work_dir>/work/<ID>/` and the config's `read`/`write` dirs: give a task a new path there, or it stalls on a permission nobody can grant.
