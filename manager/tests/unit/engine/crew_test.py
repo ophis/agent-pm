@@ -15,7 +15,7 @@ from pathlib import Path
 from threading import Event
 from unittest import mock
 
-from agent_pm.manager.engine.crew import BIN, HERE, RECOVERY_AGE, TIMEOUT, Crew
+from agent_pm.manager.engine.crew import BIN, HERE, RECOVERY_AGE, RECOVERY_MARGIN, TIMEOUT, Crew
 from agent_pm.manager.engine.roster import LOCK_TIMEOUT, Roster
 from agent_pm.manager.engine.types import Held, RosterError, Spec, Stale, State
 from agent_pm.utils import Status
@@ -398,7 +398,9 @@ class CrewTest(Case):
                             (self.command, "start", name),
                             (self.command, "resume", name),
                         }:
-                            clock.now.return_value = origin + timedelta(seconds=duration)
+                            clock.now.return_value = origin + timedelta(
+                                seconds=duration + RECOVERY_MARGIN / 2
+                            )
                             entered.set()
                             if not proceed.wait(5):
                                 raise AssertionError("pending launch was not released")
@@ -421,6 +423,7 @@ class CrewTest(Case):
                                 clock.now.return_value - datetime.fromisoformat(observed.started)
                             ).total_seconds()
                             self.assertGreater(age, duration)
+                            self.assertGreater(age - duration, RECOVERY_MARGIN / 2)
                             self.assertLess(age, RECOVERY_AGE)
                             Crew(Roster(self.directory)).attach()
                             self.assertEqual(Roster(self.directory).entries()[name].state, state)

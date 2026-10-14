@@ -17,8 +17,9 @@ from agent_pm.manager.engine.types import Entry, Lease, RosterError, Spec, State
 from agent_pm.utils import Record, Status, printable
 
 TIMEOUT = 30
-# Events, receipt open/read and commit each wait for the lock; intent timestamps lose sub-seconds.
-RECOVERY_AGE = TIMEOUT + 4 * LOCK_TIMEOUT + 1
+RECOVERY_MARGIN = 5
+# Events, receipt open/read and commit may each wait; margin covers timestamps and cleanup.
+RECOVERY_AGE = TIMEOUT + 4 * LOCK_TIMEOUT + RECOVERY_MARGIN
 EVENT = re.compile(r"[0-9]{2}:[0-9]{2}:[0-9]{2} \S+ \S.*")
 HERE = ("agent-pm-session", "ls", "--here", "--records")
 HEADER = "name\tkind\tsid\tstate\tnote\tcwd\tattach"
