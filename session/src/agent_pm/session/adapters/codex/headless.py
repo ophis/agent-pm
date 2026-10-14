@@ -33,7 +33,7 @@ class CodexHeadless(Headless):
 
     def launch(self, spec: Spec):
         resume = spec.resume
-        self.state = self.common.prepare(spec, resume=resume)
+        self.state = self.common.prepare(spec)
         self.limit_sent = False
         snapshot = self.state.snapshot
         argv = ["codex", "exec", *launch_flags(snapshot, interactive=False)]
@@ -50,6 +50,9 @@ class CodexHeadless(Headless):
             transcript=self.common.transcript(self.state) if resume else "",
             resume=self.common.resume_command(self.state) if resume else "",
         )
+
+    def commit(self) -> None:
+        self.state = self.common.commit(self.state)
 
     def events(self, lines):
         for line in lines:

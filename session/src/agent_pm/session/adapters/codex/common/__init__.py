@@ -40,7 +40,7 @@ from agent_pm.session.engine.types import (
     Usage,
     Window,
 )
-from agent_pm.utils import number, resume_command
+from agent_pm.utils import LOCAL_ENV_VARS, environment_ok, number, resume_command
 
 TABLE = "[adapters.codex]"
 LIMIT_PREFIXES = (
@@ -59,8 +59,6 @@ RESET = re.compile(
 )
 RESERVED = ("-C", "-p", "--dangerously-bypass-hook-trust")
 RESERVED_KEYS = ("hooks",)
-
-ENV_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 
 VALUED = {
     "-c": "-c",
@@ -123,10 +121,7 @@ def _snapshot(value: object) -> Snapshot:
     }:
         raise RecoveryError("invalid Codex recovery snapshot fields")
     env = value["env"]
-    if not isinstance(env, dict) or not all(
-        isinstance(k, str) and ENV_NAME.fullmatch(k) and isinstance(v, str) and "\0" not in v
-        for k, v in env.items()
-    ):
+    if not environment_ok(env):
         raise RecoveryError("invalid Codex recovery snapshot env")
     flags = value["flags"]
     if not isinstance(flags, list) or any(not isinstance(v, str) or "\0" in v for v in flags):
@@ -783,6 +778,7 @@ def _usage(snapshot) -> Usage | None:
 
 class CodexCommon:
     UNSET = (
+        *LOCAL_ENV_VARS,
         "CODEX_THREAD_ID",
         "CODEX_SESSION_ID",
         "CODEX_VERSION",
@@ -829,14 +825,22 @@ class CodexCommon:
             if ambient
             else {}
         )
-        result = {**inherited, **({} if interactive else self.DEFAULTS), **supplied}
+        result = {
+            key: value
+            for key, value in {
+                **inherited,
+                **({} if interactive else self.DEFAULTS),
+                **supplied,
+            }.items()
+            if key not in LOCAL_ENV_VARS
+        }
         if ambient and not result.get("CODEX_HOME"):
             result["CODEX_HOME"] = inherited.get("CODEX_HOME") or "~/.codex"
         return result
 
     @_recover
-    def prepare(self, spec: Spec, *, resume: bool = False, persist: bool = True) -> SessionState:
-        if resume:
+    def prepare(self, spec: Spec) -> SessionState:
+        if spec.resume:
             state = self.load(spec.workdir, spec.sid)
             if state is None:
                 raise ConfigError(f"missing Codex recovery state for run ID {spec.sid!r}")
@@ -873,7 +877,7 @@ class CodexCommon:
                 "env": explicit,
             }
         )
-        return self.store.create(workdir, sid, snapshot, roots, persist=persist)
+        return self.store.create(workdir, sid, snapshot, roots, persist=False)
 
     def _new_roots(self, spec: Spec, environment: Mapping[str, str]) -> list[str]:
         workdir = absolute_path(spec.workdir, "workdir")
@@ -891,8 +895,8 @@ class CodexCommon:
         ]
 
     @_recover
-    def writable_dirs(self, spec: Spec, *, resume: bool = False) -> tuple[str, ...]:
-        if resume:
+    def writable_dirs(self, spec: Spec) -> tuple[str, ...]:
+        if spec.resume:
             state = self.load(spec.workdir, spec.sid)
             if state is None:
                 raise ConfigError(f"missing Codex recovery state for run ID {spec.sid!r}")
@@ -903,6 +907,11 @@ class CodexCommon:
             roots = self._new_roots(spec, environment)
         implicit = map(os.path.realpath, implicit_writable_roots(environment))
         return tuple(dict.fromkeys([*roots, *implicit]))
+
+    def commit(self, state: SessionState | None) -> SessionState:
+        if state is None:
+            raise ConfigError("Codex launch has not been prepared")
+        return self.save(state) if state.native_id is None else state
 
     @_recover
     def save(self, state: SessionState) -> SessionState:

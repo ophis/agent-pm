@@ -5,6 +5,7 @@ from agent_pm.session.adapters.codex.common import CodexCommon
 from agent_pm.session.adapters.codex.headless import CodexHeadless
 from agent_pm.session.adapters.codex.tui import CodexTui
 from agent_pm.session.engine.types import SessionInfo, Spec
+from agent_pm.utils import LOCAL_ENV_VARS
 
 
 class CodexAdapter(Adapter):
@@ -27,7 +28,9 @@ class CodexAdapter(Adapter):
     keys = frozenset({"tiers", "efforts", "env"})
     runtime_note = "Run each shell call separately."
     session_env = "CODEX_THREAD_ID"
-    identity_env = tuple(key for key in CodexCommon.UNSET if key != "CLAUDECODE")
+    identity_env = tuple(
+        key for key in CodexCommon.UNSET if key != "CLAUDECODE" and key not in LOCAL_ENV_VARS
+    )
     child_defaults = CodexCommon.DEFAULTS
 
     def __init__(self, config):
@@ -53,4 +56,4 @@ class CodexAdapter(Adapter):
         return self.common.session_status(info.sid, info.cwd, transcript=info.transcript)
 
     def writable_dirs(self, spec: Spec):
-        return self.common.writable_dirs(spec, resume=spec.resume)
+        return self.common.writable_dirs(spec)

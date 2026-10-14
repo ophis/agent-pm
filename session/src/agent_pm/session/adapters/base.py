@@ -1,6 +1,7 @@
 """The Adapter interface: a runtime factory from [adapters.<name>] minus `implementation`;
 headless(), tui() and in_process() each give a fresh mode object, None if unsupported. Each mode
-reads what to run from the Spec alone. Headless launch(spec) (it may keep state for events) and Tui
+reads what to run from the Spec alone. commit() persists a validated launch before starting;
+failed starts keep diagnostics. Headless launch(spec) (it may keep state for events) and Tui
 launch(spec, hook) build a Launch whose env and resume carry Access.env and Spec.env (the Adapter is
 their only owner), and turn the runtime's output into SessionEvents, Stderr and ClientBound
 (JsonHeadless: parse(record) per JSON line). InProcess check(spec) refuses with ConfigError;
@@ -85,6 +86,9 @@ class Adapter:
 
 
 class Headless(ABC):
+    def commit(self) -> None:
+        return None
+
     @abstractmethod
     def launch(self, spec: Spec) -> Launch: ...
 
@@ -111,6 +115,9 @@ class Tui(ABC):
         """As Headless.launch, plus each label L of `hooks` as a hook running `hook + (L,)`, its
         payload on stdin. source_roots locates the loaded packages for isolated scripts.
         """
+
+    def commit(self) -> None:
+        return None
 
     def hook_state(self) -> dict:
         return {}

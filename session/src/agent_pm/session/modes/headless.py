@@ -99,6 +99,7 @@ class HeadlessMode(RunningMode):
         drop = identity_drop(registry)
         spec = cls._noted(spec, adapter)
         prepared = cls._launched(spec, run.launch, drop)
+        run.commit()
         record(prepared.info)
         try:
             proc = subprocess.Popen(

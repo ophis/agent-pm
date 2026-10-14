@@ -50,7 +50,16 @@ from agent_pm.session.hosts.tmux import tmux_host
 from agent_pm.session.hosts.tmux.tmux_host import TuiError
 from agent_pm.session.modes import headless, in_process, tui
 from agent_pm.session.modes.base import RunningMode, child_env
-from agent_pm.utils import STATE, Display, Record, load_class, printable_abs, sid_error, thaw
+from agent_pm.utils import (
+    STATE,
+    Display,
+    Record,
+    load_class,
+    overlaps,
+    printable_abs,
+    sid_error,
+    thaw,
+)
 
 POLL = 0.5
 PROBE_DIR = f"{STATE}/probe"
@@ -238,9 +247,23 @@ class HostedSession(Session):
         runtime, mode = spec.runtime, spec.mode
         if runtime is None or mode is None:
             raise ConfigError(f"spec.{'runtime' if runtime is None else 'mode'}: required to start")
-        on = cls.host(host)
         adapter = setup.registry.adapter(runtime)
         spec = replace(spec, sid=spec.sid or str(uuid.uuid4()))
+        try:
+            writable = (
+                spec.access.cwd or spec.workdir,
+                *spec.access.dirs,
+                *adapter.writable_dirs(spec),
+            )
+            for path in writable:
+                for protected in spec.protect:
+                    if overlaps(path, protected):
+                        raise ConfigError(
+                            f"writable path {path} overlaps protected path {protected}"
+                        )
+        except OSError as error:
+            raise ConfigError(f"{runtime}'s writable dirs: {error}") from error
+        on = cls.host(host)
         running = MODES[mode].start(
             spec,
             adapter,

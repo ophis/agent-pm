@@ -251,12 +251,14 @@ def _start(plan: tui.LaunchPlan, termination, trust):
     state = common.SessionStore(plan.store).load(plan.workdir, plan.sid)
     if state is None:
         raise StartError("Codex tui launch: missing recovery state")
-    env = {**os.environ, "CODEX_HOME": state.snapshot.codex_home}
+    env = {
+        key: value
+        for key, value in {**os.environ, "CODEX_HOME": state.snapshot.codex_home}.items()
+        if key not in common.LOCAL_ENV_VARS
+    }
     tui.protect(
         state,
         [
-            sys.prefix,
-            sys.base_prefix,
             sys.executable,
             plan.executable,
             plan.store,

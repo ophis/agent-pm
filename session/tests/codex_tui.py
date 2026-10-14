@@ -11,7 +11,7 @@ from agent_pm.session.adapters.codex.tui import HookPlan, LaunchPlan
 
 from session.tests.case import SRC, Case
 from session.tests.source_roots import PACKAGE_ROOTS
-from session.tests.unit.adapters.codex.support import Base
+from session.tests.unit.adapters.codex.support import Base, committed_tui
 
 ROOTS_JSON = json.dumps([SRC["session"], SRC["utils"]])
 HOOK = (sys.executable, "-I", "/protected/driver_hook.py", "/protected/session", ROOTS_JSON)
@@ -20,15 +20,12 @@ HOOK = (sys.executable, "-I", "/protected/driver_hook.py", "/protected/session",
 class ProtectCase(Base):
     def launch(self, spec, *, resume=False):
         with mock.patch("shutil.which", return_value="/protected/codex"):
-            return (
-                self.adapter.tui()
-                .launch(
-                    dataclasses.replace(spec, prompt="prompt", resume=resume),
-                    HOOK,
-                    source_roots=PACKAGE_ROOTS,
-                )
-                .argv[-1]
-            )
+            return committed_tui(
+                self.adapter,
+                dataclasses.replace(spec, prompt="prompt", resume=resume),
+                HOOK,
+                source_roots=PACKAGE_ROOTS,
+            ).argv[-1]
 
 
 class PlanCase(Case):

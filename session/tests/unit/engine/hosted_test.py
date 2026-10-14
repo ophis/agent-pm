@@ -5,6 +5,7 @@ configured class (self.session) with caller-owned dependencies.
 
 import contextlib
 import dataclasses
+import io
 import itertools
 import json
 import logging
@@ -237,7 +238,7 @@ class HistoricalRecordTest(Case):
         )
         adapter = CodexAdapter(config)
         spec = Spec(workdir=str(self.work), sid=SID, access=Access(cwd=str(self.cwd), project=True))
-        adapter.common.prepare(spec)
+        adapter.common.save(adapter.common.prepare(spec))
         adapter.common.bind(str(self.work), SID, SID)
         transcript = home / "sessions" / "2026" / "10" / "11" / f"rollout-test-{SID}.jsonl"
         transcript.parent.mkdir(parents=True)
@@ -881,6 +882,76 @@ class UsageTest(Base):
     def test_a_registry_error_raises(self):
         with self.assertRaises(ConfigError):
             self.session.usage("nope")
+
+
+class ProtectionTest(TuiBase):
+    def test_every_mode_refuses_cwd_and_grants_in_both_directions_on_start_and_resume(self):
+        protected = os.path.join(self.dir, "protected")
+        paths = (protected, os.path.join(protected, "child"), self.dir)
+        for mode, resume, field, path in itertools.product(
+            Mode, (False, True), ("cwd", "dirs"), paths
+        ):
+            access = Access(cwd=path) if field == "cwd" else Access(cwd=self.workdir, dirs=(path,))
+            spec = self.spec(
+                runtime="fake",
+                sid=SID,
+                mode=mode,
+                resume=resume,
+                access=access,
+                protect=(protected,),
+            )
+            with (
+                self.subTest(mode=mode, resume=resume, field=field, path=path),
+                mock.patch("subprocess.Popen") as popen,
+                self.assertRaisesRegex(ConfigError, "overlaps protected path"),
+            ):
+                self.session.start(spec)
+            popen.assert_not_called()
+            self.assertFalse(os.path.exists(self.workdir))
+            self.assertFalse(os.path.exists(self.log))
+        self.nothing_hosted()
+
+    def test_the_effective_default_cwd_and_symlink_grants_are_checked(self):
+        protected = os.path.join(self.dir, "protected")
+        os.mkdir(protected)
+        alias = os.path.join(self.dir, "alias")
+        os.symlink(protected, alias)
+        for access, protect in (
+            (Access(), (self.workdir,)),
+            (Access(cwd=alias), (protected,)),
+            (Access(cwd=self.workdir, dirs=(alias,)), (protected,)),
+        ):
+            with self.subTest(access=access), self.assertRaisesRegex(ConfigError, "overlaps"):
+                self.session.start(
+                    self.spec(runtime="fake", mode=Mode.HEADLESS, access=access, protect=protect)
+                )
+        self.nothing_hosted()
+        self.assertFalse(os.path.exists(self.workdir))
+
+    def test_sibling_cwd_and_grants_pass_even_when_the_state_root_is_protected(self):
+        for mode, resume in itertools.product(Mode, (False, True)):
+            self.workdir = os.path.join(self.dir, f"state-{mode}-{resume}")
+            sibling = os.path.join(self.dir, "sibling")
+            os.makedirs(sibling, exist_ok=True)
+            spec = self.spec(
+                access=Access(cwd=sibling, dirs=(os.path.join(sibling, "extra"),)),
+                protect=(self.workdir,),
+                sid=SID,
+            )
+            with (
+                self.subTest(mode=mode, resume=resume),
+                mock.patch(
+                    "subprocess.Popen",
+                    return_value=mock.Mock(stdout=io.StringIO(), stderr=io.StringIO()),
+                ),
+            ):
+                session = self.start(
+                    runtime="checked" if mode == Mode.IN_PROCESS else "fake",
+                    mode=mode,
+                    spec=spec,
+                    resume=resume,
+                )
+            self.assertEqual(session.info().cwd, sibling)
 
 
 class WritableDirsTest(Base):

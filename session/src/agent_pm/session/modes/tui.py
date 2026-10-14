@@ -152,16 +152,20 @@ class _Store:
             return PaneStatus.UNKNOWN
 
     def start(
-        self, state: dict, record: Callable[[], None], launch: Callable[[], None]
+        self, state: dict, commit: Callable[[], None], launch: Callable[[], None]
     ) -> str | None:
-        """Under the lock: a fresh dir, record(), launch() (a TuiError removes the dir), its
+        """Under the lock: a fresh dir, commit(), launch() (a TuiError removes the dir), its
         pane (failing: closed).
         """
         if field := _bad(state):
             raise DriverError(f"tui session {self.name}: bad {field} {state.get(field)!r:.80}")
         with self._locked():
             made = self._make(state)
-            record()
+            try:
+                commit()
+            except ConfigError:
+                self._unmake(made)
+                raise
             try:
                 launch()
             except TuiError as e:
@@ -352,7 +356,11 @@ class TuiMode(RunningMode):
                 env=dict(prepared.env),
             )
 
-        pane = store.start(_state(prepared, run, tmux), lambda: record(prepared.info), launch)
+        def commit() -> None:
+            run.commit()
+            record(prepared.info)
+
+        pane = store.start(_state(prepared, run, tmux), commit, launch)
         return cls(prepared, run, pane, store)
 
     @classmethod

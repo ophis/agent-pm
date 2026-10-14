@@ -10,6 +10,8 @@ from collections.abc import Mapping
 from dataclasses import asdict, dataclass
 from types import MappingProxyType
 
+import agent_pm.session.engine.types
+import agent_pm.utils
 from agent_pm.session.adapters.base import Tui
 from agent_pm.session.adapters.codex.common import (
     LIMIT_PREFIXES,
@@ -27,7 +29,7 @@ from agent_pm.session.adapters.codex.common import (
 from agent_pm.session.adapters.codex.common.types import Snapshot
 from agent_pm.session.adapters.common import scan, split_flags
 from agent_pm.session.engine.types import ConfigError, HookKind, Launch, LimitHit, Spec
-from agent_pm.utils import import_roots
+from agent_pm.utils import import_roots, package_dirs
 
 PASSED = ("-c", "--enable", "--disable")
 
@@ -123,7 +125,7 @@ class CodexTui(Tui):
     def launch(self, spec: Spec, hook, *, source_roots: tuple[str, ...]):
         common = self.common
         prompt, resume = spec.prompt, spec.resume
-        self.state = common.prepare(spec, persist=False, resume=resume)
+        self.state = common.prepare(spec)
         snapshot = self.state.snapshot
         saved_flags = snapshot.flags
         self.native = self.state.native_id or ""
@@ -135,11 +137,16 @@ class CodexTui(Tui):
             raise ConfigError("codex not found on PATH")
         exe = os.path.abspath(exe)
         hooks = HookPlan(tuple(hook), source_roots)
-        protected_roots = tuple(dict.fromkeys([*import_roots(), *source_roots]))
+        protected_roots = tuple(
+            dict.fromkeys(
+                [
+                    *package_dirs(agent_pm.session, agent_pm.utils),
+                    *(os.path.join(root, "agent_pm") for root in (*import_roots(), *source_roots)),
+                ]
+            )
+        )
         dependencies = [
             *protected_roots,
-            sys.prefix,
-            sys.base_prefix,
             sys.executable,
             exe,
             store,
@@ -179,9 +186,10 @@ class CodexTui(Tui):
             transcript=common.transcript(self.state) if resume else "",
             resume=common.resume_command(self.state) if resume else "",
         )
-        if not resume:
-            self.state = common.save(self.state)
         return launch
+
+    def commit(self) -> None:
+        self.state = self.common.commit(self.state)
 
     def hook_state(self) -> dict:
         return {

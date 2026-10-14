@@ -496,6 +496,17 @@ class AttachTest(Base):
 
 
 class StartTest(Base):
+    def test_failed_adapter_commit_removes_its_tui_state_without_launching(self):
+        class Conflict(ScanTui):
+            def commit(self):
+                raise ConfigError("commit conflict")
+
+        with self.assertRaisesRegex(ConfigError, "commit conflict"):
+            self.start(run=Conflict(self.adapter))
+        self.assertNoSessionDir()
+        self.assertEqual(self.recorded, [])
+        self.host.start.assert_not_called()
+
     def nothing_hosted(self):
         """No tmux call but the checks', no path made, no session line."""
         self.assertEqual(

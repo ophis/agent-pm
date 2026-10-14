@@ -16,7 +16,7 @@ from agent_pm.session.engine.types import (
     TurnEnd,
 )
 
-from session.tests.unit.adapters.codex.support import NATIVE, Base
+from session.tests.unit.adapters.codex.support import NATIVE, Base, committed_headless
 
 CODEX = ("-s", "danger-full-access", "-c", 'approval_policy="on-request"')
 
@@ -27,6 +27,7 @@ class HeadlessTest(Base):
     def run_instance(self):
         run = self.adapter.headless()
         run.launch(dataclasses.replace(self.spec, prompt="hello"))
+        run.commit()
         return run
 
     def test_native_binding_precedes_event(self):
@@ -129,7 +130,7 @@ class HeadlessTest(Base):
         self.common.bind(str(self.work), self.spec.sid, NATIVE)
         self.rollout()
         spec = dataclasses.replace(self.spec, prompt="again", resume=True)
-        argv = self.adapter.headless().launch(spec).argv
+        argv = committed_headless(self.adapter, spec).argv
         start = argv.index("resume")
         self.assertEqual((argv[start + 1], argv[-2:]), (NATIVE, ("--", "again")))
 
@@ -195,7 +196,7 @@ class HeadlessTest(Base):
 class LaunchPolicy(Base):
     def argv(self, adapter, spec, *, resume=False):
         return list(
-            adapter.headless().launch(dataclasses.replace(spec, prompt="hi", resume=resume)).argv
+            committed_headless(adapter, dataclasses.replace(spec, prompt="hi", resume=resume)).argv
         )
 
     def test_supplied_policy_and_saved_replay_in_both_modes(self):
@@ -261,14 +262,16 @@ class PolicyReplay(Base):
             str(self.extra),
         )
         spec = dataclasses.replace(self.spec, flags=flags, env={"K": "saved"})
-        first = self.adapter.headless().launch(dataclasses.replace(spec, prompt="one"))
+        first = committed_headless(self.adapter, dataclasses.replace(spec, prompt="one"))
         state = self.common.bind(str(self.work), spec.sid, NATIVE)
         self.rollout()
         changed = dataclasses.replace(
             spec, flags=("-s", "danger-full-access"), env={"K": "changed"}
         )
         adapter = CodexAdapter({**self.adapter.config, "env": {"K": "config"}})
-        resumed = adapter.headless().launch(dataclasses.replace(changed, prompt="two", resume=True))
+        resumed = committed_headless(
+            adapter, dataclasses.replace(changed, prompt="two", resume=True)
+        )
         self.assertEqual(state.snapshot.flags, tuple(flags))
         self.assertEqual(first.env["K"], "saved")
         self.assertEqual(resumed.env["K"], "saved")
@@ -281,6 +284,6 @@ class SuppliedPolicy(Base):
         flags = CODEX
         adapter = self.adapter
         spec = dataclasses.replace(self.spec, flags=flags)
-        launch = adapter.headless().launch(dataclasses.replace(spec, prompt="hi"))
+        launch = committed_headless(adapter, dataclasses.replace(spec, prompt="hi"))
         start = launch.argv.index(flags[0])
         self.assertEqual(launch.argv[start : start + len(flags)], flags)
