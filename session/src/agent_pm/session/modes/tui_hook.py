@@ -1,8 +1,9 @@
-"""A standalone tui hook drains stdin, checks callback sources, binds client identity,
-and appends one hooks.jsonl record before notifying its optional Host callback.
-Never stdout, always exits 0; failures retain a traceback and one stderr line.
-session.json's adapter_hook and host_hook are HookCallback.fields(): a callback module is
-trusted under the given source roots or its own declared roots, each its on_hook given a HookCall.
+"""A tui client's hook, run as `agent-pm-session hook DIR LABEL`: drains stdin, checks callback
+sources, binds client identity, and appends one hooks.jsonl record before notifying its optional
+Host callback. Never stdout, always exits 0; failures retain a traceback and one stderr line.
+session.json's adapter_hook and host_hook are HookCallback.fields(): a callback module is trusted
+under the hook's own source roots or the callback's declared roots, each its on_hook given a
+HookCall; one outside sys.path loads from its roots, sys.path unchanged.
 """
 
 from __future__ import annotations
@@ -10,14 +11,18 @@ from __future__ import annotations
 import fcntl
 import importlib
 import importlib.machinery
+import importlib.util
 import json
 import os
 import re
 import stat
 import sys
 import traceback
+from collections.abc import Sequence
 from contextlib import suppress
 from datetime import datetime
+
+from agent_pm.session.engine.types import HookCall, HookError, Word
 
 PAYLOAD_MAX = 64 << 20  # bytes of stdin parsed
 
@@ -39,45 +44,18 @@ def _abs(value) -> bool:
     return isinstance(value, str) and value.isprintable() and os.path.isabs(value)
 
 
-def _source_roots(encoded: str) -> list[str]:
-    # This runs before package imports, when only the standard library is available.
-    try:
-        roots = json.loads(encoded)
-    except (ValueError, RecursionError):
-        raise ValueError(
-            "invalid source roots: expected a nonempty JSON array of directories"
-        ) from None
-    if (
-        not isinstance(roots, list)
-        or not roots
-        or any(not _abs(path) or not os.path.isdir(path) for path in roots)
-        or len(set(roots)) != len(roots)
-    ):
-        raise ValueError("invalid source roots: expected distinct absolute directories")
-    return roots
-
-
-def _arguments(argv: list[str]) -> tuple[str, list[str], str]:
-    if len(argv) != 3 or not _abs(argv[0]) or not LABEL.fullmatch(argv[2]):
-        raise ValueError(
-            "usage: tui_hook.py <absolute session dir> <roots JSON> <label [A-Za-z0-9_.-]{1,64}>"
+def _arguments(argv: Sequence[str]) -> tuple[str, str]:
+    if len(argv) != 2 or not _abs(argv[0]) or not LABEL.fullmatch(argv[1]):
+        raise HookError(
+            "usage: agent-pm-session hook <absolute session dir> <label [A-Za-z0-9_.-]{1,64}>"
         )
-    folder, encoded_roots, label = argv
-    return folder, _source_roots(encoded_roots), label
-
-
-def _bootstrap(roots: list[str]) -> None:
-    sys.path[:] = [*roots, *(path for path in sys.path if path not in roots)]
+    return argv[0], argv[1]
 
 
 def say(text: str) -> None:
     """One stderr line; none when stderr is closed (print would fall back to stdout)."""
     if sys.stderr is not None:
         print("tui_hook: " + " ".join(text.split()), file=sys.stderr)
-
-
-if __name__ != "__main__":
-    from agent_pm.session.engine.types import HookCall, HookError, Word
 
 
 SESSION_STATE = {  # what this hook or an adapter_hook reads
@@ -90,35 +68,35 @@ SESSION_STATE = {  # what this hook or an adapter_hook reads
 }
 
 
-def _prepare(argv: list[str]):
-    folder, roots, label = _arguments(argv)
+def _prepare(argv: Sequence[str], roots: Sequence[str]):
+    """The session dir, label and state, and the search path its callbacks load from: `roots`,
+    then each callback's own, then sys.path.
+    """
+    folder, label = _arguments(argv)
     path = os.path.join(folder, STATE)
-    state = _read_state(path, ValueError)
-    _check_callbacks(state, path, ValueError)
+    state = _read_state(path, HookError)
+    _check_callbacks(state, path, HookError)
     hooks = [
         (kind, state[kind + "_hook"]) for kind in ("adapter", "host") if kind + "_hook" in state
     ]
     for kind, hook in hooks:
         if missing := [root for root in hook["roots"] if not os.path.isdir(root)]:
-            raise ValueError(f"{kind} hook {hook['module']}: root {missing[0]} is no directory")
-    own = [root for _, hook in hooks for root in hook["roots"] if root not in roots]
-    _bootstrap([*roots, *dict.fromkeys(own)])
+            raise HookError(f"{kind} hook {hook['module']}: root {missing[0]} is no directory")
+    search = list(
+        dict.fromkeys([*roots, *(root for _, hook in hooks for root in hook["roots"]), *sys.path])
+    )
     for kind, hook in hooks:
-        _check_module(hook["module"], [*roots, *hook["roots"]], kind + " hook", ValueError)
-    _check_module("agent_pm.session.engine.types", roots, "shared types", ValueError)
-    return folder, label, state
+        _check_module(hook["module"], search, [*roots, *hook["roots"]], kind + " hook", HookError)
+    return folder, label, state, search
 
 
-def main(argv: list[str], stdin) -> None:
+def main(argv: Sequence[str], stdin, *, roots: Sequence[str]) -> None:
     payload = read_payload(stdin)
-    try:
-        folder, label, state = _prepare(argv)
-    except ValueError as error:
-        raise HookError(str(error)) from None
-    _dispatch(folder, label, payload, state)
+    folder, label, state, search = _prepare(argv, roots)
+    _dispatch(folder, label, payload, state, search)
 
 
-def _dispatch(folder, label, payload, state):
+def _dispatch(folder, label, payload, state, search):
     _validate_state(state, os.path.join(folder, STATE), HookError)
 
     def call(kind, given) -> HookCall:
@@ -127,7 +105,7 @@ def _dispatch(folder, label, payload, state):
         )
 
     if adapter_hook := state.get("adapter_hook"):
-        adapter = _load_callback(adapter_hook["module"], "adapter hook")
+        adapter = _load_callback(adapter_hook["module"], "adapter hook", search)
         payload = adapter.on_hook(call("adapter_hook", payload))
         if payload is None:
             return
@@ -138,7 +116,7 @@ def _dispatch(folder, label, payload, state):
             )
     word = state["words"].get(label)
     host_hook = state.get("host_hook") if word else None
-    host = None if host_hook is None else _load_callback(host_hook["module"], "host hook")
+    host = None if host_hook is None else _load_callback(host_hook["module"], "host hook", search)
     if word != Word.DONE:
         payload = cut(payload)
     stamp = datetime.now().astimezone().isoformat(timespec="milliseconds")
@@ -230,8 +208,8 @@ def _check_callbacks(state, path, error):
             raise error(f"{path}: bad {hook}")
 
 
-def _check_module(name: str, roots: list[str], kind: str, error):
-    paths = sys.path
+def _check_module(name: str, search: list[str], roots: list[str], kind: str, error):
+    paths = search
     parts = name.split(".")
     for index in range(len(parts)):
         # A segment lookup needs no loaded parent, including for namespace packages.
@@ -252,7 +230,19 @@ def _check_module(name: str, roots: list[str], kind: str, error):
         paths = list(spec.submodule_search_locations or ())
 
 
-def _load_callback(name: str, kind: str):
+def _load_callback(name: str, kind: str, search: list[str]):
+    top = name.partition(".")[0]
+    if top not in sys.modules:
+        spec = importlib.machinery.PathFinder.find_spec(top, search)
+        if spec is None or spec.loader is None:
+            raise HookError(f"{kind} {name}: cannot find Python module")
+        package = importlib.util.module_from_spec(spec)
+        sys.modules[top] = package
+        try:
+            spec.loader.exec_module(package)
+        except BaseException:
+            del sys.modules[top]
+            raise
     module = importlib.import_module(name)
     if not callable(getattr(module, "on_hook", None)):
         raise HookError(f"{kind} {name}: missing on_hook callback")
@@ -290,20 +280,13 @@ def append(path: str, record: dict) -> None:
         raise HookError(f"{path}: short write")
 
 
-def run(argv: list[str], stdin) -> None:
-    """One hook call, as `tui_hook.py <dir> <roots JSON> <label>` or `agent-pm-session hook` runs
-    it, its payload stdin's bytes (stdin may be None): never raises, never writes stdout; a failure
-    keeps its traceback in <dir>/hook.log and one stderr line.
+def run(argv: Sequence[str], stdin, *, roots: Sequence[str]) -> None:
+    """One hook call, as `agent-pm-session hook DIR LABEL` runs it with its own source roots, its
+    payload stdin's bytes (stdin may be None): never raises, never writes stdout; a failure keeps
+    its traceback in DIR/hook.log and one stderr line.
     """
-    global HookCall, HookError, Word  # standalone: bound only once the source roots are checked
-    types_loaded = False
     try:
-        payload = read_payload(stdin.buffer)
-        folder, label, state = _prepare(argv)
-        from agent_pm.session.engine.types import HookCall, HookError, Word
-
-        types_loaded = True
-        _dispatch(folder, label, payload, state)
+        main(argv, stdin.buffer, roots=roots)
     except Exception as e:  # noqa: BLE001  # the hook must never fail the client
         if argv and _abs(argv[0]):
             with (
@@ -316,16 +299,4 @@ def run(argv: list[str], stdin) -> None:
                 ) as file,
             ):
                 file.write(traceback.format_exc())
-        say(
-            str(e)
-            if not types_loaded
-            and isinstance(e, ValueError)
-            or types_loaded
-            and isinstance(e, HookError)
-            else f"{type(e).__name__}: {e}"
-        )
-
-
-if __name__ == "__main__":
-    run(sys.argv[1:], sys.stdin)
-    sys.exit(0)
+        say(str(e) if isinstance(e, HookError) else f"{type(e).__name__}: {e}")

@@ -7,7 +7,6 @@ import json
 import os
 import re
 import stat
-import sys
 import tempfile
 import types
 import unittest
@@ -18,9 +17,7 @@ from agent_pm.session.modes import tui_hook
 
 from session.tests.case import SRC, Case
 from session.tests.tui_hook_support import (
-    HOOK,
     PROCESS,
-    SOURCE_ROOTS,
     identity,
     install,
     state,
@@ -29,6 +26,8 @@ from session.tests.tui_hook_support import (
 from utils.tests.process_fixtures import DEVNULL
 
 CLIENT = re.compile(r"claude|codex", re.I)
+HOOK = os.path.join(SRC["session"], "agent_pm", "session", "modes", "tui_hook.py")
+ROOTS = (SRC["session"], SRC["utils"])
 
 
 class InProcess(Case):
@@ -70,7 +69,7 @@ class InProcess(Case):
             unittest.mock.patch("os.access", fake_access),
             unittest.mock.patch("subprocess.run", self.mark),
         ):
-            tui_hook.main([self.dir, SOURCE_ROOTS, "tool"], io.BytesIO(b"{}"))
+            tui_hook.main([self.dir, "tool"], io.BytesIO(b"{}"), roots=ROOTS)
 
     def test_a_tmux_of_yours_or_roots_marks(self):
         for uid in (os.getuid(), 0):
@@ -112,10 +111,7 @@ class InProcess(Case):
             calls.attach_mock(flock, "flock")
             calls.attach_mock(write, "write")
             calls.attach_mock(self.mark, "mark")
-            tui_hook.main(
-                [self.dir, SOURCE_ROOTS, "tool"],
-                io.BytesIO(b'{"tool_name": "Bash"}'),
-            )
+            tui_hook.main([self.dir, "tool"], io.BytesIO(b'{"tool_name": "Bash"}'), roots=ROOTS)
         with open(os.path.join(self.dir, "hooks.jsonl"), "rb") as f:
             data = f.read()
         fd = calls.mock_calls[0].args[0]
@@ -179,26 +175,10 @@ class InProcess(Case):
             (os.rmdir if os.path.isdir(path) else os.unlink)(path)
 
 
-class Standalone(Case):
-    def setUp(self):
-        with open(HOOK) as f:
-            self.source = f.read()
-
-    def test_imports_only_the_stdlib_before_bootstrapping_shared_types(self):
-        names, shared = set(), []
-        for node in ast.walk(ast.parse(self.source)):
-            if isinstance(node, ast.Import):
-                names |= {a.name.split(".")[0] for a in node.names}
-            elif isinstance(node, ast.ImportFrom):
-                if node.module == "agent_pm.session.engine.types":
-                    shared.append([alias.name for alias in node.names])
-                else:
-                    names.add("." * node.level + (node.module or "").split(".")[0])
-        self.assertLessEqual(names, set(sys.stdlib_module_names))
-        self.assertEqual(shared, [["HookCall", "HookError", "Word"]] * 2)
-
+class Source(Case):
     def test_no_client_name(self):
-        self.assertEqual(CLIENT.findall(self.source), [])
+        with open(HOOK) as f:
+            self.assertEqual(CLIENT.findall(f.read()), [])
 
 
 class WordTest(Case):
@@ -212,7 +192,7 @@ class WordTest(Case):
 
 
 class SharedTypes(Case):
-    """The bootstrapped hook uses engine/types' HookError and Word."""
+    """The hook uses engine/types' HookError and Word."""
 
     def test_the_hook_uses_engine_types(self):
         self.assertEqual(

@@ -73,7 +73,7 @@ class StreamHeadless(Headless):
 
 
 class StubTui(Tui):
-    def launch(self, spec: Spec, hook, *, source_roots: tuple[str, ...]):
+    def launch(self, spec: Spec, hook):
         return Launch(("stub", *hook))
 
     def reply(self, payload):
@@ -261,7 +261,7 @@ class SignatureTest(Case):
             (Headless.launch, ["self", "spec"]),
             (Headless.events, ["self", "lines"]),
             (JsonHeadless.parse, ["self", "record"]),
-            (Tui.launch, ["self", "spec", "hook", "source_roots"]),
+            (Tui.launch, ["self", "spec", "hook"]),
             (InProcess.run, ["self", "spec"]),
             (InProcess.check, ["self", "spec"]),
             (Adapter.writable_dirs, ["self", "spec"]),

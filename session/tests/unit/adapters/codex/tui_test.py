@@ -53,9 +53,7 @@ class TuiTest(Base):
             mock.patch("subprocess.Popen") as proc,
         ):
             launch = run.launch(
-                dataclasses.replace(self.spec, prompt="quoted ' prompt\nnext", resume=resume),
-                HOOK,
-                source_roots=PACKAGE_ROOTS,
+                dataclasses.replace(self.spec, prompt="quoted ' prompt\nnext", resume=resume), HOOK
             )
         proc.assert_not_called()
         run.commit()
@@ -94,7 +92,7 @@ class TuiTest(Base):
                 self.subTest(path=path),
                 mock.patch("shutil.which", return_value="/protected/codex"),
             ):
-                committed_tui(self.adapter, spec, HOOK, source_roots=PACKAGE_ROOTS)
+                committed_tui(self.adapter, spec, HOOK)
             self.assertIn(
                 os.path.realpath(path), self.common.load(str(self.work), spec.sid).snapshot.dirs
             )
@@ -110,10 +108,7 @@ class TuiTest(Base):
         self.rollout()
         with mock.patch("shutil.which", return_value="/protected/codex"):
             launch = committed_tui(
-                self.adapter,
-                dataclasses.replace(spec, resume=True, access=self.spec.access),
-                HOOK,
-                source_roots=PACKAGE_ROOTS,
+                self.adapter, dataclasses.replace(spec, resume=True, access=self.spec.access), HOOK
             )
         self.assertEqual(json.loads(launch.argv[-1])["selection"], ["resume", NATIVE])
         self.assertIn(
@@ -133,12 +128,7 @@ class TuiTest(Base):
                 self.subTest(hook=hook),
                 mock.patch("shutil.which", return_value="/protected/codex"),
             ):
-                launch = committed_tui(
-                    self.adapter,
-                    dataclasses.replace(spec, prompt="hi"),
-                    hook,
-                    source_roots=PACKAGE_ROOTS,
-                )
+                launch = committed_tui(self.adapter, dataclasses.replace(spec, prompt="hi"), hook)
             data = json.loads(launch.argv[-1])
             self.assertNotIn("import_roots", data)
             self.assertEqual(data["hook"], list(hook))
@@ -212,10 +202,7 @@ class TuiTest(Base):
             self.assertRaisesRegex(ConfigError, "invalid prompt"),
         ):
             committed_tui(
-                self.adapter,
-                dataclasses.replace(self.spec, prompt="invalid\0prompt"),
-                HOOK,
-                source_roots=PACKAGE_ROOTS,
+                self.adapter, dataclasses.replace(self.spec, prompt="invalid\0prompt"), HOOK
             )
         self.assertIsNone(self.common.load(str(self.work), self.spec.sid))
         self.assertFalse((self.home / ".agent-pm").exists())
@@ -231,12 +218,7 @@ class TuiTest(Base):
                 mock.patch("shutil.which", return_value="/protected/codex"),
                 self.assertRaises(ConfigError),
             ):
-                committed_tui(
-                    self.adapter,
-                    dataclasses.replace(self.spec, prompt=prompt),
-                    hook,
-                    source_roots=roots,
-                )
+                committed_tui(self.adapter, dataclasses.replace(self.spec, prompt=prompt), hook)
             self.assertIsNone(self.common.load(str(self.work), self.spec.sid))
             self.assertFalse((self.home / ".agent-pm").exists())
 
@@ -246,10 +228,7 @@ class TuiTest(Base):
             self.assertRaisesRegex(ConfigError, "missing.*state"),
         ):
             committed_tui(
-                self.adapter,
-                dataclasses.replace(self.spec, prompt="again", resume=True),
-                HOOK,
-                source_roots=PACKAGE_ROOTS,
+                self.adapter, dataclasses.replace(self.spec, prompt="again", resume=True), HOOK
             )
         which.assert_not_called()
 
@@ -281,9 +260,7 @@ class TuiTest(Base):
         second = dataclasses.replace(self.spec, sid="explicit-env", tier=None, effort=None)
         adapter = CodexAdapter({"env": {"CODEX_CI": "configured", "PAGER": "less"}})
         with mock.patch("shutil.which", return_value="/protected/codex"):
-            launch = committed_tui(
-                adapter, dataclasses.replace(second, prompt="hi"), HOOK, source_roots=PACKAGE_ROOTS
-            )
+            launch = committed_tui(adapter, dataclasses.replace(second, prompt="hi"), HOOK)
         self.assertEqual(launch.env["CODEX_CI"], "configured")
         self.assertNotIn("CODEX_CI", launch.unset)
         self.assertEqual(launch.env["PAGER"], "less")
@@ -452,12 +429,7 @@ class TuiTest(Base):
                 "shutil.which",
                 return_value=str(path if path.name == "codex" else "/protected/codex"),
             ):
-                launch = committed_tui(
-                    self.adapter,
-                    dataclasses.replace(spec, prompt="hi"),
-                    hook,
-                    source_roots=PACKAGE_ROOTS,
-                )
+                launch = committed_tui(self.adapter, dataclasses.replace(spec, prompt="hi"), hook)
             data = json.loads(launch.argv[-1])
             self.assertEqual(
                 (data["executable"], data["hook"]),
@@ -517,7 +489,6 @@ class TuiTest(Base):
                             adapter,
                             dataclasses.replace(spec, prompt="hi", resume=resume),
                             (*HOOK[:2], "/driver-only/hook.py", *HOOK[3:]),
-                            source_roots=PACKAGE_ROOTS,
                         )
                     if resume:
                         self.assertNotIn("TMPDIR", launch.env)
@@ -542,9 +513,7 @@ class TuiTest(Base):
             self.assertEqual(len(roots), len(set(roots)))
             self.assertFalse((self.home / ".agent-pm").exists())
             with mock.patch("shutil.which", return_value="/protected/codex"):
-                run.launch(
-                    dataclasses.replace(self.spec, prompt="hello"), HOOK, source_roots=PACKAGE_ROOTS
-                )
+                run.launch(dataclasses.replace(self.spec, prompt="hello"), HOOK)
             run.commit()
             saved = self.common.load(str(self.work), self.spec.sid).writable_roots
             changed_home, changed_tmp = self.root / "changed-home", self.root / "changed-tmp"
@@ -594,10 +563,7 @@ class SuppliedFlagsTest(Base):
     def launch(self, spec, *, resume=False, hook=HOOK):
         with mock.patch("shutil.which", return_value="/protected/codex"):
             launch = committed_tui(
-                self.adapter,
-                dataclasses.replace(spec, prompt=PROMPT, resume=resume),
-                hook,
-                source_roots=PACKAGE_ROOTS,
+                self.adapter, dataclasses.replace(spec, prompt=PROMPT, resume=resume), hook
             )
         return launch, json.loads(launch.argv[-1])
 
@@ -676,10 +642,7 @@ class LaunchPolicy(Base):
     def argv(self, adapter, spec, *, resume=False):
         with mock.patch("shutil.which", return_value="/protected/codex"):
             launch = committed_tui(
-                adapter,
-                dataclasses.replace(spec, prompt="hi", resume=resume),
-                HOOK,
-                source_roots=PACKAGE_ROOTS,
+                adapter, dataclasses.replace(spec, prompt="hi", resume=resume), HOOK
             )
         return tui.execution_argv(
             tui.decode(json.loads(launch.argv[-1])),

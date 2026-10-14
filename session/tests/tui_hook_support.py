@@ -6,10 +6,9 @@ import sys
 import tempfile
 import uuid
 
-from session.tests.case import SRC, Case
+from session.tests.case import PLUGIN_BIN, Case
 
-HOOK = os.path.join(SRC["session"], "agent_pm", "session", "modes", "tui_hook.py")
-SOURCE_ROOTS = json.dumps([SRC["session"], SRC["utils"]])
+COMMAND = os.path.join(PLUGIN_BIN, "agent-pm-session")
 WORDS = {"stop": "done", "ask": "blocked", "tool": "working"}
 
 
@@ -114,8 +113,8 @@ class HookBase(Case):
         write_state(self.dir, self.state)
 
     def hook(self, label, payload=None, args=None, **env):
-        """Runs the hook (env: changes to self.env, None drops a key); checks it exits 0 printing
-        nothing on stdout; returns its stderr.
+        """Runs `agent-pm-session hook DIR LABEL` (env: changes to self.env, None drops a key;
+        args replaces DIR LABEL); checks exit 0 and no stdout; returns stderr.
         """
         data = (
             payload
@@ -123,17 +122,11 @@ class HookBase(Case):
             else json.dumps({} if payload is None else payload).encode()
         )
         environ = {k: v for k, v in {**self.env, **env}.items() if v is not None}
+        environ["PATH"] = os.pathsep.join(
+            (environ.get("PATH", ""), os.path.dirname(sys.executable), "/usr/bin", "/bin")
+        )
         res = subprocess.run(
-            [
-                sys.executable,
-                "-I",
-                HOOK,
-                *(
-                    [self.dir, json.dumps([self.root, *json.loads(SOURCE_ROOTS)]), label]
-                    if args is None
-                    else args
-                ),
-            ],
+            [COMMAND, "hook", *([self.dir, label] if args is None else args)],
             input=data,
             capture_output=True,
             env=environ,
@@ -141,6 +134,10 @@ class HookBase(Case):
         )
         self.assertEqual((res.returncode, res.stdout), (0, b""), res.stderr)
         return res.stderr.decode()
+
+    def callback(self, module: str, state: dict | None = None) -> dict:
+        """descriptor() of a callback in self.root, declaring it."""
+        return descriptor(module, state, (self.root,))
 
     def assertError(self, err, text):
         """err is one stderr line holding text."""

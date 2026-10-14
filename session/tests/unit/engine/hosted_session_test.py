@@ -1304,7 +1304,7 @@ class TuiStartTest(HostedTuiBase):
         )
         (call,) = self.host.calls.terminal.call_args_list
         self.assertEqual(call.args[0], "w1")
-        hook = tui._Store("w1", host=self.host).hook_argv(PACKAGE_ROOTS)
+        hook = tui._Store("w1", host=self.host).hook_argv()
         launch = call.args[1]
         self.assertEqual(launch.argv[-(1 + len(hook)) :], ("hello", *hook))
         self.assertEqual(launch.cwd, self.workdir)

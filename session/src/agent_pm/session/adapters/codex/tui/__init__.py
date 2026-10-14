@@ -112,7 +112,7 @@ class CodexTui(Tui):
         self.native = ""
         self.store = ""
 
-    def launch(self, spec: Spec, hook, *, source_roots: tuple[str, ...]):
+    def launch(self, spec: Spec, hook):
         common = self.common
         prompt, resume = spec.prompt, spec.resume
         self.state = common.prepare(spec)

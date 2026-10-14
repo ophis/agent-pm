@@ -18,7 +18,6 @@ from agent_pm.session.engine.types import (
 from agent_pm.utils import LOCAL_ENV_VARS
 
 from session.tests.case import SPAWNS, Case
-from session.tests.source_roots import PACKAGE_ROOTS
 from session.tests.unit.adapters.claude.support import (
     API_KEY_PROBE,
     CEILING,
@@ -79,9 +78,7 @@ class SettingSourcesTest(Base):
                 adapter = ClaudeAdapter({})
                 for launch in (
                     lambda adapter=adapter, spec=spec: adapter.headless().launch(spec),
-                    lambda adapter=adapter, spec=spec: adapter.tui().launch(
-                        spec, HOOK, source_roots=PACKAGE_ROOTS
-                    ),
+                    lambda adapter=adapter, spec=spec: adapter.tui().launch(spec, HOOK),
                 ):
                     with self.subTest(flags=flags, resume=resume):
                         self.refused(
@@ -96,9 +93,7 @@ class ReadRulesTest(Base):
         adapter = ClaudeAdapter({} if config is None else config)
         return (
             lambda adapter=adapter, spec=spec: adapter.headless().launch(spec),
-            lambda adapter=adapter, spec=spec: adapter.tui().launch(
-                spec, HOOK, source_roots=PACKAGE_ROOTS
-            ),
+            lambda adapter=adapter, spec=spec: adapter.tui().launch(spec, HOOK),
         )
 
     def both(self, *, resume=False, config=None, **access) -> list[tuple[str, ...]]:
@@ -202,7 +197,7 @@ class EnvTest(Base):
             adapter = ClaudeAdapter({})
             for launch in (
                 adapter.headless().launch(spec),
-                adapter.tui().launch(spec, HOOK, source_roots=PACKAGE_ROOTS),
+                adapter.tui().launch(spec, HOOK),
             ):
                 with self.subTest(resume=resume, argv=launch.argv):
                     self.assertEqual(
@@ -234,7 +229,7 @@ class EnvTest(Base):
             adapter = ClaudeAdapter(config)
             for launch in (
                 adapter.headless().launch(spec),
-                adapter.tui().launch(spec, HOOK, source_roots=PACKAGE_ROOTS),
+                adapter.tui().launch(spec, HOOK),
                 adapter.usage_probe(),
             ):
                 with self.subTest(resume=resume, argv=launch.argv):
@@ -272,11 +267,7 @@ class EnvTest(Base):
             (
                 ClaudeAdapter(config)
                 .tui()
-                .launch(
-                    Spec(workdir=self.work, sid=SID, access=access, prompt="hi"),
-                    HOOK,
-                    source_roots=PACKAGE_ROOTS,
-                ),
+                .launch(Spec(workdir=self.work, sid=SID, access=access, prompt="hi"), HOOK),
                 {},
             ),
         ):

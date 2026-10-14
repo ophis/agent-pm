@@ -21,10 +21,7 @@ class StartPaths(Base):
     def test_unknown_launch_fields_are_refused_without_spawning(self):
         with mock.patch("shutil.which", return_value="/protected/codex"):
             launch = committed_tui(
-                self.adapter,
-                dataclasses.replace(self.spec, prompt="prompt"),
-                HOOK,
-                source_roots=PACKAGE_ROOTS,
+                self.adapter, dataclasses.replace(self.spec, prompt="prompt"), HOOK
             )
         data = json.loads(launch.argv[-1])
         with mock.patch("subprocess.Popen") as proc, mock.patch("os.execve") as execute:
@@ -47,7 +44,6 @@ class TuiPaths(Base):
                 self.adapter,
                 dataclasses.replace(self.spec, prompt="hi"),
                 (*HOOK[:2], str(link), *HOOK[3:]),
-                source_roots=PACKAGE_ROOTS,
             )
         with mock.patch("os.chdir"), mock.patch("os.execve") as execute:
             tui_start.launch(

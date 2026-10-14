@@ -36,11 +36,7 @@ class LaunchLifecycleTest(Base):
                 if mode == "headless":
                     run.launch(spec)
                 else:
-                    run.launch(
-                        spec,
-                        (sys.executable, "-I", "/protected/hook.py"),
-                        source_roots=PACKAGE_ROOTS,
-                    )
+                    run.launch(spec, (sys.executable, "-I", "/protected/hook.py"))
             self.assertIsNone(self.common.load(spec.workdir, spec.sid))
             run.commit()
             self.assertIsNotNone(self.common.load(spec.workdir, spec.sid))
@@ -57,11 +53,7 @@ class LaunchLifecycleTest(Base):
                 if mode == "headless":
                     run.launch(spec)
                 else:
-                    run.launch(
-                        spec,
-                        (sys.executable, "-I", "/protected/hook.py"),
-                        source_roots=PACKAGE_ROOTS,
-                    )
+                    run.launch(spec, (sys.executable, "-I", "/protected/hook.py"))
             self.assertFalse((self.home / ".agent-pm").exists())
 
 
@@ -220,7 +212,6 @@ class CommonTest(Base):
                             else run.launch(
                                 dataclasses.replace(requested, prompt="again", resume=True),
                                 ("/fake/hook",),
-                                source_roots=PACKAGE_ROOTS,
                             )
                         )
                     self.assertIs(launch.project, saved)
@@ -1175,9 +1166,7 @@ class ResumeReferenceTest(Base):
         with mock.patch("shutil.which", return_value="/fake/codex"):
             launches = {
                 "headless": self.adapter.headless().launch(resumed),
-                "tui": self.adapter.tui().launch(
-                    resumed, ("/fake/hook",), source_roots=PACKAGE_ROOTS
-                ),
+                "tui": self.adapter.tui().launch(resumed, ("/fake/hook",)),
             }
         for mode, launch in launches.items():
             with self.subTest(mode):

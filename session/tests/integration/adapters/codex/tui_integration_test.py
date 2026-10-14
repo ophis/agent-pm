@@ -35,12 +35,10 @@ from agent_pm.session.engine.types import (
     Spec,
     TurnEnd,
 )
-from agent_pm.session.modes import tui_hook
 
 from session.tests import live_tmux
-from session.tests.case import PY, REPO, ROOTS, SRC, Case, configured
+from session.tests.case import PLUGIN_BIN, PY, REPO, ROOTS, Case, configured
 from session.tests.integration.adapters.codex import fake_codex, fake_tui
-from session.tests.source_roots import PACKAGE_ROOTS
 from session.tests.unit.adapters.codex.support import CHILD, NATIVE, Base
 
 WAIT = 15
@@ -415,14 +413,7 @@ class HookTrustIntegrationTest(Live):
         run = self.session_cls._config().registry.adapter("codex").tui()
         launch = run.launch(
             dataclasses.replace(self.spec, sid=self.sid, prompt="hello"),
-            (
-                sys.executable,
-                "-I",
-                os.path.abspath(tui_hook.__file__),
-                "/protected/session",
-                json.dumps(PACKAGE_ROOTS),
-            ),
-            source_roots=PACKAGE_ROOTS,
+            (os.path.join(PLUGIN_BIN, "agent-pm-session"), "hook", "/protected/session"),
         )
         data = json.loads(launch.argv[-1])
         env = {**dict(os.environ), **launch.env}
@@ -1123,7 +1114,8 @@ class HookTest(Base):
         folder = self.root / "hook-session"
         folder.mkdir()
 
-        roots_json = json.dumps([SRC["session"], SRC["utils"]])
+        command = (os.path.join(PLUGIN_BIN, "agent-pm-session"), "hook", str(folder), "Stop")
+        env = {**os.environ, "PATH": os.pathsep.join((os.path.dirname(sys.executable), os.defpath))}
         state = {
             "client": "codex",
             "sid": self.spec.sid,
@@ -1139,12 +1131,13 @@ class HookTest(Base):
         }
         (folder / "session.json").write_text(json.dumps(state))
         result = subprocess.run(
-            [sys.executable, "-I", tui_hook.__file__, str(folder), roots_json, "Stop"],
+            command,
             input=json.dumps(
                 {"session_id": NATIVE, "cwd": str(self.cwd), "last_assistant_message": "reply"}
             ),
             capture_output=True,
             text=True,
+            env=env,
             timeout=20,
         )
         self.assertEqual((result.returncode, result.stdout, result.stderr), (0, "", ""))
@@ -1153,10 +1146,11 @@ class HookTest(Base):
         self.assertEqual(records[0]["payload"]["hook_event_name"], "Stop")
         self.assertEqual(self.common.load(str(self.work), self.spec.sid).native_id, NATIVE)
         result = subprocess.run(
-            [sys.executable, "-I", tui_hook.__file__, str(folder), roots_json, "Stop"],
+            command,
             input=json.dumps({"session_id": NATIVE, "cwd": str(self.cwd), "agent_id": CHILD}),
             capture_output=True,
             text=True,
+            env=env,
             timeout=20,
         )
         self.assertEqual((result.returncode, result.stdout, result.stderr), (0, "", ""))

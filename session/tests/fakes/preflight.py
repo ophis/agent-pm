@@ -59,7 +59,7 @@ class PreflightTui(Tui):
     def __init__(self, adapter):
         self.adapter = adapter
 
-    def launch(self, spec, hook, *, source_roots):
+    def launch(self, spec, hook):
         return self.adapter.launch(spec)
 
     def commit(self):

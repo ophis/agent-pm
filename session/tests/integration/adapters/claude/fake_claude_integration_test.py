@@ -18,7 +18,6 @@ from agent_pm.session.engine.types import Access, Spec
 
 from session.tests import case, live_tmux
 from session.tests.integration.adapters.claude import fake_claude
-from session.tests.source_roots import PACKAGE_ROOTS
 
 FAKE = os.path.abspath(fake_claude.__file__)
 
@@ -464,8 +463,8 @@ class ClaudeTuiLaunch(Case):
             background=1,
         )
         new, resume = (
-            tui.launch(dataclasses.replace(spec, prompt="do it"), hook, source_roots=PACKAGE_ROOTS),
-            tui.launch(dataclasses.replace(spec, resume=True), hook, source_roots=PACKAGE_ROOTS),
+            tui.launch(dataclasses.replace(spec, prompt="do it"), hook),
+            tui.launch(dataclasses.replace(spec, resume=True), hook),
         )
         self.assertEqual(new.argv[-2:], ("--", "do it"))
         res = self.run_argv(new.argv)

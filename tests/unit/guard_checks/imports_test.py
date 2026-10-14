@@ -271,10 +271,10 @@ class ImportHygiene(Sample):
 
 
 class StandaloneImports(Sample):
-    def test_tui_hook_bootstraps_package_imports(self):
+    def test_tui_hook_uses_package_imports(self):
         path = f"{SESSION_SRC}modes/tui_hook.py"
         self.assertNotIn(path, STANDALONE)
-        self.assertEqual(IMPORT_BOOTSTRAPS[path], "_bootstrap")
+        self.assertNotIn(path, IMPORT_BOOTSTRAPS)
 
     def test_tmux_host_uses_package_imports(self):
         self.assertNotIn(TMUX_HOST, STANDALONE)

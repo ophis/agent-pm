@@ -45,9 +45,8 @@ from agent_pm.session.hosts.tmux.types import TuiError
 from agent_pm.session.modes import tui, tui_hook
 
 from session.tests import fake_adapter
-from session.tests.case import SRC, Case
+from session.tests.case import PLUGIN_BIN, Case
 from session.tests.fakes.terminal import MemoryHost, ScreenHost
-from session.tests.source_roots import PACKAGE_ROOTS
 from session.tests.tmux_host_support import Base as TmuxBase
 
 NAME = "w1"
@@ -90,10 +89,9 @@ class ScanTui(fake_adapter.FakeTui):
 
     def __init__(self, adapter):
         super().__init__(adapter)
-        self.screens, self.launched, self.roots = [], {}, None
+        self.screens, self.launched = [], {}
 
-    def launch(self, spec, hook, *, source_roots):
-        self.roots = source_roots
+    def launch(self, spec, hook):
         return Launch(("/bin/run", *hook), **self.launched)
 
     def limit(self, screen):
@@ -524,6 +522,16 @@ class StartTest(Base):
         self.assertEqual(self.recorded, [])
         self.host.calls.terminal.assert_not_called()
 
+    def test_without_agent_pm_session_on_path_nothing_starts(self):
+        with (
+            mock.patch.dict(os.environ, {"PATH": "/usr/bin:/bin"}),
+            self.assertRaisesRegex(
+                ConfigError, f"tui session {NAME}: agent-pm-session is not on PATH"
+            ),
+        ):
+            self.start()
+        self.nothing_hosted()
+
     def nothing_hosted(self):
         self.host.calls.terminal.assert_not_called()
         self.host.calls.attach.assert_not_called()
@@ -554,7 +562,7 @@ class StartTest(Base):
             (
                 NAME,
                 Launch(
-                    ("/bin/run", *tui._Store(NAME, host=self.host).hook_argv(PACKAGE_ROOTS)),
+                    ("/bin/run", *tui._Store(NAME, host=self.host).hook_argv()),
                     cwd=self.tmp,
                     env=self.prepared.env,
                 ),
@@ -563,7 +571,6 @@ class StartTest(Base):
         self.assertEqual(call.kwargs["events"], self.events)
         self.assertEqual(call.kwargs["metadata"]["sid"], SID)
         self.assertEqual(call.kwargs["metadata"]["client"], "fake")
-        self.assertEqual(self.run.roots, PACKAGE_ROOTS)
         self.assertEqual(
             (mode.name, mode.prepared.info.sid, mode._store.dir), (NAME, SID, self.dir)
         )
@@ -633,13 +640,25 @@ class StartTest(Base):
         self.run.launched = {"env": {"LAUNCH_SET": "1"}, "unset": ("LAUNCH_DROP",)}
         with mock.patch.dict(
             os.environ,
-            {"HOME": os.environ["HOME"], "INNER_ID": "i", "LAUNCH_DROP": "x", "KEEP": "k"},
+            {
+                "HOME": os.environ["HOME"],
+                "PATH": PLUGIN_BIN,
+                "INNER_ID": "i",
+                "LAUNCH_DROP": "x",
+                "KEEP": "k",
+            },
             clear=True,
         ):
             self.start()
         self.assertEqual(
             self.host.calls.terminal.call_args.args[1].env,
-            {"HOME": os.environ["HOME"], "KEEP": "k", "LAUNCH_SET": "1", "PWD": self.tmp},
+            {
+                "HOME": os.environ["HOME"],
+                "PATH": PLUGIN_BIN,
+                "KEEP": "k",
+                "LAUNCH_SET": "1",
+                "PWD": self.tmp,
+            },
         )
 
     def test_a_bad_name_given_or_made_from_the_sid_is_refused_before_host_launch_or_a_path(self):
@@ -1485,13 +1504,23 @@ class PathsTest(Base):
         self.assertEqual(tui.TUI_DIR, "~/.agent-pm/tui")
         self.assertEqual(tui._Store(NAME, host=self.host).dir, self.dir)
 
-    def test_its_hook_argv_runs_tui_hook_isolated_on_its_dir(self):
-        hook = os.path.join(SRC["session"], "agent_pm", "session", "modes", "tui_hook.py")
-        argv = tui._Store(NAME, host=self.host).hook_argv(PACKAGE_ROOTS)
-        self.assertEqual(argv, (sys.executable, "-I", argv[2], self.dir, argv[4]))
-        self.assertEqual(json.loads(argv[4]), [SRC["session"], SRC["utils"]])
-        self.assertTrue(os.path.isabs(argv[2]))
-        self.assertTrue(os.path.samefile(argv[2], hook))
+    def test_its_hook_argv_runs_the_plugins_agent_pm_session_hook_on_its_dir(self):
+        self.assertEqual(
+            tui._Store(NAME, host=self.host).hook_argv(),
+            (os.path.join(PLUGIN_BIN, "agent-pm-session"), "hook", self.dir),
+        )
+
+    def test_its_hook_argv_names_the_command_its_current_path_finds(self):
+        other = os.path.join(self.tmp, "other plugin", "bin")
+        os.makedirs(other)
+        command = os.path.join(other, "agent-pm-session")
+        with open(command, "w", encoding="utf-8") as f:
+            f.write("#!/bin/sh\n")
+        os.chmod(command, 0o755)
+        with mock.patch.dict(os.environ, {"PATH": other + os.pathsep + os.environ["PATH"]}):
+            self.assertEqual(
+                tui._Store(NAME, host=self.host).hook_argv(), (command, "hook", self.dir)
+            )
 
 
 class PrepareTest(Base):
@@ -1801,7 +1830,7 @@ class TransportErrorTest(TmuxBase):
         os.mkdir(workdir)
 
         class Launchable(ScanTui):
-            def launch(self, spec, hook, *, source_roots):
+            def launch(self, spec, hook):
                 return Launch((sys.executable,))
 
         adapter = TuiAdapter({"tui": True})

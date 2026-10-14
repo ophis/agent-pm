@@ -21,6 +21,7 @@ from agent_pm.session.engine.types import (
     Spec,
 )
 
+from session.tests.case import PLUGIN_BIN
 from session.tests.headless_support import NOTHING, SID, HeadlessCase, StubAdapter, StubRun
 from utils.tests.process_fixtures import DEVNULL
 
@@ -108,7 +109,15 @@ class Start(Base):
             {"inner": {"implementation": "agent_pm.session.adapters.inner:InnerAdapter"}}
         )
         with (
-            mock.patch.dict(os.environ, {"HM_UNSET": "x", "HM_ID": "i", "HM_KEEP": "k"}),
+            mock.patch.dict(
+                os.environ,
+                {
+                    "HM_UNSET": "x",
+                    "HM_ID": "i",
+                    "HM_KEEP": "k",
+                    "PATH": os.pathsep.join((PLUGIN_BIN, os.environ["PATH"])),
+                },
+            ),
             self.faked() as calls,
         ):
             prepared = self.start(StubAdapter(launch), access=Access(project=True), prompt="hi")

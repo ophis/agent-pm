@@ -14,7 +14,6 @@ its keys in order; a failed key gets one stderr line and no stdout line, and the
 from __future__ import annotations
 
 import argparse
-import json
 import os
 import re
 import sys
@@ -397,11 +396,7 @@ def _run(args, flags: list[str], hosts: Hosts, start_sid: str | None) -> int:
 def main(argv: list[str] | None = None) -> int:
     argv = sys.argv[1:] if argv is None else list(argv)
     if argv[:1] == ["hook"]:
-        if len(argv) == 3:
-            roots = module_roots(agent_pm.session, agent_pm.utils)
-            tui_hook.run([argv[1], json.dumps(list(roots)), argv[2]], sys.stdin)
-        else:
-            tui_hook.say(f"usage: {PROG} hook <session dir> <label>")
+        tui_hook.run(argv[1:], sys.stdin, roots=module_roots(agent_pm.session, agent_pm.utils))
         return 0
     start_sid = os.environ.get(START_SID) or None
     flags: list[str] = []

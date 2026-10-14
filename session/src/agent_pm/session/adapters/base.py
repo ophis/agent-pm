@@ -113,9 +113,9 @@ class Tui(ABC):
     client = ""  # last ClientBound's id
 
     @abstractmethod
-    def launch(self, spec: Spec, hook: tuple[str, ...], *, source_roots: tuple[str, ...]) -> Launch:
+    def launch(self, spec: Spec, hook: tuple[str, ...]) -> Launch:
         """As Headless.launch, plus each label L of `hooks` as a hook running `hook + (L,)`, its
-        payload on stdin. source_roots locates the loaded packages for isolated scripts.
+        payload on stdin.
         """
 
     def commit(self) -> None:

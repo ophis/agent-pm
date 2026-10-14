@@ -8,7 +8,6 @@ import json
 import os
 import signal
 import stat
-import sys
 import tempfile
 import time
 import uuid
@@ -16,11 +15,10 @@ from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, replace
 from typing import Self
 
-import agent_pm.session.engine.types
-import agent_pm.utils
 from agent_pm.session.adapters.base import Adapter, Tui
 from agent_pm.session.adapters.registry import Registry
 from agent_pm.session.engine.types import (
+    COMMAND,
     TAG,
     Activity,
     Blocked,
@@ -44,7 +42,7 @@ from agent_pm.session.hosts.base import Displayable, Host, HostProcess, Terminal
 from agent_pm.session.modes import tui_hook
 from agent_pm.session.modes.base import Runtime, identity_drop
 from agent_pm.utils import CONFIG_NAME as NAME
-from agent_pm.utils import STATE, Display, json_records, module_roots, read_regular
+from agent_pm.utils import STATE, Display, command_path, json_records, read_regular
 
 TUI_DIR = f"{STATE}/tui"
 WORDS = {
@@ -126,14 +124,16 @@ class _Store:
         self.dir = os.path.join(self.root, name)
         self.state_file = os.path.join(self.dir, tui_hook.STATE)
 
-    def hook_argv(self, source_roots: tuple[str, ...]) -> tuple[str, ...]:
-        return (
-            sys.executable,
-            "-I",
-            os.path.abspath(tui_hook.__file__),
-            self.dir,
-            json.dumps(source_roots),
-        )
+    def hook_argv(self) -> tuple[str, ...]:
+        """The client's hook command: the running plugin's agent-pm-session (where PATH finds it)
+        and this dir; the client appends its label.
+        """
+        command = command_path(COMMAND)
+        if command is None:
+            raise ConfigError(
+                f"tui session {self.name}: {COMMAND} is not on PATH (its hooks run it)"
+            )
+        return (command, "hook", self.dir)
 
     def read(self) -> dict:
         return _read_state(self.name, self.state_file)
@@ -368,9 +368,8 @@ class TuiRuntime(Runtime):
         store = _Store(name, host=host)
         spec = replace(spec, name=name, events=events)
         spec = cls._noted(spec, adapter)
-        roots = module_roots(agent_pm.session, agent_pm.utils)
-        hook = store.hook_argv(roots)
-        prepared = cls._launched(spec, lambda s: run.launch(s, hook, source_roots=roots), drop)
+        hook = store.hook_argv()
+        prepared = cls._launched(spec, lambda s: run.launch(s, hook), drop)
         metadata = {
             "sid": prepared.info.sid,
             "client": spec.client or "session",

@@ -97,10 +97,7 @@ class StartTest(Base):
                 mock.patch("shutil.which", return_value="/protected/codex"),
             ):
                 launch = committed_tui(
-                    self.adapter,
-                    dataclasses.replace(spec, prompt="prompt"),
-                    hook,
-                    source_roots=PACKAGE_ROOTS,
+                    self.adapter, dataclasses.replace(spec, prompt="prompt"), hook
                 )
                 plan = tui.decode(json.loads(launch.argv[-1]))
                 catalog, _ = self.catalog()
@@ -118,9 +115,7 @@ class StartTest(Base):
         run = self.adapter.tui()
         hook = HOOK
         with mock.patch("shutil.which", return_value="/protected/codex"):
-            launch = run.launch(
-                dataclasses.replace(self.spec, prompt="prompt"), hook, source_roots=PACKAGE_ROOTS
-            )
+            launch = run.launch(dataclasses.replace(self.spec, prompt="prompt"), hook)
         run.commit()
         before = {str(p): p.read_bytes() for p in self.home.rglob("*") if p.is_file()}
         with (
@@ -147,7 +142,6 @@ class StartTest(Base):
                 self.adapter,
                 dataclasses.replace(spec, prompt="prompt"),
                 (sys.executable, "-I", "/protected/hook.py", "/protected/session", ROOTS_JSON),
-                source_roots=PACKAGE_ROOTS,
             )
         with (
             mock.patch.dict(
@@ -168,7 +162,6 @@ class StartTest(Base):
                 self.adapter,
                 dataclasses.replace(self.spec, prompt="prompt"),
                 (sys.executable, "-I", "/protected/hook.py", "/protected/session", ROOTS_JSON),
-                source_roots=PACKAGE_ROOTS,
             )
         data = json.loads(launch.argv[-1])
         for given, expected in ((None, None), ("/client lib", "/client lib")):
@@ -278,7 +271,6 @@ class StartTest(Base):
             launch = run.launch(
                 dataclasses.replace(self.spec, prompt="prompt"),
                 (sys.executable, "-I", "/protected/hook.py", "/protected/session", ROOTS_JSON),
-                source_roots=PACKAGE_ROOTS,
             )
         run.commit()
         for signum in (tui_start.signal.SIGHUP, tui_start.signal.SIGTERM):
@@ -312,7 +304,6 @@ class StartTest(Base):
                 self.adapter,
                 dataclasses.replace(self.spec, prompt="hi"),
                 (sys.executable, "-I", "/protected/hook.py", "/protected/session", ROOTS_JSON),
-                source_roots=PACKAGE_ROOTS,
             )
         with (
             mock.patch.dict("os.environ", {"TMPDIR": "/protected"}),
