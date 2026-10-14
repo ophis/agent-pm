@@ -68,6 +68,12 @@ class Abstract(Case):
 
 
 class HostDefaults(Case):
+    def test_descendants_are_its_listed_sessions_unless_it_knows_who_opened_whom(self):
+        host = MinimalHost("m")
+        with mock.patch.object(host, "list", return_value=["a", "b"]) as listed:
+            self.assertEqual(host.descendants("d"), ["a", "b"])
+        listed.assert_called_once_with("d")
+
     def test_name_and_a_copy_of_settings(self):
         settings = {"root": "/x"}
         host = MinimalHost("m", settings)

@@ -320,8 +320,6 @@ LEGACY_HOST_NAMES = {
     (f"{SESSION_SRC}engine/forwarding.py", "_opener"): (2, "TASK-375"),
     (f"{SESSION_SRC}engine/forwarding.py", "opener"): (4, "TASK-375"),
     (f"{SESSION_SRC}engine/forwarding.py", "split_from"): (4, "TASK-375"),
-    (f"{SESSION_SRC}engine/types.py", "pane"): (1, "TASK-369"),
-    (f"{SESSION_SRC}engine/types.py", "opener"): (1, "TASK-369"),
 }
 
 

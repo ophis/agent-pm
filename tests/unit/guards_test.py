@@ -2662,14 +2662,17 @@ class LegacyHostNames(Sample):
 
     def test_a_removed_name_or_file_is_stale(self):
         files = self.baseline()
-        path = f"{guards.SESSION_SRC}engine/types.py"
-        files[path] = "pane = None\n"
+        path = f"{guards.SESSION_SRC}engine/forwarding.py"
+        files[path] = files[path].replace("\nopener = None", "\n").replace("\n\n", "\n")
         self.assertEqual(
             guards.legacy_host_names(self.tree(files)),
-            [f"{path}: opener: expected 1 legacy occurrences, found 0 (TASK-369)"],
+            [f"{path}: opener: expected 4 legacy occurrences, found 0 (TASK-375)"],
         )
         del files[path]
-        self.assertEqual(len(guards.legacy_host_names(self.tree(files))), 2)
+        self.assertEqual(
+            len(guards.legacy_host_names(self.tree(files))),
+            len([key for key in guards.LEGACY_HOST_NAMES if key[0] == path]),
+        )
 
     def test_new_names_and_other_modules_have_no_exemption(self):
         files = self.baseline()

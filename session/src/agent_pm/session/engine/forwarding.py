@@ -12,7 +12,6 @@ from dataclasses import replace
 
 from agent_pm.session.adapters import registry
 from agent_pm.session.engine.base import Session
-from agent_pm.session.engine.config import read_config
 from agent_pm.session.engine.hosted import HostedSession
 from agent_pm.session.engine.records import RunLog
 from agent_pm.session.engine.types import (
@@ -54,8 +53,10 @@ def sessions(match: str | None = None) -> list[SessionRow]:
 
 
 def close(name: str) -> None:
-    """Kills tui session `name` (absent is fine), then removes its session dir."""
-    Driver.from_config(read_config()).close(name)
+    """Kills tui session `name` on the configured default Host (absent is fine), then removes its
+    session dir.
+    """
+    tui.TuiMode.close(tui.checked_name(name), host=HostedSession.host())
 
 
 def _on(tmux) -> Callable[[type[Host], str, Mapping], Host]:

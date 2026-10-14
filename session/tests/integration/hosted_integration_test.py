@@ -1,24 +1,37 @@
 """HostedSession on a private tmux server (session/tests/live_tmux.py), os.environ that server's env,
 the fake adapter's Tui: Session.attach(name).close() and close(name) leave the same state (FR-4);
-list and close with no class configured; a display given to start stored, read back and listed
-(FR-48).
+list and close refused until a class is configured (FR-2: the session reads no config itself); a
+display given to start stored, read back and listed (FR-48).
 """
 
 import json
 import os
 import unittest
 
-from agent_pm.session import Mode, Spec, close, sessions
-from agent_pm.session.engine.hosted import HostedSession
+from agent_pm.session import ConfigError, Host, Mode, Spec, close, sessions
+from agent_pm.session.engine.hosted import UNCONFIGURED, HostedSession
 from agent_pm.session.modes import tui
 
+from session.tests import fake_adapter
+from session.tests.modules import adapter_loader
 from session.tests.tui_support import MANAGER, Live
 
 DISPLAYS = {"w4": f"{MANAGER}/right", "w5": "elsewhere:1.2"}
 
 
 class CloseTest(Live):
+    def configure_hosted(self) -> None:
+        self.addCleanup(setattr, HostedSession, "_setup", None)
+        HostedSession.configure(
+            adapters=self.config["adapters"],
+            hosts=Host.parse_hosts(
+                {**self.config["hosts"], "default": self.config["default_host"]}
+            ),
+            class_loader=adapter_loader({"agent_pm.session.adapters.fake": fake_adapter}),
+        )
+
     def test_attach_then_close_and_close_leave_the_same_state_fr_4(self):
+        self.configure_hosted()
         found = {}
         for name, close_it in (
             ("w1", lambda: self.driver.session_cls.attach("w1").close()),
@@ -34,9 +47,19 @@ class CloseTest(Live):
         self.assertEqual(found, {"w1": ("absent", [], False), "w2": ("absent", [], False)})
         self.assertEqual([row.name for row in self.driver.sessions()], [MANAGER])
 
-    def test_list_and_close_need_no_configured_class(self):
+    def test_list_and_close_need_a_configured_class(self):
         self.start("w3", {"read": True})
         self.assertIsNone(HostedSession._setup)
+        for call in (
+            lambda: HostedSession.list("w.*"),
+            lambda: sessions("w.*"),
+            lambda: close("w3"),
+        ):
+            with self.subTest(call=call), self.assertRaises(ConfigError) as caught:
+                call()
+            self.assertEqual(str(caught.exception), UNCONFIGURED)
+        self.assertEqual([row.name for row in self.driver.sessions("w.*")], ["w3"])
+        self.configure_hosted()
         self.assertEqual([row.name for row in HostedSession.list("w.*")], ["w3"])
         self.assertEqual(sessions("w.*"), HostedSession.list("w.*"))
         close("w3")

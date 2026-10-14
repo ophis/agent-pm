@@ -525,16 +525,15 @@ class IdleTimeout:
 
 @dataclass(frozen=True)
 class SessionRow:
-    """runtime: a tui session's (HostedSession's), else None; shown: the session showing it, ""
-    unnamed, None none; state: given its plain value too.
+    """runtime: a tui session's (HostedSession's), else None; display: its Host's, opaque; shown: the
+    session showing it, "" unnamed, None none; state: given its plain value too.
     """
 
     name: str
     sid: str | None
     runtime: str | None
     state: ActivityState
-    pane: str | None
-    opener: str | None
+    display: str | None
     shown: str | None
     last_lines: str | None
     own: bool

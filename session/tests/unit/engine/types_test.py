@@ -275,7 +275,7 @@ class CarriedEnums(Case):
     def test_a_row_carries_an_activity_state_given_it_or_its_plain_value(self):
         for state in (ActivityState.DEAD, "dead"):
             with self.subTest(state=state):
-                row = SessionRow("w1", None, None, state, None, None, None, None, own=False)
+                row = SessionRow("w1", None, None, state, None, None, None, own=False)
                 self.assertIs(row.state, ActivityState.DEAD)
 
     def test_an_unknown_value_names_the_allowed_ones(self):
@@ -289,7 +289,7 @@ class CarriedEnums(Case):
                 "resumable must be one of yes, no, unknown, got None",
             ),
             (
-                lambda: SessionRow("w1", None, None, "idle", None, None, None, None, own=False),
+                lambda: SessionRow("w1", None, None, "idle", None, None, None, own=False),
                 "state must be one of working, done, blocked, dead, got 'idle'",
             ),
         ):

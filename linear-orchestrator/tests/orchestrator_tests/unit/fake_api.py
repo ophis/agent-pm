@@ -38,7 +38,7 @@ class FakeApi:
         if self.live is None:
             raise DriverError("tmux sessions unknown: tmux failed")
         return [
-            SessionRow(n, None, None, "working", None, None, None, None, own=False)
+            SessionRow(n, None, None, "working", None, None, None, own=False)
             for n in self.live
             if match is None or re.fullmatch(match, n)
         ]

@@ -83,8 +83,7 @@ class HostProcess(ABC):
             None if receipt is None else receipt.sid,
             None if receipt is None else receipt.kind,
             ActivityState.WORKING if self.alive() else ActivityState.DEAD,
-            None,
-            None,
+            self.display(),
             None,
             None,
             own=False,
@@ -180,6 +179,12 @@ class Host(ABC):
 
     def rows(self, display: Display = None) -> list[SessionRow]:
         return [self.attach(name).row() for name in self.list(display)]
+
+    def descendants(self, display: Display = None) -> list[str]:
+        """list(display)'s sessions and, where the Host knows who opened whom, the sessions they
+        opened, transitively; sorted.
+        """
+        return self.list(display)
 
     def events_path(self, events: str | None) -> str | None:
         return None if events is None else os.path.abspath(events)

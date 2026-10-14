@@ -468,11 +468,31 @@ class DisplayableTest(Base):
             self.host.attach_command("a b")
 
 
+class DescendantsTest(Base):
+    def test_the_matching_sessions_then_those_each_opened_transitively(self):
+        self.tmux.listing.return_value = [
+            listed("a", opener="mgr", display="mgr"),
+            listed("b", opener="a", display="a/below"),
+            listed("c", opener="b", display="b"),
+            listed("d", opener="d", display="d"),
+            listed("x", opener="other", display="other"),
+        ]
+        self.assertEqual(self.host.list("mgr"), ["a"])
+        self.assertEqual(self.host.descendants("mgr"), ["a", "b", "c"])
+        self.assertEqual(self.host.descendants("other"), ["x"])
+        self.assertEqual(self.host.descendants(""), [])
+
+    def test_a_tmux_failure_is_a_driver_error(self):
+        self.tmux.listing.side_effect = [[listed("a", opener="mgr", display="mgr")], None]
+        with self.assertRaisesRegex(DriverError, "tmux failed"):
+            self.host.descendants("mgr")
+
+
 class RowsTest(Base):
     def test_a_row_per_listed_session_in_its_order(self):
         self.tmux.listing.return_value = [
             listed("mgr"),
-            listed("w1", sid=SID, runtime="fake", state="done", pane="%3", opener="mgr", shown="m"),
+            listed("w1", sid=SID, runtime="fake", state="done", display="mgr/below", shown="m"),
             listed("w2", sid="a/b", runtime="Fake", state="blocked", shown=""),
             listed("w3", runtime="x-y", state="dead"),
             listed("w4", runtime="fake", state="done", dead=True, last_lines="bye"),
@@ -490,8 +510,7 @@ class RowsTest(Base):
                     sid=None,
                     runtime=None,
                     state="working",
-                    pane=None,
-                    opener=None,
+                    display=None,
                     shown=None,
                     last_lines=None,
                     own=True,
@@ -501,8 +520,7 @@ class RowsTest(Base):
                     sid=SID,
                     runtime="fake",
                     state="done",
-                    pane="%3",
-                    opener="mgr",
+                    display="mgr/below",
                     shown="m",
                     last_lines=None,
                     own=False,
@@ -512,8 +530,7 @@ class RowsTest(Base):
                     sid=None,
                     runtime=None,
                     state="blocked",
-                    pane=None,
-                    opener=None,
+                    display=None,
                     shown="",
                     last_lines=None,
                     own=False,
@@ -523,8 +540,7 @@ class RowsTest(Base):
                     sid=None,
                     runtime=None,
                     state="working",
-                    pane=None,
-                    opener=None,
+                    display=None,
                     shown=None,
                     last_lines=None,
                     own=False,
@@ -534,8 +550,7 @@ class RowsTest(Base):
                     sid=None,
                     runtime="fake",
                     state="dead",
-                    pane=None,
-                    opener=None,
+                    display=None,
                     shown=None,
                     last_lines="bye",
                     own=False,
@@ -545,8 +560,7 @@ class RowsTest(Base):
                     sid=None,
                     runtime="fake9_",
                     state="working",
-                    pane=None,
-                    opener=None,
+                    display=None,
                     shown=None,
                     last_lines=None,
                     own=False,

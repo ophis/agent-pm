@@ -511,6 +511,18 @@ class TmuxHost(Host, Displayable):
 
         return sorted(row["name"] for row in found if display is None or matches(row["display"]))
 
+    def descendants(self, display: Display = None) -> list[str]:
+        """list(display)'s sessions, then each session whose @opener is one of those, transitively."""
+        found = set(self.list(display))
+        rows = self.tmux.listing() if found else []
+        if rows is None:
+            raise DriverError("tmux sessions unknown: tmux failed")
+        while grown := {
+            row["name"] for row in rows if row["name"] not in found and row["opener"] in found
+        }:
+            found |= grown
+        return sorted(found)
+
     def rows(self, display: Display = None) -> list[SessionRow]:
         names = set(self.list(display))
         found = self.tmux.listing()
@@ -532,8 +544,7 @@ class TmuxHost(Host, Displayable):
                 else ActivityState(row["state"])
                 if row["state"] in (Word.DONE, Word.BLOCKED)
                 else ActivityState.WORKING,
-                pane=row["pane"],
-                opener=row["opener"],
+                display=row["display"],
                 shown=row["shown"],
                 last_lines=row["last_lines"],
                 own=row["name"] == own,

@@ -20,7 +20,6 @@ from typing import Any, ClassVar, cast
 from agent_pm.session.adapters.base import Adapter
 from agent_pm.session.adapters.registry import Registry, settings
 from agent_pm.session.engine.base import Session
-from agent_pm.session.engine.config import read_config
 from agent_pm.session.engine.records import RunLog
 from agent_pm.session.engine.types import (
     Blocked,
@@ -344,11 +343,9 @@ class HostedSession(Session):
             pattern = None if match is None else re.compile(match)
         except re.error as error:
             raise ConfigError(f"match {match!r:.80}: {error}") from None
+        setup = cls._config()
         if display == "":
             return []
-        if cls._setup is None:
-            return cls.configured(**settings(read_config())).list(match, display=display)
-        setup = cls._config()
         return sorted(
             (
                 row
