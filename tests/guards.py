@@ -146,6 +146,18 @@ SESSION_NAMES_ALLOWED = {
 }
 
 
+ORCH_SESSION_CONTRACT = "linear_orchestrator reaches session only through delegate"
+
+
+ORCH_SESSION_IMPORTS = {
+    f"{ORCH_PKG}.engine.config": {"Driver"},
+    f"{ORCH_PKG}.engine.prune": {"ConfigError", "DriverError"},
+    f"{ORCH_PKG}.engine.router": {"ConfigError", "DriverError"},
+    f"{ORCH_PKG}.engine.run": {"ConfigError", "DriverError", "SIGNALS"},
+    f"{ORCH_PKG}.linear.sessions": {"ConfigError", "DriverError"},
+}
+
+
 NOQA_ALLOWED = {
     (
         f"{SESSION_SRC}modes/headless.py",
@@ -933,6 +945,44 @@ def _typing(node, *, operand=False):
     if isinstance(node, ast.Subscript):
         return _name(node.value).rpartition(".")[2] in GENERICS
     return operand and (bool(_name(node)) or isinstance(node, ast.Constant) and node.value is None)
+
+
+def orchestrator_session_imports(repo: str) -> list[str]:
+    """Orchestration imports from session only ORCH_SESSION_IMPORTS's names, its contract's
+    ignore_imports in pyproject.toml.
+    """
+    found = []
+    config = os.path.join(repo, "pyproject.toml")
+    if os.path.isfile(config):
+        with open(config, "rb") as file:
+            contracts = tomllib.load(file)["tool"]["importlinter"]["contracts"]
+        listed = next(
+            (c.get("ignore_imports") for c in contracts if c["name"] == ORCH_SESSION_CONTRACT), None
+        )
+        pinned = [f"{m} -> {PKG}.{SESSION}" for m in sorted(ORCH_SESSION_IMPORTS)]
+        if sorted(listed or ()) != pinned:
+            found.append(
+                f"pyproject.toml: {ORCH_SESSION_CONTRACT!r} must ignore exactly ORCH_SESSION_IMPORTS"
+            )
+    session = f"{PKG}.{SESSION}."
+    for rel, text in _files(os.path.join(repo, ORCH_PROJECT, ORCH_SRC), ".py"):
+        module = f"{ORCH_PKG}.{rel.removesuffix('.py').replace('/', '.')}".removesuffix(".__init__")
+        tree = ast.parse(text)
+        bound = _bindings(tree)
+        names = {
+            dotted.removeprefix(session).split(".")[0]
+            for dotted in (
+                *bound.values(),
+                *(_dotted(n, bound) for n in ast.walk(tree) if isinstance(n, ast.Attribute)),
+            )
+            if dotted.startswith(session)
+        }
+        found += [
+            f"{ORCH_PROJECT}/{ORCH_SRC}{rel}: {module} imports {name} from {PKG}.{SESSION}; "
+            "go through agent_pm.delegate (TASK-394 removes this list)"
+            for name in sorted(names - ORCH_SESSION_IMPORTS.get(module, set()))
+        ]
+    return found
 
 
 def literal_imports(repo: str) -> list[str]:

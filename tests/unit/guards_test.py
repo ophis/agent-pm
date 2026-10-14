@@ -507,6 +507,69 @@ class SessionNames(Sample):
         self.assertEqual(guards.session_names(root), [])
 
 
+class OrchestratorSessionImports(Sample):
+    def check(self, module, sample, config=None):
+        root = self.tree(
+            {
+                "pyproject.toml": config or Path(REPO, "pyproject.toml").read_text(),
+                f"linear-orchestrator/{guards.ORCH_SRC}{module}": sample,
+            }
+        )
+        return guards.orchestrator_session_imports(root)
+
+    def message(self, rel, name):
+        module = f"{guards.ORCH_PKG}.{rel.removesuffix('.py').replace('/', '.')}"
+        return (
+            f"linear-orchestrator/{guards.ORCH_SRC}{rel}: {module} imports {name} from "
+            "agent_pm.session; go through agent_pm.delegate (TASK-394 removes this list)"
+        )
+
+    def test_pinned_names_and_removals_pass(self):
+        for sample in (
+            "from agent_pm.session import SIGNALS, DriverError\n"
+            "from agent_pm.session import ConfigError as SessionConfigError\n",
+            "from agent_pm.session import DriverError\n",
+            "from agent_pm import delegate\n",
+        ):
+            with self.subTest(sample=sample):
+                self.assertEqual(self.check("engine/run.py", sample), [])
+
+    def test_an_extra_name_in_an_allowed_module_fails(self):
+        self.assertEqual(
+            self.check(
+                "linear/sessions.py",
+                "from agent_pm.session import ConfigError, DriverError, SessionStatus\n",
+            ),
+            [self.message("linear/sessions.py", "SessionStatus")],
+        )
+
+    def test_a_new_module_fails_however_it_imports(self):
+        for sample in (
+            "from agent_pm.session import Driver\n",
+            "import agent_pm.session as s\ns.Driver()\n",
+            "from agent_pm import session\nsession.Driver()\n",
+            "import agent_pm.session\nagent_pm.session.Driver.run()\n",
+            "def f():\n    from agent_pm.session import Driver\n",
+        ):
+            with self.subTest(sample=sample):
+                self.assertEqual(
+                    self.check("engine/promote.py", sample),
+                    [self.message("engine/promote.py", "Driver")],
+                )
+
+    def test_pyproject_must_ignore_exactly_the_pinned_modules(self):
+        config = Path(REPO, "pyproject.toml").read_text()
+        edge = f'    "{guards.ORCH_PKG}.engine.prune -> agent_pm.session",\n'
+        self.assertIn(edge, config)
+        self.assertEqual(
+            self.check("engine/run.py", "", config.replace(edge, "")),
+            [
+                f"pyproject.toml: {guards.ORCH_SESSION_CONTRACT!r} must ignore exactly "
+                "ORCH_SESSION_IMPORTS"
+            ],
+        )
+
+
 class LiteralImports(Sample):
     def test_unknown_contract_types_fail_loudly(self):
         root = self.tree(
