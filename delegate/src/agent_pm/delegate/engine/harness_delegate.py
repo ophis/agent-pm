@@ -746,7 +746,10 @@ class HarnessDelegate(Delegate):
                     session.close()
         raise DriverError(f"tui session {state.agent_name} did not start")
 
-    def resume(self) -> Record:
+    def resume(self, *, mode: str | None = None) -> Record:
+        """Continues in `mode` (headless or tui), else the recorded one; the new mode is recorded."""
+        if mode not in (None, Mode.HEADLESS, Mode.TUI):
+            raise ConfigError(f"resume: mode must be headless or tui, got {mode!r}")
         with self.store.mutex():
             state = previous = self._state = self._read()
             if self._alive(state) or state.result is not None and state.result.outcome is not None:
@@ -760,7 +763,17 @@ class HarnessDelegate(Delegate):
                 and under(os.path.realpath(original.cwd), self.composer.trusted_dirs()) is None
             ):
                 raise ConfigError(f"cwd {original.cwd} is no longer in trusted_dirs")
-            spec = replace(state.plan.spec, resume=True, cwd=original.cwd, team=self.composer.team)
+            mode = mode or state.plan.spec.mode
+            tui = mode == Mode.TUI
+            spec = replace(
+                state.plan.spec,
+                resume=True,
+                cwd=original.cwd,
+                team=self.composer.team,
+                mode=mode,
+                name=state.agent_name if tui else None,
+                events=state.events if tui else None,
+            )
             accepted = plan(
                 self.composer.resolve(state.role, spec.task, overlays=state.overlays),
                 spec,
