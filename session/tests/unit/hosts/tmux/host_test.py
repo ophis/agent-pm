@@ -8,6 +8,7 @@ import logging
 import os
 import re
 import signal
+import socket
 import tempfile
 from pathlib import Path
 from unittest import mock
@@ -69,6 +70,9 @@ class Base(Case):
         )
         self.control = ProcessControl.prepare(["tool", "a b"], self.dir)
         self.addCleanup(self.control.remove)
+        control_socket = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        control_socket.bind(os.path.join(self.control.path, "control"))
+        self.addCleanup(control_socket.close)
         self.completed(self.control.path)
         self.controlled = False
         self.tmux.option.side_effect = lambda _pane, key: (
@@ -247,6 +251,33 @@ class DetachTest(Base):
 
 
 class AttachListTest(Base):
+    def test_a_pane_cannot_redirect_control_to_an_arbitrary_directory_or_socket(self):
+        sentinel = Path(self.dir, "keep")
+        sentinel.write_text("owned data")
+        for path in (self.dir, "/tmp", os.path.join(self.dir, "control")):
+            with self.subTest(path=path):
+                self.tmux.option.return_value = path
+                with self.assertRaisesRegex(DriverError, "tmux session d1: invalid @control"):
+                    self.host.attach("d1")
+                self.assertEqual(sentinel.read_text(), "owned data")
+        self.socket.assert_not_called()
+        self.tmux.kill.assert_not_called()
+
+    def test_a_controller_directory_with_public_permissions_is_refused(self):
+        self.controlled = True
+        os.chmod(self.control.path, 0o755)
+        with self.assertRaisesRegex(DriverError, "invalid @control"):
+            self.host.attach("d1")
+        self.socket.assert_not_called()
+
+    def test_a_regular_file_in_place_of_the_controller_socket_is_refused(self):
+        self.controlled = True
+        Path(self.control.path, "control").unlink()
+        Path(self.control.path, "control").write_text("not a socket")
+        with self.assertRaisesRegex(DriverError, "invalid @control"):
+            self.host.attach("d1")
+        self.socket.assert_not_called()
+
     def test_attach_a_live_session_else_a_driver_error(self):
         self.assertEqual(self.host.attach("d1").name, "d1")
         for name, state, message in (

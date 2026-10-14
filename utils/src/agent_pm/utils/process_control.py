@@ -13,6 +13,7 @@ import select
 import shutil
 import signal
 import socket
+import stat
 import subprocess
 import sys
 import tempfile
@@ -148,6 +149,25 @@ class ProcessControl:
         self.path = path
         self.ended = False
         self.accepted = False
+
+    @classmethod
+    def attach(cls, path: str) -> ProcessControl:
+        real = os.path.realpath(path)
+        if os.path.dirname(real) != os.path.realpath("/tmp") or not os.path.basename(
+            real
+        ).startswith("apm-group-"):
+            raise PermissionError("untrusted process controller path")
+        folder = os.stat(real, follow_symlinks=False)
+        control = os.stat(os.path.join(real, "control"), follow_symlinks=False)
+        if not (
+            stat.S_ISDIR(folder.st_mode)
+            and stat.S_IMODE(folder.st_mode) == 0o700
+            and folder.st_uid == os.getuid()
+            and stat.S_ISSOCK(control.st_mode)
+            and control.st_uid == os.getuid()
+        ):
+            raise PermissionError("untrusted process controller ownership or permissions")
+        return cls(real)
 
     @classmethod
     def prepare(cls, argv: Sequence[str], cwd: str) -> ProcessControl:

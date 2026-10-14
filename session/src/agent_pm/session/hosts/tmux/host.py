@@ -50,7 +50,12 @@ class TmuxProcess(HostProcess):
         self._process = process
         _, _, self._pane, _ = process.split(" ")
         path = self._option("@control") if control is None else None
-        self._control = control if control is not None else ProcessControl(path) if path else None
+        try:
+            self._control = (
+                control if control is not None else ProcessControl.attach(path) if path else None
+            )
+        except OSError as error:
+            raise DriverError(f"tmux session {name}: invalid @control: {error}") from error
 
     def alive(self) -> bool:
         if not self._own():
