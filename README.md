@@ -207,7 +207,7 @@ session/              the session: an Adapter per runtime, Modes, Hosts (tmux); 
 utils/                shared utilities
 manager/              cli.py, engine/crew.py, roster.py and events.py: commands and bookkeeping
 linear-orchestrator/  cli.py: router, run, promote; engine/: scheduling, client, log, ops, issues, run_comments, writeback
-tests/                repo-wide checks: guards.py (rules), checks.py (runner), case.py and suites
+tests/                repo-wide checks: guard_checks/ (rules), guard_data/ (each layer's exceptions), checks.py (runner), case.py and suites
 .github/              CI workflows and their helpers
 ```
 
@@ -241,7 +241,7 @@ The default policy sets Claude `--permission-mode auto`, `--strict-mcp-config` a
 
 For existing `~/.agent-pm/config.local.toml` overrides, remove `[session.adapters.codex]` `sandbox` and `shell_network`: those keys now fail validation. Express them in `[delegate.policy.codex].flags` using the options above. Move Claude `--permission-mode` and `--strict-mcp-config` from `[session.adapters.claude].flags` into `[delegate.policy.claude].flags`; keep there only flags every session, workers included, should get. Policy flag lists replace the defaults wholesale, so repeat every option you intend to keep.
 
-Codex snapshots save flags and the merged Adapter, Access and Spec environment. Resume replays them, ignoring current policy and new Spec flags/env; grants are also saved. Snapshots from before this contract fail with `unsupported legacy Codex recovery snapshot: start a new session`; they are not migrated. Access write directories are always emitted as `--add-dir`, including full-access runs.
+Codex snapshots save flags and the merged Adapter, Access and Spec environment. Resume replays them, ignoring current policy and new Spec flags/env; grants are also saved. The public resume command (run.jsonl, session comments) holds no environment values: it runs `session/src/agent_pm/session/adapters/codex/common/resume.py`, which reads them from the snapshot. Snapshots from before this contract fail with `unsupported legacy Codex recovery snapshot: start a new session`; they are not migrated. Access write directories are always emitted as `--add-dir`, including full-access runs.
 
 ## Access
 
@@ -288,5 +288,5 @@ Fake and real implementations share contract assertions.
 `.github/run_tests.py` resets HOME, temporary roots and Git configuration before supervision.
 `.github/isolation.py` installs interpreter audit hooks and unit PATH blockers for git, tmux,
 claude and codex. `tests/integration/unit_imports_integration_test.py` applies Ruff TID251 to unit
-imports. `tests/guards.py` requires the migration allowlist to remain empty; interpreter gates
+imports. The migration allowlist in `tests/guards.py` must remain empty; interpreter gates
 permit no unit exemptions. Run tests through these supervised entries.

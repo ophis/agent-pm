@@ -56,7 +56,7 @@ def on_hook(word: str, call: HookCall) -> None:
                 "-p",
                 "-t",
                 f"={target}:",
-                "#{pane_id}\t#{@sid}\t#{@generation}",
+                "#{@process}\t#{@sid}\t#{@generation}",
             ],
             capture_output=True,
             text=True,
@@ -70,12 +70,12 @@ def on_hook(word: str, call: HookCall) -> None:
         fields = result.stdout.strip().split("\t")
         if len(fields) != 3:
             return
-        pane, sid, actual_generation = fields
-        if not transport.PANE.fullmatch(pane):
+        process, sid, actual_generation = fields
+        if not transport.PROCESS_ID.fullmatch(process):
             return
         if sid != call.sid or actual_generation != generation:
             return
-        mark(word, call.events, pane=pane, tmux=executable, proc=run)
+        mark(word, call.events, pane=process.split(" ")[2], tmux=executable, proc=run)
     except subprocess.TimeoutExpired:
         raise HookError(f"tmux: timed out after {MARK_TIMEOUT} s") from None
     except OSError as error:

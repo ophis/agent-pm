@@ -6,6 +6,7 @@ from pathlib import Path
 from unittest import mock
 
 from agent_pm.session import DriverError
+from agent_pm.session.hosts.tmux.host import TmuxProcess, TmuxTerminal
 from agent_pm.session.hosts.tmux.types import PaneStatus, TuiError
 from agent_pm.utils import ProcessControl
 
@@ -26,6 +27,21 @@ class AttachmentBase(Base):
 
 
 class AttachListTest(AttachmentBase):
+    def test_a_launched_session_is_the_pane_it_recorded_not_its_active_one(self):
+        self.tmux.process.side_effect = lambda target: (
+            "4242 $3 %9 5555" if target == "w1" else PROCESS if target == "%7" else None
+        )
+        self.connection.connect.side_effect = ConnectionRefusedError
+        for kind, cls in (("detach", TmuxProcess), ("terminal", TmuxTerminal)):
+            with self.subTest(kind=kind):
+                self.kind = kind
+                self.tmux.kill.reset_mock()
+                handle = self.host.attach("w1")
+                self.assertIs(type(handle), cls)
+                self.assertEqual(handle.identity, PROCESS)
+                handle.close()
+                self.tmux.kill.assert_called_once_with("%7")
+
     def test_a_terminal_without_a_controller_is_refused(self):
         self.kind, self.controlled = "terminal", False
         with self.assertRaisesRegex(DriverError, "tmux session tui: missing @control"):
@@ -88,6 +104,7 @@ class AttachListTest(AttachmentBase):
                     self.host.attach(name)
                 self.assertEqual(str(caught.exception), message)
         self.tmux.status.return_value = PaneStatus.RUNNING
+        self.kind, self.controlled = None, False
         for found, message in (
             (None, "no tmux session d1"),
             (TuiError("tmux: boom"), "tmux session d1: tmux: boom"),
