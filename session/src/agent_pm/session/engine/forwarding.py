@@ -180,11 +180,13 @@ class Driver:
         split: str | None = None,
         split_from: str | None = None,
         opener: str | None = None,
+        *,
+        command: str | None = None,
     ) -> str | None:
         tui.checked_name(name)
         display = TmuxHost.fold(opener, split, split_from)
         self.session_cls.host().tui_settings()
-        return self._shown().show(name, display=display)
+        return self._shown().show(name, display=display, command=command)
 
     def usage(self, runtime: str) -> Usage | None:
         return self.session_cls.usage(runtime)

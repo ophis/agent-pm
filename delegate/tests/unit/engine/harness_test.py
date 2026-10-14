@@ -207,6 +207,26 @@ class Harness(Base):
         self.show.assert_not_called()
         self.assert_outcome("error")
 
+    def test_begun_shows_as_the_runs_show_says(self):
+        attach = self.driver.attach_command(TUI)
+        for local, shown, printed in (
+            ('show = "none"\n', [], [attach]),
+            (
+                'show = "open {{session}}"\n',
+                [mock.call(TUI, None, None, "mgr", command="open {{session}}")],
+                [],
+            ),
+        ):
+            with self.subTest(local=local), self.ran():
+                Path(self.agent_pm, "config.local.toml").write_text("[delegate]\n" + local)
+                self.show.reset_mock()
+                code, out, err = self.drives("--opener", "mgr", mode="tui")
+                self.assertEqual((code, out), (0, ""), err)
+                self.assertEqual(self.show.call_args_list, shown)
+                lines = err.splitlines()
+                at = lines.index(f"delegate: session {SID}")
+                self.assertEqual(lines[at + 1 :], [*printed, "delegate: status done"])
+
     def test_input_dash_is_the_literal_text_stdin_unread(self):
         with self.ran() as run:
             code, _, err = self.drives(input="-", stdin="SECRET")
@@ -237,7 +257,7 @@ class Harness(Base):
                     "--split", "below", "--split-from", "mgr", "--opener", "mgr", mode="tui"
                 )
                 self.assertEqual((code, out), (0, ""), err)
-                self.show.assert_called_once_with(TUI, "below", "mgr", "mgr")
+                self.show.assert_called_once_with(TUI, "below", "mgr", "mgr", command=None)
                 lines = err.splitlines()
                 at = lines.index(f"delegate: session {SID}")
                 self.assertEqual(lines[at + 1 :], [*printed, "delegate: status done"])

@@ -107,8 +107,15 @@ def inner(a, cfg, *, gql, run=delegate.run, now=timestamp):
         if isinstance(event, delegate.Begun):
             post()  # after Begun: run.jsonl names the session's cwd, which the resume command needs
             if name is not None:
+                show = cfg.roles[role].run.show
                 try:
-                    if command := cfg.driver.show(name, a.split, a.split_from, a.opener):
+                    if show == "none":
+                        command = cfg.driver.attach_command(name)
+                    else:
+                        command = cfg.driver.show(
+                            name, a.split, a.split_from, a.opener, command=show or None
+                        )
+                    if command:
                         print(printable(command), file=sys.stderr, flush=True)
                 except (SessionConfigError, DriverError) as e:
                     log("run", "tui-error", a.issue, session=name, msg=one_line(e))

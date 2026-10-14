@@ -483,6 +483,7 @@ class ProcessControl:
                     if group is None:
                         self.accepted = self.cancelled = True
                     else:
+                        self.accepted = True
                         group.kill()
                 elif command.startswith(b"signal "):
                     signum = int(command.removeprefix(b"signal "))
@@ -491,6 +492,7 @@ class ProcessControl:
                     if group is None:
                         self.accepted = self.cancelled = True
                     else:
+                        self.accepted = True
                         group.send(signum)
                 elif command != b"live\n":
                     raise ValueError("unknown process control command")
@@ -498,7 +500,7 @@ class ProcessControl:
                     live = not self.cancelled
                 else:
                     # A client that hears "not live" stops sending, so no retiring answer before
-                    # the launcher's started or cancel arrives.
+                    # a client accepts the group (started, cancel, kill or a signal).
                     live = group.live() if reported and self.accepted else True
                 response = {"live": live}
             except OSError as error:

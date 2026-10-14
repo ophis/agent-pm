@@ -28,7 +28,7 @@
  "agent_pm.session.Driver.session_record": "staticmethod(workdir:POSITIONAL_OR_KEYWORD, sid:POSITIONAL_OR_KEYWORD)",
  "agent_pm.session.Driver.session_status": "def(self:POSITIONAL_OR_KEYWORD, runtime:POSITIONAL_OR_KEYWORD, sid:POSITIONAL_OR_KEYWORD, cwd:POSITIONAL_OR_KEYWORD, workdir:KEYWORD_ONLY)",
  "agent_pm.session.Driver.sessions": "def(self:POSITIONAL_OR_KEYWORD, match:POSITIONAL_OR_KEYWORD=None)",
- "agent_pm.session.Driver.show": "def(self:POSITIONAL_OR_KEYWORD, name:POSITIONAL_OR_KEYWORD, split:POSITIONAL_OR_KEYWORD=None, split_from:POSITIONAL_OR_KEYWORD=None, opener:POSITIONAL_OR_KEYWORD=None)",
+ "agent_pm.session.Driver.show": "def(self:POSITIONAL_OR_KEYWORD, name:POSITIONAL_OR_KEYWORD, split:POSITIONAL_OR_KEYWORD=None, split_from:POSITIONAL_OR_KEYWORD=None, opener:POSITIONAL_OR_KEYWORD=None, command:KEYWORD_ONLY=None)",
  "agent_pm.session.Driver.start": "def(self:POSITIONAL_OR_KEYWORD, runtime:POSITIONAL_OR_KEYWORD, mode:POSITIONAL_OR_KEYWORD, prompt:POSITIONAL_OR_KEYWORD, spec:POSITIONAL_OR_KEYWORD, resume:KEYWORD_ONLY=None, events:KEYWORD_ONLY=None, idle_timeout:KEYWORD_ONLY=None)",
  "agent_pm.session.Driver.usage": "def(self:POSITIONAL_OR_KEYWORD, runtime:POSITIONAL_OR_KEYWORD)",
  "agent_pm.session.Driver.writable_dirs": "def(self:POSITIONAL_OR_KEYWORD, runtime:POSITIONAL_OR_KEYWORD, spec:POSITIONAL_OR_KEYWORD, resume:POSITIONAL_OR_KEYWORD=None)",

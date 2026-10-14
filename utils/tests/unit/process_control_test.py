@@ -257,32 +257,36 @@ class ControlTest(Case):
         self.assertGreaterEqual(probes[-1] - probes[-2], 1)
 
     def test_a_launch_that_fails_before_a_start_retry_is_answered_waits_for_its_acceptance(self):
-        control = self.control()
-        self.addCleanup(control.remove)
-        group = mock.Mock(returncode=None, eof=False)
-        group.live.return_value = False
+        for accepting in (b"started\n", b"kill\n", b"signal 15\n"):
+            with self.subTest(accepting=accepting):
+                control = self.control()
+                self.addCleanup(control.remove)
+                group = mock.Mock(returncode=None, eof=False)
+                group.live.return_value = False
 
-        def receive():
-            if group.returncode is not None:
-                return []
-            group.returncode = 1
-            return [{"error": "No such file or directory", "errno": 2}]
+                def receive(group=group):
+                    if group.returncode is not None:
+                        return []
+                    group.returncode = 1
+                    return [{"error": "No such file or directory", "errno": 2}]
 
-        group.receive.side_effect = receive
-        clients = [Connection(b"start\n"), Connection(b"started\n")]
-        listener = mock.Mock()
-        listener.accept.side_effect = [(client, None) for client in clients]
-        with (
-            mock.patch("select.select", return_value=([listener], [], [])),
-            mock.patch("signal.signal"),
-            mock.patch("signal.pthread_sigmask"),
-        ):
-            self.assertEqual(control._serve(listener, group, None), 1)
-        self.assertEqual(
-            [json.loads(client.answer) for client in clients], [{"live": True}, {"live": False}]
-        )
-        with open(os.path.join(control.path, "done.json")) as stream:
-            self.assertEqual(json.load(stream), {"rc": 1})
+                group.receive.side_effect = receive
+                clients = [Connection(b"start\n"), Connection(accepting)]
+                listener = mock.Mock()
+                listener.accept.side_effect = [(client, None) for client in clients]
+                with (
+                    mock.patch("select.select", return_value=([listener], [], [])),
+                    mock.patch("signal.signal"),
+                    mock.patch("signal.pthread_sigmask"),
+                ):
+                    self.assertEqual(control._serve(listener, group, None), 1)
+                self.assertEqual(
+                    [json.loads(client.answer) for client in clients],
+                    [{"live": True}, {"live": False}],
+                )
+                with open(os.path.join(control.path, "done.json")) as stream:
+                    self.assertEqual(json.load(stream), {"rc": 1})
+                control.remove()
 
     def test_a_query_during_directory_removal_reports_ended(self):
         control = self.control()

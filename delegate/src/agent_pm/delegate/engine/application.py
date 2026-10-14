@@ -45,7 +45,9 @@ class Application:
                 return _detach(a, self.plan(config, spec), driver), None
             tui = detach.names(config.role, a.sid, a.mode)[0] if a.harness else None
             spec = replace(spec, name=tui)
-            result = self.run(config, spec, on_event=functools.partial(_begun, a, tui, driver))
+            result = self.run(
+                config, spec, on_event=functools.partial(_begun, a, tui, driver, config.show)
+            )
         except ConfigError as e:
             say(f"delegate: {e}")
             return 2, None
@@ -65,13 +67,15 @@ def _detach(a, p: Plan, driver) -> int:
     return 0
 
 
-def _begun(a, tui: str | None, driver, event) -> None:
+def _begun(a, tui: str | None, driver, show: str, event) -> None:
     if not isinstance(event, Begun):
         return
     say(f"delegate: session {event.sid}")
     if tui is not None and a.opener is not None:
         try:
-            if command := driver.show(tui, a.split, a.split_from, a.opener):
+            if show == "none":
+                say(driver.attach_command(tui))
+            elif command := driver.show(tui, a.split, a.split_from, a.opener, command=show or None):
                 say(command)
         except (SessionConfigError, DriverError) as e:
             say(f"delegate: show {tui}: {e}")

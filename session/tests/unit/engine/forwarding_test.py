@@ -100,6 +100,7 @@ SIGNATURES = {
         ("split", POSITIONAL, None),
         ("split_from", POSITIONAL, None),
         ("opener", POSITIONAL, None),
+        ("command", KEYWORD, None),
     ],
     "usage": [("self", POSITIONAL, EMPTY), ("runtime", POSITIONAL, EMPTY)],
     "session_record": [("workdir", POSITIONAL, EMPTY), ("sid", POSITIONAL, EMPTY)],
@@ -471,6 +472,14 @@ class ShowTest(TuiBase):
                 ),
             ],
         )
+
+    def test_a_command_runs_in_place_of_a_pane(self):
+        self.configure(tui=True)
+        self.host.status.return_value = 0
+        self.host.run_command.return_value = None
+        self.assertIsNone(self.driver.show("w1", opener="mgr", command="open {{session}}"))
+        self.host.run_command.assert_called_once_with("w1", "open {{session}}")
+        self.host.open_pane.assert_not_called()
 
     def test_no_pane_is_the_attach_command_the_reason_logged(self):
         self.host.status.return_value = 0
