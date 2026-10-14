@@ -361,8 +361,12 @@ class NoteLimit(Case):
         at = stamp(NOW + timedelta(hours=1), EAST)
         path = os.path.join(self.tmp, "logs", "runs.jsonl")
         with mock.patch.object(os, "fsync", wraps=os.fsync) as spy:
-            runs.note_limit(path, issue="TASK-1", sid="s", runtime="a", resets_at=at)
-            runs.note_limit(path, issue="TASK-2", sid="t", runtime="b", resets_at=None)
+            runs.note_limit(
+                path, issue="TASK-1", sid="s", runtime="a", resets_at=at, delegate_kind="harness"
+            )
+            runs.note_limit(
+                path, issue="TASK-2", sid="t", runtime="b", resets_at=None, delegate_kind="harness"
+            )
         self.assertEqual(spy.call_count, 4)
         with open(path, encoding="utf-8") as f:
             rows = [json.loads(line) for line in f]

@@ -29,7 +29,7 @@ def note(path, kind, *, now=datetime.now, **fields):
     append_line(path, line + "\n", durable=True)
 
 
-def note_limit(path, *, issue, sid, runtime, resets_at, delegate_kind="harness"):
+def note_limit(path, *, issue, sid, runtime, resets_at, delegate_kind):
     note(
         path,
         "limit",

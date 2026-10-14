@@ -197,17 +197,25 @@ class Pruner:
                 os.rmdir(os.path.join(self.work, ident, *owner))
 
     def inventory(self):
+        """A run whose view cannot load has nothing to close, logged once; inventory unknown: None."""
+        found = {}
         try:
-            found = {}
-            for ident, entry in runs.latest(runs.parse_log(self.cfg.runs_log)).items():
-                if entry.role not in self.roles.values():
-                    continue
+            latest = runs.latest(runs.parse_log(self.cfg.runs_log))
+        except (OSError, ValueError):
+            return None
+        for ident, entry in sorted(latest.items()):
+            if entry.role not in self.roles.values():
+                continue
+            try:
                 view = LinearRun.attach(ident, cfg=self.cfg, sid=entry.sid)
                 if view.status().state == "unknown":
                     return None
-                found[ident] = view
-        except (config.ConfigError, DelegateConfigError, DriverError, OSError, ValueError):
-            return None
+            except (config.ConfigError, DelegateConfigError, OSError, ValueError) as error:
+                self.say("prune-skip", ident, once=True, sid=entry.sid, reason=one_line(error))
+                continue
+            except DriverError:
+                return None
+            found[ident] = view
         return found
 
     def close_sessions(self, ident):

@@ -121,6 +121,11 @@ class PruneDelegate(FakeDelegate):
         self.owner.close(self.workdir)
         super().close()
 
+    def status(self):
+        if self.owner.unknown:
+            raise DriverError("sessions unknown")
+        return super().status()
+
 
 class PruneScenario(Case):
     def setUp(self):
@@ -135,6 +140,7 @@ class PruneScenario(Case):
         self.api = FakeApi()
         self.sessions = {}
         self.closed_runs = set()
+        self.unknown = False
         self.cfg = config.Config(
             team=TEAM,
             states=dict(IDS_BY_KEY),

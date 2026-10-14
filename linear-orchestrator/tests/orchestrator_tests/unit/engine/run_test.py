@@ -712,6 +712,22 @@ class RunUsageLimits(Case):
                     },
                 )
 
+    def test_a_resumes_limit_row_keeps_the_recorded_delegate_kind(self):
+        runs.note(
+            self.runs,
+            "start",
+            issue=ID,
+            sid=SID,
+            role="engineer",
+            runtime=RUNTIME,
+            delegate_kind="saved",
+        )
+        self.done(result=Result(-9, None, "usage limit", Limit(T)))
+        self.assertEqual(self.main(mode="resume"), 0)
+        with open(self.runs) as f:
+            last = json.loads(f.read().splitlines()[-1])
+        self.assertEqual((last["kind"], last["delegate_kind"]), ("limit", "saved"))
+
     def test_a_failed_runs_note_is_a_run_error_and_the_session_comment_still_ends(self):
         os.makedirs(self.runs)
         self.done(result=Result(-9, None, "usage limit", Limit(T)))

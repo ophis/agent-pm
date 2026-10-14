@@ -514,7 +514,7 @@ class RetentionCleanup(PruneScenario):
                 self.api.order.clear()
                 kept = [self.mkc("TASK-49", "src", "o", "repo"), self.mkc("TASK-49", "publish")]
                 self.record("TASK-49", SID, [A])
-                os.unlink(os.path.join(self.cfg.run_dir("TASK-49"), "delegate.json"))
+                self.unknown = True
                 gql = gql_for({"TASK-49": ("Done", [(30, "Done")])}, owners={"TASK-49": "u-pm"})
                 code, out = self.prune(gql, dry=dry)
                 self.assertEqual(
@@ -573,6 +573,24 @@ class RetentionCleanup(PruneScenario):
                 f"prune-closed TASK-8 session={OTHER_SID}",
             ],
         )
+
+    def test_a_run_without_delegate_state_skips_once_and_other_issues_still_prune(self):
+        clone = self.mkc("TASK-7", "src", "o", "repo")
+        self.record("TASK-7", SID, [A])
+        self.record("TASK-8", OTHER_SID, ["other-host-agent"])
+        os.unlink(os.path.join(self.cfg.run_dir("TASK-7"), "delegate.json"))
+        gql = gql_for(dict.fromkeys(("TASK-7", "TASK-8"), ("Done", [(30, "Done")])))
+        skip = (
+            f"prune-skip TASK-7 sid={SID} reason=ConfigError: "
+            f"{self.cfg.run_dir('TASK-7')!r}: no delegate.json"
+        )
+        code, out = self.prune(gql)
+        self.assertEqual(code, 0)
+        self.assertEqual(self.closed(), ["other-host-agent"])
+        self.assertFalse(os.path.exists(clone))
+        self.assertIn(skip, out.splitlines())
+        self.assertIn(f"prune-closed TASK-8 session={OTHER_SID}", out.splitlines())
+        self.assertNotIn(skip, self.prune(gql)[1].splitlines())
 
     def test_promote_tick_archives_with_its_roles(self):
         gql = gql_for({"TASK-1": ("Done", [(30, "Done")])}, owners={"TASK-1": "u-pm"})

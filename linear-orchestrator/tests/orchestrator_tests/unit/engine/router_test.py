@@ -2,6 +2,7 @@
 
 import contextlib
 import fcntl
+import functools
 import io
 import json
 import os
@@ -147,6 +148,9 @@ def inner(*args, text=INPUT):
         *args,
         f"--input={text}",
     ]
+
+
+SAY = functools.partial(router.log, "router")
 
 
 class Moved(FakeLinear):
@@ -2208,12 +2212,7 @@ class ExplicitIssueRuns(TickBase):
                 self.assertEqual(self.err, "router.py: agent runs unknown; try again\n")
                 self.assertEqual(
                     (fake.queries, self.start.launches, self.state, self.said()),
-                    (
-                        [],
-                        [],
-                        self.before(),
-                        ["recover-skip TASK-0 sid=unknown reason=ConfigError: agent runs unknown"],
-                    ),
+                    ([], [], self.before(), []),
                 )
 
     def test_a_live_agent_run_is_refused_with_its_attach_command(self):
@@ -3253,7 +3252,7 @@ class SessionInventory(Base):
         self.add(kind="resume", ident="TASK-2", sid="TASK-2", minutes_ago=30, role="engineer")
         self.write_runs()
         self.assertEqual(
-            router.live_sessions(self.cfg(), runs.parse_log(self.runs)),
+            router.live_sessions(self.cfg(), runs.parse_log(self.runs), say=SAY),
             {
                 "researcher": ["TASK-1"],
                 "pm": ["TASK-6"],
@@ -3267,11 +3266,9 @@ class SessionInventory(Base):
         self.write_runs()
         self.api.live = None
         with redirect_stderr(io.StringIO()), self.log_dir(again=False):
-            self.assertIsNone(router.live_sessions(self.cfg(), runs.parse_log(self.runs)))
+            self.assertIsNone(router.live_sessions(self.cfg(), runs.parse_log(self.runs), say=SAY))
         self.raw = ""
-        self.assertEqual(
-            self.said(), ["recover-skip TASK-1 sid=unknown reason=ConfigError: agent runs unknown"]
-        )
+        self.assertEqual(self.said(), [])
 
     def test_removed_legacy_kind_is_not_reinterpreted_as_current_default(self):
         self.add(kind="start", ident="TASK-1", sid="old", minutes_ago=60)
@@ -3279,7 +3276,10 @@ class SessionInventory(Base):
         cfg = self.cfg()
         cfg = replace(cfg, delegate_kind="replacement", delegates={"replacement": cfg.delegate_cls})
         with redirect_stderr(io.StringIO()), self.log_dir(again=False):
-            self.assertIsNone(router.live_sessions(cfg, runs.parse_log(self.runs)))
+            self.assertEqual(
+                router.live_sessions(cfg, runs.parse_log(self.runs), say=SAY),
+                {"researcher": [], "pm": [], "engineer": []},
+            )
         self.raw = ""
         self.assertEqual(
             self.said(),
@@ -3403,13 +3403,7 @@ class ScheduledRuns(TickScenario):
             with self.subTest(argv=argv):
                 fake = FakeLinear([issue("TASK-1", "Todo", "researcher")])
                 self.assertEqual(self.tick(fake, *argv, live=None), 0)
-                self.assertEqual(
-                    self.said(),
-                    [
-                        "recover-skip TASK-8 sid=old reason=ConfigError: agent runs unknown",
-                        "skip reason=agent runs unknown",
-                    ],
-                )
+                self.assertEqual(self.said(), ["skip reason=agent runs unknown"])
                 self.assertEqual(
                     (fake.queries, self.start.launches, self.api.usage_calls, self.state),
                     ([], [], [], before),

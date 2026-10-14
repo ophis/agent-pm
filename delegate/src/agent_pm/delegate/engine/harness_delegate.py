@@ -147,6 +147,7 @@ class HarnessDelegate(Delegate):
         display: Display = None,
         harness_host: str | Host | None = None,
         callback: Sequence[str] | None = None,
+        overlays: Sequence[Mapping] = (),
         session_cls: type[Session] = Session,
         composer: Composer | None = None,
         driver: Driver | None = None,
@@ -177,7 +178,7 @@ class HarnessDelegate(Delegate):
         self.driver = driver or AgentDriver(
             session_cls, settings=self._settings, display=display, host=agent_host.name
         )
-        run = self.composer.resolve(role, spec.task)
+        run = self.composer.resolve(role, spec.task, overlays=overlays)
         accepted = plan(
             run,
             replace(spec, team=self.composer.team),

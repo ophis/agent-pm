@@ -110,17 +110,18 @@ def attempt_count(entries, issue, since=None):
     return sum(1 for e in entries if e.issue == issue and (since is None or e.ts > since))
 
 
-def live_sessions(cfg, entries, *, say=None):
+def live_sessions(cfg, entries, *, say):
+    """A run whose view cannot load counts as not alive, logged once; inventory unknown: None."""
     live = {role: [] for role in cfg.roles}
-    say = say or functools.partial(log, "router")
     for ident, entry in sorted(latest(entries).items()):
         if entry.role not in live:
             continue
         try:
             if LinearRun.attach(ident, cfg=cfg).alive():
                 live[entry.role].append(ident)
-        except (ConfigError, delegate.ConfigError, delegate.DriverError) as error:
-            log("router", "recover-skip", ident, once=True, sid=entry.sid, reason=one_line(error))
+        except (ConfigError, delegate.ConfigError) as error:
+            say("recover-skip", ident, once=True, sid=entry.sid, reason=one_line(error))
+        except delegate.DriverError:
             return None
     return live
 

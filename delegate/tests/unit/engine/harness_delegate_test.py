@@ -1,5 +1,5 @@
 """HarnessDelegate names its harness session in a Host's close failure; preview and instruct write
-no state.
+no state; owner overlays shape its run.
 """
 
 import os
@@ -89,3 +89,11 @@ class InstructTest(HarnessCase):
         self.assertIn("**Your task**: `echo`", want)
         self.assertEqual(os.listdir(self.work), ["prompt.md"])
         self.assertEqual((HarnessSession.started, RecordingHost.launches), ([], []))
+
+
+class OverlayTest(HarnessCase):
+    def test_owner_overlays_shape_the_persisted_run(self):
+        self.make()
+        self.assertEqual(self.metadata()["plan"]["run"]["effort"], "low")
+        self.make(overlays=({"roles": {"dummy-tester": {"effort": "high"}}},))
+        self.assertEqual(self.metadata()["plan"]["run"]["effort"], "high")

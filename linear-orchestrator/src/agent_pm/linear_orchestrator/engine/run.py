@@ -38,6 +38,13 @@ def _run_role(a, cfg):
     return role
 
 
+def _kind(sid, cfg):
+    entries = runs.parse_log(cfg.runs_log)
+    if any(e.sid == sid for e in entries):
+        return runs.delegate_of(entries, sid)
+    return cfg.delegate_kind
+
+
 def _report_outcome(a, cfg, ctx, result):
     if result and result.limit:
         at = result.limit.resets_at
@@ -49,8 +56,9 @@ def _report_outcome(a, cfg, ctx, result):
                 sid=a.sid,
                 runtime=a.runtime,
                 resets_at=writeback.local_time(at),
+                delegate_kind=_kind(a.sid, cfg),
             )
-        except OSError as e:
+        except (OSError, ValueError) as e:  # ValueError: an undecodable runs.jsonl
             log("run", "run-error", a.issue, error=one_line(e))
     elif not (result and result.outcome):
         log("run", "no-outcome", a.issue, error=(result.error if result else "") or "no result")
