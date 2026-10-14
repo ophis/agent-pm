@@ -437,20 +437,28 @@ class Resources(Case):
         extra = 'harness_key = ""\n' + ORCH
         Path(self.root, self.package, "linear_orchestrator", "config.toml").write_text(extra)
         Path(self.root, "linear-orchestrator", "config.toml").write_text(extra)
-        for text, key, target in (
-            ('harness_key = "secret-service"\n', "harness_key", "[linear_orchestrator]"),
+        for text, key, hint in (
+            (
+                'harness_key = "secret-service"\n',
+                "harness_key",
+                "move it under [linear_orchestrator]",
+            ),
             (
                 '[roles.engineer]\naccount = "engineer@x"\n',
                 "roles.engineer.account",
-                "[linear_orchestrator]",
+                "move it under [linear_orchestrator]",
             ),
             (
                 'unknown_key = "x"\n',
                 "unknown_key",
-                "one of [session], [delegate], [linear_orchestrator]",
+                "no supplied layer has it; move it under its owning layer's section",
             ),
-            ('runtime = "x"\n', "runtime", "[delegate]"),
-            ("[hosts.tmux]\nstatus_line = true\n", "hosts.tmux.status_line", "[session]"),
+            ('runtime = "x"\n', "runtime", "move it under [delegate]"),
+            (
+                "[hosts.tmux]\nstatus_line = true\n",
+                "hosts.tmux.status_line",
+                "move it under [session]",
+            ),
         ):
             self.local(text)
             for read in (
@@ -464,9 +472,20 @@ class Resources(Case):
                     read()
                 self.assertEqual(
                     str(caught.exception),
-                    f"~/.agent-pm/config.local.toml: unknown key {key!r}: flat local configuration; move it under {target}",
+                    f"~/.agent-pm/config.local.toml: unknown key {key!r}: flat local configuration; {hint}",
                 )
                 self.assertNotIn("[utils]", str(caught.exception))
+
+    def test_a_flat_key_without_a_supplied_owner_does_not_name_another_layer(self):
+        self.local('harness_key = "linear-harness"\n')
+        expected = "~/.agent-pm/config.local.toml: unknown key 'harness_key': flat local configuration; no supplied layer has it; move it under its owning layer's section"
+        for read in (
+            lambda: read_resources(self.resources[:1]),
+            lambda: read_project("session", root=self.root),
+        ):
+            with self.subTest(read=read), self.assertRaises(ConfigFileError) as caught:
+                read()
+            self.assertEqual(str(caught.exception), expected)
 
     def test_unknown_top_level_keys_and_non_table_sections_are_errors(self):
         for text, error in (

@@ -133,17 +133,17 @@ def _layered(
         key = flat[0]
         path, _ = next(_leaves({key: found[key]}, ()))
         schemas = {p: merge(*tables) for p, tables in known.items() if p != "utils" and any(tables)}
-        targets = _flat_sections(path, schemas) or list(schemas)
+        targets = _flat_sections(path, schemas)
         sections = ", ".join(f"[{p}]" for p in targets)
         hint = (
-            sections
+            f"move it under {sections}"
             if len(targets) == 1
-            else f"one of {sections}"
+            else f"move it under one of {sections}"
             if targets
-            else "a supplied layer section"
+            else "no supplied layer has it; move it under its owning layer's section"
         )
         raise ConfigFileError(
-            f"{local}: unknown key {'.'.join(path)!r}: flat local configuration; move it under {hint}"
+            f"{local}: unknown key {'.'.join(path)!r}: flat local configuration; {hint}"
         )
     schema, out = {}, {}
     for section, config in configs.items():
