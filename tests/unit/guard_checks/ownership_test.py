@@ -1,6 +1,5 @@
 from tests.case import REPO
 from tests.guard_checks import commands, exports, ownership
-from tests.guard_data import LEGACY_HOST_NAMES
 from tests.guard_data.delegate import CONFIG_FILE, DELEGATE_SRC
 from tests.guard_data.session import ADAPTERS_HOME, SESSION_SRC
 from tests.guard_samples import PKG, Sample
@@ -428,53 +427,6 @@ class DelegateTmux(Sample):
             }
         )
         self.assertEqual(ownership.delegate_tmux(root), [])
-
-
-class LegacyHostNames(Sample):
-    def baseline(self):
-        files = {}
-        for (path, name), (count, _) in LEGACY_HOST_NAMES.items():
-            files[path] = files.get(path, "") + f"{name} = None\n" * count
-        return files
-
-    def test_only_the_exact_existing_names_and_counts_are_allowed(self):
-        root = self.tree(self.baseline())
-        self.assertEqual(ownership.legacy_host_names(root), [])
-        self.assertEqual(ownership.tmux_calls(root), [])
-        self.assertEqual(ownership.session_display(root), [])
-
-    def test_an_extra_use_on_the_same_line_is_rejected(self):
-        files = self.baseline()
-        path = f"{SESSION_SRC}engine/forwarding.py"
-        files[path] += "opener = opener\n"
-        self.assertEqual(
-            ownership.legacy_host_names(self.tree(files)),
-            [f"{path}: opener: expected 4 legacy occurrences, found 6 (TASK-375)"],
-        )
-
-    def test_a_removed_name_or_file_is_stale(self):
-        files = self.baseline()
-        path = f"{SESSION_SRC}engine/forwarding.py"
-        files[path] = files[path].replace("\nopener = None", "\n").replace("\n\n", "\n")
-        self.assertEqual(
-            ownership.legacy_host_names(self.tree(files)),
-            [f"{path}: opener: expected 4 legacy occurrences, found 0 (TASK-375)"],
-        )
-        del files[path]
-        self.assertEqual(
-            len(ownership.legacy_host_names(self.tree(files))),
-            len([key for key in LEGACY_HOST_NAMES if key[0] == path]),
-        )
-
-    def test_new_names_and_other_modules_have_no_exemption(self):
-        files = self.baseline()
-        path = f"{SESSION_SRC}engine/forwarding.py"
-        files[path] += "pane = None\nnew_tmux = None\n"
-        self.assertTrue(ownership.session_display(self.tree(files)))
-        self.assertTrue(ownership.tmux_calls(self.tree(files)))
-        files[f"{SESSION_SRC}engine/other.py"] = "opener = None\nTmuxHost = None\n"
-        self.assertEqual(len(ownership.session_display(self.tree(files))), 2)
-        self.assertEqual(len(ownership.tmux_calls(self.tree(files))), 2)
 
 
 class StatusLogFormat(Sample):

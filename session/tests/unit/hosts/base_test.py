@@ -1,12 +1,16 @@
-"""Host process and display interfaces and defaults; Host.parse_hosts, the one [hosts] parser."""
+"""Host process and display interfaces and defaults, SIGNALS; Host.parse_hosts, the one [hosts]
+parser.
+"""
 
 import inspect
 import operator
+import signal
 import tomllib
 from types import MappingProxyType
 from unittest import mock
 
 from agent_pm.session import (
+    SIGNALS,
     ConfigError,
     Displayable,
     DriverError,
@@ -106,6 +110,9 @@ class HostDefaults(Case):
         self.assertEqual(host.display("elsewhere:1.2"), "elsewhere:1.2")
         self.assertIsNone(host.display(None))
         self.assertEqual(host.display_help(), "")
+
+    def test_signals_a_detached_run_blocks_are_hup_term_and_int(self):
+        self.assertEqual(SIGNALS, (signal.SIGHUP, signal.SIGTERM, signal.SIGINT))
 
 
 def table(base: str = TWO, text: str = ""):

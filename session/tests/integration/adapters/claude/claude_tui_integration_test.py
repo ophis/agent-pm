@@ -1,8 +1,8 @@
-"""HostedSession's tui mode, through the Driver wrapper, with client claude end to end on a private tmux server, as
+"""HostedSession's tui mode with client claude end to end on a private tmux server, as
 tui_integration_test sets it up: the real ClaudeAdapter runs
 session/tests/integration/adapters/claude/fake_claude.py (on PATH as `claude`) interactively, its
 hooks from --settings. Turns, Blocked (a hook, the trust dialog), idle timeouts, the usage-limit
-screen, deaths, resume, attach from another process, show (beside a detached session) and close.
+screen, deaths, resume, attach from another process, show (beside a detached session) and retire.
 CLAUDE_CONFIG_DIR is a temp dir; the iTerm2 path fails the test.
 """
 
@@ -17,7 +17,7 @@ import unittest
 from datetime import UTC, datetime
 from unittest import mock
 
-from agent_pm.session import Session
+from agent_pm.session import SIGNALS, Displayable, Session
 from agent_pm.session.adapters.claude.tui import ClaudeTui
 from agent_pm.session.engine.records import RunLog
 from agent_pm.session.engine.types import (
@@ -26,7 +26,9 @@ from agent_pm.session.engine.types import (
     DriverError,
     Exited,
     IdleTimeout,
+    Launch,
     LimitHit,
+    Mode,
     Reply,
     Spec,
     TurnEnd,
@@ -61,9 +63,9 @@ RESETS = datetime(2027, 10, 15, 9, tzinfo=UTC).timestamp()
 # reply].
 ATTACH = """import json, sys
 table, name, text = sys.argv[1:]
-from agent_pm.session import Driver, TurnEnd
-driver = Driver(adapters={"claude": json.loads(table)}, hosts={"tmux": {"implementation": "agent_pm.session.hosts.tmux:TmuxHost"}}, default_host="tmux")
-handle = driver.attach(name)
+from agent_pm.session import Host, Session, TurnEnd
+Session.configure(adapters={"claude": json.loads(table)}, hosts=Host.parse_hosts({"default": "tmux", "tmux": {"implementation": "agent_pm.session.hosts.tmux:TmuxHost"}}))
+handle = Session.attach(name)
 before = [handle.sid, handle.state(), handle.reply]
 handle.send(text)
 event = next(e for e in handle.events() if isinstance(e, TurnEnd))
@@ -102,23 +104,42 @@ class Live(tui_live.Live):
         self.configure_session({"claude": {**TABLE, **table}})
 
     def start(
-        self, name: str, prompt: str = "hello", *, scenario: dict, sid=None, **kwargs
+        self,
+        name: str,
+        prompt: str = "hello",
+        *,
+        scenario: dict,
+        sid=None,
+        resume=False,
+        **kwargs,
     ) -> Session:
         """Tui session `name` of claude on `prompt`, the fake playing `scenario`, its events file
         self.events.
         """
         with open(self.scenario, "w", encoding="utf-8") as f:
             json.dump({"log": self.log, **scenario}, f)
-        handle = self.driver.start(
-            "claude",
-            "tui",
-            prompt,
-            Spec(workdir=self.workdir, name=name, sid=sid),
-            events=self.events,
+        handle = self.session_cls.start(
+            Spec(
+                workdir=self.workdir,
+                name=name,
+                sid=sid,
+                client="claude",
+                mode=Mode.TUI,
+                prompt=prompt,
+                resume=resume,
+                events=self.events,
+            ),
             **kwargs,
         )
         self.addCleanup(handle.stop)
         return handle
+
+    def show(self, name: str) -> str | None:
+        """The default Host's show(name)."""
+        host = self.session_cls.host()
+        if not isinstance(host, Displayable):
+            self.fail(f"host {host.name} cannot display")
+        return host.show(name)
 
     def stream(self, handle: Session, *, replies: bool = False) -> Stream:
         """handle's Stream (a HookStream unless `replies`); at cleanup the handle stops and the
@@ -140,10 +161,8 @@ class Live(tui_live.Live):
         return len(self.server.panes(f"={MANAGER}:"))
 
     def closed(self, handle: Session) -> None:
-        self.assertEqual((handle.state(), self.driver.sessions(handle.name)), ("absent", []))
-        self.assertFalse(
-            os.path.lexists(tui._Store(handle.name, host=self.driver.session_cls.host()).dir)
-        )
+        self.assertEqual((handle.state(), self.session_cls.list(handle.name)), ("absent", []))
+        self.assertFalse(os.path.lexists(tui._Store(handle.name, host=self.session_cls.host()).dir))
 
 
 class TurnsTest(Live):
@@ -164,7 +183,7 @@ class TurnsTest(Live):
         argv = self.calls()[0]["argv"]
         self.assertEqual((argv[argv.index("--session-id") + 1], argv[-2:]), (SID, ["--", "hello"]))
         hooks = json.loads(argv[argv.index("--settings") + 1])["hooks"]
-        hook = tui._Store("w1", host=self.driver.session_cls.host()).hook_argv(PACKAGE_ROOTS)
+        hook = tui._Store("w1", host=self.session_cls.host()).hook_argv(PACKAGE_ROOTS)
         self.assertEqual(
             {label: entries[0]["hooks"][0]["command"] for label, entries in hooks.items()},
             {label: shlex.join((*hook, label)) for label in ClaudeTui.hooks},
@@ -184,7 +203,7 @@ class TurnsTest(Live):
         border = self.server.tmux("show-options", "-wqv", "-t", "=w1:", "pane-border-format").stdout
         self.assertEqual(border, tmux_model.BORDER + "\n")
         self.assertEqual(
-            (handle.state(), [r.name for r in self.driver.sessions("w1")], self.panes()),
+            (handle.state(), [r.name for r in self.session_cls.list("w1")], self.panes()),
             ("live", ["w1"], 1),
         )
 
@@ -216,8 +235,8 @@ class RepliesTest(Live):
         first = self.start("w1", scenario={"steps": ["One."]}, sid=SID)
         stream = self.stream(first, replies=True)
         self.assertEqual(delivered(self.until_turn_end(stream)), ["One."])
-        self.driver.close("w1")
-        again = self.start("w1", "again", scenario={"steps": ["Two."]}, resume=SID)
+        self.session_cls.retire("w1")
+        again = self.start("w1", "again", scenario={"steps": ["Two."]}, sid=SID, resume=True)
         events = self.until_turn_end(self.stream(again, replies=True))
         self.assertEqual(delivered(events), ["Two."])
 
@@ -304,12 +323,12 @@ class DeadTest(Live):
         self.lines("w1 done", "w1 dead")
         self.assertEqual(self.server.option("w1", "@state"), "dead")
         self.assertEqual(
-            (handle.state(), [r.state for r in self.driver.sessions("w1")]), ("live", ["dead"])
+            (handle.state(), [r.state for r in self.session_cls.list("w1")]), ("live", ["dead"])
         )
         for call in (lambda: handle.send("more"), handle.screen):
             with self.assertRaises(DriverError):
                 call()
-        self.driver.close("w1")
+        self.session_cls.retire("w1")
         self.closed(handle)
 
     def test_an_early_death_ends_with_its_exit_code_and_a_dead_line_its_pane_kept(self):
@@ -320,10 +339,10 @@ class DeadTest(Live):
         self.assertEqual(self.server.option("w2", "@state"), "dead")
         pane = self.server.tmux("capture-pane", "-p", "-J", "-t", "=w2:").stdout
         self.assertIn("claude: error: unrecognized arguments: --bogus", pane)
-        self.assertEqual([r.state for r in self.driver.sessions("w2")], ["dead"])
+        self.assertEqual([r.state for r in self.session_cls.list("w2")], ["dead"])
         with self.assertRaises(DriverError):
             handle.screen()
-        self.driver.close("w2")
+        self.session_cls.retire("w2")
         self.closed(handle)
 
 
@@ -332,9 +351,9 @@ class ResumeTest(Live):
         first = self.start("w1", scenario={"steps": ["One."]}, sid=SID)
         stream = self.stream(first)
         self.assertEqual([stream.next() for _ in range(2)], [Activity(""), TurnEnd("One.", 0)])
-        self.driver.close("w1")
+        self.session_cls.retire("w1")
         self.assertEqual(stream.until_exited(), [Exited(-signal.SIGHUP)])
-        again = self.start("w1", "again", scenario={"steps": ["Two."]}, resume=SID)
+        again = self.start("w1", "again", scenario={"steps": ["Two."]}, sid=SID, resume=True)
         stream = self.stream(again)
         self.assertEqual([stream.next() for _ in range(2)], [Activity(""), TurnEnd("Two.", 0)])
         argv = self.calls()[1]["argv"]
@@ -372,17 +391,27 @@ class ShowTest(Live):
         self.server.attach(MANAGER)
         go = os.path.join(self.dir, "go")
         self.addCleanup(lambda: open(go, "w").close())
-        self.driver.detach(
+        self.session_cls.host().detach(
             "w1-drive",
-            [sys.executable, "-I", "-c", detach_live.CHILD, os.path.join(self.dir, "d.json"), go],
-            self.dir,
-            self.server.env(),
-            opener=MANAGER,
+            Launch(
+                (
+                    sys.executable,
+                    "-I",
+                    "-c",
+                    detach_live.CHILD,
+                    os.path.join(self.dir, "d.json"),
+                    go,
+                ),
+                self.server.env(),
+                cwd=self.dir,
+                blocked_signals=SIGNALS,
+            ),
+            display=MANAGER,
         )
         handle = self.start("w1", scenario={"steps": ["Hi."]})
         self.assertEqual(self.panes(), 1)
         with mock.patch.dict(os.environ, self.server.inside(MANAGER)):
-            self.assertIsNone(self.driver.show("w1"))
+            self.assertIsNone(self.show("w1"))
         live_tmux.wait(
             functools.partial(live_tmux.assert_grid, self, self.server, MANAGER, [["w1"]]),
             what="the grid [['w1']], the detached session in no cell",
@@ -390,7 +419,7 @@ class ShowTest(Live):
         self.assertEqual(
             [self.server.option(n, "@opener") for n in ("w1", "w1-drive")], [MANAGER, MANAGER]
         )
-        self.driver.close("w1")
+        self.session_cls.retire("w1")
 
         def alone() -> bool:
             self.poke()
@@ -419,14 +448,14 @@ class ShowTest(Live):
                 mock.patch.dict(os.environ, env),
                 self.assertLogs("session", "WARNING") as logs,
             ):
-                self.assertEqual(self.driver.show("w1"), attach_command("w1"))
+                self.assertEqual(self.show("w1"), attach_command("w1"))
             self.assertIn(why, logs.output[0])
         self.assertEqual((self.panes(), self.server.pane_of("w1")), (1, ""))
-        self.driver.close("w1")
+        self.session_cls.retire("w1")
         self.assertEqual(stream.until_exited(), [Exited(-signal.SIGHUP)])
         self.closed(handle)
         with self.assertRaises(DriverError):
-            self.driver.show("w1")
+            self.show("w1")
 
 
 if __name__ == "__main__":

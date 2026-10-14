@@ -32,7 +32,7 @@ LIMIT = {"kind": "limit", "resets_at": T}
 PICK = "picked the task."
 RUNNING = r"running · #1 · \S+"
 DONE = r"done · #2 · \S+ → \S+ · exit 0"
-LIMITED = r"limit · #2 · \S+ → \S+ · exit -9"  # the Driver kills a limit-hit session
+LIMITED = r"limit · #2 · \S+ → \S+ · exit -9"  # the Session kills a limit-hit session
 KINDS = ["session", "input", "client_session", "progress", "result", "end"]
 RESEARCH = {
     "status": "done",

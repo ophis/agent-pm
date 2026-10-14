@@ -1,4 +1,4 @@
-"""Codex Driver usage queries and environment isolation through a fake app-server."""
+"""Codex session usage queries and environment isolation through a fake app-server."""
 
 import json
 import os
@@ -65,7 +65,7 @@ class UsageIntegrationTest(Case):
             }
         )
         started = time.monotonic()
-        result = self.driver.usage("codex")
+        result = self.session_cls.usage("codex")
         self.assertLess(time.monotonic() - started, 12)
         if self.log.exists():
             rows = [json.loads(line) for line in self.log.read_text().splitlines()]
@@ -119,10 +119,10 @@ class UsageIntegrationTest(Case):
         self.assertIsNone(self.probe(PATH=str(self.work)))
         self.assertFalse(self.log.exists())
 
-    def test_driver_hosted_helper_timeout_is_unknown_and_reaped(self):
+    def test_hosted_helper_timeout_is_unknown_and_reaped(self):
         self.assertIsNone(self.probe("silent"))
 
-    def test_driver_account_query_uses_factory_and_does_not_start_model(self):
+    def test_account_query_uses_factory_and_does_not_start_model(self):
         self.assertEqual(self.probe(), Usage(FIVE, WEEK))
         row = json.loads(self.log.read_text().splitlines()[0])
         self.assertNotEqual(row["ppid"], os.getpid())

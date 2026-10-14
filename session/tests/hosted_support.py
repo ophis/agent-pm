@@ -1,4 +1,4 @@
-"""Shared fake-client fixtures for hosted and forwarding tests."""
+"""Shared fake-client fixtures for HostedSession tests."""
 
 import dataclasses
 import json
@@ -173,7 +173,7 @@ PACKAGES = {
 
 
 class Base(Case):
-    """Caller-owned Driver and HostedSession fixtures."""
+    """Caller-owned HostedSession fixtures; self.session: the class."""
 
     def setUp(self):
         self.probe_dir = os.path.join(self.agent_pm, "probe")
@@ -184,7 +184,7 @@ class Base(Case):
         self.scenario = os.path.join(self.dir, "scenario.json")
         self.log = os.path.join(self.dir, "client.log")
         self.steps()
-        self.driver_dependencies = {
+        self.session_dependencies = {
             "class_loader": adapter_loader(
                 {f"agent_pm.session.adapters.{name}": module for name, module in PACKAGES.items()}
             )
@@ -193,7 +193,7 @@ class Base(Case):
 
     def configure_session(self, adapters, tmux=None) -> None:
         super().configure_session(adapters, tmux)
-        self.session = self.driver.session_cls
+        self.session = self.session_cls
 
     def steps(self, *steps):
         with open(self.scenario, "w", encoding="utf-8") as f:
@@ -280,15 +280,6 @@ class Base(Case):
         self.assertFalse(os.path.exists(self.log))
 
 
-def drive(case, client="fake", mode="headless", prompt="hello", spec=None, **kwargs):
-    """case.driver.start, `sid` and `name` going into the spec as Driver callers pass them."""
-    given = {k: kwargs.pop(k) for k in ("sid", "name") if k in kwargs}
-    spec = dataclasses.replace(spec or case.spec(), **given)
-    session = case.driver.start(client, mode, prompt, spec, **kwargs)
-    case.addCleanup(session.stop)
-    return session
-
-
 def fake_tmux(case=None) -> mock.Mock:
     """Recorded tmux responses; defaults: status None, listing [], PAUSE 0."""
     host = mock.create_autospec(Tmux, instance=True)
@@ -333,7 +324,7 @@ class TuiBase(Base):
         self.root = os.path.join(os.path.dirname(self.probe_dir), "tui")
         self.events = os.path.join(self.dir, "events")
         self.host = fake_tmux(self)
-        self.driver_dependencies = {**self.driver_dependencies, "host": self.host}
+        self.session_dependencies = {**self.session_dependencies, "host": self.host}
         self.configure(tui=True)
 
     def tui(self, **kwargs) -> Session:
@@ -360,7 +351,7 @@ class EnvBase(TuiBase):
     def setUp(self):
         super().setUp()
         self.probe = mock.Mock(return_value="7")
-        self.driver_dependencies = {**self.driver_dependencies, "probe": self.probe}
+        self.session_dependencies = {**self.session_dependencies, "probe": self.probe}
         self.configure("env", probe={"argv": ("probe-cmd",)})
         self.enterContext(mock.patch.dict(os.environ, {"PYTHONPATH": "/parent"}))
         self.access = Access(commands=("git",), env={"PYTHONPATH": PYTHONPATH})
@@ -371,8 +362,8 @@ class HostedTuiBase(TuiBase):
         super().setUp()
         self.host = ScreenHost("tmux")
         self.boundary = True
-        self.driver_dependencies = {
-            name: value for name, value in self.driver_dependencies.items() if name != "host"
+        self.session_dependencies = {
+            name: value for name, value in self.session_dependencies.items() if name != "host"
         }
         self.configure(tui=True)
 
@@ -390,11 +381,11 @@ class HostedTuiBase(TuiBase):
             }
         )
         chosen = self.host
-        self.session = HostedSession.configured(
+        self.session_cls = self.session = HostedSession.configured(
             adapters=adapters,
             hosts=hosts,
             host_factory=lambda _kind, _name, _settings: chosen,
-            **self.driver_dependencies,
+            **self.session_dependencies,
         )
 
     def nothing_hosted(self):

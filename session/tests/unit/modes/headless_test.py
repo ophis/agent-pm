@@ -86,7 +86,7 @@ class TuiOnly(Base):
 
 
 class Start(Base):
-    def test_a_commit_failure_leaves_no_session_record_or_process(self):
+    def test_a_commit_failure_leaves_no_session_line_or_process(self):
         with (
             self.faked() as calls,
             self.assertRaisesRegex(LookupError, "^cannot persist$") as caught,
@@ -103,7 +103,7 @@ class Start(Base):
             transcript="/t.jsonl",
             resume="stub --resume s1",
         )
-        self.driver_dependencies = {"class_loader": lambda _path, _base: IdentityAdapter}
+        self.session_dependencies = {"class_loader": lambda _path, _base: IdentityAdapter}
         self.configure_session(
             {"inner": {"implementation": "agent_pm.session.adapters.inner:InnerAdapter"}}
         )

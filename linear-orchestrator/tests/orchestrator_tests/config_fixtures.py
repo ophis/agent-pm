@@ -3,10 +3,15 @@
 import os
 import tempfile
 
+from agent_pm.delegate import Delegate
 from agent_pm.linear_orchestrator.engine import config
+from agent_pm.utils import load_class
 from orchestrator_tests.unit.board_ids import HEADER, role
 
 from utils.tests.case import local_section
+
+HARNESS_DELEGATE = load_class("agent_pm.delegate.engine.harness_delegate:HarnessDelegate", Delegate)
+
 
 PIPELINE = (
     HEADER + role("researcher", 'next = "pm"') + role("pm", 'next = "engineer"') + role("engineer")

@@ -2,8 +2,9 @@ import glob
 import os
 import re
 
-from agent_pm.delegate import composer
-from agent_pm.delegate.engine.config import CONFIG
+from agent_pm.delegate.composer import teams
+from agent_pm.delegate.composer.base import TEAM
+from agent_pm.delegate.config import CONFIG
 
 from delegate.tests.case import REPO, Case
 from delegate.tests.unit.composer.prompts import (
@@ -12,7 +13,7 @@ from delegate.tests.unit.composer.prompts import (
 )
 from utils.tests.case import local_section
 
-TASKS = os.path.join(composer.TEAM, "tasks")
+TASKS = os.path.join(TEAM, "tasks")
 
 SCHEMA_SHA256 = "748847763f62d05e4412f1627a029ad88e42f004162361561d7556ec3877c366"
 
@@ -38,25 +39,9 @@ API = [
     "ConfigError",
     "Composer",
     "DelegateConfig",
-    "TEAM",
-    "DELIVERABLE",
     "RunConfig",
     "RunParams",
     "Team",
-    "team",
-    "team_dirs",
-    "index",
-    "lookup",
-    "path_for",
-    "check_all",
-    "catalog",
-    "check_team_dirs",
-    "check_overlap",
-    "team_paths",
-    "resolve",
-    "trusted_dirs",
-    "access",
-    "render",
 ]
 
 DROPPED = [
@@ -104,7 +89,7 @@ COMMANDS_RULE = (
 
 def catalog() -> dict[str, dict[str, str]]:
     """The built-in team's catalog with the shipped config alone."""
-    return composer.catalog(config=CONFIG, local=os.devnull)
+    return teams.catalog(config=CONFIG, local=os.devnull)
 
 
 def roles() -> list[str]:
@@ -153,9 +138,9 @@ def team_texts():
     code).
     """
     out = {}
-    for path in glob.glob(os.path.join(composer.TEAM, "**", "*.md"), recursive=True):
+    for path in glob.glob(os.path.join(TEAM, "**", "*.md"), recursive=True):
         with open(path) as f:
-            out[os.path.relpath(path, composer.TEAM)] = f.read()
+            out[os.path.relpath(path, TEAM)] = f.read()
     return out
 
 

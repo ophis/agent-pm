@@ -27,51 +27,6 @@ OBJECT_EXPORT_MODULES = (
 OBJECT_EXPORTS_ALLOWED = {
     ("agent_pm.delegate", "read_config"): "TASK-389 layer-owned configuration entry point",
     ("agent_pm.delegate", "module_roots"): "TASK-372 layer-owned import-root entry point",
-    ("agent_pm.delegate", "resolve_run"): "Legacy Composer forwarding; 356-14 (FR-27) deletes",
-    ("agent_pm.delegate", "task_index"): "Legacy Composer forwarding; 356-14 (FR-27) deletes",
-    ("agent_pm.delegate", "trusted_dirs"): "Legacy Composer forwarding; 356-14 (FR-27) deletes",
-    ("agent_pm.delegate", "configure"): "Legacy configuration forwarding; 356-14 (FR-27) deletes",
-    ("agent_pm.delegate", "plan"): "Legacy plan forwarding; 356-14 (FR-27) deletes",
-    ("agent_pm.delegate", "run"): "FR-13 forwarding wrapper; 356-14 (FR-27) deletes",
-    ("agent_pm.delegate", "harness_host"): "Legacy Host configuration; 356-14 (FR-27) deletes",
-    ("agent_pm.delegate", "CONFIG"): "Legacy config path computed at import (os.path.join)",
-    ("agent_pm.delegate", "STATUSES"): "Legacy tuple(OutcomeStatus) copy of the enum's values",
-    ("agent_pm.delegate.composer", "team"): "FR-46 forwarding wrapper; 356-14 (FR-27) deletes",
-    ("agent_pm.delegate.composer", "team_dirs"): "FR-46 forwarding wrapper; 356-14 (FR-27) deletes",
-    ("agent_pm.delegate.composer", "index"): "FR-46 forwarding wrapper; 356-14 (FR-27) deletes",
-    ("agent_pm.delegate.composer", "lookup"): "FR-46 forwarding wrapper; 356-14 (FR-27) deletes",
-    ("agent_pm.delegate.composer", "path_for"): "FR-46 forwarding wrapper; 356-14 (FR-27) deletes",
-    ("agent_pm.delegate.composer", "check_all"): "FR-46 forwarding wrapper; 356-14 (FR-27) deletes",
-    ("agent_pm.delegate.composer", "catalog"): "FR-46 forwarding wrapper; 356-14 (FR-27) deletes",
-    (
-        "agent_pm.delegate.composer",
-        "check_team_dirs",
-    ): "FR-46 forwarding wrapper; 356-14 (FR-27) deletes",
-    (
-        "agent_pm.delegate.composer",
-        "check_overlap",
-    ): "FR-46 forwarding wrapper; 356-14 (FR-27) deletes",
-    (
-        "agent_pm.delegate.composer",
-        "team_paths",
-    ): "FR-46 forwarding wrapper; 356-14 (FR-27) deletes",
-    ("agent_pm.delegate.composer", "resolve"): "FR-46 forwarding wrapper; 356-14 (FR-27) deletes",
-    (
-        "agent_pm.delegate.composer",
-        "trusted_dirs",
-    ): "FR-46 forwarding wrapper; 356-14 (FR-27) deletes",
-    ("agent_pm.delegate.composer", "access"): "FR-46 forwarding wrapper; 356-14 (FR-27) deletes",
-    ("agent_pm.delegate.composer", "render"): "FR-46 forwarding wrapper; 356-14 (FR-27) deletes",
-    ("agent_pm.delegate.composer", "DELIVERABLE"): "Legacy workdir path computed at import",
-    ("agent_pm.delegate.composer", "TEAM"): "Legacy team path computed at import (os.path.join)",
-}
-
-
-DELEGATE_SESSION_FORWARDING_ALLOWED = {
-    (
-        "delegate/src/agent_pm/delegate/__init__.py",
-        "agent_pm.session.Driver",
-    ): "FR-13 public plan()/run() forwarding and configure() for the orchestrator's engine/config.py; 356-14 (FR-27) deletes",
 }
 
 

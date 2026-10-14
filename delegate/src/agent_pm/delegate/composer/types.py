@@ -107,7 +107,7 @@ class RunParams:
 @dataclass(frozen=True)
 class Team:
     """The roles, tasks and templates a run can name: the team root's and the team dirs' files
-    (composer.team).
+    (teams.team).
     """
 
     root: str

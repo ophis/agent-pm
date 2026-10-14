@@ -1,5 +1,5 @@
-"""HostedSession, through the Driver wrapper, over fake clients: events, idle timeouts, exits, stop, process groups,
-inherited pipes, launch environment, limits and resume. Custom adapters: in-process module tables.
+"""HostedSession over fake clients: events, idle timeouts, exits, stop, process groups, inherited
+pipes, launch environment, limits and resume. Custom adapters: in-process module tables.
 """
 
 import contextlib
@@ -28,6 +28,7 @@ from agent_pm.session.engine.types import (
     IdleTimeout,
     Launch,
     LimitHit,
+    Mode,
     Reply,
     Spec,
     Stderr,
@@ -116,7 +117,7 @@ class Base(Case):
         self.scenario = os.path.join(self.dir, "scenario.json")
         self.log = os.path.join(self.dir, "client.log")
         self.steps()
-        self.driver_dependencies = {
+        self.session_dependencies = {
             "class_loader": adapter_loader(
                 {
                     "agent_pm.session.adapters.fake": fake_adapter,
@@ -146,10 +147,18 @@ class Base(Case):
         tables["launching"].update(extra)
         self.configure_session(tables)
 
-    def start(self, client="fake", spec=None, **kwargs) -> Session:
-        handle = self.driver.start(
-            client, "headless", "hello", spec or Spec(workdir=self.workdir), **kwargs
+    def start(self, client="fake", spec=None, *, idle_timeout=None, **fields) -> Session:
+        """A headless session of `client` on prompt hello: `spec` (else one in self.workdir) with
+        `fields`.
+        """
+        spec = dataclasses.replace(
+            spec or Spec(workdir=self.workdir),
+            client=client,
+            mode=Mode.HEADLESS,
+            prompt="hello",
+            **fields,
         )
+        handle = self.session_cls.start(spec, idle_timeout=idle_timeout)
         self.addCleanup(handle.stop)
         return handle
 
@@ -396,7 +405,7 @@ class FailureTest(Base):
         self.assertEqual(handle.state(), "absent")
         self.assertEqual(list(handle.events()), [])
 
-    def test_a_failed_client_session_record_stops_the_process_and_propagates(self):
+    def test_a_failed_client_session_line_stops_the_process_and_propagates(self):
         self.steps(out("session", id="native-1"), {"sleep": 60})
         handle = self.start()
         os.replace(self.redirected(), RunLog(self.workdir).path)
@@ -473,12 +482,14 @@ class FakeTest(Base):
         )
         first = self.start()
         self.assertEqual(self.drain(first), [Reply("first"), Exited(0)])
-        self.assertEqual(self.drain(self.start(resume=first.sid)), [Reply("again"), Exited(0)])
+        self.assertEqual(
+            self.drain(self.start(sid=first.sid, resume=True)), [Reply("again"), Exited(0)]
+        )
         self.assertEqual(["--resume" in entry["argv"] for entry in self.logged()], [False, True])
 
     def test_an_object_without_resume_steps_runs_its_steps_on_a_resume(self):
         self.scenario_object(steps=[out("message", text="first")])
-        self.assertEqual(self.drain(self.start(resume="r1")), [Reply("first"), Exited(0)])
+        self.assertEqual(self.drain(self.start(sid="r1", resume=True)), [Reply("first"), Exited(0)])
 
 
 if __name__ == "__main__":

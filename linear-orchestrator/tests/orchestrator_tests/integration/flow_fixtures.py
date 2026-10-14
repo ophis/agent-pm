@@ -2,7 +2,7 @@
 included), FakeLinear over HTTP through test-only transport with the harness, role and human
 accounts and the task label group, fake_claude as `claude`, run, promote and router as `python3 -P
 -m` subprocesses, and readers of Linear, the logs and a run's files. TmuxFlow adds a private tmux
-server for the Driver's sessions and fake_gh as `gh` with REPO a bare repo.
+server for the sessions and fake_gh as `gh` with REPO a bare repo.
 """
 
 import copy
@@ -249,7 +249,7 @@ class Flow(Case):
 
 
 class TmuxFlow(Flow):
-    """A private tmux server (live_tmux) with session MANAGER for the Driver's sessions; fake_gh as
+    """A private tmux server (live_tmux) with session MANAGER for the sessions; fake_gh as
     `gh` over self.gh (write_gh), REPO a bare repo that HOME's .gitconfig puts in place of
     github.com.
     """
@@ -302,7 +302,7 @@ class TmuxFlow(Flow):
         return self.server.tmux("has-session", "-t", f"={session}").returncode == 0
 
     def wait_end(self, sid, ident, ends=1, role="engineer", timeout=TIMEOUT):
-        """Until orchestrator.jsonl holds `ends` run end lines of sid and the Driver session of role
+        """Until orchestrator.jsonl holds `ends` run end lines of sid and the detached session of role
         and ident is gone; else fails with the tails of orchestrator.jsonl and the run's run.jsonl.
         """
         driver = self.driver(role, ident)

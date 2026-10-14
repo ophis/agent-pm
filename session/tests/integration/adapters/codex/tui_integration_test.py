@@ -19,7 +19,6 @@ from pathlib import Path
 from unittest import mock
 from zoneinfo import ZoneInfo
 
-from agent_pm.session import Driver
 from agent_pm.session.adapters.codex import tui
 from agent_pm.session.adapters.codex.common import SessionStore
 from agent_pm.session.adapters.codex.tui import start as tui_start
@@ -32,13 +31,14 @@ from agent_pm.session.engine.types import (
     Exited,
     HookCallback,
     LimitHit,
+    Mode,
     Spec,
     TurnEnd,
 )
 from agent_pm.session.modes import tui_hook
 
 from session.tests import live_tmux
-from session.tests.case import PY, REPO, ROOTS, SRC, Case, settings
+from session.tests.case import PY, REPO, ROOTS, SRC, Case, configured
 from session.tests.integration.adapters.codex import fake_codex, fake_tui
 from session.tests.source_roots import PACKAGE_ROOTS
 from session.tests.unit.adapters.codex.support import CHILD, NATIVE, Base
@@ -48,9 +48,9 @@ WAIT = 15
 CHANGED = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
 
 ATTACH = """import json, sys
-from agent_pm.session import Driver, TurnEnd
-driver = Driver(**json.loads(sys.argv[1]))
-h = driver.attach(sys.argv[2])
+from agent_pm.session import Host, Session, TurnEnd
+Session.configure(adapters=json.loads(sys.argv[1]), hosts=Host.parse_hosts({"default": "tmux", "tmux": {"implementation": "agent_pm.session.hosts.tmux:TmuxHost"}}))
+h = Session.attach(sys.argv[2])
 before = [h.sid, h.state(), h.reply]
 if sys.argv[3]:
     h.send(sys.argv[3])
@@ -128,22 +128,20 @@ class Live(Case):
         self.scene()
         self.env = self.server.env(CODEX_HOME=str(self.codex_home), TZ="UTC")
         self.enterContext(mock.patch.dict(os.environ, self.env, clear=True))
-        self.config = settings(
-            {
-                "codex": {
-                    "implementation": "agent_pm.session.adapters.codex:CodexAdapter",
-                    "tiers": {"1": "gpt-test"},
-                    "efforts": {"low": "low"},
-                    "env": {
-                        "FAKE_LOG": str(self.log),
-                        "FAKE_SCENARIO": str(self.scenario),
-                        "TZ": "UTC",
-                    },
-                }
+        self.adapters = {
+            "codex": {
+                "implementation": "agent_pm.session.adapters.codex:CodexAdapter",
+                "tiers": {"1": "gpt-test"},
+                "efforts": {"low": "low"},
+                "env": {
+                    "FAKE_LOG": str(self.log),
+                    "FAKE_SCENARIO": str(self.scenario),
+                    "TZ": "UTC",
+                },
             }
-        )
-        self.driver = Driver(**self.config)
-        self.common = self.driver.registry.adapter("codex").common
+        }
+        self.session_cls = configured(self.adapters)
+        self.common = self.session_cls._config().registry.adapter("codex").common
         self.spec = Spec(
             flags=(
                 "-s",
@@ -167,15 +165,18 @@ class Live(Case):
             json.dumps({"tui_turns": [["first"]] if turns is None else turns, **fields})
         )
 
-    def start(self, name="w1", prompt="hello", **kwargs):
-        handle = self.driver.start(
-            "codex",
-            "tui",
-            prompt,
+    def start(self, name="w1", prompt="hello", *, spec=None, sid=None, events=None, **fields):
+        handle = self.session_cls.start(
             dataclasses.replace(
-                kwargs.pop("spec", self.spec), name=name, sid=kwargs.pop("sid", self.sid)
-            ),
-            **{"events": str(self.events), **kwargs},
+                spec or self.spec,
+                name=name,
+                sid=self.sid if sid is None else sid,
+                client="codex",
+                mode=Mode.TUI,
+                prompt=prompt,
+                events=str(self.events) if events is None else events,
+                **fields,
+            )
         )
         self.addCleanup(handle.stop)
         return handle
@@ -216,7 +217,7 @@ class Live(Case):
 
     def attach(self, text="", name="w1"):
         result = subprocess.run(
-            [*PY, "-c", ATTACH, json.dumps(self.config), name, text],
+            [*PY, "-c", ATTACH, json.dumps(self.adapters), name, text],
             env=self.server.child_env(),
             text=True,
             capture_output=True,
@@ -227,12 +228,15 @@ class Live(Case):
         return json.loads(result.stdout)
 
     def headless(self, *, resume=False):
-        handle = self.driver.start(
-            "codex",
-            "headless",
-            "headless",
-            dataclasses.replace(self.spec, sid=self.sid),
-            resume=self.sid if resume else None,
+        handle = self.session_cls.start(
+            dataclasses.replace(
+                self.spec,
+                sid=self.sid,
+                client="codex",
+                mode=Mode.HEADLESS,
+                prompt="headless",
+                resume=resume,
+            )
         )
         self.addCleanup(handle.stop)
         stream = Stream(self, handle)
@@ -408,7 +412,7 @@ class HookTrustIntegrationTest(Live):
 
     def test_silent_appserver_times_out_and_kills_group_with_a_fake_clock(self):
         self.scene(catalog_case="silent")
-        run = self.driver.registry.adapter("codex").tui()
+        run = self.session_cls._config().registry.adapter("codex").tui()
         launch = run.launch(
             dataclasses.replace(self.spec, sid=self.sid, prompt="hello"),
             (
@@ -523,7 +527,7 @@ class TuiLaunchIntegrationTest(Live):
         self.assertEqual(self.lines(2), ["w1 blocked", "w1 done"])
         self.assertEqual(handle.reply, raw)
         self.assertEqual(len(self.server.panes("=mgr:")), 1)
-        self.assertEqual([r.name for r in self.driver.sessions("w1")], ["w1"])
+        self.assertEqual([r.name for r in self.session_cls.list("w1")], ["w1"])
         self.assertEqual(self.server.option("w1", "@sid"), self.sid)
         self.assertEqual(stat.S_IMODE(self.record().stat().st_mode), 0o600)
         hook_store = self.home / ".agent-pm" / "tui" / "w1" / "hooks.jsonl"
@@ -556,7 +560,8 @@ class TuiLaunchIntegrationTest(Live):
             call["argv"][-2:],
             [
                 "--",
-                "quoted ' prompt\nnext\n\n" + self.driver.registry.adapter("codex").client_note,
+                "quoted ' prompt\nnext\n\n"
+                + self.session_cls._config().registry.adapter("codex").client_note,
             ],
         )
         self.assertEqual(
@@ -587,9 +592,9 @@ class TuiLaunchIntegrationTest(Live):
         self.assertIn(self.bound().native_id, handle.info().resume)
         handle.stop()
         self.assertEqual(stream.until(Exited), [Exited(-signal.SIGHUP)])
-        self.assertEqual(self.driver.sessions("w1"), [])
+        self.assertEqual(self.session_cls.list("w1"), [])
 
-    def test_workspace_write_flags_and_saved_policy_through_driver(self):
+    def test_workspace_write_flags_and_saved_policy_through_the_session(self):
         self.spec = dataclasses.replace(
             self.spec,
             flags=(
@@ -605,14 +610,14 @@ class TuiLaunchIntegrationTest(Live):
                 "sandbox_workspace_write.writable_roots=[]",
             ),
         )
-        self.driver = Driver(**self.config)
+        self.session_cls = configured(self.adapters)
         handle = self.start()
         Stream(self, handle).until(TurnEnd)
         native = self.bound().native_id
         handle.stop()
         self.spec = dataclasses.replace(self.spec, flags=("-s", "danger-full-access"))
-        self.driver = Driver(**self.config)
-        resumed = self.start(resume=self.sid)
+        self.session_cls = configured(self.adapters)
+        resumed = self.start(resume=True)
         Stream(self, resumed).until(TurnEnd)
         first, second = self.calls()
         expected = [
@@ -652,7 +657,7 @@ class TuiLaunchIntegrationTest(Live):
         spec = dataclasses.replace(
             self.spec, access=dataclasses.replace(self.spec.access, commands=())
         )
-        resumed = self.start(prompt="", resume=self.sid, spec=spec)
+        resumed = self.start(prompt="", resume=True, spec=spec)
         live_tmux.wait(lambda: len(self.calls()) == 2, WAIT, what="interactive resume starts")
         time.sleep(0.3)
         self.assertEqual(len(self.hooks()), hooks)
@@ -676,11 +681,11 @@ class TuiLaunchIntegrationTest(Live):
         )
 
     def test_explicit_operator_environment_is_forwarded_and_not_written_to_config(self):
-        cfg = self.config["adapters"]["codex"]
+        cfg = self.adapters["codex"]
         cfg["env"].update(
             NO_COLOR="0", CODEX_CI="operator", PAGER="less", FAKE_ADDITION="configured"
         )
-        self.driver = Driver(**self.config)
+        self.session_cls = configured(self.adapters)
         handle = self.start()
         self.assertEqual(Stream(self, handle).until(TurnEnd)[-1], TurnEnd("first"))
         env = self.calls()[0]["env"]
@@ -699,11 +704,11 @@ class TuiLaunchIntegrationTest(Live):
     def test_explicit_no_color_controls_interactive_rendering(self):
         for index, value in enumerate((None, "", "1", "0")):
             with self.subTest(value=value):
-                env = self.config["adapters"]["codex"]["env"]
+                env = self.adapters["codex"]["env"]
                 env.pop("NO_COLOR", None)
                 if value is not None:
                     env["NO_COLOR"] = value
-                self.driver = Driver(**self.config)
+                self.session_cls = configured(self.adapters)
                 handle = self.start(f"color{index}", sid=f"color-{index}")
                 self.assertEqual(Stream(self, handle).until(TurnEnd)[-1], TurnEnd("first"))
                 screen = self.server.tmux(
@@ -713,7 +718,7 @@ class TuiLaunchIntegrationTest(Live):
                 self.assertEqual(self.calls()[-1]["env"]["NO_COLOR"], value)
                 handle.stop()
 
-    def test_startup_dialog_screens_are_driver_blocked_events(self):
+    def test_startup_dialog_screens_are_blocked_events(self):
         for index, dialog in enumerate(("Trust this folder?", "Hooks need review")):
             with self.subTest(dialog=dialog):
                 release = self.root / f"release-{index}"
@@ -766,14 +771,14 @@ class TuiLaunchIntegrationTest(Live):
     def test_configured_home_keeps_caller_store_for_stop_binding_and_resume(self):
         client_home = self.root / "client-home"
         client_home.mkdir()
-        self.config["adapters"]["codex"]["env"]["HOME"] = str(client_home)
-        self.driver = Driver(**self.config)
+        self.adapters["codex"]["env"]["HOME"] = str(client_home)
+        self.session_cls = configured(self.adapters)
         self.scene([["configured home"]])
         first = self.start()
         self.assertEqual(Stream(self, first).until(TurnEnd)[-1], TurnEnd("configured home"))
         native = self.bound().native_id
         first.stop()
-        second = self.start(resume=self.sid)
+        second = self.start(resume=True)
         self.assertEqual(Stream(self, second).until(TurnEnd)[-1], TurnEnd("configured home"))
         self.assertEqual(self.bound().native_id, native)
         self.assertEqual(len(list(self.record().parent.glob("*.json"))), 1)
@@ -786,8 +791,8 @@ class TuiLaunchIntegrationTest(Live):
             with self.subTest(grant=grant):
                 client_home = grant / "client-home"
                 client_home.mkdir()
-                self.config["adapters"]["codex"]["env"]["HOME"] = str(client_home)
-                self.driver = Driver(**self.config)
+                self.adapters["codex"]["env"]["HOME"] = str(client_home)
+                self.session_cls = configured(self.adapters)
                 name, sid = f"configured{index}", f"configured-{index}"
                 before = len(self.calls())
                 first = self.start(name, sid=sid)
@@ -799,7 +804,7 @@ class TuiLaunchIntegrationTest(Live):
                 self.assertEqual(found[-1], TurnEnd("writable client home"))
                 native = self.bound(sid).native_id
                 first.stop()
-                second = self.start(name, sid=sid, resume=sid)
+                second = self.start(name, sid=sid, resume=True)
                 self.assertEqual(
                     Stream(self, second).until(TurnEnd)[-1], TurnEnd("writable client home")
                 )
@@ -817,9 +822,9 @@ class TuiLaunchIntegrationTest(Live):
         )
         first_tmp.mkdir()
         next_tmp.mkdir()
-        self.config["adapters"]["codex"]["env"]["TMPDIR"] = str(first_tmp)
-        self.driver = Driver(**self.config)
-        fresh = self.driver.writable_dirs("codex", self.spec)
+        self.adapters["codex"]["env"]["TMPDIR"] = str(first_tmp)
+        self.session_cls = configured(self.adapters)
+        fresh = self.session_cls.writable_dirs(dataclasses.replace(self.spec, client="codex"))
         self.assertEqual(list(fresh[:3]), [str(p) for p in (self.cwd, self.codex_home, self.extra)])
         self.assertIn(str(first_tmp), fresh)
         self.assertFalse(Path(SessionStore().root).parent.exists())
@@ -828,21 +833,23 @@ class TuiLaunchIntegrationTest(Live):
         self.assertEqual(Stream(self, first).until(TurnEnd)[-1], TurnEnd("first"))
         saved = self.bound().writable_roots
         first.stop()
-        self.config["adapters"]["codex"]["env"].update(
+        self.adapters["codex"]["env"].update(
             {"TMPDIR": str(next_tmp), "CODEX_HOME": str(ignored_home)}
         )
-        self.driver = Driver(**self.config)
+        self.session_cls = configured(self.adapters)
         changed_spec = dataclasses.replace(
             self.spec, access=Access(cwd=str(self.extra), project=True)
         )
         before = self.record().read_bytes()
-        resumed = self.driver.writable_dirs("codex", changed_spec, resume=self.sid)
+        resumed = self.session_cls.writable_dirs(
+            dataclasses.replace(changed_spec, client="codex", sid=self.sid, resume=True)
+        )
         self.assertIsInstance(saved, tuple)
         self.assertEqual(tuple(resumed[: len(saved)]), saved)
         self.assertNotIn(str(next_tmp), resumed)
         self.assertNotIn(str(ignored_home), resumed)
         self.assertEqual(self.record().read_bytes(), before)
-        second = self.start(resume=self.sid)
+        second = self.start(resume=True)
         self.assertEqual(Stream(self, second).until(TurnEnd)[-1], TurnEnd("first"))
         self.assertEqual(self.calls()[-1]["env"]["TMPDIR"], str(first_tmp))
         self.assertEqual(self.calls()[-1]["env"]["CODEX_HOME"], str(self.codex_home))
@@ -852,7 +859,7 @@ class TuiLaunchIntegrationTest(Live):
             first = self.start()
             self.assertEqual(Stream(self, first).until(TurnEnd)[-1], TurnEnd("first"))
             first.stop()
-            second = self.start(resume=self.sid)
+            second = self.start(resume=True)
             self.assertEqual(Stream(self, second).until(TurnEnd)[-1], TurnEnd("first"))
             with mock.patch.dict(os.environ, self.server.inside("w1")):
                 nested = self.start("z1", sid="nested", events=str(self.root / "nested.events"))
@@ -875,7 +882,7 @@ class TuiRecoveryIntegrationTest(Live):
         native = self.bound().native_id
         handle.stop()
         self.scene([["recovered"]])
-        resumed = self.start(resume=self.sid)
+        resumed = self.start(resume=True)
         stream = Stream(self, resumed)
         self.assertEqual(
             stream.until(TurnEnd),
@@ -972,13 +979,13 @@ class TuiRecoveryIntegrationTest(Live):
         handle.stop()
         changed = self.root / "changed"
         changed.mkdir()
-        cfg = self.config["adapters"]["codex"]
+        cfg = self.adapters["codex"]
         cfg.update(
             tiers={"1": "changed"},
             efforts={"low": "high"},
         )
         cfg["env"]["CODEX_HOME"] = str(changed)
-        self.driver = Driver(**self.config)
+        self.session_cls = configured(self.adapters)
         spec = dataclasses.replace(
             self.spec,
             tier=4,
@@ -986,7 +993,7 @@ class TuiRecoveryIntegrationTest(Live):
             access=Access(cwd=str(changed), project=False, commands=("changed command",)),
         )
         self.scene([["resumed"]])
-        resumed = self.start(resume=self.sid, spec=spec)
+        resumed = self.start(resume=True, spec=spec)
         self.assertTrue(resumed.info().project)
         self.assertTrue(resumed.info().transcript)
         self.assertIn(native, resumed.info().resume)
@@ -1004,15 +1011,15 @@ class TuiRecoveryIntegrationTest(Live):
             starts[0]["payload"]["transcript_path"], starts[1]["payload"]["transcript_path"]
         )
         self.assertEqual(
-            self.driver.session_status(
-                "codex", self.sid, str(self.cwd), workdir=str(self.work)
+            self.session_cls.inspect(
+                Spec(workdir=str(self.work), client="codex", sid=self.sid)
             ).resumable,
             "yes",
         )
 
     def test_headless_to_tui_to_headless_resume_uses_one_store(self):
         self.headless()
-        handle = self.start(resume=self.sid)
+        handle = self.start(resume=True)
         self.assertEqual(Stream(self, handle).until(TurnEnd)[-1], TurnEnd("first"))
         handle.stop()
         self.headless(resume=True)
@@ -1033,7 +1040,7 @@ class TuiRecoveryIntegrationTest(Live):
 
     def test_resume_missing_binding_native_fifo_and_malformed_record_fail_before_spawn(self):
         with self.assertRaisesRegex(ConfigError, "missing.*state"):
-            self.start(resume=self.sid)
+            self.start(resume=True)
         self.assertEqual(self.logged(), [])
         handle = self.start()
         self.assertEqual(Stream(self, handle).until(TurnEnd)[-1], TurnEnd("first"))
@@ -1051,7 +1058,7 @@ class TuiRecoveryIntegrationTest(Live):
                     path.chmod(0o600)
                 started = time.monotonic()
                 with self.assertRaises(ConfigError):
-                    self.start(resume=self.sid)
+                    self.start(resume=True)
                 self.assertLess(time.monotonic() - started, 1)
                 self.assertEqual(len(self.logged()), before)
         path.unlink()
@@ -1068,7 +1075,7 @@ class TuiRecoveryIntegrationTest(Live):
                     native.write_text("invalid")
                 started = time.monotonic()
                 with self.assertRaises(ConfigError):
-                    self.start(resume=self.sid)
+                    self.start(resume=True)
                 self.assertLess(time.monotonic() - started, 1)
                 self.assertEqual(len(self.logged()), before)
         native.unlink(missing_ok=True)
@@ -1081,7 +1088,9 @@ class TuiRecoveryIntegrationTest(Live):
                     self.spec, access=dataclasses.replace(self.spec.access, dirs=(root,))
                 )
                 self.start(f"g{index}", sid=f"granted-{index}", spec=spec)
-                self.assertEqual([r.name for r in self.driver.sessions(f"g{index}")], [f"g{index}"])
+                self.assertEqual(
+                    [r.name for r in self.session_cls.list(f"g{index}")], [f"g{index}"]
+                )
 
     def test_store_grants_and_untrusted_settings_are_rejected_before_tmux_or_client(self):
         roots = (str(self.home),)
@@ -1104,7 +1113,7 @@ class TuiRecoveryIntegrationTest(Live):
         with self.assertRaisesRegex(ConfigError, "project Codex settings"):
             self.start(spec=spec)
         self.assertEqual(self.logged(), [])
-        self.assertEqual([r.name for r in self.driver.sessions()], ["mgr"])
+        self.assertEqual([r.name for r in self.session_cls.list()], ["mgr"])
         self.assertFalse((self.work / "run.jsonl").exists())
 
 

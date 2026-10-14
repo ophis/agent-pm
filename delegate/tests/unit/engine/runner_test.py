@@ -15,10 +15,9 @@ from agent_pm.delegate import (
     Progress,
     Result,
     Spec,
-    composer,
-    plan,
-    run,
 )
+from agent_pm.delegate.composer import Composer
+from agent_pm.delegate.engine.plan import plan
 from agent_pm.delegate.engine.runner import FIX, NUDGE, POLICIES, STOP_LIMIT, execute, stopped
 from agent_pm.delegate.event.reply import marks
 from agent_pm.session import (
@@ -37,7 +36,15 @@ from agent_pm.utils import Stopped
 
 from delegate.tests.case import Case
 from delegate.tests.replies import bare, block
-from delegate.tests.runner import INVALID, INVALID_ERROR, LEFT_OPEN, PENDING, SID, Base
+from delegate.tests.runner import (
+    INVALID,
+    INVALID_ERROR,
+    LEFT_OPEN,
+    PENDING,
+    SID,
+    Base,
+    executed,
+)
 from delegate.tests.unit.engine.instruction import ROLES, InstructionCase
 from delegate.tests.unit.runs import (
     DONE,
@@ -461,21 +468,20 @@ class TuiPolicy(Base):
         self.configure_fake()
         with self.assertRaises(ConfigError) as cm:
             self.go(mode="tui")
-        self.assertEqual(
-            (str(cm.exception), os.path.lexists(self.work)),
-            ("client 'fake' does not support tui mode", False),
-        )
+        self.assertEqual(str(cm.exception), "client 'fake' does not support tui mode")
 
-    def test_the_run_wrapper_makes_a_new_workdir_and_records_a_failed_start_there(self):
+    def test_a_failed_start_is_recorded_in_the_workdir(self):
         with mock.patch.object(self.driver, "start", side_effect=DriverError("no tmux")):
             self.assertEqual(self.go(mode="tui"), Result(1, None, "tui: no tmux"))
         self.assertEqual(self.kinds(), ["input", "result", "end"])
 
     def test_the_runner_records_into_an_existing_workdir_only(self):
+        composition = Composer()
         accepted = plan(
-            composer.resolve("dummy-tester"),
+            composition.resolve("dummy-tester"),
             Spec("Echo me.", self.work, task="echo", client="fake", mode="tui", cwd=self.work),
             driver=self.driver,
+            composition=composition,
         )
         with (
             mock.patch.object(self.driver, "start", side_effect=DriverError("no tmux")),
@@ -507,9 +513,9 @@ class InstructionRuns(InstructionCase):
         for role in ROLES:
             with self.subTest(role=role):
                 args = self.given(role)
-                want, events = plan(*args, driver=self.driver).prompt, []
+                want, events = plan(*args, driver=self.driver, composition=Composer()).prompt, []
                 with no_child(), redirect_stderr(io.StringIO()):
-                    r = run(*args, on_event=events.append, driver=self.driver)
+                    r = executed(*args, on_event=events.append, driver=self.driver)
                 self.assertEqual((r.returncode, r.outcome, r.instruction), (0, None, args[1].out))
                 with open(args[1].out) as f:
                     self.assertEqual(f.read(), want)
@@ -520,7 +526,7 @@ class InstructionRuns(InstructionCase):
     def test_an_unconfigured_client_does_not_start_a_session(self):
         args = self.given("dummy-tester", client="unconfigured")
         with no_child():
-            result = run(*args, driver=self.driver)
+            result = executed(*args, driver=self.driver)
         self.assertEqual(
             (result.returncode, result.outcome, result.instruction), (0, None, args[1].out)
         )
@@ -531,7 +537,7 @@ class InstructionRuns(InstructionCase):
             no_child(),
             self.assertRaisesRegex(ConfigError, "instruction has no session to resume"),
         ):
-            run(*args, driver=self.driver)
+            executed(*args, driver=self.driver)
 
 
 class Stopping(Case):

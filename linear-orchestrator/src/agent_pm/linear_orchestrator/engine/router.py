@@ -1,6 +1,6 @@
 """Router: the Linear orchestrator's scheduler. Decides which agent run starts or resumes among
 the team's issues assigned to role accounts, then starts it through the outer (run.py in a detached
-Driver session).
+session on the harness Host).
 
 python3 -P -m agent_pm.linear_orchestrator.cli router [--now] [--dry-run] [--issue ID] | --brake ROLE
 
@@ -65,8 +65,9 @@ from agent_pm.linear_orchestrator.engine.types import (
     Transient,
     Unavailable,
 )
+from agent_pm.session import SIGNALS, DriverError, Launch, NoRecordedSession, Session
 from agent_pm.session import ConfigError as SessionConfigError
-from agent_pm.session import DriverError
+from agent_pm.session import Spec as SessionSpec
 from agent_pm.utils import one_line, parse_time
 
 STALE = timedelta(hours=2)
@@ -467,7 +468,7 @@ def fail(ident, kind, reason, rc):
     return rc
 
 
-def outer(a, cfg, *, gql, run, keychain, driver):
+def outer(a, cfg, *, gql, run, keychain, session, harness):
     os.environ["PATH"] = config.path()
     if reason := a.identity_error():
         print(f"router.py: {reason}", file=sys.stderr)
@@ -482,10 +483,12 @@ def outer(a, cfg, *, gql, run, keychain, driver):
         return fail(a.issue, "config-error", f"no Keychain item for role key {key}", 2)
     if a.mode == "resume":
         try:
-            st = driver.session_status(
-                a.client, a.sid, cfg.run_dir(a.issue), workdir=cfg.run_dir(a.issue)
+            st = session.inspect(
+                SessionSpec(workdir=cfg.run_dir(a.issue), client=a.client, sid=a.sid)
             )
             why = None if st.resumable == "yes" else st.resumable
+        except NoRecordedSession:
+            why = "no"
         except (SessionConfigError, DriverError) as e:
             why = one_line(e)
         if why:
@@ -550,11 +553,11 @@ def outer(a, cfg, *, gql, run, keychain, driver):
     else:
         env.pop("PYTHONPATH", None)
     try:
-        driver.detach(
+        session.host(harness).detach(
             config.driver_name(role, a.issue),
-            [sys.executable, *RUN, *spec.to_argv()],
-            cwd=rd,
-            env=env,
+            Launch(
+                (sys.executable, *RUN, *spec.to_argv()), cwd=rd, env=env, blocked_signals=SIGNALS
+            ),
         )
     except (SessionConfigError, DriverError) as e:
         log("router", "launch-error", a.issue, error=one_line(e))
@@ -754,7 +757,7 @@ def main(
     run=None,
     keychain=None,
     start=None,
-    driver=None,
+    session=None,
     delegate_cls=None,
 ):
     gql = gql or linear_gql
@@ -784,13 +787,15 @@ def main(
         return brake(role, cfg)
     gql = functools.partial(gql, service=cfg.harness_key)
     if start is None:
-        try:
-            driver = driver or delegate.configure()
-        except delegate.ConfigError as error:
-            config.report_error("router", ConfigError(str(error), cfg.logs_dir), dry=opts["dry"])
-            return 1
+        harness = None
+        if session is None:
+            try:
+                session, harness = _harness_session(cfg.logs_dir)
+            except ConfigError as error:
+                config.report_error("router", error, dry=opts["dry"])
+                return 1
         start = functools.partial(
-            outer, cfg=cfg, gql=gql, run=run, keychain=keychain, driver=driver
+            outer, cfg=cfg, gql=gql, run=run, keychain=keychain, session=session, harness=harness
         )
     try:
         if opts["issue"]:
@@ -807,6 +812,20 @@ def main(
         return event_log.config_error("router", e, dry=opts["dry"])
     except Unavailable as e:
         return linear_error("router", e, dry=opts["dry"])
+
+
+def _harness_session(logs_dir):
+    try:
+        settings = delegate.read_config()
+    except (OSError, ValueError) as error:
+        raise ConfigError(f"delegate config: {error}", logs_dir) from None
+    try:
+        Session.configure_from(settings)
+        harness = settings.get("delegates", {}).get("harness_host") or None
+        Session.host(harness)
+    except SessionConfigError as error:
+        raise ConfigError(f"session config: {error}", logs_dir) from None
+    return Session, harness
 
 
 def start_run(start, args, say):

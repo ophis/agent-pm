@@ -9,7 +9,10 @@ from contextlib import redirect_stderr
 from dataclasses import replace
 from unittest import mock
 
-from agent_pm.delegate import Result, Spec, composer, run
+from agent_pm.delegate import Result, RunConfig, Spec
+from agent_pm.delegate.composer import Composer
+from agent_pm.delegate.engine.plan import plan
+from agent_pm.delegate.engine.runner import execute
 
 from delegate.tests.case import Case
 from delegate.tests.unit.runs import DONE, NAME, turn
@@ -45,6 +48,15 @@ def ended(text) -> dict:
 PENDING = turn("Waiting for the build.", pending=1)
 
 
+def executed(config: RunConfig, spec: Spec, *, driver, on_event=None, composition=None) -> Result:
+    """plan() then execute(), a session's workdir made between."""
+    composition = Composer(team=spec.team) if composition is None else composition
+    accepted = plan(config, spec, driver=driver, composition=composition)
+    if driver.session_based:
+        os.makedirs(accepted.spec.workdir, exist_ok=True)
+    return execute(accepted, driver=driver, on_event=on_event)
+
+
 class Base(Case):
     """dummy-tester's echo over the fake client in workdir `work` (not made), out `out`, the cwd
     the workdir.
@@ -60,7 +72,7 @@ class Base(Case):
         self.scenario, self.log = (
             os.path.join(self.tmp, name) for name in ("scenario.json", "client.log")
         )
-        self.driver_dependencies = {
+        self.session_dependencies = {
             "class_loader": adapter_loader({"agent_pm.session.adapters.fake": fake_adapter})
         }
         self.configure_fake()
@@ -78,14 +90,15 @@ class Base(Case):
         )
 
     def go(self, *steps, fixes=None, output=None, on_event=None, **kw) -> Result:
-        """run() over the fake with `steps` (`fixes`: its steps on --resume); self.events gets each
-        callback, self.err the stderr.
+        """executed() over the fake with `steps` (`fixes`: its steps on --resume); self.events gets
+        each callback, self.err the stderr.
         """
         with open(self.scenario, "w") as f:
             json.dump(
                 {"steps": list(steps), **({"resume": list(fixes)} if fixes is not None else {})}, f
             )
-        config = composer.resolve("dummy-tester")
+        composition = Composer()
+        config = composition.resolve("dummy-tester")
         config = replace(config, output=output) if output else config
         self.events, err = [], io.StringIO()
 
@@ -104,11 +117,12 @@ class Base(Case):
         }
         try:
             with redirect_stderr(err):
-                return run(
+                return executed(
                     config,
                     Spec(kw.pop("input"), self.work, task="echo", **kw),
                     on_event=on,
                     driver=self.driver,
+                    composition=composition,
                 )
         finally:
             self.err = err.getvalue()

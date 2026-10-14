@@ -10,9 +10,9 @@ from unittest import mock
 
 import agent_pm
 from agent_pm.delegate.engine.drivers import AgentDriver
-from agent_pm.session import Driver, read_config
+from agent_pm.session import Session, read_config
 
-from session.tests.case import settings
+from session.tests.case import configured
 from utils.tests.sandbox import clean_env, project_roots
 
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -30,10 +30,16 @@ def committed(local: str = os.devnull) -> dict:
     return read_config(local=local)["adapters"]
 
 
+def packaged(**dependencies) -> type[Session]:
+    """The session config's session class."""
+    config = read_config()
+    return configured(config["adapters"], config["hosts"]["tmux"], **dependencies)
+
+
 class Case(unittest.TestCase):
     """Fails a test whose agent_pm is not exactly this tree's, else runs it (whatever its setUp) in
-    a fresh temp HOME, self.home (self.agent_pm: its .agent-pm), fresh caller-owned session
-    settings.
+    a fresh temp HOME, self.home (self.agent_pm: its .agent-pm), a fresh session class
+    (self.session_cls) and its FakeDriver.
     """
 
     def run(self, result=None):
@@ -56,9 +62,8 @@ class Case(unittest.TestCase):
             return super().run(result)
 
     def configure_session(self, adapters, tmux=None) -> None:
-        self.driver = FakeDriver(
-            Driver(**settings(adapters, tmux), **getattr(self, "driver_dependencies", {}))
-        )
+        self.session_cls = configured(adapters, tmux, **getattr(self, "session_dependencies", {}))
+        self.driver = FakeDriver(self.session_cls)
 
 
 def _foreign(modules=None) -> str | None:
@@ -90,29 +95,26 @@ def child_env(base=None, *extra: str) -> dict[str, str]:
 
 
 class FakeDriver:
-    """A forwarding fake whose per-test methods may be replaced."""
+    """An AgentDriver whose per-test methods may be replaced."""
 
     session_based = True
     session = None
     display = None
 
-    def __init__(self, driver):
-        self.driver = driver
+    def __init__(self, session_cls):
+        self.session_cls = session_cls
 
     def policy(self, client):
-        return AgentDriver(self.driver.session_cls).policy(client)
+        return AgentDriver(self.session_cls).policy(client)
 
     def start(self, spec, *, display=None, host=None, idle_timeout=None):
-        self.session = AgentDriver(self.driver.session_cls).start(
+        self.session = AgentDriver(self.session_cls).start(
             spec, display=display, host=host, idle_timeout=idle_timeout
         )
         return self.session
 
     def writable_dirs(self, spec):
-        return self.driver.session_cls.writable_dirs(spec)
+        return self.session_cls.writable_dirs(spec)
 
     def preflight(self, spec):
-        AgentDriver(self.driver.session_cls).preflight(spec)
-
-    def __getattr__(self, name):
-        return getattr(self.driver, name)
+        AgentDriver(self.session_cls).preflight(spec)

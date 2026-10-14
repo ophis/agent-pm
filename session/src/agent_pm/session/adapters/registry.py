@@ -17,7 +17,6 @@ from agent_pm.utils import load_class as load
 class Settings:
     adapters: Mapping[str, Mapping]
     hosts: Mapping[str, Mapping]
-    default_host: str
 
 
 PACKAGE = "agent_pm.session"
@@ -38,7 +37,7 @@ class Registry:
             isinstance(k, str) and isinstance(t, Mapping) for k, t in adapters.items()
         ):
             raise ConfigError("adapters: want a mapping of [adapters.<name>] tables")
-        self.settings = Settings(freeze(adapters), hosts.tables, hosts.default)
+        self.settings = Settings(freeze(adapters), hosts.tables)
         self.class_loader = class_loader
 
     def configured(self) -> list[str]:

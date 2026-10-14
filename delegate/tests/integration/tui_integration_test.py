@@ -1,6 +1,7 @@
-"""delegate.run in tui mode on a private tmux server, set up as the Driver's tui_integration_test,
-the session config's ClaudeAdapter running session/tests/integration/adapters/claude/fake_claude.py
-interactively (a Stop hook step: a turn end with no prompt before it). The tui policy end to end
+"""A run planned and executed in tui mode on a private tmux server, set up as the session's
+tui_integration_test, the session config's ClaudeAdapter running
+session/tests/integration/adapters/claude/fake_claude.py interactively (a Stop hook step: a turn end
+with no prompt before it). The tui policy end to end
 (FR-21, FR-23, FR-24): the nudge, the give-up, pending turn ends, a mark's reset, the idle give-up
 on a clock ahead (the session's clock only), the fix send; the session left open. Main's
 tests/integration/core/drive_tui_integration_test.py, its tui run.
@@ -15,12 +16,15 @@ import unittest
 from contextlib import redirect_stderr
 from unittest import mock
 
-from agent_pm.delegate import Progress, Spec, composer, run
+from agent_pm.delegate import Progress, Spec
+from agent_pm.delegate.composer import Composer
+from agent_pm.delegate.engine.drivers import AgentDriver
 from agent_pm.delegate.engine.runner import FIX, NUDGE, STOP_LIMIT
-from agent_pm.session import Driver, read_config
 
+from delegate.tests.case import packaged
 from delegate.tests.integration.cli import DONE, SID, UNSAVED, UNSAVED_ERROR
 from delegate.tests.replies import block, mark, prompt
+from delegate.tests.runner import executed
 from delegate.tests.unit.runs import GAVE_UP
 from session.tests import tui_support as tui_live
 from session.tests.integration.adapters.claude import fake_claude
@@ -74,15 +78,15 @@ class TuiRun(tui_live.Live):
                 },
             )
         )
-        self.driver = Driver.from_config(read_config())
+        self.driver = AgentDriver(packaged())
 
     def go(self, on_event=None, **scenario):
-        """run() with the fake playing `scenario`, failing past WAIT s; self.seen gets each
+        """executed() with the fake playing `scenario`, failing past WAIT s; self.seen gets each
         callback, self.err the stderr.
         """
         with open(self.scenario, "w") as f:
             json.dump({**scenario, "log": self.log}, f)
-        config, self.seen, err, ended = composer.resolve("dummy-tester"), [], io.StringIO(), []
+        config, self.seen, err, ended = Composer().resolve("dummy-tester"), [], io.StringIO(), []
 
         def on(event):
             self.seen.append(event)
@@ -91,7 +95,7 @@ class TuiRun(tui_live.Live):
 
         def target():
             ended.append(
-                run(
+                executed(
                     config,
                     Spec(
                         "Hello.",
@@ -208,7 +212,7 @@ class TurnEnds(TuiRun):
 class Idle(TuiRun):
     def test_no_event_for_the_idle_timeout_gives_up_the_session_left_open(self):
         clock = Ahead()
-        self.driver = Driver.from_config(read_config(), clock=clock.monotonic)
+        self.driver = AgentDriver(packaged(clock=clock.monotonic))
 
         def later(event):
             if isinstance(event, Progress):  # from here each clock read is past the idle timeout

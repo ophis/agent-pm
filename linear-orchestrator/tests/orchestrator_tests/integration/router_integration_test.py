@@ -1,4 +1,4 @@
-"""router.py as a subprocess on the Driver: run.py in its detached session on a private tmux server,
+"""router.py as a subprocess on the Session: run.py in its detached session on a private tmux server,
 fake_claude as client claude, FakeLinear over HTTP. A claim runs to In Review; a crash or a Linear
 failure mid write-back resumes the same session; a Linear outage stops a tick and --issue; a tick's
 usage gate; a long description reaches the run; a SIGTERM'd run.py ends its run; the researcher's

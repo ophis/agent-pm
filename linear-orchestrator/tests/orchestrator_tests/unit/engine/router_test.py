@@ -968,7 +968,7 @@ class RouterLocking(TickBase):
                 rc = router.main(
                     ["--brake", "researcher"],
                     config_path=self.config_path,
-                    driver=self.api,
+                    session=self.api,
                     delegate_cls=self.cfg().delegate_cls,
                 )
             self.assertEqual((rc, out.getvalue()), (0, "five_hour=10% weekly=10%\n"))
@@ -1046,7 +1046,7 @@ class RouterOutages(TickBase):
 
 
 class ClientUsage(Base):
-    """The usage gate's thresholds over the Driver's Usage (the old rate_limit_event rows)."""
+    """The usage gate's thresholds over the Delegate's Usage (the old rate_limit_event rows)."""
 
     def gate(self):
         self.write_runs()
@@ -1244,7 +1244,7 @@ class RunBrake(Base):
             rc = router.main(
                 ["--brake", role],
                 config_path=self.config_path,
-                driver=self.api,
+                session=self.api,
                 delegate_cls=self.cfg().delegate_cls,
             )
             self.path = os.environ["PATH"]
@@ -1794,7 +1794,7 @@ class ScheduledTaskSelection(TickBase):
 
 class RunLaunching(OuterBase):
     """FR-45, FR-47's resume check: the outer reads the issue, checks its repo, renders its input
-    and starts run.py in a detached Driver session.
+    and starts run.py in a detached session on the harness Host.
     """
 
     def test_build_starts_run_py_in_a_detached_driver_session(self):
@@ -2972,8 +2972,8 @@ class HistoryReads(Base):
 
 
 class StaleRunRecovery(Base):
-    """FR-47: liveness and resumability are the Driver's session status; what it cannot say changes
-    nothing.
+    """FR-47: liveness and resumability are the run view's session status; what it cannot say
+    changes nothing.
     """
 
     def test_an_unrecorded_sid_returns_to_todo_only_after_live(self):

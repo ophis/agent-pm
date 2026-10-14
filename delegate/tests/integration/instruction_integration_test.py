@@ -11,7 +11,7 @@ import subprocess
 import tempfile
 import unittest
 
-from agent_pm.delegate import composer
+from agent_pm.delegate.composer import Composer, RunParams
 
 from delegate.tests.case import Case
 from delegate.tests.skills.act_as import argv, head, prefix
@@ -65,9 +65,10 @@ class Instruction(Case):
 
     def expected(self, role) -> bytes:
         work = self.work(role)
-        run = composer.resolve(role, local=self.local)
-        params = composer.RunParams(input=INPUT, out=os.path.join(work, "prompt.md"), workdir=work)
-        return composer.render(run, params).encode("utf-8")
+        composition = Composer()
+        run = composition.resolve(role)
+        params = RunParams(input=INPUT, out=os.path.join(work, "prompt.md"), workdir=work)
+        return composition.render(run, params).encode("utf-8")
 
     def delivered(self, role):
         out = os.path.join(self.work(role), "prompt.md")
@@ -104,7 +105,7 @@ class Instruction(Case):
         env = {"PATH": self.env["PATH"], "HOME": self.home}
         for command in commands:
             with self.subTest(command=command):
-                command = command.replace("<team>", composer.TEAM)
+                command = command.replace("<team>", Composer().team.root)
                 ok, bare = (
                     subprocess.run(
                         args,

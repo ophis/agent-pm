@@ -11,9 +11,7 @@ from dataclasses import asdict, dataclass, replace
 from datetime import datetime
 from pathlib import Path
 
-from agent_pm.delegate.composer import RunConfig
 from agent_pm.delegate.engine.drivers import Driver
-from agent_pm.delegate.engine.plan import plan
 from agent_pm.delegate.engine.types import (
     Begun,
     ConfigError,
@@ -24,7 +22,6 @@ from agent_pm.delegate.engine.types import (
     Plan,
     Progress,
     Result,
-    Spec,
     Stopped,
 )
 from agent_pm.delegate.event.outcome import SAVES_DELIVERABLE
@@ -173,16 +170,6 @@ def report(result: Result, out: str | None) -> tuple[int, str | None]:
             say(f"delegate: deliverable {path}")
     say(f"delegate: status {result.outcome.status}")
     return 0, result.outcome.status
-
-
-def run(
-    run: RunConfig,
-    spec: Spec,
-    *,
-    on_event: Callable[[Event], None] | None = None,
-    driver: Driver,
-) -> Result:
-    return execute(plan(run, spec, driver=driver), driver=driver, on_event=on_event)
 
 
 def execute(

@@ -7,7 +7,7 @@ import os
 import subprocess
 import tempfile
 
-from agent_pm.delegate.composer import TEAM
+from agent_pm.delegate.composer.base import TEAM
 
 from delegate.tests.case import Case
 

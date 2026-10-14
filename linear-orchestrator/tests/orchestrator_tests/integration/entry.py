@@ -2,44 +2,54 @@
 
 import os
 import sys
+from dataclasses import replace
 
 from agent_pm import delegate
 from agent_pm.linear_orchestrator import cli
 from agent_pm.linear_orchestrator.engine import promote, router, run
-from agent_pm.session import Driver
+from agent_pm.session import Session
 from orchestrator_tests.integration.fake_transport import install
 
 
-class DetachedDriver(Driver):
-    def detach(self, name, argv, cwd, env, *, opener=None):
-        prefix = [sys.executable, *router.RUN]
-        if list(argv[: len(prefix)]) != prefix:
-            raise ValueError(f"unexpected detached command: {argv}")
-        return super().detach(
+class DetachedHost:
+    def __init__(self, host):
+        self.host = host
+
+    def detach(self, name, launch, **placement):
+        prefix = (sys.executable, *router.RUN)
+        if launch.argv[: len(prefix)] != prefix:
+            raise ValueError(f"unexpected detached command: {launch.argv}")
+        tests = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+        return self.host.detach(
             name,
-            [sys.executable, __file__, "run", *argv[len(prefix) :]],
-            cwd,
-            {
-                **env,
-                "PYTHONPATH": os.pathsep.join(
-                    (env["PYTHONPATH"], os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
-                ),
-            },
-            opener=opener,
+            replace(
+                launch,
+                argv=(sys.executable, __file__, "run", *launch.argv[len(prefix) :]),
+                env={
+                    **launch.env,
+                    "PYTHONPATH": os.pathsep.join((launch.env["PYTHONPATH"], tests)),
+                },
+            ),
+            **placement,
         )
+
+
+class DetachedSession:
+    @staticmethod
+    def inspect(spec):
+        return Session.inspect(spec)
+
+    @staticmethod
+    def host(name=None):
+        return DetachedHost(Session.host(name))
 
 
 def main(argv):
     entry, *arguments = argv
     with install(os.environ["FAKE_LINEAR_TRANSPORT"]):
         if entry == "router":
-            settings = delegate.configure()
-            driver = DetachedDriver(
-                adapters=settings.registry.settings.adapters,
-                hosts=settings.registry.settings.hosts,
-                default_host=settings.registry.settings.default_host,
-            )
-            return router.main(arguments, driver=driver)
+            Session.configure_from(delegate.read_config())
+            return router.main(arguments, session=DetachedSession)
         if entry == "writeback":
             return cli.main([entry, *arguments])
         return {"run": run.main, "promote": promote.main}[entry](arguments)

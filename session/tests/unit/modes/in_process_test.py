@@ -91,7 +91,7 @@ class Base(Case):
         self.mode = InProcessRuntime.start(
             spec,
             adapter,
-            registry=self.driver.registry,
+            registry=self.session_cls._config().registry,
             record=record or self.recorded.append,
             host=MemoryHost(),
             display=display,
@@ -370,7 +370,7 @@ class Start(Base):
         mode = InProcessRuntime.start(
             SPEC,
             StubAdapter(script),
-            registry=self.driver.registry,
+            registry=self.session_cls._config().registry,
             record=self.recorded.append,
             host=MemoryHost(),
         )

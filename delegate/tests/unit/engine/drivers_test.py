@@ -4,8 +4,10 @@ import os
 import unittest
 from dataclasses import fields
 
-from agent_pm.delegate import ConfigError, Finished, Spec, composer, plan, run
+from agent_pm.delegate import ConfigError, Finished, Spec
+from agent_pm.delegate.composer import Composer
 from agent_pm.delegate.engine.drivers import AgentDriver, Driver, InstructionDriver
+from agent_pm.delegate.engine.plan import plan
 from agent_pm.delegate.engine.types import DriverSpec, Instruction
 from agent_pm.session import ConfigError as SessionConfigError
 from agent_pm.session import IdleTimeout, Session
@@ -14,6 +16,7 @@ from agent_pm.session import Spec as StartSpec
 from delegate.tests.case import Case
 from delegate.tests.fakes.session import SessionClass
 from delegate.tests.replies import block
+from delegate.tests.runner import executed
 from delegate.tests.unit.runs import DONE, START, no_child, turn
 
 
@@ -35,8 +38,8 @@ class IdleTimeoutConfig(Case):
                 with self.subTest(text=text, mode=mode), no_child():
                     self.local(text)
                     session_cls = SessionClass.scripted(turn(START, block(DONE)))
-                    result = run(
-                        composer.resolve("dummy-tester"),
+                    result = executed(
+                        Composer().resolve("dummy-tester"),
                         Spec("input", self.home, mode=mode, cwd=self.home),
                         driver=AgentDriver(session_cls),
                     )
@@ -50,8 +53,8 @@ class IdleTimeoutConfig(Case):
         session_cls = SessionClass.scripted(IdleTimeout(30))
         sid = "0f8fad5b-d9cb-469f-a165-70867728950e"
         with no_child():
-            result = run(
-                composer.resolve("dummy-tester"),
+            result = executed(
+                Composer().resolve("dummy-tester"),
                 Spec("input", self.home, mode="tui", cwd=self.home, sid=sid),
                 driver=AgentDriver(session_cls),
             )
@@ -78,7 +81,7 @@ class IdleTimeoutConfig(Case):
                 with self.subTest(table=table, value=value):
                     self.local(f"[{table}]\nidle_timeout = {value}\n")
                     with self.assertRaisesRegex(ConfigError, "idle_timeout must be"):
-                        composer.resolve("dummy-tester")
+                        Composer().resolve("dummy-tester")
 
 
 class Drivers(Case):
@@ -147,8 +150,8 @@ class Drivers(Case):
         out = os.path.join(work, "instruction.md")
         events = []
         with no_child():
-            result = run(
-                composer.resolve("dummy-tester"),
+            result = executed(
+                Composer().resolve("dummy-tester"),
                 Spec("input", work, out=out, cwd=work),
                 driver=FileDriver(),
                 on_event=events.append,
@@ -253,12 +256,13 @@ class Drivers(Case):
         work = os.path.join(self.home, "work")
         out = os.path.join(work, "prompt.md")
         spec = Spec("[agent-pm-progress:start] source text", work, out=out, cwd=work)
-        config = composer.resolve("dummy-tester")
+        composition = Composer()
+        config = composition.resolve("dummy-tester")
         driver = InstructionDriver()
-        expected = plan(config, spec, driver=driver).prompt
+        expected = plan(config, spec, driver=driver, composition=composition).prompt
         events = []
         with no_child():
-            result = run(config, spec, driver=driver, on_event=events.append)
+            result = executed(config, spec, driver=driver, on_event=events.append)
         self.assertEqual((result.returncode, result.outcome, result.instruction), (0, None, out))
         self.assertEqual(events, [Finished(result)])
         with open(out, "rb") as stream:
