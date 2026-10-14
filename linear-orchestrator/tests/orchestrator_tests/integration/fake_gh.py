@@ -3,6 +3,7 @@ import os
 import re
 import shlex
 import shutil
+import subprocess
 import sys
 import tempfile
 from urllib.parse import unquote
@@ -16,6 +17,9 @@ THREAD = re.compile(r"repos/([^/]+)/([^/]+)/(issues/\d+/comments|pulls/\d+/(?:re
 HOST = "github.com"
 PR_LIST = ("--repo", "--head", "--state", "--json", "--limit")
 KEYS = {"repos", "contents", "login", "pulls", "threads"}
+CLONE = re.compile(r"(?:github\.com/)?([^/]+)/([^/]+)")
+# git's ssh, variant simple: HOST "git-upload-pack '/O/N.git'"; it serves the one bare repo
+SSH = '#!/bin/sh\nset -- $2\nexec git "${1#git-}" %s\n'
 TAIL = "/usr/bin:/bin"
 # the repo root, for utils.tests.sandbox: an agent run's PYTHONPATH holds only the src roots
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), *[os.pardir] * 4))
@@ -173,9 +177,42 @@ def pr_list(rest: list[str]) -> None:
     )
 
 
+def git(*argv: str) -> str:
+    done = subprocess.run(["git", *argv], capture_output=True, text=True, timeout=60)
+    if done.returncode != 0:
+        sys.stderr.write(done.stderr)
+        sys.exit(done.returncode)
+    return done.stdout.strip()
+
+
+def repo_clone(rest: list[str]) -> None:
+    """`gh repo clone O/N DIR -- FLAGS`: git clone through HOME's gitconfig, then origin over a
+    local ssh: `git remote get-url` expands that gitconfig's insteadOf, which repo.py checks.
+    """
+    m = CLONE.fullmatch(rest[0]) if len(rest) >= 3 and rest[2] == "--" else None
+    if not m:
+        sys.exit("fake_gh.py: usage: gh repo clone [github.com/]O/N DIR -- [GIT FLAGS]")
+    wt = rest[1]
+    git("clone", *rest[3:], f"https://{HOST}/{m[1]}/{m[2]}.git", wt)
+    bare = git("-C", wt, "remote", "get-url", "origin").removeprefix("file://")
+    ssh = os.path.join(wt, ".git", "fake-ssh")
+    with open(ssh, "w") as f:
+        f.write(SSH % shlex.quote(bare))
+    os.chmod(ssh, 0o700)
+    for key, value in (
+        ("remote.origin.url", f"ssh://git@{HOST}/{m[1]}/{m[2]}.git"),
+        ("core.sshCommand", ssh),
+        ("ssh.variant", "simple"),
+        ("protocol.ssh.allow", "always"),
+    ):
+        git("-C", wt, "config", key, value)
+
+
 def main(argv: list[str]) -> None:
     if argv[:2] == ["pr", "list"]:
         return pr_list(argv[2:])
+    if argv[:2] == ["repo", "clone"]:
+        return repo_clone(argv[2:])
     if argv[:3] == ["api", "--hostname", HOST]:
         rest = argv[3:]
         if rest == ["user"]:

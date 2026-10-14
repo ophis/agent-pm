@@ -378,6 +378,34 @@ class Pulls(Case):
                 self.assertIn("fake_gh.py:", res.stderr)
 
 
+class Clone(Case):
+    def test_repo_clone_gives_a_checkout_whose_ssh_origin_fetches_the_bare_repo(self):
+        fake_gh.bare(self.repos, "acme", "widgets", branches=("main",))
+        fake_gh.gitconfig(self.home, self.repos)
+        self.write({"repos": {"acme/widgets": REPO}})
+        wt = os.path.join(self.root, "wt")
+        res = self.gh("repo", "clone", "github.com/acme/widgets", wt, "--", "--filter=blob:none")
+        self.assertEqual(res.returncode, 0, res.stderr)
+        url = self.run_cmd("git", "-C", wt, "remote", "get-url", "origin")
+        self.assertEqual(url.stdout, "ssh://git@github.com/acme/widgets.git\n", url.stderr)
+        fetch = self.run_cmd("git", "-C", wt, "fetch", "origin")
+        self.assertEqual(fetch.returncode, 0, fetch.stderr)
+        head = self.run_cmd("git", "-C", wt, "rev-parse", "--verify", "origin/main")
+        self.assertEqual(head.returncode, 0, head.stderr)
+
+    def test_a_bad_clone_argv_is_a_usage_error(self):
+        self.write({"repos": {"acme/widgets": REPO}})
+        for argv in (
+            ("repo", "clone", "acme/widgets"),
+            ("repo", "clone", "acme/widgets", "wt", "-x"),
+            ("repo", "clone", "acme", "wt", "--"),
+        ):
+            with self.subTest(argv):
+                res = self.gh(*argv)
+                self.assertEqual((res.returncode, res.stdout), (1, ""))
+                self.assertIn("fake_gh.py:", res.stderr)
+
+
 class Bare(Case):
     def refs(self, path):
         res = self.run_cmd("git", "--git-dir", path, "for-each-ref", "--format=%(refname)")
