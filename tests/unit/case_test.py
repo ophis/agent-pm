@@ -214,7 +214,8 @@ class Checks:
         expected.update(
             GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM="1", GIT_CEILING_DIRECTORIES="/"
         )
-        expected["TMUX_TMPDIR"] = clean_env({})["TMUX_TMPDIR"]
+        carried = {"TMUX_TMPDIR", "AGENT_PM_CONTROL_ROOT"}
+        expected.update((key, value) for key, value in clean_env({}).items() if key in carried)
         self.assertEqual(child_env(base, "/r1", "/r2"), expected)
         with mock.patch.dict(os.environ, {"PYTHONWARNINGS": "error", "OTHER": "1"}):
             env = child_env()

@@ -67,3 +67,13 @@ class TmuxCleanup(Case):
         self.assertFalse(blocked, "tmux cleanup waited for the allocation lock")
         self.assertEqual(run.call_args.kwargs["env"], {"PATH": os.environ["PATH"]})
         self.assertFalse(root.exists())
+
+
+class ControlRoot(Case):
+    def test_clean_env_carries_the_control_root_into_a_base_without_one(self):
+        with mock.patch.dict(os.environ, {"AGENT_PM_CONTROL_ROOT": "/sandbox"}):
+            self.assertEqual(sandbox.clean_env({})["AGENT_PM_CONTROL_ROOT"], "/sandbox")
+            own = sandbox.clean_env({"AGENT_PM_CONTROL_ROOT": "/own"})
+            self.assertEqual(own["AGENT_PM_CONTROL_ROOT"], "/own")
+            del os.environ["AGENT_PM_CONTROL_ROOT"]
+            self.assertNotIn("AGENT_PM_CONTROL_ROOT", sandbox.clean_env({}))

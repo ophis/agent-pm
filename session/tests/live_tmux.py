@@ -123,11 +123,13 @@ class Server:
             case.fail(f"tmux socket path over {SOCKET_MAX} bytes: {self.socket}")
 
     def env(self, **extra: str) -> dict[str, str]:
+        root = os.environ.get("AGENT_PM_CONTROL_ROOT")
         return {
             "PATH": self.path,
             "HOME": self.home,
             "PYTHONUTF8": "1",
             "TMUX_TMPDIR": self.root,
+            **({"AGENT_PM_CONTROL_ROOT": root} if root else {}),
             **extra,
         }
 

@@ -163,6 +163,7 @@ def supervise(title):
             TMUX_TMPDIR=tmp,
             TUI_ATTACH_PREFIX="",
             AGENT_PM_TEST_SANDBOX=tmp,
+            AGENT_PM_CONTROL_ROOT=tmp,
             AGENT_PM_TEST_TMP=workspace,
             AGENT_PM_TEST_WORKSPACE=workspace,
         )

@@ -61,6 +61,8 @@ def clean_env(base=None, *import_roots):
         )
     )
     env["PYTHONDONTWRITEBYTECODE"] = "1"
+    if os.environ.get("AGENT_PM_CONTROL_ROOT") and "AGENT_PM_CONTROL_ROOT" not in env:
+        env["AGENT_PM_CONTROL_ROOT"] = os.environ["AGENT_PM_CONTROL_ROOT"]
     if import_roots:
         env["PYTHONPATH"] = os.pathsep.join(map(str, import_roots))
     return env

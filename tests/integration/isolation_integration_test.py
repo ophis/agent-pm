@@ -741,6 +741,7 @@ os.close(dir_fd)
             f"        self.assertNotIn({str(ambient)!r}, sys.path)\n"
             "        self.assertTrue(os.environ['PATH'].split(os.pathsep)[0].endswith('blocked-bin'))\n"
             "        self.assertNotEqual(os.environ['HOME'], os.environ['TMPDIR'])\n"
+            "        self.assertEqual(os.environ['AGENT_PM_CONTROL_ROOT'], os.environ['AGENT_PM_TEST_SANDBOX'])\n"
         )
         env = clean_env(None, REPO, str(Path(REPO, ".github")), str(ambient))
         env.pop("RUN_TESTS_STATE", None)
