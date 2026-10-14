@@ -296,15 +296,18 @@ class PackagedDeployments(ConfigFile, Case):
         self.deployment = Path(self.dir).resolve() / "deployment"
         self.copy_packages(self.deployment)
 
-    def copy_packages(self, deployment):
+    def copy_packages(self, deployment, *, editable=None):
         for project in ("linear-orchestrator", "delegate", "session", "utils"):
             package = project.replace("-", "_")
             target = deployment / project / "src" / "agent_pm" / package
             shutil.copytree(
                 Path(REPO) / project / "src" / "agent_pm" / package,
-                target,
+                editable if project == "linear-orchestrator" and editable is not None else target,
                 ignore=shutil.ignore_patterns("__pycache__"),
             )
+            if project == "linear-orchestrator" and editable is not None:
+                target.parent.mkdir(parents=True)
+                target.symlink_to(editable, target_is_directory=True)
             source = Path(REPO) / project / "config.toml"
             if source.exists():
                 shutil.copyfile(source, deployment / project / "config.toml")
@@ -387,9 +390,8 @@ class PackagedDeployments(ConfigFile, Case):
         git("init", "-q", str(editable))
         source = editable / "src" / "agent_pm" / "linear_orchestrator"
         source.parent.mkdir(parents=True)
-        package = self.package()
-        shutil.move(str(package), str(source))
-        package.symlink_to(source, target_is_directory=True)
+        self.deployment = Path(self.dir) / "editable-deployment"
+        self.copy_packages(self.deployment, editable=source)
         found = self.discovery(editable / "state")
         self.assertIn(str(source), found["protected"])
         self.assertIn(str(editable), found["protected"])
