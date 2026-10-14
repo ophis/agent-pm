@@ -232,9 +232,23 @@ class Tui(Detach):
     def test_a_policy_env_secret_reaches_the_client_but_no_argv_record_or_printed_command(self):
         with open(os.path.join(self.agent_pm, "config.local.toml"), "w", encoding="utf-8") as f:
             f.write(f'[delegate.policy.claude]\nenv = {{ FAKE_TOKEN = "{SECRET}" }}\n')
+        launched = os.path.join(self.dir, "launched.jsonl")
+        dump = (
+            "import json, os, sys; f = open(sys.argv[1], 'a'); "
+            "f.write(json.dumps({'argv': sys.argv[2:], 'env': dict(os.environ)}) + chr(10))"
+        )
+        python, fake = shlex.quote(sys.executable), shlex.quote(fake_claude.__file__)
+        with open(os.path.join(self.server.bin, "claude"), "w", encoding="utf-8") as f:
+            f.write(
+                f'#!/bin/sh\n{python} -I -c "{dump}" {shlex.quote(launched)} "$@"\n'
+                f'exec {python} -I {fake} "$@"\n'
+            )
         res = self.detach("--mode", "tui", steps=[START], turns=[[block(DONE)]])
         self.said(res, tui=True)
         self.until(lambda: self.kinds().count("session") > 0, "a session row")
+        with open(launched, encoding="utf-8") as f:
+            tui = [e["env"] for e in map(json.loads, f) if "--session-id" in e["argv"]]
+        self.assertEqual([env.get("FAKE_TOKEN") for env in tui], [SECRET])
         ps = subprocess.run(["ps", "-A", "-ww", "-o", "args="], capture_output=True, text=True)
         self.assertEqual(ps.returncode, 0, ps.stderr)
         self.ended(turn_ends=2)
@@ -269,6 +283,7 @@ class Tui(Detach):
         self.assertEqual(
             (resumed["argv"][:2], resumed["env"].get("FAKE_TOKEN")), (["--resume", SID], SECRET)
         )
+        self.assertNotIn(SECRET, "\0".join(resumed["argv"]))
 
     def test_kill_session_of_the_harness_stops_the_tui_one_outcome_error(self):
         res = self.detach("--mode", "tui", steps=[START])

@@ -14,6 +14,7 @@ from unittest import mock
 from agent_pm.session.adapters.claude import ClaudeAdapter
 from agent_pm.session.engine.types import (
     Access,
+    ConfigError,
     Mode,
     SessionInfo,
     SessionStatus,
@@ -659,6 +660,13 @@ class ResumeTest(Base):
         (name,) = os.listdir(store())
         self.assertEqual(stat.S_IMODE(os.stat(store()).st_mode), 0o700)
         self.assertEqual(stat.S_IMODE(os.stat(os.path.join(store(), name)).st_mode), 0o600)
+
+    def test_a_store_it_cannot_write_is_a_config_error(self):
+        os.makedirs(os.path.dirname(store()), exist_ok=True)
+        with open(store(), "w", encoding="utf-8"):
+            pass
+        with self.assertRaisesRegex(ConfigError, "^claude resume state: "):
+            self.committed()
 
     def test_a_resume_it_cannot_run_prints_one_line_and_runs_nothing(self):
         self.committed()

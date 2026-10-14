@@ -250,12 +250,15 @@ class ClaudeCommon:
             "dirs": list(spec.access.dirs),
             "env": {k: v for k, v in env.items() if k not in LOCAL_ENV_VARS},
         }
-        os.makedirs(self.store, 0o700, exist_ok=True)
-        found = os.lstat(self.store)
-        if not stat.S_ISDIR(found.st_mode) or found.st_uid != os.getuid():
-            raise ConfigError(f"{self.store}: not a directory of yours")
-        os.chmod(self.store, 0o700)
-        save(_state_path(self.store, cwd, sid), json.dumps(state), own=True, durable=True)
+        try:
+            os.makedirs(self.store, 0o700, exist_ok=True)
+            found = os.lstat(self.store)
+            if not stat.S_ISDIR(found.st_mode) or found.st_uid != os.getuid():
+                raise ConfigError(f"{self.store}: not a directory of yours")
+            os.chmod(self.store, 0o700)
+            save(_state_path(self.store, cwd, sid), json.dumps(state), own=True, durable=True)
+        except OSError as error:
+            raise ConfigError(f"claude resume state: {error}") from None
 
     def resume_main(self, argv) -> int:
         """resume()'s run (STORE CWD SID): execs claude resuming SID with the saved dirs and env
