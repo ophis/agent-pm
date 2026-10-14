@@ -70,13 +70,15 @@ class Crew:
             raise RuntimeError(f"{shlex.join(argv)}: {reason}")
         return result.stdout
 
-    def _here(self) -> list[Record]:
+    def _here(self) -> list[Record] | None:
         if self._listed is None:
-            raw = self._execute(HERE)
             try:
+                raw = self._execute(HERE)
                 self._listed = [Record.parse(line) for line in raw.splitlines()]
             except ValueError as error:
-                raise RuntimeError(f"{shlex.join(HERE)}: invalid Record: {error}") from error
+                print(f"crew: {shlex.join(HERE)}: invalid Record: {error}", file=sys.stderr)
+            except RuntimeError as error:
+                print(f"crew: {error}", file=sys.stderr)
         return self._listed
 
     def _start(self, argv: tuple[str, ...], name: str, sid: str) -> Record:
@@ -185,11 +187,7 @@ class Crew:
     def attach(self, *, after: int | None = None, gen: int | None = None) -> str:
         self._listed = None
         self.roster.check_lease()
-        try:
-            here = self._here()
-        except RuntimeError as error:
-            print(f"crew: {error}", file=sys.stderr)
-            here = None
+        here = self._here()
         if gen is not None:
             self.roster.advance(after, gen)
         instant = datetime.datetime.now(datetime.UTC)
@@ -333,7 +331,7 @@ class Crew:
         self.roster.check_lease()
         entries = self.roster.entries()
         records = [entry.record for entry in entries.values() if entry.record is not None]
-        records.extend(self._here())
+        records.extend(self._here() or ())
         names = sorted(set(entries) | {record.name for record in records})
         if not dry_run:
             failures = self._control("close", records)
