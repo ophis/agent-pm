@@ -11,7 +11,7 @@ from pathlib import Path
 
 from agent_pm.delegate.composer.base import METHOD, PLACEHOLDER, TEAM, read_text, title_of
 from agent_pm.delegate.composer.types import ConfigError, Team
-from agent_pm.delegate.config import CONFIG, read_config
+from agent_pm.delegate.config import CONFIG, read_config, validate_team_dirs
 from agent_pm.delegate.event import PROGRESS
 from agent_pm.utils import LOCAL, temp_dirs, under, unfenced
 from agent_pm.utils import load_config as load
@@ -115,14 +115,17 @@ def check_all(team: Team, cfg: Mapping) -> None:
 
 def team_dirs(config: str = CONFIG, local: str = LOCAL) -> tuple[str, ...]:
     try:
-        own, value = (
-            load(config).get("team_dirs"),
-            read_config(path=config, local=local).get("team_dirs"),
-        )
-    except (OSError, ValueError) as e:
-        raise ConfigError(f"config: {e}") from None
-    if own:
-        raise ConfigError(f"team_dirs: set it in {local}, not {os.path.basename(config)}")
+        own = load(config)
+    except (OSError, ValueError) as error:
+        raise ConfigError(f"config: {error}") from None
+    try:
+        validate_team_dirs(own, config, local=local)
+    except ValueError as error:
+        raise ConfigError(str(error)) from None
+    try:
+        value = read_config(path=config, local=local).get("team_dirs")
+    except (OSError, ValueError) as error:
+        raise ConfigError(f"config: {error}") from None
     return configured_dirs(value)
 
 

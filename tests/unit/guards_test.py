@@ -600,7 +600,9 @@ class DelegateSessionForwarding(Sample):
         key = self.BASE + "engine/plan.py", "agent_pm.session.Driver"
         public = self.BASE + "__init__.py", "agent_pm.session.Driver"
         self.assertEqual(set(guards.DELEGATE_SESSION_FORWARDING_ALLOWED), {key, public})
-        sample = "from agent_pm.session import Driver as SessionDriver\nSessionDriver()\n"
+        sample = (
+            "from agent_pm.session import Driver as SessionDriver\nSessionDriver.from_config({})\n"
+        )
         self.assertEqual(self.references(sample, "engine/plan.py"), [])
         self.assertTrue(self.references(sample, "cli.py"))
         found = guards.delegate_session_forwarding(self.tree({}))
@@ -2502,10 +2504,10 @@ class PythonCommands(Sample):
         self.assertEqual(
             guards.python_commands(root),
             [
+                'delegate/skills/a/SKILL.md:1: python command "python3.11 x.py"',
                 'delegate/src/agent_pm/delegate/config.toml:1: python command "python3 -m agent_pm.x"',
                 'delegate/src/agent_pm/delegate/config.toml:1: python command "python3 x.py"',
                 'delegate/src/agent_pm/delegate/config.toml:3: python command "python3 -P {{team}}/x.py"',
-                'delegate/skills/a/SKILL.md:1: python command "python3.11 x.py"',
                 f'{team}/roles/r.md:1: python command "python3 -P agent_pm.x"',
                 f'{team}/roles/r.md:2: python command "python3 -I -m agent_pm.x"',
                 f'{team}/roles/r.md:5: python command "python3 -P <team>/tools/../repo.py"',

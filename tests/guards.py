@@ -624,7 +624,7 @@ def delegate_session_forwarding(repo: str) -> list[str]:
             for name in names:
                 for prefix in ("agent_pm.session.", "agent_pm.session.engine.forwarding."):
                     if name.startswith(prefix) and name[len(prefix) :].split(".")[0] in wrappers:
-                        key = base + rel, name
+                        key = base + rel, prefix + name[len(prefix) :].split(".")[0]
                         if key in DELEGATE_SESSION_FORWARDING_ALLOWED:
                             seen.add(key)
                         else:

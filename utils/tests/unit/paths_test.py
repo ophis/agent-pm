@@ -3,13 +3,16 @@ utils/src/agent_pm/utils/paths.py: real_dirs, under, temp_dirs, printable_abs an
 """
 
 import os
+import sys
 import tempfile
 import unittest
+from importlib.machinery import ModuleSpec
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
 from unittest import mock
 
 from agent_pm.utils.paths import (
+    import_env,
     import_roots,
     module_roots,
     overlaps,
@@ -291,3 +294,65 @@ class Overlaps(Case):
             ):
                 with self.subTest(a=a, b=b):
                     self.assertEqual(overlaps(str(a), str(b)), expected)
+
+
+class ImportEnvironment(unittest.TestCase):
+    def setUp(self):
+        self.enterContext(
+            mock.patch(
+                "sysconfig.get_paths",
+                return_value={"purelib": "/installation", "platlib": "/installation"},
+            )
+        )
+        self.packages = []
+        for name in ("delegate", "session", "utils"):
+            module = ModuleType(f"agent_pm.{name}")
+            module.__file__ = f"/checkout/{name}/src/agent_pm/{name}/__init__.py"
+            self.packages.append(module)
+        self.roots = tuple(f"/checkout/{name}/src" for name in ("delegate", "session", "utils"))
+
+    def test_normal_module_and_package_find_the_same_source_root(self):
+        module = ModuleType("agent_pm.delegate.engine.config")
+        module.__file__ = "/checkout/delegate/src/agent_pm/delegate/engine/config.py"
+        module.__spec__ = ModuleSpec(module.__name__, loader=None)
+        self.assertEqual(module_roots(module, self.packages[0]), (self.roots[0],))
+
+    def test_bootstrap_paths_are_supplied_in_package_order_without_unrelated_roots(self):
+        with mock.patch.dict(os.environ, {"PYTHONPATH": "/unrelated"}):
+            self.assertEqual(
+                import_env(*self.packages), {"PYTHONPATH": os.pathsep.join(self.roots)}
+            )
+
+    def test_roots_available_only_from_pythonpath_still_need_child_bootstrap(self):
+        with mock.patch.dict(os.environ, {"PYTHONPATH": os.pathsep.join(self.roots)}):
+            self.assertEqual(
+                import_env(*self.packages), {"PYTHONPATH": os.pathsep.join(self.roots)}
+            )
+
+    def test_installed_shared_root_needs_no_pythonpath(self):
+        root = os.path.realpath(next(path for path in sys.path if path))
+        for module in self.packages:
+            module.__file__ = f"{root}/agent_pm/{module.__name__.rsplit('.', 1)[-1]}/__init__.py"
+        with (
+            mock.patch("sysconfig.get_paths", return_value={"purelib": root, "platlib": root}),
+            mock.patch.dict(os.environ, {"PYTHONPATH": "/unrelated"}),
+        ):
+            self.assertEqual(import_env(*self.packages), {})
+
+    def test_manually_bootstrapped_source_paths_still_need_child_bootstrap(self):
+        root = os.path.realpath(next(path for path in sys.path if path))
+        for module in self.packages:
+            module.__file__ = f"{root}/agent_pm/{module.__name__.rsplit('.', 1)[-1]}/__init__.py"
+        with mock.patch.dict(os.environ, {"PYTHONPATH": ""}):
+            self.assertEqual(import_env(*self.packages), {"PYTHONPATH": root})
+
+    def test_mixed_installation_needs_all_supplied_roots(self):
+        root = os.path.realpath(next(path for path in sys.path if path))
+        self.packages[0].__file__ = f"{root}/agent_pm/delegate/__init__.py"
+        with (
+            mock.patch("sysconfig.get_paths", return_value={"purelib": root, "platlib": root}),
+            mock.patch.dict(os.environ, {"PYTHONPATH": ""}),
+        ):
+            self.assertEqual(
+                import_env(*self.packages), {"PYTHONPATH": os.pathsep.join((root, *self.roots[1:]))}
+            )

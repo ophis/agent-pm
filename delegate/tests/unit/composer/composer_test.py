@@ -42,6 +42,12 @@ PARAMS = RunParams(input="  # Literal\n\n```\n{{role}}\n```  ", out="/work/out.m
 
 
 class OwnedComposer(Case):
+    def test_plain_input_uses_the_current_workdir_default_deliverable(self):
+        with mock.patch("os.getcwd", return_value="/work"):
+            prompt = self.composer.compose("writer", None, "  Plain text.  ")
+        self.assertIn("Save <Workdir>/tmp/deliverable.md.", prompt)
+        self.assertTrue(prompt.endswith("\n# Input\n\nPlain text.\n"))
+
     def setUp(self):
         self.enterContext(
             mock.patch("builtins.open", side_effect=lambda path: io.StringIO(TEXTS[path]))

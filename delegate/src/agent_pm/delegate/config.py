@@ -10,11 +10,21 @@ CONFIG: str = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.t
 
 
 def read_config(*, local: str = utils.LOCAL, path: str | None = None) -> dict:
+    def validate(package: str, source: str, table: Mapping) -> None:
+        if package == "agent_pm.delegate":
+            validate_team_dirs(table, source, local=local)
+
     return read_resources(
         (("agent_pm.session", "config.toml"), ("agent_pm.delegate", "config.toml")),
         local=local,
         paths=None if path is None else {"agent_pm.delegate": path},
+        validate=validate,
     )
+
+
+def validate_team_dirs(table: Mapping, source: str, *, local: str = utils.LOCAL) -> None:
+    if table.get("team_dirs"):
+        raise ValueError(f"team_dirs: set it in {local}, not {os.path.basename(source)}")
 
 
 def harness_host(config: Mapping, hosts: Collection[str]) -> str | None:

@@ -145,6 +145,22 @@ class TrustedDirsTest(Case):
 
 
 class Shipped(Case):
+    def test_team_dirs_may_come_only_from_the_local_section(self):
+        own = os.path.join(self.home, "delegate.toml")
+        local = os.path.join(self.home, "local.toml")
+        with open(own, "w") as stream:
+            stream.write('team_dirs = ["/untrusted"]\n')
+        with open(local, "w") as stream:
+            stream.write("[delegate]\nteam_dirs = []\n")
+        with self.assertRaises(ValueError) as caught:
+            read_config(path=own, local=local)
+        self.assertEqual(str(caught.exception), f"team_dirs: set it in {local}, not delegate.toml")
+        with open(own, "w") as stream:
+            stream.write("team_dirs = []\n")
+        with open(local, "w") as stream:
+            stream.write(f'[delegate]\nteam_dirs = ["{self.home}"]\n')
+        self.assertEqual(read_config(path=own, local=local)["team_dirs"], [self.home])
+
     def test_public_config_reader_supports_local_and_path_overrides(self):
         from_config = os.path.join(self.home, "delegate.toml")
         local = os.path.join(self.home, "local.toml")

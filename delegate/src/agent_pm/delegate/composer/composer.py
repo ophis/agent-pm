@@ -6,6 +6,7 @@ from typing import overload
 
 from agent_pm.delegate.composer import prompt, run, teams
 from agent_pm.delegate.composer.types import (
+    DELIVERABLE,
     ConfigError,
     DelegateConfig,
     Intent,
@@ -88,11 +89,11 @@ class Composer:
         *,
         overlays: Sequence[Mapping] = (),
     ) -> str:
-        params = (
-            input
-            if isinstance(input, RunParams)
-            else RunParams(input=input, out="", workdir=os.getcwd())
-        )
+        if isinstance(input, RunParams):
+            params = input
+        else:
+            workdir = os.getcwd()
+            params = RunParams(input=input, out=os.path.join(workdir, DELIVERABLE), workdir=workdir)
         return self.render(self.resolve(role, task, overlays=overlays), params)
 
     def access(
