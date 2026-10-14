@@ -26,7 +26,7 @@ from agent_pm.delegate import DelegateEvent
 from agent_pm.delegate.engine.state import RunState
 from agent_pm.utils import Record
 
-from delegate.tests.case import PYTHONPATH, Case
+from delegate.tests.case import PY, PYTHONPATH, Case
 from delegate.tests.fakes import callback_recorder
 from delegate.tests.integration.cli import ASKING, DONE, RUN, SID
 from delegate.tests.replies import block, mark, running
@@ -43,6 +43,7 @@ HARNESS_LINE = re.compile(rf"{STAMP} {HARNESS} ((?:outcome [a-z_]+)|(?:exited -?
 START = mark("start", "echoing")
 WAIT = 60  # seconds: a run
 ANSWER = "Use option B."
+SECRET = "sk-fake-441"
 RESUME = (*RUN[:-1], "resume")
 
 
@@ -227,6 +228,47 @@ class Tui(Detach):
         self.assertEqual((clients.returncode, clients.stdout), (0, ""), clients.stderr)
         self.assertEqual(self.server.option(TUI, "@pane"), "")
         self.assertEqual(len(self.server.panes(f"={MANAGER}:")), 1)
+
+    def test_a_policy_env_secret_reaches_the_client_but_no_argv_record_or_printed_command(self):
+        with open(os.path.join(self.agent_pm, "config.local.toml"), "w", encoding="utf-8") as f:
+            f.write(f'[delegate.policy.claude]\nenv = {{ FAKE_TOKEN = "{SECRET}" }}\n')
+        res = self.detach("--mode", "tui", steps=[START], turns=[[block(DONE)]])
+        self.said(res, tui=True)
+        self.until(lambda: self.kinds().count("session") > 0, "a session row")
+        ps = subprocess.run(["ps", "-A", "-ww", "-o", "args="], capture_output=True, text=True)
+        self.assertEqual(ps.returncode, 0, ps.stderr)
+        self.ended(turn_ends=2)
+        printed = [res.stdout, res.stderr, ps.stdout]
+        for layer, name in (("delegate", self.work), ("session", TUI)):
+            for query in ("status", "attach-command"):
+                out = self.cli([*PY, "-m", f"agent_pm.{layer}.cli", query, name])
+                self.assertEqual(out.returncode, 0, out.stderr)
+                printed += [out.stdout, out.stderr]
+        records = self.cli([*PY, "-m", "agent_pm.session.cli", "ls", "--records"])
+        printed += [records.stdout, self.read(os.path.join(self.work, "run.jsonl"))]
+        self.assertIn(TUI, records.stdout)
+        for text in printed:
+            self.assertNotIn(SECRET, text)
+        resume = self.last("session")["resume"]
+        recorder = os.path.join(self.dir, "rec")
+        os.mkdir(recorder)
+        with open(os.path.join(recorder, "claude"), "w", encoding="utf-8") as f:
+            f.write(
+                f"#!{sys.executable}\nimport json, os, sys\n"
+                "with open(os.environ['RESUME_RECORD'], 'w') as f:\n"
+                "    json.dump({'argv': sys.argv[1:], 'env': dict(os.environ)}, f)\n"
+            )
+        os.chmod(os.path.join(recorder, "claude"), 0o700)
+        record = os.path.join(self.dir, "resumed.json")
+        env = self.server.env(RESUME_RECORD=record)
+        env["PATH"] = recorder + os.pathsep + env["PATH"]
+        run = subprocess.run(["/bin/sh", "-c", resume], env=env, capture_output=True, text=True)
+        self.assertEqual(run.returncode, 0, run.stderr)
+        with open(record, encoding="utf-8") as f:
+            resumed = json.load(f)
+        self.assertEqual(
+            (resumed["argv"][:2], resumed["env"].get("FAKE_TOKEN")), (["--resume", SID], SECRET)
+        )
 
     def test_kill_session_of_the_harness_stops_the_tui_one_outcome_error(self):
         res = self.detach("--mode", "tui", steps=[START])
