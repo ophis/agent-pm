@@ -143,7 +143,7 @@ def split_window(flag, pane, sock=SOCK):
         "#{pane_id}",
         "-t",
         pane,
-        "env",
+        "/usr/bin/env",
         "-u",
         "TMUX",
         TMUX,

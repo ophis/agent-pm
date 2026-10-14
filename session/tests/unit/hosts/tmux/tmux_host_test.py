@@ -1167,15 +1167,16 @@ class StartTest(StartFixture):
                 )
                 self.assertEqual(os.listdir(self.temp), [])
 
-    def test_dead_session_is_killed_then_started(self):
+    def test_dead_session_is_refused_untouched(self):
         for pane in ("1 0 ", "1  9"):
             with self.subTest(pane=pane):
                 fake = Tmux(pane=pane)
-                self.start(fake)
+                with self.assertRaisesRegex(types.TuiError, "^session s exists$"):
+                    self.start(fake)
                 self.assertEqual(
-                    fake.commands(), ["display-message", "kill-session", "new-session"]
+                    fake.calls, [["tmux", "display-message", "-p", "-t", "=s:", FORMAT]]
                 )
-                self.assertEqual(fake.calls[1], ["tmux", "kill-session", "-t", "=s"])
+                self.assertEqual(os.listdir(self.temp), [])
 
     def test_an_unknown_session_is_never_killed(self):
         # tmux failing otherwise: new-session finds out; another start's session is not ours to kill

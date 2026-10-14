@@ -383,6 +383,91 @@ class RetileTest(Live):
         self.holds(self.layout, dragged, "the layout after a drag")
 
 
+class BoundaryTest(Live):
+    def setUp(self):
+        super().setUp()
+        self.retile("off")
+        self.started("w1")
+        self.started("w2")
+        self.manager = self.server.inside(MANAGER)["TMUX_PANE"]
+        self.window = self.window_of(MANAGER)
+        self.tui("tile", self.window)
+
+    def layout(self):
+        return self.display(MANAGER, "#{window_layout}")
+
+    def assert_complete(self):
+        actual = set(self.server.panes(self.window))
+        leaves = layout.pane_ids(layout.parse_layout(self.layout()))
+        self.assertEqual(set(leaves), actual)
+        self.assertEqual(len(leaves), len(actual))
+
+    def test_manual_and_retained_dead_terminals_keep_one_grid_cell_each(self):
+        terminal = self.host.terminal(
+            "dead", Launch(("/bin/sh", "-c", "exit 7"), self.server.env(), cwd=self.cwd)
+        )
+        live_tmux.wait(lambda: not terminal.alive(), what="retained terminal exit")
+        self.assertIsNone(self.host.show("dead", display=MANAGER))
+        manual = self.tmux(
+            "split-window", "-d", "-P", "-F", "#{pane_id}", "-t", self.window, *live_tmux.IDLE
+        )
+        self.tui("tile", self.window)
+        self.assert_complete()
+        order = self.tmux("list-panes", "-t", self.window, "-F", "#{pane_id}").split()
+        self.assertEqual(
+            order,
+            [
+                self.manager,
+                self.server.pane_of("dead"),
+                self.server.pane_of("w1"),
+                self.server.pane_of("w2"),
+                manual,
+            ],
+        )
+        self.assertEqual(self.server.option("dead", "@state"), "dead")
+
+    def test_duplicate_and_invalid_claims_do_not_drop_or_duplicate_real_panes(self):
+        for name, pane in (("duplicate", self.server.pane_of("w1")), ("invalid", "%999999")):
+            self.tmux("new-session", "-d", "-s", name, *live_tmux.IDLE)
+            self.tmux("set-option", "-t", f"={name}:", "@opener", MANAGER)
+            self.tmux("set-option", "-t", f"={name}:", "@pane", pane)
+        self.tui("tile", self.window)
+        self.assert_complete()
+        self.grid([["w1", "w2"]])
+
+    def test_zoomed_layout_is_unchanged(self):
+        self.tmux("resize-pane", "-Z", "-t", self.manager)
+        before = self.layout()
+        self.tui("tile", self.window)
+        self.assertEqual(self.layout(), before)
+        self.assertEqual(self.display(MANAGER, "#{window_zoomed_flag}"), "1")
+
+    def test_no_fit_preserves_the_previous_fitting_layout(self):
+        self.started("w3")
+        self.tmux("select-layout", "-t", self.window, "even-horizontal")
+        self.tmux("resize-window", "-t", self.window, "-y", "3")
+        before = self.layout()
+        self.tui("tile", self.window)
+        self.assertEqual(self.layout(), before)
+        self.assert_complete()
+
+    def test_removed_manager_clears_grid_and_show_rebuilds_it(self):
+        self.tmux("kill-pane", "-t", self.manager)
+        self.tui("tile", self.window)
+        self.assertEqual(self.hooks(MANAGER), [])
+        for option in (
+            tmux_model.GRID_MANAGER,
+            tmux_model.GRID_PER_COLUMN,
+            tmux_model.GRID_PANES_SET,
+        ):
+            self.assertEqual(self.window_option(MANAGER, option), "")
+        self.started("w3")
+        manager = self.window_option(MANAGER, tmux_model.GRID_MANAGER)
+        self.assertIn(manager, self.server.panes(self.window))
+        self.assertEqual(self.window_option(MANAGER, tmux_model.GRID_PER_COLUMN), "3")
+        self.assert_complete()
+
+
 class SettleTest(Live):
     def setUp(self):
         super().setUp()

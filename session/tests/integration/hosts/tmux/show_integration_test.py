@@ -33,6 +33,8 @@ class ShowTest(Case):
         self.environment.update(ITERM_SESSION_ID="w0t0p0:ABC", TERM_PROGRAM="iTerm.app")
         self.calls = []
         self.fail_metadata = False
+        self.new_pane = None
+        self.server.tmux("set-option", "-w", "-t", "=mgr:", "remain-on-exit", "on")
 
     def transport(self, argv, **kwargs):
         self.calls.append(argv)
@@ -42,7 +44,10 @@ class ShowTest(Case):
             self.fail("a private-server test must not address iTerm2")
         if self.fail_metadata and argv[1:4] == ["set-option", "-t", "=worker:"]:
             return subprocess.CompletedProcess(argv, 1, "", "metadata refused")
-        return subprocess.run(argv, **kwargs)
+        response = subprocess.run(argv, **kwargs)
+        if argv[:2] == ["tmux", "split-window"]:
+            self.new_pane = response.stdout.strip()
+        return response
 
     def show(self):
         self.stderr = io.StringIO()
@@ -55,15 +60,23 @@ class ShowTest(Case):
             )
 
     def assert_visible_private_attach(self):
-        live_tmux.wait(
-            lambda: bool(self.server.tmux("list-clients", "-t", "=worker").stdout.strip()),
-            what="the nested display attaches to the worker on the private server",
-        )
         split = next(argv for argv in self.calls if argv[:2] == ["tmux", "split-window"])
+        try:
+            live_tmux.wait(
+                lambda: bool(self.server.tmux("list-clients", "-t", "=worker").stdout.strip()),
+                what="the nested display attaches to the worker on the private server",
+            )
+        except AssertionError as failure:
+            captured = self.server.tmux("capture-pane", "-p", "-t", self.new_pane)
+            self.fail(
+                f"{failure}\n{split!r}\n{captured.stdout}\n{captured.stderr}\n{self.server.tmux('list-sessions').stdout}"
+            )
         executable = split[split.index("TMUX") + 1]
         self.assertTrue(os.path.isabs(executable))
         self.assertEqual(split[split.index("-S") + 1], self.server.socket)
-        self.assertIn(["env", "-u", "TMUX"], [split[i : i + 3] for i in range(len(split) - 2)])
+        self.assertIn(
+            ["/usr/bin/env", "-u", "TMUX"], [split[i : i + 3] for i in range(len(split) - 2)]
+        )
         self.assertEqual(split[-3:], ["attach", "-t", "=worker"])
         self.assertEqual(self.server.tmux("has-session", "-t", "=mgr").returncode, 0)
 

@@ -278,7 +278,7 @@ def _split(session: str, side: str, a: Anchor, tmux: str, proc) -> tuple[str | N
                 raise
             a = a.tmux
     command = [
-        "env",
+        "/usr/bin/env",
         "-u",
         "TMUX",
         tmux,

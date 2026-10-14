@@ -172,8 +172,7 @@ def start(
     """Runs argv in a new detached session that keeps its pane once argv ends, in cwd with env (its
     terminal keys the pane's, PWD cwd), tags, @events, the pane-died hook (@state dead, a dead line
     to @events), the `<session> <state>` border and the status line set in the same tmux call (an
-    instant death still gets its dead line); opens no pane. A running session is refused, a dead one
-    replaced; argv reaches the pane through a 0600 handover file. Returns once argv has exec'd;
+    instant death still gets its dead line); opens no pane. An existing session is refused untouched; argv reaches the pane through a 0600 handover file. Returns once argv has exec'd;
     raising, it leaves no session of its own.
     """
     argv, cwd, env = launch.argv, launch.cwd, launch.env
@@ -191,7 +190,7 @@ def start(
         if state == PaneStatus.RUNNING:
             raise TuiError(f"session {session} is running; {attach_command(session)}")
         if isinstance(state, int):
-            kill(session, proc=proc)
+            raise TuiError(f"session {session} exists")
         pipe = _handover(path, argv, cwd, env)
         cols, rows = shutil.get_terminal_size()
         decorations = [

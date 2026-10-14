@@ -8,6 +8,7 @@ import fcntl
 import json
 import os
 import re
+import stat
 import subprocess
 import sys
 import time
@@ -352,6 +353,9 @@ def _grid_lock(socket: str, window: str, *, wait: bool):
     except OSError as e:
         raise TuiError(f"grid lock {path}: {e.strerror}") from e
     try:
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid():
+            raise TuiError(f"grid lock {path}: not a regular file owned by you")
         end = time.monotonic() + TILE_WAIT
         while True:
             try:
