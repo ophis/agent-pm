@@ -1,7 +1,6 @@
 """Host callbacks bind their saved server and launch generation before marking."""
 
 import os
-import subprocess
 from dataclasses import replace
 from unittest import mock
 
@@ -42,8 +41,8 @@ class CallbackTest(Case):
             mock.patch(
                 "subprocess.run",
                 side_effect=[
-                    subprocess.CompletedProcess([], 0, response, ""),
-                    subprocess.CompletedProcess([], 0, "", ""),
+                    mock.Mock(returncode=0, stdout=response, stderr=""),
+                    mock.Mock(returncode=0, stdout="", stderr=""),
                 ],
             ) as run,
         ):

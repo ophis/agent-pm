@@ -7,7 +7,6 @@ import json
 import os
 import re
 import stat
-import subprocess
 import sys
 import tempfile
 import types
@@ -19,6 +18,7 @@ from agent_pm.session.modes import tui_hook
 
 from session.tests.case import SRC, Case
 from session.tests.tui_hook_support import HOOK, SOURCE_ROOTS, install, receipt, state, write_state
+from utils.tests.process_fixtures import DEVNULL
 
 RUNTIME = re.compile(r"claude|codex", re.I)
 
@@ -37,8 +37,8 @@ class InProcess(Case):
         self.lookup = f"%3\t{receipt(self.state).to_line()}\n"
         self.mark = unittest.mock.Mock(
             side_effect=[
-                subprocess.CompletedProcess([], 0, self.lookup, ""),
-                subprocess.CompletedProcess([], 0, "", ""),
+                unittest.mock.Mock(returncode=0, stdout=self.lookup, stderr=""),
+                unittest.mock.Mock(returncode=0, stdout="", stderr=""),
             ]
         )
 
@@ -69,8 +69,8 @@ class InProcess(Case):
             with self.subTest(uid=uid):
                 self.mark.reset_mock(side_effect=True)
                 self.mark.side_effect = [
-                    subprocess.CompletedProcess([], 0, self.lookup, ""),
-                    subprocess.CompletedProcess([], 0, "", ""),
+                    unittest.mock.Mock(returncode=0, stdout=self.lookup, stderr=""),
+                    unittest.mock.Mock(returncode=0, stdout="", stderr=""),
                 ]
                 self.faked(uid=uid)
                 self.assertEqual(
@@ -120,7 +120,7 @@ class InProcess(Case):
                     [self.tmux, "display-message", "-p", "-t", "=w1:", "#{pane_id}\t#{@record}"],
                     capture_output=True,
                     text=True,
-                    stdin=subprocess.DEVNULL,
+                    stdin=DEVNULL,
                     timeout=5,
                     env={
                         **{
@@ -135,7 +135,7 @@ class InProcess(Case):
                     [self.tmux, "set-option", "-t", "%3", "@state", "working"],
                     capture_output=True,
                     text=True,
-                    stdin=subprocess.DEVNULL,
+                    stdin=DEVNULL,
                     timeout=5,
                     env={
                         **{
