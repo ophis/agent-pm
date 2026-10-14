@@ -17,7 +17,16 @@ from agent_pm.delegate.engine.callback import EventCallback
 from agent_pm.delegate.engine.drivers import AgentDriver, Driver
 from agent_pm.delegate.engine.plan import plan
 from agent_pm.delegate.engine.runner import execute
-from agent_pm.delegate.engine.types import ConfigError, Event, Limit, Outer, Plan, Result, Spec
+from agent_pm.delegate.engine.types import (
+    ConfigError,
+    Event,
+    Finished,
+    Limit,
+    Outer,
+    Plan,
+    Result,
+    Spec,
+)
 from agent_pm.delegate.event.types import Outcome
 from agent_pm.session import (
     Access,
@@ -136,6 +145,10 @@ class HarnessDelegate(Delegate):
                 ),
             ),
         )
+        try:
+            self.driver.preflight(accepted.session)
+        except SessionConfigError as error:
+            raise ConfigError(str(error)) from None
         self.workdir = accepted.spec.workdir
         self._state = _State(
             role,
@@ -177,6 +190,10 @@ class HarnessDelegate(Delegate):
             1,
             {},
         )
+        try:
+            driver.preflight(accepted.session)
+        except SessionConfigError as error:
+            raise ConfigError(str(error)) from None
         owner._persist_new()
         return owner
 
@@ -200,10 +217,7 @@ class HarnessDelegate(Delegate):
 
     def _configure(self) -> None:
         try:
-            self.session_cls.configure(
-                adapters=self._settings.get("adapters", {}),
-                hosts=Host.parse_hosts(self._settings.get("hosts")),
-            )
+            self.session_cls.configure_from(self._settings)
         except SessionConfigError as error:
             raise ConfigError(str(error)) from None
 
@@ -335,12 +349,17 @@ class HarnessDelegate(Delegate):
     def usage(cls, role: str) -> Usage | None:
         composition = Composer()
         settings = thaw(composition.config.values)
-        Session.configure(
-            adapters=settings.get("adapters", {}), hosts=Host.parse_hosts(settings.get("hosts"))
-        )
+        Session.configure_from(settings)
         return Session.usage(composition.resolve(role).runtime)
 
     def _agent(self, state: _State) -> Session | None:
+        agent = self.driver.session
+        if (
+            agent is not None
+            and state.attempt == self._state.attempt
+            and agent.sid == state.plan.sid
+        ):
+            return agent
         try:
             return self.session_cls.attach(state.agent_name, host=state.host)
         except DriverError:
@@ -361,11 +380,11 @@ class HarnessDelegate(Delegate):
             return None
 
     def _alive(self, state: _State) -> bool:
-        if state.completed:
-            return False
         if state.detached:
             process = self._harness(state)
             return process is not None and process.alive()
+        if state.completed:
+            return False
         agent = self._agent(state)
         return agent is not None and agent.state() == Liveness.LIVE
 
@@ -451,6 +470,8 @@ class HarnessDelegate(Delegate):
 
     def session_info(self) -> SessionStatus:
         state = self._read()
+        if state.completed:
+            return self.session_cls.inspect(state.plan.session)
         agent = self._agent(state)
         return (
             agent.session_status()
@@ -468,17 +489,17 @@ class HarnessDelegate(Delegate):
         )
 
         def emit(event: Event) -> None:
+            if isinstance(event, Finished):
+                with file_lock(self._path, own=True):
+                    state = self._current()
+                    self._state = replace(state, result=event.result, completed=True)
+                    self._save(self._state)
             if on_event is not None:
                 on_event(event)
             if callback is not None:
                 callback(event)
 
-        result = execute(self._state.plan, driver=self.driver, on_event=emit)
-        with file_lock(self._path, own=True):
-            state = self._current()
-            self._state = replace(state, result=result, completed=True)
-            self._save(self._state)
-        return result
+        return execute(self._state.plan, driver=self.driver, on_event=emit)
 
     def _current(self) -> _State:
         state = self._read()
@@ -547,6 +568,10 @@ class HarnessDelegate(Delegate):
                     ),
                 ),
             )
+            try:
+                self.driver.preflight(accepted.session)
+            except SessionConfigError as error:
+                raise ConfigError(str(error)) from None
             state = replace(state, plan=accepted, completed=False, result=None)
             return self._detach(state)
 

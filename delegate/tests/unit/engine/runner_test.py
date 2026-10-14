@@ -108,6 +108,7 @@ class TuiPolicy(Base):
 
     def setUp(self):
         super().setUp()
+        self.configure_fake(tui=True)
         self.enterContext(mock.patch.dict(os.environ))
         os.environ.pop("TUI_ATTACH_PREFIX", None)
 
@@ -375,6 +376,7 @@ class TuiPolicy(Base):
         with mock.patch.object(self.driver, "start", side_effect=DriverError("no tmux")):
             self.assertEqual(self.go(mode="tui"), Result(1, None, "tui: no tmux"))
         self.fresh()
+        self.configure_fake()
         with self.assertRaises(ConfigError) as cm:
             self.go(mode="tui")
         self.assertEqual(

@@ -8,7 +8,7 @@ import time
 from dataclasses import replace
 
 import agent_pm.delegate
-from agent_pm.delegate import Begun, ConfigError, Finished, Limit, Outcome, Spec
+from agent_pm.delegate import Begun, ConfigError, Finished, Limit, Outcome, Progress, Spec
 from agent_pm.delegate.engine.harness_delegate import HarnessDelegate
 from agent_pm.session import Exited, LimitHit, Reply
 from agent_pm.utils import Record, package_dirs
@@ -21,7 +21,7 @@ from delegate.tests.fakes.harness_session import (
     RecordingHost,
 )
 from delegate.tests.harness import SID, HarnessCase
-from delegate.tests.replies import block
+from delegate.tests.replies import block, mark
 from delegate.tests.unit.runs import DONE
 
 
@@ -216,6 +216,55 @@ class Views(HarnessCase):
 
 
 class Completion(HarnessCase):
+    def test_foreground_headless_owns_live_session_and_publishes_result_before_finished(self):
+        HarnessSession.script = (Reply(mark("start", "working")), Reply(block(DONE)), Exited(0))
+        delegate = self.make()
+        seen = []
+
+        def observe(event):
+            seen.append(event)
+            if isinstance(event, (Begun, Progress)):
+                self.assertTrue(delegate.alive())
+                self.assertEqual(delegate.session_info(), HarnessSession.history)
+                self.assertEqual(HarnessSession.inspected, [])
+                self.assertIsNone(delegate.outcome())
+            else:
+                self.assertFalse(delegate.alive())
+                self.assertEqual(delegate.outcome(), event.result.outcome)
+                view = HarnessDelegate.attach(self.work)
+                self.assertFalse(view.alive())
+                self.assertEqual(view.outcome(), event.result.outcome)
+
+        result = delegate.run(observe)
+        self.assertEqual([type(event) for event in seen], [Begun, Progress, Finished])
+        self.assertEqual(seen[-1], Finished(result))
+        self.assertEqual(HarnessSession.started[0]["spec"].sid, SID)
+
+    def test_headless_keeps_display_for_harness_and_passes_none_to_agent(self):
+        delegate = self.make(display="opaque", host="agent", harness_host="harness")
+        record = delegate.detach()
+        self.assertEqual(record.display, "opaque")
+        self.assertEqual(RecordingHost.launches[0]["display"], "opaque")
+        self.stop(record)
+        delegate.run()
+        self.assertIsNone(HarnessSession.started[0]["display"])
+        self.assertEqual(self.metadata()["display"], "opaque")
+
+    def test_finished_callback_queries_the_completed_result_before_run_returns(self):
+        delegate = self.make()
+        finished = []
+
+        def observe(event):
+            if isinstance(event, Finished):
+                finished.append(event)
+                view = HarnessDelegate.attach(self.work)
+                self.assertFalse(view.alive())
+                self.assertEqual(view.outcome(), event.result.outcome)
+                self.assertEqual(view.status().outcome, "done")
+
+        result = delegate.run(observe)
+        self.assertEqual(finished, [Finished(result)])
+
     def test_every_returned_result_has_one_last_finished_event(self):
         for script in (
             (Reply(block(DONE)), Exited(0)),

@@ -63,12 +63,16 @@ class Base(Case):
         self.driver_dependencies = {
             "class_loader": adapter_loader({"agent_pm.session.adapters.fake": fake_adapter})
         }
+        self.configure_fake()
+
+    def configure_fake(self, *, tui=False):
         self.configure_session(
             {
                 "fake": {
                     "implementation": "agent_pm.session.adapters.fake:FakeAdapter",
                     "scenario": self.scenario,
                     "log": self.log,
+                    "tui": tui,
                 }
             }
         )

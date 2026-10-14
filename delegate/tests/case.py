@@ -94,6 +94,7 @@ class FakeDriver:
     """A forwarding fake whose per-test methods may be replaced."""
 
     session_based = True
+    session = None
 
     def __init__(self, driver):
         self.driver = driver
@@ -102,12 +103,16 @@ class FakeDriver:
         return AgentDriver(self.driver.session_cls).policy(runtime)
 
     def start(self, spec, *, display=None, host=None, idle_timeout=None):
-        return AgentDriver(self.driver.session_cls).start(
+        self.session = AgentDriver(self.driver.session_cls).start(
             spec, display=display, host=host, idle_timeout=idle_timeout
         )
+        return self.session
 
     def writable_dirs(self, spec):
         return self.driver.session_cls.writable_dirs(spec)
+
+    def preflight(self, spec):
+        AgentDriver(self.driver.session_cls).preflight(spec)
 
     def __getattr__(self, name):
         return getattr(self.driver, name)

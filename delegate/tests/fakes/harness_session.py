@@ -16,7 +16,7 @@ from agent_pm.session import (
 )
 from agent_pm.utils import Record, append_line, read_regular, save
 
-from session.tests.fakes.session import FakeSession
+from delegate.tests.fakes.session import SessionClass
 
 
 class RecordingProcess(HostProcess):
@@ -104,7 +104,7 @@ class ShowingHost(RecordingHost, Displayable):
         return None
 
 
-class HarnessSession(FakeSession):
+class HarnessSession(SessionClass):
     name: str
     hosts: dict[str, RecordingHost] = {}
     host_names: dict[str, str] = {}
@@ -115,6 +115,7 @@ class HarnessSession(FakeSession):
     @classmethod
     def reset(cls, *, displayable=False):
         cls.started, cls.live, cls.attached, cls.inspected = [], {}, [], []
+        cls.preflights, cls.preflight_error = [], None
         cls.host_names = {}
         RecordingHost.processes, RecordingHost.launches, ShowingHost.shown = {}, [], []
         kind = ShowingHost if displayable else RecordingHost

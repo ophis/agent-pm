@@ -7,6 +7,7 @@ from dataclasses import fields
 from agent_pm.delegate import ConfigError, Finished, Spec, composer, plan, run
 from agent_pm.delegate.engine.drivers import AgentDriver, Driver, InstructionDriver
 from agent_pm.delegate.engine.types import DriverSpec, Instruction
+from agent_pm.session import ConfigError as SessionConfigError
 from agent_pm.session import Session
 from agent_pm.session import Spec as StartSpec
 
@@ -16,6 +17,58 @@ from delegate.tests.unit.runs import no_child
 
 
 class Drivers(Case):
+    def test_agent_preflight_forwards_spec_and_owned_placement_without_launching(self):
+        session_cls = SessionClass.fresh()
+        driver = AgentDriver(session_cls, display="opaque", host="other")
+        spec = StartSpec(workdir=self.home, runtime="fake", mode="tui", prompt="accepted prompt")
+        with no_child():
+            driver.preflight(spec)
+        self.assertEqual(
+            session_cls.preflights,
+            [{"spec": spec, "display": "opaque", "host": "other", "idle_timeout": None}],
+        )
+        self.assertIs(session_cls.preflights[0]["spec"], spec)
+        self.assertEqual(session_cls.started, [])
+        self.assertEqual(os.listdir(self.home), [".agent-pm"])
+
+    def test_headless_preflight_and_start_keep_owned_host_without_owned_display(self):
+        session_cls = SessionClass.fresh()
+        driver = AgentDriver(session_cls, display="opaque", host="other")
+        spec = StartSpec(workdir=self.home, runtime="fake", mode="headless", prompt="input")
+        with no_child():
+            driver.preflight(spec)
+            session = driver.start(
+                DriverSpec(spec, os.path.join(self.home, "out")), idle_timeout=30
+            )
+        self.addCleanup(session.close)
+        self.assertEqual(
+            session_cls.preflights,
+            [{"spec": spec, "display": None, "host": "other", "idle_timeout": None}],
+        )
+        self.assertEqual(
+            session_cls.started,
+            [{"spec": spec, "display": None, "host": "other", "idle_timeout": 30}],
+        )
+        self.assertIs(session_cls.preflights[0]["spec"], spec)
+        self.assertIs(session_cls.started[0]["spec"], spec)
+
+    def test_agent_preflight_preserves_the_session_failure_without_a_start(self):
+        session_cls = SessionClass.fresh()
+        error = SessionConfigError("unsupported mode")
+        session_cls.preflight_error = error
+        driver = AgentDriver(session_cls)
+        spec = StartSpec(workdir=self.home, runtime="fake", mode="tui")
+        with self.assertRaises(SessionConfigError) as caught:
+            driver.preflight(spec)
+        self.assertIs(caught.exception, error)
+        self.assertEqual(session_cls.started, [])
+
+    def test_instruction_preflight_needs_no_session_and_writes_nothing(self):
+        work = os.path.join(self.home, "missing")
+        with no_child():
+            InstructionDriver().preflight(StartSpec(workdir=work, prompt="instruction"))
+        self.assertFalse(os.path.exists(work))
+
     def test_a_driver_capability_selects_instruction_delivery_without_concrete_type_checks(self):
         class FileDriver(Driver):
             session_based = False

@@ -13,6 +13,7 @@ from agent_pm.delegate.composer.prompt import RESUME
 from delegate.tests.application_case import SID
 from delegate.tests.case import PY, child_env
 from delegate.tests.cli_case import Base
+from delegate.tests.integration.artifacts import DELEGATE_FILES
 from delegate.tests.replies import block
 from delegate.tests.unit.runs import DONE, START, limit, said
 
@@ -124,7 +125,7 @@ class Deliverable(Base):
         self.assertEqual((code, out), (0, DONE["deliverable"]), err)
         self.assertNotIn("delegate: deliverable", err)
         self.assertTrue(err.endswith("delegate: status done\n"), err)
-        self.assertEqual(os.listdir(self.work), ["run.jsonl"])
+        self.assertEqual(set(os.listdir(self.work)), DELEGATE_FILES | {"run.jsonl"})
 
     def test_out_dash_drops_control_characters_but_newlines_and_tabs(self):
         text = "a\x1b]0;x\x07b\n\tc\x1b[2Jd\x9be\n"
