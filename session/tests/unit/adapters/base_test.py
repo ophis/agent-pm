@@ -686,6 +686,19 @@ class SpecTest(Refusals):
                     f"cwd must be a printable absolute path, got {shown}",
                 )
 
+    def test_refuses_access_dirs_that_are_not_printable_absolute_paths(self):
+        for bad in ("../../other/agent-pm", "", "/d\n", "/d\0"):
+            with self.subTest(bad=bad):
+                self.refused(
+                    lambda *, bad=bad: Spec(
+                        workdir="/w",
+                        access=Access(cwd="/x/deploy/work", dirs=(bad,)),
+                        protect=("/x/other/agent-pm",),
+                        runtime="claude",
+                    ),
+                    "dirs must contain only printable absolute paths",
+                )
+
     def test_refuses_a_sid_that_is_not_a_non_empty_printable_string_without_a_slash(self):
         for bad, shown in (
             ("", "''"),

@@ -175,6 +175,37 @@ class ReadRulesTest(Base):
 
 
 class EnvTest(Base):
+    def test_resume_command_clears_repository_selectors_and_keeps_session_environment(self):
+        git_env = dict.fromkeys(LOCAL_ENV_VARS, "/deployment")
+        for resume in (False, True):
+            spec = Spec(
+                workdir=self.work,
+                sid=SID,
+                resume=resume,
+                access=Access(env={**git_env, "KEEP": "access", "ACCESS_ONLY": "kept"}),
+                env={**git_env, "KEEP": "session", "SESSION_ONLY": "kept"},
+            )
+            adapter = ClaudeAdapter({})
+            for launch in (
+                adapter.headless().launch(spec),
+                adapter.tui().launch(spec, HOOK, source_roots=PACKAGE_ROOTS),
+            ):
+                with self.subTest(resume=resume, argv=launch.argv):
+                    self.assertEqual(
+                        shlex.split(launch.resume),
+                        [
+                            "cd",
+                            self.work,
+                            "&&",
+                            "KEEP=session",
+                            "ACCESS_ONLY=kept",
+                            "SESSION_ONLY=kept",
+                            "claude",
+                            "--resume",
+                            SID,
+                        ],
+                    )
+
     def test_repository_selection_environment_is_removed_from_every_launch_source(self):
         git_env = dict.fromkeys(LOCAL_ENV_VARS, "/deployment")
         config = {"env": {**git_env, "KEEP": "configured"}}

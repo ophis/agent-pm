@@ -771,8 +771,8 @@ class WritableDirsTest(Base):
         )
 
     def test_fresh_query_translates_path_errors_without_persistence(self):
-        spec = dataclasses.replace(self.spec, access=Access(dirs=("relative",)))
         with self.assertRaisesRegex(ConfigError, "absolute path"):
+            spec = dataclasses.replace(self.spec, access=Access(dirs=("relative",)))
             self.adapter.writable_dirs(spec)
         self.assertFalse((self.home / ".agent-pm").exists())
 
@@ -1059,9 +1059,6 @@ class StoreRootTest(Base):
         store = SessionStore()
         operations = (
             lambda: store.directory(create=False),
-            lambda: store.create(
-                state.workdir, "preview", state.snapshot, state.writable_roots, persist=False
-            ),
             lambda: store.create(state.workdir, "new", state.snapshot, state.writable_roots),
             lambda: store.save(replace(state, sid="saved")),
             lambda: store.load(state.workdir, state.sid),
@@ -1084,16 +1081,14 @@ class StoreRootTest(Base):
         other_home.mkdir()
         with mock.patch.dict(os.environ, {"HOME": str(other_home)}):
             self.assertIsNone(store.load(state.workdir, state.sid))
-            store.create(state.workdir, state.sid, state.snapshot, state.writable_roots)
+            store.save(store.create(state.workdir, state.sid, state.snapshot, state.writable_roots))
             self.assertEqual(store.load(state.workdir, state.sid), state)
             parent = other_home / ".agent-pm" / "core-new-sessions"
             target = other_home / "moved-store"
             parent.rename(target)
             parent.symlink_to(target, target_is_directory=True)
             with self.assertRaisesRegex(RecoveryError, "symlink"):
-                store.create(
-                    state.workdir, "preview", state.snapshot, state.writable_roots, persist=False
-                )
+                store.create(state.workdir, "preview", state.snapshot, state.writable_roots)
 
     def test_nonpersisted_prepare_rejects_a_symlinked_default_store(self):
         store = self.home / ".agent-pm" / "core-new-sessions" / "codex"

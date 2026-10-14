@@ -202,6 +202,8 @@ class Spec(ProcessOptions):
             object.__setattr__(self, "effort", _member(Effort, "effort", self.effort))
         if self.access.cwd != "" and not printable_abs(self.access.cwd):
             raise ConfigError(f"cwd must be a printable absolute path, got {self.access.cwd!r:.80}")
+        if not all(map(printable_abs, self.access.dirs)):
+            raise ConfigError("dirs must contain only printable absolute paths")
         if self.sid is not None and (error := sid_error(self.sid)):
             raise ConfigError(error)
         super().__post_init__()

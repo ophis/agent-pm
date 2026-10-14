@@ -559,8 +559,6 @@ class SessionStore:
         sid: str,
         snapshot: Snapshot,
         writable_roots: Sequence[str],
-        *,
-        persist: bool = True,
     ) -> SessionState:
         workdir, sid = session_identity(workdir, sid)
         state = SessionState(
@@ -569,8 +567,6 @@ class SessionStore:
             snapshot,
             tuple(dict.fromkeys(absolute_path(path, "writable root") for path in writable_roots)),
         )
-        if persist:
-            return self.save(state)
         _StoreOperation(self.root).validate_for_save(state)
         return state
 
@@ -877,7 +873,7 @@ class CodexCommon:
                 "env": explicit,
             }
         )
-        return self.store.create(workdir, sid, snapshot, roots, persist=False)
+        return self.store.create(workdir, sid, snapshot, roots)
 
     def _new_roots(self, spec: Spec, environment: Mapping[str, str]) -> list[str]:
         workdir = absolute_path(spec.workdir, "workdir")

@@ -182,7 +182,11 @@ class ClaudeCommon:
     ) -> str:
         """`dirs`: the granted Access.dirs, each an --add-dir as at launch."""
         added = (arg for d in dirs for arg in ("--add-dir", d))
-        return resume_command(cwd, env, ("claude", *self.selector(sid, resume=True), *added))
+        return resume_command(
+            cwd,
+            {key: value for key, value in env.items() if key not in LOCAL_ENV_VARS},
+            ("claude", *self.selector(sid, resume=True), *added),
+        )
 
     @staticmethod
     def uuid(sid) -> str:

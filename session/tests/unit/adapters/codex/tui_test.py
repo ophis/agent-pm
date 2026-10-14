@@ -1038,7 +1038,6 @@ class HookTest(Base):
                 "explicit-store",
                 state.snapshot,
                 state.writable_roots,
-                persist=False,
             )
             self.assertEqual(common.SessionStore(store).save(fresh), fresh)
             self.assertEqual(common.SessionStore(store).load(str(self.work), fresh.sid), fresh)
