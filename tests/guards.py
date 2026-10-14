@@ -170,6 +170,7 @@ OBJECT_EXPORTS_ALLOWED = {
 
 
 IMPORT_BOOTSTRAPS = {
+    f"{SESSION_SRC}adapters/codex/common/resume.py": "_bootstrap",
     f"{SESSION_SRC}adapters/codex/tui/start.py": "_bootstrap",
     f"{SESSION_SRC}hosts/tmux/entry.py": "_bootstrap",
     f"{SESSION_SRC}modes/tui_hook.py": "_bootstrap",
@@ -186,7 +187,6 @@ PACKAGE_CLIMB_ALLOWED = {
     ("utils/src/agent_pm/utils/paths.py", "import_roots"): "TASK-393",
     ("utils/src/agent_pm/utils/config_file.py", "read_project"): "TASK-393",
     (f"{SESSION_SRC}adapters/codex/tui/__init__.py", "import_roots()"): "TASK-393",
-    ("manager/src/agent_pm/manager/engine/crew.py", "BIN"): "TASK-373",
 }
 
 
