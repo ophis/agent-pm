@@ -195,6 +195,12 @@ class EveryTest(Sample):
 
 
 class SessionNames(Sample):
+    def test_layer_owned_config_entry_can_forward_to_utils(self):
+        root = self.tree(
+            {guards.SESSION_SRC + "engine/config.py": "from agent_pm.utils import read_project\n"}
+        )
+        self.assertEqual(guards.session_names(root), [])
+
     def test_config_readers_protocol_and_team_names_are_rejected(self):
         root = self.tree(
             {

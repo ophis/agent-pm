@@ -21,6 +21,7 @@ from orchestrator_tests.unit.run_fixtures import ID, SID
 
 from session.tests import live_tmux
 from session.tests.integration.adapters.claude import fake_claude
+from utils.tests.case import local_section
 
 RUN, PROMOTE, ROUTER = (
     (os.path.join(os.path.dirname(__file__), "entry.py"), n) for n in ("run", "promote", "router")
@@ -110,7 +111,11 @@ class Flow(Case):
         state = os.path.join(self.root, "state")
         self.runs_dir, self.logs = os.path.join(state, "work"), os.path.join(state, "logs")
         with open(os.path.join(self.agent_pm, "config.local.toml"), "w") as f:
-            f.write(run_fixtures.local(state) + TASK_LABELS + "\n" + run_fixtures.CORE_LOCAL)
+            f.write(
+                local_section(run_fixtures.local(state) + TASK_LABELS, "linear_orchestrator")
+                + "\n"
+                + run_fixtures.CORE_LOCAL
+            )
         self.fake = fake_linear.FakeLinear(harness=HARNESS)
         self.ids = {HARNESS_EMAIL: self.fake.user(HARNESS_EMAIL, "Harness", HARNESS)}
         for r in ROLES:

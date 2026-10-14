@@ -4,15 +4,26 @@ freeze and thaw.
 """
 
 import copy
+import importlib.util
 import operator
 import os
 import tempfile
 import tomllib
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from agent_pm.utils import config_file
-from agent_pm.utils.config_file import freeze, load, merge, read_project, thaw, unset
+from agent_pm.utils.config_file import (
+    ConfigFileError,
+    freeze,
+    load,
+    merge,
+    read_project,
+    read_resources,
+    thaw,
+    unset,
+)
 
 from utils.tests.case import REPO, Case
 
@@ -151,8 +162,7 @@ class Projects(Case):
 
     def test_local_goes_over_all_tables_merging_and_lists_replaced_whole(self):
         self.local(
-            'runtime = "b"\nteam_dirs = ["~/t"]\nteam = "T"\n[hosts.tmux]\nstatus_line = true\n'
-            '[roles.pm]\ntier = 1\naccount = "pm@x"\n'
+            '[session.hosts.tmux]\nstatus_line = true\n[delegate]\nruntime = "b"\nteam_dirs = ["~/t"]\n[delegate.roles.pm]\ntier = 1\n[linear_orchestrator]\nteam = "T"\n[linear_orchestrator.roles.pm]\naccount = "pm@x"\n[manager]\nruntime = "b"\n'
         )
         found = self.read("linear-orchestrator")
         self.assertEqual(
@@ -167,10 +177,9 @@ class Projects(Case):
 
     def test_a_project_takes_only_the_local_keys_owned_at_or_below_it(self):
         self.local(
-            'team = "T"\nshow = "none"\n[hosts.tmux]\nstatus_line = true\n[core.roles.pm]\ncwd = "/c"\n'
-            '[roles.pm]\naccount = "pm@x"\ncwd = "/p"\n[roles.new]\naccount = "n@x"\nmax_runs = 2\ntier = 3\n'
-            '[roles.pm.output]\ntype = "github"\n'
+            '[session.hosts.tmux]\nstatus_line = true\n[delegate]\nshow = "none"\n[delegate.roles.pm]\ncwd = "/p"\n[delegate.roles.new]\ntier = 3\n[delegate.roles.pm.output]\ntype = "github"\n[linear_orchestrator]\nteam = "T"\n[linear_orchestrator.core.roles.pm]\ncwd = "/c"\n[linear_orchestrator.roles.pm]\naccount = "pm@x"\n[linear_orchestrator.roles.new]\naccount = "n@x"\nmax_runs = 2\n'
         )
+        self.write("delegate", 'cwd = ""\n' + DELEGATE)
         session, delegate = self.read("session"), self.read("delegate")
         self.assertEqual(session["hosts"]["tmux"], {"status_line": True})
         self.assertEqual(set(session), {"hosts"})
@@ -187,7 +196,7 @@ class Projects(Case):
 
     def test_own_is_the_projects_file_and_the_local_keys_it_owns(self):
         self.local(
-            'team = "T"\nruntime = "b"\n[roles.pm]\naccount = "pm@x"\ncwd = "/p"\ntier = 1\nunknown_field = "typo"\n[roles.new]\nmax_runs = 2\n[roles.pm.output]\ntype = "github"\n'
+            '[delegate]\nruntime = "b"\n[delegate.roles.pm]\ncwd = "/p"\ntier = 1\n[delegate.roles.pm.output]\ntype = "github"\n[linear_orchestrator]\nteam = "T"\n[linear_orchestrator.roles.pm]\naccount = "pm@x"\n[linear_orchestrator.roles.new]\nmax_runs = 2\n[manager]\nruntime = "b"\n'
         )
         self.write("delegate", 'cwd = ""\n' + DELEGATE)
         self.assertEqual(
@@ -196,7 +205,7 @@ class Projects(Case):
                 "team": "T",
                 "work_dir": "~/w",
                 "roles": {
-                    "pm": {"account": "pm@x", "max_runs": 3, "unknown_field": "typo"},
+                    "pm": {"account": "pm@x", "max_runs": 3},
                     "new": {"max_runs": 2},
                 },
                 "core": {"roles": {"pm": {"gate": "g"}}},
@@ -205,31 +214,29 @@ class Projects(Case):
         found = self.read("delegate", own=True)
         self.assertEqual(
             found["roles"],
-            {"pm": {"tier": 1, "output": {"type": "github"}, "cwd": "/p", "unknown_field": "typo"}},
+            {"pm": {"tier": 1, "output": {"type": "github"}, "cwd": "/p"}},
         )
         self.assertNotIn("hosts", found)
         self.assertEqual(self.read("manager", own=True), {"runtime": "b"})
 
     def test_a_local_top_level_key_no_project_has_is_refused_at_run_time(self):
-        self.local('runtime = "b"\nbogus = 1\n')
+        self.local("[session]\nbogus = 1\n")
         for name in ("session", "delegate", "manager"):
             with (
                 self.subTest(name),
                 self.assertRaisesRegex(
                     ValueError,
-                    (
-                        r"^~/.agent-pm/config.local.toml: unknown key 'bogus': no project's config.toml has it$"
-                    ),
+                    (r"^~/.agent-pm/config.local.toml: unknown key 'bogus' in \[session\]$"),
                 ),
             ):
                 self.read(name)
 
     def test_a_new_table_under_a_known_one_is_taken_as_its_owners(self):
-        self.local('[hosts.other]\nimplementation = "a.b:C"\n[adapters]\n')
-        with self.assertRaisesRegex(ValueError, "unknown key 'adapters'"):
+        self.local("[session.hosts.other]\nstatus_line = true\n[session.adapters]\nx = 1\n")
+        with self.assertRaisesRegex(ValueError, "unknown key 'x'"):
             self.read("session")
-        self.local('[hosts.other]\nimplementation = "a.b:C"\n')
-        self.assertEqual(self.read("session")["hosts"]["other"], {"implementation": "a.b:C"})
+        self.local("[session.hosts.other]\nstatus_line = true\n")
+        self.assertEqual(self.read("session")["hosts"]["other"], {"status_line": True})
 
     def test_no_local_file_and_no_config_file_are_empty(self):
         os.remove(os.path.join(self.root, "manager", "config.toml"))
@@ -254,7 +261,7 @@ class Projects(Case):
             self.read("delegate")
 
     def test_a_new_empty_local_table_is_dropped(self):
-        self.local("[roles.ghost]\n")
+        self.local("[delegate.roles.ghost]\n")
         self.assertNotIn("ghost", self.read("linear-orchestrator").get("roles", {}))
         self.assertNotIn("ghost", self.read("delegate").get("roles", {}))
 
@@ -277,20 +284,140 @@ class Projects(Case):
         other = os.path.join(self.root, "other.toml")
         with open(other, "w", encoding="utf-8") as f:
             f.write('runtime = "z"\nlanguage = "x"\n')
-        self.local('language = "y"\n')
+        self.local('[delegate]\nlanguage = "y"\n')
         found = self.read("delegate", path=other)
         self.assertEqual((found["runtime"], found["language"], "roles" in found), ("z", "y", False))
 
     def test_an_explicit_local_file(self):
         local = os.path.join(self.root, "mine.toml")
         with open(local, "w", encoding="utf-8") as f:
-            f.write('runtime = "q"\n')
+            f.write('[delegate]\nruntime = "q"\n')
         self.assertEqual(self.read("delegate", local=local)["runtime"], "q")
 
     def test_malformed_files_propagate(self):
         self.local("x = [\n")
         with self.assertRaises(tomllib.TOMLDecodeError):
             self.read("delegate")
+
+
+class Resources(Case):
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.root = tmp.name
+        for project, text in (
+            ("session", SESSION),
+            ("delegate", DELEGATE),
+            ("linear-orchestrator", ORCH),
+        ):
+            folder = Path(self.root, project)
+            folder.mkdir()
+            (folder / "config.toml").write_text(text)
+        self.package = "config_fixture_" + Path(self.root).name.replace("-", "_")
+        for section, text in (
+            ("session", SESSION),
+            ("delegate", DELEGATE),
+            ("linear_orchestrator", ORCH),
+        ):
+            folder = Path(self.root, self.package, section)
+            folder.mkdir(parents=True)
+            (folder / "__init__.py").write_text("")
+            (folder / "config.toml").write_text(text)
+        modules = {}
+        for section in ("session", "delegate", "linear_orchestrator"):
+            name = f"{self.package}.{section}"
+            spec = importlib.util.spec_from_file_location(
+                name, Path(self.root, self.package, section, "__init__.py")
+            )
+            modules[name] = importlib.util.module_from_spec(spec)
+        self.enterContext(mock.patch("importlib.import_module", side_effect=modules.__getitem__))
+        self.resources = [
+            (f"{self.package}.{section}", "config.toml")
+            for section in ("session", "delegate", "linear_orchestrator")
+        ]
+
+    def local(self, text):
+        Path(self.agent_pm, "config.local.toml").write_text(text)
+
+    def test_reads_resources_and_interleaves_each_local_section(self):
+        self.local(
+            '[delegate.roles.pm]\ntier = 1\n[linear_orchestrator.roles.pm]\ntier = 3\naccount = "pm@x"\n'
+        )
+        found = read_resources(iter(self.resources))
+        self.assertEqual(
+            found["roles"]["pm"],
+            {"tier": 3, "output": {"type": "local"}, "account": "pm@x", "max_runs": 3},
+        )
+        self.assertEqual(read_resources(self.resources[:2])["roles"]["pm"]["tier"], 1)
+        self.assertEqual(found["hosts"]["default"], "tmux")
+
+    def test_upper_packaged_values_override_lower_local_values(self):
+        self.local('[delegate.roles.pm]\naccount = "not-known-at-this-layer"\n')
+        with self.assertRaisesRegex(ConfigFileError, "unknown key 'account'"):
+            read_resources(self.resources)
+        self.local('[delegate]\nruntime = "lower-local"\n[delegate.roles.pm]\ntier = 1\n')
+        Path(self.root, self.package, "linear_orchestrator", "config.toml").write_text(
+            ORCH.replace('account = ""', 'tier = 3\naccount = ""')
+        )
+        self.assertEqual(read_resources(self.resources)["roles"]["pm"]["tier"], 3)
+        self.assertEqual(read_resources(self.resources)["runtime"], "lower-local")
+
+    def test_only_supplied_layers_are_validated(self):
+        self.local(
+            "[session.hosts.tmux]\nstatus_line = true\n[delegate]\nanything = 1\n[linear_orchestrator]\nunknown = true\n"
+        )
+        self.assertTrue(read_resources(self.resources[:1])["hosts"]["tmux"]["status_line"])
+        with self.assertRaisesRegex(ConfigFileError, "unknown key 'anything'"):
+            read_resources(self.resources[:2])
+        self.local("[session]\nunknown = 1\n")
+        with self.assertRaisesRegex(ConfigFileError, "unknown key 'unknown'"):
+            read_resources(self.resources[:1])
+
+    def test_path_replaces_one_resource_with_defaults_as_schema(self):
+        override = Path(self.root, "override.toml")
+        override.write_text('runtime = "override"\nnew_key = "default"\n')
+        self.local('[delegate]\nnew_key = "local"\n[delegate.roles.pm]\ntier = 1\n')
+        found = read_resources(
+            iter(self.resources[:2]), paths={self.resources[1][0]: str(override)}
+        )
+        self.assertEqual(
+            (found["runtime"], found["new_key"], found["roles"]["pm"]),
+            ("override", "local", {"tier": 1}),
+        )
+        with self.assertRaises(FileNotFoundError):
+            read_resources(
+                self.resources[:2], paths={self.resources[1][0]: str(override) + ".missing"}
+            )
+        with self.assertRaisesRegex(ConfigFileError, "no resource"):
+            read_resources(self.resources[:1], paths={"absent": str(override)})
+
+    def test_flat_local_keys_name_the_required_section(self):
+        for text, section in (
+            ('runtime = "x"\n', "delegate"),
+            ("[hosts.tmux]\nstatus_line = true\n", "session"),
+        ):
+            self.local(text)
+            with (
+                self.subTest(text=text),
+                self.assertRaisesRegex(ConfigFileError, rf"move it under \[{section}\]"),
+            ):
+                read_resources(self.resources)
+            with self.assertRaisesRegex(ConfigFileError, rf"move it under \[{section}\]"):
+                read_project("linear-orchestrator", root=self.root)
+
+    def test_unknown_nested_keys_and_non_table_sections_are_errors(self):
+        for text in ("[delegate.roles.pm]\nunknown_field = 1\n", "session = 1\n"):
+            self.local(text)
+            with self.subTest(text=text), self.assertRaises(ConfigFileError):
+                read_resources(self.resources)
+
+    def test_package_location_wins_over_legacy_location(self):
+        folder = Path(self.root, "session", "src", "agent_pm", "session")
+        folder.mkdir(parents=True)
+        (folder / "config.toml").write_text('[hosts]\ndefault = "packaged"\n')
+        self.assertEqual(read_project("session", root=self.root)["hosts"], {"default": "packaged"})
+        (folder / "config.toml").unlink()
+        self.assertEqual(read_project("session", root=self.root)["hosts"]["default"], "tmux")
 
 
 class Unset(Case):

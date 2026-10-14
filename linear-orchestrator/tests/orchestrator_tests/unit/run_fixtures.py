@@ -14,6 +14,8 @@ from agent_pm.linear_orchestrator.linear import issues, linear, sessions, writeb
 from orchestrator_tests.case import Case
 from orchestrator_tests.unit.board_ids import HEADER, STATES, role
 
+from utils.tests.case import local_section
+
 ID, UUID = "TASK-7", "11111111-2222-4333-8444-555555555555"
 
 SID = "0b6f2c1e-6d0a-4c1b-9a51-3f1f6b0e2a7d"
@@ -36,13 +38,13 @@ USER_NOTE = {
     "user": {"email": "ME@x.com", "name": "Me", "isMe": False},
 }
 
-CORE_LOCAL = """[roles.researcher.output]
+CORE_LOCAL = """[delegate.roles.researcher.output]
 type = "github"
 repo = "ophis/private_docs"
 branch = "main"
 dir = "Research/"
 
-[roles.pm.output]
+[delegate.roles.pm.output]
 type = "github"
 repo = "ophis/private_docs"
 branch = "main"
@@ -191,7 +193,7 @@ class Base(Case):
 
     def write_local(self, text):
         """~/.agent-pm/config.local.toml: `text`, then CORE_LOCAL (the delegate's keys)."""
-        self.write(self.local, text + "\n" + CORE_LOCAL)
+        self.write(self.local, local_section(text, "linear_orchestrator") + "\n" + CORE_LOCAL)
 
     def said(self, src=None):
         return [

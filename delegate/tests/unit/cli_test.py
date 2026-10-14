@@ -29,6 +29,7 @@ from delegate.tests.replies import block
 from delegate.tests.unit.runs import DONE, START, STOP, FakeHandle, limit, no_child, said, turn
 from session.tests import fake_adapter
 from session.tests.modules import adapter_loader
+from utils.tests.case import local_section
 
 SID = "11111111-2222-3333-4444-555555555555"
 KEYS = {
@@ -122,7 +123,7 @@ class Base(Case):
 
     def local(self, text):
         with open(os.path.join(self.agent_pm, "config.local.toml"), "w") as f:
-            f.write(text)
+            f.write(local_section(text, "delegate"))
 
     def cli(self, *argv, stdin=""):
         """(exit code, stdout, stderr) of cli.main(argv), an argparse exit's code included."""

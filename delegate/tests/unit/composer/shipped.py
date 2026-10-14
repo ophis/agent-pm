@@ -10,6 +10,7 @@ from delegate.tests.unit.composer.prompts import (
     composed,
     parameters,
 )
+from utils.tests.case import local_section
 
 TASKS = os.path.join(composer.TEAM, "tasks")
 
@@ -162,4 +163,4 @@ class RealConfig(Case):
 
     def local(self, text):
         with open(os.path.join(self.agent_pm, "config.local.toml"), "w") as f:
-            f.write(text)
+            f.write(local_section(text, "delegate"))

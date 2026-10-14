@@ -100,6 +100,7 @@ OBJECT_EXPORT_MODULES = (
 
 
 OBJECT_EXPORTS_ALLOWED = {
+    (f"{PKG}.{SESSION}", "read_config"): "TASK-389 layer-owned configuration entry point",
     (f"{PKG}.{SESSION}", "close"): "FR-4 forwarding wrapper; 356-14 (FR-27) deletes",
     (f"{PKG}.{SESSION}", "sessions"): "FR-4 forwarding wrapper; 356-14 (FR-27) deletes",
     (f"{PKG}.{SESSION}", "note"): "FR-4 forwarding wrapper; 356-14 (FR-27) deletes",
@@ -533,7 +534,7 @@ def _source_modules(repo, projects):
 
 
 def session_names(repo: str) -> list[str]:
-    """Session owns no config reader, reply-protocol tag or team text."""
+    """Only engine/config.py forwards configuration reads; no parser, reply tag or team text."""
     forbidden = (
         "config_file",
         "tomllib",
@@ -547,7 +548,7 @@ def session_names(repo: str) -> list[str]:
         f"{SESSION_SRC}{rel}: names {word}"
         for rel, text in _files(os.path.join(repo, SESSION_SRC), ".py")
         for word in forbidden
-        if word in text
+        if word in text and not (word == "read_project" and rel == "engine/config.py")
     )
 
 

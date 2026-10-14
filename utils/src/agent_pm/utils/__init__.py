@@ -1,7 +1,15 @@
 """Public utility modules and functions shared by the layers."""
 
 from agent_pm.utils.args import Once
-from agent_pm.utils.config_file import LOCAL, ConfigFileError, freeze, read_project, thaw, unset
+from agent_pm.utils.config_file import (
+    LOCAL,
+    ConfigFileError,
+    freeze,
+    read_project,
+    read_resources,
+    thaw,
+    unset,
+)
 from agent_pm.utils.config_file import load as load_config
 from agent_pm.utils.files import (
     ConfinedFileError,
@@ -86,6 +94,7 @@ __all__ = [
     "printable_abs",
     "read_confined",
     "read_project",
+    "read_resources",
     "read_regular",
     "real_dirs",
     "redact",

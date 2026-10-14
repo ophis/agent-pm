@@ -20,6 +20,8 @@ from orchestrator_tests.case import ORCH_ROOT, PY, REPO, ROOTS, Case, child_env
 from orchestrator_tests.unit.board_ids import HEADER, STATES, TASK_GROUP, TEAM, role
 from orchestrator_tests.unit.config_fixtures import GATE
 
+from utils.tests.case import local_section
+
 BASE = (
     HEADER
     + role("researcher", 'next = "pm"')
@@ -32,15 +34,15 @@ PIPELINE = (
     HEADER + role("researcher", 'next = "pm"') + role("pm", 'next = "engineer"') + role("engineer")
 )
 
-CORE_TOP = 'language = "Chinese"\n'
+CORE_TOP = '[delegate]\nlanguage = "Chinese"\n'
 
-CORE_TABLES = """[roles.researcher.output]
+CORE_TABLES = """[delegate.roles.researcher.output]
 type = "github"
 repo = "ophis/private_docs"
 branch = "main"
 dir = "Research/"
 
-[roles.pm.output]
+[delegate.roles.pm.output]
 type = "github"
 repo = "ophis/private_docs"
 branch = "main"
@@ -180,7 +182,8 @@ class ConfigFile:
     def local(self, text):
         """~/.agent-pm/config.local.toml: `text` amid CORE_LOCAL (the delegate's keys)."""
         write(
-            os.path.join(self.agent_pm, "config.local.toml"), CORE_TOP + text + "\n" + CORE_TABLES
+            os.path.join(self.agent_pm, "config.local.toml"),
+            CORE_LOCAL + "\n" + local_section(text, "linear_orchestrator"),
         )
 
     def load(self, text):
@@ -656,7 +659,7 @@ class CommittedConfiguration(Case):
 
     def load(self, local=None):
         if local is not None:
-            write(self.local, CORE_TOP + local + "\n" + CORE_TABLES)
+            write(self.local, CORE_LOCAL + "\n" + local_section(local, "linear_orchestrator"))
         return config.load()
 
     def test_committed_config_holds_no_deployment_values(self):
@@ -774,7 +777,10 @@ class TeamDirectoryIsolation(ConfigFile, Case):
         before = self.seen()
         write(
             os.path.join(self.agent_pm, "config.local.toml"),
-            f"team_dirs = {json.dumps([self.team])}\n" + CORE_LOCAL + "[roles.writer]\ntier = 3\n",
+            CORE_TOP
+            + f"team_dirs = {json.dumps([self.team])}\n"
+            + CORE_TABLES
+            + "[delegate.roles.writer]\ntier = 3\n",
         )
         listed = subprocess.run(
             [*PY, "-m", "agent_pm.delegate.cli", "--list"],
@@ -1159,7 +1165,11 @@ class ConfigurationRoot(ConfigFile, Case):
         write(os.path.join(self.agent_pm, "config.local.toml"), "[[[ not toml")
         path, local = (os.path.join(self.dir, n) for n in ("config.toml", "config.local.toml"))
         write(path, PIPELINE)
-        write(local, 'language = "French"\n' + role("engineer", "max_runs = 2"))
+        write(
+            local,
+            '[delegate]\nlanguage = "French"\n'
+            + local_section(role("engineer", "max_runs = 2"), "linear_orchestrator"),
+        )
         with mock.patch.object(builtins, "open", side_effect=open) as opened:
             cfg = config.load(self.root, path=path, local=local, core=self.core_path)
         projects = {os.path.join(os.path.dirname(root), "config.toml") for root in ROOTS}
@@ -1232,7 +1242,7 @@ class ConfigurationRoot(ConfigFile, Case):
         write(
             os.path.join(self.agent_pm, "config.local.toml"),
             (
-                '[adapters.a]\nimplementation = "adapters.a:AAdapter"\n[hosts.tmux]\nstatus_line = true\n'
+                '[session.adapters.a]\nimplementation = "adapters.a:AAdapter"\n[session.hosts.tmux]\nstatus_line = true\n'
             ),
         )
         cfg = self.load(PIPELINE)
@@ -1242,7 +1252,7 @@ class ConfigurationRoot(ConfigFile, Case):
     def test_a_later_delegate_plan_keeps_the_settings_load_configured(self):
         path, local = (os.path.join(self.dir, n) for n in ("config.toml", "config.local.toml"))
         write(path, PIPELINE)
-        write(local, "[hosts.tmux]\nstatus_line = true\n")
+        write(local, "[session.hosts.tmux]\nstatus_line = true\n")
         cfg = config.load(self.root, path=path, local=local, core=self.core_path)
         pm = cfg.roles["pm"]
         work = os.path.join(self.dir, "work")
@@ -1252,7 +1262,9 @@ class ConfigurationRoot(ConfigFile, Case):
         self.assertTrue(cfg.driver.registry.tui().status_line)
 
     def test_a_bad_session_config_stops_the_caller(self):
-        write(os.path.join(self.agent_pm, "config.local.toml"), '[hosts]\ndefault = "nope"\n')
+        write(
+            os.path.join(self.agent_pm, "config.local.toml"), '[session.hosts]\ndefault = "nope"\n'
+        )
         self.fails("session config: [hosts] default: want one of tmux", PIPELINE)
 
     def test_no_core_table(self):

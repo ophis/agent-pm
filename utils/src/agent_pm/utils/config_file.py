@@ -1,21 +1,18 @@
-"""TOML config loading, table merging and freezing, and the projects' config files: each project's
-<root>/<name>/config.toml, merged in LEVELS order (a higher level's key wins), with LOCAL, this
-machine's one local file, on top of all.
+"""Ordered config resources with per-layer local sections; read_project is the repository wrapper.
 
-Merge rules (merge): tables merge key by key, the higher layer's value wins, any other value (a list
-too) replaces the lower one's whole; a layer cannot drop a key a lower one sets.
-
-Ownership of a local key: a top-level key in one project's config.toml is that project's. A
-top-level table in several (roles) is resolved by the full dotted key, among the projects with that
-table: those whose config.toml has the key, else the same table, depth and last key (roles.<new
-role>.account), else a suffix of the key (roles.<role>.cwd: cwd), else all of them; a local
-top-level key no project has is a ValueError.
+Tables merge key by key; higher values and whole lists replace lower values. Each layer's local
+section overlays its file before the next layer. Sections use the package's final name, with
+hyphens replaced by underscores. Only supplied layers are read and validated against their own
+and lower files. A leaf is known by its dotted key, a same-depth dynamic table key, or a suffix
+under a known table. Flat local keys are rejected. Explicit paths replace files while retaining
+the defaults as their validation schema. Missing optional repository files contribute no keys.
 """
 
 import copy
 import os
 import tomllib
-from collections.abc import Iterator, Mapping
+from collections.abc import Iterable, Iterator, Mapping
+from importlib.resources import files
 from types import MappingProxyType
 from typing import Any
 
@@ -68,43 +65,110 @@ def thaw(value: Any) -> Any:
     return copy.deepcopy(value)
 
 
+def read_resources(
+    resources: Iterable[tuple[str, str]],
+    *,
+    local: str = LOCAL,
+    paths: Mapping[str, str] | None = None,
+) -> dict:
+    """Read (package name, resource filename) pairs, lower first; paths replace named packages."""
+    resources = tuple(resources)
+    configs, known = {}, {}
+    for package, filename in resources:
+        section = package.rsplit(".", 1)[-1].replace("-", "_")
+        if section in configs:
+            raise ConfigFileError(f"duplicate config layer {section!r}")
+        resource = files(package).joinpath(filename)
+        with resource.open("rb") as stream:
+            default = tomllib.load(stream)
+        override = paths.get(package) if paths is not None else None
+        configs[section] = load(override) if override is not None else default
+        known[section] = (default, configs[section])
+    if paths and (extra := paths.keys() - {p for p, _ in resources}):
+        raise ConfigFileError(f"config path override has no resource: {min(extra)!r}")
+    return _layered(configs, known, local=local)
+
+
 def read_project(
     name: str, *, local: str = LOCAL, path: str | None = None, root: str = ROOT, own: bool = False
 ) -> dict:
-    """Each project config.toml at or below `name`'s level, then `local`'s keys owned there; `own`:
-    `name`'s file and the local keys it owns. `path` stands in for `name`'s config.toml. Missing:
-    `path` or an own file is an OSError.
-    """
+    """Repository forwarding API; own selects the named layer; path replaces its file."""
     rank = _rank(name)
-    own_file = path or os.path.join(root, name, "config.toml")
-    if (path or name not in UNCONFIGURED) and (
-        os.path.isdir(own_file) or not os.path.exists(own_file)
-    ):
+
+    def location(project):
+        package = project.replace("-", "_")
+        packed = os.path.join(root, project, "src", "agent_pm", package, "config.toml")
+        return packed if os.path.exists(packed) else os.path.join(root, project, "config.toml")
+
+    own_file = path or location(name)
+    if (path or name not in UNCONFIGURED) and not os.path.isfile(own_file):
         raise FileNotFoundError(f"{own_file}: missing")
-    configs = _configs(root, name, path)
-    known = (
-        {**configs, name: merge(_load(os.path.join(root, name, "config.toml")), configs[name])}
-        if path
-        else configs
-    )
-    out = {}
-    for level in () if own else LEVELS[: rank + 1]:
+    configs, known = {}, {}
+    for level in LEVELS[: rank + 1]:
         layer = {}
         for project in level:
-            if clash := sorted(set(layer) & set(configs[project])):
+            section = project.replace("-", "_")
+            default = _load(location(project))
+            value = load(path) if project == name and path else default
+            if clash := sorted(set(layer) & set(value)):
                 raise ConfigFileError(
                     f"{project}/config.toml: {clash[0]} is also a same-level project's"
                 )
-            layer.update(configs[project])
-        out = merge(out, layer)
+            layer.update(value)
+            configs[section] = value
+            known[section] = (default, value)
+    return _layered(configs, known, local=local, own=name.replace("-", "_") if own else None)
+
+
+def _layered(
+    configs: Mapping[str, dict], known: Mapping[str, tuple[dict, dict]], *, local: str, own=None
+) -> dict:
     found = _load(os.path.expanduser(local))
-    if unknown := sorted(k for k in found if not any(k in c for c in known.values())):
+    sections = {p.replace("-", "_") for level in LEVELS for p in level} | configs.keys()
+    if flat := sorted(found.keys() - sections):
+        key = flat[0]
+        candidates = [p for p, table in known.items() if any(key in schema for schema in table)]
+        target = candidates[0] if candidates else next(iter(configs), "session")
         raise ConfigFileError(
-            f"{local}: unknown key {unknown[0]!r}: no project's config.toml has it"
+            f"{local}: unknown key {key!r}: flat local configuration; move it under [{target}]"
         )
-    if own:
-        return merge(configs[name], _owned(found, known, lambda owners: name in owners))
-    return merge(out, _owned(found, known, lambda owners: min(map(_rank, owners)) <= rank))
+    schema, out, schemas = {}, {}, []
+    for section, config in configs.items():
+        schemas.extend(known[section])
+        schema = merge(schema, merge(*known[section]))
+        overlay = found.get(section, {})
+        if not isinstance(overlay, dict):
+            raise ConfigFileError(f"{local}: [{section}]: want a table")
+        checked = {}
+        for keys, value in _leaves(overlay, ()):
+            if not any(_known_key(s, keys) for s in (schema, *schemas)):
+                if value == {} and keys[0] in schema:
+                    continue
+                table = ".".join((section, *keys[:-1]))
+                raise ConfigFileError(f"{local}: unknown key {keys[-1]!r} in [{table}]")
+            table = checked
+            for key in keys[:-1]:
+                table = table.setdefault(key, {})
+            table[keys[-1]] = value
+        if own is None:
+            out = merge(out, merge(config, checked))
+        elif section == own:
+            out = merge(config, checked)
+    return out
+
+
+def _known_key(schema: Mapping, keys: tuple) -> bool:
+    if not keys or keys[0] not in schema:
+        return False
+    return (
+        _has(schema, keys)
+        or any(
+            len(k) == len(keys) and k[0] == keys[0] and k[-1] == keys[-1]
+            for k, _ in _leaves(schema, ())
+        )
+        or any(_has(schema, keys[i:]) for i in range(1, len(keys)))
+        or any(value == {} and keys[: len(k)] == k for k, value in _leaves(schema, ()))
+    )
 
 
 def unset(cfg: Mapping, keys: tuple[str, ...]) -> list[str]:
@@ -123,47 +187,11 @@ def _rank(name: str) -> int:
     )
 
 
-def _configs(root: str, name: str, path: str | None) -> dict[str, dict]:
-    return {
-        p: _load(path if p == name and path else os.path.join(root, p, "config.toml"))
-        for level in LEVELS
-        for p in level
-    }
-
-
 def _load(path: str) -> dict:
     if not os.path.isfile(path):
         return {}
     with open(path, "rb") as f:
         return tomllib.load(f)
-
-
-def _owned(found: dict, configs: dict[str, dict], taken) -> dict:
-    out = {}
-    for keys, value in _leaves(found, ()):
-        if value == {} and not any(_has(c, keys) for c in configs.values()):
-            continue
-        if taken(_owners(keys, configs)):
-            table = out
-            for k in keys[:-1]:
-                table = table.setdefault(k, {})
-            table[keys[-1]] = value
-    return out
-
-
-def _owners(keys: tuple, configs: dict[str, dict]) -> list[str]:
-    having = [p for p, c in configs.items() if keys[0] in c]
-    if len(having) == 1:
-        return having
-    exact = [p for p in having if _has(configs[p], keys)]
-    shaped = [
-        p
-        for p in having
-        if isinstance(top := configs[p][keys[0]], Mapping)
-        and any(len(k) == len(keys) and k[-1] == keys[-1] for k, _ in _leaves(top, keys[:1]))
-    ]
-    suffix = [p for p in having if any(_has(configs[p], keys[i:]) for i in range(1, len(keys)))]
-    return exact or shaped or suffix or having
 
 
 def _has(table, keys) -> bool:

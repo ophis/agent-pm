@@ -355,7 +355,7 @@ class Status(Base):
             f.write("malformed = [\n")
         local = os.path.join(self.dir, "config.local.toml")
         with open(local, "w") as f:
-            f.write('users = ["alice"]\n')
+            f.write('[delegate]\nusers = ["alice"]\n')
         for text, given in (('users = ["alice"]\n', os.devnull), ('users = ["bob"]\n', local)):
             with self.subTest(local=given):
                 code, r, _ = self.status(
@@ -926,7 +926,7 @@ class LocalSafety(Clone):
             with self.subTest(case):
                 if in_local:
                     with open(local, "w") as f:
-                        f.write(f"trusted_dirs = {json.dumps([self.clone])}\n")
+                        f.write(f"[delegate]\ntrusted_dirs = {json.dumps([self.clone])}\n")
                 try:
                     config = None if listed is None else self.listing(*listed)
                     self.assertEqual(self.worktree(config=config, spec=spec, local=local), (0, ""))
