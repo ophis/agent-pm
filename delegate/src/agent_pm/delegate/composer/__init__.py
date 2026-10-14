@@ -10,6 +10,8 @@ Formats of roles/, tasks/ and templates/ files, the team root's and a team dir's
   progress mark, PROGRESS) and a `## Resume` section outside code fences.
 - Text only: no front matter (---), no {{…}} placeholder; each `<team>/methods/<m>.md` named is a
   file of the team root's methods/.
+- tools/ (a team dir's optional): files a role's commands run as `<role team>/tools/<file>`, the
+  team root holding the role's charter; trusted as the team dir's text (teams.check_team_dirs).
 
 A role's index is checked whenever it is read, a team dir file whenever it is looked up; a defect
 raises ConfigError naming the file.

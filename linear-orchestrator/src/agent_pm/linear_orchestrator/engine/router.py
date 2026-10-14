@@ -9,8 +9,9 @@ agent-pm-linear router [--now] [--dry-run] [--issue ID] | --brake ROLE
               unavailable (config-error, linear-error: once a day), else 0.
   --now       Skip the 01:00-06:59 hours check.
 --issue ID    Start or resume only this issue, without the hours, max_runs and usage gates. Exits 1 a config error,
-              Linear unavailable, agent runs unknown, a live agent run of the issue or nothing started, else the
-              outer's code: 0 detached or bounced, 1 the launch failed, 2 a config error of the issue, 3 transient.
+              Linear unavailable, agent runs unknown, a live agent run of the issue or nothing started, 0 its ended
+              run's outcome written back instead, else the outer's code: 0 detached or bounced, 1 the launch
+              failed, 2 a config error of the issue, 3 transient.
 --dry-run     With either: print the plan (a tick's with its usage checks); change nothing, start nothing; exit 0.
 --brake ROLE  Print ROLE's client usage; exit 0 if a deep-research round may start, 1 if not or unknown, 2 no such
               role.
@@ -50,6 +51,7 @@ from agent_pm.linear_orchestrator.engine.ops import humans, role_ids, task_group
 from agent_pm.linear_orchestrator.engine.runs import (
     client_of,
     delegate_of,
+    failures,
     latest,
     note,
     parse_log,
@@ -185,7 +187,8 @@ class Board:
         self.cfg, self.gate = cfg, gate
         self.say: Callable[..., None] = say or functools.partial(log, "router", dry=dry)
         self.hist, self.ready, self.blocked, self.live, self.statuses = {}, None, {}, set(), {}
-        self.status_errors = {}
+        self.status_errors, self.replays = {}, {}
+        self.failures = failures(cfg.runs_log)
         self.label_tasks = {i: task for task, i in cfg.task_labels.items()}
         t = team(gql, cfg)
         task_group(gql, cfg)
@@ -241,12 +244,13 @@ class Board:
         )
 
     def attempts(self, issue):
-        n = attempt_count(self.entries, issue["identifier"])
+        tried = [*self.entries, *self.failures]
+        n = attempt_count(tried, issue["identifier"])
         return (
             n
             if n < CAP
             else attempt_count(
-                self.entries, issue["identifier"], self.last_move(issue, "todo", by_user=True)
+                tried, issue["identifier"], self.last_move(issue, "todo", by_user=True)
             )
         )
 
@@ -320,9 +324,32 @@ class Board:
             return True
         return status.last_active is not None and status.last_active > (self.now - LIVE).timestamp()
 
+    def replay(self, issue, sid):
+        """The ended run's outcome its ledger has not completed, written back in process instead of
+        a resume (FR-41): None when there is none; else whether its write-back is now complete.
+        """
+        ident = issue["identifier"]
+        try:
+            outcome = LinearRun.attach(ident, cfg=self.cfg, sid=sid).outcome()
+        except (ConfigError, delegate.ConfigError, delegate.SessionError):
+            return None  # status says why
+        if outcome is None:
+            return None
+        try:
+            done = writeback.replay(self.cfg, ident, sid, outcome, gql=self.gql, dry=self.dry)
+        except (ConfigError, ValueError) as error:
+            self.say("recover-skip", ident, once=True, sid=sid, reason=one_line(error))
+            return False
+        if done is not None:
+            self.say("recover", ident, to="writeback", sid=sid)
+        return done
+
     def settle(self, issue, sid, *, wait=True):
         ident = issue["identifier"]
         if wait and self.recent_session(ident):
+            return False
+        if sid and (replayed := self.replay(issue, sid)) is not None:
+            self.replays[ident] = replayed
             return False
         if sid and self.attempts(issue) >= CAP:
             self.say("recover", ident, to="in_review", reason=f"reached {CAP} attempts")
@@ -486,8 +513,19 @@ def fail(ident, kind, reason, rc):
 def outer(a, cfg, *, gql, run, keychain, now=datetime.now):
     """Prepares the issue's input, then detaches its LinearRun. Its runs.jsonl row, an attempt
     toward CAP, comes once Recover can read the run back: a resume's first, a new run's once its
-    LinearRun (its Delegate's state) is built, before its detach.
+    LinearRun (its Delegate's state) is built, before its detach; a new run failing before then
+    leaves a `failed` row, an attempt that Recover cannot read back.
     """
+    rc = None
+    try:
+        rc = _outer(a, cfg, gql=gql, run=run, keychain=keychain, now=now)
+        return rc
+    finally:
+        if a.mode == "new" and rc != 0 and a.sid not in {e.sid for e in parse_log(cfg.runs_log)}:
+            note(cfg.runs_log, "failed", issue=a.issue, sid=a.sid, now=now)
+
+
+def _outer(a, cfg, *, gql, run, keychain, now):
     os.environ["PATH"] = config.path()
     if reason := a.identity_error():
         print(f"router.py: {reason}", file=sys.stderr)
@@ -720,7 +758,7 @@ def run_issue(opts, cfg, gql, start, *, clock=datetime.now):
         ):
             sid = board.current_sid(issue)
             if not board.settle(issue, sid, wait=False):
-                return stop
+                return 0 if board.replays.get(ident) else stop
             board.plan(("resume", issue, sid))
             spec = Spec.from_issue(
                 issue, mode="resume", sid=sid, task=None, client=client_of(entries, sid)

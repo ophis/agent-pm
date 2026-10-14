@@ -14,6 +14,7 @@ from datetime import UTC, datetime, timedelta
 from unittest import mock
 
 from agent_pm.delegate import ConfigError as DelegateConfigError
+from agent_pm.delegate import Outcome, OutcomeStatus
 from agent_pm.linear_orchestrator.engine import config, inputs, issues, ops, router, runs
 from agent_pm.linear_orchestrator.engine import gate as quota
 from agent_pm.linear_orchestrator.engine.types import LinearError, Spec, Unavailable
@@ -757,7 +758,7 @@ class RouterEntry(OuterBase):
     def test_an_unloadable_recorded_run_is_a_tui_error_and_the_run_starts(self):
         self.add(kind="start", ident=ID, sid="old", minutes_ago=600, role="engineer")
         self.lines[-1] = self.lines[-1].replace(
-            '"client": "a"', '"client": "a", "delegate_kind": "gone"'
+            '"delegate_kind": "harness"', '"delegate_kind": "gone"'
         )
         self.assertEqual(self.entry("--issue", ID), 0)
         self.assertIn(
@@ -838,6 +839,26 @@ class RouterEntry(OuterBase):
                 )
                 self.assertIn("claim TASK-7 role=engineer client=a", said)
                 self.assertEqual(said[-1], "launch TASK-7 exit=0")
+
+    def test_a_new_run_failing_before_its_linear_run_counts_toward_the_cap(self):
+        self.missing.add(KEY)
+        for _ in range(router.CAP):
+            self.todo["state"] = "Todo"
+            self.assertEqual(self.entry("--issue", ID), 2)
+            self.assertEqual(self.todo["state"], "In Progress")
+            self.lines = self.raw_runs().splitlines()
+        rows = [json.loads(line) for line in self.lines]
+        self.assertEqual(
+            [{k: v for k, v in row.items() if k != "ts"} for row in rows],
+            [{"kind": "failed", "issue": ID, "sid": row["sid"]} for row in rows],
+        )
+        self.todo["state"] = "Todo"
+        self.assertEqual(self.entry("--issue", ID), 1)
+        self.assertIn(
+            f"claim-skip TASK-7 to=in_review reason=reached {router.CAP} attempts", self.said()
+        )
+        self.assertEqual(self.todo["state"], "In Review")
+        self.assertEqual(self.todo["subscribers"], ["Me@X.com"])
 
     def test_a_live_run_is_refused(self):
         for role in ("engineer", "pm"):
@@ -1377,7 +1398,13 @@ class ScheduledUsageGates(TickBase):
         (claimed,) = self.start.launches
         self.assertEqual(self.launched_run(), ("start", "TASK-1", claimed.sid, "researcher", "a"))
         runs.note(
-            self.runs, "start", issue="TASK-1", sid=claimed.sid, role="researcher", client="a"
+            self.runs,
+            "start",
+            issue="TASK-1",
+            sid=claimed.sid,
+            role="researcher",
+            client="a",
+            delegate_kind="harness",
         )
         with open(self.runs) as f:
             self.lines = f.read().splitlines()
@@ -2016,8 +2043,10 @@ class RunLaunching(OuterBase):
 
     def test_no_keychain_item(self):
         self.missing.add(KEY)
-        for mode, kinds in (("new", []), ("resume", ["start", "resume"])):
+        for mode, kinds in (("new", ["failed"]), ("resume", ["start", "resume"])):
             with self.subTest(mode=mode):
+                with contextlib.suppress(FileNotFoundError):
+                    os.unlink(self.runs)
                 self.assertEqual(self.outer(mode=mode), 2)
                 self.assertEqual(
                     self.said(),
@@ -2038,7 +2067,7 @@ class RunLaunching(OuterBase):
 
     def test_a_new_runs_row_comes_once_its_delegate_state_is_built_before_its_detach(self):
         for attr, error, kinds in (
-            ("construct_error", DelegateConfigError("role engineer: refused"), []),
+            ("construct_error", DelegateConfigError("role engineer: refused"), ["failed"]),
             ("detach_error", SessionError("detach: duplicate"), ["start"]),
         ):
             with self.subTest(attr=attr):
@@ -3175,6 +3204,22 @@ class StaleRunRecovery(Base):
         self.assertEqual(self.said(), ["recover-skip TASK-1 sid=a reason=session unknown"])
         self.assertEqual((fake.issues["TASK-1"]["state"], fake.mutations), ("In Progress", []))
 
+    def test_a_kindless_row_is_a_bad_row_skipped_without_an_agent(self):
+        fake = self.fake(issue("TASK-1", "In Progress", "researcher", updated=ago(hours=3)))
+        self.resumable("TASK-1", "a", 300)
+        kindless = json.loads(self.lines[-1])
+        del kindless["delegate_kind"]
+        self.lines[-1] = json.dumps(kindless)
+        self.assertEqual(self.plan(fake), "")
+        self.assertEqual(
+            self.said(),
+            [
+                "recover-skip TASK-1 sid=a reason=ConfigError: TASK-1: "
+                "session a's runs.jsonl row has no delegate kind"
+            ],
+        )
+        self.assertEqual((fake.issues["TASK-1"]["state"], fake.mutations), ("In Progress", []))
+
     def test_one_status_read_per_sid_with_its_recorded_client_at_the_workdir(self):
         fake = self.fake(issue("TASK-1", "In Progress", "researcher"))
         self.resumable("TASK-1", "a", 60)
@@ -3833,3 +3878,102 @@ class ScheduledRuns(TickScenario):
             self.assertEqual(len(fake.reads()), 1, argv)
             self.assertEqual("plan mode=new queue=2" in self.said(), not argv, argv)
             self.assertEqual(self.said().count('blocked TASK-1 by=["TASK-7"]'), 1, argv)
+
+
+class RecoverWriteBack(TickBase):
+    """FR-41: Recover writes back an ended run's outcome its ledger has not completed, in process,
+    instead of resuming the run; a run without an outcome resumes as before.
+    """
+
+    ISSUE = "11111111-1111-4111-8111-111111111111"
+
+    def setUp(self):
+        super().setUp()
+        self.moved("TASK-1", 61)
+        start = json.loads(self.row("start", "TASK-1", "a", "researcher", minutes=60))
+        key = self.cfg().roles["researcher"].key
+        self.lines.append(
+            json.dumps(start | {"uuid": self.ISSUE, "project": IDS[DR], "target": None, "key": key})
+        )
+        self.workdir = self.cfg().run_dir("TASK-1")
+        os.makedirs(self.workdir)
+        self.write(
+            os.path.join(self.workdir, "writeback.json"),
+            json.dumps({self.sid("a"): {"steps": ["comment"]}}),
+        )
+        self.linear = self.fake(issue("TASK-1", "In Progress", "researcher", updated=ago(hours=3)))
+        self.linear.ids[self.ISSUE] = "TASK-1"
+
+    def ended(self):
+        self.api.outcomes["TASK-1"] = Outcome(
+            OutcomeStatus.DONE, "Report", "Found it.", [], "", [], ""
+        )
+
+    def steps(self):
+        with open(os.path.join(self.workdir, "writeback.json")) as f:
+            return json.load(f)[self.sid("a")]["steps"]
+
+    def test_an_outcome_is_written_back_without_an_agent_or_a_second_comment(self):
+        self.ended()
+        self.assertEqual(self.tick(self.linear, "--now"), 0)
+        self.assertEqual(self.start.launches, [])
+        self.assertEqual(self.linear.issues["TASK-1"]["state"], "In Review")
+        self.assertIsNone(self.linear.issues["TASK-1"].get("comments"))
+        self.assertEqual(self.steps(), ["comment", "move:in_review", "outcome"])
+        recovered = [show(e) for e in logged(self.logs) if e["kind"] == "recover"]
+        self.assertEqual(self.unmap("\n".join(recovered)), "recover TASK-1 to=writeback sid=a")
+        mutations = list(self.linear.mutations)
+        self.assertEqual(self.tick(self.linear, "--now", again=True), 0)
+        self.assertEqual((self.start.launches, self.linear.mutations), ([], mutations))
+        self.assertEqual(self.steps(), ["comment", "move:in_review", "outcome"])
+
+    def test_a_failed_write_back_is_left_for_the_next_tick(self):
+        self.ended()
+        self.linear.refuse.add(self.ISSUE)
+        self.assertEqual(self.tick(self.linear, "--now"), 0)
+        self.assertEqual(self.start.launches, [])
+        self.assertEqual(self.linear.issues["TASK-1"]["state"], "In Progress")
+        self.assertEqual(self.steps(), ["comment"])
+        self.linear.refuse.clear()
+        self.assertEqual(self.tick(self.linear, "--now", again=True), 0)
+        self.assertEqual(self.start.launches, [])
+        self.assertEqual(self.linear.issues["TASK-1"]["state"], "In Review")
+        self.assertEqual(self.steps(), ["comment", "move:in_review", "outcome"])
+
+    def test_a_dry_run_writes_nothing(self):
+        self.ended()
+        self.assertEqual(self.tick(self.linear, "--now", "--dry-run"), 0)
+        self.assertEqual(self.linear.mutations, [])
+        self.assertEqual(self.steps(), ["comment"])
+        self.assertEqual(sorted(os.listdir(self.workdir)), ["writeback.json"])
+
+    def test_explicit_issue_writes_back_and_exits_0(self):
+        self.ended()
+        self.assertEqual(self.tick(self.linear, "--issue", "TASK-1"), 0)
+        self.assertEqual(self.start.launches, [])
+        self.assertEqual(self.linear.issues["TASK-1"]["state"], "In Review")
+
+    def test_a_live_run_is_not_written_back(self):
+        self.ended()
+        self.assertEqual(self.tick(self.linear, "--now", live=["agent-pm-researcher-TASK-1"]), 0)
+        self.assertEqual((self.start.launches, self.linear.mutations), ([], []))
+        self.assertEqual(self.steps(), ["comment"])
+
+    def test_a_complete_write_back_resumes_as_before(self):
+        self.ended()
+        done = ["comment", "move:in_review", "outcome"]
+        self.write(
+            os.path.join(self.workdir, "writeback.json"),
+            json.dumps({self.sid("a"): {"steps": done}}),
+        )
+        self.touch("a", 40)
+        self.assertEqual(self.tick(self.linear, "--now"), 0)
+        self.assertEqual(self.launched_runs(), [("TASK-1", "resume")])
+        self.assertEqual(self.steps(), done)
+
+    def test_without_an_outcome_the_run_resumes(self):
+        self.touch("a", 40)
+        self.assertEqual(self.tick(self.linear, "--now"), 0)
+        self.assertEqual(self.launched_runs(), [("TASK-1", "resume")])
+        self.assertEqual(self.steps(), ["comment"])
+        self.assertEqual(self.linear.mutations, [])

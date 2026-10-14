@@ -7,6 +7,7 @@ References and Methods tests).
 import inspect
 import os
 import re
+import shlex
 import tempfile
 from dataclasses import replace
 
@@ -50,7 +51,15 @@ from delegate.tests.unit.composer.shipped import (
     runs,
     words,
 )
-from delegate.tests.unit.composer.teams import FILES, INTRO, POET, RUN_CONFIG, VERSE, WRITER
+from delegate.tests.unit.composer.teams import (
+    FILES,
+    INTRO,
+    POET,
+    RUN_CONFIG,
+    STEPS,
+    VERSE,
+    WRITER,
+)
 from utils.tests.case import local_section
 
 TEXTS = {
@@ -534,6 +543,7 @@ class Parameters(Fake):
                 "<Workdir>",
                 "<tasks>",
                 "<team>",
+                "<role team>",
                 "<gate>",
                 "<out-repo>",
                 "<out-branch>",
@@ -847,6 +857,45 @@ class TeamDirs(Fake):
             self.fails("poet", found=found),
             f"{self.path('roles/poet.md', 'bad')}: no such anchor: [x](#nope)",
         )
+
+    def test_role_team_is_the_team_root_holding_the_role(self):
+        tool = "\nRun `python3 -P <role team>/tools/t.py`.\n"
+        bard = (
+            "# Bard\n\nSing.\n\n## Tasks\n\n"
+            + INTRO.format("ballad")
+            + "- `ballad` (`<tasks>/ballad.md`): a ballad; always; light.\n"
+        )
+        a, b = (os.path.realpath(os.path.join(self.agent_pm, n)) for n in ("a", "b"))
+        self.write({"roles/poet.md": POET + tool, "tasks/verse.md": VERSE, "tools/t.py": ""}, a)
+        self.write({"roles/bard.md": bard + tool, "tasks/ballad.md": "# Ballad\n" + STEPS}, b)
+        self.write({"tools/t.py": "", "principles.md": "# Principles\n" + tool})
+        found = team(self.root, (a, b))
+        for role, root in (("poet", a), ("bard", b), ("writer", self.root)):
+            with self.subTest(role=role):
+                prompt = self.compose(role, found=found)[0]
+                self.assertEqual(parameters(prompt)["<role team>"], f"`{root}`")
+                self.assertNotIn("<team>", parameters(prompt))
+
+    def test_a_quoted_command_is_written_as_its_rule_less_the_wildcard(self):
+        text = "\nRun `python3 -P <role team>/tools/t.py --dir <Workdir>/src <x>`.\n"
+        command = "python3 -P {{role_team}}/tools/t.py --dir {{workdir}}/src *"
+        overlay = {"roles": {"poet": {"commands": [command]}}}
+        for name, work in (("plain", "/w"), ("te am's", os.path.join(self.tmp, "w o'rk"))):
+            with self.subTest(name=name):
+                top = os.path.realpath(os.path.join(self.agent_pm, name))
+                self.write({"roles/poet.md": POET + text, "tasks/verse.md": VERSE}, top)
+                composition = self.composition(team(self.root, (top,)))
+                run = composition.resolve("poet", overlays=[overlay])
+                params = replace(PARAMS, workdir=work, out=os.path.join(work, "out.md"))
+                prompt = composition.render(run, params)
+                [approved] = composition.access(run, work, cwd=work, project=False).commands
+                prefix = approved.removesuffix(" *")
+                self.assertEqual(
+                    shlex.split(prefix),
+                    ["python3", "-P", f"{top}/tools/t.py", "--dir", f"{work}/src"],
+                )
+                self.assertIn(text.strip() if name == "plain" else f"Run `{prefix} <x>`.", prompt)
+                self.assertIn(f"Run `{prefix} <x>`.", expanded(prompt))
 
     def test_without_a_team_dir_for_this_role_every_prompt_is_unchanged(self):
         other = self.with_dir(

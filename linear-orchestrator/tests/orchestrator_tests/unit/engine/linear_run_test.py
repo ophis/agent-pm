@@ -144,7 +144,7 @@ class Runs(RunCase):
         with self.assertRaisesRegex(DelegateConfigError, f"sid {newer} is not the run's"):
             LinearRun.attach("TASK-1", cfg=self.cfg)
 
-    def test_legacy_rows_use_harness_even_when_current_default_changes(self):
+    def test_a_kindless_row_is_a_bad_row_whatever_the_current_default(self):
         owner = LinearRun(
             "TASK-1", "Input", self.cfg.run_dir("TASK-1"), cfg=self.cfg, role="dummy", sid=SID
         )
@@ -155,8 +155,7 @@ class Runs(RunCase):
             delegate_kind="other",
             delegates={**self.cfg.delegates, "other": OtherDelegate},
         )
-        view = LinearRun.attach("TASK-1", cfg=changed)
-        self.assertEqual(view.delegate_kind, "harness")
-        self.assertTrue(view.alive())
-        with self.assertRaisesRegex(ConfigError, "harness.*no longer configured"):
-            LinearRun.attach("TASK-1", cfg=replace(changed, delegates={"other": OtherDelegate}))
+        with self.assertRaisesRegex(
+            ConfigError, f"session {SID}'s runs.jsonl row has no delegate kind"
+        ):
+            LinearRun.attach("TASK-1", cfg=changed)

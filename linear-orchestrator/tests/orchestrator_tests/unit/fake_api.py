@@ -30,6 +30,7 @@ class FakeApi:
         self.statuses, self.records, self.usages = {}, {}, {}
         self.usage_calls, self.constructed, self.detached, self.runs_at_detach = [], [], [], []
         self.construct_error = self.detach_error = None
+        self.outcomes = {}
 
     def host(self, name=None):
         return self
