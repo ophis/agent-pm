@@ -3,6 +3,7 @@
 import json
 import os
 import signal
+import socket
 from unittest import mock
 
 from agent_pm.utils.process_control import ProcessControl, _Group
@@ -254,6 +255,40 @@ class ControlTest(Case):
         self.assertGreater(len(probes), 3)
         self.assertLessEqual(len(probes), 11)
         self.assertGreaterEqual(probes[-1] - probes[-2], 1)
+
+    def test_a_launch_that_fails_before_a_start_retry_is_answered_waits_for_its_acceptance(self):
+        control = self.control()
+        self.addCleanup(control.remove)
+        group = mock.Mock(returncode=None, eof=False)
+        group.live.return_value = False
+
+        def receive():
+            if group.returncode is not None:
+                return []
+            group.returncode = 1
+            return [{"error": "No such file or directory", "errno": 2}]
+
+        group.receive.side_effect = receive
+        clients, servers = zip(*(socket.socketpair() for _ in range(2)), strict=True)
+        for end in (*clients, *servers):
+            self.addCleanup(end.close)
+        for client, command in zip(clients, (b"start\n", b"started\n"), strict=True):
+            client.sendall(command)
+        listener = mock.Mock()
+        listener.accept.side_effect = [(server, None) for server in servers]
+        with (
+            mock.patch("select.select", return_value=([listener], [], [])),
+            mock.patch("signal.signal"),
+            mock.patch("signal.pthread_sigmask"),
+        ):
+            self.assertEqual(control._serve(listener, group, None), 1)
+        answers = []
+        for client in clients:
+            with client.makefile("rb") as stream:
+                answers.append(json.loads(stream.readline()))
+        self.assertEqual(answers, [{"live": True}, {"live": False}])
+        with open(os.path.join(control.path, "done.json")) as stream:
+            self.assertEqual(json.load(stream), {"rc": 1})
 
     def test_a_query_during_directory_removal_reports_ended(self):
         control = self.control()

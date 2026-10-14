@@ -494,7 +494,12 @@ class ProcessControl:
                         group.send(signum)
                 elif command != b"live\n":
                     raise ValueError("unknown process control command")
-                live = not self.cancelled if group is None else group.live() if reported else True
+                if group is None:
+                    live = not self.cancelled
+                else:
+                    # A client that hears "not live" stops sending, so no retiring answer before
+                    # the launcher's started or cancel arrives.
+                    live = group.live() if reported and self.accepted else True
                 response = {"live": live}
             except OSError as error:
                 response = {"error": str(error), "errno": error.errno or errno.EIO}
