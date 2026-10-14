@@ -157,10 +157,24 @@ class HostContract:
         name, out = self.fresh(), self.file("env")
         env = self.env(HOST_CONTRACT_VALUE="a b 'c' \"$HOME\" ;*")
         with mock.patch.dict(os.environ, {"HOST_CONTRACT_CREATOR_ONLY": "1"}):
-            self.host.detach(name, program(DUMP_ENV, out), self.home, env)
-        got = json.loads(self.poll(lambda: read(out), f"env in {out}"))
-        self.assertEqual({k: got.get(k) for k in env}, env)
-        self.assertNotIn("HOST_CONTRACT_CREATOR_ONLY", got)
+            self.host.detach(
+                name,
+                [
+                    "/usr/bin/perl",
+                    "-e",
+                    'open(my $out, ">", $ARGV[0]) or die $!; '
+                    'print $out map { "$_=$ENV{$_}\\0" } keys %ENV;',
+                    out,
+                ],
+                self.home,
+                env,
+            )
+        got = dict(
+            entry.split("=", 1)
+            for entry in self.poll(lambda: read(out), f"env in {out}").split("\0")
+            if entry
+        )
+        self.assertEqual(got, env)
 
     def test_a_foreign_display_is_kept_and_listed_only_under_itself(self):
         name = self.fresh()

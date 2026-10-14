@@ -663,7 +663,7 @@ class DetachTest(TuiBase):
         control = ProcessControl(self.host.detach.call_args.kwargs["control"])
         self.assertEqual(
             json.loads(Path(control.path, "launch.json").read_text()),
-            {"argv": ["tool", "a b"], "cwd": self.dir},
+            {"argv": ["tool", "a b"], "cwd": self.dir, "env": env},
         )
         self.assertEqual(
             self.host.mock_calls,

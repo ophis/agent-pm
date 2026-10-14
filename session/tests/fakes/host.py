@@ -167,7 +167,7 @@ class FakeHost(Host):
             previous.close()
         shutil.rmtree(folder, ignore_errors=True)
         os.makedirs(folder, mode=0o700)
-        control = ProcessControl.prepare(argv, cwd)
+        control = ProcessControl.prepare(argv, cwd, env=env)
         meta = {
             "control": control.path,
             "kind": kind,

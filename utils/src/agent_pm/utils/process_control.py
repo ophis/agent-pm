@@ -18,7 +18,7 @@ import subprocess
 import sys
 import tempfile
 import time
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 
 POLL = 0.05
 TIMEOUT = 10
@@ -170,10 +170,15 @@ class ProcessControl:
         return cls(real)
 
     @classmethod
-    def prepare(cls, argv: Sequence[str], cwd: str) -> ProcessControl:
+    def prepare(
+        cls, argv: Sequence[str], cwd: str, *, env: Mapping[str, str] | None = None
+    ) -> ProcessControl:
         path = tempfile.mkdtemp(prefix="apm-group-", dir="/tmp")
         try:
-            _write(os.path.join(path, "launch.json"), {"argv": list(argv), "cwd": cwd})
+            launch = {"argv": list(argv), "cwd": cwd}
+            if env is not None:
+                launch["env"] = dict(env)
+            _write(os.path.join(path, "launch.json"), launch)
         except BaseException:
             shutil.rmtree(path)
             raise
@@ -283,6 +288,8 @@ class ProcessControl:
             listener.bind(os.path.join(self.path, "control"))
             listener.listen()
             signal.signal(signal.SIGCHLD, signal.SIG_DFL)
+            if "env" in launch:
+                options["env"] = launch["env"]
             group = _Group.launch(launch["argv"], launch["cwd"], **options)
             if detached:
                 os.setsid()

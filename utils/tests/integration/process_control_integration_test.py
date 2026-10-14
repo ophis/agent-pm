@@ -15,6 +15,19 @@ from utils.tests.case import Case
 
 
 class ProcessControlTest(Case):
+    def test_program_environment_has_no_controller_interpreter_additions(self):
+        env = {"ONE": "a b", "TWO": ""}
+        control = ProcessControl.prepare(["/usr/bin/env"], os.getcwd(), env=env)
+        process = subprocess.Popen(
+            control.command(), stdout=subprocess.PIPE, stderr=subprocess.PIPE
+        )
+        self.addCleanup(control.remove)
+        self.addCleanup(process.communicate, timeout=10)
+        control.wait_started()
+        out, err = process.communicate(timeout=10)
+        self.assertEqual(dict(line.split("=", 1) for line in out.decode().splitlines()), env)
+        self.assertEqual((process.returncode, err), (0, b""))
+
     def test_exec_failure_is_reported_without_a_startup_timeout(self):
         control = ProcessControl.prepare(["/no-such-task366-program"], os.getcwd())
         process = subprocess.Popen(
