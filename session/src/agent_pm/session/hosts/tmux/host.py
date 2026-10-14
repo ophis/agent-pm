@@ -92,7 +92,7 @@ EXIT_STATUS = (
 EXITED_EVENT = (
     "run-shell 'echo "
     + SessionStatusLog.line("#{q:session_name}", "exited", EXIT_STATUS, at=CLOCK)
-    + " >> #{q:@events}' ; kill-session"
+    + " >> #{q:@events}' ; kill-pane"
 )
 
 
@@ -420,7 +420,7 @@ class Tmux:
         """Runs argv as start does; env's full iTerm2
         $ITERM_SESSION_ID stays; opener, display and record (a line) become @opener, @display, @record.
         No decoration; with events, @events and a kept pane whose pane-died hook appends
-        `HH:MM:SS <session> exited <rc>` (signal n: -n) to it, then kills the session. @process set
+        `HH:MM:SS <session> exited <rc>` (signal n: -n) to it, then kills that pane. @process set
         in the same tmux call. An existing session is refused untouched. Returns its pane's
         process(), read as tmux made it.
         """
@@ -1239,11 +1239,25 @@ class TmuxHost(Host, Displayable):
                 raise SessionError(f"session {name.name} is not running on host {self.name}")
             target = name._pane
         else:
-            target = _session(name)
+            target = self._launched_pane(name)
         try:
             return self.tmux.read(target, lines)
         except TuiError as e:
             raise SessionError(f"tmux session {name}: {e}") from None
+
+    def _launched_pane(self, name: str) -> str:
+        """The pane name's launch recorded (@process), whichever pane is active; a session without
+        @process: name, its active pane.
+        """
+        try:
+            process = self.tmux.option(_session(name), "@process")
+        except TuiError as e:
+            raise SessionError(f"tmux session {name}: {e}") from None
+        if process is None:
+            return name
+        if not PROCESS_ID.fullmatch(process):
+            raise SessionError(f"tmux session {name}: bad @process {process!r:.80}")
+        return process.split(" ")[2]
 
     def layout(self, *, display: Display = None) -> str | None:
         """display, its opener part the caller's once the pane it goes beside (split_from's, else
