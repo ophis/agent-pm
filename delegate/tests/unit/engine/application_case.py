@@ -1,13 +1,10 @@
-"""Shared CLI and harness test setup over the configured fake runtime."""
+"""Shared engine application test setup over the configured fake runtime."""
 
-import io
 import json
 import os
 import tempfile
-from contextlib import redirect_stderr, redirect_stdout
-from unittest import mock
 
-from agent_pm.delegate import cli
+from agent_pm.delegate.engine.application import Application
 
 from delegate.tests.case import Case, local_section
 from delegate.tests.replies import block
@@ -21,7 +18,7 @@ DRIVER = f"{TUI}-drive"
 SPLIT = "--split and --split-from need --detach --mode tui"
 
 
-class FakeApplication(cli.Application):
+class FakeApplication(Application):
     def __init__(self, case):
         self.case = case
 
@@ -30,10 +27,10 @@ class FakeApplication(cli.Application):
         return self.case.driver
 
     def plan(self, config, spec):
-        return cli.Application(self.driver).plan(config, spec)
+        return Application(self.driver).plan(config, spec)
 
     def run(self, config, spec, *, on_event):
-        return cli.Application(self.driver).run(config, spec, on_event=on_event)
+        return Application(self.driver).run(config, spec, on_event=on_event)
 
 
 class Base(Case):
@@ -73,45 +70,6 @@ class Base(Case):
     def local(self, text):
         with open(os.path.join(self.agent_pm, "config.local.toml"), "w") as f:
             f.write(local_section(text, "delegate"))
-
-    def cli(self, *argv, stdin=""):
-        """(exit code, stdout, stderr) of cli.main(argv), an argparse exit's code included."""
-        out, err = io.StringIO(), io.StringIO()
-        with (
-            redirect_stdout(out),
-            redirect_stderr(err),
-            mock.patch("sys.stdin", io.StringIO(stdin)),
-        ):
-            try:
-                code = cli.main(list(argv), application=self.application)
-            except SystemExit as e:
-                code = e.code
-        return code, out.getvalue(), err.getvalue()
-
-    def runs(
-        self,
-        *extra,
-        role="dummy-tester",
-        task="echo",
-        input="Hello.",
-        runtime="fake",
-        stdin="",
-        out=None,
-    ):
-        return self.cli(
-            "--role",
-            role,
-            *(("--task", task) if task else ()),
-            "--input",
-            input,
-            "--out",
-            out or self.out,
-            "--workdir",
-            self.work,
-            *(("--runtime", runtime) if runtime else ()),
-            *extra,
-            stdin=stdin,
-        )
 
     def launches(self) -> list[dict]:
         if not os.path.exists(self.log):

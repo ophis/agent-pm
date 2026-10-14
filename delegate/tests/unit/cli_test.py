@@ -20,16 +20,13 @@ from agent_pm.session import ConfigError, DriverError
 from delegate.tests.case import Case, committed
 from delegate.tests.cli import (
     DONE_RESULT,
-    DRIVER,
     HEADS,
     KEYS,
-    SID,
-    SPLIT,
-    TUI,
-    Base,
     RefusingAdapter,
 )
 from delegate.tests.replies import block
+from delegate.tests.unit.cli_case import Base
+from delegate.tests.unit.engine.application_case import DRIVER, SID, SPLIT, TUI
 from delegate.tests.unit.runs import DONE, START, STOP, FakeHandle, no_child, turn
 from session.tests import fake_adapter
 from session.tests.modules import adapter_loader

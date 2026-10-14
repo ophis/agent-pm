@@ -6,8 +6,8 @@ import os
 import signal
 import sys
 
-from agent_pm.delegate.cli import Application
 from agent_pm.delegate.engine import detach
+from agent_pm.delegate.engine.application import Application
 from agent_pm.delegate.engine.types import Stopped
 from agent_pm.session import SIGNALS
 
