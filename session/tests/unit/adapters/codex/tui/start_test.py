@@ -12,7 +12,8 @@ import subprocess
 import sys
 from unittest import mock
 
-from agent_pm.session.adapters.codex import app_server, tui
+from agent_pm.session.adapters.codex import tui
+from agent_pm.session.adapters.codex.common import app_server
 from agent_pm.session.adapters.codex.tui import start as tui_start
 
 from session.tests import case
@@ -31,7 +32,8 @@ try:
 except SystemExit as error:
     status = error.code
 from agent_pm.session.adapters import common as shared
-from agent_pm.session.adapters.codex import app_server, common, tui
+from agent_pm.session.adapters.codex import common, tui
+from agent_pm.session.adapters.codex.common import app_server
 from agent_pm.session.adapters.codex.common import types
 from agent_pm.session.adapters.codex.tui import start
 roots = json.loads(data)["import_roots"]

@@ -21,7 +21,7 @@ from functools import cached_property, wraps
 from typing import Literal, overload
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from agent_pm.session.adapters.codex import app_server
+from agent_pm.session.adapters.codex.common import app_server
 from agent_pm.session.adapters.codex.common.types import (
     NativeMetadata,
     SessionFile,

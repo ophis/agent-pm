@@ -63,7 +63,8 @@ if __name__ == "__main__":
         sys.exit(1)
 
 try:
-    from agent_pm.session.adapters.codex import app_server, common, tui
+    from agent_pm.session.adapters.codex import common, tui
+    from agent_pm.session.adapters.codex.common import app_server
     from agent_pm.session.adapters.codex.common.types import LaunchPlan
     from agent_pm.session.adapters.codex.tui import HOOKS
 except ImportError as exc:

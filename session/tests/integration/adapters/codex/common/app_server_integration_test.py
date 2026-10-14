@@ -47,7 +47,13 @@ class AppServerIntegrationTest(Case):
             FAKE_LOG=str(self.log),
         )
         self.script = (
-            Path(SRC["session"]) / "agent_pm" / "session" / "adapters" / "codex" / "app_server.py"
+            Path(SRC["session"])
+            / "agent_pm"
+            / "session"
+            / "adapters"
+            / "codex"
+            / "common"
+            / "app_server.py"
         )
         self.addCleanup(self.cleanup)
 

@@ -2,7 +2,7 @@
 
 from unittest import mock
 
-from agent_pm.session.adapters.codex import app_server
+from agent_pm.session.adapters.codex.common import app_server
 from agent_pm.session.adapters.codex.tui import start as tui_start
 
 from session.tests.case import Case
