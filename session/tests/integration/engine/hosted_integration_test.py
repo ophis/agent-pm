@@ -12,10 +12,10 @@ from agent_pm.session.adapters.base import Adapter
 from agent_pm.session.engine.hosted_session import HostedSession
 from agent_pm.session.engine.types import (
     Access,
-    DriverError,
     Exited,
     Liveness,
     Mode,
+    SessionError,
     SessionInfo,
     SessionStatus,
     Spec,
@@ -41,7 +41,7 @@ class SessionTest(Base):
             (lambda: session.send("x"), "send: tui mode only"),
             (session.screen, "screen: tui mode only"),
         ):
-            with self.subTest(message=message), self.assertRaises(DriverError) as caught:
+            with self.subTest(message=message), self.assertRaises(SessionError) as caught:
                 call()
             self.assertEqual(str(caught.exception), message)
         self.assertEqual(self.drain(session), [Exited(0)])

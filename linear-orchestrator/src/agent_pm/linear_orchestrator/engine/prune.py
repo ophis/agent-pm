@@ -23,7 +23,7 @@ import subprocess
 from datetime import timedelta
 
 from agent_pm.delegate import ConfigError as DelegateConfigError
-from agent_pm.delegate import DriverError
+from agent_pm.delegate import SessionError
 from agent_pm.linear_orchestrator.engine import config, runs
 from agent_pm.linear_orchestrator.engine.config import CLONES
 from agent_pm.linear_orchestrator.engine.linear_run import LinearRun
@@ -213,7 +213,7 @@ class Pruner:
             except (config.ConfigError, DelegateConfigError, OSError, ValueError) as error:
                 self.say("prune-skip", ident, once=True, sid=entry.sid, reason=one_line(error))
                 continue
-            except DriverError:
+            except SessionError:
                 return None
             found[ident] = view
         return found
@@ -227,7 +227,13 @@ class Pruner:
             return
         try:
             view.close()
-        except (config.ConfigError, DelegateConfigError, DriverError, OSError, ValueError) as error:
+        except (
+            config.ConfigError,
+            DelegateConfigError,
+            SessionError,
+            OSError,
+            ValueError,
+        ) as error:
             self.error(ident, session=view.sid, error=one_line(error))
         else:
             self.say("prune-closed", ident, session=view.sid)

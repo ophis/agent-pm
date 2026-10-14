@@ -8,7 +8,6 @@ import os
 
 from agent_pm.session import (
     Displayable,
-    DriverError,
     Exited,
     Host,
     HostProcess,
@@ -18,6 +17,7 @@ from agent_pm.session import (
     NotDisplayable,
     Resumable,
     Session,
+    SessionError,
     SessionStatus,
 )
 from agent_pm.session import Spec as SessionSpec
@@ -82,7 +82,7 @@ class RecordingHost(Host):
 
     def attach(self, name):
         if (self.name, name) not in self.processes:
-            raise DriverError(f"no {self.name} session {name}")
+            raise SessionError(f"no {self.name} session {name}")
         return self.processes[self.name, name]
 
     def list(self, display=None):
@@ -157,7 +157,7 @@ class HarnessSession(SessionClass):
     def host(cls, name=None):
         key = name or "agent"
         if key not in cls.hosts:
-            raise DriverError(f"unknown host {key}")
+            raise SessionError(f"unknown host {key}")
         return cls.hosts[key]
 
     @classmethod
@@ -174,7 +174,7 @@ class HarnessSession(SessionClass):
         cls.host(host)
         session = super().attach(name, host=host, idle_timeout=idle_timeout)
         if cls.host_names[name] != (host or "agent"):
-            raise DriverError(f"no {host} session {name}")
+            raise SessionError(f"no {host} session {name}")
         return session
 
     @classmethod
@@ -260,7 +260,7 @@ class DiskHost(RecordingHost):
 
     def attach(self, name):
         if not os.path.isfile(self.path(name)):
-            raise DriverError(f"no {self.name} session {name}")
+            raise SessionError(f"no {self.name} session {name}")
         return DiskProcess(name, self.path(name))
 
     def list(self, display=None):
@@ -276,4 +276,4 @@ class PersistentSession(HarnessSession):
 class FailingSession(HarnessSession):
     @classmethod
     def start(cls, spec, *, display=None, host=None, idle_timeout=None):
-        raise DriverError("fake spawn refused")
+        raise SessionError("fake spawn refused")

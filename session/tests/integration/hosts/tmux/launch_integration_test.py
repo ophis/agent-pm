@@ -9,7 +9,7 @@ import time
 from pathlib import Path
 from unittest import mock
 
-from agent_pm.session import DriverError, KeyPress, Launch
+from agent_pm.session import KeyPress, Launch, SessionError
 from agent_pm.session.engine.types import Key, Paste
 from agent_pm.session.hosts.tmux import TmuxHost
 
@@ -198,7 +198,7 @@ class LaunchTest(Case):
         old = self.launch("terminal", "same", launch)
         old.close()
         new = self.launch("terminal", "same", launch)
-        with self.assertRaises(DriverError):
+        with self.assertRaises(SessionError):
             old.send(Paste("old input"))
         old.kill()
         old.close()

@@ -15,12 +15,12 @@ from agent_pm.session.adapters.registry import Registry
 from agent_pm.session.engine.types import (
     ClientBound,
     ConfigError,
-    DriverError,
     KeyPress,
     Launch,
     Liveness,
     Mode,
     Prepared,
+    SessionError,
     SessionEvent,
     SessionInfo,
     Spec,
@@ -107,7 +107,7 @@ class Runtime(ABC):
     def screen(self, lines: int | None = None) -> str: ...
 
     def press(self, keys: Sequence[KeyPress]) -> None:
-        raise DriverError(f"press: a {self.kind.value} session has no terminal")
+        raise SessionError(f"press: a {self.kind.value} session has no terminal")
 
     @abstractmethod
     def stop(self) -> None: ...

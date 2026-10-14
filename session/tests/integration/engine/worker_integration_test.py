@@ -6,7 +6,7 @@ import os
 import stat
 import unittest
 
-from agent_pm.session import DriverError
+from agent_pm.session import SessionError
 from agent_pm.session.engine import worker
 from agent_pm.session.engine.worker import Worker, WorkerState
 
@@ -50,7 +50,7 @@ class StateFileTest(Case):
             with self.subTest(make=make):
                 self.remove(self.path)
                 make()
-                with self.assertRaisesRegex(DriverError, "missing, not a regular file of yours"):
+                with self.assertRaisesRegex(SessionError, "missing, not a regular file of yours"):
                     Worker.load("w1")
 
     def test_a_pointer_that_is_a_symlink_or_holds_no_sid_is_refused(self):
@@ -58,11 +58,11 @@ class StateFileTest(Case):
         self.write(target, SID)
         self.remove(self.pointer)
         os.symlink(target, self.pointer)
-        with self.assertRaisesRegex(DriverError, "^w1: not a worker"):
+        with self.assertRaisesRegex(SessionError, "^w1: not a worker"):
             Worker.load("w1")
         self.remove(self.pointer)
         self.write(self.pointer, "../../x\n")
-        with self.assertRaisesRegex(DriverError, "holds no session id"):
+        with self.assertRaisesRegex(SessionError, "holds no session id"):
             Worker.load("w1")
 
     def test_a_workers_directory_that_is_a_symlink_is_refused_before_any_lock(self):
@@ -73,7 +73,7 @@ class StateFileTest(Case):
         os.mkdir(target, 0o700)
         os.symlink(target, other.workdir())
         with (
-            self.assertRaisesRegex(DriverError, "not a directory of yours"),
+            self.assertRaisesRegex(SessionError, "not a directory of yours"),
             Worker(other).locked(),
         ):
             self.fail("locked")

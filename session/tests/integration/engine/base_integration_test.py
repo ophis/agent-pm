@@ -13,7 +13,7 @@ CALLED = ("start", "attach", "usage", "layout", "writable_dirs", "display", "hos
 # {"unconfigured": {name: message}, "configured": {name: result or [error type, message]},
 # "read_state": tui.TuiRuntime.snapshot("w1")'s error}.
 DISPATCH = """import json, os
-from agent_pm.session import ConfigError, DriverError, Hosts, Mode, Session, Spec
+from agent_pm.session import ConfigError, SessionError, Hosts, Mode, Session, Spec
 from agent_pm.session.engine.hosted_session import HostedSession
 from agent_pm.session.modes import tui
 spec = Spec(workdir=os.environ["HOME"], client="fake", mode=Mode.HEADLESS, prompt="hi")
@@ -30,7 +30,7 @@ calls = {
 def outcome(call):
     try:
         return call()
-    except (ConfigError, DriverError) as e:
+    except (ConfigError, SessionError) as e:
         return [type(e).__name__, str(e)]
 unconfigured = {n: outcome(c)[1] for n, c in calls.items() if n != "list"}
 tmux = {"implementation": "agent_pm.session.hosts.tmux:TmuxHost"}
@@ -58,7 +58,7 @@ class SessionClassMethods(Case):
         self.assertEqual(res.returncode, 0, res.stderr)
         found = json.loads(res.stdout)
         self.assertEqual(found["unconfigured"], {name: UNCONFIGURED for name in CALLED})
-        self.assertEqual(found["read_state"][0], "DriverError")
+        self.assertEqual(found["read_state"][0], "SessionError")
         no_fake = ["ConfigError", "no [adapters.fake] table in the configured adapters"]
         bad_display = ["ConfigError", "display 'x;': want printable text not ending in ;"]
         self.assertEqual(

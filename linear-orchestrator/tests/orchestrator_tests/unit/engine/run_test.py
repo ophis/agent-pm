@@ -22,7 +22,7 @@ from agent_pm.linear_orchestrator.engine import (
 from agent_pm.linear_orchestrator.engine import log as event_log
 from agent_pm.linear_orchestrator.engine.types import Spec as RunSpec
 from agent_pm.linear_orchestrator.engine.types import Stopped
-from agent_pm.session import SIGNALS, DriverError
+from agent_pm.session import SIGNALS, SessionError
 from agent_pm.session import Spec as SessionSpec
 from orchestrator_tests.config_fixtures import HARNESS_DELEGATE
 from orchestrator_tests.unit.board_ids import STATES
@@ -150,7 +150,7 @@ class CleanupDelegate(FakeDelegate):
         for name in owner.cleanup_sessions:
             try:
                 owner.api.close(name)
-            except DriverError as error:
+            except SessionError as error:
                 failed = error
         if failed:
             raise failed
@@ -611,12 +611,12 @@ class RunTui(Case):
 
     def test_close_error_logs_and_other_owned_sessions_close_before_run(self):
         self.record_cleanup(self.MINE)
-        self.api.errors = {self.MINE[0]: DriverError("kill failed")}
+        self.api.errors = {self.MINE[0]: SessionError("kill failed")}
         self.done(Progress("start", "x"))
         self.prepare_cleanup()
         self.assertEqual(self.main(), 0, (self.said(), self.err))
         self.assertEqual(self.order[:3], [*(("close", x) for x in self.MINE), "run"])
-        self.assertEqual(self.said()[0], "router tui-error TASK-7 msg=DriverError: kill failed")
+        self.assertEqual(self.said()[0], "router tui-error TASK-7 msg=SessionError: kill failed")
         self.assertIn(f"writeback step TASK-7 sid={SID} step=move:in_review", self.said())
         self.assertEqual(self.gql.calls[-2:], [*updated(ended("done", 0)), REPAIR])
 

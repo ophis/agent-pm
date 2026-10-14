@@ -13,10 +13,10 @@ from agent_pm.session.adapters.base import Adapter, Headless
 from agent_pm.session.adapters.registry import Registry
 from agent_pm.session.engine.types import (
     ClientBound,
-    DriverError,
     Liveness,
     Mode,
     Prepared,
+    SessionError,
     SessionEvent,
     SessionInfo,
     Spec,
@@ -102,7 +102,7 @@ class HeadlessRuntime(Runtime):
             ):
                 threading.Thread(target=mode._pump, args=(pipe, events, eof), daemon=True).start()
         except (OSError, ValueError) as e:
-            raise DriverError(f"cannot start {prepared.argv[0]}: {e}") from e
+            raise SessionError(f"cannot start {prepared.argv[0]}: {e}") from e
         return mode
 
     def _pump(
@@ -140,10 +140,10 @@ class HeadlessRuntime(Runtime):
         return Liveness.LIVE if self.proc.poll() is None else Liveness.ABSENT
 
     def send(self, text: str) -> None:
-        raise DriverError("send: tui mode only")
+        raise SessionError("send: tui mode only")
 
     def screen(self, lines: int | None = None) -> str:
-        raise DriverError("screen: tui mode only")
+        raise SessionError("screen: tui mode only")
 
     def stop(self) -> None:
         kill_group(self.proc, ended=all(eof.is_set() for eof in self.eof), wait=self.stop_wait)

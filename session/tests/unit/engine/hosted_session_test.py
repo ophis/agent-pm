@@ -35,7 +35,6 @@ from agent_pm.session.engine.types import (
     Blocked,
     ClientBound,
     ConfigError,
-    DriverError,
     Exited,
     Hosts,
     IdleTimeout,
@@ -44,6 +43,7 @@ from agent_pm.session.engine.types import (
     Mode,
     Paste,
     Reply,
+    SessionError,
     SessionInfo,
     SessionRow,
     SessionStatus,
@@ -225,11 +225,11 @@ class InspectTest(Base):
         return Spec(workdir=self.workdir, client=client, sid="s1")
 
     def test_an_adapters_driver_error_propagates_as_raised(self):
-        error = DriverError("inspection refused")
+        error = SessionError("inspection refused")
         spec = self.recorded()
         with (
             mock.patch.object(ProbeAdapter, "session_status", side_effect=error),
-            self.assertRaises(DriverError) as caught,
+            self.assertRaises(SessionError) as caught,
         ):
             self.inspect(spec)
         self.assertIs(caught.exception, error)
@@ -596,7 +596,7 @@ class InProcessTest(Base):
 
     def test_an_in_process_session_has_no_terminal_to_press_keys_into(self):
         session, _ = self.run_in_process()
-        with self.assertRaisesRegex(DriverError, "^press: a in_process session has no terminal$"):
+        with self.assertRaisesRegex(SessionError, "^press: a in_process session has no terminal$"):
             session.press((KeyPress("Escape"),))
 
     def test_a_spec_started_in_process_yields_reply_turn_end_then_exited_fr_12(self):
@@ -1235,8 +1235,8 @@ class ListTest(HostedTuiBase):
 
     def test_tmux_failing_or_a_bad_tmux_pane_is_a_driver_error_never_no_rows(self):
         for message in ("host listing unavailable", "host display unavailable"):
-            self.host.calls.list.side_effect = DriverError(message)
-            with self.subTest(message=message), self.assertRaises(DriverError) as caught:
+            self.host.calls.list.side_effect = SessionError(message)
+            with self.subTest(message=message), self.assertRaises(SessionError) as caught:
                 self.session.list()
             self.assertEqual(str(caught.exception), message)
 
@@ -1358,7 +1358,7 @@ class TuiStartTest(HostedTuiBase):
             terminal.calls.alive.return_value = False
             terminal.calls.returncode.return_value = code
             for call in (lambda: session.send("more"), session.screen):
-                with self.subTest(code=code, call=call), self.assertRaises(DriverError) as caught:
+                with self.subTest(code=code, call=call), self.assertRaises(SessionError) as caught:
                     call()
                 self.assertEqual(str(caught.exception), "tui session w1 is not running")
         terminal.calls.send.assert_not_called()
@@ -1603,13 +1603,13 @@ class AttachTest(HostedTuiBase):
         self.nothing_hosted()
 
     def test_no_session_dir_or_another_sid_is_no_tui_session(self):
-        with self.assertRaises(DriverError) as caught:
+        with self.assertRaises(SessionError) as caught:
             self.session.attach("w1")
         self.assertTrue(str(caught.exception).startswith("no tui session w1: "), caught.exception)
         self.nothing_hosted()
         self.started()
         for found in ("other", None):
-            with self.subTest(found=found), self.assertRaises(DriverError) as caught:
+            with self.subTest(found=found), self.assertRaises(SessionError) as caught:
                 terminal = self.host.processes["w1"]
                 terminal.calls.session_identity.return_value = (
                     found,
@@ -1625,7 +1625,7 @@ class AttachTest(HostedTuiBase):
             state = json.load(f)
         with open(path, "w") as f:
             json.dump({**state, "cwd": ""}, f)
-        with self.assertRaises(DriverError) as caught:
+        with self.assertRaises(SessionError) as caught:
             self.session.attach("w1")
         self.assertEqual(str(caught.exception), f"no tui session w1: {path}: bad cwd")
         self.host.calls.attach.assert_not_called()
@@ -1637,7 +1637,7 @@ class AttachTest(HostedTuiBase):
             "no tui session w1: client 'fake' has no tui mode",
             "no tui session w1: no [adapters.fake] table in the configured adapters",
         ):
-            with self.subTest(message=message), self.assertRaises(DriverError) as caught:
+            with self.subTest(message=message), self.assertRaises(SessionError) as caught:
                 self.session.attach("w1")
             self.assertEqual(str(caught.exception), message)
             self.configure_session({})
@@ -1668,7 +1668,7 @@ class MultipleHostsTest(HostedTuiBase):
         attached = self.session.attach("w1", host="second")
         self.assertEqual((attached.sid, attached.name), (session.sid, session.name))
         self.assertFalse(attached.displayable)
-        with self.assertRaises(DriverError):
+        with self.assertRaises(SessionError):
             self.session.attach("w1")
 
     def test_list_combines_all_hosts_sorted_and_passes_the_display_unchanged(self):
@@ -1693,14 +1693,14 @@ class MultipleHostsTest(HostedTuiBase):
 
     def test_start_refuses_a_name_owned_by_another_configured_host(self):
         self.other.create("w1", SID)
-        with self.assertRaisesRegex(DriverError, "session w1 exists"):
+        with self.assertRaisesRegex(SessionError, "session w1 exists"):
             self.tui(name="w1")
         self.host.calls.terminal.assert_not_called()
         self.assertFalse(os.path.exists(RunLog(self.workdir).path))
 
     def test_an_automatic_name_cannot_replace_another_hosts_session(self):
         incumbent = self.other.create("fake-0f8fad5b", SID)
-        with self.assertRaisesRegex(DriverError, "^session fake-0f8fad5b exists$"):
+        with self.assertRaisesRegex(SessionError, "^session fake-0f8fad5b exists$"):
             self.tui(sid=SID, events=self.events)
         self.host.calls.terminal.assert_not_called()
         self.assertIs(self.other.attach("fake-0f8fad5b"), incumbent)
@@ -1715,7 +1715,7 @@ class MultipleHostsTest(HostedTuiBase):
             incumbent.calls.returncode.return_value = 7
             with (
                 self.subTest(name=name),
-                self.assertRaisesRegex(DriverError, f"^session {resolved} exists$"),
+                self.assertRaisesRegex(SessionError, f"^session {resolved} exists$"),
             ):
                 self.tui(name=name, sid=SID)
             self.assertIs(self.other.attach(resolved), incumbent)
@@ -1742,10 +1742,10 @@ class MultipleHostsTest(HostedTuiBase):
         self.assertEqual(self.session.attach("w1").record(), replacement.record())
 
     def test_another_hosts_listing_failure_propagates_before_launch(self):
-        failure = DriverError("second Host listing unavailable")
+        failure = SessionError("second Host listing unavailable")
         self.other.calls.list.side_effect = failure
         for name in (None, "w1"):
-            with self.subTest(name=name), self.assertRaises(DriverError) as caught:
+            with self.subTest(name=name), self.assertRaises(SessionError) as caught:
                 self.tui(name=name, sid=SID)
             self.assertIs(caught.exception, failure)
         self.host.calls.terminal.assert_not_called()
@@ -1794,7 +1794,7 @@ class MultipleHostsTest(HostedTuiBase):
                     ),
                     host=host,
                 )
-            except DriverError as error:
+            except SessionError as error:
                 refusals[host] = str(error)
 
         first = threading.Thread(target=start, args=("tmux",), daemon=True)

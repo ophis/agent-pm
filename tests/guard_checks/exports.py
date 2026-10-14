@@ -318,7 +318,7 @@ def _typing(node, *, operand=False):
 
 def session_interface_snapshot(repo: str) -> list[str]:
     """The session's public interface (_session_interface()) equals SESSION_INTERFACE. Only TASK-369,
-    TASK-387, TASK-414, TASK-420 and TASK-427 change it on purpose, rewriting the file from
+    TASK-375, TASK-387, TASK-414, TASK-420 and TASK-427 change it on purpose, rewriting the file from
     _session_interface().
     """
     try:

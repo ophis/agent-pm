@@ -18,7 +18,7 @@ import unittest.mock
 from pathlib import Path
 from unittest import mock
 
-from agent_pm.session import ConfigError, Displayable, DriverError, Host, Launch, Terminal
+from agent_pm.session import ConfigError, Displayable, Host, Launch, SessionError, Terminal
 from agent_pm.session.engine.types import ActivityState, Key, KeyPress, Paste, SessionRow
 from agent_pm.session.hosts.base import SIGNALS
 from agent_pm.session.hosts.tmux import TmuxHost, transport, types
@@ -167,7 +167,7 @@ class DetachTest(Base):
             raise TuiError("session d1 exists")
 
         self.tmux.detach.side_effect = refuse
-        with self.assertRaisesRegex(DriverError, "session d1 exists"):
+        with self.assertRaisesRegex(SessionError, "session d1 exists"):
             self.detach()
         self.assertEqual(len(paths), 1)
         self.assertFalse(os.path.exists(paths[0]))
@@ -183,7 +183,7 @@ class DetachTest(Base):
         self.tmux.detach.side_effect = pending
         with (
             mock.patch("time.monotonic", side_effect=[0, 11]),
-            self.assertRaisesRegex(DriverError, "process controller did not start"),
+            self.assertRaisesRegex(SessionError, "process controller did not start"),
         ):
             self.detach()
         self.assertFalse(os.path.exists(paths[0]))
@@ -199,7 +199,7 @@ class DetachTest(Base):
         self.tmux.detach.side_effect = refuse
         self.connection.connect.side_effect = TimeoutError("cancel timed out")
         with self.assertRaisesRegex(
-            DriverError, "cannot create pane; cancel controller: cancel timed out"
+            SessionError, "cannot create pane; cancel controller: cancel timed out"
         ):
             self.detach()
         self.tmux.kill.assert_not_called()
@@ -215,7 +215,7 @@ class DetachTest(Base):
         with (
             mock.patch("time.monotonic", side_effect=[0, 11]),
             self.assertRaisesRegex(
-                DriverError, "cancel controller: process controller did not cancel"
+                SessionError, "cancel controller: process controller did not cancel"
             ),
         ):
             self.detach()
@@ -227,7 +227,7 @@ class DetachTest(Base):
         with (
             mock.patch("time.monotonic", side_effect=[0, 11]),
             self.assertRaisesRegex(
-                DriverError, "process controller did not start; close pane: cannot inspect pane"
+                SessionError, "process controller did not start; close pane: cannot inspect pane"
             ),
         ):
             self.detach()
@@ -244,7 +244,7 @@ class DetachTest(Base):
         self.connection.connect.side_effect = PermissionError("controller denied")
         with (
             mock.patch("time.monotonic", side_effect=[0, 11]),
-            self.assertRaisesRegex(DriverError, "cancel controller: controller denied"),
+            self.assertRaisesRegex(SessionError, "cancel controller: controller denied"),
         ):
             self.detach()
         self.tmux.kill.assert_called_once_with("%7")
@@ -311,14 +311,14 @@ class DetachTest(Base):
 
     def test_events_creation_failure_is_a_driver_error_before_launch(self):
         self.tmux.events_file.side_effect = TuiError("cannot create events")
-        with self.assertRaisesRegex(DriverError, "cannot create events"):
+        with self.assertRaisesRegex(SessionError, "cannot create events"):
             self.detach(events=os.path.join(self.dir, "events"))
         self.tmux.detach.assert_not_called()
         self.socket.assert_not_called()
 
     def test_a_tmux_failure_is_a_driver_error(self):
         self.tmux.detach.side_effect = TuiError("session d1 exists")
-        with self.assertRaises(DriverError) as caught:
+        with self.assertRaises(SessionError) as caught:
             self.detach()
         self.assertEqual(str(caught.exception), "detach d1: session d1 exists")
 
@@ -334,7 +334,7 @@ class TerminalTest(Base):
         self.tmux.start.side_effect = pending
         with (
             mock.patch("time.monotonic", side_effect=[0, 11]),
-            self.assertRaisesRegex(DriverError, "process controller did not start"),
+            self.assertRaisesRegex(SessionError, "process controller did not start"),
         ):
             self.host.terminal("t1", Launch((self.tool,), cwd=self.dir))
         self.assertFalse(os.path.exists(paths[0]))
@@ -426,7 +426,7 @@ class TerminalTest(Base):
 
     def test_terminal_with_no_controller_is_refused_when_attaching(self):
         self.kind, self.controlled = "terminal", False
-        with self.assertRaisesRegex(DriverError, "missing @control"):
+        with self.assertRaisesRegex(SessionError, "missing @control"):
             self.host.attach("t1")
 
 
@@ -444,7 +444,7 @@ class AttachTest(Base):
         ):
             with self.subTest(value=value):
                 self.recorded = value
-                with self.assertRaisesRegex(DriverError, error):
+                with self.assertRaisesRegex(SessionError, error):
                     self.host.attach("w1")
 
     def test_a_foreign_session_is_its_active_pane(self):
@@ -488,7 +488,7 @@ class DisplayableTest(Base):
 
     def test_show_refuses_an_absent_session_a_foreign_display_or_a_bad_setting(self):
         self.tmux.status.return_value = None
-        with self.assertRaisesRegex(DriverError, "^no tmux session w1$"):
+        with self.assertRaisesRegex(SessionError, "^no tmux session w1$"):
             self.host.show("w1")
         self.tmux.status.return_value = types.PaneStatus.RUNNING
         with self.assertRaisesRegex(ConfigError, r"^display 'elsewhere:1\.2': not <opener>"):
@@ -522,7 +522,7 @@ class DisplayableTest(Base):
     def test_layout_without_a_pane_or_split_from_is_refused(self):
         hint = ": run from tmux or iTerm2, or pass split_from"
         self.tmux.anchor.side_effect = TuiError(NO_PANE)
-        with self.assertRaises(DriverError) as caught:
+        with self.assertRaises(SessionError) as caught:
             self.host.layout()
         self.assertEqual(str(caught.exception), f"no pane to show the TUI beside ({NO_PANE}){hint}")
         self.tmux.status.return_value = None
@@ -550,9 +550,9 @@ class DisplayableTest(Base):
         self.host.tile("@1")
         self.tmux.tile.assert_called_once_with("@1")
         self.tmux.read.side_effect = TuiError("tmux: boom")
-        with self.assertRaisesRegex(DriverError, "^tmux session w1: tmux: boom$"):
+        with self.assertRaisesRegex(SessionError, "^tmux session w1: tmux: boom$"):
             self.host.screen("w1")
-        with self.assertRaisesRegex(DriverError, "^no tmux session 'a b'$"):
+        with self.assertRaisesRegex(SessionError, "^no tmux session 'a b'$"):
             self.host.attach_command("a b")
 
 
@@ -563,7 +563,7 @@ class PublishTest(Base):
         self.tmux.set_option.assert_called_once_with("%7", "@record", LINE.to_line())
         self.assertEqual(process.token, self.control.path)
         self.tmux.process.return_value = "9 $1 %7 9"
-        with self.assertRaisesRegex(DriverError, "^tmux session w1 is gone$"):
+        with self.assertRaisesRegex(SessionError, "^tmux session w1 is gone$"):
             process.publish(LINE)
         with self.assertRaises(ConfigError):
             process.publish(LINE.to_line())
@@ -589,7 +589,7 @@ class DescendantsTest(Base):
 
     def test_a_tmux_failure_is_a_driver_error(self):
         self.tmux.listing.side_effect = [[listed("a", opener="mgr", display="mgr")], None]
-        with self.assertRaisesRegex(DriverError, "tmux failed"):
+        with self.assertRaisesRegex(SessionError, "tmux failed"):
             self.host.descendants("mgr")
 
 
@@ -683,7 +683,7 @@ class CloseTest(Base):
         self.active({"live": True}, {"live": False})
         process = TmuxProcess("w1", PROCESS, tmux=self.tmux, control=self.control)
         self.tmux.kill.side_effect = TuiError("tmux: boom")
-        with self.assertRaisesRegex(DriverError, "^tmux: boom$"):
+        with self.assertRaisesRegex(SessionError, "^tmux: boom$"):
             process.close()
         self.assertEqual(
             self.connection.sendall.call_args_list,
@@ -706,7 +706,7 @@ class CloseTest(Base):
         self.active()
         process = TmuxProcess("w1", PROCESS, tmux=self.tmux, control=self.control)
         self.connection.connect.side_effect = PermissionError("termination denied")
-        with self.assertRaisesRegex(DriverError, "process group w1: termination denied"):
+        with self.assertRaisesRegex(SessionError, "process group w1: termination denied"):
             process.close()
         self.assertFalse(self.control.ended)
         self.killpg.assert_not_called()
@@ -716,13 +716,13 @@ class CloseTest(Base):
         process = TmuxProcess("w1", PROCESS, tmux=self.tmux, control=self.control)
         self.tmux.kill.side_effect = TuiError("tmux: boom")
         self.connection.connect.side_effect = PermissionError("termination denied")
-        with self.assertRaises(DriverError) as caught:
+        with self.assertRaises(SessionError) as caught:
             process.close()
         self.assertEqual(str(caught.exception), "tmux: boom; process group w1: termination denied")
 
     def test_attach_wraps_a_failed_kind_read_as_a_driver_error(self):
         self.tmux.option.side_effect = TuiError("tmux: lost server")
-        with self.assertRaises(DriverError) as caught:
+        with self.assertRaises(SessionError) as caught:
             self.host.attach("t1")
         self.assertEqual(str(caught.exception), "tmux session t1: tmux: lost server")
 
@@ -781,7 +781,7 @@ class CloseTest(Base):
             mock.patch(
                 "time.sleep", side_effect=lambda _seconds: clock.__setitem__(0, clock[0] + 1)
             ),
-            self.assertRaisesRegex(DriverError, "process group w1: did not exit"),
+            self.assertRaisesRegex(SessionError, "process group w1: did not exit"),
         ):
             process.close()
         self.assertEqual(clock[0], 10)

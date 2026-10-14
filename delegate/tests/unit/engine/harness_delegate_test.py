@@ -10,7 +10,7 @@ from unittest import mock
 from agent_pm.delegate import ConfigError, Result, Spec
 from agent_pm.delegate.composer import Composer, RunParams
 from agent_pm.delegate.engine.harness_delegate import HarnessDelegate
-from agent_pm.session import DriverError, Exited, Liveness, Reply
+from agent_pm.session import Exited, Liveness, Reply, SessionError
 
 from delegate.tests.fakes.harness_session import HarnessSession, RecordingHost, harness_launches
 from delegate.tests.harness import SID, HarnessCase
@@ -23,8 +23,8 @@ class CloseTest(HarnessCase):
         name = self.metadata()["harness_name"]
         process = RecordingHost.processes["harness", name]
         with (
-            mock.patch.object(process, "close", side_effect=DriverError("tmux: boom")),
-            self.assertRaises(DriverError) as caught,
+            mock.patch.object(process, "close", side_effect=SessionError("tmux: boom")),
+            self.assertRaises(SessionError) as caught,
         ):
             HarnessDelegate.attach(record).close()
         self.assertEqual(str(caught.exception), f"close {name}: tmux: boom")

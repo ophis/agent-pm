@@ -23,13 +23,13 @@ from agent_pm.session.engine.records import RunLog
 from agent_pm.session.engine.types import (
     Activity,
     Blocked,
-    DriverError,
     Exited,
     IdleTimeout,
     Launch,
     LimitHit,
     Mode,
     Reply,
+    SessionError,
     Spec,
     TurnEnd,
 )
@@ -326,7 +326,7 @@ class DeadTest(Live):
             (handle.state(), [r.state for r in self.session_cls.list("w1")]), ("live", ["dead"])
         )
         for call in (lambda: handle.send("more"), handle.screen):
-            with self.assertRaises(DriverError):
+            with self.assertRaises(SessionError):
                 call()
         self.session_cls.retire("w1")
         self.closed(handle)
@@ -340,7 +340,7 @@ class DeadTest(Live):
         pane = self.server.tmux("capture-pane", "-p", "-J", "-t", "=w2:").stdout
         self.assertIn("claude: error: unrecognized arguments: --bogus", pane)
         self.assertEqual([r.state for r in self.session_cls.list("w2")], ["dead"])
-        with self.assertRaises(DriverError):
+        with self.assertRaises(SessionError):
             handle.screen()
         self.session_cls.retire("w2")
         self.closed(handle)
@@ -454,7 +454,7 @@ class ShowTest(Live):
         self.session_cls.retire("w1")
         self.assertEqual(stream.until_exited(), [Exited(-signal.SIGHUP)])
         self.closed(handle)
-        with self.assertRaises(DriverError):
+        with self.assertRaises(SessionError):
             self.show("w1")
 
 

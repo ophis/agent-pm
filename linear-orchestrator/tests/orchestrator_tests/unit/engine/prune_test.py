@@ -5,7 +5,7 @@ import shutil
 from functools import partial
 from unittest import mock
 
-from agent_pm.delegate import ConfigError, DriverError
+from agent_pm.delegate import ConfigError, SessionError
 from agent_pm.linear_orchestrator.engine import config, ops, prune
 from agent_pm.linear_orchestrator.engine.types import LinearError
 from agent_pm.utils import temp_dirs
@@ -527,7 +527,7 @@ class RetentionCleanup(PruneScenario):
                 self.assertEqual(self.api.order, [])
 
     def test_close_failure_counted(self):
-        for error in (DriverError("boom"), ConfigError("bad name")):
+        for error in (SessionError("boom"), ConfigError("bad name")):
             with self.subTest(error=type(error).__name__):
                 self.api.order.clear()
                 self.record("TASK-7", SID, [B, A])
@@ -545,7 +545,7 @@ class RetentionCleanup(PruneScenario):
     def test_close_failure_still_closes_other_runs_and_deletes_workspace(self):
         clone = self.mkc("TASK-7", "src", "o", "repo")
         self.record("TASK-7", SID, [B, A])
-        self.api.errors = {B: DriverError("boom")}
+        self.api.errors = {B: SessionError("boom")}
         code, out = self.prune(gql_for({"TASK-7": ("Done", [(30, "Done")])}))
         self.assertEqual(code, 3)
         self.assertEqual(self.closed(), [B, A])
@@ -553,7 +553,7 @@ class RetentionCleanup(PruneScenario):
         self.assertEqual(
             out.splitlines(),
             [
-                f"prune-error TASK-7 session={SID} error=DriverError: boom",
+                f"prune-error TASK-7 session={SID} error=SessionError: boom",
                 "prune-removed entry=TASK-7/src/o/repo what=clone",
             ],
         )
@@ -561,7 +561,7 @@ class RetentionCleanup(PruneScenario):
     def test_failed_run_close_does_not_stop_another_finished_issue(self):
         self.record("TASK-7", SID, [A])
         self.record("TASK-8", OTHER_SID, ["other-host-agent"])
-        self.api.errors = {A: DriverError("boom")}
+        self.api.errors = {A: SessionError("boom")}
         gql = gql_for(dict.fromkeys(("TASK-7", "TASK-8"), ("Done", [(30, "Done")])))
         code, out = self.prune(gql)
         self.assertEqual(code, 3)
@@ -569,7 +569,7 @@ class RetentionCleanup(PruneScenario):
         self.assertEqual(
             out.splitlines(),
             [
-                f"prune-error TASK-7 session={SID} error=DriverError: boom",
+                f"prune-error TASK-7 session={SID} error=SessionError: boom",
                 f"prune-closed TASK-8 session={OTHER_SID}",
             ],
         )

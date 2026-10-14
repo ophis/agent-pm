@@ -203,8 +203,8 @@ class OrchestratorLayout(Sample):
     def test_session_imports_are_frozen_at_their_owners(self):
         root = self.tree(
             {
-                f"{ORCH_PROJECT}/{OPKG}/engine/router.py": "from agent_pm.session import DriverError, RunLog\n",
-                f"{ORCH_PROJECT}/{OPKG}/engine/ops.py": "from agent_pm.session import DriverError\n",
+                f"{ORCH_PROJECT}/{OPKG}/engine/router.py": "from agent_pm.session import SessionError, RunLog\n",
+                f"{ORCH_PROJECT}/{OPKG}/engine/ops.py": "from agent_pm.session import SessionError\n",
                 f"{ORCH_PROJECT}/{OPKG}/engine/new.py": "import agent_pm.session as session\nsession.RunLog()\n",
             }
         )
@@ -212,7 +212,7 @@ class OrchestratorLayout(Sample):
             imports.orchestrator_session_imports(root),
             [
                 f"{ORCH_PROJECT}/{OPKG}/engine/new.py: {ORCH_PKG}.engine.new imports RunLog from agent_pm.session; go through agent_pm.delegate",
-                f"{ORCH_PROJECT}/{OPKG}/engine/ops.py: {ORCH_PKG}.engine.ops imports DriverError from agent_pm.session; go through agent_pm.delegate",
+                f"{ORCH_PROJECT}/{OPKG}/engine/ops.py: {ORCH_PKG}.engine.ops imports SessionError from agent_pm.session; go through agent_pm.delegate",
                 f"{ORCH_PROJECT}/{OPKG}/engine/router.py: {ORCH_PKG}.engine.router imports RunLog from agent_pm.session; go through agent_pm.delegate",
             ],
         )

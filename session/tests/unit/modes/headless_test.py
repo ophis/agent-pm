@@ -14,9 +14,9 @@ from agent_pm.session.adapters.base import Adapter
 from agent_pm.session.engine.types import (
     Access,
     ConfigError,
-    DriverError,
     Launch,
     Prepared,
+    SessionError,
     SessionInfo,
     Spec,
 )
@@ -80,7 +80,7 @@ class TuiOnly(Base):
             (self.mode.screen, "screen: tui mode only"),
             (lambda: self.mode.screen(5), "screen: tui mode only"),
         ):
-            with self.subTest(message=message), self.assertRaises(DriverError) as caught:
+            with self.subTest(message=message), self.assertRaises(SessionError) as caught:
                 call()
             self.assertEqual(str(caught.exception), message)
 
@@ -208,7 +208,7 @@ class Start(Base):
                 self.recorded = []
                 with (
                     mock.patch("subprocess.Popen", side_effect=error) as popen,
-                    self.assertRaises(DriverError) as caught,
+                    self.assertRaises(SessionError) as caught,
                 ):
                     self.start()
                 self.assertEqual(str(caught.exception), f"cannot start {sys.executable}: {error}")
@@ -223,7 +223,7 @@ class Start(Base):
                 proc = mock.Mock(stdout=io.StringIO(), stderr=io.StringIO())
                 with (
                     mock.patch("subprocess.Popen", return_value=proc) as popen,
-                    self.assertRaises(DriverError) as caught,
+                    self.assertRaises(SessionError) as caught,
                 ):
                     self.start(adapter)
                 self.assertEqual(str(caught.exception), f"cannot start {sys.executable}: {error}")

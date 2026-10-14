@@ -15,7 +15,7 @@ import time
 import unittest
 from unittest import mock
 
-from agent_pm.session.engine.types import DriverError, Launch, Reply, Spec, Stderr
+from agent_pm.session.engine.types import Launch, Reply, SessionError, Spec, Stderr
 from agent_pm.session.modes.headless import HeadlessRuntime
 
 from session.tests.fakes.terminal import MemoryHost
@@ -293,7 +293,7 @@ class Stop(Base):
 
 class Start(Base):
     def test_a_missing_cwd_is_a_driver_error(self):
-        with self.assertRaisesRegex(DriverError, rf"\Acannot start {sys.executable}: "):
+        with self.assertRaisesRegex(SessionError, rf"\Acannot start {sys.executable}: "):
             self.start(StubAdapter(Launch(NOTHING, cwd=os.path.join(self.dir, "missing"))))
         self.assertEqual((len(self.recorded), self.mode), (1, None))
 

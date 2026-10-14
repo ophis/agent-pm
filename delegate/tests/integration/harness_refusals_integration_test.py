@@ -1,4 +1,4 @@
-"""Delegate refusal types and a start's DriverError as the run's result."""
+"""Delegate refusal types and a start's SessionError as the run's result."""
 
 import os
 import subprocess
@@ -10,7 +10,7 @@ from agent_pm.delegate.composer import Composer
 from agent_pm.delegate.engine.drivers import AgentDriver
 from agent_pm.delegate.engine.harness_delegate import HarnessDelegate
 from agent_pm.session import ConfigError as SessionConfigError
-from agent_pm.session import DriverError
+from agent_pm.session import SessionError
 
 from delegate.tests.case import REPO, child_env
 from delegate.tests.fakes.harness_session import HarnessSession
@@ -35,11 +35,11 @@ class PlacementSession(HarnessSession):
 class MissingTmuxSession(HarnessSession):
     @classmethod
     def preflight(cls, spec, **placement):
-        raise DriverError("tmux not found")
+        raise SessionError("tmux not found")
 
     @classmethod
     def start(cls, spec, **placement):
-        raise DriverError("tmux not found")
+        raise SessionError("tmux not found")
 
 
 class Refusals(HarnessCase):

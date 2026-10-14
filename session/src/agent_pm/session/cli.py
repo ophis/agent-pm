@@ -29,10 +29,10 @@ from agent_pm.session.engine.types import (
     TAG,
     ActivityState,
     ConfigError,
-    DriverError,
     Hosts,
     KeyPress,
     NotDisplayable,
+    SessionError,
     SessionRow,
 )
 from agent_pm.session.engine.worker import Worker
@@ -273,7 +273,7 @@ def _batch(args, hosts: Hosts) -> int:
         except NotDisplayable as error:
             _say(str(error))
             failed = 1
-        except (ConfigError, DriverError, OSError) as error:
+        except (ConfigError, SessionError, OSError) as error:
             _say(f"{PROG}: {name}: {error}")
             failed = 1
     return failed
@@ -305,7 +305,7 @@ def _ls(args, hosts: Hosts) -> int:
         for host, name in sorted(_listed(args, hosts), key=lambda found: found[1]):
             try:
                 record = host.attach(name).record()
-            except DriverError:
+            except SessionError:
                 if name in host.list():
                     raise
                 continue
@@ -424,7 +424,7 @@ def main(argv: list[str] | None = None) -> int:
     except ConfigError as error:
         _say(f"{PROG}: {error}")
         return 2
-    except (DriverError, OSError) as error:
+    except (SessionError, OSError) as error:
         _say(f"{PROG}: {error}")
         return 1
 

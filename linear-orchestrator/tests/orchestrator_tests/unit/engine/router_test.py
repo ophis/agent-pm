@@ -16,7 +16,7 @@ from unittest import mock
 from agent_pm.linear_orchestrator.engine import config, inputs, issues, ops, router, runs
 from agent_pm.linear_orchestrator.engine import gate as quota
 from agent_pm.linear_orchestrator.engine.types import LinearError, Spec, Unavailable
-from agent_pm.session import ConfigError, DriverError, SessionStatus, Window
+from agent_pm.session import ConfigError, SessionError, SessionStatus, Window
 from agent_pm.session import Usage as SessionUsage
 from agent_pm.utils import SHORT
 from orchestrator_tests.process_fixtures import TimeoutExpired
@@ -1071,7 +1071,7 @@ class ClientUsage(Base):
             (reading(None, None), None),
             (None, "reason=usage unknown"),
             (ConfigError("no client a"), "reason=usage unknown"),
-            (DriverError("boom"), "reason=usage unknown"),
+            (SessionError("boom"), "reason=usage unknown"),
         )
         for value, why in rows:
             with self.subTest(value=value):
@@ -1261,7 +1261,7 @@ class RunBrake(Base):
             (reading(None, None), 0, "five_hour=none weekly=none"),
             (None, 1, "unknown"),
             (ConfigError("no client a"), 1, "unknown"),
-            (DriverError("boom"), 1, "unknown"),
+            (SessionError("boom"), 1, "unknown"),
         )
         for value, rc, out in rows:
             with self.subTest(value=value):
@@ -1898,7 +1898,7 @@ class RunLaunching(OuterBase):
         for value, why in (
             (NO, "no"),
             (SessionStatus("unknown", None, ""), "unknown"),
-            (DriverError("boom"), "DriverError: boom"),
+            (SessionError("boom"), "SessionError: boom"),
         ):
             with self.subTest(why=why):
                 self.api.statuses[SID] = value
@@ -2056,7 +2056,7 @@ class RunLaunching(OuterBase):
 
     def test_a_driver_session_that_cannot_start_exits_1(self):
         for error in (
-            DriverError("detach agent-pm-engineer-TASK-7: duplicate session"),
+            SessionError("detach agent-pm-engineer-TASK-7: duplicate session"),
             ConfigError("cwd must be an existing directory"),
         ):
             with self.subTest(error=error):
@@ -3035,7 +3035,7 @@ class StaleRunRecovery(Base):
     def test_an_unknown_session_changes_nothing_and_is_said_once_a_day(self):
         statuses = (
             SessionStatus("unknown", None, ""),
-            DriverError("boom"),
+            SessionError("boom"),
             ConfigError("no client a"),
         )
         for st in statuses:
@@ -3066,7 +3066,7 @@ class StaleRunRecovery(Base):
     def test_an_unknown_session_is_not_settled_without_the_wait(self):
         fake = self.fake(issue("TASK-1", "In Progress", "researcher", updated=ago(hours=3)))
         self.resumable("TASK-1", "a", 300)
-        self.api.statuses[self.sid("a")] = DriverError("boom")
+        self.api.statuses[self.sid("a")] = SessionError("boom")
 
         def use(b):
             (found,) = b.issues("in_progress")

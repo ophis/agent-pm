@@ -65,7 +65,7 @@ from agent_pm.linear_orchestrator.engine.types import (
     Transient,
     Unavailable,
 )
-from agent_pm.session import SIGNALS, DriverError, Launch, NoRecordedSession, Session
+from agent_pm.session import SIGNALS, Launch, NoRecordedSession, Session, SessionError
 from agent_pm.session import ConfigError as SessionConfigError
 from agent_pm.session import Spec as SessionSpec
 from agent_pm.utils import one_line, parse_time
@@ -121,7 +121,7 @@ def live_sessions(cfg, entries, *, say):
                 live[entry.role].append(ident)
         except (ConfigError, delegate.ConfigError) as error:
             say("recover-skip", ident, once=True, sid=entry.sid, reason=one_line(error))
-        except delegate.DriverError:
+        except delegate.SessionError:
             return None
     return live
 
@@ -282,7 +282,7 @@ class Board:
             except ConfigError as error:
                 self.status_errors[sid] = one_line(error)
                 self.statuses[sid] = None
-            except (delegate.ConfigError, delegate.DriverError):
+            except (delegate.ConfigError, delegate.SessionError):
                 self.statuses[sid] = None
         return self.statuses[sid]
 
@@ -444,7 +444,7 @@ def begin(cfg, spec: Spec, *, role, now=datetime.now):
     if spec.mode == "new" and spec.issue in latest(entries):
         try:
             LinearRun.attach(spec.issue, cfg=cfg).close()
-        except (ConfigError, delegate.ConfigError, delegate.DriverError) as error:
+        except (ConfigError, delegate.ConfigError, delegate.SessionError) as error:
             log("router", "tui-error", spec.issue, msg=one_line(error))
         else:
             log("router", "tui-closed", spec.issue)
@@ -489,7 +489,7 @@ def outer(a, cfg, *, gql, run, keychain, session, harness):
             why = None if st.resumable == "yes" else st.resumable
         except NoRecordedSession:
             why = "no"
-        except (SessionConfigError, DriverError) as e:
+        except (SessionConfigError, SessionError) as e:
             why = one_line(e)
         if why:
             return fail(a.issue, "transient", f"session {a.sid} not resumable ({why})", 3)
@@ -559,7 +559,7 @@ def outer(a, cfg, *, gql, run, keychain, session, harness):
                 (sys.executable, *RUN, *spec.to_argv()), cwd=rd, env=env, blocked_signals=SIGNALS
             ),
         )
-    except (SessionConfigError, DriverError) as e:
+    except (SessionConfigError, SessionError) as e:
         log("router", "launch-error", a.issue, error=one_line(e))
         return 1
     return 0

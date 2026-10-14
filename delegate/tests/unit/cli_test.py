@@ -18,7 +18,7 @@ from agent_pm.delegate.composer.prompt import RESUME
 from agent_pm.delegate.engine.harness_delegate import HarnessDelegate
 from agent_pm.delegate.engine.runner import STOP_LIMIT
 from agent_pm.delegate.engine.state import RunState
-from agent_pm.session import DriverError, NotDisplayable
+from agent_pm.session import NotDisplayable, SessionError
 from agent_pm.utils import Record, Status
 
 from delegate.tests.case import Case, committed
@@ -190,8 +190,8 @@ class Detach(Base):
     def test_a_refusal_exits_2_and_a_start_failure_1_without_a_record(self):
         for failure, code in (
             (ConfigError(f"{self.work}: delegate is still alive"), 2),
-            (DriverError(f"detach {HARNESS}: duplicate session"), 1),
-            (DriverError(f"tui session {TUI} did not start"), 1),
+            (SessionError(f"detach {HARNESS}: duplicate session"), 1),
+            (SessionError(f"tui session {TUI} did not start"), 1),
             (OSError("No space left on device"), 1),
         ):
             with self.subTest(failure=failure):
@@ -967,7 +967,7 @@ class Queries(Case):
     def test_a_failing_key_is_named_and_the_others_answered(self):
         for error, code in (
             (ConfigError("/w/gone: no delegate.json"), 2),
-            (DriverError("tmux: boom"), 1),
+            (SessionError("tmux: boom"), 1),
         ):
             with self.subTest(error=error):
                 got = self.query("status", "gone", "a", gone=error, a=View("a"))

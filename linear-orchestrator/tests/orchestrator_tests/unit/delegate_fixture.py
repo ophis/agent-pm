@@ -3,7 +3,7 @@
 import os
 from dataclasses import replace
 
-from agent_pm.delegate import ConfigError, Delegate, DriverError
+from agent_pm.delegate import ConfigError, Delegate, SessionError
 from agent_pm.linear_orchestrator.engine import config, runs
 from agent_pm.session import ConfigError as SessionConfigError
 from agent_pm.session import NoRecordedSession, SessionStatus
@@ -50,7 +50,7 @@ def provider(api, cfg):
 
         def alive(self):
             if api.live is None:
-                raise DriverError("agent runs unknown")
+                raise SessionError("agent runs unknown")
             return config.driver_name(self.entry.role, self.issue) in api.live
 
         def status(self):

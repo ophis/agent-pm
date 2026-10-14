@@ -62,7 +62,7 @@ TYPES = {
             "Window",
             "Hosts",
             "ConfigError",
-            "DriverError",
+            "SessionError",
             "NotDisplayable",
         ),
         engine_types,

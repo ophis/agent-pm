@@ -22,7 +22,7 @@ ORCH_SESSION_CONTRACT = "linear_orchestrator reaches session only through delega
 ORCH_SESSION_IMPORTS = {
     f"{ORCH_PKG}.engine.router": {  # until TASK-374
         "ConfigError",
-        "DriverError",
+        "SessionError",
         "Launch",
         "NoRecordedSession",
         "SIGNALS",

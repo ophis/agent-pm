@@ -10,13 +10,13 @@ from agent_pm.session import (
     Access,
     ActivityState,
     ConfigError,
-    DriverError,
     Effort,
     Hosts,
     Liveness,
     Mode,
     NotDisplayable,
     Resumable,
+    SessionError,
     SessionInfo,
     SessionRow,
     SessionStatus,
@@ -212,7 +212,7 @@ class WhatToStart(Case):
 
 class DisplayError(Case):
     def test_not_displayable_is_a_driver_error(self):
-        self.assertTrue(issubclass(NotDisplayable, DriverError))
+        self.assertTrue(issubclass(NotDisplayable, SessionError))
         self.assertEqual(
             str(NotDisplayable("host fake cannot display")), "host fake cannot display"
         )

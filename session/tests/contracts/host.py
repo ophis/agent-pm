@@ -14,7 +14,7 @@ import time
 import uuid
 from unittest import mock
 
-from agent_pm.session import Displayable, DriverError, Host, Mode, NotDisplayable, Spec
+from agent_pm.session import Displayable, Host, Mode, NotDisplayable, SessionError, Spec
 from agent_pm.session.engine.hosted_session import HostedSession
 from agent_pm.session.engine.types import Key, KeyPress, Launch, Paste
 from agent_pm.utils import Record
@@ -108,7 +108,7 @@ class HostContract:
         return name
 
     def forget(self, name: str) -> None:
-        with contextlib.suppress(DriverError):
+        with contextlib.suppress(SessionError):
             self.host.attach(name).close()
 
     def env(self, **extra: str) -> dict[str, str]:
@@ -307,7 +307,7 @@ class HostContract:
         process.close()
         self.assertFalse(process.alive())
         self.assertNotIn(name, self.host.list())
-        with self.assertRaises(DriverError):
+        with self.assertRaises(SessionError):
             self.host.attach(name)
 
     def test_publish_stores_the_record_attach_returns_and_needs_a_live_session(self):
@@ -318,18 +318,18 @@ class HostContract:
         terminal.publish(published)
         self.assertEqual(self.host.attach(name).record(), published)
         terminal.close()
-        with self.assertRaises(DriverError):
+        with self.assertRaises(SessionError):
             terminal.publish(published)
 
     def test_attach_of_an_unknown_name_raises_driver_error(self):
-        with self.assertRaises(DriverError):
+        with self.assertRaises(SessionError):
             self.host.attach(f"nope-{uuid.uuid4().hex[:12]}")
 
     def test_a_live_name_is_refused(self):
         name = self.fresh()
         process = self.start("detach", name, SLEEP)
         for kind in ("detach", "terminal"):
-            with self.subTest(kind=kind), self.assertRaises(DriverError):
+            with self.subTest(kind=kind), self.assertRaises(SessionError):
                 self.start(kind, name, SLEEP)
         self.assertTrue(process.alive())
 

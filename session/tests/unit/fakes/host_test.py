@@ -11,7 +11,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from agent_pm.session import ConfigError, DriverError, Launch
+from agent_pm.session import ConfigError, Launch, SessionError
 from agent_pm.utils import ProcessControl
 
 from session.tests.case import Case
@@ -68,7 +68,7 @@ class FailedStart(Case):
             mock.patch("os.killpg") as killpg,
             mock.patch("time.monotonic", side_effect=itertools.count(0, 100)),
             mock.patch("time.sleep"),
-            self.assertRaises((DriverError, OSError)) as raised,
+            self.assertRaises((SessionError, OSError)) as raised,
         ):
             host.detach("w1", Launch(tuple(program(SLEEP)), cwd=self.home))
         meta = json.loads(Path(self.home, "hosts", "w1", "meta.json").read_text())
@@ -77,7 +77,7 @@ class FailedStart(Case):
 
     def test_an_exited_supervisor_is_not_signalled(self):
         error, killpg = self.start(mock.Mock(pid=4242, returncode=1), pid_file=False)
-        self.assertIsInstance(error, DriverError)
+        self.assertIsInstance(error, SessionError)
         self.assertRegex(str(error), "did not start")
         killpg.assert_not_called()
 
@@ -121,9 +121,9 @@ class ControlTest(Case):
                 b'{"error": "permission denied", "errno": 1}\n',
                 b'{"live": false}\n',
             ]
-            with self.assertRaisesRegex(DriverError, "permission denied"):
+            with self.assertRaisesRegex(SessionError, "permission denied"):
                 process.wait_exit(0)
-            with self.assertRaisesRegex(DriverError, "permission denied"):
+            with self.assertRaisesRegex(SessionError, "permission denied"):
                 process.kill()
             process.kill()
             self.assertTrue(process.wait_exit(0))

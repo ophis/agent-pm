@@ -12,7 +12,7 @@ import unittest
 
 from agent_pm.session import Exited, Launch, Mode, Reply, Spec, TurnEnd
 from agent_pm.session.engine.hosted_session import HostedSession
-from agent_pm.session.extension import ConfigError, DriverError, Host, Record
+from agent_pm.session.extension import ConfigError, Host, Record, SessionError
 
 from session.tests import outside
 from session.tests.case import Case
@@ -75,7 +75,7 @@ class OutsideTest(Case):
         process.kill()
         self.assertTrue(process.wait_exit(WAIT))
         self.assertFalse(process.alive())
-        with self.assertRaises(DriverError):
+        with self.assertRaises(SessionError):
             host.attach("j2")
 
 

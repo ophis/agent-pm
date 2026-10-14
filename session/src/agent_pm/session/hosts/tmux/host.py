@@ -24,7 +24,6 @@ from agent_pm.session.engine.status_log import SessionStatusLog
 from agent_pm.session.engine.types import (
     ActivityState,
     ConfigError,
-    DriverError,
     HookCallback,
     Key,
     KeyPress,
@@ -32,6 +31,7 @@ from agent_pm.session.engine.types import (
     Liveness,
     NamedKey,
     Paste,
+    SessionError,
     SessionRow,
     TuiSettings,
     Word,
@@ -584,7 +584,7 @@ class Tmux:
 
 def _session(name) -> str:
     if not isinstance(name, str) or not NAME.fullmatch(name):
-        raise DriverError(f"no tmux session {name!r:.80}")
+        raise SessionError(f"no tmux session {name!r:.80}")
     return name
 
 
@@ -607,7 +607,7 @@ class TmuxProcess(HostProcess):
         _, _, self._pane, _ = process.split(" ")
         path = self._option("@control") if control is None else None
         if control is None and self._option("@kind") in ("detach", "terminal") and not path:
-            raise DriverError(
+            raise SessionError(
                 f"tmux session {name}: missing @control; close sessions before upgrading"
             )
         try:
@@ -616,7 +616,7 @@ class TmuxProcess(HostProcess):
             else:
                 self._control = ProcessControl.attach(path) if path else None
         except OSError as error:
-            raise DriverError(f"tmux session {name}: invalid @control: {error}") from error
+            raise SessionError(f"tmux session {name}: invalid @control: {error}") from error
 
     @property
     def identity(self) -> str:
@@ -630,16 +630,16 @@ class TmuxProcess(HostProcess):
         if not isinstance(record, Record):
             raise ConfigError(f"record: want a Record, got {type(record).__name__}")
         if not self._own():
-            raise DriverError(f"tmux session {self.name} is gone")
+            raise SessionError(f"tmux session {self.name} is gone")
         try:
             self.tmux.set_option(self._pane, "@record", record.to_line())
         except TuiError as error:
-            raise DriverError(f"tmux session {self.name}: {error}") from error
+            raise SessionError(f"tmux session {self.name}: {error}") from error
 
     def state(self) -> Liveness:
         try:
             own, value = self._pane_state()
-        except DriverError:
+        except SessionError:
             return Liveness.UNKNOWN
         if not own or value is None:
             return Liveness.ABSENT
@@ -648,7 +648,7 @@ class TmuxProcess(HostProcess):
     def returncode(self) -> int | None:
         try:
             own, value = self._pane_state()
-        except DriverError:
+        except SessionError:
             return None
         if not own or value is None:
             return -signal.SIGHUP
@@ -666,14 +666,14 @@ class TmuxProcess(HostProcess):
             try:
                 self.tmux.mark(word, events, pane=self._pane)
             except TuiError as error:
-                raise DriverError(str(error)) from error
+                raise SessionError(str(error)) from error
 
     def alive(self) -> bool:
         own, state = self._pane_state()
         if not own:
             return False
         if state == PaneStatus.UNKNOWN:
-            raise DriverError(f"tmux session {self.name}: tmux failed")
+            raise SessionError(f"tmux session {self.name}: tmux failed")
         return state == PaneStatus.RUNNING and (self._control is None or self._control.running())
 
     def wait_exit(self, timeout: float) -> bool:
@@ -687,20 +687,20 @@ class TmuxProcess(HostProcess):
     def kill(self) -> None:
         self._kill_group()
         if not self.wait_exit(KILL_WAIT):
-            raise DriverError(f"process group {self.name}: did not exit")
+            raise SessionError(f"process group {self.name}: did not exit")
 
     def close(self) -> None:
         """Closes the pane, then ends the process group, even when the pane fails; every failure
-        is in the one DriverError raised.
+        is in the one SessionError raised.
         """
         failures = []
         for step in (self._close_pane, self._end_group):
             try:
                 step()
-            except DriverError as error:
+            except SessionError as error:
                 failures.append(str(error))
         if failures:
-            raise DriverError("; ".join(failures))
+            raise SessionError("; ".join(failures))
 
     def _end_group(self) -> None:
         if self._control is None:
@@ -710,11 +710,11 @@ class TmuxProcess(HostProcess):
         except (ConnectionRefusedError, ConnectionResetError):
             return
         except OSError as error:
-            raise DriverError(f"process group {self.name}: {error}") from error
+            raise SessionError(f"process group {self.name}: {error}") from error
         if not self._wait_group(KILL_WAIT):
             self._kill_group()
             if not self._wait_group(KILL_WAIT):
-                raise DriverError(f"process group {self.name}: did not exit")
+                raise SessionError(f"process group {self.name}: did not exit")
 
     def _wait_group(self, timeout: float) -> bool:
         deadline = time.monotonic() + timeout
@@ -731,7 +731,7 @@ class TmuxProcess(HostProcess):
             self.tmux.kill(self._pane)
         except TuiError as e:
             if self._own():
-                raise DriverError(str(e)) from None
+                raise SessionError(str(e)) from None
 
     def record(self) -> Record | None:
         line = self._option("@record")
@@ -748,20 +748,20 @@ class TmuxProcess(HostProcess):
         try:
             found, value = self.tmux.process_status(self._pane)
         except TuiError as e:
-            raise DriverError(f"tmux session {self.name}: {e}") from None
+            raise SessionError(f"tmux session {self.name}: {e}") from None
         return found == self._process, value
 
     def _own(self) -> bool:
         try:
             return self.tmux.process(self._pane) == self._process
         except TuiError as e:
-            raise DriverError(f"tmux session {self.name}: {e}") from None
+            raise SessionError(f"tmux session {self.name}: {e}") from None
 
     def _group_live(self) -> bool:
         try:
             return self._control is not None and self._control.live()
         except OSError as error:
-            raise DriverError(f"process group {self.name}: {error}") from error
+            raise SessionError(f"process group {self.name}: {error}") from error
 
     def _kill_group(self) -> None:
         if self._control is None:
@@ -770,7 +770,7 @@ class TmuxProcess(HostProcess):
         try:
             self._control.kill()
         except OSError as error:
-            raise DriverError(f"process group {self.name}: {error}") from error
+            raise SessionError(f"process group {self.name}: {error}") from error
 
     def _option(self, key: str) -> str | None:
         if not self._own():
@@ -778,7 +778,7 @@ class TmuxProcess(HostProcess):
         try:
             return self.tmux.option(self._pane, key)
         except TuiError as e:
-            raise DriverError(f"tmux session {self.name}: {e}") from None
+            raise SessionError(f"tmux session {self.name}: {e}") from None
 
 
 class TmuxGroup(HostProcess):
@@ -796,7 +796,7 @@ class TmuxGroup(HostProcess):
         try:
             return self._control.live()
         except OSError as error:
-            raise DriverError(f"process group {self.name}: {error}") from error
+            raise SessionError(f"process group {self.name}: {error}") from error
 
     def wait_exit(self, timeout: float) -> bool:
         deadline = time.monotonic() + timeout
@@ -810,15 +810,15 @@ class TmuxGroup(HostProcess):
         try:
             self._control.kill()
         except OSError as error:
-            raise DriverError(f"process group {self.name}: {error}") from error
+            raise SessionError(f"process group {self.name}: {error}") from error
         if not self.wait_exit(KILL_WAIT):
-            raise DriverError(f"process group {self.name}: did not exit")
+            raise SessionError(f"process group {self.name}: did not exit")
 
     def close(self) -> None:
         try:
             self._control.terminate()
         except OSError as error:
-            raise DriverError(f"process group {self.name}: {error}") from error
+            raise SessionError(f"process group {self.name}: {error}") from error
         if not self.wait_exit(KILL_WAIT):
             self.kill()
 
@@ -834,7 +834,7 @@ class TmuxTerminal(TmuxProcess, Terminal):
 
     def send(self, action: Paste | Key) -> None:
         if not self.alive():
-            raise DriverError(f"tui session {self.name} is not running")
+            raise SessionError(f"tui session {self.name} is not running")
         try:
             if isinstance(action, Paste):
                 self.tmux.paste(self._pane, action.text)
@@ -845,19 +845,19 @@ class TmuxTerminal(TmuxProcess, Terminal):
                 self.tmux.keys(self._pane, action.name)
                 self._pasted = False
         except TuiError as error:
-            raise DriverError(f"send to tui session {self.name}: {error}") from error
+            raise SessionError(f"send to tui session {self.name}: {error}") from error
 
     def press(self, keys) -> None:
         names = [_tmux_key(key) for key in keys]
         if not self.alive():
-            raise DriverError(f"tui session {self.name} is not running")
+            raise SessionError(f"tui session {self.name} is not running")
         try:
             if self._pasted:
                 time.sleep(self.tmux.PAUSE)
             self.tmux.press(self._pane, *names)
             self._pasted = False
         except TuiError as error:
-            raise DriverError(f"send to tui session {self.name}: {error}") from error
+            raise SessionError(f"send to tui session {self.name}: {error}") from error
 
 
 def _tmux_key(key) -> str:
@@ -1006,7 +1006,7 @@ class TmuxHost(Host, Displayable):
                 else str(error)
             )
             prefix = "" if terminal else f"detach {name}: "
-            raise DriverError(f"{prefix}{failure}{detail}") from error
+            raise SessionError(f"{prefix}{failure}{detail}") from error
         return TmuxProcess(name, process, tmux=self.tmux, control=control)
 
     def validate(self, name: str, launch: Launch, *, display: Display = None) -> None:
@@ -1014,14 +1014,14 @@ class TmuxHost(Host, Displayable):
         try:
             self.tmux.validate_start(name, launch.argv, launch.env, {})
         except TuiError as error:
-            raise DriverError(str(error)) from error
+            raise SessionError(str(error)) from error
         self.tui_settings()
 
     def prepare_events(self, events: str | None) -> str | None:
         try:
             return None if events is None else self.tmux.events_file(events)
         except TuiError as error:
-            raise DriverError(str(error)) from error
+            raise SessionError(str(error)) from error
 
     def events_path(self, events: str | None) -> str | None:
         try:
@@ -1047,7 +1047,7 @@ class TmuxHost(Host, Displayable):
     def _executable(self) -> str:
         path = self.tmux.tmux_path()
         if path is None:
-            raise DriverError("tmux not found")
+            raise SessionError("tmux not found")
         return path
 
     def tui_settings(self) -> TuiSettings:
@@ -1085,23 +1085,23 @@ class TmuxHost(Host, Displayable):
         """
         state = self.tmux.status(_session(name))
         if state is None:
-            raise DriverError(f"no tmux session {name}")
+            raise SessionError(f"no tmux session {name}")
         if state == PaneStatus.UNKNOWN:
-            raise DriverError(f"tmux session {name}: tmux failed")
+            raise SessionError(f"tmux session {name}: tmux failed")
         try:
             kind = self.tmux.option(name, "@kind")
             launched = kind in ("detach", "terminal")
             process = self.tmux.option(name, "@process") if launched else self.tmux.process(name)
         except TuiError as e:
-            raise DriverError(f"tmux session {name}: {e}") from None
+            raise SessionError(f"tmux session {name}: {e}") from None
         if launched and process is None:
-            raise DriverError(
+            raise SessionError(
                 f"tmux session {name}: missing @process; close sessions before upgrading"
             )
         if launched and not PROCESS_ID.fullmatch(process or ""):
-            raise DriverError(f"tmux session {name}: bad @process {process!r:.80}")
+            raise SessionError(f"tmux session {name}: bad @process {process!r:.80}")
         if process is None:
-            raise DriverError(f"no tmux session {name}")
+            raise SessionError(f"no tmux session {name}")
         return (TmuxTerminal if kind == "terminal" else TmuxProcess)(name, process, tmux=self.tmux)
 
     def list(self, display: Display = None) -> list[str]:
@@ -1109,7 +1109,7 @@ class TmuxHost(Host, Displayable):
             return []
         found = self.tmux.listing()
         if found is None:
-            raise DriverError("tmux sessions unknown: tmux failed")
+            raise SessionError("tmux sessions unknown: tmux failed")
         parts = self.unfold(display)
 
         def matches(value):
@@ -1128,7 +1128,7 @@ class TmuxHost(Host, Displayable):
         found = set(self.list(display))
         rows = self.tmux.listing() if found else []
         if rows is None:
-            raise DriverError("tmux sessions unknown: tmux failed")
+            raise SessionError("tmux sessions unknown: tmux failed")
         while grown := {
             row["name"] for row in rows if row["name"] not in found and row["opener"] in found
         }:
@@ -1137,7 +1137,7 @@ class TmuxHost(Host, Displayable):
 
     def reclaim(self, token: str) -> TmuxGroup | None:
         """A group-only handle on token's controller (a private apm-group-* directory and
-        socket of this user's) while its group lives; else None; DriverError if it cannot tell.
+        socket of this user's) while its group lives; else None; SessionError if it cannot tell.
         """
         if not isinstance(token, str):
             return None
@@ -1152,11 +1152,11 @@ class TmuxHost(Host, Displayable):
         names = set(self.list(display))
         found = self.tmux.listing()
         if found is None:
-            raise DriverError("tmux sessions unknown: tmux failed")
+            raise SessionError("tmux sessions unknown: tmux failed")
         try:
             own = self.tmux.own_session() if found else None
         except TuiError as error:
-            raise DriverError(f"tmux sessions unknown: {error}") from error
+            raise SessionError(f"tmux sessions unknown: {error}") from error
         return [
             SessionRow(
                 name=row["name"],
@@ -1201,7 +1201,7 @@ class TmuxHost(Host, Displayable):
 
     def show(self, name: str, *, display: Display = None, command: str | None = None) -> str | None:
         if self.tmux.status(_session(name)) is None:
-            raise DriverError(f"no tmux session {name}")
+            raise SessionError(f"no tmux session {name}")
         try:
             why = (
                 self.tmux.open_pane(
@@ -1226,14 +1226,14 @@ class TmuxHost(Host, Displayable):
     def screen(self, name: str | HostProcess, lines: int | None = None) -> str:
         if isinstance(name, HostProcess):
             if not isinstance(name, TmuxProcess) or name.tmux is not self.tmux or not name.alive():
-                raise DriverError(f"session {name.name} is not running on host {self.name}")
+                raise SessionError(f"session {name.name} is not running on host {self.name}")
             target = name._pane
         else:
             target = _session(name)
         try:
             return self.tmux.read(target, lines)
         except TuiError as e:
-            raise DriverError(f"tmux session {name}: {e}") from None
+            raise SessionError(f"tmux session {name}: {e}") from None
 
     def layout(self, *, display: Display = None) -> str | None:
         """display, its opener part the caller's once the pane it goes beside (split_from's, else
@@ -1252,7 +1252,7 @@ class TmuxHost(Host, Displayable):
                     if split_from is None:
                         raise
         except TuiError as e:
-            raise DriverError(
+            raise SessionError(
                 f"no pane to show the TUI beside ({e})" + ("" if split_from else NO_PANE_HINT)
             ) from None
         return self.fold(opener, split, split_from)
@@ -1261,7 +1261,7 @@ class TmuxHost(Host, Displayable):
         try:
             self.tmux.tile(window)
         except TuiError as e:
-            raise DriverError(f"tile {window}: {e}") from None
+            raise SessionError(f"tile {window}: {e}") from None
 
     def _parts(self, display) -> Parts:
         parts = self.unfold(display)

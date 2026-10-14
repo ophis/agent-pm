@@ -12,7 +12,7 @@ import time
 from unittest import mock
 
 from agent_pm.session import Displayable
-from agent_pm.session.engine.types import DriverError, Launch
+from agent_pm.session.engine.types import Launch, SessionError
 from agent_pm.session.hosts.tmux import TmuxHost, layout
 from agent_pm.session.hosts.tmux import grid as tmux_model
 from agent_pm.session.hosts.tmux.host import Tmux
@@ -218,7 +218,7 @@ class SplitsTest(Live):
             self.assertEqual(self.session_cls.layout(), MANAGER)
         beside = f"/below/{MANAGER}"
         self.assertEqual(self.session_cls.layout(display=beside), beside)
-        with self.assertRaises(DriverError) as caught:
+        with self.assertRaises(SessionError) as caught:
             self.session_cls.layout(display="/below")
         self.assertTrue(
             str(caught.exception).endswith(": run from tmux or iTerm2, or pass split_from"),

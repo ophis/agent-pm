@@ -9,7 +9,16 @@ import tempfile
 from dataclasses import replace
 from unittest import mock
 
-from agent_pm.session import Access, ConfigError, DriverError, Effort, Host, Mode, Spec, read_config
+from agent_pm.session import (
+    Access,
+    ConfigError,
+    Effort,
+    Host,
+    Mode,
+    SessionError,
+    Spec,
+    read_config,
+)
 from agent_pm.session.engine.hosted_session import HostedSession
 from agent_pm.session.hosts.tmux.host import validate_events, validate_start
 from agent_pm.session.hosts.tmux.types import PaneStatus, TuiError
@@ -106,7 +115,7 @@ class Preflight(Case):
                 with self.assertRaises(ConfigError) as refusal:
                     self.session.preflight(spec)
                 self.assertEqual(str(refusal.exception), "command not found: claude")
-                with self.assertRaises(DriverError) as failure:
+                with self.assertRaises(SessionError) as failure:
                     self.session.start(spec)
                 session_name = name if name is not None else f"claude-{SID[:8]}"
                 self.assertEqual(
@@ -123,7 +132,7 @@ class Preflight(Case):
         before = self.tree()
         with self.no_client():
             self.assertIsNone(self.session.preflight(spec))
-            with self.assertRaises(DriverError) as failure:
+            with self.assertRaises(SessionError) as failure:
                 self.session.start(spec)
         self.assertEqual(
             str(failure.exception), f"cannot start tui session event-worker: {message}"
@@ -296,7 +305,7 @@ print(json.dumps([result, PreflightAdapter.prepared[-1].sid, PreflightAdapter.co
         self.unchanged(before)
         self.tmux.kill.assert_not_called()
         self.tmux.status.return_value = PaneStatus.RUNNING
-        with self.no_client(), self.assertRaises(DriverError) as failure:
+        with self.no_client(), self.assertRaises(SessionError) as failure:
             self.session.start(spec)
         self.assertEqual(str(failure.exception), message)
 

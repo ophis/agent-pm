@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 from functools import partial
 
 from agent_pm.delegate import ConfigError as DelegateConfigError
-from agent_pm.delegate import DelegateEvent, DriverError
+from agent_pm.delegate import DelegateEvent, SessionError
 from agent_pm.linear_orchestrator.engine import client, promote, router, run, runs, writeback
 from agent_pm.linear_orchestrator.engine import log as event_log
 from agent_pm.linear_orchestrator.engine.config import load
@@ -87,7 +87,7 @@ def main(argv=None):
         viewed,
         reply,
         usage=(ConfigError, DelegateConfigError, ValueError),
-        failures=(DriverError, RuntimeError, OSError),
+        failures=(SessionError, RuntimeError, OSError),
         prog="agent-pm-linear",
         out=sys.stdout,
         err=sys.stderr,

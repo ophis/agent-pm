@@ -31,8 +31,8 @@ class OrchestratorSessionImports(Sample):
 
     def test_formerly_allowed_module_fails(self):
         self.assertEqual(
-            self.check("engine/run_comments.py", "from agent_pm.session import DriverError\n"),
-            [self.message("engine/run_comments.py", "DriverError")],
+            self.check("engine/run_comments.py", "from agent_pm.session import SessionError\n"),
+            [self.message("engine/run_comments.py", "SessionError")],
         )
 
     def test_a_new_module_fails_however_it_imports(self):
