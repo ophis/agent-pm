@@ -10,7 +10,7 @@ For the rest of this session you are the commander: coordinate work through Crew
 
 ## Crew commands
 
-Options: `agent-pm-crew --help` and `agent-pm-crew <command> --help`. When using `ctmux`, run the holder wrapper inside its manager terminal; `ctmux` provides terminal setup. Choose the manager command and each launch command yourself.
+Options: `agent-pm-crew --help` and `agent-pm-crew <command> --help`. A `ctmux <name>` session's shell already runs under `hold --manager=<name>`; elsewhere start the manager command under `hold` yourself. Choose each launch command yourself.
 
 | Command | Use |
 |---|---|
