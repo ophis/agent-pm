@@ -1,6 +1,4 @@
-"""modes/tui.py with its hook run for real, over a fake tmux module: a hook firing while close
-removes a session's files recreates none of them.
-"""
+"""A hook firing while close removes its mode state recreates no files."""
 
 import os
 import subprocess
@@ -9,13 +7,13 @@ import unittest
 from unittest import mock
 
 from agent_pm.session.engine.types import Spec
-from agent_pm.session.hosts.tmux import tmux_host
 from agent_pm.session.modes import tui
 
 from session.tests import fake_adapter
 from session.tests.case import Case
+from session.tests.fakes.terminal import ScreenHost
 from session.tests.source_roots import PACKAGE_ROOTS
-from session.tests.tui_support import SID, fake_host
+from session.tests.tui_support import SID
 
 NAME = "w1"
 
@@ -24,7 +22,7 @@ class CloseTest(Case):
     def test_close_prevents_a_late_hook_from_recreating_files_during_removal(self):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
-        root, host = os.path.join(self.agent_pm, "tui"), fake_host()
+        root, host = os.path.join(self.agent_pm, "tui"), ScreenHost()
         tui.TuiMode.start(
             Spec(
                 workdir=tmp.name,
@@ -38,13 +36,12 @@ class CloseTest(Case):
             record=lambda _info: None,
             host=host,
         )
-        host.status.return_value = tmux_host.PaneStatus.RUNNING
         remove, hooks = os.rmdir, []
 
         def remove_after_hook(path, *args, **kwargs):
             hooks.append(
                 subprocess.run(
-                    [*tui._Store(NAME).hook_argv(PACKAGE_ROOTS), "stop"],
+                    [*tui._Store(NAME, host=host).hook_argv(PACKAGE_ROOTS), "stop"],
                     input=b"{}",
                     capture_output=True,
                     check=True,

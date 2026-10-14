@@ -93,8 +93,8 @@ def _prepare(argv: list[str]):
     _check_callbacks(state, path, ValueError)
     for kind in ("adapter", "host"):
         if name := state.get(kind + "_hook"):
-            check_module(name, roots, kind + " hook", ValueError)
-    check_module("agent_pm.session.engine.types", roots, "shared types", ValueError)
+            _check_module(name, roots, kind + " hook", ValueError)
+    _check_module("agent_pm.session.engine.types", roots, "shared types", ValueError)
     return folder, label, state
 
 
@@ -110,11 +110,13 @@ def main(argv: list[str], stdin) -> None:
 def _dispatch(folder, label, payload, state):
     _validate_state(state, os.path.join(folder, STATE), HookError)
     if "adapter_hook" in state:
-        adapter = load_callback(state["adapter_hook"], "adapter hook")
+        adapter = _load_callback(state["adapter_hook"], "adapter hook")
         if adapter.on_hook(label, payload, state) is False:
             return
     word = state["words"].get(label)
-    host = load_callback(state["host_hook"], "host hook") if word and "host_hook" in state else None
+    host = (
+        _load_callback(state["host_hook"], "host hook") if word and "host_hook" in state else None
+    )
     if word != Word.DONE:
         payload = cut(payload)
     stamp = datetime.now().astimezone().isoformat(timespec="milliseconds")
@@ -203,7 +205,7 @@ def _check_callbacks(state, path, error):
             raise error(f"{path}: bad {data}")
 
 
-def check_module(name: str, roots: list[str], kind: str, error):
+def _check_module(name: str, roots: list[str], kind: str, error):
     paths = sys.path
     parts = name.split(".")
     for index in range(len(parts)):
@@ -225,7 +227,7 @@ def check_module(name: str, roots: list[str], kind: str, error):
         paths = list(spec.submodule_search_locations or ())
 
 
-def load_callback(name: str, kind: str):
+def _load_callback(name: str, kind: str):
     module = importlib.import_module(name)
     if not callable(getattr(module, "on_hook", None)):
         raise HookError(f"{kind} {name}: missing on_hook callback")
