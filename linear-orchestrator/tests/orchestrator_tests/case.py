@@ -13,12 +13,11 @@ from unittest import mock
 
 import agent_pm
 from agent_pm.linear_orchestrator.engine import log
-from agent_pm.utils import import_roots
 
-from utils.tests.sandbox import clean_env
+from utils.tests.sandbox import clean_env, project_roots
 
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
-ROOTS = import_roots(REPO)
+ROOTS = project_roots(REPO)
 SRC = {os.path.basename(os.path.dirname(r)).replace("-", "_"): r for r in ROOTS}
 PYTHONPATH = os.pathsep.join(ROOTS)
 RUN_WITH = os.pathsep.join(os.path.relpath(root, REPO) for root in ROOTS)
