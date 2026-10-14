@@ -13,7 +13,7 @@ def clean_env(base=None, *import_roots):
         key: value
         for key, value in source.items()
         if not key.startswith(("GIT_", "PYTHON"))
-        and key not in {"TMUX", "TMUX_PANE", "PYTHONUSERBASE"}
+        and key not in {"TMUX", "TMUX_PANE", "TMUX_TMPDIR"}
     }
     env.update(GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM="1")
     env["GIT_CEILING_DIRECTORIES"] = os.pathsep.join(

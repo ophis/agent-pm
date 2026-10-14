@@ -184,6 +184,8 @@ class Checks:
             "PATH": "/b",
             "PYTHONPATH": "/x",
             "PYTHONHOME": "/y",
+            "PYTHONUSERBASE": "/ambient-python",
+            "TMUX_TMPDIR": "/ambient-tmux",
             "PYTHONSAFEPATH": "1",
             "PYTHONDONTWRITEBYTECODE": "1",
         }

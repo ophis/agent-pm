@@ -160,16 +160,28 @@ def supervise(title):
             AGENT_PM_TEST_WORKSPACE=workspace,
         )
         isolation.blockers(Path(tmp) / "blocked-bin")
-        with subprocess.Popen(
-            [sys.executable, "-P", "-S", "-X", "faulthandler", *sys.orig_argv[1:]],
-            env={**env, STATE: state},
-            stderr=subprocess.PIPE,
-            text=True,
-            errors="replace",
-        ) as child:
-            for line in child.stderr:
-                sys.stderr.write(line)
-                tail.append(line)
+        try:
+            with subprocess.Popen(
+                [sys.executable, "-P", "-S", "-X", "faulthandler", *sys.orig_argv[1:]],
+                env={**env, STATE: state},
+                stderr=subprocess.PIPE,
+                text=True,
+                errors="replace",
+            ) as child:
+                for line in child.stderr:
+                    sys.stderr.write(line)
+                    tail.append(line)
+        finally:
+            socket = Path(tmp) / f"tmux-{os.getuid()}" / "default"
+            if socket.exists():
+                subprocess.run(
+                    ["tmux", "-S", str(socket), "kill-server"],
+                    env=env,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    timeout=10,
+                    check=False,
+                )
         with open(state, encoding="utf-8") as file:
             lines = file.read().splitlines()
     code = 128 - child.returncode if child.returncode < 0 else child.returncode

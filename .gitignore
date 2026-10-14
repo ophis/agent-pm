@@ -1,4 +1,5 @@
 work/
+.test-sandbox-*/
 logs/
 __pycache__/
 .DS_Store

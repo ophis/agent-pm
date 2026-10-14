@@ -37,7 +37,7 @@ from agent_pm.session.engine.types import (
 from agent_pm.session.modes import tui_hook
 
 from session.tests import live_tmux
-from session.tests.case import PY, REPO, ROOTS, SRC, Case, child_env, settings
+from session.tests.case import PY, REPO, ROOTS, SRC, Case, settings
 from session.tests.integration.adapters.codex import fake_codex, fake_tui
 from session.tests.source_roots import PACKAGE_ROOTS
 from session.tests.unit.adapters.codex.support import CHILD, NATIVE, Base
@@ -216,7 +216,7 @@ class Live(Case):
     def attach(self, text="", name="w1"):
         result = subprocess.run(
             [*PY, "-c", ATTACH, json.dumps(self.config), name, text],
-            env=child_env(),
+            env=self.server.child_env(),
             text=True,
             capture_output=True,
             stdin=subprocess.DEVNULL,

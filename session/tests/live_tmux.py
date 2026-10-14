@@ -13,6 +13,7 @@ import threading
 import time
 from typing import NamedTuple
 
+from session.tests.case import child_env
 from session.tests.grid import GridCheck
 from session.tests.integration.adapters.claude import fake_claude
 
@@ -60,6 +61,9 @@ class Server:
             "TMUX_TMPDIR": self.root,
             **extra,
         }
+
+    def child_env(self) -> dict[str, str]:
+        return {**child_env(), "TMUX_TMPDIR": self.root}
 
     def start(self, manager: str, width: int = 200, height: int = 50) -> None:
         """Capped (RLIMIT_NPROC) at the user's processes plus HEADROOM against a fork loop."""

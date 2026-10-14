@@ -1,8 +1,11 @@
 """Exercise irreversible audit hooks in disposable interpreters before real state is reached."""
 
 import json
+import shutil
 import subprocess
 import sys
+import time
+import unittest
 from pathlib import Path
 
 from tests.case import REPO, Case
@@ -95,6 +98,51 @@ print(json.dumps(sorted(blocked)))
 
 
 class SandboxGates(Case):
+    @unittest.skipUnless(shutil.which("tmux"), "tmux is unavailable")
+    def test_supervisor_stops_its_private_default_tmux_server(self):
+        root = Path(self.home)
+        package = root / "integration"
+        package.mkdir()
+        (package / "__init__.py").touch()
+        marker = root / "server-pid"
+        (package / "server_test.py").write_text(
+            "import os, subprocess, unittest\nfrom pathlib import Path\n"
+            "class Server(unittest.TestCase):\n"
+            "    def test_private(self):\n"
+            "        subprocess.run(['tmux', '-f', os.devnull, 'new-session', '-d', 'sleep 300'], check=True)\n"
+            "        pid = subprocess.check_output(['tmux', 'display-message', '-p', '#{pid}'], text=True)\n"
+            f"        Path({str(marker)!r}).write_text(pid)\n"
+        )
+        env = clean_env(None, REPO, str(Path(REPO, ".github")))
+        env.pop("RUN_TESTS_STATE", None)
+        proc = subprocess.run(
+            [
+                sys.executable,
+                "-P",
+                "-S",
+                str(Path(REPO, ".github/run_tests.py")),
+                "Private tmux",
+                "integration",
+            ],
+            cwd=root,
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        pid = marker.read_text().strip()
+        deadline = time.monotonic() + 3
+        while True:
+            state = subprocess.run(
+                ["ps", "-p", pid, "-o", "stat="], capture_output=True, text=True, timeout=5
+            )
+            if state.returncode == 1 or state.stdout.strip().startswith("Z"):
+                break
+            if time.monotonic() >= deadline:
+                self.fail(f"private tmux server {pid} remains live: {state.stdout}")
+            time.sleep(0.01)
+
     def test_caught_and_background_violations_still_fail_at_stop_test(self):
         script = """import json, os, sys, threading, unittest
 from pathlib import Path
