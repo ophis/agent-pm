@@ -63,7 +63,7 @@ class SkillFlows(LiveCrew):
 
     def test_a_role_runs_dry_run_check_prints_its_plan_and_starts_nothing(self):
         work = self.workdir("r")
-        self.ok(self.written("tmux", "agent-pm-crew attach"))
+        os.makedirs(work)
         out = self.ok(
             self.written(
                 "tmux",
@@ -71,7 +71,6 @@ class SkillFlows(LiveCrew):
                 "--dry-run",
                 role=ROLE,
                 workdir=work,
-                events=self.events,
                 input="Hello, it's me.",
             )
         )
