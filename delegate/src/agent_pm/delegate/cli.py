@@ -2,8 +2,8 @@
 """agent-pm-delegate: run a role on HarnessDelegate, deliver its prompt, or query its runs.
 `run --detach` starts the run's harness and prints the run's Record line on stdout. main reads
 $AGENT_PM_SID and $AGENT_PM_EVENTS once and removes them from its environment: `run`'s sid is --sid,
-else $AGENT_PM_SID (the two must agree); `run --detach`'s events file is --events, else
-$AGENT_PM_EVENTS.
+else $AGENT_PM_SID (the two must agree); `resume` refuses a run of another $AGENT_PM_SID;
+`run --detach`'s events file is --events, else $AGENT_PM_EVENTS.
 
 Exits 0 on success, 2 on usage or config errors, 1 on other failures.
 """
@@ -57,7 +57,7 @@ def main(
         return _run(a, run, argv[1:], delegate_cls, sid=sid, events=events)
     if a.command == "prompt":
         return _prompt(a, prompt, delegate_cls)
-    return _query(a, delegate_cls)
+    return _query(a, delegate_cls, sid)
 
 
 def _common_options(ap: argparse.ArgumentParser) -> None:
@@ -240,12 +240,12 @@ def _prompt(
     return 0
 
 
-def _query(a: argparse.Namespace, delegate_cls: type[HarnessDelegate]) -> int:
+def _query(a: argparse.Namespace, delegate_cls: type[HarnessDelegate], sid: str | None) -> int:
     single = a.command in ("outcome", "resume", "attach-command")
     keys = ([] if a.keys is None else [a.keys]) if single else a.keys
 
     def viewed(key):
-        view = delegate_cls.attach(key)
+        view = delegate_cls.attach(key, sid=sid if a.command == "resume" else None)
         if single:
             return "", view
         status = view.status()

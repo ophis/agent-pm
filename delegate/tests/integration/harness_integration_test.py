@@ -1120,6 +1120,40 @@ class Attempts(HarnessCase):
         self.assertEqual(stamps, {(SID, 2)})
 
 
+class LiveNameSession(HarnessSession):
+    """Refuses, as the real preflight does, a session whose name a live one holds."""
+
+    @classmethod
+    def preflight(cls, spec, **placement):
+        super().preflight(spec, **placement)
+        if spec.name in cls.live:
+            raise DriverError(f"tui session {spec.name} is running")
+
+
+class Answer(HarnessCase):
+    def test_an_answer_closes_the_ended_runs_open_tui_and_detaches_its_next_attempt(self):
+        LiveNameSession.reset()
+        tui = Spec("Hello.", self.work, cwd=self.work, client="fake", sid=SID, mode="tui")
+        placed = {"host": "agent", "harness_host": "harness", "session_cls": LiveNameSession}
+        record = self.make(spec=tui, **placed).detach()
+        harness, agent = (
+            RecordingHost.processes[host, name]
+            for host, name in zip(("harness", "agent"), record.sessions, strict=True)
+        )
+        answer = replace(tui, input="Use option B.", resume=True)
+        with self.assertRaisesRegex(ConfigError, "delegate is still alive"):
+            self.make(spec=answer, **placed)
+        self.assertTrue(agent.alive())
+        self.assertEqual(self.metadata()["attempt"], 1)
+        harness.close()
+        self.assertEqual(self.make(spec=answer, **placed).detach(), record)
+        self.assertFalse(agent.alive())
+        state = self.metadata()
+        session = state["plan"]["session"]
+        self.assertEqual((state["attempt"], session["sid"], session["resume"]), (2, SID, True))
+        self.assertTrue(session["prompt"].endswith("\nUse option B.\n"), session["prompt"])
+
+
 class ConcurrentResume(HarnessCase):
     def test_two_processes_resume_once_and_return_the_same_record(self):
         delegate = HarnessDelegate(
