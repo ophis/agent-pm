@@ -444,6 +444,10 @@ class OrchestratorObjectExports(Sample):
             [f"{self.INIT}: no literal __all__"],
         )
 
+    def test_a_missing_package_init_fails(self):
+        root = self.tree({"delegate/src/agent_pm/delegate/event/__init__.py": "__all__ = []\n"})
+        self.assertIn(f"{self.INIT}: no literal __all__", exports.object_exports(root))
+
 
 class ObjectExports(Sample):
     SESSION = f"session/{PKG}/session/"

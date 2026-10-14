@@ -52,7 +52,9 @@ class RunState:
             yield
 
     def remove(self) -> None:
-        """Deletes these files, the mutex last; ConfigError while a run holds the run lock."""
+        """Deletes these files, the mutex last; ConfigError while a run holds the run lock. Only for
+        a quiescent workdir: a process waiting on the mutex meanwhile locks the unlinked file.
+        """
         with self.mutex():
             if self.running():
                 raise ConfigError(f"{self.workdir}: delegate run is running")

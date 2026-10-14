@@ -136,6 +136,7 @@ class OrchestratorImports(Sample):
                 "from agent_pm.linear_orchestrator import LinearRun\n",
                 "import agent_pm.linear_orchestrator.engine.runs\n",
                 "from agent_pm import linear_orchestrator\n",
+                "import agent_pm\nagent_pm.linear_orchestrator.LinearRun\n",
             ):
                 rel = f"{project}/{PKG}/{package}/engine/sample.py"
                 with self.subTest(rel=rel, sample=sample):

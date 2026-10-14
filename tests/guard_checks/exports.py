@@ -14,6 +14,7 @@ import types
 from tests.guard_checks.common import _at_import, _bindings, _dotted, _files, _resolve_boundary
 from tests.guard_data import OBJECT_EXPORT_MODULES, OBJECT_EXPORTS_ALLOWED
 from tests.guard_data.delegate import DELEGATE_INTERFACE, DELEGATE_INTERFACE_MODULES
+from tests.guard_data.linear_orchestrator import ORCH_PROJECT
 from tests.guard_data.session import SESSION_INTERFACE, SESSION_INTERFACE_MODULES
 from tests.guards import PROJECTS
 
@@ -49,7 +50,7 @@ def object_exports(repo: str) -> list[str]:
         path = os.path.join(repo, rel)
         project = rel.split("/", 1)[0]
         if not os.path.isfile(path):
-            if project == "delegate":
+            if project in ("delegate", ORCH_PROJECT):
                 found.add(f"{rel}: no literal __all__")
             continue
         package = rel.removeprefix(f"{project}/src/").removesuffix(".py").replace("/", ".")
@@ -325,8 +326,8 @@ def session_interface_snapshot(repo: str) -> list[str]:
 
 
 def delegate_interface_snapshot(repo: str) -> list[str]:
-    """The delegate's public interface equals DELEGATE_INTERFACE. Only TASK-405 changes it on
-    purpose, rewriting the file from _interface().
+    """The delegate's public interface equals DELEGATE_INTERFACE. Only TASK-405 and TASK-429 change
+    it on purpose, rewriting the file from _interface().
     """
     return _snapshot_drift(repo, DELEGATE_INTERFACE, DELEGATE_INTERFACE_MODULES)
 

@@ -128,7 +128,10 @@ def orchestrator_imports(repo: str) -> list[str]:
     for project in PROJECTS:
         if project != ORCH_PROJECT:
             for rel, text in _files(os.path.join(repo, project, "src"), ".py"):
-                modules, names = _imported(ast.parse(text, rel))
+                tree = ast.parse(text, rel)
+                bound = _bindings(tree)
+                modules, names = _imported(tree)
+                names += [_dotted(n, bound) for n in ast.walk(tree) if isinstance(n, ast.Attribute)]
                 if any(_within(name, ORCH_PKG) for name in (*modules, *names)):
                     found.add(f"{project}/src/{rel}: imports {ORCH_PKG} (FR-3)")
     return sorted(found)
