@@ -207,16 +207,17 @@ class ConfigureTest(Base):
                 self.refused(message, lambda *, given=given: Driver(**given))
                 self.assertEqual(self.driver.registry.configured(), ["fake"])
 
-    def test_the_tmux_host_name_resolves_but_a_driver_never_loads_it(self):
+    def test_the_host_loads_lazily_when_its_display_settings_are_requested(self):
         with (
             mock.patch.object(importlib, "import_module", wraps=importlib.import_module) as imp,
         ):
             self.driver = Driver(**settings({}, {"workers_per_column": 4}))
+            imp.assert_not_called()
             self.assertEqual(
                 self.driver.registry.tui(),
                 registry.TuiSettings(status_line=False, per_column=4, retile=None),
             )
-        imp.assert_not_called()
+        imp.assert_called_once_with("agent_pm.session.hosts.tmux")
         self.assertIs(
             load_class(HOSTS["tmux"]["implementation"], Host), agent_pm.session.hosts.tmux.TmuxHost
         )

@@ -9,7 +9,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from agent_pm.session import DriverError
+from agent_pm.session import ConfigError, DriverError, Launch
 from agent_pm.utils import ProcessControl
 
 from session.tests.case import Case
@@ -26,8 +26,6 @@ class FakeHostOnly(Case):
             ("../w", *good[:2]),
             ("", *good[:2]),
             ("w1", [], self.home),
-            ("w1", "python3", self.home),
-            ("w1", [sys.executable, 1], self.home),
             ("w1", good[0], os.path.join(self.home, "absent")),
         ):
             for kind in ("detach", "terminal"):
@@ -35,7 +33,20 @@ class FakeHostOnly(Case):
                     self.subTest(kind=kind, name=name, argv=argv, cwd=cwd),
                     self.assertRaises(ValueError),
                 ):
-                    getattr(host, kind)(name, argv, cwd, {})
+                    getattr(host, kind)(name, Launch(tuple(argv), cwd=cwd))
+        self.assertEqual(host.list(), [])
+
+    def test_launch_rejects_malformed_argv_before_the_host_can_start(self):
+        host = FakeHost("fake", {"root": "~/hosts"})
+        for argv in ("python3", (sys.executable, 1)):
+            for kind in ("detach", "terminal"):
+                with (
+                    self.subTest(kind=kind, argv=argv),
+                    self.assertRaisesRegex(
+                        ConfigError, "^launch: argv must be strings without NUL$"
+                    ),
+                ):
+                    getattr(host, kind)("w1", Launch(argv, cwd=self.home))
         self.assertEqual(host.list(), [])
 
 
