@@ -79,6 +79,9 @@ class Base(Case):
         self.tmux.detach.side_effect = self.detached
         self.socket = self.enterContext(mock.patch("socket.socket"))
         self.connection = self.socket.return_value.__enter__.return_value
+        self.connection.makefile.return_value.__enter__.return_value.readline.return_value = (
+            b'{"live": true}\n'
+        )
 
     @staticmethod
     def completed(path):

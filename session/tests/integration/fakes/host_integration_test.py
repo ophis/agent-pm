@@ -25,11 +25,13 @@ class FakeHostOnly(Case):
         self.addCleanup(lambda: [self.host.attach(n).close() for n in self.host.list()])
 
     def test_state_lives_under_the_root_setting_expanded(self):
-        self.host.detach("w1", program("pass"), self.home, {}).wait_exit(10)
+        process = self.host.detach("w1", program(SLEEP), self.home, {})
         self.assertEqual(
             sorted(os.listdir(os.path.join(self.home, "hosts", "w1"))),
-            ["env.json", "meta.json", "output", "pid", "rc"],
+            ["env.json", "meta.json", "output", "pid"],
         )
+        process.close()
+        self.assertFalse(os.path.exists(os.path.join(self.home, "hosts", "w1")))
 
     def test_a_dead_name_is_started_again(self):
         first = self.host.detach("w1", program("pass"), self.home, {})

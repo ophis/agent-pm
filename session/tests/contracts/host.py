@@ -204,12 +204,14 @@ class HostContract:
                 self.left_child_ended_by(end)
 
     def left_child_ended_by(self, end: str) -> None:
-        name, pids = self.fresh(), self.file("pids")
-        process = self.start("detach", name, LEAVE, pids)
+        name, pids, events = self.fresh(), self.file("pids"), self.file("events")
+        process = self.start("detach", name, LEAVE, pids, events=events)
         self.addCleanup(process.kill)
         own, child = map(int, self.poll(lambda: read(pids), f"pids in {pids}").split())
         self.poll(lambda: gone(own), f"end of {own}")
         self.poll(lambda: not process.alive(), f"{name} no longer running its program")
+        self.event(events, name, "exited 0")
+        self.poll(lambda: name not in self.host.list(), f"{name} session removed")
         self.assertFalse(process.wait_exit(0.3))
         self.assertFalse(gone(child))
         getattr(process, end)()

@@ -5,6 +5,7 @@ ProcessControl owns the process group, while exited/dead events and rc track the
 import contextlib
 import json
 import os
+import shutil
 import subprocess
 import sys
 
@@ -29,6 +30,8 @@ def main(folder: str, events: str) -> None:
             with contextlib.suppress(OSError):
                 SessionStatusLog(events).write(name, *word)
         save(os.path.join(folder, "rc"), str(rc))
+        if meta["kind"] == "detach":
+            shutil.rmtree(folder)
 
     save(os.path.join(folder, "pid"), str(os.getpid()))
     with open(os.path.join(folder, "output"), "ab") as output:

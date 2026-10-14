@@ -75,6 +75,10 @@ class ProcessControlTest(Case):
             self.assertEqual(process.communicate(timeout=10), (b"cleanup complete\n", b""))
             self.assertEqual(process.returncode, 0)
             self.assertFalse(control.live())
+            deadline = time.monotonic() + 10
+            while os.path.exists(control.path):
+                self.assertLess(time.monotonic(), deadline)
+                time.sleep(0.02)
 
     def test_the_controller_keeps_ownership_after_the_program_leaves_a_descendant(self):
         with tempfile.TemporaryDirectory() as folder:
@@ -90,9 +94,13 @@ class ProcessControlTest(Case):
                 time.sleep(0.02)
             child = int(pids.read_text())
             time.sleep(0.2)
-            self.assertIsNone(process.poll())
+            self.assertEqual(process.wait(timeout=10), 0)
             self.assertTrue(control.live())
             os.kill(child, 0)
             control.kill()
             process.communicate(timeout=10)
             self.assertFalse(control.live())
+            deadline = time.monotonic() + 10
+            while os.path.exists(control.path):
+                self.assertLess(time.monotonic(), deadline)
+                time.sleep(0.02)

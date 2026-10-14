@@ -147,6 +147,7 @@ class ProcessControl:
     def __init__(self, path: str):
         self.path = path
         self.ended = False
+        self.accepted = False
 
     @classmethod
     def prepare(cls, argv: Sequence[str], cwd: str) -> ProcessControl:
@@ -170,6 +171,7 @@ class ProcessControl:
             if time.monotonic() >= deadline:
                 raise TimeoutError("process controller did not start")
             time.sleep(POLL)
+        self._request("started")
         if "error" in message:
             raise OSError(message["errno"], message["error"], message.get("filename"))
 
@@ -220,7 +222,39 @@ class ProcessControl:
         self.ended = not response["live"]
         return response["live"]
 
-    def serve(self, *, on_exit: Callable[[int], None] | None = None, **options) -> int:
+    def run(self) -> int:
+        read, write = os.pipe()
+        pid = os.fork()
+        if pid == 0:
+            os.close(read)
+
+            def exited(rc):
+                os.write(write, str(rc).encode() + b"\n")
+                os.close(write)
+
+            try:
+                self.serve(on_exit=exited, detached=True)
+            finally:
+                os._exit(0)
+        os.close(write)
+
+        def forward(signum, _frame):
+            with contextlib.suppress(
+                FileNotFoundError, ConnectionRefusedError, ConnectionResetError
+            ):
+                self._request(f"signal {signum}")
+
+        for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
+            signal.signal(sig, forward)
+        signal.pthread_sigmask(signal.SIG_UNBLOCK, {signal.SIGINT, signal.SIGTERM, signal.SIGHUP})
+        with os.fdopen(read, "rb") as channel:
+            result = channel.readline()
+        os.waitpid(pid, os.WNOHANG)
+        return int(result) if result else 1
+
+    def serve(
+        self, *, on_exit: Callable[[int], None] | None = None, detached: bool = False, **options
+    ) -> int:
         launch = _read(os.path.join(self.path, "launch.json"))
         if launch is None:
             raise FileNotFoundError("missing process launch")
@@ -230,21 +264,28 @@ class ProcessControl:
             listener.listen()
             signal.signal(signal.SIGCHLD, signal.SIG_DFL)
             group = _Group.launch(launch["argv"], launch["cwd"], **options)
+            if detached:
+                os.setsid()
+                signal.signal(signal.SIGHUP, signal.SIG_IGN)
+                with open(os.devnull, "r+b") as null:
+                    for fd in (0, 1, 2):
+                        os.dup2(null.fileno(), fd)
             try:
-                return self._serve(listener, group, on_exit)
+                return self._serve(listener, group, on_exit, detached=detached)
             finally:
                 os.close(group.channel)
                 with contextlib.suppress(FileNotFoundError):
                     os.unlink(os.path.join(self.path, "control"))
+                self.remove()
 
-    def _serve(self, listener, group, on_exit) -> int:
+    def _serve(self, listener, group, on_exit, *, detached=False) -> int:
         stopping: int | None = None
 
         def stop(signum, _frame):
             nonlocal stopping
             stopping = signum
 
-        for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
+        for sig in (signal.SIGINT, signal.SIGTERM, *(() if detached else (signal.SIGHUP,))):
             signal.signal(sig, stop)
         signal.pthread_sigmask(signal.SIG_UNBLOCK, {signal.SIGINT, signal.SIGTERM, signal.SIGHUP})
         started, reported = False, False
@@ -271,7 +312,7 @@ class ProcessControl:
                 live = not started or group.live()
             except OSError:
                 live = True
-            if started and not live:
+            if started and not live and self.accepted:
                 rc = group.returncode if group.returncode is not None else 1
                 if not reported:
                     _write(os.path.join(self.path, "exited.json"), {"rc": rc})
@@ -283,16 +324,22 @@ class ProcessControl:
             if ready:
                 self._answer(listener, group)
 
-    @staticmethod
-    def _answer(listener, group):
+    def _answer(self, listener, group):
         connection, _ = listener.accept()
         with connection:
             connection.settimeout(TIMEOUT)
             try:
                 with connection.makefile("rb") as stream:
                     command = stream.readline(32)
-                if command == b"kill\n":
+                if command == b"started\n":
+                    self.accepted = True
+                elif command == b"kill\n":
                     group.kill()
+                elif command.startswith(b"signal "):
+                    signum = int(command.removeprefix(b"signal "))
+                    if signum not in (signal.SIGHUP, signal.SIGTERM, signal.SIGINT):
+                        raise ValueError("unsupported process control signal")
+                    group.send(signum)
                 elif command != b"live\n":
                     raise ValueError("unknown process control command")
                 response = {"live": True}
@@ -305,7 +352,7 @@ class ProcessControl:
 
 
 if __name__ == "__main__":
-    result = ProcessControl(sys.argv[1]).serve()
+    result = ProcessControl(sys.argv[1]).run()
     if result < 0:
         sig = -result
         if sig != signal.SIGKILL:

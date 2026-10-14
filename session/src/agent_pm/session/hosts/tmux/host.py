@@ -82,8 +82,6 @@ class TmuxProcess(HostProcess):
             if time.monotonic() >= deadline:
                 raise DriverError(f"process group {self.name}: did not exit")
             time.sleep(POLL)
-        if self._control is not None:
-            self._control.remove()
         if not self._own():
             return
         try:

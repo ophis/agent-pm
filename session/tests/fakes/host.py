@@ -43,10 +43,10 @@ def _meta(folder: str) -> dict:
 
 
 class FakeProcess(HostProcess):
-    def __init__(self, name: str, folder: str) -> None:
+    def __init__(self, name: str, folder: str, *, meta: dict | None = None) -> None:
         self.name = name
         self.folder = folder
-        meta = _meta(folder)
+        meta = _meta(folder) if meta is None else meta
         self._id = meta.get("id")
         control = meta.get("control")
         self._control = ProcessControl(control) if control else None
@@ -79,8 +79,6 @@ class FakeProcess(HostProcess):
         self.kill()
         if self._own():
             shutil.rmtree(self.folder, ignore_errors=True)
-        if self._control is not None:
-            self._control.remove()
 
     def record(self) -> Record | None:
         line = self._own().get("record")
@@ -165,7 +163,8 @@ class FakeHost(Host):
         previous = FakeProcess(name, folder)
         if previous.alive():
             raise DriverError(f"{self.name} session {name} is live")
-        previous.close()
+        if os.path.isdir(folder):
+            previous.close()
         shutil.rmtree(folder, ignore_errors=True)
         os.makedirs(folder, mode=0o700)
         control = ProcessControl.prepare(argv, cwd)
@@ -194,7 +193,9 @@ class FakeHost(Host):
             )
         threading.Thread(target=supervisor.wait, daemon=True).start()
         deadline = time.monotonic() + START_TIMEOUT
-        while _read(folder, "pid") is None:
+        while _read(folder, "pid") is None and not os.path.isfile(
+            os.path.join(control.path, "started.json")
+        ):
             if supervisor.returncode is not None or time.monotonic() > deadline:
                 with contextlib.suppress(ProcessLookupError):
                     os.killpg(supervisor.pid, signal.SIGKILL)
@@ -202,4 +203,4 @@ class FakeHost(Host):
                 raise DriverError(f"{self.name} session {name} did not start: {tail}")
             time.sleep(POLL)
         control.wait_started()
-        return KINDS[kind](name, folder)
+        return KINDS[kind](name, folder, meta=meta)
