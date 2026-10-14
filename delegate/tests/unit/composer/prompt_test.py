@@ -11,7 +11,7 @@ import tempfile
 from dataclasses import replace
 
 from agent_pm.delegate import composer
-from agent_pm.delegate.composer import ConfigError, RunParams
+from agent_pm.delegate.composer import Composer, ConfigError, RunParams
 from agent_pm.delegate.composer.base import TEAM, anchor, fill
 from agent_pm.delegate.composer.prompt import (
     OUTCOME,
@@ -22,9 +22,8 @@ from agent_pm.delegate.composer.prompt import (
     reference_errors,
     render,
 )
-from agent_pm.delegate.composer.run import resolve
 from agent_pm.delegate.composer.teams import index, team
-from agent_pm.delegate.engine.config import CONFIG
+from agent_pm.delegate.config import CONFIG, read_config
 
 from delegate.tests.case import ROOTS, Case
 from delegate.tests.unit.composer.prompts import (
@@ -98,21 +97,20 @@ class Fake(Case):
             f.write(local_section(text, "delegate"))
 
     def run_of(self, role="writer", task=None, overlays=(), found=None):
-        return resolve(
-            role,
-            task,
-            team=self.found(found),
-            config=self.config,
-            local=self.local_file,
-            overlays=overlays,
+        return self.composition(found).resolve(role, task, overlays=overlays)
+
+    def composition(self, found=None):
+        return Composer(
+            config=read_config(path=self.config, local=self.local_file), team=self.found(found)
         )
 
     def found(self, given=None):
         return given if given is not None else team(self.root)
 
     def compose(self, role="writer", task=None, *, overlays=(), found=None, **params):
-        run = self.run_of(role, task, overlays, found)
-        return render(run, replace(PARAMS, **params), team=self.found(found)), run
+        composition = self.composition(found)
+        run = composition.resolve(role, task, overlays=overlays)
+        return composition.render(run, replace(PARAMS, **params)), run
 
     def fails(self, role="writer", task=None, overlays=(), found=None) -> str:
         with self.assertRaises(ConfigError) as cm:

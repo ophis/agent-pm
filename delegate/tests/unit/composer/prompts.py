@@ -6,10 +6,8 @@ import os
 import re
 from dataclasses import replace
 
-from agent_pm.delegate.composer import RunParams
+from agent_pm.delegate.composer import Composer, RunParams
 from agent_pm.delegate.composer.base import METHOD, TEAM, outline
-from agent_pm.delegate.composer.prompt import render
-from agent_pm.delegate.composer.run import resolve
 from agent_pm.delegate.composer.teams import index
 
 RUN = RunParams(
@@ -42,8 +40,9 @@ def composed(role, task=None, overlays=(), **changes):
     """The real core's prompt for `role` (and `task`) with RUN, its run changed by `changes`, and
     that run.
     """
-    run = replace(resolve(role, task, overlays=overlays), **changes)
-    return render(run, RUN), run
+    composition = Composer()
+    run = replace(composition.resolve(role, task, overlays=overlays), **changes)
+    return composition.render(run, RUN), run
 
 
 def task_text(task):
