@@ -8,12 +8,12 @@ from agent_pm.linear_orchestrator.engine import runs
 from agent_pm.linear_orchestrator.engine.linear_run import LinearRun
 from agent_pm.linear_orchestrator.engine.types import ConfigError
 from agent_pm.utils import Record
-from orchestrator_tests.linear_run_case import SID, RunCase
+from orchestrator_tests.linear_run_case import SID, ReadyDelegate, RunCase
 
 from delegate.tests.fakes.delegate import FakeDelegate
 
 
-class CapturedDelegate(FakeDelegate):
+class CapturedDelegate(ReadyDelegate):
     def __init__(self, role, spec, **options):
         self.accepted = (role, spec, options)
         super().__init__(role, spec, **options)
@@ -29,18 +29,21 @@ class Runs(RunCase):
     def test_constructed_delegate_receives_exact_spec_display_and_protection(self):
         owner, record = self.start(delegate_cls=CapturedDelegate, display="opaque:\nvalue")
         role, spec, options = owner.delegate.accepted
-        self.assertEqual(role, "dummy")
+        self.assertEqual(role, "researcher")
         self.assertEqual(spec.input, "Echo input.")
         self.assertEqual(spec.workdir, self.cfg.run_dir("TASK-1"))
-        self.assertEqual((spec.task, spec.runtime, spec.sid), ("echo", "fake", SID))
-        self.assertEqual(spec.name, "dummy-TASK-1-1234abcd")
+        self.assertEqual((spec.task, spec.runtime, spec.sid), ("light-research", "fake", SID))
+        self.assertEqual(spec.name, "researcher-TASK-1-1234abcd")
         self.assertEqual(spec.cwd, spec.workdir)
         self.assertEqual(spec.out, os.path.join(spec.workdir, "out.md"))
         self.assertEqual(spec.protect, self.cfg.protect)
-        self.assertEqual(options, {"display": "opaque:\nvalue", "callback": None})
+        self.assertEqual(
+            options,
+            {"display": "opaque:\nvalue", "callback": None, "overlays": (self.cfg.core,)},
+        )
         self.assertEqual(record.display, "opaque:\nvalue")
         self.assertEqual((record.name, record.kind), ("TASK-1", "pipeline"))
-        self.assertEqual(record.sessions, ("dummy-TASK-1-1234abcd",))
+        self.assertEqual(record.sessions, ("researcher-TASK-1-1234abcd",))
         self.assertEqual(record.ctl, ("agent-pm-linear",))
         self.assertEqual(record.resume, ("agent-pm-linear", "resume", "TASK-1"))
 

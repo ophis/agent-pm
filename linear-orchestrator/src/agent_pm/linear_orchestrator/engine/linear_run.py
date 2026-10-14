@@ -51,6 +51,7 @@ class LinearRun:
             ),
             display=display,
             callback=callback,
+            overlays=(cfg.core,),
         )
 
     @staticmethod

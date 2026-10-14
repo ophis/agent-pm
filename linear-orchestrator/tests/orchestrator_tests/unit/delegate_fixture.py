@@ -28,9 +28,9 @@ def provider(api, cfg):
             return view
 
         @classmethod
-        def usage(cls, role):
+        def usage(cls, role, *, overlays=()):
             try:
-                return api.usage(cls.resolve(role).runtime)
+                return api.usage(cls.resolve(role, overlays=overlays).runtime)
             except SessionConfigError as error:
                 raise ConfigError(str(error)) from None
 

@@ -256,6 +256,7 @@ def _load(cfg, protected, protect, work):
         local_clones=frozen["local_clones"],
         delegate_kind=kind,
         delegates=MappingProxyType(delegates),
+        core=utils.freeze(cfg.get("core", {})),
     )
 
 

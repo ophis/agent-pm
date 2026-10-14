@@ -370,11 +370,17 @@ class HarnessDelegate(Delegate):
         return Composer().trusted_dirs()
 
     @classmethod
-    def usage(cls, role: str, *, session_cls: type[Session] = Session) -> Usage | None:
+    def usage(
+        cls,
+        role: str,
+        *,
+        overlays: Sequence[Mapping] = (),
+        session_cls: type[Session] = Session,
+    ) -> Usage | None:
         composition = Composer()
         try:
             session_cls.configure_from(thaw(composition.config.values))
-            return session_cls.usage(composition.resolve(role).runtime)
+            return session_cls.usage(composition.resolve(role, overlays=overlays).runtime)
         except SessionConfigError as error:
             raise ConfigError(str(error)) from None
 

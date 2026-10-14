@@ -25,9 +25,9 @@ class ReadyDelegate(FakeDelegate):
     usage_calls = []
 
     @classmethod
-    def usage(cls, role):
+    def usage(cls, role, *, overlays=()):
         cls.usage_calls.append(role)
-        return super().usage(role)
+        return super().usage(role, overlays=overlays)
 
     @classmethod
     def resolve(cls, role, task=None, *, overlays=()):
@@ -73,9 +73,9 @@ class RunCase(ConfigFile, Case):
             "Echo input.",
             self.cfg.run_dir(issue),
             cfg=self.cfg,
-            role="dummy",
+            role="researcher",
             sid=sid,
-            task="echo",
+            task="light-research",
             runtime="fake",
             display=display,
             delegate_cls=delegate_cls,
@@ -85,7 +85,7 @@ class RunCase(ConfigFile, Case):
             "start",
             issue=issue,
             sid=sid,
-            role="dummy",
+            role="researcher",
             runtime="fake",
             delegate_kind="fake",
         )

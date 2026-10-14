@@ -753,6 +753,21 @@ class RunUsageLimits(Case):
 
 
 class RunArguments(Case):
+    def test_a_bad_session_config_ends_the_run_as_a_logged_config_error(self):
+        with open(self.local, "a") as f:
+            f.write('\n[session.hosts]\ndefault = "absent"\n')
+        with redirect_stderr(io.StringIO()):
+            rc = run.main(self.argv(), gql=self.gql, run=self.delegate, now=lambda: NOW)
+        self.assertEqual(rc, 1)
+        self.assertEqual(
+            self.said(),
+            [
+                "run config-error TASK-7 reason=session config: [hosts] default: want one of tmux",
+                f"run end TASK-7 sid={SID} exit=1",
+            ],
+        )
+        self.assertEqual((self.delegate.calls, self.gql.calls), ([], []))
+
     def test_launch_arguments_preserve_input_and_display_values(self):
         values = self.argv() + [
             "--task=light-build",

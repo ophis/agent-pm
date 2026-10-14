@@ -803,6 +803,25 @@ class RouterEntry(OuterBase):
                 )
         self.assertEqual(self.api.detached, [])
 
+    def test_a_bad_session_config_exits_1_as_a_logged_config_error(self):
+        with open(self.local, "a") as f:
+            f.write('\n[session.hosts]\ndefault = "absent"\n')
+        with redirect_stderr(io.StringIO()), self.log_dir(again=True):
+            rc = router.main(
+                ["--now"],
+                now=lambda: NOW,
+                config_path=self.config_path,
+                hour=2,
+                gql=self.fake,
+                run=self.run_,
+                keychain=self.keychain,
+            )
+        self.assertEqual(rc, 1)
+        self.assertEqual(
+            self.said(), ["config-error reason=session config: [hosts] default: want one of tmux"]
+        )
+        self.assertEqual(self.fake.mutations, [])
+
     def test_a_config_error_exits_1_logged_once_a_day_and_printed_on_a_terminal(self):
         for text, reason in (
             ("bogus = 1\n" + OUTER, "linear-orchestrator/config.toml: unknown keys: bogus"),
@@ -1037,7 +1056,7 @@ class RuntimeUsage(Base):
         error = AttributeError("adapter defect")
         self.api.usages["a"] = error
         with self.assertRaises(AttributeError) as caught:
-            quota.read_usage("researcher", delegate_cls=self.cfg().delegate_cls)
+            quota.read_usage("researcher", self.cfg())
         self.assertIs(caught.exception, error)
 
     def test_thresholds(self):

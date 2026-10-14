@@ -58,6 +58,7 @@ class FakeDelegate(Delegate):
         host=None,
         harness_host=None,
         callback=None,
+        overlays=(),
     ) -> None:
         self._known(role)
         sid = spec.sid or str(uuid.uuid4())
@@ -80,7 +81,7 @@ class FakeDelegate(Delegate):
         return view
 
     @classmethod
-    def usage(cls, role):
+    def usage(cls, role, *, overlays=()):
         cls._known(role)
         return cls.usage_result
 

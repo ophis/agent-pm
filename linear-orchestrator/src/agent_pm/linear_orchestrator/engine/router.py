@@ -723,7 +723,7 @@ def run_issue(opts, cfg, gql, start, *, clock=datetime.now):
 
 
 def brake(role, cfg):
-    usage = read_usage(role, delegate_cls=cfg.delegate_cls)
+    usage = read_usage(role, cfg)
     print(summary(usage))
     return 1 if usage is None or exhausted(usage, BRAKE_5H) else 0
 
@@ -787,7 +787,11 @@ def main(
         return brake(role, cfg)
     gql = functools.partial(gql, service=cfg.harness_key)
     if start is None:
-        driver = driver or delegate.configure()
+        try:
+            driver = driver or delegate.configure()
+        except delegate.ConfigError as error:
+            config.report_error("router", ConfigError(str(error), cfg.logs_dir), dry=opts["dry"])
+            return 1
         start = functools.partial(
             outer, cfg=cfg, gql=gql, run=run, keychain=keychain, driver=driver
         )

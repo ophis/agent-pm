@@ -91,7 +91,22 @@ class InstructTest(HarnessCase):
         self.assertEqual((HarnessSession.started, RecordingHost.launches), ([], []))
 
 
+class UsageSession(HarnessSession):
+    runtimes = []
+
+    @classmethod
+    def usage(cls, runtime):
+        cls.runtimes.append(runtime)
+
+
 class OverlayTest(HarnessCase):
+    def test_usage_reads_the_runtime_the_owner_overlays_resolve(self):
+        UsageSession.runtimes = []
+        overlays = ({"roles": {"dummy-tester": {"runtime": "claude"}}},)
+        HarnessDelegate.usage("dummy-tester", session_cls=UsageSession)
+        HarnessDelegate.usage("dummy-tester", overlays=overlays, session_cls=UsageSession)
+        self.assertEqual(UsageSession.runtimes, ["fake", "claude"])
+
     def test_owner_overlays_shape_the_persisted_run(self):
         self.make()
         self.assertEqual(self.metadata()["plan"]["run"]["effort"], "low")

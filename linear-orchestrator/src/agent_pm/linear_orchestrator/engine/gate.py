@@ -28,9 +28,9 @@ def exhausted(usage, max_5h=MAX_5H):
     )
 
 
-def read_usage(role, *, delegate_cls):
+def read_usage(role, cfg):
     try:
-        return delegate_cls.usage(role)
+        return cfg.delegate_cls.usage(role, overlays=(cfg.core,))
     except (delegate.ConfigError, delegate.DriverError):
         return None
 
@@ -42,7 +42,8 @@ class Gate:
         self.say: Callable[..., None] = say or functools.partial(log, "router", dry=dry)
 
     def blocked(self, role, ident, *, key=None):
-        current = (self.cfg.delegate_kind, self.cfg.delegate_cls.resolve(role).runtime)
+        configured = self.cfg.roles.get(role)
+        current = (self.cfg.delegate_kind, configured and configured.run.runtime)
         key = current if key is None else key
         kind, runtime = key
         if key in self.limits:
@@ -68,7 +69,7 @@ class Gate:
         return reason is not None
 
     def _check(self, role, runtime):
-        usage = read_usage(role, delegate_cls=self.cfg.delegate_cls)
+        usage = read_usage(role, self.cfg)
         shown = {"usage": summary(usage)}
         reason = "usage unknown" if usage is None else "usage" if exhausted(usage) else None
         fields = shown if reason == "usage" else {}

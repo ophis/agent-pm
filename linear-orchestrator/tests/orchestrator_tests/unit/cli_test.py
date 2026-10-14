@@ -78,7 +78,7 @@ class Queries(RunCase):
                 self.assertEqual(
                     json.load(file)["starts"], 2 if state in ("interrupted", "live-again") else 1
                 )
-        self.assertEqual(ReadyDelegate.usage_calls, ["dummy"])
+        self.assertEqual(ReadyDelegate.usage_calls, ["researcher"])
 
     def test_interrupted_batch_probes_a_shared_recorded_key_once(self):
         self.start("TASK-1")
@@ -90,7 +90,7 @@ class Queries(RunCase):
         self.assertEqual(
             [Record.parse(line).name for line in output.splitlines()], ["TASK-1", "TASK-2"]
         )
-        self.assertEqual(ReadyDelegate.usage_calls, ["dummy"])
+        self.assertEqual(ReadyDelegate.usage_calls, ["researcher"])
 
     def test_config_drift_never_probes_and_recorded_limits_still_block(self):
         self.start()

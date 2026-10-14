@@ -178,7 +178,12 @@ def main(argv, *, gql=client.linear_gql, run=delegate.run, driver=None, now=time
         log("run", "end", a.issue, sid=a.sid, exit=1)
         return 1
     event_log.use_logs(cfg.logs_dir)
-    driver = driver or delegate.configure()
+    try:
+        driver = driver or delegate.configure()
+    except delegate.ConfigError as e:
+        log("run", "config-error", a.issue, reason=str(e))
+        log("run", "end", a.issue, sid=a.sid, exit=1)
+        return 1
     return inner(a, cfg, gql=gql, driver=driver, run=run, now=now)
 
 

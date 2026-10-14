@@ -157,6 +157,7 @@ class PruneScenario(Case):
             stages={},
             delegate_kind="harness",
             delegates={"harness": PruneDelegate},
+            core={},
         )
         log.use_logs(self.logs)
 

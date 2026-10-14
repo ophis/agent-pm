@@ -47,6 +47,7 @@ class Config:
     stages: Mapping[str, int]
     delegate_kind: str
     delegates: Mapping[str, type]
+    core: Mapping
 
     @property
     def delegate_cls(self) -> type:

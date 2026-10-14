@@ -24,8 +24,8 @@ class LegacyRunDelegate(Delegate):
         return delegate.trusted_dirs()
 
     @classmethod
-    def usage(cls, role):
-        return delegate.configure().session_cls.usage(cls.resolve(role).runtime)
+    def usage(cls, role, *, overlays=()):
+        return delegate.configure().session_cls.usage(cls.resolve(role, overlays=overlays).runtime)
 
     @classmethod
     def attach(cls, record_or_workdir):

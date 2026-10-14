@@ -1,9 +1,10 @@
 """Quota keys, configuration drift and tick-local probes at the Delegate boundary."""
 
 import os
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
+from agent_pm.linear_orchestrator.engine import runs
 from agent_pm.linear_orchestrator.engine.gate import Gate
 from orchestrator_tests.case import Case
 from orchestrator_tests.gate_fixtures import quota_provider
@@ -12,9 +13,42 @@ NOW = datetime(2026, 10, 14, 12, tzinfo=UTC)
 
 
 class DelegateQuotaKeys(Case):
-    def gate(self, provider, *, kind="first", say=None):
-        cfg = SimpleNamespace(delegate_kind=kind, delegate_cls=provider, delegates={kind: provider})
-        return Gate(os.path.join(self.home, "missing-runs.jsonl"), NOW, say, cfg=cfg, dry=False)
+    def gate(self, provider, *, kind="first", say=None, runtime=None, core=None, log=None):
+        roles = {
+            role: SimpleNamespace(run=provider.resolve(role, overlays=(core or {},)))
+            for role in provider.ROLES
+        }
+        if runtime is not None:
+            roles["engineer"] = SimpleNamespace(run=SimpleNamespace(runtime=runtime))
+        cfg = SimpleNamespace(
+            delegate_kind=kind,
+            delegate_cls=provider,
+            delegates={kind: provider},
+            roles=roles,
+            core=core or {},
+        )
+        path = log or os.path.join(self.home, "missing-runs.jsonl")
+        return Gate(path, NOW, say, cfg=cfg, dry=False)
+
+    def test_the_configured_overlay_runtime_keys_limits_and_reaches_the_probe(self):
+        core = {"roles": {"engineer": {"runtime": "overlay-runtime"}}}
+        provider = quota_provider("catalog-runtime", 10)
+        self.assertFalse(
+            self.gate(provider, runtime="overlay-runtime", core=core).blocked("engineer", "TASK-1")
+        )
+        self.assertEqual((provider.queried, provider.overlays), (["engineer"], [(core,)]))
+        log = os.path.join(self.home, "runs.jsonl")
+        runs.note_limit(
+            log,
+            issue="TASK-0",
+            sid="s",
+            runtime="overlay-runtime",
+            resets_at=(NOW + timedelta(hours=1)).isoformat(),
+            delegate_kind="first",
+        )
+        gate = self.gate(provider, runtime="overlay-runtime", core=core, log=log)
+        self.assertTrue(gate.blocked("engineer", "TASK-1"))
+        self.assertEqual(provider.queried, ["engineer"])
 
     def test_roles_sharing_a_runtime_probe_once_even_when_blocked(self):
         provider = quota_provider("shared-runtime", 95)
