@@ -3,17 +3,18 @@ kind (render).
 """
 
 import fnmatch
+import functools
 import json
+import os
 import re
 from dataclasses import dataclass
 from urllib.parse import quote, unquote
 
-from agent_pm.linear_orchestrator.engine.config import TASKS, sh_run
+from agent_pm.linear_orchestrator.engine import config, issues
+from agent_pm.linear_orchestrator.engine.config import TASKS
 from agent_pm.linear_orchestrator.engine.target import pr_title
 from agent_pm.linear_orchestrator.engine.types import InputError
-from agent_pm.linear_orchestrator.linear import issues
-from agent_pm.linear_orchestrator.linear.linear import parse_time
-from agent_pm.utils import SHORT, err_text
+from agent_pm.utils import SHORT, err_text, parse_time, sh
 
 
 @dataclass(frozen=True)
@@ -118,7 +119,8 @@ def _listed(run, docs, ident, dir_):
     return f"{d}/{hits[-1]}" if hits else None
 
 
-def gather(issue, role, docs, *, run=sh_run) -> Sources:
+def gather(issue, role, docs, *, run=None) -> Sources:
+    run = run or functools.partial(sh, env={**os.environ, "PATH": config.path()})
     kind = TASKS[role].kind
     links = _links(issue, docs)
     path = None

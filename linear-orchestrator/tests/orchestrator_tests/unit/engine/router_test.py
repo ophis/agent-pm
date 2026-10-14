@@ -1,9 +1,5 @@
-"""orchestrator router.py, ported from the old router_test (Plan, Claim, Blockers, TaskLabels, Gate
-over Usage, Tick, IssueFlag, OneRouter, Outage, Usage, Brake, Outer, AttendedEntry's headless parts
-as Entry) onto config.load() and a fake Driver api, plus FR-44 to FR-48, FR-56 and FR-60. A tick's
-start is injected but in Entry, which runs main's own outer."""
+"""Orchestrator router behavior at its dependency boundaries."""
 
-import argparse
 import contextlib
 import fcntl
 import io
@@ -15,10 +11,8 @@ from contextlib import redirect_stderr, redirect_stdout
 from datetime import UTC, datetime, timedelta
 from unittest import mock
 
-from agent_pm.linear_orchestrator.engine import config, inputs, router, runs
-from agent_pm.linear_orchestrator.engine import run as run_py
-from agent_pm.linear_orchestrator.engine.types import LinearError
-from agent_pm.linear_orchestrator.linear import issues, linear
+from agent_pm.linear_orchestrator.engine import config, inputs, issues, ops, router, runs
+from agent_pm.linear_orchestrator.engine.types import LinearError, Spec, Unavailable
 from agent_pm.session import ConfigError, DriverError, SessionStatus, Window
 from agent_pm.session import Usage as SessionUsage
 from agent_pm.utils import SHORT
@@ -104,9 +98,9 @@ def reading(five=10.0, weekly=10.0):
 
 def writes(fake):
     return [
-        ("read" if q == linear.Q_ISSUE_STATE else op(q), v["i"])
+        ("read" if q == ops.Q_ISSUE_STATE else op(q), v["i"])
         for q, v in fake.queries
-        if q == linear.Q_ISSUE_STATE or "mutation" in q
+        if q == ops.Q_ISSUE_STATE or "mutation" in q
     ]
 
 
@@ -144,7 +138,8 @@ def inner(*args, text=INPUT):
         sys.executable,
         "-P",
         "-m",
-        "agent_pm.linear_orchestrator.engine.run",
+        "agent_pm.linear_orchestrator.cli",
+        "run",
         "--uuid",
         UUID,
         *args,
@@ -189,10 +184,10 @@ class LostClaim(FakeLinear):
 
     def __call__(self, query, **v):
         out = super().__call__(query, **v)
-        if query == linear.M_STATE and self.lose:
+        if query == ops.M_STATE and self.lose:
             self.lose = False
             self.issues[v["i"]]["updatedAt"] = ago(minutes=0)
-            raise linear.Unavailable("issueUpdate", reason="TimeoutError: timed out")
+            raise Unavailable("issueUpdate", reason="TimeoutError: timed out")
         return out
 
 
@@ -713,7 +708,7 @@ class RouterEntry(OuterBase):
                 )
                 self.assertEqual(
                     self.fake.mutations,
-                    [(linear.M_STATE, {"i": ID, "s": IDS_BY_KEY["in_progress"]})],
+                    [(ops.M_STATE, {"i": ID, "s": IDS_BY_KEY["in_progress"]})],
                 )
                 self.assertEqual(self.err, "")
 
@@ -890,7 +885,7 @@ class RouterArguments(Base):
         self.assertEqual((self.api.order, self.api.usage_calls), ([], []))
         self.assertEqual(
             router.USAGE,
-            "usage: python3 -P -m agent_pm.linear_orchestrator.engine.router [--now] [--dry-run] [--issue ID] | --brake ROLE",
+            "usage: python3 -P -m agent_pm.linear_orchestrator.cli router [--now] [--dry-run] [--issue ID] | --brake ROLE",
         )
         for flag in ("--gate", "--tui", "--split", "--events", "--manager"):
             self.assertNotIn(flag, router.USAGE + router.__doc__)
@@ -967,7 +962,7 @@ class RouterOutages(TickBase):
                             (self.said(), self.raw), ([] if again else [self.SAID[name]], "")
                         )
                         self.assertEqual(
-                            gql.failed, [(linear.Q_TEAM, {"service": HARNESS, "t": TEAM})]
+                            gql.failed, [(ops.Q_TEAM, {"service": HARNESS, "t": TEAM})]
                         )
                         self.assertEqual((self.start.launches, self.state), ([], ""))
                     fake = FakeLinear([issue("TASK-1", "Todo", "researcher")])
@@ -1624,9 +1619,7 @@ class ScheduledTaskSelection(TickBase):
     def test_fr1_tick_checks_the_task_group_once_and_stops_on_a_bad_one(self):
         fake = FakeLinear([issue("TASK-1", "Todo", "researcher")])
         self.tick(fake)
-        self.assertEqual(
-            [v for q, v in fake.queries if q == linear.Q_TASK_GROUP], [{"i": TASK_GROUP}]
-        )
+        self.assertEqual([v for q, v in fake.queries if q == ops.Q_TASK_GROUP], [{"i": TASK_GROUP}])
         fake = FakeLinear([issue("TASK-1", "Todo", "researcher")])
         fake.group = {"isGroup": False}
         self.assertEqual(self.tick(fake), 1)
@@ -1636,7 +1629,7 @@ class ScheduledTaskSelection(TickBase):
         )
         self.assertEqual(
             (fake.queries, fake.mutations),
-            ([(linear.Q_TEAM, {"t": TEAM}), (linear.Q_TASK_GROUP, {"i": TASK_GROUP})], []),
+            ([(ops.Q_TEAM, {"t": TEAM}), (ops.Q_TASK_GROUP, {"i": TASK_GROUP})], []),
         )
         self.assertEqual(
             (self.api.order, self.api.usage_calls, self.start.launches), (SESSIONS, [], [])
@@ -1784,7 +1777,7 @@ class RunLaunching(OuterBase):
         self.assertEqual(self.outer(task="light-build"), 0)
         argv = self.detached()
         self.assertEqual(argv, inner("--target", "Ophis/Agent-PM", *forwarded(task="light-build")))
-        found = run_py.options(argv[4:])
+        found = Spec.from_argv(argv[5:])
         self.assertEqual(
             (
                 found.uuid,
@@ -2040,7 +2033,7 @@ class RunLaunching(OuterBase):
 
 
 class RunStartRecords(Base):
-    """FR-46: the start or resume line records the runtime; the launch Namespace carries it."""
+    """FR-46: the start or resume line records the runtime; the launch Spec carries it."""
 
     def test_one_json_line_and_the_launch_namespace(self):
         path = os.path.join(self.tmp, "logs", "runs.jsonl")
@@ -2049,12 +2042,8 @@ class RunStartRecords(Base):
         got = [
             router.begin(
                 path,
-                mode=mode,
-                issue=found,
-                sid="s1",
+                Spec.from_issue(found, mode=mode, sid="s1", task=task, runtime="a"),
                 role="researcher",
-                task=task,
-                runtime="a",
                 now=lambda: datetime.fromisoformat(stamp),
             )
             for mode, task in (("new", "light-research"), ("resume", None))
@@ -2071,7 +2060,9 @@ class RunStartRecords(Base):
         self.assertEqual(
             got,
             [
-                argparse.Namespace(
+                Spec(
+                    uuid="TASK-1",
+                    input="",
                     issue="TASK-1",
                     project=IDS[DR],
                     assignee=ROLE["researcher"],
@@ -2160,7 +2151,9 @@ class ExplicitIssueRuns(TickBase):
         (launch,) = self.start.launches
         self.assertEqual(
             launch,
-            argparse.Namespace(
+            Spec(
+                uuid="TASK-4",
+                input="",
                 issue="TASK-4",
                 project=IDS[PD],
                 assignee=ROLE["engineer"],
@@ -2232,7 +2225,9 @@ class ExplicitIssueRuns(TickBase):
         (launch,) = self.start.launches
         self.assertEqual(
             launch,
-            argparse.Namespace(
+            Spec(
+                uuid="TASK-1",
+                input="",
                 issue="TASK-1",
                 project=IDS[DR],
                 assignee=ROLE["researcher"],
@@ -2452,7 +2447,7 @@ class TickRecords(TickScenario):
         self.add(kind="start", ident="TASK-8", sid="old", minutes_ago=60 * 24 * 8)
         with mock.patch.object(os, "replace", side_effect=OSError("disk")):
             self.tick(fake)
-        self.assertIn("skip reason=prune failed error=OSError: disk", self.said())
+        self.assertIn("skip reason=trim failed error=OSError: disk", self.said())
         self.assertEqual(len(self.start.launches), 1)
 
     def test_the_outers_exit_and_exceptions_never_break_the_tick(self):
@@ -3090,7 +3085,9 @@ class ClaimRechecks(Base):
         self.assertEqual(self.said(), ["pick TASK-1 queue=1", "claim TASK-1 role=pm runtime=b"])
         self.assertEqual(self.api.usage_calls, ["b"])
         a = router.begin(
-            self.runs, mode="new", issue=taken, sid="s1", role=role, task=task, runtime=runtime
+            self.runs,
+            Spec.from_issue(taken, mode="new", sid="s1", task=task, runtime=runtime),
+            role=role,
         )
         self.assertEqual((a.assignee, a.runtime), (ROLE["pm"], "b"))
 
@@ -3141,12 +3138,8 @@ class ClaimRechecks(Base):
         self.assertEqual(self.claim(fake), f"TASK-1 https://linear.app/x/TASK-1 {PD}")
         a = router.begin(
             self.runs,
-            mode="new",
-            issue=self.taken[0],
-            sid="s1",
+            Spec.from_issue(self.taken[0], mode="new", sid="s1", task=None, runtime="a"),
             role="researcher",
-            task=None,
-            runtime="a",
         )
         self.assertEqual(a.project, IDS[PD])
 
@@ -3270,7 +3263,9 @@ class ScheduledRuns(TickScenario):
         (launch,) = self.start.launches
         self.assertEqual(
             launch,
-            argparse.Namespace(
+            Spec(
+                uuid="TASK-1",
+                input="",
                 issue="TASK-1",
                 project=IDS[DR],
                 assignee=ROLE["researcher"],

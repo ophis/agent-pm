@@ -3,6 +3,7 @@ tree's import roots (REPO, SRC, ROOTS, PYTHONPATH).
 """
 
 import os
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -11,7 +12,7 @@ from types import SimpleNamespace
 from unittest import mock
 
 import agent_pm
-from agent_pm.linear_orchestrator.linear import linear
+from agent_pm.linear_orchestrator.engine import log
 from agent_pm.utils import import_roots
 
 from utils.tests.sandbox import clean_env
@@ -47,7 +48,7 @@ class Case(unittest.TestCase):
         ):
             if ".unit." in self.id():
                 stack.enter_context(mock.patch("subprocess.run", _getconf))
-            linear.use_logs(None)
+            log.use_logs(None)
             self.agent_pm = os.path.join(self.home, ".agent-pm")
             os.mkdir(self.agent_pm)
             return super().run(result)
@@ -82,6 +83,17 @@ def child_env(base=None, *extra: str) -> dict[str, str]:
 
 
 def _getconf(argv, *_args, **_kwargs):
-    if argv != ["getconf", "DARWIN_USER_TEMP_DIR"]:
-        raise AssertionError(f"unexpected subprocess: {argv}")
-    return SimpleNamespace(stdout="")
+    if argv == ["getconf", "DARWIN_USER_TEMP_DIR"]:
+        return SimpleNamespace(stdout="")
+    if "rev-parse" in argv and "--show-toplevel" in argv:
+        cwd = argv[argv.index("-C") + 1] if "-C" in argv else _kwargs.get("cwd", REPO)
+        inside = os.path.commonpath((os.path.realpath(cwd), REPO)) == REPO
+        return subprocess.CompletedProcess(
+            argv,
+            0 if inside else 128,
+            stdout="true\n" + REPO + "\n" if inside else "",
+            stderr=""
+            if inside
+            else "fatal: not a git repository (or any of the parent directories): .git",
+        )
+    raise AssertionError(f"unexpected subprocess: {argv}")

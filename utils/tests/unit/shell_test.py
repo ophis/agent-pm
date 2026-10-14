@@ -2,10 +2,26 @@
 
 import unittest
 from types import SimpleNamespace
+from unittest import mock
 
 from agent_pm.utils import resume_command, shell
 
 from utils.tests.case import Case
+
+
+class ShellExecution(Case):
+    def test_explicit_environment_is_forwarded_without_inheriting_values(self):
+        env = {"PATH": "/custom/bin", "ONLY": "1"}
+        with mock.patch("subprocess.run", return_value="result") as run:
+            self.assertEqual(shell.sh(["git", "status"], 5, env=env), "result")
+        run.assert_called_once_with(
+            ["git", "status"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            stdin=shell.subprocess.DEVNULL,
+            env=env,
+        )
 
 
 class ErrText(Case):

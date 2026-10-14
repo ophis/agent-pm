@@ -2,6 +2,10 @@
 session from the Driver, read from its replies' progress marks and outcome block.
 """
 
+import sys
+
+import agent_pm.session as session
+import agent_pm.utils as utils
 from agent_pm.delegate.composer import ConfigError as ComposerConfigError
 from agent_pm.delegate.composer import RunConfig, trusted_dirs
 from agent_pm.delegate.composer import index as task_index
@@ -32,6 +36,15 @@ from agent_pm.delegate.engine.types import (
 )
 from agent_pm.delegate.event import DelegateEvent
 from agent_pm.delegate.event.types import STATUSES, InvalidOutcome, Outcome, OutcomeStatus
+
+
+def module_roots() -> tuple[str, ...]:
+    return utils.module_roots(sys.modules[__name__], session, utils)
+
+
+def package_dirs() -> tuple[str, ...]:
+    return utils.package_dirs(sys.modules[__name__], session, utils)
+
 
 __all__ = [
     "ConfigError",
@@ -65,5 +78,7 @@ __all__ = [
     "IMPORT_ROOTS",
     "PYTHONPATH",
     "harness_host",
+    "module_roots",
+    "package_dirs",
     "read_config",
 ]

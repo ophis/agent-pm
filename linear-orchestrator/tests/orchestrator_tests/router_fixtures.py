@@ -1,6 +1,5 @@
 """Shared orchestrator scenario fixtures for unit and sandboxed integration contracts."""
 
-import argparse
 import functools
 import io
 import json
@@ -13,11 +12,15 @@ from dataclasses import replace
 from datetime import UTC, datetime, timedelta, timezone
 from unittest import mock
 
-from agent_pm.linear_orchestrator.engine import config, inputs, router, runs
-from agent_pm.linear_orchestrator.engine.types import LinearError
-from agent_pm.linear_orchestrator.linear import linear
+from agent_pm.linear_orchestrator.engine import (
+    config,
+    inputs,
+    ops,
+    router,
+    runs,
+)
+from agent_pm.linear_orchestrator.engine.types import LinearError, Spec
 from agent_pm.session import SessionStatus
-from orchestrator_tests.case import PYTHONPATH
 from orchestrator_tests.unit import run_fixtures
 from orchestrator_tests.unit.board_ids import ACCOUNTS, HEADER, TEAM, team_node
 from orchestrator_tests.unit.board_ids import STATES as IDS_BY_KEY
@@ -31,6 +34,7 @@ from orchestrator_tests.unit.run_fixtures import (
     PROJECT,
     SID,
     USER_NOTE,
+    UUID,
     Gql,
     logged,
     node,
@@ -223,9 +227,9 @@ class FakeLinear:
         raise AssertionError(query)
 
     def _identity(self, query, v):
-        if query == linear.Q_TEAM:
+        if query == ops.Q_TEAM:
             return {"teams": {"nodes": [team_node()]}}
-        if query == linear.Q_TASK_GROUP:
+        if query == ops.Q_TASK_GROUP:
             return {"issueLabel": self.group}
         if "users(filter" in query:
             users = {
@@ -241,7 +245,7 @@ class FakeLinear:
     def _issue_read(self, query, v):
         if "history" in query:
             return {"issue": {"history": {"nodes": self.history.get(v["i"], [])}}}
-        if query == linear.Q_ISSUE_STATE:
+        if query == ops.Q_ISSUE_STATE:
             return {"issue": {"state": {"id": STATES[self.issues[v["i"]]["state"]]}}}
         if "issue(id:" in query and "inverseRelations" in query:
             if v["i"] in self.unreadable:
@@ -466,7 +470,7 @@ class Base(run_fixtures.Base):
 
 
 class Start:
-    """The injected start: records each launch Namespace; per issue an exit code (`exits`) or an
+    """The injected start: records each launch Spec; per issue an exit code (`exits`) or an
     exception to raise.
     """
 
@@ -551,7 +555,9 @@ class OuterBase(TickBase):
         return service not in self.missing
 
     def outer(self, *, assignee=ENGINEER, task=None, mode="new", ident=ID, sid=SID, runtime="a"):
-        a = argparse.Namespace(
+        a = Spec(
+            uuid=UUID,
+            input="",
             issue=ident,
             project=PROJECT,
             assignee=assignee,
@@ -579,7 +585,7 @@ class OuterBase(TickBase):
         expected = {
             **os.environ,
             "PATH": config.path(),
-            "PYTHONPATH": PYTHONPATH,
+            "PYTHONPATH": config.pythonpath(),
         }
         self.assertEqual(set(env), set(expected))
         for key, value in expected.items():

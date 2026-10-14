@@ -11,10 +11,19 @@ from datetime import UTC, datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest import mock
 
-from agent_pm.linear_orchestrator.engine import promote, prune
+from agent_pm.linear_orchestrator.engine import (
+    client,
+    issues,
+    ops,
+    promote,
+    prune,
+    run_comments,
+    types,
+    writeback,
+)
 from agent_pm.linear_orchestrator.engine import router as routing
 from agent_pm.linear_orchestrator.engine.types import LinearError
-from agent_pm.linear_orchestrator.linear import issues, linear, sessions, writeback
+from agent_pm.utils import parse_time
 from orchestrator_tests.case import Case
 from orchestrator_tests.integration import fake_linear
 from orchestrator_tests.integration.fake_transport import install
@@ -58,8 +67,8 @@ class ServerCase(Case):
         self.addCleanup(env.stop)
         transport = install(os.environ["FAKE_LINEAR_TRANSPORT"])
         self.addCleanup(transport.close)
-        self.gql = functools.partial(linear.linear_gql, service=HARNESS)
-        self.eng = functools.partial(linear.linear_gql, service=ENGINEER)
+        self.gql = functools.partial(client.linear_gql, service=HARNESS)
+        self.eng = functools.partial(client.linear_gql, service=ENGINEER)
 
     def log(self):
         return [(r.op, r.account, r.result) for r in self.fake.requests]
@@ -68,11 +77,11 @@ class ServerCase(Case):
 class GraphQLProjection(ServerCase):
     def test_projection_keeps_only_the_selection(self):
         want = {"issue": {"state": {"id": STATES["in_progress"]}}}
-        self.assertEqual(self.gql(linear.Q_ISSUE_STATE, i="TASK-7"), want)
-        self.assertEqual(self.gql(linear.Q_ISSUE_STATE, i=self.fake.find("TASK-7")["id"]), want)
+        self.assertEqual(self.gql(ops.Q_ISSUE_STATE, i="TASK-7"), want)
+        self.assertEqual(self.gql(ops.Q_ISSUE_STATE, i=self.fake.find("TASK-7")["id"]), want)
 
     def test_a_selected_field_the_model_lacks_is_an_error(self):
-        query = linear.Q_ISSUE_STATE.replace("state { id }", "state { id color }")
+        query = ops.Q_ISSUE_STATE.replace("state { id }", "state { id color }")
         self.fake.ops[query] = "linear.Q_ISSUE_STATE"
         with self.assertRaises(LinearError) as cm:
             self.gql(query, i="TASK-7")
@@ -98,22 +107,22 @@ class GraphQLProjection(ServerCase):
                 )
                 self.assertEqual(
                     {
-                        s: gql(linear.Q_COMMENT, c=c)["comment"]["user"]["isMe"]
+                        s: gql(ops.Q_COMMENT, c=c)["comment"]["user"]["isMe"]
                         for s, c in mine.items()
                     },
                     {HARNESS: service == HARNESS, ENGINEER: service == ENGINEER},
                 )
         with self.assertRaises(LinearError):
-            self.eng(sessions.M_UPDATE, c=mine[HARNESS], b="hijacked")
+            self.eng(run_comments.M_UPDATE, c=mine[HARNESS], b="hijacked")
         self.assertEqual(
             sorted(c["body"] for c in self.fake.find("TASK-7")["comments"]),
             ["From an integration", f"Run {SID} · not a session", f"Run {SID} · running"],
         )
 
     def test_a_session_comment_is_created_then_updated_by_its_session_id(self):
-        session = linear.client_id(SID, "session")
+        session = ops.client_id(SID, "session")
         for text in (f"Run {SID} · running · #1", f"Run {SID} · done · #2"):
-            self.assertIsNone(sessions.write(self.gql, SID, "TASK-7", text))
+            self.assertIsNone(run_comments.write(self.gql, SID, "TASK-7", text))
         self.assertEqual(
             [(c["id"], c["user"], c["body"]) for c in self.fake.find("TASK-7")["comments"]],
             [(session, self.harness, f"Run {SID} · done · #2")],
@@ -128,12 +137,12 @@ class GraphQLProjection(ServerCase):
         )
 
     def test_a_comment_is_created_and_found_by_its_client_id(self):
-        cid = linear.client_id(SID, "comment")
+        cid = ops.client_id(SID, "comment")
         task, other = self.fake.find("TASK-7")["id"], self.fake.issue("Other")["id"]
-        self.assertIsNone(linear.find_comment(self.eng, cid, task))
-        linear.comment(self.eng, task, "Build ready.", cid)
+        self.assertIsNone(ops.find_comment(self.eng, cid, task))
+        ops.comment(self.eng, task, "Build ready.", cid)
         self.assertEqual(
-            self.eng(linear.Q_COMMENT, c=cid),
+            self.eng(ops.Q_COMMENT, c=cid),
             {
                 "comment": {
                     "id": cid,
@@ -143,12 +152,12 @@ class GraphQLProjection(ServerCase):
                 }
             },
         )
-        self.assertEqual(linear.find_comment(self.eng, cid, task), "Build ready.")
+        self.assertEqual(ops.find_comment(self.eng, cid, task), "Build ready.")
         for gql, issue in ((self.gql, task), (self.eng, other)):
             with self.subTest(issue=issue), self.assertRaisesRegex(LinearError, "is not ours$"):
-                linear.find_comment(gql, cid, issue)
+                ops.find_comment(gql, cid, issue)
         with self.assertRaises(LinearError) as cm:
-            linear.comment(self.gql, other, "Squatted.", cid)
+            ops.comment(self.gql, other, "Squatted.", cid)
         self.assertIn(f"fake: comment id {cid} in use", str(cm.exception))
         self.assertEqual(
             [(c["id"], c["body"]) for c in self.fake.find("TASK-7")["comments"]],
@@ -175,9 +184,7 @@ class GraphQLProjection(ServerCase):
             actor=self.harness,
             at=datetime(2026, 10, 8, 7, 30, 41, 62000, UTC),
         )
-        self.assertIsNone(
-            linear.move(self.eng, "TASK-8", STATES["in_review"], STATES["in_progress"])
-        )
+        self.assertIsNone(ops.move(self.eng, "TASK-8", STATES["in_review"], STATES["in_progress"]))
         nodes = self.gql(promote.Q_DETAIL, i="TASK-8")["issue"]["history"]["nodes"]
         self.assertEqual(
             [(n["actorId"], n["fromStateId"], n["toStateId"]) for n in nodes],
@@ -189,7 +196,7 @@ class GraphQLProjection(ServerCase):
         self.assertEqual(nodes[1]["createdAt"], "2026-10-08T07:30:41.062Z")
         self.assertRegex(nodes[0]["createdAt"], LINEAR_TIME)
         self.assertLess(
-            datetime.now(UTC) - linear.parse_time(nodes[0]["createdAt"]), timedelta(seconds=10)
+            datetime.now(UTC) - parse_time(nodes[0]["createdAt"]), timedelta(seconds=10)
         )
         self.assertEqual(self.fake.find("TASK-8")["state"], STATES["in_review"])
 
@@ -202,19 +209,19 @@ class GraphQLProjection(ServerCase):
                 self.fake.requests.clear()
                 self.fake.fail("linear.M_COMMENT", "error")
                 with self.assertRaises(LinearError) as cm:
-                    linear.comment(eng, "TASK-7", "lost")
+                    ops.comment(eng, "TASK-7", "lost")
                 self.assertIsInstance(str(cm.exception), str)
                 self.fake.fail("linear.M_STATE", "unsuccessful")
                 with self.assertRaisesRegex(LinearError, "^issueUpdate: success: false$"):
-                    linear.move(eng, "TASK-7", STATES["in_review"], STATES["in_progress"])
+                    ops.move(eng, "TASK-7", STATES["in_review"], STATES["in_progress"])
                 self.fake.fail("linear.M_SUBSCRIBE", "503")
-                with self.assertRaises(linear.Unavailable) as cm:
-                    linear.call(eng, linear.M_SUBSCRIBE, "issueSubscribe", i="TASK-7", e="me@x.com")
+                with self.assertRaises(types.Unavailable) as cm:
+                    ops.call(eng, ops.M_SUBSCRIBE, "issueSubscribe", i="TASK-7", e="me@x.com")
                 self.assertEqual(str(cm.exception), "issueSubscribe: HTTP 503")
                 self.fake.fail("linear.Q_ISSUE_STATE", "hang", seconds=3)
                 start = time.monotonic()
-                with self.assertRaises(linear.Unavailable) as cm:
-                    eng(linear.Q_ISSUE_STATE, timeout=1, i="TASK-7")
+                with self.assertRaises(types.Unavailable) as cm:
+                    eng(ops.Q_ISSUE_STATE, timeout=1, i="TASK-7")
                 self.assertEqual(str(cm.exception), "issue: TimeoutError: timed out")
                 self.assertLess(time.monotonic() - start, 2.5)
                 self.assertEqual(
@@ -234,11 +241,11 @@ class GraphQLProjection(ServerCase):
 
     def test_account_and_times_scope_a_failure(self):
         self.fake.fail("linear.M_COMMENT", "error", account="Engineer@agents.test", times=2)
-        linear.comment(self.gql, "TASK-7", "by the harness")
+        ops.comment(self.gql, "TASK-7", "by the harness")
         for _ in range(2):
             with self.assertRaises(LinearError):
-                linear.comment(self.eng, "TASK-7", "lost")
-        linear.comment(self.eng, "TASK-7", "by the engineer")
+                ops.comment(self.eng, "TASK-7", "lost")
+        ops.comment(self.eng, "TASK-7", "by the engineer")
         self.assertEqual(
             self.log(),
             [
@@ -265,7 +272,7 @@ class GraphQLProjection(ServerCase):
             ),
             self.assertRaises(urllib.error.HTTPError) as cm,
         ):
-            linear.linear_gql(linear.Q_USER, service="stranger", e="me@x.com")
+            client.linear_gql(ops.Q_USER, service="stranger", e="me@x.com")
         cm.exception.close()
         self.assertEqual(cm.exception.code, 401)
         self.assertEqual(
@@ -290,7 +297,7 @@ class GraphQLProjection(ServerCase):
 
     def test_a_bad_call_is_a_logged_error(self):
         with self.assertRaises(LinearError) as cm:
-            self.gql(linear.Q_ISSUE_STATE)
+            self.gql(ops.Q_ISSUE_STATE)
         self.assertIn("fake: linear.Q_ISSUE_STATE: KeyError: 'i'", str(cm.exception))
         with self.assertRaises(LinearError) as cm:
             self.gql(promote.Q_HANDOFF, t=TEAM, s=STATES["in_progress"], a=None)
@@ -327,7 +334,7 @@ class GraphQLProjection(ServerCase):
             for n in range(51)
         ]
         archived = self.fake.issue("Archived", state="done", assignee=self.engineer)["identifier"]
-        linear.call(self.gql, prune.M_ARCHIVE, "issueArchive", i=archived)
+        ops.call(self.gql, prune.M_ARCHIVE, "issueArchive", i=archived)
         self.fake.issue("Someone else's", state="done", assignee=self.human)
         pages, cursor = [], None
         while True:
@@ -349,7 +356,7 @@ class GraphQLProjection(ServerCase):
     def test_issue_create_takes_the_next_number_and_refuses_a_used_id(self):
         self.fake.issue("Older", identifier="TASK-3")
         new = {
-            "id": promote.child_id("src", "pm", "2026-10-09T07:00:00.000Z"),
+            "id": ops.client_id("src", "pm", "2026-10-09T07:00:00.000Z"),
             "teamId": TEAM,
             "projectId": PROJECT["id"],
             "assigneeId": self.engineer,
@@ -358,7 +365,7 @@ class GraphQLProjection(ServerCase):
             "title": "PRD: Widgets",
             "description": "Handoff from TASK-7: https://linear.app/fake/issue/TASK-7",
         }
-        made = linear.call(self.gql, promote.M_CREATE, "issueCreate", **{"in": new})
+        made = ops.call(self.gql, promote.M_CREATE, "issueCreate", **{"in": new})
         self.assertEqual(
             made, {"success": True, "issue": {"id": new["id"], "identifier": "TASK-8"}}
         )
@@ -382,9 +389,7 @@ class GraphQLProjection(ServerCase):
             },
         )
         with self.assertRaises(LinearError) as cm:
-            linear.call(
-                self.gql, promote.M_CREATE, "issueCreate", **{"in": dict(new, title="Again")}
-            )
+            ops.call(self.gql, promote.M_CREATE, "issueCreate", **{"in": dict(new, title="Again")})
         self.assertIn(new["id"], str(cm.exception))
         self.assertEqual([r.result for r in self.fake.requests], ["ok", "ok", "error"])
         self.assertIsNone(self.fake.find("TASK-9"))
@@ -401,7 +406,7 @@ class GraphQLProjection(ServerCase):
         )
         self.fake.issue("No project", assignee=self.engineer)
         self.fake.issue("Someone else's", assignee=self.human, project=PROJECT)
-        linear.call(
+        ops.call(
             self.gql,
             promote.M_RELATE,
             "issueRelationCreate",
@@ -410,9 +415,9 @@ class GraphQLProjection(ServerCase):
         cfg = SimpleNamespace(
             team=TEAM, states=STATES, task_label_group=TASK_GROUP, task_labels={"build": LABEL}
         )
-        self.assertEqual(linear.team(self.gql, cfg).states, STATES)
-        linear.task_group(self.gql, cfg)
-        self.assertEqual(linear.user_id(self.gql, "me@x.com"), self.human)
+        self.assertEqual(ops.team(self.gql, cfg).states, STATES)
+        ops.task_group(self.gql, cfg)
+        self.assertEqual(ops.user_id(self.gql, "me@x.com"), self.human)
         flt = {
             "team": {"id": {"eq": TEAM}},
             "project": {"null": False},
@@ -456,10 +461,10 @@ class FixtureOperations(Case):
         want = {
             f"{name}.{key}": value
             for name, module in (
-                ("linear", linear),
+                ("linear", ops),
                 ("router", routing),
                 ("issues", issues),
-                ("sessions", sessions),
+                ("sessions", run_comments),
                 ("writeback", writeback),
                 ("promote", promote),
                 ("prune", prune),
@@ -561,7 +566,7 @@ class FixtureOperations(Case):
 
 class GraphQLQueries(ServerCase):
     def test_the_team_lists_backlog_beside_the_config_states(self):
-        query = linear.Q_TEAM.replace(
+        query = ops.Q_TEAM.replace(
             "states(first: 100) { nodes { id } }", "states(first: 100) { nodes { id name type } }"
         )
         self.fake.ops[query] = "linear.Q_TEAM"
@@ -580,7 +585,7 @@ class GraphQLQueries(ServerCase):
         )
         self.assertEqual(len(nodes), 7)
         cfg = SimpleNamespace(team=TEAM, states=STATES)
-        self.assertEqual(linear.team(self.gql, cfg).states, STATES)
+        self.assertEqual(ops.team(self.gql, cfg).states, STATES)
 
     def test_a_backlog_issue_is_not_in_a_todo_list(self):
         later = self.fake.issue(
@@ -603,15 +608,15 @@ class GraphQLQueries(ServerCase):
         backlog = fake_linear.BACKLOG
         self.assertEqual(listed(STATES["todo"]), [ready["identifier"]])
         self.assertEqual(listed(backlog), [later["identifier"]])
-        self.assertIsNone(linear.move(self.gql, later["id"], STATES["todo"], backlog))
+        self.assertIsNone(ops.move(self.gql, later["id"], STATES["todo"], backlog))
         self.assertEqual(listed(STATES["todo"]), [later["identifier"], ready["identifier"]])
-        self.assertIsNone(linear.move(self.gql, ready["id"], backlog, STATES["todo"]))
+        self.assertIsNone(ops.move(self.gql, ready["id"], backlog, STATES["todo"]))
         self.assertEqual(
             (listed(STATES["todo"]), listed(backlog)),
             ([later["identifier"]], [ready["identifier"]]),
         )
         self.assertEqual(
-            self.gql(linear.Q_ISSUE_STATE, i=ready["id"]), {"issue": {"state": {"id": backlog}}}
+            self.gql(ops.Q_ISSUE_STATE, i=ready["id"]), {"issue": {"state": {"id": backlog}}}
         )
 
     def test_issue_create_takes_the_backlog_state(self):
@@ -621,7 +626,7 @@ class GraphQLQueries(ServerCase):
             "stateId": fake_linear.BACKLOG,
             "title": "Later",
         }
-        linear.call(self.gql, promote.M_CREATE, "issueCreate", **{"in": new})
+        ops.call(self.gql, promote.M_CREATE, "issueCreate", **{"in": new})
         self.assertEqual(self.fake.find(new["id"])["state"], fake_linear.BACKLOG)
 
     def test_relate_shows_in_relations_and_inverse_relations(self):
@@ -647,22 +652,20 @@ class GraphQLQueries(ServerCase):
 
     def test_the_write_back_ops(self):
         prd = self.fake.issue("PRD: Widgets", state="done")
-        linear.call(
+        ops.call(
             self.gql,
             promote.M_RELATE,
             "issueRelationCreate",
             **{"in": {"type": "related", "issueId": prd["id"], "relatedIssueId": "TASK-7"}},
         )
         for _ in range(2):
-            linear.call(self.eng, writeback.M_ATTACH, "attachmentLinkURL", i="TASK-7", u=PR, t="PR")
+            ops.call(self.eng, writeback.M_ATTACH, "attachmentLinkURL", i="TASK-7", u=PR, t="PR")
         self.assertEqual(
             self.eng(writeback.Q_ATTACHED, i="TASK-7"),
             {"issue": {"attachments": {"nodes": [{"url": PR}]}}},
         )
-        self.assertEqual(linear.subscribe(self.eng, "TASK-7", ["ME@x.com"]), "")
-        linear.call(
-            self.eng, writeback.M_TITLE, "issueUpdate", i="TASK-7", t="ENG: Session registry"
-        )
+        self.assertEqual(ops.subscribe(self.eng, "TASK-7", ["ME@x.com"]), "")
+        ops.call(self.eng, writeback.M_TITLE, "issueUpdate", i="TASK-7", t="ENG: Session registry")
         task = self.fake.find("TASK-7")
         with self.fake.lock:
             task["archived"] = True
@@ -676,10 +679,10 @@ class GraphQLQueries(ServerCase):
             (
                 "ENG: Session registry",
                 PROJECT["id"],
-                (issues.Linked(prd["identifier"], "PRD: Widgets", "Done"),),
+                (types.Linked(prd["identifier"], "PRD: Widgets", "Done"),),
             ),
         )
-        linear.call(self.eng, writeback.M_UNARCHIVE, "issueUnarchive", i=task["id"])
+        ops.call(self.eng, writeback.M_UNARCHIVE, "issueUnarchive", i=task["id"])
         self.assertEqual(
             (task["attachments"], task["subscribers"], task["archived"]),
             ([{"url": PR, "title": "PR"}], ["Me@X.com"], False),
@@ -698,8 +701,8 @@ class GraphQLQueries(ServerCase):
         )
         self.fake.move("TASK-9", "handoff", actor=self.human, at=handed)
         self.fake.comment("TASK-9", self.human, "Build it.", at=said)
-        linear.call(self.eng, writeback.M_ATTACH, "attachmentLinkURL", i="TASK-9", u=PR, t="PR")
-        linear.call(
+        ops.call(self.eng, writeback.M_ATTACH, "attachmentLinkURL", i="TASK-9", u=PR, t="PR")
+        ops.call(
             self.gql,
             promote.M_RELATE,
             "issueRelationCreate",
@@ -754,6 +757,6 @@ class GraphQLQueries(ServerCase):
         finished = self.gql(prune.Q_ISSUE, i="TASK-9")["issue"]
         self.assertEqual(finished["state"], {"id": STATES["done"]})
         self.assertEqual(
-            linear.last_move(finished["history"]["nodes"], {STATES["done"]}),
-            linear.parse_time(done),
+            ops.last_move(finished["history"]["nodes"], {STATES["done"]}),
+            parse_time(done),
         )

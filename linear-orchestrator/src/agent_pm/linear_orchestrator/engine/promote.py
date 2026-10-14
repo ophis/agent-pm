@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 import functools
 import os
 import subprocess
@@ -8,18 +7,14 @@ from datetime import UTC, datetime, timedelta
 from traceback import format_exception
 from typing import Any
 
-from agent_pm.linear_orchestrator.engine import config
+from agent_pm.linear_orchestrator.engine import config, issues, ops, run_comments
+from agent_pm.linear_orchestrator.engine import log as event_log
+from agent_pm.linear_orchestrator.engine.client import linear_gql
+from agent_pm.linear_orchestrator.engine.log import linear_error, log
+from agent_pm.linear_orchestrator.engine.ops import role_ids, team
+from agent_pm.linear_orchestrator.engine.prune import Pruner
 from agent_pm.linear_orchestrator.engine.types import ConfigError, LinearError, Unavailable
-from agent_pm.linear_orchestrator.linear import issues, linear, sessions
-from agent_pm.linear_orchestrator.linear.linear import (
-    linear_error,
-    linear_gql,
-    log,
-    one_line,
-    parse_time,
-    role_ids,
-    team,
-)
+from agent_pm.utils import one_line, parse_time
 
 
 @dataclass
@@ -41,8 +36,8 @@ create that role's issue in the same project, assigned to its account, in Todo w
 human instructions, relate it, and move the source to Done.
 --dry-run   Change nothing; print what would happen.
 --now       Skip the 10-minute wait in Handoff (for a manual run).
-Needs Python 3.11+ (tomllib). Events go to orchestrator.jsonl (linear.log, src promote); an idle run writes none; a
-config error or Linear unavailable exits 1, logged once a day (linear.config_error, linear.linear_error).
+Needs Python 3.11+ (tomllib). Events go to orchestrator.jsonl (event_log.log, src promote); an idle run writes none; a
+config error or Linear unavailable exits 1, logged once a day (event_log.config_error, event_log.linear_error).
 
 At the end of every tick, prune.py's Pruner removes the worktrees and clones of finished issues (TASK-49), closes
 their left-open TUI sessions and archives finished pm and engineer issues; a prune failure is logged and never breaks
@@ -58,7 +53,7 @@ Q_HANDOFF = """query($t: ID, $s: ID, $a: [ID!]) { issues(filter: { team: { id: {
 Q_DETAIL = (
     """query($i: String!) { issue(id: $i) { state { id }
   """
-    + linear.HISTORY
+    + ops.HISTORY
     + """
   comments(first: 250) { nodes { body createdAt user { email name isMe } } }
   relations(first: 250) { nodes { relatedIssue { id } } }
@@ -69,10 +64,6 @@ M_CREATE = "mutation($in: IssueCreateInput!) { issueCreate(input: $in) { success
 M_RELATE = (
     "mutation($in: IssueRelationCreateInput!) { issueRelationCreate(input: $in) { success } }"
 )
-
-
-def child_id(source_id, target, handoff_at):
-    return linear.client_id(source_id, target, handoff_at)
 
 
 def child_title(prefix, src_prefix, title):
@@ -188,7 +179,7 @@ class Promoter:
                     "handoff-bounce", src["identifier"], to="in_review", reason="no instructions"
                 )
             return
-        cid = child_id(src["id"], nxt, handoff.first)
+        cid = ops.client_id(src["id"], nxt, handoff.first)
         existing = self.gql(Q_CHILD, c=cid)["issues"]["nodes"]
         if existing:
             child = handoff.child = existing[0]
@@ -196,7 +187,7 @@ class Promoter:
             self.say("promote", src["identifier"], role=nxt, project=src["project"]["name"])
             return
         else:
-            child = handoff.child = linear.call(
+            child = handoff.child = ops.call(
                 self.gql,
                 M_CREATE,
                 "issueCreate",
@@ -220,7 +211,7 @@ class Promoter:
         related = {r["relatedIssue"]["id"] for r in detail["relations"]["nodes"]}
         related |= {r["issue"]["id"] for r in detail["inverseRelations"]["nodes"]}
         if child["id"] not in related and not self.dry:
-            linear.call(
+            ops.call(
                 self.gql,
                 M_RELATE,
                 "issueRelationCreate",
@@ -241,7 +232,7 @@ class Promoter:
 
     def description(self, src, comments, detail):
         everything = sorted(
-            (c for c in detail["comments"]["nodes"] if not sessions.is_comment(c)),
+            (c for c in detail["comments"]["nodes"] if not run_comments.is_comment(c)),
             key=lambda c: parse_time(c["createdAt"]),
         )
         return issues.handoff(
@@ -250,7 +241,7 @@ class Promoter:
             sources=[
                 (a["title"], a["url"])
                 for a in src["attachments"]["nodes"]
-                if not sessions.is_record(a)
+                if not run_comments.is_record(a)
             ],
             instructions=[(c["user"]["name"], c["createdAt"], c["body"]) for c in comments],
             comments=[
@@ -278,18 +269,18 @@ class Promoter:
 
     def comment(self, src, body):
         if not self.dry:
-            linear.comment(self.gql, src["id"], body)
+            ops.comment(self.gql, src["id"], body)
 
     def move(self, src, state, step):
         return self.dry or self.moved(
-            src, step, linear.move(self.gql, src["id"], self.states[state], self.states["handoff"])
+            src, step, ops.move(self.gql, src["id"], self.states[state], self.states["handoff"])
         )
 
     def comment_and_move(self, src, body, step):
         return self.dry or self.moved(
             src,
             step,
-            linear.comment_and_move(
+            ops.comment_and_move(
                 self.gql,
                 src["id"],
                 body,
@@ -309,7 +300,7 @@ def run_prune(gql, now, promoter, pruner=None):
     # a failure, even an ImportError, is logged
     try:
         if pruner is None:
-            from agent_pm.linear_orchestrator.engine.prune import Pruner as pruner
+            pruner = Pruner
         pruner(
             gql,
             now,
@@ -331,7 +322,7 @@ def run_prune(gql, now, promoter, pruner=None):
         )
 
 
-def main(argv, gql=linear_gql, now=None, config_path=config.CONFIG, pruner=None):
+def main(argv, gql=linear_gql, now=None, config_path=None, pruner=None):
     os.environ["PATH"] = config.path()
     if any(a not in ("--dry-run", "--now") for a in argv):
         print(HELP.strip(), file=sys.stderr)
@@ -342,19 +333,15 @@ def main(argv, gql=linear_gql, now=None, config_path=config.CONFIG, pruner=None)
     except ConfigError as error:
         config.report_error("promote", error, dry=dry)
         return 1
-    linear.use_logs(cfg.logs_dir)
+    event_log.use_logs(cfg.logs_dir)
     gql = functools.partial(gql, service=cfg.harness_key)
     now = now or datetime.now(UTC)
     try:
         promoter = Promoter(gql, cfg, now, dry, tasks=config.TASKS, wait="--now" not in argv)
         promoter.run()
     except LinearError as e:
-        return linear.config_error("promote", e, dry=dry)
+        return event_log.config_error("promote", e, dry=dry)
     except Unavailable as e:
         return linear_error("promote", e, dry=dry)
     run_prune(gql, now, promoter, pruner)
     return 0
-
-
-if __name__ == "__main__":
-    sys.exit(main(sys.argv[1:]))

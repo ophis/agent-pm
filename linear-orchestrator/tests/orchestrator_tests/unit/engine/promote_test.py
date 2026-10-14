@@ -1,5 +1,4 @@
-"""orchestrator promote.py, ported from the old promote_test onto config.load(): every Linear call goes
-as the harness account."""
+"""Orchestrator promote behavior at its dependency boundaries."""
 
 import functools
 import io
@@ -8,8 +7,7 @@ import os
 from contextlib import redirect_stderr, redirect_stdout
 from unittest import mock
 
-from agent_pm.linear_orchestrator.engine import config, promote
-from agent_pm.linear_orchestrator.linear import linear, sessions
+from agent_pm.linear_orchestrator.engine import config, ops, promote, run_comments
 from orchestrator_tests.case import Case
 from orchestrator_tests.unit.board_ids import STATES as IDS_BY_KEY
 from orchestrator_tests.unit.board_ids import TEAM
@@ -61,7 +59,7 @@ class PromotionFailures(Base):
                 self.fake = FakeLinear()
                 src = self.ready(handoff=90)
                 if existing:
-                    cid = promote.child_id("DR-1", "pm", ago(90))
+                    cid = ops.client_id("DR-1", "pm", ago(90))
                     self.fake.children[cid] = {"id": cid, "identifier": "C-9"}
                 self.fake.fail[fail] = (
                     "create failed" if fail == promote.M_CREATE else "relate failed"
@@ -93,7 +91,7 @@ class PromotionFailures(Base):
             instructions(child["description"]),
             f"## Instructions\nMe, {ago(2915)}:\nbuild X\n\nMe, {ago(20)}:\nagain",
         )
-        self.assertEqual(child["id"], promote.child_id("DR-1", "pm", ago(2900)))
+        self.assertEqual(child["id"], ops.client_id("DR-1", "pm", ago(2900)))
         self.assertEqual(src["state"], "Done")
 
 
@@ -112,7 +110,7 @@ class PartialPromotion(Base):
 
     def test_comment_failure_after_done_keeps_done(self):
         src = self.ready(handoff=90)
-        self.fake.fail[linear.M_COMMENT] = "comment failed"
+        self.fake.fail[ops.M_COMMENT] = "comment failed"
         self.run_main()
         self.assertEqual(src["state"], "Done")
         self.assertEqual(
@@ -123,7 +121,7 @@ class PartialPromotion(Base):
     def test_failed_bounce_posts_no_comment_and_stays_in_handoff(self):
         src = self.fake.add("DR-1")
         self.fake.moved("DR-1", 30, "Handoff", frm=STATES["In Review"])
-        self.fake.fail[linear.M_STATE] = "boom"
+        self.fake.fail[ops.M_STATE] = "boom"
         self.run_main()
         self.assertEqual(src["state"], "Handoff")
         self.assertNotIn("posted", src)
@@ -132,7 +130,7 @@ class PartialPromotion(Base):
     def test_subscribe_failure_noted_in_the_bounce(self):
         src = self.fake.add("DR-1")
         self.fake.moved("DR-1", 30, "Handoff", frm=STATES["In Review"])
-        self.fake.fail[linear.M_SUBSCRIBE] = "boom"
+        self.fake.fail[ops.M_SUBSCRIBE] = "boom"
         self.run_main()
         self.assertEqual(
             (src["state"], src["posted"]),
@@ -153,7 +151,7 @@ class PartialPromotion(Base):
         self.assertEqual(src["state"], "In Review")
         self.assertNotIn("posted", src)
         self.assertEqual(
-            self.fake.writes(), [promote.M_CREATE, promote.M_RELATE, linear.Q_ISSUE_STATE]
+            self.fake.writes(), [promote.M_CREATE, promote.M_RELATE, ops.Q_ISSUE_STATE]
         )
         self.assertEqual(self.out, f"move-skip DR-1 step=promote state={STATES['In Review']}")
 
@@ -164,7 +162,7 @@ class PartialPromotion(Base):
         self.run_main()
         self.assertEqual((src["state"], src["subscribers"]), ("Todo", ["me@x.com"]))
         self.assertNotIn("posted", src)
-        self.assertEqual(self.fake.writes(), [linear.M_SUBSCRIBE, linear.Q_ISSUE_STATE])
+        self.assertEqual(self.fake.writes(), [ops.M_SUBSCRIBE, ops.Q_ISSUE_STATE])
         self.assertEqual(self.out, f"move-skip DR-1 step=handoff-bounce state={STATES['Todo']}")
 
 
@@ -240,7 +238,7 @@ class PromotionOutages(Base):
                     gql = failing(error)
                     self.assertEqual(self.run_main(gql=gql), 1)
                     self.assertEqual((self.out, self.err, FakePruner.calls), (said, "", []))
-                    self.assertEqual(gql.failed, [(linear.Q_TEAM, {"service": HARNESS, "t": TEAM})])
+                    self.assertEqual(gql.failed, [(ops.Q_TEAM, {"service": HARNESS, "t": TEAM})])
         self.assertEqual(self.fake.calls, [])
         self.assertEqual((self.run_main(), src["state"]), (0, "Done"))
 
@@ -302,7 +300,7 @@ class PromotionOutages(Base):
                 )
                 self.assertEqual(
                     [q for q, _ in self.fake.mutations],
-                    [promote.M_CREATE, promote.M_RELATE, linear.M_STATE, linear.M_COMMENT],
+                    [promote.M_CREATE, promote.M_RELATE, ops.M_STATE, ops.M_COMMENT],
                 )
 
     def test_a_failure_bouncing_a_failed_handoff_stops_the_run(self):
@@ -350,7 +348,7 @@ class PromotionCleanup(Base):
         self.assertIsInstance(gql, functools.partial)
         self.assertEqual((gql.func, gql.keywords), (self.fake, {"service": HARNESS}))
         self.assertEqual((now, dry, work), (NOW, True, os.path.join(self.work, "work")))
-        self.assertEqual(team, linear.Team(TEAM, "Team", dict(IDS_BY_KEY)))
+        self.assertEqual(team, ops.Team(TEAM, "Team", dict(IDS_BY_KEY)))
         self.assertEqual(roles, {f"u-{role}": role for role in ROLE})
 
     def test_prune_error_does_not_break_promote(self):
@@ -384,7 +382,7 @@ class HandoffPromotion(Base):
         src = self.ready(attachments=[{"title": "Report", "url": "https://gh/r.md"}])
         self.assertEqual(self.run_main(), 0)
         (child,) = self.fake.children.values()
-        self.assertEqual(child["id"], promote.child_id("DR-1", "pm", ago(30)))
+        self.assertEqual(child["id"], ops.client_id("DR-1", "pm", ago(30)))
         self.assertEqual(
             (
                 child["projectId"],
@@ -410,9 +408,9 @@ class HandoffPromotion(Base):
             [
                 promote.M_CREATE,
                 promote.M_RELATE,
-                linear.Q_ISSUE_STATE,
-                linear.M_STATE,
-                linear.M_COMMENT,
+                ops.Q_ISSUE_STATE,
+                ops.M_STATE,
+                ops.M_COMMENT,
             ],
         )
         self.assertFalse(
@@ -462,7 +460,7 @@ class HandoffPromotion(Base):
         self.assertEqual(self.fake.mutations, [])
 
     def test_run_records_left_out_of_source(self):
-        record = {"title": "Run s-1", "url": sessions.URL + "s-1"}
+        record = {"title": "Run s-1", "url": run_comments.URL + "s-1"}
         self.ready(
             "DR-1",
             attachments=[
@@ -571,11 +569,11 @@ class HandoffPromotion(Base):
         self.assertEqual(
             self.fake.writes(),
             [
-                linear.M_SUBSCRIBE,
-                linear.M_SUBSCRIBE,
-                linear.Q_ISSUE_STATE,
-                linear.M_STATE,
-                linear.M_COMMENT,
+                ops.M_SUBSCRIBE,
+                ops.M_SUBSCRIBE,
+                ops.Q_ISSUE_STATE,
+                ops.M_STATE,
+                ops.M_COMMENT,
             ],
         )
         self.assertIn("handoff-bounce DR-1 to=in_review reason=no instructions", self.out)
@@ -606,7 +604,7 @@ class IdlePromotion(Base):
 class PromotionIdempotency(Base):
     def test_existing_child_with_relation(self):
         src = self.ready()
-        cid = promote.child_id("DR-1", "pm", ago(30))
+        cid = ops.client_id("DR-1", "pm", ago(30))
         self.fake.children[cid] = {"id": cid, "identifier": "C-9"}
         src["inverse"].append(cid)
         self.run_main()
@@ -624,7 +622,7 @@ class PromotionIdempotency(Base):
 
     def test_rehandoff_after_failure_bounce_reuses_child(self):
         src = self.ready(handoff=90)
-        cid = promote.child_id("DR-1", "pm", ago(90))
+        cid = ops.client_id("DR-1", "pm", ago(90))
         self.fake.children[cid] = {"id": cid, "identifier": "C-9"}
         self.fake.moved("DR-1", 60, "In Review", frm=STATES["Handoff"])
         self.fake.moved("DR-1", 10, "Handoff", frm=STATES["In Review"])
@@ -645,11 +643,11 @@ class PromotionIdempotency(Base):
         self.assertEqual(len(self.fake.children), 2)
 
     def test_child_id(self):
-        a = promote.child_id("DR-1", "pm", "2026-09-27T10:00:00.000Z")
+        a = ops.client_id("DR-1", "pm", "2026-09-27T10:00:00.000Z")
         self.assertEqual(a, CHILD)
-        self.assertEqual(a, linear.client_id("DR-1", "pm", "2026-09-27T10:00:00.000Z"))
-        self.assertNotEqual(a, promote.child_id("DR-1", "pm", "2026-09-27T10:00:01.000Z"))
-        self.assertNotEqual(a, promote.child_id("DR-1", "engineer", "2026-09-27T10:00:00.000Z"))
+        self.assertEqual(a, ops.client_id("DR-1", "pm", "2026-09-27T10:00:00.000Z"))
+        self.assertNotEqual(a, ops.client_id("DR-1", "pm", "2026-09-27T10:00:01.000Z"))
+        self.assertNotEqual(a, ops.client_id("DR-1", "engineer", "2026-09-27T10:00:00.000Z"))
         self.assertEqual(a[14], "4")
 
 

@@ -10,7 +10,7 @@ import shlex
 import unittest
 from datetime import UTC, datetime
 
-from agent_pm.linear_orchestrator.linear import linear
+from agent_pm.linear_orchestrator.engine import ops
 from orchestrator_tests.integration.flow_fixtures import (
     ACCOUNTS,
     HARNESS_EMAIL,
@@ -47,7 +47,7 @@ TO_REVIEW = ("linear.M_STATE", {"i": UUID, "s": STATES["in_review"]})
 
 
 def cid(step):
-    return linear.client_id(SID, step)
+    return ops.client_id(SID, step)
 
 
 def post(step, body):

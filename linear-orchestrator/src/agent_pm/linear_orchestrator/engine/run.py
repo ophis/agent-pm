@@ -1,10 +1,8 @@
-#!/usr/bin/env python3
 """One agent run of an issue's role through delegate.run: its events write back to Linear (the
 session comment as the harness account, progress and outcome as the role's), its usage limit to
 Linear and runs.jsonl. Exits 2 on bad argv, 1 on a config error, else 0.
 """
 
-import argparse
 import functools
 import os
 import re
@@ -14,16 +12,17 @@ from dataclasses import replace
 from traceback import format_exception
 
 from agent_pm import delegate
-from agent_pm.linear_orchestrator.engine import config, runs
+from agent_pm.linear_orchestrator.engine import client, config, run_comments, runs, writeback
+from agent_pm.linear_orchestrator.engine import log as event_log
+from agent_pm.linear_orchestrator.engine.log import log
 from agent_pm.linear_orchestrator.engine.types import (
     ConfigError,
+    Spec,
     Stopped,
 )
-from agent_pm.linear_orchestrator.linear import linear, sessions, writeback
-from agent_pm.linear_orchestrator.linear.linear import ISSUE_ID, log, one_line
 from agent_pm.session import SIGNALS, DriverError
 from agent_pm.session import ConfigError as SessionConfigError
-from agent_pm.utils import printable
+from agent_pm.utils import one_line, printable, repo_slug, timestamp
 
 
 def _stop(signum, _frame):
@@ -36,27 +35,18 @@ def _close_tuis(a, role, cfg):
     except DriverError:
         log("run", "tui-error", a.issue, msg="tmux sessions unknown")
         return
-    for name in (row.name for row in found):
-        if config.tui_issue(name) != (role, a.issue):
-            continue
-        try:
-            cfg.driver.close(name)
-        except (SessionConfigError, DriverError) as e:
-            log("run", "tui-error", a.issue, session=name, msg=one_line(e))
+    names = (row.name for row in found if config.tui_issue(row.name) == (role, a.issue))
+    for name, error in run_comments.close_tuis(cfg.driver, names):
+        if error:
+            log("run", "tui-error", a.issue, session=name, msg=error)
         else:
             log("run", "tui-closed", a.issue, session=name)
 
 
 def _run_role(a, cfg):
     role = config.role_for(cfg.roles, a.assignee)
-    if role is None:
-        reason = f"{a.assignee!r} is not a role account"
-    elif a.task is not None and a.task not in cfg.roles[role].tasks:
-        reason = (
-            f"task {a.task!r} is not one of {role}'s tasks ({', '.join(cfg.roles[role].tasks)})"
-        )
-    else:
-        reason = None
+    tasks = cfg.roles[role].tasks if role is not None else ()
+    reason = a.role_error(role, tasks)
     if reason:
         log("run", "config-error", a.issue, reason=reason)
         log("run", "end", a.issue, sid=a.sid, exit=1)
@@ -82,7 +72,7 @@ def _report_outcome(a, cfg, ctx, result):
         log("run", "no-outcome", a.issue, error=(result.error if result else "") or "no result")
 
 
-def inner(a, cfg, *, gql, run=delegate.run, now=sessions.now):
+def inner(a, cfg, *, gql, run=delegate.run, now=timestamp):
     os.environ["PATH"] = config.path()
     for sig in (signal.SIGTERM, signal.SIGHUP, signal.SIGINT):
         signal.signal(sig, _stop)
@@ -93,27 +83,15 @@ def inner(a, cfg, *, gql, run=delegate.run, now=sessions.now):
     log("run", "launch", a.issue, mode=a.mode, sid=a.sid)
     _close_tuis(a, role, cfg)
     rd = cfg.run_dir(a.issue)
-    harness = functools.partial(gql, service=cfg.harness_key, timeout=sessions.LIMIT)
-    rec = sessions.base(
+    harness = functools.partial(gql, service=cfg.harness_key, timeout=run_comments.LIMIT)
+    rec = run_comments.base(
         sid=a.sid, workdir=rd, runtime=a.runtime, started_at=now(), driver=cfg.driver
     )
-    # pylint: disable=duplicate-code  # Build writeback.context directly in both callers; no shared builder by design.
-    ctx = writeback.context(
-        cfg,
-        role,
-        gql,
-        ident=a.issue,
-        issue_id=a.uuid,
-        sid=a.sid,
-        resume=a.mode == "resume",
-        project=a.project,
-        target=config.repo_slug(a.target) if a.target else None,
-    )
-    # pylint: enable=duplicate-code
+    ctx = writeback.for_run(cfg, role, gql, a)
     name = config.tui_name(role, a.issue, a.sid) if a.tui else None
 
     def post(rc=None, *, outcome=None, limit=False):
-        if error := sessions.post(
+        if error := run_comments.post(
             a.issue,
             rec,
             gql=harness,
@@ -153,6 +131,7 @@ def inner(a, cfg, *, gql, run=delegate.run, now=sessions.now):
             events=a.events,
             out=os.path.join(rd, "out.md"),
             cwd=rd,
+            protect=cfg.protect,
         )
         result = run(
             cfg.roles[role].run,
@@ -177,22 +156,18 @@ def inner(a, cfg, *, gql, run=delegate.run, now=sessions.now):
         log("run", "end", a.issue, sid=a.sid, exit=rc)
         _report_outcome(a, cfg, ctx, result)
         post(rc, outcome=result.outcome if result else None, limit=bool(result and result.limit))
-        if error := sessions.repair(a.issue, a.uuid, rec, gql=harness):
+        if error := run_comments.repair(a.issue, a.uuid, rec, gql=harness):
             log("run", "registry-error", a.issue, sid=a.sid, error=error)
     return 0
 
 
-def main(argv, *, gql=linear.linear_gql, run=delegate.run, driver=None, now=sessions.now):
-    a = options(argv)
-    if not re.fullmatch(ISSUE_ID, a.issue) or not config.UUID_RE.fullmatch(a.sid):
-        return _usage(f"bad issue or session id: {a.issue} {a.sid}")
+def main(argv, *, gql=client.linear_gql, run=delegate.run, driver=None, now=timestamp):
+    a = Spec.from_argv(argv)
+    if reason := a.identity_error():
+        return _usage(reason)
     if not a.tui and any(v is not None for v in (a.split, a.split_from, a.opener, a.events)):
         return _usage("--split, --split-from, --opener and --events need --tui")
-    if (
-        not config.UUID_RE.fullmatch(a.uuid)
-        or a.target is not None
-        and not config.repo_slug(a.target)
-    ):
+    if not config.UUID_RE.fullmatch(a.uuid) or a.target is not None and not repo_slug(a.target):
         return _usage(f"bad issue uuid or target: {a.uuid} {a.target}")
     if not a.runtime or not a.runtime.isprintable():
         return _usage(f"bad runtime: {a.runtime!r}")
@@ -200,34 +175,17 @@ def main(argv, *, gql=linear.linear_gql, run=delegate.run, driver=None, now=sess
         cfg = config.load()
     except ConfigError as e:
         if e.logs_dir:
-            linear.use_logs(e.logs_dir)
+            event_log.use_logs(e.logs_dir)
         else:
             print(e.msg, file=sys.stderr)  # no log dir yet
         log("run", "config-error", a.issue, reason=e.msg)
         log("run", "end", a.issue, sid=a.sid, exit=1)
         return 1
-    linear.use_logs(cfg.logs_dir)
+    event_log.use_logs(cfg.logs_dir)
     cfg = replace(cfg, driver=driver) if driver is not None else cfg
     return inner(a, cfg, gql=gql, run=run, now=now)
-
-
-def options(argv):
-    ap = argparse.ArgumentParser(prog="run.py")
-    for f in ("--uuid", "--issue", "--project", "--assignee", "--sid", "--runtime", "--input"):
-        ap.add_argument(f, required=True)
-    ap.add_argument("--mode", choices=("new", "resume"), required=True)
-    ap.add_argument("--task")
-    ap.add_argument("--target")
-    ap.add_argument("--tui", action="store_true")
-    for f in ("--split", "--split-from", "--opener", "--events"):
-        ap.add_argument(f)
-    return ap.parse_args(argv)
 
 
 def _usage(msg):
     print(f"run.py: {msg}", file=sys.stderr)
     return 2
-
-
-if __name__ == "__main__":
-    sys.exit(main(sys.argv[1:]))

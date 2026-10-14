@@ -12,9 +12,8 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import NamedTuple
 
-from agent_pm.linear_orchestrator.engine import config, runs
+from agent_pm.linear_orchestrator.engine import config, ops, runs
 from agent_pm.linear_orchestrator.engine import router as routing
-from agent_pm.linear_orchestrator.linear import linear
 from orchestrator_tests.integration import fake_linear
 from orchestrator_tests.integration.flow_fixtures import (
     ACCOUNTS,
@@ -541,7 +540,7 @@ class Segment(TmuxFlow):
         )
 
     def moved_to_todo(self, ident):
-        return linear.last_move(
+        return ops.last_move(
             self.issue(ident)["history"], {fake_linear.IDS["todo"]}, {self.ids[HUMAN]}
         )
 

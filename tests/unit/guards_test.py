@@ -126,14 +126,6 @@ class PackageClimbs(Sample):
             ): "TASK-393",
             ("delegate/src/agent_pm/delegate/engine/config.py", "DELEGATE"): "TASK-367",
             ("delegate/src/agent_pm/delegate/engine/config.py", "import_roots()"): "TASK-367",
-            (
-                "linear-orchestrator/src/agent_pm/linear_orchestrator/engine/config.py",
-                "ROOT",
-            ): "TASK-372",
-            (
-                "linear-orchestrator/src/agent_pm/linear_orchestrator/engine/config.py",
-                "import_roots()",
-            ): "TASK-372",
             ("manager/src/agent_pm/manager/engine/crew.py", "BIN"): "TASK-373",
         }
         self.assertLessEqual(guards.PACKAGE_CLIMB_ALLOWED.keys(), expected.keys())
@@ -143,7 +135,7 @@ class PackageClimbs(Sample):
     def test_every_exemption_must_still_have_an_escape(self):
         root = self.tree({})
         found = guards.package_climbs(root)
-        self.assertEqual(len(found), 9)
+        self.assertEqual(len(found), 7)
         for (rel, name), ticket in guards.PACKAGE_CLIMB_ALLOWED.items():
             self.assertIn(f"{rel}: {name}: allowlisted but no package escape ({ticket})", found)
 
@@ -540,10 +532,10 @@ class OrchestratorSessionImports(Sample):
     def test_an_extra_name_in_an_allowed_module_fails(self):
         self.assertEqual(
             self.check(
-                "linear/sessions.py",
+                "engine/run_comments.py",
                 "from agent_pm.session import ConfigError, DriverError, SessionStatus\n",
             ),
-            [self.message("linear/sessions.py", "SessionStatus")],
+            [self.message("engine/run_comments.py", "SessionStatus")],
         )
 
     def test_a_new_module_fails_however_it_imports(self):
@@ -682,20 +674,15 @@ class SourceSuppressions(Sample):
         )
 
     def test_pylint_disable_requires_a_matching_enable(self):
-        path = "linear-orchestrator/src/agent_pm/linear_orchestrator/engine/router.py"
-        reason = guards.NOQA_ALLOWED[path, "duplicate-code", "outer"]
-        other = self.scoped(
-            "start_run", [f"# noqa: BLE001  # {guards.NOQA_ALLOWED[path, 'BLE001', 'start_run']}"]
-        )
-        self.assertEqual(
-            self.found(
-                {
-                    path: self.scoped("outer", [f"# pylint: disable=duplicate-code  # {reason}"])
-                    + other
-                }
-            ),
-            [f"{path}: suppression duplicate-code in outer has no matching enable"],
-        )
+        path = "tests/example.py"
+        reason = "Fixture approval."
+        with mock.patch.dict(guards.NOQA_ALLOWED, {(path, "duplicate-code", "outer"): reason}):
+            self.assertEqual(
+                self.found(
+                    {path: self.scoped("outer", [f"# pylint: disable=duplicate-code  # {reason}"])}
+                ),
+                [f"{path}: suppression duplicate-code in outer has no matching enable"],
+            )
 
     def test_unlisted_pylint_blocks_and_unmatched_enables_are_rejected(self):
         path = "tests/other.py"
@@ -718,24 +705,23 @@ class SourceSuppressions(Sample):
         )
 
     def test_pylint_enable_cannot_close_another_scope(self):
-        path = "linear-orchestrator/src/agent_pm/linear_orchestrator/engine/router.py"
-        reason = guards.NOQA_ALLOWED[path, "duplicate-code", "outer"]
-        other = self.scoped(
-            "start_run", [f"# noqa: BLE001  # {guards.NOQA_ALLOWED[path, 'BLE001', 'start_run']}"]
-        )
-        self.assertEqual(
-            self.found(
-                {
-                    path: self.scoped("outer", [f"# pylint: disable=duplicate-code  # {reason}"])
-                    + self.scoped("other", ["# pylint: enable=duplicate-code"])
-                    + other
-                }
-            ),
-            [
-                f"{path}:4: suppression duplicate-code in other has no matching disable",
-                f"{path}: suppression duplicate-code in outer has no matching enable",
-            ],
-        )
+        path = "tests/example.py"
+        reason = "Fixture approval."
+        with mock.patch.dict(guards.NOQA_ALLOWED, {(path, "duplicate-code", "outer"): reason}):
+            self.assertEqual(
+                self.found(
+                    {
+                        path: self.scoped(
+                            "outer", [f"# pylint: disable=duplicate-code  # {reason}"]
+                        )
+                        + self.scoped("other", ["# pylint: enable=duplicate-code"])
+                    }
+                ),
+                [
+                    f"{path}:4: suppression duplicate-code in other has no matching disable",
+                    f"{path}: suppression duplicate-code in outer has no matching enable",
+                ],
+            )
 
     def test_strings_docstrings_and_unrelated_comments_are_ignored(self):
         self.assertEqual(
@@ -1323,6 +1309,25 @@ class SharedTypes(Sample):
         )
         self.assertEqual(self.found("types.py"), [])
 
+    def test_orchestrator_issue_data_types_have_no_exemption(self):
+        home = "linear-orchestrator/src/agent_pm/linear_orchestrator/engine"
+        for name in ("Issue", "Handoff", "Note", "Link", "Linked"):
+            with self.subTest(name=name):
+                root = self.tree(
+                    {
+                        f"{home}/issues.py": self.DATA.replace("class A:", f"class {name}:"),
+                        f"{home}/writeback.py": (
+                            f"from agent_pm.linear_orchestrator.engine.issues import {name}\n"
+                        ),
+                    }
+                )
+                self.assertEqual(
+                    guards.shared_types(root),
+                    [
+                        f"{home}/writeback.py:1: agent_pm.linear_orchestrator.engine.issues.{name}: a shared data type belongs in a types.py"
+                    ],
+                )
+
     def test_a_relative_import_and_a_module_attribute_count(self):
         for user in ("from .a import A\n", "from agent_pm.utils import a\n\nx = a.A\n"):
             with self.subTest(user):
@@ -1535,6 +1540,32 @@ class TypesOnly(Sample):
         )
 
 
+class RunSpecSerialization(Sample):
+    def test_serialization_belongs_to_the_run_spec(self):
+        path = f"{guards.ORCH_PROJECT}/{OPKG}/engine/types.py"
+        source = "from dataclasses import dataclass\n@dataclass\nclass Spec:\n    def to_argv(self): return ['run']\n    @classmethod\n    def from_argv(cls, argv): return argv\n    def run(self): return 1\n"
+        self.assertEqual(
+            guards.types_only(self.tree({path: source})),
+            [
+                f"{path}:7: Spec.run: business method in types module",
+            ],
+        )
+
+    def test_serializer_names_do_not_allow_other_types_or_layers(self):
+        for path, name in (
+            (f"{guards.ORCH_PROJECT}/{OPKG}/engine/types.py", "Other"),
+            ("utils/src/agent_pm/utils/types.py", "Spec"),
+        ):
+            with self.subTest(path=path, name=name):
+                source = f"from dataclasses import dataclass\n@dataclass\nclass {name}:\n    def to_argv(self): return []\n"
+                self.assertEqual(
+                    guards.types_only(self.tree({path: source})),
+                    [
+                        f"{path}:4: {name}.to_argv: business method in types module",
+                    ],
+                )
+
+
 class NamespacePackage(Sample):
     def own(self, *extra: str) -> str:
         files = [f"{top}/src/agent_pm/{sub}/__init__.py" for top, sub in guards.PROJECTS.items()]
@@ -1588,6 +1619,47 @@ class NamespacePackage(Sample):
         self.assertEqual(guards.namespace_package(root), [f"manager/{PKG}/manager: missing"])
 
 
+class OrchestratorLayout(Sample):
+    def test_only_cli_is_executable(self):
+        root = self.tree(
+            {
+                f"{guards.ORCH_PROJECT}/{OPKG}/cli.py": 'if __name__ == "__main__": pass\n',
+                f"{guards.ORCH_PROJECT}/{OPKG}/engine/run.py": 'if __name__ == "__main__": pass\n',
+            }
+        )
+        self.assertEqual(
+            guards.orchestrator_entry(root),
+            [
+                f"{guards.ORCH_PROJECT}/{OPKG}/engine/run.py:1: entry outside cli.py",
+            ],
+        )
+
+    def test_entry_is_required(self):
+        self.assertEqual(
+            guards.orchestrator_entry(self.tree({})),
+            [
+                f"{guards.ORCH_PROJECT}/{OPKG}/cli.py: missing entry",
+            ],
+        )
+
+    def test_session_imports_are_frozen_at_their_owners(self):
+        root = self.tree(
+            {
+                f"{guards.ORCH_PROJECT}/{OPKG}/engine/router.py": "from agent_pm.session import DriverError, Session\n",
+                f"{guards.ORCH_PROJECT}/{OPKG}/engine/ops.py": "from agent_pm.session import DriverError\n",
+                f"{guards.ORCH_PROJECT}/{OPKG}/engine/new.py": "import agent_pm.session as session\nsession.Driver()\n",
+            }
+        )
+        self.assertEqual(
+            guards.orchestrator_session_imports(root),
+            [
+                f"{guards.ORCH_PROJECT}/{OPKG}/engine/new.py: {guards.ORCH_PKG}.engine.new imports Driver from agent_pm.session; go through agent_pm.delegate (TASK-394 removes this list)",
+                f"{guards.ORCH_PROJECT}/{OPKG}/engine/ops.py: {guards.ORCH_PKG}.engine.ops imports DriverError from agent_pm.session; go through agent_pm.delegate (TASK-394 removes this list)",
+                f"{guards.ORCH_PROJECT}/{OPKG}/engine/router.py: {guards.ORCH_PKG}.engine.router imports Session from agent_pm.session; go through agent_pm.delegate (TASK-394 removes this list)",
+            ],
+        )
+
+
 class PackageTop(Sample):
     def test_package_config_resource_is_allowed(self):
         files = {
@@ -1611,7 +1683,7 @@ class PackageTop(Sample):
             **self.package(
                 "delegate", "__init__.py", "cli.py", "engine/x.py", "team/x.py", "misc/x.py"
             ),
-            **self.package(guards.ORCH_PROJECT, "__init__.py", "engine/x.py", "linear/x.py"),
+            **self.package(guards.ORCH_PROJECT, "__init__.py", "engine/x.py", "config.toml"),
             **self.package("manager", "__init__.py", "engine/crew.py", "engine/roster.py", "y.py"),
         }
         self.assertEqual(
@@ -1788,7 +1860,7 @@ class OrchestratorText(Sample):
     def test_handoff_literals_only_in_issues(self):
         root = self.tree(
             {
-                f"{OPKG}/linear/issues.py": 'H = "Handoff from"\nS = ("## Source", "## Instructions", "## Comments")\n',
+                f"{OPKG}/engine/issues.py": 'H = "Handoff from"\nS = ("## Source", "## Instructions", "## Comments")\n',
                 f"{OPKG}/promote.py": 'x = f"Handoff from {i}: {u}"\n# ## Comments are quoted\n',
                 f"{OPKG}/target.py": 'M = "or its ## Instructions"\nS = "## Source"\n',
                 "src/issues.py": 'H = "Handoff from"\n',
@@ -1810,14 +1882,14 @@ class OrchestratorText(Sample):
 
 class ConfigOnce(Sample):
     LOAD = "calls agent_pm.linear_orchestrator.engine.config.load outside an entry main"
-    USE_LOGS = "calls agent_pm.linear_orchestrator.linear.linear.use_logs outside an entry main"
+    USE_LOGS = "calls agent_pm.linear_orchestrator.engine.log.use_logs outside an entry main"
 
     def test_load_and_use_logs_outside_an_entry_main(self):
         root = self.tree(
             {
-                f"{OPKG}/engine/run.py": "from agent_pm.linear_orchestrator.engine import config\nfrom agent_pm.linear_orchestrator.linear import linear\ndef main():\n    config.load()\n    linear.use_logs(None)\n\ndef inner():\n    config.load()\n",
-                f"{OPKG}/linear/writeback.py": (
-                    "from agent_pm.linear_orchestrator.engine import config\nfrom agent_pm.linear_orchestrator.linear.linear import use_logs\n\ndef main():\n    config.load()\n    use_logs(None)\n"
+                f"{OPKG}/engine/run.py": "from agent_pm.linear_orchestrator.engine import config\nfrom agent_pm.linear_orchestrator.engine import log as linear\ndef main():\n    config.load()\n    linear.use_logs(None)\n\ndef inner():\n    config.load()\n",
+                f"{OPKG}/engine/writeback.py": (
+                    "from agent_pm.linear_orchestrator.engine import config\nfrom agent_pm.linear_orchestrator.engine.log import use_logs\n\ndef main():\n    config.load()\n    use_logs(None)\n"
                 ),
                 f"{OPKG}/engine/promote.py": (
                     "import agent_pm.linear_orchestrator.engine.config as c\n\nclass P:\n    def main(self):\n        c.load()\n"
@@ -1830,8 +1902,8 @@ class ConfigOnce(Sample):
             [
                 f"{OPKG}/engine/promote.py:5: {self.LOAD}",
                 f"{OPKG}/engine/run.py:8: {self.LOAD}",
-                f"{OPKG}/linear/writeback.py:5: {self.LOAD}",
-                f"{OPKG}/linear/writeback.py:6: {self.USE_LOGS}",
+                f"{OPKG}/engine/writeback.py:5: {self.LOAD}",
+                f"{OPKG}/engine/writeback.py:6: {self.USE_LOGS}",
                 f"src/run.py:4: {self.LOAD}",
             ],
         )
@@ -1846,7 +1918,7 @@ class ConfigOnce(Sample):
                     "def _runnable():\n    pass\n\ndef load():\n    _runnable()\n    _docs()\n    _load_config()\n"
                 ),
                 f"{OPKG}/engine/promote.py": (
-                    "from agent_pm.linear_orchestrator.engine import config\nfrom agent_pm.linear_orchestrator.linear import linear\ndef main():\n    try:\n        cfg = config.load()\n    except SystemExit:\n        linear.use_logs(None)\n"
+                    "from agent_pm.linear_orchestrator.engine import config\nfrom agent_pm.linear_orchestrator.engine import log as linear\ndef main():\n    try:\n        cfg = config.load()\n    except SystemExit:\n        linear.use_logs(None)\n"
                 ),
                 "src/config.py": "def load():\n    _runnable()\n",
             }
@@ -1945,7 +2017,7 @@ class ExplicitKeys(Sample):
                 "delegate/config.toml": (
                     'cwd = ""\n# local: cwd = "/x"\n[output]\ntype = "local"\ndir = ""\n[roles.a.output]\ntype = "x"\n# local: [roles.b]\n# local: cwd = "/y"\n# local: [roles.b.output]\n# local: dir = "d"\n'
                 ),
-                f"{guards.ORCH_PROJECT}/config.toml": (
+                f"{guards.ORCH_PROJECT}/{OPKG}/config.toml": (
                     '[labels]\n# local: [labels]\n# local: x = "1"\n[roles.a]\nkey = ""\n# local: [roles.c]\n# local: key = "k"\n# local: [core.roles.a]\n# local: cwd = "/z"\n'
                 ),
             }
@@ -1955,7 +2027,7 @@ class ExplicitKeys(Sample):
     def test_sectioned_examples_keep_dynamic_empty_tables_and_reject_missing_keys(self):
         root = self.tree(
             {
-                f"{guards.ORCH_PROJECT}/config.toml": (
+                f"{guards.ORCH_PROJECT}/{OPKG}/config.toml": (
                     '[labels]\n# local: [linear_orchestrator.labels]\n# local: x = "1"\n'
                     '[roles.a]\nkey = ""\n# local: [linear_orchestrator.roles.b]\n# local: key = "k"\n'
                     "# local: [linear_orchestrator]\n# local: typo = 1\n# local: [session]\n"
@@ -1965,7 +2037,7 @@ class ExplicitKeys(Sample):
         self.assertEqual(
             guards.explicit_keys(root),
             [
-                f"{guards.ORCH_PROJECT}/config.toml: `# local:` key linear_orchestrator.typo has no real line",
+                f"{guards.ORCH_PROJECT}/{OPKG}/config.toml: `# local:` key linear_orchestrator.typo has no real line",
             ],
         )
 
@@ -2227,7 +2299,7 @@ class PythonCommands(Sample):
         root = self.tree(
             {
                 "delegate/config.toml": 'commands = ["python3 x.py", "python3 -m agent_pm.x"]\n# python3 -P {{team}}/tools/repo.py\ngate = "python3 -P {{team}}/x.py"\n',
-                "linear-orchestrator/config.toml": 'gate = "python3 -P -m agent_pmx.y"\n',
+                f"{guards.ORCH_PROJECT}/{OPKG}/config.toml": 'gate = "python3 -P -m agent_pmx.y"\n',
                 "delegate/skills/a/SKILL.md": "Run `python3.11 x.py`.\n- Bash(python -P -m agent_pm.delegate.cli --list)\n",
                 "manager/skills/b/SKILL.md": "Run `python3 y.py`.\n",
                 f"{team}/roles/r.md": (
@@ -2246,7 +2318,7 @@ class PythonCommands(Sample):
                 f'{team}/roles/r.md:2: python command "python3 -I -m agent_pm.x"',
                 f'{team}/roles/r.md:5: python command "python3 -P <team>/tools/../repo.py"',
                 f'{team}/roles/r.md:6: python command "python3 -P <team>/tools/repo.pyc"',
-                'linear-orchestrator/config.toml:1: python command "python3 -P -m agent_pmx.y"',
+                f'{guards.ORCH_PROJECT}/{OPKG}/config.toml:1: python command "python3 -P -m agent_pmx.y"',
                 'manager/skills/b/SKILL.md:1: python command "python3 y.py"',
             ],
         )

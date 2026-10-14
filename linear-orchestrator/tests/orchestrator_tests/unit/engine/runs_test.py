@@ -1,6 +1,4 @@
-"""orchestrator runs.py's readers, ported from the old router_test (parse_log, prune as trim), plus
-runtime, limit rows (FR-60) and runtime_of.
-"""
+"""Orchestrator runs behavior at its dependency boundaries."""
 
 import json
 import os

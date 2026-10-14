@@ -8,7 +8,7 @@ import os
 import unittest
 from datetime import UTC, datetime, timedelta
 
-from agent_pm.linear_orchestrator.engine import promote
+from agent_pm.linear_orchestrator.engine import ops
 from orchestrator_tests.integration import fake_linear
 from orchestrator_tests.integration.flow_fixtures import (
     ACCOUNTS,
@@ -81,7 +81,7 @@ class Promote(Tick):
                 self.fake.users[human]["name"],
             )
             self.instructions = f"## Instructions\n{name}, {said['createdAt']}:\n{INSTRUCTIONS}"
-            self.child = promote.child_id(source["id"], "pm", handoff["createdAt"])
+            self.child = ops.client_id(source["id"], "pm", handoff["createdAt"])
 
     def assert_promoted(self):
         with self.fake.lock:

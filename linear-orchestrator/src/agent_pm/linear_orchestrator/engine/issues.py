@@ -4,15 +4,17 @@ handoff, parse_handoff and head.
 
 import re
 
-from agent_pm.linear_orchestrator.engine.types import ISSUE_ID, IssueError
-from agent_pm.linear_orchestrator.linear import linear, sessions
-from agent_pm.linear_orchestrator.linear.types import (
+from agent_pm.linear_orchestrator.engine import run_comments
+from agent_pm.linear_orchestrator.engine.types import (
+    ISSUE_ID,
     Handoff,
     Issue,
+    IssueError,
     Link,
     Linked,
     Note,
 )
+from agent_pm.utils import one_line, parse_time
 
 Q_ISSUE = """query($i: String!) { issue(id: $i) { id identifier url title description createdAt
   project { id }
@@ -92,9 +94,9 @@ def read_issue(gql, ident) -> Issue:
                 (c["user"] or {}).get("name"),
             )
             for c in node["comments"]["nodes"]
-            if not sessions.is_comment(c)
+            if not run_comments.is_comment(c)
         ),
-        key=lambda n: linear.parse_time(n.at),
+        key=lambda n: parse_time(n.at),
     )
     linked = {}
     for r in [x["relatedIssue"] for x in node["relations"]["nodes"]] + [
@@ -133,8 +135,7 @@ def handoff(identifier, url, *, sources, instructions, comments) -> str:
     source, said, quoted = SECTIONS
     if sources:
         parts.append(
-            f"{source}\n"
-            + "\n".join(f"- {linear.one_line(t)}: {linear.one_line(u)}" for t, u in sources)
+            f"{source}\n" + "\n".join(f"- {one_line(t)}: {one_line(u)}" for t, u in sources)
         )
     if instructions:
         parts.append(
@@ -165,4 +166,4 @@ def build_cutoff(issue, humans) -> str:
     started = [
         n.at for n in issue.notes if not is_user(n, humans) and BUILD_STARTED.match(n.body.strip())
     ]
-    return max(started, key=linear.parse_time) if started else issue.created_at
+    return max(started, key=parse_time) if started else issue.created_at

@@ -16,20 +16,31 @@ from traceback import format_exception
 
 from agent_pm.delegate import Outcome, Progress
 from agent_pm.linear_orchestrator.engine.config import LOCAL, TASKS
-from agent_pm.linear_orchestrator.engine.target import MAPPED
-from agent_pm.linear_orchestrator.engine.types import LinearError, Stopped, Unavailable
-from agent_pm.linear_orchestrator.linear.linear import (
+from agent_pm.linear_orchestrator.engine.log import log
+from agent_pm.linear_orchestrator.engine.ops import (
     call,
     client_id,
     comment,
     find_comment,
-    log,
     move,
-    one_line,
     subscribe,
 )
-from agent_pm.linear_orchestrator.linear.types import Issue
-from agent_pm.utils import ConfinedFileError, ConfinedReason, read_confined, save
+from agent_pm.linear_orchestrator.engine.types import (
+    Invalid,
+    Issue,
+    LinearError,
+    Spec,
+    Stopped,
+    Unavailable,
+)
+from agent_pm.utils import (
+    ConfinedFileError,
+    ConfinedReason,
+    one_line,
+    read_confined,
+    repo_slug,
+    save,
+)
 
 
 @dataclass(frozen=True)
@@ -83,6 +94,20 @@ def context(cfg, role, gql, *, ident, issue_id, sid, resume, project, target):
         repos=cfg.project_repos,
         team=cfg.team,
         target=target,
+    )
+
+
+def for_run(cfg, role, gql, spec: Spec):
+    return context(
+        cfg,
+        role,
+        gql,
+        ident=spec.issue,
+        issue_id=spec.uuid,
+        sid=spec.sid,
+        resume=spec.mode == "resume",
+        project=spec.project,
+        target=repo_slug(spec.target) if spec.target else None,
     )
 
 
@@ -339,14 +364,15 @@ def _limit(ctx, resets_at):
     return True
 
 
-def bounce(ctx, issue: Issue, reason: str) -> None:
+def bounce(ctx, issue: Issue, invalid: Invalid) -> None:
+    reason = invalid.reason
     gql, h = ctx.gql, issue.handoff
     src = gql(Q_ID, i=h.source)["issue"] if h else None
     if h is not None and src and src["team"]["id"] == ctx.team:
         text = (
             f"Repo check failed: {reason}. To build it, move {h.source} to Handoff again with a comment "
             "`Repo: <owner>/<name>` naming the target repo."
-        ) + (f" Or fix {LOCAL}'s [project_repos] entry." if reason.startswith(MAPPED) else "")
+        ) + (f" Or fix {LOCAL}'s [project_repos] entry." if invalid.mapped else "")
         with contextlib.suppress(LinearError, Unavailable, OSError, subprocess.SubprocessError):
             call(gql, M_UNARCHIVE, "issueUnarchive", i=src["id"])
         notes = subscribe(gql, src["id"], ctx.humans)

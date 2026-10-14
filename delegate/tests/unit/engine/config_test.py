@@ -49,6 +49,17 @@ def parsed(text: str = "") -> dict:
 
 
 class PathsTest(Case):
+    def test_public_locations_cover_only_the_delegate_and_its_lower_layers_in_order(self):
+        roots = tuple(
+            os.path.join(case.REPO, name, "src") for name in ("delegate", "session", "utils")
+        )
+        dirs = tuple(
+            os.path.realpath(os.path.join(root, "agent_pm", name))
+            for root, name in zip(roots, ("delegate", "session", "utils"), strict=True)
+        )
+        self.assertEqual(agent_pm.delegate.module_roots(), roots)
+        self.assertEqual(agent_pm.delegate.package_dirs(), dirs)
+
     def test_the_delegate_dir_holds_the_config_and_the_roots_are_every_projects_src(self):
         self.assertEqual(DELEGATE, os.path.join(case.REPO, "delegate"))
         self.assertEqual(CONFIG, os.path.join(DELEGATE, "config.toml"))

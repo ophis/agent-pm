@@ -91,10 +91,10 @@ The layer that turns a Linear issue into free text, calls the delegate and maps 
 _Avoid_: orchestration layer, runner
 
 **Write-back**:
-The Linear orchestrator's mapping of an agent run's start and progress marks and its outcome to Linear.
+The Linear orchestrator's mapping of an agent run's start and progress marks and its outcome to Linear. In code: `linear-orchestrator/src/agent_pm/linear_orchestrator/engine/writeback.py`.
 
 **Overlay**:
-The core run keys the Linear orchestrator adds to its own agent runs, in `linear-orchestrator/config.toml`'s `[core]` table (its comment).
+The core run keys the Linear orchestrator adds to its own agent runs, in `linear-orchestrator/src/agent_pm/linear_orchestrator/config.toml`'s `[core]` table (its comment).
 
 **Manager**:
 The top layer: the commander session you talk to (`/agent-pm:manage`) and its crew. In code: `manager/src/agent_pm/manager/`.

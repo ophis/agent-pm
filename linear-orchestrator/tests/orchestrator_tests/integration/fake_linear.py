@@ -18,10 +18,18 @@ from datetime import UTC, datetime
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from agent_pm.linear_orchestrator.engine import config, promote, prune
+from agent_pm.linear_orchestrator.engine import (
+    client,
+    issues,
+    ops,
+    promote,
+    prune,
+    run_comments,
+    types,
+    writeback,
+)
 from agent_pm.linear_orchestrator.engine import router as routing
 from agent_pm.linear_orchestrator.engine.types import LinearError
-from agent_pm.linear_orchestrator.linear import issues, linear, sessions, writeback
 from orchestrator_tests.integration.fixture_errors import Problem
 from orchestrator_tests.unit.board_ids import STATES, TEAM
 
@@ -61,14 +69,22 @@ TYPES = {
 
 NAMES = {i: k for k, i in IDS.items()}
 
-TITLES = {**config.STATES, "backlog": "Backlog"}
+TITLES = {
+    "todo": "Todo",
+    "in_progress": "In Progress",
+    "in_review": "In Review",
+    "handoff": "Handoff",
+    "done": "Done",
+    "canceled": "Canceled",
+    "backlog": "Backlog",
+}
 
 KINDS = ("error", "unsuccessful", "503", "hang")
 
 MODULES = {
-    "linear": linear,
+    "linear": ops,
     "issues": issues,
-    "sessions": sessions,
+    "sessions": run_comments,
     "writeback": writeback,
     "promote": promote,
     "prune": prune,
@@ -363,9 +379,9 @@ class FakeLinear:
         if delay:
             time.sleep(min(delay, timeout))
             if delay >= timeout:
-                raise linear.Unavailable(linear.operation(query), reason="TimeoutError: timed out")
+                raise types.Unavailable(client.operation(query), reason="TimeoutError: timed out")
         if status >= 500:
-            raise linear.Unavailable(linear.operation(query), status=status)
+            raise types.Unavailable(client.operation(query), status=status)
         if status != 200:
             raise urllib.error.HTTPError(
                 "fake_linear",

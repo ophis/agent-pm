@@ -1,5 +1,4 @@
-"""orchestrator config.py, ported from the old config_test (less its clients layer and transcript
-cases) onto load()'s frozen Config, plus the old attended name cases (TUI names)."""
+"""Configuration loading, validation, frozen values and driver names."""
 
 import builtins
 import dataclasses
@@ -9,10 +8,13 @@ import os
 import re
 import shlex
 import tomllib
+from importlib.resources import files
+from pathlib import Path
 from unittest import mock
 
-from agent_pm import delegate
+from agent_pm import delegate, utils
 from agent_pm.linear_orchestrator.engine import config
+from agent_pm.linear_orchestrator.engine.types import State
 from agent_pm.utils import temp_dirs
 from orchestrator_tests.case import REPO, ROOTS, Case
 from orchestrator_tests.config_fixtures import (
@@ -36,8 +38,6 @@ P1, P2 = "a0000000-0000-4000-8000-000000000031", "b0000000-0000-4000-8000-000000
 
 
 STATES_LINE = HEADER[HEADER.index("states = ") : HEADER.index("task_label_group")]
-
-ROOT_Q = shlex.quote(config.ROOT)
 
 LABEL = ("linear-orchestrator/config.toml", "core")
 
@@ -438,13 +438,13 @@ class CommittedConfiguration(Case):
         return config.load()
 
     def test_committed_config_holds_no_deployment_values(self):
-        with open(config.CONFIG, "rb") as f:
+        with files("agent_pm.linear_orchestrator").joinpath("config.toml").open("rb") as f:
             committed = tomllib.load(f)
         self.assertEqual(
             {k: committed[k] for k in DEPLOYMENT},
             {
                 **dict.fromkeys(("team", "harness_key", "task_label_group"), ""),
-                "states": dict.fromkeys(config.STATES, ""),
+                "states": dict.fromkeys(State, ""),
                 "human_members": [],
                 **dict.fromkeys(("task_labels", "project_repos", "local_clones"), {}),
                 "work_dir": "~/.agent-pm",
@@ -499,7 +499,7 @@ class CommittedConfiguration(Case):
         )
 
     def test_local_lines_uncommented_set_every_required_key(self):
-        with open(config.CONFIG) as f:
+        with files("agent_pm.linear_orchestrator").joinpath("config.toml").open() as f:
             local = "".join(
                 line.removeprefix("# local: ") for line in f if line.startswith("# local: ")
             )
@@ -519,27 +519,6 @@ class WritableDirectories(Case):
         self.assertEqual(config.writable("/w"), ("/w", *temp_dirs()))
         with self.assertRaises(TypeError):
             config.writable()
-
-
-class RepositoryNames(Case):
-    def test_slug(self):
-        cases = {
-            "ophis/agent-pm": ("ophis", "agent-pm"),
-            "ophis/.github": ("ophis", ".github"),
-            "-a/b": None,
-            "a/-b": None,
-            "a/..": None,
-            "a/.": None,
-            "a b/c": None,
-            "ophis": None,
-            "https://github.com/ophis/x": None,
-            "": None,
-            None: None,
-            42: None,
-        }
-        for value, want in cases.items():
-            with self.subTest(value=value):
-                self.assertEqual(config.repo_slug(value), want)
 
 
 class WorkDirectories(ConfigFile, Case):
@@ -564,6 +543,64 @@ class WorkDirectories(ConfigFile, Case):
         )
 
 
+class DeploymentDirectories(Case):
+    def test_own_package_and_deployment_checkout_are_protected(self):
+        packages = tuple(
+            os.path.join(REPO, project, "src", "agent_pm", project.replace("-", "_"))
+            for project in ("linear-orchestrator", "delegate", "session", "utils")
+        )
+        protected, protect = config.deployment_dirs()
+        self.assertEqual(protected, (os.path.realpath(REPO), *packages))
+        self.assertEqual(protect, (os.path.realpath(REPO), packages[0]))
+        for directory in packages:
+            with self.subTest(directory=directory):
+                self.assertIn(directory, protected)
+                with self.assertRaisesRegex(config.ConfigError, "work_dir must neither"):
+                    config._work_dir({"work_dir": directory}, protected)
+
+    def test_local_clone_equal_containment_and_symlink_boundaries(self):
+        root = Path(self.home).resolve()
+        clone = root / "clone"
+        clone.mkdir()
+        alias = root / "alias"
+        alias.symlink_to(clone, target_is_directory=True)
+        for work in (clone, clone / "missing", clone.parent, alias):
+            with (
+                self.subTest(work=work),
+                self.assertRaisesRegex(config.ConfigError, "local_clones.ophis/x"),
+            ):
+                config._work_dir({"work_dir": str(work)}, (), {"ophis/x": str(clone)})
+        sibling = root / "sibling" / "missing"
+        self.assertEqual(
+            config._work_dir({"work_dir": str(sibling)}, (), {"ophis/x": str(clone)}), str(sibling)
+        )
+        self.assertFalse(sibling.exists())
+
+    def test_discovery_failure_rejects_loading(self):
+        with (
+            mock.patch("subprocess.run", side_effect=PermissionError("inaccessible deployment")),
+            self.assertRaisesRegex(config.ConfigError, "inaccessible deployment"),
+        ):
+            config.deployment_dirs()
+
+    def test_pythonpath_skips_standard_installation_locations(self):
+        roots = (
+            f"{REPO}/linear-orchestrator/src",
+            f"{REPO}/delegate/src",
+            f"{REPO}/session/src",
+            f"{REPO}/utils/src",
+        )
+        self.assertEqual(config.pythonpath(), os.pathsep.join(roots))
+        with (
+            mock.patch(
+                "sysconfig.get_paths", return_value={"purelib": roots[0], "platlib": roots[0]}
+            ),
+            mock.patch("site.getsitepackages", return_value=list(roots)),
+            mock.patch("site.getusersitepackages", return_value=roots[0]),
+        ):
+            self.assertEqual(config.pythonpath(), "")
+
+
 class ExecutablePath(Case):
     def path(self, home, env):
         """config.path() with HOME `home` and AGENT_PM_PATH as in `env` (unset when absent)."""
@@ -584,13 +621,13 @@ class ExecutablePath(Case):
 
 
 class ShellExecution(Case):
-    def test_sh_run(self):
+    def test_configured_environment_preserves_inherited_values(self):
         with (
             mock.patch("subprocess.run", return_value="res") as run,
             mock.patch.dict(os.environ, {"PATH": "/usr/bin:/bin", "KEEP": "1"}),
         ):
-            self.assertEqual(config.sh_run(["git", "status"], 5), "res")
             env = {**os.environ, "PATH": config.path()}
+            self.assertEqual(utils.sh(["git", "status"], 5, env=env), "res")
         run.assert_called_once_with(
             ["git", "status"],
             capture_output=True,
@@ -607,7 +644,7 @@ class TuiSessionNames(Case):
         for role_name in ("engineer", "dummy-tester", "pm2"):
             with self.subTest(role=role_name):
                 self.assertEqual(config.tui_prefix(role_name, ID), f"{role_name}-{ID}-")
-        self.assertEqual(config.session("pm", ID), f"agent-pm-pm-{ID}")
+        self.assertEqual(config.driver_name("pm", ID), f"agent-pm-pm-{ID}")
 
     def test_a_prefix_outside_the_contract(self):
         for role_name, ident in (
@@ -759,7 +796,7 @@ class RunnableRoles(ConfigFile, Case):
             self.assertIn(f"`<Workdir>/{config.CLONES[1]}`", f.read())
         self.assertEqual(
             delegate.CONFIG,
-            os.path.join(config.ROOT, "delegate", "config.toml"),
+            os.path.join(REPO, "delegate", "config.toml"),
         )
 
 
@@ -780,7 +817,34 @@ class ConfigurationRoot(ConfigFile, Case):
     def load(self, text):
         path = os.path.join(self.dir, "config.toml")
         write(path, text)
-        return config.load(self.root, path=path, core=self.core_path)
+        return config.load(path=path, core=self.core_path)
+
+    def test_work_dir_rejects_checkout_equality_containment_and_symlink(self):
+        root = os.path.realpath(self.root)
+        link = os.path.join(self.home, "deployment-link")
+        os.symlink(root, link)
+        for work in (root, os.path.join(root, "state", "missing"), os.path.dirname(root), link):
+            with self.subTest(work=work), self.assertRaises(config.ConfigError) as caught:
+                config._work_dir({"work_dir": work}, (root,))
+            self.assertEqual(
+                str(caught.exception),
+                "linear-orchestrator/config.toml: work_dir must neither lie in nor contain "
+                f"the repo {root}: {work!r}",
+            )
+        sibling = os.path.join(os.path.dirname(root), "separate-state", "missing")
+        self.assertFalse(os.path.exists(sibling))
+        self.assertEqual(config._work_dir({"work_dir": sibling}, (root,)), sibling)
+
+    def test_explicit_paths_preserve_nested_overlay_values_and_local_precedence(self):
+        local = os.path.join(self.agent_pm, "config.local.toml")
+        write(local, "[delegate.roles.engineer]\ntier = 1\n")
+        cfg = self.load(
+            PIPELINE + '[core.roles.engineer]\ntier = 3\ncommands = ["echo unchanged"]\n'
+        )
+        self.assertEqual(
+            (cfg.roles["engineer"].run.tier, cfg.roles["engineer"].run.commands),
+            (3, ["echo unchanged"]),
+        )
 
     def test_tasks_are_the_core_configs_index(self):
         with self.charter(
@@ -814,14 +878,17 @@ class ConfigurationRoot(ConfigFile, Case):
             mock.patch.object(builtins, "open", side_effect=open) as opened,
             mock.patch.object(io, "open", side_effect=io.open) as resource_opened,
         ):
-            cfg = config.load(self.root, path=path, local=local, core=self.core_path)
+            cfg = config.load(path=path, local=local, core=self.core_path)
         projects = {
             path
             for root in ROOTS
             for path in (
                 os.path.join(os.path.dirname(root), "config.toml"),
                 os.path.join(
-                    root, "agent_pm", os.path.basename(os.path.dirname(root)), "config.toml"
+                    root,
+                    "agent_pm",
+                    os.path.basename(os.path.dirname(root)).replace("-", "_"),
+                    "config.toml",
                 ),
             )
         }
@@ -845,11 +912,15 @@ class ConfigurationRoot(ConfigFile, Case):
             mock.patch.object(builtins, "open", side_effect=open) as opened,
             mock.patch.object(io, "open", side_effect=io.open) as resource_opened,
         ):
-            config.load(self.root, path=path, local=local, core=self.core_path)
-        paths = [str(c.args[0]) for c in [*opened.call_args_list, *resource_opened.call_args_list]]
+            config.load(path=path, local=local, core=self.core_path)
+        paths = [
+            str(call.args[0]) for call in [*opened.call_args_list, *resource_opened.call_args_list]
+        ]
         session = os.path.join(REPO, "session", "src", "agent_pm", "session", "config.toml")
         self.assertEqual(
-            [paths.count(p) for p in (path, self.core_path, session, local)], [1, 1, 3, 3], paths
+            [paths.count(file) for file in (path, self.core_path, session, local)],
+            [1, 1, 2, 3],
+            paths,
         )
 
     def test_an_unknown_harness_host_or_delegates_key_stops_the_caller(self):
@@ -859,7 +930,7 @@ class ConfigurationRoot(ConfigFile, Case):
         ):
             with self.subTest(text):
                 self.core(CORE_TOML + text)
-                self.fails(f"delegate config: {want}", PIPELINE)
+                self.fails(f"core: {want}", PIPELINE)
 
     def test_an_index_error_stops_the_caller(self):
         with self.charter(
@@ -869,22 +940,31 @@ class ConfigurationRoot(ConfigFile, Case):
         ):
             self.fails("core: roles/researcher.md: lists 'ghost' without tasks/ghost.md", PIPELINE)
 
-    def test_overlay_fills_root(self):
+    def test_legacy_root_placeholder_names_its_replacement(self):
+        for text in (
+            '[core]\ncommands = ["ls {{root}}/a"]\n',
+            '[core.roles.researcher]\ngate = "python3 {{root}}/x"\n',
+        ):
+            with self.subTest(text=text):
+                self.fails(
+                    "linear-orchestrator/config.toml: {{root}} is no longer supported; use an explicit path, or {{pythonpath}} for Python imports",
+                    PIPELINE + text,
+                )
+
+    def test_overlay_fills_pythonpath_and_keeps_other_values(self):
         cfg = self.load(
             PIPELINE
-            + (
-                '[core]\ntier = 3\ncommands = ["ls {{root}}/a", "true"]\n'
-                '[core.roles.researcher]\ngate = "python3 {{root}}/x --y {{root}}"\n[core.roles.pm]\nlanguage = "French"\n'
-            )
+            + '[core]\ntier = 3\ncommands = ["env PYTHONPATH={{pythonpath}} python3 -P", "true"]\n'
+            + '[core.roles.researcher]\ngate = "env PYTHONPATH={{pythonpath}} python3 -P"\n'
+            + '[core.roles.pm]\nlanguage = "French"\n'
         )
-        q = shlex.quote(self.root)
-        self.assertTrue(q.startswith("'"), q)
+        q = shlex.quote(config.pythonpath())
         run = cfg.roles["researcher"].run
         self.assertEqual(
-            (run.tier, run.commands, run.gate), (3, [f"ls {q}/a", "true"], f"python3 {q}/x --y {q}")
+            (run.tier, run.commands, run.gate),
+            (3, [f"env PYTHONPATH={q} python3 -P", "true"], f"env PYTHONPATH={q} python3 -P"),
         )
-        run = cfg.roles["pm"].run
-        self.assertEqual((run.gate, run.language), ("", "French"))
+        self.assertEqual((cfg.roles["pm"].run.gate, cfg.roles["pm"].run.language), ("", "French"))
 
     def test_a_trusted_dir_holding_the_work_dir_stops_the_caller(self):
         work = os.path.join(os.path.realpath(os.path.dirname(self.root)), "state", "agent-pm")
@@ -912,7 +992,7 @@ class ConfigurationRoot(ConfigFile, Case):
         path, local = (os.path.join(self.dir, n) for n in ("config.toml", "config.local.toml"))
         write(path, PIPELINE)
         write(local, "[session.hosts.tmux]\nstatus_line = true\n")
-        cfg = config.load(self.root, path=path, local=local, core=self.core_path)
+        cfg = config.load(path=path, local=local, core=self.core_path)
         pm = cfg.roles["pm"]
         work = os.path.join(self.dir, "work")
         delegate.plan(

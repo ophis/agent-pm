@@ -1,4 +1,4 @@
-"""orchestrator sessions.py, ported from the old sessions_test: one comment written by its session id,
+"""Run comments: one comment written by its session id,
 numbered `#<seq>`, repaired at the end after a late write; the resume command is the Driver's
 session_status."""
 
@@ -8,9 +8,10 @@ from datetime import datetime
 from unittest import mock
 
 from agent_pm.delegate import Outcome
+from agent_pm.linear_orchestrator.engine import ops, run_comments
 from agent_pm.linear_orchestrator.engine.types import LinearError, Stopped
-from agent_pm.linear_orchestrator.linear import linear, sessions
 from agent_pm.session import ConfigError, SessionStatus
+from agent_pm.utils import timestamp
 from orchestrator_tests import case
 from orchestrator_tests.process_fixtures import CalledProcessError
 from orchestrator_tests.unit.fake_api import FakeApi
@@ -23,7 +24,7 @@ ISSUE, ISSUE_ID = "TASK-12", "00000000-0000-4000-8000-000000000012"
 
 OTHER_ISSUE = "00000000-0000-4000-8000-000000000013"
 
-CID = linear.client_id(SID, "session")
+CID = ops.client_id(SID, "session")
 
 T1, T2, T3 = "2026-09-30T10:00:00+08:00", "2026-09-30T11:30:00+08:00", "2026-09-30T12:00:00+08:00"
 
@@ -35,7 +36,7 @@ NOT_FOUND = LinearError("linear api error: [{'message': 'Entity not found: Comme
 
 
 def record(driver, started_at=T1):
-    return sessions.base(
+    return run_comments.base(
         sid=SID, workdir=WORKDIR, runtime=RUNTIME, started_at=started_at, driver=driver
     )
 
@@ -48,12 +49,12 @@ def comment(id, body, issue=ISSUE_ID, *, mine=True):
     return {"id": id, "body": body, "mine": mine, "issue": issue}
 
 
-def start(gql, rec, timeout=sessions.LIMIT):
-    return sessions.post(ISSUE, rec, gql=gql, timeout=timeout)
+def start(gql, rec, timeout=run_comments.LIMIT):
+    return run_comments.post(ISSUE, rec, gql=gql, timeout=timeout)
 
 
 def end(gql, rec, rc, ended_at=T2):
-    return sessions.post(ISSUE, rec, gql=gql, rc=rc, ended_at=ended_at)
+    return run_comments.post(ISSUE, rec, gql=gql, rc=rc, ended_at=ended_at)
 
 
 class FakeLinear:
@@ -69,7 +70,7 @@ class FakeLinear:
                 return {op: {"success": False}}
             raise self.fail[op]
         if op == "comment":
-            assert query == linear.Q_COMMENT, query
+            assert query == ops.Q_COMMENT, query
             c = self.comments.get(v["c"])
             if c is None:
                 raise NOT_FOUND
@@ -83,11 +84,11 @@ class FakeLinear:
                 }
             }
         if op == "commentCreate":
-            assert query == linear.M_COMMENT_ID and v["i"] == ISSUE, (query, v)
+            assert query == ops.M_COMMENT_ID and v["i"] == ISSUE, (query, v)
             assert v["c"] not in self.comments, "fake: comment id in use"
             self.comments[v["c"]] = comment(v["c"], v["b"])
         else:
-            assert query == sessions.M_UPDATE, query
+            assert query == run_comments.M_UPDATE, query
             if v["c"] not in self.comments:
                 raise NOT_FOUND
             self.comments[v["c"]]["body"] = v["b"]
@@ -171,7 +172,7 @@ class Record(Case):
 
         def gql(query, **v):
             calls.append((query, v))
-            if query == sessions.M_UPDATE:
+            if query == run_comments.M_UPDATE:
                 return {"commentUpdate": None}
             return {"commentCreate": {"success": True}}
 
@@ -180,15 +181,15 @@ class Record(Case):
         self.assertEqual(
             calls,
             [
-                (sessions.M_UPDATE, {"c": CID, "b": body}),
-                (linear.M_COMMENT_ID, {"c": CID, "i": ISSUE, "b": body}),
+                (run_comments.M_UPDATE, {"c": CID, "b": body}),
+                (ops.M_COMMENT_ID, {"c": CID, "i": ISSUE, "b": body}),
             ],
         )
 
     def test_each_body_takes_the_next_seq(self):
         rec = self.record()
-        self.assertEqual(sessions.body(rec), text(f"running · #1 · {T1}"))
-        self.assertEqual(sessions.body(rec, 0, T2), text(f"done · #2 · {T1} → {T2} · exit 0"))
+        self.assertEqual(run_comments.body(rec), text(f"running · #1 · {T1}"))
+        self.assertEqual(run_comments.body(rec, 0, T2), text(f"done · #2 · {T1} → {T2} · exit 0"))
         self.assertEqual(rec["seq"], 2)
 
     def test_terminal_outcome_keeps_status_and_native_exit_diagnostic(self):
@@ -196,7 +197,7 @@ class Record(Case):
             with self.subTest(status=status):
                 fake = FakeLinear()
                 self.assertIsNone(
-                    sessions.post(
+                    run_comments.post(
                         ISSUE,
                         self.record(),
                         gql=fake,
@@ -211,17 +212,17 @@ class Record(Case):
 
     def test_a_limit_ended_run_says_limit_unless_it_reported_an_outcome(self):
         rec, asked = self.record(), Outcome("needs_input", "title", "summary")
-        self.assertEqual(sessions.body(rec, limit=True), text(f"running · #1 · {T1}"))
+        self.assertEqual(run_comments.body(rec, limit=True), text(f"running · #1 · {T1}"))
         self.assertEqual(
-            sessions.body(rec, -9, T2, limit=True), text(f"limit · #2 · {T1} → {T2} · exit -9")
+            run_comments.body(rec, -9, T2, limit=True), text(f"limit · #2 · {T1} → {T2} · exit -9")
         )
         self.assertEqual(
-            sessions.body(rec, -9, T2, outcome=asked, limit=True),
+            run_comments.body(rec, -9, T2, outcome=asked, limit=True),
             text(f"needs_input · #3 · {T1} → {T2} · exit -9"),
         )
         fake = FakeLinear()
         self.assertIsNone(
-            sessions.post(
+            run_comments.post(
                 ISSUE,
                 self.record(),
                 gql=fake,
@@ -239,19 +240,19 @@ class Record(Case):
         start(fake, self.record(started_at=T2))
         body = fake.only()["body"]
         self.assertEqual(body.splitlines()[0], f"Run {SID} · running · #1 · {T2}")
-        self.assertEqual(body, sessions.body(self.record(started_at=T2)))
+        self.assertEqual(body, run_comments.body(self.record(started_at=T2)))
 
     def test_end_defaults_to_now(self):
         fake = FakeLinear()
-        self.assertIsNone(sessions.post(ISSUE, self.record(), gql=fake, rc=0, ended_at=T2))
-        self.assertEqual(fake.only()["body"], sessions.body(self.record(), 0, T2))
+        self.assertIsNone(run_comments.post(ISSUE, self.record(), gql=fake, rc=0, ended_at=T2))
+        self.assertEqual(fake.only()["body"], run_comments.body(self.record(), 0, T2))
 
     def test_now_is_local_iso_with_offset(self):
-        stamp = sessions.now()
+        stamp = timestamp()
         self.assertIsNotNone(datetime.fromisoformat(stamp).utcoffset(), stamp)
 
     def test_no_cli(self):
-        self.assertFalse(hasattr(sessions, "main") or hasattr(sessions, "USAGE"))
+        self.assertFalse(hasattr(run_comments, "main") or hasattr(run_comments, "USAGE"))
 
     def test_failed_start_leaves_end_to_create_the_comment(self):
         fake, rec = FakeLinear(fail={"commentCreate": RuntimeError("down")}), self.record()
@@ -267,7 +268,7 @@ class Record(Case):
     def test_writes_only_its_session_id(self):
         mine = f"Run {SID} · running · #1 · {T1}"
         others = [
-            comment(linear.client_id(OTHER, "session"), f"Run {OTHER} · running · #1 · {T1}"),
+            comment(ops.client_id(OTHER, "session"), f"Run {OTHER} · running · #1 · {T1}"),
             comment("human", mine, mine=False),
             comment("legacy", f"Run {SID} · running · {T1}"),
         ]
@@ -278,8 +279,8 @@ class Record(Case):
         self.assertEqual([fake.comments[c["id"]] for c in others], others)
 
     def test_is_comment(self):
-        body = sessions.body(self.record())
-        self.assertTrue(sessions.is_comment({"user": {"isMe": True}, "body": body}))
+        body = run_comments.body(self.record())
+        self.assertTrue(run_comments.is_comment({"user": {"isMe": True}, "body": body}))
         for name, c in (
             ("human, same body", {"user": {"isMe": False}, "body": body}),
             (
@@ -291,16 +292,20 @@ class Record(Case):
             ("prefix not at the start", {"user": {"isMe": True}, "body": "see " + body}),
         ):
             with self.subTest(name):
-                self.assertFalse(sessions.is_comment(c))
+                self.assertFalse(run_comments.is_comment(c))
 
     def test_is_record_by_url(self):
-        self.assertTrue(sessions.is_record({"title": f"Run {SID}", "url": sessions.URL + SID}))
-        self.assertFalse(sessions.is_record({"title": "Run rate analysis", "url": "https://gh/x"}))
+        self.assertTrue(
+            run_comments.is_record({"title": f"Run {SID}", "url": run_comments.URL + SID})
+        )
+        self.assertFalse(
+            run_comments.is_record({"title": "Run rate analysis", "url": "https://gh/x"})
+        )
 
     def test_limit_and_no_default_identity(self):
-        self.assertEqual(sessions.LIMIT, 10)
+        self.assertEqual(run_comments.LIMIT, 10)
         with self.assertRaises(TypeError):
-            sessions.post(ISSUE, self.record())
+            run_comments.post(ISSUE, self.record())
 
 
 class Command(Case):
@@ -312,17 +317,17 @@ class Command(Case):
             with self.subTest(entry=entry):
                 self.session.return_value = entry
                 self.info.reset_mock()
-                self.assertEqual(sessions.command(self.record()), CMD)
+                self.assertEqual(run_comments.command(self.record()), CMD)
                 self.session.assert_not_called()
                 self.info.assert_called_once_with(RUNTIME, SID, WORKDIR, workdir=WORKDIR)
 
     def test_built_fresh_each_time_never_read_from_the_record(self):
         rec = self.record()
         rec["command"] = "rm -rf ~"
-        self.assertEqual(sessions.body(rec), text(f"running · #1 · {T1}"))
+        self.assertEqual(run_comments.body(rec), text(f"running · #1 · {T1}"))
         self.info.return_value = SessionStatus("yes", None, "resume it")
         self.assertEqual(
-            sessions.body(rec), f"Run {SID} · running · #2 · {T1}\n\n```\nresume it\n```"
+            run_comments.body(rec), f"Run {SID} · running · #2 · {T1}\n\n```\nresume it\n```"
         )
         self.assertEqual(self.info.call_count, 2)
 
@@ -336,8 +341,8 @@ class Command(Case):
                 self.info.side_effect = effect if isinstance(effect, Exception) else None
                 self.info.return_value = effect
                 rec = self.record()
-                self.assertIsNone(sessions.command(rec))
-                self.assertEqual(sessions.body(rec), f"Run {SID} · running · #1 · {T1}")
+                self.assertIsNone(run_comments.command(rec))
+                self.assertEqual(run_comments.body(rec), f"Run {SID} · running · #1 · {T1}")
 
 
 class Status(Case):
@@ -348,14 +353,14 @@ class Status(Case):
             with self.subTest(entry=entry):
                 self.session.return_value = entry
                 self.info.reset_mock()
-                self.assertIs(sessions.status(WORKDIR, "rt", SID, driver=self.api), st)
+                self.assertIs(run_comments.status(WORKDIR, "rt", SID, driver=self.api), st)
                 self.session.assert_not_called()
                 self.info.assert_called_once_with("rt", SID, WORKDIR, workdir=WORKDIR)
 
     def test_errors_propagate(self):
         self.info.side_effect = ConfigError("bad")
         with self.assertRaises(ConfigError):
-            sessions.status(WORKDIR, RUNTIME, SID, driver=self.api)
+            run_comments.status(WORKDIR, RUNTIME, SID, driver=self.api)
         self.session.assert_not_called()
 
 
@@ -381,7 +386,7 @@ class Failure(Case):
     def test_worker_control_flow_propagates_to_the_caller(self):
         for error in (KeyboardInterrupt(), Stopped(143)):
             with self.subTest(error=error), self.assertRaises(type(error)) as caught:
-                sessions._bounded(lambda error=error: self.failing(error)("query"), 1)
+                run_comments._bounded(lambda error=error: self.failing(error)("query"), 1)
             self.assertIs(caught.exception, error)
 
     def test_update_failure_never_creates(self):
@@ -429,7 +434,7 @@ class Failure(Case):
         release = threading.Event()
         self.addCleanup(release.set)
         t = time.monotonic()
-        out = sessions.post(
+        out = run_comments.post(
             ISSUE,
             self.record(),
             gql=lambda _q, **_v: release.wait(30),
@@ -460,7 +465,7 @@ class Repair(Case):
         self.fake, self.rec = FakeLinear(), self.record()
 
     def repair(self, gql=None, **kw):
-        return sessions.repair(ISSUE, ISSUE_ID, self.rec, gql=gql or self.fake, **kw)
+        return run_comments.repair(ISSUE, ISSUE_ID, self.rec, gql=gql or self.fake, **kw)
 
     def test_a_late_start_write_is_repaired_with_a_higher_seq(self):
         late = Late(self.fake)
@@ -504,7 +509,7 @@ class Repair(Case):
     def test_a_limit_end_is_rewritten_as_limit(self):
         down = FakeLinear(fail={"commentCreate": RuntimeError("down")})
         self.assertEqual(
-            sessions.post(
+            run_comments.post(
                 ISSUE,
                 self.rec,
                 gql=down,

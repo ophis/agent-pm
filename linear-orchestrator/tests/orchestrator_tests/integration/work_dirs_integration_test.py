@@ -2,14 +2,13 @@
 
 import os
 
-from agent_pm.linear_orchestrator.engine import config
-from orchestrator_tests.case import Case
+from orchestrator_tests.case import REPO, Case
 from orchestrator_tests.config_fixtures import BASE, ConfigFile
 
 
 class WorkDirectories(ConfigFile, Case):
     def test_refused(self):
-        real = os.path.realpath(config.ROOT)
+        real = os.path.realpath(REPO)
         d = os.path.realpath(self.dir)
         link, clink = os.path.join(d, "link"), os.path.join(d, "clink")
         os.symlink(real, link)

@@ -11,9 +11,15 @@ from datetime import UTC, datetime
 from unittest import mock
 
 from agent_pm.delegate import STATUSES, Begun, Finished, Outcome, Progress, Result
-from agent_pm.linear_orchestrator.engine import config, runs
-from agent_pm.linear_orchestrator.engine.types import LinearError, Stopped
-from agent_pm.linear_orchestrator.linear import issues, linear, writeback
+from agent_pm.linear_orchestrator.engine import (
+    config,
+    issues,
+    log,
+    ops,
+    runs,
+    writeback,
+)
+from agent_pm.linear_orchestrator.engine.types import Invalid, Issue, LinearError, Stopped
 from orchestrator_tests.case import Case
 from orchestrator_tests.unit import board_ids, run_fixtures
 from orchestrator_tests.unit.clock import logs_at
@@ -57,16 +63,16 @@ START = Progress("start", "x")
 T = datetime(2026, 10, 11, 10, 0, tzinfo=UTC).timestamp()
 
 NAMES = {
-    linear.M_SUBSCRIBE: "subscribe",
-    linear.M_COMMENT: "comment",
-    linear.M_COMMENT_ID: "comment",
-    linear.Q_COMMENT: "find",
-    linear.M_STATE: "state",
+    ops.M_SUBSCRIBE: "subscribe",
+    ops.M_COMMENT: "comment",
+    ops.M_COMMENT_ID: "comment",
+    ops.Q_COMMENT: "find",
+    ops.M_STATE: "state",
     writeback.M_TITLE: "title",
     writeback.M_ATTACH: "attach",
     writeback.M_UNARCHIVE: "unarchive",
     writeback.Q_ATTACHED: "read",
-    linear.Q_ISSUE_STATE: "reread",
+    ops.Q_ISSUE_STATE: "reread",
     writeback.Q_ID: "id",
 }
 
@@ -96,7 +102,7 @@ def sub(e, i=UUID):
 
 
 def cid(step, sid=SID):
-    return linear.client_id(sid, step)
+    return ops.client_id(sid, step)
 
 
 def post(step, b, sid=SID):
@@ -160,7 +166,7 @@ HANDOFF = (
 
 
 def issue(description):
-    return issues.Issue(
+    return Issue(
         UUID,
         ID,
         f"https://linear.app/t/issue/{ID}",
@@ -228,7 +234,7 @@ class Base(Case):
     def setUp(self):
         self.tmp = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, self.tmp)
-        linear.use_logs(os.path.join(self.tmp, "logs"))
+        log.use_logs(os.path.join(self.tmp, "logs"))
 
     def ctx(self, role="engineer", *, gql=None):
         return writeback.Context(
@@ -412,7 +418,7 @@ class IssueBounce(Base):
     def test_handoff_path(self):
         gql = Gql(issue=self.src(), states=self.DONE)
         reason = "ophis/x: no push permission"
-        writeback.bounce(self.ctx(gql=gql), issue(HANDOFF), reason)
+        writeback.bounce(self.ctx(gql=gql), issue(HANDOFF), Invalid(reason))
         t = self.text(reason)
         self.assertEqual(
             gql.calls,
@@ -433,7 +439,7 @@ class IssueBounce(Base):
 
     def test_skipped_moves_logged(self):
         gql = Gql(issue=self.src(), states=(STATES["handoff"], STATES["todo"]))
-        writeback.bounce(self.ctx(gql=gql), issue(HANDOFF), "r")
+        writeback.bounce(self.ctx(gql=gql), issue(HANDOFF), Invalid("r"))
         t = self.text("r")
         self.assertEqual(
             gql.calls[-4:], [comment(t, SRC_UUID), reread(SRC_UUID), comment(t), reread()]
@@ -449,7 +455,7 @@ class IssueBounce(Base):
     def test_mapped_reason_names_project_repos(self):
         gql = Gql(issue=self.src())
         reason = "project mapping ophis/x: not found or no access (HTTP 404)"
-        writeback.bounce(self.ctx(gql=gql), issue(HANDOFF), reason)
+        writeback.bounce(self.ctx(gql=gql), issue(HANDOFF), Invalid(reason, mapped=True))
         self.assertIn(
             comment(
                 self.text(
@@ -468,7 +474,7 @@ class IssueBounce(Base):
                     states=self.DONE,
                     fail=lambda name, _v, *, err=err: err if name == "unarchive" else None,
                 )
-                writeback.bounce(self.ctx(gql=gql), issue(HANDOFF), "r")
+                writeback.bounce(self.ctx(gql=gql), issue(HANDOFF), Invalid("r"))
                 self.assertEqual(gql.calls[-1], move("canceled"))
 
     def test_subscribe_failure_noted_move_made(self):
@@ -481,7 +487,7 @@ class IssueBounce(Base):
                 else None
             ),
         )
-        writeback.bounce(self.ctx(gql=gql), issue(HANDOFF), "r")
+        writeback.bounce(self.ctx(gql=gql), issue(HANDOFF), Invalid("r"))
         t = self.text("r")
         self.assertIn(
             comment(
@@ -509,7 +515,7 @@ class IssueBounce(Base):
         ):
             with self.subTest(name):
                 gql = Gql(issue=src)
-                writeback.bounce(self.ctx(gql=gql), issue(description), reason)
+                writeback.bounce(self.ctx(gql=gql), issue(description), Invalid(reason))
                 self.assertEqual(
                     gql.calls,
                     [
@@ -526,7 +532,7 @@ class IssueBounce(Base):
         gql = Gql(
             fail=lambda name, v: False if name == "subscribe" and v["e"] == HUMANS[0] else None
         )
-        writeback.bounce(self.ctx(gql=gql), issue("x"), "r")
+        writeback.bounce(self.ctx(gql=gql), issue("x"), Invalid("r"))
         self.assertEqual(
             gql.calls[-3:],
             [
@@ -547,19 +553,19 @@ class IssueBounce(Base):
                     fail=lambda n, _v, *, name=name: Stopped(129) if n == name else None,
                 )
                 with self.assertRaises(Stopped):
-                    writeback.bounce(self.ctx(gql=gql), issue(HANDOFF), "r")
+                    writeback.bounce(self.ctx(gql=gql), issue(HANDOFF), Invalid("r"))
                 self.assertEqual(gql.calls[-1][0], name)
 
     def test_other_failures_raise(self):
         gql = Gql(issue=self.src(), fail=lambda name, _v: False if name == "comment" else None)
         with self.assertRaises(LinearError):
-            writeback.bounce(self.ctx(gql=gql), issue(HANDOFF), "r")
+            writeback.bounce(self.ctx(gql=gql), issue(HANDOFF), Invalid("r"))
         self.assertEqual(gql.calls[-1], comment(self.text("r"), SRC_UUID))
         gql = Gql(
             fail=lambda name, _v: LinearError("linear api error: x") if name == "state" else None
         )
         with self.assertRaises(LinearError):
-            writeback.bounce(self.ctx(gql=gql), issue("x"), "r")
+            writeback.bounce(self.ctx(gql=gql), issue("x"), Invalid("r"))
 
 
 class WritebackContext(run_fixtures.Base):

@@ -1,8 +1,8 @@
-"""Router: the Linear orchestrator's one entry point. Decides which agent run starts or resumes among
+"""Router: the Linear orchestrator's scheduler. Decides which agent run starts or resumes among
 the team's issues assigned to role accounts, then starts it through the outer (run.py in a detached
 Driver session).
 
-python3 -P -m agent_pm.linear_orchestrator.engine.router [--now] [--dry-run] [--issue ID] | --brake ROLE
+python3 -P -m agent_pm.linear_orchestrator.cli router [--now] [--dry-run] [--issue ID] | --brake ROLE
 
 (no mode)     One scheduled tick: the hours check, then at most one agent run. Exits 1 a config error or Linear
               unavailable (config-error, linear-error: once a day), else 0.
@@ -15,10 +15,9 @@ python3 -P -m agent_pm.linear_orchestrator.engine.router [--now] [--dry-run] [--
               role.
 Bad arguments exit 2.
 
-Events go to orchestrator.jsonl (linear.log, src router); an idle tick writes none, a usage-blocked
+Events go to orchestrator.jsonl (event_log.log, src router); an idle tick writes none, a usage-blocked
 one only its usage-skip lines."""
 
-import argparse
 import contextlib
 import fcntl
 import functools
@@ -32,33 +31,35 @@ from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from traceback import format_exception
 
-from agent_pm.delegate import PYTHONPATH
-from agent_pm.linear_orchestrator.engine import config, inputs, target
+from agent_pm.linear_orchestrator.engine import (
+    client,
+    config,
+    inputs,
+    issues,
+    ops,
+    run_comments,
+    target,
+    writeback,
+)
+from agent_pm.linear_orchestrator.engine import log as event_log
+from agent_pm.linear_orchestrator.engine.client import linear_gql
+from agent_pm.linear_orchestrator.engine.log import linear_error, log
+from agent_pm.linear_orchestrator.engine.ops import humans, role_ids, task_group, team
 from agent_pm.linear_orchestrator.engine.runs import limits, note, parse_log, runtime_of, trim
 from agent_pm.linear_orchestrator.engine.types import (
+    ISSUE_ID,
     ConfigError,
     InputError,
     Invalid,
     IssueError,
     LinearError,
+    Spec,
     Transient,
     Unavailable,
 )
-from agent_pm.linear_orchestrator.linear import issues, linear, sessions, writeback
-from agent_pm.linear_orchestrator.linear.linear import (
-    ISSUE_ID,
-    humans,
-    linear_error,
-    linear_gql,
-    log,
-    one_line,
-    parse_time,
-    role_ids,
-    task_group,
-    team,
-)
 from agent_pm.session import ConfigError as SessionConfigError
 from agent_pm.session import DriverError
+from agent_pm.utils import one_line, parse_time, sh
 
 STALE = timedelta(hours=2)
 LIVE = timedelta(minutes=30)
@@ -70,11 +71,10 @@ MAX_WEEK = 100
 CAP_COMMENT = "Tried 4 times without finishing; needs a look."
 INTERRUPTED = "The previous agent run was interrupted. Moving this issue back to the Todo queue."
 BUSY = "another router is running"
-USAGE = "usage: python3 -P -m agent_pm.linear_orchestrator.engine.router [--now] [--dry-run] [--issue ID] | --brake ROLE"
+USAGE = "usage: python3 -P -m agent_pm.linear_orchestrator.cli router [--now] [--dry-run] [--issue ID] | --brake ROLE"
 FLAGS = {"--dry-run": "dry", "--now": "now"}
-RUN = ("-P", "-m", "agent_pm.linear_orchestrator.engine.run")
+RUN = ("-P", "-m", "agent_pm.linear_orchestrator.cli", "run")
 SESSIONS = "agent-pm-"
-SHARED = ("issue", "project", "assignee", "sid", "task", "mode", "runtime")
 DONE = {"completed", "canceled", "duplicate"}
 UNREADABLE = "(unreadable)"
 RELATIONS = "inverseRelations(first: 50) { nodes { type issue { identifier state { type } } } }"
@@ -83,7 +83,7 @@ Q_RECHECK = (
     "query($i: String!) { issue(id: $i) { state { id } assignee { id email } project { id name } "
     "labels { nodes { id name parent { id } } } } }"
 )
-Q_HISTORY = "query($i: String!) { issue(id: $i) { " + linear.HISTORY + " } }"
+Q_HISTORY = "query($i: String!) { issue(id: $i) { " + ops.HISTORY + " } }"
 
 
 def latest_sid(entries, issue):
@@ -111,7 +111,7 @@ def live_sessions(roles, *, driver):
         return None
     live = {}
     for r in roles:
-        prefix = config.session(r, "")
+        prefix = config.driver_name(r, "")
         ids = [n.removeprefix(prefix) for n in names if n.startswith(prefix)]
         live[r] = sorted(i for i in ids if re.fullmatch(ISSUE_ID, i))
     return live
@@ -280,7 +280,7 @@ class Board:
     def last_move(self, issue, state, *, by_user=False):
         if issue["id"] not in self.hist:
             self.hist[issue["id"]] = self.gql(Q_HISTORY, i=issue["id"])["issue"]["history"]["nodes"]
-        return linear.last_move(
+        return ops.last_move(
             self.hist[issue["id"]], {self.states[state]}, self.humans if by_user else None
         )
 
@@ -304,7 +304,7 @@ class Board:
     def comment_and_move(self, issue, body, state, frm, step):
         if self.dry:
             return
-        left = linear.comment_and_move(
+        left = ops.comment_and_move(
             self.gql,
             issue["id"],
             body,
@@ -318,7 +318,7 @@ class Board:
     def status(self, ident, sid):
         if sid not in self.statuses:
             try:
-                st = sessions.status(
+                st = run_comments.status(
                     self.cfg.run_dir(ident),
                     runtime_of(self.entries, sid),
                     sid,
@@ -471,26 +471,15 @@ class Board:
         if self.gated(runtime, ident):
             return None
         self.say("claim", ident, role=role, task=task, runtime=runtime)
-        linear.call(
-            self.gql, linear.M_STATE, "issueUpdate", i=issue["id"], s=self.states["in_progress"]
-        )
+        ops.call(self.gql, ops.M_STATE, "issueUpdate", i=issue["id"], s=self.states["in_progress"])
         taken = {**issue, "assignee": current["assignee"], "project": current["project"]}
         return taken, task, role, runtime
 
 
-def begin(runs, *, mode, issue, sid, role, task, runtime, now=datetime.now):
-    ident = issue["identifier"]
-    kind = "resume" if mode == "resume" else "start"
-    note(runs, kind, issue=ident, sid=sid, role=role, runtime=runtime, now=now)
-    return argparse.Namespace(
-        issue=ident,
-        project=issue["project"]["id"],
-        assignee=issue["assignee"]["email"],
-        sid=sid,
-        task=task,
-        mode=mode,
-        runtime=runtime,
-    )
+def begin(path, spec: Spec, *, role, now=datetime.now):
+    kind = "resume" if spec.mode == "resume" else "start"
+    note(path, kind, issue=spec.issue, sid=spec.sid, role=role, runtime=spec.runtime, now=now)
+    return spec
 
 
 def fail(ident, kind, reason, rc):
@@ -500,21 +489,20 @@ def fail(ident, kind, reason, rc):
 
 def outer(a, cfg, *, gql, run, keychain):
     os.environ["PATH"] = config.path()
-    if not re.fullmatch(ISSUE_ID, a.issue) or not config.UUID_RE.fullmatch(a.sid):
-        print(f"router.py: bad issue or session id: {a.issue} {a.sid}", file=sys.stderr)
+    if reason := a.identity_error():
+        print(f"router.py: {reason}", file=sys.stderr)
         return 2
     role = config.role_for(cfg.roles, a.assignee)
-    if role is None:
-        return fail(a.issue, "config-error", f"{a.assignee!r} is not a role account", 2)
-    tasks, key = (cfg.roles[role].tasks, cfg.roles[role].key)
-    if a.task is not None and a.task not in tasks:
-        why = f"task {a.task!r} is not one of {role}'s tasks ({', '.join(tasks)})"
-        return fail(a.issue, "config-error", why, 2)
+    tasks = cfg.roles[role].tasks if role is not None else ()
+    reason = a.role_error(role, tasks)
+    if role is None or reason:
+        return fail(a.issue, "config-error", reason, 2)
+    key = cfg.roles[role].key
     if not keychain(key):
         return fail(a.issue, "config-error", f"no Keychain item for role key {key}", 2)
     if a.mode == "resume":
         try:
-            st = sessions.status(cfg.run_dir(a.issue), a.runtime, a.sid, driver=cfg.driver)
+            st = run_comments.status(cfg.run_dir(a.issue), a.runtime, a.sid, driver=cfg.driver)
             why = None if st.resumable == "yes" else st.resumable
         except (SessionConfigError, DriverError) as e:
             why = one_line(e)
@@ -525,19 +513,8 @@ def outer(a, cfg, *, gql, run, keychain):
         issue = issues.read_issue(gql, a.issue)
     except (LinearError, Unavailable, OSError, subprocess.SubprocessError, IssueError) as e:
         return fail(a.issue, "transient", f"Linear: {one_line(e)}", 3)
-    # pylint: disable=duplicate-code  # Build writeback.context directly in both callers; no shared builder by design.
-    ctx = writeback.context(
-        cfg,
-        role,
-        gql,
-        ident=a.issue,
-        issue_id=issue.id,
-        sid=a.sid,
-        resume=a.mode == "resume",
-        project=a.project,
-        target=None,
-    )
-    # pylint: enable=duplicate-code
+    a = replace(a, uuid=issue.id)
+    ctx = writeback.for_run(cfg, role, gql, a)
     if build:
         try:
             repo = target.check(
@@ -549,7 +526,7 @@ def outer(a, cfg, *, gql, run, keychain):
             return fail(a.issue, "transient", repo.reason, 3)  # never bounce a mid-build agent run
         if isinstance(repo, Invalid):
             try:
-                writeback.bounce(ctx, issue, repo.reason)
+                writeback.bounce(ctx, issue, repo)
             except (LinearError, Unavailable, OSError, subprocess.SubprocessError) as e:
                 return fail(a.issue, "transient", f"bounce: {one_line(e)}", 3)
             log("router", "bounce", a.issue, reason=repo.reason)
@@ -584,20 +561,18 @@ def outer(a, cfg, *, gql, run, keychain):
     except OSError as e:
         log("router", "launch-error", a.issue, error=f"input: {one_line(e)}")
         return 1
+    spec = replace(a, input=text, target=f"{repo.owner}/{repo.name}" if build and repo else None)
+    env = dict(os.environ)
+    if roots := config.pythonpath():
+        env["PYTHONPATH"] = roots
+    else:
+        env.pop("PYTHONPATH", None)
     try:
         cfg.driver.detach(
-            config.session(role, a.issue),
-            [
-                sys.executable,
-                *RUN,
-                "--uuid",
-                issue.id,
-                *(["--target", f"{repo.owner}/{repo.name}"] if build and repo is not None else []),
-                *(f"--{k}={v}" for k in SHARED if (v := getattr(a, k)) is not None),
-                f"--input={text}",
-            ],
+            config.driver_name(role, a.issue),
+            [sys.executable, *RUN, *spec.to_argv()],
             cwd=rd,
-            env={**os.environ, "PYTHONPATH": PYTHONPATH},
+            env=env,
         )
     except (SessionConfigError, DriverError) as e:
         log("router", "launch-error", a.issue, error=one_line(e))
@@ -661,7 +636,9 @@ def choose(board, gate, live_ids, full, counts):
         runtime = runtime_of(board.entries, sid)
         if not gate.blocked(runtime, issue["identifier"]):
             board.plan(("resume", issue, sid), counts)
-            return "resume", issue, sid, board.role(issue), None, runtime
+            return Spec.from_issue(
+                issue, mode="resume", sid=sid, task=None, runtime=runtime
+            ), board.role(issue)
     if not (queue := board.queue(full)):
         return None
     board.plan(("new", len(queue)), counts)
@@ -669,7 +646,9 @@ def choose(board, gate, live_ids, full, counts):
         board.say("skip", reason="nothing claimed")
         return None
     issue, task, role, runtime = taken
-    return "new", issue, str(uuid.uuid4()), role, task, runtime
+    return Spec.from_issue(
+        issue, mode="new", sid=str(uuid.uuid4()), task=task, runtime=runtime
+    ), role
 
 
 def tick(opts, cfg, gql, *, start, clock=datetime.now, hour=None):
@@ -701,24 +680,15 @@ def tick(opts, cfg, gql, *, start, clock=datetime.now, hour=None):
             try:
                 trim(runs, now)
             except (OSError, UnicodeDecodeError) as e:
-                say("skip", reason="prune failed", error=one_line(e))
+                say("skip", reason="trim failed", error=one_line(e))
         with Held(dry) as walk:
             gate = Gate(runs, now, dry=dry, say=walk, driver=cfg.driver)
             board = Board(gql, parse_log(runs), cfg, now=now, dry=dry, gate=gate, say=walk)
             run = choose(board, gate, {i for ids in live.values() for i in ids}, full, counts)
             if run is None or dry:
                 return 0
-            mode, issue, sid, role, task, runtime = run
-            a = begin(
-                runs,
-                mode=mode,
-                issue=issue,
-                sid=sid,
-                role=role,
-                task=task,
-                runtime=runtime,
-                now=clock,
-            )
+            spec, role = run
+            a = begin(runs, spec, role=role, now=clock)
             walk.write()  # the outer logs past the walk
             return start_run(start, a, walk)
 
@@ -737,7 +707,7 @@ def run_issue(opts, cfg, gql, start, *, clock=datetime.now):
             print("router.py: agent runs unknown; try again", file=sys.stderr)
             return stop
         if role := next((r for r, ids in live.items() if ident in ids), None):
-            attach = cfg.driver.attach_command(config.session(role, ident))
+            attach = cfg.driver.attach_command(config.driver_name(role, ident))
             print(f"router.py: {ident} has a live agent run: {attach}", file=sys.stderr)
             return stop
         entries = parse_log(runs)
@@ -749,27 +719,20 @@ def run_issue(opts, cfg, gql, start, *, clock=datetime.now):
             if not board.settle(issue, sid, wait=False):
                 return stop
             board.plan(("resume", issue, sid))
-            run = ("resume", issue, sid, board.role(issue), None, runtime_of(entries, sid))
+            spec = Spec.from_issue(
+                issue, mode="resume", sid=sid, task=None, runtime=runtime_of(entries, sid)
+            )
+            role = board.role(issue)
         elif board.is_blocked(ident) or not (taken := board.take(ident)):
             return stop
         else:
             issue, task, role, runtime = taken
-            run = ("new", issue, str(uuid.uuid4()), role, task, runtime)
+            spec = Spec.from_issue(
+                issue, mode="new", sid=str(uuid.uuid4()), task=task, runtime=runtime
+            )
         if dry:
             return 0
-        mode, issue, sid, role, task, runtime = run
-        return start(
-            begin(
-                runs,
-                mode=mode,
-                issue=issue,
-                sid=sid,
-                role=role,
-                task=task,
-                runtime=runtime,
-                now=clock,
-            )
-        )
+        return start(begin(runs, spec, role=role, now=clock))
 
 
 def brake(role, cfg):
@@ -801,7 +764,7 @@ def main(
     argv,
     *,
     now=datetime.now,
-    config_path=config.CONFIG,
+    config_path=None,
     hour=None,
     gql=None,
     run=None,
@@ -810,8 +773,8 @@ def main(
     driver=None,
 ):
     gql = gql or linear_gql
-    run = run or config.sh_run
-    keychain = keychain or linear.has_key
+    run = run or functools.partial(sh, env={**os.environ, "PATH": config.path()})
+    keychain = keychain or client.has_key
     opts = options(argv)
     if opts is None:
         print(USAGE, file=sys.stderr)
@@ -825,7 +788,7 @@ def main(
     except ConfigError as error:
         config.report_error("router", error, dry=opts["dry"])
         return 1
-    linear.use_logs(cfg.logs_dir)
+    event_log.use_logs(cfg.logs_dir)
     cfg = replace(cfg, driver=driver) if driver is not None else cfg
     if opts["brake"] is not None:
         role = opts["brake"]
@@ -847,7 +810,7 @@ def main(
             clock=now,
         )
     except LinearError as e:
-        return linear.config_error("router", e, dry=opts["dry"])
+        return event_log.config_error("router", e, dry=opts["dry"])
     except Unavailable as e:
         return linear_error("router", e, dry=opts["dry"])
 
@@ -865,7 +828,3 @@ def start_run(start, args, say):
     else:
         say("launch", args.issue, exit=result)
     return 0
-
-
-if __name__ == "__main__":
-    sys.exit(main(sys.argv[1:]))

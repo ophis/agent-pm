@@ -19,9 +19,11 @@ class Stopped(BaseException):
         self.code = code
 
 
-def sh(argv: list[str], timeout: int) -> subprocess.CompletedProcess:
+def sh(
+    argv: list[str], timeout: int, *, env: Mapping[str, str] | None = None
+) -> subprocess.CompletedProcess:
     return subprocess.run(
-        argv, capture_output=True, text=True, timeout=timeout, stdin=subprocess.DEVNULL
+        argv, capture_output=True, text=True, timeout=timeout, stdin=subprocess.DEVNULL, env=env
     )
 
 

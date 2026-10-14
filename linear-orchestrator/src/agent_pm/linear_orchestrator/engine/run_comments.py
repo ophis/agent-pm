@@ -6,13 +6,14 @@ when a late write left an older one. status: a session's SessionStatus at its re
 import re
 import threading
 
-from agent_pm.linear_orchestrator.engine import config
+from agent_pm.linear_orchestrator.engine import ops
 from agent_pm.linear_orchestrator.engine.types import (
+    UUID_RE,
     LinearError,
 )
-from agent_pm.linear_orchestrator.linear import linear
 from agent_pm.session import ConfigError as SessionConfigError
 from agent_pm.session import DriverError
+from agent_pm.utils import one_line, timestamp
 
 URL = "https://agent-pm.invalid/run/"
 LIMIT = 10
@@ -20,7 +21,6 @@ M_UPDATE = (
     "mutation($c: String!, $b: String!) { commentUpdate(id: $c, input: { body: $b }) { success } }"
 )
 SEQ = re.compile(r" · #(\d+) · (\S+)")
-now = linear.stamp
 
 
 def is_record(attachment):
@@ -32,7 +32,7 @@ def is_comment(comment):
     # isMe means the harness account because callers query with its key
     return (
         bool((comment["user"] or {}).get("isMe"))
-        and re.match(f"Run {config.UUID_RE.pattern} · ", comment["body"]) is not None
+        and re.match(f"Run {UUID_RE.pattern} · ", comment["body"]) is not None
     )
 
 
@@ -97,22 +97,22 @@ def _bounded(call, limit):
         error = out["error"]
         if not isinstance(error, (Exception, SystemExit)):
             raise error
-        return None, linear.one_line(error)
+        return None, one_line(error)
     return out["value"], None
 
 
 def write(gql, sid, issue, text, limit=LIMIT):
-    cid = linear.client_id(sid, "session")
+    cid = ops.client_id(sid, "session")
 
     def call():
         try:
             done = gql(M_UPDATE, c=cid, b=text)["commentUpdate"]
         except LinearError as e:
-            if not linear.not_found(e):
+            if not ops.not_found(e):
                 raise
             done = None
         if done is None:
-            done = gql(linear.M_COMMENT_ID, c=cid, i=issue, b=text)["commentCreate"]
+            done = gql(ops.M_COMMENT_ID, c=cid, i=issue, b=text)["commentCreate"]
         return done["success"]
 
     ok, error = _bounded(call, limit)
@@ -129,7 +129,7 @@ def _text(rec):
 def post(issue, rec, *, gql, timeout=LIMIT, rc=None, ended_at=None, outcome=None, limit=False):
     rec["args"] = (
         rc,
-        None if rc is None else ended_at or now(),
+        None if rc is None else ended_at or timestamp(),
         outcome,
         limit,
     )
@@ -138,7 +138,7 @@ def post(issue, rec, *, gql, timeout=LIMIT, rc=None, ended_at=None, outcome=None
 
 def repair(issue, issue_id, rec, *, gql, limit=LIMIT):
     found, error = _bounded(
-        lambda: linear.find_comment(gql, linear.client_id(rec["sid"], "session"), issue_id), limit
+        lambda: ops.find_comment(gql, ops.client_id(rec["sid"], "session"), issue_id), limit
     )
     if error:
         return error
@@ -146,3 +146,13 @@ def repair(issue, issue_id, rec, *, gql, limit=LIMIT):
     if seq and int(seq[1]) >= rec["last"] and seq[2] == rec["started_at"]:
         return None
     return write(gql, rec["sid"], issue, _text(rec), limit=limit)
+
+
+def close_tuis(driver, names):
+    for name in names:
+        try:
+            driver.close(name)
+        except (SessionConfigError, DriverError) as error:
+            yield name, one_line(error)
+        else:
+            yield name, None
