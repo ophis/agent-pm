@@ -375,12 +375,21 @@ class TerminalTest(Base):
     def test_a_key_it_cannot_translate_sends_none_of_the_keys(self):
         self.active()
         terminal = TmuxTerminal("t1", PROCESS, tmux=self.tmux, control=self.control)
-        for bad in ("Up", KeyPress.parse("C-1"), KeyPress.parse("C-/"), KeyPress.parse("S-a")):
+        for bad in ("Up", *map(KeyPress.parse, ("C-1", "C-2", "C--", "C-;", "C-{", "S-a"))):
             with self.subTest(bad=bad), self.assertRaises(ConfigError):
                 terminal.press((KeyPress("Up"), bad))
         self.tmux.press.assert_not_called()
         terminal.press((KeyPress.parse("C-c"), KeyPress.parse("S-Up"), KeyPress.parse("M-1")))
         self.tmux.press.assert_called_once_with("%7", "C-c", "S-Up", "M-1")
+
+    def test_ctrl_reaches_letters_space_and_the_c0_punctuation(self):
+        self.active()
+        terminal = TmuxTerminal("t1", PROCESS, tmux=self.tmux, control=self.control)
+        notation = ("C- ", "C-/", "C-@", "C-[", "C-\\", "C-]", "C-^", "C-_", "C-?", "C-M-[", "C-A")
+        terminal.press(tuple(map(KeyPress.parse, notation)))
+        self.tmux.press.assert_called_once_with(
+            "%7", "C-Space", "C-/", "C-@", "C-[", "C-\\", "C-]", "C-^", "C-_", "C-?", "C-M-[", "C-A"
+        )
 
     def test_a_press_following_a_paste_waits_for_paste_delivery(self):
         self.active()
