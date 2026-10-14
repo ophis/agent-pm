@@ -23,7 +23,7 @@ from agent_pm.session.engine.types import (
     Usage,
 )
 from agent_pm.session.hosts.base import Host
-from agent_pm.utils import Display, Record, load_class, process_options_error
+from agent_pm.utils import Display, Record, load_class
 
 HOSTED = "agent_pm.session.engine.hosted:HostedSession"
 
@@ -85,7 +85,7 @@ class Session(ABC):
 
     @staticmethod
     def validate_policy(*, flags, env) -> None:
-        if error := process_options_error(flags=flags, env=env):
+        if error := Spec.process_options_error(flags=flags, env=env):
             raise ConfigError(error)
 
     @classmethod

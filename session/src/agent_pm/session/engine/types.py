@@ -10,11 +10,8 @@ from enum import StrEnum
 from types import MappingProxyType
 
 from agent_pm.utils import (
-    clean_string,
-    environment_ok,
     freeze,
     printable_abs,
-    process_options_error,
     sid_error,
 )
 
@@ -54,6 +51,25 @@ __all__ = [
     "Window",
     "Word",
 ]
+
+
+def _clean_string(value) -> bool:
+    return isinstance(value, str) and "\0" not in value
+
+
+def _environment_ok(env) -> bool:
+    return isinstance(env, Mapping) and all(
+        isinstance(k, str) and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", k) and _clean_string(v)
+        for k, v in env.items()
+    )
+
+
+def _process_options_error(*, flags, env) -> str | None:
+    if not (isinstance(flags, tuple) and all(map(_clean_string, flags))):
+        return "flags must be a tuple of strings without NUL"
+    if not _environment_ok(env):
+        return "env must map variable names to strings without NUL"
+    return None
 
 
 class ConfigError(Exception):
@@ -149,7 +165,7 @@ class Access:
         for name in ("dirs", "commands", "reads"):
             if not _string_tuple(getattr(self, name)):
                 raise ConfigError(f"{name} must be a tuple of strings")
-        if not environment_ok(self.env):
+        if not _environment_ok(self.env):
             raise ConfigError(
                 "access env must map names ([A-Za-z_][A-Za-z0-9_]*) to strings without NUL"
             )
@@ -174,6 +190,10 @@ class Spec:
     resume: bool = False  # resume session sid
     events: str | None = None
 
+    @classmethod
+    def process_options_error(cls, *, flags, env) -> str | None:
+        return _process_options_error(flags=flags, env=env)
+
     def __post_init__(self):
         if not printable_abs(self.workdir):
             raise ConfigError(
@@ -191,7 +211,7 @@ class Spec:
             raise ConfigError(f"cwd must be a printable absolute path, got {self.access.cwd!r:.80}")
         if self.sid is not None and (error := sid_error(self.sid)):
             raise ConfigError(error)
-        if error := process_options_error(flags=self.flags, env=self.env):
+        if error := _process_options_error(flags=self.flags, env=self.env):
             raise ConfigError(error)
         object.__setattr__(self, "env", MappingProxyType(dict(self.env)))
         if self.name is not None and not isinstance(self.name, str):
@@ -238,13 +258,13 @@ class Launch:
             raise ConfigError("launch: project must be a bool or None")
         env = self.env
         for name, ok in (
-            ("argv", isinstance(self.argv, tuple) and all(map(clean_string, self.argv))),
+            ("argv", isinstance(self.argv, tuple) and all(map(_clean_string, self.argv))),
             (
                 "env",
                 isinstance(env, Mapping)
-                and all(clean_string(k) and clean_string(v) for k, v in env.items()),
+                and all(_clean_string(k) and _clean_string(v) for k, v in env.items()),
             ),
-            ("unset", isinstance(self.unset, tuple) and all(map(clean_string, self.unset))),
+            ("unset", isinstance(self.unset, tuple) and all(map(_clean_string, self.unset))),
         ):
             if not ok:
                 raise ConfigError(f"launch: {name} must be strings without NUL")
