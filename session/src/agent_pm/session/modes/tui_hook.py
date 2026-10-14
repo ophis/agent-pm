@@ -213,12 +213,12 @@ def _check_callbacks(state, path, error):
 
 
 def _check_module(name: str, search: list[str], roots: list[str], kind: str, error):
-    """The specs of `name` and each package above it, found over `search`."""
+    """What `name` and each package above it were found as over `search`, outermost first."""
     paths, specs = search, []
     parts = name.split(".")
     for index in range(len(parts)):
         # A segment lookup needs no loaded parent, including for namespace packages.
-        spec = importlib.machinery.PathFinder.find_spec(".".join(parts[: index + 1]), paths)
+        spec = importlib.machinery.PathFinder.find_spec(parts[index], paths)
         if spec is None or (spec.origin is None and index == len(parts) - 1):
             raise error(f"{kind} {name}: cannot find Python module")
         if spec.origin is not None:
@@ -238,19 +238,35 @@ def _check_module(name: str, search: list[str], roots: list[str], kind: str, err
 
 
 def _load_callback(name: str, kind: str, specs):
-    """`name` from the specs _check_module found: each segment not yet loaded, from its spec."""
-    for spec in specs[name]:
-        if spec.name in sys.modules:
+    """`name` from what _check_module found: each segment not yet loaded, from its file or, for a
+    namespace package, its directories.
+    """
+    parts = name.split(".")
+    for index, found in enumerate(specs[name]):
+        fullname = ".".join(parts[: index + 1])
+        if fullname in sys.modules:
             continue
+        locations = found.submodule_search_locations
+        if found.origin is None:
+            spec = importlib.machinery.ModuleSpec(fullname, None, is_package=True)
+            spec.submodule_search_locations = list(locations or ())
+        else:
+            spec = importlib.util.spec_from_file_location(
+                fullname,
+                found.origin,
+                submodule_search_locations=None if locations is None else list(locations),
+            )
+            if spec is None:
+                raise HookError(f"{kind} {name}: cannot load {found.origin}")
         module = importlib.util.module_from_spec(spec)
-        sys.modules[spec.name] = module
+        sys.modules[fullname] = module
         try:
-            if spec.loader is not None:  # None: a namespace package (Python < 3.12)
+            if spec.loader is not None and found.origin is not None:
                 spec.loader.exec_module(module)
         except BaseException:
-            del sys.modules[spec.name]
+            del sys.modules[fullname]
             raise
-        parent, _, child = spec.name.rpartition(".")
+        parent, _, child = fullname.rpartition(".")
         if parent:
             setattr(sys.modules[parent], child, module)
     module = sys.modules[name]

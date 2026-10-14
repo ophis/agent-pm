@@ -11,6 +11,8 @@ import tempfile
 import types
 import unittest
 import unittest.mock
+import uuid
+from contextlib import redirect_stderr
 
 from agent_pm.session.engine import types as engine_types
 from agent_pm.session.modes import tui_hook
@@ -173,6 +175,44 @@ class InProcess(Case):
                         tui_hook.read_state(path)
                 self.assertEqual(len(os.listdir("/dev/fd")), before)
             (os.rmdir if os.path.isdir(path) else os.unlink)(path)
+
+
+class DeclaredRootCallback(Case):
+    """A callback outside sys.path loads in this process from its declared root."""
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.root = os.path.realpath(tmp.name)
+        self.dir = os.path.join(self.root, "s1")
+        os.mkdir(self.dir, 0o700)
+
+    def run_hook(self, module, roots):
+        state_ = {**state(self.root, None), "words": {}}
+        del state_["host_hook"]
+        write_state(
+            self.dir, {**state_, "adapter_hook": {"module": module, "state": {}, "roots": roots}}
+        )
+        with redirect_stderr(io.StringIO()) as stderr:
+            tui_hook.run(
+                [self.dir, "stop"], types.SimpleNamespace(buffer=io.BytesIO(b"{}")), roots=ROOTS
+            )
+        with open(os.path.join(self.dir, "hooks.jsonl"), encoding="utf-8") as f:
+            return stderr.getvalue(), [json.loads(line)["payload"] for line in f]
+
+    def write(self, *parts, text="def on_hook(call):\n    return {'loaded': __name__}\n"):
+        path = os.path.join(self.root, *parts)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(text)
+
+    def test_a_nested_namespace_callback_split_over_two_roots(self):
+        top = f"ns_{uuid.uuid4().hex}"
+        self.write("left", top, "nested", "other.py", text="")
+        self.write("right", top, "nested", "callback.py")
+        roots = [os.path.join(self.root, "left"), os.path.join(self.root, "right")]
+        module = f"{top}.nested.callback"
+        self.assertEqual(self.run_hook(module, roots), ("", [{"loaded": module}]))
 
 
 class Source(Case):
