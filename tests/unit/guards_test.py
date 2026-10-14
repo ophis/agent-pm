@@ -2064,6 +2064,7 @@ class ObjectExports(Sample):
     INIT = SESSION + "__init__.py"
     EXTENSION = SESSION + "extension.py"
     WRAPPERS = ("close", "note", "session_record", "sessions")
+    ENTRY_FUNCTIONS = (*WRAPPERS, "read_config")
     BAD = ("OS", "Shut", "modes", "f", "g", "LAMBDA", "Ghost")
     BAD_SOURCE = (
         "import os as OS\n"
@@ -2077,13 +2078,15 @@ class ObjectExports(Sample):
     def init(self, source="", names=()):
         """A session __init__ exporting the allowlisted wrappers (forwarding.py's), then `names`."""
         imported = f"from agent_pm.session.engine.forwarding import {', '.join(self.WRAPPERS)}\n"
-        return f"{imported}{source}__all__ = {[*self.WRAPPERS, *names]!r}\n"
+        imported += "from agent_pm.session.engine.config import read_config\n"
+        return f"{imported}{source}__all__ = {[*self.ENTRY_FUNCTIONS, *names]!r}\n"
 
     def found(self, files=None):
         tree = {
             self.SESSION + "engine/forwarding.py": "".join(
                 f"def {name}(): pass\n" for name in self.WRAPPERS
             ),
+            self.SESSION + "engine/config.py": "def read_config(): pass\n",
             self.SESSION + "modes/__init__.py": "",
             self.INIT: self.init(),
             self.EXTENSION: "__all__ = []\n",
@@ -2097,7 +2100,7 @@ class ObjectExports(Sample):
     def test_the_allowlisted_wrappers_pass_each_with_a_one_line_reason(self):
         self.assertEqual(self.found(), [])
         self.assertEqual(
-            set(guards.OBJECT_EXPORTS_ALLOWED), {("agent_pm.session", n) for n in self.WRAPPERS}
+            set(guards.OBJECT_EXPORTS_ALLOWED), {("agent_pm.session", n) for n in self.ENTRY_FUNCTIONS}
         )
         for key, reason in guards.OBJECT_EXPORTS_ALLOWED.items():
             with self.subTest(key=key):
@@ -2172,7 +2175,7 @@ class ObjectExports(Sample):
         init = 'class close: pass\n__all__ = ["close"]\n'
         self.assertEqual(
             self.found({self.INIT: init}),
-            [f"agent_pm.session: {name}: {stale}" for name in self.WRAPPERS],
+            sorted(f"agent_pm.session: {name}: {stale}" for name in self.ENTRY_FUNCTIONS),
         )
 
 
