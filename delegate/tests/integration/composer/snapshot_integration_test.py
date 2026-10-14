@@ -26,5 +26,9 @@ class ConfigSnapshot(Case):
             self.assertEqual(first.trusted_dirs(), frozenset({"/first"}))
             self.assertEqual(second.trusted_dirs(), frozenset({"/second"}))
             self.assertEqual(list(first.index()), ["researcher", "pm", "engineer", "dummy-tester"])
-            self.assertIn("are in First", first.compose("dummy-tester", "echo", params))
-            self.assertIn("are in Second", second.compose("dummy-tester", "echo", params))
+            self.assertIn(
+                "are in First", first.render(first.resolve("dummy-tester", "echo"), params)
+            )
+            self.assertIn(
+                "are in Second", second.render(second.resolve("dummy-tester", "echo"), params)
+            )

@@ -32,7 +32,7 @@ jobs:
         with:
           python-version: "3.11"
       - name: Install pinned tools
-        run: python3 -m pip install ruff==0.16.9 pyright==1.1.414 import-linter=="$IMPORT_LINTER_VERSION" pylint==4.1.3
+        run: python3 -m pip install ruff==0.16.9 pyright==1.1.414 import-linter=="$IMPORT_LINTER_VERSION" pylint==4.1.3 vulture==2.16
       - name: Comment budget
         run: python3 .github/comment_budget.py
       - name: Ruff
@@ -49,6 +49,9 @@ jobs:
       - name: Pylint
         if: ${{ !cancelled() }}
         run: pylint --disable=all --enable=cyclic-import,duplicate-code manager/src linear-orchestrator/src delegate/src session/src utils/src
+      - name: Vulture
+        if: ${{ !cancelled() }}
+        run: vulture
       - name: Repository design and test boundaries
         if: ${{ !cancelled() }}
         run: python3 -m tests.checks

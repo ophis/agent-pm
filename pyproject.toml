@@ -24,6 +24,12 @@ pythonVersion = "3.11"
 include = ["manager/src", "linear-orchestrator/src", "delegate/src", "session/src", "utils/src"]
 extraPaths = ["manager/src", "linear-orchestrator/src", "delegate/src", "session/src", "utils/src"]
 
+[tool.vulture]
+paths = [
+    "manager/src", "linear-orchestrator/src", "delegate/src", "session/src", "utils/src",
+    ".github/vulture_whitelist.py",
+]
+
 [tool.importlinter]
 include_external_packages = true
 contract_types = ["units: tests.import_contracts.UnitsContract"]
