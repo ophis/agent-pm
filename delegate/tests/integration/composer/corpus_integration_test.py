@@ -18,7 +18,9 @@ class PromptCorpus(Case):
             for key, (role, task, overlays, params) in cases.items():
                 with self.subTest(case=key):
                     self.assertEqual(
-                        composition.compose(role, task, params, overlays=overlays).encode("utf-8"),
+                        composition.render(
+                            composition.resolve(role, task, overlays=overlays), params
+                        ).encode("utf-8"),
                         expected[key].encode("utf-8"),
                     )
 
