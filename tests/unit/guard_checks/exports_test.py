@@ -318,7 +318,6 @@ class DelegateObjectExports(Sample):
     VALUES = {
         "agent_pm.delegate": {
             "CONFIG": "CONFIG: str = os.path.join('a', 'config.toml')\n",
-            "PYTHONPATH": "PYTHONPATH: str = os.pathsep.join(('a', 'b'))\n",
             "STATUSES": "STATUSES = tuple(('done', 'failed'))\n",
         },
         "agent_pm.delegate.composer": {
