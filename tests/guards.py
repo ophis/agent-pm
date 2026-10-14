@@ -1583,6 +1583,8 @@ def explicit_keys(repo: str) -> list[str]:
     for rel, leaves in examples.items():
         for key, _ in leaves:
             k = key[1:] if key[0] in PROJECTS.values() else key
+            if not k:
+                continue
             if not (
                 k in keys
                 or (k[0], len(k), k[-1]) in shapes
