@@ -126,7 +126,7 @@ class AppServerIntegrationTest(Case):
             ],
         )
 
-    def test_production_probe_isolates_stdlib_from_a_types_sibling(self):
+    def test_production_probe_isolates_stdlib_from_a_select_sibling(self):
         launch = CodexAdapter({}).usage_probe()
         self.assertEqual(Path(launch.argv[-1]), self.script)
         self.assertEqual(launch.argv[:2], (os.path.realpath(sys.executable), "-I"))
@@ -135,7 +135,9 @@ class AppServerIntegrationTest(Case):
             copied_script = folder / "app_server.py"
             copied_script.write_bytes(self.script.read_bytes())
             marker = folder / "shadowed"
-            (folder / "types.py").write_text(f"open({str(marker)!r}, 'w').close()\n")
+            (folder / "select.py").write_text(
+                f"open({str(marker)!r}, 'w').close()\nraise RuntimeError('shadowed stdlib select')\n"
+            )
             result = subprocess.run(
                 (*launch.argv[:2], str(copied_script), "--timeout", "0"),
                 cwd=folder,
@@ -144,8 +146,20 @@ class AppServerIntegrationTest(Case):
                 text=True,
                 timeout=3,
             )
-        self.assertEqual((result.returncode, result.stdout, result.stderr), (0, "null\n", ""))
-        self.assertFalse(marker.exists())
+            self.assertEqual((result.returncode, result.stdout, result.stderr), (0, "null\n", ""))
+            self.assertFalse(marker.exists())
+            unisolated = subprocess.run(
+                (launch.argv[0], str(copied_script), "--timeout", "0"),
+                cwd=folder,
+                env=self.env,
+                capture_output=True,
+                text=True,
+                timeout=3,
+            )
+            self.assertNotEqual(unisolated.returncode, 0)
+            self.assertEqual(unisolated.stdout, "")
+            self.assertIn("shadowed stdlib select", unisolated.stderr)
+            self.assertTrue(marker.exists())
 
     def test_partial_null_and_empty_native_snapshots_are_preserved(self):
         for case in ("weekly-only", "null", "empty", "fallback", "five-first", "weekly-full"):
