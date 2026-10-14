@@ -573,6 +573,7 @@ class HarnessDelegate(Delegate):
                 else EventCallback(
                     self._state.callback,
                     self.workdir,
+                    cwd=self.store.dir,
                     sid=self._state.plan.sid,
                     attempt=self._state.attempt,
                 )
