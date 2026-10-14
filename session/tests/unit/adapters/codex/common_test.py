@@ -856,6 +856,13 @@ class SnapshotEnvTest(Base):
 
 
 class StoreRootTest(Base):
+    def test_invalid_save_does_not_create_the_store(self):
+        state = self.common.prepare(self.spec, persist=False, resume=False)
+        unsafe = replace(state, writable_roots=(*state.writable_roots, str(self.home)))
+        with self.assertRaisesRegex(RecoveryError, "writable"):
+            SessionStore().save(unsafe)
+        self.assertFalse((self.home / ".agent-pm").exists())
+
     def test_each_operation_resolves_the_default_root_once(self):
         state = self.prepare()
         store = SessionStore()

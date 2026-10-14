@@ -398,40 +398,16 @@ def _state_data(fd: int, path: str):
     return data
 
 
-class SessionStore:
-    """Recovery mappings and locking; default roots follow HOME, explicit roots pin the store."""
-
-    def __init__(self, root: str | None = None):
-        self._root = root
-
-    @property
-    def root(self) -> str:
-        return (
-            self._root
-            if self._root is not None
-            else os.path.join(
-                os.path.realpath(os.path.expanduser("~")), ".agent-pm", "core-new-sessions", "codex"
-            )
-        )
-
-    def _resolve_root(self) -> str:
-        root = self.root
+class _StoreOperation:
+    def __init__(self, root: str):
         canonical = absolute_path(root, "store")
         _check_ancestors(root)
         if canonical != root:
             raise RecoveryError("invalid Codex recovery store: expected a canonical path")
-        return root
-
-    @overload
-    def directory(self, *, create: Literal[True]) -> str: ...
-
-    @overload
-    def directory(self, *, create: bool) -> str | None: ...
+        self.root = root
 
     def directory(self, *, create: bool) -> str | None:
-        return self._directory(self._resolve_root(), create=create)
-
-    def _directory(self, root: str, *, create: bool) -> str | None:
+        root = self.root
         parent = os.path.dirname(root)
         base = os.path.dirname(parent)
         check_writable_roots(root, implicit_writable_roots())
@@ -441,11 +417,11 @@ class SessionStore:
             return None
         return root if _private_dir(root, create=create) else None
 
-    def _path(self, root: str, workdir: str, sid: str) -> str:
+    def _path(self, workdir: str, sid: str) -> str:
         digest = hashlib.sha256((workdir + "\x00" + sid).encode("utf-8")).hexdigest()
-        return os.path.join(root, digest + ".json")
+        return os.path.join(self.root, digest + ".json")
 
-    def _validate_recovery(self, root: str, state: SessionState) -> None:
+    def _validate_recovery(self, state: SessionState) -> None:
         snapshot = state.snapshot
         paths = [
             snapshot.cwd,
@@ -453,15 +429,15 @@ class SessionStore:
             *snapshot.dirs,
             *(absolute_path(path, "dir") for path in added_dirs(snapshot.flags, snapshot.cwd)),
         ]
-        check_writable_roots(root, paths)
+        check_writable_roots(self.root, paths)
         for path in paths:
             if not any(inside(path, grant) for grant in state.writable_roots):
                 raise RecoveryError(
                     f"invalid Codex recovery writable grants: no recorded root covers {path}"
                 )
 
-    def _read(
-        self, root: str, path: str, workdir: str | None = None, sid: str | None = None
+    def read(
+        self, path: str, workdir: str | None = None, sid: str | None = None
     ) -> SessionState | None:
         _check_ancestors(path)
         try:
@@ -478,15 +454,18 @@ class SessionStore:
         if sid is None:
             raise RecoveryError("invalid recovery state identity")
         state = _state(data, workdir, sid)
-        if path != self._path(root, workdir, sid):
+        if path != self._path(workdir, sid):
             raise RecoveryError("invalid recovery state identity")
-        self._validate_recovery(root, state)
-        check_writable_roots(root, state.writable_roots)
+        self._validate_recovery(state)
+        check_writable_roots(self.root, state.writable_roots)
         return state
 
+    def load(self, workdir: str, sid: str) -> SessionState | None:
+        return self.read(self._path(workdir, sid), workdir, sid)
+
     @contextmanager
-    def _locked(self, root: str, timeout: float | None = None):
-        fd = os.open(root, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+    def locked(self, timeout: float | None = None):
+        fd = os.open(self.root, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
         try:
             deadline = None if timeout is None else time.monotonic() + timeout
             while True:
@@ -502,7 +481,7 @@ class SessionStore:
             fcntl.flock(fd, fcntl.LOCK_UN)
             os.close(fd)
 
-    def _write(self, root: str, state: SessionState, *, exclusive: bool) -> None:
+    def write(self, state: SessionState, *, exclusive: bool) -> None:
         payload = json.dumps(
             {
                 "version": _SESSION_VERSION,
@@ -516,8 +495,8 @@ class SessionStore:
         ).encode("utf-8")
         if len(payload) > _MAX_SESSION_BYTES:
             raise RecoveryError("recovery state is too large")
-        path = self._path(root, state.workdir, state.sid)
-        fd, tmp = tempfile.mkstemp(prefix=".state-", dir=root)
+        path = self._path(state.workdir, state.sid)
+        fd, tmp = tempfile.mkstemp(prefix=".state-", dir=self.root)
         try:
             os.fchmod(fd, 0o600)
             with os.fdopen(fd, "wb") as stream:
@@ -534,7 +513,7 @@ class SessionStore:
                     ) from exc
             else:
                 os.replace(tmp, path)
-            directory = os.open(root, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+            directory = os.open(self.root, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
             try:
                 os.fsync(directory)
             finally:
@@ -544,6 +523,36 @@ class SessionStore:
                 os.close(fd)
             if os.path.exists(tmp):
                 os.unlink(tmp)
+
+    def validate_for_save(self, state: SessionState) -> None:
+        self._validate_recovery(state)
+        check_writable_roots(self.root, [*state.writable_roots, *implicit_writable_roots()])
+
+
+class SessionStore:
+    """Recovery mappings and locking; default roots follow HOME, explicit roots pin the store."""
+
+    def __init__(self, root: str | None = None):
+        self._root = root
+
+    @property
+    def root(self) -> str:
+        return (
+            self._root
+            if self._root is not None
+            else os.path.join(
+                os.path.realpath(os.path.expanduser("~")), ".agent-pm", "core-new-sessions", "codex"
+            )
+        )
+
+    @overload
+    def directory(self, *, create: Literal[True]) -> str: ...
+
+    @overload
+    def directory(self, *, create: bool) -> str | None: ...
+
+    def directory(self, *, create: bool) -> str | None:
+        return _StoreOperation(self.root).directory(create=create)
 
     def create(
         self,
@@ -563,27 +572,23 @@ class SessionStore:
         )
         if persist:
             return self.save(state)
-        self._validate_for_save(self._resolve_root(), state)
+        _StoreOperation(self.root).validate_for_save(state)
         return state
 
-    def _validate_for_save(self, root: str, state: SessionState) -> None:
-        self._validate_recovery(root, state)
-        check_writable_roots(root, [*state.writable_roots, *implicit_writable_roots()])
-
     def save(self, state: SessionState) -> SessionState:
-        root = self._resolve_root()
-        self._validate_for_save(root, state)
-        self._directory(root, create=True)
-        self._write(root, state, exclusive=True)
+        operation = _StoreOperation(self.root)
+        operation.validate_for_save(state)
+        operation.directory(create=True)
+        operation.write(state, exclusive=True)
         return state
 
     def load(self, workdir: str, sid: object) -> SessionState | None:
-        root = self._resolve_root()
+        operation = _StoreOperation(self.root)
         workdir, sid = session_identity(workdir, sid)
-        directory = self._directory(root, create=False)
+        directory = operation.directory(create=False)
         if directory is None:
             return None
-        return self._read(root, self._path(root, workdir, sid), workdir, sid)
+        return operation.load(workdir, sid)
 
     def bind(
         self,
@@ -592,15 +597,15 @@ class SessionStore:
         identifier: str,
         timeout: float | None = None,
     ) -> SessionState:
-        root = self._resolve_root()
+        operation = _StoreOperation(self.root)
         workdir, sid = session_identity(workdir, sid)
         if not native_id(identifier):
             raise RecoveryError("invalid Codex recovery native ID")
-        directory = self._directory(root, create=False)
+        directory = operation.directory(create=False)
         if directory is None:
             raise RecoveryError(f"missing recovery state for run ID {sid!r}")
-        with self._locked(root, timeout):
-            existing = self._read(root, self._path(root, workdir, sid), workdir, sid)
+        with operation.locked(timeout):
+            existing = operation.load(workdir, sid)
             if existing is None:
                 raise RecoveryError(f"missing recovery state for run ID {sid!r}")
             validated = replace(existing, native_id=identifier)
@@ -610,20 +615,20 @@ class SessionStore:
                         f"recovery run ID {sid!r} is already bound to a different native ID"
                     )
                 return existing
-            self._write(root, validated, exclusive=False)
+            operation.write(validated, exclusive=False)
             return validated
 
     def lookup(self, sid: str, cwd: str) -> SessionState | None:
-        root = self._resolve_root()
+        operation = _StoreOperation(self.root)
         cwd = absolute_path(cwd, "cwd")
-        directory = self._directory(root, create=False)
+        directory = operation.directory(create=False)
         if directory is None:
             return None
         matches = []
-        with os.scandir(root) as entries:
+        with os.scandir(directory) as entries:
             for entry in entries:
                 if entry.name.endswith(".json"):
-                    state = self._read(root, entry.path)
+                    state = operation.read(entry.path)
                     if state is not None and state.sid == sid and state.snapshot.cwd == cwd:
                         matches.append(state)
         if len(matches) > 1:
