@@ -137,16 +137,23 @@ class TmuxProcess(HostProcess):
         if self._control is None:
             return
         try:
-            self._kill_group()
-        except DriverError as error:
-            if not isinstance(error.__cause__, ConnectionRefusedError | ConnectionResetError):
-                raise
+            self._control.terminate()
+        except (ConnectionRefusedError, ConnectionResetError):
             return
-        deadline = time.monotonic() + KILL_WAIT
+        except OSError as error:
+            raise DriverError(f"process group {self.name}: {error}") from error
+        if not self._wait_group(KILL_WAIT):
+            self._kill_group()
+            if not self._wait_group(KILL_WAIT):
+                raise DriverError(f"process group {self.name}: did not exit")
+
+    def _wait_group(self, timeout: float) -> bool:
+        deadline = time.monotonic() + timeout
         while self._group_live():
             if time.monotonic() >= deadline:
-                raise DriverError(f"process group {self.name}: did not exit")
+                return False
             time.sleep(POLL)
+        return True
 
     def _close_pane(self) -> None:
         if not self._own():
@@ -285,11 +292,8 @@ class TmuxHost(Host, Displayable):
 
     def _launch(self, name, launch, *, display, events, record, terminal):
         self.validate(name, launch, display=display)
-        if events is not None:
-            try:
-                events = self.tmux.events_file(events)
-            except TuiError as error:
-                raise ConfigError(str(error)) from error
+        events = self.events_path(events)
+        events = self.prepare_events(events)
         parts = self.unfold(display)
         control = ProcessControl.prepare(launch.argv, launch.cwd, env=launch.env)
         process = None
@@ -331,8 +335,13 @@ class TmuxHost(Host, Displayable):
         except (TuiError, OSError) as error:
             cleanup = self._cancel_launch(control, process)
             detail = f"; {cleanup}" if cleanup else ""
+            failure = (
+                f"cannot run {error.filename or launch.argv[0]}: {os.strerror(error.errno)}"
+                if isinstance(error, OSError) and error.errno is not None
+                else str(error)
+            )
             raise DriverError(
-                f"{'start' if terminal else 'detach'} {name}: {error}{detail}"
+                f"{'start' if terminal else 'detach'} {name}: {failure}{detail}"
             ) from error
         return TmuxProcess(name, process, tmux=self.tmux, control=control)
 
@@ -342,8 +351,14 @@ class TmuxHost(Host, Displayable):
         try:
             self.tmux.validate_start(name, launch.argv, launch.env, {})
         except TuiError as error:
-            raise ConfigError(str(error)) from error
+            raise DriverError(str(error)) from error
         self.tui_settings()
+
+    def prepare_events(self, events: str | None) -> str | None:
+        try:
+            return None if events is None else self.tmux.events_file(events)
+        except TuiError as error:
+            raise DriverError(str(error)) from error
 
     def events_path(self, events: str | None) -> str | None:
         try:

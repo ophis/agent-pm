@@ -180,11 +180,11 @@ class ProcessTest(AttachmentBase):
         with self.assertRaisesRegex(DriverError, "^tmux session d1: tmux failed$"):
             process.alive()
 
-    def test_close_kills_its_group_then_its_panes_session_absent_is_fine(self):
+    def test_close_terminates_its_group_after_closing_its_pane_absent_is_fine(self):
         self.active({"live": False})
         process = self.host.attach("d1")
         process.close()
-        self.connection.sendall.assert_called_once_with(b"kill\n")
+        self.connection.sendall.assert_called_once_with(b"signal 15\n")
         self.killpg.assert_not_called()
         self.tmux.kill.assert_called_once_with("%7")
         self.tmux.kill.side_effect = TuiError("tmux: can't find pane: %7")

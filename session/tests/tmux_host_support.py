@@ -22,7 +22,7 @@ def fake_tmux() -> mock.Mock:
     tmux = mock.create_autospec(tmux_host)
     for name in ("PaneStatus", "TuiError", "Retile"):
         setattr(tmux, name, getattr(tmux_host, name))
-    for name in ("attach_command", "events_file", "validate_start"):
+    for name in ("attach_command", "events_file", "validate_events", "validate_start"):
         getattr(tmux, name).side_effect = getattr(tmux_host, name)
     tmux.status.return_value = tmux_host.PaneStatus.RUNNING
     tmux.listing.return_value = []

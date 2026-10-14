@@ -264,6 +264,9 @@ class ProcessControl:
     def kill(self) -> None:
         self._request("kill")
 
+    def terminate(self) -> None:
+        self._request(f"signal {signal.SIGTERM}")
+
     def _request(self, command: str) -> bool:
         if (
             self.ended

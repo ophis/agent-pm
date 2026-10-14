@@ -1,6 +1,5 @@
-"""TmuxHost's display format, detach serialization and refusals, and Displayable forwarding over
-recorded tmux calls. Attachment and TmuxProcess cases use real controller metadata in
-session/tests/integration/hosts/tmux/process_integration_test.py.
+"""TmuxHost launch/display boundaries and process-close ordering over recorded calls.
+Attachment trust uses real metadata in integration/hosts/tmux/process_integration_test.py.
 """
 
 import json
@@ -261,6 +260,13 @@ class DetachTest(Base):
                 self.detach(**kw)
         self.tmux.detach.assert_not_called()
 
+    def test_events_creation_failure_is_a_driver_error_before_launch(self):
+        self.tmux.events_file.side_effect = TuiError("cannot create events")
+        with self.assertRaisesRegex(DriverError, "cannot create events"):
+            self.detach(events=os.path.join(self.dir, "events"))
+        self.tmux.detach.assert_not_called()
+        self.socket.assert_not_called()
+
     def test_a_tmux_failure_is_a_driver_error(self):
         self.tmux.detach.side_effect = TuiError("session d1 exists")
         with self.assertRaises(DriverError) as caught:
@@ -477,3 +483,88 @@ class RowsTest(Base):
             self.tmux.mock_calls,
             [mock.call.listing(), mock.call.listing(), mock.call.own_session()],
         )
+
+
+class CloseTest(Base):
+    def test_close_during_controller_retirement_never_sends_a_numeric_group_signal(self):
+        self.active()
+        Path(self.control.path, "control").touch(mode=0o600)
+        process = TmuxProcess("w1", PROCESS, tmux=self.tmux, control=self.control)
+        for failure in (ConnectionRefusedError, ConnectionResetError):
+            with self.subTest(failure=failure):
+                self.connection.connect.side_effect = failure
+                process.close()
+        self.killpg.assert_not_called()
+        self.connection.sendall.assert_not_called()
+        self.assertFalse(self.control.ended)
+
+    def test_a_denied_termination_preserves_the_controller_for_later_cleanup(self):
+        self.active()
+        process = TmuxProcess("w1", PROCESS, tmux=self.tmux, control=self.control)
+        self.connection.connect.side_effect = PermissionError("termination denied")
+        with self.assertRaisesRegex(DriverError, "process group w1: termination denied"):
+            process.close()
+        self.assertFalse(self.control.ended)
+        self.killpg.assert_not_called()
+
+    def test_close_removes_the_pane_then_allows_term_cleanup_without_hard_kill(self):
+        self.active({"live": True}, {"live": True}, {"live": False})
+        process = TmuxProcess("w1", PROCESS, tmux=self.tmux, control=self.control)
+        order = mock.Mock()
+        order.attach_mock(self.tmux.kill, "pane")
+        order.attach_mock(self.connection.sendall, "request")
+        with mock.patch("time.sleep") as sleep:
+            process.close()
+        self.assertEqual(
+            order.mock_calls,
+            [
+                mock.call.pane("%7"),
+                mock.call.request(b"signal 15\n"),
+                mock.call.request(b"live\n"),
+                mock.call.request(b"live\n"),
+            ],
+        )
+        sleep.assert_called_once_with(0.1)
+
+    def test_close_forces_survivors_only_after_the_grace_period(self):
+        self.active({"live": True})
+        process = TmuxProcess("w1", PROCESS, tmux=self.tmux, control=self.control)
+        clock, requests, killed = [0.0], [], [False]
+
+        def request(command):
+            requests.append((command, clock[0]))
+            if command == b"kill\n":
+                killed[0] = True
+
+        self.connection.sendall.side_effect = request
+        stream = self.connection.makefile.return_value.__enter__.return_value
+        stream.readline.side_effect = lambda: json.dumps({"live": not killed[0]}).encode() + b"\n"
+        with (
+            mock.patch("time.monotonic", side_effect=lambda: clock[0]),
+            mock.patch(
+                "time.sleep", side_effect=lambda _seconds: clock.__setitem__(0, clock[0] + 1)
+            ),
+        ):
+            process.close()
+        self.assertEqual(requests[0], (b"signal 15\n", 0))
+        self.assertEqual(
+            [request for request in requests if request[0] == b"kill\n"], [(b"kill\n", 5)]
+        )
+
+    def test_close_reports_a_group_that_survives_the_forced_kill_without_forgetting_it(self):
+        self.active({"live": True})
+        process = TmuxProcess("w1", PROCESS, tmux=self.tmux, control=self.control)
+        stream = self.connection.makefile.return_value.__enter__.return_value
+        stream.readline.side_effect = None
+        clock = [0.0]
+        with (
+            mock.patch("time.monotonic", side_effect=lambda: clock[0]),
+            mock.patch(
+                "time.sleep", side_effect=lambda _seconds: clock.__setitem__(0, clock[0] + 1)
+            ),
+            self.assertRaisesRegex(DriverError, "process group w1: did not exit"),
+        ):
+            process.close()
+        self.assertEqual(clock[0], 10)
+        self.assertFalse(self.control.ended)
+        self.assertEqual(self.connection.sendall.call_args_list[0], mock.call(b"signal 15\n"))

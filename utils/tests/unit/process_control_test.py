@@ -91,6 +91,18 @@ class ControlTest(Case):
         os.mkdir(path, 0o700)
         return ProcessControl(path)
 
+    def test_terminate_requests_term_from_the_owned_controller(self):
+        control = self.control()
+        self.addCleanup(control.remove)
+        with mock.patch("socket.socket") as socket:
+            connection = socket.return_value.__enter__.return_value
+            connection.makefile.return_value.__enter__.return_value.readline.return_value = (
+                b'{"live": true}\n'
+            )
+            control.terminate()
+        connection.sendall.assert_called_once_with(b"signal 15\n")
+        self.assertFalse(control.ended)
+
     def test_start_retries_a_bound_socket_before_the_controller_listens(self):
         control = self.control()
         self.addCleanup(control.remove)
@@ -286,6 +298,7 @@ class ControlTest(Case):
         with open(os.path.join(control.path, "done.json"), "w") as stream:
             json.dump({"rc": 0}, stream)
         with mock.patch("socket.socket") as socket, mock.patch("os.killpg") as killpg:
+            control.terminate()
             control.kill()
             self.assertFalse(control.live())
             socket.assert_not_called()
