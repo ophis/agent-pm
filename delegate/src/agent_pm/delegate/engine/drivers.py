@@ -1,12 +1,10 @@
-"""Driver starts a bundled session spec or delivers its instruction. The injected Session.start
-owns placement and idle timeout; today's runner retains api.start pending TASK-365.
-"""
+"""Driver delivers an instruction or starts a Session through its injected class."""
 
 import os
 from abc import ABC, abstractmethod
 
 from agent_pm.delegate.engine.types import ConfigError, Instruction
-from agent_pm.session import Session
+from agent_pm.session import Session, Spec
 from agent_pm.utils import Display, save
 
 
@@ -14,7 +12,7 @@ class Driver(ABC):
     @abstractmethod
     def start(
         self,
-        spec,
+        spec: Spec,
         *,
         display: Display = None,
         host: str | None = None,
@@ -23,18 +21,21 @@ class Driver(ABC):
 
 
 class AgentDriver(Driver):
-    def __init__(self, session_cls):
-        self.session_cls = session_cls
+    def __init__(self, session_cls: type[Session], *, harness_host: str | None = None):
+        self.session_cls, self.harness_host = session_cls, harness_host
 
     def start(
         self,
-        spec,
+        spec: Spec,
         *,
         display: Display = None,
         host: str | None = None,
         idle_timeout: float | None = None,
     ) -> Session:
         return self.session_cls.start(spec, display=display, host=host, idle_timeout=idle_timeout)
+
+    def writable_dirs(self, spec: Spec) -> tuple[str, ...]:
+        return self.session_cls.writable_dirs(spec)
 
 
 class InstructionDriver(Driver):
@@ -43,7 +44,7 @@ class InstructionDriver(Driver):
 
     def start(
         self,
-        spec,
+        spec: Spec,
         *,
         display: Display = None,
         host: str | None = None,
@@ -55,11 +56,7 @@ class InstructionDriver(Driver):
             raise ConfigError("instruction has no host or display")
         if idle_timeout is not None:
             raise ConfigError("instruction has no idle timeout")
-        return self.deliver(spec.prompt)
-
-    def deliver(self, prompt: str) -> Instruction:
-        """The current runner supplies prompt directly until session.Spec gains its prompt field."""
-        save(self.path, prompt)
+        save(self.path, spec.prompt)
         return Instruction(self.path)
 
     def detach(self) -> None:

@@ -8,9 +8,10 @@ from agent_pm.delegate import ConfigError, Spec, composer, plan, run
 from agent_pm.delegate.engine.drivers import AgentDriver, Driver, InstructionDriver
 from agent_pm.delegate.engine.types import Instruction
 from agent_pm.session import Session
+from agent_pm.session import Spec as StartSpec
 
 from delegate.tests.case import Case
-from delegate.tests.fakes.session import SessionClass, StartSpec
+from delegate.tests.fakes.session import SessionClass
 from delegate.tests.unit.runs import no_child
 
 
@@ -40,8 +41,12 @@ class Drivers(Case):
             with self.subTest(idle_timeout=timeout):
                 session = driver.start(spec, host="other", display="opaque", idle_timeout=timeout)
                 self.assertIsInstance(session, Session)
-                self.assertEqual(session_cls.started[-1], (spec, "other", "opaque", timeout))
-                self.assertIs(session_cls.started[-1][0], spec)
+                self.assertEqual(
+                    session_cls.started[-1],
+                    {"spec": spec, "host": "other", "display": "opaque", "idle_timeout": timeout},
+                )
+                self.assertIs(session_cls.started[-1]["spec"], spec)
+                session.close()
                 self.assertEqual(
                     (session.runtime, session.mode, session.sid, session.name),
                     ("fake", "headless", spec.sid, "mine"),
@@ -62,7 +67,12 @@ class Drivers(Case):
         out = os.path.join(self.home, "work", "prompt.md")
         driver = InstructionDriver(out)
         spec = StartSpec(
-            workdir=self.home, runtime="fake", mode="headless", prompt="the prompt", resume=True
+            workdir=self.home,
+            runtime="fake",
+            mode="headless",
+            prompt="the prompt",
+            sid="11111111-2222-3333-4444-555555555555",
+            resume=True,
         )
         with self.assertRaisesRegex(ConfigError, "instruction has no session to resume"):
             driver.start(spec)

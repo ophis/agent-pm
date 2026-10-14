@@ -146,13 +146,17 @@ class TuiPolicy(Base):
                 self.fresh()
                 r = self.faked(turn(START, block(DONE)), **kw)
                 args, given = self.started.call_args
-                self.assertEqual((args[:2], r.outcome.status), (("fake", "tui"), "done"))
                 self.assertEqual(
-                    (given, args[3].sid, args[3].name),
+                    ((args[0].runtime, args[0].mode), r.outcome.status), (("fake", "tui"), "done")
+                )
+                self.assertEqual(
+                    (given, args[0].sid, args[0].name, args[0].resume, args[0].events),
                     (
-                        {"idle_timeout": IDLE_TIMEOUT, **want[0]},
+                        {"idle_timeout": IDLE_TIMEOUT},
                         self.events[0].sid,
                         want[1],
+                        want[0]["resume"] is not None,
+                        want[0]["events"],
                     ),
                 )
                 self.assertIn(f"delegate: tui session {name}: tmux attach -t '={name}'\n", self.err)
@@ -380,8 +384,8 @@ class TuiPolicy(Base):
         self.assertEqual(self.kinds(), ["input", "idle", "progress", "result", "end"])
         args, given = self.started.call_args
         self.assertEqual(
-            (given, args[3].sid),
-            ({"resume": None, "idle_timeout": IDLE_TIMEOUT, "events": None}, self.events[0].sid),
+            (given, args[0].sid, args[0].resume, args[0].events),
+            ({"idle_timeout": IDLE_TIMEOUT}, self.events[0].sid, False, None),
         )
 
 

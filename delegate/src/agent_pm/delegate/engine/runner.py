@@ -12,7 +12,7 @@ from datetime import datetime
 from pathlib import Path
 
 from agent_pm.delegate.composer import RunConfig
-from agent_pm.delegate.engine.drivers import InstructionDriver
+from agent_pm.delegate.engine.drivers import AgentDriver, InstructionDriver
 from agent_pm.delegate.engine.plan import plan
 from agent_pm.delegate.engine.types import (
     Begun,
@@ -31,15 +31,15 @@ from agent_pm.delegate.event.outcome import read as read_outcome
 from agent_pm.delegate.event.reply import OUTCOME, marks, outcome_block
 from agent_pm.delegate.event.types import InvalidOutcome, Outcome
 from agent_pm.session import ConfigError as SessionConfigError
+from agent_pm.session import Driver as SessionDriver
 from agent_pm.session import (
-    Driver,
     DriverError,
     Exited,
-    Handle,
     IdleTimeout,
     LimitHit,
     Mode,
     Reply,
+    Session,
     Stderr,
     TurnEnd,
     note,
@@ -65,33 +65,20 @@ class GiveUp:
 
 
 class Headless:
-    def __init__(self, note: Callable[..., None], driver: Driver):
+    def __init__(self, note: Callable[..., None], driver: AgentDriver):
         self.note, self.driver = note, driver
 
-    def start(self, p: Plan, name: str | None = None, events: str | None = None) -> Handle:
-        s = p.spec
+    def start(self, p: Plan, name: str | None = None, events: str | None = None) -> Session:
         return self.driver.start(
-            p.runtime,
-            s.mode,
-            p.prompt,
-            replace(p.session, sid=s.sid, name=name),
-            resume=s.sid if s.resume else None,
-            idle_timeout=IDLE_TIMEOUT,
-            events=events,
+            replace(p.session, name=name, events=events), idle_timeout=IDLE_TIMEOUT
         )
 
-    def fix(self, handle: Handle, p: Plan, text: str) -> Handle:
-        s = p.spec
+    def fix(self, handle: Session, p: Plan, text: str) -> Session:
         return self.driver.start(
-            p.runtime,
-            s.mode,
-            text,
-            p.session,
-            resume=s.sid,
-            idle_timeout=IDLE_TIMEOUT,
+            replace(p.session, prompt=text, resume=True), idle_timeout=IDLE_TIMEOUT
         )
 
-    def turn_end(self, handle: Handle, reply: str, pending: int) -> str | GiveUp | None:
+    def turn_end(self, handle: Session, reply: str, pending: int) -> str | GiveUp | None:
         return None
 
     def progress(self) -> None:
@@ -107,23 +94,23 @@ class Tui(Headless):
     gives up. The session is left open.
     """
 
-    def __init__(self, note: Callable[..., None], driver: Driver):
+    def __init__(self, note: Callable[..., None], driver: AgentDriver):
         super().__init__(note, driver)
         self.nudged, self.count = False, 0
 
-    def start(self, p: Plan) -> Handle:
+    def start(self, p: Plan) -> Session:
         handle = super().start(p, p.spec.name, p.spec.events)
         name = handle.name
         if name is None:
             raise DriverError("tui session has no name")
-        say(f"delegate: tui session {name}: {self.driver.attach_command(name)}")
+        say(f"delegate: tui session {name}: {handle.attach_command()}")
         return handle
 
-    def fix(self, handle: Handle, p: Plan, text: str) -> Handle:
+    def fix(self, handle: Session, p: Plan, text: str) -> Session:
         handle.send(text)
         return handle
 
-    def turn_end(self, handle: Handle, reply: str, pending: int) -> str | GiveUp | None:
+    def turn_end(self, handle: Session, reply: str, pending: int) -> str | GiveUp | None:
         if outcome_block(reply) is not None:
             return END
         if pending:
@@ -160,14 +147,16 @@ def run(
     spec: Spec,
     *,
     on_event: Callable[[Event], None] | None = None,
-    driver: Driver | InstructionDriver,
+    driver: AgentDriver | InstructionDriver | SessionDriver,
 ) -> Result:
     """on_event gets Begun once, a Progress per mark line and Finished only with a valid outcome;
     its exception stops the session and propagates.
     """
+    if isinstance(driver, SessionDriver):
+        driver = AgentDriver(driver.session_cls)
     p = plan(run, spec, driver=driver)
     if isinstance(driver, InstructionDriver):
-        instruction = driver.deliver(p.prompt)
+        instruction = driver.start(p.session)
         return Result(0, None, instruction=instruction.path)
     attempts = _Attempts(p, on_event or (lambda _event: None), driver)
     try:
@@ -200,11 +189,11 @@ def _resets(at: float | None) -> str:
 
 
 class _Attempts:
-    def __init__(self, p: Plan, on_event: Callable[[Event], None], driver: Driver):
+    def __init__(self, p: Plan, on_event: Callable[[Event], None], driver: AgentDriver):
         self.plan, self.on_event, self.policy = (
             p,
             on_event,
-            POLICIES[p.spec.mode](self.note, driver),
+            POLICIES[Mode(p.spec.mode)](self.note, driver),
         )
         self.workdir = p.spec.workdir
         self.seen: set[str] = set()
@@ -265,7 +254,7 @@ class _Attempts:
             self.stop(handle)
             raise
 
-    def stop(self, handle: Handle) -> bool:
+    def stop(self, handle: Session) -> bool:
         """A DriverError is printed, not raised; False then, the session maybe running."""
         try:
             handle.stop()
@@ -288,7 +277,7 @@ class _Attempts:
                 return f"cannot remove the stale out: {e}"
         return ""
 
-    def attempt(self, handle: Handle) -> tuple[int, str | None, Limit | None]:
+    def attempt(self, handle: Session) -> tuple[int, str | None, Limit | None]:
         """rc 0 when the policy ended it, the session running on."""
         rc: int | None = None
         last: str | None = None
@@ -324,7 +313,7 @@ class _Attempts:
                 if name is None:
                     raise DriverError("tui session has no name")
                 say(
-                    f"delegate: {answer.reason}; session {name} left open: {self.policy.driver.attach_command(name)}"
+                    f"delegate: {answer.reason}; session {name} left open: {handle.attach_command()}"
                 )
                 return 0, None, None
             if answer == END:

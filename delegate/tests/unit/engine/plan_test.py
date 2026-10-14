@@ -278,9 +278,11 @@ class Planned(Base):
         self.assertEqual(err, notice(os.getcwd()))
 
     def test_the_spec_holds_the_runs_tier_and_effort_and_the_absolute_workdir(self):
-        spec = self.planned(keys={"tier": 4, "effort": "low"})[0].session
+        planned = self.planned(keys={"tier": 4, "effort": "low"})[0]
+        spec = planned.session
+        self.assertEqual(spec.sid, planned.spec.sid)
         self.assertEqual(
-            (spec.workdir, spec.tier, spec.effort, spec.sid), (self.work, 4, "low", None)
+            (spec.workdir, spec.tier, spec.effort, spec.sid), (self.work, 4, "low", spec.sid)
         )
 
     def test_a_new_run_gets_a_new_uuid4_sid_unless_given_one_and_a_resume_its_own(self):
@@ -327,17 +329,28 @@ class Planned(Base):
         got = self.planned(mode="in_process", sid=SID)[0]
         self.assertEqual(got.spec.mode, "in_process")
         self.assertEqual(
-            replace(got, spec=replace(got.spec, mode="headless")), self.planned(sid=SID)[0]
+            replace(
+                got,
+                spec=replace(got.spec, mode="headless"),
+                session=replace(got.session, mode="headless"),
+            ),
+            self.planned(sid=SID)[0],
         )
 
     def test_tui_takes_name_and_events_unchecked_for_the_driver_to_check(self):
-        for name, events in ((None, None), ("mine", "/x/events.log"), ("a b", "rel\n")):
+        for name, events in ((None, None), ("mine", "/x/events.log"), ("a b", "relative")):
             with self.subTest(name=name, events=events):
                 got = self.planned(mode="tui", name=name, events=events)[0]
                 self.assertEqual(
                     (got.spec.mode, got.spec.name, got.spec.events), ("tui", name, events)
                 )
                 self.assertFalse(os.path.exists(self.work))
+
+    def test_tui_rejects_an_unprintable_events_path_before_any_write(self):
+        self.assertIn(
+            "events must be a printable path", self.refused(mode="tui", name="a b", events="rel\n")
+        )
+        self.assertFalse(os.path.exists(self.work))
 
     def test_plan_creates_and_writes_nothing(self):
         for kw in ({}, {"sid": SID, "resume": True}, {"out": None}):
@@ -391,7 +404,7 @@ class ConfiguredTeamDirs(Base):
     def test_the_runtimes_dirs_are_asked_with_the_runs_spec_only_when_there_are_team_dirs(self):
         with mock.patch.object(self.driver, "writable_dirs", return_value=()) as asked:
             got = self.planned(sid=SID, resume=True)[0]
-            asked.assert_called_once_with("fake", got.session, SID)
+            asked.assert_called_once_with(replace(got.session, prompt=""))
             asked.reset_mock()
             self.local("")
             self.planned(runtime="codex")

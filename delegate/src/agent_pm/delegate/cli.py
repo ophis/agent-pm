@@ -21,9 +21,8 @@ from agent_pm.delegate.composer import RunParams, Team
 from agent_pm.delegate.engine import detach
 from agent_pm.delegate.engine.drivers import InstructionDriver
 from agent_pm.delegate.engine.runner import say
-from agent_pm.delegate.engine.types import Stopped
-from agent_pm.session import SIGNALS, DriverError, Mode
 from agent_pm.session import ConfigError as SessionConfigError
+from agent_pm.session import DriverError, Mode
 from agent_pm.utils import Once, holds, printable
 
 LIST_PARAMS = RunParams(input="", out="/agent-pm-list/work/out.md", workdir="/agent-pm-list/work")

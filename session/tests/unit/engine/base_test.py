@@ -3,6 +3,7 @@
 import inspect
 
 from agent_pm.session import (
+    ConfigError,
     Hosts,
     Mode,
     Session,
@@ -62,6 +63,21 @@ class SessionClassMethods(Case):
             with self.subTest(method=method.__name__):
                 found = inspect.signature(method).parameters.values()
                 self.assertEqual([(p.name, p.kind) for p in found], parameters)
+
+    def test_policy_validation_needs_no_session_or_workdir(self):
+        Session.validate_policy(flags=("--flag",), env={"TOKEN": "value"})
+        for flags, env, message in (
+            (("bad\0flag",), {}, "flags must be a tuple of strings without NUL"),
+            ((), {"NOT-A-NAME": "value"}, "env must map variable names to strings without NUL"),
+            ((), {"TOKEN": "bad\0value"}, "env must map variable names to strings without NUL"),
+        ):
+            with self.subTest(flags=flags, env=env):
+                with self.assertRaises(ConfigError) as caught:
+                    Session.validate_policy(flags=flags, env=env)
+                self.assertEqual(str(caught.exception), message)
+                with self.assertRaises(ConfigError) as spec_error:
+                    Spec(workdir=self.home, flags=flags, env=env)
+                self.assertEqual(str(spec_error.exception), message)
 
     def test_on_a_subclass_each_is_its_own(self):
         self.assertIsInstance(FakeSession.host(), FakeHost)

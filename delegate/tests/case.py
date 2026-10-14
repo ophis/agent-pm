@@ -9,6 +9,7 @@ import unittest
 from unittest import mock
 
 import agent_pm
+from agent_pm.delegate.engine.drivers import AgentDriver
 from agent_pm.session import Driver
 from agent_pm.utils import import_roots, read_project
 
@@ -94,6 +95,14 @@ class FakeDriver:
 
     def __init__(self, driver):
         self.driver = driver
+
+    def start(self, spec, *, display=None, host=None, idle_timeout=None):
+        return AgentDriver(self.driver.session_cls).start(
+            spec, display=display, host=host, idle_timeout=idle_timeout
+        )
+
+    def writable_dirs(self, spec):
+        return self.driver.session_cls.writable_dirs(spec)
 
     def __getattr__(self, name):
         return getattr(self.driver, name)

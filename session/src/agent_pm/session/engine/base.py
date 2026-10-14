@@ -9,6 +9,7 @@ from collections.abc import Callable, Iterator, Mapping
 from typing import Any
 
 from agent_pm.session.engine.types import (
+    ConfigError,
     Hosts,
     IdleTimeout,
     Liveness,
@@ -22,7 +23,7 @@ from agent_pm.session.engine.types import (
     Usage,
 )
 from agent_pm.session.hosts.base import Host
-from agent_pm.utils import Display, Record, load_class
+from agent_pm.utils import Display, Record, load_class, process_options_error
 
 HOSTED = "agent_pm.session.engine.hosted:HostedSession"
 
@@ -81,6 +82,11 @@ class Session(ABC):
         if cls is not Session:
             raise NotImplementedError(f"{cls.__name__}.{method}: not implemented")
         return getattr(load_class(HOSTED, Session), method)
+
+    @staticmethod
+    def validate_policy(*, flags, env) -> None:
+        if error := process_options_error(flags=flags, env=env):
+            raise ConfigError(error)
 
     @classmethod
     def configure(cls, *, adapters: Mapping, hosts: Hosts) -> None:

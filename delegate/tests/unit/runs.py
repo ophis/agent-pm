@@ -57,10 +57,13 @@ class FakeHandle:
         self.exhausted = AssertionError("no event left")
         self.name, self.sid = NAME, None
 
-    def start(self, runtime, mode, prompt, spec, *, resume=None, idle_timeout=None, events=None):
+    def start(self, spec, *, display=None, host=None, idle_timeout=None):
         os.makedirs(spec.workdir, exist_ok=True)
-        self.name, self.sid = spec.name or NAME, resume or spec.sid
+        self.name, self.sid = spec.name or NAME, spec.sid
         return self
+
+    def attach_command(self):
+        return f"tmux attach -t '={self.name}'"
 
     def events(self):
         for event in self.left:

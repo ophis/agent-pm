@@ -57,7 +57,7 @@ class Base(Case):
         self.configure_session(
             {
                 "fake": {
-                    "implementation": "adapters.fake:FakeAdapter",
+                    "implementation": "agent_pm.session.adapters.fake:FakeAdapter",
                     "scenario": self.scenario,
                     "log": self.log,
                 }

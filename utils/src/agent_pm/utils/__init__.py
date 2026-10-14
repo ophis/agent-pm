@@ -1,6 +1,6 @@
 """Public utility modules and functions shared by the layers."""
 
-from agent_pm.utils.args import Once
+from agent_pm.utils.args import Once, clean_string, environment_ok, process_options_error
 from agent_pm.utils.config_file import (
     LOCAL,
     ConfigFileError,
@@ -82,6 +82,9 @@ __all__ = [
     "Stopped",
     "append_line",
     "check_slug",
+    "clean_string",
+    "environment_ok",
+    "process_options_error",
     "checkout",
     "common_dir",
     "err_text",
