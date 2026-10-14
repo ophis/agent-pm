@@ -357,8 +357,8 @@ class Segment(TmuxFlow):
         return line, call, logged
 
     def attended(self, ident, role, sid, res):
-        """res's one Record line, the run's pipeline Record shown at MANAGER; its sessions and
-        attach command on stderr.
+        """res's one Record line, the run's pipeline Record shown at MANAGER; its attach command and
+        each session's attach-command line on stderr.
         """
         self.assertEqual(len(res.stdout.splitlines()), 1, res.stdout)
         record = Record.parse(res.stdout)
@@ -371,8 +371,10 @@ class Segment(TmuxFlow):
             (record.ctl, record.resume),
             (("agent-pm-linear",), ("agent-pm-linear", "resume", ident)),
         )
-        self.assertIn(f"router.py: {ident}: sessions {' '.join(sessions)}\n", res.stderr)
         self.assertIn(f"router.py: {ident}: attach: tmux attach -t '={sessions[1]}'\n", res.stderr)
+        for name in sessions:
+            line = f"router.py: {ident}: {name}: agent-pm-session attach-command {name}\n"
+            self.assertIn(line, res.stderr)
         return record
 
     def agent_run(self):

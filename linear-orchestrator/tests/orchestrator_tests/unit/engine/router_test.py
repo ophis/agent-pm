@@ -1095,7 +1095,8 @@ class AttendedEntry(OuterBase):
                 harness = f"agent-pm-engineer-{ID}"
                 self.assertEqual(
                     self.err,
-                    f"router.py: {ID}: sessions {harness}\nrouter.py: {ID}: attach: attach {harness}\n",
+                    f"router.py: {ID}: attach: attach {harness}\n"
+                    f"router.py: {ID}: {harness}: agent-pm-session attach-command {harness}\n",
                 )
 
     def test_a_resume_under_tui_is_attended_and_prints_its_record(self):
@@ -1150,6 +1151,18 @@ class AttendedEntry(OuterBase):
                 )
                 self.assertEqual((self.api.detached, self.out), ([], ""))
                 self.assertEqual(self.state, self.before())
+
+    def test_a_dry_run_resuming_another_session_than_the_launchers_exits_0(self):
+        self.todo["state"] = "In Progress"
+        self.resumable(ID, SID, 60, role="engineer")
+        env = {router.SID_ENV: "5b1f9a0e-2c3d-4e5f-8a7b-9c0d1e2f3a4b"}
+        for argv in (("--dry-run", "--issue", ID), ("--dry-run", "--now")):
+            with self.subTest(argv=argv):
+                rc = self.entry(*argv, "--tui", "--events", self.events, env=env)
+                self.assertEqual(rc, 0, self.err)
+                self.assertIn(f"plan {ID} mode=resume sid={SID}", self.said())
+                self.assertNotIn("differs", self.err)
+        self.assertEqual((self.api.detached, self.out), ([], ""))
 
     def test_a_bad_launcher_session_id_exits_2_before_any_linear_call(self):
         rc = self.entry("--issue", ID, "--tui", "--events", self.events, env={router.SID_ENV: "x"})

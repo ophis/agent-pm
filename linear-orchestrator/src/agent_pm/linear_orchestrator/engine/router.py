@@ -17,14 +17,14 @@ agent-pm-linear router [--now] [--dry-run] [--issue ID] [--tui [--display D] [--
               agent-pm-session --help; none: the caller's place), its events written to FILE, else
               $AGENT_PM_EVENTS. Exits 2 before any Linear call without either, or when the Delegate refuses D or
               FILE (no place to show the TUI, a D its Host cannot use, FILE not writable). A run it starts or
-              resumes prints its Record line on stdout, its sessions and attach command on stderr. launchd
+              resumes prints its Record line on stdout, its attach commands on stderr. launchd
               never passes it: a tick resumes a run headless.
 --brake ROLE  Print ROLE's client usage; exit 0 if a deep-research round may start, 1 if not or unknown, 2 no such
               role.
 --help        Print this; exit 0. Bad arguments exit 2.
 
 $AGENT_PM_SID (agent-pm-crew run's), read once and removed, is a new run's session id; a resume of
-another session exits 2, starting nothing.
+another session exits 2, starting nothing (a dry run: 0).
 
 Events go to orchestrator.jsonl (event_log.log, src router); an idle tick writes none, a usage-blocked
 one only its usage-skip lines."""
@@ -654,15 +654,20 @@ def _outer(a, cfg, *, gql, run, keychain, now, attended):
 
 
 def announce(ident, linear_run, detached):
-    """An attended run's Record line on stdout, its sessions and attach command on stderr."""
+    """An attended run's Record line on stdout; on stderr its attach command (its TUI's) and, per
+    session, the command printing that session's.
+    """
     print(detached.to_line(), flush=True)
-    print(f"router.py: {ident}: sessions {' '.join(detached.sessions)}", file=sys.stderr)
     try:
         command = linear_run.attach_command()
-    except delegate.SessionError as e:
+    except (delegate.ConfigError, delegate.SessionError) as e:
         command = f"unknown ({one_line(e)})"
     if command:
         print(f"router.py: {ident}: attach: {command}", file=sys.stderr)
+    for name in detached.sessions:
+        print(
+            f"router.py: {ident}: {name}: agent-pm-session attach-command {name}", file=sys.stderr
+        )
 
 
 @contextlib.contextmanager
@@ -782,7 +787,12 @@ def tick(opts, cfg, gql, *, start, clock=datetime.now, hour=None, launch_sid=Non
             live_ids = {i for ids in live.values() for i in ids}
             new_sid = launch_sid or str(uuid.uuid4())
             spec = choose(board, gate, live_ids, full, counts, new_sid=new_sid)
-            if spec is not None and spec.mode == "resume" and other_sid(spec, launch_sid):
+            if (
+                not dry
+                and spec is not None
+                and spec.mode == "resume"
+                and other_sid(spec, launch_sid)
+            ):
                 return 2
             if spec is None or dry:
                 return 0
@@ -820,7 +830,7 @@ def run_issue(opts, cfg, gql, start, *, clock=datetime.now, launch_sid=None):
             spec = Spec.from_issue(
                 issue, mode="resume", sid=sid, task=None, client=client_of(entries, sid)
             )
-            if other_sid(spec, launch_sid):
+            if not dry and other_sid(spec, launch_sid):
                 return 2
         elif board.is_blocked(ident) or not (taken := board.take(ident)):
             return stop

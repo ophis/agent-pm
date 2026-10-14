@@ -150,7 +150,7 @@ class CheckTuiTest(HarnessCase):
     def check(self, **kw):
         HarnessDelegate.check_tui(session_cls=HarnessSession, **kw)
 
-    def test_the_agents_host_places_the_display_and_the_harnesss_takes_the_events(self):
+    def test_the_agents_host_places_the_display_and_the_harness_takes_the_events(self):
         with (
             mock.patch.object(ShowingHost, "layout", autospec=True) as layout,
             mock.patch.object(ShowingHost, "events_path", autospec=True) as events_path,
