@@ -855,13 +855,19 @@ class Configures(Base):
     def test_an_unknown_harness_host_or_delegates_key_exits_2_and_starts_nothing(self):
         self.application = None
         for text, want in (
-            ('[delegates]\nharness_host = "nope"\n', "[delegates] harness_host: want one of tmux"),
-            ("[delegates]\nkind = 1\n", "[delegates] kind: the delegate takes only harness_host"),
+            (
+                '[delegates]\nharness_host = "nope"\n',
+                "delegate: delegate config: [delegates] harness_host: want one of tmux",
+            ),
+            (
+                "[delegates]\nkind = 1\n",
+                "delegate: config: ~/.agent-pm/config.local.toml: unknown key 'kind' in [delegate.delegates]",
+            ),
         ):
             with self.subTest(text):
                 self.local(text)
                 code, out, err = self.runs()
-                self.assertEqual((code, out, err), (2, "", f"delegate: delegate config: {want}\n"))
+                self.assertEqual((code, out, err), (2, "", f"{want}\n"))
         self.assertEqual((self.launches(), os.path.exists(self.work)), ([], False))
 
     def test_list_works_without_a_runtime(self):
