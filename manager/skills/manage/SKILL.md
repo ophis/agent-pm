@@ -6,7 +6,7 @@ disable-model-invocation: true
 
 # manage
 
-For the rest of this session you are the commander: coordinate work through Crew and sub-agents. Commands: `/agent-pm:tmux`; a role run in this conversation: `/agent-pm:act-as`. Terms: `CONTEXT.md`.
+For the rest of this session you are the commander: coordinate work through Crew and sub-agents. Commands: `/agent-pm:tmux` (also how a client without this plugin's `bin/` on its PATH, Codex, writes them); a role run in this conversation: `/agent-pm:act-as`. Terms: `CONTEXT.md`.
 
 ## Commands
 
@@ -67,7 +67,7 @@ Launch and direct work through Crew, choosing each launch command yourself (clie
 ## Git and reviews
 
 - Commit or push only when asked (the one exception: Babysitting's `.gitignore` commit); comment on or merge a PR only with explicit consent. Merges are squash merges unless the user says otherwise.
-- After a merge that bumps the agent-pm plugin version, update the installed plugin yourself (`claude plugin marketplace update agent-pm`, then `claude plugin update agent-pm@agent-pm`) unless something blocks it.
+- After a merge that bumps the agent-pm plugin version, update the installed plugin yourself, in each client that has it, unless something blocks it: Claude Code `claude plugin marketplace update agent-pm`, then `claude plugin update agent-pm@agent-pm`; Codex `codex plugin marketplace upgrade agent-pm`, which reinstalls it.
 - A large rework runs on one integration branch: every issue branches from it and merges back into it (no stacked branches). A draft PR from it to the default branch carries its issues as a task list, ticked as each merges; it merges once, at the cutover, on the user's word. Until then, fix nothing on the default branch in the code it replaces: fold new findings into its issues.
 - Before an experiment, read the docs, then the source.
 - Size reviews to the change: config-only gets none, small code a light check, a feature a full panel. A worker's PR built by autopilot (its own review rounds, CI, live run) gets only a quick gate: CI green, files within the issue's scope, its body showing its review and live-run results, no side effect (e.g. an issue moved by a stray PR). Have a sub-agent review it only when the gate raises a doubt, and act on its verdict.

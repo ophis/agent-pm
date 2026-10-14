@@ -79,3 +79,9 @@ class Manage(Case):
             self.assertIsNotNone(part, top)
             for name in inner:
                 self.assertRegex(part[1], rf"(?m)^#+ {re.escape(name)}$|\*\*{re.escape(name)}:\*\*")
+
+    def test_a_plugin_update_names_each_clients_command(self):
+        update = rule("bumps the agent-pm plugin version")
+        self.assertIn("`claude plugin update agent-pm@agent-pm`", update)
+        self.assertIn("`codex plugin marketplace upgrade agent-pm`", update)
+        self.assertIn("how a client without this plugin's `bin/` on its PATH", body("manage"))
