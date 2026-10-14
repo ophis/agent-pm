@@ -64,6 +64,8 @@ def decode(data: object) -> LaunchPlan:
     if not isinstance(data, dict) or frozenset(data) != FIELDS:
         raise ValueError("Codex tui launch: invalid launch fields")
     selection, hook = _words(data["selection"]), _words(data["hook"])
+    if any(word.startswith("-") for word in selection):
+        raise ValueError("Codex tui launch: invalid session selection")
     if not hook:
         raise ValueError("Codex tui launch: invalid command")
     executable = data["executable"]

@@ -78,19 +78,16 @@ class CodexTui(Tui):
             raise ConfigError(str(exc)) from exc
         if not resume:
             self.state = common.save(self.state)
-        try:
-            plan = LaunchPlan(
-                exe,
-                self.common.selector(self.native, resume=resume),
-                prompt,
-                hooks,
-                self.state.workdir,
-                self.state.sid,
-                store,
-                (*protected_roots, *spec.protect),
-            )
-        except ValueError as exc:
-            raise ConfigError(str(exc)) from exc
+        plan = LaunchPlan(
+            exe,
+            self.common.selector(self.native, resume=resume),
+            prompt,
+            hooks,
+            self.state.workdir,
+            self.state.sid,
+            store,
+            (*protected_roots, *spec.protect),
+        )
         return Launch(
             (
                 os.path.realpath(sys.executable),

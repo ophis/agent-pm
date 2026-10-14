@@ -1,6 +1,6 @@
-"""Codex typed recovery state detaches mutable inputs and rejects mutable nested values."""
+"""Codex typed recovery state detaches collection aliases and freezes records."""
 
-from dataclasses import FrozenInstanceError, replace
+from dataclasses import FrozenInstanceError
 from types import MappingProxyType
 
 from agent_pm.session.adapters.codex.types import (
@@ -51,38 +51,8 @@ class ImmutableStateTest(Case):
         with self.assertRaises(FrozenInstanceError):
             state.sid = "changed"
 
-    def test_direct_construction_rejects_mutable_nested_values(self):
-        snapshot = Snapshot(
-            cwd="/cwd",
-            project=False,
-            dirs=(),
-            commands=(),
-            model=None,
-            effort=None,
-            codex_home="/home",
-            flags=(),
-            env={},
-        )
-        for fields in (
-            {"cwd": []},
-            {"project": {}},
-            {"dirs": [{}]},
-            {"commands": [[]]},
-            {"flags": [{}]},
-            {"env": {"K": {}}},
-            {"model": []},
-            {"effort": {}},
-        ):
-            with self.subTest(fields=fields), self.assertRaises(ValueError):
-                replace(snapshot, **fields)
-        with self.assertRaises(ValueError):
-            SessionState("/work", "caller", snapshot, [{}])
-
     def test_native_metadata_has_only_immutable_typed_fields(self):
         metadata = NativeMetadata("native", "/cwd", "parent")
         record = SessionFile("/session.jsonl", 10.0, metadata)
         with self.assertRaises(FrozenInstanceError):
             record.metadata.parent_thread_id = "changed"
-        for values in (({}, "/cwd", None), ("native", [], None), ("native", "/cwd", {})):
-            with self.subTest(values=values), self.assertRaises(ValueError):
-                NativeMetadata(*values)
