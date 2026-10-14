@@ -1,18 +1,17 @@
-"""A tui LinearRun through the real harness on a private tmux server (live_tmux) whose manager
-session a client shows, fake_claude interactive as client `claude`: its opaque display (FR-48)
-puts the TUI `<role>-<ID>-<sid8>` beside the display's split_from session, or in its opener's grid;
-the run writes back through agent-pm-linear writeback and leaves its TUI open.
+"""A tui LinearRun (entry.py tui) through the real harness on a private tmux server (live_tmux)
+whose manager session a client shows, fake_claude interactive as client `claude`: its opaque
+display (FR-48) puts the TUI `<role>-<ID>-<sid8>` beside the display's split_from session, or in
+its opener's grid; the run writes back through agent-pm-linear writeback and leaves its TUI open.
 """
 
 import functools
 import os
 import unittest
-from unittest import mock
 
-from agent_pm.linear_orchestrator.engine import config, runs
-from agent_pm.linear_orchestrator.engine.linear_run import LinearRun
+from agent_pm.linear_orchestrator.engine import runs
 from orchestrator_tests.integration.flow_fixtures import (
     ACCOUNTS,
+    ENTRY,
     KEYS,
     MANAGER,
     PROJECT,
@@ -52,32 +51,21 @@ class Tui(TmuxFlow):
 
     def launch(self, display):
         """The claimed run's LinearRun detached in tui mode at `display`, until written back."""
-        with mock.patch.dict(os.environ, self.env(), clear=True):
-            cfg = config.load()
-            runs.note(
-                cfg.runs_log,
-                "start",
-                issue=ID,
-                sid=SID,
-                role="pm",
-                client="claude",
-                delegate_kind="harness",
-                uuid=UUID,
-                project=PROJECT["id"],
-                target=None,
-                key=KEYS["pm"],
-            )
-            LinearRun(
-                ID,
-                "Do it.\n",
-                cfg.run_dir(ID),
-                cfg=cfg,
-                role="pm",
-                sid=SID,
-                client="claude",
-                mode="tui",
-                display=display,
-            ).detach()
+        runs.note(
+            os.path.join(self.logs, "runs.jsonl"),
+            "start",
+            issue=ID,
+            sid=SID,
+            role="pm",
+            client="claude",
+            delegate_kind="harness",
+            uuid=UUID,
+            project=PROJECT["id"],
+            target=None,
+            key=KEYS["pm"],
+        )
+        res = self.script(ENTRY, "tui", ID, SID, "pm", "claude", display, "Do it.\n")
+        self.assertEqual((res.returncode, res.stdout), (0, ""), res.stderr)
         self.wait_end(SID, ID, role="pm")
         self.assertTrue(self.live(TUI))
         self.assertEqual((self.state(ID), self.ledger(ID)), ("in_review", {SID: LEDGER}))

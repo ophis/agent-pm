@@ -182,13 +182,28 @@ class OrchestratorLayout(Sample):
         root = self.tree(
             {
                 f"{ORCH_PROJECT}/{OPKG}/cli.py": 'if __name__ == "__main__": pass\n',
-                f"{ORCH_PROJECT}/{OPKG}/engine/run.py": 'if __name__ == "__main__": pass\n',
+                f"{ORCH_PROJECT}/{OPKG}/engine/router.py": 'if __name__ == "__main__": pass\n',
             }
         )
         self.assertEqual(
             placement.orchestrator_entry(root),
             [
-                f"{ORCH_PROJECT}/{OPKG}/engine/run.py:1: entry outside cli.py",
+                f"{ORCH_PROJECT}/{OPKG}/engine/router.py:1: entry outside cli.py",
+            ],
+        )
+
+    def test_a_run_module_is_refused(self):
+        root = self.tree(
+            {
+                f"{ORCH_PROJECT}/{OPKG}/cli.py": "",
+                f"{ORCH_PROJECT}/{OPKG}/engine/run.py": "from agent_pm import delegate\n",
+            }
+        )
+        self.assertEqual(
+            placement.orchestrator_entry(root),
+            [
+                f"{ORCH_PROJECT}/{OPKG}/engine/run.py: no such module: a run is its Delegate's"
+                " harness (FR-25)"
             ],
         )
 

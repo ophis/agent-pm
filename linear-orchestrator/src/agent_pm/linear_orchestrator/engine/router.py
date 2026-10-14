@@ -448,8 +448,8 @@ def begin(cfg, spec: Spec) -> Spec:
     return spec
 
 
-def record(cfg, spec: Spec, *, role, target, now) -> str:
-    """The run's runs.jsonl row, before its launch: a start row holds the claim's context (issue
+def record(cfg, spec: Spec, *, role, now, target=None) -> str:
+    """The run's runs.jsonl row, an attempt toward CAP: a start row holds the claim's context (issue
     uuid, project, target, the role's key), which its write-back reads; returns its Delegate kind.
     """
     if spec.mode == "new":
@@ -484,7 +484,10 @@ def fail(ident, kind, reason, rc):
 
 
 def outer(a, cfg, *, gql, run, keychain, now=datetime.now):
-    """Prepares the issue's input, records the run, then detaches its LinearRun."""
+    """Records the run, prepares the issue's input, then detaches its LinearRun. The row comes as
+    soon as its context is known, so what fails after it counts toward CAP: a resume's first, a new
+    run's once its target is.
+    """
     os.environ["PATH"] = config.path()
     if reason := a.identity_error():
         print(f"router.py: {reason}", file=sys.stderr)
@@ -495,9 +498,11 @@ def outer(a, cfg, *, gql, run, keychain, now=datetime.now):
     if role is None or reason:
         return fail(a.issue, "config-error", reason, 2)
     key = cfg.roles[role].key
-    if not keychain(key):
-        return fail(a.issue, "config-error", f"no Keychain item for role key {key}", 2)
+    keyless = None if keychain(key) else f"no Keychain item for role key {key}"
     if a.mode == "resume":
+        kind = record(cfg, a, role=role, now=now)
+        if keyless:
+            return fail(a.issue, "config-error", keyless, 2)
         try:
             st = LinearRun.attach(a.issue, cfg=cfg, sid=a.sid).session_info()
             why = None if st.resumable == "yes" else st.resumable
@@ -522,6 +527,8 @@ def outer(a, cfg, *, gql, run, keychain, now=datetime.now):
         if isinstance(repo, Transient) or (isinstance(repo, Invalid) and a.mode == "resume"):
             return fail(a.issue, "transient", repo.reason, 3)  # never bounce a mid-build agent run
         if isinstance(repo, Invalid):
+            if keyless:
+                return fail(a.issue, "config-error", keyless, 2)
             try:
                 writeback.bounce(ctx, issue, repo)
             except (LinearError, Unavailable, OSError, subprocess.SubprocessError) as e:
@@ -530,6 +537,11 @@ def outer(a, cfg, *, gql, run, keychain, now=datetime.now):
             return 0
     else:
         repo = target.research_repo(issue, cfg.project_repos)
+    if a.mode == "new":
+        slug = f"{repo.owner}/{repo.name}" if build and repo else None
+        kind = record(cfg, a, role=role, target=slug, now=now)
+        if keyless:
+            return fail(a.issue, "config-error", keyless, 2)
     if repo is not None:
         repo = target.with_clone(
             repo,
@@ -558,8 +570,6 @@ def outer(a, cfg, *, gql, run, keychain, now=datetime.now):
     except OSError as e:
         log("router", "launch-error", a.issue, error=f"input: {one_line(e)}")
         return 1
-    slug = f"{repo.owner}/{repo.name}" if build and repo else None
-    kind = record(cfg, a, role=role, target=slug, now=now)
     try:
         LinearRun(
             a.issue,

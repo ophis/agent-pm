@@ -800,6 +800,23 @@ class RouterEntry(OuterBase):
             ],
         )
 
+    def test_a_resume_failing_each_tick_is_capped_then_goes_to_review(self):
+        self.todo["state"], self.fake.node = "In Progress", None
+        self.resumable(ID, "s", 60, role="engineer")
+        for _ in range(router.CAP - 1):
+            self.assertEqual(self.entry(), 0)
+            self.assertIn("launch TASK-7 exit=3", self.said())
+            self.lines = self.raw_runs().splitlines()
+        self.assertEqual(
+            [json.loads(line)["kind"] for line in self.lines],
+            ["start", *["resume"] * (router.CAP - 1)],
+        )
+        self.assertEqual(self.entry(), 0)
+        self.assertIn(
+            f"recover TASK-7 to=in_review reason=reached {router.CAP} attempts", self.said()
+        )
+        self.assertEqual(self.todo["state"], "In Review")
+
     def test_a_live_run_is_refused(self):
         for role in ("engineer", "pm"):
             with self.subTest(role=role):
@@ -1975,16 +1992,48 @@ class RunLaunching(OuterBase):
             ([], [], [], []),
         )
 
-    def test_no_keychain_item(self):
+    def test_no_keychain_item_is_a_config_error_after_the_runs_row(self):
         self.missing.add(KEY)
-        for mode in ("new", "resume"):
+        for mode, kinds, read in (
+            ("resume", ["start", "resume"], []),
+            ("new", ["start"], [("issue", HARNESS, {"i": ID})]),
+        ):
             with self.subTest(mode=mode):
+                self.gql.calls.clear()
+                with contextlib.suppress(FileNotFoundError):
+                    os.unlink(self.runs)
                 self.assertEqual(self.outer(mode=mode), 2)
                 self.assertEqual(
                     self.said(),
                     [f"config-error TASK-7 reason=no Keychain item for role key {KEY}"],
                 )
-        self.assertEqual((self.api.detached, self.api.info, self.gql.calls), ([], [], []))
+                self.assertEqual(self.kinds(), kinds)
+                self.assertEqual(self.gql.calls, read)
+        self.assertEqual((self.api.detached, self.api.info), ([], []))
+
+    def kinds(self):
+        if not os.path.exists(self.runs):
+            return []
+        return [json.loads(line)["kind"] for line in self.raw_runs().splitlines()]
+
+    def test_a_resume_that_fails_still_counts_toward_the_cap(self):
+        self.api.statuses[SID] = NO
+        self.assertEqual(self.outer(mode="resume"), 3)
+        self.assertEqual(self.kinds(), ["start", "resume"])
+
+    def test_a_new_runs_row_comes_once_its_target_is_known(self):
+        self.run_.table = [(("gh", "api"), ok(code=1, stderr="HTTP 502: Bad Gateway"))]
+        self.assertEqual(self.outer(), 3)
+        self.assertEqual(self.kinds(), [])
+        self.run_.table = [(LISTING, ok(code=1, stderr="HTTP 500"))]
+        self.gql.issue = node(title="Compare queues", description="Which queue fits?")
+        self.assertEqual(self.outer(assignee=RESEARCHER), 3)
+        self.assertEqual(
+            self.said(),
+            ["transient TASK-7 reason=docs: InputError: gh api contents Research: HTTP 500"],
+        )
+        self.assertEqual(self.kinds(), ["start"])
+        self.assertEqual(self.api.detached, [])
 
     def test_linear_errors_are_transient(self):
         for gql, reason in (

@@ -103,7 +103,7 @@ Before upgrading, close running agent-pm sessions: earlier sessions lack generat
 
 Requires macOS, Install's requirements and `gh` logged in as you. The Linear orchestrator runs this checkout's scripts, not the plugin.
 
-1. Create `~/.agent-pm/config.local.toml` from the projects' `# local:` examples, placing each fragment under its layer's section as shown below. Include researcher's and pm's `[output]` (delegate's Destination comment); a required key left `""` stops router, run and promote. `<work_dir>` below is `linear_orchestrator.work_dir`. Merge and validation rules: `utils/src/agent_pm/utils/config_file.py`'s docstring.
+1. Create `~/.agent-pm/config.local.toml` from the projects' `# local:` examples, placing each fragment under its layer's section as shown below. Include researcher's and pm's `[output]` (delegate's Destination comment); a required key left `""` stops every `agent-pm-linear` command. `<work_dir>` below is `linear_orchestrator.work_dir`. Merge and validation rules: `utils/src/agent_pm/utils/config_file.py`'s docstring.
 2. Find `task_label_group` with the Linear API's `issueLabels { nodes { id name isGroup } }`; the router stops if it isn't a label group or a `[task_labels]` id isn't one of its labels.
 3. Agent runs need no `linear` skill and get no Linear key: router and promote act in Linear as the harness account `frank.agent.w@gmail.com`, each role's write-back as its `[roles.<role>]` `account`, its API key in the Keychain under `key`. Per role:
    1. Linear → Settings → Members: invite the `account` (a Gmail plus-alias of the harness account, e.g. `frank.agent.w+pm@gmail.com`).

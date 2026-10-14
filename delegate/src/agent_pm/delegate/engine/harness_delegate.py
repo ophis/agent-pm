@@ -31,7 +31,6 @@ from agent_pm.delegate.engine.types import (
     Preview,
     Result,
     Spec,
-    Stopped,
 )
 from agent_pm.delegate.event.types import Outcome
 from agent_pm.session import (
@@ -580,8 +579,8 @@ class HarnessDelegate(Delegate):
     def run(self, on_event: Callable[[Event], None] | None = None) -> Result:
         """Each event goes to the callback, then `on_event`; a Finished is stored first. A run that
         raises before its Finished stores and calls back a stopped one (not to `on_event`), then
-        re-raises; any raise but a signal's Stopped is also a run.jsonl run_error row with its
-        traceback.
+        re-raises; a crash (an Exception or SystemExit, not a signal's Stopped or an interrupt) is
+        also a run.jsonl run_error row with its traceback.
         """
         state = self._state
         if state.events is not None and not state.detached and state.plan.spec.mode != Mode.TUI:
@@ -619,7 +618,7 @@ class HarnessDelegate(Delegate):
             except BaseException as error:
                 if not finished:
                     ended = stopped(error)
-                    if not isinstance(error, Stopped):
+                    if isinstance(error, (Exception, SystemExit)):
                         RunLog(self.workdir).note(
                             "run_error",
                             error=ended.error,
