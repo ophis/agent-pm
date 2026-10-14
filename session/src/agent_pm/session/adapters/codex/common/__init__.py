@@ -780,7 +780,7 @@ def _usage(snapshot) -> Usage | None:
 
 class CodexCommon:
     UNSET = (
-        *LOCAL_ENV_VARS,
+        *sorted(LOCAL_ENV_VARS),
         "CODEX_THREAD_ID",
         "CODEX_SESSION_ID",
         "CODEX_VERSION",
@@ -892,7 +892,7 @@ class CodexCommon:
         return [
             cwd,
             home,
-            *(absolute_path(path, "dir") for path in spec.access.dirs),
+            *(os.path.realpath(path) for path in spec.access.dirs),
             *added,
         ]
 

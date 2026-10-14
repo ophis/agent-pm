@@ -3,18 +3,40 @@
 import dataclasses
 import json
 import os
+import site
 import sys
+import sysconfig
 from unittest import mock
 
 from agent_pm.session.adapters.codex.common.types import Snapshot
 from agent_pm.session.adapters.codex.tui import HookPlan, LaunchPlan
 
-from session.tests.case import SRC, Case
+from session.tests.case import ROOTS, SRC, Case
 from session.tests.source_roots import PACKAGE_ROOTS
 from session.tests.unit.adapters.codex.support import Base, committed_tui
 
 ROOTS_JSON = json.dumps([SRC["session"], SRC["utils"]])
 HOOK = (sys.executable, "-I", "/protected/driver_hook.py", "/protected/session", ROOTS_JSON)
+INTERPRETER_ROOTS = tuple(
+    dict.fromkeys(
+        [
+            *(sysconfig.get_path(name) for name in ("stdlib", "platstdlib", "purelib", "platlib")),
+            *site.getsitepackages(),
+        ]
+    )
+)
+PROTECTED_ROOTS = tuple(
+    dict.fromkeys(
+        [
+            *(
+                os.path.realpath(os.path.join(SRC[package], "agent_pm", package))
+                for package in ("session", "utils")
+            ),
+            *(os.path.join(root, "agent_pm") for root in ROOTS),
+            *INTERPRETER_ROOTS,
+        ]
+    )
+)
 
 
 class ProtectCase(Base):

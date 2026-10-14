@@ -13,6 +13,7 @@ from unittest import mock
 
 from agent_pm.session.adapters.codex import tui
 from agent_pm.session.adapters.codex.tui import start as tui_start
+from agent_pm.utils import LOCAL_ENV_VARS
 
 from session.tests.case import Case
 from session.tests.codex_tui import HOOK, ROOTS_JSON, ProtectCase
@@ -23,6 +24,16 @@ DIRECTORY = pathlib.Path(tui_start.__file__).parent
 
 
 class BootstrapTest(Case):
+    def test_lone_surrogate_is_a_start_error_before_decoding_or_imports(self):
+        before = list(sys.path)
+        with (
+            mock.patch("json.loads") as decode,
+            self.assertRaisesRegex(tui_start.StartError, "surrogates not allowed"),
+        ):
+            tui_start._bootstrap(["\ud800"])
+        decode.assert_not_called()
+        self.assertEqual(sys.path, before)
+
     def test_main_reports_launch_validation_as_one_line_and_failure_status(self):
         stderr = io.StringIO()
         with mock.patch("sys.stderr", stderr):
@@ -127,7 +138,7 @@ class StartTest(Base):
             before, {str(p): p.read_bytes() for p in self.home.rglob("*") if p.is_file()}
         )
 
-    def test_start_passes_the_session_env_to_codex(self):
+    def test_start_passes_session_env_and_clears_git_local_environment(self):
         access = dataclasses.replace(self.spec.access, env={"PYTHONPATH": "/a b;c"})
         spec = dataclasses.replace(self.spec, access=access)
         with mock.patch("shutil.which", return_value="/protected/codex"):
@@ -138,13 +149,17 @@ class StartTest(Base):
                 source_roots=PACKAGE_ROOTS,
             )
         with (
-            mock.patch.dict(os.environ, launch.env),
+            mock.patch.dict(
+                os.environ, {**launch.env, **dict.fromkeys(LOCAL_ENV_VARS, "inherited")}
+            ),
             contextlib.nullcontext(mock.Mock(return_value="hooks.state={exact}")) as trust,
             mock.patch("os.chdir"),
             mock.patch("os.execve") as execute,
         ):
             tui_start.launch(json.loads(launch.argv[-1]), trust=trust)
         self.assertEqual(execute.call_args.args[2]["PYTHONPATH"], "/a b;c")
+        self.assertFalse(LOCAL_ENV_VARS.intersection(execute.call_args.args[2]))
+        self.assertFalse(LOCAL_ENV_VARS.intersection(trust.call_args.kwargs["env"]))
 
     def test_hooks_list_initializes_and_closes_mock_process(self):
         proc = mock.Mock()

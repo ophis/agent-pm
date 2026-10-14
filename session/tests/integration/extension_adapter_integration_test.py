@@ -15,6 +15,7 @@ import unittest
 
 from session.tests import fake_adapter
 from session.tests.case import PY, REPO, Case, child_env
+from session.tests.codex_tui import INTERPRETER_ROOTS
 
 TIMEOUT = 60  # seconds
 SKIP = shutil.ignore_patterns("__pycache__")
@@ -142,9 +143,14 @@ class ExtensionAdapterIntegration(Case):
         self.assertEqual(child.returncode, 0, child.stderr)
         plan = json.loads(child.stdout)
         namespace = os.path.join(self.site, "agent_pm")
-        self.assertTrue(
-            {namespace, os.path.join(namespace, "session"), os.path.join(namespace, "utils")}
-            <= set(plan["protect"])
+        self.assertEqual(
+            plan["protect"],
+            [
+                os.path.join(namespace, "session"),
+                os.path.join(namespace, "utils"),
+                namespace,
+                *INTERPRETER_ROOTS,
+            ],
         )
         self.assertNotIn(self.site, plan["protect"])
         self.assertEqual(plan["import_roots"], [self.site])

@@ -26,9 +26,10 @@ from agent_pm.session.engine.types import (
     Paste,
     TurnEnd,
 )
+from agent_pm.utils import LOCAL_ENV_VARS
 
 from session.tests.case import ROOTS, SRC
-from session.tests.codex_tui import PlanCase
+from session.tests.codex_tui import INTERPRETER_ROOTS, PROTECTED_ROOTS, PlanCase
 from session.tests.source_roots import PACKAGE_ROOTS
 from session.tests.unit.adapters.codex.support import CHILD, NATIVE, Base, committed_tui
 
@@ -74,11 +75,63 @@ class TuiTest(Base):
 
     def test_the_launch_protects_packages_and_hook_namespaces(self):
         _, _, data = self.launch()
-        for package in ("session", "utils"):
-            self.assertIn(os.path.join(SRC[package], "agent_pm", package), data["protect"])
-        for root in ROOTS:
-            self.assertIn(os.path.join(root, "agent_pm"), data["protect"])
-            self.assertNotIn(root, data["protect"])
+        self.assertEqual(data["protect"], list(PROTECTED_ROOTS))
+
+    def test_writable_interpreter_libraries_and_site_files_are_rejected_before_commit(self):
+        for index, root in enumerate(INTERPRETER_ROOTS):
+            for path in (root, os.path.join(root, "startup.pth")):
+                spec = dataclasses.replace(
+                    self.spec,
+                    sid=f"interpreter-{index}",
+                    access=dataclasses.replace(self.spec.access, dirs=(path,)),
+                )
+                with (
+                    self.subTest(path=path),
+                    mock.patch("shutil.which", return_value="/protected/codex"),
+                    self.assertRaisesRegex(ConfigError, "could rewrite hook dependency"),
+                ):
+                    self.adapter.tui().launch(spec, HOOK, source_roots=PACKAGE_ROOTS)
+                self.assertIsNone(self.common.load(str(self.work), spec.sid))
+        self.assertFalse((self.home / ".agent-pm").exists())
+
+    def test_resume_rejects_saved_library_grants_without_rewriting_recovery(self):
+        library = INTERPRETER_ROOTS[0]
+        spec = dataclasses.replace(
+            self.spec,
+            access=dataclasses.replace(self.spec.access, dirs=(library,)),
+        )
+        self.common.save(self.common.prepare(spec))
+        self.common.bind(str(self.work), "caller-id", NATIVE)
+        self.rollout()
+        before = self.record().read_bytes()
+        with (
+            mock.patch("shutil.which", return_value="/protected/codex"),
+            self.assertRaisesRegex(ConfigError, "could rewrite hook dependency"),
+        ):
+            self.adapter.tui().launch(
+                dataclasses.replace(spec, resume=True, access=self.spec.access),
+                HOOK,
+                source_roots=PACKAGE_ROOTS,
+            )
+        self.assertEqual(self.record().read_bytes(), before)
+        self.assertFalse((self.work / "run.jsonl").exists())
+
+    def test_other_interpreter_site_paths_are_protected_including_pth_files(self):
+        site_path = "/external/interpreter/site-packages"
+        with mock.patch("site.getsitepackages", return_value=[site_path]):
+            _, _, data = self.launch()
+            self.assertIn(site_path, data["protect"])
+            spec = dataclasses.replace(
+                self.spec,
+                sid="external-site",
+                access=dataclasses.replace(self.spec.access, dirs=(site_path + "/startup.pth",)),
+            )
+            with (
+                mock.patch("shutil.which", return_value="/protected/codex"),
+                self.assertRaisesRegex(ConfigError, "could rewrite hook dependency"),
+            ):
+                self.adapter.tui().launch(spec, HOOK, source_roots=PACKAGE_ROOTS)
+        self.assertIsNone(self.common.load(str(self.work), spec.sid))
 
     def test_launch_preserves_opaque_hook_words_and_separate_roots(self):
         roots = tuple(reversed(PACKAGE_ROOTS))
@@ -250,6 +303,19 @@ class TuiTest(Base):
         self.assertEqual(launch.env["CODEX_CI"], "configured")
         self.assertNotIn("CODEX_CI", launch.unset)
         self.assertEqual(launch.env["PAGER"], "less")
+
+    def test_interactive_launch_clears_git_local_environment_in_sorted_order(self):
+        inherited = {key: "inherited" for key in LOCAL_ENV_VARS}
+        with mock.patch.dict(os.environ, inherited):
+            _, launch, _ = self.launch()
+            snapshot = self.common.load(str(self.work), self.spec.sid).snapshot
+            effective = self.common.environment(snapshot, interactive=True, ambient=True)
+            child = {key: value for key, value in os.environ.items() if key not in launch.unset}
+            child.update(launch.env)
+        self.assertEqual(launch.unset[: len(LOCAL_ENV_VARS)], tuple(sorted(LOCAL_ENV_VARS)))
+        self.assertFalse(LOCAL_ENV_VARS.intersection(launch.env))
+        self.assertFalse(LOCAL_ENV_VARS.intersection(effective))
+        self.assertFalse(LOCAL_ENV_VARS.intersection(child))
 
     def test_hook_mapping_null_reply_and_submit(self):
         run, _, _ = self.launch()
