@@ -84,6 +84,30 @@ class GroupTest(Case):
 
 
 class ControlTest(Case):
+    def test_background_membership_probes_back_off_while_requests_remain_responsive(self):
+        control = ProcessControl.prepare(["program"], "/")
+        self.addCleanup(control.remove)
+        control.accepted = True
+        clock, probes = [0.0], []
+        group = mock.Mock(returncode=0, eof=False)
+        group.receive.return_value = [{"started": True}]
+        group.live.side_effect = lambda: probes.append(clock[0]) or clock[0] < 5
+
+        def poll(_read, _write, _error, timeout):
+            clock[0] += timeout
+            return [], [], []
+
+        with (
+            mock.patch("time.monotonic", side_effect=lambda: clock[0]),
+            mock.patch("select.select", side_effect=poll),
+            mock.patch("signal.signal"),
+            mock.patch("signal.pthread_sigmask"),
+        ):
+            self.assertEqual(control._serve(mock.Mock(), group, None), 0)
+        self.assertGreater(len(probes), 3)
+        self.assertLessEqual(len(probes), 11)
+        self.assertGreaterEqual(probes[-1] - probes[-2], 1)
+
     def test_a_completed_generation_never_contacts_or_signals_a_reused_group(self):
         control = ProcessControl.prepare(["program"], "/")
         self.addCleanup(control.remove)

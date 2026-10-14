@@ -316,6 +316,7 @@ class ProcessControl:
             signal.signal(sig, stop)
         signal.pthread_sigmask(signal.SIG_UNBLOCK, {signal.SIGINT, signal.SIGTERM, signal.SIGHUP})
         started, reported = False, False
+        live, probe_at, probe_delay = True, 0.0, POLL
         while True:
             for message in group.receive():
                 if "started" in message or "error" in message:
@@ -336,7 +337,11 @@ class ProcessControl:
                 if stopping is not None:
                     group.send(stopping)
                     stopping = None
-                live = not started or group.live()
+                now = time.monotonic()
+                if started and (not reported or now >= probe_at):
+                    probe_at = now + probe_delay
+                    probe_delay = min(1.0, probe_delay * 2) if reported else POLL
+                    live = group.live()
             except OSError:
                 live = True
             if started and not live and self.accepted:
@@ -349,9 +354,9 @@ class ProcessControl:
                 return rc
             ready, _, _ = select.select([listener], [], [], POLL)
             if ready:
-                self._answer(listener, group)
+                self._answer(listener, group, reported=reported)
 
-    def _answer(self, listener, group):
+    def _answer(self, listener, group, *, reported):
         connection, _ = listener.accept()
         with connection:
             connection.settimeout(TIMEOUT)
@@ -369,7 +374,7 @@ class ProcessControl:
                     group.send(signum)
                 elif command != b"live\n":
                     raise ValueError("unknown process control command")
-                response = {"live": True}
+                response = {"live": group.live() if reported else True}
             except OSError as error:
                 response = {"error": str(error), "errno": error.errno or errno.EIO}
             except ValueError as error:
