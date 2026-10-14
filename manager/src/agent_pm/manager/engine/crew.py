@@ -10,7 +10,6 @@ import time
 import uuid
 from collections.abc import Iterable
 from dataclasses import replace
-from pathlib import Path
 
 from agent_pm.manager.engine.roster import LOCK_TIMEOUT, Roster
 from agent_pm.manager.engine.types import Entry, Lease, RosterError, Spec, State
@@ -23,7 +22,6 @@ RECOVERY_AGE = TIMEOUT + 4 * LOCK_TIMEOUT + RECOVERY_MARGIN
 EVENT = re.compile(r"[0-9]{2}:[0-9]{2}:[0-9]{2} \S+ \S.*")
 HERE = ("agent-pm-session", "ls", "--here", "--records")
 HEADER = "name\tkind\tsid\tstate\tnote\tcwd\tattach"
-BIN = str(Path(__file__).parents[5] / "bin")
 
 
 class Crew:
@@ -45,7 +43,6 @@ class Crew:
                 "AGENT_PM_HOLDER_GENERATION",
             }
         }
-        env["PATH"] = os.pathsep.join((BIN, os.environ.get("PATH", os.defpath)))
         if events:
             env["AGENT_PM_EVENTS"] = self.roster.events
         return env

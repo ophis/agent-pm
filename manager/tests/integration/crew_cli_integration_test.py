@@ -39,8 +39,9 @@ class Commands(Case):
         self.directory = os.path.join(self.agent_pm, "managers", "mgr")
 
     def plugin_root(self) -> str:
-        """This tree's projects under a plugin root whose bin/ holds only agent-pm-crew: Crew puts
-        its own bin/ first on PATH, so the fake agent-pm-session beside it wins over the real one.
+        """This tree's projects under a plugin root whose bin/ holds only agent-pm-crew: the
+        launcher puts its own bin/ first on PATH, so the fake agent-pm-session beside it wins over
+        the real one.
         """
         root = os.path.join(self.home, "plugin")
         os.makedirs(os.path.join(root, "bin"))

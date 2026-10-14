@@ -121,7 +121,6 @@ class PackageClimbs(Sample):
                 "session/src/agent_pm/session/adapters/codex/tui/__init__.py",
                 "import_roots()",
             ): "TASK-393",
-            ("manager/src/agent_pm/manager/engine/crew.py", "BIN"): "TASK-373",
         }
         self.assertLessEqual(PACKAGE_CLIMB_ALLOWED.keys(), expected.keys())
         for key, owner in PACKAGE_CLIMB_ALLOWED.items():
@@ -130,7 +129,7 @@ class PackageClimbs(Sample):
     def test_every_exemption_must_still_have_an_escape(self):
         root = self.tree({})
         found = placement.package_climbs(root)
-        self.assertEqual(len(found), 5)
+        self.assertEqual(len(found), len(PACKAGE_CLIMB_ALLOWED))
         for (rel, name), ticket in PACKAGE_CLIMB_ALLOWED.items():
             self.assertIn(f"{rel}: {name}: allowlisted but no package escape ({ticket})", found)
 
