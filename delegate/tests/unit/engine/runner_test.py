@@ -19,7 +19,7 @@ from agent_pm.delegate import (
     plan,
     run,
 )
-from agent_pm.delegate.engine.runner import FIX, NUDGE, POLICIES, STOP_LIMIT, execute
+from agent_pm.delegate.engine.runner import FIX, NUDGE, POLICIES, STOP_LIMIT, execute, stopped
 from agent_pm.delegate.event.reply import marks
 from agent_pm.session import (
     Activity,
@@ -33,7 +33,9 @@ from agent_pm.session import (
     TurnFailed,
 )
 from agent_pm.session import ConfigError as SessionConfigError
+from agent_pm.utils import Stopped
 
+from delegate.tests.case import Case
 from delegate.tests.replies import bare, block
 from delegate.tests.runner import INVALID, INVALID_ERROR, LEFT_OPEN, PENDING, SID, Base
 from delegate.tests.unit.engine.instruction import ROLES, InstructionCase
@@ -530,3 +532,16 @@ class InstructionRuns(InstructionCase):
             self.assertRaisesRegex(ConfigError, "instruction has no session to resume"),
         ):
             run(*args, driver=self.driver)
+
+
+class Stopping(Case):
+    def test_a_raised_run_ends_with_the_runners_code_and_a_one_line_stopped_error(self):
+        for error, want in (
+            (Stopped(143), Result(143, None, "stopped: Stopped: 143")),
+            (SystemExit(3), Result(3, None, "stopped: SystemExit: 3")),
+            (SystemExit("bye"), Result(1, None, "stopped: SystemExit: bye")),
+            (RuntimeError("a\n  b"), Result(1, None, "stopped: RuntimeError: a b")),
+            (KeyboardInterrupt(), Result(1, None, "stopped: KeyboardInterrupt")),
+        ):
+            with self.subTest(error=error):
+                self.assertEqual(stopped(error), want)

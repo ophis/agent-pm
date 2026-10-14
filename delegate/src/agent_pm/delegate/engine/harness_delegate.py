@@ -18,7 +18,7 @@ from agent_pm.delegate.engine.callback import EventCallback
 from agent_pm.delegate.engine.config import module_roots
 from agent_pm.delegate.engine.drivers import AgentDriver, Driver, InstructionDriver
 from agent_pm.delegate.engine.plan import plan
-from agent_pm.delegate.engine.runner import execute, say
+from agent_pm.delegate.engine.runner import execute, say, stopped
 from agent_pm.delegate.engine.state import RunState
 from agent_pm.delegate.engine.types import (
     ConfigError,
@@ -99,15 +99,13 @@ class _State:
 
 TUI_START_TIMEOUT = 30  # seconds: a detached tui run's agent session to go live
 TUI_POLL = 0.1  # seconds
+# A launcher's start token (the run's sid) and events file: no harness inherits them.
+SID_ENV, EVENTS_ENV = "AGENT_PM_SID", "AGENT_PM_EVENTS"
 
 
 class HarnessDelegate(Delegate):
     def __init__(self, role: str, spec: Spec, **placement) -> None:
         self._accept(role, spec, **placement)
-        try:
-            self.driver.preflight(self._state.plan.session)
-        except (SessionConfigError, DriverError) as error:
-            raise ConfigError(str(error)) from None
         self._persist_new()
 
     @classmethod
@@ -227,23 +225,36 @@ class HarnessDelegate(Delegate):
             raise ConfigError(str(error)) from None
 
     def _persist_new(self) -> None:
+        """The session preflight follows the replaced run's refusal and cleanup."""
         try:
             with self.store.mutex():
                 payload = self.store.read()
                 if payload is not None:
                     self._state = replace(self._state, attempt=self._replacing(payload))
+                try:
+                    self.driver.preflight(self._state.plan.session)
+                except (SessionConfigError, DriverError) as error:
+                    raise ConfigError(str(error)) from None
                 self._save(self._state)
         except OSError as error:
             raise ConfigError(str(error)) from None
 
     def _replacing(self, payload: bytes) -> int:
-        """The attempt replacing the run `payload` records, refused while that run is alive."""
+        """The attempt replacing the run `payload` records, refused while that run is alive; the
+        agent session it left open (a tui run's, after its outcome) is closed.
+        """
         try:
             previous = self._parse(payload)
         except ConfigError:
             return self._salvaged(payload)
         if self._alive(previous):
             raise ConfigError(f"{self.workdir}: delegate is still alive")
+        agent = self._agent(previous)
+        if agent is not None:
+            try:
+                agent.close()
+            except DriverError as error:
+                raise ConfigError(str(error)) from None
         return previous.attempt + 1
 
     def _salvaged(self, payload: bytes) -> int:
@@ -354,6 +365,7 @@ class HarnessDelegate(Delegate):
         cls,
         record_or_workdir: Record | str,
         *,
+        sid: str | None = None,
         session_cls: type[Session] | None = None,
         composer: Composer | None = None,
     ) -> HarnessDelegate:
@@ -368,6 +380,8 @@ class HarnessDelegate(Delegate):
         view.workdir = os.path.abspath(workdir)
         view.store = RunState(view.workdir)
         view._state = view._read()
+        if sid is not None and sid != view._state.plan.sid:
+            raise ConfigError(f"sid {sid} is not the run's (its sid: {view._state.plan.sid})")
         try:
             view.composer = composer or Composer(
                 config=DelegateConfig(config.read_config()),
@@ -560,6 +574,10 @@ class HarnessDelegate(Delegate):
         )
 
     def run(self, on_event: Callable[[Event], None] | None = None) -> Result:
+        """Each event goes to the callback, then `on_event`; a Finished is stored first. A run that
+        raises before its Finished stores and calls back a stopped one (not to `on_event`), then
+        re-raises.
+        """
         state = self._state
         if state.events is not None and not state.detached and state.plan.spec.mode != Mode.TUI:
             raise ConfigError("events: a headless run writes them only when detached")
@@ -573,23 +591,42 @@ class HarnessDelegate(Delegate):
                 else EventCallback(
                     self._state.callback,
                     self.workdir,
+                    cwd=self.store.dir,
                     sid=self._state.plan.sid,
                     attempt=self._state.attempt,
                 )
             )
 
+            finished = False
+
             def emit(event: Event) -> None:
+                nonlocal finished
                 if isinstance(event, Finished):
-                    with self.store.mutex():
-                        state = self._current()
-                        self._state = replace(state, result=event.result, completed=True)
-                        self._save(self._state)
-                if on_event is not None:
-                    on_event(event)
+                    self._complete(event.result)
+                    finished = True
                 if callback is not None:
                     callback(event)
+                if on_event is not None:
+                    on_event(event)
 
-            return execute(self._state.plan, driver=self.driver, on_event=emit)
+            try:
+                return execute(self._state.plan, driver=self.driver, on_event=emit)
+            except BaseException as error:
+                if not finished:
+                    ended = stopped(error)
+                    try:
+                        self._complete(ended)
+                    except (ConfigError, OSError) as failure:
+                        say(f"delegate: {failure}")
+                    if callback is not None:
+                        callback(Finished(ended))
+                raise
+
+    def _complete(self, result: Result) -> None:
+        with self.store.mutex():
+            state = self._current()
+            self._state = replace(state, result=result, completed=True)
+            self._save(self._state)
 
     def announce(self, result: Result | None) -> None:
         """Appends the run's one events line, `outcome <status>` for its harness session (`error`
@@ -624,7 +661,11 @@ class HarnessDelegate(Delegate):
             )
         except (ValueError, SessionConfigError) as error:
             raise ConfigError(str(error)) from None
-        environment = {key: value for key, value in os.environ.items() if key != "PYTHONPATH"}
+        environment = {
+            key: value
+            for key, value in os.environ.items()
+            if key not in ("PYTHONPATH", SID_ENV, EVENTS_ENV)
+        }
         environment.update(source_path(roots))
         return Launch(
             (sys.executable, "-P", "-s", "-m", "agent_pm.delegate.engine.harness", self.workdir),

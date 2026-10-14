@@ -41,8 +41,6 @@ from agent_pm.session import DriverError, Host, NotDisplayable
 from agent_pm.session import read_config as read_session_config
 from agent_pm.utils import LOCAL
 
-PYTHONPATH: str = os.pathsep.join(module_roots())
-
 
 def configure(*, local: str = LOCAL, cfg: Mapping | None = None) -> SessionDriver:
     """The session's Driver from its config, [hosts] parsed once, keeping harness_host (`cfg`, else
@@ -127,7 +125,6 @@ __all__ = [
     "RunConfig",
     "DelegateEvent",
     "CONFIG",
-    "PYTHONPATH",
     "harness_host",
     "module_roots",
     "read_config",
