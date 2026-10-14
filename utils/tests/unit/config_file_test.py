@@ -431,6 +431,9 @@ class Resources(Case):
                 read_project("linear-orchestrator", root=self.root)
 
     def test_flat_migration_hints_match_key_paths_and_never_choose_utils(self):
+        unrelated = DELEGATE + '[clients.writer]\naccount = ""\n'
+        Path(self.root, self.package, "delegate", "config.toml").write_text(unrelated)
+        Path(self.root, "delegate", "config.toml").write_text(unrelated)
         extra = 'harness_key = ""\n' + ORCH
         Path(self.root, self.package, "linear_orchestrator", "config.toml").write_text(extra)
         Path(self.root, "linear-orchestrator", "config.toml").write_text(extra)

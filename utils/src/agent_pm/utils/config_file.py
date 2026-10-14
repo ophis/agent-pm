@@ -174,7 +174,10 @@ def _flat_sections(keys: tuple, schemas: Mapping[str, dict]) -> list[str]:
     shaped = [
         p
         for p in having
-        if any(len(k) == len(keys) and k[-1] == keys[-1] for k, _ in _leaves(schemas[p], ()))
+        if any(
+            len(k) == len(keys) and k[0] == keys[0] and k[-1] == keys[-1]
+            for k, _ in _leaves(schemas[p], ())
+        )
     ]
     suffix = [p for p in having if any(_has(schemas[p], keys[i:]) for i in range(1, len(keys)))]
     return exact or shaped or suffix or having
