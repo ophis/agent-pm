@@ -510,7 +510,12 @@ class StartTest(Base):
     def nothing_hosted(self):
         """No tmux call but the checks', no path made, no session line."""
         self.assertEqual(
-            [c for c in self.host.mock_calls if c[0] not in ("events_file", "tmux_path")], []
+            [
+                c
+                for c in self.host.mock_calls
+                if c[0] not in ("validate_events", "validate_start", "tmux_path")
+            ],
+            [],
         )
         self.assertFalse(os.path.lexists(self.root))
         self.assertEqual(self.recorded, [])
@@ -534,7 +539,15 @@ class StartTest(Base):
         mode = self.start()
         self.assertEqual(
             [c[0] for c in self.host.mock_calls],
-            ["events_file", "tmux_path", "status", "start", "pane"],
+            [
+                "validate_events",
+                "tmux_path",
+                "validate_start",
+                "events_file",
+                "status",
+                "start",
+                "pane",
+            ],
         )
         (call,) = self.host.start.call_args_list
         self.assertEqual(
@@ -1555,7 +1568,12 @@ class PrepareTest(Base):
                 self.adapter.run.launched = launched
                 self.start(**fields)
         self.assertEqual(
-            [c for c in self.host.mock_calls if c[0] not in ("events_file", "tmux_path")], []
+            [
+                c
+                for c in self.host.mock_calls
+                if c[0] not in ("validate_events", "validate_start", "tmux_path")
+            ],
+            [],
         )
         self.assertFalse(os.path.lexists(self.root))
         self.assertEqual(self.recorded, [])

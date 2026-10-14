@@ -13,7 +13,7 @@ import threading
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from typing import Self
 
-from agent_pm.session.adapters.base import Adapter
+from agent_pm.session.adapters.base import Adapter, Headless
 from agent_pm.session.adapters.registry import Registry
 from agent_pm.session.engine.types import (
     ClientBound,
@@ -81,6 +81,36 @@ class HeadlessMode(RunningMode):
         self.eof = (threading.Event(), threading.Event())
 
     @classmethod
+    def preflight(
+        cls,
+        spec: Spec,
+        adapter: Adapter,
+        *,
+        registry: Registry,
+        host=tmux_host,
+        display: Display = None,
+    ) -> Prepared:
+        return cls._prepare(spec, adapter, registry=registry, display=display)[0]
+
+    @classmethod
+    def _prepare(
+        cls,
+        spec: Spec,
+        adapter: Adapter,
+        *,
+        registry: Registry,
+        display: Display,
+    ) -> tuple[Prepared, Headless]:
+        run = adapter.headless()
+        if run is None:
+            raise cls._unsupported(spec)
+        cls._no_tui_keys(spec, display)
+        cls._selected(spec, adapter)
+        drop = identity_drop(registry)
+        spec = cls._noted(spec, adapter)
+        return cls._launched(spec, run.launch, drop), run
+
+    @classmethod
     def start(
         cls,
         spec: Spec,
@@ -91,14 +121,7 @@ class HeadlessMode(RunningMode):
         host=tmux_host,
         display: Display = None,
     ) -> Self:
-        run = adapter.headless()
-        if run is None:
-            raise cls._unsupported(spec)
-        cls._no_tui_keys(spec, display)
-        cls._selected(spec, adapter)
-        drop = identity_drop(registry)
-        spec = cls._noted(spec, adapter)
-        prepared = cls._launched(spec, run.launch, drop)
+        prepared, run = cls._prepare(spec, adapter, registry=registry, display=display)
         run.commit()
         record(prepared.info)
         try:

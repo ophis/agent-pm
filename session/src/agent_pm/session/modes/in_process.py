@@ -42,16 +42,25 @@ class InProcessMode(RunningMode):
         self.items, self.lock, self.over = queue.Queue(), threading.Lock(), threading.Event()
 
     @classmethod
-    def start(
+    def preflight(
         cls,
         spec: Spec,
         adapter: Adapter,
         *,
         registry: Registry,
-        record: Callable[[SessionInfo], None],
         host=tmux_host,
         display: Display = None,
-    ) -> Self:
+    ) -> Prepared:
+        return cls._prepare(spec, adapter, display=display)[0]
+
+    @classmethod
+    def _prepare(
+        cls,
+        spec: Spec,
+        adapter: Adapter,
+        *,
+        display: Display,
+    ) -> tuple[Prepared, InProcess]:
         run = adapter.in_process()
         if run is None:
             raise cls._unsupported(spec)
@@ -63,10 +72,24 @@ class InProcessMode(RunningMode):
         run.check(spec)
         cwd = spec.access.cwd or spec.workdir
         prepared = Prepared(spec, SessionInfo(spec.sid, cwd, spec.access.project, "", ""))
+        return prepared, run
+
+    @classmethod
+    def start(
+        cls,
+        spec: Spec,
+        adapter: Adapter,
+        *,
+        registry: Registry,
+        record: Callable[[SessionInfo], None],
+        host=tmux_host,
+        display: Display = None,
+    ) -> Self:
+        prepared, run = cls._prepare(spec, adapter, display=display)
         record(prepared.info)
         mode = cls(prepared)
         try:
-            threading.Thread(target=mode._pump, args=(run, spec), daemon=True).start()
+            threading.Thread(target=mode._pump, args=(run, prepared.spec), daemon=True).start()
         except RuntimeError as e:
             raise DriverError(f"cannot start the in_process run: {e}") from e
         return mode

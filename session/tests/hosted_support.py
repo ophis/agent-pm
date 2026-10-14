@@ -292,6 +292,8 @@ def fake_tmux() -> mock.Mock:
     host.PAUSE = 0
     host.attach_command.side_effect = tmux_host.attach_command
     host.events_file.side_effect = tmux_host.events_file
+    host.validate_events.side_effect = tmux_host.validate_events
+    host.validate_start.side_effect = tmux_host.validate_start
     host.display_error.side_effect = tmux_host.display_error
     host.status.return_value = None
     host.listing.return_value = []

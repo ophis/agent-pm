@@ -3,6 +3,7 @@
 import json
 import os
 import queue
+import shutil
 import tempfile
 import threading
 import time
@@ -34,12 +35,24 @@ DIALOG = "Pick one: 1. this 2. that"
 TMUX = "/opt/tmux/bin/tmux"
 
 
+def _validate_start(name, argv, env, tags):
+    which = shutil.which
+
+    def resolved(command, *, path=None):
+        return command if command == "/bin/run" else which(command, path=path)
+
+    with mock.patch("shutil.which", side_effect=resolved):
+        tmux_host.validate_start(name, argv, env, tags)
+
+
 def fake_host() -> mock.Mock:
     host = mock.create_autospec(tmux_host)
     for name in ("PaneStatus", "PAUSE", "TuiError"):
         setattr(host, name, getattr(tmux_host, name))
     host.attach_command.side_effect = tmux_host.attach_command
     host.events_file.side_effect = tmux_host.events_file
+    host.validate_events.side_effect = tmux_host.validate_events
+    host.validate_start.side_effect = _validate_start
     host.tmux_path.return_value = TMUX
     host.status.return_value = None
     host.read.return_value = ""

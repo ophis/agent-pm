@@ -480,7 +480,8 @@ class _StoreOperation:
             fcntl.flock(fd, fcntl.LOCK_UN)
             os.close(fd)
 
-    def write(self, state: SessionState, *, exclusive: bool) -> None:
+    @staticmethod
+    def encoded(state: SessionState) -> bytes:
         payload = json.dumps(
             {
                 "version": _SESSION_VERSION,
@@ -494,6 +495,10 @@ class _StoreOperation:
         ).encode("utf-8")
         if len(payload) > _MAX_SESSION_BYTES:
             raise RecoveryError("recovery state is too large")
+        return payload
+
+    def write(self, state: SessionState, *, exclusive: bool) -> None:
+        payload = self.encoded(state)
         path = self._path(state.workdir, state.sid)
         fd, tmp = tempfile.mkstemp(prefix=".state-", dir=self.root)
         try:
@@ -526,6 +531,7 @@ class _StoreOperation:
     def validate_for_save(self, state: SessionState) -> None:
         self._validate_recovery(state)
         check_writable_roots(self.root, [*state.writable_roots, *implicit_writable_roots()])
+        self.encoded(state)
 
 
 class SessionStore:

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import errno
 import fcntl
 import itertools
 import json
@@ -544,13 +545,46 @@ def _mark_tmux(argv: list[str], proc) -> str:
     return res.stdout
 
 
+def validate_events(path: str) -> str:
+    """Check an events destination without opening it for writing or creating it."""
+    path = os.path.abspath(path)
+    if "#" in path or path.endswith(";"):
+        raise TuiError(f"events file {path}: tmux would misread it")
+    try:
+        info = os.lstat(path)
+    except FileNotFoundError:
+        parent = os.path.dirname(path)
+        if not os.path.isdir(parent):
+            raise TuiError(f"events file {path}: No such file or directory") from None
+        if not os.access(parent, os.W_OK):
+            raise TuiError(f"events file {path}: Permission denied") from None
+    except OSError as error:
+        raise TuiError(f"events file {path}: {error.strerror}") from error
+    else:
+        if stat.S_ISDIR(info.st_mode):
+            raise TuiError(f"events file {path}: {os.strerror(errno.EISDIR)}")
+        if stat.S_ISLNK(info.st_mode):
+            raise TuiError(f"events file {path}: Too many levels of symbolic links")
+        if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid():
+            raise TuiError(f"events file {path}: not a regular file owned by you")
+        if not os.access(path, os.W_OK):
+            raise TuiError(f"events file {path}: Permission denied")
+    return path
+
+
+def validate_start(
+    session: str, argv: Sequence[str], env: Mapping[str, str], tags: Mapping[str, str]
+) -> None:
+    _name(session)
+    _tags(session, tags)
+    _command(argv, env)
+
+
 def events_file(path: str) -> str:
     """The absolute path, created 0600 when missing; TuiError unless a regular file tmux takes
     verbatim.
     """
-    path = os.path.abspath(path)
-    if "#" in path or path.endswith(";"):
-        raise TuiError(f"events file {path}: tmux would misread it")
+    path = validate_events(path)
     try:
         fd = os.open(
             path, os.O_WRONLY | os.O_CREAT | os.O_APPEND | os.O_NOFOLLOW | os.O_NONBLOCK, 0o600
