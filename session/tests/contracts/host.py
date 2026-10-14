@@ -209,6 +209,7 @@ class HostContract:
         self.addCleanup(process.kill)
         own, child = map(int, self.poll(lambda: read(pids), f"pids in {pids}").split())
         self.poll(lambda: gone(own), f"end of {own}")
+        self.poll(lambda: not process.alive(), f"{name} no longer running its program")
         self.assertFalse(process.wait_exit(0.3))
         self.assertFalse(gone(child))
         getattr(process, end)()

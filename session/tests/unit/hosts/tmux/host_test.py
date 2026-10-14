@@ -3,18 +3,20 @@ format (fold, unfold, display, display_help), detach's forwarding and refusals, 
 Displayable forwards and TmuxProcess (its pane and process group; os.killpg faked).
 """
 
+import json
 import logging
 import os
 import re
 import signal
 import tempfile
+from pathlib import Path
 from unittest import mock
 
 from agent_pm.session import ConfigError, Displayable, DriverError, Host
 from agent_pm.session.hosts.base import SIGNALS
 from agent_pm.session.hosts.tmux import TmuxHost, tmux_host
 from agent_pm.session.hosts.tmux.host import TmuxProcess
-from agent_pm.utils import Record, load_class
+from agent_pm.utils import ProcessControl, Record, load_class
 
 from session.tests.case import Case
 
@@ -32,7 +34,6 @@ FOLDS = (
 )
 FOREIGN = ("elsewhere:1.2", "mgr/left", "a b", "mgr/right/a b", "a/b/c/d", "x:y:z")
 PROCESS = "4242 $3 %7 4343"
-GROUP = 4343
 
 
 def fake_tmux() -> mock.Mock:
@@ -63,7 +64,40 @@ class Base(Case):
         self.dir = os.path.realpath(tmp.name)
         self.tmux = fake_tmux()
         self.host = TmuxHost("tmux", {"workers_per_column": 2}, tmux=self.tmux)
-        self.killpg = self.enterContext(mock.patch("os.killpg", side_effect=ProcessLookupError))
+        self.killpg = self.enterContext(
+            mock.patch("os.killpg", side_effect=AssertionError("unsafe signal"))
+        )
+        self.control = ProcessControl.prepare(["tool", "a b"], self.dir)
+        self.addCleanup(self.control.remove)
+        self.completed(self.control.path)
+        self.controlled = False
+        self.tmux.option.side_effect = lambda _pane, key: (
+            self.control.path
+            if key == "@control" and self.controlled
+            else self.tmux.option.return_value
+        )
+        self.tmux.detach.side_effect = self.detached
+        self.socket = self.enterContext(mock.patch("socket.socket"))
+        self.connection = self.socket.return_value.__enter__.return_value
+
+    @staticmethod
+    def completed(path):
+        for name, message in (("started.json", {"started": True}), ("done.json", {"rc": 0})):
+            Path(path, name).write_text(json.dumps(message))
+
+    def detached(self, *_args, **kw):
+        self.control = ProcessControl(kw["control"])
+        self.addCleanup(self.control.remove)
+        Path(self.control.path, "started.json").write_text('{"started": true}')
+        return PROCESS
+
+    def active(self, *responses):
+        self.controlled = True
+        Path(self.control.path, "done.json").unlink(missing_ok=True)
+        stream = self.connection.makefile.return_value.__enter__.return_value
+        stream.readline.side_effect = [
+            json.dumps(response).encode() + b"\n" for response in responses
+        ]
 
 
 class ClassTest(Case):
@@ -162,7 +196,7 @@ class DetachTest(Base):
         process = self.detach(display="mgr/below", events=events, record=LINE)
         self.tmux.detach.assert_called_once_with(
             "d1",
-            ["tool", "a b"],
+            self.control.command(),
             cwd=self.dir,
             env={"PATH": "/bin"},
             block=SIGNALS,
@@ -170,8 +204,13 @@ class DetachTest(Base):
             display="mgr/below",
             events=events,
             record=LINE.to_line(),
+            control=self.control.path,
         )
         self.assertEqual((process.name, process.alive()), ("d1", True))
+        self.assertEqual(
+            json.loads(Path(self.control.path, "launch.json").read_text()),
+            {"argv": ["tool", "a b"], "cwd": self.dir},
+        )
         self.tmux.status.assert_called_with("%7")
         self.assertEqual(SIGNALS, (signal.SIGHUP, signal.SIGTERM, signal.SIGINT))
 
@@ -296,12 +335,11 @@ class ProcessTest(Base):
             process.alive()
 
     def test_close_kills_its_group_then_its_panes_session_absent_is_fine(self):
+        self.active({"live": False})
         process = self.host.attach("d1")
-        self.killpg.side_effect = None
         process.close()
-        self.assertEqual(
-            self.killpg.call_args_list, [mock.call(GROUP, 0), mock.call(GROUP, signal.SIGKILL)]
-        )
+        self.connection.sendall.assert_called_once_with(b"kill\n")
+        self.killpg.assert_not_called()
         self.tmux.kill.assert_called_once_with("%7")
         self.tmux.kill.side_effect = TuiError("tmux: can't find pane: %7")
         self.tmux.process.side_effect = [PROCESS, None]
@@ -311,31 +349,51 @@ class ProcessTest(Base):
             process.close()
 
     def test_after_its_pane_ends_wait_exit_waits_for_its_group_and_kill_ends_it(self):
+        self.active({"live": True}, {"live": False})
         process = self.host.attach("d1")
         self.tmux.status.return_value = None
-        self.killpg.side_effect = None
         self.assertFalse(process.alive())
         self.assertFalse(process.wait_exit(0))
-        self.killpg.side_effect = [None, None, None, ProcessLookupError]
         process.kill()
         self.assertEqual(
-            self.killpg.call_args_list[-4:],
-            [
-                mock.call(GROUP, 0),
-                mock.call(GROUP, signal.SIGKILL),
-                mock.call(GROUP, 0),
-                mock.call(GROUP, 0),
-            ],
+            self.connection.sendall.call_args_list, [mock.call(b"live\n"), mock.call(b"kill\n")]
         )
-        self.killpg.reset_mock()
+        self.connection.sendall.reset_mock()
         self.assertTrue(process.wait_exit(0))
         process.kill()
         process.close()
+        self.connection.sendall.assert_not_called()
         self.killpg.assert_not_called()
+
+    def test_unobserved_exit_and_retained_dead_pane_never_signal_a_reused_group(self):
+        self.controlled = True
+        old = self.host.attach("d1")
+        self.tmux.status.return_value = 0
+        attached_dead = self.host.attach("d1")
+        for process in (old, attached_dead):
+            process.kill()
+            process.close()
+            self.assertTrue(process.wait_exit(0))
+        self.socket.assert_not_called()
+        self.killpg.assert_not_called()
+
+    def test_permission_denied_retains_control_for_later_cleanup(self):
+        self.active(
+            {"error": "permission denied", "errno": 1},
+            {"error": "permission denied", "errno": 1},
+            {"live": False},
+        )
+        process = self.host.attach("d1")
+        self.tmux.status.return_value = 0
+        for operation in (lambda: process.wait_exit(0), process.kill):
+            with self.assertRaisesRegex(DriverError, "permission denied"):
+                operation()
+        process.kill()
+        self.assertTrue(process.wait_exit(0))
+        self.assertEqual(self.connection.sendall.call_count, 3)
 
     def test_a_handle_never_acts_on_a_later_pane_of_its_name(self):
         process = self.host.attach("d1")
-        self.killpg.side_effect = None
         for later in (None, "4242 $4 %9 5555", "9999 $3 %7 4343", "4242 $3 %7 5555"):
             with self.subTest(later=later):
                 self.tmux.process.return_value = later
@@ -349,7 +407,7 @@ class ProcessTest(Base):
                 self.tmux.option.assert_not_called()
                 self.tmux.kill.assert_not_called()
                 self.tmux.process.assert_called_with("%7")
-        self.assertEqual({c.args[0] for c in self.killpg.call_args_list}, {GROUP})
+        self.killpg.assert_not_called()
 
     def test_a_tmux_failure_reading_metadata_is_a_driver_error(self):
         process = self.host.attach("d1")

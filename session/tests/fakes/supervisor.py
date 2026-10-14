@@ -1,7 +1,5 @@
-"""FakeHost's supervisor, run as `python3 -P supervisor.py <dir> <events or "">`, its process
-group's leader: runs meta.json's argv in its cwd with env.json verbatim (a terminal's stdin: the
-FIFO <dir>/input), output to <dir>/output; writes <dir>/pid, its own; when the program exits, the
-event (`exited <rc>` / `dead`) to <events>, then <dir>/rc.
+"""FakeHost's standalone supervisor: program output and terminal input stay in the session dir;
+ProcessControl owns the process group, while exited/dead events and rc track the program.
 """
 
 import contextlib
@@ -11,7 +9,7 @@ import subprocess
 import sys
 
 from agent_pm.session.engine.status_log import SessionStatusLog
-from agent_pm.utils import save
+from agent_pm.utils import ProcessControl, save
 
 
 def main(folder: str, events: str) -> None:
@@ -23,18 +21,20 @@ def main(folder: str, events: str) -> None:
     if meta["kind"] == "terminal":
         os.mkfifo(os.path.join(folder, "input"), 0o600)
         stdin = os.open(os.path.join(folder, "input"), os.O_RDWR)
-    with open(os.path.join(folder, "output"), "ab") as output:
-        program = subprocess.Popen(
-            meta["argv"], cwd=meta["cwd"], env=env, stdin=stdin, stdout=output, stderr=output
-        )
+
+    def exited(rc):
+        if events:
+            name = os.path.basename(folder)
+            word = ("exited", rc) if meta["kind"] == "detach" else ("dead",)
+            with contextlib.suppress(OSError):
+                SessionStatusLog(events).write(name, *word)
+        save(os.path.join(folder, "rc"), str(rc))
+
     save(os.path.join(folder, "pid"), str(os.getpid()))
-    rc = program.wait()
-    if events:
-        name = os.path.basename(folder)
-        word = ("exited", rc) if meta["kind"] == "detach" else ("dead",)
-        with contextlib.suppress(OSError):
-            SessionStatusLog(events).write(name, *word)
-    save(os.path.join(folder, "rc"), str(rc))
+    with open(os.path.join(folder, "output"), "ab") as output:
+        ProcessControl(meta["control"]).serve(
+            env=env, stdin=stdin, stdout=output, stderr=output, on_exit=exited
+        )
 
 
 if __name__ == "__main__":

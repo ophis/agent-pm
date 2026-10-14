@@ -1,8 +1,6 @@
-"""FakeHost, a Host that cannot display: real processes, each under supervisor.py in its own process
-group, state in one dir per session under settings["root"] (default ~/.agent-pm/fake-host):
-meta.json (its start's id), env.json, pid, rc, output, and a terminal's FIFO input. Every call
-reads that state, so any process sees the sessions another started; a handle acts only on its own
-start and process group.
+"""FakeHost runs programs under a generation-scoped ProcessControl; supervisor.py writes session
+state and events. Metadata lives under settings["root"] (default ~/.agent-pm/fake-host); a handle
+keeps its launch's controller even when the session name is reused.
 """
 
 import contextlib
@@ -19,7 +17,7 @@ import uuid
 
 from agent_pm.session import DriverError, Host, HostProcess, Terminal
 from agent_pm.session.engine.types import Key, Paste
-from agent_pm.utils import Display, Record, import_roots
+from agent_pm.utils import Display, ProcessControl, Record, import_roots
 
 NAME = re.compile(r"[A-Za-z0-9_-]+\Z")
 KEYS = {"Enter": "\n", "Escape": "\x1b", "Tab": "\t"}
@@ -48,46 +46,41 @@ class FakeProcess(HostProcess):
     def __init__(self, name: str, folder: str) -> None:
         self.name = name
         self.folder = folder
-        self._id = _meta(folder).get("id")
-        pid = _read(folder, "pid")
-        self._pid = self._group = int(pid) if pid else None
+        meta = _meta(folder)
+        self._id = meta.get("id")
+        control = meta.get("control")
+        self._control = ProcessControl(control) if control else None
 
     def _own(self) -> dict:
         meta = _meta(self.folder)
         return meta if self._id is not None and meta.get("id") == self._id else {}
 
     def alive(self) -> bool:
-        if not self._own() or self._pid is None or _read(self.folder, "rc") is not None:
-            return False
-        try:
-            os.kill(self._pid, 0)
-        except ProcessLookupError:
-            return False
-        except PermissionError:
-            pass
-        return True
+        return bool(self._own()) and _read(self.folder, "rc") is None and self._live_group()
 
     def wait_exit(self, timeout: float) -> bool:
         deadline = time.monotonic() + timeout
-        while self.alive() or self._live_group() is not None:
+        while self.alive() or self._live_group():
             if time.monotonic() >= deadline:
                 return False
             time.sleep(POLL)
         return True
 
     def kill(self) -> None:
-        """The whole process group, whatever its leader's state (a child the program left is in it),
-        until found empty: its id may be reused after.
-        """
-        if (group := self._live_group()) is not None:
-            with contextlib.suppress(ProcessLookupError, PermissionError):
-                os.killpg(group, signal.SIGKILL)
-        self.wait_exit(5)
+        if self._control is not None:
+            try:
+                self._control.kill()
+            except OSError as error:
+                raise DriverError(f"process group {self.name}: {error}") from error
+        if not self.wait_exit(5):
+            raise DriverError(f"process group {self.name}: did not exit")
 
     def close(self) -> None:
         self.kill()
         if self._own():
             shutil.rmtree(self.folder, ignore_errors=True)
+        if self._control is not None:
+            self._control.remove()
 
     def record(self) -> Record | None:
         line = self._own().get("record")
@@ -96,13 +89,13 @@ class FakeProcess(HostProcess):
     def display(self) -> Display:
         return self._own().get("display")
 
-    def _live_group(self) -> int | None:
-        if self._group is not None:
-            try:
-                os.killpg(self._group, 0)
-            except (ProcessLookupError, PermissionError):
-                self._group = None
-        return self._group
+    def _live_group(self) -> bool:
+        if self._control is None:
+            return False
+        try:
+            return self._control.live()
+        except OSError as error:
+            raise DriverError(f"process group {self.name}: {error}") from error
 
 
 class FakeTerminal(FakeProcess, Terminal):
@@ -169,11 +162,15 @@ class FakeHost(Host):
         if not isinstance(cwd, str) or not os.path.isdir(cwd):
             raise ValueError(f"cwd: want a directory, not {cwd!r}")
         folder = os.path.join(self.root(), name)
-        if FakeProcess(name, folder).alive():
+        previous = FakeProcess(name, folder)
+        if previous.alive():
             raise DriverError(f"{self.name} session {name} is live")
+        previous.close()
         shutil.rmtree(folder, ignore_errors=True)
         os.makedirs(folder, mode=0o700)
+        control = ProcessControl.prepare(argv, cwd)
         meta = {
+            "control": control.path,
             "kind": kind,
             "id": uuid.uuid4().hex,
             "argv": list(argv),
@@ -204,4 +201,5 @@ class FakeHost(Host):
                 tail = (_read(folder, "output") or "").strip().rpartition("\n")[2]
                 raise DriverError(f"{self.name} session {name} did not start: {tail}")
             time.sleep(POLL)
+        control.wait_started()
         return KINDS[kind](name, folder)

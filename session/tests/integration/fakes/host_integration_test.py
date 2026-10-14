@@ -3,7 +3,6 @@ send's errors and the group killed until found empty.
 """
 
 import os
-import signal
 import unittest
 from unittest import mock
 
@@ -54,7 +53,8 @@ class FakeHostOnly(Case):
             terminal.kill()
             terminal.kill()
             terminal.close()
-        self.assertEqual([c.args[1] for c in killpg.call_args_list if c.args[1]], [signal.SIGKILL])
+        killpg.assert_not_called()
+        self.assertTrue(terminal.wait_exit(0))
 
 
 if __name__ == "__main__":

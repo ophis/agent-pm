@@ -6,10 +6,12 @@ Handle, sessions, close, note and session_record, and the session package export
 import dataclasses
 import inspect
 import itertools
+import json
 import os
 import signal
 import tempfile
 import uuid
+from pathlib import Path
 from unittest import mock
 
 import agent_pm.session as session_pkg
@@ -39,6 +41,7 @@ from agent_pm.session.engine.types import (
 from agent_pm.session.hosts.base import SIGNALS
 from agent_pm.session.hosts.tmux import TmuxHost, tmux_host
 from agent_pm.session.modes import headless, tui
+from agent_pm.utils import ProcessControl
 
 from session.tests.case import HOSTS, Case
 from session.tests.hosted_support import (
@@ -630,14 +633,29 @@ class AttachCommandTest(TuiBase):
 
 class DetachTest(TuiBase):
     def test_the_default_host_runs_argv_with_the_signals_blocked_the_opener_its_display(self):
+        def detached(_name, _argv, **kw):
+            control = ProcessControl(kw["control"])
+            self.addCleanup(control.remove)
+            Path(control.path, "started.json").write_text('{"started": true}')
+            Path(control.path, "done.json").write_text('{"rc": 0}')
+            return "4242 $3 %7 4343"
+
+        self.host.detach.side_effect = detached
+        self.host.process.return_value = "4242 $3 %7 4343"
+        self.host.option.return_value = None
         env = {"PATH": "/bin", "TMUX": "x"}
         self.assertIsNone(self.driver.detach("d1", ["tool", "a b"], self.dir, env, opener="mgr"))
+        control = ProcessControl(self.host.detach.call_args.kwargs["control"])
+        self.assertEqual(
+            json.loads(Path(control.path, "launch.json").read_text()),
+            {"argv": ["tool", "a b"], "cwd": self.dir},
+        )
         self.assertEqual(
             self.host.mock_calls,
             [
                 mock.call.detach(
                     "d1",
-                    ["tool", "a b"],
+                    control.command(),
                     cwd=self.dir,
                     env=env,
                     block=SIGNALS,
@@ -645,7 +663,8 @@ class DetachTest(TuiBase):
                     display="mgr",
                     events=None,
                     record=None,
-                )
+                    control=control.path,
+                ),
             ],
         )
         self.driver.detach("d2", ("tool",), self.dir, env)

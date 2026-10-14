@@ -7,8 +7,6 @@ from __future__ import annotations
 
 import contextlib
 import logging
-import os
-import signal
 import time
 from collections.abc import Mapping, Sequence
 
@@ -16,7 +14,7 @@ from agent_pm.session.engine.types import ConfigError, DriverError
 from agent_pm.session.hosts.base import SIGNALS, Displayable, Host, HostProcess
 from agent_pm.session.hosts.tmux import tmux_host
 from agent_pm.session.hosts.tmux.tmux_host import TuiError
-from agent_pm.utils import Display, Record
+from agent_pm.utils import Display, ProcessControl, Record
 
 FORMAT = "<opener>[/<split>[/<split_from>]]"
 NO_PANE_HINT = ": run from tmux or iTerm2, or pass split_from"
@@ -39,17 +37,19 @@ def _checked(display) -> None:
 
 
 class TmuxProcess(HostProcess):
-    """The pane `process` names (tmux_host.process) and the process group its process leads: a later
-    session of its name is another. Its Record and display are read back from tmux options a pane
-    can set: untrusted, so no consumer runs a Record's ctl or resume without re-validating it.
+    """The captured pane and its generation's controller. A pane can set its Record and display
+    options: consumers must re-validate a Record's ctl or resume before running it.
     """
 
-    def __init__(self, name: str, process: str, *, tmux=tmux_host) -> None:
+    def __init__(
+        self, name: str, process: str, *, tmux=tmux_host, control: ProcessControl | None = None
+    ) -> None:
         self.name = name
         self.tmux = tmux
         self._process = process
-        _, _, self._pane, group = process.split(" ")
-        self._group: int | None = int(group)
+        _, _, self._pane, _ = process.split(" ")
+        path = self._option("@control") if control is None else None
+        self._control = control if control is not None else ProcessControl(path) if path else None
 
     def alive(self) -> bool:
         if not self._own():
@@ -57,11 +57,13 @@ class TmuxProcess(HostProcess):
         state = self.tmux.status(self._pane)
         if state == self.tmux.PaneStatus.UNKNOWN:
             raise DriverError(f"tmux session {self.name}: tmux failed")
-        return state == self.tmux.PaneStatus.RUNNING
+        return state == self.tmux.PaneStatus.RUNNING and (
+            self._control is None or self._control.running()
+        )
 
     def wait_exit(self, timeout: float) -> bool:
         deadline = time.monotonic() + timeout
-        while self.alive() or self._live_group() is not None:
+        while self.alive() or self._group_live():
             if time.monotonic() >= deadline:
                 return False
             time.sleep(POLL)
@@ -69,10 +71,18 @@ class TmuxProcess(HostProcess):
 
     def kill(self) -> None:
         self._kill_group()
-        self.wait_exit(KILL_WAIT)
+        if not self.wait_exit(KILL_WAIT):
+            raise DriverError(f"process group {self.name}: did not exit")
 
     def close(self) -> None:
         self._kill_group()
+        deadline = time.monotonic() + KILL_WAIT
+        while self._group_live():
+            if time.monotonic() >= deadline:
+                raise DriverError(f"process group {self.name}: did not exit")
+            time.sleep(POLL)
+        if self._control is not None:
+            self._control.remove()
         if not self._own():
             return
         try:
@@ -97,19 +107,18 @@ class TmuxProcess(HostProcess):
         except TuiError as e:
             raise DriverError(f"tmux session {self.name}: {e}") from None
 
-    def _live_group(self) -> int | None:
-        # once found empty, never again: its id may then be another group's
-        if self._group is not None:
-            try:
-                os.killpg(self._group, 0)
-            except (ProcessLookupError, PermissionError):
-                self._group = None
-        return self._group
+    def _group_live(self) -> bool:
+        try:
+            return self._control is not None and self._control.live()
+        except OSError as error:
+            raise DriverError(f"process group {self.name}: {error}") from error
 
     def _kill_group(self) -> None:
-        if (group := self._live_group()) is not None:
-            with contextlib.suppress(ProcessLookupError, PermissionError):
-                os.killpg(group, signal.SIGKILL)
+        if self._control is not None:
+            try:
+                self._control.kill()
+            except OSError as error:
+                raise DriverError(f"process group {self.name}: {error}") from error
 
     def _option(self, key: str) -> str | None:
         if not self._own():
@@ -184,9 +193,10 @@ class TmuxHost(Host, Displayable):
                 raise ConfigError(str(e)) from None
         parts = self.unfold(display)
         try:
+            control = ProcessControl.prepare(argv, cwd)
             process = self.tmux.detach(
                 name,
-                list(argv),
+                control.command(),
                 cwd=cwd,
                 env=dict(env),
                 block=SIGNALS,
@@ -194,10 +204,15 @@ class TmuxHost(Host, Displayable):
                 display=display,
                 events=events,
                 record=None if record is None else record.to_line(),
+                control=control.path,
             )
         except TuiError as e:
             raise DriverError(f"detach {name}: {e}") from e
-        return TmuxProcess(name, process, tmux=self.tmux)
+        try:
+            control.wait_started()
+        except OSError as error:
+            raise DriverError(f"start {name}: {error}") from error
+        return TmuxProcess(name, process, tmux=self.tmux, control=control)
 
     def terminal(
         self,

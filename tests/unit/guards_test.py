@@ -777,6 +777,14 @@ class SourceSuppressions(Sample):
 
 
 class PrivateImports(Sample):
+    def test_documented_os_exit_is_public_despite_its_underscore(self):
+        root = self.tree(
+            {
+                "a.py": "import os as system\nfrom os import _exit\nsystem._exit(0)\n_exit(0)\nsystem._secret()\n"
+            }
+        )
+        self.assertEqual(guards.private_imports(root), ["a.py:5: private system._secret"])
+
     def test_an_underscore_name_from_another_module(self):
         root = self.tree(
             {

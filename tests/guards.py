@@ -119,7 +119,7 @@ IMPORT_BOOTSTRAPS = {
 }
 
 
-STANDALONE = frozenset(
+STANDALONE = frozenset({"utils/src/agent_pm/utils/process_control.py"}) | frozenset(
     f"{SESSION_SRC}{path}"
     for path in (
         "hosts/tmux/tmux_host.py",
@@ -1130,12 +1130,16 @@ def status_log_format(repo: str) -> list[str]:
     return sorted(found)
 
 
+PUBLIC_UNDERSCORE = frozenset({"os._exit"})
+
+
 def private_imports(root: str) -> list[str]:
     """Ruff 0.16.9 PLC2701 is preview; this guard supplies stable private-import checks."""
     found = set()
     for rel, text in _files(root, ".py"):
         tree = ast.parse(text, rel)
         imported = set()
+        bound = _bindings(tree)
         for node in ast.walk(tree):
             if isinstance(node, ast.ImportFrom):
                 imported.update(a.asname or a.name for a in node.names)
@@ -1143,12 +1147,16 @@ def private_imports(root: str) -> list[str]:
                 found.update(
                     f"{rel}:{node.lineno}: private {module}{a.name}"
                     for a in node.names
-                    if _private(a.name)
+                    if _private(a.name) and f"{module}{a.name}" not in PUBLIC_UNDERSCORE
                 )
             elif isinstance(node, ast.Import):
                 imported.update(a.asname or a.name.split(".")[0] for a in node.names)
         for node in ast.walk(tree):
-            if isinstance(node, ast.Attribute) and _private(node.attr):
+            if (
+                isinstance(node, ast.Attribute)
+                and _private(node.attr)
+                and _dotted(node, bound) not in PUBLIC_UNDERSCORE
+            ):
                 chain, base = [node.attr], node.value
                 while isinstance(base, ast.Attribute):
                     chain.append(base.attr)
