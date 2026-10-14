@@ -188,7 +188,7 @@ class Spec(ProcessOptions):
     effort: Effort | None = None
     sid: str | None = None
     name: str | None = None
-    protect: tuple[str, ...] = ()  # paths no writable dir may overlap (a sandboxing Adapter only)
+    protect: tuple[str, ...] = ()
     reply_tags: tuple[str, str] | None = None  # caller's (progress, outcome) tags for in_process
     runtime: str | None = None
     mode: Mode | None = None

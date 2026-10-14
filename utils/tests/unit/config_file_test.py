@@ -351,6 +351,15 @@ class Resources(Case):
     def local(self, text):
         Path(self.agent_pm, "config.local.toml").write_text(text)
 
+    def test_utils_without_a_resource_has_no_local_keys(self):
+        self.local("[utils]\nunknown = 1\n")
+        with self.assertRaisesRegex(ConfigFileError, "unknown key 'unknown' in \\[utils\\]"):
+            read_resources(self.resources[:1])
+        self.local("[utils]\n")
+        self.assertEqual(
+            read_resources(self.resources[:1]), read_resources(self.resources[:1], local=os.devnull)
+        )
+
     def test_reads_resources_and_interleaves_each_local_section(self):
         self.local(
             '[delegate.roles.pm]\ntier = 1\n[linear_orchestrator.roles.pm]\ntier = 3\naccount = "pm@x"\n'

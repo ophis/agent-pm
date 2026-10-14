@@ -7,6 +7,7 @@ session's files and lock, over a fake tmux module.
 import errno
 import fcntl
 import inspect
+import itertools
 import json
 import os
 import re
@@ -20,6 +21,7 @@ from unittest import mock
 
 from agent_pm.session.engine.records import RunLog
 from agent_pm.session.engine.types import (
+    Access,
     Activity,
     Blocked,
     ClientBound,
@@ -149,7 +151,7 @@ class Base(Case):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         self.tmp = os.path.realpath(tmp.name)
-        self.events = os.path.join(self.tmp, "events")
+        self.events = os.path.join(self.home, "events")
         self.host = fake_host()
         self.log = []
         self.clock = Clock(self.log)
@@ -618,6 +620,19 @@ class StartTest(Base):
             ("fake-0f8fad5b", "fake-0f8fad5b", (TMUX, self.root)),
         )
         self.assertEqual(self.host.start.call_args.args[0], "fake-0f8fad5b")
+
+    def test_added_hook_paths_reject_overlapping_cwd_and_grants_before_launch(self):
+        for protected, field in itertools.product((TMUX, self.events, self.root), ("cwd", "dirs")):
+            for path in (protected, os.path.dirname(protected), os.path.join(protected, "child")):
+                access = Access(cwd=path) if field == "cwd" else Access(dirs=(path,))
+                with (
+                    self.subTest(path=path, field=field),
+                    self.assertRaisesRegex(ConfigError, "overlaps protected path"),
+                ):
+                    self.start(access=access)
+                self.assertEqual(self.recorded, [])
+                self.assertNoSessionDir()
+        self.host.start.assert_not_called()
 
     def test_its_child_env_drops_adapter_identities_then_takes_the_launch_env(self):
         self.driver_dependencies = {"class_loader": lambda _path, _base: IdentityAdapter}
@@ -1590,7 +1605,7 @@ class PrepareTest(Base):
         self.assertEqual(stat.S_IMODE(os.lstat(self.root).st_mode), 0o700)
 
     def test_a_tui_dir_that_is_no_real_directory_of_yours_is_refused(self):
-        target = os.path.join(self.tmp, "target")
+        target = os.path.join(self.home, "target")
         os.mkdir(target, 0o755)
         os.chmod(target, 0o755)
         cases = (

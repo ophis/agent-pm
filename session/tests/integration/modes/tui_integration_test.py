@@ -31,7 +31,7 @@ class CloseTest(Case):
                 name=NAME,
                 runtime="fake",
                 sid=SID,
-                events=os.path.join(tmp.name, "events"),
+                events=os.path.join(self.home, "events"),
             ),
             fake_adapter.FakeAdapter({"tui": True, "scenario": "", "log": ""}),
             registry=self.driver.registry,

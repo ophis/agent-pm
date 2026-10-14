@@ -55,12 +55,11 @@ from agent_pm.utils import (
     Display,
     Record,
     load_class,
-    overlaps,
     printable_abs,
     sid_error,
     thaw,
-from agent_pm.utils import probe as run_probe
 )
+from agent_pm.utils import probe as run_probe
 
 
 def _request(spec: Spec, display: Display, idle_timeout: float | None) -> tuple[str, Mode]:
@@ -72,21 +71,6 @@ def _request(spec: Spec, display: Display, idle_timeout: float | None) -> tuple[
     if runtime is None or mode is None:
         raise ConfigError(f"spec.{'runtime' if runtime is None else 'mode'}: required to start")
     return runtime, mode
-
-
-def _protect(spec: Spec, adapter: Adapter) -> None:
-    try:
-        writable = (
-            spec.access.cwd or spec.workdir,
-            *spec.access.dirs,
-            *adapter.writable_dirs(spec),
-        )
-        for path in writable:
-            for protected in spec.protect:
-                if overlaps(path, protected):
-                    raise ConfigError(f"writable path {path} overlaps protected path {protected}")
-    except OSError as error:
-        raise ConfigError(f"{spec.runtime}'s writable dirs: {error}") from error
 
 
 POLL = 0.5
@@ -274,7 +258,7 @@ class HostedSession(Session):
         runtime, mode = _request(spec, display, idle_timeout)
         adapter = setup.registry.adapter(runtime)
         spec = replace(spec, sid=spec.sid or str(uuid.uuid4()))
-        _protect(spec, adapter)
+        RunningMode.check_protection(spec, adapter)
         cls.host(host)
         MODES[mode].preflight(
             spec,
@@ -298,7 +282,7 @@ class HostedSession(Session):
         runtime, mode = _request(spec, display, idle_timeout)
         adapter = setup.registry.adapter(runtime)
         spec = replace(spec, sid=spec.sid or str(uuid.uuid4()))
-        _protect(spec, adapter)
+        RunningMode.check_protection(spec, adapter)
         on = cls.host(host)
         running = MODES[mode].start(
             spec,

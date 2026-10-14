@@ -557,6 +557,19 @@ class InProcessTest(Base):
                     lambda *, runtime=runtime: self.start(runtime=runtime, mode="in_process"),
                 )
 
+    def test_empty_protection_validates_mode_before_codex_launch_configuration(self):
+        self.configure_session(
+            {"codex": {"implementation": "agent_pm.session.adapters.codex:CodexAdapter"}}
+        )
+        spec = self.spec(runtime="codex", mode=Mode.IN_PROCESS, flags=("--sandbox", "invalid"))
+        for call in (self.session.preflight, self.session.start):
+            with (
+                self.subTest(call=call.__name__),
+                self.assertRaisesRegex(ConfigError, "does not support in_process mode"),
+            ):
+                call(spec)
+        self.assertFalse(os.path.exists(self.workdir))
+
     def test_a_run_idle_past_idle_timeout_yields_idle_timeout_and_goes_on(self):
         self.steps(
             {"out": {"type": "message", "text": "a"}},
