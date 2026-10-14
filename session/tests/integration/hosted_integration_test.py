@@ -7,6 +7,7 @@ itself); a display given to start stored, read back and listed (FR-48).
 import json
 import os
 import unittest
+from unittest import mock
 
 from agent_pm.session import ConfigError, Host, Mode, Session, Spec
 from agent_pm.session.engine.hosted_session import UNCONFIGURED, HostedSession
@@ -21,8 +22,13 @@ DISPLAYS = {"w4": f"{MANAGER}/right", "w5": "elsewhere:1.2"}
 
 
 class CloseTest(Live):
+    """Each test starts with HostedSession unconfigured, whatever ran before it."""
+
+    def setUp(self):
+        super().setUp()
+        self.enterContext(mock.patch.object(HostedSession, "_setup", None))
+
     def configure_hosted(self) -> None:
-        self.addCleanup(setattr, HostedSession, "_setup", None)
         HostedSession.configure(
             adapters=self.adapters,
             hosts=Host.parse_hosts({**HOSTS, "default": "tmux"}),
