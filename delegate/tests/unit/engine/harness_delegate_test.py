@@ -112,3 +112,9 @@ class OverlayTest(HarnessCase):
         self.assertEqual(self.metadata()["plan"]["run"]["effort"], "low")
         self.make(overlays=({"roles": {"dummy-tester": {"effort": "high"}}},))
         self.assertEqual(self.metadata()["plan"]["run"]["effort"], "high")
+
+    def test_resume_resolves_with_the_overlays_it_was_built_with(self):
+        record = self.make(overlays=({"roles": {"dummy-tester": {"effort": "high"}}},)).detach()
+        self.stop(record)
+        HarnessDelegate.attach(self.work, session_cls=HarnessSession).resume()
+        self.assertEqual(self.metadata()["plan"]["run"]["effort"], "high")

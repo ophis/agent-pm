@@ -96,6 +96,7 @@ class _State:
     detached: bool = False
     completed: bool = False
     result: Result | None = None
+    overlays: tuple[Mapping, ...] = ()
 
 
 class HarnessDelegate(Delegate):
@@ -210,6 +211,7 @@ class HarnessDelegate(Delegate):
             f"{name}-drive",
             1,
             {},
+            overlays=tuple(thaw(overlay) for overlay in overlays),
         )
 
     def _persist_new(self) -> None:
@@ -297,11 +299,13 @@ class HarnessDelegate(Delegate):
                     result["limit"] = Limit(**from_limit)
                 result = Result(**result)
             callback = data.pop("callback")
+            overlays = tuple(data.pop("overlays", ()))
             state = _State(
                 **data,
                 plan=accepted,
                 callback=None if callback is None else tuple(callback),
                 result=result,
+                overlays=overlays,
             )
             if type(state.attempt) is not int or state.attempt < 1:
                 raise ValueError("invalid attempt")
@@ -621,7 +625,7 @@ class HarnessDelegate(Delegate):
                 raise ConfigError(f"cwd {original.cwd} is no longer in trusted_dirs")
             spec = replace(state.plan.spec, resume=True, cwd=original.cwd, team=self.composer.team)
             accepted = plan(
-                self.composer.resolve(state.role, spec.task),
+                self.composer.resolve(state.role, spec.task, overlays=state.overlays),
                 spec,
                 driver=self.driver,
                 composition=self.composer,
