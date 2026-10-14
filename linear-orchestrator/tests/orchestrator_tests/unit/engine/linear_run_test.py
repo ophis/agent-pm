@@ -3,6 +3,7 @@
 import os
 from dataclasses import replace
 
+from agent_pm.delegate import ConfigError as DelegateConfigError
 from agent_pm.delegate import NotDisplayable
 from agent_pm.linear_orchestrator.engine import runs
 from agent_pm.linear_orchestrator.engine.linear_run import LinearRun
@@ -21,7 +22,7 @@ class CapturedDelegate(ReadyDelegate):
 
 class OtherDelegate(FakeDelegate):
     @classmethod
-    def attach(cls, record_or_workdir):
+    def attach(cls, record_or_workdir, *, sid=None):
         raise AssertionError("current default must not attach this run")
 
 
@@ -32,19 +33,43 @@ class Runs(RunCase):
         self.assertEqual(role, "researcher")
         self.assertEqual(spec.input, "Echo input.")
         self.assertEqual(spec.workdir, self.cfg.run_dir("TASK-1"))
-        self.assertEqual((spec.task, spec.client, spec.sid), ("light-research", "fake", SID))
+        self.assertEqual(
+            (spec.task, spec.client, spec.sid, spec.resume), ("light-research", "fake", SID, False)
+        )
         self.assertEqual(spec.name, "researcher-TASK-1-1234abcd")
         self.assertEqual(spec.cwd, spec.workdir)
         self.assertEqual(spec.out, os.path.join(spec.workdir, "out.md"))
         self.assertEqual(
             options,
-            {"display": "opaque:\nvalue", "callback": None, "overlays": (self.cfg.core,)},
+            {
+                "display": "opaque:\nvalue",
+                "callback": ["agent-pm-linear", "writeback", "--issue", "TASK-1", "--workdir"]
+                + [spec.workdir],
+                "overlays": (self.cfg.core,),
+            },
         )
         self.assertEqual(record.display, "opaque:\nvalue")
         self.assertEqual((record.name, record.kind), ("TASK-1", "pipeline"))
         self.assertEqual(record.sessions, ("researcher-TASK-1-1234abcd",))
         self.assertEqual(record.ctl, ("agent-pm-linear",))
         self.assertEqual(record.resume, ("agent-pm-linear", "resume", "TASK-1"))
+
+    def test_a_resumed_run_asks_its_delegate_to_resume_the_session(self):
+        owner = LinearRun(
+            "TASK-1",
+            "Answer.",
+            self.cfg.run_dir("TASK-1"),
+            cfg=self.cfg,
+            role="researcher",
+            sid=SID,
+            client="fake",
+            resume=True,
+            delegate_cls=CapturedDelegate,
+        )
+        _, spec, _ = owner.delegate.accepted
+        self.assertEqual(
+            (spec.sid, spec.resume, spec.task, spec.input), (SID, True, None, "Answer.")
+        )
 
     def test_saved_provider_survives_a_changed_default_and_live_resume_is_idempotent(self):
         owner, record = self.start(display="foreign display")
@@ -94,6 +119,21 @@ class Runs(RunCase):
         self.start(sid=newer)
         with self.assertRaisesRegex(ConfigError, "no longer the latest"):
             LinearRun.attach("TASK-1", cfg=self.cfg, sid=SID)
+
+    def test_a_newer_row_without_its_own_delegate_state_never_views_the_previous_session(self):
+        self.start()
+        newer = "abcdef12-0000-4000-8000-000000000000"
+        runs.note(
+            self.cfg.runs_log,
+            "start",
+            issue="TASK-1",
+            sid=newer,
+            role="researcher",
+            client="fake",
+            delegate_kind="fake",
+        )
+        with self.assertRaisesRegex(DelegateConfigError, f"sid {newer} is not the run's"):
+            LinearRun.attach("TASK-1", cfg=self.cfg)
 
     def test_legacy_rows_use_harness_even_when_current_default_changes(self):
         owner = LinearRun(

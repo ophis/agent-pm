@@ -6,9 +6,9 @@ Runs Claude agents unattended from a Linear board. Each Linear project is a prod
 
 ```mermaid
 flowchart LR
-    R["researcher<br>deep-research, light-research"] -->|"report → Approve → promote.py"| P["pm<br>product-design"]
-    P -->|"PRD → Approve → promote.py"| E["engineer<br>build, light-build"] -->|pull request| Y[you]
-    T[router.py] -.->|claims Todo issues| R & P & E
+    R["researcher<br>deep-research, light-research"] -->|"report → Approve → promote"| P["pm<br>product-design"]
+    P -->|"PRD → Approve → promote"| E["engineer<br>build, light-build"] -->|pull request| Y[you]
+    T[agent-pm-linear router] -.->|claims Todo issues| R & P & E
 ```
 
 ### Core architecture
@@ -26,9 +26,10 @@ flowchart TB
     W["engine/crew.py"] --> RS["engine/roster.py"]
   end
   subgraph LO[agent_pm.linear_orchestrator]
-    R["engine/router.py<br>pick · usage gate"]
-    RU["engine/run.py<br>one run · write-back"]
+    LCLI["cli.py<br>agent-pm-linear"]
+    R["engine/router.py<br>pick · usage gate · trigger"]
     LR["engine/linear_run.py<br>Delegate ownership · queries"]
+    WB["engine/writeback.py<br>one event's write-back"]
     PP["engine/promote.py → prune.py"]
     LC["engine/config.py<br>[core] overlay"]
   end
@@ -58,17 +59,17 @@ flowchart TB
     P1[Claude Code]
     P2[Codex CLI]
   end
-  LD -.-> R & PP
-  HU -.->|"--issue"| R
+  LD -.->|"router · promote"| LCLI
+  HU -.->|"router --issue"| LCLI
   HU -.->|"act-as · CLI"| D
   HU -.-> W
   HU -.-> SC
   SC --> DR
-  R -.->|detached session| RU
-  R & RU --> LR
-  RU & LR -->|agent_pm.delegate| E
+  LCLI --> R & PP & WB
+  R --> LR
+  LR -->|"agent_pm.delegate: detach, views"| HD
+  H -.->|"each event: agent-pm-linear writeback"| LCLI
   LC -->|"Delegate class methods"| HD
-  R & RU -->|"legacy launch until TASK-374"| DR
   W -.-> CC
   D & H --> HD
   HD -.->|"detach on the harness Host"| H
@@ -102,13 +103,13 @@ Before upgrading, close running agent-pm sessions: earlier sessions lack generat
 
 Requires macOS, Install's requirements and `gh` logged in as you. The Linear orchestrator runs this checkout's scripts, not the plugin.
 
-1. Create `~/.agent-pm/config.local.toml` from the projects' `# local:` examples, placing each fragment under its layer's section as shown below. Include researcher's and pm's `[output]` (delegate's Destination comment); a required key left `""` stops router, run and promote. `<work_dir>` below is `linear_orchestrator.work_dir`. Merge and validation rules: `utils/src/agent_pm/utils/config_file.py`'s docstring.
+1. Create `~/.agent-pm/config.local.toml` from the projects' `# local:` examples, placing each fragment under its layer's section as shown below. Include researcher's and pm's `[output]` (delegate's Destination comment); a required key left `""` stops every `agent-pm-linear` command. `<work_dir>` below is `linear_orchestrator.work_dir`. Merge and validation rules: `utils/src/agent_pm/utils/config_file.py`'s docstring.
 2. Find `task_label_group` with the Linear API's `issueLabels { nodes { id name isGroup } }`; the router stops if it isn't a label group or a `[task_labels]` id isn't one of its labels.
 3. Agent runs need no `linear` skill and get no Linear key: router and promote act in Linear as the harness account `frank.agent.w@gmail.com`, each role's write-back as its `[roles.<role>]` `account`, its API key in the Keychain under `key`. Per role:
    1. Linear → Settings → Members: invite the `account` (a Gmail plus-alias of the harness account, e.g. `frank.agent.w+pm@gmail.com`).
    2. Open the invite in a private window, choosing **Continue with email** (Google signs in as the harness account).
    3. As the role account, create a personal API key in its settings.
-   4. `security add-generic-password -s <key> -a <account> -w`, pasting the key at the prompt. `router.py` checks the item exists; a missing one stops that role's agent runs with a `config-error` event in `<work_dir>/logs/orchestrator.jsonl`.
+   4. `security add-generic-password -s <key> -a <account> -w`, pasting the key at the prompt. `agent-pm-linear router` checks the item exists; a missing one stops that role's agent runs with a `config-error` event in `<work_dir>/logs/orchestrator.jsonl`.
 4. The harness account's key:
    ```bash
    security add-generic-password -a frank.agent.w -s linear-api-key -w   # config.local.toml: [linear_orchestrator] harness_key
@@ -172,27 +173,29 @@ The issue's label in the `Tasks` label group names one of the assignee role's ta
 
 ```mermaid
 flowchart LR
-    L[launchd] -->|every 30 min| R["router.py: claim or resume, render the input"] -->|"tmux, input as text"| I[run.py]
+    L[launchd] -->|every 30 min| R["agent-pm-linear router: claim or resume, render the input"] -->|"detach its LinearRun, exit"| I["harness: Delegate, claude"]
     Y[you] -->|"--issue"| R
-    I --> D["Delegate: claude"] -->|"marks, outcome"| W["writeback.py → Linear, as the role"]
-    L -->|every 5 min| P[promote.py] --> X[prune.py]
+    I -->|"each event: agent-pm-linear writeback"| W["writeback.py → Linear, as the role"]
+    L -->|every 5 min| P[agent-pm-linear promote] --> X[prune]
 ```
 
-From a source checkout, set `PYTHONPATH` to its five absolute `src` paths; an installed package needs none. Run `python3 -P -m agent_pm.linear_orchestrator.cli router …` or `python3 -P -m agent_pm.linear_orchestrator.cli promote …`; the router's options: `linear-orchestrator/src/agent_pm/linear_orchestrator/engine/router.py`'s docstring.
+Run `bin/agent-pm-linear router …`, `… promote …` or `… prune …` (each `--help` lists its options) by its absolute path: it sets its own `PYTHONPATH`, and the runs' PATH holds this checkout's `bin/`, so a run's harness finds `agent-pm-linear writeback` under launchd's PATH.
 
 ```bash
-tmux ls                                                      # running sessions, agent-pm-<role>-<ID>
-tmux attach -t '=agent-pm-<role>-<ID>'                       # watch one agent run; = matches the exact name
+tmux ls                                                      # running sessions: <role>-<ID>-<sid8>-drive (a run's harness), <role>-<ID>-<sid8> (its tui)
+bin/agent-pm-linear attach-command <ID>                      # the command that shows one agent run
 ```
 
 `--issue` skips the hours, `max_runs` and usage gates and Recover's waits (`tmux ls` is the truth): a ready Todo issue is claimed as in a tick; an In Progress one resumes its session in `runs.jsonl`, or, with none to resume, goes where Recover sends it; an issue with a live agent run gets its attach command instead (exit 1). While another router runs, nothing happens (exit 1).
 
 | Log | Contents |
 |---|---|
-| `<work_dir>/logs/orchestrator.jsonl` | Every router, promote, prune, run and write-back event, one JSON object a line: `ts`, `src`, `kind`, then `issue` when it has one. An idle tick writes none; the same skip, config-load error or Linear outage (`linear-error`: a 5xx, rate limit, timeout or network error; the run stops, the next retries), once a day |
-| `<work_dir>/logs/runs.jsonl` | Start/resume rows from the last 7 days, every issue's latest session rows regardless of age, and unexpired usage limits. Rows record Delegate kind and client; legacy rows use the fixed `harness` registration. Keep it: resume and Recover read it |
+| `<work_dir>/logs/orchestrator.jsonl` | Every router, promote, prune and write-back event, one JSON object a line: `ts`, `src`, `kind`, then `issue` when it has one. An idle tick writes none; the same skip, config-load error or Linear outage (`linear-error`: a 5xx, rate limit, timeout or network error; the run stops, the next retries), once a day |
+| `<work_dir>/logs/runs.jsonl` | Start/resume rows from the last 7 days, every issue's latest session rows regardless of age, and unexpired usage limits. Rows record Delegate kind and client; a start row also the claim's issue uuid, project, target and the role's key, which the run's write-back reads; legacy rows use the fixed `harness` registration. Keep it: resume, Recover and write-back read it |
 
 An agent run's workdir `<work_dir>/work/<ID>/` holds `run.jsonl` (its record: input, sessions, progress, outcome; headless, the client's stderr), `delegate.json` (the Delegate's state, published from the State dir `~/.agent-pm/delegates/`), `writeback.json` (each session id's write-back steps done and each attempt's `Run <sid>` comment start and number) and, for a `local` or `orchestrator` destination, `out.md` (the deliverable); `src/`, `publish/` and `tmp/` are workspaces (Finish). Documents are published from the agent run's clone in `publish/`: `git pull` your own docs clone to see them. Each session gets a `Run <sid>` comment on its issue, holding `cd <cwd> && claude --resume <sid>`: to open the session, first move the issue out of In Progress, or the router may resume it once idle 30 minutes. Moving `<work_dir>` or a run's cwd breaks resuming its in-progress agent runs.
+
+**Upgrade** to the trigger-only router: deploy with no issue In Progress; a run started before has no claim context in its start row, so its write-back refuses its events.
 
 **Upgrade** to `orchestrator.jsonl` and `runs.jsonl`: deploy with no issue In Progress (nothing reads the old `runs.log`, so Recover would send such an issue back to Todo for a new session); delete the old logs, no archive (another `<work_dir>`: its `logs/`):
 

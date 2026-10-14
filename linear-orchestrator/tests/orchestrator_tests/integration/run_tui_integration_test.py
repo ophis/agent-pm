@@ -1,23 +1,30 @@
-"""run.py --tui as a subprocess through the Delegate's tui mode, on a private tmux server
-(live_tmux) whose manager session a client shows, fake_claude interactive as client `claude`: FR-43
-leaves unrecorded sessions untouched; the TUI `<role>-<ID>-<sid8>` shows beside the
---split-from session, or in the --opener's grid; the run writes back and leaves its TUI open.
+"""A tui LinearRun (entry.py tui) through the real harness on a private tmux server (live_tmux)
+whose manager session a client shows, fake_claude interactive as client `claude`: its opaque
+display (FR-48) puts the TUI `<role>-<ID>-<sid8>` beside the display's split_from session, or in
+its opener's grid; the run writes back through agent-pm-linear writeback and leaves its TUI open.
 """
 
 import functools
+import os
 import unittest
 
-from orchestrator_tests.integration.flow_fixtures import ACCOUNTS, PROJECT, RUN, Flow, steps
+from agent_pm.linear_orchestrator.engine import runs
+from orchestrator_tests.integration.flow_fixtures import (
+    ACCOUNTS,
+    ENTRY,
+    KEYS,
+    MANAGER,
+    PROJECT,
+    TmuxFlow,
+    steps,
+)
 from orchestrator_tests.unit.run_fixtures import ID, SID, UUID
 from orchestrator_tests.unit.writeback_fixtures import PRD
 
 from delegate.tests.replies import block, mark
 from session.tests import live_tmux
 
-MANAGER = "manager"
 TUI = f"pm-{ID}-{SID[:8]}"
-OLD = f"pm-{ID}-aaaaaaaa"
-KEPT = (f"{OLD}-drive", f"engineer-{ID}-aaaaaaaa")
 LEDGER = ["start", "retitle", "comment", f"attach:{PRD}", "move:in_review", "outcome"]
 DONE = {
     "status": "done",
@@ -27,15 +34,11 @@ DONE = {
 }
 
 
-class Tui(Flow):
+class Tui(TmuxFlow):
     def setUp(self):
         super().setUp()
-        self.server = live_tmux.Server(self, self.home)
-        self.server.start(MANAGER)
         self.server.attach(MANAGER)
         self.manager = self.server.inside(MANAGER)["TMUX_PANE"]
-        self.bin = self.server.bin
-        self.guard()
         self.fake.issue(
             "Session registry",
             identifier=ID,
@@ -46,39 +49,36 @@ class Tui(Flow):
         )
         self.scene([f"{mark('start', 'a PRD.')}\n{block(DONE)}"])
 
-    def base(self):
-        return self.server.env()
-
-    def live(self, session):
-        return self.server.tmux("has-session", "-t", f"={session}").returncode == 0
-
-    def run_tui(self, *argv):
-        res = self.script(
-            *RUN,
-            *("--uuid", UUID, "--issue", ID, "--project", PROJECT["id"], "--sid", SID),
-            *("--assignee", ACCOUNTS["pm"], "--client", "claude", "--mode", "new", "--tui"),
-            *argv,
-            "--input",
-            "Do it.\n",
+    def launch(self, display):
+        """The claimed run's LinearRun detached in tui mode at `display`, until written back."""
+        runs.note(
+            os.path.join(self.logs, "runs.jsonl"),
+            "start",
+            issue=ID,
+            sid=SID,
+            role="pm",
+            client="claude",
+            delegate_kind="harness",
+            uuid=UUID,
+            project=PROJECT["id"],
+            target=None,
+            key=KEYS["pm"],
         )
-        self.assertEqual(res.returncode, 0, res.stderr)
-        self.assertTrue(self.live(TUI), res.stderr)
+        res = self.script(ENTRY, "tui", ID, SID, "pm", "claude", display, "Do it.\n")
+        self.assertEqual((res.returncode, res.stdout), (0, ""), res.stderr)
+        self.wait_end(SID, ID, role="pm")
+        self.assertTrue(self.live(TUI))
         self.assertEqual((self.state(ID), self.ledger(ID)), ("in_review", {SID: LEDGER}))
-
-    def test_unrecorded_tuis_stay_and_the_new_tui_shows_beside_split_from(self):
-        for name in (OLD, *KEPT):
-            made = self.server.tmux("new-session", "-d", "-s", name, *live_tmux.IDLE)
-            self.assertEqual(made.returncode, 0, made.stderr)
-        self.run_tui("--split-from", MANAGER)
-        self.assertEqual([self.live(n) for n in (OLD, *KEPT)], [True, True, True])
         self.assertEqual(self.said(), steps(*LEDGER))
+
+    def test_the_tui_shows_beside_the_displays_split_from(self):
+        self.launch(f"{MANAGER}//{MANAGER}")
         panes, pane = self.server.panes(f"={MANAGER}:"), self.server.pane_of(TUI)
         self.assertEqual(set(panes), {self.manager, pane})
         self.assertGreater(panes[pane][0], panes[self.manager][0])
 
     def test_the_tui_shows_in_the_openers_grid(self):
-        self.run_tui("--opener", MANAGER)
-        self.assertEqual(self.said(), steps(*LEDGER))
+        self.launch(MANAGER)
         live_tmux.wait(
             functools.partial(live_tmux.assert_grid, self, self.server, MANAGER, [[TUI]]),
             what=f"the grid [[{TUI!r}]]",

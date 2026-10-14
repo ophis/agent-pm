@@ -7,6 +7,7 @@ import json
 import os
 import sys
 import time
+import traceback
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, fields, is_dataclass, replace
 
@@ -42,7 +43,10 @@ from agent_pm.session import (
     Launch,
     Liveness,
     Mode,
+    NoRecordedSession,
     NotDisplayable,
+    Resumable,
+    RunLog,
     Session,
     SessionStatus,
     SessionStatusLog,
@@ -240,8 +244,9 @@ class HarnessDelegate(Delegate):
             raise ConfigError(str(error)) from None
 
     def _replacing(self, payload: bytes) -> int:
-        """The attempt replacing the run `payload` records, refused while that run is alive; the
-        agent session it left open (a tui run's, after its outcome or its process's death) is closed.
+        """The attempt replacing the run `payload` records (its session's next, else 1), refused
+        while that run is alive; the agent session it left open (a tui run's, after its outcome or
+        its process's death) is closed.
         """
         try:
             previous = self._parse(payload)
@@ -255,7 +260,7 @@ class HarnessDelegate(Delegate):
                 agent.close()
             except DriverError as error:
                 raise ConfigError(str(error)) from None
-        return previous.attempt + 1
+        return previous.attempt + 1 if previous.plan.sid == self._state.plan.sid else 1
 
     def _salvaged(self, payload: bytes) -> int:
         """A corrupt record's run counts as alive while its run lock is held or the harness it
@@ -564,19 +569,23 @@ class HarnessDelegate(Delegate):
                 raise DriverError(f"close {state.harness_name}: {error}") from error
 
     def session_info(self) -> SessionStatus:
-        """Its own live agent session's status, else the plan's: an attached one lacks its env."""
+        """Its own live agent session's status, else the plan's: an attached one lacks its env;
+        never recorded (its launch failed): not resumable.
+        """
         state = self._read()
         agent = None if state.completed else self._own(state)
-        return (
-            agent.session_status()
-            if agent is not None
-            else self.session_cls.inspect(state.plan.session)
-        )
+        if agent is not None:
+            return agent.session_status()
+        try:
+            return self.session_cls.inspect(state.plan.session)
+        except NoRecordedSession:
+            return SessionStatus(Resumable.NO, None, "")
 
     def run(self, on_event: Callable[[Event], None] | None = None) -> Result:
         """Each event goes to the callback, then `on_event`; a Finished is stored first. A run that
         raises before its Finished stores and calls back a stopped one (not to `on_event`), then
-        re-raises.
+        re-raises; a crash (an Exception or SystemExit, not a signal's Stopped or an interrupt) is
+        also a run.jsonl run_error row with its traceback.
         """
         state = self._state
         if state.events is not None and not state.detached and state.plan.spec.mode != Mode.TUI:
@@ -614,6 +623,13 @@ class HarnessDelegate(Delegate):
             except BaseException as error:
                 if not finished:
                     ended = stopped(error)
+                    if isinstance(error, (Exception, SystemExit)):
+                        RunLog(self.workdir).note(
+                            "run_error",
+                            error=ended.error,
+                            traceback="".join(traceback.format_exception(error)),
+                            best_effort=True,
+                        )
                     try:
                         self._complete(ended)
                     except (ConfigError, OSError) as failure:

@@ -74,6 +74,12 @@ class DelegateContract:
                 self.assertIsInstance(status, Status)
                 self.assertEqual((status.name, status.alive), (record.name, True))
 
+    def test_attach_with_another_sessions_sid_raises_config_error(self):
+        record, workdir = self.detached()
+        self.assertTrue(self.delegate_cls.attach(workdir, sid=record.sid).alive())
+        with self.assertRaises(ConfigError):
+            self.delegate_cls.attach(workdir, sid="00000000-0000-4000-8000-0000000000ff")
+
     def test_attach_of_a_dir_without_a_run_raises_config_error(self):
         with self.assertRaises(ConfigError):
             self.delegate_cls.attach(self.workdir())

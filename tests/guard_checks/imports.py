@@ -18,7 +18,6 @@ from tests.guard_checks.common import (
 )
 from tests.guard_data import (
     IMPORT_BOOTSTRAPS,
-    ORCH_SESSION_IMPORTS,
     STANDALONE,
 )
 from tests.guard_data.linear_orchestrator import (
@@ -82,14 +81,8 @@ def orchestrator_session_imports(repo: str) -> list[str]:
     if os.path.isfile(config):
         with open(config, "rb") as file:
             contracts = tomllib.load(file)["tool"]["importlinter"]["contracts"]
-        listed = next(
-            (c.get("ignore_imports") for c in contracts if c["name"] == ORCH_SESSION_CONTRACT), None
-        )
-        pinned = [f"{m} -> {PKG}.{SESSION}" for m in sorted(ORCH_SESSION_IMPORTS)]
-        if sorted(listed or ()) != pinned:
-            found.append(
-                f"pyproject.toml: {ORCH_SESSION_CONTRACT!r} must ignore exactly ORCH_SESSION_IMPORTS"
-            )
+        if any(c.get("ignore_imports") for c in contracts if c["name"] == ORCH_SESSION_CONTRACT):
+            found.append(f"pyproject.toml: {ORCH_SESSION_CONTRACT!r} must ignore no imports")
     session = f"{PKG}.{SESSION}."
     for rel, text in _files(os.path.join(repo, ORCH_PROJECT, ORCH_SRC), ".py"):
         module = f"{ORCH_PKG}.{rel.removesuffix('.py').replace('/', '.')}".removesuffix(".__init__")
@@ -106,7 +99,7 @@ def orchestrator_session_imports(repo: str) -> list[str]:
         found += [
             f"{ORCH_PROJECT}/{ORCH_SRC}{rel}: {module} imports {name} from {PKG}.{SESSION}; "
             "go through agent_pm.delegate"
-            for name in sorted(names - ORCH_SESSION_IMPORTS.get(module, set()))
+            for name in sorted(names)
         ]
     return found
 

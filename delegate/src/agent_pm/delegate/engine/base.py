@@ -17,7 +17,8 @@ class Delegate(ABC):
 
     @classmethod
     @abstractmethod
-    def attach(cls, record_or_workdir: Record | str) -> Delegate: ...
+    def attach(cls, record_or_workdir: Record | str, *, sid: str | None = None) -> Delegate:
+        """The run's view; ConfigError when `sid` is given and the run is another session's."""
 
     @classmethod
     @abstractmethod

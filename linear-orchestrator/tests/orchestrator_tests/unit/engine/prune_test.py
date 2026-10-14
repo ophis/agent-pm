@@ -1,7 +1,10 @@
 """Orchestrator prune behavior at its dependency boundaries."""
 
+import io
+import json
 import os
 import shutil
+from contextlib import redirect_stderr, redirect_stdout
 from functools import partial
 from unittest import mock
 
@@ -13,7 +16,7 @@ from orchestrator_tests.case import Case
 from orchestrator_tests.prune_fixtures import NOW, ROLES, TEAM_OBJ, PruneScenario, gql_for, write
 from orchestrator_tests.unit import promote_fixtures as tp
 from orchestrator_tests.unit.board_ids import STATES as IDS_BY_KEY
-from orchestrator_tests.unit.run_fixtures import HARNESS, logged
+from orchestrator_tests.unit.run_fixtures import CORE_LOCAL, HARNESS, logged, show
 
 A, B = "engineer-TASK-7-0b6f2c1e", "dummy-tester-TASK-7-7c1d9e2f"
 SID = "0b6f2c1e-6d0a-4c1b-9a51-3f1f6b0e2a7d"
@@ -636,6 +639,73 @@ class RetentionCleanup(PruneScenario):
         self.outage(
             "issueArchive", issues, [(prune.M_ARCHIVE, {"service": HARNESS, "i": "id-TASK-1"})]
         )
+
+
+class PruneCommand(PruneScenario):
+    """agent-pm-linear prune: one prune tick alone, as promote's tick runs it."""
+
+    def command(self, prune_gql, *argv):
+        write(
+            os.path.join(self.agent_pm, "config.local.toml"),
+            f'[linear_orchestrator]\nwork_dir = "{self.root}"\n' + CORE_LOCAL,
+        )
+        path = os.path.join(self.root, "config.toml")
+        write(path, tp.CONFIG)
+        fake = tp.FakeLinear()
+
+        def gql(query, **v):
+            board = query not in (prune.Q_ISSUE, prune.Q_FINISHED, prune.M_ARCHIVE)
+            return (fake if board else prune_gql)(query, **v)
+
+        before, out, err = len(logged(self.logs)), io.StringIO(), io.StringIO()
+        with redirect_stdout(out), redirect_stderr(err):
+            code = prune.main(list(argv), gql=gql, now=NOW, config_path=path, pruner=self.pruner)
+        lines = err.getvalue().splitlines()
+        copies = [json.loads(line) for line in lines if line.startswith("{")]
+        said = "\n".join(show(e) for e in logged(self.logs)[before:] + copies)
+        rest = "".join(f"{line}\n" for line in lines if not line.startswith("{"))
+        return code, out.getvalue(), rest, said
+
+    def test_a_tick_deletes_finished_checkouts_and_archives(self):
+        clone = self.mkc("TASK-49", "src", "o", "repo")
+        gql = gql_for({"TASK-49": ("Done", [(30, "Done")])}, owners={"TASK-49": "u-pm"})
+        self.assertEqual(self.command(gql)[:3], (0, "", ""))
+        self.assertFalse(os.path.exists(clone))
+        self.assertEqual(gql.archived, ["id-TASK-49"])
+        self.assertOutsideKept()
+
+    def test_a_dry_run_plans_and_changes_nothing(self):
+        clone = self.mkc("TASK-49", "src", "o", "repo")
+        gql = gql_for({"TASK-49": ("Done", [(30, "Done")])}, owners={"TASK-49": "u-pm"})
+        code, out, err, said = self.command(gql, "--dry-run")
+        self.assertEqual((code, out, err), (0, "", ""))
+        self.assertTrue(os.path.isdir(os.path.join(clone, ".git")))
+        self.assertEqual(gql.archived, [])
+        self.assertEqual(
+            said.splitlines(),
+            [
+                "prune-plan entry=TASK-49/src/o/repo what=delete the clone",
+                "prune-plan TASK-49 what=archive",
+            ],
+        )
+
+    def test_a_failed_step_exits_1_after_the_rest(self):
+        def down(query, **v):
+            if query == prune.Q_ISSUE:
+                raise LinearError("linear api error: down")
+            return gql_for({})(query, **v)
+
+        self.mkc("TASK-49", "src", "o", "repo")
+        code, _, _, said = self.command(down)
+        self.assertEqual(code, 1)
+        self.assertIn("prune-error TASK-49 error=Linear: LinearError: linear api error: down", said)
+
+    def test_other_arguments_are_a_usage_error(self):
+        for argv in (["--now"], ["TASK-1"], ["--dry-run", "x"]):
+            with self.subTest(argv=argv):
+                code, out, err, said = self.command(gql_for({}), *argv)
+                self.assertEqual((code, out, said), (2, "", ""))
+                self.assertIn("agent-pm-linear prune", err)
 
 
 class CloneConfiguration(Case):

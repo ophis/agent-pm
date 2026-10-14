@@ -5,7 +5,7 @@ import os
 
 from tests.guard_checks.common import _bindings, _dotted, _files
 from tests.guard_data import ENTRY_MODULES, SUBPACKAGES
-from tests.guard_data.linear_orchestrator import ORCH_PROJECT, ORCH_SRC
+from tests.guard_data.linear_orchestrator import ORCH_ABSENT, ORCH_PROJECT, ORCH_SRC
 from tests.guards import PKG, PROJECTS
 
 LEFTOVERS = {"__pycache__", ".DS_Store"}
@@ -19,6 +19,11 @@ def orchestrator_entry(repo: str) -> list[str]:
     root = os.path.join(repo, ORCH_PROJECT, ORCH_SRC)
     if not os.path.isfile(os.path.join(root, "cli.py")):
         found.append(f"{ORCH_PROJECT}/{ORCH_SRC}cli.py: missing entry")
+    found += [
+        f"{ORCH_PROJECT}/{ORCH_SRC}{rel}: no such module: a run is its Delegate's harness (FR-25)"
+        for rel in ORCH_ABSENT
+        if os.path.lexists(os.path.join(root, rel))
+    ]
     for rel, text in _files(root, ".py"):
         if rel == "cli.py":
             continue

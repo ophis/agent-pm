@@ -13,6 +13,7 @@ from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from unittest import mock
 
+from agent_pm.delegate import ConfigError as DelegateConfigError
 from agent_pm.linear_orchestrator.engine import config, inputs, issues, ops, router, runs
 from agent_pm.linear_orchestrator.engine import gate as quota
 from agent_pm.linear_orchestrator.engine.types import LinearError, Spec, Unavailable
@@ -682,31 +683,29 @@ class RouterEntry(OuterBase):
         self.todo["project"] = {"id": PROJECT, "name": "Agent PM"}
         self.fake = ClaimLinear(self.todo, node(comments=[USER_NOTE]))
 
-    def entry(self, *argv, live=(), tty=False, now=NOW):
+    def entry(self, *argv, live=(), tty=False, now=NOW, clock=None):
         outer = {"run": self.run_, "keychain": self.keychain}
-        return self.tick(self.fake, *argv, live=live, again=True, tty=tty, outer=outer, now=now)
+        return self.tick(
+            self.fake, *argv, live=live, again=True, tty=tty, outer=outer, now=now, clock=clock
+        )
 
-    def test_claims_then_starts_run_py_after_its_start_line(self):
+    def test_claims_then_detaches_its_linear_run_after_its_start_row(self):
         for argv, said in (
             (("--issue", ID), []),
             (("--now",), ["launch TASK-7 exit=0"]),
         ):
             with self.subTest(argv=argv):
-                self.todo["state"], self.fake.mutations, self.api.detached = "Todo", [], []
-                lines, detach = [], self.api.detach
-
-                def at_detach(*args, lines=lines, detach=detach, **kw):
-                    with open(self.runs) as f:
-                        lines.append(f.read())
-                    return detach(*args, **kw)
-
-                with mock.patch.object(self.api, "detach", at_detach):
-                    self.assertEqual(self.entry(*argv), 0)
+                self.lines, self.todo["state"], self.fake.mutations = [], "Todo", []
+                self.api.detached, self.api.runs_at_detach = [], []
+                self.assertEqual(self.entry(*argv), 0)
                 kind, ident, sid, role, client = self.last_run()
                 self.assertEqual((kind, ident, role, client), ("start", ID, "engineer", "a"))
-                self.assertEqual(lines, [self.state])
+                self.assertEqual(self.api.runs_at_detach, [self.raw_runs()])
+                self.assertEqual(self.detached(), self.expected(sid=sid))
+                row = json.loads(self.state.splitlines()[-1])
                 self.assertEqual(
-                    self.detached(), inner("--target", "Ophis/Agent-PM", *forwarded(sid=sid))
+                    [row[k] for k in ("uuid", "project", "target", "key", "delegate_kind")],
+                    [UUID, PROJECT, "Ophis/Agent-PM", KEY, "harness"],
                 )
                 self.assertEqual(
                     self.said()[-2 - len(said) :],
@@ -718,15 +717,61 @@ class RouterEntry(OuterBase):
                 )
                 self.assertEqual(self.err, "")
 
-    def test_a_task_label_reaches_run_py_as_its_task(self):
+    def test_a_row_records_its_write_time_after_a_slow_walk_and_only_the_logs(self):
+        written = NOW + timedelta(minutes=5)
+        for state in ("Todo", "In Progress"):
+            with self.subTest(state=state):
+                self.lines, self.todo["state"] = [], state
+                if state == "In Progress":
+                    self.resumable(ID, "s", 60, role="engineer")
+                clock = functools.partial(next, iter((NOW, written)))
+                self.assertEqual(self.entry("--issue", ID, clock=clock), 0)
+                entry = runs.parse_log(self.runs)[-1]
+                kind = "start" if state == "Todo" else "resume"
+                self.assertEqual((entry.kind, entry.ts), (kind, written))
+                self.assertEqual(
+                    sorted(os.listdir(os.path.dirname(self.runs))),
+                    ["orchestrator.jsonl", "router.lock", "runs.jsonl"],
+                )
+
+    def test_a_new_run_closes_only_its_issues_recorded_run_first(self):
+        harness = f"agent-pm-engineer-{ID}"
+        for error, said in (
+            (None, f"tui-closed {ID}"),
+            (DriverError("kill failed"), f"tui-error {ID} msg=DriverError: kill failed"),
+        ):
+            with self.subTest(said=said):
+                self.lines, self.todo["state"], self.api.errors = [], "Todo", {}
+                if error is not None:
+                    self.api.errors[harness] = error
+                self.add(kind="start", ident=ID, sid="old", minutes_ago=600, role="engineer")
+                self.add(kind="start", ident="TASK-70", sid="other", minutes_ago=600)
+                self.assertEqual(self.entry("--issue", ID), 0)
+                self.assertEqual(
+                    [o for o in self.api.order if o[0] in ("close", "detach")],
+                    [("close", harness), ("detach", harness)],
+                )
+                self.assertIn(said, self.said())
+                self.assertEqual(self.last_run()[:2], ("start", ID))
+
+    def test_an_unloadable_recorded_run_is_a_tui_error_and_the_run_starts(self):
+        self.add(kind="start", ident=ID, sid="old", minutes_ago=600, role="engineer")
+        self.lines[-1] = self.lines[-1].replace(
+            '"client": "a"', '"client": "a", "delegate_kind": "gone"'
+        )
+        self.assertEqual(self.entry("--issue", ID), 0)
+        self.assertIn(
+            f"tui-error {ID} msg=ConfigError: delegate kind 'gone' is no longer configured",
+            self.said(),
+        )
+        self.assertEqual(self.detached(), self.expected(sid=self.last_run()[2]))
+
+    def test_a_task_label_reaches_the_run_as_its_task(self):
         self.write_config(OUTER + f'[task_labels]\nlight-build = "{LIGHT}"\n')
         self.todo["labels"] = [label("Light Build", LIGHT)]
         self.assertEqual(self.entry("--issue", ID), 0)
         sid = self.last_run()[2]
-        self.assertEqual(
-            self.detached(),
-            inner("--target", "Ophis/Agent-PM", *forwarded(task="light-build", sid=sid)),
-        )
+        self.assertEqual(self.detached(), self.expected(task="light-build", sid=sid))
         self.assertIn("claim TASK-7 role=engineer task=light-build client=a", self.said())
 
     def test_a_resume_keeps_the_client_of_its_claim(self):
@@ -739,10 +784,7 @@ class RouterEntry(OuterBase):
         self.write_config(OUTER.replace(OVERLAY, '[core]\nclient = "b"\n'))
         self.assertEqual(self.entry(), 0)
         self.assertEqual(self.last_run(), ("resume", ID, sid, "engineer", "a"))
-        self.assertEqual(
-            self.detached(),
-            inner("--target", "Ophis/Agent-PM", *forwarded(sid=sid, mode="resume")),
-        )
+        self.assertEqual(self.detached(), self.expected(sid=sid, resume=True))
         self.assertEqual((self.api.info, self.api.usage_calls), ([("a", sid, self.rd)] * 2, []))
 
     def test_the_outers_lines_follow_the_ticks_plan(self):
@@ -757,6 +799,45 @@ class RouterEntry(OuterBase):
                 "launch TASK-7 exit=3",
             ],
         )
+
+    def test_a_resume_failing_each_tick_is_capped_then_goes_to_review(self):
+        self.todo["state"], self.fake.node = "In Progress", None
+        self.resumable(ID, "s", 60, role="engineer")
+        for _ in range(router.CAP - 1):
+            self.assertEqual(self.entry(), 0)
+            self.assertIn("launch TASK-7 exit=3", self.said())
+            self.lines = self.raw_runs().splitlines()
+        self.assertEqual(
+            [json.loads(line)["kind"] for line in self.lines],
+            ["start", *["resume"] * (router.CAP - 1)],
+        )
+        self.assertEqual(self.entry(), 0)
+        self.assertIn(
+            f"recover TASK-7 to=in_review reason=reached {router.CAP} attempts", self.said()
+        )
+        self.assertEqual(self.todo["state"], "In Review")
+
+    def test_a_claim_whose_run_fails_to_build_or_start_is_not_stranded(self):
+        for attr, error in (
+            ("construct_error", DelegateConfigError("role engineer: refused")),
+            ("detach_error", DriverError("detach: duplicate")),
+        ):
+            with self.subTest(attr=attr):
+                self.lines, self.todo["state"], self.fake.mutations = [], "Todo", []
+                self.api.construct_error = self.api.detach_error = None
+                setattr(self.api, attr, error)
+                self.assertEqual(self.entry("--issue", ID), 1)
+                self.assertEqual(self.todo["state"], "In Progress")
+                self.lines = self.raw_runs().splitlines() if os.path.exists(self.runs) else []
+                setattr(self.api, attr, None)
+                self.assertEqual(self.entry(now=NOW + timedelta(hours=3)), 0)
+                said = self.said()
+                self.assertFalse([line for line in said if line.startswith("recover-skip")], said)
+                self.assertTrue(
+                    [line for line in said if line.startswith("recover TASK-7 to=todo")]
+                )
+                self.assertIn("claim TASK-7 role=engineer client=a", said)
+                self.assertEqual(said[-1], "launch TASK-7 exit=0")
 
     def test_a_live_run_is_refused(self):
         for role in ("engineer", "pm"):
@@ -803,24 +884,25 @@ class RouterEntry(OuterBase):
                 )
         self.assertEqual(self.api.detached, [])
 
-    def test_a_bad_session_config_exits_1_as_a_logged_config_error(self):
+    def test_a_bad_session_config_is_a_launch_error_that_starts_nothing(self):
         with open(self.local, "a") as f:
             f.write('\n[session.hosts]\ndefault = "absent"\n')
         with redirect_stderr(io.StringIO()), self.log_dir(again=True):
             rc = router.main(
-                ["--now"],
+                ["--issue", ID],
                 now=lambda: NOW,
                 config_path=self.config_path,
-                hour=2,
                 gql=self.fake,
                 run=self.run_,
                 keychain=self.keychain,
             )
         self.assertEqual(rc, 1)
         self.assertEqual(
-            self.said(), ["config-error reason=session config: [hosts] default: want one of tmux"]
+            self.said()[-1],
+            "launch-error TASK-7 error=ConfigError: [hosts] default: want one of tmux",
         )
-        self.assertEqual(self.fake.mutations, [])
+        self.assertEqual(self.todo["state"], "In Progress")
+        self.assertFalse(os.path.exists(os.path.join(self.rd, "delegate.json")))
 
     def test_a_config_error_exits_1_logged_once_a_day_and_printed_on_a_terminal(self):
         for text, reason in (
@@ -875,8 +957,7 @@ class RouterArguments(Base):
 
     def test_unknown_flags_rejected(self):
         for argv in (
-            ["--help"],
-            ["-h"],
+            ["--help", "--now"],
             ["--prune", "x"],
             ["--gate", "new"],
             ["--now", "--issue", "TASK-1"],
@@ -911,7 +992,7 @@ class RouterArguments(Base):
         self.assertEqual((self.api.order, self.api.usage_calls), ([], []))
         self.assertEqual(
             router.USAGE,
-            "usage: python3 -P -m agent_pm.linear_orchestrator.cli router [--now] [--dry-run] [--issue ID] | --brake ROLE",
+            "usage: agent-pm-linear router [--now] [--dry-run] [--issue ID] | --brake ROLE",
         )
         for flag in ("--gate", "--tui", "--split", "--events", "--manager"):
             self.assertNotIn(flag, router.USAGE + router.__doc__)
@@ -968,7 +1049,6 @@ class RouterLocking(TickBase):
                 rc = router.main(
                     ["--brake", "researcher"],
                     config_path=self.config_path,
-                    session=self.api,
                     delegate_cls=self.cfg().delegate_cls,
                 )
             self.assertEqual((rc, out.getvalue()), (0, "five_hour=10% weekly=10%\n"))
@@ -1244,7 +1324,6 @@ class RunBrake(Base):
             rc = router.main(
                 ["--brake", role],
                 config_path=self.config_path,
-                session=self.api,
                 delegate_cls=self.cfg().delegate_cls,
             )
             self.path = os.environ["PATH"]
@@ -1296,7 +1375,10 @@ class ScheduledUsageGates(TickBase):
         fake = FakeLinear([issue("TASK-1", "Todo", "researcher")])
         self.tick(fake, now=NOW - timedelta(minutes=60))
         (claimed,) = self.start.launches
-        self.assertEqual(self.last_run(), ("start", "TASK-1", claimed.sid, "researcher", "a"))
+        self.assertEqual(self.launched_run(), ("start", "TASK-1", claimed.sid, "researcher", "a"))
+        runs.note(
+            self.runs, "start", issue="TASK-1", sid=claimed.sid, role="researcher", client="a"
+        )
         with open(self.runs) as f:
             self.lines = f.read().splitlines()
         self.api.records[claimed.sid] = {"cwd": os.path.join(self.work, "work", "TASK-1")}
@@ -1307,7 +1389,7 @@ class ScheduledUsageGates(TickBase):
         self.tick(fake)
         (resumed,) = self.start.launches
         self.assertEqual((resumed.sid, resumed.mode, resumed.client), (claimed.sid, "resume", "a"))
-        self.assertEqual(self.last_run(), ("resume", "TASK-1", claimed.sid, "researcher", "a"))
+        self.assertEqual(self.launched_run(), ("resume", "TASK-1", claimed.sid, "researcher", "a"))
         self.assertEqual(
             (self.api.info, self.api.usage_calls),
             ([("a", claimed.sid, os.path.join(self.work, "work", "TASK-1"))], []),
@@ -1333,7 +1415,7 @@ class ScheduledUsageGates(TickBase):
         )
         (launch,) = self.start.launches
         self.assertEqual((launch.issue, launch.client), ("TASK-2", "b"))
-        self.assertEqual(self.last_run(), ("start", "TASK-2", launch.sid, "pm", "b"))
+        self.assertEqual(self.launched_run(), ("start", "TASK-2", launch.sid, "pm", "b"))
         self.assertEqual(self.api.usage_calls, ["a", "b"])
         self.assertEqual(fake.issues["TASK-1"]["state"], "In Progress")
 
@@ -1373,9 +1455,7 @@ class ScheduledUsageGates(TickBase):
             ],
         )
         self.assertEqual((self.launched_runs(), self.api.usage_calls), ([("TASK-2", "new")], ["b"]))
-        self.assertEqual(
-            [json.loads(x)["kind"] for x in self.state.splitlines()], ["limit", "start"]
-        )
+        self.assertEqual([json.loads(x)["kind"] for x in self.state.splitlines()], ["limit"])
 
     def test_a_dry_run_walks_the_same_and_changes_nothing(self):
         at = (NOW + timedelta(hours=1)).astimezone(EAST).isoformat()
@@ -1731,7 +1811,7 @@ class ScheduledTaskSelection(TickBase):
         self.tick(fake)
         (launch,) = self.start.launches
         self.assertEqual((launch.sid, launch.task, launch.mode), (self.sid("a"), None, "resume"))
-        self.assertEqual(self.last_run(), ("resume", "TASK-1", "a", "researcher", "a"))
+        self.assertEqual(self.launched_run(), ("resume", "TASK-1", "a", "researcher", "a"))
         self.assertIn("plan TASK-1 mode=resume sid=a", self.said())
 
     def test_fr22_a_logged_role_not_the_assignees_goes_to_review(self):
@@ -1788,19 +1868,36 @@ class ScheduledTaskSelection(TickBase):
         self.assertIn("claim TASK-1 role=researcher task=light-research client=a", self.said())
         (launch,) = self.start.launches
         self.assertEqual((launch.task, launch.mode), ("light-research", "new"))
-        self.assertEqual(self.last_run(), ("start", "TASK-1", launch.sid, "researcher", "a"))
+        self.assertEqual(self.launched_run(), ("start", "TASK-1", launch.sid, "researcher", "a"))
         self.assertEqual(fake.issues["TASK-1"]["state"], "In Progress")
 
 
 class RunLaunching(OuterBase):
-    """FR-45, FR-47's resume check: the outer reads the issue, checks its repo, renders its input
-    and starts run.py in a detached session on the harness Host.
+    """FR-45, FR-47's resume check: the outer reads the issue, checks its repo, renders its input,
+    records the run and detaches its LinearRun (FR-25).
     """
 
-    def test_build_starts_run_py_in_a_detached_driver_session(self):
+    def test_build_detaches_its_linear_run_after_its_start_row(self):
         self.assertEqual(self.outer(), 0)
-        self.assertEqual(self.detached(), inner("--target", "Ophis/Agent-PM", *forwarded()))
+        self.assertEqual(self.detached(), self.expected())
         self.assertEqual((len(self.api.detached), os.listdir(self.rd)), (1, []))
+        self.assertEqual(self.api.runs_at_detach, [self.raw_runs()])
+        self.assertEqual(
+            json.loads(self.raw_runs()),
+            {
+                "ts": NOW.astimezone().isoformat(timespec="seconds"),
+                "kind": "start",
+                "issue": ID,
+                "sid": SID,
+                "role": "engineer",
+                "client": "a",
+                "delegate_kind": "harness",
+                "uuid": UUID,
+                "project": PROJECT,
+                "target": "Ophis/Agent-PM",
+                "key": KEY,
+            },
+        )
         self.assertEqual(self.gql.calls, [("issue", HARNESS, {"i": ID})])
         self.assertEqual(
             self.run_.calls, [(("gh", "api", "repos/ophis/agent-pm"), SHORT), (LS_REMOTE, SHORT)]
@@ -1810,26 +1907,9 @@ class RunLaunching(OuterBase):
         )
         self.assertEqual((self.err, self.said()), ("", []))
 
-    def test_a_given_task_reaches_run_py_whose_argv_parses_it(self):
+    def test_a_given_task_reaches_the_run(self):
         self.assertEqual(self.outer(task="light-build"), 0)
-        argv = self.detached()
-        self.assertEqual(argv, inner("--target", "Ophis/Agent-PM", *forwarded(task="light-build")))
-        found = Spec.from_argv(argv[5:])
-        self.assertEqual(
-            (
-                found.uuid,
-                found.target,
-                found.issue,
-                found.project,
-                found.assignee,
-                found.sid,
-                found.task,
-                found.mode,
-                found.client,
-            ),
-            (UUID, "Ophis/Agent-PM", ID, PROJECT, ENGINEER, SID, "light-build", "new", "a"),
-        )
-        self.assertEqual((found.input, found.tui), (INPUT, False))
+        self.assertEqual(self.detached(), self.expected(task="light-build"))
 
     def test_a_long_input_reaches_run_py_intact(self):
         big = "".join(
@@ -1839,9 +1919,7 @@ class RunLaunching(OuterBase):
         self.assertEqual(self.outer(), 0)
         text = INPUT.replace("Add a session registry.", big)
         self.assertGreater(len(text.encode()), 20_000)
-        self.assertEqual(
-            self.detached(), inner("--target", "Ophis/Agent-PM", *forwarded(), text=text)
-        )
+        self.assertEqual(self.detached(), self.expected(text=text))
 
     def test_nul_is_removed_and_a_lone_surrogate_replaced_in_the_input(self):
         for description, want in (
@@ -1868,23 +1946,24 @@ class RunLaunching(OuterBase):
                 self.assertEqual(self.outer(assignee=who_), 0)
                 self.assertEqual(
                     self.detached(role),
-                    inner(
-                        *forwarded(who_),
+                    self.expected(
+                        role,
                         text=(
                             f"Reference: TASK-7\nRepo: ophis/agent-pm\nCheckout: TASK-7\n\n"
                             f"{inputs.PRECEDENCE[kind]}\n\n## {heading}\n\n{title}\n\n{description}"
                         ),
                     ),
                 )
+                self.assertIsNone(json.loads(self.raw_runs().splitlines()[-1])["target"])
                 self.assertEqual(self.run_.calls, [(listing, SHORT)])
 
     def test_a_resume_reads_its_session_at_its_client_and_rebuilds_the_input(self):
         self.assertEqual(self.outer(mode="resume", client="b"), 0)
-        self.assertEqual(
-            self.detached(),
-            inner("--target", "Ophis/Agent-PM", *forwarded(mode="resume", client="b")),
-        )
+        self.assertEqual(self.detached(), self.expected(client="b", resume=True))
         self.assertEqual(self.api.info, [("b", SID, self.rd)])
+        self.assertEqual(
+            [json.loads(line)["kind"] for line in self.raw_runs().splitlines()], ["start", "resume"]
+        )
 
     def test_a_status_defect_does_not_become_a_transient_resume(self):
         error = AttributeError("adapter defect")
@@ -1937,14 +2016,38 @@ class RunLaunching(OuterBase):
 
     def test_no_keychain_item(self):
         self.missing.add(KEY)
-        for mode in ("new", "resume"):
+        for mode, kinds in (("new", []), ("resume", ["start", "resume"])):
             with self.subTest(mode=mode):
                 self.assertEqual(self.outer(mode=mode), 2)
                 self.assertEqual(
                     self.said(),
                     [f"config-error TASK-7 reason=no Keychain item for role key {KEY}"],
                 )
+                self.assertEqual(self.kinds(), kinds)
         self.assertEqual((self.api.detached, self.api.info, self.gql.calls), ([], [], []))
+
+    def kinds(self):
+        if not os.path.exists(self.runs):
+            return []
+        return [json.loads(line)["kind"] for line in self.raw_runs().splitlines()]
+
+    def test_a_resume_that_fails_still_counts_toward_the_cap(self):
+        self.api.statuses[SID] = NO
+        self.assertEqual(self.outer(mode="resume"), 3)
+        self.assertEqual(self.kinds(), ["start", "resume"])
+
+    def test_a_new_runs_row_comes_once_its_delegate_state_is_built_before_its_detach(self):
+        for attr, error, kinds in (
+            ("construct_error", DelegateConfigError("role engineer: refused"), []),
+            ("detach_error", DriverError("detach: duplicate"), ["start"]),
+        ):
+            with self.subTest(attr=attr):
+                with contextlib.suppress(FileNotFoundError):
+                    os.unlink(self.runs)
+                self.api.construct_error = self.api.detach_error = None
+                setattr(self.api, attr, error)
+                self.assertEqual(self.outer(), 1)
+                self.assertEqual(self.kinds(), kinds)
 
     def test_linear_errors_are_transient(self):
         for gql, reason in (
@@ -2054,64 +2157,62 @@ class RunLaunching(OuterBase):
             ),
         )
 
-    def test_a_driver_session_that_cannot_start_exits_1(self):
-        for error in (
-            DriverError("detach agent-pm-engineer-TASK-7: duplicate session"),
-            ConfigError("cwd must be an existing directory"),
+    def test_a_run_that_cannot_be_built_or_detached_is_a_launch_error(self):
+        for attr, error in (
+            ("construct_error", DelegateConfigError("role engineer: refused")),
+            ("detach_error", DelegateConfigError("cwd must be an existing directory")),
+            ("detach_error", DriverError("detach engineer-TASK-7-0b6f2c1e-drive: duplicate")),
         ):
             with self.subTest(error=error):
-                self.api.detach_error = error
+                self.api.construct_error = self.api.detach_error = None
+                setattr(self.api, attr, error)
                 self.assertEqual(self.outer(), 1)
                 self.assertEqual(
                     (self.said(), self.err),
                     ([f"launch-error TASK-7 error={type(error).__name__}: {error}"], ""),
                 )
-        self.assertEqual(self.input(), INPUT)
+        self.assertEqual(self.gql.calls, [("issue", HARNESS, {"i": ID})] * 3)
+        self.assertEqual(self.api.constructed[-1][1].input, INPUT)
 
 
 class RunStartRecords(Base):
-    """FR-46: the start or resume line records the client; the launch Spec carries it."""
+    """FR-46, FR-25: a start row records the client, the Delegate kind and the claim's context
+    (issue uuid, project, target, the role's key); a resume row its sid's recorded kind.
+    """
 
-    def test_one_json_line_and_the_launch_namespace(self):
-        path = os.path.join(self.tmp, "logs", "runs.jsonl")
+    def test_one_json_line_each_and_the_claim_context_on_the_start(self):
+        cfg = replace(self.cfg(), work_dir=self.tmp)
         found = issue("TASK-1", "In Progress", "researcher")
         stamp = datetime.fromisoformat("2026-10-09T00:26:33-04:00").astimezone().isoformat()
-        got = [
-            router.begin(
-                replace(self.cfg(), work_dir=self.tmp),
-                Spec.from_issue(found, mode=mode, sid="s1", task=task, client="a"),
+        kinds = [
+            router.record(
+                cfg,
+                replace(
+                    Spec.from_issue(found, mode=mode, sid="s1", task=task, client="a"), uuid=UUID
+                ),
                 role="researcher",
+                target=None,
                 now=lambda: datetime.fromisoformat(stamp),
             )
             for mode, task in (("new", "light-research"), ("resume", None))
         ]
-        with open(path) as f:
+        self.assertEqual(kinds, ["harness", "harness"])
+        common = (
+            '"issue": "TASK-1", "sid": "s1", "role": "researcher", "client": "a", '
+            '"delegate_kind": "harness"'
+        )
+        claim = (
+            f'"uuid": "{UUID}", "project": "{IDS[DR]}", "target": null, '
+            f'"key": "{cfg.roles["researcher"].key}"'
+        )
+        with open(cfg.runs_log) as f:
             self.assertEqual(
                 f.read(),
-                "".join(
-                    f'{{"ts": "{stamp}", "kind": "{kind}", "issue": "TASK-1", '
-                    '"sid": "s1", "role": "researcher", "client": "a", "delegate_kind": "harness"}\n'
-                    for kind in ("start", "resume")
-                ),
+                f'{{"ts": "{stamp}", "kind": "start", {common}, {claim}}}\n'
+                f'{{"ts": "{stamp}", "kind": "resume", {common}}}\n',
             )
-        self.assertEqual(
-            got,
-            [
-                Spec(
-                    uuid="TASK-1",
-                    input="",
-                    issue="TASK-1",
-                    project=IDS[DR],
-                    assignee=ROLE["researcher"],
-                    sid="s1",
-                    task=task,
-                    mode=mode,
-                    client="a",
-                )
-                for mode, task in (("new", "light-research"), ("resume", None))
-            ],
-        )
-        self.assertEqual([e.kind for e in runs.parse_log(path)], ["start", "resume"])
+        self.assertEqual([e.kind for e in runs.parse_log(cfg.runs_log)], ["start", "resume"])
+        self.assertEqual(runs.claim(cfg.runs_log, "TASK-1", "s1").key, cfg.roles["researcher"].key)
 
 
 class ExplicitIssueRuns(TickBase):
@@ -2190,7 +2291,6 @@ class ExplicitIssueRuns(TickBase):
             launch,
             Spec(
                 uuid="TASK-4",
-                input="",
                 issue="TASK-4",
                 project=IDS[PD],
                 assignee=ROLE["engineer"],
@@ -2201,7 +2301,7 @@ class ExplicitIssueRuns(TickBase):
             ),
         )
         self.assertRegex(launch.sid, config.UUID_RE)
-        self.assertEqual(self.last_run(), ("start", "TASK-4", launch.sid, "engineer", "a"))
+        self.assertEqual(self.launched_run(), ("start", "TASK-4", launch.sid, "engineer", "a"))
         self.assertIn("TASK-8", self.state)
         self.assertEqual((self.api.order, self.api.usage_calls), (SESSIONS, []))
         self.assertEqual(
@@ -2265,7 +2365,6 @@ class ExplicitIssueRuns(TickBase):
             launch,
             Spec(
                 uuid="TASK-1",
-                input="",
                 issue="TASK-1",
                 project=IDS[DR],
                 assignee=ROLE["researcher"],
@@ -2275,7 +2374,7 @@ class ExplicitIssueRuns(TickBase):
                 client="a",
             ),
         )
-        self.assertEqual(self.last_run(), ("resume", "TASK-1", "a", "researcher", "a"))
+        self.assertEqual(self.launched_run(), ("resume", "TASK-1", "a", "researcher", "a"))
         self.assertEqual((fake.mutations, self.api.usage_calls), ([], []))
 
     def test_in_progress_with_nothing_to_resume_is_settled_at_once(self):
@@ -2523,7 +2622,7 @@ class TickRecords(TickScenario):
                     self.assertIn(f"{type(error).__name__}: {error}", record["traceback"])
                 (launch,) = self.start.launches
                 self.assertEqual(
-                    self.last_run(), ("start", "TASK-1", launch.sid, "researcher", "a")
+                    self.launched_run(), ("start", "TASK-1", launch.sid, "researcher", "a")
                 )
 
     def test_resume_reads_the_session_at_its_recorded_cwd(self):
@@ -3128,7 +3227,6 @@ class ClaimRechecks(Base):
         a = router.begin(
             self.cfg(),
             Spec.from_issue(taken, mode="new", sid="s1", task=task, client=client),
-            role=role,
         )
         self.assertEqual((a.assignee, a.client), (ROLE["pm"], "b"))
 
@@ -3180,7 +3278,6 @@ class ClaimRechecks(Base):
         a = router.begin(
             self.cfg(),
             Spec.from_issue(self.taken[0], mode="new", sid="s1", task=None, client="a"),
-            role="researcher",
         )
         self.assertEqual(a.project, IDS[PD])
 
@@ -3353,7 +3450,6 @@ class ScheduledRuns(TickScenario):
             launch,
             Spec(
                 uuid="TASK-1",
-                input="",
                 issue="TASK-1",
                 project=IDS[DR],
                 assignee=ROLE["researcher"],
@@ -3364,39 +3460,8 @@ class ScheduledRuns(TickScenario):
             ),
         )
         self.assertRegex(launch.sid, config.UUID_RE)
-        self.assertEqual(self.last_run(), ("start", "TASK-1", launch.sid, "researcher", "a"))
+        self.assertEqual(self.launched_run(), ("start", "TASK-1", launch.sid, "researcher", "a"))
         self.assertEqual(fake.issues["TASK-1"]["state"], "In Progress")
-
-    def test_begin_appends_one_json_line_to_runs_jsonl(self):
-        fake = FakeLinear([issue("TASK-1", "Todo", "researcher")])
-        stamp = datetime.fromisoformat("2026-10-09T00:26:33-04:00").astimezone().isoformat()
-        self.tick(fake, "--now", hour=12, now=datetime.fromisoformat(stamp))
-        (launch,) = self.start.launches
-        self.assertEqual(
-            self.state,
-            f'{{"ts": "{stamp}", "kind": "start", "issue": "TASK-1", '
-            f'"sid": "{launch.sid}", "role": "researcher", "client": "a", "delegate_kind": "harness"}}\n',
-        )
-        self.assertEqual(
-            sorted(os.listdir(os.path.dirname(self.runs))),
-            ["orchestrator.jsonl", "router.lock", "runs.jsonl"],
-        )
-
-    def test_start_records_write_time_after_a_slow_tick(self):
-        written = NOW + timedelta(minutes=5)
-        times = iter((NOW, written))
-        fake = FakeLinear([issue("TASK-1", "Todo", "researcher")])
-        self.assertEqual(self.tick(fake, clock=lambda: next(times)), 0)
-        self.assertEqual(runs.parse_log(self.runs)[-1].ts, written)
-
-    def test_resume_records_write_time_after_a_slow_issue_lookup(self):
-        written = NOW + timedelta(minutes=5)
-        times = iter((NOW, written))
-        fake = self.fake(issue("TASK-1", "In Progress", "researcher"))
-        self.resumable("TASK-1", "a", 60)
-        self.assertEqual(self.tick(fake, "--issue", "TASK-1", clock=lambda: next(times)), 0)
-        entry = runs.parse_log(self.runs)[-1]
-        self.assertEqual((entry.kind, entry.ts), ("resume", written))
 
     def test_an_idle_tick_writes_no_line(self):
         cases = [
@@ -3572,7 +3637,7 @@ class ScheduledRuns(TickScenario):
                 "TASK-3": ("Todo", None),
             },
         )
-        self.assertEqual(self.last_run(), ("resume", "TASK-2", "b", "researcher", "a"))
+        self.assertEqual(self.launched_run(), ("resume", "TASK-2", "b", "researcher", "a"))
         self.assertEqual(self.api.usage_calls, ["a"])
 
     def test_nothing_to_do_with_full_role(self):

@@ -665,123 +665,6 @@ class DurableRunNotes(Case):
         )
 
 
-class UsageLimitReporting(Base):
-    def setUp(self):
-        super().setUp()
-        # POSIX TZ: CST-8 is UTC+8
-        tz = mock.patch.dict(os.environ, {"TZ": "CST-8"})
-        tz.start()
-        self.addCleanup(time.tzset)
-        self.addCleanup(tz.stop)
-        time.tzset()
-
-    def test_body_names_the_reset_time_or_says_it_is_unknown(self):
-        for resets_at, text in (
-            (T, "Usage limit, resets at 2026-10-11T18:00:00+08:00."),
-            (None, "Usage limit, reset time unknown."),
-            (1e20, "Usage limit, reset time unknown."),
-        ):
-            with self.subTest(resets_at=resets_at):
-                gql = Gql()
-                ctx = self.ctx(gql=gql)
-                self.assertTrue(writeback.limit(ctx, resets_at))
-                self.assertEqual(
-                    gql.calls,
-                    [
-                        sub(HUMANS[0]),
-                        sub(HUMANS[1]),
-                        post("limit", text),
-                        reread(),
-                        move("in_review"),
-                    ],
-                )
-                self.assertEqual(self.steps(ctx), {SID: ["limit"]})
-
-    def test_local_time(self):
-        self.assertEqual(writeback.local_time(T), "2026-10-11T18:00:00+08:00")
-        self.assertIsNone(writeback.local_time(None))
-
-    def test_subscribes_the_humans_and_notes_failures(self):
-        gql = Gql()
-        self.assertTrue(writeback.limit(replace(self.ctx(gql=gql), humans=()), T))
-        self.assertEqual(
-            gql.calls,
-            [
-                post("limit", "Usage limit, resets at 2026-10-11T18:00:00+08:00."),
-                reread(),
-                move("in_review"),
-            ],
-        )
-        gql = Gql(
-            fail=lambda name, v: False if name == "subscribe" and v["e"] == HUMANS[0] else None
-        )
-        self.assertTrue(writeback.limit(self.ctx(gql=gql), None))
-        self.assertEqual(
-            gql.calls[2],
-            post(
-                "limit",
-                (
-                    "Usage limit, reset time unknown.\n\nCould not subscribe ann@example.com: LinearError: issueSubscribe: success: false"
-                ),
-            ),
-        )
-
-    def test_moves_to_in_review_only_from_in_progress(self):
-        for state, skip in (
-            ("in_review", None),
-            ("handoff", f"skip {ID} reason=move to in_review: issue is {STATES['handoff']}"),
-        ):
-            with self.subTest(state=state):
-                gql = Gql(states=[STATES[state]])
-                before = len(logged())
-                self.assertTrue(writeback.limit(self.ctx(gql=gql), T))
-                self.assertEqual(gql.calls[-1], reread())
-                self.assertEqual(
-                    [line for line in self.lines()[before:] if line.startswith("skip")],
-                    [skip] if skip else [],
-                )
-
-    def test_a_second_limit_on_the_sid_moves_again_without_a_second_comment(self):
-        ctx = self.ctx()
-        self.assertTrue(writeback.limit(ctx, T))
-        again = Gql()
-        self.assertTrue(writeback.limit(replace(ctx, gql=again, resume=True), None))
-        self.assertEqual(again.calls, [sub(HUMANS[0]), sub(HUMANS[1]), reread(), move("in_review")])
-        self.assertEqual(self.steps(ctx), {SID: ["limit"]})
-        self.assertEqual(self.lines(), [f"step {ID} step=limit"])
-
-    def test_a_failed_comment_stops_before_the_move(self):
-        gql = Gql(fail=lambda name, _v: False if name == "comment" else None)
-        ctx = self.ctx(gql=gql)
-        self.assertFalse(writeback.limit(ctx, T))
-        self.assertEqual(gql.calls[-1][0], "comment")
-        self.assertEqual(
-            self.lines(),
-            [f"step-error {ID} step=limit error=LinearError: commentCreate: success: false"],
-        )
-        self.no_ledger(ctx)
-
-    def test_never_raises(self):
-        for name, err, line in (
-            (
-                "state",
-                LinearError("linear api error: x"),
-                "step=move:in_review error=LinearError: linear api error: x",
-            ),
-            ("reread", Stopped(143), "step=limit error=Stopped: 143"),
-            ("subscribe", Stopped(143), "step=limit error=Stopped: 143"),
-        ):
-            with self.subTest(name=name):
-                gql = Gql(fail=lambda n, _v, *, err=err, name=name: err if n == name else None)
-                self.assertFalse(writeback.limit(self.ctx(gql=gql), T))
-                self.assertEqual(gql.calls[-1][0], name)
-                self.assertEqual(self.lines()[-1], f"step-error {ID} {line}")
-                if "step=limit" in line:
-                    record = logged()[-1]
-                    self.assertIn("in limit", record["traceback"])
-                    self.assertIn("Stopped: 143", record["traceback"])
-
-
 class CompletionSteps(Base):
     def test_attach_skipped_when_already_attached(self):
         gql = Gql(attachments=[PR])
@@ -1454,14 +1337,12 @@ class ResumedComments(Base):
                 ctx, Outcome(status="failed", title="ENG-7: x", summary="push not permitted")
             )
         )
-        self.assertTrue(writeback.limit(ctx, None))
         self.assertNotIn("find", [c[0] for c in gql.calls])
         self.assertEqual(
             [c for c in gql.calls if c[0] == "comment"],
             [
                 post("start", "Build started: x"),
                 post("comment", "Build failed: push not permitted"),
-                post("limit", "Usage limit, reset time unknown."),
             ],
         )
 
@@ -2115,10 +1996,104 @@ class LimitEvents(Events):
         )
 
     def test_an_unknown_reset_time_says_so(self):
-        self.assertTrue(self.deliver(self.limited(resets_at=None)))
-        body = self.linear.comments[ops.client_id(RUN_SID, "limit")]["body"]
-        self.assertEqual(body, "Usage limit, reset time unknown.")
-        self.assertEqual(self.rows(), [self.row(None)])
+        for index, resets_at in enumerate((None, 1e20)):
+            with self.subTest(resets_at=resets_at):
+                sid = f"0b6f2c1e-6d0a-4c1b-9a51-3f1f6b0e2a{index:02d}"
+                self.claim(sid)
+                event = delegate_event("finished", sid=sid, returncode=-9, outcome=None)
+                self.assertTrue(self.deliver(replace(event, limit={"resets_at": resets_at})))
+                body = self.linear.comments[ops.client_id(sid, "limit")]["body"]
+                self.assertEqual(body, "Usage limit, reset time unknown.")
+                self.linear.state = self.cfg.states["in_progress"]
+
+    def test_local_time(self):
+        self.assertEqual(writeback.local_time(T), "2026-10-11T18:00:00+08:00")
+        self.assertIsNone(writeback.local_time(None))
+
+    def test_the_humans_are_subscribed_and_a_failed_subscription_noted(self):
+        self.cfg = replace(self.cfg, human_members=HUMANS)
+
+        def fail(op, v):
+            if op == "subscribe" and v["e"] == HUMANS[0]:
+                return LinearError("issueSubscribe: success: false")
+            return None
+
+        self.linear.fail = fail
+        self.assertTrue(self.deliver(self.limited()))
+        mine = [(op, v) for service, op, v in self.linear.calls if service == CLAIM_KEY]
+        self.assertEqual(
+            [op for op, _ in mine], ["subscribe", "subscribe", "find", "comment", "reread", "state"]
+        )
+        self.assertEqual([v["e"] for op, v in mine if op == "subscribe"], list(HUMANS))
+        self.assertEqual(
+            self.linear.comments[ops.client_id(RUN_SID, "limit")]["body"],
+            "Usage limit, resets at 2026-10-11T18:00:00+08:00.\n\n"
+            "Could not subscribe ann@example.com: LinearError: issueSubscribe: success: false",
+        )
+
+    def test_it_moves_to_in_review_only_from_in_progress(self):
+        for attempt, state, skip in (
+            (1, "in_review", None),
+            (2, "handoff", f"skip {RUN_ISSUE} reason=move to in_review: issue is "),
+        ):
+            with self.subTest(state=state):
+                self.linear.state = self.cfg.states[state]
+                before = len(self.said())
+                self.assertTrue(self.deliver(self.limited(attempt)))
+                self.assertEqual(self.linear.state, self.cfg.states[state])
+                skips = [line for line in self.said()[before:] if line.startswith("writeback skip")]
+                self.assertEqual(
+                    [line.startswith(f"writeback {skip}") for line in skips],
+                    [True] if skip else [],
+                )
+
+    def test_a_failed_limit_comment_stops_before_the_move(self):
+        self.linear.fail = lambda op, _v: (
+            LinearError("commentCreate: success: false") if op == "comment" else None
+        )
+        self.assertFalse(self.deliver(self.limited()))
+        mine = [op for service, op, _ in self.linear.calls if service == CLAIM_KEY]
+        self.assertEqual(mine, ["find", "comment"])
+        self.assertIn(
+            f"writeback step-error {RUN_ISSUE} sid={RUN_SID} step=limit "
+            "error=LinearError: commentCreate: success: false",
+            self.said(),
+        )
+
+    def test_a_linear_failure_in_the_limit_is_a_step_error_never_raised(self):
+        self.cfg = replace(self.cfg, human_members=HUMANS)
+        for index, (op, step) in enumerate(
+            (("reread", "limit-move:1"), ("state", "limit-move:1"), ("subscribe", "limit-row:1"))
+        ):
+            with self.subTest(op=op):
+                sid = f"0b6f2c1e-6d0a-4c1b-9a51-3f1f6b0e2b{index:02d}"
+                self.claim(sid)
+                self.now = iter((STARTED, RESTARTED))
+                self.linear.state = self.cfg.states["in_progress"]
+                self.linear.fail = lambda o, _v, op=op: (
+                    LinearError("linear api error: down") if o == op else None
+                )
+                event = delegate_event("finished", sid=sid, returncode=-9, outcome=None)
+                ok = self.deliver(replace(event, limit={"resets_at": T}))
+                session = ops.client_id(sid, "session")
+                self.assertIn("· limit · ", self.linear.comments[session]["body"])
+                if op == "subscribe":
+                    self.assertTrue(ok)
+                    self.assertIn(
+                        "Could not subscribe",
+                        self.linear.comments[ops.client_id(sid, "limit")]["body"],
+                    )
+                else:
+                    self.assertFalse(ok)
+                    self.assertTrue(
+                        any(
+                            line.startswith(
+                                f"writeback step-error {RUN_ISSUE} sid={sid} step={step} "
+                            )
+                            for line in self.said()
+                        ),
+                        self.said(),
+                    )
 
     def test_the_same_limit_twice_moves_once_and_records_one_row(self):
         self.assertTrue(self.deliver(self.limited()))

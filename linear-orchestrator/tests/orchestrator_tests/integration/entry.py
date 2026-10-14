@@ -1,58 +1,60 @@
-"""Explicit subprocess wiring for the fake Linear transport and detached run children."""
+"""Explicit subprocess wiring for the fake Linear transport: each entry runs under it. `launch`
+runs router.outer on a claimed or resumed run given by its Spec fields (--name VALUE); `tui ISSUE
+SID ROLE CLIENT DISPLAY INPUT` detaches a recorded run's LinearRun in tui mode at DISPLAY.
+"""
 
+import argparse
+import functools
 import os
 import sys
-from dataclasses import replace
 
-from agent_pm import delegate
 from agent_pm.linear_orchestrator import cli
-from agent_pm.linear_orchestrator.engine import promote, router, run
-from agent_pm.session import Session
+from agent_pm.linear_orchestrator.engine import client, config, log, promote, router
+from agent_pm.linear_orchestrator.engine.linear_run import LinearRun
+from agent_pm.linear_orchestrator.engine.types import Spec
 from orchestrator_tests.integration.fake_transport import install
 
 
-class DetachedHost:
-    def __init__(self, host):
-        self.host = host
-
-    def detach(self, name, launch, **placement):
-        prefix = (sys.executable, *router.RUN)
-        if launch.argv[: len(prefix)] != prefix:
-            raise ValueError(f"unexpected detached command: {launch.argv}")
-        tests = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
-        return self.host.detach(
-            name,
-            replace(
-                launch,
-                argv=(sys.executable, __file__, "run", *launch.argv[len(prefix) :]),
-                env={
-                    **launch.env,
-                    "PYTHONPATH": os.pathsep.join((launch.env["PYTHONPATH"], tests)),
-                },
-            ),
-            **placement,
-        )
+def launch(argv):
+    parser = argparse.ArgumentParser(prog="entry.py launch")
+    for name in ("uuid", "issue", "project", "assignee", "sid", "mode", "client"):
+        parser.add_argument(f"--{name}", required=True)
+    parser.add_argument("--task")
+    cfg = config.load()
+    log.use_logs(cfg.logs_dir)
+    return router.outer(
+        Spec(**vars(parser.parse_args(argv))),
+        cfg,
+        gql=functools.partial(client.linear_gql, service=cfg.harness_key),
+        run=config.shell,
+        keychain=client.has_key,
+    )
 
 
-class DetachedSession:
-    @staticmethod
-    def inspect(spec):
-        return Session.inspect(spec)
-
-    @staticmethod
-    def host(name=None):
-        return DetachedHost(Session.host(name))
+def tui(argv):
+    issue, sid, role, run_client, display, text = argv
+    cfg = config.load()
+    LinearRun(
+        issue,
+        text,
+        cfg.run_dir(issue),
+        cfg=cfg,
+        role=role,
+        sid=sid,
+        client=run_client,
+        mode="tui",
+        display=display,
+    ).detach()
+    return 0
 
 
 def main(argv):
     entry, *arguments = argv
     with install(os.environ["FAKE_LINEAR_TRANSPORT"]):
-        if entry == "router":
-            Session.configure_from(delegate.read_config())
-            return router.main(arguments, session=DetachedSession)
         if entry == "writeback":
             return cli.main([entry, *arguments])
-        return {"run": run.main, "promote": promote.main}[entry](arguments)
+        entries = {"launch": launch, "tui": tui, "promote": promote.main, "router": router.main}
+        return entries[entry](arguments)
 
 
 if __name__ == "__main__":

@@ -49,13 +49,17 @@ class OrchestratorSessionImports(Sample):
                     [self.message("engine/promote.py", "RunLog")],
                 )
 
-    def test_pyproject_ignored_imports_cannot_grow(self):
+    def test_pyproject_ignores_no_imports(self):
         config = Path(REPO, "pyproject.toml").read_text()
-        edge = '    "agent_pm.linear_orchestrator.engine.prune -> agent_pm.session",\n'
-        config = config.replace("ignore_imports = [\n", "ignore_imports = [\n" + edge, 1)
+        contract = f'name = "{ORCH_SESSION_CONTRACT}"\n'
+        self.assertIn(contract, config)
+        edge = (
+            'ignore_imports = ["agent_pm.linear_orchestrator.engine.prune -> agent_pm.session"]\n'
+        )
+        config = config.replace(contract, contract + edge, 1)
         self.assertEqual(
-            self.check("engine/run.py", "", config),
-            [f"pyproject.toml: {ORCH_SESSION_CONTRACT!r} must ignore exactly ORCH_SESSION_IMPORTS"],
+            self.check("engine/prune.py", "", config),
+            [f"pyproject.toml: {ORCH_SESSION_CONTRACT!r} must ignore no imports"],
         )
 
 
