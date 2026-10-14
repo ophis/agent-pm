@@ -4,7 +4,7 @@
 #
 # The session's keys: [adapters.<name>] and [hosts]. The session reads no config file: each entry reads this file
 # through agent_pm.session.read_config(), parses [hosts] once (Host.parse_hosts) and hands both to
-# Session.configure(adapters=, hosts=) (today the deprecated Driver configures its own Session class with them).
+# Session.configure(adapters=, hosts=); bin/agent-pm-session (session/src/agent_pm/session/cli.py) is one such entry.
 
 # ── Adapters ────────────────────────────────────────────
 # [adapters.<name>]  one table per runtime, loaded only by session/src/agent_pm/session/adapters/registry.py; <name> is the
@@ -69,7 +69,7 @@ max = "max"
 #   status_line       true → tui sessions show tmux's status line
 #   workers_per_column panes per tmux grid column (the tmux Host's show), 1..9999
 #   grid_retile       when a tmux grid re-tiles: "open-close" (a pane opens or closes), "all" (also a drag or a
-#                     window resize), "off" (never by itself)
+#                     window resize), "off" (never by itself: agent-pm-session tile @N)
 [hosts]
 default = "tmux"
 

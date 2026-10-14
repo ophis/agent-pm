@@ -906,14 +906,12 @@ class SourceSuppressions(Sample):
     def test_the_real_inventory_has_matching_comments(self):
         self.assertEqual(guards.source_suppressions(REPO), [])
 
-    def test_hook_suppression_is_only_at_the_main_boundary(self):
+    def test_hook_suppression_is_only_at_the_hook_run_boundary(self):
         path = "session/src/agent_pm/session/modes/tui_hook.py"
-        reason = guards.NOQA_ALLOWED[path, "BLE001", "__main__"]
+        reason = guards.NOQA_ALLOWED[path, "BLE001", "run"]
         comment = f"# noqa: BLE001  # {reason}"
         self.assertEqual(
-            self.found(
-                {path: self.scoped("__main__", [comment]) + self.scoped("other", [comment])}
-            ),
+            self.found({path: self.scoped("run", [comment]) + self.scoped("other", [comment])}),
             [f"{path}:4: suppression BLE001 in other is not allowed"],
         )
 
@@ -2663,14 +2661,17 @@ class LegacyHostNames(Sample):
 
     def test_a_removed_name_or_file_is_stale(self):
         files = self.baseline()
-        path = f"{guards.SESSION_SRC}engine/types.py"
-        files[path] = "pane = None\n"
+        path = f"{guards.SESSION_SRC}engine/forwarding.py"
+        files[path] = files[path].replace("\nopener = None", "\n").replace("\n\n", "\n")
         self.assertEqual(
             guards.legacy_host_names(self.tree(files)),
-            [f"{path}: opener: expected 1 legacy occurrences, found 0 (TASK-369)"],
+            [f"{path}: opener: expected 4 legacy occurrences, found 0 (TASK-375)"],
         )
         del files[path]
-        self.assertEqual(len(guards.legacy_host_names(self.tree(files))), 2)
+        self.assertEqual(
+            len(guards.legacy_host_names(self.tree(files))),
+            len([key for key in guards.LEGACY_HOST_NAMES if key[0] == path]),
+        )
 
     def test_new_names_and_other_modules_have_no_exemption(self):
         files = self.baseline()

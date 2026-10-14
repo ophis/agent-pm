@@ -42,7 +42,8 @@ flowchart TB
     end
   end
   subgraph SE[agent_pm.session]
-    DR["engine/: base · hosted · forwarding · types · records<br>modes/: headless · tui · in_process<br>hosts/tmux/: host · transport · placement · grid"]
+    SC["cli.py<br>agent-pm-session"]
+    DR["engine/: base · hosted · worker · forwarding · types · records<br>modes/: headless · tui · in_process<br>hosts/tmux/: host · transport · placement · grid"]
     subgraph AD[adapters/]
       CL[claude]
       CX[codex]
@@ -57,6 +58,8 @@ flowchart TB
   HU -.->|"--issue"| R
   HU -.->|"act-as · CLI"| D
   HU -.-> W
+  HU -.-> SC
+  SC --> DR
   R -.->|detached session| RU
   RU -->|agent_pm.delegate| D
   LC -->|agent_pm.delegate| C
@@ -197,7 +200,7 @@ The old router's `--tui` is gone; the new router gains it in [TASK-332](https://
 
 ```text
 delegate/             the Delegate (one role's run), the Composer, the built-in team; shared event/ and config.py
-session/              the session: an Adapter per runtime, Modes, Hosts (tmux)
+session/              the session: an Adapter per runtime, Modes, Hosts (tmux); cli.py: agent-pm-session
 utils/                shared utilities
 manager/              cli.py, engine/crew.py, roster.py and events.py: commands and bookkeeping
 linear-orchestrator/  cli.py: router, run, promote; engine/: scheduling, client, log, ops, issues, run_comments, writeback
@@ -208,6 +211,24 @@ tests/                repo-wide checks: guards.py (rules), checks.py (runner), c
 The Delegate's `Driver`, `AgentDriver` and `InstructionDriver` live in `delegate/src/agent_pm/delegate/engine/drivers.py`; definitions: `CONTEXT.md` › Driver.
 
 Each project holds `src/agent_pm/<its package>/` (one PEP 420 namespace package `agent_pm` over the five `src/` roots) and `tests/`. Session, Delegate and orchestration configuration ships inside their packages. Each module's docstring states its behaviour.
+
+## agent-pm-session
+
+`bin/agent-pm-session` is the session layer's command (`--help` lists its subcommands and each Host's
+`--display` format). `start NAME --runtime R [--cwd D] [--resume SID] [--prompt T] [--env K=V]…
+[--display D] [-- FLAGS…]` starts a worker, a plain tui session of runtime R with its state in
+`~/.agent-pm/workers/<sid>/worker.json`; it prints the worker's Record once the runtime has run 5 s
+without exiting. Its session id is `--resume SID`, else `$AGENT_PM_SID`, else a new one; the two
+must agree. There is no default runtime. `resume NAME` prints a live worker's Record and starts
+nothing, else resumes it; `restart NAME` restarts it in place; both wait for the old runtime's
+process group to exit first (10 s, then a kill). `send NAME --key K…` takes keys as one character
+or `Enter`, `Escape`, `Tab`, `BTab`, `BSpace`, `Up`, `Down`, `Left`, `Right`, `Home`, `End`,
+`PageUp`, `PageDown`, `F1`–`F12`, after any of `C-`, `M-`, `S-`.
+
+Plain `ls` prints a header line, then one tab-separated row per session: `name`, `state`
+(`working`, `done`, `blocked` or `dead`), `runtime`, `sid` and `display`, `-` for none. `ls
+--records` prints only the Records sessions hold, one JSON line each; `--here` lists the sessions
+the caller opened (`--descendants`: and those they opened, transitively).
 
 ## Runtime policy
 

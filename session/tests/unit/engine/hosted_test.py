@@ -38,6 +38,7 @@ from agent_pm.session.engine.types import (
     Hosts,
     IdleTimeout,
     Key,
+    KeyPress,
     Mode,
     Paste,
     Reply,
@@ -130,10 +131,12 @@ class ConfiguredTest(Case):
             later.host()
         self.assertEqual(str(caught.exception), UNCONFIGURED)
 
-    def test_an_unconfigured_class_refuses_each_class_method_but_list(self):
+    def test_an_unconfigured_class_refuses_each_class_method(self):
         fresh = type("Fresh", (HostedSession,), {})
         spec = Spec(workdir=self.home, runtime="fake", mode=Mode.HEADLESS)
         for name, call in (
+            ("list", fresh.list),
+            ("list display ''", lambda: fresh.list(display="")),
             ("start", lambda: fresh.start(spec)),
             ("attach", lambda: fresh.attach("w1")),
             ("inspect", lambda: fresh.inspect(spec)),
@@ -147,7 +150,6 @@ class ConfiguredTest(Case):
             with self.subTest(name=name), self.assertRaises(ConfigError) as caught:
                 call()
             self.assertEqual(str(caught.exception), UNCONFIGURED)
-        self.assertEqual(fresh.list(display=""), [])
 
     def test_configure_takes_parsed_hosts_only(self):
         with self.assertRaises(ConfigError) as caught:
@@ -545,6 +547,11 @@ class InProcessTest(Base):
     def logged(self) -> list[dict]:
         with open(self.log, encoding="utf-8") as f:
             return [json.loads(line) for line in f]
+
+    def test_an_in_process_session_has_no_terminal_to_press_keys_into(self):
+        session, _ = self.run_in_process()
+        with self.assertRaisesRegex(DriverError, "^press: a in_process session has no terminal$"):
+            session.press((KeyPress("Escape"),))
 
     def test_a_spec_started_in_process_yields_reply_turn_end_then_exited_fr_12(self):
         self.steps(
@@ -1146,14 +1153,13 @@ class ListTest(HostedTuiBase):
         first = self.host.create("w2", SID)
         second = self.host.create("w1", "other")
         first.calls.row.return_value = SessionRow(
-            "w2", SID, "fake", ActivityState.DONE, None, None, "shown", "bye", own=False
+            "w2", SID, "fake", ActivityState.DONE, None, "shown", "bye", own=False
         )
         second.calls.row.return_value = SessionRow(
             "w1",
             "other",
             "unknown-runtime",
             ActivityState.WORKING,
-            None,
             None,
             None,
             None,
@@ -1208,15 +1214,14 @@ class ListTest(HostedTuiBase):
     def test_a_row_is_frozen_with_these_fields(self):
         self.assertEqual(
             [f.name for f in dataclasses.fields(SessionRow)],
-            ["name", "sid", "runtime", "state", "pane", "opener", "shown", "last_lines", "own"],
+            ["name", "sid", "runtime", "state", "display", "shown", "last_lines", "own"],
         )
         found = SessionRow(
             name="w1",
             sid=None,
             runtime=None,
             state="working",
-            pane=None,
-            opener=None,
+            display=None,
             shown=None,
             last_lines=None,
             own=False,

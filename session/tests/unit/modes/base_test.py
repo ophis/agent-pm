@@ -25,7 +25,7 @@ KINDS = {
     in_process.InProcessMode: Mode.IN_PROCESS,
     tui.TuiMode: Mode.TUI,
 }
-IDENTITIES = {"INNER_SESSION", "INNER_ID", "OTHER_SESSION", "OTHER_ID"}
+IDENTITIES = {"AGENT_PM_SID", "INNER_SESSION", "INNER_ID", "OTHER_SESSION", "OTHER_ID"}
 
 
 class NoModeAdapter(Adapter):
@@ -142,7 +142,12 @@ class IdentityDropTest(ChildEnvTest):
         self.assertEqual(
             identity_drop(registry(inner=InnerAdapter, other=OtherAdapter)), IDENTITIES
         )
-        self.assertEqual(identity_drop(registry()), frozenset())
+        self.assertEqual(identity_drop(registry()), frozenset({"AGENT_PM_SID"}))
+
+    def test_a_callers_start_token_never_reaches_a_runtime(self):
+        self.environ(AGENT_PM_SID="0f8fad5b-d9cb-469f-a165-70867728950e", KEEP="k")
+        env = child_env(Launch(("x",)), "/cwd", identity_drop(registry()))
+        self.assertEqual((env.get("AGENT_PM_SID"), env["KEEP"]), (None, "k"))
 
     def test_a_child_default_only_inside_its_runtime_and_at_its_value(self):
         both = registry(inner=InnerAdapter, other=OtherAdapter)

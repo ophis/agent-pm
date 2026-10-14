@@ -106,5 +106,5 @@ A manager's command executor. It owns a Roster, starts opaque argv and uses each
 A manager's ledger of launch intents and Records, entry states, holder lease and events cursor: `~/.agent-pm/managers/<name>/roster.json`. It alone writes the ledger and manages event rotation. In code: `manager/src/agent_pm/manager/engine/roster.py` and `events.py`.
 
 **Worker**:
-A Session-owned plain tui session, with its state in `~/.agent-pm/workers/<sid>/`; no role, no task.
+A Session-owned plain tui session, with its state in `~/.agent-pm/workers/<sid>/worker.json`; no role, no task. Started, restarted and resumed by `agent-pm-session`, which prints its Record. In code: `session/src/agent_pm/session/engine/worker.py`.
 _Avoid_: subagent

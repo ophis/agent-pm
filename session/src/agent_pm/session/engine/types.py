@@ -9,6 +9,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import StrEnum
 from types import MappingProxyType
+from typing import Self
 
 from agent_pm.utils import (
     environment_ok,
@@ -34,10 +35,12 @@ __all__ = [
     "Hosts",
     "IdleTimeout",
     "Key",
+    "KeyPress",
     "Launch",
     "LimitHit",
     "Liveness",
     "Mode",
+    "NamedKey",
     "NotDisplayable",
     "NoRecordedSession",
     "Paste",
@@ -470,6 +473,85 @@ class Key:
     name: str
 
 
+class NamedKey(StrEnum):
+    """KeyPress's named keys; each Host translates them."""
+
+    ENTER = "Enter"
+    ESCAPE = "Escape"
+    TAB = "Tab"
+    BTAB = "BTab"
+    BSPACE = "BSpace"
+    UP = "Up"
+    DOWN = "Down"
+    LEFT = "Left"
+    RIGHT = "Right"
+    HOME = "Home"
+    END = "End"
+    PAGE_UP = "PageUp"
+    PAGE_DOWN = "PageDown"
+    F1 = "F1"
+    F2 = "F2"
+    F3 = "F3"
+    F4 = "F4"
+    F5 = "F5"
+    F6 = "F6"
+    F7 = "F7"
+    F8 = "F8"
+    F9 = "F9"
+    F10 = "F10"
+    F11 = "F11"
+    F12 = "F12"
+
+
+MODIFIERS = {"C-": "ctrl", "M-": "meta", "S-": "shift"}
+KEY_RULE = (
+    f"want one printable character or one of {', '.join(NamedKey)}, after any of "
+    f"{', '.join(MODIFIERS)}"
+)
+
+
+@dataclass(frozen=True)
+class KeyPress:
+    """One key of `send --key`'s Host-independent notation: one printable character or a NamedKey,
+    with Ctrl, Alt (meta) and Shift; written `C-`, `M-`, `S-` before it (`C-c`, `S-Up`).
+    """
+
+    key: str
+    ctrl: bool = False
+    meta: bool = False
+    shift: bool = False
+
+    def __post_init__(self):
+        if not (
+            isinstance(self.key, str)
+            and (self.key in tuple(NamedKey) or len(self.key) == 1 and self.key.isprintable())
+        ):
+            raise ConfigError(f"key {self.key!r:.80}: {KEY_RULE}")
+        if not all(isinstance(getattr(self, flag), bool) for flag in MODIFIERS.values()):
+            raise ConfigError("key modifiers: want booleans")
+
+    @classmethod
+    def parse(cls, text) -> Self:
+        if not isinstance(text, str):
+            raise ConfigError(f"key {text!r:.80}: want text")
+        flags: dict[str, bool] = {}
+        rest = text
+        while len(rest) > 2 and rest[:2] in MODIFIERS:
+            flag = MODIFIERS[rest[:2]]
+            if flag in flags:
+                raise ConfigError(f"key {text!r:.80}: {rest[:2]} twice")
+            flags[flag] = True
+            rest = rest[2:]
+        try:
+            return cls(rest, **flags)
+        except ConfigError:
+            raise ConfigError(f"key {text!r:.80}: {KEY_RULE}") from None
+
+    def __str__(self) -> str:
+        on = (prefix for prefix, flag in MODIFIERS.items() if getattr(self, flag))
+        return "".join(on) + self.key
+
+
 class DriverError(Exception):
     """A failed start, or a call its Mode lacks."""
 
@@ -489,16 +571,15 @@ class IdleTimeout:
 
 @dataclass(frozen=True)
 class SessionRow:
-    """runtime: a tui session's (HostedSession's), else None; shown: the session showing it, ""
-    unnamed, None none; state: given its plain value too.
+    """runtime: a tui session's (HostedSession's), else None; display: its Host's, opaque; shown: the
+    session showing it, "" unnamed, None none; state: given its plain value too.
     """
 
     name: str
     sid: str | None
     runtime: str | None
     state: ActivityState
-    pane: str | None
-    opener: str | None
+    display: str | None
     shown: str | None
     last_lines: str | None
     own: bool
