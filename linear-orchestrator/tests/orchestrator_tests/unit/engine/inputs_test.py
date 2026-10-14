@@ -12,6 +12,8 @@ from agent_pm.utils import SHORT
 from orchestrator_tests.case import Case
 from orchestrator_tests.config_fixtures import HARNESS_DELEGATE
 
+from session.tests.case import configured
+
 DOCS = config.Docs(
     "ophis/private_docs", "main", {"researcher": "Research/", "pm": "Product Design/"}
 )
@@ -413,7 +415,9 @@ class InputCheckout(Case):
                 spec = delegate.Spec(
                     text, self.home, task=task, out=os.path.join(self.home, "out.md")
                 )
-                prompt = HARNESS_DELEGATE.preview("engineer", spec).plan.prompt
+                prompt = HARNESS_DELEGATE.preview(
+                    "engineer", spec, session_cls=configured({})
+                ).plan.prompt
                 self.assertIn(f"\nCheckout: {name}\n", prompt)
                 self.assertIn(
                     (
