@@ -64,6 +64,7 @@ class RoleTest(RoleCase):
         record = self.started("r", steps=[START], turns=[[block(DONE)]])
         harness, tui = record.sessions
         self.wait_event(harness, "exited")
+        self.wait_event(tui, "done", 2)
         self.assertEqual(self.words(tui), [["done"], ["done"]])
         self.assertEqual(self.words(harness), [["outcome", "done"], ["exited", "0"]])
         self.ok(self.crew("attach"))
