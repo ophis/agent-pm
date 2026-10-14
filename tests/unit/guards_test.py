@@ -2,6 +2,7 @@ import ast
 import importlib
 import os
 from pathlib import Path
+from unittest import mock
 
 from tests import guards
 from tests.case import ORCH_ROOT, REPO, SRC, Case
@@ -2320,3 +2321,16 @@ class RealTree(Case):
                     module = importlib.import_module(".".join(parts))
                     real = os.path.realpath(module.__file__)
                     self.assertEqual(os.path.commonpath([src, real]), src)
+
+
+class UnitIsolation(Sample):
+    def test_no_migration_exemption_can_be_reintroduced(self):
+        root = self.tree({"session/tests/unit/present_test.py": ""})
+        self.assertEqual(guards.unit_isolation_allowlist(root), [])
+        with mock.patch.dict(
+            guards.UNIT_ISOLATION_ALLOWED, {"session/tests/unit/present_test.py": "escape"}
+        ):
+            self.assertEqual(
+                guards.unit_isolation_allowlist(root),
+                [f"{root}/tests/guards.py: unit isolation allowlist must remain empty"],
+            )

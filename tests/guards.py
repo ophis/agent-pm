@@ -1255,11 +1255,11 @@ def unit_test_modules(repo: str) -> list[str]:
 
 
 def unit_isolation_allowlist(repo: str) -> list[str]:
-    return [
-        f"{path}: missing unit isolation exception"
-        for path in sorted(UNIT_ISOLATION_ALLOWED)
-        if not os.path.isfile(os.path.join(repo, path))
-    ]
+    return (
+        [f"{os.path.join(repo, 'tests/guards.py')}: unit isolation allowlist must remain empty"]
+        if UNIT_ISOLATION_ALLOWED
+        else []
+    )
 
 
 def shared_types(repo: str) -> list[str]:

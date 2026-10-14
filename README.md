@@ -255,5 +255,5 @@ Fake and real implementations share contract assertions.
 `.github/run_tests.py` resets HOME, temporary roots and Git configuration before supervision.
 `.github/isolation.py` installs interpreter audit hooks and unit PATH blockers for git, tmux,
 claude and codex. `tests/integration/unit_imports_integration_test.py` applies Ruff TID251 to unit
-imports. `tests/guards.py` owns the temporary migration allowlist; Phase B removes the remaining
-session exceptions after TASK-365 and TASK-386 merge. Run tests through these supervised entries.
+imports. `tests/guards.py` requires the migration allowlist to remain empty; interpreter gates
+permit no unit exemptions. Run tests through these supervised entries.

@@ -1,6 +1,5 @@
 """Interpreter gates for unit logic and sandboxed integration tools."""
 
-import ast
 import contextlib
 import inspect
 import os
@@ -30,31 +29,13 @@ GIT_ALLOWED = {
 }
 
 
-def allowlist(root):
-    path = root / "tests/guards.py"
-    if not path.exists():
-        return {}
-    tree = ast.parse(path.read_text())
-    return next(
-        ast.literal_eval(node.value)
-        for node in tree.body
-        if isinstance(node, ast.Assign)
-        and any(
-            isinstance(target, ast.Name) and target.id == "UNIT_ISOLATION_ALLOWED"
-            for target in node.targets
-        )
-    )
-
-
 class Gate:
     def __init__(self, root, sandbox, workspace=None):
         self.root = root.resolve()
         self.sandbox = Path(sandbox).resolve()
         self.workspace = Path(workspace).resolve() if workspace else self.sandbox
-        self.allowed = allowlist(self.root)
         self.current = "test discovery"
         self.unit = True
-        self.exempt = False
         self.reporting_file = None
 
     def fail(self, message):
@@ -67,7 +48,7 @@ class Gate:
         return actual.is_relative_to(self.sandbox) or actual.is_relative_to(self.workspace)
 
     def audit(self, event, args):
-        if event in DENIED and self.unit and not self.exempt:
+        if event in DENIED and self.unit:
             self.fail(f"forbidden {event}")
         if event == "subprocess.Popen":
             executable, argv, cwd, env = args
@@ -143,18 +124,16 @@ class Gate:
     @contextlib.contextmanager
     def test(self, test):
         path = Path(inspect.getfile(type(test))).resolve()
-        rel = str(path.relative_to(self.root)) if path.is_relative_to(self.root) else str(path)
-        previous = self.current, self.unit, self.exempt
+        previous = self.current, self.unit
         self.current = test.id()
         self.unit = "unit" in path.parts or path.parent == self.root / ".github"
-        self.exempt = rel in self.allowed
         path_before = os.environ.get("PATH", os.defpath)
-        if self.unit and not self.exempt:
+        if self.unit:
             os.environ["PATH"] = str(self.sandbox / "blocked-bin") + os.pathsep + path_before
         try:
             yield
         finally:
-            self.current, self.unit, self.exempt = previous
+            self.current, self.unit = previous
             os.environ["PATH"] = path_before
 
 
