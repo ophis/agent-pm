@@ -109,7 +109,7 @@ OBJECT_EXPORTS_ALLOWED = {
 
 IMPORT_BOOTSTRAPS = {
     f"{SESSION_SRC}adapters/codex/tui/start.py": "_bootstrap",
-    f"{SESSION_SRC}modes/tui_hook.py": "main",
+    f"{SESSION_SRC}modes/tui_hook.py": "_bootstrap",
 }
 
 
@@ -117,7 +117,6 @@ STANDALONE = frozenset(
     f"{SESSION_SRC}{path}"
     for path in (
         "hosts/tmux/tmux_host.py",
-        "modes/tui_hook.py",
         "adapters/codex/common/app_server.py",
     )
 )

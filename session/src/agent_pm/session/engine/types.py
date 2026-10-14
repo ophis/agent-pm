@@ -95,7 +95,7 @@ class Tier(StrEnum):
 
 
 class Word(StrEnum):
-    """A tui hook's mark for its pane's activity (modes/tui_hook.py keeps a copy)."""
+    """A tui hook's mark for its pane's activity."""
 
     DONE = "done"
     BLOCKED = "blocked"

@@ -622,6 +622,11 @@ class ImportHygiene(Sample):
 
 
 class StandaloneImports(Sample):
+    def test_tui_hook_bootstraps_package_imports(self):
+        path = f"{guards.SESSION_SRC}modes/tui_hook.py"
+        self.assertNotIn(path, guards.STANDALONE)
+        self.assertEqual(guards.IMPORT_BOOTSTRAPS[path], "_bootstrap")
+
     def found(self, source):
         files = dict.fromkeys(guards.STANDALONE, source)
         return guards.standalone_imports(self.tree(files))

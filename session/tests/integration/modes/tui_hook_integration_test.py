@@ -176,6 +176,21 @@ runpy.run_path(path, run_name="__main__")
 
 
 class ErrorLoggingTest(HookBase):
+    def test_package_import_failures_keep_a_traceback_and_one_error_line(self):
+        package = os.path.join(self.root, "agent_pm")
+        os.mkdir(package)
+        initializer = os.path.join(package, "__init__.py")
+        with open(initializer, "w") as file:
+            file.write('raise RuntimeError("first\\nsecond")\n')
+        self.assertEqual(self.hook("stop"), "tui_hook: RuntimeError: first second\n")
+        with open(os.path.join(self.dir, "hook.log")) as file:
+            trace = file.read()
+        self.assertEqual(trace.count("Traceback (most recent call last):"), 1)
+        self.assertIn(initializer, trace)
+        self.assertIn("RuntimeError: first\nsecond\n", trace)
+        self.assertNothingWritten()
+
+
     def test_adapter_failures_append_full_tracebacks_without_a_record_or_mark(self):
         callback = os.path.join(self.root, "adapter.py")
         with open(callback, "w") as file:
@@ -495,7 +510,7 @@ assert "callback_package" not in sys.modules
                         HOOK,
                         rejected,
                         self.dir,
-                        json.dumps([self.root]),
+                        json.dumps([self.root, *json.loads(SOURCE_ROOTS)]),
                         "stop",
                     ],
                     input=b"{}",
@@ -544,7 +559,7 @@ with unittest.mock.patch("os.lstat", root_owner):
                 HOOK,
                 json.dumps(files),
                 self.dir,
-                json.dumps([self.root]),
+                json.dumps([self.root, *json.loads(SOURCE_ROOTS)]),
                 "stop",
             ],
             input=b"{}",
@@ -570,7 +585,8 @@ with unittest.mock.patch("os.lstat", root_owner):
             )
         self.state.update(adapter_hook="namespace.nested.callback", words={})
         write_state(self.dir, self.state)
-        self.assertEqual(self.hook("stop", args=[self.dir, json.dumps(sources), "stop"]), "")
+        roots = [*sources, *json.loads(SOURCE_ROOTS)]
+        self.assertEqual(self.hook("stop", args=[self.dir, json.dumps(roots), "stop"]), "")
         self.assertEqual(self.records()[0]["payload"], {"callback_imported": True})
 
     def test_callback_namespace_cannot_hide_a_package_outside_source_roots(self):
@@ -587,7 +603,15 @@ except SystemExit as error:
 assert "callback_package" not in sys.modules
 """
         result = subprocess.run(
-            [sys.executable, "-c", script, HOOK, self.dir, json.dumps([source]), "stop"],
+            [
+                sys.executable,
+                "-c",
+                script,
+                HOOK,
+                self.dir,
+                json.dumps([source, *json.loads(SOURCE_ROOTS)]),
+                "stop",
+            ],
             input=b"{}",
             capture_output=True,
             env={**self.env, "PYTHONPATH": self.root},
@@ -662,16 +686,18 @@ assert "callback_package" not in sys.modules
             os.mkdir(source)
             with open(os.path.join(source, "source_marker.py"), "w") as file:
                 file.write(f"VALUE = {value!r}\n")
+        roots = [*sources, *json.loads(SOURCE_ROOTS)]
         callback = os.path.join(sources[0], "adapter.py")
         with open(callback, "w") as file:
             file.write(
-                """import sys
+                f"""import sys
 from source_marker import VALUE
 def on_hook(label, payload, state):
     payload["source"] = VALUE
     payload["roots"] = sys.path[:2]
     payload["counts"] = [sys.path.count(path) for path in sys.path[:2]]
-    payload["tail"] = sys.path[2:]
+    payload["import_roots"] = sys.path[:{len(roots)}]
+    payload["tail"] = sys.path[{len(roots)}:]
 """
             )
         self.state.update(adapter_hook="adapter", words={})
@@ -685,7 +711,7 @@ for _ in range(2):
     main([folder, encoded, "stop"], io.BytesIO(b"{}"))
 """
         result = subprocess.run(
-            [sys.executable, "-I", "-c", script, HOOK, self.dir, json.dumps(sources)],
+            [sys.executable, "-I", "-c", script, HOOK, self.dir, json.dumps(roots)],
             capture_output=True,
             env=self.env,
             check=True,
@@ -698,6 +724,7 @@ for _ in range(2):
             self.assertEqual(
                 (payload["source"], payload["roots"], payload["counts"]), ("first", sources, [1, 1])
             )
+            self.assertEqual(payload["import_roots"], roots)
             self.assertNotIn(SRC["session"], payload["tail"])
             self.assertNotIn(SRC["utils"], payload["tail"])
 
