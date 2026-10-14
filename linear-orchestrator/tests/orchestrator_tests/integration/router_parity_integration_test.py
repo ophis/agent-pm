@@ -15,6 +15,8 @@ from orchestrator_tests.integration.flow_fixtures import (
     ACCOUNTS,
     HARNESS_EMAIL,
     HUMAN,
+    LIGHT_RESEARCH,
+    MANAGER,
     PROJECT,
     REPO,
     TIMEOUT,
@@ -22,6 +24,7 @@ from orchestrator_tests.integration.flow_fixtures import (
     usage,
 )
 from orchestrator_tests.integration.segments import agent_calls
+from orchestrator_tests.unit.board_ids import TASK_GROUP
 
 from delegate.tests.replies import block, mark, option
 from session.tests import live_tmux
@@ -34,6 +37,7 @@ START = mark("start", STARTED)
 DONE = block({"status": "done", "title": "Session registry", "summary": READY, "url": PR})
 # a hang answer's delay: the first router holds the lock that long
 HOLD = 10
+MYSTERY = "00000000-0000-4000-8000-000000000031"
 
 
 class Parity(BinFlow):
@@ -238,6 +242,65 @@ class Recover(Parity):
         self.assertEqual(author, HARNESS_EMAIL)
         self.assertTrue(body.startswith(f"The interrupted agent run's {why}; needs a look."), body)
         self.assertEqual(self.subscribers(ID), [HUMAN])
+
+
+class Refusals(Parity):
+    def assert_nothing_started(self):
+        self.assertEqual((self.runs(), agent_calls(self.calls())), ([], []))
+        sessions = self.server.tmux("list-sessions", "-F", "#{session_name}")
+        self.assertEqual(sessions.stdout.split(), [MANAGER], sessions.stderr)
+
+    def test_a_new_run_whose_target_check_fails_is_bounced_and_starts_no_agent_run(self):
+        """v1 CLAUDE.md › Architecture: router.outer, a build role: `target.check` Invalid on a
+        new agent run → `writeback.bounce`, no agent run; the bounce acts as the role's account
+        and its move to In Review subscribes each human_members email.
+        """
+        self.seed(ID, "ENG: Session registry")
+        self.gh["repos"][REPO]["permissions"]["push"] = False
+        self.write_gh()
+        self.scene([START, DONE], rate_limit=usage(0.5))
+        self.tick()
+        self.assert_nothing_started()
+        self.assertEqual(self.state(ID), "in_review")
+        self.assertEqual(
+            self.history(ID),
+            [("todo", "in_progress", HARNESS_EMAIL), ("in_progress", "in_review", ENGINEER)],
+        )
+        [(author, body)] = self.comments(ID)
+        self.assertEqual(author, ENGINEER)
+        self.assertIn("repo check failed: ", body)
+        self.assertIn(f"{REPO}: no push permission", body)
+        self.assertEqual(self.subscribers(ID), [HUMAN])
+        [bounce] = [line for line in self.routed() if line.startswith(f"router bounce {ID} ")]
+        self.assertTrue(bounce.endswith(f"{REPO}: no push permission"), bounce)
+        self.assertIn(f"router launch {ID} exit=0", self.routed())
+
+    def test_bad_task_labels_send_their_issues_to_in_review_unclaimed(self):
+        """v1 CLAUDE.md › Architecture and v1 router_test.test_fr7_invalid_label_goes_to_review:
+        a Tasks label that is not one of the role's tasks, or not in [task_labels], is a
+        claim-skip: the issue goes to In Review with a comment saying what to fix, no agent run.
+        """
+        self.fake.label_group(TASK_GROUP, "Tasks", {MYSTERY: "Mystery"})
+        self.seed(ID, "ENG: Session registry", labels=[LIGHT_RESEARCH])
+        self.seed(OTHER, "ENG: Session index", labels=[MYSTERY])
+        self.scene([START, DONE], rate_limit=usage(0.5))
+        self.tick()
+        self.assert_nothing_started()
+        for ident, said in (
+            (ID, 'Task label "Light Research" is not one of engineer\'s tasks ('),
+            (OTHER, 'Task label "Mystery" is not in '),
+        ):
+            with self.subTest(ident):
+                self.assertIn(
+                    f"router claim-skip {ident} to=in_review reason=bad task label", self.routed()
+                )
+                self.assertEqual(self.state(ident), "in_review")
+                self.assertEqual(self.history(ident), [("todo", "in_review", HARNESS_EMAIL)])
+                [(author, body)] = self.comments(ident)
+                self.assertEqual(author, HARNESS_EMAIL)
+                self.assertTrue(body.startswith(said), body)
+                self.assertIn("then move the issue back to Todo.", body)
+                self.assertEqual(self.subscribers(ident), [HUMAN])
 
 
 if __name__ == "__main__":
