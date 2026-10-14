@@ -2324,6 +2324,21 @@ class RealTree(Case):
 
 
 class UnitIsolation(Sample):
+    def test_tests_cannot_patch_or_reach_the_interpreter_gate(self):
+        samples = (
+            "from unittest import mock\nmock.patch('isolation.Gate.audit')\n",
+            "from unittest.mock import patch\npatch.object('isolation.Gate', 'audit')\n",
+            "import run_tests as runner\nrunner.GATE.unit = False\n",
+            "from run_tests import GATE as gate\ngate.unit = False\n",
+            "import run_tests\nrun_tests.isolation.Gate.audit = lambda: None\n",
+        )
+        for index, text in enumerate(samples):
+            with self.subTest(text=text):
+                path = f".github/sample{index}_test.py"
+                found = guards.test_gate_mutation(self.tree({path: text}))
+                self.assertTrue(found, text)
+                self.assertTrue(all(line.startswith(path + ":") for line in found), found)
+
     def test_no_migration_exemption_can_be_reintroduced(self):
         root = self.tree({"session/tests/unit/present_test.py": ""})
         self.assertEqual(guards.unit_isolation_allowlist(root), [])

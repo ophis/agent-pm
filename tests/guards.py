@@ -1262,6 +1262,33 @@ def unit_isolation_allowlist(repo: str) -> list[str]:
     )
 
 
+def test_gate_mutation(repo: str) -> list[str]:
+    found = set()
+    for rel, text in _tree_files(repo, ".py"):
+        if "tests" not in rel.split("/") and not (
+            rel.startswith(".github/") and rel.endswith("_test.py")
+        ):
+            continue
+        tree = ast.parse(text)
+        aliases = _boundary_bindings(tree)
+        for node in ast.walk(tree):
+            name = _boundary_name(node, aliases)
+            if isinstance(node, ast.Name | ast.Attribute) and any(
+                _within(name, target) for target in ("run_tests.GATE", "run_tests.isolation")
+            ):
+                found.add(f"{rel}:{node.lineno}: interpreter gate access")
+            if not isinstance(node, ast.Call) or not node.args:
+                continue
+            call = _boundary_name(node.func, aliases)
+            target = _boundary_name(node.args[0], aliases)
+            if ("patch" in call.split(".") or call in {"setattr", "delattr"}) and any(
+                _within(target, name)
+                for name in ("isolation", "run_tests.GATE", "run_tests.isolation")
+            ):
+                found.add(f"{rel}:{node.lineno}: interpreter gate patch")
+    return sorted(found)
+
+
 def shared_types(repo: str) -> list[str]:
     found = []
     for project in PROJECTS:
