@@ -223,16 +223,31 @@ class TuiTest(Base):
         access = dataclasses.replace(self.spec.access, env={"PYTHONPATH": "/a b;c"})
         self.spec = dataclasses.replace(self.spec, access=access)
         adapter = CodexAdapter({**self.adapter.config, "env": {"PYTHONPATH": "/config"}})
-        _, launch, data = self.launch(adapter=adapter)
-        self.assertEqual(data["pythonpath"], "/a b;c")
+        _, launch, _ = self.launch(adapter=adapter)
+        self.assertEqual(launch.env[tui.CLIENT_PYTHONPATH], "/a b;c")
         self.assertEqual(launch.env["PYTHONPATH"], os.pathsep.join(dict.fromkeys(PACKAGE_ROOTS)))
         state = self.common.bind(str(self.work), self.spec.sid, NATIVE)
         self.rollout()
         self.spec = dataclasses.replace(self.spec, access=Access())
-        _, resumed, data = self.launch(resume=True, adapter=adapter)
-        self.assertEqual(data["pythonpath"], "/a b;c")
+        _, resumed, _ = self.launch(resume=True, adapter=adapter)
+        self.assertEqual(resumed.env[tui.CLIENT_PYTHONPATH], "/a b;c")
         self.assertNotIn("/a b;c", resumed.resume)
         self.assertEqual(self.common.resume_launch(state).env["PYTHONPATH"], "/a b;c")
+
+    def test_no_env_value_reaches_the_argv_new_or_resumed(self):
+        secrets = ("sk-fake-config", "sk-fake-access", "/sk-fake-path")
+        adapter = CodexAdapter({**self.adapter.config, "env": {"CFG_TOKEN": secrets[0]}})
+        access = dataclasses.replace(self.spec.access, env={"ACCESS_TOKEN": secrets[1]})
+        self.spec = dataclasses.replace(self.spec, access=access, env={"PYTHONPATH": secrets[2]})
+        _, launch, _ = self.launch(adapter=adapter)
+        self.common.bind(str(self.work), self.spec.sid, NATIVE)
+        self.rollout()
+        _, resumed, _ = self.launch(resume=True, adapter=adapter)
+        for each in (launch, resumed):
+            argv = "\0".join(each.argv)
+            for secret in secrets:
+                self.assertNotIn(secret, argv)
+            self.assertEqual(each.env[tui.CLIENT_PYTHONPATH], secrets[2])
 
     def test_invalid_launch_plan_saves_no_recovery_state(self):
         with (
@@ -293,7 +308,7 @@ class TuiTest(Base):
             _, launch, _ = self.launch()
         self.assertNotIn("CODEX_CI", launch.env)
         self.assertNotIn("NO_COLOR", launch.env)
-        self.assertEqual(launch.unset, self.common.UNSET)
+        self.assertEqual(launch.unset, (*self.common.UNSET, tui.CLIENT_PYTHONPATH))
         self.assertIn("CODEX_THREAD_ID", launch.unset)
         second = dataclasses.replace(self.spec, sid="explicit-env", tier=None, effort=None)
         adapter = CodexAdapter({"env": {"CODEX_CI": "configured", "PAGER": "less"}})
@@ -781,7 +796,6 @@ class PlanTest(PlanCase):
                 "workdir",
                 "sid",
                 "store",
-                "pythonpath",
             },
         )
         self.assertEqual(data["hook"], list(self.plan.hook.argv))

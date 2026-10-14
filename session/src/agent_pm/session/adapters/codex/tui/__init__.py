@@ -39,6 +39,8 @@ PASSED = ("-c", "--enable", "--disable")
 
 START = f"{__name__}.start"  # run as python -P -s -m on this layer's source roots
 
+CLIENT_PYTHONPATH = "AGENT_PM_CLIENT_PYTHONPATH"  # START's env: the client's PYTHONPATH, never argv
+
 
 HOOKS = (
     ("SessionStart", "sessionStart", "activity"),
@@ -59,7 +61,6 @@ FIELDS = frozenset(
         "workdir",
         "sid",
         "store",
-        "pythonpath",
     }
 )
 
@@ -78,7 +79,6 @@ class LaunchPlan:
     workdir: str
     sid: str
     store: str
-    pythonpath: str | None  # the client's; START itself runs on this layer's roots
 
 
 def _hook_identity(value) -> tuple[str, str] | None:
@@ -144,16 +144,20 @@ class CodexTui(Tui):
             self.state.workdir,
             self.state.sid,
             store,
-            env.get("PYTHONPATH", os.environ.get("PYTHONPATH")),
         )
+        pythonpath = env.get("PYTHONPATH", os.environ.get("PYTHONPATH"))
         try:
             encoded = encode(plan)
         except ValueError as exc:
             raise ConfigError(str(exc)) from exc
         launch = Launch(
             (os.path.realpath(sys.executable), "-P", "-s", "-m", START, encoded),
-            env={**env, **source_path(module_roots(sys.modules[__name__], agent_pm.utils))},
-            unset=common.UNSET,
+            env={
+                **env,
+                **source_path(module_roots(sys.modules[__name__], agent_pm.utils)),
+                **({CLIENT_PYTHONPATH: pythonpath} if pythonpath is not None else {}),
+            },
+            unset=(*common.UNSET, CLIENT_PYTHONPATH),
             cwd=snapshot.cwd,
             project=snapshot.project,
             transcript=common.transcript(self.state) if resume else "",
@@ -268,9 +272,6 @@ def decode(data: object) -> LaunchPlan:
         raise ValueError("Codex tui launch: invalid prompt")
     if not isinstance(data["sid"], str):
         raise ValueError("Codex tui launch: invalid recovery identity")
-    pythonpath = data["pythonpath"]
-    if pythonpath is not None and (not isinstance(pythonpath, str) or "\0" in pythonpath):
-        raise ValueError("Codex tui launch: invalid PYTHONPATH")
     return LaunchPlan(
         executable,
         selection,
@@ -279,7 +280,6 @@ def decode(data: object) -> LaunchPlan:
         workdir,
         data["sid"],
         store,
-        pythonpath,
     )
 
 
