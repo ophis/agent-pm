@@ -103,6 +103,15 @@ class Runs(RunCase):
         self.assertEqual(view.resume(), record)
         self.assertTrue(owner.alive())
 
+    def test_forget_has_its_delegate_forget_the_run(self):
+        self.start()
+        view = LinearRun.attach("TASK-1", cfg=self.cfg)
+        view.close()
+        view.forget()
+        with self.assertRaises(DelegateConfigError):
+            LinearRun.attach("TASK-1", cfg=self.cfg)
+        self.assertTrue(os.path.isdir(self.cfg.run_dir("TASK-1")))
+
     def test_missing_record_provider_or_invalid_identity_refuses_attach(self):
         with self.assertRaisesRegex(ConfigError, "no recorded run"):
             LinearRun.attach("TASK-1", cfg=self.cfg)

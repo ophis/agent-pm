@@ -16,7 +16,7 @@ def text() -> str:
 
 def command(step: int) -> str:
     line = re.search(rf"^{step}\. .*$", text(), re.M)[0]
-    return re.search(r"`(env [^`]+)`", line)[1]
+    return re.search(r"`((?:env|agent-pm-delegate) [^`]+)`", line)[1]
 
 
 def head() -> str:
@@ -26,7 +26,7 @@ def head() -> str:
 
 def prefix() -> str:
     """
-    What step 4 puts before each command of the prompt that runs an agent_pm module or team tool.
+    What step 4 puts before each command of the prompt that runs a team tool.
     """
     return command(4)
 

@@ -122,7 +122,7 @@ max_runs = 3
 #              and [clients] tables are refused; a role table holding the old
 #              task-level keys is an error
 [core.roles.researcher]
-# the gate sets the import roots itself; why `env`: delegate/skills/act-as/SKILL.md
-gate = "env PYTHONPATH={{pythonpath}} python3 -P -m agent_pm.linear_orchestrator.cli router --brake researcher"
+# the gate is this installation's bin/ command: the router puts that bin/ on its runs' PATH
+gate = "agent-pm-linear router --brake researcher"
 # local: [linear_orchestrator.core.roles.researcher]
 # local: cwd = "~/src/<name>"

@@ -5,6 +5,7 @@ import sys
 from tests.case import REPO
 from tests.guard_checks import exports
 from tests.guard_data import OBJECT_EXPORTS_ALLOWED
+from tests.guard_data.delegate import DELEGATE_INTERFACE, DELEGATE_INTERFACE_MODULES
 from tests.guard_data.session import SESSION_INTERFACE, SESSION_INTERFACE_MODULES
 from tests.guard_samples import PKG, Sample
 
@@ -278,7 +279,6 @@ class EventObjectExports(Sample):
                     ("delegate", "delegate"),
                     ("delegate", "delegate/composer"),
                     ("manager", "manager"),
-                    ("linear-orchestrator", "linear_orchestrator"),
                 )
             }
         )
@@ -404,6 +404,49 @@ class DelegateObjectExports(Sample):
                         self.exports(package, bad, ["BAD"]),
                         [f"{rel}: __all__ exports function BAD (FR-44)"],
                     )
+
+
+class OrchestratorObjectExports(Sample):
+    INIT = "linear-orchestrator/src/agent_pm/linear_orchestrator/__init__.py"
+
+    def found(self, source):
+        root = self.tree(
+            {
+                "delegate/src/agent_pm/delegate/event/__init__.py": "__all__ = []\n",
+                "linear-orchestrator/src/agent_pm/linear_orchestrator/engine/run.py": (
+                    "class LinearRun: pass\ndef launch(): pass\n"
+                ),
+                self.INIT: source,
+            }
+        )
+        return [e for e in exports.object_exports(root) if e.startswith(self.INIT)]
+
+    def test_classes_and_constants_pass(self):
+        source = (
+            "from agent_pm.linear_orchestrator.engine.run import LinearRun\n"
+            "KINDS = ('a',)\n__all__ = ['LinearRun', 'KINDS']\n"
+        )
+        self.assertEqual(self.found(source), [])
+
+    def test_an_exported_function_fails(self):
+        for source in (
+            "def launch(): pass\n__all__ = ['launch']\n",
+            "from agent_pm.linear_orchestrator.engine.run import launch\n__all__ = ['launch']\n",
+        ):
+            with self.subTest(source=source):
+                self.assertEqual(
+                    self.found(source), [f"{self.INIT}: __all__ exports function launch (FR-44)"]
+                )
+
+    def test_the_package_must_define_all(self):
+        self.assertEqual(
+            self.found("from agent_pm.linear_orchestrator.engine.run import LinearRun\n"),
+            [f"{self.INIT}: no literal __all__"],
+        )
+
+    def test_a_missing_package_init_fails(self):
+        root = self.tree({"delegate/src/agent_pm/delegate/event/__init__.py": "__all__ = []\n"})
+        self.assertIn(f"{self.INIT}: no literal __all__", exports.object_exports(root))
 
 
 class ObjectExports(Sample):
@@ -578,4 +621,59 @@ class SessionInterfaceSnapshot(Sample):
         self.assertEqual(
             exports.session_interface_snapshot(self.tree({"README.md": ""})),
             [f"{SESSION_INTERFACE}: missing"],
+        )
+
+
+class DelegateInterfaceSnapshot(Sample):
+    def snapshot(self) -> dict:
+        with open(os.path.join(REPO, DELEGATE_INTERFACE), encoding="utf-8") as f:
+            return json.load(f)
+
+    def checked(self, snapshot) -> list[str]:
+        return exports.delegate_interface_snapshot(
+            self.tree({DELEGATE_INTERFACE: json.dumps(snapshot)})
+        )
+
+    def test_the_repository_matches_its_snapshot(self):
+        self.assertEqual(exports.delegate_interface_snapshot(REPO), [])
+
+    def test_the_snapshot_covers_the_delegate_package_and_its_signatures(self):
+        snapshot = self.snapshot()
+        self.assertEqual(DELEGATE_INTERFACE_MODULES, ("agent_pm.delegate",))
+        self.assertEqual(
+            snapshot["agent_pm.delegate.Delegate.resume"],
+            "def(self:POSITIONAL_OR_KEYWORD, mode:KEYWORD_ONLY=None)",
+        )
+        self.assertEqual(
+            snapshot["agent_pm.delegate.Delegate.attach"],
+            "classmethod(cls:POSITIONAL_OR_KEYWORD, record_or_workdir:POSITIONAL_OR_KEYWORD, "
+            "sid:KEYWORD_ONLY=None)",
+        )
+        self.assertIn("agent_pm.delegate.DelegateEvent", snapshot)
+
+    def test_a_changed_removed_or_added_export_or_signature_fails(self):
+        key = "agent_pm.delegate.Delegate.resume"
+        snapshot = self.snapshot()
+        have = snapshot[key]
+        for changed, want in (
+            (
+                {**snapshot, key: "def(self:POSITIONAL_OR_KEYWORD)"},
+                f"{DELEGATE_INTERFACE}: {key}: def(self:POSITIONAL_OR_KEYWORD) -> {have}",
+            ),
+            (
+                {k: v for k, v in snapshot.items() if k != key},
+                f"{DELEGATE_INTERFACE}: {key}: absent -> {have}",
+            ),
+            (
+                {**snapshot, "agent_pm.delegate.run": "def()"},
+                f"{DELEGATE_INTERFACE}: agent_pm.delegate.run: def() -> absent",
+            ),
+        ):
+            with self.subTest(want=want):
+                self.assertEqual(self.checked(changed), [want])
+
+    def test_a_missing_snapshot_fails(self):
+        self.assertEqual(
+            exports.delegate_interface_snapshot(self.tree({"README.md": ""})),
+            [f"{DELEGATE_INTERFACE}: missing"],
         )

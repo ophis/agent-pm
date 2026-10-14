@@ -11,6 +11,7 @@ from unittest import mock
 from agent_pm.delegate import ConfigError, Result, Spec
 from agent_pm.delegate.composer import Composer, RunParams
 from agent_pm.delegate.engine.harness_delegate import HarnessDelegate
+from agent_pm.delegate.engine.state import RunState
 from agent_pm.session import DriverError, Exited, Liveness, Mode, Reply
 from agent_pm.session import Spec as SessionSpec
 
@@ -30,6 +31,29 @@ class CloseTest(HarnessCase):
         ):
             HarnessDelegate.attach(record).close()
         self.assertEqual(str(caught.exception), f"close {name}: tmux: boom")
+
+
+class ForgetTest(HarnessCase):
+    def setUp(self):
+        super().setUp()
+        self.state = os.path.join(self.agent_pm, "delegates")
+
+    def test_forget_deletes_the_runs_state_dir_files_and_keeps_its_workdir(self):
+        view = HarnessDelegate.attach(self.make().detach())
+        view.close()
+        self.assertTrue(os.path.isfile(self.state_record()))
+        view.forget()
+        self.assertEqual(os.listdir(self.state), [])
+        self.assertTrue(os.path.isfile(os.path.join(self.work, "delegate.json")))
+        view.forget()
+        self.assertEqual(os.listdir(self.state), [])
+
+    def test_a_run_holding_its_run_lock_is_refused_and_keeps_its_files(self):
+        view = HarnessDelegate.attach(self.make().detach())
+        view.close()
+        with RunState(self.work).run_lock(), self.assertRaisesRegex(ConfigError, "running"):
+            view.forget()
+        self.assertTrue(os.path.isfile(self.state_record()))
 
 
 class PreviewTest(HarnessCase):

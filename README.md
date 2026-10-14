@@ -23,7 +23,7 @@ flowchart TB
     CC[Control/resume commands]
   end
   subgraph MG[agent_pm.manager]
-    W["engine/crew.py"] --> RS["engine/roster.py"]
+    MC["cli.py<br>agent-pm-crew"] --> W["engine/crew.py"] --> RS["engine/roster.py"]
   end
   subgraph LO[agent_pm.linear_orchestrator]
     LCLI["cli.py<br>agent-pm-linear"]
@@ -62,7 +62,7 @@ flowchart TB
   LD -.->|"router · promote"| LCLI
   HU -.->|"router --issue"| LCLI
   HU -.->|"act-as · CLI"| D
-  HU -.-> W
+  HU -.-> MC
   HU -.-> SC
   SC --> DR
   LCLI --> R & PP & WB
@@ -97,7 +97,7 @@ Before upgrading, close running agent-pm sessions: earlier sessions lack generat
 - `ctmux <name>` (`manager/skills/tmux/scripts/ctmux`): the commander's tmux session `<name>`, attached through iTerm2's tmux integration (`-CC`). A new session's shell runs under `agent-pm-crew hold --manager=<name>`, which holds that manager's lease while the shell lives: start the commander's client in it. `agent-pm-crew` must be on the tmux server's PATH. `ctmux --install` copies the script to `~/.agent-pm/bin/ctmux` and prints that path.
 - `/agent-pm:manage`: coordinate the commander session through Crew; command guidance: `manager/skills/manage/SKILL.md`.
 - `/agent-pm:act-as <role>[:<task>] <input>`: run a core role in this conversation, on that task or one it picks: `delegate/skills/act-as/SKILL.md`.
-- Your own roles, tasks and templates, outside the plugin: `delegate/src/agent_pm/delegate/config.toml`'s `team_dirs` comment; `agent-pm-delegate run --list` (`delegate/src/agent_pm/delegate/cli.py`) lists every role and task.
+- Your own roles, tasks, templates and tools, outside the plugin: `delegate/src/agent_pm/delegate/config.toml`'s `team_dirs` comment; `agent-pm-delegate run --list` (`delegate/src/agent_pm/delegate/cli.py`) lists every role and task.
 
 ## Setup
 
@@ -114,8 +114,29 @@ Requires macOS, Install's requirements and `gh` logged in as you. The Linear orc
    ```bash
    security add-generic-password -a frank.agent.w -s linear-api-key -w   # config.local.toml: [linear_orchestrator] harness_key
    ```
+5. Run each job once by hand; `--dry-run` prints the plan and changes nothing:
+   ```bash
+   bin/agent-pm-linear router --dry-run
+   bin/agent-pm-linear promote --dry-run
+   ```
+6. Install the launchd jobs by copying `linear-orchestrator/launchd/`'s plists. They keep the old jobs' labels, so `bootout` first unloads any old router or promote job and the copy replaces its plist: only one set runs. `enable` clears a `launchctl disable`, which would block `bootstrap`:
+   ```bash
+   mkdir -p ~/.agent-pm/logs   # the plists' log dir; launchd can't start a job without it
+   for job in router promote; do
+     launchctl bootout gui/$(id -u)/com.ophis.agent-pm.$job 2>/dev/null   # fails harmlessly if none is loaded
+     cp linear-orchestrator/launchd/com.ophis.agent-pm.$job.plist ~/Library/LaunchAgents/
+     launchctl enable gui/$(id -u)/com.ophis.agent-pm.$job
+     launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.ophis.agent-pm.$job.plist
+   done
+   launchctl list | grep com.ophis.agent-pm   # exactly the two jobs
+   ```
 
-launchd scheduling of router and promote returns with [TASK-379](https://linear.app/ophis-workgroup/issue/TASK-379).
+The plists run `/Users/francis/playground/agent-pm/bin/agent-pm-linear` and log to `/Users/francis/.agent-pm/logs/orchestrator.jsonl` (launchd doesn't expand `~`): with another checkout or `work_dir`, edit those paths. Their PATH holds `claude` (`~/.local/bin`) and tmux, `gh` and Python 3.11+ (`/opt/homebrew/bin`). The router runs at :00 and :30 with `--now`, which skips its 01:00–06:59 hours check (drop it to run only at night); promote runs every 5 minutes. To change a job, edit its plist here and rerun step 6. To uninstall one:
+
+```bash
+launchctl bootout gui/$(id -u)/com.ophis.agent-pm.<job>
+rm ~/Library/LaunchAgents/com.ophis.agent-pm.<job>.plist
+```
 
 ### Local configuration migration
 
@@ -161,7 +182,7 @@ flowchart LR
 - **Order work:** the router claims by priority, then later role, then oldest. "Y blocks X": X is claimed only once every direct blocker is Done, Canceled or Duplicate (archived counts as done, an unreadable blocker as not done); the router logs a `blocked` event naming Y.
 - **Approve:** move to Handoff, commenting what's next (optional for a PRD). A PRD's target repo is the project's `[project_repos]` entry, which the PM's hand-off comment names; without one, comment `Repo: <owner>/<name>`; a `Repo:` line in your comment always wins. After a 10-minute undo window (pull it back out of Handoff), promote creates the next role's issue in the same project and marks this one Done; it carries the source's output links and your comments.
 - **Revise:** comment, move back to Todo; the agent picks up where it left off. On an engineer issue your PR comments and reviews count too; other authors' reach the build as review input, but only yours start a new build. After 4 attempts (a new agent run that failed before it started counts) an unfinished issue goes to In Review; a `human_members` user moving it back to Todo resets the count.
-- **Finish:** Done and Canceled are yours to set. 24 hours later, `src/` (clones and worktrees), `publish/` (the docs clone) and `tmp/` in `<work_dir>/work/<ID>/` are deleted; the rest stays. In each local clone those worktrees came from, prune drops their records and deletes the issue's `<ID>-*` branches that origin holds, keeping and reporting the others. Lost: uncommitted changes, commits never pushed from a detached HEAD or a submodule, and, as `git worktree prune` covers the whole clone, the record of any of your worktrees whose folder is missing then, unless you `git worktree lock` it. pm and engineer issues are archived then too: restore one in Linear before reworking it.
+- **Finish:** Done and Canceled are yours to set. 24 hours later, its run is closed, its Delegate state in `~/.agent-pm/delegates/` and `src/` (clones and worktrees), `publish/` (the docs clone) and `tmp/` in `<work_dir>/work/<ID>/` are deleted; the rest stays. In each local clone those worktrees came from, prune drops their records and deletes the issue's `<ID>-*` branches that origin holds, keeping and reporting the others. Lost: uncommitted changes, commits never pushed from a detached HEAD or a submodule, and, as `git worktree prune` covers the whole clone, the record of any of your worktrees whose folder is missing then, unless you `git worktree lock` it. pm and engineer issues are archived then too: restore one in Linear before reworking it.
 
 ### Task labels
 
@@ -220,7 +241,7 @@ delegate/             the Delegate (one role's run), the Composer, the built-in 
 session/              the session: an Adapter per client, Runtimes, Hosts (tmux); cli.py: agent-pm-session
 utils/                shared utilities
 manager/              cli.py, engine/crew.py, roster.py and events.py: commands and bookkeeping
-linear-orchestrator/  cli.py: router, run, promote, run queries, writeback; engine/: scheduling, client, log, ops, issues, run_comments, writeback
+linear-orchestrator/  cli.py: router, run, promote, run queries, writeback; engine/: scheduling, client, log, ops, issues, run_comments, writeback; launchd/: router and promote plists
 tests/                repo-wide checks: guard_checks/ (rules), guard_data/ (each layer's exceptions), checks.py (runner), case.py and suites
 .github/              CI workflows and their helpers
 ```

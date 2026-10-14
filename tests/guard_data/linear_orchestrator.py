@@ -20,6 +20,9 @@ ORCH_FILES = f"{ORCH_PROJECT}/{ORCH_SRC}"
 ORCH_SESSION_CONTRACT = "linear_orchestrator reaches session only through delegate"
 
 
+OBJECT_EXPORT_MODULES = (f"{ORCH_FILES}__init__.py",)
+
+
 # FR-25: the router only triggers a run; its Delegate's harness runs it and calls write-back back
 ORCH_ABSENT = ("engine/run.py",)
 

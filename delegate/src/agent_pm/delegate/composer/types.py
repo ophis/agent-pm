@@ -126,6 +126,18 @@ class Team:
 
 
 @dataclass(frozen=True)
+class ApprovedCommand:
+    """A requested command as the team text writes it (text: its names, no trailing ` *`) and as it
+    is approved (rule: each word holding a placeholder filled and shell-quoted); quoted when the
+    quoting changed a word, the prompt then writing the rule in place of the text.
+    """
+
+    text: str
+    rule: str
+    quoted: bool
+
+
+@dataclass(frozen=True)
 class Intent:
     dirs: tuple[str, ...]
     reads: tuple[str, ...]

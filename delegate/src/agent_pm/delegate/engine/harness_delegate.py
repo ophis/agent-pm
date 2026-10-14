@@ -568,6 +568,9 @@ class HarnessDelegate(Delegate):
             except DriverError as error:
                 raise DriverError(f"close {state.harness_name}: {error}") from error
 
+    def forget(self) -> None:
+        self.store.remove()
+
     def session_info(self) -> SessionStatus:
         """Its own live agent session's status, else the plan's: an attached one lacks its env;
         never recorded (its launch failed): not resumable.
