@@ -4,6 +4,7 @@ import contextlib
 import fcntl
 import inspect
 import os
+import stat
 import sys
 import tempfile
 import traceback
@@ -163,6 +164,12 @@ class Gate:
                 directory = env.get("TMUX_TMPDIR", "")
                 if not directory or not self.inside(directory):
                     self.fail("tmux requires a private TMUX_TMPDIR or -S socket")
+                try:
+                    metadata = Path(directory).lstat()
+                    if not stat.S_ISDIR(metadata.st_mode) or metadata.st_uid != os.getuid():
+                        self.fail("tmux requires a real TMUX_TMPDIR directory owned by the user")
+                except OSError:
+                    self.fail("tmux requires an existing TMUX_TMPDIR directory")
                 socket = (
                     env.get("TMUX", "").split(",")[0] if label is None else ""
                 ) or os.path.join(directory, f"tmux-{os.getuid()}", label or "default")

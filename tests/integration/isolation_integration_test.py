@@ -16,6 +16,7 @@ from utils.tests.sandbox import clean_env
 
 SCRIPT = """import json, os, subprocess, sys
 from pathlib import Path
+from unittest import mock
 import isolation
 
 root, sandbox, marker = map(Path, sys.argv[1:])
@@ -62,8 +63,12 @@ except RuntimeError:
 else:
     raise AssertionError("reporting bypassed the write gate")
 gate.unit = False
+(sandbox / "linked").symlink_to(sandbox, target_is_directory=True)
 bad = [
     ("tmux", ["tmux", "ls"], {}),
+    ("tmux", ["tmux", "ls"], {"TMUX_TMPDIR": str(sandbox / "missing")}),
+    ("tmux", ["tmux", "ls"], {"TMUX_TMPDIR": str(sandbox / "linked")}),
+    ("tmux", ["tmux", "ls"], {"TMUX_TMPDIR": str(sandbox / "owned")}),
     ("tmux", ["tmux", "-S", str(marker), "ls"], {}),
     ("tmux", ["tmux", "-S" + str(marker), "ls"], {"TMUX_TMPDIR": str(sandbox)}),
     ("tmux", ["tmux", "-uS", str(marker), "ls"], {"TMUX_TMPDIR": str(sandbox)}),
@@ -79,6 +84,13 @@ for exe, argv, env in bad:
         pass
     else:
         raise AssertionError("integration tool escaped")
+with mock.patch("os.getuid", return_value=os.getuid() + 1):
+    try:
+        sys.audit("subprocess.Popen", "tmux", ["tmux", "ls"], None, {"TMUX_TMPDIR": str(sandbox)})
+    except RuntimeError:
+        pass
+    else:
+        raise AssertionError("tmux directory with a foreign owner escaped")
 sys.audit("subprocess.Popen", "tmux", ["tmux", "-S", str(sandbox / "socket"), "ls"], None, {})
 sys.audit("subprocess.Popen", "tmux", ["tmux", "-uS", str(sandbox / "socket"), "ls"], None, {})
 sys.audit("subprocess.Popen", "tmux", ["tmux", "-uS" + str(sandbox / "socket"), "ls"], None, {})
