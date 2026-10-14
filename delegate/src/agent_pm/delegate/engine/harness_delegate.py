@@ -243,8 +243,8 @@ class HarnessDelegate(Delegate):
 
     def _replacing(self, payload: bytes) -> int:
         """The attempt replacing the run `payload` records (its session's next, else 1), refused
-        while that run is alive; the agent session it left open (a tui run's, after its outcome) is
-        closed.
+        while that run is alive; the agent session it left open (a tui run's, after its outcome or
+        its process's death) is closed.
         """
         try:
             previous = self._parse(payload)
@@ -441,13 +441,19 @@ class HarnessDelegate(Delegate):
         except SessionConfigError as error:
             raise ConfigError(str(error)) from None
 
-    def _agent(self, state: _State) -> Session | None:
+    def _own(self, state: _State) -> Session | None:
+        """The agent session this process started for `state`'s attempt."""
         agent = self.driver.session
         if (
             agent is not None
             and state.attempt == self._state.attempt
             and agent.sid == state.plan.sid
         ):
+            return agent
+        return None
+
+    def _agent(self, state: _State) -> Session | None:
+        if (agent := self._own(state)) is not None:
             return agent
         try:
             return self.session_cls.attach(state.agent_name, host=state.host)
@@ -476,12 +482,7 @@ class HarnessDelegate(Delegate):
         if state.detached:
             process = self._harness(state)
             return process is not None and process.alive()
-        if state.completed:
-            return False
-        if self.store.running():
-            return True
-        agent = self._agent(state)
-        return agent is not None and agent.state() == Liveness.LIVE
+        return not state.completed and self.store.running()
 
     def alive(self) -> bool:
         return self._alive(self._read())
@@ -566,10 +567,9 @@ class HarnessDelegate(Delegate):
                 raise DriverError(f"close {state.harness_name}: {error}") from error
 
     def session_info(self) -> SessionStatus:
+        """Its own live agent session's status, else the plan's: an attached one lacks its env."""
         state = self._read()
-        if state.completed:
-            return self.session_cls.inspect(state.plan.session)
-        agent = self._agent(state)
+        agent = None if state.completed else self._own(state)
         return (
             agent.session_status()
             if agent is not None

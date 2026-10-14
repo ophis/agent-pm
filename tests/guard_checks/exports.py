@@ -318,8 +318,8 @@ def _typing(node, *, operand=False):
 
 def session_interface_snapshot(repo: str) -> list[str]:
     """The session's public interface (_session_interface()) equals SESSION_INTERFACE. Only TASK-369,
-    TASK-387, TASK-414, TASK-420 and TASK-427 change it on purpose, rewriting the file from
-    _session_interface().
+    TASK-387, TASK-414, TASK-420, TASK-427 and TASK-433 change it on purpose, rewriting the file
+    from _session_interface().
     """
     try:
         with open(os.path.join(repo, SESSION_INTERFACE), encoding="utf-8") as f:

@@ -1,5 +1,7 @@
 """Codex account usage and session inspection queries."""
 
+import contextlib
+import io
 import json
 import os
 import sys
@@ -86,7 +88,10 @@ class SessionStatusTest(Base):
             "no",
         )
         path = self.rollout()
-        with mock.patch("os.open", side_effect=PermissionError("unreadable")):
+        with (
+            mock.patch("os.open", side_effect=PermissionError("unreadable")),
+            contextlib.redirect_stderr(io.StringIO()),
+        ):
             self.assertEqual(
                 self.adapter.session_status(
                     SessionInfo(

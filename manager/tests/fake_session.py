@@ -24,7 +24,7 @@ def set_records(state_dir: str, records) -> None:
 
 def main(state_dir: str, argv: list[str]) -> int:
     append_line(Path(state_dir, "calls.jsonl"), json.dumps(argv) + "\n")
-    if argv != ["ls", "--here", "--records"]:
+    if argv not in (["ls", "--here", "--records"], ["ls", "--here", "--records", "--descendants"]):
         return 2
     for line in Path(state_dir, "records.jsonl").read_text().splitlines():
         print(Record.parse(line).to_line())

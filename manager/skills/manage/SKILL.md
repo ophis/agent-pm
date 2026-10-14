@@ -20,7 +20,7 @@ Options: `agent-pm-crew --help` and `agent-pm-crew <command> --help`. A `ctmux <
 | `agent-pm-crew resume NAME` | Recover one `gone` entry through its recorded resume command. |
 | `agent-pm-crew release` | Hand over: stop listening and release authority. The successor starts a new holder, then attaches. |
 | `agent-pm-crew stop NAME` | Close the entry's work and remove its bookkeeping. |
-| `agent-pm-crew stop-all` | On the user's instruction to stop everything, close recorded work and matching display orphans. |
+| `agent-pm-crew stop-all` | On the user's instruction to stop everything, close recorded work, matching display orphans and what they opened, transitively (nested managers' work). |
 | `agent-pm-crew forget NAME --force` | Repair bookkeeping when its controller is unavailable, without calling it. Work may remain alive. Ordinary `forget` requires confirmed inactivity; failed status leaves liveness unknown. |
 
 ## The user

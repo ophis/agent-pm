@@ -1,5 +1,8 @@
 """Codex's abstract factory."""
 
+from collections.abc import Mapping
+from types import MappingProxyType
+
 from agent_pm.session.adapters.base import Adapter
 from agent_pm.session.adapters.codex.common import CodexCommon
 from agent_pm.session.adapters.codex.headless import CodexHeadless
@@ -52,7 +55,7 @@ class CodexAdapter(Adapter):
     def session_metadata(self, info):
         return self.common.session_metadata(info)
 
-    def session_status(self, info: SessionInfo):
+    def session_status(self, info: SessionInfo, *, env: Mapping[str, str] = MappingProxyType({})):
         return self.common.session_status(info.sid, info.cwd, transcript=info.transcript)
 
     def writable_dirs(self, spec: Spec):

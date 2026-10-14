@@ -376,7 +376,7 @@ def interactive(args):
     if any(
         row["enabled"] and not row["isManaged"] and row["trustStatus"] != "trusted" for row in rows
     ):
-        print("Hooks need review", flush=True)
+        print("Hooks need review\n1 hook is new or changed.\n\n› 1. Review hooks", flush=True)
         for _ in sys.stdin:
             pass
         return 1
