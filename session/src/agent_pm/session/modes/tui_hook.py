@@ -234,12 +234,13 @@ def _load_callback(name: str, kind: str, search: list[str]):
     top = name.partition(".")[0]
     if top not in sys.modules:
         spec = importlib.machinery.PathFinder.find_spec(top, search)
-        if spec is None or spec.loader is None:
+        if spec is None:
             raise HookError(f"{kind} {name}: cannot find Python module")
         package = importlib.util.module_from_spec(spec)
         sys.modules[top] = package
         try:
-            spec.loader.exec_module(package)
+            if spec.loader is not None:  # None: a namespace package (Python < 3.12)
+                spec.loader.exec_module(package)
         except BaseException:
             del sys.modules[top]
             raise

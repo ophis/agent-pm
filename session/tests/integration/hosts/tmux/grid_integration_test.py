@@ -521,7 +521,7 @@ class SettleTest(Live):
                     per_column=1,
                     retile="all",
                     proc=subprocess.run,
-                    script=tmux_model.ENTRY,
+                    command=COMMAND,
                 )
             )
 
