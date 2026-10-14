@@ -263,7 +263,7 @@ def _start(plan: LaunchPlan, termination, trust):
             sys.executable,
             plan.executable,
             plan.store,
-            *(word for word in tui_plan.hook_argv(plan.hook) if os.path.isabs(word)),
+            *(word for word in plan.hook.argv if os.path.isabs(word)),
             *plan.protect,
         ],
         env,

@@ -54,14 +54,10 @@ def _paths(value: object, label: str) -> tuple[str, ...]:
     return tuple(value)
 
 
-def hook_plan(argv: Sequence[str]) -> HookPlan:
+def hook_plan(argv: Sequence[str], source_roots: Sequence[str]) -> HookPlan:
     if not argv or not os.path.isabs(argv[0]):
         raise ValueError("Codex tui requires an absolute Tui mode hook command")
-    try:
-        roots = json.loads(argv[-1])
-    except (ValueError, RecursionError) as exc:
-        raise ValueError("Codex tui hook command requires source roots JSON") from exc
-    return HookPlan(_words(list(argv[:-1])), _roots(roots))
+    return HookPlan(_words(list(argv)), _roots(list(source_roots)))
 
 
 def decode(data: object) -> LaunchPlan:
@@ -104,7 +100,7 @@ def encode(plan: LaunchPlan) -> str:
             "executable": plan.executable,
             "selection": list(plan.selection),
             "prompt": plan.prompt,
-            "hook": list(plan.hook.prefix),
+            "hook": list(plan.hook.argv),
             "workdir": plan.workdir,
             "sid": plan.sid,
             "store": plan.store,
@@ -115,13 +111,8 @@ def encode(plan: LaunchPlan) -> str:
     )
 
 
-def hook_argv(plan: HookPlan) -> tuple[str, ...]:
-    return *plan.prefix, json.dumps(plan.import_roots)
-
-
 def commands(plan: HookPlan) -> Mapping[str, str]:
-    argv = hook_argv(plan)
-    return MappingProxyType({event: shlex.join((*argv, event)) for event, _, _ in HOOKS})
+    return MappingProxyType({event: shlex.join((*plan.argv, event)) for event, _, _ in HOOKS})
 
 
 def hook_flags(plan: HookPlan) -> tuple[str, ...]:

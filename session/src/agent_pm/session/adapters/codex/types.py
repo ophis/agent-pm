@@ -91,11 +91,11 @@ class SessionState:
 
 @dataclass(frozen=True)
 class HookPlan:
-    prefix: tuple[str, ...]
+    argv: tuple[str, ...]
     import_roots: tuple[str, ...]
 
     def __post_init__(self):
-        for name, values in (("prefix", self.prefix), ("import_roots", self.import_roots)):
+        for name, values in (("argv", self.argv), ("import_roots", self.import_roots)):
             copied = tuple(values)
             if any(not isinstance(value, str) for value in copied):
                 raise ValueError(f"hook plan {name} must contain strings")

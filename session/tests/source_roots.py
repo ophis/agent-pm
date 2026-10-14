@@ -4,6 +4,8 @@ from pathlib import Path
 
 from session.tests.case import SRC
 
+PACKAGE_ROOTS = (SRC["session"], SRC["utils"])
+
 
 def source_roots_cases(directory):
     folder = Path(directory) / "source-roots"
@@ -22,7 +24,7 @@ def source_roots_cases(directory):
         path.mkdir()
     file = folder / "file"
     file.write_text("fixture")
-    split = [SRC["session"], SRC["utils"]]
+    split = list(PACKAGE_ROOTS)
     valid = {
         "single distribution": [str(joined)],
         "split distributions": split,

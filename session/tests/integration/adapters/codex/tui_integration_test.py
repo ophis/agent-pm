@@ -39,6 +39,7 @@ from agent_pm.session.modes.tui import hook_argv
 from session.tests import live_tmux
 from session.tests.case import PY, REPO, ROOTS, Case, child_env, settings
 from session.tests.integration.adapters.codex import fake_codex, fake_tui
+from session.tests.source_roots import PACKAGE_ROOTS
 
 WAIT = 15
 
@@ -410,7 +411,8 @@ class HookTrustIntegrationTest(Live):
         launch = run.launch(
             "hello",
             dataclasses.replace(self.spec, sid=self.sid),
-            hook_argv("/protected/session"),
+            hook_argv("/protected/session", PACKAGE_ROOTS),
+            source_roots=PACKAGE_ROOTS,
             resume=False,
         )
         data = json.loads(launch.argv[-1])

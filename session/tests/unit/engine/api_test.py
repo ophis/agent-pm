@@ -49,6 +49,7 @@ from agent_pm.session.modes import headless, in_process, tui
 from session.tests import fake_adapter
 from session.tests.case import SPAWNS, Case
 from session.tests.modules import adapter_loader
+from session.tests.source_roots import PACKAGE_ROOTS
 from session.tests.threads import capture_errors
 
 WAIT = 10
@@ -160,9 +161,11 @@ class InnerAdapter(fake_adapter.FakeAdapter):
 
 
 class InnerTui(fake_adapter.FakeTui):
-    def launch(self, prompt, spec: Spec, hook, *, resume: bool = False):
+    def launch(
+        self, prompt, spec: Spec, hook, *, source_roots: tuple[str, ...], resume: bool = False
+    ):
         LAUNCHED.append(spec)
-        launch = super().launch(prompt, spec, hook, resume=resume)
+        launch = super().launch(prompt, spec, hook, source_roots=source_roots, resume=resume)
         env = {**spec.env, "LAUNCH_SET": "1"}
         return dataclasses.replace(launch, env=env, unset=("LAUNCH_DROP",))
 
@@ -193,8 +196,10 @@ class EnvRun(fake_adapter.FakeHeadless):
 
 
 class EnvTui(fake_adapter.FakeTui):
-    def launch(self, prompt, spec: Spec, hook, *, resume: bool = False):
-        launch = super().launch(prompt, spec, hook, resume=resume)
+    def launch(
+        self, prompt, spec: Spec, hook, *, source_roots: tuple[str, ...], resume: bool = False
+    ):
+        launch = super().launch(prompt, spec, hook, source_roots=source_roots, resume=resume)
         return dataclasses.replace(launch, env={**spec.access.env, **spec.env})
 
 
@@ -1453,8 +1458,8 @@ class TuiStartTest(TuiBase):
         (call,) = self.host.start.call_args_list
         self.assertEqual(call.args[0], "w1")
         self.assertEqual(
-            call.args[1][-(1 + len(tui.hook_argv(os.path.join(self.root, "w1")))) :],
-            ["hello", *tui.hook_argv(os.path.join(self.root, "w1"))],
+            call.args[1][-(1 + len(tui.hook_argv(os.path.join(self.root, "w1"), PACKAGE_ROOTS))) :],
+            ["hello", *tui.hook_argv(os.path.join(self.root, "w1"), PACKAGE_ROOTS)],
         )
         self.assertEqual(call.kwargs["cwd"], self.workdir)
         self.assertEqual(

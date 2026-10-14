@@ -40,6 +40,7 @@ from session.tests import tui_support as tui_live
 from session.tests.case import PY, child_env
 from session.tests.integration.adapters.claude import fake_claude
 from session.tests.processes import reject_command
+from session.tests.source_roots import PACKAGE_ROOTS
 
 MANAGER, SID, IDLE, WAIT, Stream = (
     tui_live.MANAGER,
@@ -149,7 +150,7 @@ class TurnsTest(Live):
         argv = self.calls()[0]["argv"]
         self.assertEqual((argv[argv.index("--session-id") + 1], argv[-2:]), (SID, ["--", "hello"]))
         hooks = json.loads(argv[argv.index("--settings") + 1])["hooks"]
-        hook = tui.hook_argv(tui.session_dir("w1"))
+        hook = tui.hook_argv(tui.session_dir("w1"), PACKAGE_ROOTS)
         self.assertEqual(
             {label: entries[0]["hooks"][0]["command"] for label, entries in hooks.items()},
             {label: shlex.join((*hook, label)) for label in ClaudeTui.hooks},

@@ -12,6 +12,7 @@ from agent_pm.session.adapters.codex.sessions import snapshot_data
 from agent_pm.session.engine.types import Access, ConfigError, SessionInfo
 from agent_pm.session.modes.tui import hook_argv
 
+from session.tests.source_roots import PACKAGE_ROOTS
 from session.tests.unit.adapters.codex.support import CHILD, NATIVE, Base
 
 
@@ -139,7 +140,11 @@ class CommonTest(Base):
                             run.launch("again", requested, resume=True)
                             if mode == "headless"
                             else run.launch(
-                                "again", requested, hook_argv("/fake/session"), resume=True
+                                "again",
+                                requested,
+                                hook_argv("/fake/session", PACKAGE_ROOTS),
+                                source_roots=PACKAGE_ROOTS,
+                                resume=True,
                             )
                         )
                     self.assertIs(launch.project, saved)

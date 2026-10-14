@@ -192,9 +192,7 @@ class _TuiSteps(_LaunchSteps):
         return replace(spec, name=self.name, protect=(*spec.protect, *hooks))
 
     def launch(self, prompt: str, spec: Spec, *, resume: bool = False) -> Launch:
-        return self.run.launch(
-            prompt, spec, tui.hook_argv(tui.session_dir(self.name)), resume=resume
-        )
+        return tui.launch(self.run, prompt, spec, tui.session_dir(self.name), resume=resume)
 
     @contextlib.contextmanager
     def prepared(self, info: SessionInfo, workdir: str) -> Iterator[tui.TuiMode]:

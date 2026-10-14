@@ -38,7 +38,9 @@ class CodexTui(Tui):
         self.native = ""
         self.store = ""
 
-    def launch(self, prompt, spec: Spec, hook, *, resume: bool = False):
+    def launch(
+        self, prompt, spec: Spec, hook, *, source_roots: tuple[str, ...], resume: bool = False
+    ):
         common = self.common
         self.state = common.prepare(spec, persist=False, resume=resume)
         snapshot = self.state.snapshot
@@ -54,7 +56,7 @@ class CodexTui(Tui):
             raise ConfigError("codex not found on PATH")
         exe = os.path.abspath(exe)
         try:
-            hooks = tui_plan.hook_plan(hook)
+            hooks = tui_plan.hook_plan(hook, source_roots)
         except ValueError as exc:
             raise ConfigError(str(exc)) from exc
         roots = hooks.import_roots

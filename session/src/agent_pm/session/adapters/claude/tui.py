@@ -55,7 +55,9 @@ class ClaudeTui(Tui):
     def __init__(self, common: ClaudeCommon):
         self.common = common
 
-    def launch(self, prompt, spec: Spec, hook, *, resume: bool = False):
+    def launch(
+        self, prompt, spec: Spec, hook, *, source_roots: tuple[str, ...], resume: bool = False
+    ):
         common = self.common
         hooks = {
             label: [

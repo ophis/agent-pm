@@ -23,9 +23,11 @@ from agent_pm.session.engine.types import (
     Blocked,
     DriverError,
     Event,
+    Launch,
     Paste,
     SessionBound,
     SessionInfo,
+    Spec,
     Stderr,
 )
 from agent_pm.session.hosts.tmux import tmux_host
@@ -43,9 +45,19 @@ def session_dir(name: str) -> str:
     return os.path.join(os.path.expanduser(TUI_DIR), name)
 
 
-def hook_argv(folder: str) -> tuple[str, ...]:
+def hook_argv(folder: str, source_roots: tuple[str, ...]) -> tuple[str, ...]:
+    return (
+        sys.executable,
+        "-I",
+        os.path.abspath(tui_hook.__file__),
+        folder,
+        json.dumps(source_roots),
+    )
+
+
+def launch(run: Tui, prompt: str, spec: Spec, folder: str, *, resume: bool = False) -> Launch:
     roots = module_roots(agent_pm.session, agent_pm.utils)
-    return sys.executable, "-I", os.path.abspath(tui_hook.__file__), folder, json.dumps(roots)
+    return run.launch(prompt, spec, hook_argv(folder, roots), source_roots=roots, resume=resume)
 
 
 def read_state(name: str) -> dict:

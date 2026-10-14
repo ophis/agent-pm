@@ -82,7 +82,7 @@ class PlanTest(Case):
                 "import_roots",
             },
         )
-        self.assertEqual(data["hook"], list(self.plan.hook.prefix))
+        self.assertEqual(data["hook"], list(self.plan.hook.argv))
         self.assertEqual(data["import_roots"], list(self.plan.hook.import_roots))
         with mock.patch("json.loads", side_effect=AssertionError("launch JSON decoded twice")):
             decoded = tui_plan.decode(data)
@@ -158,11 +158,18 @@ class PlanTest(Case):
             root = Path(self.home) / name
             root.symlink_to(SRC[package], target_is_directory=True)
             roots.append(str(root))
-        hook = HookPlan(self.plan.hook.prefix, tuple(roots))
-        argv = tui_plan.hook_argv(hook)
-        self.assertEqual(tui_plan.hook_plan(argv), hook)
-        self.assertEqual(argv[:-1], hook.prefix)
-        self.assertEqual(json.loads(argv[-1]), roots)
+        argv = (
+            *self.plan.hook.argv,
+            json.dumps(roots, ensure_ascii=False, separators=(",", ":")),
+            "opaque trailing word",
+        )
+        hook = tui_plan.hook_plan(argv, tuple(roots))
+        self.assertEqual(hook.argv, argv)
+        self.assertEqual(hook.import_roots, tuple(roots))
+        decoded = tui_plan.decode(
+            json.loads(tui_plan.encode(dataclasses.replace(self.plan, hook=hook)))
+        )
+        self.assertEqual(decoded.hook, hook)
         commands = tui_plan.commands(hook)
         self.assertEqual(list(commands), [event for event, _, _ in HOOKS])
         flags = tui_plan.hook_flags(hook)

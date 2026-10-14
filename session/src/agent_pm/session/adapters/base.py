@@ -110,10 +110,16 @@ class Tui(ABC):
 
     @abstractmethod
     def launch(
-        self, prompt: str, spec: Spec, hook: tuple[str, ...], *, resume: bool = False
+        self,
+        prompt: str,
+        spec: Spec,
+        hook: tuple[str, ...],
+        *,
+        source_roots: tuple[str, ...],
+        resume: bool = False,
     ) -> Launch:
         """As Headless.launch, plus each label L of `hooks` as a hook running `hook + (L,)`, its
-        payload on stdin.
+        payload on stdin. source_roots locates the loaded packages for isolated scripts.
         """
 
     def hook_state(self) -> dict:

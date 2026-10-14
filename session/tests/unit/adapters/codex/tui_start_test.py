@@ -7,6 +7,7 @@ import io
 import json
 import os
 import pathlib
+import shlex
 import subprocess
 import sys
 from unittest import mock
@@ -15,7 +16,7 @@ from agent_pm.session.adapters.codex import tui_hook, tui_plan, tui_start
 
 from session.tests import case
 from session.tests.case import Case
-from session.tests.source_roots import source_roots_cases
+from session.tests.source_roots import PACKAGE_ROOTS, source_roots_cases
 from session.tests.unit.adapters.codex.support import NATIVE, Base
 
 DIRECTORY = pathlib.Path(tui_start.__file__).parent
@@ -282,6 +283,32 @@ print(json.dumps(HOOKS))
         with self.assertRaisesRegex(tui_start.StartError, "review"):
             tui_start.trusted(result, str(self.cwd), commands)
 
+    def test_opaque_hook_words_survive_launch_and_exact_trust_matching(self):
+        for index, hook in enumerate(
+            (
+                (*HOOK, "extra opaque word"),
+                (*HOOK[:-1], json.dumps(PACKAGE_ROOTS, indent=2)),
+                (*HOOK[:-1], "not JSON at all"),
+            )
+        ):
+            spec = dataclasses.replace(self.spec, sid=f"opaque-trust-{index}")
+            with (
+                self.subTest(hook=hook),
+                mock.patch("shutil.which", return_value="/protected/codex"),
+            ):
+                launch = self.adapter.tui().launch("prompt", spec, hook, source_roots=PACKAGE_ROOTS)
+                plan = tui_plan.decode(json.loads(launch.argv[-1]))
+                catalog, _ = self.catalog()
+                rows = catalog["data"][0]["hooks"]
+                for row, (event, _, _) in zip(rows, tui_start.HOOKS, strict=True):
+                    row["command"] = shlex.join((*hook, event))
+                commands = tui_plan.commands(plan.hook)
+                trusted = tui_start.trusted(catalog, str(self.cwd), commands)
+                self.assertIn('"key-stop"={trusted_hash="sha256:', trusted)
+                rows[0]["command"] = shlex.join((*hook[:-1], "SessionStart"))
+                with self.assertRaises(tui_start.StartError):
+                    tui_start.trusted(catalog, str(self.cwd), commands)
+
     def test_standalone_account_probe_uses_stdlib(self):
         script = """import json, runpy, sys
 imports = set()
@@ -304,7 +331,7 @@ print(json.dumps(sorted((imports & sys.modules.keys()) - sys.stdlib_module_names
         run = self.adapter.tui()
         hook = HOOK
         with mock.patch("shutil.which", return_value="/protected/codex"):
-            launch = run.launch("prompt", self.spec, hook, resume=False)
+            launch = run.launch("prompt", self.spec, hook, source_roots=PACKAGE_ROOTS, resume=False)
         before = {str(p): p.read_bytes() for p in self.home.rglob("*") if p.is_file()}
         with (
             contextlib.nullcontext(mock.Mock(return_value="hooks.state={exact}")) as trust,
@@ -330,6 +357,7 @@ print(json.dumps(sorted((imports & sys.modules.keys()) - sys.stdlib_module_names
                 "prompt",
                 spec,
                 (sys.executable, "-I", "/protected/hook.py", "/protected/session", ROOTS_JSON),
+                source_roots=PACKAGE_ROOTS,
                 resume=False,
             )
         with (
@@ -432,7 +460,9 @@ print(json.dumps(sorted((imports & sys.modules.keys()) - sys.stdlib_module_names
 
     def test_import_roots_are_required_and_validated_without_spawning(self):
         with mock.patch("shutil.which", return_value="/protected/codex"):
-            launch = self.adapter.tui().launch("prompt", self.spec, HOOK, resume=False)
+            launch = self.adapter.tui().launch(
+                "prompt", self.spec, HOOK, source_roots=PACKAGE_ROOTS, resume=False
+            )
         data = json.loads(launch.argv[-1])
         missing = {key: value for key, value in data.items() if key != "import_roots"}
         _, invalid = source_roots_cases(self.root)
@@ -458,6 +488,7 @@ print(json.dumps(sorted((imports & sys.modules.keys()) - sys.stdlib_module_names
                 "prompt",
                 self.spec,
                 (sys.executable, "-I", "/protected/hook.py", "/protected/session", ROOTS_JSON),
+                source_roots=PACKAGE_ROOTS,
                 resume=False,
             )
         for signum in (tui_start.signal.SIGHUP, tui_start.signal.SIGTERM):
@@ -491,6 +522,7 @@ print(json.dumps(sorted((imports & sys.modules.keys()) - sys.stdlib_module_names
                 "hi",
                 self.spec,
                 (sys.executable, "-I", "/protected/hook.py", "/protected/session", ROOTS_JSON),
+                source_roots=PACKAGE_ROOTS,
                 resume=False,
             )
         with (
@@ -507,7 +539,11 @@ print(json.dumps(sorted((imports & sys.modules.keys()) - sys.stdlib_module_names
 class ProtectTest(Base):
     def launch(self, spec, *, resume=False):
         with mock.patch("shutil.which", return_value="/protected/codex"):
-            return self.adapter.tui().launch("prompt", spec, HOOK, resume=resume).argv[-1]
+            return (
+                self.adapter.tui()
+                .launch("prompt", spec, HOOK, source_roots=PACKAGE_ROOTS, resume=resume)
+                .argv[-1]
+            )
 
     def test_the_recheck_keeps_carried_protect_paths_out_of_the_saved_roots(self):
         link = self.root / "protected-link"
