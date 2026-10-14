@@ -1,12 +1,71 @@
 """The Linear orchestrator's data types used by two or more of its modules."""
 
 import argparse
+import os
 import re
+from collections.abc import Mapping
 from dataclasses import MISSING, dataclass, field, fields
 from enum import StrEnum
 from typing import Literal
 
+from agent_pm import delegate
 from agent_pm.utils import Stopped as Stopped
+
+
+@dataclass(frozen=True)
+class Role:
+    account: str
+    key: str
+    tasks: tuple[str, ...]
+    max_runs: int
+    next: str | None
+    require_instructions: bool
+    run: delegate.RunConfig
+
+
+@dataclass(frozen=True)
+class Docs:
+    repo: str
+    branch: str
+    dirs: Mapping[str, str]
+
+
+@dataclass(frozen=True)
+class Config:
+    team: str
+    states: Mapping[str, str]
+    human_members: tuple[str, ...]
+    harness_key: str
+    task_label_group: str
+    task_labels: Mapping[str, str]
+    roles: Mapping[str, Role]
+    project_repos: Mapping[str, str]
+    local_clones: Mapping[str, str]
+    work_dir: str
+    protect: tuple[str, ...]
+    docs: Docs
+    stages: Mapping[str, int]
+    delegate_kind: str
+    delegates: Mapping[str, type]
+
+    @property
+    def delegate_cls(self) -> type:
+        return self.delegates[self.delegate_kind]
+
+    @property
+    def runs_dir(self) -> str:
+        return os.path.join(self.work_dir, "work")
+
+    @property
+    def logs_dir(self) -> str:
+        return os.path.join(self.work_dir, "logs")
+
+    @property
+    def runs_log(self) -> str:
+        return os.path.join(self.logs_dir, "runs.jsonl")
+
+    def run_dir(self, issue: str) -> str:
+        return os.path.join(self.runs_dir, issue)
 
 
 class State(StrEnum):
