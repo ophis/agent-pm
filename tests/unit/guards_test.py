@@ -905,14 +905,12 @@ class SourceSuppressions(Sample):
     def test_the_real_inventory_has_matching_comments(self):
         self.assertEqual(guards.source_suppressions(REPO), [])
 
-    def test_hook_suppression_is_only_at_the_main_boundary(self):
+    def test_hook_suppression_is_only_at_the_hook_run_boundary(self):
         path = "session/src/agent_pm/session/modes/tui_hook.py"
-        reason = guards.NOQA_ALLOWED[path, "BLE001", "__main__"]
+        reason = guards.NOQA_ALLOWED[path, "BLE001", "run"]
         comment = f"# noqa: BLE001  # {reason}"
         self.assertEqual(
-            self.found(
-                {path: self.scoped("__main__", [comment]) + self.scoped("other", [comment])}
-            ),
+            self.found({path: self.scoped("run", [comment]) + self.scoped("other", [comment])}),
             [f"{path}:4: suppression BLE001 in other is not allowed"],
         )
 

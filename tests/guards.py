@@ -260,7 +260,7 @@ NOQA_ALLOWED = {
     (
         f"{SESSION_SRC}modes/tui_hook.py",
         "BLE001",
-        "__main__",
+        "run",
     ): "the hook must never fail the client runtime",
 }
 

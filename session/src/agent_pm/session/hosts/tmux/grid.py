@@ -289,6 +289,8 @@ def _grid_pass(
         .stdout.rstrip("\n")
         .split("\t", 7)
     )
+    if not fields[0]:  # tmux formats a missing window's fields empty, exit 0
+        raise TuiError(f"can't find window: {window}")
     if len(fields) != 8 or fields[2] != "0" or not fields[4]:
         return None
     width, height, _, layout, manager, n, recorded, tiles = fields

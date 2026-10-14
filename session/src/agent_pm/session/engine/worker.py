@@ -186,20 +186,31 @@ class Worker:
         self.state, self.session_cls, self.say, self.clock = state, session_cls, say, clock
 
     @classmethod
+    def new(cls, **fields) -> Worker:
+        """A worker not yet started: WorkerState(**fields)."""
+        return cls(WorkerState(**fields))
+
+    @classmethod
     def load(cls, name: str, *, sid: str | None = None, **kw) -> Worker:
         """Worker `name`'s state: sid's (given, e.g. by AGENT_PM_SID), else its latest start's."""
         if not isinstance(name, str) or not TAG.fullmatch(name):
             raise ConfigError(f"name must match [A-Za-z0-9_-]+, got {name!r:.80}")
         root = os.path.abspath(os.path.expanduser(WORKERS))
         given = sid is not None
-        if sid is None:
-            pointer = _read(os.path.join(root, BY_NAME, name), f"{name}: not a worker")
-            sid = pointer.decode(errors="replace").strip()
-            if not SID.fullmatch(sid):
-                raise DriverError(f"{name}: not a worker: {BY_NAME}/{name} holds no session id")
-        elif not isinstance(sid, str) or not SID.fullmatch(sid):
+        if given and (not isinstance(sid, str) or not SID.fullmatch(sid)):
             raise ConfigError(f"sid {sid!r:.80}: want a session id")
-        data = _read(os.path.join(root, sid, STATE_FILE), f"{name}: no worker {sid}")
+        latest = read_regular(os.path.join(root, BY_NAME, name), limit=STATE_MAX, own=True)
+        latest = None if latest is None else latest.decode(errors="replace").strip()
+        if sid is None:
+            if latest is None:
+                raise DriverError(f"{name}: not a worker")
+            if not SID.fullmatch(latest):
+                raise DriverError(f"{name}: not a worker: {BY_NAME}/{name} holds no session id")
+            sid = latest
+        state_file = os.path.join(root, sid, STATE_FILE)
+        if given and latest not in (None, sid) and not os.path.lexists(state_file):
+            raise ConfigError(f"sid {sid} is not worker {name}'s (its latest: {latest})")
+        data = _read(state_file, f"{name}: no worker {sid}")
         try:
             state = WorkerState.from_json(json.loads(data))
         except (ValueError, RecursionError, TypeError, ConfigError) as error:
@@ -219,6 +230,14 @@ class Worker:
                 yield
         except OSError as error:
             raise DriverError(f"{self.state.name}: {workdir}: {error.strerror or error}") from None
+
+    def check(self, *, prompt: str, resume: bool) -> None:
+        """A start's validation (Session.preflight): writes, closes and runs nothing."""
+        self.session_cls.preflight(
+            self.state.spec(prompt=prompt, resume=resume),
+            display=self.state.display,
+            host=self.state.host,
+        )
 
     def start(self, *, prompt: str, resume: bool) -> Record:
         """Start its runtime, save its state, show it, watch it; then publish its Record and return
@@ -254,20 +273,23 @@ class Worker:
 
     def resume(self) -> Record:
         """Its Record, starting nothing, while its session lives; else a resumed start."""
-        handle = self._handle()
-        if handle is not None and handle.alive():
-            record = handle.record()
+        session = self._session()
+        if session is not None and session.alive():
+            record = session.record()
             if record is None or record.sid != self.state.sid:
                 record = self.state.record()
-                handle.publish(record)
+                session.publish(record)
             return record
-        self.replace(handle)
+        self.check(prompt="", resume=True)
+        self.replace(session or self._group())
         return self.start(prompt="", resume=True)
 
     def restart(self) -> Record:
-        if self.state.name not in self.session_cls.host(self.state.host).list():
+        session = self._session()
+        if session is None:
             raise DriverError(f"{self.state.name}: no session to restart; resume starts it")
-        self.replace(self._handle())
+        self.check(prompt="", resume=True)
+        self.replace(session)
         return self.start(prompt="", resume=True)
 
     def replace(self, handle: HostProcess | None) -> None:
@@ -285,17 +307,23 @@ class Worker:
         if not handle.wait_exit(WAIT):
             raise DriverError(f"{name}: its old runtime did not exit; nothing started")
 
-    def _handle(self) -> HostProcess | None:
-        """Its Host's session of its name (not another's), else its token's surviving group."""
+    def _session(self) -> HostProcess | None:
+        """Its Host's session of its name, refused if another's; None when absent."""
         host = self.session_cls.host(self.state.host)
         name = self.state.name
-        if name in host.list():
-            handle = host.attach(name)
-            sid, _ = handle.session_identity()
-            if sid is not None and sid != self.state.sid:
-                raise DriverError(f"session {name} is not worker {self.state.sid} (its sid: {sid})")
-            return handle
-        return None if self.state.token is None else host.reclaim(self.state.token)
+        if name not in host.list():
+            return None
+        handle = host.attach(name)
+        sid, _ = handle.session_identity()
+        if sid is not None and sid != self.state.sid:
+            raise DriverError(f"session {name} is not worker {self.state.sid} (its sid: {sid})")
+        return handle
+
+    def _group(self) -> HostProcess | None:
+        """Its last launch's process group, while it outlives its session."""
+        if self.state.token is None:
+            return None
+        return self.session_cls.host(self.state.host).reclaim(self.state.token)
 
     def _save(self) -> None:
         root = os.path.dirname(self.state.workdir())
@@ -307,12 +335,9 @@ class Worker:
         name = self.state.name
         try:
             self.say(f"session {name}: {session.attach_command()}")
-            command = session.show(display=self.state.display)
+            session.show(display=self.state.display)
         except (DriverError, ConfigError) as error:
             self.say(f"session {name}: not shown: {error}")
-            return
-        if command is not None:
-            self.say(f"session {name}: not shown; attach with {command}")
 
     def _watch(self, session: Session) -> None:
         deadline = self.clock() + EARLY

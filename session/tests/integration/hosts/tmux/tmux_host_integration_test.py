@@ -47,8 +47,7 @@ class PackageEntryTest(Case):
                 timeout=30,
             )
         self.assertEqual(res.returncode, 0, res.stderr)
-        for word in ("start", "send", "read", "show"):
-            self.assertIn(word, res.stdout)
+        self.assertIn("tile", res.stdout)
 
 
 class ExecTest(Case):

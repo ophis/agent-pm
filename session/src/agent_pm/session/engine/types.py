@@ -459,6 +459,10 @@ class NamedKey(StrEnum):
 
 
 MODIFIERS = {"C-": "ctrl", "M-": "meta", "S-": "shift"}
+KEY_RULE = (
+    f"want one printable character or one of {', '.join(NamedKey)}, after any of "
+    f"{', '.join(MODIFIERS)}"
+)
 
 
 @dataclass(frozen=True)
@@ -477,10 +481,7 @@ class KeyPress:
             isinstance(self.key, str)
             and (self.key in tuple(NamedKey) or len(self.key) == 1 and self.key.isprintable())
         ):
-            raise ConfigError(
-                f"key {self.key!r:.80}: want one printable character or one of "
-                f"{', '.join(NamedKey)}, after any of {', '.join(MODIFIERS)}"
-            )
+            raise ConfigError(f"key {self.key!r:.80}: {KEY_RULE}")
         if not all(isinstance(getattr(self, flag), bool) for flag in MODIFIERS.values()):
             raise ConfigError("key modifiers: want booleans")
 
@@ -498,8 +499,8 @@ class KeyPress:
             rest = rest[2:]
         try:
             return cls(rest, **flags)
-        except ConfigError as error:
-            raise ConfigError(f"key {text!r:.80}: {error}") from None
+        except ConfigError:
+            raise ConfigError(f"key {text!r:.80}: {KEY_RULE}") from None
 
     def __str__(self) -> str:
         on = (prefix for prefix, flag in MODIFIERS.items() if getattr(self, flag))

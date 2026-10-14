@@ -55,6 +55,7 @@ class Base(Case):
         self.session.events.return_value = iter([IdleTimeout(worker.EARLY)])
         self.order.attach_mock(self.session_cls.retire, "retire")
         self.order.attach_mock(self.session_cls.start, "start")
+        self.order.attach_mock(self.session_cls.preflight, "preflight")
         for call in ("close", "wait_exit", "kill", "publish"):
             self.order.attach_mock(getattr(self.handle, call), call)
         self.said = []
@@ -183,6 +184,8 @@ class LoadTest(Base):
         self.assertEqual(Worker.load("w1", sid=SID).state.name, "w1")
         with self.assertRaisesRegex(ConfigError, f"^sid {SID} is worker w1's, not w2's$"):
             Worker.load("w2", sid=SID)
+        with self.assertRaisesRegex(ConfigError, f"^sid {OTHER} is not worker w1's"):
+            Worker.load("w1", sid=OTHER)
         for sid in ("..", SID.upper()):
             with self.subTest(sid=sid), self.assertRaises(ConfigError):
                 Worker.load("w1", sid=sid)
@@ -220,7 +223,9 @@ class ResumeTest(Base):
     def test_a_dead_one_is_retired_its_group_awaited_then_resumed_with_no_prompt(self):
         self.handle.wait_exit.return_value = True
         self.worker().resume()
-        self.assertEqual(self.calls(), ["retire", "close", "wait_exit", "start", "publish"])
+        self.assertEqual(
+            self.calls(), ["preflight", "retire", "close", "wait_exit", "start", "publish"]
+        )
         self.handle.wait_exit.assert_called_once_with(worker.WAIT)
         spec = self.session_cls.start.call_args.args[0]
         self.assertEqual((spec.prompt, spec.resume, spec.sid), ("", True, SID))
@@ -229,7 +234,8 @@ class ResumeTest(Base):
         self.handle.wait_exit.side_effect = [False, True]
         self.worker().resume()
         self.assertEqual(
-            self.calls(), ["retire", "close", "wait_exit", "kill", "wait_exit", "start", "publish"]
+            self.calls(),
+            ["preflight", "retire", "close", "wait_exit", "kill", "wait_exit", "start", "publish"],
         )
 
     def test_a_group_that_outlives_its_kill_starts_nothing(self):
@@ -238,19 +244,26 @@ class ResumeTest(Base):
             self.worker().resume()
         self.session_cls.start.assert_not_called()
 
-    def test_a_gone_session_reclaims_its_tokens_group(self):
+    def test_a_gone_session_reclaims_its_tokens_live_group_and_replaces_it(self):
         self.host.list.return_value = []
         self.host.reclaim.return_value = self.handle
+        self.handle.alive.return_value = True
         self.handle.wait_exit.return_value = True
         self.worker(token="/tmp/apm-group-1").resume()
         self.host.reclaim.assert_called_once_with("/tmp/apm-group-1")
-        self.assertEqual(self.calls()[:3], ["retire", "close", "wait_exit"])
+        self.assertEqual(self.calls()[:4], ["preflight", "retire", "close", "wait_exit"])
 
     def test_a_gone_session_without_a_group_starts_after_retiring(self):
         self.host.list.return_value = []
         self.worker(token=None).resume()
-        self.assertEqual(self.calls()[:2], ["retire", "start"])
+        self.assertEqual(self.calls()[:3], ["preflight", "retire", "start"])
         self.host.reclaim.assert_not_called()
+
+    def test_a_start_it_cannot_make_is_refused_before_the_old_one_is_touched(self):
+        self.session_cls.preflight.side_effect = ConfigError("unknown runtime claude")
+        with self.assertRaisesRegex(ConfigError, "unknown runtime"):
+            self.worker().resume()
+        self.assertEqual(self.calls(), ["preflight"])
 
     def test_another_sessions_name_is_never_closed(self):
         self.handle.session_identity.return_value = (OTHER, "g")
@@ -264,7 +277,9 @@ class RestartTest(Base):
         self.handle.alive.return_value = True
         self.handle.wait_exit.return_value = True
         self.worker().restart()
-        self.assertEqual(self.calls(), ["retire", "close", "wait_exit", "start", "publish"])
+        self.assertEqual(
+            self.calls(), ["preflight", "retire", "close", "wait_exit", "start", "publish"]
+        )
 
     def test_no_session_is_refused_untouched(self):
         self.host.list.return_value = []
