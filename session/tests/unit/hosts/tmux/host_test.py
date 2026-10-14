@@ -53,6 +53,7 @@ from session.tests.tmux_fixtures import (
     chained,
     decorations,
     environ,
+    recorded,
     which,
 )
 from session.tests.tmux_host_support import LINE, PROCESS, Base
@@ -323,22 +324,21 @@ class DetachTest(Base):
 
 
 class TerminalTest(Base):
-    def test_failed_process_lookup_closes_only_the_session_owned_by_the_new_controller(self):
-        for result in (None, TuiError("cannot inspect pane")):
-            with self.subTest(result=result):
-                self.tmux.process.side_effect = [result]
-                self.tmux.kill.reset_mock()
-                with self.assertRaises(DriverError):
-                    self.host.terminal("t1", Launch((self.tool,), cwd=self.dir))
-                self.tmux.kill.assert_called_once_with("t1")
-                self.assertFalse(os.path.exists(self.control.path))
+    def test_a_terminal_that_never_starts_closes_only_its_captured_pane(self):
+        paths = []
 
-    def test_failed_process_lookup_never_closes_a_replacement_controller_session(self):
-        self.tmux.process.return_value = None
-        self.tmux.option.side_effect = lambda _target, _key: "/another-controller"
-        with self.assertRaises(DriverError):
+        def pending(*_args, **kw):
+            paths.append(kw["tags"]["@control"])
+            return PROCESS
+
+        self.tmux.start.side_effect = pending
+        with (
+            mock.patch("time.monotonic", side_effect=[0, 11]),
+            self.assertRaisesRegex(DriverError, "process controller did not start"),
+        ):
             self.host.terminal("t1", Launch((self.tool,), cwd=self.dir))
-        self.tmux.kill.assert_not_called()
+        self.assertFalse(os.path.exists(paths[0]))
+        self.tmux.kill.assert_called_once_with("%7")
 
     def test_only_a_key_following_a_paste_waits_for_paste_delivery(self):
         self.active(*[{"live": True}] * 4)
@@ -415,10 +415,43 @@ class TerminalTest(Base):
             json.loads(Path(self.control.path, "launch.json").read_text())["env"], dict(launch.env)
         )
 
+    def test_a_terminal_is_the_pane_its_start_made_not_the_sessions_active_one(self):
+        self.tmux.process.side_effect = lambda target: (
+            PROCESS if target == "%7" else "4242 $3 %9 5555"
+        )
+        terminal = self.host.terminal("t1", Launch((self.tool,), cwd=self.dir))
+        self.assertEqual(terminal.identity, PROCESS)
+        terminal.send(Paste("a b"))
+        self.tmux.paste.assert_called_once_with("%7", "a b")
+
     def test_terminal_with_no_controller_is_refused_when_attaching(self):
         self.kind, self.controlled = "terminal", False
         with self.assertRaisesRegex(DriverError, "missing @control"):
             self.host.attach("t1")
+
+
+class AttachTest(Base):
+    def setUp(self):
+        super().setUp()
+        self.tmux.process.side_effect = lambda target: (
+            "4242 $3 %9 5555" if target == "w1" else PROCESS if target == "%7" else None
+        )
+
+    def test_a_launched_session_without_a_valid_process_option_is_refused(self):
+        for value, error in (
+            (None, "^tmux session w1: missing @process; close sessions before upgrading$"),
+            ("4242 $3 %9", r"^tmux session w1: bad @process '4242 \$3 %9'$"),
+        ):
+            with self.subTest(value=value):
+                self.recorded = value
+                with self.assertRaisesRegex(DriverError, error):
+                    self.host.attach("w1")
+
+    def test_a_foreign_session_is_its_active_pane(self):
+        self.kind, self.controlled = None, False
+        handle = self.host.attach("w1")
+        self.assertIs(type(handle), TmuxProcess)
+        self.assertEqual(handle.identity, "4242 $3 %9 5555")
 
 
 class DisplayableTest(Base):
@@ -812,6 +845,7 @@ class DetachHandoverTest(StartFixture):
                     "=d:",
                     "@kind",
                     "detach",
+                    *recorded("d"),
                 ]
             ],
         )
@@ -904,6 +938,7 @@ class DetachHandoverTest(StartFixture):
                             "=d:",
                             "@opener",
                             opener,
+                            *recorded("d"),
                         ]
                     ],
                 )
@@ -959,6 +994,7 @@ class DetachHandoverTest(StartFixture):
                 "=d:",
                 "@record",
                 line,
+                *recorded("d"),
             ],
         )
         self.assertEqual(stat.S_IMODE(os.stat(events).st_mode), 0o600)
@@ -987,6 +1023,7 @@ class DetachHandoverTest(StartFixture):
                 "=d:",
                 "@record",
                 "{}",
+                *recorded("d"),
             ],
         )
 
@@ -1031,6 +1068,15 @@ class DetachHandoverTest(StartFixture):
                     self.detach(fake, **kw)
                 self.assertEqual(fake.calls, [])
                 self.assertEqual(os.listdir(self.temp), [])
+
+    def test_the_creating_call_records_its_pane_identity(self):
+        for kw in ({}, {"events": "ev", "opener": "mgr", "record": LINE.to_line()}):
+            with self.subTest(**kw):
+                fake = FakeTmux()
+                if "events" in kw:
+                    kw = {**kw, "events": os.path.join(self.root, kw["events"])}
+                self.assertEqual(self.detach(fake, **kw), NEW_PROCESS)
+                self.assertEqual(fake.calls[0][-len(recorded("d")) :], recorded("d"))
 
     def test_a_new_session_tmux_does_not_name_is_killed(self):
         for out in ("", "4242 $3 %7\n", "4242 $3 %7 x\n"):
@@ -1246,6 +1292,23 @@ class EventsFileTest(Case):
 
 
 class StartTest(StartFixture):
+    def test_the_creating_call_records_and_returns_its_pane_identity(self):
+        fake = FakeTmux()
+        self.assertEqual(self.start(fake), NEW_PROCESS)
+        self.assertEqual(fake.calls[1][: 3 + len(NEW)], ["tmux", "new-session", "-d", *NEW])
+        self.assertEqual(fake.calls[1][-len(recorded("s")) :], recorded("s"))
+
+    def test_a_new_session_tmux_does_not_name_is_killed(self):
+        for out in ("", "4242 $3 %7\n", "4242 $3 %7 x\n"):
+            with self.subTest(out=out):
+                fake = FakeTmux(results={"new-session": (0, out, "")})
+                with self.assertRaisesRegex(types.TuiError, "^tmux: bad new session "):
+                    self.start(fake)
+                self.assertEqual(
+                    fake.commands(), ["display-message", "new-session", "kill-session"]
+                )
+                self.assertEqual(os.listdir(self.temp), [])
+
     def test_start_runs_wrapper_decorates_dead_pane_without_opening_a_pane(
         self,
     ):
@@ -1261,6 +1324,7 @@ class StartTest(StartFixture):
                         "tmux",
                         "new-session",
                         "-d",
+                        *NEW,
                         "-s",
                         "s",
                         "-x",
@@ -1281,6 +1345,7 @@ class StartTest(StartFixture):
                         "remain-on-exit",
                         "on",
                         *chained(decorations("s")),
+                        *recorded("s"),
                     ],
                 )
                 self.assertNotIn("-c", fake.calls[1][: fake.calls[1].index(sys.executable)])
@@ -1477,6 +1542,7 @@ class StartTest(StartFixture):
                 "@k",
                 "a b#{x}",
                 *chained(decorations("s")),
+                *recorded("s"),
             ],
         )
         self.assertEqual(fake.commands(), ["display-message", "new-session"])
@@ -1678,14 +1744,10 @@ class StartTest(StartFixture):
                         name, Launch(("tool",), {"PATH": self.bin}, cwd=self.cwd)
                     ),
                     lambda *, fake=fake, name=name: transport.kill(name, proc=fake),
-                    lambda *, fake=fake, name=name: transport.send(
-                        name, "x", proc=fake, sleep=self.sleep
-                    ),
                     lambda *, fake=fake, name=name: transport.paste(name, "x", proc=fake),
                     lambda *, fake=fake, name=name: transport.keys(name, "Enter", proc=fake),
                     lambda *, fake=fake, name=name: transport.read(name, proc=fake),
                     lambda *, fake=fake, name=name: transport.option(name, "@sid", proc=fake),
-                    lambda *, fake=fake, name=name: transport.pane(name, proc=fake),
                 ):
                     with self.assertRaises(types.TuiError):
                         call()
@@ -1710,6 +1772,6 @@ class StartTest(StartFixture):
                 self.assertEqual(fake.commands(), ["display-message", "new-session"])
                 self.assertEqual(
                     fake.calls[1][fake.calls[1].index(fake.fifo) + 8 :],
-                    chained(decorations("s", path, status)),
+                    [*chained(decorations("s", path, status)), *recorded("s")],
                 )
         self.assertEqual(stat.S_IMODE(os.stat(events).st_mode), 0o600)

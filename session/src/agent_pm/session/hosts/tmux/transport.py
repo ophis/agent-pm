@@ -8,7 +8,6 @@ import re
 import shutil
 import signal
 import subprocess
-import time
 import uuid
 
 from agent_pm.session.hosts.tmux.types import (
@@ -184,13 +183,11 @@ def tmux_path() -> str | None:
 
 
 def kill(target: str, *, proc=subprocess.run) -> None:
-    checked(["kill-session", "-t", address(target, "")], proc)
-
-
-def send(session: str, text: str, *, proc=subprocess.run, sleep=time.sleep) -> None:
-    paste(session, text, proc=proc)
-    sleep(PAUSE)
-    keys(session, "Enter", proc=proc)
+    """Kills the pane a pane id names, else the named session."""
+    if PANE.fullmatch(target):
+        checked(["kill-pane", "-t", target], proc)
+    else:
+        checked(["kill-session", "-t", address(target, "")], proc)
 
 
 def paste(target: str, text: str, *, proc=subprocess.run) -> None:
@@ -247,21 +244,6 @@ def option(target: str, name: str, *, proc=subprocess.run) -> str | None:
             return None
         raise TuiError(f"tmux: {error(res)}")
     return res.stdout.removesuffix("\n")
-
-
-def pane(session: str, *, proc=subprocess.run) -> str | None:
-    target = f"={session_name(session)}:"
-    res = run(["display-message", "-p", "-t", target, "#{pane_id}"], proc)
-    if res.returncode:
-        if absent(res):
-            return None
-        raise TuiError(f"tmux: {error(res)}")
-    found = res.stdout.strip()
-    if not found:  # tmux (3.7) exits 0 printing nothing for a missing session
-        return None
-    if not PANE.fullmatch(found):
-        raise TuiError(f"bad tmux pane {found!r}")
-    return found
 
 
 def process(target: str, *, proc=subprocess.run) -> str | None:

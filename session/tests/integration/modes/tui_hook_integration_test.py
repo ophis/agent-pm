@@ -19,6 +19,7 @@ from session.tests.tui_hook_support import (
     LINE,
     LOOKUP,
     PANE,
+    PROCESS,
     SOURCE_ROOTS,
     TMUX,
     HookBase,
@@ -306,7 +307,7 @@ for number in range(20):
     def test_a_tmux_that_is_no_regular_executable_file_is_one_stderr_line_after_the_record(self):
         plain = os.path.join(self.root, "plain")
         with open(plain, "w") as f:
-            f.write(TMUX.format(python=sys.executable))
+            f.write(TMUX.format(python=sys.executable, process=PROCESS))
         os.chmod(plain, 0o644)
         for tmux in (plain, os.path.join(self.root, "bin"), os.path.join(self.root, "missing")):
             with self.subTest(tmux):

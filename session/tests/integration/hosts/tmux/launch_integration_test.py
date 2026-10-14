@@ -111,6 +111,49 @@ class LaunchTest(Case):
         self.assertTrue(terminal.alive())
         self.assertEqual(self.server.tmux("list-buffers").stdout, before)
 
+    def test_a_split_and_refocused_session_is_reached_through_its_launched_pane(self):
+        ready, received = Path(self.home, "ready"), Path(self.home, "received")
+        code = (
+            "import os, sys, tty\n"
+            "tty.setraw(0)\n"
+            "open(sys.argv[1], 'w').close()\n"
+            "data = b''\n"
+            "while len(data) < 4: data += os.read(0, 4 - len(data))\n"
+            "with open(sys.argv[2], 'wb') as f: f.write(data)\n"
+            "while True: os.read(0, 1)\n"
+        )
+        launched = self.host.terminal(
+            "split",
+            Launch((sys.executable, "-I", "-c", code, str(ready), str(received)), cwd=self.home),
+            metadata={"sid": "sid-1", "client": "tool", "generation": "generation-1"},
+        )
+        self.handles.append(launched)
+        self.poll(ready.exists)
+        pane = launched.identity.split(" ")[2]
+        added = self.server.tmux(
+            "split-window", "-P", "-F", "#{pane_id}", "-t", "=split:", *live_tmux.IDLE
+        )
+        self.assertEqual(added.returncode, 0, added.stderr)
+        other = added.stdout.strip()
+        active = self.server.tmux("display-message", "-p", "-t", "=split:", "#{pane_id}")
+        self.assertEqual(active.stdout.strip(), other)
+
+        attached = self.host.attach("split")
+        self.assertEqual(attached.identity, launched.identity)
+        self.assertEqual(attached.session_identity(), ("sid-1", "generation-1"))
+        self.assertTrue(attached.alive())
+        attached.send(Paste("ping"))
+        self.poll(lambda: received.exists() and received.stat().st_size == 4)
+        self.assertEqual(received.read_bytes(), b"ping")
+        self.assertNotIn("ping", self.server.tmux("capture-pane", "-p", "-t", other).stdout)
+
+        attached.close()
+        panes = self.server.tmux("list-panes", "-s", "-t", "=split:", "-F", "#{pane_id}")
+        self.assertEqual(panes.returncode, 0, panes.stderr)
+        self.assertEqual(panes.stdout.split(), [other])
+        self.assertNotEqual(pane, other)
+        self.assertFalse(attached.alive())
+
     def test_stale_terminal_cannot_send_to_a_same_name_replacement(self):
         launch = Launch((sys.executable, "-I", "-c", "import time; time.sleep(30)"), cwd=self.home)
         old = self.launch("terminal", "same", launch)

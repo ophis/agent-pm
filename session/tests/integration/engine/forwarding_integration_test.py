@@ -157,28 +157,6 @@ class CloseTest(TuiBase):
                 self.assertTrue(os.path.isdir(self.root))
         self.assertEqual(found, {"w1": [mock.call.kill("%1")], "w2": [mock.call.kill("%1")]})
 
-    def test_kills_the_session_and_removes_its_dir(self):
-        self.tui(name="w1")
-        self.host.reset_mock()
-        self.driver.close("w1")
-        self.assertEqual(
-            list(self.host.mock_calls),
-            [
-                mock.call.listing(),
-                mock.call.status("w1"),
-                mock.call.process("w1"),
-                mock.call.option("w1", "@kind"),
-                mock.call.process("%1"),
-                mock.call.option("%1", "@control"),
-                mock.call.process("%1"),
-                mock.call.option("%1", "@kind"),
-                mock.call.process("%1"),
-                mock.call.kill("%1"),
-            ],
-        )
-        self.assertFalse(os.path.lexists(os.path.join(self.root, "w1")))
-        self.assertTrue(os.path.isdir(self.root))
-
 
 if __name__ == "__main__":
     unittest.main()

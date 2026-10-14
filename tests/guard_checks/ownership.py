@@ -1,0 +1,324 @@
+"""Client ownership checks: which layer may name a client, tool or display."""
+
+import ast
+import io
+import os
+import re
+import tokenize
+from collections import Counter
+
+from tests.guard_checks.common import _files, _strings
+from tests.guard_data import LEGACY_HOST_NAMES
+from tests.guard_data.delegate import CONFIG_FILE
+from tests.guard_data.linear_orchestrator import HANDOFF_HOME, ORCH, ORCH_PROJECT
+from tests.guard_data.session import (
+    ADAPTERS_HOME,
+    SESSION_SRC,
+    STATUS_LOG_CLOCK,
+    STATUS_LOG_HOME,
+    TMUX_HOME,
+)
+from tests.guard_data.utils import CONFIG_LEVELS
+from tests.guards import PKG, PROJECTS
+
+CLIENT = re.compile(r"claude|codex", re.I)
+
+
+TOML_CODE = re.compile(r"""(?:[^#"']|"(?:\\.|[^"\\])*"|'[^']*')*""")
+
+
+TOML_HEADER = re.compile(r"\s*\[\s*(?:adapters|policy)\.[a-z][a-z0-9_]*(\.[^\]]*)?\]\s*\Z")
+
+
+TOML_IMPLEMENTATION = re.compile(
+    r'\s*implementation\s*=\s*"[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*:[A-Za-z_]\w*"\s*\Z'
+)
+
+
+TOML_CLIENT = re.compile(r'\s*client\s*=\s*"[a-z][a-z0-9_]*"\s*\Z')
+
+
+LOWER = tuple(p for p in PROJECTS if p != ORCH_PROJECT)
+
+
+DISPLAY_NAMES = re.compile(
+    r"(?<![a-zA-Z0-9])(?:pane|opener|split_from)(?![a-zA-Z0-9])|--split|@record|@pane"
+)
+
+
+LINEAR = re.compile(f"{ORCH_PROJECT}|{ORCH}")
+
+
+TOOL_STRINGS = ("tmux", "adapters")
+
+
+TOML_STRING = re.compile(r""""((?:\\.|[^"\\])*)"|'([^']*)'""")
+
+
+HANDOFF = re.compile(r"Handoff from|## (?:Source|Instructions|Comments)")
+
+
+def _code_words(text, tree):
+    words = {
+        (*token.start, token.string)
+        for token in tokenize.generate_tokens(io.StringIO(text).readline)
+        if token.type == tokenize.NAME
+    }
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            words.add((node.lineno, node.col_offset, node.value))
+        elif isinstance(node, ast.Name):
+            words.add((node.lineno, node.col_offset, node.id))
+        elif (
+            isinstance(node, ast.Attribute)
+            and node.end_lineno is not None
+            and node.end_col_offset is not None
+        ):
+            words.add((node.end_lineno, node.end_col_offset - len(node.attr), node.attr))
+    yield from ((line, value) for line, _, value in sorted(words))
+
+
+def session_names(repo: str) -> list[str]:
+    """Only engine/config.py forwards configuration reads; no parser, reply tag or team text."""
+    forbidden = (
+        "config_file",
+        "tomllib",
+        "agent_pm.delegate.engine.config",
+        "read_project",
+        "agent-pm-progress",
+        "agent-pm-outcome",
+        "team/",
+    )
+    return sorted(
+        f"{SESSION_SRC}{rel}: names {word}"
+        for rel, text in _files(os.path.join(repo, SESSION_SRC), ".py")
+        for word in forbidden
+        if word in text
+    )
+
+
+def delegate_package_names(repo: str) -> list[str]:
+    """TASK-389: Delegate owns package resources and never discovers sibling projects."""
+    base = "delegate/src/agent_pm/delegate/"
+    forbidden = {"read_project", "import_roots", "DELEGATE", "IMPORT_ROOTS"}
+    found = set()
+    for rel, text in _files(os.path.join(repo, base), ".py"):
+        for node in ast.walk(ast.parse(text, rel)):
+            name = (
+                node.id
+                if isinstance(node, ast.Name)
+                else node.attr
+                if isinstance(node, ast.Attribute)
+                else node.name
+                if isinstance(node, ast.alias | ast.FunctionDef | ast.AsyncFunctionDef)
+                else ""
+            )
+            if name in forbidden:
+                found.add(f"{base}{rel}:{node.lineno}: legacy package name {name} (TASK-389)")
+    return sorted(found)
+
+
+def manager_sid(repo: str) -> list[str]:
+    rel = "manager/src/agent_pm/manager/engine/crew.py"
+    path = os.path.join(repo, rel)
+    if not os.path.isfile(path):
+        return []
+    with open(path, encoding="utf-8") as source:
+        tree = ast.parse(source.read(), rel)
+    found = []
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr in {"get", "getenv"}
+            and node.args
+            and isinstance(node.args[0], ast.Constant)
+            and node.args[0].value == "AGENT_PM_SID"
+        ) or (
+            isinstance(node, ast.Subscript)
+            and isinstance(node.ctx, ast.Load)
+            and isinstance(node.slice, ast.Constant)
+            and node.slice.value == "AGENT_PM_SID"
+        ):
+            found.append(f"{rel}:{node.lineno}: reads inherited AGENT_PM_SID")
+    return sorted(found)
+
+
+def manager_lease(repo: str) -> list[str]:
+    rel = "manager/src/agent_pm/manager/engine/roster.py"
+    path = os.path.join(repo, rel)
+    if not os.path.isfile(path):
+        return []
+    with open(path, encoding="utf-8") as source:
+        tree = ast.parse(source.read(), rel)
+    return sorted(
+        f"{rel}:{node.lineno}: lease liveness callback"
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Attribute) and node.attr == "_alive"
+    )
+
+
+def manager_display(repo: str) -> list[str]:
+    found = set()
+    base = "manager/src/agent_pm/manager/"
+    forbidden = re.compile(
+        r"(?<![a-zA-Z0-9_])(?:pane|opener|split_from)(?![a-zA-Z0-9_])|--split|@record"
+    )
+    for rel, text in _files(os.path.join(repo, base), ".py"):
+        tree = ast.parse(text, rel)
+        for node in ast.walk(tree):
+            value = (
+                node.id
+                if isinstance(node, ast.Name)
+                else node.attr
+                if isinstance(node, ast.Attribute)
+                else node.arg
+                if isinstance(node, ast.arg)
+                else node.value
+                if isinstance(node, ast.Constant) and isinstance(node.value, str)
+                else ""
+            )
+            if forbidden.search(value):
+                found.add(f"{base}{rel}:{node.lineno}: interprets display {value!r}")
+    return sorted(found)
+
+
+def standalone(repo: str) -> list[str]:
+    found = set()
+    for project in LOWER:
+        for top, dirs, names in os.walk(os.path.join(repo, project)):
+            dirs[:] = sorted(d for d in dirs if d != "__pycache__")
+            if top == os.path.join(repo, project):
+                dirs[:] = [d for d in dirs if d != "tests"]
+            for name in sorted(names):
+                rel = os.path.relpath(os.path.join(top, name), repo).replace(os.sep, "/")
+                with open(os.path.join(top, name), encoding="utf-8", errors="replace") as f:
+                    for number, line in enumerate(f, 1):
+                        if rel == CONFIG_LEVELS and line.startswith("LEVELS = "):
+                            continue
+                        found.update(f"{rel}:{number}: names {w}" for w in LINEAR.findall(line))
+    return sorted(found)
+
+
+def client_names(repo: str) -> list[str]:
+    found = set()
+    for rel, text in _lower_files(repo, (".py", ".toml"), skip=f"{SESSION_SRC}adapters/"):
+        for number, line in enumerate(text.splitlines(), 1):
+            if rel.endswith(".toml"):
+                code = TOML_CODE.match(line)[0]
+                line = code if line[len(code) : len(code) + 1] in ("", "#") else line
+                if (
+                    TOML_HEADER.match(line)
+                    or TOML_IMPLEMENTATION.match(line)
+                    or TOML_CLIENT.match(line)
+                ):
+                    continue
+            found.update(f"{rel}:{number}: client name {word}" for word in CLIENT.findall(line))
+    return sorted(found)
+
+
+def adapters_key(repo: str) -> list[str]:
+    found = set()
+    for rel, text in _lower_files(repo, ".py", skip=ADAPTERS_HOME):
+        found.update(
+            f'{rel}:{line}: literal key "adapters"'
+            for line, s in _strings(ast.parse(text, rel))
+            if s == "adapters"
+        )
+    return sorted(found)
+
+
+def tmux_calls(repo: str) -> list[str]:
+    found = set()
+    for rel, text in _lower_files(repo, ".py"):
+        if rel.startswith(TMUX_HOME):
+            continue
+        tree = ast.parse(text, rel)
+        if rel.startswith(SESSION_SRC):
+            found.update(
+                f"{rel}:{line}: tmux outside session/hosts/tmux/"
+                for line, value in _code_words(text, tree)
+                if "tmux" in value.lower() and (rel, value) not in LEGACY_HOST_NAMES
+            )
+        else:
+            found.update(
+                f'{rel}:{line}: str constant "tmux"' for line, s in _strings(tree) if s == "tmux"
+            )
+    return sorted(found)
+
+
+def session_display(repo: str) -> list[str]:
+    found = set()
+    for rel, text in _lower_files(repo, ".py", skip=TMUX_HOME):
+        if not (rel.startswith((SESSION_SRC, f"utils/src/{PKG}/utils/")) or rel == CONFIG_FILE):
+            continue
+        found.update(
+            f"{rel}:{line}: interprets display {value!r}"
+            for line, value in _code_words(text, ast.parse(text, rel))
+            if DISPLAY_NAMES.search(value) and (rel, value) not in LEGACY_HOST_NAMES
+        )
+    return sorted(found)
+
+
+def legacy_host_names(repo: str) -> list[str]:
+    counts = Counter()
+    for rel in sorted({path for path, _ in LEGACY_HOST_NAMES}):
+        path = os.path.join(repo, rel)
+        if os.path.isfile(path):
+            with open(path, encoding="utf-8") as source:
+                text = source.read()
+            counts.update((rel, value) for _, value in _code_words(text, ast.parse(text, rel)))
+    return sorted(
+        f"{rel}: {value}: expected {count} legacy occurrences, found {counts[rel, value]} ({ticket})"
+        for (rel, value), (count, ticket) in LEGACY_HOST_NAMES.items()
+        if counts[rel, value] != count
+    )
+
+
+def status_log_format(repo: str) -> list[str]:
+    found = set()
+    for top in PROJECTS:
+        for rel, text in _files(os.path.join(repo, top, "src"), ".py"):
+            rel = f"{top}/src/{rel}"
+            if rel != STATUS_LOG_HOME:
+                found.update(
+                    f"{rel}:{line}: status log line format outside session/engine/status_log.py"
+                    for line, s in _strings(ast.parse(text, rel))
+                    if STATUS_LOG_CLOCK in s
+                )
+    return sorted(found)
+
+
+def orchestrator_text(repo: str) -> list[str]:
+    found = set()
+    for rel, text in _files(os.path.join(repo, ORCH_PROJECT), (".py", ".toml"), skip="tests/"):
+        lines = text.splitlines()
+        grammar = rel.startswith("src/") and rel.endswith(".py") and rel != HANDOFF_HOME
+        for number, line in enumerate(lines, 1):
+            found.update(
+                f"{rel}:{number}: client name {w}"
+                for w in CLIENT.findall(line.replace("AGENTS.md", " "))
+            )
+            if grammar:
+                found.update(f"{rel}:{number}: Handoff literal {w}" for w in HANDOFF.findall(line))
+        strings = (
+            _strings(ast.parse(text, rel))
+            if rel.endswith(".py")
+            else (
+                (number, m[1] or m[2])
+                for number, line in enumerate(lines, 1)
+                for m in TOML_STRING.finditer(TOML_CODE.match(line)[0])
+            )
+        )
+        found.update(
+            f'{rel}:{line}: str constant "{s}"' for line, s in strings if s in TOOL_STRINGS
+        )
+    return sorted(found)
+
+
+def _lower_files(repo, suffixes, skip=None, projects=LOWER):
+    for project in projects:
+        for rel, text in _files(os.path.join(repo, project), suffixes):
+            rel = f"{project}/{rel}"
+            if not rel.startswith(f"{project}/tests/") and not (skip and rel.startswith(skip)):
+                yield rel, text

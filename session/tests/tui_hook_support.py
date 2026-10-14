@@ -63,9 +63,10 @@ def write_state(folder: str, value) -> None:
 
 
 PANE = "%3"
+PROCESS = "4242 $3 %3 4343"  # its launch's @process: PANE
 LINE = r"\A[0-9]{2}:[0-9]{2}:[0-9]{2} w1 %s\n\Z"  # one event line
 TS = r"\A\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}[+-]\d\d:\d\d\Z"
-LOOKUP = ["display-message", "-p", "-t", "=w1:", "#{pane_id}\t#{@sid}\t#{@generation}"]
+LOOKUP = ["display-message", "-p", "-t", "=w1:", "#{@process}\t#{@sid}\t#{@generation}"]
 TMUX = """#!{python} -I
 import json, os, sys
 with open(os.environ["TMUX_LOG"], "a") as f:
@@ -73,8 +74,8 @@ with open(os.environ["TMUX_LOG"], "a") as f:
 if os.environ.get("TMUX_FAIL"):
     sys.exit("boom\\nagain")
 if sys.argv[1] == "display-message":
-    if "pane_id" in sys.argv[-1]:
-        print("" if os.environ.get("TMUX_TARGET_ABSENT") else "%3\\t" + os.environ["TMUX_TARGET_IDENTITY"])
+    if "@process" in sys.argv[-1]:
+        print("" if os.environ.get("TMUX_TARGET_ABSENT") else "{process}\\t" + os.environ["TMUX_TARGET_IDENTITY"])
     else:
         print("w1")
 """
@@ -93,7 +94,9 @@ class HookBase(Case):
         self.hooks = os.path.join(self.dir, "hooks.jsonl")
         self.events = os.path.join(self.root, "events")
         os.close(os.open(self.events, os.O_WRONLY | os.O_CREAT, 0o600))
-        self.tmux = install(os.path.join(self.root, "bin"), TMUX.format(python=sys.executable))
+        self.tmux = install(
+            os.path.join(self.root, "bin"), TMUX.format(python=sys.executable, process=PROCESS)
+        )
         self.decoy = os.path.join(self.root, "decoy.log")
         install(
             os.path.join(self.root, "path"), DECOY.format(python=sys.executable, log=self.decoy)
