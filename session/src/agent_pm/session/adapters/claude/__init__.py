@@ -55,9 +55,7 @@ class ClaudeAdapter(Adapter):
         return self.common.parse_usage(output)
 
     def session_status(self, info: SessionInfo):
-        return self.common.session_status(
-            info.sid, info.cwd, transcript=info.transcript, resume=info.resume
-        )
+        return self.common.session_status(info.sid, info.cwd, transcript=info.transcript)
 
     def writable_dirs(self, spec: Spec):
         cwd = spec.access.cwd or spec.workdir

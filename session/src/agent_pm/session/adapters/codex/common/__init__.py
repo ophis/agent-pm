@@ -265,6 +265,8 @@ def session_paths(snapshot: Snapshot, identifier: str = "*") -> list[str]:
 def session_file(snapshot: Snapshot, identifier: str, *, recorded: str = "") -> SessionFile | None:
     if not native_id(identifier):
         raise RecoveryError("invalid Codex recovery native ID")
+    if recorded:
+        absolute_path(recorded, "recorded transcript")
     matches = [recorded] if recorded else session_paths(snapshot, identifier)
     if len(matches) > 1:
         raise RecoveryError(f"duplicate Codex session files for native ID {identifier}")
@@ -1007,14 +1009,13 @@ class CodexCommon:
         found = session_file(state.snapshot, state.native_id) if state.native_id else None
         return found.path if found is not None else ""
 
-    def session_status(
-        self, sid: str, cwd: str, *, transcript: str = "", resume: str = ""
-    ) -> SessionStatus:
+    def session_status(self, sid: str, cwd: str, *, transcript: str = "") -> SessionStatus:
+        resume = ""
         try:
             state = self.lookup(sid, cwd)
             if state is None or state.native_id is None:
                 return SessionStatus(Resumable.NO, None, "")
-            resume = resume or self.resume_command(state)
+            resume = self.resume_command(state)
             found = session_file(state.snapshot, state.native_id, recorded=transcript)
             if found is None:
                 return SessionStatus(Resumable.NO, None, resume)

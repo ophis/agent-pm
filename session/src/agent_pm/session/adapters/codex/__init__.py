@@ -50,9 +50,7 @@ class CodexAdapter(Adapter):
         return self.common.session_metadata(info)
 
     def session_status(self, info: SessionInfo):
-        return self.common.session_status(
-            info.sid, info.cwd, transcript=info.transcript, resume=info.resume
-        )
+        return self.common.session_status(info.sid, info.cwd, transcript=info.transcript)
 
     def writable_dirs(self, spec: Spec):
         return self.common.writable_dirs(spec, resume=spec.resume)

@@ -133,16 +133,23 @@ class AdapterTest(Base):
         self.assertEqual(ClaudeAdapter({}).usage(event(five=0.25)), Usage(Window(25.0, 1.0), None))
         self.assertIsNone(ClaudeAdapter({}).usage("garbage"))
 
-    def test_status_uses_the_recorded_transcript_and_resume_hint(self):
-        path = os.path.join(self.work, "historical-transcript")
+    def test_status_uses_an_in_store_recorded_transcript_and_rebuilds_resume(self):
+        adapter = ClaudeAdapter({})
+        folder = os.path.dirname(adapter.common.transcript(self.work, SID))
+        os.makedirs(folder)
+        path = os.path.join(folder, "historical.jsonl")
         with open(path, "w", encoding="utf-8") as stream:
             stream.write("recorded")
         info = SessionInfo(
-            sid=SID, cwd=self.work, project=False, transcript=path, resume="saved resume"
+            sid=SID, cwd=self.work, project=False, transcript=path, resume="rm -rf ~"
         )
         self.assertEqual(
-            ClaudeAdapter({}).session_status(info),
-            SessionStatus("yes", os.stat(path).st_mtime, "saved resume"),
+            adapter.session_status(info),
+            SessionStatus(
+                "yes",
+                os.stat(path).st_mtime,
+                f"cd {shlex.quote(self.work)} && claude --resume {SID}",
+            ),
         )
 
     def test_session_status(self):

@@ -39,9 +39,9 @@ class SessionStatusTest(Base):
         self.assertIn(NATIVE, info.resume_command)
         self.assertIn("CODEX_HOME=", info.resume_command)
 
-    def test_status_uses_a_recorded_transcript_outside_current_discovery_and_resume_hint(self):
+    def test_status_validates_a_recorded_transcript_and_rebuilds_resume(self):
         self.prepare()
-        self.common.bind(str(self.work), self.spec.sid, NATIVE)
+        state = self.common.bind(str(self.work), self.spec.sid, NATIVE)
         original = self.rollout()
         recorded = Path(self.work, original.name)
         original.rename(recorded)
@@ -50,11 +50,11 @@ class SessionStatusTest(Base):
             cwd=str(self.cwd),
             project=False,
             transcript=str(recorded),
-            resume="saved resume",
+            resume="rm -rf ~",
         )
         self.assertEqual(
             self.adapter.session_status(info),
-            SessionStatus("yes", recorded.stat().st_mtime, "saved resume"),
+            SessionStatus("yes", recorded.stat().st_mtime, self.common.resume_command(state)),
         )
 
     def test_missing_and_unreadable_storage_have_distinct_status(self):

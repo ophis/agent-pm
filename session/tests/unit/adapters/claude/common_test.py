@@ -500,6 +500,51 @@ class SessionStatusTest(Base):
         self.write(self.path, 1000)
         self.assertEqual(self.status(), SessionStatus("yes", 1000.0, self.resume))
 
+    def test_recorded_transcripts_cannot_escape_the_cwd_store_or_follow_symlinks(self):
+        self.write(self.path, 1000)
+        outside = os.path.join(self.tmp, "outside.jsonl")
+        self.write(outside, 9000)
+        inside = os.path.join(os.path.dirname(self.path), "other.jsonl")
+        self.write(inside, 8000)
+        link = os.path.join(os.path.dirname(self.path), "link.jsonl")
+        os.symlink(inside, link)
+        directory = os.path.join(os.path.dirname(self.path), "directory")
+        os.mkdir(directory)
+        fifo = os.path.join(os.path.dirname(self.path), "fifo")
+        os.mkfifo(fifo)
+        parent_link = os.path.join(os.path.dirname(self.path), "outside-link")
+        os.symlink(self.tmp, parent_link)
+        for path in (
+            outside,
+            link,
+            directory,
+            fifo,
+            os.path.join(parent_link, "outside.jsonl"),
+            "/abcdef",
+            "relative.jsonl",
+            "\0",
+        ):
+            with self.subTest(path=path):
+                self.assertEqual(
+                    self.common.session_status(SID, self.work, transcript=path),
+                    SessionStatus("yes", 1000.0, self.resume),
+                )
+
+    def test_a_recorded_filename_without_a_suffix_keeps_the_scan_inside_the_store(self):
+        path = os.path.join(os.path.dirname(self.path), "a")
+        self.write(path, 2000)
+        self.assertEqual(
+            self.common.session_status(SID, self.work, transcript=path),
+            SessionStatus("yes", 2000.0, self.resume),
+        )
+
+    def test_a_symlink_session_directory_cannot_expand_the_activity_scan(self):
+        self.write(self.path, 1000)
+        outside = os.path.join(self.tmp, "outside")
+        self.write(os.path.join(outside, "child.jsonl"), 9000)
+        os.symlink(outside, os.path.splitext(self.path)[0])
+        self.assertEqual(self.status(), SessionStatus("yes", 1000.0, self.resume))
+
     def test_the_newest_file_under_the_session_dir_wins(self):
         self.write(self.path, 1000)
         sub = self.path[: -len(".jsonl")]

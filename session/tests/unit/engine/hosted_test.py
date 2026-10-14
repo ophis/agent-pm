@@ -9,14 +9,18 @@ import itertools
 import json
 import logging
 import os
+import shlex
 import stat
 import tempfile
 import threading
+from pathlib import Path
 from unittest import mock
 
 from agent_pm.session import Host, NoRecordedSession, NotDisplayable
 from agent_pm.session.adapters import common as selection
 from agent_pm.session.adapters.base import Adapter
+from agent_pm.session.adapters.claude import ClaudeAdapter
+from agent_pm.session.adapters.codex import CodexAdapter
 from agent_pm.session.engine import hosted
 from agent_pm.session.engine import types as engine_types
 from agent_pm.session.engine.hosted import POLL, HostedSession
@@ -47,7 +51,7 @@ from agent_pm.session.hosts.tmux import TmuxHost, tmux_host
 from agent_pm.session.modes import tui
 
 from session.tests import fake_adapter
-from session.tests.case import HOSTS, SPAWNS, Case
+from session.tests.case import HOSTS, REPO, SPAWNS, Case
 from session.tests.fakes.host import FakeHost
 from session.tests.hosted_support import (
     LAUNCHED,
@@ -179,6 +183,76 @@ class InspectTest(Base):
             with self.subTest(spec=spec), self.assertRaises(ConfigError) as caught:
                 self.inspect(spec)
             self.assertEqual(str(caught.exception), message)
+
+
+class HistoricalRecordTest(Case):
+    def setUp(self):
+        directory = self.enterContext(tempfile.TemporaryDirectory(dir=REPO))
+        self.root = Path(directory).resolve()
+        self.enterContext(mock.patch.dict(os.environ, {"HOME": str(self.root)}))
+        self.work = self.root / "work"
+        self.cwd = self.work / "project ' quoted"
+        self.cwd.mkdir(parents=True)
+
+    def forged(self, runtime, transcript, *, expected):
+        log = RunLog(str(self.work))
+        info = SessionInfo(sid=SID, cwd=str(self.cwd), project=True, transcript="", resume="")
+        log.note("session", **info.persisted())
+        log.note("session_metadata", sid=SID, transcript=str(transcript), resume="rm -rf ~")
+        request = Spec(workdir=str(self.work), runtime=runtime, sid=SID)
+        self.assertEqual(self.driver.session_cls.inspect(request), expected)
+        log.note("session_metadata", sid=SID, transcript="", resume="printf forged-command")
+        fresh = self.driver.session_cls.inspect(request)
+        self.assertEqual(fresh, SessionStatus("yes", 100.0, expected.resume_command))
+        self.assertNotIn("forged-command", fresh.resume_command)
+
+    def test_claude_resume_is_built_fresh_and_an_outside_recorded_transcript_is_ignored(self):
+        config = {"env": {"CLAUDE_CONFIG_DIR": str(self.root / "claude")}}
+        self.configure_session(
+            {
+                "claude": {
+                    "implementation": "agent_pm.session.adapters.claude:ClaudeAdapter",
+                    **config,
+                }
+            }
+        )
+        adapter = ClaudeAdapter(config)
+        transcript = Path(adapter.common.transcript(str(self.cwd), SID))
+        transcript.parent.mkdir(parents=True)
+        transcript.write_text("{}\n", encoding="utf-8")
+        os.utime(transcript, (100, 100))
+        outside = self.root / "outside.jsonl"
+        outside.write_text("{}\n", encoding="utf-8")
+        os.utime(outside, (9000, 9000))
+        command = f"cd {shlex.quote(str(self.cwd))} && claude --resume {SID}"
+        self.forged("claude", outside, expected=SessionStatus("yes", 100.0, command))
+
+    def test_codex_resume_is_built_fresh_and_a_forged_outside_transcript_is_refused(self):
+        home = self.root / ".codex"
+        home.mkdir()
+        config = {"env": {"CODEX_HOME": str(home)}}
+        self.configure_session(
+            {"codex": {"implementation": "agent_pm.session.adapters.codex:CodexAdapter", **config}}
+        )
+        adapter = CodexAdapter(config)
+        spec = Spec(workdir=str(self.work), sid=SID, access=Access(cwd=str(self.cwd), project=True))
+        adapter.common.prepare(spec)
+        adapter.common.bind(str(self.work), SID, SID)
+        transcript = home / "sessions" / "2026" / "10" / "11" / f"rollout-test-{SID}.jsonl"
+        transcript.parent.mkdir(parents=True)
+        transcript.write_text(
+            json.dumps({"type": "session_meta", "payload": {"id": SID, "cwd": str(self.cwd)}}),
+            encoding="utf-8",
+        )
+        os.utime(transcript, (100, 100))
+        outside = self.root / f"rollout-forged-{SID}.jsonl"
+        outside.write_text(
+            json.dumps({"type": "session_meta", "payload": {"id": SID, "cwd": str(self.root)}}),
+            encoding="utf-8",
+        )
+        os.utime(outside, (9000, 9000))
+        command = f"cd {shlex.quote(str(self.cwd))} && CODEX_HOME={shlex.quote(str(home))} codex resume {SID}"
+        self.forged("codex", outside, expected=SessionStatus("unknown", None, command))
 
 
 class HostTest(Case):

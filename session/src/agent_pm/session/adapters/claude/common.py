@@ -274,14 +274,20 @@ class ClaudeCommon:
                 five_hour = _full(five_hour, resets)
         return Usage(five_hour, weekly)
 
-    def session_status(
-        self, sid: str, cwd: str, *, transcript: str = "", resume: str = ""
-    ) -> SessionStatus:
+    def session_status(self, sid: str, cwd: str, *, transcript: str = "") -> SessionStatus:
         try:
             self.uuid(sid)
         except ConfigError:
             return SessionStatus(Resumable.NO, None, "")
-        path = transcript or self.transcript(cwd, sid)
+        path = self.transcript(cwd, sid)
+        root = os.path.realpath(os.path.dirname(path))
+        if printable_abs(transcript):
+            with contextlib.suppress(OSError):
+                recorded = os.path.realpath(transcript)
+                if os.path.commonpath((recorded, root)) == root and stat.S_ISREG(
+                    os.lstat(transcript).st_mode
+                ):
+                    path = recorded
         try:
             mode = os.lstat(path).st_mode
         except (FileNotFoundError, NotADirectoryError):
@@ -291,10 +297,14 @@ class ClaudeCommon:
         else:
             resumable = Resumable.YES if stat.S_ISREG(mode) else Resumable.UNKNOWN
         paths = [path]
-        for top, _, files in os.walk(path[: -len(".jsonl")]):
-            paths += (os.path.join(top, name) for name in files)
+        folder = os.path.splitext(path)[0]
+        if os.path.commonpath((os.path.realpath(folder), root)) == root and not os.path.islink(
+            folder
+        ):
+            for top, _, files in os.walk(folder):
+                paths += (os.path.join(top, name) for name in files)
         times = []
         for each in paths:
             with contextlib.suppress(OSError):
                 times.append(os.lstat(each).st_mtime)
-        return SessionStatus(resumable, max(times, default=None), resume or self.resume(cwd, sid))
+        return SessionStatus(resumable, max(times, default=None), self.resume(cwd, sid))
