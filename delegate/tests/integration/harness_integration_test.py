@@ -20,6 +20,7 @@ from agent_pm.delegate import (
     Limit,
     Outcome,
     Progress,
+    Result,
     Spec,
 )
 from agent_pm.delegate.engine.drivers import InstructionDriver
@@ -696,6 +697,10 @@ class HarnessLaunch(HarnessCase):
         self.make(spec=spec).detach()
         launch = RecordingHost.launches[0]
         self.assertEqual((launch["cwd"], launch["blocked_signals"]), (project, SIGNALS))
+        self.assertEqual(
+            launch["argv"],
+            [sys.executable, "-P", "-s", "-m", "agent_pm.delegate.engine.harness", self.work],
+        )
 
 
 class DeadOnArrival(RecordingHost):
@@ -768,6 +773,41 @@ class TuiStart(HarnessCase):
         with mock.patch("time.sleep", side_effect=AssertionError("waited")):
             record = self.make(host="agent", harness_host="harness").detach()
         self.assertEqual(len(record.sessions), 1)
+
+
+class Announce(HarnessCase):
+    def run_with_events(self):
+        self.events = os.path.join(self.home, "events")
+        spec = Spec("input", self.work, runtime="fake", sid=SID, events=self.events)
+        return self.make(spec=spec)
+
+    def test_one_outcome_line_for_the_harness_session_per_result(self):
+        delegate = self.run_with_events()
+        asking = Outcome(**{**DONE, "status": "needs_input", "questions": ["Which?"]})
+        for result in (
+            Result(0, Outcome(**DONE)),
+            Result(0, asking),
+            Result(1, None, "no outcome"),
+            None,
+        ):
+            delegate.announce(result)
+        with open(self.events, encoding="utf-8") as file:
+            lines = file.read().splitlines()
+        stamp, name = "[0-9]{2}:[0-9]{2}:[0-9]{2}", f"dummy-tester-{SID[:8]}-drive"
+        for line, status in zip(lines, ("done", "needs_input", "error", "error"), strict=True):
+            self.assertRegex(line, f"^{stamp} {name} outcome {status}$")
+
+    def test_a_write_error_is_printed_not_raised(self):
+        delegate = self.run_with_events()
+        os.mkdir(self.events)
+        err = io.StringIO()
+        with redirect_stderr(err):
+            delegate.announce(Result(0, Outcome(**DONE)))
+        self.assertTrue(err.getvalue().startswith("delegate: "), err.getvalue())
+
+    def test_a_run_without_events_writes_no_line(self):
+        self.make().announce(None)
+        self.assertEqual(os.listdir(self.home), [".agent-pm", "run"])
 
 
 class Names(HarnessCase):

@@ -151,13 +151,15 @@ def say(text: str) -> None:
     print(printable(text), file=sys.stderr, flush=True)
 
 
-def report(result: Result, out: str) -> tuple[int, str | None]:
-    """(exit code, the valid outcome's status), printing the deliverable for `out` `-`."""
+def report(result: Result, out: str | None) -> tuple[int, str | None]:
+    """(exit code, the valid outcome's status), printing the deliverable for `out` `-` and naming
+    the file `out` that holds it; None: neither.
+    """
     if result.outcome is None:
         say(f"delegate: {result.error}")
         return 1, None
     text = result.outcome.deliverable
-    if text:
+    if text and out is not None:
         if out == "-":
             print("\n".join(map(printable, text.split("\n"))), end="", flush=True)
         elif holds(path := os.path.abspath(out), text):

@@ -5,7 +5,6 @@ from __future__ import annotations
 import contextlib
 import json
 import os
-import signal
 import sys
 import time
 from collections.abc import Callable, Mapping, Sequence
@@ -31,7 +30,6 @@ from agent_pm.delegate.engine.types import (
     Preview,
     Result,
     Spec,
-    Stopped,
 )
 from agent_pm.delegate.event.types import Outcome
 from agent_pm.session import (
@@ -47,6 +45,7 @@ from agent_pm.session import (
     NotDisplayable,
     Session,
     SessionStatus,
+    SessionStatusLog,
     Usage,
 )
 from agent_pm.session import ConfigError as SessionConfigError
@@ -589,6 +588,21 @@ class HarnessDelegate(Delegate):
 
             return execute(self._state.plan, driver=self.driver, on_event=emit)
 
+    def announce(self, result: Result | None) -> None:
+        """Appends the run's one events line, `outcome <status>` for its harness session (`error`
+        without a valid outcome); an OSError is printed, never raised.
+        """
+        events = self._state.events
+        if events is None:
+            return
+        outcome = None if result is None else result.outcome
+        try:
+            SessionStatusLog(events).write(
+                self._state.harness_name, "outcome", "error" if outcome is None else outcome.status
+            )
+        except OSError as error:
+            say(f"delegate: {error}")
+
     def _current(self) -> _State:
         state = self._read()
         if (state.plan.sid, state.attempt) != (self._state.plan.sid, self._state.attempt):
@@ -610,7 +624,7 @@ class HarnessDelegate(Delegate):
         environment = {key: value for key, value in os.environ.items() if key != "PYTHONPATH"}
         environment.update(source_path(roots))
         return Launch(
-            (sys.executable, "-P", "-m", "agent_pm.delegate.engine.harness_delegate", self.workdir),
+            (sys.executable, "-P", "-s", "-m", "agent_pm.delegate.engine.harness", self.workdir),
             cwd=state.plan.session.access.cwd or self.workdir,
             env=environment,
             blocked_signals=SIGNALS,
@@ -734,25 +748,3 @@ class HarnessDelegate(Delegate):
             record = self._launch(previous, state)
         self._started(self._state)
         return record
-
-
-def _stop(signum, _frame):
-    signal.pthread_sigmask(signal.SIG_BLOCK, SIGNALS)
-    raise Stopped(128 + signum)
-
-
-def main(argv: list[str]) -> int:
-    owner = HarnessDelegate.attach(argv[0])
-    for signum in SIGNALS:
-        signal.signal(signum, _stop)
-    try:
-        signal.pthread_sigmask(signal.SIG_UNBLOCK, SIGNALS)
-        return owner.run().returncode
-    except Stopped as stopped:
-        return stopped.code
-    finally:
-        signal.pthread_sigmask(signal.SIG_BLOCK, SIGNALS)
-
-
-if __name__ == "__main__":
-    sys.exit(main(sys.argv[1:]))
