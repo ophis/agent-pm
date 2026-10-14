@@ -20,8 +20,9 @@ from unittest import mock
 from zoneinfo import ZoneInfo
 
 from agent_pm.session import Driver
-from agent_pm.session.adapters.codex import tui_start
-from agent_pm.session.adapters.codex.sessions import store_root
+from agent_pm.session.adapters.codex import tui
+from agent_pm.session.adapters.codex.common import SessionStore
+from agent_pm.session.adapters.codex.tui import start as tui_start
 from agent_pm.session.engine import records
 from agent_pm.session.engine.types import (
     Access,
@@ -34,10 +35,12 @@ from agent_pm.session.engine.types import (
     Spec,
     TurnEnd,
 )
+from agent_pm.session.modes.tui import hook_argv
 
 from session.tests import live_tmux
 from session.tests.case import PY, REPO, ROOTS, Case, child_env, settings
 from session.tests.integration.adapters.codex import fake_codex, fake_tui
+from session.tests.source_roots import PACKAGE_ROOTS
 
 WAIT = 15
 
@@ -209,7 +212,7 @@ class Live(Case):
         return self.common.load(str(self.work), sid or self.sid)
 
     def record(self):
-        return next(Path(store_root()).glob("*.json"))
+        return next(Path(SessionStore().root).glob("*.json"))
 
     def attach(self, text="", name="w1"):
         result = subprocess.run(
@@ -409,7 +412,8 @@ class HookTrustIntegrationTest(Live):
         launch = run.launch(
             "hello",
             dataclasses.replace(self.spec, sid=self.sid),
-            (sys.executable, "-V"),
+            hook_argv("/protected/session", PACKAGE_ROOTS),
+            source_roots=PACKAGE_ROOTS,
             resume=False,
         )
         data = json.loads(launch.argv[-1])
@@ -442,7 +446,12 @@ class HookTrustIntegrationTest(Live):
             ),
             self.assertRaisesRegex(tui_start.StartError, "no answer"),
         ):
-            tui_start.hooks_list(data["argv"][0], data["hook_flags"], str(self.cwd), env)
+            tui_start.hooks_list(
+                data["executable"],
+                tui.trust_args(tui.decode(data), run.state.snapshot),
+                str(self.cwd),
+                env,
+            )
         self.assertLess(clock() - started, 3)
         (probe,) = self.calls("app-server")
         self.assertFalse(self.pid_exists(probe["pid"]))
@@ -626,7 +635,7 @@ class TuiLaunchIntegrationTest(Live):
         ]
         self.assertEqual(first["argv"][5 : 5 + len(expected)], expected)
         self.assertEqual(second["argv"], ["resume", native, *first["argv"]])
-        self.assertEqual(self.bound().snapshot["flags"][1], "workspace-write")
+        self.assertEqual(self.bound().snapshot.flags[1], "workspace-write")
 
     def test_session_start_waits_for_first_submission_fresh_and_resumed(self):
         spec = dataclasses.replace(
@@ -813,7 +822,7 @@ class TuiLaunchIntegrationTest(Live):
         fresh = self.driver.writable_dirs("codex", self.spec)
         self.assertEqual(list(fresh[:3]), [str(p) for p in (self.cwd, self.codex_home, self.extra)])
         self.assertIn(str(first_tmp), fresh)
-        self.assertFalse(Path(store_root()).parent.exists())
+        self.assertFalse(Path(SessionStore().root).parent.exists())
         self.assertEqual(self.logged(), [])
         first = self.start()
         self.assertEqual(Stream(self, first).until(TurnEnd)[-1], TurnEnd("first"))
@@ -828,7 +837,8 @@ class TuiLaunchIntegrationTest(Live):
         )
         before = self.record().read_bytes()
         resumed = self.driver.writable_dirs("codex", changed_spec, resume=self.sid)
-        self.assertEqual(list(resumed[: len(saved)]), saved)
+        self.assertIsInstance(saved, tuple)
+        self.assertEqual(tuple(resumed[: len(saved)]), saved)
         self.assertNotIn(str(next_tmp), resumed)
         self.assertNotIn(str(ignored_home), resumed)
         self.assertEqual(self.record().read_bytes(), before)
@@ -876,7 +886,7 @@ class TuiRecoveryIntegrationTest(Live):
         )
         self.assertEqual(self.calls()[-1]["argv"][:2], ["resume", native])
         self.assertEqual(
-            list(Path(store_root()).glob("*.json")),
+            list(Path(SessionStore().root).glob("*.json")),
             [self.record()],
         )
 

@@ -2,6 +2,8 @@
 tui_hook.py appends to its session dir, and from its pane.
 """
 
+from __future__ import annotations
+
 import contextlib
 import fcntl
 import json
@@ -13,22 +15,26 @@ import tempfile
 import time
 from collections.abc import Iterator, Mapping, Sequence
 
+import agent_pm.session.engine.types
+import agent_pm.utils
 from agent_pm.session.adapters.base import ACTIVITY, BLOCKED, TURN_END, Tui
 from agent_pm.session.engine.types import (
     Activity,
     Blocked,
     DriverError,
     Event,
+    Launch,
     Paste,
     SessionBound,
     SessionInfo,
+    Spec,
     Stderr,
 )
 from agent_pm.session.hosts.tmux import tmux_host
 from agent_pm.session.hosts.tmux.tmux_host import TuiError
 from agent_pm.session.modes import tui_hook
 from agent_pm.session.modes.tui_hook import HookError
-from agent_pm.utils import STATE, json_records, read_regular
+from agent_pm.utils import STATE, json_records, module_roots, read_regular
 
 TUI_DIR = f"{STATE}/tui"
 WORDS = {TURN_END: "done", BLOCKED: "blocked", ACTIVITY: "working"}
@@ -39,8 +45,19 @@ def session_dir(name: str) -> str:
     return os.path.join(os.path.expanduser(TUI_DIR), name)
 
 
-def hook_argv(folder: str) -> tuple[str, ...]:
-    return sys.executable, "-I", os.path.abspath(tui_hook.__file__), folder
+def hook_argv(folder: str, source_roots: tuple[str, ...]) -> tuple[str, ...]:
+    return (
+        sys.executable,
+        "-I",
+        os.path.abspath(tui_hook.__file__),
+        folder,
+        json.dumps(source_roots),
+    )
+
+
+def launch(run: Tui, prompt: str, spec: Spec, folder: str, *, resume: bool = False) -> Launch:
+    roots = module_roots(agent_pm.session, agent_pm.utils)
+    return run.launch(prompt, spec, hook_argv(folder, roots), source_roots=roots, resume=resume)
 
 
 def read_state(name: str) -> dict:
@@ -154,7 +171,7 @@ class TuiMode:
         workdir: str,
         tmux: str,
         host=tmux_host,
-    ) -> "TuiMode":
+    ) -> TuiMode:
         """A fresh session dir with session.json, unless the session runs or is unknown."""
         state = {
             "runtime": runtime,
@@ -231,7 +248,7 @@ class TuiMode:
             _remove(self.dir, self._made)
 
     @classmethod
-    def attach(cls, name: str, state: dict, run: Tui, *, host=tmux_host) -> "TuiMode":
+    def attach(cls, name: str, state: dict, run: Tui, *, host=tmux_host) -> TuiMode:
         """read_state's session, bound to the name's pane if tagged with its sid; reply: last
         TURN_END's; blocked: last kind BLOCKED or @state blocked; events from its next record.
         """
@@ -316,7 +333,9 @@ class TuiMode:
         self._gone = True
         self._code = -signal.SIGHUP if self._code is None else self._code
 
-    def _read(self) -> list[Event | Stderr]:
+    def _read(
+        self,
+    ) -> list[Event | Stderr]:
         data = b"" if self._gone else read_regular(self.hooks, offset=self._offset) or b""
         end = data.rfind(b"\n") + 1
         if end:

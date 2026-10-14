@@ -16,6 +16,7 @@ from agent_pm.session.engine.types import (
 )
 
 from session.tests.case import SPAWNS, Case
+from session.tests.source_roots import PACKAGE_ROOTS
 from session.tests.unit.adapters.claude.support import (
     CEILING,
     CONFIG,
@@ -65,7 +66,9 @@ class ReadRulesTest(Base):
         adapter = ClaudeAdapter({} if config is None else config)
         return (
             lambda: adapter.headless().launch("hi", spec, resume=resume),
-            lambda: adapter.tui().launch("hi", spec, HOOK, resume=resume),
+            lambda: adapter.tui().launch(
+                "hi", spec, HOOK, source_roots=PACKAGE_ROOTS, resume=resume
+            ),
         )
 
     def both(self, *, resume=False, config=None, **access) -> list[tuple[str, ...]]:
@@ -177,7 +180,13 @@ class EnvTest(Base):
             (
                 ClaudeAdapter(config)
                 .tui()
-                .launch("hi", Spec(workdir=self.work, sid=SID, access=access), HOOK, resume=False),
+                .launch(
+                    "hi",
+                    Spec(workdir=self.work, sid=SID, access=access),
+                    HOOK,
+                    source_roots=PACKAGE_ROOTS,
+                    resume=False,
+                ),
                 {},
             ),
         ):

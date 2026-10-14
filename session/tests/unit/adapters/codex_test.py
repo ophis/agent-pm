@@ -72,10 +72,12 @@ class UsageTest(Case):
         with mock.patch.dict(os.environ, {"CODEX_THREAD_ID": "inherited", "PAGER": "inherited"}):
             launch = self.adapter.usage_probe()
         self.assertIsInstance(launch, Launch)
+        self.assertEqual(len(launch.argv), 3)
         self.assertEqual(launch.argv[0], os.path.realpath(sys.executable))
-        self.assertTrue(all(os.path.isabs(path) for path in launch.argv))
-        self.assertEqual(Path(launch.argv[1]).name, "app_server.py")
-        self.assertTrue(Path(launch.argv[1]).is_file())
+        self.assertEqual(launch.argv[1], "-I")
+        self.assertTrue(all(os.path.isabs(path) for path in launch.argv if path != "-I"))
+        self.assertEqual(Path(launch.argv[2]).name, "app_server.py")
+        self.assertTrue(Path(launch.argv[2]).is_file())
         self.assertEqual(
             launch.env, {**self.adapter.common.DEFAULTS, "PAGER": "configured", "ADDED": "value"}
         )

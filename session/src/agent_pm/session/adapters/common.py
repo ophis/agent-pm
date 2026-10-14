@@ -1,8 +1,9 @@
 """What the Claude and Codex adapters share."""
 
-import math
-import shlex
-from collections.abc import Mapping
+import re
+from collections.abc import Iterator, Mapping, Sequence
+from dataclasses import dataclass
+from types import MappingProxyType
 
 from agent_pm.session.engine.types import EFFORTS, ConfigError
 
@@ -35,22 +36,69 @@ CHECKS = (
 )
 
 
-def check(config: Mapping, table: str, checks=CHECKS) -> None:
+def check_config(config: Mapping, table: str, checks=CHECKS) -> None:
     for key, ok, what in checks:
         if key in config and not ok(config[key]):
             raise ConfigError(f"{table}.{key} must be {what}")
 
 
-def number(value) -> float | None:
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
-        return None
-    try:
-        value = float(value)
-    except OverflowError:
-        return None
-    return value if math.isfinite(value) else None
+@dataclass(frozen=True)
+class Flag:
+    arg: str
+    word: str
+    value: str | None
+    start: int
+    end: int
+
+    @property
+    def text(self) -> str:
+        return f"{self.arg} {self.value}" if self.end - self.start > 1 else self.arg
 
 
-def resume_command(cwd: str, env: Mapping[str, str], argv) -> str:
-    assign = "".join(f"{name}={shlex.quote(value)} " for name, value in env.items())
-    return f"cd {shlex.quote(cwd)} && {assign}{shlex.join(argv)}"
+def split_flags(flags: Sequence[str]) -> tuple[list[str], list[str]]:
+    index = max((flag.end for flag in scan(flags)), default=0)
+    return list(flags[:index]), list(flags[index:])
+
+
+def scan(flags: Sequence[str], valued: Mapping[str, str] = MappingProxyType({})) -> Iterator[Flag]:
+    """Scan before '--'; a valued option may consume that separator as its next value."""
+    i = 0
+    while i < len(flags) and flags[i] != "--":
+        start, arg = i, flags[i]
+        if arg.startswith("--"):
+            word, attached, value = arg.partition("=")
+        else:
+            word, attached = arg[:2], arg[2:]
+            value = attached.removeprefix("=")
+        name = valued.get(word)
+        if name is None:
+            value = None
+        elif not attached:
+            i += 1
+            value = flags[i] if i < len(flags) else ""
+        yield Flag(arg, name or word, value, start, i + 1)
+        i += 1
+
+
+UUID = re.compile(r"[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}")
+
+
+def select(
+    native: str,
+    syntax: tuple[tuple[str, ...], tuple[str, ...]],
+    *,
+    resume: bool,
+    uuid: bool = False,
+) -> tuple[str, ...]:
+    if uuid and not UUID.fullmatch(native):
+        raise ConfigError(f"session ids are UUIDs, got {native!r:.80}")
+    prefix = syntax[int(resume)]
+    return (*prefix, native) if prefix else ()
+
+
+def check_selection(
+    flags: tuple[str, ...], forbidden: tuple[str, ...], valued: tuple[str, ...] = ()
+) -> None:
+    for flag in scan(flags, {word: word for word in valued}):
+        if flag.arg in forbidden or flag.word in forbidden:
+            raise ConfigError(f"{flag.arg}: picks the session; use sid= or resume=")

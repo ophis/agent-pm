@@ -9,6 +9,8 @@ import tempfile
 import time
 from pathlib import Path
 
+from agent_pm.session.adapters.codex import CodexAdapter
+
 from session.tests.case import REPO, SRC, Case
 from session.tests.integration.adapters.codex import fake_app_server
 
@@ -45,7 +47,13 @@ class AppServerIntegrationTest(Case):
             FAKE_LOG=str(self.log),
         )
         self.script = (
-            Path(SRC["session"]) / "agent_pm" / "session" / "adapters" / "codex" / "app_server.py"
+            Path(SRC["session"])
+            / "agent_pm"
+            / "session"
+            / "adapters"
+            / "codex"
+            / "common"
+            / "app_server.py"
         )
         self.addCleanup(self.cleanup)
 
@@ -66,7 +74,7 @@ class AppServerIntegrationTest(Case):
         self.log.unlink(missing_ok=True)
         started = time.monotonic()
         result = subprocess.run(
-            (sys.executable, str(self.script), "--timeout", str(timeout)),
+            (sys.executable, "-I", str(self.script), "--timeout", str(timeout)),
             cwd=self.work,
             env={**self.env, "FAKE_CASE": case, **env},
             capture_output=True,
@@ -117,6 +125,41 @@ class AppServerIntegrationTest(Case):
                 {"id": 2, "method": "account/rateLimits/read"},
             ],
         )
+
+    def test_production_probe_isolates_stdlib_from_a_select_sibling(self):
+        launch = CodexAdapter({}).usage_probe()
+        self.assertEqual(Path(launch.argv[-1]), self.script)
+        self.assertEqual(launch.argv[:2], (os.path.realpath(sys.executable), "-I"))
+        with tempfile.TemporaryDirectory(dir=self.root) as directory:
+            folder = Path(directory)
+            copied_script = folder / "app_server.py"
+            copied_script.write_bytes(self.script.read_bytes())
+            marker = folder / "shadowed"
+            (folder / "select.py").write_text(
+                f"open({str(marker)!r}, 'w').close()\nraise RuntimeError('shadowed stdlib select')\n"
+            )
+            result = subprocess.run(
+                (*launch.argv[:2], str(copied_script), "--timeout", "0"),
+                cwd=folder,
+                env=self.env,
+                capture_output=True,
+                text=True,
+                timeout=3,
+            )
+            self.assertEqual((result.returncode, result.stdout, result.stderr), (0, "null\n", ""))
+            self.assertFalse(marker.exists())
+            unisolated = subprocess.run(
+                (launch.argv[0], str(copied_script), "--timeout", "0"),
+                cwd=folder,
+                env=self.env,
+                capture_output=True,
+                text=True,
+                timeout=3,
+            )
+            self.assertNotEqual(unisolated.returncode, 0)
+            self.assertEqual(unisolated.stdout, "")
+            self.assertIn("shadowed stdlib select", unisolated.stderr)
+            self.assertTrue(marker.exists())
 
     def test_partial_null_and_empty_native_snapshots_are_preserved(self):
         for case in ("weekly-only", "null", "empty", "fallback", "five-first", "weekly-full"):
@@ -183,7 +226,7 @@ class AppServerIntegrationTest(Case):
         ):
             with self.subTest(argv=argv):
                 result = subprocess.run(
-                    (sys.executable, str(self.script), *argv),
+                    (sys.executable, "-I", str(self.script), *argv),
                     cwd=self.work,
                     env=self.env,
                     capture_output=True,

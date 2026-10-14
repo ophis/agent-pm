@@ -9,7 +9,7 @@ from collections.abc import Iterator, Mapping
 from types import MappingProxyType
 
 from agent_pm.session.adapters import common
-from agent_pm.session.adapters.selection import UUID, scan
+from agent_pm.session.adapters.common import UUID, scan
 from agent_pm.session.engine.types import (
     ConfigError,
     Launch,
@@ -18,29 +18,26 @@ from agent_pm.session.engine.types import (
     Usage,
     Window,
 )
-from agent_pm.utils import printable_abs
+from agent_pm.utils import json_records, number, printable_abs, resume_command
 
 TABLE = "[adapters.claude]"
 NOT_LITERAL = "*?[]{}()\\,"
 
 
-def _before_end(flags: tuple[str, ...]) -> tuple[str, ...]:
-    return flags[: flags.index("--")] if "--" in flags else flags
-
-
 def added_dirs(flags: tuple[str, ...]) -> Iterator[str]:
     """Each --add-dir X or --add-dir=X's X before "--"."""
-    return (value for _, word, value in scan(flags, ("--add-dir",)) if word == "--add-dir")
+    return (
+        flag.value
+        for flag in scan(flags, {"--add-dir": "--add-dir"})
+        if flag.word == "--add-dir" and flag.value is not None
+    )
 
 
 def _merged(flags: tuple[str, ...], hooks: Mapping) -> tuple[dict, tuple[str, ...]]:
-    for i, flag in enumerate(_before_end(flags)):
-        if flag == "--settings":
-            value, end = (flags[i + 1] if i + 1 < len(flags) else ""), i + 2
-        elif flag.startswith("--settings="):
-            value, end = flag.removeprefix("--settings="), i + 1
-        else:
+    for flag in scan(flags, {"--settings": "--settings"}):
+        if flag.word != "--settings" or flag.value is None:
             continue
+        value = flag.value
         try:
             settings = json.loads(value)
         except (ValueError, RecursionError):
@@ -56,13 +53,13 @@ def _merged(flags: tuple[str, ...], hooks: Mapping) -> tuple[dict, tuple[str, ..
             )
         for event, entries in hooks.items():
             own[event] = [*own.get(event, []), *entries]
-        return settings, (*flags[:i], *flags[end:])
+        return settings, (*flags[: flag.start], *flags[flag.end :])
     return {"hooks": dict(hooks)}, flags
 
 
 def _window(value) -> Window | None:
-    used = common.number(value.get("utilization")) if isinstance(value, dict) else None
-    return None if used is None else Window(100 * used, common.number(value.get("resetsAt")))
+    used = number(value.get("utilization")) if isinstance(value, dict) else None
+    return None if used is None else Window(100 * used, number(value.get("resetsAt")))
 
 
 def _full(window: Window | None, resets: float | None) -> Window:
@@ -134,10 +131,12 @@ class ClaudeCommon:
 
     def __init__(self, config: Mapping, *, selector):
         self.selector = selector
-        common.check(config, TABLE, CHECKS)
+        common.check_config(config, TABLE, CHECKS)
         self.flags = tuple(config.get("flags", ()))
         if any(flag.startswith("--setting-sources") for flag in self.flags):
-            raise ConfigError(f"--setting-sources is the Driver's: remove it from {TABLE}.flags")
+            raise ConfigError(
+                f"--setting-sources is set by the Claude adapter: remove it from {TABLE}.flags"
+            )
         self.allow = tuple(config.get("allow", ()))
         self.tiers = dict(config.get("tiers", {}))
         self.efforts = dict(config.get("efforts", {}))
@@ -180,7 +179,7 @@ class ClaudeCommon:
     ) -> str:
         """`dirs`: the granted Access.dirs, each an --add-dir as at launch."""
         added = (arg for d in dirs for arg in ("--add-dir", d))
-        return common.resume_command(cwd, env, ("claude", *self.selector(sid, resume=True), *added))
+        return resume_command(cwd, env, ("claude", *self.selector(sid, resume=True), *added))
 
     @staticmethod
     def uuid(sid) -> str:
@@ -214,7 +213,7 @@ class ClaudeCommon:
             *_read_rules(access.reads),
             *self.allow,
         )
-        strict = "--strict-mcp-config" in _before_end(spec.flags)
+        strict = any(flag.arg == "--strict-mcp-config" for flag in scan(spec.flags))
         selection = self.selector(sid, resume=resume)
         if not isinstance(sid, str):
             raise ConfigError(f"session ids are UUIDs, got {sid!r:.80}")
@@ -251,12 +250,8 @@ class ClaudeCommon:
     @staticmethod
     def parse_usage(output: str) -> Usage | None:
         info = None
-        for line in output.splitlines():
-            try:
-                record = json.loads(line)
-            except (ValueError, RecursionError):
-                continue
-            if isinstance(record, dict) and record.get("type") == "rate_limit_event":
+        for record in json_records(output.splitlines()):
+            if record.get("type") == "rate_limit_event":
                 info = record.get("rate_limit_info")
         if not isinstance(info, dict):
             return None
@@ -269,7 +264,7 @@ class ClaudeCommon:
         )
         weekly = max(weeks, key=lambda window: window.used_percent, default=None)
         if info.get("status") == "rejected":
-            resets = common.number(info.get("resetsAt"))
+            resets = number(info.get("resetsAt"))
             kind = info.get("rateLimitType")
             if isinstance(kind, str) and kind.startswith("seven_day"):
                 weekly = _full(weekly, resets)

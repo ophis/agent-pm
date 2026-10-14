@@ -9,7 +9,7 @@ signals): it applies spec.access.cwd, not its env. Starts no process.
 from abc import ABC, abstractmethod
 from collections.abc import Iterable, Iterator, Mapping
 
-from agent_pm.session.adapters.selection import select
+from agent_pm.session.adapters.common import select
 from agent_pm.session.engine.types import (
     Activity,
     Blocked,
@@ -110,10 +110,16 @@ class Tui(ABC):
 
     @abstractmethod
     def launch(
-        self, prompt: str, spec: Spec, hook: tuple[str, ...], *, resume: bool = False
+        self,
+        prompt: str,
+        spec: Spec,
+        hook: tuple[str, ...],
+        *,
+        source_roots: tuple[str, ...],
+        resume: bool = False,
     ) -> Launch:
         """As Headless.launch, plus each label L of `hooks` as a hook running `hook + (L,)`, its
-        payload on stdin.
+        payload on stdin. source_roots locates the loaded packages for isolated scripts.
         """
 
     def hook_state(self) -> dict:

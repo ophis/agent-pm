@@ -1,14 +1,17 @@
-"""Each tui hook runs `<python> -I tui_hook.py <session dir> <label>` with JSON on stdin. Checks
+"""Each tui hook runs `<python> -I tui_hook.py <session dir> <roots JSON> <label>` with JSON on stdin. Checks
 session.json, runs its optional adapter_hook to bind runtime identity, appends {"ts", "label",
 "payload"} to hooks.jsonl, then marks the pane with the label's word (tmux_host.mark) using
 session.json's tmux_path, never PATH. Payload strs are cut to CUT chars unless the word is done.
-Standalone, stdlib only; never stdout, always exits 0. Failures append a full traceback to hook.log
+The entry script uses only the stdlib; adapter callbacks import packages after the supplied roots
+are set. Never stdout, always exits 0. Failures append a full traceback to hook.log
 when writable and report one stderr line.
 """
 
 from __future__ import annotations
 
 import fcntl
+import importlib
+import importlib.machinery
 import importlib.util
 import json
 import os
@@ -69,12 +72,16 @@ SESSION_STATE = {
 
 def main(argv: list[str], stdin, *, load_host=None) -> None:
     payload = read_payload(stdin)
-    if len(argv) != 2 or not _abs(argv[0]) or not LABEL.fullmatch(argv[1]):
-        raise HookError("usage: tui_hook.py <absolute session dir> <label [A-Za-z0-9_.-]{1,64}>")
-    folder, label = argv
+    if len(argv) != 3 or not _abs(argv[0]) or not LABEL.fullmatch(argv[2]):
+        raise HookError(
+            "usage: tui_hook.py <absolute session dir> <roots JSON> <label [A-Za-z0-9_.-]{1,64}>"
+        )
+    folder, encoded_roots, label = argv
+    roots = _source_roots(encoded_roots)
     state = read_state(os.path.join(folder, STATE))
+    sys.path[:] = [*roots, *(path for path in sys.path if path not in roots)]
     if "adapter_hook" in state:
-        adapter = load_adapter(state["adapter_hook"])
+        adapter = load_adapter(state["adapter_hook"], roots)
         if adapter.on_hook(label, payload, state) is False:
             return
     word = state["words"].get(label)
@@ -89,6 +96,23 @@ def main(argv: list[str], stdin, *, load_host=None) -> None:
             tmux_host.mark(word, state["events"], tmux=tmux)
         except tmux_host.TuiError as e:
             raise HookError(str(e)) from None
+
+
+def _source_roots(encoded: str) -> list[str]:
+    try:
+        roots = json.loads(encoded)
+    except (ValueError, RecursionError):
+        raise HookError(
+            "invalid source roots: expected a nonempty JSON array of directories"
+        ) from None
+    if (
+        not isinstance(roots, list)
+        or not roots
+        or any(not _abs(path) or not os.path.isdir(path) for path in roots)
+        or len(set(roots)) != len(roots)
+    ):
+        raise HookError("invalid source roots: expected distinct absolute directories")
+    return roots
 
 
 def read_payload(stream) -> dict:
@@ -144,27 +168,39 @@ def read_state(path: str) -> dict:
     for field, check in SESSION_STATE.items():
         if field not in state or not check(state[field]):
             raise HookError(f"{path}: bad {field}")
-    if "adapter_hook" in state and not _abs(state["adapter_hook"]):
+    if "adapter_hook" in state and (
+        not isinstance(state["adapter_hook"], str)
+        or not all(part.isidentifier() for part in state["adapter_hook"].split("."))
+    ):
         raise HookError(f"{path}: bad adapter_hook")
     if "adapter_state" in state and not isinstance(state["adapter_state"], dict):
         raise HookError(f"{path}: bad adapter_state")
     return state
 
 
-def load_adapter(path: str):
-    try:
-        info = os.lstat(path)
-    except OSError as error:
-        raise HookError(f"adapter hook {path}: {error.strerror}") from error
-    if not stat.S_ISREG(info.st_mode) or info.st_uid not in (0, os.getuid()):
-        raise HookError(f"adapter hook {path}: not a regular file owned by you or root")
-    spec = importlib.util.spec_from_file_location("_agent_pm_adapter_hook", path)
-    if spec is None or spec.loader is None:
-        raise HookError(f"adapter hook {path}: cannot load Python module")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+def load_adapter(name: str, roots: list[str]):
+    paths = sys.path
+    parts = name.split(".")
+    for index in range(len(parts)):
+        # A segment lookup needs no loaded parent, including for namespace packages.
+        spec = importlib.machinery.PathFinder.find_spec(parts[index], paths)
+        if spec is None or (spec.origin is None and index == len(parts) - 1):
+            raise HookError(f"adapter hook {name}: cannot find Python module")
+        if spec.origin is not None:
+            if not any(
+                os.path.commonpath((root, spec.origin)) == os.path.normpath(root) for root in roots
+            ):
+                raise HookError(f"adapter hook {name}: module outside source roots")
+            try:
+                info = os.lstat(spec.origin)
+            except OSError as error:
+                raise HookError(f"adapter hook {name}: {error.strerror}") from error
+            if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid():
+                raise HookError(f"adapter hook {name}: not a regular file owned by you")
+        paths = list(spec.submodule_search_locations or ())
+    module = importlib.import_module(name)
     if not callable(getattr(module, "on_hook", None)):
-        raise HookError(f"adapter hook {path}: missing on_hook callback")
+        raise HookError(f"adapter hook {name}: missing on_hook callback")
     return module
 
 

@@ -67,7 +67,9 @@ class StubHeadless(Headless):
 
 
 class StubTui(Tui):
-    def launch(self, prompt, spec: Spec, hook, *, resume: bool = False):
+    def launch(
+        self, prompt, spec: Spec, hook, *, source_roots: tuple[str, ...], resume: bool = False
+    ):
         return Launch(("stub", *hook))
 
     def reply(self, payload):

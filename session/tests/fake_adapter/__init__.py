@@ -143,7 +143,9 @@ class FakeInProcess(InProcess):
 class FakeTui(Tui):
     hooks = {"stop": TURN_END, "ask": BLOCKED, "tool": ACTIVITY}
 
-    def launch(self, prompt, spec: Spec, hook, *, resume: bool = False):
+    def launch(
+        self, prompt, spec: Spec, hook, *, source_roots: tuple[str, ...], resume: bool = False
+    ):
         return Launch((*_argv(self.adapter, prompt, spec, resume), *hook))
 
     def reply(self, payload):

@@ -90,16 +90,18 @@ LOCAL_EXAMPLE = re.compile(r"\s*# local: ?(.*)")
 SESSION_SRC = f"session/src/{PKG}/{SESSION}/"
 
 
+IMPORT_BOOTSTRAPS = {
+    f"{SESSION_SRC}adapters/codex/tui/start.py": "_bootstrap",
+    f"{SESSION_SRC}modes/tui_hook.py": "main",
+}
+
+
 STANDALONE = frozenset(
     f"{SESSION_SRC}{path}"
     for path in (
         "hosts/tmux/tmux_host.py",
         "modes/tui_hook.py",
-        "adapters/codex/app_server.py",
-        "adapters/codex/hook_schema.py",
-        "adapters/codex/sessions.py",
-        "adapters/codex/tui_start.py",
-        "adapters/codex/tui_hook.py",
+        "adapters/codex/common/app_server.py",
     )
 )
 
@@ -165,16 +167,6 @@ NOQA_ALLOWED = {
         "BLE001",
         "__main__",
     ): "the hook must never fail the client runtime",
-    (
-        f"{SESSION_SRC}adapters/codex/tui_hook.py",
-        "duplicate-code",
-        "_sibling",
-    ): "standalone stdlib-only scripts cannot share code",
-    (
-        f"{SESSION_SRC}adapters/codex/tui_start.py",
-        "duplicate-code",
-        "_sibling",
-    ): "standalone stdlib-only scripts cannot share code",
     (
         f"{ORCH_PROJECT}/{ORCH_SRC}engine/router.py",
         "duplicate-code",
@@ -1002,13 +994,34 @@ def import_hygiene(repo: str) -> list[str]:
         path, environ, putenv = (
             _spellings(nodes, n) for n in ("sys.path", "os.environ", "os.putenv")
         )
-        found.update(f"{rel}:{n.lineno}: sys.path mutation" for n in nodes if _changes(n, path))
+        bootstrap = _path_bootstrap(rel, tree)
+        found.update(
+            f"{rel}:{n.lineno}: sys.path mutation"
+            for n in nodes
+            if _changes(n, path) and n is not bootstrap
+        )
         found.update(
             f"{rel}:{n.lineno}: module-level environment write"
             for n in _at_import(tree)
             if _changes(n, environ) or isinstance(n, ast.Call) and _is(n.func, putenv)
         )
     return sorted(found)
+
+
+def _path_bootstrap(rel, tree):
+    name = IMPORT_BOOTSTRAPS.get(rel)
+    if name is None:
+        return None
+    assignment = ast.parse(
+        "sys.path[:] = [*roots, *(path for path in sys.path if path not in roots)]"
+    ).body[0]
+    for function in tree.body:
+        if not isinstance(function, ast.FunctionDef) or function.name != name:
+            continue
+        for statement in function.body:
+            if isinstance(statement, ast.Assign) and ast.dump(statement) == ast.dump(assignment):
+                return statement.targets[0]
+    return None
 
 
 def namespace_package(repo: str) -> list[str]:
@@ -1053,6 +1066,7 @@ def unit_test_modules(repo: str) -> list[str]:
                 helper = os.path.join(tests, *parts[:unit], *relative, stem + ".py")
                 matches = (
                     os.path.isfile(home + ".py")
+                    or os.path.isfile(os.path.join(home, "__init__.py"))
                     or any(files for _, _, files in os.walk(home))
                     or os.path.isfile(helper)
                     or (

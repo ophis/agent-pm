@@ -4,6 +4,7 @@ import json
 import unittest
 from dataclasses import asdict
 
+from agent_pm.utils import number
 from agent_pm.utils.record import Record, RecordError, Status
 
 from utils.tests.case import Case
@@ -130,6 +131,21 @@ class RecordLine(Case):
             Record(**{**asdict(MINIMAL), "ctl": ["fake-ctl"]})
         self.assertEqual(str(caught.exception), f"ctl: {ARGV}")
         self.assertIsInstance(caught.exception, ValueError)
+
+
+class NumberTest(Case):
+    def test_finite_numeric_values_become_floats(self):
+        for value, expected in ((0, 0.0), (-2, -2.0), (1.5, 1.5), (10**100, 1e100)):
+            with self.subTest(value=value):
+                converted = number(value)
+                self.assertEqual(converted, expected)
+                self.assertIsInstance(converted, float)
+
+    def test_non_numeric_and_non_finite_values_are_absent(self):
+        for value in (True, False, None, "1", [], {}, float("nan"), float("inf"), -float("inf")):
+            with self.subTest(value=value):
+                self.assertIsNone(number(value))
+        self.assertIsNone(number(10**1000))
 
 
 class StatusLine(Case):

@@ -6,11 +6,12 @@ from agent_pm.session.adapters.base import Headless
 from agent_pm.session.adapters.codex.common import (
     LIMIT_PREFIXES,
     CodexCommon,
-    flags,
+    launch_flags,
     native_id,
     reset_at,
 )
-from agent_pm.session.adapters.codex.sessions import SessionState, split_flags
+from agent_pm.session.adapters.codex.common.types import SessionState
+from agent_pm.session.adapters.common import split_flags
 from agent_pm.session.engine.types import (
     Activity,
     Launch,
@@ -34,17 +35,17 @@ class CodexHeadless(Headless):
         self.state = self.common.prepare(spec, resume=resume)
         self.limit_sent = False
         snapshot = self.state.snapshot
-        argv = ["codex", "exec", *flags(snapshot, interactive=False)]
+        argv = ["codex", "exec", *launch_flags(snapshot, interactive=False)]
         if resume:
             argv.extend(self.common.selector(self.state.native_id, resume=True))
-        _, literal = split_flags(snapshot["flags"])
+        _, literal = split_flags(snapshot.flags)
         argv.extend((*literal, prompt) if literal else ("--", prompt))
         return Launch(
             tuple(argv),
             env=self.common.environment(snapshot),
             unset=self.common.UNSET,
-            cwd=snapshot["cwd"],
-            project=snapshot["project"],
+            cwd=snapshot.cwd,
+            project=snapshot.project,
             transcript=self.common.transcript(self.state) if resume else "",
             resume=self.common.resume_command(self.state) if resume else "",
         )

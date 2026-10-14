@@ -252,13 +252,19 @@ class SourceSuppressions(Sample):
         )
 
     def test_pylint_disable_requires_a_matching_enable(self):
-        path = "session/src/agent_pm/session/adapters/codex/tui_hook.py"
-        reason = guards.NOQA_ALLOWED[path, "duplicate-code", "_sibling"]
+        path = "linear-orchestrator/src/agent_pm/linear_orchestrator/engine/router.py"
+        reason = guards.NOQA_ALLOWED[path, "duplicate-code", "outer"]
+        other = self.scoped(
+            "start_run", [f"# noqa: BLE001  # {guards.NOQA_ALLOWED[path, 'BLE001', 'start_run']}"]
+        )
         self.assertEqual(
             self.found(
-                {path: self.scoped("_sibling", [f"# pylint: disable=duplicate-code  # {reason}"])}
+                {
+                    path: self.scoped("outer", [f"# pylint: disable=duplicate-code  # {reason}"])
+                    + other
+                }
             ),
-            [f"{path}: suppression duplicate-code in _sibling has no matching enable"],
+            [f"{path}: suppression duplicate-code in outer has no matching enable"],
         )
 
     def test_unlisted_pylint_blocks_and_unmatched_enables_are_rejected(self):
@@ -282,18 +288,22 @@ class SourceSuppressions(Sample):
         )
 
     def test_pylint_enable_cannot_close_another_scope(self):
-        path = "session/src/agent_pm/session/adapters/codex/tui_hook.py"
-        reason = guards.NOQA_ALLOWED[path, "duplicate-code", "_sibling"]
+        path = "linear-orchestrator/src/agent_pm/linear_orchestrator/engine/router.py"
+        reason = guards.NOQA_ALLOWED[path, "duplicate-code", "outer"]
+        other = self.scoped(
+            "start_run", [f"# noqa: BLE001  # {guards.NOQA_ALLOWED[path, 'BLE001', 'start_run']}"]
+        )
         self.assertEqual(
             self.found(
                 {
-                    path: self.scoped("_sibling", [f"# pylint: disable=duplicate-code  # {reason}"])
+                    path: self.scoped("outer", [f"# pylint: disable=duplicate-code  # {reason}"])
                     + self.scoped("other", ["# pylint: enable=duplicate-code"])
+                    + other
                 }
             ),
             [
                 f"{path}:4: suppression duplicate-code in other has no matching disable",
-                f"{path}: suppression duplicate-code in _sibling has no matching enable",
+                f"{path}: suppression duplicate-code in outer has no matching enable",
             ],
         )
 
@@ -500,6 +510,75 @@ class PrivateImports(Sample):
 
 
 class ImportHygiene(Sample):
+    def test_bootstrap_owners_may_prepend_roots_in_their_startup_function(self):
+        root = self.tree(
+            {
+                path: (
+                    f"import sys\ndef {function}(roots):\n"
+                    "    sys.path[:] = [*roots, *(path for path in sys.path if path not in roots)]\n"
+                )
+                for path, function in guards.IMPORT_BOOTSTRAPS.items()
+            }
+        )
+        self.assertEqual(guards.import_hygiene(root), [])
+
+    def test_bootstrap_permission_does_not_cover_other_scopes(self):
+        assignment = "sys.path[:] = [*roots, *(path for path in sys.path if path not in roots)]"
+        for path, function in guards.IMPORT_BOOTSTRAPS.items():
+            with self.subTest(path=path):
+                root = self.tree(
+                    {
+                        path: (
+                            f"import sys\n{assignment}\ndef {function}(roots):\n"
+                            f"    {assignment}\n"
+                            f"    def nested():\n        {assignment}\n"
+                            f"def other(roots):\n    {assignment}\n"
+                            f"class Other:\n    def {function}(self, roots):\n"
+                            f"        {assignment}\n"
+                        )
+                    }
+                )
+                self.assertEqual(
+                    guards.import_hygiene(root),
+                    sorted(f"{path}:{line}: sys.path mutation" for line in (2, 6, 8, 11)),
+                )
+
+    def test_bootstrap_permission_covers_only_one_root_prefix_assignment(self):
+        for path, function in guards.IMPORT_BOOTSTRAPS.items():
+            with self.subTest(path=path):
+                root = self.tree(
+                    {
+                        path: (
+                            f"import sys\ndef {function}(roots):\n"
+                            "    sys.path[:] = [*roots, *(path for path in sys.path if path not in roots)]\n"
+                            "    sys.path[:] = [*roots, *(path for path in sys.path if path not in roots)]\n"
+                            "    sys.path[:0] = ['arbitrary']\n    sys.path[:] = roots\n"
+                            "    sys.path[0:0] = roots\n    sys.path[:False] = roots\n"
+                            "    sys.path.append(roots)\n    sys.path.insert(0, roots)\n"
+                            "    sys.path = roots\n    sys.path += roots\n"
+                        )
+                    }
+                )
+                self.assertEqual(
+                    guards.import_hygiene(root),
+                    sorted(f"{path}:{line}: sys.path mutation" for line in range(4, 13)),
+                )
+
+    def test_named_bootstrap_functions_in_other_files_cannot_change_search_paths(self):
+        assignment = "sys.path[:] = [*roots, *(path for path in sys.path if path not in roots)]"
+        root = self.tree(
+            {
+                "tests/other.py": (
+                    f"import sys\ndef _bootstrap(roots):\n    {assignment}\n"
+                    f"def main(roots):\n    {assignment}\n"
+                )
+            }
+        )
+        self.assertEqual(
+            guards.import_hygiene(root),
+            ["tests/other.py:3: sys.path mutation", "tests/other.py:5: sys.path mutation"],
+        )
+
     def test_any_sys_path_mutation(self):
         root = self.tree(
             {
@@ -573,6 +652,45 @@ class StandaloneImports(Sample):
         missing = min(guards.STANDALONE)
         root = self.tree({path: "" for path in guards.STANDALONE if path != missing})
         self.assertEqual(guards.standalone_imports(root), [f"{missing}: missing standalone script"])
+
+    def test_every_branch_is_checked_unconditionally(self):
+        source = """if __package__:
+    from agent_pm.session.adapters import flags
+else:
+    import runpy
+    import requests
+import agent_pm.utils
+"""
+        self.assertEqual(
+            self.found(source),
+            sorted(
+                f"{path}:{line}: non-stdlib import {name}"
+                for path in guards.STANDALONE
+                for line, name in (
+                    (2, "agent_pm.session.adapters"),
+                    (5, "requests"),
+                    (6, "agent_pm.utils"),
+                )
+            ),
+        )
+
+    def test_nested_or_other_conditions_do_not_hide_standalone_imports(self):
+        source = """def load():
+    if __package__:
+        import agent_pm.utils
+if __package__ is not None:
+    import requests
+if not __package__:
+    import other
+"""
+        self.assertEqual(
+            self.found(source),
+            sorted(
+                f"{path}:{line}: non-stdlib import {name}"
+                for path in guards.STANDALONE
+                for line, name in ((3, "agent_pm.utils"), (5, "requests"), (7, "other"))
+            ),
+        )
 
     def test_unlisted_module_is_not_a_standalone_script(self):
         files = dict.fromkeys(guards.STANDALONE, "")

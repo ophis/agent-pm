@@ -1,15 +1,27 @@
 """Session behavior tests with caller-owned dependencies."""
 
 import dataclasses
+import json
 import os
 import shlex
 import stat
 import time
+from dataclasses import replace
 from unittest import mock
 
 from agent_pm.session.adapters.codex import CodexAdapter
+from agent_pm.session.adapters.codex.common import (
+    NativeMetadata,
+    RecoveryError,
+    SessionStore,
+    read_metadata,
+    snapshot_data,
+    validate_snapshot,
+)
 from agent_pm.session.engine.types import Access, ConfigError, SessionInfo
+from agent_pm.session.modes.tui import hook_argv
 
+from session.tests.source_roots import PACKAGE_ROOTS
 from session.tests.unit.adapters.codex.support import CHILD, NATIVE, Base
 
 
@@ -42,7 +54,7 @@ class CommonTest(Base):
         with mock.patch("os.fsync", wraps=os.fsync) as sync:
             state = self.prepare()
         self.assertGreaterEqual(sync.call_count, 2)
-        self.assertEqual(state.snapshot["cwd"], str(self.cwd))
+        self.assertEqual(state.snapshot.cwd, str(self.cwd))
         self.assertIsNone(state.native_id)
         path = self.record()
         self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
@@ -94,7 +106,7 @@ class CommonTest(Base):
         launch = adapter.headless().launch("hi", self.spec, resume=False)
         self.assertEqual((launch.env["PYTHONPATH"], launch.env["K"]), ("/a b;c", "v"))
         self.assertEqual(
-            self.common.load(str(self.work), self.spec.sid).snapshot["env"], {**env, "K": "v"}
+            self.common.load(str(self.work), self.spec.sid).snapshot.env, {**env, "K": "v"}
         )
         state = self.common.bind(str(self.work), self.spec.sid, NATIVE)
         self.rollout()
@@ -136,7 +148,13 @@ class CommonTest(Base):
                         launch = (
                             run.launch("again", requested, resume=True)
                             if mode == "headless"
-                            else run.launch("again", requested, ("/fake/hook",), resume=True)
+                            else run.launch(
+                                "again",
+                                requested,
+                                hook_argv("/fake/session", PACKAGE_ROOTS),
+                                source_roots=PACKAGE_ROOTS,
+                                resume=True,
+                            )
                         )
                     self.assertIs(launch.project, saved)
                     self.assertEqual(launch.transcript, str(path))
@@ -182,7 +200,7 @@ class CommonTest(Base):
         launch = self.adapter.headless().launch("hi", spec, resume=False)
         self.assertNotIn("-m", launch.argv)
         self.assertFalse(any(x.startswith("model_reasoning_effort=") for x in launch.argv))
-        self.assertIsNone(self.common.load(str(self.work), self.spec.sid).snapshot["model"])
+        self.assertIsNone(self.common.load(str(self.work), self.spec.sid).snapshot.model)
 
     def test_missing_recovery_and_session_fail_before_launch(self):
         with self.assertRaisesRegex(ConfigError, "missing.*state"):
@@ -233,10 +251,10 @@ class CommonTest(Base):
         original = self.record().read_text()
         cases = (
             {"sid": "forged"},
-            {"snapshot": {**state.snapshot, "project": "yes"}},
-            {"snapshot": {**state.snapshot, "cwd": str(self.work / ".." / "work")}},
+            {"snapshot": {**snapshot_data(state.snapshot), "project": "yes"}},
+            {"snapshot": {**snapshot_data(state.snapshot), "cwd": str(self.work / ".." / "work")}},
             *(
-                {"snapshot": {**state.snapshot, "env": env}}
+                {"snapshot": {**snapshot_data(state.snapshot), "env": env}}
                 for env in (
                     {"X;Y": "1"},
                     {"A=B": "1"},
@@ -247,7 +265,7 @@ class CommonTest(Base):
                     [],
                 )
             ),
-            {"snapshot": {**state.snapshot, "other": 1}},
+            {"snapshot": {**snapshot_data(state.snapshot), "other": 1}},
             {"writable_roots": [str(self.extra)]},
             {"writable_roots": [str(self.home)]},
             {"native_id": "not-a-uuid"},
@@ -394,6 +412,128 @@ class CommonTest(Base):
             self.assertIn(f"[adapters.codex].{key}", str(caught.exception))
 
 
+class EnvironmentTest(Base):
+    def test_explicit_source_precedence_matches_snapshot_launch_and_inspection(self):
+        ambient_tmp, config_tmp, access_tmp, spec_tmp = (
+            str(self.root / name)
+            for name in ("ambient-tmp", "config-tmp", "access-tmp", "spec-tmp")
+        )
+        configured = {
+            "SOURCE": "config",
+            "CONFIG_ONLY": "config",
+            "CODEX_HOME": str(self.root / "config-home"),
+            "TMPDIR": config_tmp,
+            "PAGER": "configured",
+            "CODEX_SESSION_ID": "explicit-marker",
+        }
+        access = {
+            "SOURCE": "access",
+            "ACCESS_ONLY": "access",
+            "CODEX_HOME": str(self.root / "access-home"),
+            "TMPDIR": access_tmp,
+            "NO_COLOR": "access",
+        }
+        supplied = {
+            "SOURCE": "spec",
+            "SPEC_ONLY": "spec",
+            "CODEX_HOME": str(self.codex_home),
+            "TMPDIR": spec_tmp,
+            "CODEX_CI": "explicit",
+        }
+        adapter = CodexAdapter(self.adapter.config | {"env": configured})
+        spec = dataclasses.replace(
+            self.spec, access=dataclasses.replace(self.spec.access, env=access), env=supplied
+        )
+        with mock.patch.dict(
+            os.environ,
+            {
+                "SOURCE": "ambient",
+                "AMBIENT_ONLY": "ambient",
+                "CODEX_HOME": str(self.root / "ambient-home"),
+                "TMPDIR": ambient_tmp,
+                "PAGER": "ambient",
+                "CODEX_THREAD_ID": NATIVE,
+                "CODEX_SESSION_ID": "ambient-marker",
+            },
+        ):
+            roots = adapter.writable_dirs(spec)
+            launch = adapter.headless().launch("hi", spec)
+            state = adapter.common.load(spec.workdir, spec.sid)
+            self.assertEqual(state.snapshot.env, {**configured, **access, **supplied})
+            self.assertEqual(state.snapshot.codex_home, str(self.codex_home))
+            self.assertEqual(launch.env["SOURCE"], "spec")
+            self.assertEqual(launch.env["PAGER"], "configured")
+            self.assertEqual(launch.env["NO_COLOR"], "access")
+            self.assertEqual(launch.env["CODEX_CI"], "explicit")
+            self.assertEqual(launch.env["GIT_PAGER"], "cat")
+            self.assertNotIn("AMBIENT_ONLY", launch.env)
+            self.assertIn(spec_tmp, roots)
+            for ignored in (ambient_tmp, config_tmp, access_tmp):
+                self.assertNotIn(ignored, roots)
+            effective = adapter.common.environment(state.snapshot, ambient=True)
+            self.assertEqual(effective["AMBIENT_ONLY"], "ambient")
+            self.assertEqual(effective["TMPDIR"], spec_tmp)
+            self.assertNotIn("CODEX_THREAD_ID", effective)
+            self.assertEqual(effective["CODEX_SESSION_ID"], "explicit-marker")
+            self.assertEqual(adapter.writable_dirs(spec, resume=True), roots)
+
+    def test_resume_replays_explicit_inputs_and_refreshes_ambient_values(self):
+        first_tmp, second_tmp, ignored_tmp = (
+            str(self.root / name) for name in ("first-tmp", "second-tmp", "ignored-tmp")
+        )
+        with mock.patch.dict(os.environ, {"TMPDIR": first_tmp, "PAGER": "first-pager"}):
+            inspected = self.adapter.writable_dirs(self.spec)
+            saved = self.prepare()
+            self.assertEqual(saved.snapshot.env, {})
+            self.assertIn(first_tmp, inspected)
+            self.assertEqual(self.common.environment(saved.snapshot)["PAGER"], "cat")
+            self.assertNotIn("PAGER", self.common.environment(saved.snapshot, interactive=True))
+        self.common.bind(str(self.work), self.spec.sid, NATIVE)
+        self.rollout()
+        changed = CodexAdapter(self.adapter.config | {"env": {"TMPDIR": ignored_tmp}})
+        spec = dataclasses.replace(self.spec, env={"TMPDIR": ignored_tmp, "PAGER": "ignored"})
+        with mock.patch.dict(
+            os.environ,
+            {
+                "TMPDIR": second_tmp,
+                "PAGER": "second-pager",
+                "CODEX_HOME": str(self.root / "changed-home"),
+                "CODEX_THREAD_ID": NATIVE,
+            },
+        ):
+            resumed = changed.common.prepare(spec, resume=True)
+            self.assertEqual(resumed.snapshot, saved.snapshot)
+            roots = changed.writable_dirs(spec, resume=True)
+            self.assertIn(second_tmp, roots)
+            self.assertNotIn(first_tmp, roots)
+            self.assertNotIn(ignored_tmp, roots)
+            launch = changed.headless().launch("again", spec, resume=True)
+            self.assertEqual(launch.env["CODEX_HOME"], str(self.codex_home))
+            self.assertEqual(launch.env["PAGER"], "cat")
+            self.assertNotIn("TMPDIR", launch.env)
+            effective = changed.common.environment(resumed.snapshot, ambient=True)
+            interactive = changed.common.environment(
+                resumed.snapshot, ambient=True, interactive=True
+            )
+            self.assertEqual(effective["TMPDIR"], second_tmp)
+            self.assertEqual(effective["PAGER"], "cat")
+            self.assertEqual(interactive["PAGER"], "second-pager")
+            self.assertEqual(interactive["CODEX_HOME"], str(self.codex_home))
+            self.assertNotIn("CODEX_THREAD_ID", interactive)
+
+    def test_empty_explicit_codex_home_preserves_the_ambient_fallback(self):
+        adapter = CodexAdapter(self.adapter.config | {"env": {"CODEX_HOME": ""}})
+        with mock.patch.dict(os.environ, {"CODEX_HOME": str(self.codex_home)}):
+            inspected = adapter.writable_dirs(self.spec)
+            state = adapter.common.prepare(self.spec)
+            self.assertEqual(state.snapshot.env, {"CODEX_HOME": ""})
+            self.assertEqual(state.snapshot.codex_home, str(self.codex_home))
+            self.assertEqual(
+                adapter.common.environment(state.snapshot)["CODEX_HOME"], str(self.codex_home)
+            )
+            self.assertEqual(inspected[1], str(self.codex_home))
+
+
 class WritableDirsTest(Base):
     def new_launch(self, adapter, home):
         roots = [str(path) for path in (self.cwd, home, self.extra)]
@@ -403,7 +543,9 @@ class WritableDirsTest(Base):
         self.assertEqual(len(set(dirs)), len(dirs))
         launch = adapter.headless().launch("hi", self.spec, resume=False)
         self.assertEqual(launch.env["CODEX_HOME"], str(home))
-        self.assertEqual(adapter.common.load(str(self.work), self.spec.sid).writable_roots, roots)
+        self.assertEqual(
+            adapter.common.load(str(self.work), self.spec.sid).writable_roots, tuple(roots)
+        )
 
     def test_config_codex_home(self):
         home = self.root / "config-codex"
@@ -430,7 +572,7 @@ class WritableDirsTest(Base):
         spec = dataclasses.replace(self.spec, access=Access(project=True))
         self.assertIn(elsewhere, other.writable_dirs(spec, resume=False))
         dirs = other.writable_dirs(spec, resume=True)
-        self.assertEqual(list(dirs[: len(saved)]), saved)
+        self.assertEqual(tuple(dirs[: len(saved)]), saved)
         self.assertNotIn(elsewhere, dirs)
         self.assertEqual(self.record().read_bytes(), record)
 
@@ -445,7 +587,7 @@ class WritableDirsTest(Base):
             [argv[i + 1] for i, arg in enumerate(argv) if arg == "--add-dir"], [str(self.extra)]
         )
         self.assertEqual(
-            adapter.common.load(str(self.work), spec.sid).snapshot["dirs"], [str(self.extra)]
+            adapter.common.load(str(self.work), spec.sid).snapshot.dirs, (str(self.extra),)
         )
         for resume in (False, True):
             with self.subTest(resume=resume):
@@ -641,11 +783,11 @@ class GrantTest(Base):
             str(self.extra),
             str(added),
         ]
-        self.assertEqual(state.writable_roots, expected)
+        self.assertEqual(state.writable_roots, tuple(expected))
         self.common.bind(str(self.work), spec.sid, NATIVE)
         self.rollout()
         changed = dataclasses.replace(spec, flags=("--add-dir", "/changed"))
-        self.assertEqual(self.common.prepare(changed, resume=True).writable_roots, expected)
+        self.assertEqual(self.common.prepare(changed, resume=True).writable_roots, tuple(expected))
         self.assertNotIn("/changed", self.adapter.writable_dirs(changed, resume=True))
 
     def test_recovery_needs_roots_covering_cwd_and_home(self):
@@ -668,6 +810,174 @@ class SavedFlags(Base):
     def test_invalid_saved_flags_fail_closed(self):
         state = self.prepare()
         for value in (None, True, 0, {}, "-s", [1], ["bad\0"]):
-            self.edit_record(snapshot=state.snapshot | {"flags": value})
+            self.edit_record(snapshot=snapshot_data(state.snapshot) | {"flags": value})
             with self.subTest(value=value), self.assertRaisesRegex(ConfigError, "snapshot flags"):
                 self.common.load(str(self.work), self.spec.sid)
+
+
+GOOD = ({}, {"PYTHONPATH": "/a b;c", "_x1": ""})
+BAD = (
+    {"X;Y": "a"},
+    {"A=B": "a"},
+    {"1A": "a"},
+    {"": "a"},
+    {"A B": "a"},
+    {"A\n": "a"},
+    {1: "a"},
+    {"A": 1},
+    {"A": None},
+    {"A": "b\0"},
+    [("A", "b")],
+    None,
+)
+
+
+class SnapshotEnvTest(Base):
+    def snapshot(self, **fields):
+        return {
+            **snapshot_data(self.common.prepare(self.spec, persist=False, resume=False).snapshot),
+            **fields,
+        }
+
+    def test_keeps_an_env_access_env_accepts(self):
+        for env in GOOD:
+            with self.subTest(env=env):
+                self.assertEqual(Access(env=env).env, env)
+                self.assertEqual(validate_snapshot(self.snapshot(env=env)).env, env)
+
+    def test_refuses_an_env_access_env_refuses(self):
+        for env in BAD:
+            with self.subTest(env=env):
+                with self.assertRaises(ConfigError):
+                    Access(env=env)
+                with self.assertRaises(RecoveryError) as caught:
+                    validate_snapshot(self.snapshot(env=env))
+                self.assertEqual(str(caught.exception), "invalid Codex recovery snapshot env")
+
+
+class StoreRootTest(Base):
+    def test_invalid_save_does_not_create_the_store(self):
+        state = self.common.prepare(self.spec, persist=False, resume=False)
+        unsafe = replace(state, writable_roots=(*state.writable_roots, str(self.home)))
+        with self.assertRaisesRegex(RecoveryError, "writable"):
+            SessionStore().save(unsafe)
+        self.assertFalse((self.home / ".agent-pm").exists())
+
+    def test_each_operation_resolves_the_default_root_once(self):
+        state = self.prepare()
+        store = SessionStore()
+        operations = (
+            lambda: store.directory(create=False),
+            lambda: store.create(
+                state.workdir, "preview", state.snapshot, state.writable_roots, persist=False
+            ),
+            lambda: store.create(state.workdir, "new", state.snapshot, state.writable_roots),
+            lambda: store.save(replace(state, sid="saved")),
+            lambda: store.load(state.workdir, state.sid),
+            lambda: store.bind(state.workdir, state.sid, NATIVE),
+            lambda: store.lookup(state.sid, state.snapshot.cwd),
+        )
+        for operation in operations:
+            with (
+                self.subTest(operation=operation),
+                mock.patch("os.path.expanduser", wraps=os.path.expanduser) as expanduser,
+            ):
+                operation()
+                expanduser.assert_called_once_with("~")
+
+    def test_existing_store_resolves_and_validates_a_changed_home_per_operation(self):
+        state = self.prepare()
+        store = SessionStore()
+        self.assertEqual(store.load(state.workdir, state.sid), state)
+        other_home = self.root / "other-home"
+        other_home.mkdir()
+        with mock.patch.dict(os.environ, {"HOME": str(other_home)}):
+            self.assertIsNone(store.load(state.workdir, state.sid))
+            store.create(state.workdir, state.sid, state.snapshot, state.writable_roots)
+            self.assertEqual(store.load(state.workdir, state.sid), state)
+            parent = other_home / ".agent-pm" / "core-new-sessions"
+            target = other_home / "moved-store"
+            parent.rename(target)
+            parent.symlink_to(target, target_is_directory=True)
+            with self.assertRaisesRegex(RecoveryError, "symlink"):
+                store.create(
+                    state.workdir, "preview", state.snapshot, state.writable_roots, persist=False
+                )
+
+    def test_nonpersisted_prepare_rejects_a_symlinked_default_store(self):
+        store = self.home / ".agent-pm" / "core-new-sessions" / "codex"
+        target = self.root / "store-target"
+        store.parent.mkdir(parents=True, mode=0o700)
+        target.mkdir(mode=0o700)
+        store.symlink_to(target, target_is_directory=True)
+        with self.assertRaisesRegex(ConfigError, "symlink"):
+            self.common.prepare(self.spec, persist=False)
+        self.assertEqual(list(target.iterdir()), [])
+
+
+class CodecTest(Base):
+    def test_malformed_snapshot_fields_are_rejected_when_loading_saved_json(self):
+        state = self.prepare()
+        original = snapshot_data(state.snapshot)
+        for fields in (
+            {"cwd": 1},
+            {"codex_home": "relative"},
+            {"dirs": "not-a-list"},
+            {"dirs": ["relative"]},
+            {"commands": "not-a-list"},
+            {"commands": [1]},
+            {"commands": [""]},
+            {"commands": ["git\nstatus"]},
+            {"model": float("nan")},
+            {"model": ""},
+            {"effort": []},
+            {"effort": "bad\nvalue"},
+        ):
+            with self.subTest(fields=fields):
+                self.edit_record(snapshot=original | fields)
+                with self.assertRaises(ConfigError):
+                    self.common.load(state.workdir, state.sid)
+
+    def test_snapshot_codec_detaches_both_sides_and_keeps_the_persisted_schema(self):
+        state = self.prepare()
+        raw = snapshot_data(state.snapshot)
+        decoded = validate_snapshot(raw)
+        raw["dirs"].append("/changed")
+        raw["commands"].append("changed")
+        raw["flags"].append("--changed")
+        raw["env"]["CHANGED"] = "yes"
+        self.assertEqual(decoded, state.snapshot)
+        encoded = snapshot_data(decoded)
+        encoded["dirs"].append("/changed-again")
+        encoded["env"]["CHANGED"] = "again"
+        self.assertEqual(decoded, state.snapshot)
+        persisted = json.loads(self.record().read_text())
+        self.assertEqual(persisted["version"], 1)
+        self.assertEqual(persisted["snapshot"], snapshot_data(state.snapshot))
+        self.assertEqual(persisted["writable_roots"], list(state.writable_roots))
+        self.assertEqual(self.common.load(str(self.work), self.spec.sid), state)
+
+    def test_native_parent_extraction_preserves_precedence_and_forgiving_source_formats(self):
+        path = self.rollout()
+        source = {"subagent": {"thread_spawn": {"parent_thread_id": CHILD, "depth": 1}}}
+        for parent, origin, expected in (
+            (NATIVE, source, NATIVE),
+            (None, source, CHILD),
+            ("invalid", source, None),
+            ({}, source, None),
+            (None, "exec", None),
+            (None, {"subagent": "invalid"}, None),
+            (None, {"subagent": {"thread_spawn": []}}, None),
+            (None, {"subagent": {"thread_spawn": {"parent_thread_id": {}}}}, None),
+        ):
+            payload = {
+                "id": NATIVE,
+                "cwd": str(self.cwd),
+                "parent_thread_id": parent,
+                "source": origin,
+                "other": {"mutable": []},
+            }
+            path.write_text(json.dumps({"type": "session_meta", "payload": payload}) + "\n")
+            with self.subTest(parent=parent, origin=origin):
+                metadata = read_metadata(str(path)).metadata
+                self.assertEqual(metadata, NativeMetadata(NATIVE, str(self.cwd), expected))

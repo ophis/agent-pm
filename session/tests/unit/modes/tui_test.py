@@ -22,10 +22,12 @@ from agent_pm.session.engine.types import (
     Blocked,
     DriverError,
     Key,
+    Launch,
     LimitHit,
     Paste,
     SessionBound,
     SessionInfo,
+    Spec,
     TurnEnd,
 )
 from agent_pm.session.hosts.tmux import tmux_host
@@ -33,6 +35,7 @@ from agent_pm.session.modes import tui
 
 from session.tests import fake_adapter
 from session.tests.case import SRC, Case
+from session.tests.source_roots import PACKAGE_ROOTS
 
 NAME = "w1"
 
@@ -774,12 +777,11 @@ class CloseStopTest(Base):
     def test_close_prevents_a_late_hook_from_recreating_files_during_removal(self):
         self.started()
         remove, hooks = os.rmdir, []
-        hook = os.path.join(SRC["session"], "agent_pm", "session", "modes", "tui_hook.py")
 
         def remove_after_hook(path, *args, **kwargs):
             hooks.append(
                 subprocess.run(
-                    [sys.executable, "-I", hook, self.dir, "stop"],
+                    [*tui.hook_argv(self.dir, PACKAGE_ROOTS), "stop"],
                     input=b"{}",
                     capture_output=True,
                     check=True,
@@ -1092,14 +1094,29 @@ class ReturncodeStateTest(Base):
 
 
 class PathsTest(Base):
+    def test_launch_passes_the_derived_roots_separately_from_the_hook(self):
+        run = mock.create_autospec(fake_adapter.FakeTui, instance=True)
+        run.launch.return_value = Launch(("fake",))
+        spec = Spec(workdir=self.tmp, sid=SID)
+        launch = tui.launch(run, "prompt", spec, self.dir, resume=True)
+        self.assertIs(launch, run.launch.return_value)
+        run.launch.assert_called_once_with(
+            "prompt",
+            spec,
+            tui.hook_argv(self.dir, PACKAGE_ROOTS),
+            source_roots=PACKAGE_ROOTS,
+            resume=True,
+        )
+
     def test_session_dir_is_under_tui_dir_in_home(self):
         self.assertEqual(tui.TUI_DIR, "~/.agent-pm/tui")
         self.assertEqual(tui.session_dir(NAME), self.dir)
 
     def test_hook_argv_runs_tui_hook_isolated_on_the_dir(self):
         hook = os.path.join(SRC["session"], "agent_pm", "session", "modes", "tui_hook.py")
-        argv = tui.hook_argv("/d/w1")
-        self.assertEqual(argv, (sys.executable, "-I", argv[2], "/d/w1"))
+        argv = tui.hook_argv("/d/w1", PACKAGE_ROOTS)
+        self.assertEqual(argv, (sys.executable, "-I", argv[2], "/d/w1", argv[4]))
+        self.assertEqual(json.loads(argv[4]), [SRC["session"], SRC["utils"]])
         self.assertTrue(os.path.isabs(argv[2]))
         self.assertTrue(os.path.samefile(argv[2], hook))
 

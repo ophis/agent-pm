@@ -98,7 +98,7 @@ class ConfigTest(Base):
             with self.subTest(flags=flags):
                 self.refused(
                     lambda *, flags=flags: ClaudeAdapter({"flags": flags}),
-                    "--setting-sources is the Driver's: remove it from [adapters.claude].flags",
+                    "--setting-sources is set by the Claude adapter: remove it from [adapters.claude].flags",
                 )
 
     def test_the_env_attributes(self):
