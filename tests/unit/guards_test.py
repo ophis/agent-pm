@@ -1636,7 +1636,7 @@ class ExplicitKeys(Sample):
                 f"{guards.ORCH_PROJECT}/config.toml": (
                     '[labels]\n# local: [linear_orchestrator.labels]\n# local: x = "1"\n'
                     '[roles.a]\nkey = ""\n# local: [linear_orchestrator.roles.b]\n# local: key = "k"\n'
-                    "# local: [linear_orchestrator]\n# local: typo = 1\n"
+                    "# local: [linear_orchestrator]\n# local: typo = 1\n# local: [session]\n"
                 )
             }
         )
