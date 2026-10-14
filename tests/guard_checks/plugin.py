@@ -12,6 +12,9 @@ MANIFESTS = (".claude-plugin/plugin.json", ".codex-plugin/plugin.json")
 SKILL_DIRS = ("skills", *(f"{project}/skills" for project in PROJECTS))
 
 
+SKILLS = ("act-as", "manage", "tmux")
+
+
 def _skills(repo, dirs):
     return {
         os.path.relpath(path, repo)
@@ -52,4 +55,19 @@ def plugin_manifests(repo: str) -> list[str]:
             for key in ("name", "version")
             if fields.get(key) != first[1].get(key)
         ]
+    return found
+
+
+def plugin_skills(repo: str) -> list[str]:
+    """The plugin's skills are exactly SKILLS, each in one place."""
+    names = sorted(os.path.basename(os.path.dirname(rel)) for rel in _skills(repo, SKILL_DIRS))
+    found = [
+        f"skill {name}: shipped {names.count(name)} times"
+        for name in sorted(set(names))
+        if names.count(name) > 1
+    ]
+    found += [f"skill {name}: missing" for name in SKILLS if name not in names]
+    found += [
+        f"skill {name}: not one of {', '.join(SKILLS)}" for name in sorted(set(names) - set(SKILLS))
+    ]
     return found

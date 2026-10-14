@@ -83,3 +83,26 @@ class PluginManifests(Sample):
                 f'{CODEX}: version "0.9.0", not {CLAUDE}\'s "1.0.0"',
             ],
         )
+
+
+class PluginSkills(Sample):
+    def test_the_real_plugin_ships_exactly_its_three_skills(self):
+        self.assertEqual(plugin.plugin_skills(REPO), [])
+
+    def test_a_missing_extra_or_repeated_skill(self):
+        root = self.tree(
+            {
+                "delegate/skills/act-as/SKILL.md": "",
+                "manager/skills/manage/SKILL.md": "",
+                "skills/manage/SKILL.md": "",
+                "manager/skills/extra/SKILL.md": "",
+            }
+        )
+        self.assertEqual(
+            plugin.plugin_skills(root),
+            [
+                "skill manage: shipped 2 times",
+                "skill tmux: missing",
+                "skill extra: not one of act-as, manage, tmux",
+            ],
+        )
