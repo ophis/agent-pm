@@ -11,6 +11,7 @@ import shlex
 import sys
 import threading
 import time
+from types import MappingProxyType
 
 from agent_pm.session.extension import (
     Activity,
@@ -47,7 +48,7 @@ class FakeAdapter(Adapter):
 
 
 class InspectAdapter(FakeAdapter):
-    def session_status(self, info: SessionInfo):
+    def session_status(self, info: SessionInfo, *, env=MappingProxyType({})):
         return SessionStatus("yes", 1.5, f"{info.sid} {info.cwd} {info.transcript} {info.resume}")
 
 

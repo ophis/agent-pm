@@ -157,6 +157,16 @@ class AdapterTest(Base):
             ),
         )
 
+    def test_status_looks_under_the_config_dir_of_the_env_it_is_given(self):
+        adapter, env = ClaudeAdapter({}), {"CLAUDE_CONFIG_DIR": os.path.join(self.tmp, "account")}
+        path = adapter.common.transcript(self.work, SID, env)
+        os.makedirs(os.path.dirname(path))
+        with open(path, "w", encoding="utf-8") as stream:
+            stream.write("recorded")
+        info = SessionInfo(sid=SID, cwd=self.work, project=False, transcript=path, resume="")
+        self.assertEqual(adapter.session_status(info, env=env).resumable, "yes")
+        self.assertEqual(adapter.session_status(info).resumable, "no")
+
     def test_session_status(self):
         self.assertEqual(
             ClaudeAdapter({}).session_status(

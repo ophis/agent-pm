@@ -243,3 +243,9 @@ class CrashTest(HarnessCase):
         self.assertEqual(left.state(), Liveness.ABSENT)
         self.assertEqual(record.sid, SID)
         self.assertEqual(self.metadata()["attempt"], 2)
+
+    def test_the_status_of_an_agent_session_another_process_started_comes_from_its_plan(self):
+        view, _name = self.crashed()
+        self.assertEqual(view.session_info(), HarnessSession.history)
+        (inspected,) = HarnessSession.inspected
+        self.assertEqual((inspected.sid, inspected.mode, inspected.client), (SID, "tui", "fake"))

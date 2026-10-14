@@ -79,7 +79,9 @@ class Adapter:
     def session_metadata(self, info: SessionInfo) -> SessionInfo:
         return info
 
-    def session_status(self, info: SessionInfo) -> SessionStatus:
+    def session_status(
+        self, info: SessionInfo, *, env: Mapping[str, str] = MappingProxyType({})
+    ) -> SessionStatus:
         return SessionStatus(Resumable.UNKNOWN, None, "")
 
     def writable_dirs(self, spec: Spec) -> tuple[str, ...]:
