@@ -93,10 +93,10 @@ class _State:
     harness_name: str
     attempt: int
     outer: Outer
+    overlays: tuple[Mapping, ...]
     detached: bool = False
     completed: bool = False
     result: Result | None = None
-    overlays: tuple[Mapping, ...] = ()
 
 
 class HarnessDelegate(Delegate):
@@ -211,7 +211,7 @@ class HarnessDelegate(Delegate):
             f"{name}-drive",
             1,
             {},
-            overlays=tuple(thaw(overlay) for overlay in overlays),
+            tuple(thaw(overlay) for overlay in overlays),
         )
 
     def _persist_new(self) -> None:
@@ -299,7 +299,7 @@ class HarnessDelegate(Delegate):
                     result["limit"] = Limit(**from_limit)
                 result = Result(**result)
             callback = data.pop("callback")
-            overlays = tuple(data.pop("overlays", ()))
+            overlays = tuple(data.pop("overlays"))
             state = _State(
                 **data,
                 plan=accepted,

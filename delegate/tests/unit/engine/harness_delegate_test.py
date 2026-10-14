@@ -2,6 +2,7 @@
 no state; owner overlays shape its run.
 """
 
+import json
 import os
 from unittest import mock
 
@@ -112,6 +113,18 @@ class OverlayTest(HarnessCase):
         self.assertEqual(self.metadata()["plan"]["run"]["effort"], "low")
         self.make(overlays=({"roles": {"dummy-tester": {"effort": "high"}}},))
         self.assertEqual(self.metadata()["plan"]["run"]["effort"], "high")
+
+    def test_a_record_without_overlays_is_corrupt(self):
+        self.make()
+        path = os.path.join(self.work, "delegate.json")
+        with open(path, encoding="utf-8") as file:
+            data = json.load(file)
+        self.assertEqual(data["overlays"], [])
+        del data["overlays"]
+        with open(path, "w", encoding="utf-8") as file:
+            json.dump(data, file)
+        with self.assertRaisesRegex(ConfigError, "invalid delegate.json: 'overlays'"):
+            HarnessDelegate.attach(self.work, session_cls=HarnessSession)
 
     def test_resume_resolves_with_the_overlays_it_was_built_with(self):
         record = self.make(overlays=({"roles": {"dummy-tester": {"effort": "high"}}},)).detach()
