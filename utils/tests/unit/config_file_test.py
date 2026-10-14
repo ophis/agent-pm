@@ -240,6 +240,16 @@ class Projects(Case):
             ):
                 self.read(name)
 
+    def test_a_renamed_local_key_is_refused_naming_its_new_key(self):
+        old, hint = "runtime", "; renamed to 'client'"
+        self.local(f'[delegate]\n{old} = "codex"\n')
+        with self.assertRaises(ConfigFileError) as cm:
+            self.read("delegate")
+        self.assertEqual(
+            str(cm.exception),
+            f"~/.agent-pm/config.local.toml: unknown key {old!r} in [delegate]{hint}",
+        )
+
     def test_a_new_table_under_a_known_one_is_taken_as_its_owners(self):
         self.local('[session.hosts.other]\nimplementation = "a.b:C"\n[session.adapters]\n')
         with self.assertRaisesRegex(ValueError, r"unknown key 'adapters' in \[session\]"):

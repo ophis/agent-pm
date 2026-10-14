@@ -642,6 +642,29 @@ class OwnedKeys(Fake):
                 self.local(local)
                 self.assertEqual(self.refused(overlays=(overlay,)), msg)
 
+    def test_a_renamed_run_key_is_refused_naming_its_new_name(self):
+        old, hint = "runtime", "; renamed to 'client'"
+        for configured, local, overlay, msg in (
+            (f'{old} = "a"\n' + RUN_CONFIG, "", {}, f"unknown key {old!r}{hint}"),
+            (
+                RUN_CONFIG,
+                f'[roles.writer]\n{old} = "a"\n',
+                {},
+                f"unknown key {old!r} in roles.writer{hint}",
+            ),
+            (RUN_CONFIG, "", {old: "a"}, f"run overlay: unknown key {old!r} in [overlay]{hint}"),
+            (
+                RUN_CONFIG,
+                "",
+                {"roles": {"writer": {old: "a"}}},
+                f"run overlay: unknown key {old!r} in [overlay.roles.writer]{hint}",
+            ),
+        ):
+            with self.subTest(msg=msg):
+                self.configure(configured)
+                self.local(local)
+                self.assertEqual(self.refused(overlays=(overlay,)), msg)
+
     def test_show_resolves_global_then_role_then_overlay_and_is_one_line(self):
         self.assertIn("show", RUN_KEYS)
         self.assertEqual(self.resolved().show, "")

@@ -163,6 +163,9 @@ def access(
 
 
 def _check(cfg: Mapping) -> None:
+    for key in cfg:
+        if hint := utils.renamed_key(key):
+            raise ConfigError(f"unknown key {key!r}{hint}")
     _check_output(cfg, "output", str)
     for r, table in cfg.get("roles", {}).items():
         _check_role(table, r, "", str)
@@ -206,7 +209,7 @@ def _check_output(table: Mapping, where: str, shown: Callable[[str], str]) -> No
 
 def _check_keys(table: Mapping, allowed: frozenset, where: str) -> None:
     if extra := sorted(set(table) - allowed, key=str):
-        raise ConfigError(f"unknown key {extra[0]!r} in {where}")
+        raise ConfigError(f"unknown key {extra[0]!r} in {where}{utils.renamed_key(extra[0])}")
 
 
 def _run_keys(layer: Mapping, role: str) -> dict:
