@@ -12,6 +12,7 @@ import logging
 import os
 import shlex
 import stat
+import sys
 import tempfile
 import threading
 from pathlib import Path
@@ -22,6 +23,7 @@ from agent_pm.session.adapters import common as selection
 from agent_pm.session.adapters.base import Adapter
 from agent_pm.session.adapters.claude import ClaudeAdapter
 from agent_pm.session.adapters.codex import CodexAdapter
+from agent_pm.session.adapters.codex.common import RESUME, SessionStore
 from agent_pm.session.engine import hosted
 from agent_pm.session.engine import types as engine_types
 from agent_pm.session.engine.hosted import POLL, HostedSession
@@ -289,7 +291,9 @@ class HistoricalRecordTest(Case):
             encoding="utf-8",
         )
         os.utime(outside, (9000, 9000))
-        command = f"cd {shlex.quote(str(self.cwd))} && CODEX_HOME={shlex.quote(str(home))} codex resume {SID}"
+        roots = json.dumps(list(PACKAGE_ROOTS))
+        argv = [sys.executable, "-I", RESUME, roots, SessionStore().root, str(self.work), SID, SID]
+        command = f"cd {shlex.quote(str(self.cwd))} && {shlex.join(argv)}"
         self.forged("codex", outside, expected=SessionStatus("unknown", None, command))
 
 

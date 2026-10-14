@@ -194,12 +194,13 @@ class TuiTest(Base):
         adapter = CodexAdapter({**self.adapter.config, "env": {"PYTHONPATH": "/config"}})
         _, launch, _ = self.launch(adapter=adapter)
         self.assertEqual(launch.env["PYTHONPATH"], "/a b;c")
-        self.common.bind(str(self.work), self.spec.sid, NATIVE)
+        state = self.common.bind(str(self.work), self.spec.sid, NATIVE)
         self.rollout()
         self.spec = dataclasses.replace(self.spec, access=Access())
         _, resumed, _ = self.launch(resume=True, adapter=adapter)
         self.assertEqual(resumed.env["PYTHONPATH"], "/a b;c")
-        self.assertEqual(shlex.split(resumed.resume)[3], "PYTHONPATH=/a b;c")
+        self.assertNotIn("/a b;c", resumed.resume)
+        self.assertEqual(self.common.resume_launch(state).env["PYTHONPATH"], "/a b;c")
 
     def test_invalid_launch_plan_saves_no_recovery_state(self):
         with (
