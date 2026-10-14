@@ -1,4 +1,8 @@
-"""Delegate application behavior shared by command-line entry and detached harness."""
+"""Delegate application behavior shared by command-line entry and detached harness.
+
+Exits 0 on an instruction, valid outcome or detach; 1 without an outcome; 2 on configuration or
+usage errors; 3 on client/start failure or usage limit. The harness exits 128 + signum on a signal.
+"""
 
 import argparse
 import functools
