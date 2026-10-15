@@ -408,8 +408,8 @@ class ConfigErrors(Integration):
             ),
             "task off the index": (self.argv("--task", "nope"), "task 'nope' is not one of"),
             "missing options": (
-                [*cli, "--role", self.ROLE, "--input", "x", "--workdir", self.work],
-                "--input, --out and --workdir are required",
+                [*cli, "--role", self.ROLE, "--input", "x", "--out", self.out],
+                "--input and --workdir are required",
             ),
             "a client without in_process": (
                 self.argv("--client", "codex", "--mode", "in_process"),
@@ -424,6 +424,18 @@ class ConfigErrors(Integration):
                 self.assertIn(said, res.stderr)
                 self.assertEqual(self.calls(), [])
                 self.assertEqual(os.listdir(self.work), [])
+
+    def test_cwd_in_run_dir_writes_nothing(self):
+        work = os.path.join(self.root, "new")
+        run = Layout(work).run
+        for cwd in (work, run):
+            with self.subTest(cwd=cwd):
+                argv = [*RUN, "--role", self.ROLE, "--input", "x", "--workdir", work]
+                res = self.drive([block(DONE)], argv=[*argv, "--sid", SID, "--cwd", cwd])
+                self.assertEqual((res.returncode, res.stdout), (2, ""), res.stderr)
+                self.assertIn(f"cwd {cwd} overlaps the run dir {run}", res.stderr)
+                self.assertFalse(os.path.lexists(work))
+                self.assertEqual(self.calls(), [])
 
 
 class Draft(Integration):

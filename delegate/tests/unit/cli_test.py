@@ -98,8 +98,12 @@ class Detach(Base):
             (("--detach",), None, "--detach needs --events"),
             (("--events", e), None, "--events needs --detach"),
             (("--events", e, "--mode", "tui"), None, "--events needs --detach"),
-            (("--detach", "--events", e), "-", "--detach needs --out PATH"),
-            (("--detach", "--events", e, "--dry-run"), "-", "--detach needs --out PATH"),
+            (("--detach", "--events", e), "-", "--detach needs --out PATH or no --out"),
+            (
+                ("--detach", "--events", e, "--dry-run"),
+                "-",
+                "--detach needs --out PATH or no --out",
+            ),
             (
                 ("--detach", "--events", e, "--mode", "in_process"),
                 None,
@@ -109,6 +113,33 @@ class Detach(Base):
             with self.subTest(argv=argv, out=out):
                 self.assertEqual(self.runs(*argv, out=out), (2, "", f"delegate: {want}\n"))
         self.assertEqual(Detaching.made, [])
+
+    def test_without_out_the_spec_out_is_none(self):
+        code, out, err = self.cli(
+            "run",
+            "--role",
+            "dummy-tester",
+            "--input",
+            "x",
+            "--workdir",
+            self.work,
+            "--sid",
+            SID,
+            "--detach",
+            "--events",
+            self.events,
+        )
+        self.assertEqual(
+            (code, out, err), (0, RECORD.to_line() + "\n", f"delegate: session {SID}\n")
+        )
+        ((_, spec, _),) = Detaching.made
+        self.assertIsNone(spec.out)
+
+    def test_cwd_is_the_specs_cwd(self):
+        cwd = os.path.join(self.tmp, "elsewhere")
+        self.assertEqual(self.detaches("--cwd", cwd)[0], 0)
+        self.assertEqual(self.detaches()[0], 0)
+        self.assertEqual([spec.cwd for _, spec, _ in Detaching.made], [cwd, None])
 
     def test_split_options_are_gone(self):
         for extra in (("--split", "right"), ("--split-from", "mgr")):
@@ -686,16 +717,16 @@ class Configures(Base):
 
 
 class Usage(Base):
-    def test_a_run_needs_input_out_and_workdir(self):
+    def test_a_run_needs_input_and_workdir(self):
         for argv in (
             ("--out", "o.md"),
-            ("--input", "x", "--workdir", self.work),
+            ("--workdir", self.work),
             ("--input", "x", "--out", "o.md"),
         ):
             with self.subTest(argv=argv):
                 self.assertEqual(
                     self.cli("run", "--role", "dummy-tester", "--client", "fake", *argv),
-                    (2, "", "delegate: --input, --out and --workdir are required\n"),
+                    (2, "", "delegate: --input and --workdir are required\n"),
                 )
         self.assertEqual(self.launches(), [])
 

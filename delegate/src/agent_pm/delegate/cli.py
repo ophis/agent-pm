@@ -53,7 +53,7 @@ def main(
             help="none: one Record per stdin line",
         )
     prompt = commands.add_parser("prompt", help="write a role's prompt as an instruction file")
-    _common_options(prompt)
+    _common_options(prompt, out="where the deliverable is written; -: stdout")
     a = parser.parse_args(argv)
     if a.command == "run":
         return _run(a, run, argv[1:], delegate_cls, sid=sid, events=events)
@@ -62,21 +62,24 @@ def main(
     return _query(a, delegate_cls, sid)
 
 
-def _common_options(ap: argparse.ArgumentParser) -> None:
+def _common_options(ap: argparse.ArgumentParser, *, out: str) -> None:
     ap.add_argument("--role")
     ap.add_argument("--task")
     ap.add_argument(
         "--input", metavar="TEXT|-", help="the input text, even when it names a file; -: stdin's"
     )
-    ap.add_argument(
-        "--out", action=Once, metavar="PATH|-", help="where the deliverable is written; -: stdout"
-    )
+    ap.add_argument("--out", action=Once, metavar="PATH|-", help=out)
     ap.add_argument("--workdir", action=Once)
     ap.add_argument("--repo")
 
 
 def _run_options(ap: argparse.ArgumentParser) -> None:
-    _common_options(ap)
+    _common_options(
+        ap, out="where the deliverable is written; -: stdout; default <workdir>/run/out.md"
+    )
+    ap.add_argument(
+        "--cwd", action=Once, metavar="PATH", help="the agent's cwd; default <workdir>/agent"
+    )
     ap.add_argument(
         "--list",
         action="store_true",
@@ -180,12 +183,13 @@ def spec_of(a, text: str) -> Spec:
         events=a.events,
         out=None if a.out == "-" else a.out,
         repo=a.repo,
+        cwd=a.cwd,
     )
 
 
 def _check(a: argparse.Namespace) -> None:
-    if None in (a.input, a.out, a.workdir):
-        raise ConfigError("--input, --out and --workdir are required")
+    if None in (a.input, a.workdir):
+        raise ConfigError("--input and --workdir are required")
     if a.resume and a.sid is None:
         raise ConfigError("--resume needs --sid")
     if a.events is not None and not a.detach:
@@ -195,7 +199,7 @@ def _check(a: argparse.Namespace) -> None:
     if a.detach and a.events is None:
         raise ConfigError("--detach needs --events")
     if a.detach and a.out == "-":
-        raise ConfigError("--detach needs --out PATH")
+        raise ConfigError("--detach needs --out PATH or no --out")
     if a.detach and a.mode == Mode.IN_PROCESS:
         raise ConfigError("--detach needs --mode headless or tui")
 
