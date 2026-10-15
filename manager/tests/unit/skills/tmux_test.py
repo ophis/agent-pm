@@ -94,6 +94,26 @@ class Names(Case):
                 any("agent-pm@agent-pm" in flag for flag in adapters[client]["flags"]), client
             )
 
+    def test_the_upgrading_row_carries_each_packaged_plugin_off_entry(self):
+        with open(os.path.join(REPO, "README.md"), encoding="utf-8") as f:
+            [row] = [line for line in f if line.startswith("| a local `flags` list")]
+        configs = {
+            ("session", "adapters"): "session/src/agent_pm/session/config.toml",
+            ("delegate", "policy"): "delegate/src/agent_pm/delegate/config.toml",
+        }
+        for (layer, table), path in configs.items():
+            with open(os.path.join(REPO, path), "rb") as f:
+                tables = tomllib.load(f)[table]
+            for client in ("claude", "codex"):
+                flags = tables[client]["flags"]
+                [at] = [i for i, flag in enumerate(flags) if "agent-pm@agent-pm" in flag]
+                entry = f'"{flags[at - 1]}", ' + (
+                    f"'{flags[at]}'" if '"' in flags[at] else f'"{flags[at]}"'
+                )
+                with self.subTest(table=f"{layer}.{table}.{client}"):
+                    self.assertIn(f"`[{layer}.{table}.{client}]`", row)
+                    self.assertIn(entry, row)
+
     def test_the_skills_it_names_are_this_plugins(self):
         for skill in re.findall(r"`/agent-pm:([a-z-]+)`", body("tmux") + body("manage")):
             homes = [os.path.join(REPO, d, "skills", skill) for d in ("manager", "delegate")]

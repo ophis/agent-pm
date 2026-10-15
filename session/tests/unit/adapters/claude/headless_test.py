@@ -143,6 +143,7 @@ class ArgvTest(Base):
         with open(listed, "w", encoding="utf-8") as f:
             f.write("[]")
         limit = "want a regular file of at most 2 MiB"
+        far = os.path.join(self.work, "d" * 90, "missing.json")
         for value, message in (
             (self.work, limit),
             (big, limit),
@@ -151,11 +152,12 @@ class ArgvTest(Base):
                 "missing.json",
                 f"[Errno 2] No such file or directory: {self.work + '/missing.json'!r}",
             ),
+            (far, f"[Errno 2] No such file or directory: {far!r}"),
         ):
             with self.subTest(value=value):
                 self.refused(
                     lambda *, value=value: self.launch(config={}, flags=("--settings", value)),
-                    f"--settings {value!r:.80}: {message}",
+                    f"--settings {value!r}: {message}",
                 )
 
     def test_a_prompt_starting_with_a_dash_stays_last_after_the_separator(self):
