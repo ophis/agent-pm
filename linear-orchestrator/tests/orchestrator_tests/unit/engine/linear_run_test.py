@@ -146,6 +146,14 @@ class Runs(RunCase):
             with self.subTest(issue=issue, sid=sid), self.assertRaises(ConfigError):
                 LinearRun.attach(issue, cfg=self.cfg, sid=sid)
 
+    def test_a_newer_failed_launch_leaves_the_issue_no_run_but_its_sid_attaches(self):
+        self.start()
+        failed = "abcdef12-0000-4000-8000-000000000000"
+        runs.note(self.cfg.runs_log, "failed", issue="TASK-1", sid=failed)
+        with self.assertRaisesRegex(ConfigError, "TASK-1: its latest launch failed at "):
+            LinearRun.attach("TASK-1", cfg=self.cfg)
+        self.assertEqual(LinearRun.attach("TASK-1", cfg=self.cfg, sid=SID).sid, SID)
+
     def test_nonlatest_sid_is_refused_before_attaching_the_wrong_view(self):
         self.start()
         newer = "abcdef12-0000-4000-8000-000000000000"
