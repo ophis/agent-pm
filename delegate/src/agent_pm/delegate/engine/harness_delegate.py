@@ -606,10 +606,11 @@ class HarnessDelegate(Delegate):
             return SessionStatus(Resumable.NO, None, "")
 
     def run(self, on_event: Callable[[Event], None] | None = None) -> Result:
-        """Each event goes to the callback, then `on_event`; a Finished is stored first. A run that
-        raises before its Finished stores and calls back a stopped one (not to `on_event`), then
-        re-raises; a crash (an Exception or SystemExit, not a signal's Stopped or an interrupt) is
-        also a run.jsonl run_error row with its traceback.
+        """Each event goes to the callback, then `on_event`; a Finished is stored first, a failed
+        store printed and the Finished still sent. A run that raises before its Finished stores and
+        calls back a stopped one (not to `on_event`), then re-raises; a crash (an Exception or
+        SystemExit, not a signal's Stopped or an interrupt) is also a run.jsonl run_error row with
+        its traceback.
         """
         state = self._state
         if state.events is not None and not state.detached and state.plan.spec.mode != Mode.TUI:
@@ -635,8 +636,11 @@ class HarnessDelegate(Delegate):
             def emit(event: Event) -> None:
                 nonlocal finished
                 if isinstance(event, Finished):
-                    self._complete(event.result)
                     finished = True
+                    try:
+                        self._complete(event.result)
+                    except (ConfigError, OSError) as failure:
+                        say(f"delegate: {failure}")
                 if callback is not None:
                     callback(event)
                 if on_event is not None:

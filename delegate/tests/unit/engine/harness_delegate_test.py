@@ -8,7 +8,7 @@ import json
 import os
 from unittest import mock
 
-from agent_pm.delegate import ConfigError, Result, Spec
+from agent_pm.delegate import ConfigError, Finished, Result, Spec
 from agent_pm.delegate.composer import Composer, RunParams
 from agent_pm.delegate.engine.harness_delegate import HarnessDelegate
 from agent_pm.delegate.engine.state import RunState
@@ -190,6 +190,23 @@ class LaunchTest(HarnessCase):
         self.assertNotIn("AGENT_PM_SID", environment)
         self.assertNotIn("AGENT_PM_EVENTS", environment)
         self.assertEqual(environment["KEPT"], "kept")
+
+
+class SaveFailureTest(HarnessCase):
+    def test_a_failed_result_save_still_hands_on_the_runs_real_finished(self):
+        delegate, events, real = self.make(), [], os.replace
+        published = os.path.join(self.work, "delegate.json")
+
+        def replace(src, dst):
+            if str(dst) == published:
+                raise OSError("disk full")
+            real(src, dst)
+
+        with mock.patch.object(os, "replace", replace):
+            result = delegate.run(on_event=events.append)
+        finished = [e for e in events if isinstance(e, Finished)]
+        self.assertEqual([e.result for e in finished], [result])
+        self.assertEqual(result.outcome.status, "done")
 
 
 class UsageSession(HarnessSession):
