@@ -39,8 +39,8 @@ def note(path, kind, *, now=datetime.now, **fields):
     append_line(path, _row(kind, now, fields), durable=True, locked=True)
 
 
-def note_limit(path, *, issue, sid, client, resets_at, delegate_kind):
-    """Once per (issue, sid, resets_at): a redelivery after a lost ledger write appends none."""
+def note_limit(path, *, issue, sid, client, resets_at, delegate_kind, attempt):
+    """Once per (issue, sid, attempt): a redelivery after a lost ledger write appends none."""
     os.makedirs(os.path.dirname(path), exist_ok=True)
     fields = {
         "issue": issue,
@@ -48,19 +48,20 @@ def note_limit(path, *, issue, sid, client, resets_at, delegate_kind):
         "client": client,
         "resets_at": resets_at,
         "delegate_kind": delegate_kind,
+        "attempt": attempt,
     }
+    key = ("limit", issue, sid, attempt)
     with file_lock(path):
-        if not any(_limit_of(line, issue, sid, resets_at) for line in _lines(path)):
+        if not any(_limit_key(line) == key for line in _lines(path)):
             append_line(path, _row("limit", datetime.now, fields), durable=True)
 
 
-def _limit_of(line, issue, sid, resets_at):
+def _limit_key(line):
     try:
         d = json.loads(line)
     except ValueError:
-        return False
-    found = isinstance(d, dict) and (d.get("kind"), d.get("issue"), d.get("sid"))
-    return found == ("limit", issue, sid) and d.get("resets_at") == resets_at
+        return None
+    return isinstance(d, dict) and tuple(d.get(k) for k in ("kind", "issue", "sid", "attempt"))
 
 
 def _client(d):

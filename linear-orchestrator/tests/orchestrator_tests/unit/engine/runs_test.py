@@ -257,6 +257,7 @@ class Trim(Case):
                 "client": "a",
                 "resets_at": at,
                 "delegate_kind": "harness",
+                "attempt": 1,
             },
         )
         real = os.replace
@@ -422,17 +423,29 @@ class NoteLimit(Case):
         path = os.path.join(self.tmp, "logs", "runs.jsonl")
         with mock.patch.object(os, "fsync", wraps=os.fsync) as spy:
             runs.note_limit(
-                path, issue="TASK-1", sid="s", client="a", resets_at=at, delegate_kind="harness"
+                path,
+                issue="TASK-1",
+                sid="s",
+                client="a",
+                resets_at=at,
+                delegate_kind="harness",
+                attempt=1,
             )
             runs.note_limit(
-                path, issue="TASK-2", sid="t", client="b", resets_at=None, delegate_kind="harness"
+                path,
+                issue="TASK-2",
+                sid="t",
+                client="b",
+                resets_at=None,
+                delegate_kind="harness",
+                attempt=1,
             )
         self.assertEqual(spy.call_count, 4)
         with open(path, encoding="utf-8") as f:
             rows = [json.loads(line) for line in f]
         self.assertEqual(
             [list(r) for r in rows],
-            [["ts", "kind", "issue", "sid", "client", "resets_at", "delegate_kind"]] * 2,
+            [["ts", "kind", "issue", "sid", "client", "resets_at", "delegate_kind", "attempt"]] * 2,
         )
         self.assertEqual(
             [{k: v for k, v in r.items() if k != "ts"} for r in rows],
@@ -444,6 +457,7 @@ class NoteLimit(Case):
                     "client": "a",
                     "resets_at": at,
                     "delegate_kind": "harness",
+                    "attempt": 1,
                 },
                 {
                     "kind": "limit",
@@ -452,20 +466,25 @@ class NoteLimit(Case):
                     "client": "b",
                     "resets_at": None,
                     "delegate_kind": "harness",
+                    "attempt": 1,
                 },
             ],
         )
         self.assertEqual(runs.limits(path, NOW), {("harness", "a"): datetime.fromisoformat(at)})
 
-    def test_a_sids_same_reset_is_one_row_and_a_new_reset_another(self):
-        first, later = (stamp(NOW + timedelta(hours=h), EAST) for h in (1, 2))
-        for at in (first, first, later):
+    def test_an_attempts_limit_is_one_row_and_a_later_attempts_another(self):
+        at = stamp(NOW + timedelta(hours=1), EAST)
+        for attempt in (1, 1, 2):
             runs.note_limit(
-                self.log, issue="TASK-1", sid="s", client="a", resets_at=at, delegate_kind="harness"
+                self.log,
+                issue="TASK-1",
+                sid="s",
+                client="a",
+                resets_at=at,
+                delegate_kind="harness",
+                attempt=attempt,
             )
-        self.assertEqual(
-            [json.loads(line)["resets_at"] for line in self.read().splitlines()], [first, later]
-        )
+        self.assertEqual([json.loads(line)["attempt"] for line in self.read().splitlines()], [1, 2])
 
 
 if __name__ == "__main__":

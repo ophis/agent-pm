@@ -399,7 +399,7 @@ class Segment(TmuxFlow):
                 ACCOUNTS[p.role],
                 p.script.report,
             )
-            self.expect_session(p.ident, p.sid, report["status"] if report else "done")
+            self.expect_session(p.ident, p.sid, report["status"] if report else "no outcome")
             ledgered = want.ledger.get(p.sid, [])
             first = "start" not in ledgered
             comments, steps, changes = [(account, "start")] if first else [], ["start"], {}

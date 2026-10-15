@@ -273,6 +273,7 @@ class Undone(Run):
             "client": "claude",
             "resets_at": RESETS,
             "delegate_kind": "harness",
+            "attempt": 1,
         }
         start = {
             "kind": "start",
@@ -297,7 +298,8 @@ class Undone(Run):
             self.framed(SUBSCRIBE, REREAD, TO_REVIEW, end=LIMITED, created=False, since=n),
         )
         resumed = {k: start[k] for k in ("issue", "sid", "role", "client", "delegate_kind")}
-        self.assertEqual(self.runs(), [start, note, {"kind": "resume", **resumed}, note])
+        again = {**note, "attempt": 2}
+        self.assertEqual(self.runs(), [start, note, {"kind": "resume", **resumed}, again])
         self.assertEqual([s for _, s in self.stored()].count(cid("limit")), 1)
         researcher = ACCOUNTS["researcher"]
         self.assertEqual(

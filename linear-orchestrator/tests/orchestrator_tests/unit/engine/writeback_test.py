@@ -1963,7 +1963,7 @@ class LimitEvents(Events):
             if row["kind"] == "limit"
         ]
 
-    def row(self, resets_at="2026-10-11T18:00:00+08:00"):
+    def row(self, resets_at="2026-10-11T18:00:00+08:00", attempt=1):
         return {
             "kind": "limit",
             "issue": RUN_ISSUE,
@@ -1971,6 +1971,7 @@ class LimitEvents(Events):
             "client": "fake",
             "resets_at": resets_at,
             "delegate_kind": "fake",
+            "attempt": attempt,
         }
 
     def test_a_limit_comments_moves_and_records_its_row_then_ends_the_session(self):
@@ -2131,7 +2132,7 @@ class LimitEvents(Events):
         self.assertEqual(len(self.linear.writes("state")), 1)
         self.assertEqual(self.rows(), [self.row()])
 
-    def test_a_later_attempts_limit_moves_again_without_a_second_comment_or_same_row(self):
+    def test_a_later_attempts_limit_moves_again_without_a_second_comment(self):
         self.assertTrue(self.deliver(self.limited()))
         self.linear.state = self.cfg.states["in_progress"]
         n = len(self.linear.calls)
@@ -2141,7 +2142,7 @@ class LimitEvents(Events):
             ["reread", "state"],
         )
         self.assertEqual(len([c for c in self.linear.comments if c != RUN_SESSION]), 1)
-        self.assertEqual(self.rows(), [self.row()])
+        self.assertEqual(self.rows(), [self.row(), self.row(attempt=2)])
         self.assertEqual(
             self.ledger()[RUN_SID]["steps"],
             ["limit", "limit-move:1", "limit-row:1", "limit-move:2", "limit-row:2"],

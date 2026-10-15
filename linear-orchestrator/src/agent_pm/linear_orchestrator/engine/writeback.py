@@ -503,6 +503,7 @@ def _limited(ctx, runs_log, claim, attempt, resets_at) -> bool:
             client=claim.client,
             resets_at=at,
             delegate_kind=claim.delegate_kind,
+            attempt=attempt,
         ),
     )
     return moved and noted is None
