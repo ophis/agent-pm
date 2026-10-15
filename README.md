@@ -376,24 +376,24 @@ Nothing migrates automatically. Do each step that applies, once, by hand or thro
 | an issue In Progress across the trigger-only router or `runs.jsonl` deploys | Deploy with nothing In Progress. |
 | Claude runs started before `agent-pm-session client-resume claude` | Resume them by hand: their `Run <sid>` command has no saved launch to replay. |
 | old logs in `<work_dir>/logs/` | `rm -rf ~/.agent-pm/logs/runs.log ~/.agent-pm/logs/router.log ~/.agent-pm/logs/promote.log ~/.agent-pm/logs/projects ~/.agent-pm/logs/tui` |
-| `src/` or `run.jsonl` directly in a `<work_dir>/work/<ID>/`, or `~/.agent-pm/delegates/` | [Workdir split](#workdir-split). |
+| `src/` or `run.jsonl` directly in a `<work_dir>/work/<ID>/` or `~/.agent-pm/adhoc/*/`, or `~/.agent-pm/delegates/` | [Workdir split](#workdir-split). |
 
 ### Workdir split
 
-A run's workdir `<work_dir>/work/<ID>/` now holds `agent/` and `run/`. Nothing reads the old layout, and no run started before the move resumes (its cwd moved). The move keeps each issue's checkouts, which prune then finds, and its records; Codex recovery state stays as a record.
+A run's workdir, `<work_dir>/work/<ID>/` or an ad-hoc `~/.agent-pm/adhoc/<date>-<role>-<name>/`, now holds `agent/` and `run/`. Nothing reads the old layout, and no run started before the move resumes (its cwd moved). The move keeps each issue's checkouts, which prune then finds, and its records; Codex recovery state stays as a record.
 
-1. With no live run and nothing In Progress, move each workdir's files:
+1. With no live run and nothing In Progress, move each workdir's files (a finished ad-hoc folder can be deleted instead: [State root](#state-root)):
    ```bash
-   for w in <work_dir>/work/*/; do
-     [ -d "$w/run" ] && continue
+   for w in <work_dir>/work/*/ ~/.agent-pm/adhoc/*/; do
+     [ -d "$w" ] && [ ! -d "$w/run" ] || continue
      mkdir "$w/agent" "$w/run"
-     for f in src publish tmp; do [ -e "$w/$f" ] && mv "$w/$f" "$w/agent/"; done
+     for f in src publish tmp prompt.md; do [ -e "$w/$f" ] && mv "$w/$f" "$w/agent/"; done
      for f in run.jsonl out.md delegate.json writeback.json writeback.lock delegate.lock; do [ -e "$w/$f" ] && mv "$w/$f" "$w/run/"; done
    done
    ```
 2. Reconnect each moved worktree (a checkout whose `.git` is a file) to its `[local_clones]` clone:
    ```bash
-   for g in <work_dir>/work/*/agent/src/*/*/.git; do [ -f "$g" ] && git -C "${g%/.git}" worktree repair; done
+   for g in <work_dir>/work/*/agent/src/*/*/.git ~/.agent-pm/adhoc/*/agent/src/*/*/.git; do [ -f "$g" ] && git -C "${g%/.git}" worktree repair; done
    ```
 3. `rm -rf ~/.agent-pm/delegates`
 
