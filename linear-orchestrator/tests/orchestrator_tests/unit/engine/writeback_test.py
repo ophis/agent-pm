@@ -15,6 +15,7 @@ from agent_pm.delegate import (
     Begun,
     DelegateEvent,
     Finished,
+    Layout,
     Outcome,
     OutcomeStatus,
     Progress,
@@ -258,6 +259,8 @@ class Base(Case):
         log.use_logs(os.path.join(self.tmp, "logs"))
 
     def ctx(self, role="engineer", *, gql=None):
+        workdir = tempfile.mkdtemp(dir=self.tmp)
+        os.mkdir(Layout(workdir).run)
         return writeback.Context(
             ident=ID,
             issue_id=UUID,
@@ -265,7 +268,8 @@ class Base(Case):
             sid=SID,
             resume=False,
             project=None,
-            workdir=tempfile.mkdtemp(dir=self.tmp),
+            workdir=workdir,
+            run=Layout(workdir).run,
             gql=gql or Gql(),
             humans=HUMANS,
             states=STATES,
@@ -295,14 +299,14 @@ class Base(Case):
         return [show({k: v for k, v in e.items() if k != "sid"}) for e in events]
 
     def ledger(self, ctx):
-        with open(os.path.join(ctx.workdir, "writeback.json")) as f:
+        with open(os.path.join(ctx.run, "writeback.json")) as f:
             return json.load(f)
 
     def steps(self, ctx):
         return {sid: entry["steps"] for sid, entry in self.ledger(ctx).items()}
 
     def no_ledger(self, ctx):
-        self.assertFalse(os.path.exists(os.path.join(ctx.workdir, "writeback.json")))
+        self.assertFalse(os.path.exists(os.path.join(ctx.run, "writeback.json")))
 
 
 class ProgressReporting(Base):
@@ -618,6 +622,7 @@ class WritebackContext(run_fixtures.Base):
                     resume=resume,
                     project=PROJECT,
                     workdir=os.path.join(self.work, "work", ID),
+                    run=os.path.join(self.work, "work", ID, "run"),
                     gql=ctx.gql,
                     humans=("me@x.com",),
                     states=cfg.states,
@@ -1247,7 +1252,7 @@ class CompletionLedger(Base):
         ctx = self.ctx()
         self.write(
             ctx,
-            "writeback.json",
+            "run/writeback.json",
             json.dumps({OTHER_SID: {"steps": ["comment", "move:in_review"]}}),
         )
         gql = Gql()
@@ -1281,7 +1286,7 @@ class CompletionLedger(Base):
             with self.subTest(text=text):
                 gql = Gql()
                 ctx = self.ctx(gql=gql)
-                self.write(ctx, "writeback.json", text)
+                self.write(ctx, "run/writeback.json", text)
                 writeback.finish(
                     ctx, Outcome(status="failed", title="ENG-7: x", summary="push not permitted")
                 )
@@ -1293,7 +1298,7 @@ class CompletionLedger(Base):
     def test_fifo_ledger_does_not_block(self):
         gql = Gql()
         ctx = self.ctx(gql=gql)
-        os.mkfifo(os.path.join(ctx.workdir, "writeback.json"))
+        os.mkfifo(os.path.join(ctx.run, "writeback.json"))
         self.assertTrue(
             writeback.finish(
                 ctx, Outcome(status="failed", title="ENG-7: x", summary="push not permitted")
@@ -1307,7 +1312,7 @@ class CompletionLedger(Base):
         elsewhere = os.path.join(self.tmp, "elsewhere.json")
         with open(elsewhere, "w") as f:
             f.write(json.dumps({SID: {"steps": ["comment", "move:in_review"]}}))
-        os.symlink(elsewhere, os.path.join(ctx.workdir, "writeback.json"))
+        os.symlink(elsewhere, os.path.join(ctx.run, "writeback.json"))
         writeback.finish(
             ctx, Outcome(status="failed", title="ENG-7: x", summary="push not permitted")
         )
@@ -1315,7 +1320,7 @@ class CompletionLedger(Base):
             gql.calls,
             expect(body="Build failed: push not permitted", state="in_review"),
         )
-        self.assertFalse(os.path.islink(os.path.join(ctx.workdir, "writeback.json")))
+        self.assertFalse(os.path.islink(os.path.join(ctx.run, "writeback.json")))
         with open(elsewhere) as f:
             self.assertEqual(json.load(f), {SID: {"steps": ["comment", "move:in_review"]}})
 
@@ -1325,7 +1330,7 @@ class CompletionLedger(Base):
             writeback.progress(ctx, START)
         self.assertEqual(self.lines(), [f"step-error {ID} step=start error=OSError: disk full"])
         self.assertEqual(ctx.gql.calls, [post("start", "Build started: x")])
-        self.assertEqual(os.listdir(ctx.workdir), [])
+        self.assertEqual(os.listdir(ctx.run), [])
 
 
 class ResumedComments(Base):
@@ -1534,6 +1539,7 @@ class Events(RunCase):
         super().setUp()
         log.use_logs(self.cfg.logs_dir)
         self.workdir = self.cfg.run_dir(RUN_ISSUE)
+        self.run = Layout(self.workdir).run
         LinearRun(
             RUN_ISSUE,
             "Echo input.",
@@ -1580,7 +1586,7 @@ class Events(RunCase):
         )
 
     def ledger(self):
-        with open(os.path.join(self.workdir, writeback.LEDGER)) as f:
+        with open(os.path.join(self.run, writeback.LEDGER)) as f:
             return json.load(f)
 
     def said(self):
@@ -1624,16 +1630,12 @@ class ForClaim(RunCase):
         ctx.gql("query", i=UUID)
         self.assertEqual(calls, [(CLAIM_KEY, "query", {"i": UUID})])
         self.assertEqual(
-            (ctx.ident, ctx.issue_id, ctx.sid, ctx.role, ctx.project, ctx.target, ctx.workdir),
-            (
-                RUN_ISSUE,
-                UUID,
-                RUN_SID,
-                "engineer",
-                "p1",
-                ("ophis", "agent-pm"),
-                self.cfg.run_dir(RUN_ISSUE),
-            ),
+            (ctx.ident, ctx.issue_id, ctx.sid, ctx.role, ctx.project, ctx.target),
+            (RUN_ISSUE, UUID, RUN_SID, "engineer", "p1", ("ophis", "agent-pm")),
+        )
+        self.assertEqual(
+            (ctx.workdir, ctx.run),
+            (self.cfg.run_dir(RUN_ISSUE), os.path.join(self.cfg.run_dir(RUN_ISSUE), "run")),
         )
 
     def test_a_later_attempt_is_a_resume(self):
@@ -1760,7 +1762,7 @@ class ProgressEvents(Events):
             LinearError("linear api error: down") if op == "comment" else None
         )
         self.assertFalse(self.deliver(delegate_event("progress", name="start", text="x")))
-        self.assertFalse(os.path.exists(os.path.join(self.workdir, writeback.LEDGER)))
+        self.assertFalse(os.path.exists(os.path.join(self.run, writeback.LEDGER)))
 
 
 class RefusedEvents(Events):
@@ -1779,7 +1781,7 @@ class RefusedEvents(Events):
             with self.subTest(name), self.assertRaises(error):
                 self.deliver(e, **kwargs)
         self.assertEqual(self.linear.calls, [])
-        self.assertFalse(os.path.exists(os.path.join(self.workdir, writeback.LEDGER)))
+        self.assertFalse(os.path.exists(os.path.join(self.run, writeback.LEDGER)))
 
     def test_a_claimed_role_without_write_back_raises(self):
         other = "9c1d2e3f-4a5b-4c6d-8e7f-a0b1c2d3e4f5"
@@ -1931,7 +1933,7 @@ class FinishedEvents(Events):
             with self.subTest(name), self.assertRaises(ValueError):
                 self.deliver(self.finished(outcome=data))
         self.assertEqual(self.linear.calls, [])
-        self.assertFalse(os.path.exists(os.path.join(self.workdir, writeback.LEDGER)))
+        self.assertFalse(os.path.exists(os.path.join(self.run, writeback.LEDGER)))
 
 
 class LimitEvents(Events):
@@ -2202,7 +2204,18 @@ class RecoverReplay(Events):
         self.assertEqual(len(self.linear.writes("state")), 1)
         self.assertEqual(len([c for c in self.linear.comments if c != RUN_SESSION]), 1)
 
-    def test_a_first_event_makes_its_workdir(self):
-        shutil.rmtree(self.workdir)
-        self.assertTrue(self.deliver(delegate_event("progress", name="build", text="one")))
-        self.assertEqual(len(self.ledger()[RUN_SID]["steps"]), 1)
+    def test_an_absent_run_dir_is_a_lock_error_that_makes_nothing(self):
+        shutil.rmtree(self.run)
+        self.assertFalse(self.deliver(delegate_event("progress", name="build", text="one")))
+        self.assertEqual(self.linear.calls, [])
+        self.assertFalse(os.path.lexists(self.run))
+        self.assertEqual(
+            [(e["kind"], e["step"]) for e in logged() if e["src"] == "writeback"],
+            [("step-error", "lock")],
+        )
+
+    def test_ledger_and_lock_live_in_run_dir(self):
+        self.assertTrue(self.deliver(delegate_event("progress", name="start", text="x")))
+        self.assertEqual(self.ledger(), {RUN_SID: {"steps": ["start"]}})
+        self.assertTrue(os.path.isfile(os.path.join(self.run, writeback.LOCK)))
+        self.assertEqual(sorted(os.listdir(self.workdir)), ["agent", "run"])

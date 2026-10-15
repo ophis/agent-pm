@@ -22,9 +22,8 @@ class TargetCheckout(Case):
         self.tmp = os.path.realpath(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, self.tmp)
         self.work = os.path.join(self.tmp, "work")
-        self.checkout = os.path.join(
-            self.work, "TASK-26", config.CLONES[0], "ophis", "agent-pm-TASK-26"
-        )
+        self.src = os.path.join(self.work, "TASK-26", "agent", config.CLONES[0])
+        self.checkout = os.path.join(self.src, "ophis", "agent-pm-TASK-26")
 
     def clone(self, name, origin=HTTPS):
         path = os.path.join(self.tmp, name)
@@ -63,7 +62,7 @@ class TargetCheckout(Case):
         return target.Target("ophis", "agent-pm", "TASK-26-x", clone)
 
     def test_the_checkout_is_cores_rule_with_the_issue_id(self):
-        want = checkout(os.path.join(self.work, "TASK-26", "src"), "ophis", "agent-pm", "TASK-26")
+        want = checkout(self.src, "ophis", "agent-pm", "TASK-26")
         self.assertEqual(target.checkout("TASK-26", "ophis", "agent-pm", work=self.work), want)
         self.assertEqual(want, self.checkout)
 
@@ -83,7 +82,7 @@ class TargetCheckout(Case):
         ):
             with self.subTest(clones):
                 self.assertEqual(self.run_(clones), self.want(want))
-        os.makedirs(os.path.join(self.work, "TASK-26", config.CLONES[0], "ophis"))
+        os.makedirs(os.path.join(self.src, "ophis"))
         self.assertEqual(self.run_({}), self.want(""))
 
     def test_a_clone_made_from_owner_name_beats_the_table(self):

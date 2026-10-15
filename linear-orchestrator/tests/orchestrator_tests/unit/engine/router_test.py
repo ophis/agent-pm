@@ -14,7 +14,7 @@ from datetime import UTC, datetime, timedelta
 from unittest import mock
 
 from agent_pm.delegate import ConfigError as DelegateConfigError
-from agent_pm.delegate import Outcome, OutcomeStatus
+from agent_pm.delegate import Layout, Outcome, OutcomeStatus
 from agent_pm.linear_orchestrator.engine import config, inputs, issues, ops, router, runs
 from agent_pm.linear_orchestrator.engine import gate as quota
 from agent_pm.linear_orchestrator.engine.types import LinearError, Spec, Unavailable
@@ -2125,7 +2125,7 @@ class RunLaunching(OuterBase):
     def test_build_detaches_its_linear_run_after_its_start_row(self):
         self.assertEqual(self.outer(), 0)
         self.assertEqual(self.detached(), self.expected())
-        self.assertEqual((len(self.api.detached), os.listdir(self.rd)), (1, []))
+        self.assertEqual((len(self.api.detached), os.path.lexists(self.rd)), (1, False))
         self.assertEqual(self.api.runs_at_detach, [self.raw_runs()])
         self.assertEqual(
             json.loads(self.raw_runs()),
@@ -2387,22 +2387,6 @@ class RunLaunching(OuterBase):
                 self.assertEqual(self.outer(assignee=RESEARCHER), 3)
                 self.assertEqual(self.said(), [f"transient TASK-7 reason=docs: {reason}"])
         self.assertEqual(self.api.detached, [])
-
-    def test_a_run_dir_that_cannot_be_made_starts_nothing(self):
-        self.write(self.rd, "")
-        self.assertEqual(self.outer(), 1)
-        self.assertEqual(
-            (self.said(), self.err, self.api.detached),
-            (
-                [
-                    (
-                        f"launch-error TASK-7 error=input: FileExistsError: [Errno 17] File exists: '{self.rd}'"
-                    )
-                ],
-                "",
-                [],
-            ),
-        )
 
     def test_a_run_that_cannot_be_built_or_detached_is_a_launch_error(self):
         for attr, error in (
@@ -4113,10 +4097,10 @@ class RecoverWriteBack(TickBase):
         self.lines.append(
             json.dumps(start | {"uuid": self.ISSUE, "project": IDS[DR], "target": None, "key": key})
         )
-        self.workdir = self.cfg().run_dir("TASK-1")
-        os.makedirs(self.workdir)
+        self.run = Layout(self.cfg().run_dir("TASK-1")).run
+        os.makedirs(self.run)
         self.write(
-            os.path.join(self.workdir, "writeback.json"),
+            os.path.join(self.run, "writeback.json"),
             json.dumps({self.sid("a"): {"steps": ["comment"]}}),
         )
         self.linear = self.fake(issue("TASK-1", "In Progress", "researcher", updated=ago(hours=3)))
@@ -4128,7 +4112,7 @@ class RecoverWriteBack(TickBase):
         )
 
     def steps(self):
-        with open(os.path.join(self.workdir, "writeback.json")) as f:
+        with open(os.path.join(self.run, "writeback.json")) as f:
             return json.load(f)[self.sid("a")]["steps"]
 
     def test_an_outcome_is_written_back_without_an_agent_or_a_second_comment(self):
@@ -4163,7 +4147,7 @@ class RecoverWriteBack(TickBase):
         self.assertEqual(self.tick(self.linear, "--now", "--dry-run"), 0)
         self.assertEqual(self.linear.mutations, [])
         self.assertEqual(self.steps(), ["comment"])
-        self.assertEqual(sorted(os.listdir(self.workdir)), ["writeback.json"])
+        self.assertEqual(sorted(os.listdir(self.run)), ["writeback.json"])
 
     def test_explicit_issue_writes_back_and_exits_0(self):
         self.ended()
@@ -4181,7 +4165,7 @@ class RecoverWriteBack(TickBase):
         self.ended()
         done = ["comment", "move:in_review", "outcome"]
         self.write(
-            os.path.join(self.workdir, "writeback.json"),
+            os.path.join(self.run, "writeback.json"),
             json.dumps({self.sid("a"): {"steps": done}}),
         )
         self.touch("a", 40)

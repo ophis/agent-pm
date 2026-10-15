@@ -9,6 +9,7 @@ import re
 import subprocess
 import unittest
 
+from agent_pm.delegate import Layout
 from agent_pm.linear_orchestrator.engine import ops, runs
 from orchestrator_tests.case import PY
 from orchestrator_tests.integration.flow_fixtures import (
@@ -31,6 +32,7 @@ class Writeback(Flow):
     def setUp(self):
         super().setUp()
         self.rd = os.path.join(self.runs_dir, ID)
+        os.makedirs(Layout(self.rd).run)
         self.fake.issue(
             "Session registry",
             identifier=ID,

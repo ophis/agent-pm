@@ -177,9 +177,8 @@ class TargetValidation(Case):
     def setUp(self):
         self.work = os.path.realpath(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, self.work)
-        self.clone = os.path.join(
-            self.work, "TASK-26", config.CLONES[0], "ophis", "agent-pm-TASK-26"
-        )
+        self.src = os.path.join(self.work, "TASK-26", "agent", config.CLONES[0])
+        self.clone = os.path.join(self.src, "ophis", "agent-pm-TASK-26")
         self.ls_remote = [
             "git",
             "-c",
@@ -240,6 +239,12 @@ class TargetValidation(Case):
     def argvs(self):
         return [c[0] for c in self.run_.calls]
 
+    def test_the_checkout_is_in_the_agent_dir(self):
+        self.assertEqual(
+            target.checkout("TASK-26", "ophis", "agent-pm", work=self.work),
+            os.path.join(self.work, "TASK-26", "agent", "src", "ophis", "agent-pm-TASK-26"),
+        )
+
     def test_ok_without_a_local_clone_asks_the_remote(self):
         self.assertEqual(
             self.check(), target.Target("ophis", "agent-pm", "TASK-26-session-registry")
@@ -283,7 +288,7 @@ class TargetValidation(Case):
             os.symlink(dest, os.path.join(self.clone, ".git"))
 
         def at(*parts):
-            return lambda: os.makedirs(os.path.join(self.work, "TASK-26", config.CLONES[0], *parts))
+            return lambda: os.makedirs(os.path.join(self.src, *parts))
 
         local, remote = [(self.branch_list(), SHORT)], [(tuple(self.ls_remote), SHORT)]
         cases = [
@@ -524,9 +529,7 @@ class TargetValidation(Case):
                 self.assertEqual(self.argvs(), [("gh", "api", "repos/ophis/agent-pm")])
 
     def test_o_and_n_come_from_full_name(self):
-        renamed = os.path.join(
-            self.work, "TASK-26", config.CLONES[0], "Ophis", "Agent-PM-2-TASK-26"
-        )
+        renamed = os.path.join(self.src, "Ophis", "Agent-PM-2-TASK-26")
         os.makedirs(os.path.join(renamed, ".git"))
         for desc, asked in (
             ("Repo: OPHIS/agent-pm", "OPHIS/agent-pm"),

@@ -17,7 +17,7 @@ from dataclasses import dataclass, fields, replace
 from datetime import datetime
 from traceback import format_exception
 
-from agent_pm.delegate import DelegateEvent, Outcome, OutcomeStatus, Progress
+from agent_pm.delegate import DelegateEvent, Layout, Outcome, OutcomeStatus, Progress
 from agent_pm.linear_orchestrator.engine import run_comments, runs
 from agent_pm.linear_orchestrator.engine.config import LOCAL, TASKS
 from agent_pm.linear_orchestrator.engine.linear_run import LinearRun
@@ -60,6 +60,7 @@ class Context:
     resume: bool
     project: str | None
     workdir: str
+    run: str
     gql: Callable[..., dict]
     humans: tuple[str, ...]
     states: Mapping[str, str]
@@ -100,6 +101,7 @@ def context(cfg, role, gql, *, key, ident, issue_id, sid, resume, project, targe
         resume=resume,
         project=project,
         workdir=cfg.run_dir(ident),
+        run=Layout(cfg.run_dir(ident)).run,
         gql=functools.partial(gql, service=key),
         humans=tuple(e.lower() for e in cfg.human_members),
         states=cfg.states,
@@ -214,7 +216,7 @@ def _ledger(ctx):
     else reads as empty.
     """
     try:
-        with os.fdopen(os.open(os.path.join(ctx.workdir, LEDGER), NO_FOLLOW), "rb") as f:
+        with os.fdopen(os.open(os.path.join(ctx.run, LEDGER), NO_FOLLOW), "rb") as f:
             data = json.load(f)
     except (OSError, ValueError):
         return {}
@@ -228,9 +230,8 @@ def _exclusive(ctx):
     logged, when it cannot be opened.
     """
     try:
-        os.makedirs(ctx.workdir, exist_ok=True)
         fd = os.open(
-            os.path.join(ctx.workdir, LOCK),
+            os.path.join(ctx.run, LOCK),
             os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK,
             0o600,
         )
@@ -263,7 +264,7 @@ def _step(ctx, step, call, cid=None):
             call()
         ledger = _ledger(ctx)
         ledger.setdefault(ctx.sid, {}).setdefault("steps", []).append(step)
-        save(os.path.join(ctx.workdir, LEDGER), json.dumps(ledger))
+        save(os.path.join(ctx.run, LEDGER), json.dumps(ledger))
     except (LinearError, Unavailable, OSError, subprocess.SubprocessError) as e:
         _error(ctx, step, e)
         return e
@@ -464,7 +465,7 @@ def _session(ctx, cfg, client, attempt, *, gql, now, end=None) -> bool:
     try:
         ledger = _ledger(ctx)
         ledger.setdefault(ctx.sid, {}).setdefault("attempts", {})[str(attempt)] = record
-        save(os.path.join(ctx.workdir, LEDGER), json.dumps(ledger))
+        save(os.path.join(ctx.run, LEDGER), json.dumps(ledger))
     except OSError as e:
         error = error or one_line(e)
     if error:

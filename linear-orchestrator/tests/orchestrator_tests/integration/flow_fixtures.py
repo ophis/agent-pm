@@ -212,7 +212,8 @@ class Flow(Case):
     def ledger(self, ident):
         """Each sid's write-back steps."""
         try:
-            with open(os.path.join(self.runs_dir, ident, "writeback.json")) as f:
+            run = Layout(os.path.join(self.runs_dir, ident)).run
+            with open(os.path.join(run, "writeback.json")) as f:
                 return {sid: entry.get("steps", []) for sid, entry in json.load(f).items()}
         except FileNotFoundError:
             return {}

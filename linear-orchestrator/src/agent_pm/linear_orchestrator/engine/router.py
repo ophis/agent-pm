@@ -609,21 +609,16 @@ def _outer(a, cfg, *, gql, run, keychain, now, attended):
         sources = inputs.gather(issue, role, cfg.docs, run=run)
     except (InputError, OSError, subprocess.TimeoutExpired) as e:
         return fail(a.issue, "transient", f"docs: {one_line(e)}", 3)
-    try:
-        os.makedirs(rd, exist_ok=True)
-        text = inputs.render(
-            issue,
-            role,
-            sources,
-            humans=ctx.humans,
-            target=repo,
-            docs=cfg.docs,
-        ).replace("\x00", "")
-        # a lone surrogate cannot be encoded
-        text = text.encode("utf-8", "replace").decode()
-    except OSError as e:
-        log("router", "launch-error", a.issue, error=f"input: {one_line(e)}")
-        return 1
+    text = inputs.render(
+        issue,
+        role,
+        sources,
+        humans=ctx.humans,
+        target=repo,
+        docs=cfg.docs,
+    ).replace("\x00", "")
+    # a lone surrogate cannot be encoded
+    text = text.encode("utf-8", "replace").decode()
     try:
         linear_run = LinearRun(
             a.issue,

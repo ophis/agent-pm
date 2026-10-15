@@ -12,6 +12,7 @@ import re
 import sys
 import unittest
 
+from agent_pm.delegate import Layout
 from orchestrator_tests.case import REPO as WORKTREE
 from orchestrator_tests.integration import fake_gh
 from orchestrator_tests.integration.flow_fixtures import (
@@ -91,7 +92,7 @@ class Rework(BinFlow):
                 TOOL,
                 command,
                 "--dir",
-                os.path.join(self.runs_dir, ID, "src"),
+                os.path.join(Layout(os.path.join(self.runs_dir, ID)).agent, "src"),
                 "--branch",
                 BRANCH,
                 "--name",

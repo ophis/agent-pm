@@ -7,6 +7,7 @@ import os
 import re
 from dataclasses import replace
 
+from agent_pm.delegate import Layout
 from agent_pm.linear_orchestrator.engine import config, issues
 from agent_pm.linear_orchestrator.engine.config import CLONES, REF, TASKS
 from agent_pm.linear_orchestrator.engine.types import Invalid, Target, Transient
@@ -96,7 +97,9 @@ def _repo_info(o, n, run):
 
 
 def checkout(ident, owner, name, *, work) -> str:
-    return clone_checkout(os.path.join(work, ident, CLONES[0]), owner, name, ident)
+    return clone_checkout(
+        os.path.join(Layout(os.path.join(work, ident)).agent, CLONES[0]), owner, name, ident
+    )
 
 
 def _branches(ident, o, n, *, run, work, roles):
