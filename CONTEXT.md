@@ -88,7 +88,7 @@ The event a Delegate run delivers to its callback: Begun, Progress or Finished. 
 _Avoid_: event
 
 **Attended run**:
-An agent run started by hand in tui mode so you watch it in a TUI pane and can step in; otherwise the same claim, input and write-back as an unattended agent run (README › Attended runs).
+An agent run started by hand in tui mode so you watch it in a TUI pane and can step in; otherwise the same claim, input and write-back as an unattended agent run.
 
 **Destination**:
 Where an agent run delivers its deliverable: a GitHub repo, a local file, a pull request, or back to the orchestrator that called it.

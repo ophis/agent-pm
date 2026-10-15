@@ -87,6 +87,10 @@ class RunConfig:
             or not os.path.isabs(os.path.expanduser(self.cwd))
         ):
             raise ConfigError(f"cwd must be a printable absolute or ~ path, got {self.cwd!r:.80}")
+        for key in ("read", "write", "commands", "templates"):
+            value = getattr(self, key)
+            if not isinstance(value, (list, tuple)) or not all(isinstance(v, str) for v in value):
+                raise ConfigError(f"{key} must be a list of strings, got {value!r:.80}")
 
 
 @dataclass(frozen=True, kw_only=True)

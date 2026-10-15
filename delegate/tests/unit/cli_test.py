@@ -632,6 +632,19 @@ class List(Base):
                 "roles.ghost: no charter roles/ghost.md in core or team_dirs",
             ),
             ('team_dirs = "x"\n', "team_dirs: want a list of absolute or ~ paths, got 'x'"),
+            (
+                "bogus = 1\n",
+                "config: ~/.agent-pm/config.local.toml: unknown key 'bogus' in [delegate]",
+            ),
+            ('tier = "2"\n', "tier must be an integer 1–4, got '2'"),
+            (
+                'effort = "ultra"\n',
+                "effort must be one of low, medium, high, xhigh, max, got 'ultra'",
+            ),
+            ('read = "~/notes"\n', "read must be a list of strings, got '~/notes'"),
+            ("write = 3\n", "write must be a list of strings, got 3"),
+            ('[roles.pm]\ncommands = "ls *"\n', "commands must be a list of strings, got 'ls *'"),
+            ("[roles.pm]\ntemplates = [3]\n", "templates must be a list of strings, got [3]"),
         ):
             with self.subTest(local=local):
                 self.local(local)
