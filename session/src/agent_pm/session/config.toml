@@ -13,10 +13,11 @@
 #   any other key    the adapter's own (its class's `keys`); a key it does not list is a config error
 
 # [adapters.claude]  Claude Code (session/src/agent_pm/session/adapters/claude/)
-#   flags            claude flags added to every session command; never --setting-sources (the session layer's); empty → none.
-#                    Its --settings and a Spec's merge into one. Default: agent-pm's own plugin (<plugin>@<marketplace>)
-#                    stays off in every session, workers and role runs; the user's other plugins load. A local list
-#                    replaces it whole
+#   flags            claude flags added to every session command and its resume command; never --setting-sources (the
+#                    session layer's); empty → none. Every --settings here and in a Spec, inline JSON or a settings
+#                    file's path (relative to the session's cwd), merges into one. Default: agent-pm's own plugin
+#                    (<plugin>@<marketplace>) stays off in every session, workers and role runs; the user's other plugins
+#                    load. A local list replaces it whole
 #   allow            tool rules pre-approved for every session (--allowedTools), after the run's commands and read
 #                    rules; empty → none
 #   env              variables added to every command's environment, over the adapter's defaults; empty → none

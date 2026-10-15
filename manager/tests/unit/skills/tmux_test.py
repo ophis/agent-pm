@@ -84,6 +84,16 @@ class Names(Case):
             self.assertIn(key, tmux)
             self.assertIn(f"`{key}`", body("tmux"))
 
+    def test_only_the_commander_has_it_as_the_session_config_turns_it_off(self):
+        self.assertIn("so a worker or role run starts no sessions of its own", body("tmux"))
+        [config] = {p for p in paths("tmux") if p.endswith("config.toml")}
+        with open(config, "rb") as f:
+            adapters = tomllib.load(f)["adapters"]
+        for client in ("claude", "codex"):
+            self.assertTrue(
+                any("agent-pm@agent-pm" in flag for flag in adapters[client]["flags"]), client
+            )
+
     def test_the_skills_it_names_are_this_plugins(self):
         for skill in re.findall(r"`/agent-pm:([a-z-]+)`", body("tmux") + body("manage")):
             homes = [os.path.join(REPO, d, "skills", skill) for d in ("manager", "delegate")]
