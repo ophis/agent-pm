@@ -14,6 +14,8 @@ from agent_pm.manager.engine.holder import Holder
 from agent_pm.manager.engine.types import Lease, StatusError
 from agent_pm.utils import STATE, nested_start
 
+SESSION_COMMAND = ("agent-pm-session",)
+
 
 def _number(value: str) -> int:
     try:
@@ -150,7 +152,7 @@ def _next_event(args) -> int:
     line, event = crew.next_event(after=args.after, gen=args.gen)
     print(f"{line} {event}", flush=True)
     if args.content:
-        print(crew.event_content(event), end="")
+        print(crew.event_content(event, SESSION_COMMAND), end="")
     return 0
 
 

@@ -395,9 +395,10 @@ class Crew:
             else:
                 time.sleep(0.5)
 
-    def event_content(self, event: str) -> str:
+    def event_content(self, event: str, session_command: tuple[str, ...]) -> str:
         """What a next_event line is about, newline-terminated: a `done` session's reply, a
-        harness's (`<tui>-drive`) entry Status, else the session's screen; else why it is unreadable.
+        harness's (`<tui>-drive`) entry Status, else the session's screen (both by
+        session_command); else why it is unreadable.
         """
         _, session, word = event.split(maxsplit=3)[:3]
         try:
@@ -408,7 +409,7 @@ class Crew:
                 content = "".join(status.to_line() + "\n" for status in self.status((name,)))
             else:
                 verb = "reply" if word == "done" else "read"
-                content = self._execute(("agent-pm-session", verb, session))
+                content = self._execute((*session_command, verb, session))
         except (OSError, RosterError, RuntimeError, ValueError) as error:
             content = f"content unavailable: {printable(one_line(str(error)))}"
         return content if content.endswith("\n") else content + "\n"
