@@ -13,7 +13,11 @@
 #   any other key    the adapter's own (its class's `keys`); a key it does not list is a config error
 
 # [adapters.claude]  Claude Code (session/src/agent_pm/session/adapters/claude/)
-#   flags            claude flags added to every session command; never --setting-sources (the session layer's); empty → none
+#   flags            claude flags added to every session command and its resume command; never --setting-sources (the
+#                    session layer's); empty → none. Every --settings here and in a Spec, inline JSON or a settings
+#                    file's path (relative to the session's cwd), merges into one. Default: agent-pm's own plugin
+#                    (<plugin>@<marketplace>) stays off in every session, workers and role runs; the user's other plugins
+#                    load. A local list replaces it whole
 #   allow            tool rules pre-approved for every session (--allowedTools), after the run's commands and read
 #                    rules; empty → none
 #   env              variables added to every command's environment, over the adapter's defaults; empty → none
@@ -22,7 +26,7 @@
 #                            starting a run whose tier or effort has no entry here is a config error
 [adapters.claude]
 implementation = "agent_pm.session.adapters.claude:ClaudeAdapter"
-flags = []
+flags = ["--settings", '{"enabledPlugins": {"agent-pm@agent-pm": false}}']
 allow = []
 # local: [session.adapters.claude]
 # local: allow = ["<rule>"]
@@ -42,8 +46,12 @@ high = "high"
 xhigh = "xhigh"
 max = "max"
 
+# [adapters.codex]   Codex (session/src/agent_pm/session/adapters/codex/)
+#   flags            codex flags added before a Spec's to every new session; a resume keeps its own; empty → none.
+#                    Default: as [adapters.claude] flags'; the plugin id stays unquoted, or the key never matches
 [adapters.codex]
 implementation = "agent_pm.session.adapters.codex:CodexAdapter"
+flags = ["-c", "plugins.agent-pm@agent-pm.enabled=false"]
 
 [adapters.codex.tiers]
 1 = "gpt-6-astra"

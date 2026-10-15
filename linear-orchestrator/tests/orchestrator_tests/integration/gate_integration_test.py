@@ -23,6 +23,7 @@ class RecordedQuotaKeys(Case):
             client="saved-client",
             delegate_kind="saved-kind",
             resets_at=(NOW + timedelta(hours=1)).isoformat(),
+            attempt=1,
         )
         events = []
         gate = Gate(
@@ -63,6 +64,7 @@ class RecordedQuotaKeys(Case):
             client="shared-client",
             delegate_kind="other-kind",
             resets_at=(NOW + timedelta(hours=1)).isoformat(),
+            attempt=1,
         )
         gate = Gate(path, NOW, cfg=cfg, dry=False)
         self.assertFalse(gate.blocked("engineer", "TASK-2"))
@@ -79,6 +81,7 @@ class RecordedQuotaKeys(Case):
             client="saved-client",
             delegate_kind="saved-kind",
             resets_at=(NOW - timedelta(seconds=1)).isoformat(),
+            attempt=1,
         )
         gate = Gate(path, NOW, cfg=cfg, dry=False)
         self.assertFalse(gate.blocked("engineer", "TASK-1", key=("saved-kind", "saved-client")))

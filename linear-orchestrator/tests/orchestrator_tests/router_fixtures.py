@@ -326,6 +326,7 @@ class FakeLinear:
 class Base(run_fixtures.Base):
     def setUp(self):
         super().setUp()
+        self.missing, self.keychain_calls = set(), []
         self.write_local(f'work_dir = "{self.work}"\n')
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
@@ -433,6 +434,10 @@ class Base(run_fixtures.Base):
         self.mark = len(logged(self.logs))
         return logs_at(self.logs)
 
+    def keychain(self, service):
+        self.keychain_calls.append(service)
+        return service not in self.missing
+
     def cfg(self):
         cfg = config.load(path=self.config_path)
         return replace(cfg, delegates={**cfg.delegates, cfg.delegate_kind: provider(self.api, cfg)})
@@ -449,6 +454,7 @@ class Base(run_fixtures.Base):
                     cfg,
                     now=NOW,
                     dry=dry,
+                    keychain=self.keychain,
                     gate=quota.Gate(self.runs, NOW, dry=dry, cfg=cfg) if gate else None,
                 )
             )
@@ -559,7 +565,7 @@ class TickBase(Base):
                 gql=fake,
                 delegate_cls=delegate_cls,
                 start=self.start,
-                **outer or {},
+                **{"keychain": self.keychain, **(outer or {})},
             )
             self.path = os.environ["PATH"]
         self.raw, self.err = err.getvalue(), self.unmap(err.getvalue())
@@ -601,12 +607,7 @@ class OuterBase(TickBase):
         self.write_config(OUTER)
         self.gql = Gql(issue=node(comments=[USER_NOTE]))
         self.run_ = FakeRun(ENG_RUN)
-        self.missing, self.keychain_calls = set(), []
         self.api.records[SID] = {"cwd": self.rd}
-
-    def keychain(self, service):
-        self.keychain_calls.append(service)
-        return service not in self.missing
 
     def outer(self, *, assignee=ENGINEER, task=None, mode="new", ident=ID, sid=SID, client="a"):
         """router.outer on a Spec; a resume's run is recorded first, as Recover finds it."""

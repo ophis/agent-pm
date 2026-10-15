@@ -147,7 +147,7 @@ def status(target: str, *, proc=subprocess.run):
         return PaneStatus.UNKNOWN
     if res.returncode:
         return None if absent(res) else PaneStatus.UNKNOWN
-    return _dead_status(res.stdout.rstrip("\n"))
+    return _dead_status(res.stdout.rstrip("\n"), proc)
 
 
 def process_status(target: str, *, proc=subprocess.run):
@@ -159,17 +159,23 @@ def process_status(target: str, *, proc=subprocess.run):
         raise TuiError(f"tmux: {error(res)}")
     identity, _, dead = res.stdout.rstrip("\n").partition("\t")
     found = _process_id(identity.strip())
-    return found, None if found is None else _dead_status(dead)
+    return found, None if found is None else _dead_status(dead, proc)
 
 
-def _dead_status(text: str):
+def _dead_status(text: str, proc):
     fields = text.split(" ")
     if fields == ["", "", ""]:  # tmux (3.7) exits 0 with empty fields for a missing session
         return None
     if len(fields) != 3 or fields[0] not in ("0", "1"):
         return PaneStatus.UNKNOWN
     dead, code, sig = fields
-    if dead == "0" or not (code or sig):  # dead, but not yet reaped
+    if dead == "0":
+        return PaneStatus.RUNNING
+    if not (code or sig):
+        # dead, not reaped: tmux 3.4 with utempter can lose the SIGCHLD, then reaps (and runs
+        # pane-died) only when another child exits; a no-op job is one
+        with contextlib.suppress(TuiError):
+            run(["run-shell", "-b", "true"], proc)
         return PaneStatus.RUNNING
     if sig:  # libc's sys_signame (macOS: "kill"), else the number
         return -(int(sig) if sig.isdigit() else getattr(signal, "SIG" + sig.upper(), 0))

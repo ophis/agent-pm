@@ -34,7 +34,14 @@ from agent_pm.utils import LOCAL_ENV_VARS
 from session.tests.case import ROOTS, SRC
 from session.tests.codex_tui import PlanCase
 from session.tests.source_roots import PACKAGE_ROOTS
-from session.tests.unit.adapters.codex.support import CHILD, NATIVE, Base, committed_tui
+from session.tests.unit.adapters.codex.support import (
+    CHILD,
+    NATIVE,
+    PLUGIN_OFF,
+    Base,
+    committed_tui,
+    packaged,
+)
 
 HOOK = (
     sys.executable,
@@ -637,6 +644,24 @@ class SuppliedFlagsTest(Base):
                 self.adapter, dataclasses.replace(spec, prompt=PROMPT, resume=resume), hook
             )
         return launch, json.loads(launch.argv[-1])
+
+    def test_the_configs_flags_reach_the_client_before_the_specs(self):
+        own = ("-c", "plugins.x@m.enabled=false")
+        self.adapter = CodexAdapter({**self.adapter.config, "flags": list(own)})
+        spec = dataclasses.replace(self.spec, flags=("--enable", "web"))
+        _, data = self.launch(spec)
+        snapshot = self.common.load(data["workdir"], data["sid"]).snapshot
+        argv = tui.execution_argv(tui.decode(data), snapshot, "hooks.state={trusted}")
+        start = argv.index(own[1]) - 1
+        self.assertEqual(argv[start : start + 4], [*own, "--enable", "web"])
+
+    def test_the_packaged_config_turns_the_agent_pm_plugin_off(self):
+        self.adapter = packaged()
+        _, data = self.launch(self.spec)
+        snapshot = self.common.load(data["workdir"], data["sid"]).snapshot
+        argv = tui.execution_argv(tui.decode(data), snapshot, "hooks.state={trusted}")
+        start = argv.index(PLUGIN_OFF[1]) - 1
+        self.assertEqual(argv[start : start + 2], list(PLUGIN_OFF))
 
     def test_supplied_flags_env_and_hooks_share_one_path(self):
         flags = ("--add-dir", "../../added", '--config=model_verbosity="low"', "--enable", "web")

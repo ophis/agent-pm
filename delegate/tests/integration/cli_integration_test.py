@@ -92,14 +92,10 @@ class NewRun(Integration):
         argv = call["argv"]
         start = argv.index("--permission-mode")
         self.assertEqual(
-            argv[start : start + 5],
-            [
-                "--permission-mode",
-                "auto",
-                "--strict-mcp-config",
-                "--settings",
-                '{"enabledPlugins": {"agent-pm@agent-pm": false}}',
-            ],
+            argv[start : start + 4], ["--permission-mode", "auto", "--strict-mcp-config", "--"]
+        )
+        self.assertEqual(
+            argv[argv.index("--settings") + 1], '{"enabledPlugins": {"agent-pm@agent-pm": false}}'
         )
         for flag in ("--permission-mode", "--strict-mcp-config", "--settings"):
             self.assertEqual(argv.count(flag), 1, flag)

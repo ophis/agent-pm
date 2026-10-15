@@ -2,6 +2,9 @@
 
 from collections.abc import Mapping
 
+# a manager's roster lease: its holder's command alone carries it, no launch below it
+LEASE_ENV = ("AGENT_PM_MANAGER", "AGENT_PM_HOLDER_ID", "AGENT_PM_HOLDER_GENERATION")
+
 
 def environment_ok(value: object) -> bool:
     """Accept exec names: nonempty, no '=' or NUL; string values without NUL.

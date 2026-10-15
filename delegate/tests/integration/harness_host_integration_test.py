@@ -4,6 +4,7 @@ private tmux server (session/tests/live_tmux.py) running fake_claude; an extensi
 run, its package only on the caller's PYTHONPATH.
 """
 
+import contextlib
 import json
 import os
 import shutil
@@ -12,6 +13,7 @@ import tempfile
 import unittest
 
 from agent_pm.delegate import Layout
+from agent_pm.session import SessionError
 from agent_pm.utils import Record
 
 from delegate.tests.case import PY, PYTHONPATH, REPO, Case
@@ -56,6 +58,7 @@ class HarnessHosts(Case):
         self.dir = os.path.realpath(tmp.name)
         self.server = live_tmux.Server(self, self.home)
         self.server.start("mgr")
+        self.addCleanup(self.end_fake_harness)  # before tmp's cleanup: it writes into tmp
         self.proj, self.work = (os.path.join(self.dir, d) for d in ("proj", "work"))
         for directory in (self.proj, self.work):
             os.mkdir(directory)
@@ -63,6 +66,10 @@ class HarnessHosts(Case):
         self.events, self.scenario = (
             os.path.join(self.dir, f) for f in ("events", "scenario.json")
         )
+
+    def end_fake_harness(self) -> None:
+        with contextlib.suppress(SessionError):
+            FakeHost("fake").attach(HARNESS).kill()
 
     def configure(self, text: str) -> None:
         with open(os.path.join(self.agent_pm, "config.local.toml"), "w", encoding="utf-8") as file:
@@ -98,14 +105,16 @@ class HarnessHosts(Case):
         return self.server.tmux("has-session", "-t", f"={name}").returncode == 0
 
     def outcome(self, status: str = "done") -> None:
-        def ended():
+        """The harness's outcome, then its exit: its host logs `exited` into self.dir after it."""
+
+        def logged(event):
             self.server.tmux("run-shell", "-b", "true")
             return any(
-                line.endswith(f" {HARNESS} outcome {status}")
-                for line in live_tmux.events(self.events)
+                line.endswith(f" {HARNESS} {event}") for line in live_tmux.events(self.events)
             )
 
-        live_tmux.wait(ended, WAIT, what=f"`{HARNESS} outcome {status}`")
+        for event in (f"outcome {status}", "exited 0"):
+            live_tmux.wait(lambda e=event: logged(e), WAIT, what=f"`{HARNESS} {event}`")
 
     def metadata(self) -> dict:
         with open(os.path.join(Layout(self.work).run, "delegate.json"), encoding="utf-8") as file:
@@ -135,7 +144,6 @@ class HarnessHosts(Case):
         self.assertEqual(
             (self.metadata()["host"], self.metadata()["harness_host"]), ("tmux", "fake")
         )
-        self.assertFalse(self.live(HARNESS))
 
     def test_a_configured_fake_harness_host_imports_and_routes_the_harness(self):
         self.configure(f'[session.hosts.fake]\n{KEPT}[delegate.delegates]\nharness_host = "fake"\n')
@@ -153,7 +161,6 @@ class HarnessHosts(Case):
         self.assertEqual(
             (self.metadata()["host"], self.metadata()["harness_host"]), ("tmux", "fake")
         )
-        self.assertFalse(self.live(HARNESS))
 
     def test_a_detached_extension_client_reaches_its_outcome(self):
         extensions = os.path.join(self.dir, "extensions")

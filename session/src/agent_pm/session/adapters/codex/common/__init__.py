@@ -29,7 +29,7 @@ from agent_pm.session.adapters.codex.common.types import (
     SessionState,
     Snapshot,
 )
-from agent_pm.session.adapters.common import check_config, scan, split_flags
+from agent_pm.session.adapters.common import CHECKS, FLAGS, check_config, scan, split_flags
 from agent_pm.session.engine.types import (
     COMMAND,
     ConfigError,
@@ -831,7 +831,9 @@ class CodexCommon:
     def __init__(self, config, *, selector):
         self.selector = selector
         self.config = dict(config)
-        check_config(config, TABLE)
+        check_config(config, TABLE, (FLAGS, *CHECKS))
+        self.flags = tuple(config.get("flags", ()))
+        refuse(self.flags)
 
     @cached_property
     def store(self) -> SessionStore:
@@ -909,7 +911,7 @@ class CodexCommon:
                 "model": self._mapped("tiers", spec.tier),
                 "effort": self._mapped("efforts", spec.effort and spec.effort.value),
                 "codex_home": home,
-                "flags": list(spec.flags),
+                "flags": [*self.flags, *spec.flags],
                 "env": explicit,
             }
         )
@@ -921,7 +923,8 @@ class CodexCommon:
             _config_home(cwd, environment.get("CODEX_HOME")),
             "codex_home",
         )
-        added = [absolute_path(path, "dir") for path in added_dirs(spec.flags, cwd)]
+        flags = (*self.flags, *spec.flags)
+        added = [absolute_path(path, "dir") for path in added_dirs(flags, cwd)]
         return [
             cwd,
             home,

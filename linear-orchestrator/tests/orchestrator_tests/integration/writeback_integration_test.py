@@ -175,6 +175,7 @@ class Limit(Writeback):
             "client": "claude",
             "resets_at": None,
             "delegate_kind": "harness",
+            "attempt": 1,
         }
         self.assertEqual(self.limit_rows(), [row])
 
@@ -193,7 +194,7 @@ class Limit(Writeback):
             self.stored(),
             [(HARNESS_EMAIL, SESSION), (researcher, ops.client_id(SID, "limit"))],
         )
-        self.assertEqual(self.limit_rows(), [row, row])
+        self.assertEqual(self.limit_rows(), [row, {**row, "attempt": 2}])
 
 
 if __name__ == "__main__":

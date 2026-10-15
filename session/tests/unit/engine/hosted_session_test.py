@@ -627,6 +627,14 @@ class InProcessTest(Base):
         with open(self.log, encoding="utf-8") as f:
             return [json.loads(line) for line in f]
 
+    def test_cleanup_joins_a_stopped_runs_thread_before_removing_its_files(self):
+        self.steps({"sleep": 0.3})
+        before = set(threading.enumerate())
+        self.start(mode="in_process").stop()
+        self.doCleanups()
+        self.assertEqual([t for t in threading.enumerate() if t not in before], [])
+        self.assertFalse(os.path.exists(self.dir))
+
     def test_an_in_process_session_has_no_terminal_to_press_keys_into(self):
         session, _ = self.run_in_process()
         with self.assertRaisesRegex(SessionError, "^press: a in_process session has no terminal$"):

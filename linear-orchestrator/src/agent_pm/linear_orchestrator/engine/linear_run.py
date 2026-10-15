@@ -88,6 +88,9 @@ class LinearRun:
         latest = runs.latest(entries)[issue]
         if sid is not None and sid != latest.sid:
             raise ConfigError(f"{issue}: session {sid} is no longer the latest run")
+        failed = [f.ts for f in runs.failures(cfg.runs_log) if f.issue == issue]
+        if sid is None and failed and max(failed) >= latest.ts:
+            raise ConfigError(f"{issue}: its latest launch failed at {max(failed).isoformat()}")
         view = cls.__new__(cls)
         view.issue, view.sid = issue, latest.sid
         view.delegate_kind = runs.delegate_of(entries, latest.sid)

@@ -35,6 +35,7 @@ LIMIT = {"kind": "limit", "resets_at": T}
 PICK = "picked the task."
 RUNNING = r"running · #1 · \S+"
 DONE = r"done · #2 · \S+ → \S+ · exit 0"
+UNDONE = r"no outcome · #2 · \S+ → \S+ · exit 0"
 LIMITED = r"limit · #2 · \S+ → \S+ · exit -9"  # the Session kills a limit-hit session
 KINDS = ["session", "input", "client_session", "progress", "result", "end"]
 RESEARCH = {
@@ -234,7 +235,9 @@ class Undone(Run):
     def test_a_run_without_an_outcome_stays_in_progress(self):
         self.seed("engineer")
         self.launch([mark("start", PICK), "Working."])
-        self.assertEqual(self.wrote(), self.framed(post("start", f"Build started: {PICK}")))
+        self.assertEqual(
+            self.wrote(), self.framed(post("start", f"Build started: {PICK}"), end=UNDONE)
+        )
         self.assertEqual(
             self.said(),
             steps(
@@ -271,6 +274,7 @@ class Undone(Run):
             "client": "claude",
             "resets_at": RESETS,
             "delegate_kind": "harness",
+            "attempt": 1,
         }
         start = {
             "kind": "start",
@@ -295,7 +299,8 @@ class Undone(Run):
             self.framed(SUBSCRIBE, REREAD, TO_REVIEW, end=LIMITED, created=False, since=n),
         )
         resumed = {k: start[k] for k in ("issue", "sid", "role", "client", "delegate_kind")}
-        self.assertEqual(self.runs(), [start, note, {"kind": "resume", **resumed}, note])
+        again = {**note, "attempt": 2}
+        self.assertEqual(self.runs(), [start, note, {"kind": "resume", **resumed}, again])
         self.assertEqual([s for _, s in self.stored()].count(cid("limit")), 1)
         researcher = ACCOUNTS["researcher"]
         self.assertEqual(

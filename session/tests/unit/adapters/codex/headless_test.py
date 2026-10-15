@@ -16,7 +16,13 @@ from agent_pm.session.engine.types import (
     TurnEnd,
 )
 
-from session.tests.unit.adapters.codex.support import NATIVE, Base, committed_headless
+from session.tests.unit.adapters.codex.support import (
+    NATIVE,
+    PLUGIN_OFF,
+    Base,
+    committed_headless,
+    packaged,
+)
 
 CODEX = ("-s", "danger-full-access", "-c", 'approval_policy="on-request"')
 
@@ -287,3 +293,38 @@ class SuppliedPolicy(Base):
         launch = committed_headless(adapter, dataclasses.replace(spec, prompt="hi"))
         start = launch.argv.index(flags[0])
         self.assertEqual(launch.argv[start : start + len(flags)], flags)
+
+
+class ConfiguredFlags(Base):
+    OWN = ("-c", "plugins.x@m.enabled=false")
+
+    def test_the_configs_flags_precede_the_specs_and_resume_keeps_them(self):
+        adapter = CodexAdapter({**self.adapter.config, "flags": list(self.OWN)})
+        spec = dataclasses.replace(self.spec, flags=CODEX)
+        first = committed_headless(adapter, dataclasses.replace(spec, prompt="one"))
+        start = first.argv.index(self.OWN[0])
+        self.assertEqual(first.argv[start : start + 6], (*self.OWN, *CODEX))
+        state = self.common.bind(str(self.work), spec.sid, NATIVE)
+        self.assertEqual(state.snapshot.flags, (*self.OWN, *CODEX))
+        self.rollout()
+        resumed = committed_headless(
+            self.adapter, dataclasses.replace(spec, prompt="two", resume=True)
+        )
+        self.assertIn(self.OWN[1], resumed.argv)
+
+    def test_the_packaged_config_turns_the_agent_pm_plugin_off(self):
+        spec = dataclasses.replace(self.spec, flags=CODEX, prompt="hi")
+        argv = committed_headless(packaged(), spec).argv
+        start = argv.index(PLUGIN_OFF[1]) - 1
+        self.assertEqual(argv[start : start + 2], PLUGIN_OFF)
+
+    def test_bad_configured_flags_are_refused(self):
+        for flags, message in (
+            ("-c", "[adapters.codex].flags must be a list of strings"),
+            ([1], "[adapters.codex].flags must be a list of strings"),
+            (["-C", "/x"], "-C /x: the Codex adapter sets hooks, session and cwd"),
+            (["-c", "hooks.x=1"], "-c hooks.x=1: the Codex adapter sets hooks, session and cwd"),
+        ):
+            with self.subTest(flags=flags), self.assertRaises(ConfigError) as caught:
+                CodexAdapter({**self.adapter.config, "flags": flags})
+            self.assertEqual(str(caught.exception), message)

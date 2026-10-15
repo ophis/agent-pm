@@ -68,7 +68,12 @@ NEW = ["-P", "-F", "#{pid} #{session_id} #{pane_id} #{pane_pid}"]
 EXITED = (
     'run-shell \'echo "$(date +%H:%M:%S)" #{q:session_name} exited'
     " #{?pane_dead_signal,-#{?#{m:*[!0-9]*,#{pane_dead_signal}},$(kill -l #{q:pane_dead_signal}),"
-    "#{pane_dead_signal}},#{pane_dead_status}} >> #{q:@events}' ; kill-pane"
+    "#{pane_dead_signal}},#{pane_dead_status}} >> #{q:@events}'"
+)
+EXITED_HOOK = (
+    'run-shell \'echo "$(date +%H:%M:%S)" ##{q:session_name} exited'
+    " ##{?pane_dead_signal,-##{?##{m:*[!0-9]*,##{pane_dead_signal}},$(kill -l ##{q:pane_dead_signal}),"
+    "##{pane_dead_signal}},##{pane_dead_status}} >> ##{q:@events}' ; kill-pane -t #{pane_id}"
 )
 
 INSIDE = {"TMUX": "/tmp/tmux-501/default,1,0", "TMUX_PANE": "%3", "ITERM_SESSION_ID": "w0t0p0:ABC"}

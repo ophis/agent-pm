@@ -219,13 +219,19 @@ class LiveCrew(Case):
         """Kills tui run `name`'s sessions after its first turn; attach then says gone."""
         harness, tui = record.sessions
         self.wait_event(tui, "done")
+        shown = self.server.tmux("display-message", "-p", "-t", f"={harness}:", "#{pane_pid}")
+        pid = int(shown.stdout)
         self.kill(harness)
         self.server.tmux(
             "kill-session", "-t", f"={tui}"
         )  # the harness, stopping, may close it first
-        self.until(
-            lambda: self.gone(tui) and ["outcome", "error"] in self.words(harness),
-            f"{tui} gone, the harness's outcome",
+        self.until(  # kill-session: no exited hook
+            lambda: (
+                self.gone(tui)
+                and ["outcome", "error"] in self.words(harness)
+                and not live_tmux.alive(pid)
+            ),
+            f"{tui} gone, the harness's outcome and exit",
         )
         out = self.ok(self.crew("attach")).stdout.splitlines()
         self.assertIn(f"resume: agent-pm-crew resume --manager mgr {name}", out)

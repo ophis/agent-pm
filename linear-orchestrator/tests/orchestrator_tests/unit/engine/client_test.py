@@ -127,7 +127,13 @@ class Unavailable(Case):
             with self.subTest(want=want):
                 self.assertEqual(self.unavailable(query, opened=error), want)
 
-    def test_other_http_errors_unchanged(self):
+    def linear_error(self, error):
+        with error, self.assertRaises(LinearError) as cm:
+            self.gql(VIEWER, opened=error)
+        self.assertNotIn(SECRET, str(cm.exception))
+        return str(cm.exception)
+
+    def test_other_4xx_are_linear_errors_naming_op_and_status(self):
         for error in (
             http_error(400, errors("GRAPHQL_VALIDATION_FAILED")),
             http_error(400, b"not json"),
@@ -135,14 +141,12 @@ class Unavailable(Case):
             http_error(400, b'{"errors": 1}'),
             http_error(401, errors("AUTHENTICATION_ERROR")),
             http_error(401, errors("RATELIMITED")),
+            http_error(403),
         ):
-            with (
-                self.subTest(code=error.code),
-                error,
-                self.assertRaises(urllib.error.HTTPError) as cm,
-            ):
-                self.gql(VIEWER, opened=error)
-            self.assertIs(cm.exception, error)
+            with self.subTest(code=error.code):
+                self.assertEqual(
+                    self.linear_error(error), f"linear api error: viewer: HTTP {error.code}"
+                )
 
     def test_transport_errors_carry_the_reason(self):
         cases = [
@@ -192,17 +196,17 @@ class Unavailable(Case):
             with self.subTest(body=body), self.assertRaises(types.Unavailable):
                 self.gql(VIEWER, body=body)
 
-    def test_malformed_rate_limit_errors_keep_the_original_http_error(self):
+    def test_malformed_rate_limit_errors_are_linear_errors(self):
         for body in (
             b"null",
             b"[]",
             b'{"errors": null}',
             b'{"errors": [null, 1, {"extensions": 1}]}',
         ):
-            error = http_error(400, body)
-            with self.subTest(body=body), self.assertRaises(urllib.error.HTTPError) as caught:
-                self.gql(VIEWER, opened=error)
-            self.assertIs(caught.exception, error)
+            with self.subTest(body=body):
+                self.assertEqual(
+                    self.linear_error(http_error(400, body)), "linear api error: viewer: HTTP 400"
+                )
 
     def test_operation_is_the_first_field_of_the_top_level_selection_set(self):
         cases = {

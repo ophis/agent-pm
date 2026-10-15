@@ -10,7 +10,7 @@ import os
 import shutil
 from unittest import mock
 
-from agent_pm.delegate import ConfigError, Layout, Result, Spec
+from agent_pm.delegate import ConfigError, Finished, Layout, Result, Spec
 from agent_pm.delegate.composer import Composer, RunParams
 from agent_pm.delegate.engine.harness_delegate import HarnessDelegate
 from agent_pm.delegate.engine.state import RunState
@@ -248,12 +248,30 @@ class CheckTuiTest(HarnessCase):
 class LaunchTest(HarnessCase):
     def test_the_launchers_variables_stay_out_of_the_harness_environment(self):
         launcher = {"AGENT_PM_SID": SID, "AGENT_PM_EVENTS": "/manager/events", "KEPT": "kept"}
-        with mock.patch.dict(os.environ, launcher):
+        lease = ("AGENT_PM_MANAGER", "AGENT_PM_HOLDER_ID", "AGENT_PM_HOLDER_GENERATION")
+        with mock.patch.dict(os.environ, launcher | dict.fromkeys(lease, "1")):
             self.make().detach()
         environment = RecordingHost.launches[0]["env"]
-        self.assertNotIn("AGENT_PM_SID", environment)
-        self.assertNotIn("AGENT_PM_EVENTS", environment)
+        for name in ("AGENT_PM_SID", "AGENT_PM_EVENTS", *lease):
+            self.assertNotIn(name, environment)
         self.assertEqual(environment["KEPT"], "kept")
+
+
+class SaveFailureTest(HarnessCase):
+    def test_a_failed_result_save_still_hands_on_the_runs_real_finished(self):
+        delegate, events, real = self.make(), [], os.replace
+        record = os.path.join(Layout(self.work).run, "delegate.json")
+
+        def replace(src, dst):
+            if str(dst) == record:
+                raise OSError("disk full")
+            real(src, dst)
+
+        with mock.patch.object(os, "replace", replace):
+            result = delegate.run(on_event=events.append)
+        finished = [e for e in events if isinstance(e, Finished)]
+        self.assertEqual([e.result for e in finished], [result])
+        self.assertEqual(result.outcome.status, "done")
 
 
 class UsageSession(HarnessSession):
@@ -366,11 +384,11 @@ class ResumeModeTest(HarnessCase):
 
 
 class CrashTest(HarnessCase):
-    def crashed(self):
+    def crashed(self, cwd=None):
         """A tui run whose process died mid-run: no outcome stored, no run lock held, its agent
         session left live as the run started it.
         """
-        spec = Spec("input", self.work, mode="tui", client="fake", sid=SID)
+        spec = Spec("input", self.work, mode="tui", client="fake", sid=SID, cwd=cwd)
         self.make(spec=spec)
         state = self.metadata()
         agent = SessionSpec(
@@ -406,6 +424,45 @@ class CrashTest(HarnessCase):
         view.resume()
         self.assertTrue(os.path.isdir(Layout(self.work).agent))
         self.assertEqual(self.metadata()["attempt"], 2)
+
+    def test_a_resume_refused_for_an_untrusted_cwd_leaves_the_agent_session_live(self):
+        project = os.path.join(self.home, "project")
+        os.mkdir(project)
+        self.settings(trusted_dirs=(project,))
+        _view, name = self.crashed(cwd=project)
+        self.settings()
+        left, launches = HarnessSession.live[name], len(harness_launches())
+        view = HarnessDelegate.attach(self.work, session_cls=HarnessSession)
+        with self.assertRaisesRegex(ConfigError, "no longer in trusted_dirs"):
+            view.resume()
+        self.assertEqual(left.state(), Liveness.LIVE)
+        self.assertEqual(len(harness_launches()), launches)
+
+    def test_a_resume_its_preflight_refuses_leaves_the_agent_session_live(self):
+        _view, name = self.crashed()
+        left, launches = HarnessSession.live[name], len(harness_launches())
+        HarnessSession.preflight_error = SessionConfigError("fake: no client binary")
+        view = HarnessDelegate.attach(self.work, session_cls=HarnessSession)
+        with self.assertRaisesRegex(ConfigError, "no client binary"):
+            view.resume()
+        self.assertEqual((left.state(), len(harness_launches())), (Liveness.LIVE, launches))
+
+    def test_resume_preflights_the_live_agents_name_under_a_probe_name(self):
+        view, name = self.crashed()
+        view.resume()
+        self.assertNotEqual(HarnessSession.preflights[-1]["spec"].name, name)
+        self.assertEqual(self.metadata()["plan"]["session"]["name"], name)
+
+    def test_resume_refuses_a_run_replaced_since_its_attach(self):
+        view, _name = self.crashed()
+        other = "0b6f2c1e-6d0a-4c1b-9a51-3f1f6b0e2a7d"
+        self.make(spec=Spec("input", self.work, task="echo", sid=other))
+        launches = len(harness_launches())
+        with self.assertRaisesRegex(ConfigError, f"run {SID} was replaced by {other}"):
+            view.resume()
+        self.assertEqual(
+            (len(harness_launches()), self.metadata()["spec"]["sid"]), (launches, other)
+        )
 
     def test_the_status_of_an_agent_session_another_process_started_comes_from_its_plan(self):
         view, _name = self.crashed()

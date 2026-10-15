@@ -100,6 +100,20 @@ class ProcessStatusTest(Case):
                     fake.calls, [["tmux", "display-message", "-p", "-t", "%7", self.QUERY]]
                 )
 
+    def test_a_dead_pane_tmux_has_not_reaped_is_running_and_gets_one_no_op_job(self):
+        fake = FakeTmux(pane="4242 $3 %7 4343\t1  ")
+        self.assertEqual(
+            transport.process_status("%7", proc=fake),
+            ("4242 $3 %7 4343", types.PaneStatus.RUNNING),
+        )
+        self.assertEqual(
+            fake.calls,
+            [
+                ["tmux", "display-message", "-p", "-t", "%7", self.QUERY],
+                ["tmux", "run-shell", "-b", "true"],
+            ],
+        )
+
     def test_a_failing_tmux_or_a_bad_identity_raises(self):
         for fake, message in (
             (FakeTmux(pane="", fail=("display-message",)), "tmux: boom"),
@@ -120,7 +134,6 @@ class StatusTest(Case):
             ("1  kill", -9),
             ("1  9", -9),
             ("1  term", -15),
-            ("1  ", types.PaneStatus.RUNNING),
             ("  ", None),
             (None, None),
         ):
@@ -131,6 +144,22 @@ class StatusTest(Case):
                     fake.calls, [["tmux", "display-message", "-p", "-t", "=s:", FORMAT]]
                 )
                 self.assertEqual(fake.kwargs, [TMUX_KW])
+
+    def test_a_dead_pane_tmux_has_not_reaped_is_running_and_gets_one_no_op_job(self):
+        for fake in (
+            FakeTmux(pane="1  "),
+            FakeTmux(pane="1  ", fail=("run-shell",)),
+            FakeTmux(pane="1  ", results={"run-shell": OSError("gone")}),
+        ):
+            with self.subTest(results=fake.results, fail=fake.fail):
+                self.assertEqual(transport.status("s", proc=fake), types.PaneStatus.RUNNING)
+                self.assertEqual(
+                    fake.calls,
+                    [
+                        ["tmux", "display-message", "-p", "-t", "=s:", FORMAT],
+                        ["tmux", "run-shell", "-b", "true"],
+                    ],
+                )
 
     def test_a_pane_status_is_a_str_enum_member(self):
         self.assertEqual(list(types.PaneStatus), ["running", "unknown"])

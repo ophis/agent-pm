@@ -543,7 +543,11 @@ class SessionInfoTest(Base):
         with open(record, encoding="utf-8") as f:
             resumed = json.load(f)
         self.assertEqual(
-            (resumed["argv"], os.path.realpath(resumed["cwd"])), (["--resume", SID], self.workdir)
+            (resumed["argv"], os.path.realpath(resumed["cwd"])),
+            (
+                ["--resume", SID, "--settings", '{"enabledPlugins": {"agent-pm@agent-pm": false}}'],
+                self.workdir,
+            ),
         )
         self.assertEqual({key: resumed["env"].get(key) for key in secrets}, secrets)
 

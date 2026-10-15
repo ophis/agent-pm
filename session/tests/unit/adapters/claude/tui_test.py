@@ -334,22 +334,66 @@ class SessionTuiTest(Base):
             ({"hooks": TUI_HOOKS}, (*after, "--", "hi")),
         )
 
-    def test_a_malformed_settings_flag_is_refused(self):
-        long = "x" * 100
-        for flags, value in (
-            (("--settings",), ""),
-            (("--settings", "--"), "--"),
-            (("--settings", "/a/settings.json"), "/a/settings.json"),
-            (("--settings=[]",), "[]"),
-            (("--settings", '{"hooks": null}'), '{"hooks": null}'),
-            (("--settings", '{"hooks": []}'), '{"hooks": []}'),
-            (("--settings", '{"hooks": {"Stop": {}}}'), '{"hooks": {"Stop": {}}}'),
-            (("--settings", long), long),
+    def test_the_configs_specs_and_hooks_settings_merge_into_one(self):
+        mine = {"type": "command", "command": "mine"}
+        config = {
+            "flags": [
+                "--settings",
+                json.dumps({"enabledPlugins": {"a@m": False}, "hooks": {"Stop": [mine]}}),
+            ]
+        }
+        flags = (
+            "--settings",
+            '{"enabledPlugins": {"b@m": true}, "model": "x"}',
+            "--verbose",
+            '--settings={"model": "y"}',
+        )
+        argv = self.session(flags=flags, config=config).argv
+        self.assertEqual(argv.count("--settings"), 1)
+        at = argv.index("--settings")
+        self.assertEqual(
+            json.loads(argv[at + 1]),
+            {
+                "enabledPlugins": {"a@m": False, "b@m": True},
+                "model": "y",
+                "hooks": {**TUI_HOOKS, "Stop": [mine, *TUI_HOOKS["Stop"]]},
+            },
+        )
+        self.assertEqual(argv[at + 2 :], ("--verbose", "--", "hi"))
+
+    def test_a_malformed_inline_settings_flag_is_refused(self):
+        for value in ('{"hooks": null}', '{"hooks": []}', '{"hooks": {"Stop": {}}}', "{x"):
+            with self.subTest(value=value):
+                self.refused(
+                    lambda *, value=value: self.session(flags=("--settings", value)),
+                    f"--settings {value!r:.80}: {WANT_SETTINGS}",
+                )
+
+    def test_an_empty_or_separator_settings_value_is_a_path_that_is_refused(self):
+        limit = "want a regular file of at most 2 MiB"
+        for flags, message in (
+            (("--settings",), f"{self.work + '/'!r}: {limit}"),
+            (("--settings", ""), f"{self.work + '/'!r}: {limit}"),
+            (("--settings", "--"), f"{self.work + '/--'!r}: No such file or directory"),
         ):
             with self.subTest(flags=flags):
                 self.refused(
-                    lambda *, flags=flags: self.session(flags=flags),
-                    f"--settings {value!r:.80}: {WANT_SETTINGS}",
+                    lambda *, flags=flags: self.session(flags=flags), f"--settings {message}"
+                )
+
+    def test_a_settings_file_merges_with_the_hooks(self):
+        mine = {"type": "command", "command": "mine"}
+        path = os.path.join(self.work, "s.json")
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump({"model": "x", "hooks": {"Stop": [mine]}}, f)
+        for value in (path, "s.json"):
+            with self.subTest(value=value):
+                self.assertEqual(
+                    self.settings(("--settings", value)),
+                    (
+                        {"model": "x", "hooks": {**TUI_HOOKS, "Stop": [mine, *TUI_HOOKS["Stop"]]}},
+                        ("--", "hi"),
+                    ),
                 )
 
 
