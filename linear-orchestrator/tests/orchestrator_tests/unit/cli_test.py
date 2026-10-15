@@ -59,17 +59,14 @@ class Commands(Case):
 class InsideAnAgentSession(Case):
     def test_resume_exits_2_before_config_and_status_still_runs(self):
         with mock.patch.dict(os.environ, {"AGENT_PM_AGENT_SESSION": "1"}):
-            for command, refused in (("resume", True), ("status", False)):
+            for command, first in (
+                ("resume", "agent-pm-linear: refused inside an agent session"),
+                ("status", "agent-pm-linear: linear-orchestrator/config.toml: required, unset:"),
+            ):
                 errors = io.StringIO()
                 with self.subTest(command=command), redirect_stderr(errors):
-                    cli.main([command, "TASK-1"])
-                    self.assertEqual(
-                        errors.getvalue().startswith(
-                            "agent-pm-linear: refused inside an agent session"
-                        ),
-                        refused,
-                        errors.getvalue(),
-                    )
+                    self.assertEqual(cli.main([command, "TASK-1"]), 2)
+                self.assertTrue(errors.getvalue().startswith(first), errors.getvalue())
 
 
 DEPLOY = "/Users/francis/playground/agent-pm"
