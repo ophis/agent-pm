@@ -139,7 +139,7 @@ def live_sessions(cfg, entries, *, say):
         if entry.role not in live:
             continue
         try:
-            if LinearRun.attach(ident, cfg=cfg).alive():
+            if LinearRun.attach(ident, cfg=cfg, sid=entry.sid).alive():
                 live[entry.role].append(ident)
         except (ConfigError, delegate.ConfigError) as error:
             say("recover-skip", ident, once=True, sid=entry.sid, reason=one_line(error))
@@ -489,10 +489,13 @@ class Board:
 
 
 def begin(cfg, spec: Spec) -> Spec:
-    """A new run of an issue with a recorded run closes that run first (its retained TUI)."""
-    if spec.mode == "new" and spec.issue in latest(parse_log(cfg.runs_log)):
+    """A new run of an issue with a recorded run closes that run first (its retained TUI), by its
+    sid: a newer failed launch leaves the issue no run, not that one.
+    """
+    recorded = latest(parse_log(cfg.runs_log)).get(spec.issue)
+    if spec.mode == "new" and recorded is not None:
         try:
-            LinearRun.attach(spec.issue, cfg=cfg).close()
+            LinearRun.attach(spec.issue, cfg=cfg, sid=recorded.sid).close()
         except (ConfigError, delegate.ConfigError, delegate.SessionError) as error:
             log("router", "tui-error", spec.issue, msg=one_line(error))
         else:
@@ -819,7 +822,8 @@ def run_issue(opts, cfg, gql, start, *, keychain, clock=datetime.now, launch_sid
             print("router.py: agent runs unknown; try again", file=sys.stderr)
             return stop
         if any(ident in ids for ids in live.values()):
-            attach = LinearRun.attach(ident, cfg=cfg).attach_command()
+            sid = latest(entries)[ident].sid
+            attach = LinearRun.attach(ident, cfg=cfg, sid=sid).attach_command()
             shown = f": {attach}" if attach else ""
             print(f"router.py: {ident} has a live agent run{shown}", file=sys.stderr)
             return stop

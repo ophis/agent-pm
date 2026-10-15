@@ -758,6 +758,19 @@ class RouterEntry(OuterBase):
                 self.assertIn(said, self.said())
                 self.assertEqual(self.last_run()[:2], ("start", ID))
 
+    def test_a_new_run_closes_the_recorded_run_past_a_newer_failed_launch(self):
+        self.add(kind="start", ident=ID, sid="old", minutes_ago=600, role="engineer")
+        at = (NOW - timedelta(minutes=300)).isoformat(timespec="seconds")
+        failed = {"ts": at, "kind": "failed", "issue": ID, "sid": self.sid("failed")}
+        self.lines.append(json.dumps(failed))
+        self.assertEqual(self.entry("--issue", ID), 0)
+        harness = f"agent-pm-engineer-{ID}"
+        self.assertEqual(
+            [o for o in self.api.order if o[0] in ("close", "detach")],
+            [("close", harness), ("detach", harness)],
+        )
+        self.assertIn(f"tui-closed {ID}", self.said())
+
     def test_an_unloadable_recorded_run_is_a_tui_error_and_the_run_starts(self):
         self.add(kind="start", ident=ID, sid="old", minutes_ago=600, role="engineer")
         self.lines[-1] = self.lines[-1].replace(
@@ -2628,6 +2641,20 @@ class ExplicitIssueRuns(TickBase):
                         (fake.queries, self.api.order, self.state, self.start.launches),
                         ([], SESSIONS, self.before(), []),
                     )
+
+    def test_a_live_agent_run_past_a_newer_failed_launch_is_still_live(self):
+        live = ["agent-pm-engineer-TASK-1"]
+        self.add(
+            kind="start", ident="TASK-1", sid=f"live:{live[0]}", minutes_ago=10, role="engineer"
+        )
+        at = (NOW - timedelta(minutes=5)).isoformat(timespec="seconds")
+        failed = {"ts": at, "kind": "failed", "issue": "TASK-1", "sid": self.sid("failed")}
+        self.lines.append(json.dumps(failed))
+        fake = FakeLinear([issue("TASK-1", "Todo", "engineer")])
+        self.assertEqual(self.tick(fake, "--issue", "TASK-1", live=live), 1)
+        self.assertEqual(
+            self.err, "router.py: TASK-1 has a live agent run: attach agent-pm-engineer-TASK-1\n"
+        )
 
     def test_a_live_agent_run_without_an_attach_command_is_refused_without_one(self):
         fake = FakeLinear([issue("TASK-1", "Todo", "engineer")])
