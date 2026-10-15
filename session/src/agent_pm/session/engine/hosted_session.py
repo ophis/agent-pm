@@ -507,6 +507,10 @@ class HostedSession(Session):
             isinstance(event, Blocked) or self._blocked and isinstance(event, (Stderr, Reply))
         )
 
+    @property
+    def opening_pending(self) -> str | None:
+        return self._running.opening_pending
+
     def send(self, text: str) -> None:
         self._running.send(text)
 

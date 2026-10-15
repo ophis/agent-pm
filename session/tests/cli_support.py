@@ -25,6 +25,7 @@ MANAGER = "mgr"
 TIMEOUT = 60
 FAKE_HOST = "session.tests.fakes.host:FakeHost"
 CLAUDE_HOOKS = {
+    "SessionStart",
     "Stop",
     "StopFailure",
     "PermissionRequest",
@@ -108,15 +109,19 @@ class CliCase(Case):
         """Worker `name`'s fake claude scenario, as env."""
         path = os.path.join(self.root, f"{name}.claude.json")
         steps = [f"Hi from {name}."] if steps is None else steps
+        scenario = {"steps": steps, "turns": list(turns), "log": self.log(name)}
         with open(path, "w", encoding="utf-8") as f:
-            json.dump({"steps": steps, "turns": list(turns), "log": self.log(name), **more}, f)
+            json.dump({**scenario, "commands": self.log(name, "commands"), **more}, f)
         return {"FAKE_CLAUDE_SCENARIO": path}
 
-    def log(self, name: str) -> str:
-        return os.path.join(self.root, f"{name}.claude.jsonl")
+    def log(self, name: str, kind: str = "claude") -> str:
+        return os.path.join(self.root, f"{name}.{kind}.jsonl")
 
     def calls(self, name: str) -> list[dict]:
         return logged(self.log(name))
+
+    def commands(self, name: str) -> list[dict]:
+        return logged(self.log(name, "commands"))
 
     def start(
         self, name: str, *args: str, steps=None, turns=(), prompt: str = "hi", **extra

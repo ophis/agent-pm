@@ -23,7 +23,7 @@ from agent_pm.session.adapters.base import Adapter
 from agent_pm.session.adapters.claude import ClaudeAdapter
 from agent_pm.session.adapters.codex import CodexAdapter
 from agent_pm.session.adapters.codex.common import SessionStore
-from agent_pm.session.engine import hosted_session
+from agent_pm.session.engine import hosted_session, worker
 from agent_pm.session.engine import types as engine_types
 from agent_pm.session.engine.hosted_session import POLL, HostedSession
 from agent_pm.session.engine.records import RunLog
@@ -875,6 +875,14 @@ class EventsOverARuntimeTest(Case):
         found = list(itertools.islice(session.events(), 50))
         self.assertLess(len(found), 50, found)
         return found
+
+    def test_opening_pending_is_its_runtimes(self):
+        session = self.session()
+        for pending in ("/color", None):
+            with self.subTest(pending=pending):
+                self.mode.opening_pending = pending
+                self.assertIsInstance(session, worker._Opens)
+                self.assertIs(session.opening_pending, pending)
 
     def test_binding_and_late_metadata_preserve_completion(self):
         adapter = fake_adapter.FakeAdapter({})

@@ -135,7 +135,12 @@ class Start(Base):
         self.assertEqual(self.recorded, [info])
         self.assertEqual(
             (argv, kwargs["cwd"], kwargs["env"], lines),
-            (NOTHING, self.dir, {**env, "HM_SET": "1", "PWD": self.dir}, 1),
+            (
+                NOTHING,
+                self.dir,
+                {**env, "HM_SET": "1", "PWD": self.dir, "AGENT_PM_AGENT_SESSION": "1"},
+                1,
+            ),
         )
         self.assertEqual((kwargs["stdin"], kwargs["process_group"]), (DEVNULL, 0))
         (spec,) = StubRun.specs

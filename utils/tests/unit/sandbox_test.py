@@ -121,6 +121,13 @@ class ControlRoot(Case):
             self.assertNotIn("AGENT_PM_CONTROL_ROOT", sandbox.clean_env({}))
 
 
+class AgentSession(Case):
+    def test_clean_env_drops_the_agent_session_marker_so_suites_run_inside_one(self):
+        env = sandbox.clean_env({"AGENT_PM_AGENT_SESSION": "1", "KEEP": "k"})
+        self.assertNotIn("AGENT_PM_AGENT_SESSION", env)
+        self.assertEqual(env["KEEP"], "k")
+
+
 PS = """\
   100     1   100   501 Ss   /usr/bin/python3 run_tests.py Unit
   200   100   100   501 S    /usr/bin/python3 -P -S run_tests.py Unit

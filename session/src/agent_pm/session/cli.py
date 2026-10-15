@@ -4,7 +4,9 @@ start, restart and resume a worker (engine/worker.py) and print its Record; repl
 keys in KeyPress notation) and read a session; status, show, close and attach-command for session
 names, or Records one per stdin line; ls; tile; hook, a tui client's hook call (tui_hook.run).
 Every subcommand but hook reads the session config once: read_config, Host.parse_hosts,
-Session.configure. AGENT_PM_SID, read once here, is a start's or resume's session id.
+Session.configure. AGENT_PM_SID, read once here, is a start's or resume's session id. Inside an
+agent session agent-pm started (AGENT_PM_AGENT_SESSION), start, restart, resume and client-resume
+refuse.
 
 stdout holds only machine output: Records, Status lines, ls rows, read and reply text, attach
 commands. Exit 0 done, 2 a usage or config error (nothing done), 1 anything else. A batch answers
@@ -41,7 +43,7 @@ from agent_pm.session.hosts.base import Displayable, Host
 from agent_pm.session.runtimes import tui_hook
 from agent_pm.session.runtimes.base import EVENTS, START_SID
 from agent_pm.session.runtimes.tui import TuiRuntime
-from agent_pm.utils import Record, Status, module_roots
+from agent_pm.utils import Record, Status, module_roots, nested_start
 
 PROG = COMMAND
 GONE = "gone"
@@ -101,7 +103,8 @@ def _parser(hosts: Hosts | None) -> argparse.ArgumentParser:
         description="Start worker NAME, a plain tui session of CLIENT; everything after -- is "
         "its client's flags, verbatim. Its session id: --resume SID (resumes that "
         "conversation), else $AGENT_PM_SID, else a new one; the two must agree. Prints its "
-        "Record once it has run 5 s without exiting.",
+        "Record once it has run 5 s without exiting (up to 15 s while its launch input is "
+        "pending).",
     )
     p.add_argument("name", type=_name)
     p.add_argument("--client", required=True, help="its client, an [adapters.<name>]")
@@ -456,6 +459,10 @@ def main(argv: list[str] | None = None) -> int:
     except (ConfigError, OSError, ValueError) as error:
         hosts, failure = None, error
     args = _parser(hosts).parse_args(argv)
+    starts = args.cmd in {"start", "restart", "resume", "client-resume"}
+    if starts and (refused := nested_start()):
+        _say(f"{PROG}: {refused}")
+        return 2
     if hosts is None:
         _say(f"{PROG}: config: {failure}")
         return 2
