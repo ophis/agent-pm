@@ -1,5 +1,6 @@
 """ctmux (manager/skills/tmux/scripts/ctmux): its tmux calls through a fake tmux, its new session on
-a private tmux server with the shell under agent-pm-crew hold, and its standalone installed copy.
+a private tmux server with the shell under its plugin's agent-pm-crew hold, and the launchers
+--install puts in ~/.agent-pm/bin, run from a plain PATH before and after a plugin upgrade.
 """
 
 import json
@@ -17,6 +18,8 @@ from manager.tests.case import REPO, Case
 from session.tests import live_tmux
 
 CTMUX = os.path.join(REPO, "manager", "skills", "tmux", "scripts", "ctmux")
+LAUNCHER = os.path.join(REPO, "manager", "skills", "tmux", "scripts", "launcher")
+COMMANDS = ("ctmux", "agent-pm-crew", "agent-pm-session", "agent-pm-delegate", "agent-pm-linear")
 USAGE = "usage: ctmux <session-name> | ctmux --install"
 FAKE = """#!{python} -I
 import json, os, sys
@@ -35,7 +38,7 @@ os.execv({program!r}, [{program!r}, "-f", os.devnull, *sys.argv[1:]])
 """
 SHELL = """#!/bin/sh
 printf '%s\\n' "$(pwd -P)" "$*" "$AGENT_PM_MANAGER" "$AGENT_PM_HOLDER_ID" \\
-  "$AGENT_PM_HOLDER_GENERATION" > "$0.tmp" && mv "$0.tmp" "$0.log"
+  "$AGENT_PM_HOLDER_GENERATION" "${PATH%%:*}" > "$0.tmp" && mv "$0.tmp" "$0.log"
 exec cat
 """
 START = [
@@ -73,9 +76,28 @@ OPTIONS = (
 )
 
 
-def created(name: str, cwd: str, shell: str) -> list[str]:
-    hold = ["agent-pm-crew", "hold", f"--manager={name}", f"--session={name}", "--", shell, "-l"]
+def created(name: str, cwd: str, shell: str, root: str = REPO) -> list[str]:
+    crew = os.path.join(root, "bin", "agent-pm-crew")
+    hold = [crew, "hold", f"--manager={name}", f"--session={name}", "--", shell, "-l"]
     return [*START, name, "-c", cwd, *hold]
+
+
+def plugin(root: str) -> str:
+    """A plugin install at root: this checkout's projects linked in, its bin/ copied."""
+    os.makedirs(root)
+    for project in ("utils", "session", "delegate", "manager", "linear-orchestrator"):
+        os.symlink(os.path.join(REPO, project), os.path.join(root, project))
+    shutil.copytree(os.path.join(REPO, "bin"), os.path.join(root, "bin"))
+    return root
+
+
+def record(home: str, *roots: str) -> None:
+    """Claude Code's install record in home, listing roots for agent-pm@agent-pm."""
+    path = os.path.join(home, ".claude", "plugins", "installed_plugins.json")
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    entries = [{"scope": "user", "installPath": root} for root in roots]
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump({"version": 2, "plugins": {"agent-pm@agent-pm": entries}}, f)
 
 
 def executable(path: str, text: str) -> str:
@@ -93,7 +115,10 @@ class FakeTmux(Case):
         os.mkdir(self.bin)
         os.mkdir(self.cwd)
         executable(os.path.join(self.bin, "tmux"), FAKE.format(python=sys.executable))
-        self.dst = os.path.join(self.agent_pm, "bin", "ctmux")
+        os.symlink(sys.executable, os.path.join(self.bin, "python3"))
+        self.installed = os.path.join(self.agent_pm, "bin")
+        self.dst = os.path.join(self.installed, "ctmux")
+        self.codex = os.path.join(self.home, ".codex", "plugins", "cache", "agent-pm", "agent-pm")
         self.env = {
             "PATH": f"{self.bin}:/usr/bin:/bin",
             "HOME": self.home,
@@ -192,28 +217,83 @@ class FakeTmux(Case):
         self.assertNotIn(b"claude", text)
         self.assertNotIn(b"codex", text)
 
-    def test_install_copies_exact_bytes_mode_755_and_prints_the_path_without_tmux(self):
-        with open(CTMUX, "rb") as f:
-            source = f.read()
-        for script in (CTMUX, self.dst):
-            with self.subTest(script=script):
-                process, out, err, calls = self.ctmux("--install", script=script)
-                self.assertEqual((process.returncode, out, err), (0, self.dst + "\n", ""))
-                self.assertEqual(stat.S_IMODE(os.stat(self.dst).st_mode), 0o755)
-                with open(self.dst, "rb") as f:
-                    self.assertEqual(f.read(), source)
-                self.assertEqual(calls, [])
+    def install(self, script=CTMUX):
+        process, out, err, calls = self.ctmux("--install", script=script)
+        paths = [os.path.join(self.installed, name) for name in COMMANDS]
+        self.assertEqual(
+            (process.returncode, out, err, calls), (0, "".join(f"{p}\n" for p in paths), "", [])
+        )
 
-    def test_the_installed_copy_runs_without_its_source(self):
-        source = os.path.join(self.home, "plugin")
-        os.mkdir(source)
-        copy = shutil.copy2(CTMUX, os.path.join(source, "ctmux"))
-        process, out, _, _ = self.ctmux("--install", script=copy)
-        self.assertEqual((process.returncode, out), (0, self.dst + "\n"))
-        shutil.rmtree(source)
-        process, _, err, calls = self.ctmux("s1", script=self.dst)
-        self.assertEqual((process.returncode, err), (0, ""))
-        self.assertEqual(calls[1][2:], created("s1", self.cwd, "/bin/zsh"))
+    def test_install_writes_each_launcher_exact_mode_755_and_a_rerun_refreshes_them(self):
+        with open(LAUNCHER, "rb") as f:
+            source = f.read()
+        record(self.home, REPO)
+        self.install()
+        with open(os.path.join(self.installed, "agent-pm-crew"), "w", encoding="utf-8") as f:
+            f.write("stale")
+        self.install(script=self.dst)
+        self.assertEqual(sorted(os.listdir(self.installed)), sorted(COMMANDS))
+        for name in COMMANDS:
+            path = os.path.join(self.installed, name)
+            self.assertEqual(stat.S_IMODE(os.stat(path).st_mode), 0o755, name)
+            with open(path, "rb") as f:
+                self.assertEqual(f.read(), source, name)
+
+    def test_the_installed_ctmux_runs_the_recorded_plugins_and_follows_an_upgrade(self):
+        self.install()
+        for version in ("0.5.0", "0.6.0"):
+            with self.subTest(version=version):
+                root = plugin(os.path.join(self.home, "cache", version))
+                record(self.home, root)
+                process, _, err, calls = self.ctmux("s1", script=self.dst)
+                self.assertEqual((process.returncode, err), (0, ""))
+                self.assertEqual(calls[1][2:], created("s1", self.cwd, "/bin/zsh", root))
+
+    def test_without_a_claude_record_the_newest_codex_install_runs(self):
+        self.install()
+        for version in ("0.9.0", "0.10.0"):
+            plugin(os.path.join(self.codex, version))
+        _, _, err, calls = self.ctmux("s1", script=self.dst)
+        self.assertEqual(err, "")
+        self.assertEqual(
+            calls[1][2:], created("s1", self.cwd, "/bin/zsh", os.path.join(self.codex, "0.10.0"))
+        )
+
+    def test_a_claude_record_wins_over_a_codex_install(self):
+        self.install()
+        plugin(os.path.join(self.codex, "9.0.0"))
+        record(self.home, root := plugin(os.path.join(self.home, "cache", "0.5.0")))
+        _, _, _, calls = self.ctmux("s1", script=self.dst)
+        self.assertEqual(calls[1][2:], created("s1", self.cwd, "/bin/zsh", root))
+
+    def test_a_launcher_passes_its_arguments_stdin_and_status(self):
+        self.install()
+        root = os.path.join(self.home, "cache", "0.5.0")
+        os.makedirs(os.path.join(root, "bin"))
+        executable(
+            os.path.join(root, "bin", "agent-pm-crew"),
+            '#!/bin/sh\nprintf "%s|" "$0" "$@"; cat; exit 3\n',
+        )
+        record(self.home, root)
+        done = subprocess.run(
+            (os.path.join(self.installed, "agent-pm-crew"), "status", "--manager", "a b"),
+            input="in",
+            env=self.env,
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+        crew = os.path.join(root, "bin", "agent-pm-crew")
+        self.assertEqual((done.returncode, done.stdout), (3, f"{crew}|status|--manager|a b|in"))
+
+    def test_with_no_install_a_launcher_fails_naming_where_it_looked(self):
+        self.install()
+        process, out, err, calls = self.ctmux("s1", script=self.dst)
+        self.assertNotEqual(process.returncode, 0)
+        self.assertEqual((out, calls), ("", []))
+        self.assertIn(os.path.join(self.home, ".claude", "plugins", "installed_plugins.json"), err)
+        self.assertIn(self.codex, err)
 
     def test_an_install_failure_exits_nonzero_without_a_path(self):
         os.rmdir(self.agent_pm)
@@ -240,15 +320,15 @@ class PrivateServer(Case):
         )
         self.shell = executable(os.path.join(self.home, "shell"), SHELL)
         self.env = {
-            "PATH": os.pathsep.join((tools, os.path.join(REPO, "bin"), python, "/usr/bin", "/bin")),
+            "PATH": os.pathsep.join((tools, python, "/usr/bin", "/bin")),
             "HOME": self.home,
             "SHELL": self.shell,
             "TMUX_TMPDIR": self.server.root,
         }
 
-    def ctmux(self, name):
+    def ctmux(self, *args, script=CTMUX):
         return subprocess.run(
-            (CTMUX, name),
+            (script, *args),
             cwd=self.cwd,
             env=self.env,
             capture_output=True,
@@ -287,10 +367,11 @@ class PrivateServer(Case):
             [self.show(scope, option) for scope, option in OPTIONS[:3]], ["on", "50000", "on"]
         )
         self.assertIn("xterm*:extkeys", self.show("-s", "terminal-features"))
-        cwd, args, manager, holder, generation = live_tmux.wait(
+        cwd, args, manager, holder, generation, first = live_tmux.wait(
             self.shell_report, what="the held shell's report"
         )
         self.assertEqual((cwd, args, manager, generation), (self.cwd, "-l", "s1", "1"))
+        self.assertEqual(first, os.path.join(REPO, "bin"))
         self.assertEqual((str(uuid.UUID(holder)), uuid.UUID(holder).version), (holder, 4))
         with self.assertRaisesRegex(Held, "held by s1"), self.roster("s1").hold(None):
             pass
@@ -320,6 +401,31 @@ class PrivateServer(Case):
         )
         names = self.server.tmux("list-sessions", "-F", "#{session_name}").stdout.split()
         self.assertEqual(sorted(names), ["s1", "s1-", "s1-x"])
+
+    def test_installed_launchers_run_off_path_and_follow_an_upgrade_without_a_reinstall(self):
+        installed = os.path.join(self.agent_pm, "bin")
+        record(self.home, REPO)
+        done = self.ctmux("--install")
+        self.assertEqual((done.returncode, done.stderr), (0, ""))
+        upgraded = plugin(os.path.join(self.home, "cache", "0.6.0"))
+        for name, root in (("s1", REPO), ("s2", upgraded)):
+            with self.subTest(root=root):
+                record(self.home, root)
+                if os.path.exists(self.shell + ".log"):
+                    os.unlink(self.shell + ".log")
+                done = self.ctmux(name, script=os.path.join(installed, "ctmux"))
+                self.assertEqual((done.returncode, done.stderr), (0, ""))
+                self.assertEqual(self.attaches()[-1], ["-CC", "attach", "-t", f"={name}"])
+                report = live_tmux.wait(self.shell_report, what="the held shell's report")
+                self.assertEqual((report[2], report[5]), (name, os.path.join(root, "bin")))
+                with self.assertRaisesRegex(Held, f"held by {name}"), self.roster(name).hold(None):
+                    pass
+                done = self.ctmux(
+                    "status", "--manager", name, script=os.path.join(installed, "agent-pm-crew")
+                )
+                self.assertEqual((done.returncode, done.stderr), (0, ""))
+                self.server.tmux("send-keys", "-t", f"={name}:", "C-d")
+                live_tmux.wait(lambda n=name: self.free(self.roster(n)), what="the lease to end")
 
     @staticmethod
     def free(roster):

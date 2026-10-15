@@ -120,7 +120,7 @@ Every session agent-pm starts, agent runs and workers, loads your user settings 
 | Command | Does |
 |---|---|
 | `/agent-pm:tmux` | Launch and direct workers, role runs and pipeline runs. |
-| `ctmux <name>` | Open the commander's tmux session. `ctmux --install` puts it in `~/.agent-pm/bin/`. |
+| `ctmux <name>` | Open the commander's tmux session. `ctmux --install` puts ctmux and the four commands `agent-pm-crew`, `agent-pm-session`, `agent-pm-delegate` and `agent-pm-linear` in `~/.agent-pm/bin/`: run them by that path, or add it to `PATH`. Each runs that command from the plugin installed when it runs, Claude Code's install first, then Codex's newest, so an upgrade needs no reinstall; rerun `--install` to refresh them. |
 | `/agent-pm:manage` | The commander's guidelines. |
 | `/agent-pm:act-as <role>[:<task>] <input>` | Run a core role in this conversation. |
 | `agent-pm-delegate run --list` | List every role and task. |
@@ -256,7 +256,7 @@ agent-pm keeps its state in its state root, `~/.agent-pm/`. `work/` and `logs/` 
 ├── managers/<name>/              a manager's Roster and events file
 ├── adhoc/<date>-<role>-<name>/   workdirs of /agent-pm:act-as and /agent-pm:tmux role runs
 ├── probe/                        the empty cwd of the client usage check
-└── bin/ctmux                     ctmux --install's copy
+└── bin/                         ctmux --install's launchers
 ```
 
 | Entry | Cleaned by | Safe to delete by hand |
@@ -273,7 +273,7 @@ agent-pm keeps its state in its state root, `~/.agent-pm/`. `work/` and `logs/` 
 | `workers/<sid>/` | nobody | once you won't restart or resume the worker |
 | `managers/<name>/` | `agent-pm-crew forget` drops an entry; `events` rotates to `events.1` past 1 MiB | while no manager holds it; its Roster is lost |
 | `adhoc/` | nobody | a finished run's folder |
-| `probe/`, `bin/ctmux` | nobody | any time; `ctmux --install` restores `bin/ctmux` |
+| `probe/`, `bin/` | nobody | any time; `ctmux --install` restores `bin/` |
 
 ## agent-pm-session
 
@@ -377,6 +377,7 @@ Nothing migrates automatically. Do each step that applies, once, by hand or thro
 | `runs.jsonl` start, resume or limit rows without `delegate_kind` | Before deploying, add `"delegate_kind": "harness"` to each, changing nothing else. |
 | an issue In Progress across the trigger-only router or `runs.jsonl` deploys | Deploy with nothing In Progress. |
 | Claude runs started before `agent-pm-session client-resume claude` | Resume them by hand: their `Run <sid>` command has no saved launch to replay. |
+| a `~/.agent-pm/bin/ctmux` that is a copy of ctmux, not a launcher (its sessions exit at once outside Claude Code) | Run the plugin's ctmux once: `<plugin>/manager/skills/tmux/scripts/ctmux --install`, `<plugin>` being `~/.claude/plugins/cache/agent-pm/agent-pm/<version>` or `~/.codex/plugins/cache/agent-pm/agent-pm/<version>`. |
 | old logs in `<work_dir>/logs/` | `rm -rf ~/.agent-pm/logs/runs.log ~/.agent-pm/logs/router.log ~/.agent-pm/logs/promote.log ~/.agent-pm/logs/projects ~/.agent-pm/logs/tui` |
 | `src/` or `run.jsonl` directly in a `<work_dir>/work/<ID>/` or `~/.agent-pm/adhoc/*/`, or `~/.agent-pm/delegates/` | [Workdir split](#workdir-split). |
 

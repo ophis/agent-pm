@@ -1,0 +1,31 @@
+#!/bin/sh
+# ctmux --install copies this under each command's name into ~/.agent-pm/bin: it runs that command
+# from the agent-pm plugin installed now, Claude Code's install first, then Codex's newest.
+target=$(python3 -I - "${0##*/}" <<'EOF'
+import glob, json, os, sys
+
+name = sys.argv[1]
+rel = os.path.join("manager", "skills", "tmux", "scripts", name) if name == "ctmux" else os.path.join("bin", name)
+home = os.path.expanduser("~")
+record = os.path.join(os.environ.get("CLAUDE_CONFIG_DIR") or os.path.join(home, ".claude"), "plugins", "installed_plugins.json")
+cache = os.path.join(os.environ.get("CODEX_HOME") or os.path.join(home, ".codex"), "plugins", "cache", "agent-pm", "agent-pm")
+
+
+def version(path):
+    return [int(part) if part.isdigit() else -1 for part in os.path.basename(path).split(".")]
+
+
+try:
+    with open(record, encoding="utf-8") as f:
+        roots = [entry["installPath"] for entry in json.load(f)["plugins"]["agent-pm@agent-pm"]]
+except (OSError, ValueError, LookupError, TypeError):
+    roots = []
+roots += sorted(glob.glob(os.path.join(glob.escape(cache), "*")), key=version, reverse=True)
+for root in roots:
+    if isinstance(root, str) and os.access(path := os.path.join(root, rel), os.X_OK):
+        print(path)
+        sys.exit()
+sys.exit(f"{name}: no installed agent-pm plugin has {rel}; looked in {record} and {cache}/<version>/")
+EOF
+) || exit
+exec "$target" "$@"
