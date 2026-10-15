@@ -99,6 +99,7 @@ class RunParams:
     out: str
     workdir: str
     resume: bool = False
+    reads: tuple[str, ...] = ()
 
     @property
     def deliverable(self) -> str:

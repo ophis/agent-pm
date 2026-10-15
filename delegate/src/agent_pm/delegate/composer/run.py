@@ -119,9 +119,7 @@ def trusted_dirs(
         raise ConfigError(str(e)) from None
 
 
-def bind(entry: str, repo_dir: str | None) -> str | None:
-    if entry == "repo":
-        return os.path.abspath(repo_dir) if repo_dir else None
+def bind(entry: str) -> str:
     return os.path.abspath(os.path.expanduser(entry))
 
 
@@ -131,7 +129,7 @@ def access(
     *,
     cwd: str,
     project: bool,
-    repo_dir: str | None = None,
+    reads: Sequence[str] = (),
     team: Team | None = None,
 ) -> Intent:
     if not isinstance(cwd, str) or not os.path.isabs(cwd):
@@ -141,9 +139,13 @@ def access(
     paths = {"read": [], "write": []}
     for key, entries in (("read", run.read), ("write", run.write)):
         for entry in entries:
-            p = bind(fill(entry, roots, key), repo_dir)
-            if p and p not in paths[key]:
+            if (p := bind(fill(entry, roots, key))) not in paths[key]:
                 paths[key].append(p)
+    for p in map(bind, reads):
+        if not os.path.isdir(p):
+            raise ConfigError(f"read dir {p} is not a directory")
+        if p not in paths["read"]:
+            paths["read"].append(p)
     dirs = [workdir] if os.path.realpath(cwd) != os.path.realpath(workdir) else []
     dirs += [p for p in paths["write"] if p not in dirs]
     seen, reads = set(map(os.path.realpath, dirs)), []

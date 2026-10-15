@@ -89,6 +89,7 @@ def plan(run: RunConfig, spec: Spec, *, driver: Driver, composition: Composer) -
         client=client,
         sid=spec.sid if spec.sid is not None else str(uuid.uuid4()),
         team=composition.team,
+        read=tuple(dict.fromkeys(os.path.abspath(os.path.expanduser(p)) for p in spec.read)),
     )
     resume = spec.sid if spec.resume else None
     here, project = place(
@@ -99,7 +100,7 @@ def plan(run: RunConfig, spec: Spec, *, driver: Driver, composition: Composer) -
             f"delegate: cwd {here} is not in trusted_dirs: its project settings are off",
             file=sys.stderr,
         )
-    intent = composition.access(run, workdir, cwd=here, project=project, repo_dir=spec.repo)
+    intent = composition.access(run, workdir, cwd=here, project=project, reads=spec.read)
     access = Access(
         dirs=intent.dirs,
         commands=intent.commands + ((intent.gate,) if intent.gate else ()),
@@ -130,6 +131,7 @@ def plan(run: RunConfig, spec: Spec, *, driver: Driver, composition: Composer) -
         out=spec.out or os.path.join(workdir, DELIVERABLE),
         workdir=workdir,
         resume=spec.resume,
+        reads=spec.read,
     )
     return Plan(spec, replace(session, prompt=composition.render(run, params)), run)
 

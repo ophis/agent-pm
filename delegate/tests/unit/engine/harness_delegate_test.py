@@ -6,6 +6,7 @@ died, its tui agent session left open, at once.
 
 import json
 import os
+from dataclasses import replace
 from unittest import mock
 
 from agent_pm.delegate import ConfigError, Result, Spec
@@ -231,6 +232,34 @@ class OverlayTest(HarnessCase):
         self.stop(record)
         HarnessDelegate.attach(self.work, session_cls=HarnessSession).resume()
         self.assertEqual(self.metadata()["plan"]["run"]["effort"], "high")
+
+
+class ReadTest(HarnessCase):
+    def test_spec_read_survives_the_metadata_round_trip(self):
+        material = os.path.join(os.path.dirname(self.work), "material")
+        os.makedirs(material)
+        spec = Spec("input", self.work, task="echo", sid=SID, cwd=self.work, client="fake")
+        record = self.make(spec=replace(spec, read=(material,))).detach()
+        self.assertEqual(
+            (self.metadata()["version"], self.metadata()["spec"]["read"]), (2, [material])
+        )
+        self.stop(record)
+        HarnessDelegate.attach(self.work, session_cls=HarnessSession).resume()
+        self.assertIn(material, self.metadata()["plan"]["session"]["access"]["reads"])
+        self.assertIn(
+            f"- `<read dirs>`: `{material}`\n", self.metadata()["plan"]["session"]["prompt"]
+        )
+
+    def test_version_1_metadata_is_unsupported(self):
+        self.make()
+        path = self.state_record()
+        with open(path, encoding="utf-8") as file:
+            data = json.load(file)
+        data["version"] = 1
+        with open(path, "w", encoding="utf-8") as file:
+            json.dump(data, file)
+        with self.assertRaisesRegex(ConfigError, "unsupported metadata version"):
+            HarnessDelegate.attach(self.work, session_cls=HarnessSession)
 
 
 class ResumeModeTest(HarnessCase):

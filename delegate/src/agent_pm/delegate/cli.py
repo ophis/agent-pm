@@ -72,7 +72,13 @@ def _common_options(ap: argparse.ArgumentParser) -> None:
         "--out", action=Once, metavar="PATH|-", help="where the deliverable is written; -: stdout"
     )
     ap.add_argument("--workdir", action=Once)
-    ap.add_argument("--repo")
+    ap.add_argument(
+        "--read",
+        action="append",
+        default=[],
+        metavar="DIR",
+        help="a dir the run may read, read-only; repeatable",
+    )
 
 
 def _run_options(ap: argparse.ArgumentParser) -> None:
@@ -179,7 +185,7 @@ def spec_of(a, text: str) -> Spec:
         resume=a.resume,
         events=a.events,
         out=None if a.out == "-" else a.out,
-        repo=a.repo,
+        read=tuple(a.read),
     )
 
 
@@ -254,7 +260,7 @@ def _prompt(
             a.workdir,
             task=a.task,
             out=a.out,
-            repo=a.repo,
+            read=tuple(a.read),
         )
         result = delegate_cls.instruct(a.role, spec)
     except (ConfigError, OSError) as error:

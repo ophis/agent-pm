@@ -307,7 +307,7 @@ class HarnessDelegate(Delegate):
             if field.name != "team"
         }
         spec["team"] = None if team is None else {"root": team.root, "dirs": team.dirs}
-        values["plan"], values["spec"], values["version"] = accepted, spec, 1
+        values["plan"], values["spec"], values["version"] = accepted, spec, 2
         self.store.write(json.dumps(values))
 
     def _read(self) -> _State:
@@ -320,10 +320,11 @@ class HarnessDelegate(Delegate):
             data = json.loads(payload)
             if not isinstance(data, dict):
                 raise ValueError("metadata must be an object")
-            if data.pop("version") != 1:
+            if data.pop("version") != 2:
                 raise ValueError("unsupported metadata version")
             given = data.pop("spec")
             team = given.pop("team")
+            given["read"] = tuple(given["read"])
             spec = Spec(
                 **given, team=None if team is None else Team(team["root"], tuple(team["dirs"]))
             )

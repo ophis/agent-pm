@@ -52,6 +52,7 @@ PARAMETERS = {
     "<team>": "team",
     "<role team>": "role_team",
     "<gate>": "gate",
+    "<read dirs>": "read_dirs",
     "<out-repo>": "output.repo",
     "<out-branch>": "output.branch",
     "<out-dir>": "output.dir",
@@ -256,6 +257,7 @@ def _parameters(run: RunConfig, params: RunParams, texts: Mapping[str, str], tea
         "team": _code(team.root),
         "role_team": _code(teams.role_team(team, run.role)),
         "gate": _code(run.gate or "none"),
+        "read_dirs": ", ".join(map(_code, params.reads)) or _code("none"),
     }
     values |= {
         f"output.{k}": _code(str(v)) for k, v in ({"host": "github.com"} | run.output).items()

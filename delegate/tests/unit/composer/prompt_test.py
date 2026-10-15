@@ -545,6 +545,7 @@ class Parameters(Fake):
                 "<team>",
                 "<role team>",
                 "<gate>",
+                "<read dirs>",
                 "<out-repo>",
                 "<out-branch>",
                 "<out-dir>",
@@ -587,6 +588,12 @@ class Parameters(Fake):
             parameters(self.compose(overlays=[{"gate": "make gate"}])[0])["<gate>"], "`make gate`"
         )
         self.assertNotIn("<gate>", parameters(self.compose("editor")[0]))
+
+    def test_read_dirs_parameter(self):
+        self.write({"principles.md": "# Principles\n\nRead `<read dirs>` only.\n"})
+        self.assertEqual(parameters(self.compose()[0])["<read dirs>"], "`none`")
+        names = parameters(self.compose(reads=("/a", "/b c"))[0])
+        self.assertEqual(names["<read dirs>"], "`/a`, `/b c`")
 
     def test_gate_used_in_a_method_file_a_text_names(self):
         self.write(
@@ -997,10 +1004,10 @@ class Real(RealConfig):
     def test_each_roles_parameters_follow_what_its_texts_use(self):
         base, out = (
             ["<Workdir>", "<tasks>", "<team>"],
-            ["<out-repo>", "<out-branch>", "<out-dir>", "<out-host>"],
+            ["<read dirs>", "<out-repo>", "<out-branch>", "<out-dir>", "<out-host>"],
         )
         want = {
-            "engineer": base,
+            "engineer": [*base, "<read dirs>"],
             "pm": [*base, *out],
             "researcher": [*base, "<gate>", *out],
         }
@@ -1008,7 +1015,10 @@ class Real(RealConfig):
             (r, t) for r, t in role_tasks() if r in want
         ]:
             self.assertEqual(parameter_names(role, task), want[role], (role, task))
-        self.assertEqual(parameter_names("researcher", output={"type": "local"}), [*base, "<gate>"])
+        self.assertEqual(
+            parameter_names("researcher", output={"type": "local"}),
+            [*base, "<gate>", "<read dirs>"],
+        )
 
     def test_names_written_as_their_values_each_requested_command_starts_a_command(self):
         for role in roles():

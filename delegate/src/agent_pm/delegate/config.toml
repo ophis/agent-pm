@@ -89,10 +89,10 @@ host = ""
 # Roles: [roles.<role>], a role's run keys; its tasks are its charter's index (core's team/roles/<role>.md › Tasks). A
 # role table holding the old task-level keys is an error (root README › Upgrading).
 #   templates     names of team/templates/*.md inlined into the prompt; [] → none
-#   read          extra dirs the agent run needs to read; `repo` is the caller's repo dir, {{team}} core's team/,
-#                 {{role_team}} the role's team root (its team dir: team_dirs; core's team/ for a core role);
-#                 the role's tasks dir (core's team/tasks/, or a team dir's: team_dirs) is always
-#                 included; [] → none. Read-only: never --add-dir. Claude gets a Read(//<dir>/**) allow rule each
+#   read          extra dirs the agent run needs to read; {{team}} core's team/, {{role_team}} the role's team root
+#                 (its team dir: team_dirs; core's team/ for a core role); the role's tasks dir (core's team/tasks/,
+#                 or a team dir's: team_dirs) is always included; a run's `agent-pm-delegate run --read DIR` (Spec.read)
+#                 adds DIR, which must be a dir, and lists it in the prompt as <read dirs>; [] → none. Read-only: never --add-dir. Claude gets a Read(//<dir>/**) allow rule each
 #                 (Read; Grep and Glob best-effort), so a file-tool write there is denied headless (-p) and prompts in
 #                 tui mode, but under the shipped --permission-mode auto goes to Claude's classifier; a broad dir such
 #                 as ~ pre-approves reads of its whole tree; a path with any of *?[]{}()\, refuses the run. Codex adds

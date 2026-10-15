@@ -92,7 +92,9 @@ class Fake(Case):
 
 class Params(Case):
     def test_its_fields(self):
-        self.assertEqual([f.name for f in fields(RunParams)], ["input", "out", "workdir", "resume"])
+        self.assertEqual(
+            [f.name for f in fields(RunParams)], ["input", "out", "workdir", "resume", "reads"]
+        )
 
     def test_the_deliverable_is_out_under_the_real_workdir_else_tmp_deliverable(self):
         tmp = tempfile.TemporaryDirectory()
@@ -181,11 +183,10 @@ class ExplicitPaths(Fake):
 
 
 class Bind(Case):
-    def test_repo_is_the_repo_dir_else_dropped_and_any_other_entry_a_path(self):
-        self.assertEqual(bind("repo", "/r/x/.."), "/r")
-        self.assertIsNone(bind("repo", None))
-        self.assertEqual(bind("~/d", None), os.path.expanduser("~/d"))
-        self.assertEqual(bind("/a/./b", "/r"), "/a/b")
+    def test_every_entry_is_a_path(self):
+        self.assertEqual(bind("repo"), os.path.abspath("repo"))
+        self.assertEqual(bind("~/d"), os.path.expanduser("~/d"))
+        self.assertEqual(bind("/a/./b"), "/a/b")
 
 
 class Access(Fake):
@@ -195,7 +196,7 @@ class Access(Fake):
         self.repo = os.path.join(self.tmp, "repo")
         self.tasks = os.path.join(self.root, "tasks")
 
-    def intent(self, cwd=None, *, project=False, repo_dir=None, found=None, **kw):
+    def intent(self, cwd=None, *, project=False, reads=(), found=None, **kw):
         run = RunConfig(
             **{
                 "role": "writer",
@@ -213,7 +214,7 @@ class Access(Fake):
             self.work,
             cwd=self.work if cwd is None else cwd,
             project=project,
-            repo_dir=repo_dir,
+            reads=reads,
             team=found or team(self.root),
         )
 
@@ -223,11 +224,12 @@ class Access(Fake):
             "PYTHONPATH": os.pathsep.join(SRC[name] for name in ("delegate", "session", "utils"))
         }
         out = os.path.join(self.root, "out")
-        for name, cfg, repo_dir, dirs, reads, writes, commands, want, session in (
+        os.makedirs(self.repo)
+        for name, cfg, run_reads, dirs, reads, writes, commands, want, session in (
             (
                 "gate",
                 {"commands": ["python3 -P -m x *"], "gate": gate},
-                None,
+                (),
                 [],
                 [self.tasks],
                 [],
@@ -235,12 +237,12 @@ class Access(Fake):
                 gate,
                 env,
             ),
-            ("no gate", {"commands": ["x"]}, None, [], [self.tasks], [], ["x"], "", env),
-            ("a gate alone", {"gate": gate}, None, [], [self.tasks], [], [], gate, env),
+            ("no gate", {"commands": ["x"]}, (), [], [self.tasks], [], ["x"], "", env),
+            ("a gate alone", {"gate": gate}, (), [], [self.tasks], [], [], gate, env),
             (
-                "repo entry binds to the repo dir",
-                {"write": ["repo"], "commands": ["x --dir {{workdir}}/src *"]},
-                self.repo,
+                "a write dir and workdir commands",
+                {"write": [self.repo], "commands": ["x --dir {{workdir}}/src *"]},
+                (),
                 [self.repo],
                 [self.tasks],
                 [self.repo],
@@ -251,7 +253,7 @@ class Access(Fake):
             (
                 "team fills commands",
                 {"commands": ["python3 -P {{team}}/tools/x.py --dir {{workdir}}/src *"]},
-                None,
+                (),
                 [],
                 [self.tasks],
                 [],
@@ -260,9 +262,9 @@ class Access(Fake):
                 env,
             ),
             (
-                "no repo dir drops the repo entry",
-                {"read": ["repo"], "write": ["repo", "~/w", "~/w"]},
-                None,
+                "write entries deduped",
+                {"write": ["~/w", "~/w"]},
+                (),
                 [home],
                 [self.tasks],
                 [home],
@@ -271,9 +273,9 @@ class Access(Fake):
                 {},
             ),
             (
-                "read dirs after the tasks dir, deduped",
-                {"read": ["{{team}}", "repo", self.tasks, "{{team}}"]},
-                self.repo,
+                "run reads after the tasks dir and the role's reads, deduped",
+                {"read": ["{{team}}", self.tasks, "{{team}}"]},
+                (self.repo, self.root, self.repo),
                 [],
                 [self.tasks, self.root, self.repo],
                 [],
@@ -284,7 +286,7 @@ class Access(Fake):
             (
                 "team fills read and write, deduped, write wins",
                 {"read": ["{{team}}", self.tasks], "write": ["{{team}}/out", "{{team}}"]},
-                None,
+                (),
                 [out, self.root],
                 [self.tasks],
                 [out, self.root],
@@ -295,7 +297,7 @@ class Access(Fake):
             (
                 "a tasks dir to write",
                 {"write": [self.tasks]},
-                None,
+                (),
                 [self.tasks],
                 [],
                 [self.tasks],
@@ -306,7 +308,7 @@ class Access(Fake):
         ):
             with self.subTest(name):
                 self.assertEqual(
-                    self.intent(repo_dir=repo_dir, **cfg),
+                    self.intent(reads=run_reads, **cfg),
                     Intent(
                         dirs=tuple(dirs),
                         reads=tuple(reads),
@@ -369,6 +371,26 @@ class Access(Fake):
                 self.assertEqual(
                     (got.dirs, got.reads, got.cwd, got.project), (dirs, reads, cwd, True)
                 )
+
+    def test_run_reads_follow_the_role_reads_dedupe(self):
+        inside, link = os.path.join(self.work, "inside"), os.path.join(self.tmp, "link")
+        os.makedirs(inside)
+        os.makedirs(self.repo)
+        os.symlink(self.repo, link)
+        got = self.intent(write=[self.repo], reads=(self.work, inside, link, self.tasks))
+        self.assertEqual((got.dirs, got.reads), ((self.repo,), (self.tasks, self.work, inside)))
+        with mock.patch("os.getcwd", return_value=self.tmp):
+            self.assertEqual(self.intent(reads=("repo",)).reads, (self.tasks, self.repo))
+
+    def test_a_run_read_dir_not_a_directory_refuses(self):
+        a_file = os.path.join(self.tmp, "file")
+        with open(a_file, "w", encoding="utf-8"):
+            pass
+        for path in (os.path.join(self.tmp, "missing"), a_file):
+            with self.subTest(path=path):
+                with self.assertRaises(ConfigError) as cm:
+                    self.intent(reads=(path,))
+                self.assertEqual(str(cm.exception), f"read dir {path} is not a directory")
 
     def test_a_cwd_that_is_not_an_absolute_path(self):
         for cwd in ("", "work"):

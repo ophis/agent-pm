@@ -118,6 +118,19 @@ class Detach(Base):
                 self.assertIn("unrecognized arguments", err)
         self.assertEqual(Detaching.made, [])
 
+    def test_read_dirs_reach_spec(self):
+        self.assertEqual(self.detaches("--read", "/d1", "--read", "d2")[0], 0)
+        self.assertEqual(Detaching.made[0][1].read, ("/d1", "d2"))
+        Detaching.made = []
+        self.assertEqual(self.detaches()[0], 0)
+        self.assertEqual(Detaching.made[0][1].read, ())
+
+    def test_repo_option_is_gone(self):
+        code, out, err = self.detaches("--repo", self.tmp)
+        self.assertEqual((code, out), (2, ""))
+        self.assertIn("unrecognized arguments: --repo", err)
+        self.assertEqual(Detaching.made, [])
+
     def test_detach_prints_one_record_line_and_names_its_session(self):
         for mode in ("headless", "tui"):
             with self.subTest(mode=mode):
@@ -422,6 +435,32 @@ class DryRun(Base):
         self.assertEqual(
             (self.launches(), os.path.exists(self.work), os.listdir(self.agent_pm)), ([], False, [])
         )
+
+    def test_read_dirs_reach_reads_and_the_prompt(self):
+        d1, d2 = os.path.join(self.tmp, "d1"), os.path.join(self.tmp, "d 2")
+        for d in (d1, d2):
+            os.makedirs(d)
+        code, out, err = self.runs("--read", d1, "--read", d2, "--read", d1, "--dry-run")
+        self.assertEqual(code, 0, err)
+        shown = json.loads(out)
+        self.assertEqual(shown["reads"], [os.path.join(TEAM, "tasks"), d1, d2])
+        self.assertIn(f"- `<read dirs>`: `{d1}`, `{d2}`\n", shown["prompt"])
+
+    def test_no_read_dirs_is_none_in_the_prompt(self):
+        code, out, err = self.runs("--dry-run")
+        self.assertEqual(code, 0, err)
+        self.assertIn("- `<read dirs>`: `none`\n", json.loads(out)["prompt"])
+
+    def test_a_read_dir_that_is_not_a_directory_exits_2_and_writes_nothing(self):
+        missing = os.path.join(self.tmp, "missing")
+        for argv in (("--dry-run",), ("--sid", SID)):
+            with self.subTest(argv=argv):
+                code, out, err = self.runs("--read", missing, *argv)
+                self.assertEqual((code, out), (2, ""))
+                self.assertTrue(
+                    err.endswith(f"delegate: read dir {missing} is not a directory\n"), err
+                )
+                self.assertEqual((self.launches(), os.path.exists(self.work)), ([], False))
 
     def test_a_dry_run_configures_the_session(self):
         code, stdout, err = self.runs("--dry-run")
@@ -828,6 +867,17 @@ class Prompt(Case):
         self.assertEqual(Path(self.out).read_bytes(), expected.encode("utf-8"))
         log = Path(self.work, "run.jsonl")
         self.assertFalse(log.exists())
+
+    def test_prompt_takes_read(self):
+        material = os.path.join(self.home, "material")
+        os.makedirs(material)
+        self.assertEqual(self.prompt("--read", "material")[0], 0)
+        self.assertIn(f"- `<read dirs>`: `{material}`\n", Path(self.out).read_text("utf-8"))
+        code, out, err = self.prompt("--read", "gone")
+        self.assertEqual(
+            (code, out, err),
+            (2, "", f"delegate: read dir {os.path.join(self.home, 'gone')} is not a directory\n"),
+        )
 
     def test_runtime_execution_options_are_usage_errors_before_writes(self):
         for argv in (

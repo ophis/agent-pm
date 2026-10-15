@@ -421,6 +421,31 @@ class ConfigErrors(Integration):
                 self.assertEqual(os.listdir(self.work), [])
 
 
+class ReadDirs(Integration):
+    def test_read_dirs_reach_reads_rules_and_prompt(self):
+        material, link = os.path.join(self.root, "material"), os.path.join(self.root, "link")
+        os.mkdir(material)
+        os.symlink(material, link)
+        res = self.drive([block(DONE)], "--read", link)
+        self.assertEqual(res.returncode, 0, res.stderr)
+        (call,) = self.calls()
+        for rule in (f"Read(/{link}/**)", f"Read(/{material}/**)"):
+            self.assertIn(rule, call["argv"])
+        self.assertIn(f"- `<read dirs>`: `{link}`\n", call["argv"][-1])
+
+    def test_an_invalid_read_dir_exits_2_and_starts_nothing(self):
+        missing, globbed = os.path.join(self.root, "missing"), os.path.join(self.root, "a*b")
+        os.mkdir(globbed)
+        res = self.drive([block(DONE)], "--read", missing)
+        self.assertEqual((res.returncode, res.stdout), (2, ""), res.stderr)
+        self.assertIn(f"delegate: read dir {missing} is not a directory", res.stderr)
+        self.assertEqual((self.calls(), os.listdir(self.work)), ([], []))
+        res = self.drive([block(DONE)], "--read", globbed)
+        self.assertEqual((res.returncode, res.stdout), (2, ""), res.stderr)
+        self.assertIn("must be a printable absolute path without", res.stderr)
+        self.assertEqual(self.calls(), [])
+
+
 class Draft(Integration):
     def holds(self, text: str) -> bool:
         try:

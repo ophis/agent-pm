@@ -35,7 +35,8 @@ class Outer(TypedDict, total=False):
 @dataclass(frozen=True)
 class Spec:
     """One run to start: `resume` resumes session `sid`; client None: the role's; `out` None:
-    nothing is saved; `team` None: the built-in one. name and events: tui only for plan();
+    nothing is saved; `team` None: the built-in one; `read`: dirs this run may also read, read-only.
+    name and events: tui only for plan();
     HarnessDelegate takes them in every mode (`name`: its agent session, `<name>-drive` its
     harness's; `events`: also the detached harness's outcome line).
     """
@@ -50,7 +51,7 @@ class Spec:
     name: str | None = None
     events: str | None = None
     out: str | None = None
-    repo: str | None = None
+    read: tuple[str, ...] = ()
     cwd: str | None = None
     team: Team | None = None
 
@@ -82,6 +83,7 @@ class Plan:
             out=self.spec.out or self.driver_spec.out,
             workdir=self.spec.workdir,
             resume=self.spec.resume,
+            reads=self.spec.read,
         )
 
     @property

@@ -86,11 +86,9 @@ class Composer:
         *,
         cwd: str,
         project: bool,
-        repo_dir: str | None = None,
+        reads: Sequence[str] = (),
     ) -> Intent:
-        return run.access(
-            config, workdir, cwd=cwd, project=project, repo_dir=repo_dir, team=self.team
-        )
+        return run.access(config, workdir, cwd=cwd, project=project, reads=reads, team=self.team)
 
     def lookup(self, kind: str, name: str) -> str | None:
         return teams.lookup(self.team, kind, name)

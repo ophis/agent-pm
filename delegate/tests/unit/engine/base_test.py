@@ -23,7 +23,7 @@ SPEC = {
     "name": None,
     "events": None,
     "out": None,
-    "repo": None,
+    "read": (),
     "cwd": None,
     "team": None,
 }
