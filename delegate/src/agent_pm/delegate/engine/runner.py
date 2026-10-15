@@ -1,7 +1,7 @@
 """One role's run to its Result: an invalid outcome gets one fix of the same session, a usage limit
-or a failed turn ends the run, the deliverable is saved to `out`; records go to <workdir>/run.jsonl. A Mode's policy
-(POLICIES) starts the session, sends the fix and answers each turn end and IdleTimeout: go on
-(None), END or GiveUp.
+or a failed turn ends the run, the deliverable is saved to `out`; records go to the run dir's
+run.jsonl (the session's workdir). A Mode's policy (POLICIES) starts the session, sends the fix and
+answers each turn end and IdleTimeout: go on (None), END or GiveUp.
 """
 
 import os
@@ -156,18 +156,15 @@ def say(text: str) -> None:
 
 
 def report(result: Result, out: str | None) -> tuple[int, str | None]:
-    """(exit code, the valid outcome's status), printing the deliverable for `out` `-` and naming
-    the file `out` that holds it; None: neither.
+    """(exit code, the valid outcome's status), naming the file `out` when it holds the
+    deliverable; None: no file.
     """
     if result.outcome is None:
         say(f"delegate: {result.error}")
         return 1, None
     text = result.outcome.deliverable
-    if text and out is not None:
-        if out == "-":
-            print("\n".join(map(printable, text.split("\n"))), end="", flush=True)
-        elif holds(path := os.path.abspath(out), text):
-            say(f"delegate: deliverable {path}")
+    if text and out is not None and holds(path := os.path.abspath(out), text):
+        say(f"delegate: deliverable {path}")
     say(f"delegate: status {result.outcome.status}")
     return 0, result.outcome.status
 
@@ -237,13 +234,13 @@ class _Attempts:
             on_event,
             POLICIES[Mode(p.spec.mode)](self.note, driver),
         )
-        self.workdir = p.spec.workdir
+        self.run_dir = p.session.workdir
         self.seen: set[str] = set()
         self.handle: Session | None = None
         self.refused = False  # the Driver refused the start: nothing to close
 
     def note(self, kind: str, **fields) -> None:
-        RunLog(self.workdir).note(kind, **fields)
+        RunLog(self.run_dir).note(kind, **fields)
 
     def close(self, result: dict, rc: int) -> None:
         """Best effort: an OSError is printed."""
@@ -283,7 +280,7 @@ class _Attempts:
             if (block := outcome_block(last or "")) is None:
                 return Result(rc, None, diagnostic or "the agent run returned no outcome")
             try:
-                outcome = read_outcome(block, p.run.output, p.spec.workdir)
+                outcome = read_outcome(block, p.run.output, p.params.workdir)
             except InvalidOutcome as e:
                 if rc or fixed:
                     return Result(rc, None, diagnostic or f"invalid outcome: {e}")

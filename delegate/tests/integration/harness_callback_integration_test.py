@@ -1,5 +1,5 @@
 """Persisted callbacks consume real HarnessDelegate events, each delivered to a real recorder child
-(delegate/tests/fakes/callback_recorder.py) from the State dir, without affecting the agent
+(delegate/tests/fakes/callback_recorder.py) from the run dir, without affecting the agent
 result.
 """
 
@@ -9,17 +9,9 @@ import sys
 from dataclasses import asdict
 from unittest import mock
 
-from agent_pm.delegate import (
-    Begun,
-    ConfigError,
-    DelegateEvent,
-    Finished,
-    Limit,
-    Progress,
-    Spec,
-)
+from agent_pm.delegate import Begun, ConfigError, DelegateEvent, Finished, Limit, Progress, Spec
 from agent_pm.delegate.engine.harness_delegate import HarnessDelegate
-from agent_pm.delegate.engine.state import RunState
+from agent_pm.delegate.engine.types import Layout
 from agent_pm.session import ConfigError as SessionConfigError
 from agent_pm.session import Exited, LimitHit, Reply
 from agent_pm.utils import Stopped
@@ -56,13 +48,13 @@ class CallbackCase(HarnessCase):
         return [DelegateEvent.parse(entry["line"]) for entry in self.delivered(log)]
 
     def errors(self) -> list[str]:
-        with open(os.path.join(self.work, "run.jsonl"), encoding="utf-8") as file:
+        with open(os.path.join(Layout(self.work).run, "run.jsonl"), encoding="utf-8") as file:
             rows = [json.loads(line) for line in file]
         return [row["error"] for row in rows if row["kind"] == "callback_error"]
 
 
 class Callbacks(CallbackCase):
-    def test_each_event_is_one_stdin_line_in_order_from_the_state_dir(self):
+    def test_each_event_is_one_stdin_line_in_order_from_the_run_dir(self):
         delegate = self.make(callback=self.callback())
         result = delegate.run()
         self.assertEqual(self.metadata()["callback"], self.callback())
@@ -70,8 +62,7 @@ class Callbacks(CallbackCase):
         for entry in entries:
             self.assertEqual(entry["line"].count("\n"), 1)
             self.assertTrue(entry["line"].endswith("\n"))
-            self.assertEqual(entry["cwd"], os.path.realpath(RunState(self.work).dir))
-            self.assertNotEqual(entry["cwd"], os.path.realpath(self.work))
+            self.assertEqual(entry["cwd"], os.path.realpath(Layout(self.work).run))
             self.assertEqual(entry["pgid"], entry["pid"])
         events = self.events()
         self.assertEqual([event.kind for event in events], ["begun", "progress", "finished"])
@@ -81,7 +72,10 @@ class Callbacks(CallbackCase):
             (events[-1].returncode, events[-1].error, events[-1].limit),
             (result.returncode, result.error, None),
         )
-        self.assertEqual(events[-1].outcome, {**OUTCOME, "questions": [], "url": "", "files": []})
+        self.assertEqual(
+            events[-1].outcome,
+            {**OUTCOME, "questions": [], "url": Layout(self.work).out, "files": []},
+        )
         self.assertEqual(self.errors(), [])
 
     def test_a_failed_delivery_is_one_callback_error_row_and_later_events_still_arrive(self):
@@ -119,7 +113,7 @@ class Callbacks(CallbackCase):
     def test_a_new_session_replacing_an_ended_run_is_attempt_1(self):
         self.make().run()
         other = "1f8fad5b-d9cb-469f-a165-70867728950e"
-        spec = Spec("Hello.", self.work, task="echo", sid=other, cwd=self.work, client="fake")
+        spec = Spec("Hello.", self.work, task="echo", sid=other, client="fake")
         self.make(spec=spec, callback=self.callback()).run()
         self.assertEqual(self.metadata()["attempt"], 1)
         self.assertEqual({(event.sid, event.attempt) for event in self.events()}, {(other, 1)})
@@ -218,7 +212,9 @@ class OneFinished(CallbackCase):
                         "instruction": None,
                     },
                 )
-                with open(os.path.join(self.work, "run.jsonl"), encoding="utf-8") as file:
+                with open(
+                    os.path.join(Layout(self.work).run, "run.jsonl"), encoding="utf-8"
+                ) as file:
                     crashes = [row for row in map(json.loads, file) if row["kind"] == "run_error"]
                 if isinstance(error, Stopped):
                     self.assertEqual(crashes, [])
@@ -239,7 +235,7 @@ class OneFinished(CallbackCase):
         self.assertEqual(self.metadata()["result"]["outcome"]["status"], "done")
 
     def test_a_refused_start_sends_one_stopped_finished(self):
-        spec = Spec("input", self.work, cwd=self.work, client="fake")
+        spec = Spec("input", self.work, client="fake")
         delegate = HarnessDelegate(
             "dummy-tester", spec, session_cls=RefusedSession, callback=self.callback()
         )

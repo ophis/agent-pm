@@ -94,7 +94,7 @@ class Exits(Base):
         ):
             code, out, err = self.runs()
         self.assertEqual((code, out), (1, ""))
-        self.assertIn("\ndelegate: headless: cannot start ", err)
+        self.assertRegex(err, r"(?m)^delegate: headless: cannot start ")
 
     def test_agent_text_is_printed_printable(self):
         for result, want, line in (
@@ -116,29 +116,15 @@ class Exits(Base):
 
 
 class Deliverable(Base):
-    """--out -: the deliverable on stdout; --out PATH: a stderr line naming the file holding it."""
+    """--out PATH: a stderr line naming the file holding the deliverable; --out - is refused."""
 
-    def test_out_dash_prints_the_deliverable_exactly_and_saves_nothing(self):
-        code, out, err = self.runs(out="-")
-        self.assertEqual((code, out), (0, DONE["deliverable"]), err)
-        self.assertNotIn("delegate: deliverable", err)
-        self.assertTrue(err.endswith("delegate: status done\n"), err)
-        self.assertEqual(
-            set(os.listdir(self.work)),
-            {"run.jsonl", "delegate.json"},
-        )
-
-    def test_out_dash_drops_control_characters_but_newlines_and_tabs(self):
-        text = "a\x1b]0;x\x07b\n\tc\x1b[2Jd\x9be\n"
-        self.steps(said(START, block({**DONE, "deliverable": text})))
-        code, out, err = self.runs(out="-")
-        self.assertEqual((code, out), (0, "a]0;xb\n\tc[2Jde\n"), err)
-
-    def test_a_dry_run_with_out_dash_plans_no_out(self):
-        code, out, err = self.runs("--dry-run", out="-")
-        self.assertEqual(code, 0, err)
-        self.assertIn("`<Workdir>/tmp/deliverable.md`", json.loads(out)["prompt"])
-        self.assertFalse(os.path.exists(self.work))
+    def test_out_dash_is_refused_writing_nothing(self):
+        for extra in ((), ("--dry-run",)):
+            with self.subTest(extra=extra):
+                self.assertEqual(
+                    self.runs(*extra, out="-"), (2, "", "delegate: --out takes a PATH, not -\n")
+                )
+                self.assertFalse(os.path.exists(self.work))
 
     def test_out_path_is_named_on_stderr_holding_the_deliverable(self):
         code, out, err = self.runs(out=os.path.join("work", "out.md"))

@@ -13,6 +13,7 @@ import re
 import unittest
 
 from agent_pm.delegate.composer.prompt import RESUME, RETURN
+from agent_pm.delegate.engine.types import Layout
 
 from delegate.tests.case import REPO
 from delegate.tests.integration.cli import NATIVE, RUN, CodexIntegration, Integration, codex_said
@@ -167,7 +168,10 @@ class TeamDirs(Integration):
         self.assertEqual(res.returncode, 0, res.stderr)
         plan = json.loads(res.stdout)
         self.assertIn(f"`{self.tasks}`", plan["prompt"])
-        self.assertEqual((plan["dirs"], plan["reads"]), ([self.work], [self.tasks]))
+        self.assertEqual(
+            (plan["cwd"], plan["dirs"], plan["reads"]),
+            (Layout(self.work).agent, [], [self.tasks]),
+        )
         self.assertEqual(os.listdir(self.work), [])
         self.assertEqual(self.calls(), [])
 
@@ -188,7 +192,7 @@ class TeamDirs(Integration):
         (call,) = self.calls()
         self.assertIn(f"`{self.tasks}`", call["argv"][-1])
         self.assertIn(f"Read(/{self.tasks}/**)", call["argv"])
-        self.assertEqual(added(call["argv"]), [self.work])
+        self.assertEqual((call["cwd"], added(call["argv"])), (Layout(self.work).agent, []))
         self.assertFalse(os.path.exists(os.path.join(self.work, "tasks")))
         self.assertEqual(self.read(self.out), DONE["deliverable"])
 

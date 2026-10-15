@@ -4,7 +4,6 @@ harness calls `agent-pm-linear writeback --issue ID --workdir <workdir>` on each
 
 from __future__ import annotations
 
-import os
 import re
 from dataclasses import replace
 
@@ -36,7 +35,7 @@ class LinearRun:
         self._identity(issue, sid)
         self.issue, self.sid = issue, sid
         self.delegate_kind = delegate_kind or cfg.delegate_kind
-        provider = delegate_cls or self._provider(cfg, self.delegate_kind)
+        provider = delegate_cls or self.kind_cls(cfg, self.delegate_kind)
         self.delegate: Delegate = provider(
             role,
             Spec(
@@ -49,8 +48,6 @@ class LinearRun:
                 resume=resume,
                 name=config.tui_name(role, issue, sid),
                 events=events,
-                out=os.path.join(workdir, "out.md"),
-                cwd=workdir,
             ),
             display=display,
             callback=["agent-pm-linear", "writeback", "--issue", issue, "--workdir", workdir],
@@ -63,7 +60,7 @@ class LinearRun:
             raise ConfigError(f"bad issue or session id: {issue} {sid}")
 
     @staticmethod
-    def _provider(cfg: Config, kind: str) -> type:
+    def kind_cls(cfg: Config, kind: str) -> type:
         if kind not in cfg.delegates:
             raise ConfigError(f"delegate kind {kind!r} is no longer configured")
         return cfg.delegates[kind]
@@ -73,7 +70,7 @@ class LinearRun:
         """ConfigError unless an attended run of the configured Delegate kind could show at
         display and write events (Delegate.check_tui).
         """
-        cls._provider(cfg, cfg.delegate_kind).check_tui(display=display, events=events)
+        cls.kind_cls(cfg, cfg.delegate_kind).check_tui(display=display, events=events)
 
     @classmethod
     def attach(
@@ -97,8 +94,8 @@ class LinearRun:
         view = cls.__new__(cls)
         view.issue, view.sid = issue, latest.sid
         view.delegate_kind = runs.delegate_of(entries, latest.sid)
-        provider = delegate_cls or cls._provider(cfg, view.delegate_kind)
-        view.delegate = provider.attach(cfg.run_dir(issue), sid=latest.sid)
+        provider = delegate_cls or cls.kind_cls(cfg, view.delegate_kind)
+        view.delegate = provider.attach(cfg.issue_workdir(issue), sid=latest.sid)
         return view
 
     def _record(self, record: Record) -> Record:
@@ -136,9 +133,6 @@ class LinearRun:
 
     def close(self) -> None:
         self.delegate.close()
-
-    def forget(self) -> None:
-        self.delegate.forget()
 
     def attach_command(self) -> str | None:
         return self.delegate.attach_command()

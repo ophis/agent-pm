@@ -96,7 +96,7 @@ def context(cfg, role, gql, *, key, ident, issue_id, sid, resume, project, targe
         sid=sid,
         resume=resume,
         project=project,
-        workdir=cfg.run_dir(ident),
+        workdir=cfg.issue_workdir(ident),
         gql=functools.partial(gql, service=key),
         humans=tuple(e.lower() for e in cfg.human_members),
         states=cfg.states,
@@ -582,8 +582,8 @@ def deliver(cfg, issue: str, workdir: str, event: DelegateEvent, *, gql, now=tim
     """
     if not re.fullmatch(ISSUE_ID, issue):
         raise ConfigError(f"bad issue id: {issue}")
-    if os.path.abspath(workdir) != os.path.abspath(cfg.run_dir(issue)):
-        raise ConfigError(f"--workdir {workdir}: {issue}'s is {cfg.run_dir(issue)}")
+    if os.path.abspath(workdir) != os.path.abspath(cfg.issue_workdir(issue)):
+        raise ConfigError(f"--workdir {workdir}: {issue}'s is {cfg.issue_workdir(issue)}")
     attempt = event.attempt
     if attempt is None:  # DelegateEvent requires one
         raise ValueError("attempt: missing")

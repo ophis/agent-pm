@@ -15,4 +15,4 @@ Search, read and write a short report yourself, in one pass.
 
 ## Resume
 
-Reuse this session's findings; continue step 4 where it stopped. Then steps 6–7; nothing usable → `failed`.
+Step 4 not started → step 2. Else reuse this session's findings; continue step 4 where it stopped. Then steps 6–7; nothing usable → `failed`.

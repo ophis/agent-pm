@@ -56,6 +56,19 @@ class Commands(Case):
                 self.assertIn("agent-pm-linear", output.getvalue())
 
 
+class InsideAnAgentSession(Case):
+    def test_resume_exits_2_before_config_and_status_still_runs(self):
+        with mock.patch.dict(os.environ, {"AGENT_PM_AGENT_SESSION": "1"}):
+            for command, first in (
+                ("resume", "agent-pm-linear: refused inside an agent session"),
+                ("status", "agent-pm-linear: linear-orchestrator/config.toml: required, unset:"),
+            ):
+                errors = io.StringIO()
+                with self.subTest(command=command), redirect_stderr(errors):
+                    self.assertEqual(cli.main([command, "TASK-1"]), 2)
+                self.assertTrue(errors.getvalue().startswith(first), errors.getvalue())
+
+
 DEPLOY = "/Users/francis/playground/agent-pm"
 LOG = "/Users/francis/.agent-pm/logs/orchestrator.jsonl"
 JOBS = {"router": ["--now"], "promote": []}
@@ -153,17 +166,17 @@ class Queries(RunCase):
             result, output, errors = self.call(["resume", "TASK-1"])
             self.assertEqual((result, errors), (0, ""))
             self.assertEqual(Record.parse(output), record)
-            with open(record.workdir + "/delegate.json", encoding="utf-8") as file:
-                self.assertEqual(
-                    json.load(file)["starts"], 2 if state in ("interrupted", "live-again") else 1
-                )
+            self.assertEqual(
+                FakeDelegate.starts(record.workdir),
+                2 if state in ("interrupted", "live-again") else 1,
+            )
         self.assertEqual(ReadyDelegate.usage_calls, ["researcher"])
 
     def test_interrupted_batch_probes_a_shared_recorded_key_once(self):
         self.start("TASK-1")
         self.start("TASK-2")
-        FakeDelegate.end(self.cfg.run_dir("TASK-1"))
-        FakeDelegate.end(self.cfg.run_dir("TASK-2"))
+        FakeDelegate.end(self.cfg.issue_workdir("TASK-1"))
+        FakeDelegate.end(self.cfg.issue_workdir("TASK-2"))
         result, output, errors = self.call(["resume", "TASK-1", "TASK-2"])
         self.assertEqual((result, errors), (0, ""))
         self.assertEqual(
@@ -173,7 +186,7 @@ class Queries(RunCase):
 
     def test_config_drift_never_probes_and_recorded_limits_still_block(self):
         self.start()
-        FakeDelegate.end(self.cfg.run_dir("TASK-1"))
+        FakeDelegate.end(self.cfg.issue_workdir("TASK-1"))
         self.configure(default="other")
         runs.note_limit(
             self.cfg.runs_log,
@@ -189,11 +202,11 @@ class Queries(RunCase):
             self.assertEqual((result, output), (1, ""))
             self.assertEqual(errors, "agent-pm-linear: TASK-1: resume blocked by usage gate\n")
         self.assertEqual(ReadyDelegate.usage_calls, [])
-        self.assertFalse(FakeDelegate.attach(self.cfg.run_dir("TASK-1")).alive())
+        self.assertFalse(FakeDelegate.attach(self.cfg.issue_workdir("TASK-1")).alive())
 
     def test_config_drift_without_a_limit_resumes_and_logs_without_probe(self):
         self.start()
-        FakeDelegate.end(self.cfg.run_dir("TASK-1"))
+        FakeDelegate.end(self.cfg.issue_workdir("TASK-1"))
         self.configure(default="other")
         result, output, errors = self.call(["resume", "TASK-1"])
         self.assertEqual((result, errors), (0, ""))
@@ -262,7 +275,7 @@ class WritebackUsage(RunCase):
     def test_what_is_not_one_writable_event_exits_2_without_output(self):
         begun = json.dumps({"v": 1, "kind": "begun", "sid": SID, "attempt": 1})
         other = "9c1d2e3f-4a5b-4c6d-8e7f-a0b1c2d3e4f5"
-        workdir = self.cfg.run_dir("TASK-1")
+        workdir = self.cfg.issue_workdir("TASK-1")
         for name, stdin, workdir_arg, error in (
             ("no event", "", workdir, "want one DelegateEvent line"),
             ("two events", begun + "\n" + begun + "\n", workdir, "want one DelegateEvent line"),
@@ -275,7 +288,7 @@ class WritebackUsage(RunCase):
             ),
             ("an unknown kind", begun.replace("begun", "ended"), workdir, "kind: want one of"),
             ("no start row", begun.replace(SID, other) + "\n", workdir, "no start row"),
-            ("another workdir", begun + "\n", self.cfg.run_dir("TASK-2"), "--workdir"),
+            ("another workdir", begun + "\n", self.cfg.issue_workdir("TASK-2"), "--workdir"),
         ):
             with self.subTest(name):
                 result, output, errors = self.call(

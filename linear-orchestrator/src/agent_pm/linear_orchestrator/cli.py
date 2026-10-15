@@ -13,7 +13,7 @@ from agent_pm.linear_orchestrator.engine.config import load
 from agent_pm.linear_orchestrator.engine.gate import Gate
 from agent_pm.linear_orchestrator.engine.linear_run import LinearRun
 from agent_pm.linear_orchestrator.engine.types import ConfigError
-from agent_pm.utils import Record, answer_keys
+from agent_pm.utils import Record, answer_keys, nested_start
 
 
 def main(argv=None):
@@ -22,7 +22,7 @@ def main(argv=None):
     entries = {
         "router": (router.main, "claim or resume an issue's agent run: a tick, --issue or --brake"),
         "promote": (promote.main, "promote Handoff issues to the next role, then prune"),
-        "prune": (prune.main, "clean up finished issues' runs and checkouts, then archive"),
+        "prune": (prune.main, "close finished issues' runs, delete their agent dirs, then archive"),
     }
     if arguments and arguments[0] in entries:
         return entries[arguments[0]][0](arguments[1:])
@@ -37,6 +37,9 @@ def main(argv=None):
     back.add_argument("--issue", required=True)
     back.add_argument("--workdir", required=True)
     args = parser.parse_args(arguments)
+    if args.command == "resume" and (refused := nested_start()):
+        print(f"agent-pm-linear: {refused}", file=sys.stderr)
+        return 2
     try:
         cfg = load()
     except (ConfigError, DelegateConfigError, ValueError, OSError) as error:

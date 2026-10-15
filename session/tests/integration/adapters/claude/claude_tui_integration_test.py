@@ -22,6 +22,7 @@ from agent_pm.session import SIGNALS, Displayable, Session
 from agent_pm.session.adapters.claude.tui import ClaudeTui
 from agent_pm.session.engine.records import RunLog
 from agent_pm.session.engine.types import (
+    Access,
     Activity,
     Blocked,
     Exited,
@@ -122,6 +123,7 @@ class Live(tui_live.Live):
         handle = self.session_cls.start(
             Spec(
                 workdir=self.workdir,
+                access=Access(cwd=self.workdir),
                 name=name,
                 sid=sid,
                 client="claude",

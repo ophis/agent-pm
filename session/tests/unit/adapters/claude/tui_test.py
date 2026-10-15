@@ -62,7 +62,12 @@ class TuiArgvTest(Base):
         return tui_launch(self.work, prompt, config, resume=resume, **spec)
 
     def test_a_new_session_with_every_part(self):
-        access = Access(dirs=("/d1", "/d 2"), commands=("git status", "ls"), reads=("/r1", "/r 2/"))
+        access = Access(
+            cwd=self.work,
+            dirs=("/d1", "/d 2"),
+            commands=("git status", "ls"),
+            reads=("/r1", "/r 2/"),
+        )
         self.assertEqual(
             self.tui("do it", tier=4, effort="low", access=access).argv,
             (
@@ -181,7 +186,7 @@ class TuiArgvTest(Base):
         self.refused(lambda: self.tui(tier=3), "no model for tier 3 in [adapters.claude].tiers")
 
     def test_the_flags_go_before_the_prompt_the_rest_unchanged(self):
-        access = Access(dirs=("/d1",), commands=("ls",))
+        access = Access(cwd=self.work, dirs=("/d1",), commands=("ls",))
         flags = ("--verbose", "--add-dir", "/x")
         for prompt in ("do it", ""):
             with self.subTest(prompt=prompt):
@@ -427,7 +432,10 @@ class TuiPayloadTest(Base):
         super().setUp()
         self.run = ClaudeAdapter({}).tui()
         self.path = os.path.join(self.tmp, "t.jsonl")
-        self.run.restore(Spec(workdir=self.work, sid=SID), {"transcript": self.path, "start": 0})
+        self.run.restore(
+            Spec(workdir=self.work, access=Access(cwd=self.work), sid=SID),
+            {"transcript": self.path, "start": 0},
+        )
 
     def transcript(self, *records):
         with open(self.path, "w", encoding="utf-8") as f:
@@ -552,7 +560,7 @@ class TuiPayloadTest(Base):
 
     def test_it_binds_the_sid_it_launched_or_restored_once(self):
         launched = ClaudeAdapter({}).tui()
-        launched.launch(Spec(workdir=self.work, sid=SID), HOOK)
+        launched.launch(Spec(workdir=self.work, access=Access(cwd=self.work), sid=SID), HOOK)
         for run in (launched, self.run):
             with self.subTest(run=run):
                 self.assertEqual(
@@ -590,7 +598,7 @@ class TuiPayloadTest(Base):
 class StopFailureTest(Base):
     def launched(self):
         run = ClaudeAdapter({}).tui()
-        run.launch(Spec(workdir=self.work, sid=SID), HOOK)
+        run.launch(Spec(workdir=self.work, access=Access(cwd=self.work), sid=SID), HOOK)
         return run
 
     def test_typed_errors(self):
@@ -657,12 +665,15 @@ class TranscriptTest(Base):
         patch.start()
         self.addCleanup(patch.stop)
         self.run = ClaudeAdapter({}).tui()
-        spec = Spec(workdir=self.work, sid=SID)
+        spec = Spec(workdir=self.work, access=Access(cwd=self.work), sid=SID)
         self.path = self.run.launch(spec, HOOK).transcript
 
     def launched(self, **spec):
         run = ClaudeAdapter({}).tui()
-        run.launch(Spec(workdir=self.work, sid=SID, **spec), HOOK)
+        run.launch(
+            Spec(**{"workdir": self.work, "access": Access(cwd=self.work), "sid": SID, **spec}),
+            HOOK,
+        )
         return run
 
     def append(self, *records, end="\n"):
@@ -736,7 +747,10 @@ class TranscriptTest(Base):
         size = os.path.getsize(self.path)
         self.append(said("m2", text("Y")))
         run = ClaudeAdapter({}).tui()
-        run.restore(Spec(workdir=self.work, sid=SID), {"transcript": self.path, "start": size})
+        run.restore(
+            Spec(workdir=self.work, access=Access(cwd=self.work), sid=SID),
+            {"transcript": self.path, "start": size},
+        )
         self.assertEqual(run.observe(), [Reply("Y")])
         self.assertEqual(
             run.hook_callback(),
@@ -758,7 +772,9 @@ class TranscriptTest(Base):
                 self.subTest(state=state),
                 self.assertRaisesRegex(ConfigError, "transcript cursor"),
             ):
-                ClaudeAdapter({}).tui().restore(Spec(workdir=self.work, sid=SID), state)
+                ClaudeAdapter({}).tui().restore(
+                    Spec(workdir=self.work, access=Access(cwd=self.work), sid=SID), state
+                )
 
     def test_a_partial_line_waits_for_its_newline(self):
         self.append(PROMPT)
@@ -838,7 +854,10 @@ class TranscriptTest(Base):
 
     def restored(self):
         run = ClaudeAdapter({}).tui()
-        run.restore(Spec(workdir=self.work, sid=SID), {"transcript": self.path, "start": 0})
+        run.restore(
+            Spec(workdir=self.work, access=Access(cwd=self.work), sid=SID),
+            {"transcript": self.path, "start": 0},
+        )
         return run
 
     def test_a_replay_keeps_a_late_final_text_unrepeated(self):

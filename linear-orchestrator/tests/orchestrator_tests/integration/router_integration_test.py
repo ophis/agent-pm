@@ -202,7 +202,7 @@ class Router(TmuxFlow):
             pid, command = ancestor(pid)
             if HARNESS_MODULE in command:
                 break
-        self.assertIn(f"{HARNESS_MODULE} {self.runs_dir}/{ID}", command)
+        self.assertIn(f"{HARNESS_MODULE} {self.workdirs}/{ID}", command)
         os.kill(pid, signal.SIGKILL)
         with contextlib.suppress(ProcessLookupError):
             os.kill(agent["pid"], signal.SIGKILL)

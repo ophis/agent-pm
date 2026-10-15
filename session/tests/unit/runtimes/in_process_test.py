@@ -30,8 +30,20 @@ from session.tests.fakes.terminal import MemoryHost
 
 WAIT = 10  # upper bound on any wait, in seconds
 SHORT = 0.2  # a timeout that must lapse, in seconds
-SPEC = Spec(workdir="/tmp/in-process-test", prompt="hi", sid="s", client="stub")
-RESUME = Spec(workdir="/tmp/in-process-test", prompt="hi", sid="s", resume=True)
+SPEC = Spec(
+    workdir="/tmp/in-process-test",
+    access=Access(cwd="/tmp/in-process-test"),
+    prompt="hi",
+    sid="s",
+    client="stub",
+)
+RESUME = Spec(
+    workdir="/tmp/in-process-test",
+    access=Access(cwd="/tmp/in-process-test"),
+    prompt="hi",
+    sid="s",
+    resume=True,
+)
 
 
 class StubAdapter(Adapter):
@@ -292,7 +304,7 @@ class Start(Base):
     def test_its_check_gets_the_spec_before_the_session_line_then_its_run_the_same(self):
         runs = []
         adapter = StubAdapter(lambda spec: runs.append(spec) or [])
-        for given, project in (("", False), ("/cwd", True)):
+        for given, project in (("/w", False), ("/cwd", True)):
             with self.subTest(cwd=given):
                 spec = Spec(
                     workdir="/w",
@@ -313,7 +325,7 @@ class Start(Base):
                 noted = adapter.checked[checked]
                 info = SessionInfo(
                     sid="s",
-                    cwd=given or "/w",
+                    cwd=given,
                     project=project,
                     transcript="",
                     resume="",

@@ -16,6 +16,8 @@ from orchestrator_tests.integration import fake_linear
 from orchestrator_tests.integration.flow_fixtures import HARNESS_EMAIL
 from orchestrator_tests.integration.segments import BUILD, REPORT, Segment
 
+from delegate.tests.workdir import session_cwd
+
 REWORK = "Add a section on stale sessions."
 
 PRD = "# PRD: Session registry\n\nThe registry maps each tmux session to its run."
@@ -23,8 +25,9 @@ PRD = "# PRD: Session registry\n\nThe registry maps each tmux session to its run
 
 class PmToEngineer(Segment):
     def transcript_path(self, ident, sid):
-        """The Claude adapter's transcript of sid run in ident's run dir."""
-        project = re.sub(r"[^A-Za-z0-9]", "-", os.path.realpath(os.path.join(self.runs_dir, ident)))
+        """The Claude adapter's transcript of sid run in ident's agent dir."""
+        cwd = session_cwd(os.path.join(self.workdirs, ident))
+        project = re.sub(r"[^A-Za-z0-9]", "-", os.path.realpath(cwd))
         return os.path.join(self.root, "claude-config", "projects", project, f"{sid}.jsonl")
 
     def test_b1_prd_to_an_engineer_issue(self):

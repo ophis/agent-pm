@@ -12,6 +12,7 @@ from unittest import mock
 from agent_pm.session import Session
 from agent_pm.session.engine.hosted_session import HostedSession
 from agent_pm.session.engine.types import (
+    Access,
     Exited,
     IdleTimeout,
     Mode,
@@ -152,6 +153,7 @@ class Live(Case):
         handle = self.session_cls.start(
             Spec(
                 workdir=self.workdir,
+                access=Access(cwd=self.workdir),
                 name=name,
                 sid=sid,
                 client="fake",

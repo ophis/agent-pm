@@ -105,7 +105,12 @@ class SessionTest(Base):
                 for target in SPAWNS
             ]
             status = self.session.inspect(
-                Spec(workdir=self.workdir, client="probe", sid=session.sid)
+                Spec(
+                    workdir=self.workdir,
+                    access=Access(cwd=self.workdir),
+                    client="probe",
+                    sid=session.sid,
+                )
             )
         self.assertEqual(status, SessionStatus("yes", 1.5, f"probe history {self.dir}"))
         for start in starts:
@@ -205,7 +210,7 @@ class SidTest(Base):
 
 class ClientNoteTest(Base):
     def test_with_commands_the_note_follows_the_prompt(self):
-        _, argv = self.run_once(spec=self.spec(access=Access(commands=("git",))))
+        _, argv = self.run_once(spec=self.spec(access=Access(cwd=self.workdir, commands=("git",))))
         self.assertEqual(argv[-1], "hello\n\nFAKE NOTE")
 
     def test_without_commands_the_prompt_is_unchanged(self):
@@ -213,7 +218,9 @@ class ClientNoteTest(Base):
         self.assertEqual(argv[-1], "hello")
 
     def test_an_empty_note_leaves_the_prompt_unchanged(self):
-        _, argv = self.run_once(client="quiet", spec=self.spec(access=Access(commands=("git",))))
+        _, argv = self.run_once(
+            client="quiet", spec=self.spec(access=Access(cwd=self.workdir, commands=("git",)))
+        )
         self.assertEqual(argv[-1], "hello")
 
 

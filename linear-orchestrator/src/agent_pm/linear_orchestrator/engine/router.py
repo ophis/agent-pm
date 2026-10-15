@@ -24,7 +24,8 @@ agent-pm-linear router [--now] [--dry-run] [--issue ID] [--tui [--display D] [--
 --help        Print this; exit 0. Bad arguments exit 2.
 
 $AGENT_PM_SID (agent-pm-crew run's), read once and removed, is a new run's session id; a resume of
-another session exits 2, starting nothing (a dry run: 0).
+another session exits 2, starting nothing (a dry run: 0). Under $AGENT_PM_AGENT_SESSION, a tick and
+--issue (not --dry-run, --brake) exit 2, starting nothing.
 
 Events go to orchestrator.jsonl (event_log.log, src router); an idle tick writes none, a usage-blocked
 one only its usage-skip lines."""
@@ -78,7 +79,7 @@ from agent_pm.linear_orchestrator.engine.types import (
     Transient,
     Unavailable,
 )
-from agent_pm.utils import one_line, parse_time
+from agent_pm.utils import nested_start, one_line, parse_time
 
 STALE = timedelta(hours=2)
 LIVE = timedelta(minutes=30)
@@ -582,10 +583,17 @@ def _outer(a, cfg, *, gql, run, keychain, now, attended):
         return fail(a.issue, "transient", f"Linear: {one_line(e)}", 3)
     a = replace(a, uuid=issue.id)
     ctx = writeback.for_run(cfg, role, gql, a)
+    workdir = cfg.issue_workdir(a.issue)
+    delegate_cls = LinearRun.kind_cls(cfg, kind)
     if build:
         try:
             repo = target.check(
-                issue, cfg.project_repos, run=run, work=cfg.runs_dir, roles=cfg.roles
+                issue,
+                cfg.project_repos,
+                run=run,
+                delegate=delegate_cls,
+                workdir=workdir,
+                roles=cfg.roles,
             )
         except (OSError, subprocess.TimeoutExpired) as e:
             return fail(a.issue, "transient", f"repo check: {one_line(e)}", 3)
@@ -606,34 +614,29 @@ def _outer(a, cfg, *, gql, run, keychain, now, attended):
             repo,
             a.issue,
             clones=cfg.local_clones,
-            work=cfg.runs_dir,
+            delegate=delegate_cls,
+            workdir=workdir,
             run=run,
         )
-    rd = cfg.run_dir(a.issue)
     try:
         sources = inputs.gather(issue, role, cfg.docs, run=run)
     except (InputError, OSError, subprocess.TimeoutExpired) as e:
         return fail(a.issue, "transient", f"docs: {one_line(e)}", 3)
-    try:
-        os.makedirs(rd, exist_ok=True)
-        text = inputs.render(
-            issue,
-            role,
-            sources,
-            humans=ctx.humans,
-            target=repo,
-            docs=cfg.docs,
-        ).replace("\x00", "")
-        # a lone surrogate cannot be encoded
-        text = text.encode("utf-8", "replace").decode()
-    except OSError as e:
-        log("router", "launch-error", a.issue, error=f"input: {one_line(e)}")
-        return 1
+    text = inputs.render(
+        issue,
+        role,
+        sources,
+        humans=ctx.humans,
+        target=repo,
+        docs=cfg.docs,
+    ).replace("\x00", "")
+    # a lone surrogate cannot be encoded
+    text = text.encode("utf-8", "replace").decode()
     try:
         linear_run = LinearRun(
             a.issue,
             text,
-            rd,
+            workdir,
             cfg=cfg,
             role=role,
             sid=a.sid,
@@ -921,6 +924,10 @@ def main(
     opts = options(argv)
     if opts is None:
         print(USAGE, file=sys.stderr)
+        return 2
+    starts = opts["brake"] is None and not opts["dry"]
+    if starts and (refused := nested_start()):
+        print(f"router.py: {refused}", file=sys.stderr)
         return 2
     if opts["issue"] is not None and not re.fullmatch(ISSUE_ID, opts["issue"]):
         print(f"router.py: bad issue id: {opts['issue']}", file=sys.stderr)

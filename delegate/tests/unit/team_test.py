@@ -459,9 +459,25 @@ class Real(RealConfig):
                 task_text("product-design"),
                 "`<branch>` `<id>-product-design`",
             ),
+            (
+                "a run stopped in Prepare starts it over",
+                task_text("light-research"),
+                "Step 4 not started → step 2. Else reuse this session's findings",
+            ),
+            (
+                "an unlabelled Light Research upgrade is Research",
+                researcher,
+                "or no task is named and the input revises a Light Research report (an upgrade); light.",
+            ),
+            (
+                "an unlabelled Light Research upgrade is Research",
+                researcher,
+                "when the answer must be reliable, or a Research report left gaps; heavy.",
+            ),
         ):
             with self.subTest(why, literal=literal):
                 self.assertIn(literal, text)
+        self.assertNotIn("a quick pass left gaps", researcher)
 
     def test_builds_wait_for_the_prs_checks(self):
         for task in ("build", "light-build"):

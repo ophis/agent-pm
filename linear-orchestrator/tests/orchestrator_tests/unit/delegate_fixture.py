@@ -3,7 +3,8 @@ alive while api.live holds its harness name `agent-pm-<role>-<ID>`; a constructe
 (role, spec, options) in api.constructed (construct_error raises), its detach in api.detached
 (detach_error raises) with runs.jsonl's text then in api.runs_at_detach, and puts its name in
 api.live; its outcome is api.outcomes' for its issue; check_tui records its (display, events) in
-api.tui_checks (tui_error raises).
+api.tui_checks (tui_error raises); checkouts(W) is api.checkouts' for W, asked logged in
+api.asked; clean(W) appends W to api.cleaned.
 """
 
 import os
@@ -11,8 +12,8 @@ from dataclasses import replace
 
 from agent_pm.delegate import ConfigError, Delegate, SessionError
 from agent_pm.linear_orchestrator.engine import runs
+from agent_pm.session import Access, NoRecordedSession, SessionStatus
 from agent_pm.session import ConfigError as SessionConfigError
-from agent_pm.session import NoRecordedSession, SessionStatus
 from agent_pm.session import Spec as SessionSpec
 from agent_pm.utils import Record, Status
 
@@ -73,6 +74,15 @@ def provider(api, cfg):
             if api.tui_error is not None:
                 raise api.tui_error
 
+        @classmethod
+        def checkouts(cls, workdir):
+            api.asked.append((cls, workdir))
+            return api.checkouts.get(workdir)
+
+        @classmethod
+        def clean(cls, workdir, *, dry=False):
+            api.cleaned.append(workdir)
+
         def alive(self):
             if api.live is None:
                 raise SessionError("agent runs unknown")
@@ -100,7 +110,12 @@ def provider(api, cfg):
             client = runs.client_of(runs.parse_log(cfg.runs_log), self.entry.sid)
             try:
                 return api.inspect(
-                    SessionSpec(workdir=self.workdir, client=client, sid=self.entry.sid)
+                    SessionSpec(
+                        workdir=self.workdir,
+                        access=Access(cwd=self.workdir),
+                        client=client,
+                        sid=self.entry.sid,
+                    )
                 )
             except NoRecordedSession:
                 return SessionStatus("no", None, "")
@@ -133,9 +148,6 @@ def provider(api, cfg):
 
         def run(self, on_event=None):
             raise AssertionError("scenario must not launch")
-
-        def forget(self):
-            raise AssertionError("scenario must not forget")
 
         def resume(self, *, mode=None):
             raise AssertionError("legacy launcher owns this scenario")

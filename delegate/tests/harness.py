@@ -1,4 +1,4 @@
-"""Shared HarnessDelegate integration fixtures with caller-owned configuration and Sessions."""
+"""Shared HarnessDelegate fixtures with caller-owned configuration and Sessions."""
 
 import json
 import os
@@ -6,6 +6,7 @@ import os
 from agent_pm.delegate import Spec
 from agent_pm.delegate.engine.harness_delegate import HarnessDelegate
 from agent_pm.delegate.engine.state import RunState
+from agent_pm.delegate.engine.types import Layout
 from agent_pm.session import Exited, Reply
 
 from delegate.tests.case import REPO, Case
@@ -65,15 +66,15 @@ class HarnessCase(Case):
 
     def make(self, *, role="dummy-tester", spec=None, session_cls=HarnessSession, **kw):
         spec = spec or Spec(
-            "Hello.\nLiteral input.", self.work, task="echo", sid=SID, cwd=self.work, client="fake"
+            "Hello.\nLiteral input.", self.work, task="echo", sid=SID, client="fake"
         )
         return HarnessDelegate(role, spec, session_cls=session_cls, **kw)
 
     def state_record(self) -> str:
-        return RunState(self.work).record
+        return RunState(Layout(self.work)).record
 
     def metadata(self):
-        with open(os.path.join(self.work, "delegate.json"), encoding="utf-8") as file:
+        with open(self.state_record(), encoding="utf-8") as file:
             return json.load(file)
 
     def stop(self, record):

@@ -120,7 +120,9 @@ class Start(Base):
             ),
             self.faked() as calls,
         ):
-            prepared = self.start(StubAdapter(launch), access=Access(project=True), prompt="hi")
+            prepared = self.start(
+                StubAdapter(launch), access=Access(cwd=self.dir, project=True), prompt="hi"
+            )
             env = {k: v for k, v in os.environ.items() if k not in ("HM_UNSET", "HM_ID")}
         info = SessionInfo(
             sid=SID,
@@ -133,19 +135,23 @@ class Start(Base):
         self.assertEqual(self.recorded, [info])
         self.assertEqual(
             (argv, kwargs["cwd"], kwargs["env"], lines),
-            (NOTHING, self.dir, {**env, "HM_SET": "1", "PWD": self.dir}, 1),
+            (
+                NOTHING,
+                self.dir,
+                {**env, "HM_SET": "1", "PWD": self.dir, "AGENT_PM_AGENT_SESSION": "1"},
+                1,
+            ),
         )
         self.assertEqual((kwargs["stdin"], kwargs["process_group"]), (DEVNULL, 0))
         (spec,) = StubRun.specs
         self.assertEqual(prepared, Prepared(spec, info, NOTHING, kwargs["env"]))
         self.assertEqual((spec.prompt, spec.sid, spec.client), ("hi", SID, "stub"))
 
-    def test_its_cwd_is_the_launch_cwd_else_the_access_cwd_else_the_workdir(self):
+    def test_its_cwd_is_the_launch_cwd_else_the_access_cwd(self):
         given, access = (os.path.join(self.dir, d) for d in ("given", "access"))
         for launched, cwd, want in (
             (given, access, given),
             ("", access, access),
-            ("", "", self.dir),
         ):
             with self.subTest(want=want), self.faked() as calls:
                 prepared = self.start(
@@ -164,7 +170,9 @@ class Start(Base):
             (quiet, ("git",), "hi"),
         ):
             with self.subTest(commands=commands, note=adapter.client_note), self.faked():
-                prepared = self.start(adapter, access=Access(commands=commands), prompt="hi")
+                prepared = self.start(
+                    adapter, access=Access(cwd=self.dir, commands=commands), prompt="hi"
+                )
                 self.assertEqual((prepared.spec.prompt, StubRun.specs[-1].prompt), (prompt, prompt))
 
     def test_refused_before_its_session_line_or_a_process(self):

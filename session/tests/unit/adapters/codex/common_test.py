@@ -152,7 +152,9 @@ class CommonTest(Base):
                 "env": {"CODEX_HOME": str(self.root / "elsewhere")},
             },
         )
-        spec = dataclasses.replace(self.spec, access=Access(project=True), tier=None, effort=None)
+        spec = dataclasses.replace(
+            self.spec, access=Access(cwd=self.spec.workdir, project=True), tier=None, effort=None
+        )
         resumed = other.common.prepare(dataclasses.replace(spec, resume=True))
         self.assertEqual(resumed.snapshot, saved.snapshot)
         launch = committed_headless(other, dataclasses.replace(spec, prompt="again", resume=True))
@@ -175,7 +177,7 @@ class CommonTest(Base):
         )
         state = self.common.bind(str(self.work), self.spec.sid, NATIVE)
         self.rollout()
-        spec = dataclasses.replace(self.spec, access=Access())
+        spec = dataclasses.replace(self.spec, access=Access(cwd=self.spec.workdir))
         resumed = committed_headless(
             adapter, dataclasses.replace(spec, prompt="again", resume=True)
         )
@@ -329,7 +331,9 @@ class CommonTest(Base):
             with self.subTest(grant=grant), self.assertRaisesRegex(ConfigError, "writable"):
                 self.common.save(
                     self.common.prepare(
-                        dataclasses.replace(self.spec, access=Access(dirs=(str(grant),)))
+                        dataclasses.replace(
+                            self.spec, access=Access(cwd=self.spec.workdir, dirs=(str(grant),))
+                        )
                     )
                 )
         with (
@@ -356,17 +360,59 @@ class CommonTest(Base):
         self.assertEqual(self.record().read_bytes(), saved)
 
     def test_untrusted_project_configuration_and_cwd(self):
-        settings = self.cwd / ".codex"
+        agent = self.root / "agent"
+        (agent / "src").mkdir(parents=True)
+        outside = dataclasses.replace(
+            self.spec, access=dataclasses.replace(self.spec.access, cwd=str(agent))
+        )
+        self.assertEqual(self.common.save(self.common.prepare(outside)).snapshot.cwd, str(agent))
+        self.common.bind(str(self.work), self.spec.sid, NATIVE)
+        self.rollout(cwd=str(agent))
+        resumed = dataclasses.replace(outside, resume=True)
+        self.assertEqual(self.common.prepare(resumed).native_id, NATIVE)
+
+        settings = agent / ".codex"
         settings.mkdir()
-        with self.assertRaisesRegex(ConfigError, "project.*settings"):
-            self.prepare()
+        nested = dataclasses.replace(outside, sid="nested", access=Access(cwd=str(agent / "src")))
+        with self.assertRaisesRegex(
+            ConfigError, f"project Codex settings at {re.escape(str(settings))} "
+        ):
+            self.common.prepare(nested)
         settings.rmdir()
-        with self.assertRaisesRegex(ConfigError, "outside"):
-            self.common.save(
-                self.common.prepare(
-                    dataclasses.replace(self.spec, access=Access(cwd=str(self.extra)))
-                )
+
+        added = self.root / "added"
+        added.mkdir()
+        for home, root in (
+            (self.work, f"workdir {self.work}"),
+            (self.root, f"workdir {self.work}"),
+            (agent / "codex", f"writable root {agent}"),
+            (self.extra / "codex", f"writable root {self.extra}"),
+            (added / "codex", f"writable root {added}"),
+        ):
+            spec = dataclasses.replace(
+                outside, sid="home", env={"CODEX_HOME": str(home)}, flags=("--add-dir", str(added))
             )
+            with self.subTest(home=home):
+                with self.assertRaises(ConfigError) as caught:
+                    self.common.prepare(spec)
+                self.assertIn(f"CODEX_HOME {home} ", str(caught.exception))
+                self.assertIn(root, str(caught.exception))
+
+        homes = self.root / "homes"
+        self.codex_home = homes / "codex"
+        state = self.common.load(str(self.work), self.spec.sid)
+        assert state is not None
+        self.edit_record(
+            snapshot=snapshot_data(state.snapshot)
+            | {"codex_home": str(self.codex_home), "flags": ["--add-dir", str(homes)]},
+            writable_roots=[*state.writable_roots, str(homes)],
+        )
+        self.rollout(cwd=str(agent))
+        with self.assertRaisesRegex(
+            ConfigError,
+            f"CODEX_HOME {re.escape(str(self.codex_home))} .*writable root {re.escape(str(homes))}",
+        ):
+            self.common.prepare(resumed)
 
     def test_mapping_keys_and_values_name_the_table(self):
         cases = (
@@ -608,7 +654,7 @@ class WritableDirsTest(Base):
         record = self.record().read_bytes()
         elsewhere = str(self.root / "elsewhere")
         other = CodexAdapter(self.adapter.config | {"env": {"CODEX_HOME": elsewhere}})
-        spec = dataclasses.replace(self.spec, access=Access(project=True))
+        spec = dataclasses.replace(self.spec, access=Access(cwd=self.spec.workdir, project=True))
         self.assertIn(elsewhere, other.writable_dirs(spec))
         dirs = other.writable_dirs(dataclasses.replace(spec, resume=True))
         self.assertEqual(tuple(dirs[: len(saved)]), saved)
@@ -959,7 +1005,7 @@ class SnapshotEnvTest(Base):
     def test_keeps_an_env_access_env_accepts(self):
         for env in GOOD:
             with self.subTest(env=env):
-                self.assertEqual(Access(env=env).env, env)
+                self.assertEqual(Access(cwd="/c", env=env).env, env)
                 self.assertEqual(CodexAdapter({"env": env}).config["env"], env)
                 self.assertEqual(validate_snapshot(self.snapshot(env=env)).env, env)
 
@@ -967,7 +1013,7 @@ class SnapshotEnvTest(Base):
         for env in BAD:
             with self.subTest(env=env):
                 with self.assertRaises(ConfigError):
-                    Access(env=env)
+                    Access(cwd="/c", env=env)
                 with self.assertRaises(RecoveryError) as caught:
                     validate_snapshot(self.snapshot(env=env))
                 self.assertEqual(str(caught.exception), "invalid Codex recovery snapshot env")

@@ -12,6 +12,7 @@ from agent_pm.utils import SHORT
 from orchestrator_tests.case import Case
 from orchestrator_tests.config_fixtures import HARNESS_DELEGATE
 
+from delegate.tests.workdir import checkout_path
 from session.tests.case import configured
 
 DOCS = config.Docs(
@@ -407,7 +408,7 @@ class InputCheckout(Case):
         )
         name = re.search(r"^Checkout: (.+)$", text, re.M).group(1)
         self.assertEqual(
-            os.path.basename(target.checkout("ENG-7", "ophis", "agent-pm", work="/w")),
+            os.path.basename(checkout_path("/w", "ophis", "agent-pm", "ENG-7")),
             f"agent-pm-{name}",
         )
         for task in ("build", "light-build"):

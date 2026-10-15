@@ -4,12 +4,14 @@ import os
 import shutil
 import tempfile
 
-from agent_pm.linear_orchestrator.engine import config, target
+from agent_pm.linear_orchestrator.engine import target
 from agent_pm.utils import SHORT, checkout
 from orchestrator_tests.case import Case
 from orchestrator_tests.target_fixtures import LOCAL
 from orchestrator_tests.unit.target_fixtures import FakeRun, ok
 
+from delegate.tests.fakes.delegate import FakeDelegate
+from delegate.tests.workdir import checkout_path
 from utils.tests.sandbox import git
 
 
@@ -22,9 +24,9 @@ class TargetCheckout(Case):
         self.tmp = os.path.realpath(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, self.tmp)
         self.work = os.path.join(self.tmp, "work")
-        self.checkout = os.path.join(
-            self.work, "TASK-26", config.CLONES[0], "ophis", "agent-pm-TASK-26"
-        )
+        self.workdir = os.path.join(self.work, "TASK-26")
+        self.checkout = checkout_path(self.workdir, "ophis", "agent-pm", "TASK-26")
+        self.src = os.path.dirname(os.path.dirname(self.checkout))
 
     def clone(self, name, origin=HTTPS):
         path = os.path.join(self.tmp, name)
@@ -54,7 +56,8 @@ class TargetCheckout(Case):
             self.T,
             "TASK-26",
             clones=clones,
-            work=self.work,
+            delegate=FakeDelegate,
+            workdir=self.workdir,
             writable=writable,
             run=run,
         )
@@ -62,10 +65,16 @@ class TargetCheckout(Case):
     def want(self, clone):
         return target.Target("ophis", "agent-pm", "TASK-26-x", clone)
 
-    def test_the_checkout_is_cores_rule_with_the_issue_id(self):
-        want = checkout(os.path.join(self.work, "TASK-26", "src"), "ophis", "agent-pm", "TASK-26")
-        self.assertEqual(target.checkout("TASK-26", "ophis", "agent-pm", work=self.work), want)
-        self.assertEqual(want, self.checkout)
+    def test_the_checkout_is_the_one_its_delegate_reports_by_cores_rule(self):
+        def found():
+            return target.checkout(
+                "TASK-26", "ophis", "agent-pm", delegate=FakeDelegate, workdir=self.workdir
+            )
+
+        self.assertIsNone(found())
+        self.fresh()
+        self.assertEqual(found(), self.checkout)
+        self.assertEqual(self.checkout, checkout(self.src, "ophis", "agent-pm", "TASK-26"))
 
     def test_a_worktree_at_the_old_owner_name_path_is_not_read(self):
         x, y = self.clone("x"), self.clone("y")
@@ -83,7 +92,7 @@ class TargetCheckout(Case):
         ):
             with self.subTest(clones):
                 self.assertEqual(self.run_(clones), self.want(want))
-        os.makedirs(os.path.join(self.work, "TASK-26", config.CLONES[0], "ophis"))
+        os.makedirs(os.path.join(self.src, "ophis"))
         self.assertEqual(self.run_({}), self.want(""))
 
     def test_a_clone_made_from_owner_name_beats_the_table(self):
@@ -121,7 +130,7 @@ class TargetCheckout(Case):
         )
         self.assertEqual(self.run_({}, writable=(self.tmp,)), self.want(""))
 
-    def test_the_default_writable_holds_the_runs_dir(self):
+    def test_the_default_writable_holds_the_workdirs(self):
         inside = os.path.join(self.work, "clone")
         git("init", "-q", inside)
         git("-C", inside, "remote", "add", "origin", self.HTTPS)

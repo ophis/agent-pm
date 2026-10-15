@@ -23,12 +23,13 @@ MODULE = "extension_client"
 # The child: configures the session from the copy's session config, starts client argv[2] headless
 # in workdir argv[1] and prints its events; a ConfigError exits 1, its text on stderr.
 CHILD = """import dataclasses, json, sys
-from agent_pm.session import ConfigError, Mode, Session, Spec, read_config
+from agent_pm.session import Access, ConfigError, Mode, Session, Spec, read_config
 from agent_pm.session.engine import hosted_session
 try:
     Session.configure_from(read_config())
     handle = Session.start(
-        Spec(workdir=sys.argv[1], client=sys.argv[2], mode=Mode.HEADLESS, prompt="hello")
+        Spec(workdir=sys.argv[1], access=Access(cwd=sys.argv[1]), client=sys.argv[2],
+             mode=Mode.HEADLESS, prompt="hello")
     )
 except ConfigError as e:
     sys.exit(f"ConfigError: {e}")

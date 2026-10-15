@@ -23,6 +23,7 @@ from orchestrator_tests.integration.flow_fixtures import (
 )
 
 from delegate.tests.replies import block, mark
+from delegate.tests.workdir import checkout_root
 
 ENGINEER = ACCOUNTS["engineer"]
 ID, TITLE, BRANCH = "TASK-7", "ENG: Session registry", "TASK-7-session-registry"
@@ -91,7 +92,7 @@ class Rework(BinFlow):
                 TOOL,
                 command,
                 "--dir",
-                os.path.join(self.runs_dir, ID, "src"),
+                checkout_root(os.path.join(self.workdirs, ID)),
                 "--branch",
                 BRANCH,
                 "--name",

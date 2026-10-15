@@ -175,6 +175,7 @@ class Base(Case):
         spec = Spec(
             **{
                 "workdir": self.tmp,
+                "access": Access(cwd=self.tmp),
                 "name": NAME,
                 "client": "fake",
                 "sid": SID,
@@ -356,6 +357,7 @@ class AttachTest(Base):
             Prepared(
                 Spec(
                     workdir=self.tmp,
+                    access=Access(cwd=self.tmp),
                     client="fake",
                     mode=Mode.TUI,
                     sid=SID,
@@ -540,7 +542,7 @@ class StartTest(Base):
 
     def test_display_and_private_identity_are_separate_from_the_host_receipt(self):
         mode = tui.TuiRuntime.start(
-            Spec(workdir=self.tmp, name=NAME, client="fake", sid=SID),
+            Spec(workdir=self.tmp, access=Access(cwd=self.tmp), name=NAME, client="fake", sid=SID),
             self.adapter,
             registry=self.session_cls._config().registry,
             record=self.recorded.append,
@@ -620,7 +622,7 @@ class StartTest(Base):
     def test_cwd_and_grants_over_the_hook_paths_launch(self):
         for hook_path, field in itertools.product((self.events, self.root), ("cwd", "dirs")):
             for path in (hook_path, os.path.dirname(hook_path), os.path.join(hook_path, "child")):
-                access = Access(cwd=path) if field == "cwd" else Access(dirs=(path,))
+                access = Access(cwd=path) if field == "cwd" else Access(cwd=self.tmp, dirs=(path,))
                 with self.subTest(path=path, field=field):
                     self.host.processes.clear()
                     self.start(access=access)
@@ -658,6 +660,7 @@ class StartTest(Base):
                 "KEEP": "k",
                 "LAUNCH_SET": "1",
                 "PWD": self.tmp,
+                "AGENT_PM_AGENT_SESSION": "1",
             },
         )
 
@@ -1917,7 +1920,9 @@ class TransportErrorTest(TmuxBase):
         adapter.run = Launchable(adapter)
         with self.assertRaises(SessionError) as caught:
             tui.TuiRuntime.start(
-                Spec(workdir=workdir, name=NAME, client="fake", sid=SID),
+                Spec(
+                    workdir=workdir, access=Access(cwd=workdir), name=NAME, client="fake", sid=SID
+                ),
                 adapter,
                 registry=self.session_cls._config().registry,
                 record=lambda _info: None,

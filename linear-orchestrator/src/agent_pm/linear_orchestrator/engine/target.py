@@ -1,5 +1,6 @@
 """An issue's target repo: its description's Repo: line or its project's mapping, checked on GitHub
-(check), and the local clone its checkout may use (with_clone).
+(check), and the local clone its checkout may use (with_clone); its checkout is the one its
+Delegate reports in the issue's workdir (Delegate.checkouts).
 """
 
 import json
@@ -8,7 +9,7 @@ import re
 from dataclasses import replace
 
 from agent_pm.linear_orchestrator.engine import config, issues
-from agent_pm.linear_orchestrator.engine.config import CLONES, REF, TASKS
+from agent_pm.linear_orchestrator.engine.config import REF, TASKS
 from agent_pm.linear_orchestrator.engine.types import Invalid, Target, Transient
 from agent_pm.utils import GUARD, SHORT, Repo, common_dir, err_text, repo_slug, under
 from agent_pm.utils import Invalid as RepoInvalid
@@ -95,16 +96,24 @@ def _repo_info(o, n, run):
     return full, push is True, default
 
 
-def checkout(ident, owner, name, *, work) -> str:
-    return clone_checkout(os.path.join(work, ident, CLONES[0]), owner, name, ident)
+def checkout(ident, owner, name, *, delegate, workdir) -> str | None:
+    """The repo's checkout among those `delegate` reports in `workdir`, else None."""
+    return next(
+        (
+            path
+            for path in delegate.checkouts(workdir) or ()
+            if path == clone_checkout(os.path.dirname(os.path.dirname(path)), owner, name, ident)
+        ),
+        None,
+    )
 
 
-def _branches(ident, o, n, *, run, work, roles):
+def _branches(ident, o, n, *, run, delegate, workdir, roles):
     # a worktree's are read on GitHub: its clone is known only from a `.git` file the agent run
     # could have changed
-    path = checkout(ident, o, n, work=work)
-    git = os.path.join(path, ".git")
-    if os.path.isdir(git):
+    path = checkout(ident, o, n, delegate=delegate, workdir=workdir)
+    git = path and os.path.join(path, ".git")
+    if git and os.path.isdir(git):
         # The agent run can write this clone's config; these keep it from running code as the
         # harness.
         res = run(
@@ -152,7 +161,7 @@ def _branches(ident, o, n, *, run, work, roles):
     ]
 
 
-def check(issue, repos, *, run=None, work, roles) -> Target | Invalid | Transient:
+def check(issue, repos, *, run=None, delegate, workdir, roles) -> Target | Invalid | Transient:
     if run is None:
         run = config.shell
     repo = parse_repo(issue.description)
@@ -176,7 +185,7 @@ def check(issue, repos, *, run=None, work, roles) -> Target | Invalid | Transien
     if not isinstance(default, str) or not REF.fullmatch(default):
         return Invalid(f"{asked}: unsafe default branch name", mapped=mapped)
     ident = issue.identifier
-    names = _branches(ident, o, n, run=run, work=work, roles=roles)
+    names = _branches(ident, o, n, run=run, delegate=delegate, workdir=workdir, roles=roles)
     if isinstance(names, Transient):
         return names
     if len(names) > 1:
@@ -186,18 +195,18 @@ def check(issue, repos, *, run=None, work, roles) -> Target | Invalid | Transien
     return Target(o, n, names[0] if names else f"{ident}-{slug(issue.title)}")
 
 
-def with_clone(t, ident, *, run=None, work, clones, writable=None) -> Target:
+def with_clone(t, ident, *, run=None, delegate, workdir, clones, writable=None) -> Target:
     if run is None:
         run = config.shell
     # the checkout is agent-writable, so a clone its `.git` file names counts only outside
     # `writable` and with the right origin
-    path = checkout(ident, t.owner, t.name, work=work)
-    git, full = os.path.join(path, ".git"), f"{t.owner}/{t.name}"
-    if os.path.isdir(git):
+    path = checkout(ident, t.owner, t.name, delegate=delegate, workdir=workdir)
+    full = f"{t.owner}/{t.name}"
+    if path and os.path.isdir(os.path.join(path, ".git")):
         return replace(t, clone="")
-    if common := common_dir(path):
+    if path and (common := common_dir(path)):
         clone = os.path.dirname(common)
-        roots = config.writable(work) if writable is None else writable
+        roots = config.writable(os.path.dirname(workdir)) if writable is None else writable
         if not under(common, roots) and config.clone_error(clone, full, run=run) is None:
             return replace(t, clone=clone)
     return replace(t, clone=next((v for k, v in clones.items() if k.lower() == full.lower()), ""))

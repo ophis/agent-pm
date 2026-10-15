@@ -9,8 +9,8 @@ from agent_pm.delegate.composer import Composer
 from agent_pm.delegate.engine.drivers import AgentDriver, Driver, InstructionDriver
 from agent_pm.delegate.engine.plan import plan
 from agent_pm.delegate.engine.types import DriverSpec, Instruction
+from agent_pm.session import Access, IdleTimeout, Session
 from agent_pm.session import ConfigError as SessionConfigError
-from agent_pm.session import IdleTimeout, Session
 from agent_pm.session import Spec as StartSpec
 
 from delegate.tests.case import Case
@@ -40,7 +40,7 @@ class IdleTimeoutConfig(Case):
                     session_cls = SessionClass.scripted(turn(START, block(DONE)))
                     result = executed(
                         Composer().resolve("dummy-tester"),
-                        Spec("input", self.home, mode=mode, cwd=self.home),
+                        Spec("input", self.home, mode=mode),
                         driver=AgentDriver(session_cls),
                     )
                     self.assertEqual(result.outcome.status, "done")
@@ -55,7 +55,7 @@ class IdleTimeoutConfig(Case):
         with no_child():
             result = executed(
                 Composer().resolve("dummy-tester"),
-                Spec("input", self.home, mode="tui", cwd=self.home, sid=sid),
+                Spec("input", self.home, mode="tui", sid=sid),
                 driver=AgentDriver(session_cls),
             )
         self.assertIsNone(result.outcome)
@@ -88,7 +88,13 @@ class Drivers(Case):
     def test_agent_preflight_forwards_spec_and_owned_placement_without_launching(self):
         session_cls = SessionClass.fresh()
         driver = AgentDriver(session_cls, display="opaque", host="other")
-        spec = StartSpec(workdir=self.home, client="fake", mode="tui", prompt="accepted prompt")
+        spec = StartSpec(
+            workdir=self.home,
+            access=Access(cwd=self.home),
+            client="fake",
+            mode="tui",
+            prompt="accepted prompt",
+        )
         with no_child():
             driver.preflight(spec)
         self.assertEqual(
@@ -102,7 +108,13 @@ class Drivers(Case):
     def test_headless_preflight_and_start_keep_owned_host_without_owned_display(self):
         session_cls = SessionClass.fresh()
         driver = AgentDriver(session_cls, display="opaque", host="other")
-        spec = StartSpec(workdir=self.home, client="fake", mode="headless", prompt="input")
+        spec = StartSpec(
+            workdir=self.home,
+            access=Access(cwd=self.home),
+            client="fake",
+            mode="headless",
+            prompt="input",
+        )
         with no_child():
             driver.preflight(spec)
             session = driver.start(
@@ -125,7 +137,7 @@ class Drivers(Case):
         error = SessionConfigError("unsupported mode")
         session_cls.preflight_error = error
         driver = AgentDriver(session_cls)
-        spec = StartSpec(workdir=self.home, client="fake", mode="tui")
+        spec = StartSpec(workdir=self.home, access=Access(cwd=self.home), client="fake", mode="tui")
         with self.assertRaises(SessionConfigError) as caught:
             driver.preflight(spec)
         self.assertIs(caught.exception, error)
@@ -134,7 +146,9 @@ class Drivers(Case):
     def test_instruction_preflight_needs_no_session_and_writes_nothing(self):
         work = os.path.join(self.home, "missing")
         with no_child():
-            InstructionDriver().preflight(StartSpec(workdir=work, prompt="instruction"))
+            InstructionDriver().preflight(
+                StartSpec(workdir=work, access=Access(cwd=work), prompt="instruction")
+            )
         self.assertFalse(os.path.exists(work))
 
     def test_a_driver_capability_selects_instruction_delivery_without_concrete_type_checks(self):
@@ -152,7 +166,7 @@ class Drivers(Case):
         with no_child():
             result = executed(
                 Composer().resolve("dummy-tester"),
-                Spec("input", work, out=out, cwd=work),
+                Spec("input", work, out=out),
                 driver=FileDriver(),
                 on_event=events.append,
             )
@@ -170,6 +184,7 @@ class Drivers(Case):
         driver = AgentDriver(session_cls)
         spec = StartSpec(
             workdir=self.home,
+            access=Access(cwd=self.home),
             client="fake",
             mode="headless",
             prompt="the prompt",
@@ -204,7 +219,13 @@ class Drivers(Case):
     def test_instruction_start_saves_exact_utf8_bytes_without_process_or_thread(self):
         out = os.path.join(self.home, "work", "prompt.md")
         prompt = "héllo\r\n[agent-pm-progress:start] input, not an event\n\x1b"
-        spec = StartSpec(workdir=self.home, client="fake", mode="headless", prompt=prompt)
+        spec = StartSpec(
+            workdir=self.home,
+            access=Access(cwd=self.home),
+            client="fake",
+            mode="headless",
+            prompt=prompt,
+        )
         with no_child():
             instruction = InstructionDriver().start(DriverSpec(spec, out))
         self.assertEqual(instruction, Instruction(out))
@@ -214,7 +235,9 @@ class Drivers(Case):
 
     def test_one_instruction_driver_uses_each_specs_output_destination(self):
         driver = InstructionDriver()
-        session = StartSpec(workdir=self.home, prompt="exact instruction")
+        session = StartSpec(
+            workdir=self.home, access=Access(cwd=self.home), prompt="exact instruction"
+        )
         for filename in ("first.md", "second.md"):
             out = os.path.join(self.home, filename)
             self.assertEqual(driver.start(DriverSpec(session, out)), Instruction(out))
@@ -226,6 +249,7 @@ class Drivers(Case):
         driver = InstructionDriver()
         spec = StartSpec(
             workdir=self.home,
+            access=Access(cwd=self.home),
             client="fake",
             mode="headless",
             prompt="the prompt",
@@ -240,7 +264,13 @@ class Drivers(Case):
     def test_instruction_rejects_session_controls_before_any_write(self):
         out = os.path.join(self.home, "work", "prompt.md")
         driver = InstructionDriver()
-        spec = StartSpec(workdir=self.home, client="fake", mode="headless", prompt="the prompt")
+        spec = StartSpec(
+            workdir=self.home,
+            access=Access(cwd=self.home),
+            client="fake",
+            mode="headless",
+            prompt="the prompt",
+        )
         for keywords, message in (
             ({"host": "other"}, "instruction has no host or display"),
             ({"display": "opaque"}, "instruction has no host or display"),
@@ -255,7 +285,7 @@ class Drivers(Case):
     def test_instruction_run_bypasses_attempts_and_replies_but_finishes(self):
         work = os.path.join(self.home, "work")
         out = os.path.join(work, "prompt.md")
-        spec = Spec("[agent-pm-progress:start] source text", work, out=out, cwd=work)
+        spec = Spec("[agent-pm-progress:start] source text", work, out=out)
         composition = Composer()
         config = composition.resolve("dummy-tester")
         driver = InstructionDriver()

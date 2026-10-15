@@ -1,20 +1,26 @@
-"""Delegate refusal types and a start's SessionError as the run's result."""
+"""Delegate refusal types, a start's SessionError as the run's result, and a live run's refusals
+from its run dir alone.
+"""
 
+import io
 import os
+import shutil
 import subprocess
 import sys
+from contextlib import redirect_stderr, redirect_stdout
 from unittest import mock
 
-from agent_pm.delegate import ConfigError, Finished, Result, Spec
+from agent_pm.delegate import Begun, ConfigError, Finished, Result, Spec, cli
 from agent_pm.delegate.composer import Composer
 from agent_pm.delegate.engine.drivers import AgentDriver
 from agent_pm.delegate.engine.harness_delegate import HarnessDelegate
+from agent_pm.delegate.engine.types import Layout
 from agent_pm.session import ConfigError as SessionConfigError
 from agent_pm.session import SessionError
 
 from delegate.tests.case import REPO, child_env
-from delegate.tests.fakes.harness_session import HarnessSession
-from delegate.tests.harness import HarnessCase
+from delegate.tests.fakes.harness_session import HarnessSession, harness_launches
+from delegate.tests.harness import SID, HarnessCase
 from delegate.tests.runner import executed
 
 
@@ -44,7 +50,7 @@ class MissingTmuxSession(HarnessSession):
 
 class Refusals(HarnessCase):
     def construct(self, *, session_cls=HarnessSession, **placement):
-        spec = Spec("input", self.work, task="echo", cwd=self.work, client="fake")
+        spec = Spec("input", self.work, task="echo", client="fake")
         return HarnessDelegate("dummy-tester", spec, session_cls=session_cls, **placement)
 
     def test_host_display_and_harness_configuration_refusals_are_delegate_errors(self):
@@ -81,7 +87,7 @@ class Refusals(HarnessCase):
 
     def test_a_start_driver_error_is_the_result_with_one_finished(self):
         events = []
-        spec = Spec("input", self.work, task="echo", mode="tui", cwd=self.work, name="agent")
+        spec = Spec("input", self.work, task="echo", mode="tui", name="agent")
         result = executed(
             Composer().resolve("dummy-tester", "echo"),
             spec,
@@ -92,7 +98,7 @@ class Refusals(HarnessCase):
         self.assertEqual(events, [Finished(result)])
 
     def test_prompt_rerun_after_output_failure_replaces_the_incomplete_attempt(self):
-        cli = [
+        command = [
             sys.executable,
             "-P",
             "-m",
@@ -111,7 +117,7 @@ class Refusals(HarnessCase):
         with open(os.path.join(self.home, "missing"), "w", encoding="utf-8") as file:
             file.write("not a directory")
         failed = subprocess.run(
-            [*cli, "--out", os.path.join(self.home, "missing", "out.md")],
+            [*command, "--out", os.path.join(self.home, "missing", "out.md")],
             env=environment,
             capture_output=True,
             text=True,
@@ -120,7 +126,7 @@ class Refusals(HarnessCase):
         self.assertNotEqual(failed.returncode, 0)
         output = os.path.join(self.work, "out.md")
         resumed = subprocess.run(
-            [*cli, "--out", output],
+            [*command, "--out", output],
             env=environment,
             capture_output=True,
             text=True,
@@ -128,4 +134,57 @@ class Refusals(HarnessCase):
         )
         self.assertEqual(resumed.returncode, 0, resumed.stderr)
         self.assertTrue(os.path.isfile(output))
-        self.assertFalse(os.path.exists(os.path.join(self.work, "delegate.json")))
+        self.assertFalse(os.path.exists(os.path.join(Layout(self.work).run, "delegate.json")))
+
+
+class BoundDelegate(HarnessDelegate):
+    def __init__(self, role, spec, **placement):
+        super().__init__(role, spec, session_cls=HarnessSession, **placement)
+
+
+class LiveRun(HarnessCase):
+    def setUp(self):
+        super().setUp()
+        for key in ("AGENT_PM_SID", "AGENT_PM_EVENTS"):
+            os.environ.pop(key, None)
+
+    def cli(self, *extra):
+        argv = ["run", "--role", "dummy-tester", "--task", "echo", "--input", "again"]
+        argv += ["--out", os.path.join(self.home, "out.md"), "--workdir", self.work]
+        out, err = io.StringIO(), io.StringIO()
+        with redirect_stdout(out), redirect_stderr(err):
+            code = cli.main(
+                [*argv, "--client", "fake", "--sid", SID, *extra], delegate_cls=BoundDelegate
+            )
+        return code, out.getvalue(), err.getvalue()
+
+    def test_live_run_survives_emptied_agent_dir(self):
+        agent = Layout(self.work).agent
+        delegate = self.make()
+        refusal = f"delegate: {self.work}: delegate is still alive\n"
+        seen = []
+
+        def meanwhile(event):
+            if not isinstance(event, Begun):
+                return
+            shutil.rmtree(agent)
+            os.mkdir(agent)
+            with open(os.path.join(agent, "delegate.json"), "w", encoding="utf-8") as file:
+                file.write('{"version": 1, "attempt": 9}')
+            before = self.metadata()
+            launches = len(harness_launches())
+            seen.append(self.cli())
+            seen.append(self.cli("--resume"))
+            view = HarnessDelegate.attach(self.work, session_cls=HarnessSession)
+            self.assertEqual(view.resume().sid, SID)
+            with self.assertRaises(ConfigError) as caught:
+                view.detach()
+            seen.append(str(caught.exception))
+            self.assertEqual((self.metadata(), len(harness_launches())), (before, launches))
+
+        self.assertEqual(delegate.run(meanwhile).outcome.status, "done")
+        self.assertEqual(
+            seen, [(2, "", refusal), (2, "", refusal), f"{self.work}: delegate is still alive"]
+        )
+        self.assertEqual(self.make().run().returncode, 0)
+        self.assertEqual(self.metadata()["attempt"], 2)

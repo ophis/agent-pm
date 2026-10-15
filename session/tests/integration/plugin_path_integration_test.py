@@ -1,6 +1,7 @@
 """FR-32: a session's client runs the running plugin's commands: its PATH starts with the bin/ where
 the starter's PATH finds agent-pm-session, so agent-pm-crew and agent-pm-session resolve there and run,
-ahead of a stale agent-pm-crew earlier on the starter's PATH.
+ahead of a stale agent-pm-crew earlier on the starter's PATH. The client carries the agent session
+marker, so its agent-pm-session start exits 2.
 """
 
 import json
@@ -24,8 +25,12 @@ class PluginPathTest(Base):
         inherited = os.pathsep.join(
             (stale, os.path.dirname(sys.executable), "/usr/bin", PLUGIN_BIN, "/bin")
         )
-        commands = (["agent-pm-crew", "--help"], ["agent-pm-session", "--help"])
-        self.steps(*({"run": argv} for argv in commands))
+        commands = {
+            ("agent-pm-crew", "--help"): 0,
+            ("agent-pm-session", "--help"): 0,
+            ("agent-pm-session", "start", "nested", "--client", "fake", "--", "x"): 2,
+        }
+        self.steps(*({"run": list(argv)} for argv in commands))
         with mock.patch.dict(os.environ, {"PATH": inherited}):
             self.drain(self.start())
         with open(self.log, encoding="utf-8") as f:
@@ -33,7 +38,7 @@ class PluginPathTest(Base):
         self.assertEqual(
             ran,
             [
-                {"ran": argv, "found": os.path.join(PLUGIN_BIN, argv[0]), "rc": 0}
-                for argv in commands
+                {"ran": list(argv), "found": os.path.join(PLUGIN_BIN, argv[0]), "rc": rc}
+                for argv, rc in commands.items()
             ],
         )

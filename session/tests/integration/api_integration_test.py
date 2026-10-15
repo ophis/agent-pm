@@ -152,7 +152,7 @@ class Base(Case):
         `fields`.
         """
         spec = dataclasses.replace(
-            spec or Spec(workdir=self.workdir),
+            spec or Spec(workdir=self.workdir, access=Access(cwd=self.workdir)),
             client=client,
             mode=Mode.HEADLESS,
             prompt="hello",
@@ -450,7 +450,6 @@ class LaunchEnvironmentTest(Base):
         for client, extra, access, want in (
             ("launching", {"cwd": cwd}, Access(cwd=other), cwd),
             ("fake", {}, Access(cwd=other), other),
-            ("fake", {}, Access(), self.workdir),
         ):
             with (
                 self.subTest(client=client, want=want),

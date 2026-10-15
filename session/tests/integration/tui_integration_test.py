@@ -290,6 +290,7 @@ class SameNameTest(Live):
                     self.session_cls.start(
                         Spec(
                             workdir=self.workdir,
+                            access=Access(cwd=self.workdir),
                             name="w6",
                             client="fake",
                             mode=Mode.TUI,

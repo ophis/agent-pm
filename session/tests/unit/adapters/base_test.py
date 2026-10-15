@@ -306,7 +306,9 @@ class InProcessTest(Case):
         run = StubInProcess()
         for resume in (False, True):
             with self.subTest(resume=resume):
-                self.assertIsNone(run.check(Spec(workdir="/w", sid="s", resume=resume)))
+                self.assertIsNone(
+                    run.check(Spec(workdir="/w", access=Access(cwd="/w"), sid="s", resume=resume))
+                )
 
 
 class TuiTest(Case):
@@ -444,17 +446,17 @@ class NoProcessTest(Case):
                 engine_types.SessionInfo(sid="s", cwd="/c", project=False, transcript="", resume="")
             )
             adapter.in_process()
-            StubInProcess().check(Spec(workdir="/w"))
+            StubInProcess().check(Spec(workdir="/w", access=Access(cwd="/w")))
         popen.assert_not_called()
         run.assert_not_called()
 
 
 class AccessTest(Refusals):
     def test_defaults(self):
-        access = Access()
+        access = Access(cwd="/c")
         self.assertEqual(
             (access.dirs, access.commands, access.cwd, access.project, access.reads, access.env),
-            ((), (), "", False, (), {}),
+            ((), (), "/c", False, (), {}),
         )
 
     def test_accepts_tuples_of_strings(self):
@@ -462,7 +464,7 @@ class AccessTest(Refusals):
         self.assertEqual((access.dirs, access.commands, access.reads), (("/a",), ("git",), ("/r",)))
 
     def test_keeps_reads_and_env_together(self):
-        access = Access(reads=("/r",), env={"A": "b"})
+        access = Access(cwd="/c", reads=("/r",), env={"A": "b"})
         self.assertEqual((access.reads, access.env), (("/r",), {"A": "b"}))
 
     def test_takes_keywords_only(self):
@@ -472,12 +474,16 @@ class AccessTest(Refusals):
     def test_refuses_dirs_commands_or_reads_that_are_not_a_tuple_of_strings(self):
         for bad in (["/a"], ("/a", 1), "/a", None):
             with self.subTest(bad=bad):
-                self.refused(lambda *, bad=bad: Access(dirs=bad), "dirs must be a tuple of strings")
                 self.refused(
-                    lambda *, bad=bad: Access(commands=bad), "commands must be a tuple of strings"
+                    lambda *, bad=bad: Access(cwd="/c", dirs=bad), "dirs must be a tuple of strings"
                 )
                 self.refused(
-                    lambda *, bad=bad: Access(reads=bad), "reads must be a tuple of strings"
+                    lambda *, bad=bad: Access(cwd="/c", commands=bad),
+                    "commands must be a tuple of strings",
+                )
+                self.refused(
+                    lambda *, bad=bad: Access(cwd="/c", reads=bad),
+                    "reads must be a tuple of strings",
                 )
 
     def test_accepts_an_env_of_exec_names_to_strings(self):
@@ -491,7 +497,7 @@ class AccessTest(Refusals):
             "A\n": "v",
             "Ä": "v",
         }
-        self.assertEqual(Access(env=MappingProxyType(env)).env, env)
+        self.assertEqual(Access(cwd="/c", env=MappingProxyType(env)).env, env)
 
     def test_refuses_invalid_exec_env_names_and_values(self):
         message = "access env must map variable names to strings without NUL"
@@ -507,14 +513,14 @@ class AccessTest(Refusals):
             None,
         ):
             with self.subTest(bad=bad):
-                self.refused(lambda *, bad=bad: Access(env=bad), message)
+                self.refused(lambda *, bad=bad: Access(cwd="/c", env=bad), message)
 
 
 class SpecTest(Refusals):
     def test_defaults(self):
-        spec = Spec(workdir="/w")
+        spec = Spec(workdir="/w", access=Access(cwd="/w"))
         self.assertEqual(
-            (spec.access, spec.tier, spec.effort, spec.sid), (Access(), None, None, None)
+            (spec.access, spec.tier, spec.effort, spec.sid), (Access(cwd="/w"), None, None, None)
         )
         self.assertEqual(
             (spec.flags, spec.env, spec.name, spec.reply_tags),
@@ -524,6 +530,7 @@ class SpecTest(Refusals):
     def plain(self, **fields):
         return Spec(
             workdir="/w",
+            access=Access(cwd="/w"),
             flags=("--model", "x", "--", "-p"),
             env={"A": "1", "_b2": "", "PATH": "/bin:/usr/bin"},
             name="worker-1",
@@ -540,18 +547,21 @@ class SpecTest(Refusals):
                 "worker-1",
             ),
         )
-        self.assertEqual(Spec(workdir="/w", env=MappingProxyType({"A": "1"})).env, {"A": "1"})
-        self.assertEqual(Spec(workdir="/w", name="").name, "")
+        self.assertEqual(
+            Spec(workdir="/w", access=Access(cwd="/w"), env=MappingProxyType({"A": "1"})).env,
+            {"A": "1"},
+        )
+        self.assertEqual(Spec(workdir="/w", access=Access(cwd="/w"), name="").name, "")
 
     def test_env_is_an_immutable_copy_and_specs_compare_by_value(self):
         source = {"A": "1"}
-        spec = Spec(workdir="/w", env=source)
+        spec = Spec(workdir="/w", access=Access(cwd="/w"), env=source)
         source["B"] = "2"
         self.assertEqual(dict(spec.env), {"A": "1"})
         with self.assertRaises(TypeError):
             spec.env["C"] = "3"
-        self.assertEqual(spec, Spec(workdir="/w", env={"A": "1"}))
-        self.assertNotEqual(spec, Spec(workdir="/w", env={"A": "2"}))
+        self.assertEqual(spec, Spec(workdir="/w", access=Access(cwd="/w"), env={"A": "1"}))
+        self.assertNotEqual(spec, Spec(workdir="/w", access=Access(cwd="/w"), env={"A": "2"}))
         self.assertEqual(self.plain(), self.plain())
 
     def test_replace_keeps_the_plain_session_fields(self):
@@ -563,7 +573,7 @@ class SpecTest(Refusals):
         for bad in (["-x"], ("-x\0",), ("-x", 1), "-x", None):
             with self.subTest(bad=bad):
                 self.refused(
-                    lambda *, bad=bad: Spec(workdir="/w", flags=bad),
+                    lambda *, bad=bad: Spec(workdir="/w", access=Access(cwd="/w"), flags=bad),
                     "flags must be a tuple of strings without NUL",
                 )
 
@@ -582,7 +592,7 @@ class SpecTest(Refusals):
         ):
             with self.subTest(bad=bad):
                 self.refused(
-                    lambda *, bad=bad: Spec(workdir="/w", env=bad),
+                    lambda *, bad=bad: Spec(workdir="/w", access=Access(cwd="/w"), env=bad),
                     "env must map variable names to strings without NUL",
                 )
 
@@ -590,11 +600,15 @@ class SpecTest(Refusals):
         for bad in (5, b"w", ("w",)):
             with self.subTest(bad=bad):
                 self.refused(
-                    lambda *, bad=bad: Spec(workdir="/w", name=bad), "name must be None or a string"
+                    lambda *, bad=bad: Spec(workdir="/w", access=Access(cwd="/w"), name=bad),
+                    "name must be None or a string",
                 )
 
     def test_reply_tags_are_none_or_a_progress_and_an_outcome_tag(self):
-        self.assertEqual(Spec(workdir="/w", reply_tags=("p-1", "o_2")).reply_tags, ("p-1", "o_2"))
+        self.assertEqual(
+            Spec(workdir="/w", access=Access(cwd="/w"), reply_tags=("p-1", "o_2")).reply_tags,
+            ("p-1", "o_2"),
+        )
         for bad in (
             ["p", "o"],
             ("p",),
@@ -607,7 +621,7 @@ class SpecTest(Refusals):
         ):
             with self.subTest(bad=bad):
                 self.refused(
-                    lambda *, bad=bad: Spec(workdir="/w", reply_tags=bad),
+                    lambda *, bad=bad: Spec(workdir="/w", access=Access(cwd="/w"), reply_tags=bad),
                     "reply_tags must be None or (progress tag, outcome tag), each [A-Za-z0-9_-]+",
                 )
 
@@ -615,7 +629,7 @@ class SpecTest(Refusals):
         with self.assertRaises(TypeError):
             Spec("/w")
         with self.assertRaises(dataclasses.FrozenInstanceError):
-            Spec(workdir="/w").sid = "s"
+            Spec(workdir="/w", access=Access(cwd="/w")).sid = "s"
 
     def test_accepts_every_tier_and_effort(self):
         for tier in (1, 2, 3, 4):
@@ -637,13 +651,13 @@ class SpecTest(Refusals):
         ):
             with self.subTest(bad=bad):
                 self.refused(
-                    lambda *, bad=bad: Spec(workdir=bad),
+                    lambda *, bad=bad: Spec(workdir=bad, access=Access(cwd="/w")),
                     f"workdir must be a printable absolute path, got {shown}",
                 )
 
     def test_shows_at_most_80_characters_of_a_bad_workdir(self):
         self.refused(
-            lambda: Spec(workdir="/" + "x" * 200 + "\n"),
+            lambda: Spec(workdir="/" + "x" * 200 + "\n", access=Access(cwd="/w")),
             "workdir must be a printable absolute path, got '/" + "x" * 78,
         )
 
@@ -651,7 +665,7 @@ class SpecTest(Refusals):
         for bad, shown in ((0, "0"), (5, "5"), (True, "True"), ("2", "'2'"), (2.0, "2.0")):
             with self.subTest(bad=bad):
                 self.refused(
-                    lambda *, bad=bad: Spec(workdir="/w", tier=bad),
+                    lambda *, bad=bad: Spec(workdir="/w", access=Access(cwd="/w"), tier=bad),
                     f"tier must be an integer 1–4, got {shown}",
                 )
 
@@ -665,7 +679,7 @@ class SpecTest(Refusals):
         ):
             with self.subTest(bad=bad):
                 self.refused(
-                    lambda *, bad=bad: Spec(workdir="/w", effort=bad),
+                    lambda *, bad=bad: Spec(workdir="/w", access=Access(cwd="/w"), effort=bad),
                     f"effort must be one of low, medium, high, xhigh, max, got {shown}",
                 )
 
@@ -699,7 +713,7 @@ class SpecTest(Refusals):
         ):
             with self.subTest(bad=bad):
                 self.refused(
-                    lambda *, bad=bad: Spec(workdir="/w", sid=bad),
+                    lambda *, bad=bad: Spec(workdir="/w", access=Access(cwd="/w"), sid=bad),
                     f'sid must be a non-empty printable string without "/", got {shown}',
                 )
 

@@ -1,5 +1,6 @@
 """The Delegate's shared types."""
 
+import contextlib
 import os
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -13,6 +14,7 @@ from agent_pm.utils import Stopped as Stopped
 
 __all__ = [
     "ConfigError",
+    "Layout",
     "Spec",
     "Plan",
     "Limit",
@@ -33,11 +35,63 @@ class Outer(TypedDict, total=False):
 
 
 @dataclass(frozen=True)
+class Layout:
+    """A run's workdir (Spec.workdir): `agent`, the agent's cwd and only write grant; `run`, the
+    harness's state and records.
+    """
+
+    workdir: str
+
+    def __post_init__(self):
+        object.__setattr__(self, "workdir", os.path.abspath(self.workdir))
+
+    @property
+    def agent(self) -> str:
+        return os.path.join(self.workdir, "agent")
+
+    @property
+    def run(self) -> str:
+        return os.path.join(self.workdir, "run")
+
+    @property
+    def out(self) -> str:
+        """A session run's default `out`."""
+        return os.path.join(self.run, "out.md")
+
+    def in_place(self) -> bool:
+        """Whether `agent` is a real directory where it belongs, reached through no symlink."""
+        real = os.path.join(
+            os.path.realpath(os.path.dirname(self.workdir)),
+            os.path.relpath(self.agent, os.path.dirname(self.workdir)),
+        )
+        return (
+            not os.path.islink(self.agent)
+            and os.path.isdir(self.agent)
+            and os.path.realpath(self.agent) == real
+        )
+
+    def checkouts(self) -> tuple[str, ...] | None:
+        """Delegate.checkouts: the dirs at `agent`/src/<owner>/<name> that are their own real path."""
+        if not os.path.lexists(self.agent):
+            return None
+        if not self.in_place():
+            return ()
+        src, found = os.path.join(os.path.realpath(self.agent), "src"), []
+        with contextlib.suppress(OSError):
+            for owner in sorted(os.listdir(src)):
+                with contextlib.suppress(OSError):
+                    names = sorted(os.listdir(os.path.join(src, owner)))
+                    found += [os.path.join(src, owner, name) for name in names]
+        return tuple(p for p in found if os.path.realpath(p) == p and os.path.isdir(p))
+
+
+@dataclass(frozen=True)
 class Spec:
-    """One run to start: `resume` resumes session `sid`; client None: the role's; `out` None:
-    nothing is saved; `team` None: the built-in one. name and events: tui only for plan();
-    HarnessDelegate takes them in every mode (`name`: its agent session, `<name>-drive` its
-    harness's; `events`: also the detached harness's outcome line).
+    """One run to start: `workdir` is the run's workdir (Layout); `resume` resumes session `sid`;
+    client None: the role's; `out` None: `<run>/out.md` for a session run, else nothing is saved;
+    `team` None: the built-in one. name and events: tui only for plan(); HarnessDelegate takes them
+    in every mode (`name`: its agent session, `<name>-drive` its harness's; `events`: also the
+    detached harness's outcome line).
     """
 
     input: str
@@ -79,15 +133,16 @@ class Plan:
     def params(self) -> RunParams:
         return RunParams(
             input=self.spec.input,
-            out=self.spec.out or self.driver_spec.out,
-            workdir=self.spec.workdir,
+            out=self.driver_spec.out,
+            workdir=Layout(self.spec.workdir).agent,
             resume=self.spec.resume,
         )
 
     @property
     def driver_spec(self) -> DriverSpec:
         return DriverSpec(
-            self.session, self.spec.out or os.path.join(self.spec.workdir, DELIVERABLE)
+            self.session,
+            self.spec.out or os.path.join(Layout(self.spec.workdir).agent, DELIVERABLE),
         )
 
     @property

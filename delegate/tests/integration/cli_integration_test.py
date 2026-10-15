@@ -14,7 +14,8 @@ from unittest import mock
 
 from agent_pm.delegate.composer.prompt import RESUME
 from agent_pm.delegate.engine.runner import FIX
-from agent_pm.session import Spec
+from agent_pm.delegate.engine.types import Layout
+from agent_pm.session import Access, Spec
 
 from delegate.tests.case import packaged
 from delegate.tests.integration.cli import (
@@ -53,7 +54,7 @@ class NewRun(Integration):
         session = self.records()[0]
         self.assertEqual(
             (session["sid"], session["cwd"], session["project"], session["transcript"]),
-            (SID, self.proj, False, self.transcript),
+            (SID, self.agent, False, self.transcript),
         )
         self.assertEqual(
             [*map(bare, self.records()[1:])],
@@ -75,15 +76,12 @@ class NewRun(Integration):
                 {"kind": "end", "sid": SID, "rc": 0},
             ],
         )
-        self.assertEqual(
-            set(os.listdir(self.work)),
-            {"out.md", "run.jsonl", "delegate.json"},
-        )
+        self.assertEqual(set(os.listdir(self.work)), {"agent", "run", "out.md"})
         self.assertTrue(os.path.isfile(self.transcript))
         (call,) = self.calls()
         self.assertEqual(
             (call["cwd"], option(call, "--session-id"), option(call, "--output-format")),
-            (self.proj, SID, "stream-json"),
+            (self.agent, SID, "stream-json"),
         )
         self.assertIsNone(option(call, "--resume"))
 
@@ -102,8 +100,22 @@ class NewRun(Integration):
         for flag in ("--permission-mode", "--strict-mcp-config", "--settings"):
             self.assertEqual(argv.count(flag), 1, flag)
 
+    def test_add_dirs_never_hold_the_workdir_or_its_run_dir(self):
+        layout = Layout(self.work)
+        for extra, cwd, want in (
+            ((), self.agent, []),
+            (("--cwd", self.proj), self.proj, [self.agent]),
+        ):
+            with self.subTest(cwd=cwd):
+                res = self.drive([mark("start", "echoing"), block(DONE)], *extra)
+                self.assertEqual(res.returncode, 0, res.stderr)
+                argv = self.calls()[-1]["argv"]
+                added = [argv[i + 1] for i, word in enumerate(argv) if word == "--add-dir"]
+                self.assertEqual((self.calls()[-1]["cwd"], added), (cwd, want))
+                self.assertFalse({self.work, layout.run} & set(map(os.path.realpath, added)))
+
     def test_a_deliverable_file_the_agent_wrote_is_saved_to_out(self):
-        report = os.path.join(self.work, "report.md")
+        report = os.path.join(self.agent, "report.md")
         res = self.drive(
             [
                 mark("start", "echoing"),
@@ -233,7 +245,7 @@ class Resume(Integration):
         )
         self.assertEqual(res.returncode, 0, res.stderr)
         first, second = self.calls()
-        self.assertEqual(second["cwd"], self.proj)
+        self.assertEqual(second["cwd"], self.agent)
         self.assertEqual((option(second, "--resume"), option(second, "--session-id")), (SID, None))
         self.assertTrue(prompt(second).startswith(RESUME))
         self.assertTrue(prompt(second).endswith("\n# Input\n\nUse B.\n"))
@@ -244,7 +256,7 @@ class Resume(Integration):
         records = self.records()
         self.assertEqual([e["text"] for e in records if e["kind"] == "input"], ["Hello.", "Use B."])
         self.assertEqual(
-            [e["cwd"] for e in records if e["kind"] == "session"], [self.proj, self.proj]
+            [e["cwd"] for e in records if e["kind"] == "session"], [self.agent, self.agent]
         )
         self.assertEqual(self.last("result")["outcome"]["status"], "done")
 
@@ -257,7 +269,7 @@ class NeedsInput(Integration):
         self.assertFalse(os.path.exists(self.out), "a deliverable before the answer")
         res = self.drive([block(DONE)], "--resume", "--input", ANSWER)
         self.assertEqual(res.returncode, 0, res.stderr)
-        with open(os.path.join(self.work, "delegate.json")) as f:
+        with open(os.path.join(Layout(self.work).run, "delegate.json")) as f:
             self.assertEqual(json.load(f)["attempt"], 2)
         records = self.records()
         self.assertEqual(
@@ -279,7 +291,7 @@ class NeedsInput(Integration):
         self.assertEqual([e["text"] for e in records if e["kind"] == "input"], ["Hello.", ANSWER])
         self.assertEqual(
             [(e["sid"], e["cwd"]) for e in records if e["kind"] == "session"],
-            [(SID, self.proj)] * 2,
+            [(SID, self.agent)] * 2,
         )
         first, second = self.calls()
         self.assertEqual(
@@ -374,7 +386,14 @@ class UsageLimit(Integration):
         session_cls = packaged()
         with mock.patch.dict(os.environ, {"CLAUDE_CONFIG_DIR": self.config}):
             self.assertEqual(
-                session_cls.inspect(Spec(workdir=self.work, client="claude", sid=SID)).resumable,
+                session_cls.inspect(
+                    Spec(
+                        workdir=Layout(self.work).run,
+                        access=Access(cwd=self.agent),
+                        client="claude",
+                        sid=SID,
+                    )
+                ).resumable,
                 "yes",
             )
 
@@ -399,8 +418,8 @@ class ConfigErrors(Integration):
             ),
             "task off the index": (self.argv("--task", "nope"), "task 'nope' is not one of"),
             "missing options": (
-                [*cli, "--role", self.ROLE, "--input", "x", "--workdir", self.work],
-                "--input, --out and --workdir are required",
+                [*cli, "--role", self.ROLE, "--input", "x", "--out", self.out],
+                "--input and --workdir are required",
             ),
             "a client without in_process": (
                 self.argv("--client", "codex", "--mode", "in_process"),
@@ -415,6 +434,18 @@ class ConfigErrors(Integration):
                 self.assertIn(said, res.stderr)
                 self.assertEqual(self.calls(), [])
                 self.assertEqual(os.listdir(self.work), [])
+
+    def test_cwd_in_run_dir_writes_nothing(self):
+        work = os.path.join(self.root, "new")
+        run = Layout(work).run
+        for cwd in (work, run):
+            with self.subTest(cwd=cwd):
+                argv = [*RUN, "--role", self.ROLE, "--input", "x", "--workdir", work]
+                res = self.drive([block(DONE)], argv=[*argv, "--sid", SID, "--cwd", cwd])
+                self.assertEqual((res.returncode, res.stdout), (2, ""), res.stderr)
+                self.assertIn(f"cwd {cwd} overlaps the run dir {run}", res.stderr)
+                self.assertFalse(os.path.lexists(work))
+                self.assertEqual(self.calls(), [])
 
 
 class Draft(Integration):

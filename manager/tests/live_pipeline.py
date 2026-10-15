@@ -41,7 +41,7 @@ class LivePipeline(LiveCrew):
     def setUp(self):
         super().setUp()
         state = os.path.join(self.root, "state")
-        self.runs_dir = os.path.join(state, "work")
+        self.workdirs = os.path.join(state, "work")
         with open(os.path.join(self.agent_pm, "config.local.toml"), "w", encoding="utf-8") as f:
             f.write(
                 local_section(run_fixtures.local(state) + TASK_LABELS, "linear_orchestrator")
@@ -92,7 +92,7 @@ class LivePipeline(LiveCrew):
         tui = f"engineer-{ID}-{record.sid[:8]}"
         self.assertEqual(
             (record.kind, record.name, record.sessions, record.workdir, record.ctl, record.resume),
-            ("pipeline", ID, (f"{tui}-drive", tui), os.path.join(self.runs_dir, ID), CTL, RESUME),
+            ("pipeline", ID, (f"{tui}-drive", tui), os.path.join(self.workdirs, ID), CTL, RESUME),
         )
         entry = self.roster()[name]
         self.assertEqual((entry.state, entry.record, entry.sid), (State.LIVE, record, record.sid))

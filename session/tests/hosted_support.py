@@ -227,7 +227,7 @@ class Base(Case):
         self.configure_session(tables, settings or {})
 
     def spec(self, **fields) -> Spec:
-        return Spec(workdir=self.workdir, **fields)
+        return Spec(**{"workdir": self.workdir, "access": Access(cwd=self.workdir), **fields})
 
     def start(
         self,
@@ -365,7 +365,7 @@ class EnvBase(TuiBase):
         self.session_dependencies = {**self.session_dependencies, "probe": self.probe}
         self.configure("env", probe={"argv": ("probe-cmd",)})
         self.enterContext(mock.patch.dict(os.environ, {"PYTHONPATH": "/parent"}))
-        self.access = Access(commands=("git",), env={"PYTHONPATH": PYTHONPATH})
+        self.access = Access(cwd=self.workdir, commands=("git",), env={"PYTHONPATH": PYTHONPATH})
 
 
 class HostedTuiBase(TuiBase):

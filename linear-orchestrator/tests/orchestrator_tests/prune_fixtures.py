@@ -21,6 +21,7 @@ from orchestrator_tests.unit.outage import FAILURES, FIELDS, failing
 from orchestrator_tests.unit.run_fixtures import CORE_LOCAL, logged, show
 
 from delegate.tests.fakes.delegate import FakeDelegate
+from delegate.tests.workdir import checkout_path
 
 NOW = tp.NOW
 
@@ -94,6 +95,15 @@ def gql_for(issues, owners=None, page=50, fail=(), refuse=()):
     return gql
 
 
+def tree(path):
+    found = {}
+    for top, _, files in os.walk(path):
+        for name in files:
+            with open(os.path.join(top, name), "rb") as f:
+                found[os.path.relpath(os.path.join(top, name), path)] = f.read()
+    return found
+
+
 def write(path, text):
     with open(path, "w") as f:
         f.write(text)
@@ -160,9 +170,12 @@ class PruneScenario(Case):
         )
         log.use_logs(self.logs)
 
-    def record(self, ident, sid, sessions, role="engineer"):
-        workdir = self.cfg.run_dir(ident)
-        PruneDelegate("dummy", Spec("", workdir, sid=sid)).detach()
+    def record(self, ident, sid, sessions, role="engineer", *, agent=True):
+        workdir = self.cfg.issue_workdir(ident)
+        run = PruneDelegate("dummy", Spec("", workdir, sid=sid))
+        if not agent:
+            PruneDelegate.clean(workdir)
+        run.detach()
         PruneDelegate.owners[workdir] = self
         self.addCleanup(PruneDelegate.owners.pop, workdir, None)
         self.sessions[workdir] = sessions
@@ -192,8 +205,17 @@ class PruneScenario(Case):
     def closed(self):
         return [c[1] for c in self.api.order if c[0] == "close"]
 
-    def mkc(self, ident, *parts):
-        path = os.path.join(self.work, ident, *parts)
+    def checkouts(self, ident):
+        return PruneDelegate.checkouts(self.cfg.issue_workdir(ident))
+
+    def fake_clone(self):
+        clone = os.path.join(self.root, "clone")
+        os.makedirs(os.path.join(clone, ".git", "worktrees", "x"))
+        write(os.path.join(clone, ".git", "worktrees", "x", "commondir"), "../..\n")
+        return clone
+
+    def mkc(self, ident, owner="o", name="repo"):
+        path = checkout_path(self.cfg.issue_workdir(ident), owner, name, ident)
         os.makedirs(os.path.join(path, ".git", "objects"))
         write(os.path.join(path, ".git", "HEAD"), "ref: refs/heads/main\n")
         pack = os.path.join(path, ".git", "objects", "pack.idx")
@@ -225,11 +247,10 @@ class PruneScenario(Case):
         self.assertEqual({e["src"] for e in logged(self.logs)[before:] + copies} - {"prune"}, set())
         return (code, "\n".join(show(e) for e in logged(self.logs)[before:] + copies))
 
-    def mkg(self, ident, *parts, git="file"):
-        path = os.path.join(self.work, ident, *parts)
+    def mkg(self, ident, owner="o", name="n"):
+        path = checkout_path(self.cfg.issue_workdir(ident), owner, name, ident)
         os.makedirs(path)
-        if git:
-            write(os.path.join(path, ".git"), f"gitdir: {self.root}/clone/.git/worktrees/x\n")
+        write(os.path.join(path, ".git"), f"gitdir: {self.root}/clone/.git/worktrees/x\n")
         return path
 
     def fresh(self):

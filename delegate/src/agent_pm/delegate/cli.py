@@ -4,7 +4,8 @@
 `--on-event CMD` makes the harness deliver each event to CMD (split once, never a shell). main reads
 $AGENT_PM_SID and $AGENT_PM_EVENTS once and removes them from its environment: `run`'s sid is --sid,
 else $AGENT_PM_SID (the two must agree); `resume` refuses a run of another $AGENT_PM_SID;
-`run --detach`'s events file is --events, else $AGENT_PM_EVENTS.
+`run --detach`'s events file is --events, else $AGENT_PM_EVENTS. Under $AGENT_PM_AGENT_SESSION,
+`run` (but --list and --dry-run) and `resume` refuse.
 
 Exits 0 on success, 2 on usage or config errors, 1 on other failures.
 """
@@ -20,10 +21,10 @@ from dataclasses import asdict
 from agent_pm.delegate.composer import Composer, RunParams
 from agent_pm.delegate.engine.harness_delegate import EVENTS_ENV, SID_ENV, HarnessDelegate
 from agent_pm.delegate.engine.runner import report, say
-from agent_pm.delegate.engine.types import Begun, ConfigError, Preview, Spec
+from agent_pm.delegate.engine.types import Begun, ConfigError, Layout, Preview, Spec
 from agent_pm.session import ConfigError as SessionConfigError
 from agent_pm.session import Mode, NotDisplayable, SessionError
-from agent_pm.utils import Once, answer_keys
+from agent_pm.utils import Once, answer_keys, nested_start
 
 LIST_PARAMS = RunParams(input="", out="/agent-pm-list/work/out.md", workdir="/agent-pm-list/work")
 
@@ -53,8 +54,12 @@ def main(
             help="none: one Record per stdin line",
         )
     prompt = commands.add_parser("prompt", help="write a role's prompt as an instruction file")
-    _common_options(prompt)
+    _common_options(prompt, out="where the prompt is written")
     a = parser.parse_args(argv)
+    starts = a.command == "resume" or (a.command == "run" and not (a.list or a.dry_run))
+    if starts and (refused := nested_start()):
+        say(f"delegate: {refused}")
+        return 2
     if a.command == "run":
         return _run(a, run, argv[1:], delegate_cls, sid=sid, events=events)
     if a.command == "prompt":
@@ -62,21 +67,22 @@ def main(
     return _query(a, delegate_cls, sid)
 
 
-def _common_options(ap: argparse.ArgumentParser) -> None:
+def _common_options(ap: argparse.ArgumentParser, *, out: str) -> None:
     ap.add_argument("--role")
     ap.add_argument("--task")
     ap.add_argument(
         "--input", metavar="TEXT|-", help="the input text, even when it names a file; -: stdin's"
     )
-    ap.add_argument(
-        "--out", action=Once, metavar="PATH|-", help="where the deliverable is written; -: stdout"
-    )
+    ap.add_argument("--out", action=Once, metavar="PATH", help=out)
     ap.add_argument("--workdir", action=Once)
     ap.add_argument("--repo")
 
 
 def _run_options(ap: argparse.ArgumentParser) -> None:
-    _common_options(ap)
+    _common_options(ap, out="where the deliverable is saved; default <workdir>/run/out.md")
+    ap.add_argument(
+        "--cwd", action=Once, metavar="PATH", help="the agent's cwd; default <workdir>/agent"
+    )
     ap.add_argument(
         "--list",
         action="store_true",
@@ -152,7 +158,7 @@ def _run(
     except ConfigError as e:
         say(f"delegate: {e}")
         return 2
-    return report(result, a.out)[0]
+    return report(result, a.out or Layout(a.workdir).out)[0]
 
 
 def _detach(delegate_cls: type[HarnessDelegate], role: str, spec: Spec, placement: dict) -> int:
@@ -178,14 +184,16 @@ def spec_of(a, text: str) -> Spec:
         sid=a.sid,
         resume=a.resume,
         events=a.events,
-        out=None if a.out == "-" else a.out,
+        out=a.out,
         repo=a.repo,
+        cwd=a.cwd,
     )
 
 
 def _check(a: argparse.Namespace) -> None:
-    if None in (a.input, a.out, a.workdir):
-        raise ConfigError("--input, --out and --workdir are required")
+    if None in (a.input, a.workdir):
+        raise ConfigError("--input and --workdir are required")
+    _check_out(a)
     if a.resume and a.sid is None:
         raise ConfigError("--resume needs --sid")
     if a.events is not None and not a.detach:
@@ -194,8 +202,6 @@ def _check(a: argparse.Namespace) -> None:
         raise ConfigError("--on-event needs --detach")
     if a.detach and a.events is None:
         raise ConfigError("--detach needs --events")
-    if a.detach and a.out == "-":
-        raise ConfigError("--detach needs --out PATH")
     if a.detach and a.mode == Mode.IN_PROCESS:
         raise ConfigError("--detach needs --mode headless or tui")
 
@@ -239,6 +245,11 @@ def _shown(preview: Preview, a: argparse.Namespace) -> dict:
     return shown
 
 
+def _check_out(a: argparse.Namespace) -> None:
+    if a.out == "-":
+        raise ConfigError("--out takes a PATH, not -")
+
+
 def _prompt(
     a: argparse.Namespace, ap: argparse.ArgumentParser, delegate_cls: type[HarnessDelegate]
 ) -> int:
@@ -247,8 +258,7 @@ def _prompt(
     try:
         if None in (a.input, a.out, a.workdir):
             raise ConfigError("--input, --out and --workdir are required")
-        if a.out == "-":
-            raise ConfigError("prompt needs --out PATH")
+        _check_out(a)
         spec = Spec(
             sys.stdin.read() if a.input == "-" else a.input,
             a.workdir,

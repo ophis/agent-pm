@@ -11,12 +11,13 @@ from contextlib import redirect_stderr
 from dataclasses import replace
 from unittest import mock
 
-from agent_pm.delegate import ConfigError
+from agent_pm.delegate import ConfigError, Spec
 from agent_pm.delegate.composer import Composer, RunConfig, RunParams, teams
 from agent_pm.delegate.composer.base import TEAM
 from agent_pm.delegate.composer.prompt import RESUME
-from agent_pm.delegate.engine.drivers import AgentDriver
+from agent_pm.delegate.engine.drivers import AgentDriver, InstructionDriver
 from agent_pm.delegate.engine.plan import place, plan
+from agent_pm.delegate.engine.types import Layout
 from agent_pm.delegate.event.reply import OUTCOME, PROGRESS
 from agent_pm.session import Access, RunLog
 
@@ -51,6 +52,7 @@ class Cwd(Base):
         self.trusted, self.other = (os.path.join(self.tmp, d) for d in ("trusted", "other"))
         for d in (self.trusted, self.other):
             os.makedirs(d)
+        self.layout = Layout(self.work)
 
     def placed(self, *trusted, cwd=None, key="", resume=None):
         """(place's (cwd, project), stderr) for researcher with run key cwd `key` and trusted_dirs
@@ -61,7 +63,7 @@ class Cwd(Base):
         with redirect_stderr(err):
             got = place(
                 replace(composition.resolve("researcher"), cwd=key),
-                self.work,
+                self.layout,
                 resume_sid=resume,
                 cwd=cwd,
                 trusted=composition.trusted_dirs(),
@@ -69,13 +71,12 @@ class Cwd(Base):
         return got, err.getvalue()
 
     def write_record(self, *entries):
-        os.makedirs(self.work, exist_ok=True)
-        with open(os.path.join(self.work, "run.jsonl"), "w") as f:
+        os.makedirs(self.layout.run, exist_ok=True)
+        with open(os.path.join(self.layout.run, "run.jsonl"), "w") as f:
             f.writelines(json.dumps({"ts": "t", "kind": "session", **e}) + "\n" for e in entries)
 
-    def test_empty_is_the_callers_current_directory(self):
-        here = os.getcwd()
-        self.assertEqual(self.placed(), ((here, False), ""))
+    def test_empty_is_the_agent_dir_made_later(self):
+        self.assertEqual(self.placed(), ((self.layout.agent, False), ""))
 
     def test_the_run_key_wins_over_the_callers_cwd_and_expands_tilde(self):
         with mock.patch.dict(os.environ, {"HOME": self.tmp}):
@@ -97,13 +98,14 @@ class Cwd(Base):
         self.assertEqual(self.placed(self.trusted, cwd=self.other), ((self.other, False), ""))
         self.assertEqual(self.planned(cwd=self.other)[1], notice(self.other))
 
-    def test_the_workdir_as_cwd_has_no_notice(self):
-        self.assertEqual(self.placed(cwd=self.work), ((self.work, False), ""))
+    def test_the_agent_dir_as_cwd_has_no_notice(self):
+        self.assertEqual(self.placed(cwd=self.layout.agent), ((self.layout.agent, False), ""))
+        self.assertEqual(self.planned()[1], "")
 
     def test_a_trusted_cwd_in_the_workdir_is_refused(self):
-        sub = os.path.join(self.work, "sub")
+        sub = os.path.join(self.layout.agent, "sub")
         os.makedirs(sub)
-        for cwd in (self.work, sub):
+        for cwd in (self.layout.agent, sub):
             with self.subTest(cwd=cwd), self.assertRaises(ConfigError) as cm:
                 self.placed(self.tmp, cwd=cwd)
             self.assertEqual(
@@ -126,8 +128,8 @@ class Cwd(Base):
             self.assertEqual(str(cm.exception), want)
 
     def test_a_resume_runs_in_the_cwd_and_project_of_its_recorded_session(self):
-        os.makedirs(self.work)
-        RunLog(self.work).note(
+        os.makedirs(self.layout.run)
+        RunLog(self.layout.run).note(
             "session",
             sid=SID,
             cwd=self.trusted,
@@ -155,9 +157,10 @@ class Cwd(Base):
             self.placed(self.trusted, resume=SID)
         self.assertEqual(str(cm.exception), f"cwd {self.other} is no longer in trusted_dirs")
 
-    def test_a_resume_without_its_recorded_session_runs_in_the_workdir(self):
+    def test_a_resume_without_its_recorded_session_runs_in_the_agent_dir(self):
+        agent = self.layout.agent
         self.assertEqual(
-            self.placed(self.trusted, cwd=self.trusted, resume=SID), ((self.work, False), "")
+            self.placed(self.trusted, cwd=self.trusted, resume=SID), ((agent, False), "")
         )
         for entries in (
             (),
@@ -169,7 +172,7 @@ class Cwd(Base):
                 self.write_record(*entries)
                 self.assertEqual(
                     self.placed(self.trusted, cwd=self.trusted, resume=SID),
-                    ((self.work, False), ""),
+                    ((agent, False), ""),
                 )
 
     def test_prompt_paths_stay_absolute_whatever_the_cwd_and_an_input_naming_a_file_is_text(self):
@@ -185,12 +188,101 @@ class Cwd(Base):
                 got, _ = self.planned(
                     cwd=cwd, input="work/input.md", workdir="work", out="work/out.md"
                 )
-                self.assertIn(f"\n- `<Workdir>`: `{self.work}`\n", got.prompt)
+                self.assertIn(f"\n- `<Workdir>`: `{self.layout.agent}`\n", got.prompt)
                 self.assertTrue(got.prompt.endswith("\n# Input\n\nwork/input.md\n"))
                 self.assertEqual(
                     (got.session.workdir, got.params.workdir, got.spec.out),
-                    (self.work, self.work, self.out),
+                    (self.layout.run, self.layout.agent, self.out),
                 )
+
+
+class Layouts(Base):
+    """The run's agent dir W/agent, the agent's cwd and write grant, and run dir W/run, the
+    session's workdir.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.agent, self.run_dir = (os.path.join(self.work, d) for d in ("agent", "run"))
+
+    def test_workdir_placeholder_cwd_and_deliverable_are_the_agent_dir(self):
+        keys = {"commands": ["x --dir {{workdir}}/src *"], "gate": ""}
+        got, _ = self.planned(cwd=None, out=None, keys=keys)
+        self.assertIn(f"\n- `<Workdir>`: `{self.agent}`\n", got.prompt)
+        self.assertIn("`<Workdir>/tmp/deliverable.md`", got.prompt)
+        access = got.session.access
+        self.assertEqual(
+            (got.params.workdir, got.params.deliverable, access.cwd, access.commands),
+            (
+                self.agent,
+                os.path.join(self.agent, "tmp", "deliverable.md"),
+                self.agent,
+                (f"x --dir {self.agent}/src *",),
+            ),
+        )
+
+    def test_default_out_is_run_out_md(self):
+        got, _ = self.planned(cwd=None, out=None)
+        out = os.path.join(self.run_dir, "out.md")
+        self.assertEqual((got.spec.out, got.driver_spec.out, got.params.out), (out, out, out))
+        composition = Composer()
+        instruction = plan(
+            composition.resolve("researcher"),
+            Spec("Research X.", self.work, client="fake"),
+            driver=InstructionDriver(),
+            composition=composition,
+        )
+        self.assertEqual(
+            (instruction.spec.out, instruction.driver_spec.out),
+            (None, os.path.join(self.agent, "tmp", "deliverable.md")),
+        )
+
+    def test_access_dirs_never_hold_workdir_or_run_dir(self):
+        other = os.path.join(self.tmp, "other")
+        os.makedirs(other)
+        for kw in (
+            {"cwd": None},
+            {"cwd": other},
+            {"cwd": None, "keys": {"cwd": other}},
+            {"cwd": None, "sid": SID, "resume": True},
+        ):
+            with self.subTest(kw=kw):
+                got, _ = self.planned(**kw)
+                self.assertEqual(got.session.workdir, self.run_dir)
+                dirs = set(map(os.path.realpath, got.session.access.dirs))
+                self.assertEqual(dirs & {self.work, self.run_dir}, set())
+
+    def test_cwd_or_write_dir_overlapping_run_dir_is_refused(self):
+        inside = os.path.join(self.run_dir, "x")
+        for kw, label, path in (
+            ({"cwd": self.work}, "cwd", self.work),
+            ({"cwd": self.run_dir}, "cwd", self.run_dir),
+            ({"cwd": inside}, "cwd", inside),
+            ({"cwd": None, "keys": {"write": [self.work]}}, "write dir", self.work),
+        ):
+            with self.subTest(kw=kw):
+                self.assertEqual(
+                    self.refused(**kw),
+                    f"{label} {path} overlaps the run dir {self.run_dir}: the agent must not "
+                    "write it",
+                )
+                self.assertFalse(os.path.exists(self.work))
+        os.makedirs(self.run_dir)
+        link = os.path.join(self.tmp, "link")
+        os.symlink(self.run_dir, link)
+        self.assertEqual(
+            self.refused(cwd=link),
+            f"cwd {link} overlaps the run dir {self.run_dir}: the agent must not write it",
+        )
+
+    def test_role_cwd_elsewhere_adds_agent_dir(self):
+        elsewhere = os.path.join(self.home, "src", "x")
+        os.makedirs(elsewhere)
+        got, _ = self.planned(cwd=None, keys={"cwd": "~/src/x"})
+        access = got.session.access
+        self.assertEqual(access.cwd, elsewhere)
+        self.assertIn(self.agent, access.dirs)
+        self.assertNotIn(self.run_dir, access.dirs)
 
 
 class Refusals(Base):
@@ -223,17 +315,23 @@ class Refusals(Base):
         self.assertEqual(
             self.refused(keys={"templates": ["nope"]}), "missing file templates/nope.md"
         )
+        other = os.path.join(self.tmp, "other")
+        os.makedirs(other)
         self.assertIn(
             "workdir must be a printable absolute path, got ",
-            self.refused(workdir=self.work + "\n", cwd=self.tmp),
+            self.refused(workdir=self.work + "\n", cwd=other),
         )
 
 
 class Planned(Base):
     KEYS = {"read": ["{{team}}"], "commands": ["x --dir {{workdir}}/src *"]}
 
+    def setUp(self):
+        super().setUp()
+        self.layout = Layout(self.work)
+
     def test_the_access_is_the_intents_with_the_gate_last_and_its_env(self):
-        command, gate = f"x --dir {self.work}/src *", "python3 /u/usage.py *"
+        command, gate = f"x --dir {self.layout.agent}/src *", "python3 /u/usage.py *"
         env = {
             "PYTHONPATH": os.pathsep.join(SRC[name] for name in ("delegate", "session", "utils"))
         }
@@ -249,28 +347,31 @@ class Planned(Base):
                     Access(
                         dirs=(),
                         commands=commands,
-                        cwd=self.work,
+                        cwd=self.layout.agent,
                         project=False,
                         reads=(TASKS, TEAM),
                         env=want,
                     ),
                 )
 
-    def test_the_cwd_unset_is_the_callers_and_the_workdir_an_added_dir(self):
-        got, err = self.planned(keys=self.KEYS, cwd=None)
+    def test_a_cwd_elsewhere_gets_the_agent_dir_added_and_a_notice(self):
+        other = os.path.join(self.tmp, "other")
+        os.makedirs(other)
+        got, err = self.planned(keys=self.KEYS, cwd=other)
         access = got.session.access
         self.assertEqual(
             (access.cwd, access.project, access.dirs, access.reads),
-            (os.getcwd(), False, (self.work,), (TASKS, TEAM)),
+            (other, False, (self.layout.agent,), (TASKS, TEAM)),
         )
-        self.assertEqual(err, notice(os.getcwd()))
+        self.assertEqual(err, notice(other))
 
-    def test_the_spec_holds_the_runs_tier_and_effort_and_the_absolute_workdir(self):
+    def test_the_spec_holds_the_runs_tier_and_effort_and_the_absolute_run_dir(self):
         planned = self.planned(keys={"tier": 4, "effort": "low"})[0]
         spec = planned.session
         self.assertEqual(spec.sid, planned.spec.sid)
         self.assertEqual(
-            (spec.workdir, spec.tier, spec.effort, spec.sid), (self.work, 4, "low", spec.sid)
+            (spec.workdir, spec.tier, spec.effort, spec.sid),
+            (self.layout.run, 4, "low", spec.sid),
         )
 
     def test_a_new_run_gets_a_new_uuid4_sid_unless_given_one_and_a_resume_its_own(self):
@@ -289,14 +390,16 @@ class Planned(Base):
         self.assertFalse(new.startswith(RESUME))
         self.assertEqual(resumed, RESUME + new)
 
-    def test_out_is_absolute_and_without_it_the_prompt_names_the_default_deliverable(self):
+    def test_out_is_absolute_and_outside_the_agent_dir_the_prompt_names_the_default_deliverable(
+        self,
+    ):
+        inside = os.path.join(self.layout.agent, "out.md")
+        got = self.planned(out=os.path.relpath(inside))[0]
+        self.assertEqual(got.spec.out, inside)
+        self.assertIn("`<Workdir>/out.md`", got.prompt)
         got = self.planned()[0]
         self.assertEqual(got.spec.out, self.out)
-        self.assertIn("`<Workdir>/out.md`", got.prompt)
-        got = self.planned(out=None)[0]
-        self.assertIsNone(got.spec.out)
         self.assertIn("`<Workdir>/tmp/deliverable.md`", got.prompt)
-        self.assertEqual(got.params.deliverable, os.path.join(self.work, "tmp", "deliverable.md"))
 
     def test_the_plan_holds_the_run_with_its_task_and_its_params(self):
         got = self.planned()[0]
@@ -305,7 +408,7 @@ class Planned(Base):
         )
         self.assertEqual((got.spec.name, got.spec.events), (None, None))
         self.assertEqual(
-            got.params, RunParams(input="Research X.", out=self.out, workdir=self.work)
+            got.params, RunParams(input="Research X.", out=self.out, workdir=self.layout.agent)
         )
         self.assertEqual(self.planned(task=None)[0].run.task, "")
 
@@ -373,15 +476,15 @@ class TeamDirs(Base):
 
     def test_configured_it_is_the_runs_team_refused_overlapping_the_cwd(self):
         self.assertEqual(
-            self.refused("poet", "verse", cwd=self.tmp),
-            f"team_dirs: {self.team} overlaps the cwd {self.tmp}: the agent run can write there",
+            self.refused("poet", "verse", cwd=self.team),
+            f"team_dirs: {self.team} overlaps the cwd {self.team}: the agent run can write there",
         )
 
     def test_given_as_the_runs_team_it_is_refused_overlapping_the_cwd(self):
         found = teams.team(TEAM, [self.team])
         self.assertEqual(
-            self.refused("poet", "verse", team=found, cwd=self.tmp),
-            f"team_dirs: {self.team} overlaps the cwd {self.tmp}: the agent run can write there",
+            self.refused("poet", "verse", team=found, cwd=self.team),
+            f"team_dirs: {self.team} overlaps the cwd {self.team}: the agent run can write there",
         )
 
 

@@ -142,7 +142,9 @@ class HeadlessSessions(Case):
         )
 
     def inspect(self, sid: str) -> SessionStatus:
-        return self.session_cls.inspect(Spec(workdir=str(self.work), client="codex", sid=sid))
+        return self.session_cls.inspect(
+            Spec(workdir=str(self.work), access=Access(cwd=str(self.work)), client="codex", sid=sid)
+        )
 
     def logged(self):
         return (

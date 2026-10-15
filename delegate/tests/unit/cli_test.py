@@ -18,6 +18,7 @@ from agent_pm.delegate.composer.prompt import RESUME
 from agent_pm.delegate.engine.harness_delegate import HarnessDelegate
 from agent_pm.delegate.engine.runner import STOP_LIMIT
 from agent_pm.delegate.engine.state import RunState
+from agent_pm.delegate.engine.types import Layout
 from agent_pm.session import NotDisplayable, SessionError
 from agent_pm.utils import Record, Status
 
@@ -92,14 +93,31 @@ class Detach(Base):
     def detaches(self, *extra, events=None, **kw):
         return self.runs("--sid", SID, "--detach", "--events", events or self.events, *extra, **kw)
 
+    def test_inside_an_agent_session_a_run_detached_or_not_exits_2_and_constructs_nothing(self):
+        with mock.patch.dict(os.environ, {"AGENT_PM_AGENT_SESSION": "1"}):
+            for code, out, err in (self.detaches(), self.runs("--sid", SID)):
+                self.assertEqual((code, out), (2, ""))
+                self.assertTrue(err.startswith("delegate: refused inside an agent session"), err)
+        self.assertEqual(Detaching.made, [])
+
+    def test_inside_an_agent_session_list_dry_run_and_help_still_run(self):
+        self.detaching = False
+        with mock.patch.dict(os.environ, {"AGENT_PM_AGENT_SESSION": "1"}):
+            self.assertEqual(self.cli("run", "--list")[0], 0)
+            code, _, err = self.runs("--sid", SID, "--dry-run")
+            self.assertEqual(code, 0, err)
+            self.assertEqual(self.cli("--help")[0], 0)
+
     def test_usage_errors_exit_2_and_construct_nothing(self):
         e = self.events
         for argv, out, want in (
             (("--detach",), None, "--detach needs --events"),
             (("--events", e), None, "--events needs --detach"),
             (("--events", e, "--mode", "tui"), None, "--events needs --detach"),
-            (("--detach", "--events", e), "-", "--detach needs --out PATH"),
-            (("--detach", "--events", e, "--dry-run"), "-", "--detach needs --out PATH"),
+            ((), "-", "--out takes a PATH, not -"),
+            (("--dry-run",), "-", "--out takes a PATH, not -"),
+            (("--detach", "--events", e), "-", "--out takes a PATH, not -"),
+            (("--detach", "--events", e, "--dry-run"), "-", "--out takes a PATH, not -"),
             (
                 ("--detach", "--events", e, "--mode", "in_process"),
                 None,
@@ -109,6 +127,33 @@ class Detach(Base):
             with self.subTest(argv=argv, out=out):
                 self.assertEqual(self.runs(*argv, out=out), (2, "", f"delegate: {want}\n"))
         self.assertEqual(Detaching.made, [])
+
+    def test_without_out_the_spec_out_is_none(self):
+        code, out, err = self.cli(
+            "run",
+            "--role",
+            "dummy-tester",
+            "--input",
+            "x",
+            "--workdir",
+            self.work,
+            "--sid",
+            SID,
+            "--detach",
+            "--events",
+            self.events,
+        )
+        self.assertEqual(
+            (code, out, err), (0, RECORD.to_line() + "\n", f"delegate: session {SID}\n")
+        )
+        ((_, spec, _),) = Detaching.made
+        self.assertIsNone(spec.out)
+
+    def test_cwd_is_the_specs_cwd(self):
+        cwd = os.path.join(self.tmp, "elsewhere")
+        self.assertEqual(self.detaches("--cwd", cwd)[0], 0)
+        self.assertEqual(self.detaches()[0], 0)
+        self.assertEqual([spec.cwd for _, spec, _ in Detaching.made], [cwd, None])
 
     def test_split_options_are_gone(self):
         for extra in (("--split", "right"), ("--split-from", "mgr")):
@@ -401,7 +446,7 @@ class DryRun(Base):
                 "mode": "headless",
                 "sid": SID,
                 "resume": False,
-                "cwd": self.tmp,
+                "cwd": Layout(self.work).agent,
                 "project": False,
                 "tier": 3,
                 "effort": "low",
@@ -412,13 +457,11 @@ class DryRun(Base):
         )
         self.assertEqual(
             (shown["dirs"], shown["reads"], shown["commands"]),
-            ([self.work], [os.path.join(TEAM, "tasks")], []),
+            ([], [os.path.join(TEAM, "tasks")], []),
         )
         self.assertIn("**Your task**: `echo` (`<tasks>/echo.md`).", shown["prompt"])
         self.assertTrue(shown["prompt"].endswith("\n# Input\n\nHello.\n"))
-        self.assertEqual(
-            err, f"delegate: cwd {self.tmp} is not in trusted_dirs: its project settings are off\n"
-        )
+        self.assertEqual(err, "")
         self.assertEqual(
             (self.launches(), os.path.exists(self.work), os.listdir(self.agent_pm)), ([], False, [])
         )
@@ -436,7 +479,8 @@ class DryRun(Base):
         code, out, _ = self.runs("--sid", SID, "--resume", "--dry-run")
         shown = json.loads(out)
         self.assertEqual(
-            (code, shown["sid"], shown["resume"], shown["cwd"]), (0, SID, True, self.work)
+            (code, shown["sid"], shown["resume"], shown["cwd"]),
+            (0, SID, True, Layout(self.work).agent),
         )
         self.assertTrue(shown["prompt"].startswith(RESUME))
         self.assertFalse(os.path.exists(self.work))
@@ -501,24 +545,49 @@ class InProcess(Base):
         )
         self.assertEqual([(e["sid"], e["pid"]) for e in self.launches()], [(SID, os.getpid())])
 
+    def test_a_run_without_out_names_its_default_deliverable_file(self):
+        with no_child():
+            code, out, err = self.cli(
+                "run",
+                "--role",
+                "dummy-tester",
+                "--task",
+                "echo",
+                "--input",
+                "Hello.",
+                "--workdir",
+                self.work,
+                "--client",
+                "fake",
+                "--mode",
+                "in_process",
+                "--sid",
+                SID,
+            )
+        self.assertEqual((code, out), (0, ""), err)
+        self.assertIn(f"delegate: deliverable {Layout(self.work).out}\n", err)
+
     def test_a_run_reports_its_deliverable_and_leaves_its_delegate_json(self):
         code, out, err = self.runs("--mode", "in_process", "--sid", SID)
         self.assertEqual((code, out), (0, ""), err)
         self.assertIn(f"delegate: deliverable {self.out}\n", err)
-        with open(os.path.join(self.work, "delegate.json")) as f:
+        with open(RunState(Layout(self.work)).record) as f:
             state = json.load(f)
         self.assertEqual(
             (state["role"], state["attempt"], state["completed"]), ("dummy-tester", 1, True)
         )
         self.assertEqual(
-            sorted(os.listdir(self.work)),
-            ["delegate.json", "out.md", "run.jsonl"],
+            (sorted(os.listdir(self.work)), sorted(os.listdir(Layout(self.work).run))),
+            (
+                ["agent", "out.md", "run"],
+                ["delegate.json", "delegate.lock", "delegate.run.lock", "run.jsonl"],
+            ),
         )
 
     def test_an_answer_while_the_run_is_alive_exits_2_and_starts_nothing(self):
         spec = Spec("Hello.", self.work, task="echo", mode="in_process", client="fake", sid=SID)
         self.delegate_cls()("dummy-tester", spec)
-        with RunState(self.work).run_lock():
+        with RunState(Layout(self.work)).run_lock():
             code, out, err = self.runs("--mode", "in_process", "--sid", SID, "--resume")
         self.assertEqual(
             (code, out, err), (2, "", f"delegate: {self.work}: delegate is still alive\n")
@@ -555,7 +624,8 @@ class InProcess(Base):
         code, out, err = self.runs("--mode", "in_process", client="refusing")
         self.assertEqual((code, out, err.splitlines()[-1]), (2, "", "delegate: refused by check"))
         self.assertEqual(
-            (os.path.exists(os.path.join(self.work, "run.jsonl")), self.launches()), (False, [])
+            (os.path.exists(os.path.join(Layout(self.work).run, "run.jsonl")), self.launches()),
+            (False, []),
         )
 
 
@@ -683,16 +753,16 @@ class Configures(Base):
 
 
 class Usage(Base):
-    def test_a_run_needs_input_out_and_workdir(self):
+    def test_a_run_needs_input_and_workdir(self):
         for argv in (
             ("--out", "o.md"),
-            ("--input", "x", "--workdir", self.work),
+            ("--workdir", self.work),
             ("--input", "x", "--out", "o.md"),
         ):
             with self.subTest(argv=argv):
                 self.assertEqual(
                     self.cli("run", "--role", "dummy-tester", "--client", "fake", *argv),
-                    (2, "", "delegate: --input, --out and --workdir are required\n"),
+                    (2, "", "delegate: --input and --workdir are required\n"),
                 )
         self.assertEqual(self.launches(), [])
 
@@ -819,14 +889,14 @@ class Prompt(Case):
         composition = Composer()
         config = composition.resolve("dummy-tester", "echo")
         expected = composition.render(
-            config, RunParams(input="Hello.\n", out=self.out, workdir=self.work)
+            config, RunParams(input="Hello.\n", out=self.out, workdir=Layout(self.work).agent)
         )
         with mock.patch("subprocess.Popen", side_effect=AssertionError("session started")):
             self.assertEqual(
                 self.prompt(), (0, "", f"delegate: instruction delivered: {self.out}\n")
             )
         self.assertEqual(Path(self.out).read_bytes(), expected.encode("utf-8"))
-        log = Path(self.work, "run.jsonl")
+        log = Path(Layout(self.work).run, "run.jsonl")
         self.assertFalse(log.exists())
 
     def test_runtime_execution_options_are_usage_errors_before_writes(self):
@@ -850,6 +920,16 @@ class Prompt(Case):
         code, out, err = self.prompt("--help")
         self.assertEqual((code, err), (0, ""))
         self.assertNotIn("--list", out)
+        self.assertFalse(os.path.exists(self.work))
+
+    def test_out_dash_is_refused(self):
+        err = io.StringIO()
+        with redirect_stderr(err):
+            code = cli.main(
+                ["prompt", "--role", "dummy-tester", "--input", "x"]
+                + ["--workdir", self.work, "--out", "-"]
+            )
+        self.assertEqual((code, err.getvalue()), (2, "delegate: --out takes a PATH, not -\n"))
         self.assertFalse(os.path.exists(self.work))
 
     def test_hidden_driver_option_is_removed(self):
@@ -1054,6 +1134,14 @@ class Queries(Case):
             self.query("attach-command", "a", a=View("a")),
             (1, "", "delegate: a: no displayable session\n"),
         )
+
+    def test_resume_inside_an_agent_session_exits_2_and_status_still_answers(self):
+        a = View("a")
+        with mock.patch.dict(os.environ, {"AGENT_PM_AGENT_SESSION": "1"}):
+            code, out, err = self.query("resume", "a", a=a)
+            self.assertEqual((code, out), (2, ""))
+            self.assertTrue(err.startswith("delegate: refused inside an agent session"), err)
+            self.assertEqual(self.query("status", "a", a=a)[0], 0)
 
     def test_resume_prints_the_record_line(self):
         self.assertEqual(

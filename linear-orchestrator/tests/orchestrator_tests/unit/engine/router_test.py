@@ -59,6 +59,7 @@ from orchestrator_tests.router_fixtures import (
 from orchestrator_tests.unit.board_ids import HEADER, TASK_GROUP, TEAM
 from orchestrator_tests.unit.board_ids import STATES as IDS_BY_KEY
 from orchestrator_tests.unit.board_ids import role as role_table
+from orchestrator_tests.unit.delegate_fixture import provider
 from orchestrator_tests.unit.outage import FAILURES, FIELDS, failing
 from orchestrator_tests.unit.run_fixtures import (
     ENGINEER,
@@ -952,7 +953,7 @@ class RouterEntry(OuterBase):
             "launch-error TASK-7 error=ConfigError: [hosts] default: want one of pty, tmux",
         )
         self.assertEqual(self.todo["state"], "In Progress")
-        self.assertFalse(os.path.exists(os.path.join(self.rd, "delegate.json")))
+        self.assertFalse(os.path.lexists(self.rd))
 
     def test_a_config_error_exits_1_logged_once_a_day_and_printed_on_a_terminal(self):
         for text, reason in (
@@ -2167,7 +2168,7 @@ class RunLaunching(OuterBase):
     def test_build_detaches_its_linear_run_after_its_start_row(self):
         self.assertEqual(self.outer(), 0)
         self.assertEqual(self.detached(), self.expected())
-        self.assertEqual((len(self.api.detached), os.listdir(self.rd)), (1, []))
+        self.assertEqual((len(self.api.detached), os.path.lexists(self.rd)), (1, False))
         self.assertEqual(self.api.runs_at_detach, [self.raw_runs()])
         self.assertEqual(
             json.loads(self.raw_runs()),
@@ -2251,6 +2252,17 @@ class RunLaunching(OuterBase):
         self.assertEqual(
             [json.loads(line)["kind"] for line in self.raw_runs().splitlines()], ["start", "resume"]
         )
+
+    def test_target_gets_the_runs_delegate_class_and_workdir(self):
+        cfg = self.cfg()
+        changed = replace(
+            cfg,
+            delegate_kind="other",
+            delegates={**cfg.delegates, "other": provider(self.api, cfg)},
+        )
+        with mock.patch.object(self, "cfg", return_value=changed):
+            self.assertEqual(self.outer(mode="resume"), 0)
+        self.assertEqual(self.api.asked, [(changed.delegates["harness"], self.rd)] * 2)
 
     def test_a_status_defect_does_not_become_a_transient_resume(self):
         error = AttributeError("adapter defect")
@@ -2429,22 +2441,6 @@ class RunLaunching(OuterBase):
                 self.assertEqual(self.outer(assignee=RESEARCHER), 3)
                 self.assertEqual(self.said(), [f"transient TASK-7 reason=docs: {reason}"])
         self.assertEqual(self.api.detached, [])
-
-    def test_a_run_dir_that_cannot_be_made_starts_nothing(self):
-        self.write(self.rd, "")
-        self.assertEqual(self.outer(), 1)
-        self.assertEqual(
-            (self.said(), self.err, self.api.detached),
-            (
-                [
-                    (
-                        f"launch-error TASK-7 error=input: FileExistsError: [Errno 17] File exists: '{self.rd}'"
-                    )
-                ],
-                "",
-                [],
-            ),
-        )
 
     def test_a_run_that_cannot_be_built_or_detached_is_a_launch_error(self):
         for attr, error in (
@@ -4177,7 +4173,7 @@ class RecoverWriteBack(TickBase):
         self.lines.append(
             json.dumps(start | {"uuid": self.ISSUE, "project": IDS[DR], "target": None, "key": key})
         )
-        self.workdir = self.cfg().run_dir("TASK-1")
+        self.workdir = self.cfg().issue_workdir("TASK-1")
         os.makedirs(self.workdir)
         self.write(
             os.path.join(self.workdir, "writeback.json"),
@@ -4259,3 +4255,19 @@ class RecoverWriteBack(TickBase):
         self.assertEqual(self.launched_runs(), [("TASK-1", "resume")])
         self.assertEqual(self.steps(), ["comment"])
         self.assertEqual(self.linear.mutations, [])
+
+
+class InsideAnAgentSession(RouterArguments):
+    def test_a_tick_or_an_issue_is_refused_and_help_brake_and_dry_run_still_run(self):
+        refused = "router.py: refused inside an agent session"
+        with mock.patch.dict(os.environ, {"AGENT_PM_AGENT_SESSION": "1"}):
+            for argv in ([], ["--now"], ["--issue", "TASK-1"]):
+                with self.subTest(argv=argv):
+                    rc, err = self.main(argv)
+                    self.assertEqual(rc, 2)
+                    self.assertTrue(err.startswith(refused), err)
+            for argv in (["--brake", "researcher"], ["--dry-run"], ["--bogus"]):
+                with self.subTest(argv=argv), redirect_stdout(io.StringIO()):
+                    self.assertNotIn(refused, self.main(argv)[1])
+            with redirect_stdout(io.StringIO()):
+                self.assertEqual(self.main(["--help"]), (0, ""))

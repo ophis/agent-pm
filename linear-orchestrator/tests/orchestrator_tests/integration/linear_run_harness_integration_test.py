@@ -44,7 +44,7 @@ class HarnessRun(HarnessCase):
 
     def test_real_harness_state_round_trip_owns_both_sessions_and_resumes_once(self):
         issue = "TASK-1"
-        self.work = self.cfg.run_dir(issue)
+        self.work = self.cfg.issue_workdir(issue)
         owner = LinearRun(
             issue,
             "Echo input.",
