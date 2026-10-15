@@ -9,7 +9,6 @@ import os
 import shutil
 import subprocess
 import tempfile
-import time
 import unittest
 
 from agent_pm.utils import Record
@@ -52,8 +51,8 @@ class KeptLaunch(FakeHost):
 class HarnessHosts(Case):
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
         self.dir = os.path.realpath(tmp.name)
-        self.addCleanup(self.remove, tmp)
         self.server = live_tmux.Server(self, self.home)
         self.server.start("mgr")
         self.proj, self.work = (os.path.join(self.dir, d) for d in ("proj", "work"))
@@ -93,37 +92,6 @@ class HarnessHosts(Case):
         )
         self.assertEqual(res.returncode, 0, res.stderr)
         return Record.parse(res.stdout)
-
-    def remove(self, tmp: tempfile.TemporaryDirectory) -> None:
-        """tmp.cleanup(); a failure names the paths left, their mtimes and the processes on tmp."""
-        before = (self.writers(), live_tmux.events(self.events)[-3:])
-        try:
-            tmp.cleanup()
-        except OSError as error:
-            left = []
-            for folder, dirs, files in os.walk(self.dir):
-                for name in dirs + files:
-                    path = os.path.join(folder, name)
-                    try:
-                        left.append(
-                            f"{os.path.relpath(path, self.dir)} @{os.lstat(path).st_mtime:.3f}"
-                        )
-                    except OSError as gone:
-                        left.append(f"{os.path.relpath(path, self.dir)} {gone.strerror}")
-            raise AssertionError(
-                f"{error} at {time.time():.3f}; left {left}; before cleanup: writers, last events"
-                f" {before}; after: writers {self.writers()}"
-            ) from error
-
-    def writers(self) -> list[str]:
-        ps = subprocess.run(
-            ["ps", "-axo", "pid,ppid,pgid,etime,command"], capture_output=True, text=True
-        )
-        return [
-            " ".join(line.split()[:4] + [line[-160:]])
-            for line in ps.stdout.splitlines()
-            if self.dir in line or "supervisor.py" in line or "fake_claude" in line
-        ]
 
     def live(self, name: str) -> bool:
         return self.server.tmux("has-session", "-t", f"={name}").returncode == 0
