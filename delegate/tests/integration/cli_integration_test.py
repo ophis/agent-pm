@@ -108,7 +108,7 @@ class NewRun(Integration):
             self.assertEqual(argv.count(flag), 1, flag)
 
     def test_a_deliverable_file_the_agent_wrote_is_saved_to_out(self):
-        report = os.path.join(self.work, "report.md")
+        report = os.path.join(self.agent, "report.md")
         res = self.drive(
             [
                 mark("start", "echoing"),

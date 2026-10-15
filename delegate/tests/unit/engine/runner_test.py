@@ -11,6 +11,7 @@ from agent_pm.delegate import (
     Begun,
     ConfigError,
     Finished,
+    Layout,
     Limit,
     Progress,
     Result,
@@ -89,6 +90,21 @@ class InProcess(Base):
         self.assertEqual((r.returncode, r.outcome.status, r.error), (0, "done", ""))
         self.assertEqual(self.kinds(), ["session", "input", "progress", "result", "end"])
         self.assertEqual((self.read(self.out), self.launches()[0]["pid"]), ("# Doc\n", os.getpid()))
+
+    def test_a_relative_outcome_file_resolves_in_the_agent_dir(self):
+        self.write(os.path.join(Layout(self.work).agent, "notes", "doc.md"), "# From a file\n")
+        self.write(os.path.join(self.work, "notes", "doc.md"), "# Outside\n")
+        data = {k: v for k, v in DONE.items() if k != "deliverable"}
+        r = self.go(said(START, block(data | {"deliverable_file": "notes/doc.md"})))
+        self.assertEqual((r.outcome.status, r.outcome.deliverable), ("done", "# From a file\n"))
+
+    def test_an_outcome_file_outside_the_agent_dir_is_invalid(self):
+        outside = os.path.join(self.work, "run", "notes.md")
+        self.write(outside, "# Outside\n")
+        data = {k: v for k, v in DONE.items() if k != "deliverable"} | {"deliverable_file": outside}
+        r = self.go(said(START, block(data)), fixes=[said(block(data))])
+        self.assertIsNone(r.outcome)
+        self.assertIn("under the workdir", r.error)
 
     def test_a_raise_is_the_client_exiting_1_its_traceback_on_stderr(self):
         r = self.go(said(START), {"raise": "boom"})

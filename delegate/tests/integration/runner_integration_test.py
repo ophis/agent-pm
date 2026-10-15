@@ -75,7 +75,7 @@ class Callbacks(Base):
         self.assertEqual(r.outcome.status, "done")
 
     def test_a_deliverable_file_is_read_in_and_saved_to_out(self):
-        self.write(os.path.join(self.work, "notes", "doc.md"), "# From a file\n")
+        self.write(os.path.join(Layout(self.work).agent, "notes", "doc.md"), "# From a file\n")
         data = {k: v for k, v in DONE.items() if k != "deliverable"} | {
             "deliverable_file": "notes/doc.md"
         }
