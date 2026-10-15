@@ -32,7 +32,7 @@ Pick the task below that fits the input; unsure → `build` (`<tasks>/build.md`)
   1. Rerun [Engineer › Repo](#repo) step 1, never `git fetch`: on an existing worktree it only fetches `origin/*`.
   2. `git -C <worktree> status` shows uncommitted changes or a merge in progress → first commit the work in progress, or finish that merge by step 3's conflict rule; can't → `needs_input`, `questions` naming the files; stop. Never stash, reset or check out over them.
   3. `git -C <worktree> merge --no-edit origin/<base>`. Conflicts → resolve the simple ones and commit; else `git -C <worktree> merge --abort`, then `needs_input`, `questions` naming the conflicting files; stop.
-  4. Commits merged in → rerun locally only its lint and the unit tests of the projects you changed (as its `CLAUDE.md`, README or CI name them); never run its integration tests or full suites locally: its CI runs them after the push. One failing: during [Engineer › Finish › Done](#finish) → [Engineer › Finish › Failure](#finish); before the build → the failing checks go into the build's requirement; on [Engineer › Repo › Resume](#repo) → into the requirement of the build left, none left → [Engineer › Finish › Failure](#finish).
+  4. Commits merged in → rerun locally only its lint and the unit tests of the projects you changed (as its `CLAUDE.md`, README or CI name them); never run its integration tests or full suites locally: its CI, if any, runs them after the push. One failing: during [Engineer › Finish › Done](#finish) → [Engineer › Finish › Failure](#finish); before the build → the failing checks go into the build's requirement; on [Engineer › Repo › Resume](#repo) → into the requirement of the build left, none left → [Engineer › Finish › Failure](#finish).
 - **Resume**: run [Engineer › Repo](#repo) steps 1–2 again, then [Engineer › Repo › Merge](#repo), then do only what's left, using this session's history (`<tasks>/<task>.md` › Steps › Which build picks the build). Never re-create a branch or PR.
 
 ## Autopilot
@@ -47,8 +47,8 @@ Add verbatim, placeholders filled in:
 ```
 Work only in `<worktree>` on branch `<branch>`, with absolute paths; create no other clone, worktree or branch.
 Commits merged from `origin/<base>` are not this build's work.
-Every local check, in every phase: only lint and the unit tests of the projects you changed; never integration tests or full suites: the verification reviewer runs them, on the PR's CI when the repo has a `pull_request` workflow, else locally.
-Ask for no pull request: the caller opens it.
+Your and your producers' local checks, in every phase: only lint and the unit tests of the projects you changed; never integration tests or full suites: the verification reviewer runs them, on the PR's CI when the repo has a `pull_request` workflow, else locally.
+Ask for no pull request: the caller opens it, onto `<base>`.
 After <your task's push points>, run exactly `git -C <worktree> push -u origin <branch>`.
 ```
 

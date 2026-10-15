@@ -11,7 +11,8 @@ Build the requirement with `/autopilot:light-build`, then open a pull request.
 1. **Read** the input. The user's requirements outrank the requirement, which outranks a PRD.
 2. **Repo** ([Engineer › Repo](#repo)); from status, act on `plan_docs` too.
 3. **Which build:**
-   - A plan doc not at `done` → continue it, adding the user's requirements.
+   - A plan doc not at `done`, no user requirement → continue it, its verbatim input the requirement: autopilot resumes a plan doc only by its `input_sha`.
+   - Else a plan doc not at `done` → set its RESUME `phase=` to `done` (superseded), then build the requirement and the user's requirements.
    - Else a `pr` (a **finished build**) and a user requirement → a new build of the user's requirements. Review input alone never starts one.
    - Else a finished build → `needs_input` asking what next; stop.
    - Else → build the requirement.

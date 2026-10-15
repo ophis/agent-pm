@@ -11,8 +11,9 @@ Build the PRD with `/autopilot:build`, then open a pull request.
 1. **Read** the input and the PRD. The user's requirements outrank the PRD.
 2. **Repo** ([Engineer › Repo](#repo)); from status, act on `plan_docs` too.
 3. **Which build:**
-   - A plan doc not at `done` → continue it, first updating its spec and plan to the user's requirements.
-   - Else a plan doc at `done` (a **finished build**) and a user requirement → a new build, new plan doc. Review input alone never starts one.
+   - A plan doc not at `done`, no user requirement → continue it, its verbatim input the requirement: autopilot resumes a plan doc only by its `input_sha`.
+   - Else a plan doc not at `done` → set its RESUME `phase=` to `done` (superseded), then a new build, new plan doc.
+   - Else a plan doc at `done` or a `pr` (a **finished build**) and a user requirement → a new build, new plan doc. Review input alone never starts one.
    - Else a finished build → `needs_input` asking what next; stop.
    - Else → a first build of the PRD.
 4. **Report progress:**

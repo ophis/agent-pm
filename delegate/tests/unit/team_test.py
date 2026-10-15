@@ -134,10 +134,10 @@ class Shipped(Case):
                 "or branch."
             ),
             "Commits merged from `origin/<base>` are not this build's work.",
-            "Every local check, in every phase: only lint and the unit tests of the projects you changed; never "
-            "integration tests or full suites: the verification reviewer runs them, on the PR's CI when the repo "
-            "has a `pull_request` workflow, else locally.",
-            "Ask for no pull request: the caller opens it.",
+            "Your and your producers' local checks, in every phase: only lint and the unit tests of the projects "
+            "you changed; never integration tests or full suites: the verification reviewer runs them, on the PR's "
+            "CI when the repo has a `pull_request` workflow, else locally.",
+            "Ask for no pull request: the caller opens it, onto `<base>`.",
             "After <your task's push points>, run exactly `git -C <worktree> push -u origin <branch>`.",
         )
         self.assertIn(
@@ -194,11 +194,11 @@ class Shipped(Case):
             catalog()["engineer"]["light-build"],
         )
 
-    def test_builds_continue_a_plan_doc_until_done(self):
+    def test_builds_resume_an_unfinished_plan_doc_by_its_input_or_supersede_it(self):
         for task, finished in (
             (
                 "build",
-                "   - Else a plan doc at `done` (a **finished build**) and a user requirement",
+                "   - Else a plan doc at `done` or a `pr` (a **finished build**) and a user requirement",
             ),
             ("light-build", "   - Else a `pr` (a **finished build**) and a user requirement"),
         ):
@@ -206,7 +206,13 @@ class Shipped(Case):
             self.assertIn(
                 "2. **Repo** ([Engineer › Repo](#repo)); from status, act on `plan_docs` too.", text
             )
-            self.assertIn("   - A plan doc not at `done` → continue it,", text, task)
+            self.assertIn(
+                "\n   - A plan doc not at `done`, no user requirement → continue it, its verbatim input the "
+                "requirement: autopilot resumes a plan doc only by its `input_sha`.\n   - Else a plan doc not at "
+                "`done` → set its RESUME `phase=` to `done` (superseded), then ",
+                text,
+                task,
+            )
             self.assertIn(finished, text, task)
 
     def test_engineer_adopts_the_draft_pr_the_build_opened(self):
