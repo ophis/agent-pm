@@ -240,6 +240,38 @@ Role runs' client flags are `[policy.claude]` and `[policy.codex]` in `delegate/
 flags = ["-s", "workspace-write", "-c", 'approval_policy="on-request"', "-c", 'approvals_reviewer="auto_review"', "-c", "sandbox_workspace_write.network_access=false", "-c", "sandbox_workspace_write.writable_roots=[]"]
 ```
 
+## Switching from v1
+
+v1 is the `v1-runtime` checkout: `core/`, `orchestrator/`, and overrides in `~/.agent-pm/core.local.toml` and `~/.agent-pm/orchestrator.local.toml`. Nothing reads v1's files or state. Do these in order, in the checkout the launchd jobs ran:
+
+1. **Drain the board.** Wait until nothing is In Progress and `tmux ls | grep '^agent-pm-'` prints nothing. v1 runs can't be resumed or written back.
+2. **Stop v1.** Unload its jobs and kill every agent-pm tmux session (v1 tui sessions `<role>-<ID>-<8 hex>` and workers):
+   ```bash
+   for job in router promote; do launchctl bootout gui/$(id -u)/com.ophis.agent-pm.$job; done
+   tmux kill-session -t '=<name>'   # each agent-pm session tmux ls lists
+   ```
+3. **Switch to main:** `git switch main && git pull --ff-only`.
+4. **Update the plugin:** `claude plugin marketplace update agent-pm && claude plugin update agent-pm@agent-pm` (Codex: [Install](#install)), then `ctmux --install`.
+5. **Move the overrides** into `~/.agent-pm/config.local.toml` by the table below, values unchanged, then delete the two v1 files. `bin/agent-pm-linear router --dry-run` must print no `config-error`.
+6. **Do the [Upgrading](#upgrading) rows** that apply. Rotate any real credential ever passed in a Claude run's env: earlier resume commands printed it into `run.jsonl` and session comments.
+7. **Smoke-test.**
+8. launchd stays off until [TASK-379](https://linear.app/ophis-workgroup/issue/TASK-379) reinstalls it after the smoke test.
+
+`show` changed meaning: v1's `""` opened nothing. Now `""` opens a pane and `"none"` opens nothing.
+
+| v1 | `config.local.toml` |
+|---|---|
+| `core.local.toml` `tier`, `effort`, `language`, `cwd`, `show`, `users`, `trusted_dirs`, `team_dirs` | `[delegate]` |
+| `core.local.toml` `status_line`, `workers_per_column`, `grid_retile` | `[session.hosts.tmux]` |
+| `core.local.toml` `[output]`, `[roles.<role>]` | `[delegate.output]`, `[delegate.roles.<role>]` |
+| `core.local.toml` `[clients.claude]` `flags` | `--permission-mode`, `--strict-mcp-config` to `[delegate.policy.claude]`, the rest to `[session.adapters.claude]` |
+| `core.local.toml` `[clients.claude]` `allow`, `env`, `tiers`, `efforts` | `[session.adapters.claude]`, same names |
+| `core.local.toml` `[clients.codex]` `tiers`, `efforts` | `[session.adapters.codex]`, same names |
+| `core.local.toml` `[clients.codex]` `shell_network` | a `[delegate.policy.codex]` flag ([Client policy](#client-policy)) |
+| `core.local.toml` `[clients.skill.…]`, `[clients.<name>]` `implementation` | drop |
+| `orchestrator.local.toml` top-level keys | `[linear_orchestrator]` |
+| `orchestrator.local.toml` `[states]`, `[task_labels]`, `[project_repos]`, `[local_clones]`, `[roles.<role>]`, `[core]` | the same tables under `linear_orchestrator.`; drop a `gate` copied into `[core]` |
+
 ## Upgrading
 
 Nothing migrates automatically. Do each step that applies, once, by hand or through an agent.
