@@ -712,21 +712,26 @@ def _recover(method):
     return translated
 
 
-def _guard_untrusted_project(workdir: str, cwd: str, config_home: str | None = None) -> None:
+def _guard_untrusted_project(
+    workdir: str, cwd: str, config_home: str | None = None, dirs: Sequence[str] = ()
+) -> None:
     real_workdir, real_cwd = os.path.realpath(workdir), os.path.realpath(cwd)
-    if not inside(real_cwd, real_workdir):
-        raise ConfigError(
-            f"untrusted cwd {cwd} is outside the workdir: Codex project settings may load"
-        )
-
     default_home = os.path.abspath(os.path.expanduser("~/.codex"))
     real_default_home = os.path.realpath(default_home)
     config_home = _config_home(cwd, config_home)
     real_config_home = os.path.realpath(config_home)
-    if inside(config_home, workdir) or inside(real_config_home, real_workdir):
+    if any(
+        inside(home, root) or inside(root, home)
+        for home, root in ((config_home, workdir), (real_config_home, real_workdir))
+    ):
         raise ConfigError(
-            f"CODEX_HOME {config_home} is inside the untrusted workdir {workdir}; move Codex config outside the workdir"
+            f"CODEX_HOME {config_home} overlaps the untrusted workdir {workdir}; move Codex config outside the workdir"
         )
+    for root in (cwd, *dirs):
+        if inside(config_home, root) or inside(real_config_home, os.path.realpath(root)):
+            raise ConfigError(
+                f"CODEX_HOME {config_home} is inside writable root {root}; move Codex config outside the writable roots"
+            )
 
     for start in (cwd, real_cwd):
         ancestor = start
@@ -879,7 +884,12 @@ class CodexCommon:
             if session_file(snapshot, state.native_id) is None:
                 raise ConfigError(f"missing Codex session file for native ID {state.native_id}")
             if not snapshot.project:
-                _guard_untrusted_project(state.workdir, snapshot.cwd, snapshot.codex_home)
+                _guard_untrusted_project(
+                    state.workdir,
+                    snapshot.cwd,
+                    snapshot.codex_home,
+                    (*snapshot.dirs, *added_dirs(snapshot.flags, snapshot.cwd)),
+                )
             return state
         refuse(spec.flags)
         explicit = self._explicit_environment(spec)
@@ -889,7 +899,7 @@ class CodexCommon:
         workdir, sid = session_identity(spec.workdir, spec.sid)
         cwd, home, *_ = roots
         if not spec.access.project:
-            _guard_untrusted_project(workdir, cwd, home)
+            _guard_untrusted_project(workdir, cwd, home, roots[2:])
         snapshot = _snapshot(
             {
                 "cwd": cwd,

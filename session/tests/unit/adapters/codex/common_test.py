@@ -388,17 +388,59 @@ class CommonTest(Base):
         self.assertEqual(list(target.iterdir()), [])
 
     def test_untrusted_project_configuration_and_cwd(self):
-        settings = self.cwd / ".codex"
+        agent = self.root / "agent"
+        (agent / "src").mkdir(parents=True)
+        outside = dataclasses.replace(
+            self.spec, access=dataclasses.replace(self.spec.access, cwd=str(agent))
+        )
+        self.assertEqual(self.common.save(self.common.prepare(outside)).snapshot.cwd, str(agent))
+        self.common.bind(str(self.work), self.spec.sid, NATIVE)
+        self.rollout(cwd=str(agent))
+        resumed = dataclasses.replace(outside, resume=True)
+        self.assertEqual(self.common.prepare(resumed).native_id, NATIVE)
+
+        settings = agent / ".codex"
         settings.mkdir()
-        with self.assertRaisesRegex(ConfigError, "project.*settings"):
-            self.prepare()
+        nested = dataclasses.replace(outside, sid="nested", access=Access(cwd=str(agent / "src")))
+        with self.assertRaisesRegex(
+            ConfigError, f"project Codex settings at {re.escape(str(settings))} "
+        ):
+            self.common.prepare(nested)
         settings.rmdir()
-        with self.assertRaisesRegex(ConfigError, "outside"):
-            self.common.save(
-                self.common.prepare(
-                    dataclasses.replace(self.spec, access=Access(cwd=str(self.extra)))
-                )
+
+        added = self.root / "added"
+        added.mkdir()
+        for home, root in (
+            (self.work, f"workdir {self.work}"),
+            (self.root, f"workdir {self.work}"),
+            (agent / "codex", f"writable root {agent}"),
+            (self.extra / "codex", f"writable root {self.extra}"),
+            (added / "codex", f"writable root {added}"),
+        ):
+            spec = dataclasses.replace(
+                outside, sid="home", env={"CODEX_HOME": str(home)}, flags=("--add-dir", str(added))
             )
+            with self.subTest(home=home):
+                with self.assertRaises(ConfigError) as caught:
+                    self.common.prepare(spec)
+                self.assertIn(f"CODEX_HOME {home} ", str(caught.exception))
+                self.assertIn(root, str(caught.exception))
+
+        homes = self.root / "homes"
+        self.codex_home = homes / "codex"
+        state = self.common.load(str(self.work), self.spec.sid)
+        assert state is not None
+        self.edit_record(
+            snapshot=snapshot_data(state.snapshot)
+            | {"codex_home": str(self.codex_home), "flags": ["--add-dir", str(homes)]},
+            writable_roots=[*state.writable_roots, str(homes)],
+        )
+        self.rollout(cwd=str(agent))
+        with self.assertRaisesRegex(
+            ConfigError,
+            f"CODEX_HOME {re.escape(str(self.codex_home))} .*writable root {re.escape(str(homes))}",
+        ):
+            self.common.prepare(resumed)
 
     def test_mapping_keys_and_values_name_the_table(self):
         cases = (
