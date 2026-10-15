@@ -53,17 +53,6 @@ def _installed() -> set[str]:
     return installed & {os.path.realpath(path) for path in sys.path if path}
 
 
-def package_dirs(*packages: ModuleType) -> tuple[str, ...]:
-    """Each package's own resource directory, independent of its shared import root."""
-    found = []
-    for package in packages:
-        path = package.__file__
-        if path is None:
-            raise ValueError(f"{package.__name__}: package has no source file")
-        found.append(os.path.realpath(os.path.dirname(path)))
-    return tuple(dict.fromkeys(found))
-
-
 def overlaps(a: str, b: str) -> bool:
     """Real paths overlap when equal or either contains the other, including missing suffixes.
 

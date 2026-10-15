@@ -15,7 +15,6 @@ from agent_pm.utils.paths import (
     import_env,
     module_roots,
     overlaps,
-    package_dirs,
     printable_abs,
     real_dirs,
     source_path,
@@ -150,30 +149,6 @@ class ModuleRootsTest(Case):
         package.__file__ = None
         with self.assertRaisesRegex(ValueError, "package has no source file"):
             module_roots(package)
-
-
-class PackageDirectories(Case):
-    def test_installed_packages_protect_only_their_own_directories(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            site = os.path.realpath(temporary)
-            session = ModuleType("agent_pm.session")
-            session.__file__ = os.path.join(site, "agent_pm", "session", "__init__.py")
-            utils = ModuleType("agent_pm.utils")
-            utils.__file__ = os.path.join(site, "agent_pm", "utils", "__init__.py")
-            self.assertEqual(
-                package_dirs(session, utils, session),
-                (
-                    os.path.join(site, "agent_pm", "session"),
-                    os.path.join(site, "agent_pm", "utils"),
-                ),
-            )
-            self.assertEqual(module_roots(session, utils), (site,))
-
-    def test_namespace_packages_without_a_file_are_rejected(self):
-        package = ModuleType("namespace")
-        package.__file__ = None
-        with self.assertRaisesRegex(ValueError, "package has no source file"):
-            package_dirs(package)
 
 
 class Overlaps(Case):
