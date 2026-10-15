@@ -116,6 +116,7 @@ class JsonHeadless(Headless):
 class Tui(ABC):
     hooks: Mapping[str, HookKind] = MappingProxyType({})  # hook label → its kind
     dialogs: tuple[str, ...] = ()
+    opening: tuple[str, str] | None = None  # (hook label, text) sent once
     client = ""  # last ClientBound's id
 
     @abstractmethod

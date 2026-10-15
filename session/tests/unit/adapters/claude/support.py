@@ -254,6 +254,7 @@ TUI_HOOKS = {
     "Notification": [{"matcher": MATCHER, **entry("Notification")}],
     "PostToolUse": [entry("PostToolUse")],
     "UserPromptSubmit": [entry("UserPromptSubmit")],
+    "SessionStart": [{"matcher": "^(startup|resume)$", **entry("SessionStart")}],
 }
 
 TUI_SETTINGS = json.dumps({"hooks": TUI_HOOKS})

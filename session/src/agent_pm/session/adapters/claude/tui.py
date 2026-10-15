@@ -74,7 +74,9 @@ class ClaudeTui(Tui):
         "^(permission_prompt|elicitation_dialog|elicitation_url_dialog|agent_needs_input"
         "|quota_auto_resume_stale)$"
     )
+    START, START_MATCHER = "SessionStart", "^(startup|resume)$"
     dialogs = ("Quick safety check",)
+    opening = (START, "/color")
 
     def __init__(self, common: ClaudeCommon):
         self.common = common
@@ -87,14 +89,15 @@ class ClaudeTui(Tui):
     def launch(self, spec: Spec, hook):
         common = self.common
         self.sid, self.spec = spec.sid or "", spec
+        matchers = {"Notification": self.MATCHER, "SessionStart": self.START_MATCHER}
         hooks = {
             label: [
                 {
-                    **({"matcher": self.MATCHER} if label == "Notification" else {}),
+                    **({"matcher": matchers[label]} if label in matchers else {}),
                     "hooks": [{"type": "command", "command": shlex.join((*hook, label))}],
                 }
             ]
-            for label in self.hooks
+            for label in (*self.hooks, self.START)
         }
         tail = ("--", spec.prompt) if spec.prompt else ()
         launch = common.launch(spec, hooks, tail=tail)

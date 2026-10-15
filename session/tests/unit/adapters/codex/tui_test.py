@@ -505,6 +505,9 @@ class TuiTest(Base):
         screen = "■ You hit your spend cap set by the owner\n  of your workspace. Try again at Jan\n  2nd, 2027 3:04 AM.\n› "
         self.assertEqual(adapter.tui().limit(screen), LimitHit(stamp))
 
+    def test_codex_has_no_opening(self):
+        self.assertIsNone(self.adapter.tui().opening)
+
     def test_dialogs_preserve_main_worker_cases(self):
         self.assertIn("Trust this folder?", self.adapter.tui().dialogs)
         self.assertIn("Hooks need review", self.adapter.tui().dialogs)
