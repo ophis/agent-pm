@@ -94,7 +94,9 @@ class ExplicitKeys(Sample):
         root = self.tree(
             {
                 SESSION_SRC + "config.toml": "[hosts.tmux]\nstatus_line = false\n",
-                "delegate/config.toml": "# local: [session.hosts.tmux]\n# local: status_line = true\n",
+                "delegate/src/agent_pm/delegate/config.toml": (
+                    "# local: [session.hosts.tmux]\n# local: status_line = true\n"
+                ),
             }
         )
         self.assertEqual(configuration.explicit_keys(root), [])
@@ -142,22 +144,32 @@ class ExplicitKeys(Sample):
     def test_a_commented_only_key_is_refused(self):
         root = self.tree(
             {
-                "session/config.toml": (
+                SESSION_SRC + "config.toml": (
                     "[hosts.tmux]\nx = 1\n# local: [hosts.tmux]\n# local: status_line = true\n"
                 ),
                 "delegate/src/agent_pm/delegate/config.toml": (
                     '# local: team_dirs = ["~/t"]\n[roles.a]\nt = 1\n# local: [roles.a]\n# local: [roles.a.deep]\n# local: y = 2\n'
                 ),
-                "manager/config.toml": "# local: [bad\n",
+                f"{ORCH_PROJECT}/{OPKG}/config.toml": "# local: [bad\n",
             }
         )
+        bad = f"{ORCH_PROJECT}/{OPKG}/config.toml: "
         found = configuration.explicit_keys(root)
         self.assertEqual(
-            [f for f in found if not f.startswith("manager/")],
+            [f for f in found if not f.startswith(bad)],
             [
                 "delegate/src/agent_pm/delegate/config.toml: `# local:` key roles.a.deep.y has no real line",
                 "delegate/src/agent_pm/delegate/config.toml: `# local:` key team_dirs has no real line",
-                "session/config.toml: `# local:` key hosts.tmux.status_line has no real line",
+                SESSION_SRC + "config.toml: `# local:` key hosts.tmux.status_line has no real line",
             ],
         )
-        self.assertEqual(len([f for f in found if f.startswith("manager/config.toml: ")]), 1)
+        self.assertEqual(len([f for f in found if f.startswith(bad)]), 1)
+
+    def test_a_project_root_config_toml_is_not_read(self):
+        root = self.tree(
+            {
+                SESSION_SRC + "config.toml": "[hosts.tmux]\nstatus_line = false\n",
+                "session/config.toml": "# local: [hosts.tmux]\n# local: typo = 1\n[bad\n",
+            }
+        )
+        self.assertEqual(configuration.explicit_keys(root), [])

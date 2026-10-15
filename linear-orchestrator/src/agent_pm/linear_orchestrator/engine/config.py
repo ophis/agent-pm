@@ -2,13 +2,9 @@
 
 import os
 import re
-import shlex
-import site
 import subprocess
 import sys
-import sysconfig
 from types import MappingProxyType
-from typing import Any
 
 import agent_pm.utils as utils
 from agent_pm import delegate
@@ -92,7 +88,6 @@ def load(*, path: str | None = None) -> Config:
         raise ConfigError(f"linear-orchestrator/config.toml: {e}") from None
     work = _work_dir(cfg)
     try:
-        cfg = _fill_paths(cfg)
         _load_config(cfg, LOCAL)
         return _load(cfg, work)
     except ConfigError as e:
@@ -157,22 +152,6 @@ def clone_error(clone, slug, *, run=None):
     if found.host != "github.com" or f"{found.owner}/{found.name}".lower() != slug.lower():
         return f"origin is {found.slug}, not github.com/{slug}"
     return None
-
-
-def pythonpath() -> str:
-    installed = {
-        os.path.realpath(value)
-        for value in (
-            sysconfig.get_paths()["purelib"],
-            sysconfig.get_paths()["platlib"],
-            site.getusersitepackages(),
-            *site.getsitepackages(),
-        )
-    }
-    roots = (*utils.module_roots(types), *delegate.module_roots())
-    return os.pathsep.join(
-        dict.fromkeys(root for root in roots if root and os.path.realpath(root) not in installed)
-    )
 
 
 def _work_dir(cfg, clones=None):
@@ -379,23 +358,6 @@ def _task_labels(cfg):
                 f"linear-orchestrator/config.toml: task_labels.{seen[v]} and task_labels.{k} have the same label id {v}"
             )
         seen[v] = k
-
-
-def _fill_paths(value: Any) -> Any:
-    if isinstance(value, str):
-        if "{{root}}" in value:
-            raise ConfigError(
-                "linear-orchestrator/config.toml: {{root}} is no longer supported; use an explicit path, or {{pythonpath}} for Python imports"
-            )
-        if "{{pythonpath}}" in value:
-            roots = shlex.quote(pythonpath())
-            value = value.replace("{{pythonpath}}", roots)
-        return value
-    if isinstance(value, dict):
-        return {k: _fill_paths(v) for k, v in value.items()}
-    if isinstance(value, list):
-        return [_fill_paths(v) for v in value]
-    return value
 
 
 def _runnable(cfg, work, delegate_cls):

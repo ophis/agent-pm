@@ -94,12 +94,7 @@ def read_resources(
         known[section] = (default, configs[section])
     if paths and (extra := paths.keys() - {p for p, _ in resources}):
         raise ConfigFileError(f"config path override has no resource: {min(extra)!r}")
-    return _layered({"utils": {}, **configs}, {"utils": ({}, {}), **known}, local=local)
-
-
-def _layered(
-    configs: Mapping[str, dict], known: Mapping[str, tuple[dict, dict]], *, local: str
-) -> dict:
+    configs, known = {"utils": {}, **configs}, {"utils": ({}, {}), **known}
     found = _load(os.path.expanduser(local))
     for section in configs:
         if section in found and not isinstance(found[section], dict):
