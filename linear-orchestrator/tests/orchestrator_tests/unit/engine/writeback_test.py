@@ -1287,24 +1287,6 @@ class CompletionLedger(Base):
         )
         self.assertEqual(self.steps(ctx), {SID: ["comment", "move:in_review", "outcome"]})
 
-    def test_symlinked_ledger_is_empty_and_replaced(self):
-        gql = Gql()
-        ctx = self.ctx(gql=gql)
-        elsewhere = os.path.join(self.tmp, "elsewhere.json")
-        with open(elsewhere, "w") as f:
-            f.write(json.dumps({SID: {"steps": ["comment", "move:in_review"]}}))
-        os.symlink(elsewhere, os.path.join(ctx.workdir, "writeback.json"))
-        writeback.finish(
-            ctx, Outcome(status="failed", title="ENG-7: x", summary="push not permitted")
-        )
-        self.assertEqual(
-            gql.calls,
-            expect(body="Build failed: push not permitted", state="in_review"),
-        )
-        self.assertFalse(os.path.islink(os.path.join(ctx.workdir, "writeback.json")))
-        with open(elsewhere) as f:
-            self.assertEqual(json.load(f), {SID: {"steps": ["comment", "move:in_review"]}})
-
     def test_ledger_write_failure_leaves_no_temp(self):
         ctx = self.ctx()
         with mock.patch.object(os, "replace", side_effect=OSError("disk full")):

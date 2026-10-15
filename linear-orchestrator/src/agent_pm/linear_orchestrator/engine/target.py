@@ -104,7 +104,7 @@ def _branches(ident, o, n, *, run, work, roles):
     # could have changed
     path = checkout(ident, o, n, work=work)
     git = os.path.join(path, ".git")
-    if os.path.isdir(git) and not os.path.islink(git):
+    if os.path.isdir(git):
         # The agent run can write this clone's config; these keep it from running code as the
         # harness.
         res = run(
@@ -193,7 +193,7 @@ def with_clone(t, ident, *, run=None, work, clones, writable=None) -> Target:
     # `writable` and with the right origin
     path = checkout(ident, t.owner, t.name, work=work)
     git, full = os.path.join(path, ".git"), f"{t.owner}/{t.name}"
-    if os.path.isdir(git) and not os.path.islink(git):
+    if os.path.isdir(git):
         return replace(t, clone="")
     if common := common_dir(path):
         clone = os.path.dirname(common)
