@@ -23,12 +23,8 @@ def on_hook(word: str, call: HookCall) -> None:
         info = os.stat(executable)
     except OSError as error:
         raise HookError(f"tmux {executable}: {error.strerror}") from None
-    if (
-        not stat.S_ISREG(info.st_mode)
-        or info.st_uid not in (0, os.getuid())
-        or not os.access(executable, os.X_OK)
-    ):
-        raise HookError(f"tmux {executable}: not a regular executable file owned by you or root")
+    if not stat.S_ISREG(info.st_mode) or not os.access(executable, os.X_OK):
+        raise HookError(f"tmux {executable}: not a regular executable file")
     target, generation = saved.get("target"), saved.get("generation")
     if not isinstance(target, str) or not transport.NAME.fullmatch(target):
         raise HookError("host state: bad target")
@@ -108,11 +104,10 @@ def mark(
         raise TuiError(f"tmux session {session!r}: want [A-Za-z0-9_-]+")
     try:
         # O_NONBLOCK: a FIFO without a reader fails instead of hanging the hook
-        fd = os.open(events, os.O_WRONLY | os.O_APPEND | os.O_NOFOLLOW | os.O_NONBLOCK)
+        fd = os.open(events, os.O_WRONLY | os.O_APPEND | os.O_NONBLOCK)
         try:
-            st = os.fstat(fd)
-            if not stat.S_ISREG(st.st_mode) or st.st_uid != os.getuid():
-                raise TuiError(f"events file {events}: not a regular file owned by you")
+            if not stat.S_ISREG(os.fstat(fd).st_mode):
+                raise TuiError(f"events file {events}: not a regular file")
             os.write(fd, (SessionStatusLog.line(session, word) + "\n").encode())
         finally:
             os.close(fd)

@@ -240,7 +240,7 @@ def validate_events(path: str) -> str:
     if "#" in path or path.endswith(";"):
         raise TuiError(f"events file {path}: tmux would misread it")
     try:
-        info = os.lstat(path)
+        info = os.stat(path)
     except FileNotFoundError:
         parent = os.path.dirname(path)
         if not os.path.isdir(parent):
@@ -252,10 +252,8 @@ def validate_events(path: str) -> str:
     else:
         if stat.S_ISDIR(info.st_mode):
             raise TuiError(f"events file {path}: {os.strerror(errno.EISDIR)}")
-        if stat.S_ISLNK(info.st_mode):
-            raise TuiError(f"events file {path}: Too many levels of symbolic links")
-        if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid():
-            raise TuiError(f"events file {path}: not a regular file owned by you")
+        if not stat.S_ISREG(info.st_mode):
+            raise TuiError(f"events file {path}: not a regular file")
         if not os.access(path, os.W_OK):
             raise TuiError(f"events file {path}: Permission denied")
     return path
@@ -275,17 +273,15 @@ def events_file(path: str) -> str:
     """
     path = validate_events(path)
     try:
-        fd = os.open(
-            path, os.O_WRONLY | os.O_CREAT | os.O_APPEND | os.O_NOFOLLOW | os.O_NONBLOCK, 0o600
-        )
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND | os.O_NONBLOCK, 0o600)
         try:
             st = os.fstat(fd)
         finally:
             os.close(fd)
     except OSError as e:
         raise TuiError(f"events file {path}: {e.strerror}") from e
-    if not stat.S_ISREG(st.st_mode) or st.st_uid != os.getuid():
-        raise TuiError(f"events file {path}: not a regular file owned by you")
+    if not stat.S_ISREG(st.st_mode):
+        raise TuiError(f"events file {path}: not a regular file")
     return path
 
 
@@ -1150,8 +1146,8 @@ class TmuxHost(Host, Displayable):
         return sorted(found)
 
     def reclaim(self, token: str) -> TmuxGroup | None:
-        """A group-only handle on token's controller (a private apm-group-* directory and
-        socket of this user's) while its group lives; else None; SessionError if it cannot tell.
+        """A group-only handle on token's controller (an apm-group-* directory and its socket)
+        while its group lives; else None; SessionError if it cannot tell.
         """
         if not isinstance(token, str):
             return None

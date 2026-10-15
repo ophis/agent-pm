@@ -1089,21 +1089,11 @@ class UsageTest(Base):
         self.assertEqual(found, Usage(Window(42.5, None), None))
         self.assertEqual(probe.call_args.kwargs["cwd"], self.probe_dir)
 
-    def test_a_symlink_or_non_directory_at_the_probe_dir_is_none_and_runs_nothing(self):
-        target = os.path.join(self.dir, "target")
-        os.mkdir(target)
-        for kind, make in (
-            ("symlink", lambda: os.symlink(target, self.probe_dir)),
-            ("file", lambda: open(self.probe_dir, "w").close()),
-        ):
-            with self.subTest(kind=kind):
-                make()
-                try:
-                    found, probe = self.usage()
-                finally:
-                    os.remove(self.probe_dir)
-                self.assertIsNone(found)
-                probe.assert_not_called()
+    def test_a_file_at_the_probe_dir_is_none_and_runs_nothing(self):
+        open(self.probe_dir, "w").close()
+        found, probe = self.usage()
+        self.assertIsNone(found)
+        probe.assert_not_called()
 
     def test_the_probe_gets_the_child_environment_in_launch_cwd(self):
         cwd = os.path.join(self.dir, "cwd")

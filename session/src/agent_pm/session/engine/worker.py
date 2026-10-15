@@ -10,7 +10,6 @@ import contextlib
 import json
 import os
 import re
-import stat
 import sys
 import time
 from collections.abc import Callable, Iterator, Mapping
@@ -161,9 +160,6 @@ def _detail(error: SessionError | OSError) -> object:
 
 def _private_dir(path: str) -> None:
     os.makedirs(path, 0o700, exist_ok=True)
-    found = os.lstat(path)
-    if not stat.S_ISDIR(found.st_mode) or found.st_uid != os.getuid():
-        raise SessionError(f"{path}: not a directory of yours")
     os.chmod(path, 0o700)
 
 

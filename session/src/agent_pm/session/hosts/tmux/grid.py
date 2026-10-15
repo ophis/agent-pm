@@ -347,15 +347,12 @@ def _grid_lock(socket: str, window: str, *, wait: bool):
         raise TuiError(f"grid {window}: socket path {socket!r}: want an absolute path")
     path = f"{socket}-{window[1:]}.lock"
     try:
-        fd = os.open(
-            path, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC, 0o600
-        )
+        fd = os.open(path, os.O_RDWR | os.O_CREAT | os.O_NONBLOCK | os.O_CLOEXEC, 0o600)
     except OSError as e:
         raise TuiError(f"grid lock {path}: {e.strerror}") from e
     try:
-        info = os.fstat(fd)
-        if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid():
-            raise TuiError(f"grid lock {path}: not a regular file owned by you")
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            raise TuiError(f"grid lock {path}: not a regular file")
         end = time.monotonic() + TILE_WAIT
         while True:
             try:

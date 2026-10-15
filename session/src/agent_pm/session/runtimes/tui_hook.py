@@ -155,7 +155,7 @@ def read_payload(stream) -> dict:
 
 
 def read_state(path: str, *, error: type[Exception] | None = None) -> dict:
-    """session.json: a regular file (never followed), at most STATE_MAX bytes, its fields passing
+    """session.json: a regular file, at most STATE_MAX bytes, its fields passing
     SESSION_STATE; else `error`.
     """
     error = HookError if error is None else error
@@ -167,7 +167,7 @@ def read_state(path: str, *, error: type[Exception] | None = None) -> dict:
 
 def _read_state(path, error):
     try:
-        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK)
         try:
             if not stat.S_ISREG(
                 os.fstat(fd).st_mode
@@ -227,11 +227,11 @@ def _check_module(name: str, search: list[str], roots: list[str], kind: str, err
             ):
                 raise error(f"{kind} {name}: module outside source roots")
             try:
-                info = os.lstat(spec.origin)
+                info = os.stat(spec.origin)
             except OSError as failure:
                 raise error(f"{kind} {name}: {failure.strerror}") from failure
-            if not stat.S_ISREG(info.st_mode) or info.st_uid not in (0, os.getuid()):
-                raise error(f"{kind} {name}: not a regular file owned by you or root")
+            if not stat.S_ISREG(info.st_mode):
+                raise error(f"{kind} {name}: not a regular file")
         paths = list(spec.submodule_search_locations or ())
         specs.append(spec)
     return specs
@@ -286,13 +286,11 @@ def cut(value):
 
 
 def append(path: str, record: dict) -> None:
-    """One write under an exclusive flock to a regular file, created 0600, never followed."""
+    """One write under an exclusive flock to a regular file, created 0600."""
     line = (json.dumps(record) + "\n").encode()
     try:
         # O_NONBLOCK: a FIFO put there fails instead of hanging the hook
-        fd = os.open(
-            path, os.O_WRONLY | os.O_APPEND | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK, 0o600
-        )
+        fd = os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT | os.O_NONBLOCK, 0o600)
         try:
             if not stat.S_ISREG(os.fstat(fd).st_mode):
                 raise HookError(f"{path}: not a regular file")

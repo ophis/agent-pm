@@ -1,5 +1,5 @@
-"""Worker state on the real filesystem: private modes, and a state file or pointer that is a
-symlink, FIFO, directory, oversize or a link to someone else's file is refused promptly.
+"""Worker state on the real filesystem: private modes, and a state file that is a FIFO,
+directory or oversize, or a pointer that holds no sid, is refused promptly.
 """
 
 import os
@@ -54,20 +54,6 @@ class StateFileTest(Case):
         self.write(self.pointer, "../../x\n")
         with self.assertRaisesRegex(SessionError, "holds no session id"):
             Worker.load("w1")
-
-    def test_a_workers_directory_that_is_a_symlink_is_refused_before_any_lock(self):
-        other = WorkerState(
-            name="w2", sid=SID.replace("0", "1", 1), client="claude", cwd="/w", host="tmux"
-        )
-        target = os.path.join(self.home, "target")
-        os.mkdir(target, 0o700)
-        os.symlink(target, other.workdir())
-        with (
-            self.assertRaisesRegex(SessionError, "not a directory of yours"),
-            Worker(other).locked(),
-        ):
-            self.fail("locked")
-        self.assertEqual(os.listdir(target), [])
 
     @staticmethod
     def write(path: str, text: str) -> None:
