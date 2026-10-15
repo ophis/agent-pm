@@ -117,7 +117,10 @@ class Run(TmuxFlow):
         for _, _, v, _ in self.wrote(since):
             if v.get("c") == SESSION and "b" in v and v["b"] not in bodies[-1:]:
                 bodies.append(v["b"])
-        command = re.escape(f"\n\n```\ncd {shlex.quote(self.rd)} && claude --resume {SID}\n```")
+        cwd = re.escape(shlex.quote(self.rd))
+        command = (
+            rf"\n\n```\ncd {cwd} && agent-pm-session client-resume claude \S+ {cwd} {SID}\n```"
+        )
         self.assertEqual(len(bodies), len(lines), bodies)
         for body, line in zip(bodies, lines, strict=True):
             self.assertRegex(body, rf"\ARun {SID} · {line}{command}\Z")

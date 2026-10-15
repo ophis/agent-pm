@@ -263,6 +263,16 @@ NAME = "w-1"
 WANT_SETTINGS = "want a JSON object with a list of hooks per event"
 
 
+def store() -> str:
+    return os.path.join(os.path.realpath(os.path.expanduser("~")), ".agent-pm/sessions/claude")
+
+
+def reference(cwd: str, sid: str = SID) -> str:
+    """ClaudeCommon.resume's text: no env value, only where its launch state is."""
+    q = shlex.quote
+    return f"cd {q(cwd)} && agent-pm-session client-resume claude {q(store())} {q(cwd)} {sid}"
+
+
 def tui_launch(work, prompt="hi", config=CONFIG, *, resume=False, **spec) -> Launch:
     spec = Spec(**{"workdir": work, "sid": SID, "prompt": prompt, "resume": resume, **spec})
     return ClaudeAdapter(config).tui().launch(spec, HOOK)

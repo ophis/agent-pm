@@ -1,7 +1,6 @@
 """Claude claude behavior."""
 
 import os
-import shlex
 
 from agent_pm.session.adapters.claude import ClaudeAdapter
 from agent_pm.session.adapters.claude.common import ClaudeCommon as UnconfiguredCommon
@@ -30,6 +29,7 @@ from session.tests.unit.adapters.claude.support import (
     ClaudeCommon,
     Spec,
     event,
+    reference,
 )
 
 
@@ -153,7 +153,7 @@ class AdapterTest(Base):
             SessionStatus(
                 "yes",
                 os.stat(path).st_mtime,
-                f"cd {shlex.quote(self.work)} && claude --resume {SID}",
+                reference(self.work),
             ),
         )
 
@@ -172,7 +172,7 @@ class AdapterTest(Base):
             ClaudeAdapter({}).session_status(
                 SessionInfo(sid=SID, cwd=self.work, project=False, transcript="", resume="")
             ),
-            SessionStatus("no", None, f"cd {shlex.quote(self.work)} && claude --resume {SID}"),
+            SessionStatus("no", None, reference(self.work)),
         )
         self.assertEqual(
             ClaudeAdapter({}).session_status(

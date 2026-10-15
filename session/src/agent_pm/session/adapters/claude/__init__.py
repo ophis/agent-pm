@@ -57,6 +57,9 @@ class ClaudeAdapter(Adapter):
     def usage(self, output):
         return self.common.parse_usage(output)
 
+    def resume_main(self, argv):
+        return self.common.resume_main(argv)
+
     def session_status(self, info: SessionInfo, *, env: Mapping[str, str] = MappingProxyType({})):
         return self.common.session_status(info.sid, info.cwd, transcript=info.transcript, env=env)
 

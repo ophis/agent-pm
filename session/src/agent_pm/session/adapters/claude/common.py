@@ -1,16 +1,19 @@
 """Claude Code client options, Access grants, launch metadata, usage and session inspection."""
 
 import contextlib
+import hashlib
 import json
 import os
 import re
 import stat
+import sys
 from collections.abc import Iterator, Mapping
 from types import MappingProxyType
 
 from agent_pm.session.adapters import common
 from agent_pm.session.adapters.common import UUID, scan
 from agent_pm.session.engine.types import (
+    COMMAND,
     ConfigError,
     Effort,
     Launch,
@@ -20,10 +23,22 @@ from agent_pm.session.engine.types import (
     Usage,
     Window,
 )
-from agent_pm.utils import LOCAL_ENV_VARS, json_records, number, printable_abs, resume_command
+from agent_pm.utils import (
+    LOCAL_ENV_VARS,
+    STATE,
+    environment_ok,
+    json_records,
+    number,
+    printable_abs,
+    resume_command,
+    save,
+)
 
 TABLE = "[adapters.claude]"
 NOT_LITERAL = "*?[]{}()\\,"
+STORE = f"{STATE}/sessions/claude"  # under HOME, resolved per call
+STATE_KEYS = frozenset({"version", "cwd", "sid", "dirs", "env"})
+STATE_MAX = 64 * 1024
 
 
 def added_dirs(flags: tuple[str, ...]) -> Iterator[str]:
@@ -88,6 +103,47 @@ def _read_dir(path: str) -> str:
 def _read_rules(reads: tuple[str, ...]) -> tuple[str, ...]:
     dirs = (d for read in reads for d in (_read_dir(read), _read_dir(os.path.realpath(read))))
     return tuple(dict.fromkeys(f"Read(/{d.rstrip('/')}/**)" for d in dirs))
+
+
+def _state_path(store: str, cwd: str, sid: str) -> str:
+    key = hashlib.sha256(f"{os.path.realpath(cwd)}\0{sid}".encode()).hexdigest()
+    return os.path.join(store, f"{key}.json")
+
+
+def _load(store: str, cwd: str, sid: str) -> dict:
+    if not os.path.isabs(store):
+        raise ConfigError("the store must be an absolute path")
+    path = _state_path(store, cwd, sid)
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    except FileNotFoundError:
+        raise ConfigError(f"no resume state for session {sid}") from None
+    with os.fdopen(fd, "rb") as f:
+        found = os.fstat(f.fileno())
+        if not (
+            stat.S_ISREG(found.st_mode)
+            and found.st_uid == os.getuid()
+            and stat.S_IMODE(found.st_mode) == 0o600
+        ):
+            raise ConfigError(f"{path}: not a private file of yours")
+        data = f.read(STATE_MAX + 1)
+    try:
+        state = json.loads(data)
+    except (ValueError, RecursionError):
+        state = None
+    if not (
+        isinstance(state, dict)
+        and frozenset(state) == STATE_KEYS
+        and state["version"] == 1
+        and state["sid"] == sid
+        and isinstance(state["cwd"], str)
+        and os.path.realpath(state["cwd"]) == os.path.realpath(cwd)
+        and _strings(state["dirs"])
+        and isinstance(state["env"], dict)
+        and environment_ok(state["env"])
+    ):
+        raise ConfigError(f"{path}: bad resume state")
+    return state
 
 
 CHECKS = (
@@ -175,20 +231,54 @@ class ClaudeCommon:
         project = re.sub(r"[^A-Za-z0-9]", "-", os.path.realpath(cwd))
         return os.path.join(self.config_dir(env), "projects", project, f"{sid}.jsonl")
 
-    def resume(
-        self,
-        cwd: str,
-        sid: str,
-        dirs: tuple[str, ...] = (),
-        env: Mapping[str, str] = MappingProxyType({}),
-    ) -> str:
-        """`dirs`: the granted Access.dirs, each an --add-dir as at launch."""
-        added = (arg for d in dirs for arg in ("--add-dir", d))
-        return resume_command(
-            cwd,
-            {key: value for key, value in env.items() if key not in LOCAL_ENV_VARS},
-            ("claude", *self.selector(sid, resume=True), *added),
-        )
+    @property
+    def store(self) -> str:
+        return os.path.join(os.path.realpath(os.path.expanduser("~")), STORE.removeprefix("~/"))
+
+    def resume(self, cwd: str, sid: str) -> str:
+        """A reference to save()'s launch state, which resume_main execs; it never holds env values."""
+        return resume_command(cwd, {}, (COMMAND, "client-resume", "claude", self.store, cwd, sid))
+
+    def save(self, spec: Spec) -> None:
+        """What resume_main replays: spec's cwd, Access.dirs and config, Access and Spec env."""
+        cwd, sid = spec.access.cwd or spec.workdir, self.uuid(spec.sid)
+        env = {**self.env(), **spec.access.env, **spec.env}
+        state = {
+            "version": 1,
+            "cwd": cwd,
+            "sid": sid,
+            "dirs": list(spec.access.dirs),
+            "env": {k: v for k, v in env.items() if k not in LOCAL_ENV_VARS},
+        }
+        try:
+            os.makedirs(self.store, 0o700, exist_ok=True)
+            found = os.lstat(self.store)
+            if not stat.S_ISDIR(found.st_mode) or found.st_uid != os.getuid():
+                raise ConfigError(f"{self.store}: not a directory of yours")
+            os.chmod(self.store, 0o700)
+            save(_state_path(self.store, cwd, sid), json.dumps(state), own=True, durable=True)
+        except OSError as error:
+            raise ConfigError(f"claude resume state: {error}") from None
+
+    def resume_main(self, argv) -> int:
+        """resume()'s run (STORE CWD SID): execs claude resuming SID with the saved dirs and env
+        over this environment, in CWD; 1 and one stderr line when it cannot.
+        """
+        try:
+            store, cwd, sid = argv
+        except ValueError:
+            print("claude resume: expected STORE CWD SID", file=sys.stderr)
+            return 1
+        try:
+            state = _load(store, cwd, self.uuid(sid))
+            added = (arg for d in state["dirs"] for arg in ("--add-dir", d))
+            os.chdir(state["cwd"])
+            command = ["claude", *self.selector(sid, resume=True), *added]
+            os.execvpe(command[0], command, {**os.environ, **state["env"]})
+        except (ConfigError, OSError) as exc:
+            print(f"claude resume: {exc}", file=sys.stderr)
+            return 1
+        return 0
 
     @staticmethod
     def uuid(sid) -> str:
@@ -253,7 +343,7 @@ class ClaudeCommon:
             env=merged,
             unset=self.UNSET,
             transcript=self.transcript(cwd, sid, merged),
-            resume=self.resume(cwd, sid, access.dirs, {**access.env, **spec.env}),
+            resume=self.resume(cwd, sid),
         )
 
     merged = staticmethod(_merged)
@@ -299,7 +389,7 @@ class ClaudeCommon:
         transcript: str = "",
         env: Mapping[str, str] = MappingProxyType({}),
     ) -> SessionStatus:
-        """`env`: the run's access and spec env; its CLAUDE_CONFIG_DIR, if any, goes in the resume."""
+        """`env`: the run's access and spec env; its CLAUDE_CONFIG_DIR, if any, holds the transcript."""
         try:
             self.uuid(sid)
         except ConfigError:
@@ -332,5 +422,4 @@ class ClaudeCommon:
         for each in paths:
             with contextlib.suppress(OSError):
                 times.append(os.lstat(each).st_mtime)
-        named = {k: v for k, v in env.items() if k == "CLAUDE_CONFIG_DIR"}
-        return SessionStatus(resumable, max(times, default=None), self.resume(cwd, sid, env=named))
+        return SessionStatus(resumable, max(times, default=None), self.resume(cwd, sid))

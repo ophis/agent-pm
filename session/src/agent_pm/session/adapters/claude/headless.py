@@ -22,10 +22,11 @@ class ClaudeHeadless(JsonHeadless):
         self.limit_sent = False
         self.resets_at = None
         self.sid = ""
+        self.spec: Spec | None = None
 
     def launch(self, spec: Spec):
         common = self.common
-        self.sid = spec.sid or ""
+        self.sid, self.spec = spec.sid or "", spec
         return common.launch(
             spec,
             None,
@@ -34,6 +35,10 @@ class ClaudeHeadless(JsonHeadless):
             tail=(*spec.flags, "--", spec.prompt),
             env=common.ENV,
         )
+
+    def commit(self):
+        if self.spec is not None:
+            self.common.save(self.spec)
 
     def parse(self, record):
         kind = record.get("type")
