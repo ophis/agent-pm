@@ -1,16 +1,18 @@
 """agent-pm-delegate resume, each a fresh process, on a detached headless run whose Hosts keep their
 sessions on disk (delegate/tests/fakes/harness_session.py PersistentSession): one Record line, a
-live run's unchanged, a stopped run's resumed once (two concurrent commands included), and a run
-of another $AGENT_PM_SID refused.
+live run's unchanged, a stopped run's resumed once (two concurrent commands included), a run of
+another $AGENT_PM_SID refused, and an old-layout workdir refused naming its missing run record.
 """
 
 import json
 import os
+import shutil
 import subprocess
 import uuid
 
 from agent_pm.delegate import Spec
 from agent_pm.delegate.engine.harness_delegate import HarnessDelegate
+from agent_pm.delegate.engine.types import Layout
 from agent_pm.utils import Record
 
 from delegate.tests.case import PY, REPO, child_env
@@ -25,7 +27,7 @@ class ResumeCommand(HarnessCase):
         super().setUp()
         self.record = HarnessDelegate(
             "dummy-tester",
-            Spec("input", self.work, cwd=self.work, client="fake", sid=SID),
+            Spec("input", self.work, client="fake", sid=SID),
             session_cls=PersistentSession,
             host="agent",
             harness_host="harness",
@@ -91,6 +93,19 @@ class ResumeCommand(HarnessCase):
                 self.assertEqual(self.metadata()["attempt"], 1)
         self.assertEqual(self.resumed(self.work, sid=SID), self.record)
         self.assertEqual(len(self.launches()), 2)
+
+    def test_old_layout_resume_names_run_record(self):
+        run = Layout(self.work).run
+        record = os.path.join(run, "delegate.json")
+        os.replace(record, os.path.join(self.work, "delegate.json"))
+        shutil.rmtree(run)
+        res = self.resume(self.work, sid=SID)
+        self.assertEqual(
+            (res.returncode, res.stdout, res.stderr),
+            (2, "", f"delegate: {self.work}: invalid {record}: missing metadata\n"),
+        )
+        self.assertFalse(os.path.lexists(run))
+        self.assertEqual(len(self.launches()), 1)
 
     def test_two_resumes_started_together_launch_one_harness(self):
         self.end()

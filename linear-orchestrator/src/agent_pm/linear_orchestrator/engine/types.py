@@ -52,7 +52,7 @@ class Config:
         return self.delegates[self.delegate_kind]
 
     @property
-    def runs_dir(self) -> str:
+    def workdirs(self) -> str:
         return os.path.join(self.work_dir, "work")
 
     @property
@@ -63,8 +63,8 @@ class Config:
     def runs_log(self) -> str:
         return os.path.join(self.logs_dir, "runs.jsonl")
 
-    def run_dir(self, issue: str) -> str:
-        return os.path.join(self.runs_dir, issue)
+    def issue_workdir(self, issue: str) -> str:
+        return os.path.join(self.workdirs, issue)
 
 
 class State(StrEnum):

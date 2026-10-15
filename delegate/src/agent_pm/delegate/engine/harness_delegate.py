@@ -5,6 +5,7 @@ from __future__ import annotations
 import contextlib
 import json
 import os
+import shutil
 import sys
 import time
 import traceback
@@ -25,6 +26,7 @@ from agent_pm.delegate.engine.types import (
     ConfigError,
     Event,
     Finished,
+    Layout,
     Limit,
     Outer,
     Plan,
@@ -70,6 +72,14 @@ from agent_pm.utils import (
 
 def _team(team: Team) -> Team:
     return teams.team(team.root, team.dirs)
+
+
+def _loaded(payload: bytes) -> dict:
+    try:
+        data = json.loads(payload)
+    except ValueError:
+        return {}
+    return data if isinstance(data, dict) else {}
 
 
 def _encode(value: object) -> object:
@@ -206,7 +216,8 @@ class HarnessDelegate(Delegate):
             session=replace(accepted.session, name=name if tui else None),
         )
         self.workdir = accepted.spec.workdir
-        self.store = RunState(self.workdir)
+        self.layout = Layout(self.workdir)
+        self.store = RunState(self.layout)
         self._state = _State(
             role,
             accepted,
@@ -230,31 +241,44 @@ class HarnessDelegate(Delegate):
             raise ConfigError(str(error)) from None
 
     def _persist_new(self) -> None:
-        """The session preflight follows the replaced run's refusal and cleanup."""
+        """Every refusal precedes every write: a fresh workdir's session preflight runs before its
+        run dir is made; otherwise it follows the replaced run's refusal and cleanup, under the
+        mutex. The agent dir is made last, just before the run record.
+        """
+        fresh = not os.path.lexists(self.layout.run)
         try:
+            if fresh:
+                self._preflight()
+            os.makedirs(self.layout.run, exist_ok=True)
             with self.store.mutex():
                 payload = self.store.read()
                 if payload is not None:
                     self._state = replace(self._state, attempt=self._replacing(payload))
-                try:
-                    self.driver.preflight(self._state.plan.session)
-                except (SessionConfigError, SessionError) as error:
-                    raise ConfigError(str(error)) from None
+                if not fresh or payload is not None:
+                    self._preflight()
+                os.makedirs(self.layout.agent, exist_ok=True)
                 self._save(self._state)
         except OSError as error:
             raise ConfigError(str(error)) from None
 
+    def _preflight(self) -> None:
+        try:
+            self.driver.preflight(self._state.plan.session)
+        except (SessionConfigError, SessionError) as error:
+            raise ConfigError(str(error)) from None
+
     def _replacing(self, payload: bytes) -> int:
-        """The attempt replacing the run `payload` records (its session's next, else 1), refused
-        while that run is alive; the agent session it left open (a tui run's, after its outcome or
-        its process's death) is closed.
+        """The attempt replacing the run `payload` records (its session's next, else 1; a corrupt
+        record's readable attempt + 1), refused while that run is live; the agent session it left
+        open (a tui run's, after its outcome or its process's death) is closed.
         """
+        if self._live(payload):
+            raise ConfigError(f"{self.workdir}: delegate is still alive")
         try:
             previous = self._parse(payload)
         except ConfigError:
-            return self._salvaged(payload)
-        if self._alive(previous):
-            raise ConfigError(f"{self.workdir}: delegate is still alive")
+            attempt = _loaded(payload).get("attempt")
+            return attempt + 1 if type(attempt) is int and attempt >= 1 else 1
         agent = self._agent(previous)
         if agent is not None:
             try:
@@ -263,25 +287,24 @@ class HarnessDelegate(Delegate):
                 raise ConfigError(str(error)) from None
         return previous.attempt + 1 if previous.plan.sid == self._state.plan.sid else 1
 
-    def _salvaged(self, payload: bytes) -> int:
-        """A corrupt record's run counts as alive while its run lock is held or the harness it
-        names lives; its attempt is kept when readable.
+    def _live(self, payload: bytes | None) -> bool:
+        """Whether the run `payload` records is live: a readable record's per _alive; a corrupt
+        one's while its run lock is held or the harness it names lives; none: while the run lock
+        is held.
         """
+        if payload is None:
+            return self.store.running()
         try:
-            data = json.loads(payload)
-        except ValueError:
-            data = None
-        data = data if isinstance(data, dict) else {}
+            return self._alive(self._parse(payload))
+        except ConfigError:
+            data = _loaded(payload)
         host, name = data.get("harness_host"), data.get("harness_name")
-        if self.store.running() or (
+        return self.store.running() or (
             isinstance(host, str)
             and isinstance(name, str)
             and (process := self._process(host, name)) is not None
             and process.alive()
-        ):
-            raise ConfigError(f"{self.workdir}: delegate is still alive")
-        attempt = data.get("attempt")
-        return attempt + 1 if type(attempt) is int and attempt >= 1 else 1
+        )
 
     @property
     def _harness_host(self) -> Host:
@@ -362,7 +385,7 @@ class HarnessDelegate(Delegate):
             if type(state.attempt) is not int or state.attempt < 1:
                 raise ValueError("invalid attempt")
         except (AttributeError, KeyError, TypeError, ValueError, SessionConfigError) as error:
-            raise ConfigError(f"{self.workdir}: invalid delegate.json: {error}") from None
+            raise ConfigError(f"invalid {self.store.record}: {error}") from None
         else:
             return state
 
@@ -382,9 +405,7 @@ class HarnessDelegate(Delegate):
         )
         if workdir is None:
             raise ConfigError("record has no workdir")
-        view = cls.__new__(cls)
-        view.workdir = os.path.abspath(workdir)
-        view.store = RunState(view.workdir)
+        view = cls._bare(Layout(workdir))
         view._state = view._read()
         if sid is not None and sid != view._state.plan.sid:
             raise ConfigError(f"sid {sid} is not the run's (its sid: {view._state.plan.sid})")
@@ -428,6 +449,37 @@ class HarnessDelegate(Delegate):
     @classmethod
     def trusted_dirs(cls) -> frozenset[str]:
         return Composer().trusted_dirs()
+
+    @classmethod
+    def _bare(cls, layout: Layout) -> HarnessDelegate:
+        """A view of layout's run with no state loaded: enough for _live."""
+        view = cls.__new__(cls)
+        view.layout, view.workdir, view.store = layout, layout.workdir, RunState(layout)
+        view.session_cls, view._harness_override = Session, None
+        return view
+
+    @classmethod
+    def checkouts(cls, workdir: str) -> tuple[str, ...] | None:
+        return Layout(workdir).checkouts()
+
+    @classmethod
+    def clean(cls, workdir: str, *, dry: bool = False) -> None:
+        layout = Layout(workdir)
+        if not os.path.lexists(layout.agent):
+            return
+        if not layout.in_place():
+            raise ConfigError(f"not a real directory: {layout.agent}, refusing to touch")
+        store = RunState(layout)
+        with store.mutex() if os.path.isdir(layout.run) else contextlib.nullcontext():
+            payload = store.read()
+            try:
+                view = cls.attach(workdir)
+            except ConfigError:
+                view = cls._bare(layout)
+            if view._live(payload):
+                raise ConfigError(f"{layout.workdir}: delegate is still alive")
+            if not dry:
+                shutil.rmtree(layout.agent)
 
     @classmethod
     def check_tui(
@@ -547,7 +599,7 @@ class HarnessDelegate(Delegate):
             if state.result is None or state.result.outcome is None
             else state.result.outcome.status,
             self.attach_command(),
-            state.plan.session.access.cwd or state.plan.session.workdir,
+            state.plan.session.access.cwd,
         )
 
     def attach_command(self) -> str | None:
@@ -590,9 +642,6 @@ class HarnessDelegate(Delegate):
             except SessionError as error:
                 raise SessionError(f"close {state.harness_name}: {error}") from error
 
-    def forget(self) -> None:
-        self.store.remove()
-
     def session_info(self) -> SessionStatus:
         """Its own live agent session's status, else the plan's: an attached one lacks its env;
         never recorded (its launch failed): not resumable.
@@ -620,13 +669,14 @@ class HarnessDelegate(Delegate):
             with self.store.mutex():
                 if self._current().completed:
                     raise ConfigError(f"{self.workdir}: delegate run already completed")
+            run_dir = self.layout.run
             callback = (
                 None
                 if self._state.callback is None
                 else EventCallback(
                     self._state.callback,
-                    self.workdir,
-                    cwd=self.store.dir,
+                    run_dir,
+                    cwd=run_dir,
                     sid=self._state.plan.sid,
                     attempt=self._state.attempt,
                 )
@@ -653,7 +703,7 @@ class HarnessDelegate(Delegate):
                 if not finished:
                     ended = stopped(error)
                     if isinstance(error, (Exception, SystemExit)):
-                        RunLog(self.workdir).note(
+                        RunLog(run_dir).note(
                             "run_error",
                             error=ended.error,
                             traceback="".join(traceback.format_exception(error)),
@@ -714,7 +764,7 @@ class HarnessDelegate(Delegate):
         environment.update(source_path(roots))
         return Launch(
             (sys.executable, "-P", "-s", "-m", "agent_pm.delegate.engine.harness", self.workdir),
-            cwd=state.plan.session.access.cwd or self.workdir,
+            cwd=self.layout.run,
             env=environment,
             blocked_signals=SIGNALS,
         )
@@ -850,6 +900,10 @@ class HarnessDelegate(Delegate):
             state = replace(
                 state, plan=accepted, completed=False, result=None, attempt=state.attempt + 1
             )
+            try:
+                os.makedirs(self.layout.agent, exist_ok=True)
+            except OSError as error:
+                raise ConfigError(str(error)) from None
             record = self._launch(previous, state)
         self._started(self._state)
         return record

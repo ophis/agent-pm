@@ -1,11 +1,13 @@
-"""FakeDelegate, a Delegate with one session that runs nothing: its state is <workdir>/delegate.json
-(0600), so a view from attach and the Delegate that wrote it agree. end(workdir) and finish(workdir)
-stand for its sessions ending, without and with an outcome.
+"""FakeDelegate, a Delegate with one session that runs nothing: it lays its workdir out per Layout,
+its state the run dir's delegate.json, so a view from attach and the Delegate that wrote it agree;
+clean refuses only while it is alive. end(workdir) and finish(workdir) stand for its sessions
+ending, without and with an outcome; lose(workdir) for its state lost; starts(workdir) counts
+its starts.
 """
 
-import contextlib
 import json
 import os
+import shutil
 import uuid
 from dataclasses import asdict
 
@@ -19,22 +21,27 @@ from agent_pm.delegate import (
     Result,
 )
 from agent_pm.delegate.composer import RunConfig
+from agent_pm.delegate.engine.types import Layout
 from agent_pm.session import NotDisplayable, SessionStatus
 from agent_pm.utils import Record, Status, save
 
 FILE = "delegate.json"
 
 
+def _path(workdir: str) -> str:
+    return os.path.join(Layout(workdir).run, FILE)
+
+
 def _load(workdir) -> dict:
     try:
-        with open(os.path.join(workdir, FILE), encoding="utf-8") as f:
+        with open(_path(workdir), encoding="utf-8") as f:
             return json.load(f)
     except (OSError, TypeError, ValueError):
         raise ConfigError(f"{workdir!r}: no {FILE}") from None
 
 
 def _save(workdir: str, state: dict) -> dict:
-    save(os.path.join(workdir, FILE), json.dumps(state))
+    save(_path(workdir), json.dumps(state))
     return state
 
 
@@ -66,6 +73,7 @@ class FakeDelegate(Delegate):
         self.workdir, self.input = os.path.abspath(spec.workdir), spec.input
         name = spec.name or f"{role}-{sid[:8]}"
         state = {"role": role, "sid": sid, "name": name, "display": display}
+        os.makedirs(Layout(self.workdir).agent, exist_ok=True)
         _save(self.workdir, {**state, "outer": {}, "alive": False, "outcome": None, "starts": 0})
 
     @classmethod
@@ -115,12 +123,36 @@ class FakeDelegate(Delegate):
         return None
 
     @classmethod
+    def checkouts(cls, workdir):
+        return Layout(workdir).checkouts()
+
+    @classmethod
+    def clean(cls, workdir, *, dry=False):
+        layout = Layout(workdir)
+        if not os.path.lexists(layout.agent):
+            return
+        if not layout.in_place():
+            raise ConfigError(f"not a real directory: {layout.agent}, refusing to touch")
+        if os.path.exists(_path(workdir)) and _load(workdir)["alive"]:
+            raise ConfigError(f"{layout.workdir}: delegate is still alive")
+        if not dry:
+            shutil.rmtree(layout.agent)
+
+    @classmethod
     def end(cls, workdir: str) -> None:
         _update(workdir, alive=False, outcome=None)
 
     @classmethod
     def finish(cls, workdir: str) -> None:
         _update(workdir, alive=False, outcome=asdict(cls.outcome_result))
+
+    @classmethod
+    def starts(cls, workdir: str) -> int:
+        return _load(workdir)["starts"]
+
+    @classmethod
+    def lose(cls, workdir: str) -> None:
+        os.unlink(_path(workdir))
 
     def _record(self, state: dict) -> Record:
         name = state["name"]
@@ -163,7 +195,9 @@ class FakeDelegate(Delegate):
         state = _load(self.workdir)
         outcome = state["outcome"] and state["outcome"]["status"]
         word = "working" if state["alive"] else "gone"
-        return Status(state["name"], state["alive"], word, outcome, None)
+        return Status(
+            state["name"], state["alive"], word, outcome, None, Layout(self.workdir).agent
+        )
 
     def outcome(self):
         found = _load(self.workdir)["outcome"]
@@ -180,10 +214,6 @@ class FakeDelegate(Delegate):
 
     def session_info(self):
         return SessionStatus("yes", None, "")
-
-    def forget(self):
-        with contextlib.suppress(FileNotFoundError):
-            os.remove(os.path.join(self.workdir, FILE))
 
     def resume(self, *, mode=None):
         state = _load(self.workdir)

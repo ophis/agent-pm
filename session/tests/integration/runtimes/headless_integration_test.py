@@ -15,7 +15,7 @@ import time
 import unittest
 from unittest import mock
 
-from agent_pm.session.engine.types import Launch, Reply, SessionError, Spec, Stderr
+from agent_pm.session.engine.types import Access, Launch, Reply, SessionError, Spec, Stderr
 from agent_pm.session.runtimes.headless import HeadlessRuntime
 
 from session.tests.fakes.terminal import MemoryHost
@@ -300,7 +300,7 @@ class Start(Base):
     def test_start_returns_its_session_running_at_once_with_its_prepared(self):
         with self.spied() as calls:
             mode = HeadlessRuntime.start(
-                Spec(workdir=self.dir, sid=SID, client="stub"),
+                Spec(workdir=self.dir, access=Access(cwd=self.dir), sid=SID, client="stub"),
                 StubAdapter(Launch(python(SLEEPER))),
                 registry=self.session_cls._config().registry,
                 record=self.recorded.append,

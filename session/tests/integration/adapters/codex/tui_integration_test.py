@@ -1007,7 +1007,12 @@ class TuiRecoveryIntegrationTest(Live):
         )
         self.assertEqual(
             self.session_cls.inspect(
-                Spec(workdir=str(self.work), client="codex", sid=self.sid)
+                Spec(
+                    workdir=str(self.work),
+                    access=Access(cwd=str(self.work)),
+                    client="codex",
+                    sid=self.sid,
+                )
             ).resumable,
             "yes",
         )

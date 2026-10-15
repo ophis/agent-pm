@@ -238,16 +238,18 @@ agent-pm keeps its state in its state root, `~/.agent-pm/`. `work/` and `logs/` 
 ~/.agent-pm/
 ├── config.local.toml             this machine's settings
 ├── work/<ID>/                    an issue's agent-run workdir
-│   ├── src/  publish/            the run's checkouts; the report repo's clone
-│   ├── tmp/                      the run's temp files
-│   ├── run.jsonl                 session records; resume reads them
-│   ├── writeback.json            the write-back ledger
-│   └── delegate.json  out.md     a copy of the run's state; the deliverable
+│   ├── agent/                    the agent's cwd and only write grant
+│   │   ├── src/  publish/        the run's checkouts; the report repo's clone
+│   │   └── tmp/                  the run's temp files
+│   ├── run/                      the harness's files, kept as the run's record
+│   │   ├── delegate.json         the run's state, beside its locks
+│   │   ├── run.jsonl             session records; resume reads them
+│   │   └── out.md                the deliverable
+│   └── writeback.json            the write-back ledger, beside its lock
 ├── logs/
 │   ├── runs.jsonl                each run's start, resume and limit rows
 │   ├── orchestrator.jsonl        the event log, also launchd's stdout and stderr
 │   └── router.lock               one router at a time
-├── delegates/<key>.json          a Delegate run's state and locks; <key>: sha256 of its workdir path
 ├── sessions/claude/  codex/      what a client session's resume command replays
 ├── tui/<name>/                   a running tui session's state and hook log
 ├── workers/<sid>/                a worker's state; by-name/<name>: its latest sid
@@ -260,12 +262,12 @@ agent-pm keeps its state in its state root, `~/.agent-pm/`. `work/` and `logs/` 
 | Entry | Cleaned by | Safe to delete by hand |
 |---|---|---|
 | `config.local.toml` | nobody | never: your settings |
-| `work/<ID>/src/`, `publish/`, `tmp/` | prune ([Finish](#using-the-board)) | no: prune also drops the issue's worktrees and pushed branches in a `[local_clones]` clone |
-| the rest of `work/<ID>/` | nobody | once prune has run for the finished issue |
+| `work/<ID>/agent/` | prune ([Finish](#using-the-board)) | no: prune also drops the issue's worktrees and pushed branches in a `[local_clones]` clone |
+| `work/<ID>/run/` | nobody | once you won't attach or resume the run |
+| `work/<ID>/writeback.json`, `writeback.lock` | nobody | once the issue's run won't resume or be recovered: Recover replays a write-back missing from the ledger |
 | `logs/runs.jsonl` | the router: rows over 7 days old, except each issue's latest run | never ([Operating](#operating)) |
 | `logs/orchestrator.jsonl` | nobody | any time; keep `logs/` ([Setup](#setup) step 6) |
 | `logs/router.lock` | nobody | while no router runs |
-| `delegates/` | prune forgets a finished issue's latest run | a run's files once it ended and you won't attach or resume it |
 | `sessions/` | nobody | an entry once its session ended and you won't resume it |
 | `tui/<name>/` | closing or stopping the session | no: closing the session removes it; a `<name>.lock` while no session of that name starts or closes |
 | `workers/<sid>/` | nobody | once you won't restart or resume the worker |
@@ -355,7 +357,7 @@ python3 -c 'import fcntl, os, time; f = open(os.path.expanduser("~/.agent-pm/log
 bin/agent-pm-linear router --issue <H>
 ```
 
-On a failure, read `<work_dir>/logs/orchestrator.jsonl` and `<work_dir>/work/<ID>/run.jsonl`. End a stuck run with `bin/agent-pm-linear close <ID>`. A check that passes when it should fail (steps 2, 4, 9) is a bug: report it.
+On a failure, read `<work_dir>/logs/orchestrator.jsonl` and `<work_dir>/work/<ID>/run/run.jsonl`. End a stuck run with `bin/agent-pm-linear close <ID>`. A check that passes when it should fail (steps 2, 4, 9) is a bug: report it.
 
 ## Upgrading
 
@@ -376,6 +378,26 @@ Nothing migrates automatically. Do each step that applies, once, by hand or thro
 | an issue In Progress across the trigger-only router or `runs.jsonl` deploys | Deploy with nothing In Progress. |
 | Claude runs started before `agent-pm-session client-resume claude` | Resume them by hand: their `Run <sid>` command has no saved launch to replay. |
 | old logs in `<work_dir>/logs/` | `rm -rf ~/.agent-pm/logs/runs.log ~/.agent-pm/logs/router.log ~/.agent-pm/logs/promote.log ~/.agent-pm/logs/projects ~/.agent-pm/logs/tui` |
+| `src/` or `run.jsonl` directly in a `<work_dir>/work/<ID>/` or `~/.agent-pm/adhoc/*/`, or `~/.agent-pm/delegates/` | [Workdir split](#workdir-split). |
+
+### Workdir split
+
+A run's workdir, `<work_dir>/work/<ID>/` or an ad-hoc `~/.agent-pm/adhoc/<date>-<role>-<name>/`, now holds `agent/` and `run/`. Nothing reads the old layout, and no run started before the move resumes (its cwd moved). The move keeps each issue's checkouts, which prune then finds, and its records; Codex recovery state stays as a record.
+
+1. With no live run and nothing In Progress, move each workdir's files (a finished ad-hoc folder can be deleted instead: [State root](#state-root)):
+   ```bash
+   for w in <work_dir>/work/*/ ~/.agent-pm/adhoc/*/; do
+     [ -d "$w" ] && [ ! -d "$w/run" ] || continue
+     mkdir "$w/agent" "$w/run"
+     for f in src publish tmp prompt.md; do [ -e "$w/$f" ] && mv "$w/$f" "$w/agent/"; done
+     for f in run.jsonl out.md delegate.json delegate.lock; do [ -e "$w/$f" ] && mv "$w/$f" "$w/run/"; done
+   done
+   ```
+2. Reconnect each moved worktree (a checkout whose `.git` is a file) to its `[local_clones]` clone:
+   ```bash
+   for g in <work_dir>/work/*/agent/src/*/*/.git ~/.agent-pm/adhoc/*/agent/src/*/*/.git; do [ -f "$g" ] && git -C "${g%/.git}" worktree repair; done
+   ```
+3. `rm -rf ~/.agent-pm/delegates`
 
 ## Tests
 

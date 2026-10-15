@@ -24,7 +24,7 @@ import tempfile
 import unittest
 
 from agent_pm.delegate import DelegateEvent
-from agent_pm.delegate.engine.state import RunState
+from agent_pm.delegate.engine.types import Layout
 from agent_pm.utils import Record
 
 from delegate.tests.case import PY, PYTHONPATH, Case
@@ -160,7 +160,7 @@ class Detach(Case):
 
     def records(self):
         try:
-            with open(os.path.join(self.work, "run.jsonl")) as stream:
+            with open(os.path.join(Layout(self.work).run, "run.jsonl")) as stream:
                 return [json.loads(line) for line in stream]
         except FileNotFoundError:
             return []
@@ -267,7 +267,7 @@ class Tui(Detach):
                 printed += [out.stdout, out.stderr]
         options = self.server.tmux("show-options", "-t", f"={TUI}:")
         self.assertIn("@kind terminal", options.stdout)
-        printed += [options.stdout, self.read(os.path.join(self.work, "run.jsonl"))]
+        printed += [options.stdout, self.read(os.path.join(Layout(self.work).run, "run.jsonl"))]
         for text in printed:
             self.assertNotIn(SECRET, text)
         resume = self.last("session")["resume"]
@@ -342,7 +342,7 @@ class Headless(Detach):
         self.assertEqual(self.read(self.out), DONE["deliverable"])
         self.assertEqual(self.last("result")["outcome"]["status"], "done")
 
-    def test_on_event_gets_each_event_from_the_state_dir_its_stdout_off_the_record_line(self):
+    def test_on_event_gets_each_event_from_the_run_dir_its_stdout_off_the_record_line(self):
         res = self.detach(*self.on_event(), steps=[START, block(DONE)])
         self.said(res, tui=False)
         self.assertNotIn(callback_recorder.NOISE, res.stdout + res.stderr)
@@ -352,8 +352,8 @@ class Headless(Detach):
         self.assertEqual([event.kind for event in events], ["begun", "progress", "finished"])
         self.assertEqual({(event.sid, event.attempt) for event in events}, {(SID, 1)})
         self.assertEqual(events[-1].outcome["status"], "done")
-        state = os.path.realpath(RunState(self.work).dir)
-        self.assertEqual({entry["cwd"] for entry in entries}, {state})
+        run_dir = os.path.realpath(Layout(self.work).run)
+        self.assertEqual({entry["cwd"] for entry in entries}, {run_dir})
         self.assertEqual(self.kinds().count("callback_error"), 0)
 
     def test_sigterm_while_the_callback_waits_kills_its_group_then_a_stopped_finished(self):
@@ -410,7 +410,8 @@ class Answer(Detach):
         records = self.records()
         self.assertEqual([e["text"] for e in records if e["kind"] == "input"], ["Hello.", ANSWER])
         self.assertEqual(
-            {(e["sid"], e["cwd"]) for e in records if e["kind"] == "session"}, {(SID, self.proj)}
+            {(e["sid"], e["cwd"]) for e in records if e["kind"] == "session"},
+            {(SID, Layout(self.work).agent)},
         )
         again = self.cli([*RESUME, self.work])
         self.assertEqual(again.returncode, 0, again.stderr)
@@ -419,7 +420,7 @@ class Answer(Detach):
         self.assertEqual(shape(live_tmux.events(self.second)), shaped)
 
     def attempt(self) -> int:
-        with open(os.path.join(self.work, "delegate.json")) as f:
+        with open(os.path.join(Layout(self.work).run, "delegate.json")) as f:
             return json.load(f)["attempt"]
 
     def test_headless_needs_input_answered_by_a_detached_resume(self):

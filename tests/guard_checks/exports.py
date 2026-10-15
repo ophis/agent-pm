@@ -320,15 +320,15 @@ def _typing(node, *, operand=False):
 
 def session_interface_snapshot(repo: str) -> list[str]:
     """The session's public interface equals SESSION_INTERFACE. Only TASK-369, TASK-375, TASK-387,
-    TASK-414, TASK-420, TASK-427 and TASK-433 change it on purpose, rewriting the file from
-    _interface().
+    TASK-414, TASK-420, TASK-427, TASK-433 and TASK-435 change it on purpose, rewriting the file
+    from _interface().
     """
     return _snapshot_drift(repo, SESSION_INTERFACE, SESSION_INTERFACE_MODULES)
 
 
 def delegate_interface_snapshot(repo: str) -> list[str]:
-    """The delegate's public interface equals DELEGATE_INTERFACE. Only TASK-332, TASK-375, TASK-405
-    and TASK-429 change it on purpose, rewriting the file from _interface().
+    """The delegate's public interface equals DELEGATE_INTERFACE. Only TASK-332, TASK-375, TASK-405,
+    TASK-429 and TASK-435 change it on purpose, rewriting the file from _interface().
     """
     return _snapshot_drift(repo, DELEGATE_INTERFACE, DELEGATE_INTERFACE_MODULES)
 

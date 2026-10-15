@@ -12,6 +12,7 @@ import tempfile
 import unittest
 
 from agent_pm.delegate.composer import Composer, RunParams
+from agent_pm.delegate.engine.types import Layout
 
 from delegate.tests.case import REPO as CHECKOUT
 from delegate.tests.case import Case
@@ -70,7 +71,9 @@ class Instruction(Case):
         work = self.work(role)
         composition = Composer()
         run = composition.resolve(role)
-        params = RunParams(input=INPUT, out=os.path.join(work, "prompt.md"), workdir=work)
+        params = RunParams(
+            input=INPUT, out=os.path.join(work, "prompt.md"), workdir=Layout(work).agent
+        )
         return composition.render(run, params).encode("utf-8")
 
     def delivered(self, role):
@@ -146,7 +149,7 @@ class Instruction(Case):
     def test_stdout_delivery_exits_2_without_writes(self):
         res = self.cli("researcher", out="-")
         self.assertEqual((res.returncode, res.stdout), (2, ""))
-        self.assertEqual(res.stderr, "delegate: prompt needs --out PATH\n")
+        self.assertEqual(res.stderr, "delegate: --out takes a PATH, not -\n")
         self.assertFalse(os.path.exists(self.adhoc))
 
 

@@ -14,6 +14,8 @@ import sys
 import tempfile
 import time
 
+from agent_pm.delegate.engine.types import Layout
+
 from delegate.tests.case import PY, REPO, Case, child_env
 from session.tests.integration.adapters.claude import fake_claude
 from session.tests.integration.adapters.codex import fake_codex
@@ -38,7 +40,7 @@ class Runs(Case):
     """A CLI run's records in `work` and the fake client's calls in `log`."""
 
     def records(self) -> list[dict]:
-        with open(os.path.join(self.work, "run.jsonl")) as f:
+        with open(os.path.join(Layout(self.work).run, "run.jsonl")) as f:
             return [json.loads(line) for line in f]
 
     def kinds(self) -> list[str]:
@@ -59,8 +61,8 @@ class Runs(Case):
 
 
 class Integration(Runs):
-    """ROLE over the fake `claude`: a HOME of the test's own, the cwd `proj`, workdir `work`, --sid
-    SID.
+    """ROLE over the fake `claude`: a HOME of the test's own, the CLI run from `proj`, workdir
+    `work`, the agent's cwd its agent dir `agent`, --sid SID.
     """
 
     ROLE = "dummy-tester"
@@ -75,6 +77,7 @@ class Integration(Runs):
         for d in (self.proj, self.work, bin_dir):
             os.mkdir(d)
         self.out = os.path.join(self.work, "out.md")
+        self.agent = Layout(self.work).agent
         self.scenario, self.log = (
             os.path.join(self.root, "scenario.json"),
             os.path.join(self.root, "log.jsonl"),
@@ -90,7 +93,7 @@ class Integration(Runs):
             fake_claude.ENV: self.scenario,
         }
         self.transcript = os.path.join(
-            self.config, "projects", re.sub(r"[^A-Za-z0-9]", "-", self.proj), f"{SID}.jsonl"
+            self.config, "projects", re.sub(r"[^A-Za-z0-9]", "-", self.agent), f"{SID}.jsonl"
         )
 
     def argv(self, *extra) -> list[str]:

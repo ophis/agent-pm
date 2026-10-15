@@ -1,19 +1,25 @@
 """HarnessDelegate names its harness session in a Host's close failure; its harness environment
-holds no launcher variable; preview and instruct write no state; owner overlays shape its run;
+holds no launcher variable; a run's state lives only in its run dir, which counts attempts, and a
+refused start creates nothing; preview and instruct write no state; owner overlays shape its run;
 resume continues a run in the mode it records or in the one it is given, and a run whose process
-died, its tui agent session left open, at once.
+died, its tui agent session left open, at once; checkouts lists its agent dir's real checkouts and
+clean deletes that dir, refusing a live run or a dir out of place.
 """
 
+import fcntl
 import json
 import os
+import shutil
 from unittest import mock
 
 from agent_pm.delegate import ConfigError, Finished, Result, Spec
 from agent_pm.delegate.composer import Composer, RunParams
+from agent_pm.delegate.engine import harness_delegate
 from agent_pm.delegate.engine.harness_delegate import HarnessDelegate
 from agent_pm.delegate.engine.state import RunState
+from agent_pm.delegate.engine.types import Layout
+from agent_pm.session import Access, Exited, Liveness, Mode, Reply, SessionError
 from agent_pm.session import ConfigError as SessionConfigError
-from agent_pm.session import Exited, Liveness, Mode, Reply, SessionError
 from agent_pm.session import Spec as SessionSpec
 
 from delegate.tests.fakes.harness_session import (
@@ -27,7 +33,7 @@ from delegate.tests.harness import SID, HarnessCase
 
 class CloseTest(HarnessCase):
     def test_a_failed_harness_close_names_the_harness_session(self):
-        spec = Spec("input", self.work, mode="tui", client="fake", sid=SID, cwd=self.work)
+        spec = Spec("input", self.work, mode="tui", client="fake", sid=SID)
         record = self.make(spec=spec, host="agent", harness_host="harness").detach()
         name = self.metadata()["harness_name"]
         process = RecordingHost.processes["harness", name]
@@ -47,34 +53,221 @@ class OuterTest(HarnessCase):
             "ctl": ("agent-pm-linear",),
             "resume": ("agent-pm-linear", "resume", "TASK-1"),
         }
-        spec = Spec("input", self.work, mode="tui", client="fake", sid=SID, cwd=self.work)
+        spec = Spec("input", self.work, mode="tui", client="fake", sid=SID)
         record = self.make(spec=spec).detach(outer=outer)
         stored = RecordingHost.processes["agent", self.metadata()["harness_name"]].record()
         self.assertEqual((record.name, stored), ("TASK-1", record))
         self.assertEqual(HarnessDelegate.attach(record).resume(), record)
 
 
-class ForgetTest(HarnessCase):
-    def setUp(self):
-        super().setUp()
-        self.state = os.path.join(self.agent_pm, "delegates")
+class RunDirTest(HarnessCase):
+    def record(self):
+        return os.path.join(self.work, "run", "delegate.json")
 
-    def test_forget_deletes_the_runs_state_dir_files_and_keeps_its_workdir(self):
-        view = HarnessDelegate.attach(self.make().detach())
-        view.close()
-        self.assertTrue(os.path.isfile(self.state_record()))
-        view.forget()
-        self.assertEqual(os.listdir(self.state), [])
-        self.assertTrue(os.path.isfile(os.path.join(self.work, "delegate.json")))
-        view.forget()
-        self.assertEqual(os.listdir(self.state), [])
+    def stored(self):
+        with open(self.record(), encoding="utf-8") as file:
+            return json.load(file)
 
-    def test_a_run_holding_its_run_lock_is_refused_and_keeps_its_files(self):
-        view = HarnessDelegate.attach(self.make().detach())
-        view.close()
-        with RunState(self.work).run_lock(), self.assertRaisesRegex(ConfigError, "running"):
-            view.forget()
-        self.assertTrue(os.path.isfile(self.state_record()))
+    def corrupt(self, text):
+        self.make()
+        with open(self.record(), "w", encoding="utf-8") as file:
+            file.write(text)
+
+    def test_the_run_record_is_the_runs_only_state(self):
+        self.make()
+        self.assertEqual(sorted(os.listdir(self.work)), ["agent", "run"])
+        self.assertEqual(self.stored()["spec"]["sid"], SID)
+        self.assertEqual(
+            sorted(os.listdir(os.path.join(self.work, "run"))), ["delegate.json", "delegate.lock"]
+        )
+        self.assertEqual(os.listdir(self.agent_pm), ["config.local.toml"])
+
+    def test_refused_start_creates_nothing(self):
+        top = os.path.join(self.home, "a")
+        self.work = os.path.join(top, "b", "work")
+        HarnessSession.preflight_error = SessionConfigError("preflight refused")
+        with self.assertRaisesRegex(ConfigError, "preflight refused"):
+            self.make()
+        self.assertEqual(len(HarnessSession.preflights), 1)
+        HarnessSession.preflight_error = None
+        with self.assertRaisesRegex(ConfigError, "absent-role"):
+            self.make(role="absent-role")
+        self.assertFalse(os.path.lexists(top))
+        self.assertEqual(os.listdir(self.agent_pm), ["config.local.toml"])
+
+    def test_a_refused_start_on_a_workdir_makes_none_of_its_dirs(self):
+        os.mkdir(self.work)
+        HarnessSession.preflight_error = SessionConfigError("preflight refused")
+        with self.assertRaisesRegex(ConfigError, "preflight refused"):
+            self.make()
+        self.assertEqual(os.listdir(self.work), [])
+
+    def test_a_live_run_refuses_a_new_one_before_making_the_agent_dir(self):
+        self.make()
+        os.rmdir(os.path.join(self.work, "agent"))
+        before = self.stored()
+        with (
+            RunState(Layout(self.work)).run_lock(),
+            self.assertRaisesRegex(ConfigError, "delegate is still alive"),
+        ):
+            self.make()
+        self.assertEqual((os.listdir(self.work), self.stored()), (["run"], before))
+
+    def test_a_new_run_of_the_same_sid_counts_the_next_attempt(self):
+        self.make()
+        self.make()
+        self.assertEqual(self.stored()["attempt"], 2)
+        self.make(spec=Spec("input", self.work, client="fake", sid=SID.replace("0", "1")))
+        self.assertEqual(self.stored()["attempt"], 1)
+
+    def test_a_corrupt_run_record_keeps_a_readable_attempt(self):
+        for text, attempt in (("not json", 1), ('{"attempt": 4}', 5)):
+            with self.subTest(text=text):
+                self.corrupt(text)
+                self.make()
+                self.assertEqual(self.stored()["attempt"], attempt)
+
+    def test_a_held_run_lock_keeps_a_corrupt_run_record(self):
+        self.corrupt("not json")
+        with (
+            RunState(Layout(self.work)).run_lock(),
+            self.assertRaisesRegex(ConfigError, "delegate is still alive"),
+        ):
+            self.make()
+        with open(self.record(), encoding="utf-8") as file:
+            self.assertEqual(file.read(), "not json")
+
+    def test_an_old_layout_workdir_names_its_missing_run_record(self):
+        self.make()
+        os.replace(self.record(), os.path.join(self.work, "delegate.json"))
+        with self.assertRaises(ConfigError) as caught:
+            HarnessDelegate.attach(self.work, session_cls=HarnessSession)
+        self.assertEqual(str(caught.exception), f"invalid {self.record()}: missing metadata")
+
+
+def tree(top):
+    found = {}
+    for root, _dirs, files in os.walk(top):
+        for name in files:
+            with open(os.path.join(root, name), "rb") as file:
+                found[os.path.relpath(os.path.join(root, name), top)] = file.read()
+    return found
+
+
+class CleanTest(HarnessCase):
+    def agent(self):
+        return Layout(self.work).agent
+
+    def refused(self, message, workdir=None):
+        for dry in (False, True):
+            with self.subTest(dry=dry), self.assertRaises(ConfigError) as caught:
+                HarnessDelegate.clean(workdir or self.work, dry=dry)
+            self.assertEqual(str(caught.exception), message)
+
+    def test_checkouts_lists_real_src_entries(self):
+        self.assertIsNone(HarnessDelegate.checkouts(self.work))
+        self.make()
+        self.assertEqual(HarnessDelegate.checkouts(self.work), ())
+        src = os.path.join(self.agent(), "src")
+        real = os.path.join(os.path.realpath(self.work), "agent", "src")
+        for path in ("o/r-TASK-1", "p/q-TASK-1"):
+            os.makedirs(os.path.join(src, path))
+        elsewhere = os.path.join(self.home, "elsewhere")
+        os.makedirs(os.path.join(elsewhere, "n-TASK-1"))
+        os.symlink(os.path.join(elsewhere, "n-TASK-1"), os.path.join(src, "o", "s-TASK-1"))
+        os.symlink(elsewhere, os.path.join(src, "x"))
+        with open(os.path.join(src, "o", "f-TASK-1"), "w") as file:
+            file.write("x")
+        self.assertEqual(
+            HarnessDelegate.checkouts(self.work),
+            (os.path.join(real, "o", "r-TASK-1"), os.path.join(real, "p", "q-TASK-1")),
+        )
+        moved = os.path.join(self.home, "moved")
+        os.replace(self.agent(), moved)
+        os.symlink(moved, self.agent())
+        self.assertEqual(HarnessDelegate.checkouts(self.work), ())
+
+    def test_clean_deletes_agent_files_and_keeps_run_records(self):
+        self.make()
+        deep = os.path.join(self.agent(), "tmp", "deep")
+        os.makedirs(deep)
+        os.makedirs(os.path.join(self.agent(), "src", "o", "r-TASK-1"))
+        with open(os.path.join(deep, "pr.md"), "w") as file:
+            file.write("x")
+        os.chmod(os.path.join(deep, "pr.md"), 0o444)
+        with open(os.path.join(self.work, "notes.md"), "w") as file:
+            file.write("kept")
+        run = tree(Layout(self.work).run)
+        name = HarnessDelegate.attach(self.work).status().name
+        HarnessDelegate.clean(self.work, dry=True)
+        self.assertTrue(os.path.isdir(deep))
+        self.assertIsNone(HarnessDelegate.clean(self.work))
+        self.assertFalse(os.path.lexists(self.agent()))
+        self.assertEqual(tree(Layout(self.work).run), run)
+        self.assertEqual(sorted(os.listdir(self.work)), ["notes.md", "run"])
+        self.assertIsNone(HarnessDelegate.checkouts(self.work))
+        self.assertEqual(HarnessDelegate.attach(self.work).status().name, name)
+        self.assertIsNone(HarnessDelegate.clean(self.work))
+        never = os.path.join(self.home, "never")
+        self.assertIsNone(HarnessDelegate.clean(never))
+        self.assertFalse(os.path.lexists(never))
+
+    def test_clean_refuses_a_live_run(self):
+        self.make()
+        with RunState(Layout(self.work)).run_lock():
+            self.refused(f"{self.work}: delegate is still alive")
+        with open(Layout(self.work).run + "/delegate.json", "w") as file:
+            file.write("not json")
+        with RunState(Layout(self.work)).run_lock():
+            self.refused(f"{self.work}: delegate is still alive")
+        self.assertTrue(os.path.isdir(self.agent()))
+
+    def test_clean_refuses_a_live_detached_run(self):
+        spec = Spec("input", self.work, mode="tui", client="fake", sid=SID)
+        self.make(spec=spec, host="agent", harness_host="harness").detach()
+        self.refused(f"{self.work}: delegate is still alive")
+        self.assertTrue(os.path.isdir(self.agent()))
+
+    def test_clean_refuses_an_agent_dir_out_of_place(self):
+        self.make()
+        elsewhere = os.path.join(self.home, "elsewhere")
+        os.makedirs(os.path.join(elsewhere, "keep"))
+        os.replace(self.agent(), os.path.join(self.home, "agent"))
+        os.symlink(elsewhere, self.agent())
+        self.refused(f"not a real directory: {self.agent()}, refusing to touch")
+        self.assertTrue(os.path.isdir(os.path.join(elsewhere, "keep")))
+        os.unlink(self.agent())
+        with open(self.agent(), "w") as file:
+            file.write("x")
+        self.refused(f"not a real directory: {self.agent()}, refusing to touch")
+        os.unlink(self.agent())
+        os.replace(os.path.join(self.home, "agent"), self.agent())
+        link = os.path.join(self.home, "link")
+        os.symlink(self.work, link)
+        self.refused(f"not a real directory: {link}/agent, refusing to touch", link)
+        self.assertTrue(os.path.isdir(self.agent()))
+
+    def test_clean_holds_the_run_mutex_while_it_deletes(self):
+        self.make()
+        held = []
+
+        def rmtree(path):
+            with open(Layout(self.work).run + "/delegate.lock", "rb") as file:
+                try:
+                    fcntl.flock(file, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                except BlockingIOError:
+                    held.append(path)
+
+        with mock.patch.object(harness_delegate.shutil, "rmtree", side_effect=rmtree):
+            HarnessDelegate.clean(self.work)
+        self.assertEqual(held, [self.agent()])
+
+    def test_a_new_run_after_clean_lays_out_again_with_the_next_attempt(self):
+        self.make()
+        HarnessDelegate.clean(self.work)
+        self.make()
+        self.assertTrue(os.path.isdir(self.agent()))
+        self.assertEqual(self.metadata()["attempt"], 2)
 
 
 class PreviewTest(HarnessCase):
@@ -131,7 +324,7 @@ class InstructTest(HarnessCase):
         composer = Composer()
         want = composer.render(
             composer.resolve("dummy-tester", "echo"),
-            RunParams(input="Hello.", out=out, workdir=self.work),
+            RunParams(input="Hello.", out=out, workdir=Layout(self.work).agent),
         )
         with open(out, encoding="utf-8") as file:
             self.assertEqual(file.read(), want)
@@ -196,10 +389,10 @@ class LaunchTest(HarnessCase):
 class SaveFailureTest(HarnessCase):
     def test_a_failed_result_save_still_hands_on_the_runs_real_finished(self):
         delegate, events, real = self.make(), [], os.replace
-        published = os.path.join(self.work, "delegate.json")
+        record = os.path.join(Layout(self.work).run, "delegate.json")
 
         def replace(src, dst):
-            if str(dst) == published:
+            if str(dst) == record:
                 raise OSError("disk full")
             real(src, dst)
 
@@ -241,8 +434,9 @@ class OverlayTest(HarnessCase):
         del data["overlays"]
         with open(path, "w", encoding="utf-8") as file:
             json.dump(data, file)
-        with self.assertRaisesRegex(ConfigError, "invalid delegate.json: 'overlays'"):
+        with self.assertRaises(ConfigError) as caught:
             HarnessDelegate.attach(self.work, session_cls=HarnessSession)
+        self.assertEqual(str(caught.exception), f"invalid {path}: 'overlays'")
 
     def test_resume_resolves_with_the_overlays_it_was_built_with(self):
         record = self.make(overlays=({"roles": {"dummy-tester": {"effort": "high"}}},)).detach()
@@ -254,7 +448,7 @@ class OverlayTest(HarnessCase):
 class ResumeModeTest(HarnessCase):
     def gave_up(self, mode):
         """A detached run whose harness ended without an outcome, a tui agent session left open."""
-        spec = Spec("input", self.work, mode=mode, client="fake", sid=SID, cwd=self.work)
+        spec = Spec("input", self.work, mode=mode, client="fake", sid=SID)
         self.make(spec=spec).detach()
         view = HarnessDelegate.attach(self.work, session_cls=HarnessSession)
         view.close()
@@ -323,11 +517,16 @@ class CrashTest(HarnessCase):
         """A tui run whose process died mid-run: no outcome stored, no run lock held, its agent
         session left live as the run started it.
         """
-        spec = Spec("input", self.work, mode="tui", client="fake", sid=SID, cwd=cwd or self.work)
+        spec = Spec("input", self.work, mode="tui", client="fake", sid=SID, cwd=cwd)
         self.make(spec=spec)
         state = self.metadata()
         agent = SessionSpec(
-            workdir=self.work, client="fake", mode=Mode.TUI, sid=SID, name=state["agent_name"]
+            workdir=self.work,
+            access=Access(cwd=self.work),
+            client="fake",
+            mode=Mode.TUI,
+            sid=SID,
+            name=state["agent_name"],
         )
         HarnessSession.start(agent, host=state["host"])
         return HarnessDelegate.attach(self.work, session_cls=HarnessSession), state["agent_name"]
@@ -346,6 +545,13 @@ class CrashTest(HarnessCase):
         self.assertEqual(len(harness_launches()), launches + 1)
         self.assertEqual(left.state(), Liveness.ABSENT)
         self.assertEqual(record.sid, SID)
+        self.assertEqual(self.metadata()["attempt"], 2)
+
+    def test_a_resume_after_its_agent_dir_was_pruned_makes_it_again(self):
+        view, _name = self.crashed()
+        shutil.rmtree(Layout(self.work).agent)
+        view.resume()
+        self.assertTrue(os.path.isdir(Layout(self.work).agent))
         self.assertEqual(self.metadata()["attempt"], 2)
 
     def test_a_resume_refused_for_an_untrusted_cwd_leaves_the_agent_session_live(self):
@@ -379,7 +585,7 @@ class CrashTest(HarnessCase):
     def test_resume_refuses_a_run_replaced_since_its_attach(self):
         view, _name = self.crashed()
         other = "0b6f2c1e-6d0a-4c1b-9a51-3f1f6b0e2a7d"
-        self.make(spec=Spec("input", self.work, task="echo", sid=other, cwd=self.work))
+        self.make(spec=Spec("input", self.work, task="echo", sid=other))
         launches = len(harness_launches())
         with self.assertRaisesRegex(ConfigError, f"run {SID} was replaced by {other}"):
             view.resume()

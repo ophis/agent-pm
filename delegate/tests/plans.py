@@ -72,12 +72,11 @@ class Base(Case):
 
     def planned(self, role="researcher", task="research", *, keys=None, team=None, run=None, **kw):
         """(Plan, stderr) of `run`, else `role` resolved with run keys `keys`: input "Research X.",
-        client "fake", headless, out self.out, workdir self.work, the cwd the workdir, unless `kw`
+        client "fake", headless, out self.out, workdir self.work, the cwd its agent dir, unless `kw`
         says otherwise.
         """
         kw = {"client": "fake", "mode": "headless", "out": self.out, "input": "Research X.", **kw}
         workdir = kw.pop("workdir", self.work)
-        kw.setdefault("cwd", workdir)
         composition = Composer(team=team)
         run = run or replace(composition.resolve(role), **(keys or {}))
         err = io.StringIO()

@@ -235,7 +235,7 @@ class TuiTest(Base):
         self.assertEqual(launch.env["PYTHONPATH"], os.pathsep.join(dict.fromkeys(PACKAGE_ROOTS)))
         state = self.common.bind(str(self.work), self.spec.sid, NATIVE)
         self.rollout()
-        self.spec = dataclasses.replace(self.spec, access=Access())
+        self.spec = dataclasses.replace(self.spec, access=Access(cwd=self.spec.workdir))
         _, resumed, _ = self.launch(resume=True, adapter=adapter)
         self.assertEqual(resumed.env[tui.CLIENT_PYTHONPATH], "/a b;c")
         self.assertNotIn("/a b;c", resumed.resume)

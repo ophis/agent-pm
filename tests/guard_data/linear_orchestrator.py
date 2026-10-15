@@ -68,7 +68,6 @@ NOQA_ALLOWED = {
 
 OPTION_TUPLES_ALLOWED = {
     (f"{ORCH_FILES}engine/log.py", "ONCE"): "the log fields keying a once-only line",
-    (f"{ORCH_FILES}engine/config.py", "CLONES"): "checkout dir names in a workdir",
     (f"{ORCH_FILES}engine/prune.py", "ARCHIVE_ROLES"): "roles whose finished issues are archived",
 }
 

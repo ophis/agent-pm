@@ -22,7 +22,7 @@ def main(argv=None):
     entries = {
         "router": (router.main, "claim or resume an issue's agent run: a tick, --issue or --brake"),
         "promote": (promote.main, "promote Handoff issues to the next role, then prune"),
-        "prune": (prune.main, "clean up finished issues' runs and checkouts, then archive"),
+        "prune": (prune.main, "close finished issues' runs, delete their agent dirs, then archive"),
     }
     if arguments and arguments[0] in entries:
         return entries[arguments[0]][0](arguments[1:])

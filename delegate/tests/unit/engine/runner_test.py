@@ -7,18 +7,11 @@ from contextlib import redirect_stderr
 from datetime import datetime
 from unittest import mock
 
-from agent_pm.delegate import (
-    Begun,
-    ConfigError,
-    Finished,
-    Limit,
-    Progress,
-    Result,
-    Spec,
-)
+from agent_pm.delegate import Begun, ConfigError, Finished, Limit, Progress, Result, Spec
 from agent_pm.delegate.composer import Composer
 from agent_pm.delegate.engine.plan import plan
 from agent_pm.delegate.engine.runner import FIX, NUDGE, POLICIES, STOP_LIMIT, execute, stopped
+from agent_pm.delegate.engine.types import Layout
 from agent_pm.delegate.event.reply import marks
 from agent_pm.session import (
     Activity,
@@ -89,6 +82,21 @@ class InProcess(Base):
         self.assertEqual((r.returncode, r.outcome.status, r.error), (0, "done", ""))
         self.assertEqual(self.kinds(), ["session", "input", "progress", "result", "end"])
         self.assertEqual((self.read(self.out), self.launches()[0]["pid"]), ("# Doc\n", os.getpid()))
+
+    def test_a_relative_outcome_file_resolves_in_the_agent_dir(self):
+        self.write(os.path.join(Layout(self.work).agent, "notes", "doc.md"), "# From a file\n")
+        self.write(os.path.join(self.work, "notes", "doc.md"), "# Outside\n")
+        data = {k: v for k, v in DONE.items() if k != "deliverable"}
+        r = self.go(said(START, block(data | {"deliverable_file": "notes/doc.md"})))
+        self.assertEqual((r.outcome.status, r.outcome.deliverable), ("done", "# From a file\n"))
+
+    def test_an_outcome_file_outside_the_agent_dir_is_invalid(self):
+        outside = os.path.join(self.work, "run", "notes.md")
+        self.write(outside, "# Outside\n")
+        data = {k: v for k, v in DONE.items() if k != "deliverable"} | {"deliverable_file": outside}
+        r = self.go(said(START, block(data)), fixes=[said(block(data))])
+        self.assertIsNone(r.outcome)
+        self.assertIn("under the workdir", r.error)
 
     def test_a_raise_is_the_client_exiting_1_its_traceback_on_stderr(self):
         r = self.go(said(START), {"raise": "boom"})
@@ -475,11 +483,11 @@ class TuiPolicy(Base):
             self.assertEqual(self.go(mode="tui"), Result(1, None, "tui: no tmux"))
         self.assertEqual(self.kinds(), ["input", "result", "end"])
 
-    def test_the_runner_records_into_an_existing_workdir_only(self):
+    def test_the_runner_records_into_an_existing_run_dir_only(self):
         composition = Composer()
         accepted = plan(
             composition.resolve("dummy-tester"),
-            Spec("Echo me.", self.work, task="echo", client="fake", mode="tui", cwd=self.work),
+            Spec("Echo me.", self.work, task="echo", client="fake", mode="tui"),
             driver=self.driver,
             composition=composition,
         )

@@ -41,15 +41,15 @@ from session.tests.case import Case
 
 class EnvironmentSources(Case):
     def test_spec_accepts_both_environment_sources(self):
-        spec = Spec(workdir="/w", access=Access(env={"A": "1"}), env={"B": "2"})
+        spec = Spec(workdir="/w", access=Access(cwd="/w", env={"A": "1"}), env={"B": "2"})
         self.assertEqual((spec.access.env, dict(spec.env)), ({"A": "1"}, {"B": "2"}))
 
     def test_every_input_accepts_exec_environment_names(self):
         env = {"A-B": "a b", "1A": "", "X;Y": "value", "Ä": "value"}
         for build in (
-            Access,
+            lambda **fields: Access(cwd="/c", **fields),
             ProcessOptions,
-            lambda **fields: Spec(workdir="/w", **fields),
+            lambda **fields: Spec(workdir="/w", access=Access(cwd="/w"), **fields),
             lambda **fields: Launch(("x",), **fields),
         ):
             with self.subTest(build=build):
@@ -66,9 +66,9 @@ class EnvironmentSources(Case):
             None,
         ):
             for build in (
-                Access,
+                lambda **fields: Access(cwd="/c", **fields),
                 ProcessOptions,
-                lambda **fields: Spec(workdir="/w", **fields),
+                lambda **fields: Spec(workdir="/w", access=Access(cwd="/w"), **fields),
                 lambda **fields: Launch(("x",), **fields),
             ):
                 with self.subTest(env=env, build=build), self.assertRaises(ConfigError) as caught:
@@ -105,9 +105,9 @@ class FrozenLaunchData(Case):
 
     def test_access_launch_and_prepared_keep_a_copy_of_the_callers_env(self):
         for build in (
-            lambda env: Access(env=env),
+            lambda env: Access(cwd="/c", env=env),
             lambda env: Launch(("x",), env=env),
-            lambda env: Prepared(Spec(workdir="/w"), INFO, ("x",), env),
+            lambda env: Prepared(Spec(workdir="/w", access=Access(cwd="/w")), INFO, ("x",), env),
         ):
             source = {"A": "1"}
             held = build(source)
@@ -117,30 +117,26 @@ class FrozenLaunchData(Case):
 
     def test_access_launch_and_prepared_env_are_read_only(self):
         for held in (
-            Access(),
-            Access(env={"A": "1"}),
+            Access(cwd="/c"),
+            Access(cwd="/c", env={"A": "1"}),
             Launch(("x",)),
             Launch(("x",), env={"A": "1"}),
-            Prepared(Spec(workdir="/w"), INFO),
-            Prepared(Spec(workdir="/w"), INFO, ("x",), {"A": "1"}),
+            Prepared(Spec(workdir="/w", access=Access(cwd="/w")), INFO),
+            Prepared(Spec(workdir="/w", access=Access(cwd="/w")), INFO, ("x",), {"A": "1"}),
         ):
             with self.subTest(held=held), self.assertRaises(TypeError):
                 held.env["C"] = "3"
 
-    def test_default_specs_do_not_share_one_access(self):
-        first, second = Spec(workdir="/w"), Spec(workdir="/w")
-        self.assertIsNot(first.access, second.access)
-        self.assertEqual(first.access, Access())
-
     def test_frozen_copies_compare_by_value(self):
-        self.assertEqual(Access(env={"A": "1"}), Access(env=MappingProxyType({"A": "1"})))
-        self.assertNotEqual(Access(env={"A": "1"}), Access(env={"A": "2"}))
+        self.assertEqual(
+            Access(cwd="/c", env={"A": "1"}), Access(cwd="/c", env=MappingProxyType({"A": "1"}))
+        )
+        self.assertNotEqual(Access(cwd="/c", env={"A": "1"}), Access(cwd="/c", env={"A": "2"}))
         self.assertEqual(Launch(("x",), env={"A": "1"}), Launch(("x",), env={"A": "1"}))
         self.assertNotEqual(Launch(("x",), env={"A": "1"}), Launch(("x",), env={"A": "2"}))
-        self.assertEqual(Spec(workdir="/w"), Spec(workdir="/w", access=Access()))
         self.assertEqual(
-            Spec(workdir="/w", access=Access(env={"A": "1"})),
-            Spec(workdir="/w", access=Access(env={"A": "1"})),
+            Spec(workdir="/w", access=Access(cwd="/w", env={"A": "1"})),
+            Spec(workdir="/w", access=Access(cwd="/w", env={"A": "1"})),
         )
 
 
@@ -166,7 +162,7 @@ class WhatToStart(Case):
             Spec("/w")
 
     def test_the_start_fields_default_so_an_adapters_partial_spec_stays_valid(self):
-        spec = Spec(workdir="/w")
+        spec = Spec(workdir="/w", access=Access(cwd="/w"))
         self.assertEqual(
             (spec.client, spec.mode, spec.prompt, spec.resume, spec.events),
             (None, None, "", False, None),
@@ -174,11 +170,25 @@ class WhatToStart(Case):
 
     def test_idle_timeout_is_no_spec_field_but_the_callers_watch_option(self):
         with self.assertRaises(TypeError):
-            Spec(workdir="/w", idle_timeout=2.5)
+            Spec(workdir="/w", access=Access(cwd="/w"), idle_timeout=2.5)
+
+    def test_access_cwd_is_required(self):
+        with self.assertRaises(TypeError):
+            Access()
+        with self.assertRaises(TypeError):
+            Spec(workdir="/w")
+        for cwd in ("", "rel", "rel/dir"):
+            with self.subTest(cwd=cwd), self.assertRaises(ConfigError) as caught:
+                Spec(workdir="/w", access=Access(cwd=cwd))
+            self.assertEqual(
+                str(caught.exception), f"cwd must be a printable absolute path, got {cwd!r}"
+            )
+        self.assertEqual(Spec(workdir="/w", access=Access(cwd="/c")).access.cwd, "/c")
 
     def test_a_full_spec_keeps_its_fields_its_mode_a_mode(self):
         spec = Spec(
             workdir="/w",
+            access=Access(cwd="/w"),
             sid="s1",
             client="fake",
             mode="tui",
@@ -206,7 +216,7 @@ class WhatToStart(Case):
             ({"events": "/a\nb"}, r"events must be a printable path, got '/a\nb'"),
         ):
             with self.subTest(fields=fields), self.assertRaises(ConfigError) as caught:
-                Spec(workdir="/w", **fields)
+                Spec(workdir="/w", access=Access(cwd="/w"), **fields)
             self.assertEqual(str(caught.exception), message)
 
 
@@ -260,11 +270,13 @@ class CarriedEnums(Case):
     """Text is normalised once, where the value is built; the enum is what is carried."""
 
     def test_a_spec_carries_its_mode_and_effort_as_members(self):
-        spec = Spec(workdir="/w", mode="headless", effort="high")
+        spec = Spec(workdir="/w", access=Access(cwd="/w"), mode="headless", effort="high")
         self.assertIs(spec.mode, Mode.HEADLESS)
         self.assertIs(spec.effort, Effort.HIGH)
-        self.assertIs(Spec(workdir="/w", effort=Effort.LOW).effort, Effort.LOW)
-        self.assertIsNone(Spec(workdir="/w").effort)
+        self.assertIs(
+            Spec(workdir="/w", access=Access(cwd="/w"), effort=Effort.LOW).effort, Effort.LOW
+        )
+        self.assertIsNone(Spec(workdir="/w", access=Access(cwd="/w")).effort)
 
     def test_a_status_carries_a_resumable_given_it_or_its_plain_value(self):
         for resumable in (Resumable.YES, "yes"):
@@ -298,7 +310,10 @@ class CarriedEnums(Case):
             self.assertEqual(str(caught.exception), message)
 
     def test_a_tier_is_still_an_integer_one_of_the_tiers(self):
-        self.assertEqual([Spec(workdir="/w", tier=int(t)).tier for t in Tier], [1, 2, 3, 4])
+        self.assertEqual(
+            [Spec(workdir="/w", access=Access(cwd="/w"), tier=int(t)).tier for t in Tier],
+            [1, 2, 3, 4],
+        )
 
 
 class SharedTypes(Case):

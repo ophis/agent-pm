@@ -1,6 +1,5 @@
 """LinearRun owns exact plans and forwards views to the saved Delegate."""
 
-import os
 from dataclasses import replace
 
 from agent_pm.delegate import ConfigError as DelegateConfigError
@@ -42,13 +41,10 @@ class Runs(RunCase):
         role, spec, options = owner.delegate.accepted
         self.assertEqual(role, "researcher")
         self.assertEqual(spec.input, "Echo input.")
-        self.assertEqual(spec.workdir, self.cfg.run_dir("TASK-1"))
         self.assertEqual(
             (spec.task, spec.client, spec.sid, spec.resume), ("light-research", "fake", SID, False)
         )
         self.assertEqual(spec.name, "researcher-TASK-1-1234abcd")
-        self.assertEqual(spec.cwd, spec.workdir)
-        self.assertEqual(spec.out, os.path.join(spec.workdir, "out.md"))
         self.assertEqual(
             options,
             {
@@ -63,6 +59,13 @@ class Runs(RunCase):
         self.assertEqual(record.sessions, ("researcher-TASK-1-1234abcd",))
         self.assertEqual(record.ctl, ("agent-pm-linear",))
         self.assertEqual(record.resume, ("agent-pm-linear", "resume", "TASK-1"))
+
+    def test_spec_passes_only_the_workdir(self):
+        owner, _ = self.start(delegate_cls=CapturedDelegate)
+        spec = owner.delegate.accepted[1]
+        self.assertEqual(
+            (spec.workdir, spec.cwd, spec.out), (self.cfg.issue_workdir("TASK-1"), None, None)
+        )
 
     def test_check_tui_asks_the_configured_delegate_kind_and_passes_on_its_refusal(self):
         cfg = replace(
@@ -82,7 +85,7 @@ class Runs(RunCase):
         owner = LinearRun(
             "TASK-1",
             "Answer.",
-            self.cfg.run_dir("TASK-1"),
+            self.cfg.issue_workdir("TASK-1"),
             cfg=self.cfg,
             role="researcher",
             sid=SID,
@@ -117,24 +120,15 @@ class Runs(RunCase):
 
     def test_completed_resume_keeps_record_and_interrupted_resume_starts_once(self):
         owner, record = self.start()
-        FakeDelegate.finish(self.cfg.run_dir("TASK-1"))
+        FakeDelegate.finish(self.cfg.issue_workdir("TASK-1"))
         view = LinearRun.attach("TASK-1", cfg=self.cfg)
         self.assertEqual(view.outcome(), FakeDelegate.outcome_result)
         self.assertEqual(view.resume(), record)
         self.assertFalse(view.alive())
-        FakeDelegate.end(self.cfg.run_dir("TASK-1"))
+        FakeDelegate.end(self.cfg.issue_workdir("TASK-1"))
         self.assertEqual(view.resume(), record)
         self.assertEqual(view.resume(), record)
         self.assertTrue(owner.alive())
-
-    def test_forget_has_its_delegate_forget_the_run(self):
-        self.start()
-        view = LinearRun.attach("TASK-1", cfg=self.cfg)
-        view.close()
-        view.forget()
-        with self.assertRaises(DelegateConfigError):
-            LinearRun.attach("TASK-1", cfg=self.cfg)
-        self.assertTrue(os.path.isdir(self.cfg.run_dir("TASK-1")))
 
     def test_missing_record_provider_or_invalid_identity_refuses_attach(self):
         with self.assertRaisesRegex(ConfigError, "no recorded run"):
@@ -178,7 +172,7 @@ class Runs(RunCase):
 
     def test_a_kindless_row_is_a_bad_row_whatever_the_current_default(self):
         owner = LinearRun(
-            "TASK-1", "Input", self.cfg.run_dir("TASK-1"), cfg=self.cfg, role="dummy", sid=SID
+            "TASK-1", "Input", self.cfg.issue_workdir("TASK-1"), cfg=self.cfg, role="dummy", sid=SID
         )
         owner.detach()
         runs.note(self.cfg.runs_log, "start", issue="TASK-1", sid=SID, role="dummy", client="fake")

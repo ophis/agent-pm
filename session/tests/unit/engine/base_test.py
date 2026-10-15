@@ -3,6 +3,7 @@
 import inspect
 
 from agent_pm.session import (
+    Access,
     ConfigError,
     Hosts,
     Mode,
@@ -81,7 +82,7 @@ class SessionClassMethods(Case):
                     Session.validate_policy(flags=flags, env=env)
                 self.assertEqual(str(caught.exception), message)
                 with self.assertRaises(ConfigError) as spec_error:
-                    Spec(workdir=self.home, flags=flags, env=env)
+                    Spec(workdir=self.home, access=Access(cwd=self.home), flags=flags, env=env)
                 self.assertEqual(str(spec_error.exception), message)
                 with self.assertRaises(ConfigError) as options_error:
                     ProcessOptions(flags=flags, env=env)
@@ -96,7 +97,13 @@ class SessionClassMethods(Case):
         self.assertIsInstance(FakeSession.host(), FakeHost)
         self.assertEqual(FakeSession.display("d"), "d")
         own = type("Own", (Session,), {})
-        spec = Spec(workdir=self.home, client="fake", mode=Mode.HEADLESS, prompt="hi")
+        spec = Spec(
+            workdir=self.home,
+            access=Access(cwd=self.home),
+            client="fake",
+            mode=Mode.HEADLESS,
+            prompt="hi",
+        )
         calls = {
             "configure": ((), {"adapters": {}, "hosts": Hosts("tmux", {})}),
             "configure_from": (({},), {}),

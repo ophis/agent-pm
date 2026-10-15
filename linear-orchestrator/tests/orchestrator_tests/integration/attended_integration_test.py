@@ -100,7 +100,7 @@ class Attended(Segment):
         a stopped harness before its process ends, and its last callback, in its own process group,
         outlives it.
         """
-        workdir = os.path.join(self.runs_dir, ident)
+        workdir = os.path.join(self.workdirs, ident)
         marks = (
             f"agent_pm.delegate.engine.harness {workdir}",
             f"--issue {ident} --workdir {workdir}",

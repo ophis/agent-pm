@@ -64,6 +64,6 @@ class ClaudeAdapter(Adapter):
         return self.common.session_status(info.sid, info.cwd, transcript=info.transcript, env=env)
 
     def writable_dirs(self, spec: Spec):
-        cwd = spec.access.cwd or spec.workdir
+        cwd = spec.access.cwd
         dirs = (cwd, *spec.access.dirs, *(os.path.join(cwd, d) for d in added_dirs(spec.flags)))
         return tuple(dict.fromkeys(map(os.path.realpath, dirs)))

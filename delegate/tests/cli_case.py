@@ -1,4 +1,4 @@
-"""Shared CLI fixtures for unit and integration coverage over the configured fake client."""
+"""Shared CLI fixtures over the configured fake client."""
 
 import io
 import json
@@ -9,6 +9,7 @@ from unittest import mock
 
 from agent_pm.delegate import cli
 from agent_pm.delegate.engine.harness_delegate import HarnessDelegate
+from agent_pm.delegate.engine.types import Layout
 from agent_pm.session import ConfigError
 
 from delegate.tests.case import Case
@@ -112,7 +113,7 @@ class Base(Case):
             return [json.loads(line) for line in f]
 
     def records(self) -> list[dict]:
-        with open(os.path.join(self.work, "run.jsonl")) as f:
+        with open(os.path.join(Layout(self.work).run, "run.jsonl")) as f:
             return [json.loads(line) for line in f]
 
     ran = None
