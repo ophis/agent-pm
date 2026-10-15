@@ -74,37 +74,38 @@ class MalformedGh(Base):
 
 
 class PlanDocs(Case):
-    def test_nested_checkouts_node_modules_and_git_are_skipped_but_not_dot_dirs(self):
-        """A subdir holding a .git file (a worktree) or dir (a clone) is a checkout of its own."""
+    def test_only_autopilot_plan_docs_of_the_branch_count_at_a_step_or_done_newest_last(self):
+        """Autopilot resumes only from <worktree>/.autopilot/; a copy elsewhere is not a plan doc.
+        Autopilot rewrites a plan doc's RESUME at every phase change, so the newest is the last touched.
+        """
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         wt = tmp.name
 
-        def doc(*parts):
-            path = os.path.join(wt, *parts, "plan.md")
+        def doc(path, resume):
+            path = os.path.join(wt, path)
             os.makedirs(os.path.dirname(path), exist_ok=True)
             with open(path, "w") as f:
-                f.write("RESUME: phase=S5 branch=b\n")
+                f.write(f"Rules: x\nRESUME: {resume}\n")
             return path
 
-        found = doc("docs", ".autopilot")
-        for parts in (
-            ("wt", "x", "worktrees", "y"),
-            ("vendor", "clone"),
-            ("node_modules", "p"),
-            (".git",),
-        ):
-            doc(*parts)
-        with open(os.path.join(wt, "wt", "x", "worktrees", "y", ".git"), "w") as f:
-            f.write("gitdir: /elsewhere/.git/worktrees/y\n")
-        os.makedirs(os.path.join(wt, "vendor", "clone", ".git"))
-        self.assertEqual(repo.plan_docs(wt, "b"), [{"path": found, "phase": "S5"}])
+        done = doc(".autopilot/a-plan.md", "phase=done worktree=/w branch=b")
+        open_ = doc(".autopilot/b-plan.md", "phase=S5 worktree=/w branch=b")
+        doc(".autopilot/c-plan.md", "phase=S5 worktree=/w branch=other")
+        doc(".autopilot/a-spec.md", "phase=S5 worktree=/w branch=b")
+        doc("docs/a-plan.md", "phase=S7 worktree=/w branch=b")
+        os.utime(open_, (1_000, 1_000))
+        os.utime(done, (2_000, 2_000))
+        self.assertEqual(
+            repo.plan_docs(wt, "b"),
+            [{"path": open_, "phase": "S5"}, {"path": done, "phase": "done"}],
+        )
 
 
 class Status(Base):
-    def plan_doc(self, branch="TASK-1-x", phase="S8"):
-        os.makedirs(os.path.join(self.wt, "docs"), exist_ok=True)
-        path = os.path.join(self.wt, "docs", "plan.md")
+    def plan_doc(self, branch="TASK-1-x", phase="S5"):
+        os.makedirs(os.path.join(self.wt, ".autopilot"), exist_ok=True)
+        path = os.path.join(self.wt, ".autopilot", "x-plan.md")
         with open(path, "w") as f:
             f.write(f"# Plan\n\nRESUME: phase={phase} branch={branch}\n")
         return path
@@ -119,7 +120,7 @@ class Status(Base):
         )
         return code, json.loads(out) if code == 0 else err, run
 
-    def test_pr_plan_docs_and_feedback_since_the_latest_plan_doc_commit(self):
+    def test_pr_plan_docs_and_feedback_since_its_latest_own_commit(self):
         path = self.plan_doc()
         comments = [
             [
@@ -139,7 +140,20 @@ class Status(Base):
             ]
         ]
         code, r, run = self.status(
-            (lambda a: a[3:5] == ["log", "-1"], ok("2026-10-02T00:00:00+00:00\n")),
+            (
+                lambda a: (
+                    a[3:]
+                    == [
+                        "log",
+                        "-1",
+                        "--first-parent",
+                        "--no-merges",
+                        "--format=%cI",
+                        "origin/TASK-0-a..HEAD",
+                    ]
+                ),
+                ok("2026-10-02T00:00:00+00:00\n"),
+            ),
             pr_list(
                 [
                     {
@@ -161,12 +175,67 @@ class Status(Base):
             r["pr"], {"number": 7, "url": "u7", "state": "OPEN", "baseRefName": "TASK-0-a"}
         )
         self.assertIn(
-            "number,url,state,baseRefName,isCrossRepository,author",
+            "number,url,state,baseRefName,isCrossRepository,author,mergeCommit",
             next(c for c in run.calls if c[1] == "pr"),
         )
-        self.assertEqual(r["plan_docs"], [{"path": path, "phase": "S8"}])
+        self.assertEqual(r["plan_docs"], [{"path": path, "phase": "S5"}])
+        self.assertEqual(r["since"], "2026-10-02T00:00:00+00:00")
         self.assertEqual([e["body"] for e in r["user"]], ["do Y"])
         self.assertEqual([(e["body"], e["state"]) for e in r["others"]], [("nit", "COMMENTED")])
+
+    def test_a_merged_prs_own_commits_are_those_off_its_base_before_the_merge(self):
+        """A merge commit puts B's commits on origin/<base>, so they count up to its first parent;
+        a merge commit id that is no SHA falls back to origin/<base>.
+        """
+        comments = [
+            [
+                {"created_at": "2026-10-01T00:00:00Z", "user": {"login": "me"}, "body": "old"},
+                {"created_at": "2026-10-03T00:00:00Z", "user": {"login": "me"}, "body": "do Y"},
+            ]
+        ]
+        merged = "b" * 40
+        for oid, excluded in (
+            (merged, f"{merged}^1"),
+            ("--all", "origin/main"),
+            (None, "origin/main"),
+        ):
+            with self.subTest(oid=oid):
+                row = {**pr(), "state": "MERGED", "mergeCommit": oid and {"oid": oid}}
+                code, r, _ = self.status(
+                    (
+                        lambda a, excluded=excluded: (
+                            a[3:]
+                            == [
+                                "log",
+                                "-1",
+                                "--first-parent",
+                                "--no-merges",
+                                "--format=%cI",
+                                f"{excluded}..HEAD",
+                            ]
+                        ),
+                        ok("2026-10-02T00:00:00+00:00\n"),
+                    ),
+                    pr_list([row]),
+                    (lambda a: a[-1].endswith("/issues/7/comments"), ok(json.dumps(comments))),
+                    NO_FEEDBACK,
+                )
+                self.assertEqual(code, 0, r)
+                self.assertEqual(r["since"], "2026-10-02T00:00:00+00:00")
+                self.assertEqual([e["body"] for e in r["user"]], ["do Y"])
+
+    def test_a_pr_branch_without_own_commits_filters_no_feedback(self):
+        comments = [
+            [{"created_at": "2026-10-01T00:00:00Z", "user": {"login": "me"}, "body": "old"}]
+        ]
+        code, r, _ = self.status(
+            pr_list([pr()]),
+            (lambda a: a[-1].endswith("/issues/7/comments"), ok(json.dumps(comments))),
+            NO_FEEDBACK,
+        )
+        self.assertEqual(code, 0, r)
+        self.assertIsNone(r["since"])
+        self.assertEqual([e["body"] for e in r["user"]], ["old"])
 
     def test_configured_users_replace_the_gh_login(self):
         """From the config and local passed only, never the HOME one (malformed here)."""

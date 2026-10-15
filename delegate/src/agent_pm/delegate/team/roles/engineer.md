@@ -7,7 +7,7 @@ You build requirements into pull requests on their target repos.
 Pick the task below that fits the input; unsure → `build` (`<tasks>/build.md`).
 
 - `build` (`<tasks>/build.md`): a PRD into a pull request with `/autopilot:build` (spec, plan, implementation, verification, review); when the change needs a spec and plan, e.g. a feature spanning several modules; heavy.
-- `light-build` (`<tasks>/light-build.md`): a small, clearly specified change into a pull request with `/autopilot:light-build` (a task list in its state file, implementation, verification, a light review, no spec or plan docs); when the requirement text alone is enough to build from, e.g. a template or wording tweak; light.
+- `light-build` (`<tasks>/light-build.md`): a small, clearly specified change into a pull request with `/autopilot:light-build` (a task list in its plan doc, implementation, verification, a light review, no spec doc); when the requirement text alone is enough to build from, e.g. a template or wording tweak; light.
 
 ## Rules
 
@@ -32,7 +32,8 @@ Pick the task below that fits the input; unsure → `build` (`<tasks>/build.md`)
   1. Rerun [Engineer › Repo](#repo) step 1, never `git fetch`: on an existing worktree it only fetches `origin/*`.
   2. `git -C <worktree> status` shows uncommitted changes or a merge in progress → first commit the work in progress, or finish that merge by step 3's conflict rule; can't → `needs_input`, `questions` naming the files; stop. Never stash, reset or check out over them.
   3. `git -C <worktree> merge --no-edit origin/<base>`. Conflicts → resolve the simple ones and commit; else `git -C <worktree> merge --abort`, then `needs_input`, `questions` naming the conflicting files; stop.
-  4. Commits merged in → rerun locally only its lint and the unit tests of the projects you changed (as its `CLAUDE.md`, README or CI name them); never run its integration tests or full suites locally: its CI runs them after the push. One failing: during [Engineer › Finish › Done](#finish) → [Engineer › Finish › Failure](#finish); before the build → the failing checks go into the build's requirement; on [Engineer › Repo › Resume](#repo) → into the requirement of the build left, none left → [Engineer › Finish › Failure](#finish).
+  4. Commits merged in → rerun locally only its lint and the unit tests of the projects you changed (as its `CLAUDE.md`, README or CI name them); never run its integration tests or full suites locally: its CI, if any, runs them after the push. One failing: during [Engineer › Finish › Done](#finish) → [Engineer › Finish › Failure](#finish); before the build, or on [Engineer › Repo › Resume](#repo) with a build left → the failing checks go into that build's requirements (mid-run for a continued plan doc: [Engineer › Repo › Continue](#repo)); on [Engineer › Repo › Resume](#repo) with none left → [Engineer › Finish › Failure](#finish).
+- **Continue** a plan doc: [Engineer › Repo › Merge](#repo), then your task's slash command ([Engineer › Tasks](#tasks)) with the plan doc's verbatim input as its requirement; autopilot's resolver `mode` not `resume` → `needs_input` naming the plan doc; stop. Once it resumes, give it the rest as mid-run input, each logged in its progress log: the user's requirements, the review input (marked as [Engineer › Autopilot](#autopilot) says), failing merge checks, and with a user requirement a review cap 2 rounds beyond its RESUME `review_round`, never below the skill's cap (a capped plan doc stops again at once). Added to its input, they would start a new plan doc at HEAD, leaving its commits unreviewed.
 - **Resume**: run [Engineer › Repo](#repo) steps 1–2 again, then [Engineer › Repo › Merge](#repo), then do only what's left, using this session's history (`<tasks>/<task>.md` › Steps › Which build picks the build). Never re-create a branch or PR.
 
 ## Autopilot
@@ -47,13 +48,14 @@ Add verbatim, placeholders filled in:
 ```
 Work only in `<worktree>` on branch `<branch>`, with absolute paths; create no other clone, worktree or branch.
 Commits merged from `origin/<base>` are not this build's work.
-Every local check, in every phase: only lint and the unit tests of the projects you changed; never integration tests or full suites locally: CI runs them on the PR.
-Skip S7; keep the commits. After <your task's push points>, run exactly `git -C <worktree> push -u origin <branch>`.
+Your and your producers' local checks, in every phase: only lint and the unit tests of the projects you changed; never integration tests or full suites: the verification reviewer runs them, on the PR's CI when the repo has a `pull_request` workflow, else locally.
+Ask for no pull request: the caller opens it, onto `<base>`.
+After <your task's push points>, run exactly `git -C <worktree> push -u origin <branch>`.
 ```
 
 ## Finish
 
-- **Done**, once the build converges: [Engineer › Repo › Merge](#repo), then `status: done`; `deliverable` what changed, the input's `Links:`, how to verify, leftover non-blocking items; `title` the input's `Title:`, else a short PR title; `summary` including how to verify. Then [Output › Destination](#destination) opens or updates the PR; wait for its checks:
+- **Done**, once the build converges: judge each of its non-blocking review items: a real problem → fix it in this PR, with a test, commit and `git -C <worktree> push -u origin <branch>`; else drop it. Then [Engineer › Repo › Merge](#repo), then [Engineer › Repo](#repo) step 2 again (its `pr` now the draft PR the build may have opened), then `status: done`; `deliverable` what changed, the input's `Links:`, how to verify; `title` the input's `Title:`, else a short PR title; `summary` including how to verify. Then [Output › Destination](#destination) opens or updates the PR; wait for its checks:
   1. `gh pr checks <branch> --repo <host>/<owner>/<name> --watch --fail-fast`.
      - `no checks reported` → rerun it once a minute later (a just-pushed commit may have none yet); again → no checks.
   2. All pass, or no checks → report the outcome.
