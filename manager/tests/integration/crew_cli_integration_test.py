@@ -315,6 +315,7 @@ class Commands(Case):
             "monitor expired: agent-pm-crew attach --manager mgr --after LINE --gen 0\n", output
         )
         self.assertIn(
-            "next-event: agent-pm-crew next-event --manager mgr --after 0 --gen 0\n", output
+            "next-event: agent-pm-crew next-event --manager mgr --after 0 --gen 0 --content\n",
+            output,
         )
         self.assertTrue(output.endswith("N=0 GEN=0\n"))

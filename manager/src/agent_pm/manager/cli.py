@@ -76,11 +76,11 @@ def _attach(args) -> int:
             print(f"resume: {shlex.join(command)}")
     if os.path.isdir(crew.roster.directory):
         print(f"monitor: tail -n +{int(cursor) + 1} -F {shlex.quote(crew.roster.events)}")
-        for label, verb, after in (
+        for label, verb, after, *extra in (
             ("monitor expired", "attach", "LINE"),
-            ("next-event", "next-event", cursor),
+            ("next-event", "next-event", cursor, "--content"),
         ):
-            command = ("agent-pm-crew", verb, *named, "--after", after, "--gen", generation)
+            command = ("agent-pm-crew", verb, *named, "--after", after, "--gen", generation, *extra)
             print(f"{label}: {shlex.join(command)}")
     print(trailer)
     return 0

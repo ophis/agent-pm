@@ -81,6 +81,7 @@ class PathsAndArguments(Case):
                     "0",
                     "--gen",
                     "0",
+                    "--content",
                 ],
             },
         )
