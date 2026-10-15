@@ -307,7 +307,7 @@ def run_prune(gql, now, promoter, pruner=None):
             gql,
             now,
             dry=promoter.dry,
-            work=promoter.cfg.runs_dir,
+            work=promoter.cfg.workdirs,
             team=promoter.team,
             roles=promoter.roles,
             cfg=promoter.cfg,

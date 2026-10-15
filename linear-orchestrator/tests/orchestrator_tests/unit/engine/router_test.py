@@ -4097,7 +4097,7 @@ class RecoverWriteBack(TickBase):
         self.lines.append(
             json.dumps(start | {"uuid": self.ISSUE, "project": IDS[DR], "target": None, "key": key})
         )
-        self.run = Layout(self.cfg().run_dir("TASK-1")).run
+        self.run = Layout(self.cfg().issue_workdir("TASK-1")).run
         os.makedirs(self.run)
         self.write(
             os.path.join(self.run, "writeback.json"),

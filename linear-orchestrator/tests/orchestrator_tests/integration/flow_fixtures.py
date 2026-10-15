@@ -126,7 +126,7 @@ class Flow(Case):
         self.root = os.path.realpath(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, self.root, ignore_errors=True)
         state = os.path.join(self.root, "state")
-        self.runs_dir, self.logs = os.path.join(state, "work"), os.path.join(state, "logs")
+        self.workdirs, self.logs = os.path.join(state, "work"), os.path.join(state, "logs")
         with open(os.path.join(self.agent_pm, "config.local.toml"), "w") as f:
             f.write(
                 local_section(run_fixtures.local(state) + TASK_LABELS, "linear_orchestrator")
@@ -207,12 +207,12 @@ class Flow(Case):
         return jsonl(self.claude_log)
 
     def records(self, ident):
-        return jsonl(os.path.join(Layout(os.path.join(self.runs_dir, ident)).run, "run.jsonl"))
+        return jsonl(os.path.join(Layout(os.path.join(self.workdirs, ident)).run, "run.jsonl"))
 
     def ledger(self, ident):
         """Each sid's write-back steps."""
         try:
-            run = Layout(os.path.join(self.runs_dir, ident)).run
+            run = Layout(os.path.join(self.workdirs, ident)).run
             with open(os.path.join(run, "writeback.json")) as f:
                 return {sid: entry.get("steps", []) for sid, entry in json.load(f).items()}
         except FileNotFoundError:
@@ -357,7 +357,7 @@ class TmuxFlow(Flow):
                     *tail(os.path.join(self.logs, "orchestrator.jsonl")),
                     "run.jsonl:",
                     *tail(
-                        os.path.join(Layout(os.path.join(self.runs_dir, ident)).run, "run.jsonl")
+                        os.path.join(Layout(os.path.join(self.workdirs, ident)).run, "run.jsonl")
                     ),
                 ]
             )

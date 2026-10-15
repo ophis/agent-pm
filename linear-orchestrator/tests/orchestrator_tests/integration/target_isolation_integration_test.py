@@ -120,7 +120,7 @@ class TargetCheckout(Case):
         )
         self.assertEqual(self.run_({}, writable=(self.tmp,)), self.want(""))
 
-    def test_the_default_writable_holds_the_runs_dir(self):
+    def test_the_default_writable_holds_the_workdirs(self):
         inside = os.path.join(self.work, "clone")
         git("init", "-q", inside)
         git("-C", inside, "remote", "add", "origin", self.HTTPS)

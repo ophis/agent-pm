@@ -92,7 +92,7 @@ class Rework(BinFlow):
                 TOOL,
                 command,
                 "--dir",
-                os.path.join(Layout(os.path.join(self.runs_dir, ID)).agent, "src"),
+                os.path.join(Layout(os.path.join(self.workdirs, ID)).agent, "src"),
                 "--branch",
                 BRANCH,
                 "--name",

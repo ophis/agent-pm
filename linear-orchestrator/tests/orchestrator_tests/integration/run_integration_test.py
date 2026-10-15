@@ -76,7 +76,7 @@ def attach(url, title):
 class Run(TmuxFlow):
     def setUp(self):
         super().setUp()
-        self.rd = os.path.join(self.runs_dir, ID)
+        self.rd = os.path.join(self.workdirs, ID)
         self.ends = 0
 
     def seed(self, role):

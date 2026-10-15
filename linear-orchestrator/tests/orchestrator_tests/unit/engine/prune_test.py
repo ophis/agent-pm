@@ -101,7 +101,7 @@ class RepositoryCleanup(PruneScenario):
             (0, f"prune-closed TASK-7 session={SID}\nprune-removed TASK-7 what=agent dir"),
         )
         self.record("TASK-8", OTHER_SID, [B], agent=False)
-        os.unlink(os.path.join(Layout(self.cfg.run_dir("TASK-8")).run, "delegate.json"))
+        os.unlink(os.path.join(Layout(self.cfg.issue_workdir("TASK-8")).run, "delegate.json"))
         run = self.run_files("TASK-8")
         again = gql_for(dict.fromkeys(("TASK-7", "TASK-8"), ("Done", [(30, "Done")])))
         with mock.patch.object(PruneDelegate, "attach", side_effect=AssertionError("attached")):
@@ -232,7 +232,7 @@ class RepositoryCleanup(PruneScenario):
         self.assertNotIn(prune.M_ARCHIVE, gql.calls)
         self.assertTrue(os.path.isfile(os.path.join(wt, ".git")))
         self.assertEqual(self.api.order, [])
-        PruneDelegate.attach(self.cfg.run_dir("TASK-7"))
+        PruneDelegate.attach(self.cfg.issue_workdir("TASK-7"))
 
 
 class RetentionCleanup(PruneScenario):
@@ -419,7 +419,7 @@ class RetentionCleanup(PruneScenario):
             (code, out),
             (0, f"prune-closed TASK-7 session={SID}\nprune-removed TASK-7 what=agent dir"),
         )
-        PruneDelegate.attach(self.cfg.run_dir("TASK-7"))
+        PruneDelegate.attach(self.cfg.issue_workdir("TASK-7"))
 
     def test_a_failed_close_or_an_unfinished_issue_keeps_the_runs_state(self):
         self.record("TASK-7", SID, [A])
@@ -429,7 +429,7 @@ class RetentionCleanup(PruneScenario):
         self.assertEqual(self.prune(gql)[0], 3)
         for ident in ("TASK-7", "TASK-8"):
             with self.subTest(ident=ident):
-                PruneDelegate.attach(self.cfg.run_dir(ident))
+                PruneDelegate.attach(self.cfg.issue_workdir(ident))
 
     def test_sessions_unknown_prune_no_issue_but_archive(self):
         for dry, archived in (
@@ -513,11 +513,11 @@ class RetentionCleanup(PruneScenario):
         clone = self.mkc("TASK-7", "src", "o", "repo")
         self.record("TASK-7", SID, [A])
         self.record("TASK-8", OTHER_SID, ["other-host-agent"])
-        os.unlink(os.path.join(Layout(self.cfg.run_dir("TASK-7")).run, "delegate.json"))
+        os.unlink(os.path.join(Layout(self.cfg.issue_workdir("TASK-7")).run, "delegate.json"))
         gql = gql_for(dict.fromkeys(("TASK-7", "TASK-8"), ("Done", [(30, "Done")])))
         skip = (
             f"prune-skip TASK-7 sid={SID} reason=ConfigError: "
-            f"{self.cfg.run_dir('TASK-7')!r}: no delegate.json"
+            f"{self.cfg.issue_workdir('TASK-7')!r}: no delegate.json"
         )
         code, out = self.prune(gql)
         self.assertEqual(code, 0)

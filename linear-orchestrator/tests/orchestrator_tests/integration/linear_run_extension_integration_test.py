@@ -81,7 +81,7 @@ class Extension(ConfigFile, Case):
                 "from agent_pm.linear_orchestrator.engine import config, runs\n"
                 "from agent_pm.linear_orchestrator import LinearRun\n"
                 "cfg = config.load()\n"
-                f"owner = LinearRun({issue!r}, 'Echo.', cfg.run_dir({issue!r}), cfg=cfg, role='engineer', sid={SID!r}, display='opaque display')\n"
+                f"owner = LinearRun({issue!r}, 'Echo.', cfg.issue_workdir({issue!r}), cfg=cfg, role='engineer', sid={SID!r}, display='opaque display')\n"
                 f"runs.note(cfg.runs_log, 'start', issue={issue!r}, sid={SID!r}, role='engineer', client='fake', delegate_kind=cfg.delegate_kind)\n"
                 "print(owner.detach().to_line())\n"
             )

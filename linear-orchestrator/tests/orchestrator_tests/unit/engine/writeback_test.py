@@ -1538,7 +1538,7 @@ class Events(RunCase):
     def setUp(self):
         super().setUp()
         log.use_logs(self.cfg.logs_dir)
-        self.workdir = self.cfg.run_dir(RUN_ISSUE)
+        self.workdir = self.cfg.issue_workdir(RUN_ISSUE)
         self.run = Layout(self.workdir).run
         LinearRun(
             RUN_ISSUE,
@@ -1635,7 +1635,10 @@ class ForClaim(RunCase):
         )
         self.assertEqual(
             (ctx.workdir, ctx.run),
-            (self.cfg.run_dir(RUN_ISSUE), os.path.join(self.cfg.run_dir(RUN_ISSUE), "run")),
+            (
+                self.cfg.issue_workdir(RUN_ISSUE),
+                os.path.join(self.cfg.issue_workdir(RUN_ISSUE), "run"),
+            ),
         )
 
     def test_a_later_attempt_is_a_resume(self):
@@ -1771,7 +1774,7 @@ class RefusedEvents(Events):
         for name, kwargs, e, error in (
             (
                 "another workdir",
-                {"workdir": self.cfg.run_dir("TASK-2")},
+                {"workdir": self.cfg.issue_workdir("TASK-2")},
                 delegate_event("begun"),
                 ConfigError,
             ),

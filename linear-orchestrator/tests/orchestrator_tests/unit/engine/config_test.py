@@ -563,7 +563,7 @@ class WorkDirectories(ConfigFile, Case):
         work = os.path.realpath(self.agent_pm)
         cfg = self.load(PIPELINE)
         self.assertEqual(
-            (cfg.work_dir, cfg.runs_dir, cfg.logs_dir, cfg.runs_log, cfg.run_dir("TASK-9")),
+            (cfg.work_dir, cfg.workdirs, cfg.logs_dir, cfg.runs_log, cfg.issue_workdir("TASK-9")),
             (
                 work,
                 work + "/work",

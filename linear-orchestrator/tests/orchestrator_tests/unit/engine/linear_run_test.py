@@ -64,7 +64,7 @@ class Runs(RunCase):
         owner, _ = self.start(delegate_cls=CapturedDelegate)
         spec = owner.delegate.accepted[1]
         self.assertEqual(
-            (spec.workdir, spec.cwd, spec.out), (self.cfg.run_dir("TASK-1"), None, None)
+            (spec.workdir, spec.cwd, spec.out), (self.cfg.issue_workdir("TASK-1"), None, None)
         )
 
     def test_check_tui_asks_the_configured_delegate_kind_and_passes_on_its_refusal(self):
@@ -85,7 +85,7 @@ class Runs(RunCase):
         owner = LinearRun(
             "TASK-1",
             "Answer.",
-            self.cfg.run_dir("TASK-1"),
+            self.cfg.issue_workdir("TASK-1"),
             cfg=self.cfg,
             role="researcher",
             sid=SID,
@@ -120,12 +120,12 @@ class Runs(RunCase):
 
     def test_completed_resume_keeps_record_and_interrupted_resume_starts_once(self):
         owner, record = self.start()
-        FakeDelegate.finish(self.cfg.run_dir("TASK-1"))
+        FakeDelegate.finish(self.cfg.issue_workdir("TASK-1"))
         view = LinearRun.attach("TASK-1", cfg=self.cfg)
         self.assertEqual(view.outcome(), FakeDelegate.outcome_result)
         self.assertEqual(view.resume(), record)
         self.assertFalse(view.alive())
-        FakeDelegate.end(self.cfg.run_dir("TASK-1"))
+        FakeDelegate.end(self.cfg.issue_workdir("TASK-1"))
         self.assertEqual(view.resume(), record)
         self.assertEqual(view.resume(), record)
         self.assertTrue(owner.alive())
@@ -164,7 +164,7 @@ class Runs(RunCase):
 
     def test_a_kindless_row_is_a_bad_row_whatever_the_current_default(self):
         owner = LinearRun(
-            "TASK-1", "Input", self.cfg.run_dir("TASK-1"), cfg=self.cfg, role="dummy", sid=SID
+            "TASK-1", "Input", self.cfg.issue_workdir("TASK-1"), cfg=self.cfg, role="dummy", sid=SID
         )
         owner.detach()
         runs.note(self.cfg.runs_log, "start", issue="TASK-1", sid=SID, role="dummy", client="fake")

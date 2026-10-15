@@ -92,7 +92,7 @@ class LinearRun:
         view.issue, view.sid = issue, latest.sid
         view.delegate_kind = runs.delegate_of(entries, latest.sid)
         provider = delegate_cls or cls._provider(cfg, view.delegate_kind)
-        view.delegate = provider.attach(cfg.run_dir(issue), sid=latest.sid)
+        view.delegate = provider.attach(cfg.issue_workdir(issue), sid=latest.sid)
         return view
 
     def _record(self, record: Record) -> Record:

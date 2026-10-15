@@ -170,7 +170,7 @@ class PruneScenario(Case):
         log.use_logs(self.logs)
 
     def record(self, ident, sid, sessions, role="engineer", *, agent=True):
-        workdir = self.cfg.run_dir(ident)
+        workdir = self.cfg.issue_workdir(ident)
         PruneDelegate("dummy", Spec("", workdir, sid=sid)).detach()
         if not agent:
             os.rmdir(Layout(workdir).agent)

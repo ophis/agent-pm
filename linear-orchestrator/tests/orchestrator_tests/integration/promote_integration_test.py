@@ -222,10 +222,10 @@ class Prune(Tick, TmuxFlow):
             assignee=engineer,
             project=PROJECT,
         )
-        workdir = os.path.join(self.runs_dir, DONE)
+        workdir = os.path.join(self.workdirs, DONE)
         agent = delegate.Layout(workdir).agent
         gone = [os.path.join(agent, *p) for p in (CLONE, ("publish",), ("tmp",))]
-        kept = os.path.join(delegate.Layout(os.path.join(self.runs_dir, OPEN)).agent, *CLONE)
+        kept = os.path.join(delegate.Layout(os.path.join(self.workdirs, OPEN)).agent, *CLONE)
         for path in (*gone[:2], kept):
             self.git_init(path)
         os.makedirs(gone[2])

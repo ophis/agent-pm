@@ -60,7 +60,7 @@ class RunLaunching(OuterBase):
         self.local_clone()
         cfg = self.cfg()
         os.makedirs(
-            os.path.join(target.checkout(ID, "Ophis", "Agent-PM", work=cfg.runs_dir), ".git")
+            os.path.join(target.checkout(ID, "Ophis", "Agent-PM", work=cfg.workdirs), ".git")
         )
         self.run_.table = [(("git", *GUARD, "-C"), ok()), *ENG_RUN]
         self.assertEqual(self.outer(mode="resume"), 0)

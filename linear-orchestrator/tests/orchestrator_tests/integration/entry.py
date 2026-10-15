@@ -38,7 +38,7 @@ def tui(argv):
     LinearRun(
         issue,
         text,
-        cfg.run_dir(issue),
+        cfg.issue_workdir(issue),
         cfg=cfg,
         role=role,
         sid=sid,

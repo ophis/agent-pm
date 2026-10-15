@@ -324,7 +324,7 @@ def main(argv, *, gql=linear_gql, now=None, config_path=None, pruner=Pruner):
             gql,
             now or datetime.now(UTC),
             dry=dry,
-            work=cfg.runs_dir,
+            work=cfg.workdirs,
             team=team(gql, cfg),
             roles=role_ids(gql, cfg.roles),
             cfg=cfg,
