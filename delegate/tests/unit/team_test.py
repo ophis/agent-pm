@@ -215,9 +215,14 @@ class Shipped(Case):
                 "2. **Repo** ([Engineer › Repo](#repo)); from status, act on `plan_docs` too.", text
             )
             self.assertIn(
-                "\n   - The newest plan doc (`plan_docs`' last) not at `done` → "
-                "[Engineer › Repo › Continue](#repo) it.\n"
+                "\n   - The newest plan doc (`plan_docs`' last) not at `done` → continue it.\n"
                 "   - Else a plan doc or a `pr` (a **finished build**) and a user requirement → a new build",
+                text,
+                task,
+            )
+            self.assertIn(
+                "\n5. **Build**: continuing → [Engineer › Repo › Continue](#repo); else "
+                f"`/autopilot:{task}` ([Engineer › Autopilot](#autopilot)), the requirements being",
                 text,
                 task,
             )
