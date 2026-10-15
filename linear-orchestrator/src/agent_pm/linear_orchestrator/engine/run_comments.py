@@ -65,12 +65,14 @@ def _status(rc, outcome, limit):
 
 
 def body(rec, rc=None, ended_at=None, *, outcome=None, limit=False):
+    """Ended once rc or ended_at is given; an ended run without rc (Recover's replay) shows no exit."""
     rec["seq"] += 1
-    if rc is None:
+    if rc is None and ended_at is None:
         line = f"running · #{rec['seq']} · {rec['started_at']}"
     else:
         status = _status(rc, outcome, limit)
-        line = f"{status} · #{rec['seq']} · {rec['started_at']} → {ended_at} · exit {rc}"
+        code = "" if rc is None else f" · exit {rc}"
+        line = f"{status} · #{rec['seq']} · {rec['started_at']} → {ended_at}{code}"
     cmd = command(rec)
     return f"Run {rec['sid']} · {line}" + ("" if cmd is None else f"\n\n```\n{cmd}\n```")
 
@@ -126,7 +128,7 @@ def _text(rec):
 def post(issue, rec, *, gql, timeout=LIMIT, rc=None, ended_at=None, outcome=None, limit=False):
     rec["args"] = (
         rc,
-        None if rc is None else ended_at or timestamp(),
+        None if rc is None and ended_at is None else ended_at or timestamp(),
         outcome,
         limit,
     )

@@ -2213,7 +2213,22 @@ class RecoverReplay(Events):
         return Outcome(**data | {"status": OutcomeStatus(data["status"])})
 
     def replay(self):
-        return writeback.replay(self.cfg, RUN_ISSUE, RUN_SID, self.outcome(), gql=self.linear)
+        return writeback.replay(
+            self.cfg,
+            RUN_ISSUE,
+            RUN_SID,
+            self.outcome(),
+            gql=self.linear,
+            now=lambda: next(self.now),
+        )
+
+    def test_a_replay_of_a_lost_finished_ends_its_session_comment_once(self):
+        self.assertTrue(self.deliver(delegate_event("begun")))
+        self.assertTrue(self.replay())
+        ended = session_body(f"done · #2 · {STARTED} → {RESTARTED}")
+        self.assertEqual(self.linear.comments[RUN_SESSION]["body"], ended)
+        self.assertTrue(self.deliver(self.finished(outcome=outcome_data())))
+        self.assertEqual(self.linear.comments[RUN_SESSION]["body"], ended)
 
     def test_a_callback_and_recover_at_once_write_each_step_once(self):
         results, threads = self.racing(writeback, "save", self.replay)
