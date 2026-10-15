@@ -175,12 +175,67 @@ class Status(Base):
             r["pr"], {"number": 7, "url": "u7", "state": "OPEN", "baseRefName": "TASK-0-a"}
         )
         self.assertIn(
-            "number,url,state,baseRefName,isCrossRepository,author",
+            "number,url,state,baseRefName,isCrossRepository,author,mergeCommit",
             next(c for c in run.calls if c[1] == "pr"),
         )
         self.assertEqual(r["plan_docs"], [{"path": path, "phase": "S5"}])
+        self.assertEqual(r["since"], "2026-10-02T00:00:00+00:00")
         self.assertEqual([e["body"] for e in r["user"]], ["do Y"])
         self.assertEqual([(e["body"], e["state"]) for e in r["others"]], [("nit", "COMMENTED")])
+
+    def test_a_merged_prs_own_commits_are_those_off_its_base_before_the_merge(self):
+        """A merge commit puts B's commits on origin/<base>, so they count up to its first parent;
+        a merge commit id that is no SHA falls back to origin/<base>.
+        """
+        comments = [
+            [
+                {"created_at": "2026-10-01T00:00:00Z", "user": {"login": "me"}, "body": "old"},
+                {"created_at": "2026-10-03T00:00:00Z", "user": {"login": "me"}, "body": "do Y"},
+            ]
+        ]
+        merged = "b" * 40
+        for oid, excluded in (
+            (merged, f"{merged}^1"),
+            ("--all", "origin/main"),
+            (None, "origin/main"),
+        ):
+            with self.subTest(oid=oid):
+                row = {**pr(), "state": "MERGED", "mergeCommit": oid and {"oid": oid}}
+                code, r, _ = self.status(
+                    (
+                        lambda a, excluded=excluded: (
+                            a[3:]
+                            == [
+                                "log",
+                                "-1",
+                                "--first-parent",
+                                "--no-merges",
+                                "--format=%cI",
+                                f"{excluded}..HEAD",
+                            ]
+                        ),
+                        ok("2026-10-02T00:00:00+00:00\n"),
+                    ),
+                    pr_list([row]),
+                    (lambda a: a[-1].endswith("/issues/7/comments"), ok(json.dumps(comments))),
+                    NO_FEEDBACK,
+                )
+                self.assertEqual(code, 0, r)
+                self.assertEqual(r["since"], "2026-10-02T00:00:00+00:00")
+                self.assertEqual([e["body"] for e in r["user"]], ["do Y"])
+
+    def test_a_pr_branch_without_own_commits_filters_no_feedback(self):
+        comments = [
+            [{"created_at": "2026-10-01T00:00:00Z", "user": {"login": "me"}, "body": "old"}]
+        ]
+        code, r, _ = self.status(
+            pr_list([pr()]),
+            (lambda a: a[-1].endswith("/issues/7/comments"), ok(json.dumps(comments))),
+            NO_FEEDBACK,
+        )
+        self.assertEqual(code, 0, r)
+        self.assertIsNone(r["since"])
+        self.assertEqual([e["body"] for e in r["user"]], ["old"])
 
     def test_configured_users_replace_the_gh_login(self):
         """From the config and local passed only, never the HOME one (malformed here)."""

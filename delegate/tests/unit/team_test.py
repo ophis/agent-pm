@@ -194,32 +194,22 @@ class Shipped(Case):
             catalog()["engineer"]["light-build"],
         )
 
-    def test_builds_resume_the_newest_unfinished_plan_doc_by_its_input(self):
-        for task, unfinished, finished in (
-            (
-                "build",
-                "a new build, new plan doc.",
-                "   - Else a plan doc or a `pr` (a **finished build**) and a user requirement",
-            ),
-            (
-                "light-build",
-                "build the requirement and the user's requirements.",
-                "   - Else a `pr` (a **finished build**) and a user requirement",
-            ),
-        ):
+    def test_builds_finish_the_newest_unfinished_plan_doc_by_its_input_before_any_new_one(self):
+        for task in ("build", "light-build"):
             text = task_text(task)
             self.assertIn(
                 "2. **Repo** ([Engineer › Repo](#repo)); from status, act on `plan_docs` too.", text
             )
             self.assertIn(
-                "\n   - The newest plan doc (`plan_docs`' last) not at `done`, no user requirement → continue it, "
-                "its verbatim input the requirement (anything added, such as failing merge checks, makes autopilot "
-                "start a new plan doc instead: it resumes one only by its `input_sha`).\n"
-                f"   - Else the newest plan doc not at `done` → {unfinished}\n",
+                "\n   - The newest plan doc (`plan_docs`' last) not at `done` → continue it, its verbatim input "
+                "the requirement; once it resumes, give it the rest as mid-run input, each logged in its "
+                "progress log: the user's requirements, the review input (marked as "
+                "[Engineer › Autopilot](#autopilot) says), failing merge checks. Added to its input, they "
+                "would start a new plan doc at HEAD, leaving its commits unreviewed.\n"
+                "   - Else a plan doc or a `pr` (a **finished build**) and a user requirement → a new build",
                 text,
                 task,
             )
-            self.assertIn(finished, text, task)
 
     def test_engineer_fixes_or_drops_each_non_blocking_item_and_adopts_the_draft_pr(self):
         with open(os.path.join(TEAM, "roles", "engineer.md")) as f:
@@ -504,9 +494,10 @@ class Real(RealConfig):
         self.assertIn(
             (
                 "One failing: during [Engineer › Finish › Done](#finish) → "
-                "[Engineer › Finish › Failure](#finish); before the build → the failing checks go into the build's requirement; on "
-                "[Engineer › Repo › Resume](#repo) → into the requirement of the build left, none left → "
-                "[Engineer › Finish › Failure](#finish)."
+                "[Engineer › Finish › Failure](#finish); before the build, or on [Engineer › Repo › Resume](#repo) "
+                "with a build left → the failing checks go into that build's requirements (a continued plan doc "
+                "takes them mid-run: `<tasks>/<task>.md` › Steps › Which build); on "
+                "[Engineer › Repo › Resume](#repo) with none left → [Engineer › Finish › Failure](#finish)."
             ),
             merge,
         )

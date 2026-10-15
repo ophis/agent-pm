@@ -10,9 +10,9 @@ worktree prints {"repo", "host", "default", "branch", "commit", "worktree", "per
 "base", "plan_docs", "since", "user", "others"}. `pr` is B's PR {"number", "url", "state",
 "baseRefName"} or null; `base` is the PR's baseRefName, else BASE, else the default branch. `user`
 and `others` are PR comments and reviews by the user (core config's `users`, else the gh login) and
-by anyone else since B's latest own commit (not on origin/<base>, no merge), all when none.
-`plan_docs` are B's autopilot plan docs in <worktree>/.autopilot/ {"path", "phase"}, phase `S<n>`
-or `done`, newest (last modified) last.
+by anyone else since B's latest own commit (no merge; not on origin/<base>, as it was before a
+merged PR's merge), all when none. `plan_docs` are B's autopilot plan docs in <worktree>/.autopilot/
+{"path", "phase"}, phase `S<n>` or `done`, newest (last modified) last.
 
 SLUG: 1-100 of [A-Za-z0-9._-], default B with / → -. REPO is `owner/name`, `host/owner/name`,
 `https://host/owner/name` or a local clone's path (/ or ~), named by its origin and outside the temp
@@ -329,7 +329,7 @@ def status(
             "--state",
             "all",
             "--json",
-            "number,url,state,baseRefName,isCrossRepository,author",
+            "number,url,state,baseRefName,isCrossRepository,author,mergeCommit",
             "--limit",
             "100",
         ],
@@ -352,6 +352,10 @@ def status(
         raise Invalid(f"unsafe base branch name {str(onto)[:80]!r}")
     user, others, since = [], [], ""
     if pr:
+        merged = mine[0].get("mergeCommit")
+        oid = merged.get("oid") if isinstance(merged, dict) else None
+        # merging puts B's commits on origin/<base>: exclude <base> only as it was before the merge
+        off = f"{oid}^1" if isinstance(oid, str) and SHA.fullmatch(oid) else f"origin/{onto}"
         since = git(
             wt,
             "log",
@@ -359,7 +363,7 @@ def status(
             "--first-parent",
             "--no-merges",
             "--format=%cI",
-            f"origin/{onto}..HEAD",
+            f"{off}..HEAD",
             run=run,
         ).strip()
         api = f"repos/{repo.owner}/{repo.name}"
