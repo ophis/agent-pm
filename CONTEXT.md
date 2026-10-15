@@ -30,6 +30,10 @@ _Avoid_: custom pack
 One role run once, on a task given or picked from its index: a fresh client session (e.g. Claude Code's) run by the session layer in a mode, or inline in the caller's session through a skill.
 _Avoid_: job, subagent
 
+**Read dir**:
+A local dir one agent run may read, read-only, beside its role's config `read`: given by `agent-pm-delegate run --read` or the Linear orchestrator's `[project_reads]`, listed in the prompt as `<read dirs>`. In code: `Spec.read`.
+_Avoid_: add-dir, repo dir
+
 **Core pack**:
 The roles, tasks, templates and delegate, packaged as a Claude Code plugin.
 _Avoid_: core skill

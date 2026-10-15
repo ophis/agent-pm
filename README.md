@@ -124,6 +124,7 @@ Agent runs load your user settings (plugins except `agent-pm`) and no MCP server
 | `/agent-pm:manage` | The commander's guidelines. |
 | `/agent-pm:act-as <role>[:<task>] <input>` | Run a core role in this conversation. |
 | `agent-pm-delegate run --list` | List every role and task. |
+| `agent-pm-delegate run … --read <dir>` | Let one run read a local dir, read-only; repeatable. |
 
 Your own roles, tasks and templates: `team_dirs` in `delegate/src/agent_pm/delegate/config.toml`.
 
@@ -197,7 +198,7 @@ flowchart LR
     D & C -->|"Finish, 24 h later"| X[cleaned up]
 ```
 
-- **New work:** a Todo issue in the product's project, assigned to a role account. The description is the brief, or an engineer issue's requirement. Add `Repo: <owner>/<name>` if the repo is not the project's `[project_repos]` entry.
+- **New work:** a Todo issue in the product's project, assigned to a role account. The description is the brief, or an engineer issue's requirement. Add `Repo: <owner>/<name>` if the repo is not the project's `[project_repos]` entry. Local dirs the project's runs may read, such as a folder of material: `[project_reads]`.
 - **Order work:** the router claims by priority, then later role, then oldest. A blocked issue waits until its blockers are Done, Canceled or Duplicate.
 - **Approve:** move to Handoff and comment what's next. After 10 minutes (move it out of Handoff to undo), promote creates the next role's issue and marks this one Done.
 - **Revise:** comment and move back to Todo. The agent resumes where it left off. On an engineer issue your PR comments and reviews count too. After 4 attempts the issue goes to In Review.
