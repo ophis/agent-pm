@@ -8,7 +8,7 @@ import stat
 import time
 from dataclasses import asdict, dataclass, replace
 
-from agent_pm.utils import read_regular, save, sync_directory
+from agent_pm.utils import append_line, read_regular, save, sync_directory
 
 EVENTS_MAX = 1 << 20
 SETTLE = 1
@@ -39,6 +39,25 @@ def _file_id(value) -> tuple[int, int]:
     ):
         raise OSError("events rotation: invalid file identity")
     return value[0], value[1]
+
+
+def _opened(path: str) -> int | None:
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    except FileNotFoundError:
+        return None
+    opened = os.fstat(fd)
+    if not stat.S_ISREG(opened.st_mode) or opened.st_uid != os.getuid():
+        os.close(fd)
+        raise OSError(f"{path}: not a regular file owned by you")
+    return fd
+
+
+def _drain(fd: int | None) -> bytes:
+    chunks = []
+    while fd is not None and (chunk := os.read(fd, 1 << 16)):
+        chunks.append(chunk)
+    return b"".join(chunks)
 
 
 def _read(path: str) -> bytes:
@@ -210,6 +229,7 @@ class Events:
         rotation = _Rotation(gen, _identity(self.path))
         self._save_intent(rotation)
         os.replace(self.path, self.archive)
+        fresh = None
         try:
             sync_directory(os.path.dirname(self.path))
             self.ensure()
@@ -217,7 +237,8 @@ class Events:
             tail = _read(self.archive).split(b"\n", cursor)[-1]
             if tail and not tail.endswith(b"\n"):
                 tail += b"\n"
-            save(self.candidate, tail + self.read(), own=True, durable=True)
+            fresh = _opened(self.path)
+            save(self.candidate, tail + _drain(fresh), own=True, durable=True)
             rotation = replace(
                 rotation,
                 candidate=_identity(self.candidate),
@@ -227,8 +248,14 @@ class Events:
             self._save_intent(rotation)
             os.replace(self.candidate, self.path)
             sync_directory(os.path.dirname(self.path))
+            # lines the replaced fresh file took while the candidate was saved and published
+            if late := _drain(fresh):
+                append_line(self.path, late, durable=True, own=True)
         except OSError as error:
             raise OSError(
                 f"{error}: unread lines after {cursor} retained in {self.archive}"
             ) from error
+        finally:
+            if fresh is not None:
+                os.close(fresh)
         return True

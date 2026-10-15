@@ -156,6 +156,19 @@ class EventsTest(EventsCase):
         self.assertTrue(completed.is_set())
         self.assertEqual(Path(self.events.path).read_bytes(), b"old\ninflight\nfresh\n")
 
+    def test_a_line_appended_while_the_candidate_publishes_is_kept(self):
+        real_replace = os.replace
+
+        def replace(source, destination):
+            if str(source) == self.events.candidate and str(destination) == self.events.path:
+                append_line(self.events.path, b"late\n", own=True)
+            real_replace(source, destination)
+
+        with file_lock(self.events.path, own=True), mock.patch("os.replace", side_effect=replace):
+            self.assertTrue(self.events.rotate(1, 0))
+            self.events.finish(1)
+        self.assertEqual(Path(self.events.path).read_bytes(), b"old\nlate\n")
+
     def test_rollback_keeps_fresh_bytes_already_in_prepared_candidate(self):
         real_replace = os.replace
 
