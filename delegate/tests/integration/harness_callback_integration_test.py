@@ -80,7 +80,10 @@ class Callbacks(CallbackCase):
             (events[-1].returncode, events[-1].error, events[-1].limit),
             (result.returncode, result.error, None),
         )
-        self.assertEqual(events[-1].outcome, {**OUTCOME, "questions": [], "url": "", "files": []})
+        self.assertEqual(
+            events[-1].outcome,
+            {**OUTCOME, "questions": [], "url": Layout(self.work).out, "files": []},
+        )
         self.assertEqual(self.errors(), [])
 
     def test_a_failed_delivery_is_one_callback_error_row_and_later_events_still_arrive(self):

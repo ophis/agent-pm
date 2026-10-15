@@ -165,14 +165,15 @@ class Preflight(Case):
     def test_abc_forwards_preflight_to_the_configured_session_class(self):
         code = """import contextlib, json, sys
 from unittest import mock
-from agent_pm.session import Host, Mode, Session, Spec
+from agent_pm.session import Access, Host, Mode, Session, Spec
 from session.tests.case import HOSTS, SPAWNS
 from session.tests.fakes.preflight import PreflightAdapter
 Session.configure(
     adapters={"fake": {"implementation": "session.tests.fakes.preflight:PreflightAdapter"}},
     hosts=Host.parse_hosts({**HOSTS, "default": "tmux"}),
 )
-spec = Spec(workdir=sys.argv[1], client="fake", mode=Mode.HEADLESS, prompt="input", sid=sys.argv[2])
+spec = Spec(workdir=sys.argv[1], access=Access(cwd=sys.argv[1]), client="fake", mode=Mode.HEADLESS,
+            prompt="input", sid=sys.argv[2])
 with contextlib.ExitStack() as stack:
     for target in (*SPAWNS, "threading.Thread.start"):
         stack.enter_context(mock.patch(target, side_effect=AssertionError(target)))

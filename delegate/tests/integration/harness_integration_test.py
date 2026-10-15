@@ -418,7 +418,7 @@ class Views(HarnessCase):
                 HarnessSession.script = (Reply(block(data)), Exited(0))
                 delegate = self.make()
                 result = delegate.run()
-                self.assertEqual(result.outcome, Outcome(**data))
+                self.assertEqual(result.outcome, Outcome(**data, url=Layout(self.work).out))
                 view = HarnessDelegate.attach(self.work)
                 starts = len(HarnessSession.started)
                 launches = len(RecordingHost.launches)
@@ -1041,7 +1041,7 @@ class RunDir(HarnessCase):
         )
         with open(os.path.join(layout.run, "run.jsonl"), encoding="utf-8") as file:
             kinds = {json.loads(line)["kind"] for line in file}
-        self.assertTrue({"session", "input", "result", "end"} <= kinds, kinds)
+        self.assertTrue({"input", "result", "end"} <= kinds, kinds)
 
     def test_no_state_dir_under_home(self):
         self.make().run()

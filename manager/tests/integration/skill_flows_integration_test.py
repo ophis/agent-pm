@@ -121,6 +121,8 @@ class SkillFlows(LiveCrew):
         with open(scenario, "w", encoding="utf-8") as f:
             json.dump({"tui_turns": [[{"kind": "pause", "file": never}]]}, f)
         log = os.path.join(self.root, "c1.codex.jsonl")
+        agent = os.path.join(self.cwd, "agent")
+        os.mkdir(agent)  # made by the prompt step's --out <work dir>/agent/prompt.md
         record = self.record(
             self.written(
                 "manage",
@@ -132,4 +134,4 @@ class SkillFlows(LiveCrew):
         )
         self.assertEqual((record.kind, record.name, record.detail), ("worker", "c1", "codex"))
         [begun] = [start for start in logged(log) if start.get("mode") == "tui"]
-        self.assertEqual(os.path.realpath(begun["cwd"]), os.path.realpath(self.cwd))
+        self.assertEqual(os.path.realpath(begun["cwd"]), os.path.realpath(agent))

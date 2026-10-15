@@ -10,6 +10,7 @@ import subprocess
 import tempfile
 import unittest
 
+from agent_pm.delegate import Layout
 from agent_pm.session import Host
 from agent_pm.utils import Record, load_class
 
@@ -77,7 +78,7 @@ class PtyRuns(Case):
         return Record.parse(self.call(*argv).stdout)
 
     def close(self) -> None:
-        if os.path.isfile(os.path.join(self.work, "delegate.json")):
+        if os.path.isfile(os.path.join(Layout(self.work).run, "delegate.json")):
             subprocess.run(
                 [*DELEGATE, "close", self.work],
                 env=self.server.env(PYTHONPATH=PYTHONPATH),
@@ -101,7 +102,7 @@ class PtyRuns(Case):
         )
 
     def hosts(self) -> tuple[str, str]:
-        with open(os.path.join(self.work, "delegate.json"), encoding="utf-8") as file:
+        with open(os.path.join(Layout(self.work).run, "delegate.json"), encoding="utf-8") as file:
             found = json.load(file)
         return found["host"], found["harness_host"]
 

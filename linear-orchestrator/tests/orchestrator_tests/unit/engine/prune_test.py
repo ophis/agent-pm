@@ -4,7 +4,6 @@ import io
 import json
 import os
 import shutil
-import subprocess
 from contextlib import redirect_stderr, redirect_stdout
 from unittest import mock
 
@@ -13,6 +12,7 @@ from agent_pm.linear_orchestrator.engine import config, ops, prune
 from agent_pm.linear_orchestrator.engine.types import LinearError
 from agent_pm.utils import temp_dirs
 from orchestrator_tests.case import Case
+from orchestrator_tests.process_fixtures import CompletedProcess
 from orchestrator_tests.prune_fixtures import (
     NOW,
     ROLES,
@@ -152,7 +152,7 @@ class RepositoryCleanup(PruneScenario):
 
         def git(argv, _timeout):
             calls.append((os.path.lexists(agent), argv))
-            return subprocess.CompletedProcess(argv, 0, "", "")
+            return CompletedProcess(argv, 0, "", "")
 
         code, out = self.prune(
             gql_for({"TASK-49": ("Done", [(30, "Done")])}), git=git, writable=(self.work,)

@@ -94,7 +94,7 @@ class Exits(Base):
         ):
             code, out, err = self.runs()
         self.assertEqual((code, out), (1, ""))
-        self.assertIn("\ndelegate: headless: cannot start ", err)
+        self.assertRegex(err, r"(?m)^delegate: headless: cannot start ")
 
     def test_agent_text_is_printed_printable(self):
         for result, want, line in (

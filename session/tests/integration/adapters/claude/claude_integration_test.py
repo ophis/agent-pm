@@ -70,10 +70,11 @@ PROBE = [
 # KeyboardInterrupt (SIGINT, even when inherited ignored) it prints that and stays alive, the fake's
 # parent.
 CALLER = """import json, signal, sys, time
-from agent_pm.session import Host, Mode, Session, Spec
+from agent_pm.session import Access, Host, Mode, Session, Spec
 signal.signal(signal.SIGINT, signal.default_int_handler)
 Session.configure(adapters={"claude": json.loads(sys.argv[1])}, hosts=Host.parse_hosts({"default": "tmux", "tmux": {"implementation": "agent_pm.session.hosts.tmux:TmuxHost"}}))
-handle = Session.start(Spec(workdir=sys.argv[2], client="claude", mode=Mode.HEADLESS, prompt="hello"))
+handle = Session.start(Spec(workdir=sys.argv[2], access=Access(cwd=sys.argv[2]), client="claude",
+                            mode=Mode.HEADLESS, prompt="hello"))
 try:
     for event in handle.events():
         print(type(event).__name__, flush=True)
