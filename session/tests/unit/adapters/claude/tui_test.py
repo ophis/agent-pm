@@ -329,6 +329,33 @@ class SessionTuiTest(Base):
             ({"hooks": TUI_HOOKS}, (*after, "--", "hi")),
         )
 
+    def test_the_configs_specs_and_hooks_settings_merge_into_one(self):
+        mine = {"type": "command", "command": "mine"}
+        config = {
+            "flags": [
+                "--settings",
+                json.dumps({"enabledPlugins": {"a@m": False}, "hooks": {"Stop": [mine]}}),
+            ]
+        }
+        flags = (
+            "--settings",
+            '{"enabledPlugins": {"b@m": true}, "model": "x"}',
+            "--verbose",
+            '--settings={"model": "y"}',
+        )
+        argv = self.session(flags=flags, config=config).argv
+        self.assertEqual(argv.count("--settings"), 1)
+        at = argv.index("--settings")
+        self.assertEqual(
+            json.loads(argv[at + 1]),
+            {
+                "enabledPlugins": {"a@m": False, "b@m": True},
+                "model": "y",
+                "hooks": {**TUI_HOOKS, "Stop": [mine, *TUI_HOOKS["Stop"]]},
+            },
+        )
+        self.assertEqual(argv[at + 2 :], ("--verbose", "--", "hi"))
+
     def test_a_malformed_settings_flag_is_refused(self):
         long = "x" * 100
         for flags, value in (

@@ -1,6 +1,7 @@
 """Claude Code client options, Access grants, launch metadata, usage and session inspection."""
 
 import contextlib
+import functools
 import hashlib
 import json
 import os
@@ -50,28 +51,45 @@ def added_dirs(flags: tuple[str, ...]) -> Iterator[str]:
     )
 
 
-def _merged(flags: tuple[str, ...], hooks: Mapping) -> tuple[dict, tuple[str, ...]]:
+def _parsed(value: str) -> dict:
+    try:
+        settings = json.loads(value)
+    except (ValueError, RecursionError):
+        settings = None
+    hooks = settings.get("hooks", {}) if isinstance(settings, dict) else None
+    if (
+        not isinstance(settings, dict)
+        or not isinstance(hooks, dict)
+        or not all(isinstance(e, list) for e in hooks.values())
+    ):
+        raise ConfigError(
+            f"--settings {value!r:.80}: want a JSON object with a list of hooks per event"
+        )
+    return settings
+
+
+def _split(flags: tuple[str, ...]) -> tuple[list[dict], tuple[str, ...]]:
+    """Each --settings value before "--", parsed, and the flags without them."""
+    found, rest, at = [], [], 0
     for flag in scan(flags, {"--settings": "--settings"}):
-        if flag.word != "--settings" or flag.value is None:
-            continue
-        value = flag.value
-        try:
-            settings = json.loads(value)
-        except (ValueError, RecursionError):
-            settings = None
-        own = settings.setdefault("hooks", {}) if isinstance(settings, dict) else None
-        if (
-            not isinstance(settings, dict)
-            or not isinstance(own, dict)
-            or not all(isinstance(own.get(e, []), list) for e in hooks)
-        ):
-            raise ConfigError(
-                f"--settings {value!r:.80}: want a JSON object with a list of hooks per event"
-            )
-        for event, entries in hooks.items():
-            own[event] = [*own.get(event, []), *entries]
-        return settings, (*flags[: flag.start], *flags[flag.end :])
-    return {"hooks": dict(hooks)}, flags
+        if flag.word == "--settings" and flag.value is not None:
+            found.append(_parsed(flag.value))
+            rest.extend(flags[at : flag.start])
+            at = flag.end
+    return found, (*rest, *flags[at:])
+
+
+def _merge(base: dict, over: Mapping) -> dict:
+    """Tables merge, lists concatenate, else `over`'s value wins."""
+    for key, value in over.items():
+        mine = base.get(key)
+        if isinstance(mine, dict) and isinstance(value, dict):
+            _merge(mine, value)
+        elif isinstance(mine, list) and isinstance(value, list):
+            base[key] = [*mine, *value]
+        else:
+            base[key] = value
+    return base
 
 
 def _window(value) -> Window | None:
@@ -289,19 +307,24 @@ class ClaudeCommon:
     def launch(
         self,
         spec: Spec,
-        settings: Mapping | None,
+        hooks: Mapping = MappingProxyType({}),
         *,
         head: tuple[str, ...] = (),
         output: tuple[str, ...] = (),
         tail: tuple[str, ...] = (),
         env: Mapping[str, str] = MappingProxyType({}),
     ) -> Launch:
-        """Build a Claude command with configured settings, access grants and output arguments; env
-        under the config's. --mcp-config keeps a project's .mcp.json that a --strict-mcp-config in
-        spec.flags would drop.
+        """Build a Claude command with configured settings, access grants, output arguments and
+        spec.flags before `tail`; env under the config's. Claude keeps only its last --settings, so
+        the config's, then spec.flags', then `hooks` merge into one. --mcp-config keeps a project's
+        .mcp.json that a --strict-mcp-config in spec.flags would drop.
         """
         if any(flag.word == "--setting-sources" for flag in scan(spec.flags)):
             raise ConfigError("--setting-sources is set by the Claude adapter: use Access.project")
+        configured, own = _split(self.flags)
+        supplied, flags = _split(spec.flags)
+        parts = (*configured, *supplied, *(({"hooks": dict(hooks)},) if hooks else ()))
+        settings = functools.reduce(_merge, parts, {}) if parts else None
         sid = spec.sid
         model, effort = self.model(spec.tier), self.effort(spec.effort)
         access = spec.access
@@ -323,7 +346,7 @@ class ClaudeCommon:
             *(("--model", model) if model is not None else ()),
             *(("--effort", effort) if effort is not None else ()),
             *(("--name", spec.name) if spec.name is not None else ()),
-            *self.flags,
+            *own,
             "--setting-sources",
             "user,project,local" if access.project else "user",
             *(("--mcp-config", mcp) if access.project and strict and os.path.isfile(mcp) else ()),
@@ -331,6 +354,7 @@ class ClaudeCommon:
             *(("--settings", json.dumps(settings)) if settings is not None else ()),
             *(arg for d in access.dirs for arg in ("--add-dir", d)),
             *(("--allowedTools", *allow) if allow else ()),
+            *flags,
             *tail,
         )
         merged = {
@@ -345,8 +369,6 @@ class ClaudeCommon:
             transcript=self.transcript(cwd, sid, merged),
             resume=self.resume(cwd, sid),
         )
-
-    merged = staticmethod(_merged)
 
     def probe(self) -> Launch:
         return Launch(self.PROBE, env={**self.ENV, **self.env()}, unset=self.UNSET)

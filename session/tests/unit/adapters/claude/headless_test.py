@@ -1,5 +1,6 @@
 """Claude headless behavior."""
 
+import json
 import os
 import time
 from unittest import mock
@@ -20,6 +21,7 @@ from session.tests.unit.adapters.claude.support import (
     INIT,
     NOW,
     SID,
+    WANT_SETTINGS,
     Base,
     ClaudeCommon,
     assistant,
@@ -101,6 +103,24 @@ class ArgvTest(Base):
         self.assertEqual(
             self.launch(config={"allow": ["Read"]}).argv[-4:],
             ("--allowedTools", "Read", "--", "hi"),
+        )
+
+    def test_the_configs_and_specs_settings_reach_claude_as_one(self):
+        config = {"flags": ["--settings", '{"enabledPlugins": {"a@m": false}, "model": "x"}']}
+        flags = ("--verbose", "--settings", '{"enabledPlugins": {"b@m": true}, "model": "y"}')
+        argv = self.launch(config=config, flags=flags).argv
+        self.assertEqual(argv.count("--settings"), 1)
+        at = argv.index("--settings")
+        self.assertEqual(
+            json.loads(argv[at + 1]), {"enabledPlugins": {"a@m": False, "b@m": True}, "model": "y"}
+        )
+        self.assertEqual(argv[-3:], ("--verbose", "--", "hi"))
+        self.assertNotIn("--settings", self.launch(config={}).argv)
+
+    def test_a_settings_flag_that_is_no_json_object_is_refused(self):
+        self.refused(
+            lambda: self.launch(config={}, flags=("--settings", "/a/settings.json")),
+            f"--settings '/a/settings.json': {WANT_SETTINGS}",
         )
 
     def test_a_prompt_starting_with_a_dash_stays_last_after_the_separator(self):
