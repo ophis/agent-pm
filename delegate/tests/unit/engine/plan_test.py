@@ -475,15 +475,15 @@ class TeamDirs(Base):
 
     def test_configured_it_is_the_runs_team_refused_overlapping_the_cwd(self):
         self.assertEqual(
-            self.refused("poet", "verse", cwd=self.tmp),
-            f"team_dirs: {self.team} overlaps the cwd {self.tmp}: the agent run can write there",
+            self.refused("poet", "verse", cwd=self.team),
+            f"team_dirs: {self.team} overlaps the cwd {self.team}: the agent run can write there",
         )
 
     def test_given_as_the_runs_team_it_is_refused_overlapping_the_cwd(self):
         found = teams.team(TEAM, [self.team])
         self.assertEqual(
-            self.refused("poet", "verse", team=found, cwd=self.tmp),
-            f"team_dirs: {self.team} overlaps the cwd {self.tmp}: the agent run can write there",
+            self.refused("poet", "verse", team=found, cwd=self.team),
+            f"team_dirs: {self.team} overlaps the cwd {self.team}: the agent run can write there",
         )
 
 

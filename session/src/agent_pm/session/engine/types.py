@@ -1,4 +1,4 @@
-"""The session layer's data types, used by two or more of its modules. Access.dirs are granted
+"""The session layer's data types, shared by its modules. Access.dirs are granted
 write, Access.reads only read; Spec.flags/env are caller-supplied for every Mode; times are epoch
 seconds.
 """
