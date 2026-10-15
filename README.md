@@ -375,6 +375,8 @@ Nothing migrates automatically. Do each step that applies, once, by hand or thro
 | `runs.jsonl` start, resume or limit rows without `delegate_kind` | Before deploying, add `"delegate_kind": "harness"` to each, changing nothing else. |
 | an issue In Progress across the trigger-only router or `runs.jsonl` deploys | Deploy with nothing In Progress. |
 | Claude runs started before `agent-pm-session client-resume claude` | Resume them by hand: their `Run <sid>` command has no saved launch to replay. |
+| `~/.agent-pm/delegates/*.json` with `"version": 1`, which delegate no longer reads: `unsupported metadata version` | Deploy with no delegate run in flight. Else, in each file, replace the `spec` key `"repo": …` with `"read": []` and set `"version": 2`. |
+| `"repo"` in a role's `read` or `write` | It is now the relative path `<cwd>/repo`. Delete it; give the dir with `agent-pm-delegate run --read DIR` or `[linear_orchestrator.project_reads]`. |
 | old logs in `<work_dir>/logs/` | `rm -rf ~/.agent-pm/logs/runs.log ~/.agent-pm/logs/router.log ~/.agent-pm/logs/promote.log ~/.agent-pm/logs/projects ~/.agent-pm/logs/tui` |
 
 ## Tests
