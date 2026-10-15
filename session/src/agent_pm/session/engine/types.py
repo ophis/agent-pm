@@ -1,4 +1,4 @@
-"""The session layer's data types, used by two or more of its modules. Access.dirs are granted
+"""The session layer's data types, shared by its modules. Access.dirs are granted
 write, Access.reads only read; Spec.flags/env are caller-supplied for every Mode; times are epoch
 seconds.
 """
@@ -208,7 +208,7 @@ class TuiSettings:
 class Access:
     dirs: tuple[str, ...] = ()
     commands: tuple[str, ...] = ()
-    cwd: str = ""
+    cwd: str
     project: bool = False
     reads: tuple[str, ...] = ()
     env: Mapping[str, str] = field(default_factory=dict)
@@ -238,7 +238,7 @@ class ProcessOptions:
 @dataclass(frozen=True, kw_only=True)
 class Spec(ProcessOptions):
     workdir: str
-    access: Access = field(default_factory=Access)
+    access: Access
     tier: int | None = None
     effort: Effort | None = None
     sid: str | None = None
@@ -263,7 +263,7 @@ class Spec(ProcessOptions):
             raise ConfigError(f"tier must be an integer 1–4, got {self.tier!r}")
         if self.effort is not None:
             object.__setattr__(self, "effort", _member(Effort, "effort", self.effort))
-        if self.access.cwd != "" and not printable_abs(self.access.cwd):
+        if not printable_abs(self.access.cwd):
             raise ConfigError(f"cwd must be a printable absolute path, got {self.access.cwd!r:.80}")
         if not all(map(printable_abs, self.access.dirs)):
             raise ConfigError("dirs must contain only printable absolute paths")

@@ -38,7 +38,7 @@ class PreflightAdapter(Adapter):
         if self.config.get("bad_env"):
             env["BAD"] = "nul\0value"
         argv = () if self.config.get("empty_argv") else (sys.executable, spec.prompt)
-        return Launch(argv, env=env, cwd=spec.access.cwd or spec.workdir)
+        return Launch(argv, env=env, cwd=spec.access.cwd)
 
 
 class PreflightHeadless(JsonHeadless):

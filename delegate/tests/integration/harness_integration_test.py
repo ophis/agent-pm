@@ -1,9 +1,9 @@
 """HarnessDelegate plans before writing and persists its identity for durable views."""
 
-import hashlib
 import io
 import json
 import os
+import shutil
 import stat
 import subprocess
 import sys
@@ -26,8 +26,10 @@ from agent_pm.delegate import (
 from agent_pm.delegate.engine.drivers import InstructionDriver
 from agent_pm.delegate.engine.harness_delegate import HarnessDelegate
 from agent_pm.delegate.engine.state import RunState
+from agent_pm.delegate.engine.types import Layout
 from agent_pm.session import (
     SIGNALS,
+    Access,
     Exited,
     Launch,
     LimitHit,
@@ -103,7 +105,7 @@ class Planning(HarnessCase):
     def test_constructor_persists_resolved_metadata_0600_without_starting(self):
         callback = ["writeback", "--issue", "ticket-id"]
         self.make(host="agent", harness_host="harness", display="opaque-display", callback=callback)
-        path = os.path.join(self.work, "delegate.json")
+        path = self.state_record()
         self.assertEqual(stat.S_IMODE(os.stat(path).st_mode), 0o600)
         data = self.metadata()
         self.assertEqual(
@@ -122,7 +124,7 @@ class Planning(HarnessCase):
         self.assertEqual((HarnessSession.started, RecordingHost.launches), ([], []))
 
     def test_invalid_role_task_and_mode_write_nothing(self):
-        original = Spec("input", self.work, cwd=self.work)
+        original = Spec("input", self.work)
         for role, spec in (
             ("absent-role", original),
             ("dummy-tester", replace(original, task="absent-task")),
@@ -177,13 +179,13 @@ class Planning(HarnessCase):
     def test_replacing_a_run_whose_harness_host_left_the_config_is_refused(self):
         ConfiguredSession.reset()
         self.make(harness_host="harness", session_cls=ConfiguredSession).detach()
-        with open(os.path.join(self.work, "delegate.json"), "rb") as file:
+        with open(self.state_record(), "rb") as file:
             before = file.read()
         self.settings(hosts=("agent", "changed"))
         with self.assertRaises(ConfigError) as caught:
             self.make(session_cls=ConfiguredSession)
         self.assertEqual(str(caught.exception), "unknown host harness")
-        with open(os.path.join(self.work, "delegate.json"), "rb") as file:
+        with open(self.state_record(), "rb") as file:
             self.assertEqual(file.read(), before)
 
     def test_an_injected_harness_host_must_be_a_configured_host(self):
@@ -280,7 +282,7 @@ class Planning(HarnessCase):
         self.assertNotIn("protect", metadata["plan"]["session"])
 
     def test_constructor_keeps_its_config_snapshot_when_local_file_changes(self):
-        delegate = self.make(spec=Spec("input", self.work, task="echo", cwd=self.work, sid=SID))
+        delegate = self.make(spec=Spec("input", self.work, task="echo", sid=SID))
         self.settings(language="French", client="another-client")
         delegate.run()
         launched = HarnessSession.started[-1]["spec"]
@@ -309,14 +311,12 @@ class Views(HarnessCase):
         self.assertEqual(len(RecordingHost.launches), 1)
 
     def test_attach_refuses_missing_malformed_and_foreign_metadata(self):
-        os.mkdir(self.work)
-        os.makedirs(os.path.dirname(self.state_record()), exist_ok=True)
+        os.makedirs(os.path.dirname(self.state_record()))
         for value in (None, "not json", "{}", '{"worker": true}'):
             with self.subTest(value=value):
                 if value is not None:
-                    for path in (self.state_record(), os.path.join(self.work, "delegate.json")):
-                        with open(path, "w", encoding="utf-8") as file:
-                            file.write(value)
+                    with open(self.state_record(), "w", encoding="utf-8") as file:
+                        file.write(value)
                 with self.assertRaises(ConfigError) as caught:
                     HarnessDelegate.attach(self.work)
                 self.assertIn(self.work, str(caught.exception))
@@ -357,9 +357,7 @@ class Views(HarnessCase):
         )
 
     def test_a_completed_foreground_tui_left_open_is_not_alive(self):
-        spec = Spec(
-            "input", self.work, task="echo", sid=SID, cwd=self.work, client="fake", mode="tui"
-        )
+        spec = Spec("input", self.work, task="echo", sid=SID, client="fake", mode="tui")
         delegate = self.make(spec=spec)
         self.assertEqual(delegate.run().outcome.status, "done")
         agent = HarnessSession.attach(f"dummy-tester-{SID[:8]}")
@@ -371,7 +369,7 @@ class Views(HarnessCase):
     def test_a_completed_object_refuses_a_second_run_keeping_its_result(self):
         delegate = self.make()
         delegate.run()
-        path = os.path.join(self.work, "delegate.json")
+        path = self.state_record()
         with open(path, "rb") as file:
             before = file.read()
         starts = len(HarnessSession.started)
@@ -420,7 +418,7 @@ class Views(HarnessCase):
                 HarnessSession.script = (Reply(block(data)), Exited(0))
                 delegate = self.make()
                 result = delegate.run()
-                self.assertEqual(result.outcome, Outcome(**data))
+                self.assertEqual(result.outcome, Outcome(**data, url=Layout(self.work).out))
                 view = HarnessDelegate.attach(self.work)
                 starts = len(HarnessSession.started)
                 launches = len(RecordingHost.launches)
@@ -445,7 +443,7 @@ class Views(HarnessCase):
     def test_resume_uses_attach_config_snapshot(self):
         team = self.team_dir()
         self.settings(team_dirs=(team,))
-        self.make(spec=Spec("input", self.work, task="echo", cwd=self.work, client="fake", sid=SID))
+        self.make(spec=Spec("input", self.work, task="echo", client="fake", sid=SID))
         self.settings(language="French", team_dirs=(team,))
         view = HarnessDelegate.attach(self.work)
         self.settings(
@@ -600,7 +598,7 @@ class Completion(HarnessCase):
         FailingSession.reset()
         delegate = HarnessDelegate(
             "dummy-tester",
-            Spec("input", self.work, cwd=self.work, client="fake"),
+            Spec("input", self.work, client="fake"),
             session_cls=FailingSession,
         )
         seen = []
@@ -685,13 +683,15 @@ class HarnessLaunch(HarnessCase):
         self.assertEqual(str(caught.exception), "[adapters.fake]: no x")
         self.assertFalse(os.path.lexists(self.work))
 
-    def test_the_harness_runs_in_the_agents_cwd_with_its_signals_blocked(self):
+    def test_the_harness_runs_in_the_run_dir_with_its_signals_blocked(self):
         project = os.path.join(self.home, "project")
         os.mkdir(project)
         spec = Spec("input", self.work, client="fake", sid=SID, cwd=project)
         self.make(spec=spec).detach()
         launch = RecordingHost.launches[0]
-        self.assertEqual((launch["cwd"], launch["blocked_signals"]), (project, SIGNALS))
+        self.assertEqual(
+            (launch["cwd"], launch["blocked_signals"]), (Layout(self.work).run, SIGNALS)
+        )
         self.assertEqual(
             launch["argv"],
             [sys.executable, "-P", "-s", "-m", "agent_pm.delegate.engine.harness", self.work],
@@ -707,7 +707,7 @@ class DeadOnArrival(RecordingHost):
 
 class TuiStart(HarnessCase):
     def tui(self, **placement):
-        spec = Spec("input", self.work, mode="tui", client="fake", sid=SID, cwd=self.work)
+        spec = Spec("input", self.work, mode="tui", client="fake", sid=SID)
         return self.make(spec=spec, host="agent", **placement)
 
     def test_detach_returns_once_the_agent_session_is_live(self):
@@ -748,7 +748,14 @@ class TuiStart(HarnessCase):
         delegate = self.make(spec=spec, host="agent", harness_host="harness")
         other = "22222222-0000-4000-8000-000000000000"
         HarnessSession.start(
-            SessionSpec(workdir=self.home, client="fake", mode=Mode.TUI, sid=other, name="X"),
+            SessionSpec(
+                workdir=self.home,
+                access=Access(cwd=self.home),
+                client="fake",
+                mode=Mode.TUI,
+                sid=other,
+                name="X",
+            ),
             host="agent",
         )
         RecordingHost.harness_starts_agent = False
@@ -837,7 +844,7 @@ class Names(HarnessCase):
         self.make(host="agent", harness_host="harness")
         ((host, name, launch),) = ValidatingHost.validated
         self.assertEqual((host, name), ("harness", f"dummy-tester-{SID[:8]}-drive"))
-        self.assertEqual(launch.cwd, self.work)
+        self.assertEqual(launch.cwd, Layout(self.work).run)
         self.assertEqual(RecordingHost.launches, [])
 
     def test_an_invalid_name_is_refused_writing_nothing(self):
@@ -913,7 +920,7 @@ class Display(HarnessCase):
     def test_completed_once_in_the_caller_and_passed_unchanged(self):
         CountingDisplay.calls = []
         CountingDisplay.reset()
-        spec = Spec("input", self.work, mode="tui", client="fake", sid=SID, cwd=self.work)
+        spec = Spec("input", self.work, mode="tui", client="fake", sid=SID)
         record = HarnessDelegate(
             "dummy-tester",
             spec,
@@ -938,7 +945,7 @@ class Display(HarnessCase):
         CountingDisplay.reset()
         HarnessDelegate(
             "dummy-tester",
-            Spec("input", self.work, client="fake", sid=SID, cwd=self.work),
+            Spec("input", self.work, client="fake", sid=SID),
             session_cls=CountingDisplay,
             display="given",
         ).run()
@@ -952,7 +959,7 @@ class ConcurrentDetach(HarnessCase):
             "from agent_pm.delegate import ConfigError, Spec\n"
             "from agent_pm.delegate.engine.harness_delegate import HarnessDelegate\n"
             "from delegate.tests.fakes.harness_session import PersistentSession\n"
-            "spec = Spec('input', sys.argv[1], cwd=sys.argv[1], client='fake', sid=sys.argv[4])\n"
+            "spec = Spec('input', sys.argv[1], client='fake', sid=sys.argv[4])\n"
             "delegate = HarnessDelegate('dummy-tester', spec, session_cls=PersistentSession,\n"
             "                           host='agent', harness_host='harness')\n"
             "open(sys.argv[2] + str(os.getpid()), 'w').close()\n"
@@ -999,28 +1006,68 @@ class ConcurrentDetach(HarnessCase):
             self.assertEqual(len(file.readlines()), 1)
 
 
-class StateDir(HarnessCase):
-    def test_construction_writes_the_state_record_and_its_published_copy(self):
+class RunDir(HarnessCase):
+    def test_new_run_lays_out_agent_and_run_dirs(self):
         self.make()
-        record = self.state_record()
-        key = hashlib.sha256(os.fsencode(os.path.abspath(self.work))).hexdigest()
-        self.assertEqual(record, os.path.join(self.agent_pm, "delegates", f"{key}.json"))
-        with open(record, "rb") as file:
-            payload = file.read()
-        with open(os.path.join(self.work, "delegate.json"), "rb") as file:
-            self.assertEqual(file.read(), payload)
-        for path in (record, os.path.join(self.work, "delegate.json")):
-            self.assertEqual(stat.S_IMODE(os.stat(path).st_mode), 0o600)
-        self.assertEqual(stat.S_IMODE(os.stat(os.path.dirname(record)).st_mode), 0o700)
+        layout = Layout(self.work)
+        self.assertEqual(sorted(os.listdir(self.work)), ["agent", "run"])
+        self.assertTrue(os.path.isdir(layout.agent) and os.path.isdir(layout.run))
+        self.assertEqual(self.state_record(), os.path.join(layout.run, "delegate.json"))
+        self.assertEqual(stat.S_IMODE(os.stat(self.state_record()).st_mode), 0o600)
 
-    def test_no_lock_file_lands_in_the_workdir(self):
+    def test_run_files_outside_agent_dir_are_all_under_run_dir(self):
+        log = os.path.join(self.home, "callback.log")
+        callback = [sys.executable, "-P", "-S", callback_recorder.__file__, log]
+        self.make(callback=callback).run()
+        layout = Layout(self.work)
+        outside = {
+            os.path.relpath(os.path.join(root, name), self.work)
+            for root, dirs, files in os.walk(self.work)
+            if not (root + os.sep).startswith(layout.agent + os.sep)
+            for name in files
+        }
+        self.assertEqual(
+            outside,
+            {
+                os.path.join("run", name)
+                for name in (
+                    "delegate.json",
+                    "delegate.lock",
+                    "delegate.run.lock",
+                    "run.jsonl",
+                    "out.md",
+                )
+            },
+        )
+        with open(os.path.join(layout.run, "run.jsonl"), encoding="utf-8") as file:
+            kinds = {json.loads(line)["kind"] for line in file}
+        self.assertTrue({"input", "result", "end"} <= kinds, kinds)
+        self.assertEqual(HarnessSession.started[-1]["spec"].workdir, layout.run)
+
+    def test_no_state_dir_under_home(self):
         self.make().run()
         self.make(host="agent", harness_host="harness").detach()
-        self.assertEqual([name for name in os.listdir(self.work) if name.endswith(".lock")], [])
+        self.assertFalse(os.path.lexists(os.path.join(self.agent_pm, "delegates")))
+        records = [
+            os.path.join(root, name)
+            for root, _dirs, files in os.walk(self.home)
+            for name in files
+            if name == "delegate.json"
+        ]
+        self.assertEqual(records, [self.state_record()])
 
-    def test_reads_take_the_state_record_not_the_published_copy(self):
+    def test_a_new_run_after_its_agent_dir_was_pruned_counts_the_next_attempt(self):
         self.make().run()
-        with open(os.path.join(self.work, "delegate.json"), "w", encoding="utf-8") as file:
+        shutil.rmtree(Layout(self.work).agent)
+        self.assertEqual(self.make().run().returncode, 0)
+        self.assertEqual(self.metadata()["attempt"], 2)
+        self.assertTrue(os.path.isdir(Layout(self.work).agent))
+
+    def test_reads_take_the_run_record_not_one_planted_in_the_agent_dir(self):
+        self.make().run()
+        with open(
+            os.path.join(Layout(self.work).agent, "delegate.json"), "w", encoding="utf-8"
+        ) as file:
             file.write("edited by the agent")
         view = HarnessDelegate.attach(self.work)
         self.assertEqual(view.outcome().status, "done")
@@ -1097,7 +1144,7 @@ class Corrupt(HarnessCase):
 
     def test_a_held_run_lock_keeps_a_corrupt_record(self):
         self.corrupt("not json")
-        with RunState(self.work).run_lock(), self.assertRaises(ConfigError) as caught:
+        with RunState(Layout(self.work)).run_lock(), self.assertRaises(ConfigError) as caught:
             self.make()
         self.assertEqual(str(caught.exception), f"{self.work}: delegate is still alive")
         with open(self.state_record(), encoding="utf-8") as file:
@@ -1155,7 +1202,7 @@ class LiveNameSession(HarnessSession):
 class Answer(HarnessCase):
     def test_an_answer_closes_the_ended_runs_open_tui_and_detaches_its_next_attempt(self):
         LiveNameSession.reset()
-        tui = Spec("Hello.", self.work, cwd=self.work, client="fake", sid=SID, mode="tui")
+        tui = Spec("Hello.", self.work, client="fake", sid=SID, mode="tui")
         placed = {"host": "agent", "harness_host": "harness", "session_cls": LiveNameSession}
         record = self.make(spec=tui, **placed).detach()
         harness, agent = (
@@ -1180,7 +1227,7 @@ class ConcurrentResume(HarnessCase):
     def test_two_processes_resume_once_and_return_the_same_record(self):
         delegate = HarnessDelegate(
             "dummy-tester",
-            Spec("input", self.work, cwd=self.work, client="fake", sid=SID),
+            Spec("input", self.work, client="fake", sid=SID),
             session_cls=PersistentSession,
             host="agent",
             harness_host="harness",

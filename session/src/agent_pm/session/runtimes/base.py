@@ -161,7 +161,7 @@ class Runtime(ABC):
         command = launch(spec)
         if not command.argv:
             raise ConfigError(f"client {spec.client!r} gave no command")
-        cwd = command.cwd or spec.access.cwd or spec.workdir
+        cwd = command.cwd or spec.access.cwd
         project = spec.access.project if command.project is None else command.project
         info = SessionInfo(spec.sid, cwd, project, command.transcript, command.resume)
         return Prepared(spec, info, command.argv, child_env(command, cwd, drop))

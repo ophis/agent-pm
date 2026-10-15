@@ -9,10 +9,9 @@ import sys
 import uuid
 from dataclasses import replace
 
-from agent_pm.delegate.composer import Composer, RunConfig, RunParams
-from agent_pm.delegate.composer.types import DELIVERABLE
+from agent_pm.delegate.composer import Composer, RunConfig
 from agent_pm.delegate.engine.drivers import Driver
-from agent_pm.delegate.engine.types import ConfigError, Plan, Spec
+from agent_pm.delegate.engine.types import ConfigError, Layout, Plan, Spec
 from agent_pm.delegate.event.reply import OUTCOME, PROGRESS
 from agent_pm.session import Access, Mode, RunLog
 from agent_pm.session import ConfigError as SessionConfigError
@@ -34,31 +33,39 @@ def _own(f):
 @_own
 def place(
     run: RunConfig,
-    workdir: str,
+    layout: Layout,
     *,
     resume_sid: str | None,
     cwd: str | None,
     trusted: frozenset[str],
 ) -> tuple[str, bool]:
     """(cwd, whether its project settings load); a resume's from its session record."""
-    workdir = os.path.abspath(workdir)
     if resume_sid is not None:
         # The agent run can append to run.jsonl: this re-check limits a forged record.
-        entry = RunLog(workdir).session(resume_sid)
-        here, project = (entry.cwd, entry.project) if entry else (workdir, False)
+        entry = RunLog(layout.run).session(resume_sid)
+        here, project = (entry.cwd, entry.project) if entry else (layout.agent, False)
         if project and not under(os.path.realpath(here), trusted):
             raise ConfigError(f"cwd {here} is no longer in trusted_dirs")
     else:
-        here = os.path.abspath(os.path.expanduser(run.cwd or cwd or os.getcwd()))
+        here = os.path.abspath(os.path.expanduser(run.cwd or cwd or layout.agent))
         project = under(os.path.realpath(here), trusted) is not None
-    real, real_work = os.path.realpath(here), os.path.realpath(workdir)
-    if real != real_work and not os.path.isdir(here):
+    _refuse_overlap("cwd", here, layout)
+    real = os.path.realpath(here)
+    if real != os.path.realpath(layout.agent) and not os.path.isdir(here):
         raise ConfigError(f"cwd {here} is not a directory")
-    if project and under(real, [real_work]):
+    if project and under(real, [os.path.realpath(layout.workdir)]):
         raise ConfigError(
             f"cwd {here} is in trusted_dirs and in the workdir: project settings must not load from it"
         )
     return here, project
+
+
+def _refuse_overlap(label: str, path: str, layout: Layout) -> None:
+    real, run = os.path.realpath(path), os.path.realpath(layout.run)
+    if under(real, [run]) or under(run, [real]):
+        raise ConfigError(
+            f"{label} {path} overlaps the run dir {layout.run}: the agent must not write it"
+        )
 
 
 @_own
@@ -80,26 +87,35 @@ def plan(run: RunConfig, spec: Spec, *, driver: Driver, composition: Composer) -
                 f"task {spec.task!r} is not one of {run.role}'s tasks ({', '.join(tasks)})"
             )
         run = replace(run, task=spec.task)
-    workdir = os.path.abspath(spec.workdir)
+    layout = Layout(spec.workdir)
     client = spec.client or run.client
+    out = layout.out if driver.session_based else None
+    if spec.out:
+        out = os.path.abspath(spec.out)
     spec = replace(
         spec,
-        workdir=workdir,
-        out=os.path.abspath(spec.out) if spec.out else None,
+        workdir=layout.workdir,
+        out=out,
         client=client,
         sid=spec.sid if spec.sid is not None else str(uuid.uuid4()),
         team=composition.team,
     )
     resume = spec.sid if spec.resume else None
     here, project = place(
-        run, workdir, resume_sid=resume, cwd=spec.cwd, trusted=composition.trusted_dirs()
+        run, layout, resume_sid=resume, cwd=spec.cwd, trusted=composition.trusted_dirs()
     )
-    if driver.session_based and not project and os.path.realpath(here) != os.path.realpath(workdir):
+    if (
+        driver.session_based
+        and not project
+        and os.path.realpath(here) != os.path.realpath(layout.agent)
+    ):
         print(
             f"delegate: cwd {here} is not in trusted_dirs: its project settings are off",
             file=sys.stderr,
         )
-    intent = composition.access(run, workdir, cwd=here, project=project, repo_dir=spec.repo)
+    intent = composition.access(run, layout.agent, cwd=here, project=project, repo_dir=spec.repo)
+    for path in intent.dirs:
+        _refuse_overlap("write dir", path, layout)
     access = Access(
         dirs=intent.dirs,
         commands=intent.commands + ((intent.gate,) if intent.gate else ()),
@@ -110,7 +126,7 @@ def plan(run: RunConfig, spec: Spec, *, driver: Driver, composition: Composer) -
     )
     flags, env = driver.policy(client)
     session = SessionSpec(
-        workdir=workdir,
+        workdir=layout.run,
         client=client,
         mode=Mode(spec.mode),
         sid=spec.sid,
@@ -124,14 +140,13 @@ def plan(run: RunConfig, spec: Spec, *, driver: Driver, composition: Composer) -
         env=env,
         reply_tags=(PROGRESS, OUTCOME),
     )
-    _check_team_dirs(composition, intent.writes, client=client, spec=session, driver=driver)
-    params = RunParams(
-        input=spec.input,
-        out=spec.out or os.path.join(workdir, DELIVERABLE),
-        workdir=workdir,
-        resume=spec.resume,
+    _check_team_dirs(
+        composition, intent.writes, client=client, spec=session, layout=layout, driver=driver
     )
-    return Plan(spec, replace(session, prompt=composition.render(run, params)), run)
+    planned = Plan(spec, session, run)
+    return replace(
+        planned, session=replace(session, prompt=composition.render(run, planned.params))
+    )
 
 
 def _check_team_dirs(
@@ -140,6 +155,7 @@ def _check_team_dirs(
     *,
     client: str,
     spec: SessionSpec,
+    layout: Layout,
     driver: Driver,
 ) -> None:
     """Every dir the run can write counts, those `client` can write itself (writable_dirs) last;
@@ -147,7 +163,7 @@ def _check_team_dirs(
     """
     if not composition.team.dirs:
         return
-    writes = [("the workdir", spec.workdir), ("the cwd", spec.access.cwd)]
+    writes = [("the agent dir", layout.agent), ("the cwd", spec.access.cwd)]
     writes += [(f"write dir {p}", p) for p in write_dirs]
     writes += [("a dir the run adds", p) for p in spec.access.dirs]
     writes += [(f"a dir {client} can write", p) for p in driver.writable_dirs(spec)]

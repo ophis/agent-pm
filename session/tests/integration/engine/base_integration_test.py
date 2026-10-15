@@ -13,10 +13,11 @@ CALLED = ("start", "attach", "usage", "layout", "writable_dirs", "display", "hos
 # {"unconfigured": {name: message}, "configured": {name: result or [error type, message]},
 # "read_state": tui.TuiRuntime.snapshot("w1")'s error}.
 DISPATCH = """import json, os
-from agent_pm.session import ConfigError, SessionError, Hosts, Mode, Session, Spec
+from agent_pm.session import Access, ConfigError, SessionError, Hosts, Mode, Session, Spec
 from agent_pm.session.engine.hosted_session import HostedSession
 from agent_pm.session.runtimes import tui
-spec = Spec(workdir=os.environ["HOME"], client="fake", mode=Mode.HEADLESS, prompt="hi")
+home = os.environ["HOME"]
+spec = Spec(workdir=home, access=Access(cwd=home), client="fake", mode=Mode.HEADLESS, prompt="hi")
 calls = {
     "start": lambda: Session.start(spec),
     "attach": lambda: Session.attach("w1"),

@@ -28,12 +28,11 @@ class InstructionCase(Case):
         self.tmp = os.path.realpath(tmp.name)
 
     def given(self, role, **kw):
-        """A configured role's request, sid SID, output prompt.md and cwd the workdir."""
+        """A configured role's request, sid SID, output prompt.md and cwd the agent dir."""
         work = os.path.join(self.tmp, role)
         kw = {
             "sid": SID,
             "out": os.path.join(work, "prompt.md"),
-            "cwd": work,
             **kw,
         }
         self.driver = InstructionDriver()

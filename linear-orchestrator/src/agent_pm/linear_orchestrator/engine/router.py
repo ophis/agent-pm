@@ -583,10 +583,17 @@ def _outer(a, cfg, *, gql, run, keychain, now, attended):
         return fail(a.issue, "transient", f"Linear: {one_line(e)}", 3)
     a = replace(a, uuid=issue.id)
     ctx = writeback.for_run(cfg, role, gql, a)
+    workdir = cfg.issue_workdir(a.issue)
+    delegate_cls = LinearRun.kind_cls(cfg, kind)
     if build:
         try:
             repo = target.check(
-                issue, cfg.project_repos, run=run, work=cfg.runs_dir, roles=cfg.roles
+                issue,
+                cfg.project_repos,
+                run=run,
+                delegate=delegate_cls,
+                workdir=workdir,
+                roles=cfg.roles,
             )
         except (OSError, subprocess.TimeoutExpired) as e:
             return fail(a.issue, "transient", f"repo check: {one_line(e)}", 3)
@@ -607,34 +614,29 @@ def _outer(a, cfg, *, gql, run, keychain, now, attended):
             repo,
             a.issue,
             clones=cfg.local_clones,
-            work=cfg.runs_dir,
+            delegate=delegate_cls,
+            workdir=workdir,
             run=run,
         )
-    rd = cfg.run_dir(a.issue)
     try:
         sources = inputs.gather(issue, role, cfg.docs, run=run)
     except (InputError, OSError, subprocess.TimeoutExpired) as e:
         return fail(a.issue, "transient", f"docs: {one_line(e)}", 3)
-    try:
-        os.makedirs(rd, exist_ok=True)
-        text = inputs.render(
-            issue,
-            role,
-            sources,
-            humans=ctx.humans,
-            target=repo,
-            docs=cfg.docs,
-        ).replace("\x00", "")
-        # a lone surrogate cannot be encoded
-        text = text.encode("utf-8", "replace").decode()
-    except OSError as e:
-        log("router", "launch-error", a.issue, error=f"input: {one_line(e)}")
-        return 1
+    text = inputs.render(
+        issue,
+        role,
+        sources,
+        humans=ctx.humans,
+        target=repo,
+        docs=cfg.docs,
+    ).replace("\x00", "")
+    # a lone surrogate cannot be encoded
+    text = text.encode("utf-8", "replace").decode()
     try:
         linear_run = LinearRun(
             a.issue,
             text,
-            rd,
+            workdir,
             cfg=cfg,
             role=role,
             sid=a.sid,

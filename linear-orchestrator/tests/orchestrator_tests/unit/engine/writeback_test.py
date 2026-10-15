@@ -258,6 +258,7 @@ class Base(Case):
         log.use_logs(os.path.join(self.tmp, "logs"))
 
     def ctx(self, role="engineer", *, gql=None):
+        workdir = tempfile.mkdtemp(dir=self.tmp)
         return writeback.Context(
             ident=ID,
             issue_id=UUID,
@@ -265,7 +266,7 @@ class Base(Case):
             sid=SID,
             resume=False,
             project=None,
-            workdir=tempfile.mkdtemp(dir=self.tmp),
+            workdir=workdir,
             gql=gql or Gql(),
             humans=HUMANS,
             states=STATES,
@@ -1502,7 +1503,7 @@ class Events(RunCase):
     def setUp(self):
         super().setUp()
         log.use_logs(self.cfg.logs_dir)
-        self.workdir = self.cfg.run_dir(RUN_ISSUE)
+        self.workdir = self.cfg.issue_workdir(RUN_ISSUE)
         LinearRun(
             RUN_ISSUE,
             "Echo input.",
@@ -1594,17 +1595,10 @@ class ForClaim(RunCase):
         ctx.gql("query", i=UUID)
         self.assertEqual(calls, [(CLAIM_KEY, "query", {"i": UUID})])
         self.assertEqual(
-            (ctx.ident, ctx.issue_id, ctx.sid, ctx.role, ctx.project, ctx.target, ctx.workdir),
-            (
-                RUN_ISSUE,
-                UUID,
-                RUN_SID,
-                "engineer",
-                "p1",
-                ("ophis", "agent-pm"),
-                self.cfg.run_dir(RUN_ISSUE),
-            ),
+            (ctx.ident, ctx.issue_id, ctx.sid, ctx.role, ctx.project, ctx.target),
+            (RUN_ISSUE, UUID, RUN_SID, "engineer", "p1", ("ophis", "agent-pm")),
         )
+        self.assertEqual(ctx.workdir, self.cfg.issue_workdir(RUN_ISSUE))
 
     def test_a_later_attempt_is_a_resume(self):
         for attempt, resume in ((1, False), (2, True), (3, True)):
@@ -1739,7 +1733,7 @@ class RefusedEvents(Events):
         for name, kwargs, e, error in (
             (
                 "another workdir",
-                {"workdir": self.cfg.run_dir("TASK-2")},
+                {"workdir": self.cfg.issue_workdir("TASK-2")},
                 delegate_event("begun"),
                 ConfigError,
             ),
@@ -2148,7 +2142,11 @@ class LimitEvents(Events):
         self.assertEqual(len([v for _, v in self.linear.writes("comment") if v["c"] == limit]), 1)
 
     def test_a_ledger_write_lost_after_the_row_records_one_row_on_redelivery(self):
-        real, ledger, lost = os.replace, os.path.join(self.workdir, writeback.LEDGER), []
+        real, ledger, lost = (
+            os.replace,
+            os.path.join(self.workdir, writeback.LEDGER),
+            [],
+        )
 
         def replace(src, dst):
             if str(dst) == ledger and self.rows() and not lost:
@@ -2249,3 +2247,12 @@ class RecoverReplay(Events):
         shutil.rmtree(self.workdir)
         self.assertTrue(self.deliver(delegate_event("progress", name="build", text="one")))
         self.assertEqual(len(self.ledger()[RUN_SID]["steps"]), 1)
+
+    def test_ledger_and_lock_live_in_the_workdir_root(self):
+        before = sorted(os.listdir(self.workdir))
+        self.assertTrue(self.deliver(delegate_event("progress", name="start", text="x")))
+        self.assertEqual(self.ledger(), {RUN_SID: {"steps": ["start"]}})
+        self.assertEqual(
+            sorted(os.listdir(self.workdir)),
+            sorted([*before, writeback.LEDGER, writeback.LOCK]),
+        )

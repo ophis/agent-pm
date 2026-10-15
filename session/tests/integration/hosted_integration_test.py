@@ -9,7 +9,7 @@ import os
 import subprocess
 import unittest
 
-from agent_pm.session import Host, Mode, Session, Spec
+from agent_pm.session import Access, Host, Mode, Session, Spec
 from agent_pm.session.engine.hosted_session import UNCONFIGURED, HostedSession
 from agent_pm.session.runtimes import tui
 
@@ -90,7 +90,12 @@ class DisplayTest(Live):
             json.dump([{"read": True}], f)
         for name, display in DISPLAYS.items():
             spec = Spec(
-                workdir=self.workdir, name=name, client="fake", mode=Mode.TUI, prompt="hello"
+                workdir=self.workdir,
+                access=Access(cwd=self.workdir),
+                name=name,
+                client="fake",
+                mode=Mode.TUI,
+                prompt="hello",
             )
             self.addCleanup(configured.start(spec, display=display).stop)
         host = configured.host()

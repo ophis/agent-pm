@@ -10,7 +10,7 @@ import os
 import sys
 import unittest
 
-from agent_pm.session import Exited, Launch, Mode, Reply, Spec, TurnEnd
+from agent_pm.session import Access, Exited, Launch, Mode, Reply, Spec, TurnEnd
 from agent_pm.session.engine.hosted_session import HostedSession
 from agent_pm.session.extension import ConfigError, Host, Record, SessionError
 
@@ -29,7 +29,13 @@ class OutsideTest(Case):
         self.workdir = os.path.join(self.home, "work")
 
     def started(self, mode: Mode):
-        spec = Spec(workdir=self.workdir, client="outside", mode=mode, prompt="hello")
+        spec = Spec(
+            workdir=self.workdir,
+            access=Access(cwd=self.workdir),
+            client="outside",
+            mode=mode,
+            prompt="hello",
+        )
         return self.session.start(spec)
 
     def test_the_outside_module_imports_only_the_public_session_modules(self):

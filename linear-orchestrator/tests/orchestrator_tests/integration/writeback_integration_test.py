@@ -30,7 +30,8 @@ PICK = "picked the task."
 class Writeback(Flow):
     def setUp(self):
         super().setUp()
-        self.rd = os.path.join(self.runs_dir, ID)
+        self.rd = os.path.join(self.workdirs, ID)
+        os.makedirs(self.rd)
         self.fake.issue(
             "Session registry",
             identifier=ID,

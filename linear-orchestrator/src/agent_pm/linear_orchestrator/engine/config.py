@@ -66,10 +66,6 @@ TASKS = {
     ),
 }
 
-# Core's checkout dirs under an agent run's workdir: config commands' `--dir {{workdir}}/src`, the
-# github destination's `<Workdir>/publish`.
-CLONES = ("src", "publish")
-
 
 def report_error(src: str, error: ConfigError, *, dry: bool = False) -> None:
     if not error.logs_dir:

@@ -80,7 +80,7 @@ class Extension(ConfigFile, Case):
                 "from agent_pm.linear_orchestrator.engine import config, runs\n"
                 "from agent_pm.linear_orchestrator import LinearRun\n"
                 "cfg = config.load()\n"
-                f"owner = LinearRun({issue!r}, 'Echo.', cfg.run_dir({issue!r}), cfg=cfg, role='engineer', sid={SID!r}, display='opaque display')\n"
+                f"owner = LinearRun({issue!r}, 'Echo.', cfg.issue_workdir({issue!r}), cfg=cfg, role='engineer', sid={SID!r}, display='opaque display')\n"
                 f"runs.note(cfg.runs_log, 'start', issue={issue!r}, sid={SID!r}, role='engineer', client='fake', delegate_kind=cfg.delegate_kind)\n"
                 "print(owner.detach().to_line())\n"
             )
@@ -99,8 +99,7 @@ class Extension(ConfigFile, Case):
             "print(view.resume().to_line())\n"
         )
         self.assertEqual(Record.parse(output), record)
-        state = Path(record.workdir) / "delegate.json"
-        self.assertEqual(json.loads(state.read_text(encoding="utf-8"))["starts"], 1)
+        self.assertEqual(fake_delegate.FakeDelegate.starts(record.workdir), 1)
         for transition, starts in (("finish", 1), ("end", 2)):
             output = self.child(
                 "from external_delegate import ExtensionDelegate\n"
@@ -109,7 +108,7 @@ class Extension(ConfigFile, Case):
                 "raise SystemExit(cli.main(['resume', 'TASK-1']))\n"
             )
             self.assertEqual(Record.parse(output), record)
-            self.assertEqual(json.loads(state.read_text(encoding="utf-8"))["starts"], starts)
+            self.assertEqual(fake_delegate.FakeDelegate.starts(record.workdir), starts)
 
     def test_cli_batch_status_and_resume_run_in_another_process(self):
         first, second = self.start("TASK-1"), self.start("TASK-2")

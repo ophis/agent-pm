@@ -12,6 +12,7 @@ import subprocess
 import tempfile
 import unittest
 
+from agent_pm.delegate.engine.types import Layout
 from agent_pm.session import SessionError
 from agent_pm.utils import Record
 
@@ -116,7 +117,7 @@ class HarnessHosts(Case):
             live_tmux.wait(lambda e=event: logged(e), WAIT, what=f"`{HARNESS} {event}`")
 
     def metadata(self) -> dict:
-        with open(os.path.join(self.work, "delegate.json"), encoding="utf-8") as file:
+        with open(os.path.join(Layout(self.work).run, "delegate.json"), encoding="utf-8") as file:
             return json.load(file)
 
     def test_an_injected_fake_host_runs_the_harness_while_tmux_runs_the_agent(self):

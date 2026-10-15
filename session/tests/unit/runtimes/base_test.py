@@ -12,7 +12,7 @@ from unittest import mock
 from agent_pm.session.adapters.base import Adapter, Headless
 from agent_pm.session.adapters.codex import CodexAdapter
 from agent_pm.session.adapters.registry import Registry
-from agent_pm.session.engine.types import ConfigError, Launch, Mode, Spec
+from agent_pm.session.engine.types import Access, ConfigError, Launch, Mode, Spec
 from agent_pm.session.hosts.base import Host
 from agent_pm.session.runtimes import headless, in_process, tui
 from agent_pm.session.runtimes.base import Runtime, child_env, identity_drop
@@ -127,7 +127,7 @@ class RuntimeTest(Case):
                 mode()
 
     def test_a_failed_start_returns_no_session_and_records_nothing(self):
-        spec = Spec(workdir="/w", client="none", sid="s1")
+        spec = Spec(workdir="/w", access=Access(cwd="/w"), client="none", sid="s1")
         for mode, kind in KINDS.items():
             recorded = []
             with self.subTest(mode=kind.value), self.assertRaises(ConfigError) as caught:

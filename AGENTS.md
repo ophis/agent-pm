@@ -4,7 +4,7 @@ Test boundaries and commands: README.md › Tests.
 
 ## Gotchas
 
-- This file never loads in an agent run outside a trusted cwd (README › Install). An agent run reaches only its cwd, `<work_dir>/work/<ID>/` and the config's `read`/`write` dirs: give a task a new path there, or it stalls on a permission nobody can grant.
+- This file never loads in an agent run outside a trusted cwd (README › Install). An agent run reaches only its cwd, `<work_dir>/work/<ID>/agent/` and the config's `read`/`write` dirs: give a task a new path there, or it stalls on a permission nobody can grant.
 - Input rendering and write-back changes: `linear-orchestrator/tests/orchestrator_tests/unit/engine/inputs_test.py` and `linear-orchestrator/tests/orchestrator_tests/unit/engine/writeback_test.py` pin input text and Linear calls.
 - Every task has exactly one `[agent-pm-progress:start]` line and no `budget` one, which start replaced (`delegate/tests/unit/team_test.py` checks): without the start report the Delegate logs `missing progress mark: start`, write-back posts no start comment, and a build's `issues.build_cutoff` loses its `Build started` cutoff.
 - Never name Linear in the team text (`delegate/src/agent_pm/delegate/team/`) or skills.

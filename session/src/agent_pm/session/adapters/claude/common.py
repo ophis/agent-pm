@@ -279,7 +279,7 @@ class ClaudeCommon:
 
     def save(self, spec: Spec) -> None:
         """What resume_main replays: spec's cwd, Access.dirs and config, Access and Spec env."""
-        cwd, sid = spec.access.cwd or spec.workdir, self.uuid(spec.sid)
+        cwd, sid = spec.access.cwd, self.uuid(spec.sid)
         env = {**self.env(), **spec.access.env, **spec.env}
         state = {
             "version": 1,
@@ -348,7 +348,7 @@ class ClaudeCommon:
         sid = spec.sid
         model, effort = self.model(spec.tier), self.effort(spec.effort)
         access = spec.access
-        cwd = access.cwd or spec.workdir
+        cwd = access.cwd
         configured, own = _split(self.flags, cwd)
         supplied, flags = _split(spec.flags, cwd)
         hooked = ({"hooks": dict(hooks)},) if hooks else ()

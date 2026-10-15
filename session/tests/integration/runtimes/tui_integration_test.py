@@ -8,7 +8,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from agent_pm.session.engine.types import Spec
+from agent_pm.session.engine.types import Access, Spec
 from agent_pm.session.hosts.tmux import TmuxHost
 from agent_pm.session.hosts.tmux.host import Tmux
 from agent_pm.session.runtimes import tui
@@ -29,6 +29,7 @@ class CloseTest(Case):
         tui.TuiRuntime.start(
             Spec(
                 workdir=tmp.name,
+                access=Access(cwd=tmp.name),
                 name=NAME,
                 client="fake",
                 sid=SID,
@@ -92,6 +93,7 @@ class PollCostTest(Live):
         mode = tui.TuiRuntime.start(
             Spec(
                 workdir=self.workdir,
+                access=Access(cwd=self.workdir),
                 name=NAME,
                 client="fake",
                 sid=SID,

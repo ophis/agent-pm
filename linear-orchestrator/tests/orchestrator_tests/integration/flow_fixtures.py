@@ -25,6 +25,7 @@ from orchestrator_tests.integration import fake_gh, fake_linear
 from orchestrator_tests.unit import board_ids, run_fixtures
 from orchestrator_tests.unit.run_fixtures import ID, SID
 
+from delegate.tests.workdir import run_log
 from session.tests import live_tmux
 from session.tests.integration.adapters.claude import fake_claude
 from utils.tests.case import local_section
@@ -125,7 +126,7 @@ class Flow(Case):
         self.root = os.path.realpath(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, self.root, ignore_errors=True)
         state = os.path.join(self.root, "state")
-        self.runs_dir, self.logs = os.path.join(state, "work"), os.path.join(state, "logs")
+        self.workdirs, self.logs = os.path.join(state, "work"), os.path.join(state, "logs")
         with open(os.path.join(self.agent_pm, "config.local.toml"), "w") as f:
             f.write(
                 local_section(run_fixtures.local(state) + TASK_LABELS, "linear_orchestrator")
@@ -206,12 +207,12 @@ class Flow(Case):
         return jsonl(self.claude_log)
 
     def records(self, ident):
-        return jsonl(os.path.join(self.runs_dir, ident, "run.jsonl"))
+        return jsonl(run_log(os.path.join(self.workdirs, ident)))
 
     def ledger(self, ident):
         """Each sid's write-back steps."""
         try:
-            with open(os.path.join(self.runs_dir, ident, "writeback.json")) as f:
+            with open(os.path.join(self.workdirs, ident, "writeback.json")) as f:
                 return {sid: entry.get("steps", []) for sid, entry in json.load(f).items()}
         except FileNotFoundError:
             return {}
@@ -354,7 +355,7 @@ class TmuxFlow(Flow):
                     "orchestrator.jsonl:",
                     *tail(os.path.join(self.logs, "orchestrator.jsonl")),
                     "run.jsonl:",
-                    *tail(os.path.join(self.runs_dir, ident, "run.jsonl")),
+                    *tail(run_log(os.path.join(self.workdirs, ident))),
                 ]
             )
         )

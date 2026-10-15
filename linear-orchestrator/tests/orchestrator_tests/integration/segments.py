@@ -366,7 +366,7 @@ class Segment(TmuxFlow):
         sessions = (self.harness(role, ident, sid), config.tui_name(role, ident, sid))
         self.assertEqual(
             (record.kind, record.name, record.sessions, record.sid, record.workdir, record.display),
-            ("pipeline", ident, sessions, sid, os.path.join(self.runs_dir, ident), MANAGER),
+            ("pipeline", ident, sessions, sid, os.path.join(self.workdirs, ident), MANAGER),
         )
         self.assertEqual(
             (record.ctl, record.resume),

@@ -192,10 +192,15 @@ class WritableDirsTest(Base):
         os.symlink(self.added, self.link)
 
     def dirs(self, *, resume=False, workdir=None, **access) -> tuple[str, ...]:
-        spec = Spec(workdir=workdir or self.work, sid=SID, access=Access(**access), resume=resume)
+        spec = Spec(
+            workdir=workdir or self.work,
+            sid=SID,
+            access=Access(**{"cwd": workdir or self.work, **access}),
+            resume=resume,
+        )
         return ClaudeAdapter(CONFIG).writable_dirs(spec)
 
-    def test_the_workdir_without_a_cwd_then_the_added_dirs(self):
+    def test_the_cwd_then_the_added_dirs(self):
         self.assertEqual(self.dirs(), (self.work,))
         self.assertEqual(self.dirs(dirs=(self.added, self.cwd)), (self.work, self.added, self.cwd))
 
@@ -244,7 +249,7 @@ class WritableDirsTest(Base):
         )
         for resume in (False, True):
             for cwd, given, dirs in (
-                ("", (), (self.work, self.tmp)),
+                (self.work, (), (self.work, self.tmp)),
                 (self.cwd, (), (self.cwd, self.tmp)),
                 (self.cwd, flags, (self.cwd, self.tmp, os.path.join(self.cwd, "sub"), self.added)),
             ):

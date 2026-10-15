@@ -71,7 +71,7 @@ class RunCase(ConfigFile, Case):
         owner = LinearRun(
             issue,
             "Echo input.",
-            self.cfg.run_dir(issue),
+            self.cfg.issue_workdir(issue),
             cfg=self.cfg,
             role="researcher",
             sid=sid,

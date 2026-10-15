@@ -16,6 +16,7 @@ from agent_pm.delegate import Begun, Finished, Limit, Progress, Spec
 from agent_pm.delegate.composer import Composer
 from agent_pm.delegate.engine.drivers import AgentDriver
 from agent_pm.delegate.engine.runner import FIX
+from agent_pm.delegate.engine.types import Layout
 
 from delegate.tests.case import Case, packaged
 from delegate.tests.integration.cli import DONE, RESETS, SID, UNSAVED, UNSAVED_ERROR
@@ -25,7 +26,7 @@ from session.tests.integration.adapters.claude import fake_claude
 
 
 class Base(Case):
-    """dummy-tester's echo over the fake `claude` in workdir `work`, the cwd the workdir."""
+    """dummy-tester's echo over the fake `claude` in workdir `work`, the cwd its agent dir."""
 
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()
@@ -65,7 +66,6 @@ class Base(Case):
                     client="claude",
                     sid=SID,
                     out=self.out,
-                    cwd=self.work,
                 ),
                 on_event=self.events.append,
                 driver=self.driver,
@@ -76,7 +76,7 @@ class Base(Case):
             return [json.loads(line) for line in f]
 
     def kinds(self) -> list[str]:
-        with open(os.path.join(self.work, "run.jsonl")) as f:
+        with open(os.path.join(Layout(self.work).run, "run.jsonl")) as f:
             return [json.loads(line)["kind"] for line in f]
 
 

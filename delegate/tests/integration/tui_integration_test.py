@@ -20,6 +20,7 @@ from agent_pm.delegate import Progress, Spec
 from agent_pm.delegate.composer import Composer
 from agent_pm.delegate.engine.drivers import AgentDriver
 from agent_pm.delegate.engine.runner import FIX, NUDGE, STOP_LIMIT
+from agent_pm.delegate.engine.types import Layout
 
 from delegate.tests.case import packaged
 from delegate.tests.integration.cli import DONE, SID, UNSAVED, UNSAVED_ERROR
@@ -106,7 +107,6 @@ class TuiRun(tui_live.Live):
                         sid=SID,
                         events=self.events,
                         out=self.out,
-                        cwd=self.workdir,
                     ),
                     on_event=on,
                     driver=self.driver,
@@ -133,7 +133,7 @@ class TuiRun(tui_live.Live):
         return ended[0]
 
     def records(self) -> list[dict]:
-        with open(os.path.join(self.workdir, "run.jsonl")) as f:
+        with open(os.path.join(Layout(self.workdir).run, "run.jsonl")) as f:
             return [json.loads(line) for line in f]
 
     def kinds(self) -> list[str]:
