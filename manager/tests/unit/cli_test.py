@@ -168,7 +168,7 @@ class NextEventContent(CliCase):
             (0, "1 12:00:00 w1 blocked\nAllow this edit?\n 1. Yes\n", ""),
         )
 
-    def test_a_harness_event_prints_its_entrys_status(self):
+    def test_a_harness_event_prints_its_entry_status(self):
         record = self.launched("r1", "engineer-ab12", "engineer-ab12-drive")
         status = Status(record.name, alive=False, state="exited", outcome="done", attach=None)
         self.answers[(*record.ctl, "status")] = (0, status.to_line() + "\n", "")
