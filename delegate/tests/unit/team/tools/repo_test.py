@@ -116,7 +116,7 @@ class Status(Base):
         )
         return code, json.loads(out) if code == 0 else err, run
 
-    def test_pr_plan_docs_and_feedback_since_the_branchs_latest_own_commit(self):
+    def test_pr_plan_docs_and_feedback_since_its_latest_own_commit(self):
         path = self.plan_doc()
         comments = [
             [
