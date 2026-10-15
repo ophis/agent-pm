@@ -142,33 +142,22 @@ def _url(url: str, out: Mapping) -> str:
 def _file(path, workdir: str) -> str:
     base = Path(workdir).resolve()
     real = (base / path).resolve() if isinstance(path, str) and "\0" not in path else None
-    # A hard link could bring an outside file (a key) into the workdir.
-    if (
-        real is None
-        or real.suffix != ".md"
-        or not real.is_relative_to(base)
-        or not real.is_file()
-        or real.stat().st_nlink != 1
-    ):
-        raise InvalidOutcome(
-            f"file {str(path)[:200]!r} is not a single-link .md file under the workdir"
-        )
+    if real is None or real.suffix != ".md" or not real.is_relative_to(base) or not real.is_file():
+        raise InvalidOutcome(f"file {str(path)[:200]!r} is not a .md file under the workdir")
     return str(real)
 
 
 def _read_file(real: str, workdir: str) -> str:
-    """The file _file checked, rechecked through the open fd: a swap after the check is refused."""
+    """The file _file checked, its type and place rechecked through the open fd."""
     cap = 4 * _schema()["properties"]["deliverable"]["maxLength"]
     try:
         data = read_confined(real, workdir, limit=cap)
     except ConfinedFileError as error:
         path = str(real)[:200]
         messages = {
-            ConfinedReason.REGULAR: f"deliverable_file {path!r}: not a single-link regular file",
-            ConfinedReason.SINGLE_LINK: f"deliverable_file {path!r}: not a single-link regular file",
-            ConfinedReason.SUFFIX: f"file {path!r} is not a single-link .md file under the workdir",
+            ConfinedReason.REGULAR: f"deliverable_file {path!r}: not a regular file",
+            ConfinedReason.SUFFIX: f"file {path!r} is not a .md file under the workdir",
             ConfinedReason.OUTSIDE: f"deliverable_file {path!r}: no longer under the workdir",
-            ConfinedReason.REPLACED: f"deliverable_file {path!r}: replaced while it was opened",
             ConfinedReason.TOO_LARGE: f"deliverable_file {path!r}: too large (over {cap} bytes)",
         }
         raise InvalidOutcome(messages[error.reason]) from None

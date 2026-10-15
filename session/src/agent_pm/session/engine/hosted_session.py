@@ -8,7 +8,6 @@ from __future__ import annotations
 import builtins
 import os
 import re
-import stat
 import sys
 import time
 import uuid
@@ -132,9 +131,9 @@ def _probe_dir() -> str | None:
     path = os.path.expanduser(PROBE_DIR)
     try:
         os.makedirs(path, 0o700, exist_ok=True)
-        return path if stat.S_ISDIR(os.lstat(path).st_mode) else None
     except OSError:
         return None
+    return path
 
 
 def _host_class(setup: _Setup, name: str) -> tuple[type[Host], dict]:

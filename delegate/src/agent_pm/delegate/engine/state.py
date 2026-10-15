@@ -24,32 +24,29 @@ class RunState:
         self._lock = os.path.join(layout.run, "delegate")
 
     def read(self) -> bytes | None:
-        return read_regular(self.record, own=True)
+        return read_regular(self.record)
 
     def write(self, payload: str) -> None:
-        save(self.record, payload, own=True, durable=True)
+        save(self.record, payload, durable=True)
 
     @contextlib.contextmanager
     def mutex(self) -> Iterator[None]:
-        with file_lock(self._lock, own=True):
+        with file_lock(self._lock):
             yield
 
     @contextlib.contextmanager
     def run_lock(self) -> Iterator[None]:
-        with file_lock(f"{self._lock}.run", own=True):
+        with file_lock(f"{self._lock}.run"):
             yield
 
     def running(self) -> bool:
         """Whether a run holds the run lock."""
         try:
-            descriptor = os.open(
-                f"{self._lock}.run.lock", os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK
-            )
+            descriptor = os.open(f"{self._lock}.run.lock", os.O_RDONLY | os.O_NONBLOCK)
         except FileNotFoundError:
             return False
         try:
-            opened = os.fstat(descriptor)
-            if not stat.S_ISREG(opened.st_mode) or opened.st_uid != os.getuid():
+            if not stat.S_ISREG(os.fstat(descriptor).st_mode):
                 raise ConfigError(f"{self.layout.workdir}: invalid delegate run lock")
             try:
                 fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)

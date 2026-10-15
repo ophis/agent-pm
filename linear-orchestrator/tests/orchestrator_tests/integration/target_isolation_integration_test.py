@@ -144,14 +144,3 @@ class TargetCheckout(Case):
         self.assertEqual(self.run_({"ophis/agent-pm": y}), self.want(y))
         self.git_file("gitdir: " + os.path.join(self.tmp, "no-such-gitdir") + "\n")
         self.assertEqual(self.run_({"ophis/agent-pm": y}), self.want(y))
-
-    def test_a_symlinked_git_is_not_followed(self):
-        x, y = self.clone("x"), self.clone("y")
-        real_file = os.path.join(self.tmp, "dotgit-file")
-        self.worktree(x)
-        shutil.copy(os.path.join(self.checkout, ".git"), real_file)
-        for dest in (real_file, os.path.join(x, ".git")):
-            with self.subTest(dest):
-                os.symlink(dest, self.fresh())
-                self.assertEqual(self.run_({"ophis/agent-pm": y}), self.want(y))
-                self.assertEqual(self.run_({}), self.want(""))

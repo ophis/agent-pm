@@ -1,27 +1,21 @@
-"""Plan access checks for an owned team outside system temporary directories."""
+"""Plan access checks for an owned team dir."""
 
 import json
 import os
-import unittest
 from unittest import mock
 
 from agent_pm.delegate.composer import teams
 from agent_pm.delegate.composer.base import TEAM
-from agent_pm.utils import temp_dirs, under
 
 from delegate.tests.case import REPO
 from delegate.tests.plans import TASKS, TASKS_PARAM, Base, write_team
 from utils.tests.sandbox import owned_directory
 
 TEAMS = os.path.join(REPO, "work")
-IN_TEMP = under(os.path.realpath(TEAMS), temp_dirs()) is not None
 
 
-@unittest.skipIf(IN_TEMP, f"{TEAMS} is in a temp dir, where check_team_dirs refuses a team dir")
 class CustomTeam(Base):
-    """A team dir outside temp dirs given as the run's team: check_team_dirs against what the run
-    can write.
-    """
+    """A team dir given as the run's team: check_team_dirs against what the run can write."""
 
     def setUp(self):
         super().setUp()

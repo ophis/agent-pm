@@ -73,14 +73,7 @@ class Write(Case):
         self.assertEqual(self.read(), "12:00:00 w1 done\n12:00:00 w1 exited 0\n")
         self.assertEqual(stat.S_IMODE(os.stat(self.path).st_mode), 0o600)
 
-    def test_refuses_a_symlink_and_writes_no_bad_line(self):
-        target = os.path.join(self.home, "target")
-        open(target, "w").close()
-        os.symlink(target, self.path)
-        with self.assertRaises(OSError):
-            self.events.write("w1", "done")
-        self.assertEqual(self.read(target), "")
-        os.unlink(self.path)
+    def test_writes_no_bad_line(self):
         with self.assertRaises(ValueError):
             self.events.write("w 1", "done")
         self.assertFalse(os.path.lexists(self.path))

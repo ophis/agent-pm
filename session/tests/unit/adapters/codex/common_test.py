@@ -277,11 +277,11 @@ class CommonTest(Base):
         path.unlink()
         os.mkfifo(path, 0o600)
         before = time.monotonic()
-        with self.assertRaisesRegex(ConfigError, "unsafe"):
+        with self.assertRaisesRegex(ConfigError, "not a regular"):
             self.common.prepare(dataclasses.replace(self.spec, resume=True))
         self.assertLess(time.monotonic() - before, 0.5)
 
-    def test_record_type_mode_owner_size_and_json_guards(self):
+    def test_record_size_and_json_guards(self):
         self.prepare()
         path = self.record()
         original = path.read_text()
@@ -291,19 +291,7 @@ class CommonTest(Base):
                 with self.assertRaisesRegex(ConfigError, "malformed"):
                     self.common.load(str(self.work), self.spec.sid)
         path.write_text(original)
-        path.chmod(0o644)
-        with self.assertRaisesRegex(ConfigError, "mode|owner"):
-            self.common.load(str(self.work), self.spec.sid)
-        path.chmod(0o600)
-        with (
-            mock.patch("os.getuid", return_value=os.getuid() + 1),
-            self.assertRaisesRegex(ConfigError, "owner"),
-        ):
-            self.common.load(str(self.work), self.spec.sid)
-        path.unlink()
-        path.symlink_to(self.root / "absent")
-        with self.assertRaisesRegex(ConfigError, "symlink"):
-            self.common.load(str(self.work), self.spec.sid)
+        self.assertEqual(self.common.load(str(self.work), self.spec.sid).sid, self.spec.sid)
 
     def test_record_identity_snapshot_and_grants_are_revalidated(self):
         state = self.prepare()
@@ -370,22 +358,6 @@ class CommonTest(Base):
             adapter.common.prepare(dataclasses.replace(self.spec, resume=True)).native_id, NATIVE
         )
         self.assertEqual(self.record().read_bytes(), saved)
-
-    def test_store_parent_permissions_and_symlink_guard(self):
-        parent = self.home / ".agent-pm"
-        parent.mkdir(mode=0o755)
-        self.prepare()
-        parent.chmod(0o775)
-        with self.assertRaisesRegex(ConfigError, "mode|owner"):
-            self.common.load(str(self.work), self.spec.sid)
-
-    def test_store_parent_symlink_fails_before_creation(self):
-        target = self.root / "store-target"
-        target.mkdir()
-        (self.home / ".agent-pm").symlink_to(target)
-        with self.assertRaisesRegex(ConfigError, "symlink"):
-            self.prepare()
-        self.assertEqual(list(target.iterdir()), [])
 
     def test_untrusted_project_configuration_and_cwd(self):
         agent = self.root / "agent"
@@ -745,13 +717,13 @@ class WritableDirsTest(Base):
             str(target), adapter.writable_dirs(dataclasses.replace(self.spec, resume=True))
         )
 
-    def test_resume_query_translates_unsafe_recovery_without_writing_store(self):
+    def test_resume_query_translates_a_bad_recovery_file_without_writing_store(self):
         spec = dataclasses.replace(self.spec, resume=True)
         self.prepare()
         path = self.record()
         path.unlink()
         os.mkfifo(path, 0o600)
-        with self.assertRaisesRegex(ConfigError, "unsafe"):
+        with self.assertRaisesRegex(ConfigError, "not a regular"):
             self.adapter.writable_dirs(spec)
         self.assertTrue(stat.S_ISFIFO(path.lstat().st_mode))
         self.assertEqual(list(path.parent.iterdir()), [path])
@@ -866,13 +838,13 @@ class SessionStatusTest(Base):
                 self.common.session_status(self.spec.sid, str(self.cwd)).resumable, "unknown"
             )
 
-    def test_transcript_fifo_mismatch_duplicate_and_symlink(self):
+    def test_transcript_fifo_mismatch_and_duplicate(self):
         self.bound()
         path = self.rollout()
         path.unlink()
         os.mkfifo(path)
         before = time.monotonic()
-        with self.assertRaisesRegex(ConfigError, "unsafe"):
+        with self.assertRaisesRegex(ConfigError, "not a regular"):
             self.common.prepare(dataclasses.replace(self.spec, resume=True))
         self.assertLess(time.monotonic() - before, 0.5)
         path.unlink()
@@ -884,12 +856,6 @@ class SessionStatusTest(Base):
         duplicate.write_text(path.read_text())
         with self.assertRaisesRegex(ConfigError, "duplicate"):
             self.common.prepare(dataclasses.replace(self.spec, resume=True))
-        duplicate.unlink()
-        path.unlink()
-        path.symlink_to(self.root / "absent")
-        self.assertEqual(
-            self.common.session_status(self.spec.sid, str(self.cwd)).resumable, "unknown"
-        )
 
     def test_last_activity_includes_validated_descendants(self):
         self.bound()
@@ -1109,22 +1075,6 @@ class StoreRootTest(Base):
             self.assertIsNone(store.load(state.workdir, state.sid))
             store.save(store.create(state.workdir, state.sid, state.snapshot, state.writable_roots))
             self.assertEqual(store.load(state.workdir, state.sid), state)
-            parent = other_home / ".agent-pm" / "sessions"
-            target = other_home / "moved-store"
-            parent.rename(target)
-            parent.symlink_to(target, target_is_directory=True)
-            with self.assertRaisesRegex(RecoveryError, "symlink"):
-                store.create(state.workdir, "preview", state.snapshot, state.writable_roots)
-
-    def test_nonpersisted_prepare_rejects_a_symlinked_default_store(self):
-        store = self.home / ".agent-pm" / "sessions" / "codex"
-        target = self.root / "store-target"
-        store.parent.mkdir(parents=True, mode=0o700)
-        target.mkdir(mode=0o700)
-        store.symlink_to(target, target_is_directory=True)
-        with self.assertRaisesRegex(ConfigError, "symlink"):
-            self.common.prepare(self.spec)
-        self.assertEqual(list(target.iterdir()), [])
 
 
 class CodecTest(Base):

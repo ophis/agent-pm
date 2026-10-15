@@ -981,9 +981,9 @@ class TileCoordinationTest(TileFixture):
         self.assertEqual(set(slept), {grids.TILE_POLL})
         self.assertTrue(5 <= sum(slept) < 5.1)  # float steps: one poll more
 
-    def test_a_symlink_at_the_lock_path_raises_before_the_pass_and_grid_up_returns_it(self):
-        os.symlink(self.sock + "-target", self.lock)
-        want = f"^grid lock {re.escape(self.lock)}: {os.strerror(errno.ELOOP)}$"
+    def test_a_directory_at_the_lock_path_raises_before_the_pass_and_grid_up_returns_it(self):
+        os.mkdir(self.lock)
+        want = f"^grid lock {re.escape(self.lock)}: {os.strerror(errno.EISDIR)}$"
         fake = self.fake(*self.WIDE)
         with self.assertRaisesRegex(types.TuiError, want):
             grids.tile("@3", proc=fake)
@@ -994,7 +994,6 @@ class TileCoordinationTest(TileFixture):
             want,
         )
         self.assertEqual(fake.calls, [grid_set("@3", "%0"), self.SOCKET])
-        self.assertFalse(os.path.lexists(self.sock + "-target"))
 
     def test_an_empty_or_relative_socket_path_raises_before_the_lock(self):
         # the lock would land in the cwd, here an empty temp dir

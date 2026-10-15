@@ -163,7 +163,7 @@ class Validate(Base):
         )
         self.assertEqual(self.check({**DONE, "url": "https://x"}).url, "")
 
-    def test_files_are_single_link_md_files_under_the_workdir(self):
+    def test_files_are_md_files_under_the_workdir(self):
         plan = self.touch("docs", "plan.md")
         self.assertEqual(
             self.check({**DONE, "files": [plan, "docs/plan.md"]}).files,
@@ -175,19 +175,17 @@ class Validate(Base):
             f.write("x")
         outside = self.outside()
         os.symlink(outside, os.path.join(self.work, "link.md"))
-        os.link(outside, os.path.join(self.work, "hard.md"))
         for bad in (
             self.touch("notes.txt"),
             os.path.join(self.work, "missing.md"),
             sibling,
             "link.md",
-            "hard.md",
             os.path.join(self.work, "..", "secret.md"),
             os.path.expanduser("~/.ssh/id_rsa"),
             7,
             "a\0b.md",
         ):
-            self.fails({**DONE, "files": [bad]}, "single-link .md file under the workdir")
+            self.fails({**DONE, "files": [bad]}, "is not a .md file under the workdir")
 
 
 class Read(Base):
@@ -233,18 +231,16 @@ class Read(Base):
         self.touch("out.md", text=" \n")
         self.refused(FILE, "must carry the deliverable")
 
-    def test_deliverable_file_must_be_a_single_link_md_file_under_the_workdir(self):
+    def test_deliverable_file_must_be_an_md_file_under_the_workdir(self):
         self.touch("notes.txt")
         outside = self.outside()
         os.symlink(outside, os.path.join(self.work, "link.md"))
-        os.link(outside, os.path.join(self.work, "hard.md"))
         for name in (
             "missing.md",
             "notes.txt",
             "../secret.md",
             outside,
             "link.md",
-            "hard.md",
             7,
             None,
             ["out.md"],
@@ -252,14 +248,14 @@ class Read(Base):
         ):
             with self.subTest(name=name):
                 self.refused(
-                    {**FILE, "deliverable_file": name}, "single-link .md file under the workdir"
+                    {**FILE, "deliverable_file": name}, "is not a .md file under the workdir"
                 )
 
     def test_a_fifo_is_refused_at_once(self):
         os.mkfifo(os.path.join(self.work, "out.md"))
         failed = []
         worker = threading.Thread(
-            target=lambda: failed.append(self.refused(FILE, "single-link .md file")), daemon=True
+            target=lambda: failed.append(self.refused(FILE, "is not a .md file")), daemon=True
         )
         worker.start()
         worker.join(5)
@@ -332,14 +328,7 @@ class ReadRace(Base):
             os.unlink(self.target)
             os.mkfifo(self.target)
 
-        self.swapped(swap, "not a single-link regular file")
-
-    def test_a_hard_link_to_an_outside_md_file(self):
-        def swap():
-            os.unlink(self.target)
-            os.link(self.secret, self.target)
-
-        self.swapped(swap, "not a single-link regular file")
+        self.swapped(swap, "not a regular file")
 
     def test_a_parent_dir_swapped_for_a_symlink_out(self):
         out = os.path.join(self.tmp, "out")
@@ -351,23 +340,6 @@ class ReadRace(Base):
             os.symlink(out, os.path.dirname(self.target))
 
         self.swapped(swap, "no longer under the workdir")
-
-    def test_a_file_replaced_after_the_open(self):
-        real_open = os.open
-        other = self.touch("d", "other.md", text="other\n")
-
-        def open_(path, *args, **kw):
-            fd = real_open(path, *args, **kw)
-            os.rename(self.target, os.path.join(self.work, "d", "kept.md"))
-            os.rename(other, self.target)
-            return fd
-
-        with (
-            unittest.mock.patch("os.open", side_effect=open_),
-            self.assertRaises(InvalidOutcome) as cm,
-        ):
-            read(json.dumps({**FILE, "deliverable_file": "d/out.md"}), LOCAL, self.work)
-        self.assertIn("replaced while it was opened", str(cm.exception))
 
 
 class SchemaFile(Case):

@@ -869,11 +869,7 @@ class SnapshotTest(Base):
     def test_a_session_json_that_is_no_regular_file_is_refused_without_blocking(self):
         path = os.path.join(self.dir, "session.json")
         os.makedirs(self.dir)
-        real = os.path.join(self.tmp, "real.json")
-        with open(real, "w") as f:
-            json.dump(self.state(), f)
         for make in (
-            lambda: os.symlink(real, path),
             lambda: os.mkfifo(path),
             lambda: os.mkdir(path),
         ):
@@ -1262,14 +1258,8 @@ class PollTest(Base):
 
     def test_a_hooks_file_that_is_no_regular_file_gives_no_records(self):
         mode = self.started()
-        real = os.path.join(self.tmp, "real.jsonl")
-        with open(real, "w") as f:
-            f.write(json.dumps(record("tool")) + "\n")
-        for make in (lambda: os.symlink(real, self.hooks), lambda: os.mkfifo(self.hooks)):
-            make()
-            with self.subTest(stat.filemode(os.lstat(self.hooks).st_mode)):
-                self.assertEqual(mode.poll(0), ([], False))
-            os.unlink(self.hooks)
+        os.mkfifo(self.hooks)
+        self.assertEqual(mode.poll(0), ([], False))
 
     def test_empty_poll_checks_the_terminal_and_waits_in_slices(self):
         mode = self.started()
@@ -1661,32 +1651,11 @@ class PrepareTest(Base):
         self.start(events=None)
         self.assertEqual(stat.S_IMODE(os.lstat(self.root).st_mode), 0o700)
 
-    def test_an_existing_tui_dir_is_set_to_0700(self):
-        os.mkdir(self.root, 0o755)
-        os.chmod(self.root, 0o755)
-        self.start()
-        self.assertEqual(stat.S_IMODE(os.lstat(self.root).st_mode), 0o700)
-
-    def test_a_tui_dir_that_is_no_real_directory_of_yours_is_refused(self):
-        target = os.path.join(self.home, "target")
-        os.mkdir(target, 0o755)
-        os.chmod(target, 0o755)
-        cases = (
-            ("symlink", lambda: os.symlink(target, self.root), None),
-            ("file", lambda: open(self.root, "w").close(), None),
-            ("another user's", lambda: os.mkdir(self.root, 0o700), os.getuid() + 1),
-        )
-        for case, make, uid in cases:
-            with self.subTest(case):
-                make()
-                with (
-                    mock.patch("os.getuid", return_value=uid if uid is not None else os.getuid()),
-                    self.assertRaisesRegex(SessionError, re.escape(self.root)),
-                ):
-                    self.start(events=None)
-                self.assertTrue(os.path.lexists(self.root))
-                (os.rmdir if case == "another user's" else os.unlink)(self.root)
-        self.assertEqual((os.listdir(target), stat.S_IMODE(os.stat(target).st_mode)), ([], 0o755))
+    def test_a_tui_dir_that_is_no_directory_is_refused(self):
+        open(self.root, "w").close()
+        with self.assertRaisesRegex(SessionError, re.escape(self.root)):
+            self.start(events=None)
+        self.assertTrue(os.path.isfile(self.root))
         self.host.calls.terminal.assert_not_called()
 
     def test_an_old_session_dir_is_replaced(self):
@@ -1774,11 +1743,8 @@ class LockTest(Base):
 
     def test_a_lock_path_that_is_no_regular_file_is_refused_at_once(self):
         os.mkdir(self.root, 0o700)
-        target = os.path.join(self.tmp, "target")
-        open(target, "w").close()
         path = os.path.join(self.root, "w1.lock")
         for case, make in (
-            ("symlink", lambda: os.symlink(target, path)),
             ("fifo", lambda: os.mkfifo(path)),
             ("directory", lambda: os.mkdir(path)),
         ):

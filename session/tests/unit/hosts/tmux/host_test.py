@@ -297,14 +297,11 @@ class DetachTest(Base):
                 self.assertEqual((kw["opener"], kw["display"], kw["record"]), (None, display, None))
 
     def test_a_display_tmux_could_not_list_or_a_bad_events_file_is_a_config_error(self):
-        target, link = os.path.join(self.dir, "target"), os.path.join(self.dir, "link")
-        open(target, "w").close()
-        os.symlink(target, link)
         for kw, message in (
             ({"display": "mgr\tx"}, r"^display 'mgr\\tx': "),
             ({"display": "mgr\n"}, "^display "),
             ({"display": "mgr;"}, "^display "),
-            ({"events": link}, f"^events file {re.escape(link)}: "),
+            ({"events": self.dir}, f"^events file {re.escape(self.dir)}: "),
         ):
             with self.subTest(**kw), self.assertRaisesRegex(ConfigError, message):
                 self.detach(**kw)
@@ -602,9 +599,6 @@ class PublishTest(Base):
         with self.assertRaises(ConfigError):
             process.publish(LINE.to_line())
         self.assertEqual(self.tmux.set_option.call_count, 1)
-
-    def test_reclaim_of_a_controller_outside_tmp_is_refused(self):
-        self.assertIsNone(self.host.reclaim(self.control.path))
 
 
 class DescendantsTest(Base):
@@ -1086,9 +1080,6 @@ class DetachHandoverTest(StartFixture):
         self.assertEqual(hooks, [EXITED_HOOK, EXITED_HOOK])
 
     def test_a_bad_display_record_or_events_is_refused_before_tmux(self):
-        target, link = os.path.join(self.root, "target"), os.path.join(self.root, "link")
-        open(target, "w").close()
-        os.symlink(target, link)
         for kw, error in (
             ({"display": "mgr\tx"}, "^display 'mgr\\\\tx': want printable text not ending in ;$"),
             ({"display": "mgr\nx"}, "^display "),
@@ -1096,7 +1087,7 @@ class DetachHandoverTest(StartFixture):
             ({"display": 5}, "^display 5: "),
             ({"record": "{};"}, "^tag '@record'"),
             ({"record": "a\0b"}, "^tag '@record'"),
-            ({"events": link}, f"^events file {re.escape(link)}: "),
+            ({"events": self.root}, f"^events file {re.escape(self.root)}: "),
             ({"events": os.path.join(self.root, "a#b")}, "tmux would misread"),
         ):
             with self.subTest(**kw):
@@ -1261,25 +1252,18 @@ class EventsFileTest(Case):
     def test_refused(self):
         target = os.path.join(self.root, "target")
         open(target, "w").close()
-        link = os.path.join(self.root, "link")
-        os.symlink(target, link)
-        for path in (link, self.root, os.path.join(self.root, "missing", "e")):
+        for path in (self.root, os.path.join(self.root, "missing", "e")):
             with (
                 self.subTest(path=path),
                 self.assertRaisesRegex(types.TuiError, f"^events file {re.escape(path)}: "),
             ):
                 events_file(path)
-        fifo = unittest.mock.Mock(st_mode=stat.S_IFIFO | 0o600, st_uid=os.getuid())
-        for patch in (
-            unittest.mock.patch("os.getuid", return_value=os.getuid() + 1),
+        fifo = unittest.mock.Mock(st_mode=stat.S_IFIFO | 0o600)
+        with (
             unittest.mock.patch("os.fstat", return_value=fifo),
+            self.assertRaisesRegex(types.TuiError, "not a regular file$"),
         ):
-            with (
-                self.subTest(patch=patch),
-                patch,
-                self.assertRaisesRegex(types.TuiError, "owned by you"),
-            ):
-                events_file(target)
+            events_file(target)
 
     def test_a_fifo_without_a_reader_is_refused_at_once(self):
         fifo = os.path.join(self.root, "fifo")
@@ -1301,7 +1285,7 @@ class EventsFileTest(Case):
             thread.join()
             os.close(reader)
             self.fail("blocked on a FIFO without a reader")
-        self.assertEqual(caught, [f"events file {fifo}: not a regular file owned by you"] * 2)
+        self.assertEqual(caught, [f"events file {fifo}: not a regular file"] * 2)
 
     def test_a_parent_that_is_a_file_is_refused_with_nothing_made(self):
         parent = os.path.join(self.root, "file")
@@ -1464,14 +1448,11 @@ class StartTest(StartFixture):
     def test_refused_before_tmux(self):
         # the command resolved with the env's PATH (no sh there); an events file that is no regular
         # file
-        link = os.path.join(self.root, "link")
-        os.symlink(self.tool, link)
         for kw, error in (
             ({"argv": ("sh", "-c", "true")}, "sh"),
             ({"argv": ("no-such-tool",)}, "no-such-tool"),
             ({"argv": ()}, "no command"),
             ({"events": self.cwd}, ""),
-            ({"events": link}, ""),
         ):
             with self.subTest(**kw):
                 fake = FakeTmux()

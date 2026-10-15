@@ -813,7 +813,7 @@ class CrewTest(Case):
         def run(argv, **options):
             if tuple(argv) == original.resume:
                 os.replace(self.roster.path, backup)
-                os.symlink(backup, self.roster.path)
+                os.mkdir(self.roster.path)
                 return subprocess.CompletedProcess(argv, 7, None, "resume starter failed")
             return native_run(argv, **options)
 
@@ -826,13 +826,11 @@ class CrewTest(Case):
             self.assertIsNone(raised.exception.__cause__)
             self.assertEqual(
                 raised.exception.__notes__,
-                [
-                    f"worker: could not mark gone: {self.roster.path}: not a readable regular file owned by you"
-                ],
+                [f"worker: could not mark gone: {self.roster.path}: not a readable regular file"],
             )
         finally:
-            if os.path.islink(self.roster.path):
-                os.unlink(self.roster.path)
+            if os.path.isdir(self.roster.path):
+                os.rmdir(self.roster.path)
                 os.replace(backup, self.roster.path)
         entry = self.roster.entries()["worker"]
         self.assertEqual((entry.state, entry.record), (State.RESUMING, original))
@@ -882,7 +880,7 @@ class CrewTest(Case):
         def run(argv, **options):
             if tuple(argv) == original.resume:
                 os.replace(self.roster.path, backup)
-                os.symlink(backup, self.roster.path)
+                os.mkdir(self.roster.path)
                 try:
                     return native_run(missing, **options)
                 except FileNotFoundError as error:
@@ -901,13 +899,11 @@ class CrewTest(Case):
             self.assertIsInstance(failures[0], FileNotFoundError)
             self.assertEqual(
                 raised.exception.__notes__,
-                [
-                    f"worker: could not mark gone: {self.roster.path}: not a readable regular file owned by you"
-                ],
+                [f"worker: could not mark gone: {self.roster.path}: not a readable regular file"],
             )
         finally:
-            if os.path.islink(self.roster.path):
-                os.unlink(self.roster.path)
+            if os.path.isdir(self.roster.path):
+                os.rmdir(self.roster.path)
                 os.replace(backup, self.roster.path)
         entry = self.roster.entries()["worker"]
         self.assertEqual((entry.state, entry.record), (State.RESUMING, original))
@@ -974,7 +970,7 @@ class CrewTest(Case):
     def test_next_event_refuses_replacement_deletion_shrink_and_unsafe_file_while_waiting(self):
         path = self.roster.events
         replacement = os.path.join(self.home, "replacement")
-        for action in ("replace", "delete", "shrink", "symlink", "fifo"):
+        for action in ("replace", "delete", "shrink", "fifo"):
             with self.subTest(action=action):
                 if os.path.lexists(path):
                     os.unlink(path)
@@ -992,9 +988,7 @@ class CrewTest(Case):
                             pass
                     else:
                         os.unlink(path)
-                        if action == "symlink":
-                            os.symlink(replacement, path)
-                        elif action == "fifo":
+                        if action == "fifo":
                             os.mkfifo(path)
 
                 with (

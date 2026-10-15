@@ -814,16 +814,6 @@ class OutcomeFiles(Base):
         posted = [c for c in gql.calls if c[0] == "comment"]
         return gql, posted[-1][1]["b"]
 
-    def symlink(self, ctx):
-        spec, _ = self.files(ctx)
-        os.symlink(spec, os.path.join(ctx.workdir, "link.md"))
-        return os.path.join(ctx.workdir, "link.md")
-
-    def hard_link(self, ctx):
-        spec, _ = self.files(ctx)
-        os.link(spec, os.path.join(ctx.workdir, "copy.md"))
-        return spec
-
     def outside(self, ctx):
         outside = os.path.join(self.tmp, "outside.md")
         with open(outside, "w") as f:
@@ -843,8 +833,6 @@ class OutcomeFiles(Base):
 
     def test_skipped(self):
         for name, make, reason in (
-            ("symlink", self.symlink, "OSError: "),
-            ("hard link", self.hard_link, "ValueError: not a single-link file"),
             ("not md", lambda ctx: self.write(ctx, "notes.txt", "x"), "ValueError: not a .md file"),
             ("outside the workdir", self.outside, "ValueError: not under the workdir"),
             ("outside through a linked dir", self.linked_dir, "ValueError: not under the workdir"),
@@ -863,9 +851,7 @@ class OutcomeFiles(Base):
                     [c for c in gql.calls if c[0] == "comment"], [post("comment", body)]
                 )
                 note = f"Build failed: push not permitted\n\nCould not post the file `{os.path.basename(path)}`: {reason}"
-                self.assertTrue(
-                    body.startswith(note) if reason == "OSError: " else body == note, body
-                )
+                self.assertEqual(body, note)
 
     def test_posted(self):
         def invalid_utf8(ctx):
@@ -1305,24 +1291,6 @@ class CompletionLedger(Base):
             )
         )
         self.assertEqual(self.steps(ctx), {SID: ["comment", "move:in_review", "outcome"]})
-
-    def test_symlinked_ledger_is_empty_and_replaced(self):
-        gql = Gql()
-        ctx = self.ctx(gql=gql)
-        elsewhere = os.path.join(self.tmp, "elsewhere.json")
-        with open(elsewhere, "w") as f:
-            f.write(json.dumps({SID: {"steps": ["comment", "move:in_review"]}}))
-        os.symlink(elsewhere, os.path.join(ctx.run, "writeback.json"))
-        writeback.finish(
-            ctx, Outcome(status="failed", title="ENG-7: x", summary="push not permitted")
-        )
-        self.assertEqual(
-            gql.calls,
-            expect(body="Build failed: push not permitted", state="in_review"),
-        )
-        self.assertFalse(os.path.islink(os.path.join(ctx.run, "writeback.json")))
-        with open(elsewhere) as f:
-            self.assertEqual(json.load(f), {SID: {"steps": ["comment", "move:in_review"]}})
 
     def test_ledger_write_failure_leaves_no_temp(self):
         ctx = self.ctx()

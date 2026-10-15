@@ -152,16 +152,12 @@ class MarkTest(Case):
                 self.assertEqual(fake.calls, [])
         self.assertEqual(len(self.text().splitlines()), 2)
 
-    def test_refuses_an_events_file_not_a_regular_file_of_the_callers(self):
-        link = os.path.join(self.root, "link")
-        os.symlink(self.events, link)
-        fifo = unittest.mock.Mock(st_mode=stat.S_IFIFO | 0o600, st_uid=os.getuid())
+    def test_refuses_an_events_file_that_is_no_regular_file(self):
+        fifo = unittest.mock.Mock(st_mode=stat.S_IFIFO | 0o600)
         for path, patches, error in (
-            (link, (), ""),
             (self.root, (), ""),
             (os.path.join(self.root, "missing"), (), "No such file"),
-            (self.events, ("os.getuid", os.getuid() + 1), "owned by you"),
-            (self.events, ("os.fstat", fifo), "owned by you"),
+            (self.events, ("os.fstat", fifo), "not a regular file"),
         ):
             with (
                 self.subTest(path=path, error=error),

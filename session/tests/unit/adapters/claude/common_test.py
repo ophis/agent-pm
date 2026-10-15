@@ -716,12 +716,13 @@ class ResumeTest(Base):
                 code, err, chdir, execute = self.resumed(argv)
                 self.assertEqual((code, err), (1, f"claude resume: {message}\n"))
                 self.assertEqual((chdir, execute), ([], []))
-        os.chmod(path, 0o644)
+        os.remove(path)
+        os.mkfifo(path)
         self.assertEqual(
             self.resumed([store(), self.cwd, SID])[:2],
-            (1, f"claude resume: {path}: not a private file of yours\n"),
+            (1, f"claude resume: {path}: not a regular file\n"),
         )
-        os.chmod(path, 0o600)
+        os.remove(path)
         for data in (
             "not json",
             "{}",
@@ -769,7 +770,7 @@ class SessionStatusTest(Base):
                 )
         self.assertEqual(self.status(), SessionStatus("no", None, self.resume))
 
-    def test_recorded_transcripts_cannot_escape_the_cwd_store_or_follow_symlinks(self):
+    def test_recorded_transcripts_cannot_escape_the_cwd_store(self):
         self.write(self.path, 1000)
         outside = os.path.join(self.tmp, "outside.jsonl")
         self.write(outside, 9000)
@@ -785,7 +786,6 @@ class SessionStatusTest(Base):
         os.symlink(self.tmp, parent_link)
         for path in (
             outside,
-            link,
             directory,
             fifo,
             os.path.join(parent_link, "outside.jsonl"),
@@ -798,6 +798,10 @@ class SessionStatusTest(Base):
                     self.common.session_status(SID, self.work, transcript=path),
                     SessionStatus("yes", 1000.0, self.resume),
                 )
+        self.assertEqual(
+            self.common.session_status(SID, self.work, transcript=link),
+            SessionStatus("yes", 8000.0, self.resume),
+        )
 
     def test_a_recorded_filename_without_a_suffix_keeps_the_scan_inside_the_store(self):
         path = os.path.join(os.path.dirname(self.path), "a")
@@ -841,11 +845,6 @@ class SessionStatusTest(Base):
     def test_a_transcript_that_is_no_regular_file_is_unknown(self):
         os.makedirs(os.path.dirname(self.path))
         os.mkfifo(self.path)
-        self.assertEqual(self.status().resumable, "unknown")
-        os.remove(self.path)
-        target = os.path.join(self.tmp, "target.jsonl")
-        self.write(target, 1000)
-        os.symlink(target, self.path)
         self.assertEqual(self.status().resumable, "unknown")
 
     def test_a_sid_that_is_no_uuid_is_not_resumable(self):

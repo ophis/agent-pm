@@ -134,10 +134,11 @@ class Shipped(Case):
                 "or branch."
             ),
             "Commits merged from `origin/<base>` are not this build's work.",
-            "Every local check, in every phase: only lint and the unit tests of the projects you changed; never "
-            "integration tests or full suites locally: CI runs them on the PR.",
-            "Skip S7; keep the commits. After <your task's push points>, run exactly "
-            "`git -C <worktree> push -u origin <branch>`.",
+            "Your and your producers' local checks, in every phase: only lint and the unit tests of the projects "
+            "you changed; never integration tests or full suites: the verification reviewer runs them, on the PR's "
+            "CI when the repo has a `pull_request` workflow, else locally.",
+            "Ask for no pull request: the caller opens it, onto `<base>`.",
+            "After <your task's push points>, run exactly `git -C <worktree> push -u origin <branch>`.",
         )
         self.assertIn(
             "\nAdd verbatim, placeholders filled in:\n\n```\n" + "\n".join(lines) + "\n```\n",
@@ -147,14 +148,14 @@ class Shipped(Case):
     def test_a_builds_files_are_its_spec_and_plan_doc(self):
         self.assertIn(
             (
-                "adding `files`: this build's spec (its plan doc's `spec_file=`) and plan doc (on failure, those "
-                "that exist);"
+                "adding `files`: this build's spec (the `-spec.md` beside its `-plan.md` plan doc) and plan doc "
+                "(on failure, those that exist);"
             ),
             task_text("build"),
         )
 
     def test_builds_report_each_s5_task_against_their_task_count(self):
-        for task, doc in (("build", "the plan doc's"), ("light-build", "the state file's")):
+        for task, doc in (("build", "the plan doc's"), ("light-build", "the plan doc's")):
             text = task_text(task)
             self.assertIn(
                 (
@@ -173,21 +174,74 @@ class Shipped(Case):
                 task,
             )
 
-    def test_light_build_always_writes_a_state_file_with_a_task_list(self):
+    def test_builds_leave_their_docs_where_autopilot_puts_them(self):
         self.assertIn(
             (
-                'docs line "The state file goes where the repo keeps design docs, else in `docs/.autopilot/`; '
-                'never `git add -f` it."'
+                'docs line "Spec and plan doc stay where autopilot puts them; S7 copies them to where the repo '
+                'keeps design docs; never `git add -f` them."'
+            ),
+            task_text("build"),
+        )
+        self.assertIn(
+            (
+                'docs line "The plan doc stays where autopilot puts it; S7 copies it to where the repo keeps '
+                'design docs; never `git add -f` it."'
             ),
             task_text("light-build"),
         )
         self.assertIn(
-            (
-                "(a task list in its state file, implementation, verification, a light review, no spec or plan "
-                "docs)"
-            ),
+            "(a task list in its plan doc, implementation, verification, a light review, no spec doc)",
             catalog()["engineer"]["light-build"],
         )
+
+    def test_builds_continue_the_newest_unfinished_plan_doc_by_the_engineers_one_rule(self):
+        continue_ = item(section(composed("engineer")[0], "Repo"), "Continue")
+        self.assertIn(
+            (
+                " a plan doc: [Engineer › Repo › Merge](#repo), then your task's slash command "
+                "([Engineer › Tasks](#tasks)) with the plan doc's verbatim input as its requirement; "
+                "autopilot's resolver `mode` not `resume` → `needs_input` naming the plan doc; stop. Once it "
+                "resumes, give it the rest as mid-run input, each logged in its progress log: the user's "
+                "requirements, the review input (marked as [Engineer › Autopilot](#autopilot) says), failing "
+                "merge checks, and with a user requirement a review cap 2 rounds beyond its RESUME "
+                "`review_round`, never below the skill's cap (a capped plan doc stops again at once). Added to "
+                "its input, they would start a new plan doc at HEAD, leaving its commits unreviewed."
+            ),
+            continue_,
+        )
+        for task in ("build", "light-build"):
+            text = task_text(task)
+            self.assertIn(
+                "2. **Repo** ([Engineer › Repo](#repo)); from status, act on `plan_docs` too.", text
+            )
+            self.assertIn(
+                "\n   - The newest plan doc (`plan_docs`' last) not at `done` → continue it.\n"
+                "   - Else a plan doc or a `pr` (a **finished build**) and a user requirement → a new build",
+                text,
+                task,
+            )
+            self.assertIn(
+                "\n5. **Build**: continuing → [Engineer › Repo › Continue](#repo); else "
+                f"`/autopilot:{task}` ([Engineer › Autopilot](#autopilot)), the requirements being",
+                text,
+                task,
+            )
+            self.assertNotIn("mid-run", text, task)
+
+    def test_engineer_fixes_or_drops_each_non_blocking_item_and_adopts_the_draft_pr(self):
+        with open(os.path.join(TEAM, "roles", "engineer.md")) as f:
+            charter = f.read()
+        self.assertIn(
+            (
+                "- **Done**, once the build converges: judge each of its non-blocking review items: a real problem "
+                "→ fix it in this PR, with a test, commit and `git -C <worktree> push -u origin <branch>`; else "
+                "drop it. Then [Engineer › Repo › Merge](#repo), then [Engineer › Repo](#repo) step 2 again (its "
+                "`pr` now the draft PR the build may have opened), then `status: done`; `deliverable` what "
+                "changed, the input's `Links:`, how to verify; `title`"
+            ),
+            charter,
+        )
+        self.assertNotIn("leftover", charter)
 
     def test_research_tasks_prepare_before_their_start_mark(self):
         for task in ("research", "light-research"):
@@ -366,11 +420,6 @@ class Real(RealConfig):
         for why, text, literal in (
             ("builds fail without push permission", engineer, "`push` false → `failed`"),
             (
-                "light-build's cutoff skips merge commits",
-                task_text("light-build"),
-                "`git -C <worktree> log -1 --first-parent --no-merges --format=%cI`",
-            ),
-            (
                 "research hand-off phrases",
                 task_text("research"),
                 "`<Research type line, translated>`",
@@ -462,9 +511,10 @@ class Real(RealConfig):
         self.assertIn(
             (
                 "One failing: during [Engineer › Finish › Done](#finish) → "
-                "[Engineer › Finish › Failure](#finish); before the build → the failing checks go into the build's requirement; on "
-                "[Engineer › Repo › Resume](#repo) → into the requirement of the build left, none left → "
-                "[Engineer › Finish › Failure](#finish)."
+                "[Engineer › Finish › Failure](#finish); before the build, or on [Engineer › Repo › Resume](#repo) "
+                "with a build left → the failing checks go into that build's requirements (mid-run for a "
+                "continued plan doc: [Engineer › Repo › Continue](#repo)); on "
+                "[Engineer › Repo › Resume](#repo) with none left → [Engineer › Finish › Failure](#finish)."
             ),
             merge,
         )

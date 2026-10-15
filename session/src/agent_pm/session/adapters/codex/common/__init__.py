@@ -92,14 +92,6 @@ class RecoveryError(Exception):
     pass
 
 
-def private_file(info: os.stat_result) -> bool:
-    return (
-        stat.S_ISREG(info.st_mode)
-        and info.st_uid == os.getuid()
-        and stat.S_IMODE(info.st_mode) == 0o600
-    )
-
-
 def added_dirs(argv, cwd: str) -> list[str]:
     return [
         os.path.join(cwd, flag.value)
@@ -190,17 +182,16 @@ def inside(path: str, root: str) -> bool:
 
 
 def read_metadata(path: str) -> SessionFile:
-    _check_ancestors(path)
     try:
-        fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK | getattr(os, "O_NOFOLLOW", 0))
+        fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK)
     except FileNotFoundError:
         raise
     except OSError as exc:
         raise RecoveryError(f"cannot read Codex session file {path}: {exc}") from exc
     try:
         info = os.fstat(fd)
-        if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid():
-            raise RecoveryError(f"unsafe Codex session file: {path}")
+        if not stat.S_ISREG(info.st_mode):
+            raise RecoveryError(f"not a regular Codex session file: {path}")
         with os.fdopen(fd, "r", encoding="utf-8") as stream:
             fd = -1
             try:
@@ -241,7 +232,6 @@ def _parent_identifier(payload) -> str | None:
 
 def session_paths(snapshot: Snapshot, identifier: str = "*") -> list[str]:
     root = os.path.join(snapshot.codex_home, "sessions")
-    _check_ancestors(root)
     if not os.path.exists(root):
         return []
     directories = [root]
@@ -250,10 +240,13 @@ def session_paths(snapshot: Snapshot, identifier: str = "*") -> list[str]:
         for directory in directories:
             with os.scandir(directory) as entries:
                 for entry in entries:
-                    if len(entry.name) == length and entry.name.isascii() and entry.name.isdigit():
-                        _check_ancestors(entry.path)
-                        if entry.is_dir(follow_symlinks=False):
-                            children.append(entry.path)
+                    if (
+                        len(entry.name) == length
+                        and entry.name.isascii()
+                        and entry.name.isdigit()
+                        and entry.is_dir()
+                    ):
+                        children.append(entry.path)
         directories = children
     matches = []
     for directory in directories:
@@ -322,25 +315,7 @@ def _state(data: object, workdir: str, sid: str) -> SessionState:
     return SessionState(workdir, sid, validate_snapshot(data["snapshot"]), tuple(roots), native)
 
 
-def _components(path: str):
-    current = os.path.abspath(path)
-    parts = []
-    while True:
-        parts.append(current)
-        parent = os.path.dirname(current)
-        if parent == current:
-            return reversed(parts)
-        current = parent
-
-
-def _check_ancestors(path: str) -> None:
-    for component in _components(path):
-        if os.path.islink(component):
-            raise RecoveryError(f"recovery state path has a symlink: {component}")
-
-
-def _private_dir(path: str, *, create: bool, config_parent: bool = False) -> bool:
-    _check_ancestors(path)
+def _private_dir(path: str, *, create: bool) -> bool:
     if not os.path.exists(path):
         if not create:
             return False
@@ -351,12 +326,8 @@ def _private_dir(path: str, *, create: bool, config_parent: bool = False) -> boo
             os.fsync(fd)
         finally:
             os.close(fd)
-    _check_ancestors(path)
-    info = os.stat(path, follow_symlinks=False)
-    mode = stat.S_IMODE(info.st_mode)
-    unsafe_mode = mode & 0o022 if config_parent else mode != 0o700
-    if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid() or unsafe_mode:
-        raise RecoveryError(f"unsafe recovery state directory mode or owner: {path}")
+    if not os.path.isdir(path):
+        raise RecoveryError(f"recovery state path is not a directory: {path}")
     return True
 
 
@@ -382,8 +353,8 @@ def check_writable_roots(root: str, paths: Sequence[str]) -> None:
 def _state_data(fd: int, path: str):
     try:
         info = os.fstat(fd)
-        if not private_file(info):
-            raise RecoveryError(f"unsafe recovery state file mode or owner: {path}")
+        if not stat.S_ISREG(info.st_mode):
+            raise RecoveryError(f"not a regular recovery state file: {path}")
         if info.st_size > _MAX_SESSION_BYTES:
             raise RecoveryError(f"malformed recovery state: file too large: {path}")
         with os.fdopen(fd, "r", encoding="utf-8") as stream:
@@ -402,18 +373,14 @@ def _state_data(fd: int, path: str):
 
 class _StoreOperation:
     def __init__(self, root: str):
-        canonical = absolute_path(root, "store")
-        _check_ancestors(root)
-        if canonical != root:
-            raise RecoveryError("invalid Codex recovery store: expected a canonical path")
-        self.root = root
+        self.root = absolute_path(root, "store")
 
     def directory(self, *, create: bool) -> str | None:
         root = self.root
         parent = os.path.dirname(root)
         base = os.path.dirname(parent)
         check_writable_roots(root, implicit_writable_roots())
-        if not _private_dir(base, create=create, config_parent=True):
+        if not _private_dir(base, create=create):
             return None
         if not _private_dir(parent, create=create):
             return None
@@ -439,9 +406,8 @@ class _StoreOperation:
                 )
 
     def _read(self, path: str) -> dict | None:
-        _check_ancestors(path)
         try:
-            fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK | getattr(os, "O_NOFOLLOW", 0))
+            fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK)
         except FileNotFoundError:
             return None
         except OSError as exc:
@@ -511,7 +477,6 @@ class _StoreOperation:
         path = self._path(state.workdir, state.sid)
         fd, tmp = tempfile.mkstemp(prefix=".state-", dir=self.root)
         try:
-            os.fchmod(fd, 0o600)
             with os.fdopen(fd, "wb") as stream:
                 fd = -1
                 stream.write(payload)
@@ -744,7 +709,6 @@ def _guard_untrusted_project(
                 genuine_user_home = (
                     candidate in (default_home, real_default_home)
                     and real_candidate == real_default_home
-                    and not os.path.islink(candidate)
                     and not inside(candidate, workdir)
                     and not inside(real_candidate, real_workdir)
                 )

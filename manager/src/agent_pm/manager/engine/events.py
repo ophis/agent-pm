@@ -25,9 +25,9 @@ class _Rotation:
 
 
 def _identity(path: str) -> tuple[int, int]:
-    opened = os.stat(path, follow_symlinks=False)
-    if not stat.S_ISREG(opened.st_mode) or opened.st_uid != os.getuid():
-        raise OSError(f"{path}: not a regular file owned by you")
+    opened = os.stat(path)
+    if not stat.S_ISREG(opened.st_mode):
+        raise OSError(f"{path}: not a regular file")
     return opened.st_dev, opened.st_ino
 
 
@@ -43,13 +43,12 @@ def _file_id(value) -> tuple[int, int]:
 
 def _opened(path: str) -> int | None:
     try:
-        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK)
     except FileNotFoundError:
         return None
-    opened = os.fstat(fd)
-    if not stat.S_ISREG(opened.st_mode) or opened.st_uid != os.getuid():
+    if not stat.S_ISREG(os.fstat(fd).st_mode):
         os.close(fd)
-        raise OSError(f"{path}: not a regular file owned by you")
+        raise OSError(f"{path}: not a regular file")
     return fd
 
 
@@ -61,10 +60,9 @@ def _drain(fd: int | None) -> bytes:
 
 
 def _read(path: str) -> bytes:
-    _identity(path)
-    data = read_regular(path, own=True)
+    data = read_regular(path)
     if data is None:
-        raise OSError(f"{path}: not a readable regular file owned by you")
+        raise OSError(f"{path}: not a readable regular file")
     return data
 
 
@@ -85,23 +83,23 @@ class Events:
     def ensure(self) -> None:
         fd = os.open(
             self.path,
-            os.O_WRONLY | os.O_APPEND | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK,
+            os.O_WRONLY | os.O_APPEND | os.O_CREAT | os.O_NONBLOCK,
             0o600,
         )
         try:
             opened = os.fstat(fd)
-            if not stat.S_ISREG(opened.st_mode) or opened.st_uid != os.getuid():
-                raise OSError(f"{self.path}: not a regular file owned by you")
+            if not stat.S_ISREG(opened.st_mode):
+                raise OSError(f"{self.path}: not a regular file")
             os.fsync(fd)
         finally:
             os.close(fd)
         sync_directory(os.path.dirname(self.path))
 
     def read(self) -> bytes:
-        data = read_regular(self.path, own=True)
+        data = read_regular(self.path)
         if data is None:
             if os.path.lexists(self.path):
-                raise OSError(f"{self.path}: not a readable regular file owned by you")
+                raise OSError(f"{self.path}: not a readable regular file")
             return b""
         return data
 
@@ -120,10 +118,10 @@ class Events:
         return self._due(self.read(), cursor)
 
     def _intent(self) -> _Rotation | None:
-        raw = read_regular(self.journal, limit=65537, own=True)
+        raw = read_regular(self.journal, limit=65537)
         if raw is None:
             if os.path.lexists(self.journal):
-                raise OSError(f"{self.journal}: not a readable regular file owned by you")
+                raise OSError(f"{self.journal}: not a readable regular file")
             return None
         if len(raw) > 65536:
             raise OSError(f"{self.journal}: oversized rotation journal")
@@ -162,12 +160,11 @@ class Events:
         )
 
     def _save_intent(self, rotation: _Rotation) -> None:
-        save(self.journal, json.dumps(asdict(rotation)) + "\n", own=True, durable=True)
+        save(self.journal, json.dumps(asdict(rotation)) + "\n", durable=True)
 
     def _cleanup(self) -> None:
         for path in (self.candidate, self.rollback, self.journal):
             if os.path.lexists(path):
-                _identity(path)
                 os.unlink(path)
         sync_directory(os.path.dirname(self.path))
 
@@ -208,7 +205,7 @@ class Events:
         if _identity(self.archive) != rotation.original:
             raise OSError(f"{self.archive}: rotation archive changed")
         restored = _read(self.archive) + self._suffix(rotation, identity)
-        save(self.rollback, restored, own=True, durable=True)
+        save(self.rollback, restored, durable=True)
         rotation = replace(rotation, rollback=_identity(self.rollback))
         self._save_intent(rotation)
         os.replace(self.rollback, self.path)
@@ -225,10 +222,10 @@ class Events:
         if not late:
             return
         try:
-            append_line(self.path, late, durable=True, own=True)
+            append_line(self.path, late, durable=True)
         except OSError as error:
             try:
-                append_line(self.archive, late, durable=True, own=True)
+                append_line(self.archive, late, durable=True)
             except OSError:
                 raise OSError(f"{error}: {len(late)} bytes written while rotating lost") from error
             raise OSError(
@@ -241,8 +238,6 @@ class Events:
         if not self._due(data, cursor):
             return False
         self.ensure()
-        if os.path.lexists(self.archive):
-            _identity(self.archive)
         rotation = _Rotation(gen, _identity(self.path))
         self._save_intent(rotation)
         os.replace(self.path, self.archive)
@@ -256,7 +251,7 @@ class Events:
                 if tail and not tail.endswith(b"\n"):
                     tail += b"\n"
                 fresh = _opened(self.path)
-                save(self.candidate, tail + _drain(fresh), own=True, durable=True)
+                save(self.candidate, tail + _drain(fresh), durable=True)
                 rotation = replace(
                     rotation,
                     candidate=_identity(self.candidate),

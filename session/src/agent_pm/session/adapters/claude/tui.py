@@ -236,7 +236,7 @@ def _first(payload: dict, *keys: str) -> str:
 def _size(path: str) -> int:
     """A regular file's size; 0 for anything else."""
     try:
-        info = os.lstat(path)
+        info = os.stat(path)
     except (OSError, ValueError):
         return 0
     return info.st_size if stat.S_ISREG(info.st_mode) else 0

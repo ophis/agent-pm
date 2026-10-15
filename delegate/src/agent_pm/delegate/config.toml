@@ -42,11 +42,9 @@
 #                   dir's role needs no [roles.<role>] (unset: the global run keys); any role's templates may name any
 #                   template. It may also hold tools/, files its roles' commands run as <role team>/tools/… (the
 #                   config's {{role_team}}), trusted as its text is. A team dir is refused when it, its subdirs or
-#                   files (by real path) or anything in its tools/ tree (links followed) lie in a temp dir, overlap
-#                   the workdir, the cwd, a write dir, another dir the run adds to write or a dir the client can
-#                   write (Codex: its CODEX_HOME); when it, its subdirs or files (not tools/) are writable by group
-#                   or others, or are not yours; or a parent dir of it is writable by group or others (not sticky)
-#                   or owned by neither you nor root (delegate/src/agent_pm/delegate/engine/plan.py)
+#                   files (by real path) or anything in its tools/ tree (links followed) overlap the workdir, the
+#                   cwd, a write dir, another dir the run adds to write or a dir the client can write (Codex: its
+#                   CODEX_HOME) (delegate/src/agent_pm/delegate/engine/plan.py)
 #   templates, read, write, commands, gate  as in Roles below, for a role that does not set its own; [] or "" → none
 tier = 2
 effort = "high"

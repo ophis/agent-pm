@@ -197,7 +197,7 @@ class _Store:
         self._root()
         path = os.path.join(self.root, f"{self.name}.lock")
         try:
-            fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK, 0o600)
+            fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_NONBLOCK, 0o600)
         except OSError as e:
             raise SessionError(f"{path}: {e.strerror or e}") from None
         try:
@@ -209,13 +209,6 @@ class _Store:
     def _root(self) -> None:
         try:
             os.makedirs(self.root, 0o700, exist_ok=True)
-            fd = os.open(self.root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
-            try:
-                if os.fstat(fd).st_uid != os.getuid():
-                    raise SessionError(f"{self.root}: not your directory")
-                os.fchmod(fd, 0o700)
-            finally:
-                os.close(fd)
         except OSError as e:
             raise SessionError(f"{self.root}: {e.strerror or e}") from None
 

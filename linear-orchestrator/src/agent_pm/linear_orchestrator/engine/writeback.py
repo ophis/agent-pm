@@ -87,9 +87,6 @@ PLAN_MARK = "RESUME: phase="
 FOOTER = "Answer in a comment, then move this issue back to Todo."
 LIMIT = "Usage limit,"
 ATTACHED = ("already been linked", "Duplicate attachment", "Unable to create issue attachment")
-# Opens a file the agent run could replace. O_NONBLOCK: a FIFO planted there would block a plain
-# open forever; regular-file reads ignore it.
-NO_FOLLOW = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK
 
 
 def context(cfg, role, gql, *, key, ident, issue_id, sid, resume, project, target):
@@ -216,7 +213,10 @@ def _ledger(ctx):
     else reads as empty.
     """
     try:
-        with os.fdopen(os.open(os.path.join(ctx.run, LEDGER), NO_FOLLOW), "rb") as f:
+        # O_NONBLOCK: a FIFO there would block a plain open forever
+        with os.fdopen(
+            os.open(os.path.join(ctx.run, LEDGER), os.O_RDONLY | os.O_NONBLOCK), "rb"
+        ) as f:
             data = json.load(f)
     except (OSError, ValueError):
         return {}
@@ -232,7 +232,7 @@ def _exclusive(ctx):
     try:
         fd = os.open(
             os.path.join(ctx.run, LOCK),
-            os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK,
+            os.O_WRONLY | os.O_CREAT | os.O_NONBLOCK,
             0o600,
         )
     except OSError as e:
@@ -301,10 +301,8 @@ def _read_file(path, workdir):
     except ConfinedFileError as error:
         reasons = {
             ConfinedReason.REGULAR: "not a regular file",
-            ConfinedReason.SINGLE_LINK: "not a single-link file",
             ConfinedReason.SUFFIX: "not a .md file",
             ConfinedReason.OUTSIDE: "not under the workdir",
-            ConfinedReason.REPLACED: "file changed while reading",
             ConfinedReason.TOO_LARGE: f"over {MAX_FILE} bytes",
         }
         raise ValueError(reasons[error.reason]) from None

@@ -1,6 +1,6 @@
 """delegate/engine/plan.py: main's drive_test Cwd cases (place); plan's refusals, Access, Spec, sid and
-prompt; its team dirs, the Composer's, refused in a temp dir, the client's writable dirs asked only
-with team dirs (their overlap cases: plan_team_integration_test.py).
+prompt; its team dirs, the Composer's, refused overlapping the cwd, the client's writable dirs asked
+only with team dirs (their other overlap cases: plan_team_integration_test.py).
 """
 
 import io
@@ -9,7 +9,6 @@ import os
 import uuid
 from contextlib import redirect_stderr
 from dataclasses import replace
-from types import SimpleNamespace
 from unittest import mock
 
 from agent_pm.delegate import ConfigError, Layout, Spec
@@ -454,7 +453,9 @@ class Planned(Base):
 
 
 class TeamDirs(Base):
-    """A team dir in a temp dir, the local `team_dirs` or the run's team: the Composer's team."""
+    """A team dir in the test's temp dir, the local `team_dirs` or the run's team: the Composer's
+    team.
+    """
 
     def setUp(self):
         super().setUp()
@@ -468,27 +469,22 @@ class TeamDirs(Base):
             got = self.planned(sid=SID, resume=True)[0]
         asked.assert_not_called()
         self.local(f"team_dirs = {json.dumps([self.team])}\n")
-        with (
-            mock.patch.object(self.driver, "writable_dirs", return_value=()) as asked,
-            mock.patch("subprocess.run", return_value=SimpleNamespace(stdout="")),
-        ):
-            self.refused(sid=SID, resume=True)
+        with mock.patch.object(self.driver, "writable_dirs", return_value=()) as asked:
+            self.planned(sid=SID, resume=True)
         asked.assert_called_once_with(replace(got.session, prompt=""))
 
-    def test_configured_it_is_the_runs_team_refused_in_a_temp_dir(self):
-        with mock.patch("subprocess.run", return_value=SimpleNamespace(stdout="")):
-            self.assertTrue(
-                self.refused("poet", "verse").startswith(f"team_dirs: {self.team} is in temp dir ")
-            )
+    def test_configured_it_is_the_runs_team_refused_overlapping_the_cwd(self):
+        self.assertEqual(
+            self.refused("poet", "verse", cwd=self.tmp),
+            f"team_dirs: {self.team} overlaps the cwd {self.tmp}: the agent run can write there",
+        )
 
-    def test_given_as_the_runs_team_it_is_refused_in_a_temp_dir(self):
-        with mock.patch("subprocess.run", return_value=SimpleNamespace(stdout="")):
-            found = teams.team(TEAM, [self.team])
-            self.assertTrue(
-                self.refused("poet", "verse", team=found).startswith(
-                    f"team_dirs: {self.team} is in temp dir "
-                )
-            )
+    def test_given_as_the_runs_team_it_is_refused_overlapping_the_cwd(self):
+        found = teams.team(TEAM, [self.team])
+        self.assertEqual(
+            self.refused("poet", "verse", team=found, cwd=self.tmp),
+            f"team_dirs: {self.team} overlaps the cwd {self.tmp}: the agent run can write there",
+        )
 
 
 class Policy(Base):

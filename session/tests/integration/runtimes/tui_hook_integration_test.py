@@ -205,11 +205,10 @@ class PayloadTest(PayloadCases, HookBase):
         self.assertEqual(len(self.records()), 1)
         self.assertEqual(self.calls(), marked)
 
-    def test_callback_module_requires_regular_owned_file_with_on_hook(self):
+    def test_callback_module_requires_regular_file_with_on_hook(self):
         callback = os.path.join(self.root, "adapter.py")
         with open(callback, "w") as file:
             file.write("value = 1\n")
-        os.symlink(callback, os.path.join(self.root, "linked.py"))
         os.mkdir(os.path.join(self.root, "namespace"))
         for kind in ("adapter_hook", "host_hook"):
             for name in (
@@ -218,7 +217,6 @@ class PayloadTest(PayloadCases, HookBase):
                 "absent",
                 "namespace",
                 "sys",
-                "linked",
                 "adapter",
             ):
                 with self.subTest(kind=kind, module=name):
@@ -353,7 +351,7 @@ class SecurityTest(HookBase):
                 self.assertError(stderr.decode(), "tui_hook")
         self.assertNothingWritten()
 
-    def test_foreign_callback_is_checked_before_the_session_package_initializer(self):
+    def test_a_non_regular_callback_is_checked_before_the_session_package_initializer(self):
         package = os.path.join(self.root, "agent_pm")
         os.mkdir(package)
         marker = os.path.join(self.root, "package-imported")
@@ -364,14 +362,14 @@ class SecurityTest(HookBase):
             file.write("def on_hook(*args): pass\n")
         script = (
             RUN_HOOK
-            + """import os, types, unittest.mock
+            + """import os, stat, types, unittest.mock
 rejected, folder = sys.argv[1:]
-original = os.lstat
-def foreign_owner(filename):
-    info = original(filename)
-    return types.SimpleNamespace(st_mode=info.st_mode,
-        st_uid=os.getuid() + 1 if filename == rejected else info.st_uid)
-with unittest.mock.patch("os.lstat", foreign_owner):
+original = os.stat
+def non_regular(filename, *args, **kwargs):
+    if filename == rejected:
+        return types.SimpleNamespace(st_mode=stat.S_IFIFO | 0o600)
+    return original(filename, *args, **kwargs)
+with unittest.mock.patch("os.stat", non_regular):
     run_hook(folder, "stop")
 """
         )
@@ -382,7 +380,7 @@ with unittest.mock.patch("os.lstat", foreign_owner):
                     self, script, callback, self.dir, input=b"{}", timeout=10, check=True
                 )
                 self.assertEqual(result.stdout, b"")
-                self.assertError(result.stderr.decode(), "not a regular file owned by you")
+                self.assertError(result.stderr.decode(), "not a regular file")
                 self.assertFalse(os.path.exists(marker))
                 self.assertNothingWritten()
 
@@ -405,35 +403,18 @@ with unittest.mock.patch("os.lstat", foreign_owner):
         write_state(self.dir, self.state)
         return files, imported
 
-    def test_callback_symlinks_are_rejected_before_any_package_code(self):
-        files, imported = self.callback_package()
-        for path in files:
-            with self.subTest(path=path):
-                target = path + ".target"
-                os.rename(path, target)
-                os.symlink(target, path)
-                try:
-                    self.assertError(self.hook("stop"), "not a regular file owned by you")
-                    self.assertFalse(os.path.exists(imported))
-                    self.assertNothingWritten()
-                finally:
-                    os.unlink(path)
-                    os.rename(target, path)
-
-    def test_foreign_callback_files_are_rejected_before_any_package_code(self):
+    def test_non_regular_callback_files_are_rejected_before_any_package_code(self):
         files, imported = self.callback_package()
         script = (
             RUN_HOOK
-            + """import os, types, unittest.mock
+            + """import os, stat, types, unittest.mock
 rejected, folder = sys.argv[1:]
-original = os.lstat
-def foreign_owner(filename):
-    info = original(filename)
-    return types.SimpleNamespace(
-        st_mode=info.st_mode,
-        st_uid=os.getuid() + 1 if filename == rejected else info.st_uid,
-    )
-with unittest.mock.patch("os.lstat", foreign_owner):
+original = os.stat
+def non_regular(filename, *args, **kwargs):
+    if filename == rejected:
+        return types.SimpleNamespace(st_mode=stat.S_IFIFO | 0o600)
+    return original(filename, *args, **kwargs)
+with unittest.mock.patch("os.stat", non_regular):
     run_hook(folder, "stop")
 assert "callback_package" not in sys.modules
 """
@@ -444,39 +425,13 @@ assert "callback_package" not in sys.modules
                     self, script, rejected, self.dir, input=b"{}", timeout=60, check=True
                 )
                 self.assertEqual(result.stdout, b"")
-                self.assertError(result.stderr.decode(), "not a regular file owned by you")
+                self.assertError(result.stderr.decode(), "not a regular file")
                 self.assertFalse(os.path.exists(imported))
                 self.assertNothingWritten()
 
-    def test_owned_callback_package_imports_after_the_complete_chain_is_checked(self):
+    def test_callback_package_imports_after_the_complete_chain_is_checked(self):
         _, imported = self.callback_package()
         self.assertEqual(self.hook("stop"), "")
-        self.assertEqual(self.records()[0]["payload"], {"callback_imported": True})
-        with open(imported) as file:
-            self.assertEqual(file.read(), "imported\n" * 3)
-
-    def test_root_owned_callback_package_imports_after_the_complete_chain_is_checked(self):
-        files, imported = self.callback_package()
-        script = (
-            RUN_HOOK
-            + """import json, os, types, unittest.mock
-encoded_files, folder = sys.argv[1:]
-files = json.loads(encoded_files)
-original = os.lstat
-def root_owner(filename):
-    info = original(filename)
-    return types.SimpleNamespace(
-        st_mode=info.st_mode,
-        st_uid=0 if filename in files else info.st_uid,
-    )
-with unittest.mock.patch("os.lstat", root_owner):
-    run_hook(folder, "stop")
-"""
-        )
-        result = python(
-            self, script, json.dumps(files), self.dir, input=b"{}", timeout=60, check=True
-        )
-        self.assertEqual((result.stdout, result.stderr), (b"", b""))
         self.assertEqual(self.records()[0]["payload"], {"callback_imported": True})
         with open(imported) as file:
             self.assertEqual(file.read(), "imported\n" * 3)
@@ -511,32 +466,6 @@ with unittest.mock.patch("os.lstat", root_owner):
         write_state(self.dir, self.state)
         self.assertEqual(self.hook("stop"), "")
         self.assertEqual(self.records()[0]["payload"], {"extension": True})
-
-    def test_callback_namespace_cannot_hide_a_package_outside_source_roots(self):
-        _, imported = self.callback_package()
-        source = os.path.join(self.root, "source")
-        os.makedirs(os.path.join(source, "callback_package"))
-        hook = descriptor("callback_package.nested.callback", roots=(source,))
-        write_state(self.dir, {**self.state, "adapter_hook": hook})
-        script = (
-            RUN_HOOK
-            + """run_hook(sys.argv[1], "stop")
-assert "callback_package" not in sys.modules
-"""
-        )
-        result = python(
-            self,
-            script,
-            self.dir,
-            input=b"{}",
-            env={"PYTHONPATH": os.pathsep.join((*ROOTS, self.root))},
-            timeout=60,
-            check=True,
-        )
-        self.assertEqual(result.stdout, b"")
-        self.assertError(result.stderr.decode(), "module outside source roots")
-        self.assertFalse(os.path.exists(imported))
-        self.assertNothingWritten()
 
     def test_bad_arguments_write_nothing(self):
         for args in (
@@ -578,20 +507,13 @@ assert "callback_package" not in sys.modules
 
     def test_a_session_json_that_is_no_regular_file_writes_nothing(self):
         path = os.path.join(self.dir, "session.json")
-        real = os.path.join(self.root, "real")
-        os.mkdir(real)
-        write_state(real, self.state)
         os.unlink(path)
         self.assertError(self.hook("stop"), "session.json")
-        for make in (
-            lambda: os.symlink(os.path.join(real, "session.json"), path),
-            lambda: os.mkfifo(path),
-            lambda: os.mkdir(path),
-        ):
+        for make in (lambda: os.mkfifo(path), lambda: os.mkdir(path)):
             make()
             with self.subTest(stat.filemode(os.lstat(path).st_mode)):
                 self.assertError(self.hook("stop"), "session.json")
-            (os.rmdir if os.path.isdir(path) and not os.path.islink(path) else os.unlink)(path)
+            (os.rmdir if os.path.isdir(path) else os.unlink)(path)
         self.assertNothingWritten()
 
     def test_each_invalid_session_state_field_writes_nothing(self):
@@ -659,23 +581,11 @@ assert "callback_package" not in sys.modules
         self.assertNothingWritten()
 
     def test_hooks_jsonl_that_is_no_regular_file_is_refused_and_nothing_marked(self):
-        target = os.path.join(self.root, "target")
-        open(target, "w").close()
-        for make in (
-            lambda: os.symlink(target, self.hooks),
-            lambda: os.mkfifo(self.hooks),
-            lambda: os.mkdir(self.hooks),
-        ):
+        for make in (lambda: os.mkfifo(self.hooks), lambda: os.mkdir(self.hooks)):
             make()
             with self.subTest(stat.filemode(os.lstat(self.hooks).st_mode)):
                 self.assertError(self.hook("stop"), "hooks.jsonl")
-            (
-                os.rmdir
-                if os.path.isdir(self.hooks) and not os.path.islink(self.hooks)
-                else os.unlink
-            )(self.hooks)
-        with open(target) as f:
-            self.assertEqual(f.read(), "")
+            (os.rmdir if os.path.isdir(self.hooks) else os.unlink)(self.hooks)
         self.assertNothingWritten()
 
 

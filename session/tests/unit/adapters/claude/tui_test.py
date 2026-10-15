@@ -485,12 +485,9 @@ class TuiPayloadTest(Base):
 
     def test_no_readable_transcript_is_empty(self):
         self.transcript(said("m1", text("ok")))
-        link = os.path.join(self.tmp, "link.jsonl")
-        os.symlink(self.path, link)
         fifo = os.path.join(self.tmp, "fifo.jsonl")
         os.mkfifo(fifo)
         for path in (
-            link,
             fifo,
             self.tmp,
             os.path.join(self.tmp, "absent.jsonl"),
