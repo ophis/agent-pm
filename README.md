@@ -264,6 +264,7 @@ agent-pm keeps its state in its state root, `~/.agent-pm/`. `work/` and `logs/` 
 | `config.local.toml` | nobody | never: your settings |
 | `work/<ID>/agent/` | prune ([Finish](#using-the-board)) | no: prune also drops the issue's worktrees and pushed branches in a `[local_clones]` clone |
 | `work/<ID>/run/` | nobody | once you won't attach or resume the run |
+| `work/<ID>/writeback.json`, `writeback.lock` | nobody | once the issue's run won't resume or be recovered: Recover replays a write-back missing from the ledger |
 | `logs/runs.jsonl` | the router: rows over 7 days old, except each issue's latest run | never ([Operating](#operating)) |
 | `logs/orchestrator.jsonl` | nobody | any time; keep `logs/` ([Setup](#setup) step 6) |
 | `logs/router.lock` | nobody | while no router runs |

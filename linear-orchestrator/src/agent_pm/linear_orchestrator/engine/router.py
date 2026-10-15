@@ -615,7 +615,6 @@ def _outer(a, cfg, *, gql, run, keychain, now, attended):
             clones=cfg.local_clones,
             delegate=delegate_cls,
             workdir=workdir,
-            work=cfg.workdirs,
             run=run,
         )
     try:

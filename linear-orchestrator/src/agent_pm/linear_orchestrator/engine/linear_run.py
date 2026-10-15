@@ -66,18 +66,6 @@ class LinearRun:
         return cfg.delegates[kind]
 
     @classmethod
-    def provider(cls, issue: str, *, cfg: Config, log: list | None = None) -> type:
-        """The Delegate class of the issue's latest recorded run, else the configured one;
-        ConfigError when its kind is no longer configured. `log`: runs.jsonl's entries, when the
-        caller has read them.
-        """
-        log = runs.parse_log(cfg.runs_log) if log is None else log
-        entries = [entry for entry in log if entry.issue == issue]
-        if not entries:
-            return cfg.delegate_cls
-        return cls.kind_cls(cfg, runs.delegate_of(entries, runs.latest(entries)[issue].sid))
-
-    @classmethod
     def check_tui(cls, *, cfg: Config, display: Display, events: str) -> None:
         """ConfigError unless an attended run of the configured Delegate kind could show at
         display and write events (Delegate.check_tui).
@@ -106,7 +94,7 @@ class LinearRun:
         view = cls.__new__(cls)
         view.issue, view.sid = issue, latest.sid
         view.delegate_kind = runs.delegate_of(entries, latest.sid)
-        provider = delegate_cls or cls.provider(issue, cfg=cfg, log=entries)
+        provider = delegate_cls or cls.kind_cls(cfg, view.delegate_kind)
         view.delegate = provider.attach(cfg.issue_workdir(issue), sid=latest.sid)
         return view
 

@@ -1,6 +1,6 @@
 """Prune, for each issue Done or Canceled at least 24 hours ago (its latest move into either; unknown:
-skipped) whose workdir <work_dir>/work/<ID> its Delegate (LinearRun.provider) reports agent files
-in (Delegate.checkouts not None):
+skipped) whose workdir <work_dir>/work/<ID> its Delegate (its latest recorded run's kind, else the
+configured one) reports agent files in (Delegate.checkouts not None):
 - closes its recorded run through LinearRun; a failed close leaves the rest for a later tick;
 - deletes its agent files, uncommitted work included, through its Delegate (Delegate.clean; its
   refusal skips the rest); the run records and the rest of the workdir stay;
@@ -271,23 +271,30 @@ class Pruner:
         return self.by_issue
 
     def delegate(self, ident):
-        """The issue's Delegate class (LinearRun.provider), once per tick; ConfigError is kept."""
+        """The issue's Delegate class, once per tick: its latest recorded run's kind, else the
+        configured one; ConfigError (a kind no longer configured) is kept.
+        """
         if ident not in self.classes:
             try:
-                self.classes[ident] = LinearRun.provider(
-                    ident, cfg=self.cfg, log=self.log().get(ident, [])
+                rows = self.log().get(ident)
+                self.classes[ident] = (
+                    LinearRun.kind_cls(
+                        self.cfg, runs.delegate_of(rows, runs.latest(rows)[ident].sid)
+                    )
+                    if rows
+                    else self.cfg.delegate_cls
                 )
             except (config.ConfigError, OSError, ValueError) as error:
                 self.classes[ident] = error
         return self.classes[ident]
 
     def has_agent(self, ident, *, quiet=False):
-        found = self.delegate(ident)
+        found, workdir = self.delegate(ident), os.path.join(self.work, ident)
         if isinstance(found, Exception):
-            if not quiet:
+            if not quiet and self.cfg.delegate_cls.checkouts(workdir) is not None:
                 self.say("prune-skip", ident, once=True, reason=one_line(found))
             return False
-        return found.checkouts(os.path.join(self.work, ident)) is not None
+        return found.checkouts(workdir) is not None
 
     def remove_agent(self, ident):
         found, workdir = self.delegate(ident), os.path.join(self.work, ident)
@@ -296,10 +303,10 @@ class Pruner:
         try:
             if not (self.dry and view is not None and view.alive()):
                 found.clean(workdir, dry=self.dry)
-        except (config.ConfigError, DelegateConfigError, SessionError) as error:
+        except (config.ConfigError, DelegateConfigError) as error:
             self.say("prune-skip", ident, once=True, reason=one_line(error))
             return
-        except OSError as error:
+        except (SessionError, OSError) as error:
             self.error(ident, error=f"clean: {one_line(error)}")
             return
         if self.dry:

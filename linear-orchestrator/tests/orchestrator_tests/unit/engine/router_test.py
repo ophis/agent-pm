@@ -953,7 +953,7 @@ class RouterEntry(OuterBase):
             "launch-error TASK-7 error=ConfigError: [hosts] default: want one of pty, tmux",
         )
         self.assertEqual(self.todo["state"], "In Progress")
-        self.assertFalse(os.path.exists(os.path.join(self.rd, "delegate.json")))
+        self.assertFalse(os.path.lexists(self.rd))
 
     def test_a_config_error_exits_1_logged_once_a_day_and_printed_on_a_terminal(self):
         for text, reason in (

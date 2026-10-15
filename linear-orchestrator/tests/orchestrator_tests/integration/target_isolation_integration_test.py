@@ -58,7 +58,6 @@ class TargetCheckout(Case):
             clones=clones,
             delegate=FakeDelegate,
             workdir=self.workdir,
-            work=self.work,
             writable=writable,
             run=run,
         )

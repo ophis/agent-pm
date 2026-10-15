@@ -9,11 +9,12 @@ import os
 import re
 import shlex
 import unittest
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from agent_pm.linear_orchestrator.engine import ops
 from orchestrator_tests.integration.flow_fixtures import (
     ACCOUNTS,
+    ENTRY,
     HARNESS_EMAIL,
     HUMAN,
     KEYS,
@@ -27,7 +28,7 @@ from orchestrator_tests.unit.run_fixtures import ID, SESSION, SID, UUID
 from orchestrator_tests.unit.writeback_fixtures import APPROVE_MAPPED, DOC, PR, PRD
 
 from delegate.tests.replies import block, mark, option
-from delegate.tests.workdir import session_cwd
+from delegate.tests.workdir import checkout_path, session_cwd
 
 T = datetime(2026, 10, 11, 10, 0, tzinfo=UTC).timestamp()
 RESETS = "2026-10-11T10:00:00+00:00"  # T in the runs' TZ
@@ -168,6 +169,31 @@ class Done(Run):
         self.assertEqual(
             self.issue(ID)["attachments"], [{"url": outcome["url"], "title": outcome["title"]}]
         )
+
+    def test_prune_deletes_a_finished_runs_agent_files_and_keeps_its_records(self):
+        self.seed("researcher")
+        self.launch([mark("start", PICK), block(RESEARCH)])
+        os.makedirs(checkout_path(self.rd, "o", "n", ID))
+        agent = session_cwd(self.rd)
+
+        def kept():
+            found = {}
+            for top, dirs, names in os.walk(self.rd):
+                dirs[:] = [d for d in dirs if os.path.join(top, d) != agent]
+                for name in names:
+                    with open(os.path.join(top, name), "rb") as f:
+                        found[os.path.relpath(os.path.join(top, name), self.rd)] = f.read()
+            return found
+
+        before, ledger = kept(), self.ledger(ID)
+        self.assertIn("writeback.json", before)
+        done = datetime.now(UTC) - timedelta(hours=30)
+        self.fake.move(ID, "done", actor=self.ids[HUMAN], at=done)
+        res = self.script(ENTRY, "prune")
+        self.assertEqual(res.returncode, 0, (res.stderr, self.said()))
+        self.assertIn(f"prune prune-removed {ID} what=agent dir", self.said())
+        self.assertFalse(os.path.lexists(agent))
+        self.assertEqual((kept(), self.ledger(ID)), (before, ledger))
 
     def test_a_researcher_run(self):
         self.done(

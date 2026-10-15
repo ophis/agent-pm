@@ -195,7 +195,7 @@ def check(issue, repos, *, run=None, delegate, workdir, roles) -> Target | Inval
     return Target(o, n, names[0] if names else f"{ident}-{slug(issue.title)}")
 
 
-def with_clone(t, ident, *, run=None, delegate, workdir, work, clones, writable=None) -> Target:
+def with_clone(t, ident, *, run=None, delegate, workdir, clones, writable=None) -> Target:
     if run is None:
         run = config.shell
     # the checkout is agent-writable, so a clone its `.git` file names counts only outside
@@ -206,7 +206,7 @@ def with_clone(t, ident, *, run=None, delegate, workdir, work, clones, writable=
         return replace(t, clone="")
     if path and (common := common_dir(path)):
         clone = os.path.dirname(common)
-        roots = config.writable(work) if writable is None else writable
+        roots = config.writable(os.path.dirname(workdir)) if writable is None else writable
         if not under(common, roots) and config.clone_error(clone, full, run=run) is None:
             return replace(t, clone=clone)
     return replace(t, clone=next((v for k, v in clones.items() if k.lower() == full.lower()), ""))

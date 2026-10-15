@@ -86,6 +86,17 @@ class RepositoryCleanup(PruneScenario):
         self.assertEqual(clean.call_args.kwargs, {"dry": False})
         self.assertTrue(os.path.isfile(os.path.join(wt, ".git")))
 
+    def test_a_session_error_in_clean_is_an_error(self):
+        self.fake_clone()
+        wt = self.mkg("TASK-49")
+        gql = gql_for({"TASK-49": ("Done", [(30, "Done")])})
+        with mock.patch.object(PruneDelegate, "clean", side_effect=SessionError("host gone")):
+            self.assertEqual(
+                self.prune(gql, writable=(self.work,)),
+                (3, "prune-error TASK-49 error=clean: SessionError: host gone"),
+            )
+        self.assertTrue(os.path.isfile(os.path.join(wt, ".git")))
+
     def test_prune_uses_the_recorded_delegate_kind(self):
         class Recorded(PruneDelegate):
             cleaned = []
@@ -96,10 +107,11 @@ class RepositoryCleanup(PruneScenario):
                 super().clean(workdir, dry=dry)
 
         self.record("TASK-7", SID, [A])
+        self.record("TASK-8", OTHER_SID, [B], agent=False)
         with open(self.cfg.runs_log) as f:
             rows = f.read().replace('"delegate_kind": "harness"', '"delegate_kind": "recorded"')
         write(self.cfg.runs_log, rows)
-        gql = gql_for({"TASK-7": ("Done", [(30, "Done")])})
+        gql = gql_for(dict.fromkeys(("TASK-7", "TASK-8"), ("Done", [(30, "Done")])))
         self.cfg = replace(self.cfg, delegates={"harness": PruneDelegate})
         unknown = (
             "prune-skip TASK-7 reason=ConfigError: delegate kind 'recorded' is no longer configured"
