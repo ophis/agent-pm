@@ -1002,7 +1002,7 @@ class DetachHandoverTest(StartFixture):
                 "-t",
                 "=d:",
                 "pane-died",
-                EXITED,
+                f"{EXITED} ; kill-pane -t =d:",
                 ";",
                 "set-option",
                 "-t",
@@ -1060,7 +1060,9 @@ class DetachHandoverTest(StartFixture):
             ],
         )
 
-    def test_the_exited_hook_is_a_constant_reading_its_values_only_through_tmux_formats(self):
+    def test_the_exited_hook_reads_its_values_only_through_tmux_formats_and_kills_its_own_pane(
+        self,
+    ):
         self.assertEqual(EXITED_EVENT, EXITED)
         self.assertEqual(
             set(re.findall(r"#\{[^{}]*\}", EXITED)),
@@ -1079,7 +1081,9 @@ class DetachHandoverTest(StartFixture):
             fake = FakeTmux()
             self.detach(fake, session=session, events=os.path.join(self.root, events))
             hooks.append(fake.calls[0][fake.calls[0].index("pane-died") + 1])
-        self.assertEqual(hooks, [EXITED, EXITED])
+        self.assertEqual(
+            hooks, [f"{EXITED} ; kill-pane -t =d:", f"{EXITED} ; kill-pane -t =other-name:"]
+        )
 
     def test_a_bad_display_record_or_events_is_refused_before_tmux(self):
         target, link = os.path.join(self.root, "target"), os.path.join(self.root, "link")
