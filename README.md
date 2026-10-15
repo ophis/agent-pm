@@ -27,10 +27,11 @@ flowchart TB
   subgraph EN[entry points]
     LD[launchd]
     HU[the user]
-    CC[Control/resume commands]
+    CC[Starter, control and resume commands]
   end
   subgraph MG[agent_pm.manager]
     MC["cli.py<br>agent-pm-crew"] --> W["engine/crew.py"] --> RS["engine/roster.py"]
+    MC --> HO["engine/holder.py<br>lease while a command runs"] --> RS
   end
   subgraph LO[agent_pm.linear_orchestrator]
     LCLI["cli.py<br>agent-pm-linear"]
@@ -69,16 +70,17 @@ flowchart TB
   LD -.->|"router · promote"| LCLI
   HU -.->|"router --issue"| LCLI
   HU -.->|"act-as · CLI"| D
-  HU -.-> MC
+  HU -.->|"ctmux · CLI"| MC
   HU -.-> SC
   SC --> DR
-  LCLI --> R & PP & WB
-  R --> LR
+  LCLI --> R & PP & WB & LR
+  R & PP & WB --> LR
   LR -->|"agent_pm.delegate: detach, views"| HD
   H -.->|"each event: agent-pm-linear writeback"| LCLI
   LC -->|"Delegate class methods"| HD
   W -.-> CC
   D & H --> HD
+  D --> C
   HD -.->|"detach on the harness Host"| H
   HD --> E & C
   E --> C
