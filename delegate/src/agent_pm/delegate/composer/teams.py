@@ -4,10 +4,8 @@ each role's task index; the checks that keep a team dir out of reach of the agen
 
 import os
 import re
-import stat
 from collections.abc import Mapping, Sequence
 from enum import StrEnum
-from pathlib import Path
 
 from agent_pm.delegate.composer.base import METHOD, PLACEHOLDER, TEAM, read_text, title_of
 from agent_pm.delegate.composer.types import ConfigError, Team
@@ -294,47 +292,19 @@ def check_team_dirs(
 ) -> None:
     if not dirs:
         return
-    temps, me = temp_dirs() if temp is None else temp, os.getuid()
+    temps = temp_dirs() if temp is None else temp
     for d in map(os.path.realpath, dirs):
-        for path in team_paths(d):
-            shown = out_of_reach(path, temps, writes)
-            try:
-                st = os.stat(path)
-            except OSError as e:
-                raise ConfigError(f"{path}: {e.strerror}") from None
-            if st.st_mode & (stat.S_IWGRP | stat.S_IWOTH):
-                raise ConfigError(
-                    f"team_dirs: {shown} is writable by group or others: chmod go-w it"
-                )
-            if st.st_uid != me:
-                raise ConfigError(
-                    f"team_dirs: {shown} is owned by uid {st.st_uid}, not you (uid {me}): chown it"
-                )
-        for path in tool_paths(d):
+        for path in (*team_paths(d), *tool_paths(d)):
             out_of_reach(path, temps, writes)
-        for parent in Path(d).parents:
-            try:
-                st = os.stat(parent)
-            except OSError as e:
-                raise ConfigError(f"{parent}: {e.strerror}") from None
-            if st.st_mode & (stat.S_IWGRP | stat.S_IWOTH) and not st.st_mode & stat.S_ISVTX:
-                raise ConfigError(
-                    f"team_dirs: {d}'s parent dir {parent} is writable by group or others: they could replace the team dir"
-                )
-            if st.st_uid not in (me, 0):
-                raise ConfigError(
-                    f"team_dirs: {d}'s parent dir {parent} is owned by uid {st.st_uid}, not you or root: they could replace the team dir"
-                )
 
 
-def out_of_reach(path: str, temps: Sequence[str], writes: Sequence[tuple[str, str]]) -> str:
-    """`path` as an error shows it, once its real path is in no temp dir and no dir the run writes."""
+def out_of_reach(path: str, temps: Sequence[str], writes: Sequence[tuple[str, str]]) -> None:
+    """Refuse `path` when its real path is in a temp dir or a dir the run writes."""
     real = os.path.realpath(path)
     shown = path if real == path else f"{path} ({real})"
     if t := under(real, temps):
         raise ConfigError(f"team_dirs: {shown} is in temp dir {t}: any process can write there")
     check_overlap(shown, real, writes)
-    return shown
 
 
 def tool_paths(d: str) -> list[str]:

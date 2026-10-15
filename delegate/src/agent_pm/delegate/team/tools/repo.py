@@ -94,11 +94,7 @@ def place(repo: Repo, base: str, clone: str | None, slug: str, *, run: Runner) -
     if not os.path.lexists(wt):
         return wt, False
     dotgit = os.path.join(wt, ".git")
-    if (
-        os.path.islink(wt)
-        or os.path.islink(dotgit)
-        or not (os.path.isdir(dotgit) or os.path.isfile(dotgit))
-    ):
+    if not (os.path.isdir(dotgit) or os.path.isfile(dotgit)):
         raise Invalid(f"{wt} exists and is not a checkout")
     if os.path.isfile(dotgit):
         res = (

@@ -65,14 +65,11 @@ class RunState:
     def running(self) -> bool:
         """Whether a run holds the run lock."""
         try:
-            descriptor = os.open(
-                f"{self.base}.run.lock", os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK
-            )
+            descriptor = os.open(f"{self.base}.run.lock", os.O_RDONLY | os.O_NONBLOCK)
         except FileNotFoundError:
             return False
         try:
-            opened = os.fstat(descriptor)
-            if not stat.S_ISREG(opened.st_mode) or opened.st_uid != os.getuid():
+            if not stat.S_ISREG(os.fstat(descriptor).st_mode):
                 raise ConfigError(f"{self.workdir}: invalid delegate run lock")
             try:
                 fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)

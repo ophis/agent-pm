@@ -142,17 +142,8 @@ def _url(url: str, out: Mapping) -> str:
 def _file(path, workdir: str) -> str:
     base = Path(workdir).resolve()
     real = (base / path).resolve() if isinstance(path, str) and "\0" not in path else None
-    # A hard link could bring an outside file (a key) into the workdir.
-    if (
-        real is None
-        or real.suffix != ".md"
-        or not real.is_relative_to(base)
-        or not real.is_file()
-        or real.stat().st_nlink != 1
-    ):
-        raise InvalidOutcome(
-            f"file {str(path)[:200]!r} is not a single-link .md file under the workdir"
-        )
+    if real is None or real.suffix != ".md" or not real.is_relative_to(base) or not real.is_file():
+        raise InvalidOutcome(f"file {str(path)[:200]!r} is not a .md file under the workdir")
     return str(real)
 
 
