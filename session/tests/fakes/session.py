@@ -78,7 +78,7 @@ class FakeSession(Session):
     def info(self) -> SessionInfo:
         return SessionInfo(
             sid=self.sid,
-            cwd=self.spec.access.cwd or self.spec.workdir,
+            cwd=self.spec.access.cwd,
             project=False,
             transcript="",
             resume="",

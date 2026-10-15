@@ -20,7 +20,7 @@ from dataclasses import asdict
 from agent_pm.delegate.composer import Composer, RunParams
 from agent_pm.delegate.engine.harness_delegate import EVENTS_ENV, SID_ENV, HarnessDelegate
 from agent_pm.delegate.engine.runner import report, say
-from agent_pm.delegate.engine.types import Begun, ConfigError, Preview, Spec
+from agent_pm.delegate.engine.types import Begun, ConfigError, Layout, Preview, Spec
 from agent_pm.session import ConfigError as SessionConfigError
 from agent_pm.session import Mode, NotDisplayable, SessionError
 from agent_pm.utils import Once, answer_keys
@@ -155,7 +155,7 @@ def _run(
     except ConfigError as e:
         say(f"delegate: {e}")
         return 2
-    return report(result, a.out)[0]
+    return report(result, a.out or Layout(a.workdir).out)[0]
 
 
 def _detach(delegate_cls: type[HarnessDelegate], role: str, spec: Spec, placement: dict) -> int:

@@ -45,6 +45,7 @@
  "agent_pm.delegate.InvalidOutcome": "class(builtins.Exception)(?)",
  "agent_pm.delegate.Layout": "class(builtins.object)(workdir:POSITIONAL_OR_KEYWORD)",
  "agent_pm.delegate.Layout.agent": "property",
+ "agent_pm.delegate.Layout.out": "property",
  "agent_pm.delegate.Layout.run": "property",
  "agent_pm.delegate.Limit": "class(builtins.object)(resets_at:POSITIONAL_OR_KEYWORD)",
  "agent_pm.delegate.NotDisplayable": "class(agent_pm.session.engine.types.SessionError)(?)",

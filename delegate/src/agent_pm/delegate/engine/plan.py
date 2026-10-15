@@ -89,10 +89,9 @@ def plan(run: RunConfig, spec: Spec, *, driver: Driver, composition: Composer) -
         run = replace(run, task=spec.task)
     layout = Layout(spec.workdir)
     client = spec.client or run.client
+    out = layout.out if driver.session_based else None
     if spec.out:
         out = os.path.abspath(spec.out)
-    else:
-        out = os.path.join(layout.run, "out.md") if driver.session_based else None
     spec = replace(
         spec,
         workdir=layout.workdir,

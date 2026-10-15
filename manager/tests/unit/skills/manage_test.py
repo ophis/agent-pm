@@ -56,7 +56,7 @@ class Manage(Case):
         self.assertRegex(
             codex,
             r"`agent-pm-crew run <name> -- agent-pm-session start <name> --client codex "
-            r"--cwd <work dir> --prompt '[^`]+'",
+            r"--cwd <work dir>/agent --prompt 'Read <work dir>/agent/prompt\.md[^`]+'",
         )
         self.assertRegex(codex, r"[Cc]lose it .*In Review")
 

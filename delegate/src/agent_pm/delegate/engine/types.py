@@ -52,6 +52,11 @@ class Layout:
     def run(self) -> str:
         return os.path.join(self.workdir, "run")
 
+    @property
+    def out(self) -> str:
+        """A session run's default `out`."""
+        return os.path.join(self.run, "out.md")
+
 
 @dataclass(frozen=True)
 class Spec:

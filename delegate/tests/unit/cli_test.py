@@ -531,6 +531,28 @@ class InProcess(Base):
         )
         self.assertEqual([(e["sid"], e["pid"]) for e in self.launches()], [(SID, os.getpid())])
 
+    def test_a_run_without_out_names_its_default_deliverable_file(self):
+        with no_child():
+            code, out, err = self.cli(
+                "run",
+                "--role",
+                "dummy-tester",
+                "--task",
+                "echo",
+                "--input",
+                "Hello.",
+                "--workdir",
+                self.work,
+                "--client",
+                "fake",
+                "--mode",
+                "in_process",
+                "--sid",
+                SID,
+            )
+        self.assertEqual((code, out), (0, ""), err)
+        self.assertIn(f"delegate: deliverable {Layout(self.work).out}\n", err)
+
     def test_a_run_reports_its_deliverable_and_leaves_its_delegate_json(self):
         code, out, err = self.runs("--mode", "in_process", "--sid", SID)
         self.assertEqual((code, out), (0, ""), err)

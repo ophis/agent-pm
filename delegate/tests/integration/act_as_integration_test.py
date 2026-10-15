@@ -3,6 +3,7 @@
 import os
 import subprocess
 
+from agent_pm.delegate import Layout
 from agent_pm.delegate.cli import listing
 from agent_pm.delegate.composer import Composer, RunParams
 
@@ -33,7 +34,7 @@ class ActAs(Case):
 
     def test_step_3_delivers_the_instruction_file(self):
         workdir = os.path.join(self.home, "work")
-        out = os.path.join(workdir, "prompt.md")
+        out = os.path.join(Layout(workdir).agent, "prompt.md")
         run = (
             command(3)
             .replace("<role>", "dummy-tester")
@@ -59,7 +60,7 @@ class ActAs(Case):
         composition = Composer()
         expected = composition.render(
             composition.resolve("dummy-tester", "echo"),
-            RunParams(input="Hello.", out=out, workdir=workdir),
+            RunParams(input="Hello.", out=out, workdir=Layout(workdir).agent),
         )
         with open(out, "rb") as stream:
             self.assertEqual(stream.read(), expected.encode("utf-8"))
