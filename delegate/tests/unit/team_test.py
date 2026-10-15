@@ -194,24 +194,34 @@ class Shipped(Case):
             catalog()["engineer"]["light-build"],
         )
 
-    def test_builds_finish_the_newest_unfinished_plan_doc_by_its_input_before_any_new_one(self):
+    def test_builds_continue_the_newest_unfinished_plan_doc_by_the_engineers_one_rule(self):
+        continue_ = item(section(composed("engineer")[0], "Repo"), "Continue")
+        self.assertIn(
+            (
+                " a plan doc: [Engineer › Repo › Merge](#repo), then your task's slash command "
+                "([Engineer › Tasks](#tasks)) with the plan doc's verbatim input as its requirement; "
+                "autopilot's resolver `mode` not `resume` → `needs_input` naming the plan doc; stop. Once it "
+                "resumes, give it the rest as mid-run input, each logged in its progress log: the user's "
+                "requirements, the review input (marked as [Engineer › Autopilot](#autopilot) says), failing "
+                "merge checks, and with a user requirement a review cap 2 rounds beyond its RESUME "
+                "`review_round`, never below the skill's cap (a capped plan doc stops again at once). Added to "
+                "its input, they would start a new plan doc at HEAD, leaving its commits unreviewed."
+            ),
+            continue_,
+        )
         for task in ("build", "light-build"):
             text = task_text(task)
             self.assertIn(
                 "2. **Repo** ([Engineer › Repo](#repo)); from status, act on `plan_docs` too.", text
             )
             self.assertIn(
-                "\n   - The newest plan doc (`plan_docs`' last) not at `done` → continue it, its verbatim input "
-                "the requirement; autopilot's resolver `mode` not `resume` → `needs_input` naming the plan doc; "
-                "stop. Once it resumes, give it the rest as mid-run input, each logged in its progress log: the "
-                "user's requirements, the review input (marked as [Engineer › Autopilot](#autopilot) says), "
-                "failing merge checks, and with a user requirement a review cap 2 rounds beyond its RESUME "
-                "`review_round` (a capped plan doc stops again at once). Added to its input, they "
-                "would start a new plan doc at HEAD, leaving its commits unreviewed.\n"
+                "\n   - The newest plan doc (`plan_docs`' last) not at `done` → "
+                "[Engineer › Repo › Continue](#repo) it.\n"
                 "   - Else a plan doc or a `pr` (a **finished build**) and a user requirement → a new build",
                 text,
                 task,
             )
+            self.assertNotIn("mid-run", text, task)
 
     def test_engineer_fixes_or_drops_each_non_blocking_item_and_adopts_the_draft_pr(self):
         with open(os.path.join(TEAM, "roles", "engineer.md")) as f:
@@ -497,8 +507,8 @@ class Real(RealConfig):
             (
                 "One failing: during [Engineer › Finish › Done](#finish) → "
                 "[Engineer › Finish › Failure](#finish); before the build, or on [Engineer › Repo › Resume](#repo) "
-                "with a build left → the failing checks go into that build's requirements (a continued plan doc "
-                "takes them mid-run: `<tasks>/<task>.md` › Steps › Which build); on "
+                "with a build left → the failing checks go into that build's requirements (mid-run for a "
+                "continued plan doc: [Engineer › Repo › Continue](#repo)); on "
                 "[Engineer › Repo › Resume](#repo) with none left → [Engineer › Finish › Failure](#finish)."
             ),
             merge,
