@@ -10,8 +10,9 @@ worktree prints {"repo", "host", "default", "branch", "commit", "worktree", "per
 "base", "plan_docs", "since", "user", "others"}. `pr` is B's PR {"number", "url", "state",
 "baseRefName"} or null; `base` is the PR's baseRefName, else BASE, else the default branch. `user`
 and `others` are PR comments and reviews by the user (core config's `users`, else the gh login) and
-by anyone else since B's latest own commit. `plan_docs` are B's autopilot plan docs in
-<worktree>/.autopilot/ {"path", "phase"}, phase `S<n>` or `done`.
+by anyone else since B's latest own commit (not on origin/<base>, no merge), all when none.
+`plan_docs` are B's autopilot plan docs in <worktree>/.autopilot/ {"path", "phase"}, phase `S<n>`
+or `done`, newest (last modified) last.
 
 SLUG: 1-100 of [A-Za-z0-9._-], default B with / → -. REPO is `owner/name`, `host/owner/name`,
 `https://host/owner/name` or a local clone's path (/ or ~), named by its origin and outside the temp
@@ -271,15 +272,16 @@ def worktree(
 
 def plan_docs(wt: str, branch: str) -> list[dict]:
     found = []
-    for p in sorted(glob.glob(os.path.join(wt, ".autopilot", "*plan.md"))):
+    for p in glob.glob(os.path.join(wt, ".autopilot", "*plan.md")):
         try:
             with open(p, errors="replace") as fh:
                 m = re.search(r"RESUME: phase=(S\d|done)([^\n]*)", fh.read())
+            touched = os.path.getmtime(p)
         except OSError:
             continue
         if m and f"branch={branch}" in m.group(2).split():
-            found.append({"path": p, "phase": m.group(1)})
-    return found
+            found.append((touched, p, m.group(1)))
+    return [{"path": p, "phase": phase} for _, p, phase in sorted(found)]
 
 
 def _author(row: dict, key: str) -> str | None:
@@ -307,7 +309,6 @@ def status(
     if not exists:
         raise Invalid(f"{wt} missing: run worktree first")
     docs = plan_docs(wt, branch)
-    since = git(wt, "log", "-1", "--first-parent", "--no-merges", "--format=%cI", run=run).strip()
     account = gh_json(run, ["api", "--hostname", repo.host, "user"])
     if (
         not isinstance(account, dict)
@@ -349,8 +350,18 @@ def status(
     )
     if not isinstance(onto, str) or not BRANCH.fullmatch(onto):
         raise Invalid(f"unsafe base branch name {str(onto)[:80]!r}")
-    user, others = [], []
+    user, others, since = [], [], ""
     if pr:
+        since = git(
+            wt,
+            "log",
+            "-1",
+            "--first-parent",
+            "--no-merges",
+            "--format=%cI",
+            f"origin/{onto}..HEAD",
+            run=run,
+        ).strip()
         api = f"repos/{repo.owner}/{repo.name}"
         for path, key, kind in (
             (f"{api}/issues/{pr['number']}/comments", "created_at", "comment"),

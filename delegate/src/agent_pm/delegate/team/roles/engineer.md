@@ -54,7 +54,7 @@ After <your task's push points>, run exactly `git -C <worktree> push -u origin <
 
 ## Finish
 
-- **Done**, once the build converges: [Engineer › Repo › Merge](#repo), then [Engineer › Repo](#repo) step 2 again (its `pr` now the draft PR the build may have opened), then `status: done`; `deliverable` what changed, the input's `Links:`, how to verify, leftover non-blocking items; `title` the input's `Title:`, else a short PR title; `summary` including how to verify. Then [Output › Destination](#destination) opens or updates the PR; wait for its checks:
+- **Done**, once the build converges: judge each of its non-blocking review items: a real problem → fix it in this PR, with a test, commit and `git -C <worktree> push -u origin <branch>`; else drop it. Then [Engineer › Repo › Merge](#repo), then [Engineer › Repo](#repo) step 2 again (its `pr` now the draft PR the build may have opened), then `status: done`; `deliverable` what changed, the input's `Links:`, how to verify; `title` the input's `Title:`, else a short PR title; `summary` including how to verify. Then [Output › Destination](#destination) opens or updates the PR; wait for its checks:
   1. `gh pr checks <branch> --repo <host>/<owner>/<name> --watch --fail-fast`.
      - `no checks reported` → rerun it once a minute later (a just-pushed commit may have none yet); again → no checks.
   2. All pass, or no checks → report the outcome.

@@ -74,8 +74,10 @@ class MalformedGh(Base):
 
 
 class PlanDocs(Case):
-    def test_only_autopilot_plan_docs_of_the_branch_count_at_a_step_or_done(self):
-        """Autopilot resumes only from <worktree>/.autopilot/; a copy elsewhere is not a plan doc."""
+    def test_only_autopilot_plan_docs_of_the_branch_count_at_a_step_or_done_newest_last(self):
+        """Autopilot resumes only from <worktree>/.autopilot/; a copy elsewhere is not a plan doc.
+        Autopilot rewrites a plan doc's RESUME at every phase change, so the newest is the last touched.
+        """
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         wt = tmp.name
@@ -92,9 +94,11 @@ class PlanDocs(Case):
         doc(".autopilot/c-plan.md", "phase=S5 worktree=/w branch=other")
         doc(".autopilot/a-spec.md", "phase=S5 worktree=/w branch=b")
         doc("docs/a-plan.md", "phase=S7 worktree=/w branch=b")
+        os.utime(open_, (1_000, 1_000))
+        os.utime(done, (2_000, 2_000))
         self.assertEqual(
             repo.plan_docs(wt, "b"),
-            [{"path": done, "phase": "done"}, {"path": open_, "phase": "S5"}],
+            [{"path": open_, "phase": "S5"}, {"path": done, "phase": "done"}],
         )
 
 
@@ -137,7 +141,17 @@ class Status(Base):
         ]
         code, r, run = self.status(
             (
-                lambda a: a[3:] == ["log", "-1", "--first-parent", "--no-merges", "--format=%cI"],
+                lambda a: (
+                    a[3:]
+                    == [
+                        "log",
+                        "-1",
+                        "--first-parent",
+                        "--no-merges",
+                        "--format=%cI",
+                        "origin/TASK-0-a..HEAD",
+                    ]
+                ),
                 ok("2026-10-02T00:00:00+00:00\n"),
             ),
             pr_list(

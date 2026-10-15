@@ -194,37 +194,47 @@ class Shipped(Case):
             catalog()["engineer"]["light-build"],
         )
 
-    def test_builds_resume_an_unfinished_plan_doc_by_its_input_or_supersede_it(self):
-        for task, finished in (
+    def test_builds_resume_the_newest_unfinished_plan_doc_by_its_input(self):
+        for task, unfinished, finished in (
             (
                 "build",
-                "   - Else a plan doc at `done` or a `pr` (a **finished build**) and a user requirement",
+                "a new build, new plan doc.",
+                "   - Else a plan doc or a `pr` (a **finished build**) and a user requirement",
             ),
-            ("light-build", "   - Else a `pr` (a **finished build**) and a user requirement"),
+            (
+                "light-build",
+                "build the requirement and the user's requirements.",
+                "   - Else a `pr` (a **finished build**) and a user requirement",
+            ),
         ):
             text = task_text(task)
             self.assertIn(
                 "2. **Repo** ([Engineer › Repo](#repo)); from status, act on `plan_docs` too.", text
             )
             self.assertIn(
-                "\n   - A plan doc not at `done`, no user requirement → continue it, its verbatim input the "
-                "requirement: autopilot resumes a plan doc only by its `input_sha`.\n   - Else a plan doc not at "
-                "`done` → set its RESUME `phase=` to `done` (superseded), then ",
+                "\n   - The newest plan doc (`plan_docs`' last) not at `done`, no user requirement → continue it, "
+                "its verbatim input the requirement (anything added, such as failing merge checks, makes autopilot "
+                "start a new plan doc instead: it resumes one only by its `input_sha`).\n"
+                f"   - Else the newest plan doc not at `done` → {unfinished}\n",
                 text,
                 task,
             )
             self.assertIn(finished, text, task)
 
-    def test_engineer_adopts_the_draft_pr_the_build_opened(self):
+    def test_engineer_fixes_or_drops_each_non_blocking_item_and_adopts_the_draft_pr(self):
         with open(os.path.join(TEAM, "roles", "engineer.md")) as f:
             charter = f.read()
         self.assertIn(
             (
-                "[Engineer › Repo › Merge](#repo), then [Engineer › Repo](#repo) step 2 again (its `pr` now the "
-                "draft PR the build may have opened), then `status: done`;"
+                "- **Done**, once the build converges: judge each of its non-blocking review items: a real problem "
+                "→ fix it in this PR, with a test, commit and `git -C <worktree> push -u origin <branch>`; else "
+                "drop it. Then [Engineer › Repo › Merge](#repo), then [Engineer › Repo](#repo) step 2 again (its "
+                "`pr` now the draft PR the build may have opened), then `status: done`; `deliverable` what "
+                "changed, the input's `Links:`, how to verify; `title`"
             ),
             charter,
         )
+        self.assertNotIn("leftover", charter)
 
     def test_research_tasks_prepare_before_their_start_mark(self):
         for task in ("research", "light-research"):
