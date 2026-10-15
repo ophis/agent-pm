@@ -3,7 +3,6 @@
 import json
 import os
 
-from agent_pm.linear_orchestrator.engine import target
 from agent_pm.utils import GUARD, SHORT
 from orchestrator_tests.router_fixtures import (
     DESIGN_LISTING,
@@ -21,6 +20,7 @@ from orchestrator_tests.unit.run_fixtures import (
 )
 from orchestrator_tests.unit.target_fixtures import ok
 
+from delegate.tests.workdir import checkout_path
 from utils.tests.sandbox import git
 
 
@@ -59,9 +59,9 @@ class RunLaunching(OuterBase):
     def test_a_resume_over_a_clone_checkout_keeps_its_repo(self):
         self.local_clone()
         cfg = self.cfg()
-        os.makedirs(
-            os.path.join(target.checkout(ID, "Ophis", "Agent-PM", work=cfg.workdirs), ".git")
-        )
+        found = checkout_path(cfg.issue_workdir(ID), "Ophis", "Agent-PM", ID)
+        os.makedirs(os.path.join(found, ".git"))
+        self.api.checkouts[cfg.issue_workdir(ID)] = (found,)
         self.run_.table = [(("git", *GUARD, "-C"), ok()), *ENG_RUN]
         self.assertEqual(self.outer(mode="resume"), 0)
         self.assertEqual(self.input(), INPUT)

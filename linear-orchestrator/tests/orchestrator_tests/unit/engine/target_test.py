@@ -15,6 +15,9 @@ from orchestrator_tests.config_fixtures import HARNESS_DELEGATE
 from orchestrator_tests.target_fixtures import LOCAL
 from orchestrator_tests.unit.target_fixtures import FakeRun, api, ok
 
+from delegate.tests.fakes.delegate import FakeDelegate
+from delegate.tests.workdir import checkout_path
+
 PROJ = "121166b1-191a-4461-bec4-42f1c2dc0ddd"
 
 NO_LINE = target.Invalid("no Repo: line in the description or its ## Instructions")
@@ -177,8 +180,9 @@ class TargetValidation(Case):
     def setUp(self):
         self.work = os.path.realpath(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, self.work)
-        self.src = os.path.join(self.work, "TASK-26", "agent", config.CLONES[0])
-        self.clone = os.path.join(self.src, "ophis", "agent-pm-TASK-26")
+        self.workdir = os.path.join(self.work, "TASK-26")
+        self.clone = checkout_path(self.workdir, "ophis", "agent-pm", "TASK-26")
+        self.src = os.path.dirname(os.path.dirname(self.clone))
         self.ls_remote = [
             "git",
             "-c",
@@ -232,18 +236,39 @@ class TargetValidation(Case):
             issue(desc, title=title, project=project),
             repos or {},
             run=self.run_,
-            work=self.work,
+            delegate=FakeDelegate,
+            workdir=self.workdir,
             roles=roles(),
         )
 
     def argvs(self):
         return [c[0] for c in self.run_.calls]
 
-    def test_the_checkout_is_in_the_agent_dir(self):
-        self.assertEqual(
-            target.checkout("TASK-26", "ophis", "agent-pm", work=self.work),
-            os.path.join(self.work, "TASK-26", "agent", "src", "ophis", "agent-pm-TASK-26"),
-        )
+    def test_the_checkout_is_the_repos_among_those_its_delegate_reports(self):
+        class Reporting(FakeDelegate):
+            found = None
+
+            @classmethod
+            def checkouts(cls, workdir):
+                cls.asked = workdir
+                return cls.found
+
+        other = os.path.join(self.src, "ophis", "other-TASK-26")
+        for found, want in (
+            (None, None),
+            ((), None),
+            ((other, os.path.join(self.src, "ophis", "agent-pm-TASK-27")), None),
+            ((other, self.clone), self.clone),
+        ):
+            with self.subTest(found=found):
+                Reporting.found = found
+                self.assertEqual(
+                    target.checkout(
+                        "TASK-26", "ophis", "agent-pm", delegate=Reporting, workdir=self.workdir
+                    ),
+                    want,
+                )
+                self.assertEqual(Reporting.asked, self.workdir)
 
     def test_ok_without_a_local_clone_asks_the_remote(self):
         self.assertEqual(
@@ -270,7 +295,13 @@ class TargetValidation(Case):
         ):
             expected_path = config.path()
             self.assertEqual(
-                target.check(issue("Repo: ophis/agent-pm"), {}, work=self.work, roles=roles()),
+                target.check(
+                    issue("Repo: ophis/agent-pm"),
+                    {},
+                    delegate=FakeDelegate,
+                    workdir=self.workdir,
+                    roles=roles(),
+                ),
                 target.Target("ophis", "agent-pm", "TASK-26-session-registry"),
             )
         self.assertEqual(len(seen), 2)

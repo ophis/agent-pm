@@ -59,6 +59,7 @@ from orchestrator_tests.router_fixtures import (
 from orchestrator_tests.unit.board_ids import HEADER, TASK_GROUP, TEAM
 from orchestrator_tests.unit.board_ids import STATES as IDS_BY_KEY
 from orchestrator_tests.unit.board_ids import role as role_table
+from orchestrator_tests.unit.delegate_fixture import provider
 from orchestrator_tests.unit.outage import FAILURES, FIELDS, failing
 from orchestrator_tests.unit.run_fixtures import (
     ENGINEER,
@@ -2251,6 +2252,17 @@ class RunLaunching(OuterBase):
         self.assertEqual(
             [json.loads(line)["kind"] for line in self.raw_runs().splitlines()], ["start", "resume"]
         )
+
+    def test_target_gets_the_runs_delegate_class_and_workdir(self):
+        cfg = self.cfg()
+        changed = replace(
+            cfg,
+            delegate_kind="other",
+            delegates={**cfg.delegates, "other": provider(self.api, cfg)},
+        )
+        with mock.patch.object(self, "cfg", return_value=changed):
+            self.assertEqual(self.outer(mode="resume"), 0)
+        self.assertEqual(self.api.asked, [(changed.delegates["harness"], self.rd)] * 2)
 
     def test_a_status_defect_does_not_become_a_transient_resume(self):
         error = AttributeError("adapter defect")

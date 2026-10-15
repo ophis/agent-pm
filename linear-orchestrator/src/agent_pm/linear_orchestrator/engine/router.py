@@ -582,10 +582,17 @@ def _outer(a, cfg, *, gql, run, keychain, now, attended):
         return fail(a.issue, "transient", f"Linear: {one_line(e)}", 3)
     a = replace(a, uuid=issue.id)
     ctx = writeback.for_run(cfg, role, gql, a)
+    workdir = cfg.issue_workdir(a.issue)
+    delegate_cls = LinearRun.kind_cls(cfg, kind)
     if build:
         try:
             repo = target.check(
-                issue, cfg.project_repos, run=run, work=cfg.workdirs, roles=cfg.roles
+                issue,
+                cfg.project_repos,
+                run=run,
+                delegate=delegate_cls,
+                workdir=workdir,
+                roles=cfg.roles,
             )
         except (OSError, subprocess.TimeoutExpired) as e:
             return fail(a.issue, "transient", f"repo check: {one_line(e)}", 3)
@@ -606,10 +613,11 @@ def _outer(a, cfg, *, gql, run, keychain, now, attended):
             repo,
             a.issue,
             clones=cfg.local_clones,
+            delegate=delegate_cls,
+            workdir=workdir,
             work=cfg.workdirs,
             run=run,
         )
-    workdir = cfg.issue_workdir(a.issue)
     try:
         sources = inputs.gather(issue, role, cfg.docs, run=run)
     except (InputError, OSError, subprocess.TimeoutExpired) as e:
