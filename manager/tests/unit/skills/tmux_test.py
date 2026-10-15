@@ -148,6 +148,8 @@ class Flows(Case):
             "`resume: agent-pm-crew resume … <name>`",
             "`tail -n +<N+1> -F <events>`",
             "`next-event:`",
+            "`--content`",
+            "event line, then its content",
             "`monitor expired:`",
             "run_in_background",
             "--after <line>",

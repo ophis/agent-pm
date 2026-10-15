@@ -14,6 +14,8 @@ from agent_pm.manager.engine.holder import Holder
 from agent_pm.manager.engine.types import Lease, StatusError
 from agent_pm.utils import STATE, nested_start
 
+SESSION_COMMAND = ("agent-pm-session",)
+
 
 def _number(value: str) -> int:
     try:
@@ -74,11 +76,11 @@ def _attach(args) -> int:
             print(f"resume: {shlex.join(command)}")
     if os.path.isdir(crew.roster.directory):
         print(f"monitor: tail -n +{int(cursor) + 1} -F {shlex.quote(crew.roster.events)}")
-        for label, verb, after in (
+        for label, verb, after, *extra in (
             ("monitor expired", "attach", "LINE"),
-            ("next-event", "next-event", cursor),
+            ("next-event", "next-event", cursor, "--content"),
         ):
-            command = ("agent-pm-crew", verb, *named, "--after", after, "--gen", generation)
+            command = ("agent-pm-crew", verb, *named, "--after", after, "--gen", generation, *extra)
             print(f"{label}: {shlex.join(command)}")
     print(trailer)
     return 0
@@ -146,8 +148,11 @@ def _release(args) -> int:
 
 
 def _next_event(args) -> int:
-    line, event = _crew(args).next_event(after=args.after, gen=args.gen)
-    print(f"{line} {event}")
+    crew = _crew(args)
+    line, event = crew.next_event(after=args.after, gen=args.gen)
+    print(f"{line} {event}", flush=True)
+    if args.content:
+        print(crew.event_content(event, SESSION_COMMAND), end="")
     return 0
 
 
@@ -195,6 +200,12 @@ def _parser() -> argparse.ArgumentParser:
     next_event = subs.add_parser("next-event", parents=[common])
     next_event.add_argument("--after", type=_after, required=True)
     next_event.add_argument("--gen", type=_number, required=True)
+    next_event.add_argument(
+        "--content",
+        action="store_true",
+        help="then print its content: a done session's reply, a harness's entry status, "
+        "else the screen",
+    )
     next_event.set_defaults(func=_next_event)
     return parser
 

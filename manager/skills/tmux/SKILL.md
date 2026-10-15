@@ -28,7 +28,7 @@ You, the commander, launch every worker, role run and pipeline run through `agen
    - the backlog, `<line> <event>` per event after the cursor N;
    - `resume: agent-pm-crew resume … <name>` per `gone` entry; `attach` itself starts nothing;
    - `monitor:`, `monitor expired:` and `next-event:` commands, then `N=<N> GEN=<G>`.
-3. Arm before the first launch: one Monitor running the `monitor:` command (`tail -n +<N+1> -F <events>`), `timeout_ms` 1800000; its k-th line is line N+k. Without a Monitor tool, run the `next-event:` command with `run_in_background`: it marks N handled, waits, prints one `<line> <event>` and exits; handle it, then rerun it at once with `--after <line>`. Arming from N delivers the backlog again, so an event can come twice.
+3. Arm before the first launch: one Monitor running the `monitor:` command (`tail -n +<N+1> -F <events>`), `timeout_ms` 1800000; its k-th line is line N+k. Without a Monitor tool, run the `next-event:` command with `run_in_background`: it marks N handled, waits, prints one event line, then its content (`--content`: a `done` session's reply, a harness's entry status, else the screen; `content unavailable: <why>` when unreadable), and exits; handle it, then rerun it at once with `--after <line>`. Arming from N delivers the backlog again, so an event can come twice.
 
 ## Events
 

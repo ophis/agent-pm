@@ -13,7 +13,7 @@ from dataclasses import replace
 
 from agent_pm.manager.engine.roster import LOCK_TIMEOUT, Roster
 from agent_pm.manager.engine.types import Entry, Lease, RosterError, Spec, State, StatusError
-from agent_pm.utils import LEASE_ENV, Record, Status, printable
+from agent_pm.utils import LEASE_ENV, Record, Status, one_line, printable
 
 TIMEOUT = 30
 RECOVERY_MARGIN = 5
@@ -23,6 +23,18 @@ EVENT = re.compile(r"[0-9]{2}:[0-9]{2}:[0-9]{2} \S+ \S.*")
 HERE = ("agent-pm-session", "ls", "--here", "--records")
 DESCENDANTS = (*HERE, "--descendants")
 HEADER = "name\tkind\tsid\tstate\tnote\tcwd\tattach"
+HARNESS_SUFFIX = "-drive"
+
+
+def _owner(session: str, entries: dict[str, Entry]) -> str | None:
+    return next(
+        (
+            name
+            for name, entry in entries.items()
+            if entry.record is not None and session in entry.record.sessions
+        ),
+        None,
+    )
 
 
 class Crew:
@@ -323,18 +335,7 @@ class Crew:
         self._listed = None
         self.roster.check_lease()
         entries = self.roster.entries()
-        key = (
-            name
-            if name in entries
-            else next(
-                (
-                    alias
-                    for alias, entry in entries.items()
-                    if entry.record is not None and name in entry.record.sessions
-                ),
-                None,
-            )
-        )
+        key = name if name in entries else _owner(name, entries)
         if key is None:
             raise ValueError(f"{name}: not in roster")
         record = entries[key].record
@@ -393,3 +394,28 @@ class Crew:
                     return line, printable(event)
             else:
                 time.sleep(0.5)
+
+    def event_content(self, event: str, session_command: tuple[str, ...]) -> str:
+        """What a next_event line is about, newline-terminated: a harness's (`<tui>-drive`, its
+        entry's Record naming the tui) entry Status, else by session_command a `done` session's
+        reply or the session's screen; else why it is unreadable.
+        """
+        try:
+            _, session, word = event.split(maxsplit=3)[:3]
+            entries = self.roster.entries()
+            name = _owner(session, entries)
+            record = None if name is None else entries[name].record
+            tui = session.removesuffix(HARNESS_SUFFIX)
+            if (
+                name is not None
+                and record is not None
+                and tui != session
+                and tui in (record.name, *record.sessions)
+            ):
+                content = "".join(status.to_line() + "\n" for status in self.status((name,)))
+            else:
+                verb = "reply" if word == "done" else "read"
+                content = self._execute((*session_command, verb, session))
+        except (OSError, RosterError, RuntimeError, ValueError) as error:
+            content = f"content unavailable: {printable(one_line(str(error)))}"
+        return content if content.endswith("\n") else content + "\n"
