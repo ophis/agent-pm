@@ -11,7 +11,7 @@ from agent_pm.utils.config_file import (
     unset,
 )
 from agent_pm.utils.config_file import load as load_config
-from agent_pm.utils.environment import environment_ok
+from agent_pm.utils.environment import LEASE_ENV, environment_ok
 from agent_pm.utils.files import (
     ConfinedFileError,
     ConfinedReason,
@@ -86,6 +86,7 @@ __all__ = [
     "GUARD",
     "GitError",
     "Invalid",
+    "LEASE_ENV",
     "LOCAL",
     "LOCAL_ENV_VARS",
     "LONG",

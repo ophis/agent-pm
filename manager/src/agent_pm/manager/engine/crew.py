@@ -13,7 +13,7 @@ from dataclasses import replace
 
 from agent_pm.manager.engine.roster import LOCK_TIMEOUT, Roster
 from agent_pm.manager.engine.types import Entry, Lease, RosterError, Spec, State, StatusError
-from agent_pm.utils import Record, Status, printable
+from agent_pm.utils import LEASE_ENV, Record, Status, printable
 
 TIMEOUT = 30
 RECOVERY_MARGIN = 5
@@ -35,14 +35,7 @@ class Crew:
         env = {
             key: value
             for key, value in os.environ.items()
-            if key
-            not in {
-                "AGENT_PM_SID",
-                "AGENT_PM_EVENTS",
-                "AGENT_PM_MANAGER",
-                "AGENT_PM_HOLDER_ID",
-                "AGENT_PM_HOLDER_GENERATION",
-            }
+            if key not in {"AGENT_PM_SID", "AGENT_PM_EVENTS", *LEASE_ENV}
         }
         if events:
             env["AGENT_PM_EVENTS"] = self.roster.events

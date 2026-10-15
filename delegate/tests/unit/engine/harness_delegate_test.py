@@ -184,11 +184,12 @@ class CheckTuiTest(HarnessCase):
 class LaunchTest(HarnessCase):
     def test_the_launchers_variables_stay_out_of_the_harness_environment(self):
         launcher = {"AGENT_PM_SID": SID, "AGENT_PM_EVENTS": "/manager/events", "KEPT": "kept"}
-        with mock.patch.dict(os.environ, launcher):
+        lease = ("AGENT_PM_MANAGER", "AGENT_PM_HOLDER_ID", "AGENT_PM_HOLDER_GENERATION")
+        with mock.patch.dict(os.environ, launcher | dict.fromkeys(lease, "1")):
             self.make().detach()
         environment = RecordingHost.launches[0]["env"]
-        self.assertNotIn("AGENT_PM_SID", environment)
-        self.assertNotIn("AGENT_PM_EVENTS", environment)
+        for name in ("AGENT_PM_SID", "AGENT_PM_EVENTS", *lease):
+            self.assertNotIn(name, environment)
         self.assertEqual(environment["KEPT"], "kept")
 
 

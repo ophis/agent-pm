@@ -57,6 +57,7 @@ from agent_pm.session import (
     Spec as SessionSpec,
 )
 from agent_pm.utils import (
+    LEASE_ENV,
     Display,
     Record,
     Status,
@@ -708,7 +709,7 @@ class HarnessDelegate(Delegate):
         environment = {
             key: value
             for key, value in os.environ.items()
-            if key not in ("PYTHONPATH", SID_ENV, EVENTS_ENV)
+            if key not in ("PYTHONPATH", SID_ENV, EVENTS_ENV, *LEASE_ENV)
         }
         environment.update(source_path(roots))
         return Launch(

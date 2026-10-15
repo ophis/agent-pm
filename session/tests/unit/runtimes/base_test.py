@@ -26,9 +26,11 @@ KINDS = {
     in_process.InProcessRuntime: Mode.IN_PROCESS,
     tui.TuiRuntime: Mode.TUI,
 }
+LEASE = {"AGENT_PM_MANAGER", "AGENT_PM_HOLDER_ID", "AGENT_PM_HOLDER_GENERATION"}
 IDENTITIES = {
     "AGENT_PM_SID",
     "AGENT_PM_EVENTS",
+    *LEASE,
     "INNER_SESSION",
     "INNER_ID",
     "OTHER_SESSION",
@@ -189,12 +191,19 @@ class IdentityDropTest(ChildEnvTest):
         self.assertEqual(
             identity_drop(registry(inner=InnerAdapter, other=OtherAdapter)), IDENTITIES
         )
-        self.assertEqual(identity_drop(registry()), frozenset({"AGENT_PM_SID", "AGENT_PM_EVENTS"}))
+        self.assertEqual(
+            identity_drop(registry()), frozenset({"AGENT_PM_SID", "AGENT_PM_EVENTS", *LEASE})
+        )
 
     def test_a_callers_start_token_never_reaches_a_client(self):
         self.environ(AGENT_PM_SID="0f8fad5b-d9cb-469f-a165-70867728950e", KEEP="k")
         env = child_env(Launch(("x",)), "/cwd", identity_drop(registry()))
         self.assertEqual((env.get("AGENT_PM_SID"), env["KEEP"]), (None, "k"))
+
+    def test_a_managers_roster_lease_never_reaches_a_client(self):
+        self.environ(**dict.fromkeys(LEASE, "1"), KEEP="k")
+        env = child_env(Launch(("x",)), "/cwd", identity_drop(registry()))
+        self.assertEqual((LEASE & env.keys(), env["KEEP"]), (set(), "k"))
 
     def test_a_callers_events_file_never_reaches_a_client(self):
         self.environ(AGENT_PM_EVENTS="/harness/events", KEEP="k")
