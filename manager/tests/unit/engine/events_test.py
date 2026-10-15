@@ -85,7 +85,12 @@ class EventsTest(EventsCase):
         self.assertFalse(Path(self.events.journal).exists())
 
     def test_rotation_reprivatizes_fresh_0644_events_and_preserves_both_tails(self):
+        settled = []
+
         def create_fresh(_seconds):
+            if settled:  # only the settle before the candidate
+                return
+            settled.append(_seconds)
             self.assertEqual(Path(self.events.archive).read_bytes(), self.original)
             Path(self.events.path).unlink()
             Path(self.events.path).write_bytes(b"fresh\n")
@@ -168,6 +173,59 @@ class EventsTest(EventsCase):
             self.assertTrue(self.events.rotate(1, 0))
             self.events.finish(1)
         self.assertEqual(Path(self.events.path).read_bytes(), b"old\nlate\n")
+
+    def publishing(self, after):
+        """os.replace that, publishing the candidate, first opens a writer on the fresh file it
+        replaces, then runs after(writer).
+        """
+        real_replace, writers = os.replace, []
+
+        def replace(source, destination):
+            if str(source) == self.events.candidate and str(destination) == self.events.path:
+                writers.append(os.open(self.events.path, os.O_WRONLY | os.O_APPEND))
+                self.addCleanup(os.close, writers[0])
+                real_replace(source, destination)
+                after(writers[0])
+                return
+            real_replace(source, destination)
+
+        return mock.patch("os.replace", side_effect=replace), writers
+
+    def test_a_writer_opened_before_the_publish_writing_while_it_settles_is_kept(self):
+        sleeps = []
+        patched, writers = self.publishing(lambda _fd: None)
+
+        def settle(_seconds):
+            sleeps.append(_seconds)
+            if writers and len(sleeps) == 2:
+                os.write(writers[0], b"settled\n")
+
+        with file_lock(self.events.path, own=True), patched, mock.patch("time.sleep", settle):
+            self.assertTrue(self.events.rotate(1, 0))
+            self.events.finish(1)
+        if len(sleeps) < 2:
+            os.write(writers[0], b"settled\n")
+        self.assertEqual(Path(self.events.path).read_bytes(), b"old\nsettled\n")
+
+    def test_a_failed_late_append_keeps_its_lines_in_the_archive_and_says_so(self):
+        real_open = os.open
+        patched, writers = self.publishing(lambda fd: os.write(fd, b"late\n"))
+
+        def refuse(path, flags, *args):
+            if writers and str(path) == self.events.path and flags & os.O_APPEND:
+                raise OSError(errno.EIO, "append failed")
+            return real_open(path, flags, *args)
+
+        with (
+            file_lock(self.events.path, own=True),
+            patched,
+            mock.patch("time.sleep"),
+            mock.patch("os.open", side_effect=refuse),
+            self.assertRaises(OSError) as caught,
+        ):
+            self.events.rotate(1, 0)
+        self.assertIn(f"retained in {self.events.archive}", str(caught.exception))
+        self.assertTrue(Path(self.events.archive).read_bytes().endswith(b"\nlate\n"))
 
     def test_rollback_keeps_fresh_bytes_already_in_prepared_candidate(self):
         real_replace = os.replace

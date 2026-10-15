@@ -218,6 +218,23 @@ class Events:
     def finish(self, gen: int) -> None:
         self.recover(gen)
 
+    def _keep(self, late: bytes) -> None:
+        """Lines the replaced fresh file took while the rotation published: appended to the events
+        file, else to its archive.
+        """
+        if not late:
+            return
+        try:
+            append_line(self.path, late, durable=True, own=True)
+        except OSError as error:
+            try:
+                append_line(self.archive, late, durable=True, own=True)
+            except OSError:
+                raise OSError(f"{error}: {len(late)} bytes written while rotating lost") from error
+            raise OSError(
+                f"{error}: lines written while rotating retained in {self.archive}"
+            ) from error
+
     def rotate(self, cursor: int, gen: int) -> bool:
         self.recover(gen)
         data = self.read()
@@ -231,30 +248,30 @@ class Events:
         os.replace(self.path, self.archive)
         fresh = None
         try:
-            sync_directory(os.path.dirname(self.path))
-            self.ensure()
-            time.sleep(SETTLE)
-            tail = _read(self.archive).split(b"\n", cursor)[-1]
-            if tail and not tail.endswith(b"\n"):
-                tail += b"\n"
-            fresh = _opened(self.path)
-            save(self.candidate, tail + _drain(fresh), own=True, durable=True)
-            rotation = replace(
-                rotation,
-                candidate=_identity(self.candidate),
-                prefix_size=len(tail),
-                prefix_hash=hashlib.sha256(tail).hexdigest(),
-            )
-            self._save_intent(rotation)
-            os.replace(self.candidate, self.path)
-            sync_directory(os.path.dirname(self.path))
-            # lines the replaced fresh file took while the candidate was saved and published
-            if late := _drain(fresh):
-                append_line(self.path, late, durable=True, own=True)
-        except OSError as error:
-            raise OSError(
-                f"{error}: unread lines after {cursor} retained in {self.archive}"
-            ) from error
+            try:
+                sync_directory(os.path.dirname(self.path))
+                self.ensure()
+                time.sleep(SETTLE)
+                tail = _read(self.archive).split(b"\n", cursor)[-1]
+                if tail and not tail.endswith(b"\n"):
+                    tail += b"\n"
+                fresh = _opened(self.path)
+                save(self.candidate, tail + _drain(fresh), own=True, durable=True)
+                rotation = replace(
+                    rotation,
+                    candidate=_identity(self.candidate),
+                    prefix_size=len(tail),
+                    prefix_hash=hashlib.sha256(tail).hexdigest(),
+                )
+                self._save_intent(rotation)
+                os.replace(self.candidate, self.path)
+                sync_directory(os.path.dirname(self.path))
+            except OSError as error:
+                raise OSError(
+                    f"{error}: unread lines after {cursor} retained in {self.archive}"
+                ) from error
+            time.sleep(SETTLE)  # a writer that opened the fresh file before the publish
+            self._keep(_drain(fresh))
         finally:
             if fresh is not None:
                 os.close(fresh)
