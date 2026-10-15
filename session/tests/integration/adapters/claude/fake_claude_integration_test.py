@@ -321,6 +321,11 @@ class Steps(Case):
             [("user", "hello"), ("assistant", "Hi."), ("user", "more"), ("assistant", "Again.")],
         )
 
+    def test_an_exit_step_exits_at_once_with_exit(self):
+        self.scene(steps=["Hi.", {"kind": "exit"}, "Never."], exit=4)
+        res = self.run_fake(*SESSION, "--settings", self.settings("Stop"), "--", "hello")
+        self.assertEqual((res.returncode, res.stdout, self.fired()), (4, "Hi.\n", []), res.stderr)
+
     def test_eof_at_a_dialog_exits_with_exit(self):
         self.scene(steps=[{"kind": "dialog", "text": TRUST}, "Hi."], exit=4)
         res = self.run_fake(*SESSION, "--settings", self.settings("Stop"), "--", "hello")

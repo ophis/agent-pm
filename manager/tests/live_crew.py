@@ -125,12 +125,13 @@ class LiveCrew(Case):
         """`name`'s fake claude scenario, as env; its starts log to self.log(name)."""
         path = os.path.join(self.root, f"{name}.claude.json")
         steps = [f"Hi from {name}."] if steps is None else steps
+        scenario = {"steps": steps, "turns": list(turns), "log": self.log(name)}
         with open(path, "w", encoding="utf-8") as f:
-            json.dump({"steps": steps, "turns": list(turns), "log": self.log(name)}, f)
+            json.dump({**scenario, "commands": self.log(name, "commands")}, f)
         return {fake_claude.ENV: path}
 
-    def log(self, name: str) -> str:
-        return os.path.join(self.root, f"{name}.claude.jsonl")
+    def log(self, name: str, kind: str = "claude") -> str:
+        return os.path.join(self.root, f"{name}.{kind}.jsonl")
 
     def launch(
         self, name: str, argv, *, steps=None, turns=(), note: str | None = None, **kw

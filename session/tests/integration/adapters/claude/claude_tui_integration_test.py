@@ -2,7 +2,8 @@
 tui_integration_test sets it up: the real ClaudeAdapter runs
 session/tests/integration/adapters/claude/fake_claude.py (on PATH as `claude`) interactively, its
 hooks from --settings. Turns, Blocked (a hook, the trust dialog), idle timeouts, the usage-limit
-screen, deaths, resume, attach from another process, show (beside a detached session) and retire.
+screen, deaths, resume, attach from another process, show (beside a detached session), retire and
+the launch's /color (tests that send wait for it: two senders' pastes could interleave).
 CLAUDE_CONFIG_DIR is a temp dir; the iTerm2 path fails the test.
 """
 
@@ -88,6 +89,7 @@ class Live(tui_live.Live):
         super().setUp()
         self.scenario = os.path.join(self.dir, "claude.json")
         self.log = os.path.join(self.dir, "claude.log")
+        self.command_log = os.path.join(self.dir, "commands.jsonl")
         patch = mock.patch.dict(
             os.environ,
             {"CLAUDE_CONFIG_DIR": os.path.join(self.dir, "config"), fake_claude.ENV: self.scenario},
@@ -116,7 +118,7 @@ class Live(tui_live.Live):
         self.events.
         """
         with open(self.scenario, "w", encoding="utf-8") as f:
-            json.dump({"log": self.log, **scenario}, f)
+            json.dump({"log": self.log, "commands": self.command_log, **scenario}, f)
         handle = self.session_cls.start(
             Spec(
                 workdir=self.workdir,
@@ -152,6 +154,13 @@ class Live(tui_live.Live):
         with open(self.log, encoding="utf-8") as f:
             return [json.loads(line) for line in f]
 
+    def colored(self) -> list[dict]:
+        """The local commands the fake read, once it read one."""
+        return live_tmux.wait(
+            lambda: [json.loads(line) for line in live_tmux.events(self.command_log)],
+            what="the launch's /color",
+        )
+
     def users(self, transcript: str) -> list[str]:
         with open(transcript, encoding="utf-8") as f:
             return [r["message"]["content"] for r in map(json.loads, f) if r["type"] == "user"]
@@ -185,13 +194,14 @@ class TurnsTest(Live):
         hook = tui._Store("w1", host=self.session_cls.host()).hook_argv()
         self.assertEqual(
             {label: entries[0]["hooks"][0]["command"] for label, entries in hooks.items()},
-            {label: shlex.join((*hook, label)) for label in ClaudeTui.hooks},
+            {label: shlex.join((*hook, label)) for label in (*ClaudeTui.hooks, "SessionStart")},
         )
         self.lines("w1 done")
         self.assertEqual(
             (self.server.option("w1", "@state"), handle.reply), ("done", "Hi from w1.")
         )
 
+        self.colored()
         handle.send("more")
         self.assertEqual(
             [stream.next(idle=False) for _ in range(2)], [Activity(""), TurnEnd("Second.", 2)]
@@ -238,6 +248,19 @@ class RepliesTest(Live):
         again = self.start("w1", "again", scenario={"steps": ["Two."]}, sid=SID, resume=True)
         events = self.until_turn_end(self.stream(again, replies=True))
         self.assertEqual(delivered(events), ["Two."])
+
+    def test_prompted_launch_colors_without_extra_turn(self):
+        handle = self.start("w1", scenario={"steps": ["Hi."]})
+        stream = self.stream(handle, replies=True)
+        events = self.until_turn_end(stream)
+        self.assertEqual((delivered(events), events[-1]), (["Hi."], TurnEnd("Hi.", 0)))
+        (call,) = self.calls()
+        self.assertEqual(
+            [(c["pid"], c["line"], c["dialog"]) for c in self.colored()],
+            [(call["pid"], "/color", False)],
+        )
+        stream.quiet(1.0)
+        self.assertEqual(self.users(handle.info().transcript), ["hello"])
 
 
 class BlockedTest(Live):
@@ -291,6 +314,7 @@ class LimitTest(Live):
         stream.quiet(1.0)
         self.lines("w1 done")
         self.assertEqual((handle.state(), self.server.option("w1", "@state")), ("live", "done"))
+        self.colored()
         handle.send("go on")
         self.assertEqual([stream.next() for _ in range(2)], [Activity(""), TurnEnd("Back.", 0)])
         self.lines("w1 done", "w1 done")
@@ -366,6 +390,7 @@ class AttachTest(Live):
         handle = self.start("w1", scenario={"steps": ["One."], "turns": [["Two."]]}, sid=SID)
         stream = self.stream(handle)
         self.assertEqual([stream.next() for _ in range(2)], [Activity(""), TurnEnd("One.", 0)])
+        self.colored()
         res = subprocess.run(
             [*PY, "-c", ATTACH, json.dumps(TABLE), "w1", "more"],
             env=self.server.child_env(),

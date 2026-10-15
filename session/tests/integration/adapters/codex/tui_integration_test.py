@@ -585,6 +585,18 @@ class TuiLaunchIntegrationTest(Live):
         self.assertEqual(stream.until(Exited), [Exited(-signal.SIGHUP)])
         self.assertEqual(self.session_cls.list("w1"), [])
 
+    def test_no_opening_input(self):
+        handle = self.start()
+        stream = Stream(self, handle)
+        self.assertEqual(stream.until(TurnEnd)[-1], TurnEnd("first"))
+        live_tmux.wait(lambda: len(self.hooks()) == 3, WAIT, what="the turn's hook results")
+        time.sleep(2)  # past a Claude launch's /color, 1 s after its SessionStart
+        stream.quiet()
+        self.assertEqual(
+            [h["hook"] for h in self.hooks()], ["SessionStart", "UserPromptSubmit", "Stop"]
+        )
+        self.assertNotIn("/color", handle.screen())
+
     def test_workspace_write_flags_and_saved_policy_through_the_session(self):
         self.spec = dataclasses.replace(
             self.spec,

@@ -3,7 +3,8 @@ tui_integration_test, the session config's ClaudeAdapter running
 session/tests/integration/adapters/claude/fake_claude.py interactively (a Stop hook step: a turn end
 with no prompt before it). The tui policy end to end
 (FR-21, FR-23, FR-24): the nudge, the give-up, pending turn ends, a mark's reset, the idle give-up
-on a clock ahead (the session's clock only), the fix send; the session left open. Main's
+on a clock ahead (the session's clock only), the fix send; the session left open; the launch's
+/color held while the trust dialog shows, sent once it is answered. Main's
 tests/integration/core/drive_tui_integration_test.py, its tui run.
 """
 
@@ -26,6 +27,7 @@ from delegate.tests.integration.cli import DONE, SID, UNSAVED, UNSAVED_ERROR
 from delegate.tests.replies import block, mark, prompt
 from delegate.tests.runner import executed
 from delegate.tests.unit.runs import GAVE_UP
+from session.tests import live_tmux
 from session.tests import tui_support as tui_live
 from session.tests.integration.adapters.claude import fake_claude
 
@@ -33,6 +35,8 @@ NAME = f"claude-{SID[:8]}"
 LEFT_OPEN = f"session {NAME} left open: tmux attach -t '={NAME}'\n"
 WAIT = 60  # seconds: a run
 START = mark("start", "echoing")
+TRUST = "Quick safety check: Is this a project you created or one you trust? 1. Yes, I trust this folder 2. No, exit"
+HELD = 2  # seconds the trust dialog stays: past /color's due, 1 s after SessionStart
 
 
 def stop(text: str, pending: int = 0) -> dict:
@@ -207,6 +211,39 @@ class TurnEnds(TuiRun):
         result = self.go(steps=[START], turns=[[*working, stop(half), *working[1:], block(DONE)]])
         self.assertEqual((result.outcome.status, self.users()), ("done", [NUDGE]), self.err)
         self.assertIn(Progress("round", "half way"), self.seen)
+
+
+class Trust(TuiRun):
+    def answer_trust(self) -> None:
+        """Enter on the trust dialog HELD s after it shows."""
+
+        def shown() -> bool:
+            screen = self.server.tmux("capture-pane", "-p", "-J", "-t", f"={NAME}:").stdout
+            return "Quick safety check" in screen
+
+        live_tmux.wait(shown, WAIT, what="the trust dialog")
+        time.sleep(HELD)
+        self.server.tmux("send-keys", "-t", f"={NAME}:", "Enter")
+
+    def test_color_waits_for_trust_dialog(self):
+        commands = os.path.join(self.dir, "commands.jsonl")
+        answer = threading.Thread(target=self.answer_trust, daemon=True)
+        answer.start()
+        # the fake leaves its dialog on the screen; blank lines scroll it off, as Claude clears it
+        steps = [
+            {"kind": "dialog", "text": TRUST},
+            "\n" * 200,
+            {"kind": "sleep", "seconds": HELD},
+            START,
+        ]
+        result = self.go(steps=steps, turns=[[block(DONE)]], commands=commands)
+        answer.join(WAIT)
+        self.assertEqual((result.returncode, result.outcome.status), (0, "done"), self.err)
+        self.assertEqual(self.users(), [NUDGE])
+        self.assertEqual(
+            [(c["line"], c["dialog"]) for c in map(json.loads, live_tmux.events(commands))],
+            [("/color", False)],
+        )
 
 
 class Idle(TuiRun):

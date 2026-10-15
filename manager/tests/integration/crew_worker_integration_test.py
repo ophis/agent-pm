@@ -1,8 +1,9 @@
 """Workers through `agent-pm-crew run -- agent-pm-session start` (FR-17, FR-20) on the real
 commands (manager/tests/live_crew.py): the worker's Record and entry, a gone worker's crew resume,
 a live one's no-op, main's crew_integration_test.py dialog waits (C:429, C:528) on this entry,
-main's test_client_flag_starts_its_worker_and_a_restart_waits_for_the_old_one (FR-36), and one
-pane per live worker however often crew attach shows it.
+main's test_client_flag_starts_its_worker_and_a_restart_waits_for_the_old_one (FR-36), one
+pane per live worker however often crew attach shows it, and a resume's /color changing neither its
+state nor the events file.
 """
 
 import glob
@@ -10,10 +11,12 @@ import json
 import os
 import shlex
 import sys
+import time
 
 from agent_pm.manager import State
 
 from manager.tests.live_crew import MANAGER, LiveCrew, has_pair, logged
+from session.tests import live_tmux
 from session.tests.integration.adapters.claude import fake_claude
 from session.tests.integration.adapters.codex import fake_tui
 
@@ -89,6 +92,32 @@ class WorkerTest(LiveCrew):
         self.assertTrue(self.live("w1"))
         self.assertTrue(has_pair(logged(self.log("w1"))[-1]["argv"], "--resume", record.sid))
         self.assertEqual(self.roster()["w1"].state, State.LIVE)
+
+
+class ColorTest(LiveCrew):
+    def state(self, name: str) -> str:
+        (status,) = map(json.loads, self.ok(self.crew("status", name)).stdout.splitlines())
+        return status["state"]
+
+    def test_resume_color_keeps_state_and_events(self):
+        self.record(self.worker("w1"))
+        self.wait_event("w1", "done")
+        self.kill("w1")
+        self.ok(self.crew("attach"))
+        before = live_tmux.events(self.events)
+        self.record(self.crew("resume", "w1", **self.scene("w1")))
+        state = self.state("w1")
+        pid = logged(self.log("w1"))[-1]["pid"]
+        self.until(
+            lambda: (
+                [c["line"] for c in logged(self.log("w1", "commands")) if c["pid"] == pid]
+                == ["/color"]
+            ),
+            "the resume's /color",
+        )
+        time.sleep(1)
+        self.assertEqual((state, self.state("w1")), ("working", "working"))
+        self.assertEqual(live_tmux.events(self.events), before)
 
 
 class PaneTest(LiveCrew):

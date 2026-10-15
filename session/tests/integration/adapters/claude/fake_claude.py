@@ -15,7 +15,8 @@ with error "rate_limit". {"kind": "write", "path": P, "text": T} writes T to P (
 "argv": A, "path": P} runs A in the cwd and writes its {"returncode", "stdout", "stderr"} to P
 (relative to cwd; returncode null when A could not start or ran over 60 s).
 Interactive {"kind": "limit", "text": S} prints S, keeps it as a rate_limit API error and ends the
-turn with StopFailure; {"kind": "dialog", "text": S} prints S and reads another line. Other steps: {"kind": "hook", "event": E, ...}; {"kind": "sleep", "seconds": X}.
+turn with StopFailure; {"kind": "dialog", "text": S} prints S and reads another line. Other steps: {"kind": "hook", "event": E, ...}; {"kind": "sleep", "seconds": X};
+{"kind": "exit"} exits at once with `exit`.
 - turns: interactive steps of turn 2 on.
 - background: interactive background_tasks per Stop.
 - resume: print steps run instead of `steps` on --resume.
@@ -92,6 +93,7 @@ TUI = {
     "limit": {"text": _text},
     "dialog": {"text": _text},
     "sleep": {"seconds": lambda v: _number(v) and 0 <= v <= HANG_CAP},
+    "exit": {},
 }
 
 
@@ -348,6 +350,8 @@ class InteractiveSession:
                 )
             elif kind == "sleep":
                 time.sleep(step["seconds"])
+            elif kind == "exit":
+                sys.exit(self.request.scenario["exit"])
             else:
                 print(step["text"], flush=True)
                 if kind == "limit":

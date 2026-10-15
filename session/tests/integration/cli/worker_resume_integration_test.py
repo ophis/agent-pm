@@ -5,7 +5,8 @@ worker's restart replay its saved sid, cwd, flags, env and display without its p
 resumes start it once; a start killed right after its launch resumes by name; bad saved state or a
 saved Host no longer configured starts and closes nothing. A client that ignores SIGHUP and SIGTERM
 and has a child: a restart, and a resume after its session is killed, start the new generation only
-once the old one and its child are gone.
+once the old one and its child are gone. Each Claude launch (start, restart, resume) gets one
+/color, at least 1 s after its SessionStart; send, reply and read add none.
 """
 
 import contextlib
@@ -15,6 +16,7 @@ import shlex
 import signal
 import subprocess
 import sys
+from datetime import datetime
 
 from session.tests import live_tmux
 from session.tests.cli_support import COMMAND, MANAGER, TIMEOUT, CliCase, logged
@@ -280,6 +282,39 @@ class ResumeTest(Base):
                 self.assertEqual(self.calls("w1"), [call])
                 self.assertTrue(running(call["pid"]))
                 self.assertEqual(self.pane("w1"), pane)
+
+
+class ColorTest(Base):
+    def session_start(self, name: str) -> float:
+        """When its launch's one SessionStart record was written, in epoch seconds."""
+        hooks = logged(os.path.join(self.agent_pm, "tui", name, "hooks.jsonl"))
+        (stamp,) = [hook["ts"] for hook in hooks if hook["label"] == "SessionStart"]
+        return datetime.fromisoformat(stamp).timestamp()
+
+    def test_each_launch_gets_one_color(self):
+        self.record(self.start("w1"))
+        starts = [self.session_start("w1")]
+        self.record(self.again("restart", "w1"))
+        starts.append(self.session_start("w1"))
+        self.dead("w1")
+        self.kill_session("w1")
+        self.record(self.again("resume", "w1", inside=None, cwd=self.root))
+        starts.append(self.session_start("w1"))
+        pids = [call["pid"] for call in self.calls("w1")]
+        colored = live_tmux.wait(
+            lambda: len(self.commands("w1")) == 3 and self.commands("w1"), what="3 /color lines"
+        )
+        self.assertEqual(
+            [(c["pid"], c["line"], c["dialog"]) for c in colored],
+            [(pid, "/color", False) for pid in pids],
+        )
+        for command, start in zip(colored, starts, strict=True):
+            self.assertGreaterEqual(command["time"], start + 1.0)
+        self.ok(self.session("send", "w1", "hi"))
+        self.wait_event("w1", "done", 2)
+        self.assertEqual(self.ok(self.session("reply", "w1")).stdout, "Hi from w1.\n")
+        self.ok(self.session("read", "w1"))
+        self.assertEqual(self.commands("w1"), colored)
 
 
 class OldGenerationTest(Base):
