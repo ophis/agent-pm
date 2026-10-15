@@ -111,6 +111,10 @@ class FakeDelegate(Delegate):
         return frozenset()
 
     @classmethod
+    def check_tui(cls, *, display=None, events=None):
+        return None
+
+    @classmethod
     def end(cls, workdir: str) -> None:
         _update(workdir, alive=False, outcome=None)
 
@@ -119,17 +123,18 @@ class FakeDelegate(Delegate):
         _update(workdir, alive=False, outcome=asdict(cls.outcome_result))
 
     def _record(self, state: dict) -> Record:
+        name = state["name"]
         outer = {
             "kind": "role",
+            "name": name,
             "ctl": ["agent-pm-delegate"],
             "resume": ["agent-pm-delegate", "resume", self.workdir],
             **state["outer"],
         }
-        name = state["name"]
         return Record(
             1,
             outer["kind"],
-            name,
+            outer["name"],
             (name,),
             state["sid"],
             self.workdir,
@@ -180,7 +185,7 @@ class FakeDelegate(Delegate):
         with contextlib.suppress(FileNotFoundError):
             os.remove(os.path.join(self.workdir, FILE))
 
-    def resume(self):
+    def resume(self, *, mode=None):
         state = _load(self.workdir)
         if not (state["alive"] or state["outcome"]):
             state = _update(self.workdir, alive=True, starts=state["starts"] + 1)

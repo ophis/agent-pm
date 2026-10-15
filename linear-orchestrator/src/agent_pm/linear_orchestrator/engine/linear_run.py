@@ -69,6 +69,13 @@ class LinearRun:
         return cfg.delegates[kind]
 
     @classmethod
+    def check_tui(cls, *, cfg: Config, display: Display, events: str) -> None:
+        """ConfigError unless an attended run of the configured Delegate kind could show at
+        display and write events (Delegate.check_tui).
+        """
+        cls._provider(cfg, cfg.delegate_kind).check_tui(display=display, events=events)
+
+    @classmethod
     def attach(
         cls,
         issue: str,
@@ -105,6 +112,7 @@ class LinearRun:
             self.delegate.detach(
                 outer={
                     "kind": "pipeline",
+                    "name": self.issue,
                     "ctl": ("agent-pm-linear",),
                     "resume": ("agent-pm-linear", "resume", self.issue),
                 }

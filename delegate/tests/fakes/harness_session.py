@@ -182,6 +182,11 @@ class HarnessSession(SessionClass):
         cls.inspected.append(spec)
         return cls.history
 
+    @classmethod
+    def layout(cls, *, display=None):
+        host = cls.host()
+        return host.layout(display=display) if isinstance(host, Displayable) else None
+
     @property
     def displayable(self):
         return isinstance(self.host(self.host_names[self.name]), Displayable)

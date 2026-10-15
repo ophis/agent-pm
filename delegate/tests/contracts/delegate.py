@@ -15,6 +15,7 @@ from agent_pm.utils import Record, Status
 NO_ROLE = "no-such-role"
 OUTER = {
     "kind": "pipeline",
+    "name": "TASK-1",
     "ctl": ("agent-pm-linear",),
     "resume": ("agent-pm-linear", "resume", "TASK-1"),
 }
@@ -64,9 +65,11 @@ class DelegateContract:
             self.assertEqual(os.path.realpath(path), os.path.realpath(workdir))
         self.assertTrue(record.sessions)
 
-    def test_detach_takes_the_outer_starters_kind_ctl_and_resume(self):
+    def test_detach_takes_the_outer_starters_kind_name_ctl_and_resume(self):
         record, _ = self.detached(OUTER)
-        self.assertEqual((record.kind, record.ctl, record.resume), tuple(OUTER.values()))
+        self.assertEqual(
+            (record.kind, record.name, record.ctl, record.resume), tuple(OUTER.values())
+        )
 
     def test_attach_by_record_or_workdir_views_the_live_run(self):
         record, workdir = self.detached()
@@ -115,6 +118,15 @@ class DelegateContract:
         first = view.resume()
         self.assertEqual(view.resume(), first)
         self.assertEqual((first.sid, first.sessions), (record.sid, record.sessions))
+        self.assertTrue(view.alive())
+
+    def test_resume_in_a_given_mode_starts_them_once_with_the_same_sid(self):
+        record, _ = self.detached()
+        self.end(record)
+        view = self.delegate_cls.attach(record)
+        resumed = view.resume(mode="headless")
+        self.assertEqual(resumed.sid, record.sid)
+        self.assertEqual(view.resume(mode="headless"), resumed)
         self.assertTrue(view.alive())
 
     def test_resume_after_a_valid_outcome_starts_nothing_and_returns_the_record(self):

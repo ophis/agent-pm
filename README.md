@@ -247,7 +247,7 @@ rm -rf ~/.agent-pm/logs/runs.log ~/.agent-pm/logs/router.log ~/.agent-pm/logs/pr
 
 A `tui` run's give-up timeout, its default and where to set it: `delegate/src/agent_pm/delegate/config.toml`'s `idle_timeout` comment. How a started `tui` session with a display is shown (a pane, only its attach command, or a command of yours): the same file's `show` comment.
 
-The old router's `--tui` is gone; the new router gains it in [TASK-332](https://linear.app/ophis-workgroup/issue/TASK-332).
+`agent-pm-linear router --issue ID --tui` (a tick: `--now --tui`) starts or resumes the run attended; its display, events file and exit codes: `agent-pm-linear router --help`. From a manager it runs through `agent-pm-crew run` (`/agent-pm:tmux` › Launch), which gives it the manager's events file in `$AGENT_PM_EVENTS` and records the pipeline Record it prints. `agent-pm-linear close ID` ends the run and its TUI, the issue staying In Progress for Recover. A launchd tick resumes an attended run that gave up headless; `agent-pm-linear resume ID` (what `agent-pm-crew resume` runs) resumes it attended where it was shown.
 
 ## Layout
 

@@ -27,6 +27,7 @@ __all__ = [
 
 class Outer(TypedDict, total=False):
     kind: str
+    name: str
     ctl: Sequence[str]
     resume: Sequence[str]
 

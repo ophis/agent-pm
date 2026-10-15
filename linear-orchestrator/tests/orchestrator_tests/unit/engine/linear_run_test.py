@@ -26,6 +26,16 @@ class OtherDelegate(FakeDelegate):
         raise AssertionError("current default must not attach this run")
 
 
+class CheckedDelegate(FakeDelegate):
+    checks: list = []
+
+    @classmethod
+    def check_tui(cls, *, display=None, events=None):
+        cls.checks.append((display, events))
+        if display == "refused":
+            raise DelegateConfigError("no place for the TUI")
+
+
 class Runs(RunCase):
     def test_constructed_delegate_receives_exact_spec_and_display(self):
         owner, record = self.start(delegate_cls=CapturedDelegate, display="opaque:\nvalue")
@@ -53,6 +63,20 @@ class Runs(RunCase):
         self.assertEqual(record.sessions, ("researcher-TASK-1-1234abcd",))
         self.assertEqual(record.ctl, ("agent-pm-linear",))
         self.assertEqual(record.resume, ("agent-pm-linear", "resume", "TASK-1"))
+
+    def test_check_tui_asks_the_configured_delegate_kind_and_passes_on_its_refusal(self):
+        cfg = replace(
+            self.cfg,
+            delegate_kind="checked",
+            delegates={**self.cfg.delegates, "checked": CheckedDelegate},
+        )
+        CheckedDelegate.checks = []
+        LinearRun.check_tui(cfg=cfg, display="opaque", events="/e")
+        with self.assertRaisesRegex(DelegateConfigError, "no place for the TUI"):
+            LinearRun.check_tui(cfg=cfg, display="refused", events="/e")
+        self.assertEqual(CheckedDelegate.checks, [("opaque", "/e"), ("refused", "/e")])
+        with self.assertRaisesRegex(ConfigError, "no longer configured"):
+            LinearRun.check_tui(cfg=replace(cfg, delegate_kind="gone"), display=None, events="/e")
 
     def test_a_resumed_run_asks_its_delegate_to_resume_the_session(self):
         owner = LinearRun(

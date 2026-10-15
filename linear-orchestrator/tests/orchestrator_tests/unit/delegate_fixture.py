@@ -2,7 +2,8 @@
 alive while api.live holds its harness name `agent-pm-<role>-<ID>`; a constructed run records
 (role, spec, options) in api.constructed (construct_error raises), its detach in api.detached
 (detach_error raises) with runs.jsonl's text then in api.runs_at_detach, and puts its name in
-api.live; its outcome is api.outcomes' for its issue.
+api.live; its outcome is api.outcomes' for its issue; check_tui records its (display, events) in
+api.tui_checks (tui_error raises).
 """
 
 import os
@@ -26,7 +27,7 @@ def provider(api, cfg):
             api.constructed.append((role, spec, options))
             if api.construct_error is not None:
                 raise api.construct_error
-            self.role, self.spec = role, spec
+            self.role, self.spec, self.issue = role, spec, os.path.basename(spec.workdir)
 
         @classmethod
         def attach(cls, record_or_workdir, *, sid=None):
@@ -42,6 +43,7 @@ def provider(api, cfg):
             if not entries:
                 raise ConfigError(f"{view.issue}: no recorded run")
             view.entry = entries[-1]
+            view.role = view.entry.role
             if sid is not None and sid != view.entry.sid:
                 raise ConfigError(f"sid {sid} is not the run's")
             return view
@@ -65,10 +67,16 @@ def provider(api, cfg):
         def trusted_dirs(cls):
             return frozenset()
 
+        @classmethod
+        def check_tui(cls, *, display=None, events=None):
+            api.tui_checks.append((display, events))
+            if api.tui_error is not None:
+                raise api.tui_error
+
         def alive(self):
             if api.live is None:
                 raise SessionError("agent runs unknown")
-            return harness_name(self.entry.role, self.issue) in api.live
+            return harness_name(self.role, self.issue) in api.live
 
         def status(self):
             live = self.alive()
@@ -80,13 +88,13 @@ def provider(api, cfg):
             return api.outcomes.get(self.issue)
 
         def show(self):
-            return api.show(harness_name(self.entry.role, self.issue))
+            return api.show(harness_name(self.role, self.issue))
 
         def close(self):
-            return api.close(harness_name(self.entry.role, self.issue))
+            return api.close(harness_name(self.role, self.issue))
 
         def attach_command(self):
-            return api.attach_command(harness_name(self.entry.role, self.issue))
+            return api.attach_command(harness_name(self.role, self.issue))
 
         def session_info(self):
             client = runs.client_of(runs.parse_log(cfg.runs_log), self.entry.sid)
@@ -129,7 +137,7 @@ def provider(api, cfg):
         def forget(self):
             raise AssertionError("scenario must not forget")
 
-        def resume(self):
+        def resume(self, *, mode=None):
             raise AssertionError("legacy launcher owns this scenario")
 
     return ScenarioDelegate

@@ -1,6 +1,7 @@
 """Explicit subprocess wiring for the fake Linear transport: each entry runs under it. `launch`
 runs router.outer on a claimed or resumed run given by its Spec fields (--name VALUE); `tui ISSUE
-SID ROLE CLIENT DISPLAY INPUT` detaches a recorded run's LinearRun in tui mode at DISPLAY.
+SID ROLE CLIENT DISPLAY INPUT` detaches a recorded run's LinearRun in tui mode at DISPLAY; `promote`
+and `router` run theirs; any other is an agent-pm-linear command (writeback, close, resume, ...).
 """
 
 import argparse
@@ -51,10 +52,10 @@ def tui(argv):
 def main(argv):
     entry, *arguments = argv
     with install(os.environ["FAKE_LINEAR_TRANSPORT"]):
-        if entry == "writeback":
-            return cli.main([entry, *arguments])
         entries = {"launch": launch, "tui": tui, "promote": promote.main, "router": router.main}
-        return entries[entry](arguments)
+        if entry in entries:
+            return entries[entry](arguments)
+        return cli.main([entry, *arguments])
 
 
 if __name__ == "__main__":

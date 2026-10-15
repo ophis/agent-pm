@@ -38,30 +38,6 @@ class RoleCase(LiveCrew):
         self.assertEqual((entry.state, entry.record, entry.sid), (State.LIVE, record, record.sid))
         return record
 
-    def words(self, name: str) -> list[list[str]]:
-        return [
-            line.split(" ")[2:]
-            for line in live_tmux.events(self.events)
-            if line.split(" ")[1] == name
-        ]
-
-    def killed(self, name: str, record: Record) -> None:
-        """Kills tui role run `name`'s sessions after its first turn; attach then says gone."""
-        harness, tui = record.sessions
-        self.wait_event(tui, "done")
-        self.kill(harness)
-        self.server.tmux(
-            "kill-session", "-t", f"={tui}"
-        )  # the harness, stopping, may close it first
-        self.until(
-            lambda: self.gone(tui) and ["outcome", "error"] in self.words(harness),
-            f"{tui} gone, the harness's outcome",
-        )
-        out = self.ok(self.crew("attach")).stdout.splitlines()
-        self.assertIn(f"resume: agent-pm-crew resume --manager mgr {name}", out)
-        self.assertEqual(self.roster()[name].state, State.GONE)
-        self.assertTrue(self.gone(harness, tui))
-
 
 class RoleTest(RoleCase):
     def test_detach_events_default(self):

@@ -20,8 +20,8 @@ class FakeApi:
     """`live` None: the sessions unknown; `statuses` (per sid, default resumable yes), `usages`
     (per client, default LOW) and `shown`: a value or an exception to raise; `records`: the
     recorded sessions per sid, inspect's NoRecordedSession without one. host() is itself. `order`
-    logs the close, show and detach calls; `constructed`, `detached` and their errors:
-    delegate_fixture's.
+    logs the close, show and detach calls; `constructed`, `detached`, `tui_checks` and their
+    errors: delegate_fixture's.
     """
 
     def __init__(self, order=None):
@@ -29,7 +29,8 @@ class FakeApi:
         self.live, self.errors, self.shown, self.info = [], {}, None, []
         self.statuses, self.records, self.usages = {}, {}, {}
         self.usage_calls, self.constructed, self.detached, self.runs_at_detach = [], [], [], []
-        self.construct_error = self.detach_error = None
+        self.construct_error = self.detach_error = self.tui_error = None
+        self.tui_checks = []
         self.outcomes = {}
 
     def host(self, name=None):

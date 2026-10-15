@@ -33,6 +33,7 @@ ABSTRACT = {
     "roles",
     "resolve",
     "trusted_dirs",
+    "check_tui",
     "detach",
     "run",
     "alive",
@@ -45,7 +46,7 @@ ABSTRACT = {
     "session_info",
     "resume",
 }
-CLASS_METHODS = {"attach", "usage", "roles", "resolve", "trusted_dirs"}
+CLASS_METHODS = {"attach", "usage", "roles", "resolve", "trusted_dirs", "check_tui"}
 
 
 class Exports(Case):

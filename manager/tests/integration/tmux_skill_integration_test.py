@@ -9,9 +9,6 @@ import subprocess
 from manager.tests.case import Case, child_env
 from manager.tests.skills.tmux import BIN, body, examples, flags, subcommand
 
-# The router gains --tui with its pipeline Record (TASK-332); drop this entry then.
-AHEAD = {("agent-pm-linear", "router", "--tui")}
-
 
 class Examples(Case):
     def help(self, command: str, sub: str | None) -> str | None:
@@ -39,8 +36,7 @@ class Examples(Case):
             found.extend(
                 (*key, flag)
                 for flag in flags(command)
-                if (*key, flag) not in AHEAD
-                and not re.search(rf"(?<![\w-]){re.escape(flag)}(?![\w-])", helps[key])
+                if not re.search(rf"(?<![\w-]){re.escape(flag)}(?![\w-])", helps[key])
             )
         return found
 

@@ -20,7 +20,7 @@ from agent_pm.linear_orchestrator.engine import gate as quota
 from agent_pm.linear_orchestrator.engine.types import LinearError, Spec, Unavailable
 from agent_pm.session import ConfigError, SessionError, SessionStatus, Window
 from agent_pm.session import Usage as SessionUsage
-from agent_pm.utils import SHORT
+from agent_pm.utils import SHORT, Record
 from orchestrator_tests.process_fixtures import TimeoutExpired
 from orchestrator_tests.router_fixtures import (
     AGENT,
@@ -965,6 +965,224 @@ class RouterEntry(OuterBase):
         self.assertEqual((self.fake.queries, self.api.order, self.api.detached), ([], [], []))
 
 
+class AttendedEntry(OuterBase):
+    """router.main --tui end to end through its own outer: the up-front display and events check
+    (main's AttendedEntry and run_test's tui cases), the attended launch and its Record (FR-28).
+    """
+
+    DISPLAY = "mgr/below"
+
+    def setUp(self):
+        super().setUp()
+        self.todo = issue(ID, "Todo", "engineer")
+        self.todo["project"] = {"id": PROJECT, "name": "Agent PM"}
+        self.fake = ClaimLinear(self.todo, node(comments=[USER_NOTE]))
+        self.events = os.path.join(self.tmp, "events")
+
+    def entry(self, *argv, live=(), env=None):
+        outer = {"run": self.run_, "keychain": self.keychain}
+        return self.tick(self.fake, *argv, live=live, again=True, outer=outer, env=env)
+
+    def launched(self):
+        """The attended run's Delegate role, Spec and options, after its workdir."""
+        role, spec, options = self.api.detached[-1]
+        self.assertEqual((role, spec.workdir), ("engineer", self.rd))
+        return spec, options
+
+    def record(self):
+        lines = self.out.splitlines()
+        self.assertEqual(len(lines), 1, self.out)
+        return Record.parse(lines[0])
+
+    def test_tui_takes_display_and_events_and_they_need_it(self):
+        base = {"brake": None, "dry": False, "now": False, "tui": True, "issue": None}
+        for argv, want in (
+            (["--issue", ID, "--tui"], {**base, "issue": ID, "display": None, "events": None}),
+            (["--now", "--tui"], {**base, "now": True, "display": None, "events": None}),
+            (
+                ["--tui", "--issue", ID, "--display", "a/right", "--events", "e"],
+                {**base, "issue": ID, "display": "a/right", "events": "e"},
+            ),
+            (["--issue", ID, "--display", "a"], None),
+            (["--issue", ID, "--events", "e"], None),
+            (["--tui", "--display", "a", "--display", "b"], None),
+            (["--tui", "--events"], None),
+            (["--tui", "--display", "--events", "e"], None),
+            (["--brake", "pm", "--tui"], None),
+        ):
+            with self.subTest(argv=argv):
+                self.assertEqual(router.options(argv), want)
+
+    def test_events_are_its_option_else_agent_pm_events_made_absolute(self):
+        for argv, env, want in (
+            (("--events", "given"), {router.EVENTS_ENV: "/from/env"}, "given"),
+            ((), {router.EVENTS_ENV: "from-env"}, "from-env"),
+        ):
+            with self.subTest(argv=argv):
+                self.lines, self.todo["state"], self.api.tui_checks = [], "Todo", []
+                with contextlib.chdir(self.tmp):
+                    rc = self.entry("--issue", ID, "--tui", *argv, env=env)
+                self.assertEqual(rc, 0, self.err)
+                path = os.path.join(os.path.realpath(self.tmp), want)
+                self.assertEqual(self.api.tui_checks, [(None, path)])
+                self.assertEqual(self.launched()[0].events, path)
+
+    def test_without_events_or_agent_pm_events_it_exits_2_before_any_linear_call(self):
+        for argv in (("--issue", ID, "--tui"), ("--now", "--tui"), ("--dry-run", "--tui")):
+            with self.subTest(argv=argv):
+                self.assertEqual(self.entry(*argv), 2)
+                self.assertEqual(
+                    self.err, f"router.py: --tui needs --events FILE or ${router.EVENTS_ENV}\n"
+                )
+                self.assertEqual((self.fake.queries, self.api.tui_checks), ([], []))
+        self.assertEqual((self.api.constructed, self.out, self.state), ([], "", self.before()))
+
+    def test_a_display_or_events_the_delegate_refuses_exits_2_before_any_linear_call(self):
+        for error in (
+            "no pane to show the TUI beside (not in tmux): run from tmux or iTerm2, or pass split_from",
+            "display 'x/sideways': not <opener>[/<split>[/<split_from>]]",
+            "no tmux session gone",
+            f"events file {self.events}: Permission denied",
+        ):
+            self.api.tui_error = DelegateConfigError(error)
+            for argv in (("--issue", ID), ("--now",), ("--dry-run", "--issue", ID)):
+                with self.subTest(error=error, argv=argv):
+                    self.api.tui_checks = []
+                    rc = self.entry(*argv, "--tui", "--display", "x", "--events", self.events)
+                    self.assertEqual((rc, self.err), (2, f"router.py: {error}\n"))
+                    self.assertEqual(self.api.tui_checks, [("x", self.events)])
+                    self.assertEqual(self.fake.queries, [])
+        self.assertEqual((self.api.constructed, self.api.order), ([], []))
+        self.assertEqual((self.out, self.state, self.todo["state"]), ("", self.before(), "Todo"))
+        self.assertFalse(os.path.exists(self.events))
+
+    def test_a_dry_run_checks_its_display_and_events_and_creates_no_events_file(self):
+        rc = self.entry(
+            "--dry-run", "--issue", ID, "--tui", "--display", "x", "--events", self.events
+        )
+        self.assertEqual(rc, 0, self.err)
+        self.assertEqual(self.api.tui_checks, [("x", self.events)])
+        self.assertIn("pick TASK-7 queue=1", self.said())
+        self.assertEqual((self.api.constructed, self.out, self.fake.mutations), ([], "", []))
+        self.assertFalse(os.path.exists(self.events))
+
+    def test_claims_then_starts_the_run_attended_and_prints_its_pipeline_record(self):
+        for argv in (("--issue", ID), ("--now",)):
+            with self.subTest(argv=argv):
+                self.lines, self.todo["state"], self.fake.mutations = [], "Todo", []
+                rc = self.entry(*argv, "--tui", "--display", self.DISPLAY, "--events", self.events)
+                self.assertEqual(rc, 0, self.err)
+                sid = self.last_run()[2]
+                spec, options = self.launched()
+                self.assertEqual(
+                    spec,
+                    replace(self.expected(sid=sid), mode="tui", events=self.events),
+                )
+                self.assertEqual(options["display"], self.DISPLAY)
+                self.assertEqual(
+                    self.fake.mutations,
+                    [(ops.M_STATE, {"i": ID, "s": IDS_BY_KEY["in_progress"]})],
+                )
+                record = self.record()
+                self.assertEqual(
+                    (record.kind, record.name, record.sid, record.workdir),
+                    ("pipeline", ID, sid, self.rd),
+                )
+                self.assertEqual(
+                    (record.ctl, record.resume),
+                    (("agent-pm-linear",), ("agent-pm-linear", "resume", ID)),
+                )
+                harness = f"agent-pm-engineer-{ID}"
+                self.assertEqual(
+                    self.err,
+                    f"router.py: {ID}: attach: attach {harness}\n"
+                    f"router.py: {ID}: {harness}: agent-pm-session attach-command {harness}\n",
+                )
+
+    def test_a_resume_under_tui_is_attended_and_prints_its_record(self):
+        self.todo["state"] = "In Progress"
+        self.resumable(ID, SID, 60, role="engineer")
+        self.assertEqual(self.entry("--issue", ID, "--tui", "--events", self.events), 0, self.err)
+        kind, _, sid, _, _ = self.last_run()
+        spec, options = self.launched()
+        self.assertEqual((kind, spec.mode, spec.resume), ("resume", "tui", True))
+        self.assertEqual((spec.sid, self.record().sid), (self.sid(sid), self.sid(sid)))
+        self.assertEqual((spec.events, options["display"]), (self.events, None))
+
+    def test_without_tui_a_run_is_headless_without_display_events_or_record(self):
+        for argv, env in ((("--issue", ID), None), (("--now",), {router.EVENTS_ENV: self.events})):
+            with self.subTest(argv=argv):
+                self.lines, self.todo["state"] = [], "Todo"
+                self.assertEqual(self.entry(*argv, env=env), 0, self.err)
+                spec, options = self.launched()
+                self.assertEqual(
+                    (spec.mode, spec.events, options["display"]), ("headless", None, None)
+                )
+                self.assertEqual((self.out, self.api.tui_checks), ("", []))
+
+    def test_a_tick_that_starts_or_resumes_nothing_prints_no_record(self):
+        self.todo["state"] = "In Review"
+        self.assertEqual(self.entry("--now", "--tui", "--events", self.events), 0, self.err)
+        self.assertEqual((self.api.detached, self.out), ([], ""))
+
+    def test_a_new_run_takes_the_launchers_session_id(self):
+        launch = "5b1f9a0e-2c3d-4e5f-8a7b-9c0d1e2f3a4b"
+        for argv in (("--issue", ID), ("--now",)):
+            with self.subTest(argv=argv):
+                self.lines, self.todo["state"] = [], "Todo"
+                env = {router.SID_ENV: launch}
+                rc = self.entry(*argv, "--tui", "--events", self.events, env=env)
+                self.assertEqual(rc, 0, self.err)
+                self.assertEqual(self.last_run()[:3], ("start", ID, launch))
+                self.assertEqual((self.launched()[0].sid, self.record().sid), (launch, launch))
+
+    def test_a_resume_of_another_session_than_the_launchers_exits_2_starting_nothing(self):
+        launch = "5b1f9a0e-2c3d-4e5f-8a7b-9c0d1e2f3a4b"
+        self.todo["state"] = "In Progress"
+        self.resumable(ID, SID, 60, role="engineer")
+        for argv in (("--issue", ID), ("--now",)):
+            with self.subTest(argv=argv):
+                env = {router.SID_ENV: launch}
+                rc = self.entry(*argv, "--tui", "--events", self.events, env=env)
+                self.assertEqual(rc, 2)
+                self.assertEqual(
+                    self.err,
+                    f"router.py: ${router.SID_ENV} {launch} differs from {ID}'s run {SID}\n",
+                )
+                self.assertEqual((self.api.detached, self.out), ([], ""))
+                self.assertEqual(self.state, self.before())
+
+    def test_a_dry_run_resuming_another_session_than_the_launchers_exits_0(self):
+        self.todo["state"] = "In Progress"
+        self.resumable(ID, SID, 60, role="engineer")
+        env = {router.SID_ENV: "5b1f9a0e-2c3d-4e5f-8a7b-9c0d1e2f3a4b"}
+        for argv in (("--dry-run", "--issue", ID), ("--dry-run", "--now")):
+            with self.subTest(argv=argv):
+                rc = self.entry(*argv, "--tui", "--events", self.events, env=env)
+                self.assertEqual(rc, 0, self.err)
+                self.assertIn(f"plan {ID} mode=resume sid={SID}", self.said())
+                self.assertNotIn("differs", self.err)
+        self.assertEqual((self.api.detached, self.out), ([], ""))
+
+    def test_a_bad_launcher_session_id_exits_2_before_any_linear_call(self):
+        rc = self.entry("--issue", ID, "--tui", "--events", self.events, env={router.SID_ENV: "x"})
+        self.assertEqual((rc, self.err), (2, f"router.py: bad ${router.SID_ENV}: x\n"))
+        self.assertEqual((self.fake.queries, self.api.tui_checks, self.out), ([], [], ""))
+
+    def test_a_live_run_is_refused_with_its_attach_command(self):
+        for argv, rc in ((("--issue", ID), 1), (("--dry-run", "--issue", ID), 0)):
+            with self.subTest(argv=argv):
+                self.lines = []
+                live = [f"agent-pm-engineer-{ID}"]
+                got = self.entry(*argv, "--tui", "--events", self.events, live=live)
+                self.assertEqual(got, rc)
+                self.assertEqual(
+                    self.err,
+                    f"router.py: {ID} has a live agent run: attach agent-pm-engineer-{ID}\n",
+                )
+        self.assertEqual((self.api.detached, self.out, self.fake.queries), ([], "", []))
+
+
 class RouterArguments(Base):
     def main(self, argv):
         err = io.StringIO()
@@ -991,9 +1209,8 @@ class RouterArguments(Base):
             ["--brake", "researcher", "pm"],
             ["--brake=researcher"],
             ["--issue", "TASK-1", "--brake", "researcher"],
-            ["--tui"],
-            ["--now", "--tui"],
-            ["--issue", "TASK-1", "--tui"],
+            ["--brake", "researcher", "--tui"],
+            ["--tui", "--split", "right"],
             ["--split", "right"],
             ["--split-from", "dev"],
             ["--events", "x"],
@@ -1013,9 +1230,10 @@ class RouterArguments(Base):
         self.assertEqual((self.api.order, self.api.usage_calls), ([], []))
         self.assertEqual(
             router.USAGE,
-            "usage: agent-pm-linear router [--now] [--dry-run] [--issue ID] | --brake ROLE",
+            "usage: agent-pm-linear router [--now] [--dry-run] [--issue ID] "
+            "[--tui [--display D] [--events FILE]] | --brake ROLE",
         )
-        for flag in ("--gate", "--tui", "--split", "--events", "--manager"):
+        for flag in ("--gate", "--split", "--manager"):
             self.assertNotIn(flag, router.USAGE + router.__doc__)
 
     def test_bad_issue_id(self):

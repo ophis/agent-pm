@@ -12,10 +12,16 @@ from agent_pm.delegate import ConfigError, Result, Spec
 from agent_pm.delegate.composer import Composer, RunParams
 from agent_pm.delegate.engine.harness_delegate import HarnessDelegate
 from agent_pm.delegate.engine.state import RunState
+from agent_pm.session import ConfigError as SessionConfigError
 from agent_pm.session import Exited, Liveness, Mode, Reply, SessionError
 from agent_pm.session import Spec as SessionSpec
 
-from delegate.tests.fakes.harness_session import HarnessSession, RecordingHost, harness_launches
+from delegate.tests.fakes.harness_session import (
+    HarnessSession,
+    RecordingHost,
+    ShowingHost,
+    harness_launches,
+)
 from delegate.tests.harness import SID, HarnessCase
 
 
@@ -31,6 +37,21 @@ class CloseTest(HarnessCase):
         ):
             HarnessDelegate.attach(record).close()
         self.assertEqual(str(caught.exception), f"close {name}: tmux: boom")
+
+
+class OuterTest(HarnessCase):
+    def test_the_hosts_record_is_the_one_detach_returns_named_by_the_outer_starter(self):
+        outer = {
+            "kind": "pipeline",
+            "name": "TASK-1",
+            "ctl": ("agent-pm-linear",),
+            "resume": ("agent-pm-linear", "resume", "TASK-1"),
+        }
+        spec = Spec("input", self.work, mode="tui", client="fake", sid=SID, cwd=self.work)
+        record = self.make(spec=spec).detach(outer=outer)
+        stored = RecordingHost.processes["agent", self.metadata()["harness_name"]].record()
+        self.assertEqual((record.name, stored), ("TASK-1", record))
+        self.assertEqual(HarnessDelegate.attach(record).resume(), record)
 
 
 class ForgetTest(HarnessCase):
@@ -117,6 +138,47 @@ class InstructTest(HarnessCase):
         self.assertIn("**Your task**: `echo`", want)
         self.assertEqual(os.listdir(self.work), ["prompt.md"])
         self.assertEqual((HarnessSession.started, RecordingHost.launches), ([], []))
+
+
+class CheckTuiTest(HarnessCase):
+    def setUp(self):
+        super().setUp()
+        HarnessSession.reset(displayable=True)
+        self.settings(harness_host="harness")
+        self.events = os.path.join(self.home, "events")
+
+    def check(self, **kw):
+        HarnessDelegate.check_tui(session_cls=HarnessSession, **kw)
+
+    def test_the_agents_host_places_the_display_and_the_harness_takes_the_events(self):
+        with (
+            mock.patch.object(ShowingHost, "layout", autospec=True) as layout,
+            mock.patch.object(ShowingHost, "events_path", autospec=True) as events_path,
+        ):
+            self.check(display="opener/right", events=self.events)
+        [(host,)] = [call.args for call in layout.call_args_list]
+        self.assertEqual(
+            (host.name, layout.call_args.kwargs), ("agent", {"display": "opener/right"})
+        )
+        [(host, path)] = [call.args for call in events_path.call_args_list]
+        self.assertEqual((host.name, path), ("harness", self.events))
+        self.assertFalse(os.path.exists(self.events))
+
+    def test_a_host_refusing_the_display_or_the_events_is_a_config_error(self):
+        for method, error in (
+            ("layout", SessionError("no pane to show the TUI beside (not in tmux)")),
+            ("layout", SessionConfigError("no tmux session absent")),
+            ("layout", SessionConfigError("display 'a/sideways': not <opener>[/<split>]")),
+            ("events_path", SessionConfigError(f"events file {self.events}: Permission denied")),
+        ):
+            with (
+                self.subTest(method=method, error=error),
+                mock.patch.object(ShowingHost, method, side_effect=error),
+                self.assertRaises(ConfigError) as caught,
+            ):
+                self.check(display="d", events=self.events)
+            self.assertEqual(str(caught.exception), str(error))
+        self.assertEqual(RecordingHost.launches, [])
 
 
 class LaunchTest(HarnessCase):

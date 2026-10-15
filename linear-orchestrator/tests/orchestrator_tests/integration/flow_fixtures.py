@@ -2,9 +2,10 @@
 included), FakeLinear over HTTP through test-only transport with the harness, role and human
 accounts and the task label group, fake_claude as `claude`, a launch (router.outer), promote and
 router as `python3 -P` subprocesses, and readers of Linear, the logs and a run's files. TmuxFlow adds a private tmux
-server for the runs' harness and agent sessions, fake_gh as `gh` with REPO a bare repo, and
-`agent-pm-linear` as entry.py under the fake transport, the harness's write-back callback. BinFlow
-runs router and promote as bin/agent-pm-linear by absolute path, as launchd does (FR-25, FR-29).
+server for the runs' harness and agent sessions (a command run as from MANAGER's pane too),
+fake_gh as `gh` with REPO a bare repo, and `agent-pm-linear` as entry.py under the fake transport,
+the harness's write-back callback. BinFlow runs router and promote as bin/agent-pm-linear by
+absolute path, as launchd does (FR-25, FR-29).
 """
 
 import copy
@@ -171,11 +172,12 @@ class Flow(Case):
         with open(self.claude_scenario, "w") as f:
             json.dump({"steps": steps, **scenario, "log": self.claude_log}, f)
 
-    def script(self, *argv):
+    def script(self, *argv, **env):
+        """argv under python3, env added to self.env()."""
         return subprocess.run(
             [*PY, *argv],
             cwd=self.root,
-            env=self.env(),
+            env={**self.env(), **env},
             stdin=subprocess.DEVNULL,
             capture_output=True,
             text=True,
@@ -185,8 +187,8 @@ class Flow(Case):
     def promote(self, *argv):
         return self.script(*PROMOTE, *argv)
 
-    def router(self, *argv):
-        return self.script(*ROUTER, *argv)
+    def router(self, *argv, **env):
+        return self.script(*ROUTER, *argv, **env)
 
     def logged(self):
         return run_fixtures.logged(self.logs)
@@ -310,7 +312,16 @@ class TmuxFlow(Flow):
     def harness(role, ident, sid):
         return f"{role}-{ident}-{sid[:8]}-drive"
 
+    def in_manager(self):
+        """The environment of a command run in MANAGER's pane, a client attached to MANAGER."""
+        if not self.server.clients:
+            self.server.attach(MANAGER)
+        return self.server.inside(MANAGER)
+
     def live(self, session):
+        # tmux on Linux (CI: 3.4) can leave an exited pane process unreaped, its session listed,
+        # until another child of the server exits: a no-op job is one
+        self.server.tmux("run-shell", "-b", "true")
         return self.server.tmux("has-session", "-t", f"={session}").returncode == 0
 
     def wait_end(self, sid, ident, ends=1, role="engineer", timeout=TIMEOUT):
