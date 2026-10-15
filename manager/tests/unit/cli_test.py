@@ -3,10 +3,15 @@
 import contextlib
 import io
 import os
+import subprocess
 import uuid
+from dataclasses import replace
+from pathlib import Path
 from unittest import mock
 
+from agent_pm.manager import Spec
 from agent_pm.manager.cli import main
+from agent_pm.utils import Status
 
 from manager.tests.cli_case import CliCase
 
@@ -106,6 +111,79 @@ class CliTest(CliCase):
         self.assertEqual(result, 0, stderr)
         self.assertEqual(stdout, "nothing to stop\n")
         self.assertFalse(os.path.exists(self.directory))
+
+
+class NextEventContent(CliCase):
+    def setUp(self):
+        super().setUp()
+        self.calls = []
+        self.answers = {}
+
+    def launched(self, name, *sessions):
+        sid = str(uuid.uuid4())
+        record = replace(self.fake_record(name, sid=sid), sessions=sessions or (name,))
+        self.roster.begin(Spec(name, ("start",)), sid=sid)
+        self.roster.commit(name, record)
+        return record
+
+    def next_event(self, event, *extra):
+        Path(self.roster.events).write_text(f"{event}\n")
+
+        def run(argv, **_):
+            self.calls.append(tuple(argv))
+            code, out, err = self.answers.get(tuple(argv), (1, "", "no such session"))
+            return subprocess.CompletedProcess(argv, code, out, err)
+
+        with mock.patch("subprocess.run", side_effect=run):
+            return self.invoke(
+                "next-event", "--manager", "mgr", "--after", "0", "--gen", "0", *extra
+            )
+
+    def test_without_content_prints_only_the_event_line(self):
+        self.launched("w1")
+        self.assertEqual(self.next_event("12:00:00 w1 done"), (0, "1 12:00:00 w1 done\n", ""))
+        self.assertEqual(self.calls, [])
+
+    def test_done_prints_the_sessions_reply(self):
+        self.launched("w1")
+        self.answers[("agent-pm-session", "reply", "w1")] = (0, "the answer\n", "")
+        self.assertEqual(
+            self.next_event("12:00:00 w1 done", "--content"),
+            (0, "1 12:00:00 w1 done\nthe answer\n", ""),
+        )
+
+    def test_blocked_prints_the_sessions_screen(self):
+        self.launched("w1")
+        self.answers[("agent-pm-session", "read", "w1")] = (0, "Allow this edit?\n 1. Yes", "")
+        self.assertEqual(
+            self.next_event("12:00:00 w1 blocked", "--content"),
+            (0, "1 12:00:00 w1 blocked\nAllow this edit?\n 1. Yes\n", ""),
+        )
+
+    def test_a_harness_event_prints_its_entrys_status(self):
+        record = self.launched("r1", "engineer-ab12", "engineer-ab12-drive")
+        status = Status(record.name, alive=False, state="exited", outcome="done", attach=None)
+        self.answers[(*record.ctl, "status")] = (0, status.to_line() + "\n", "")
+        self.assertEqual(
+            self.next_event("12:00:00 engineer-ab12-drive outcome done", "--content"),
+            (
+                0,
+                f"1 12:00:00 engineer-ab12-drive outcome done\n{status.to_line()}\n",
+                "",
+            ),
+        )
+        self.assertNotIn(("agent-pm-session", "read", "engineer-ab12-drive"), self.calls)
+
+    def test_unreadable_content_still_prints_the_event_and_says_why(self):
+        self.launched("w1")
+        for event in ("12:00:00 gone dead", "12:00:00 gone done", "12:00:00 gone-drive exited 0"):
+            with self.subTest(event=event):
+                result, stdout, _ = self.next_event(event, "--content")
+                self.assertEqual(result, 0)
+                head, content = stdout.split("\n", 1)
+                self.assertEqual(head, f"1 {event}")
+                self.assertTrue(content.startswith("content unavailable: "), content)
+                self.assertTrue(content.endswith("\n") and content.count("\n") == 1, content)
 
 
 class InsideAnAgentSession(CliCase):
