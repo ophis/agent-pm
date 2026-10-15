@@ -9,7 +9,7 @@ from contextlib import redirect_stderr, redirect_stdout
 from dataclasses import replace
 from datetime import timedelta
 
-from agent_pm.delegate import ConfigError, SessionError, Spec
+from agent_pm.delegate import ConfigError, Layout, SessionError, Spec
 from agent_pm.linear_orchestrator.engine import config, log, ops, promote, prune, runs
 from agent_pm.linear_orchestrator.engine.types import LinearError
 from orchestrator_tests.case import Case
@@ -94,6 +94,15 @@ def gql_for(issues, owners=None, page=50, fail=(), refuse=()):
     return gql
 
 
+def tree(path):
+    found = {}
+    for top, _, files in os.walk(path):
+        for name in files:
+            with open(os.path.join(top, name), "rb") as f:
+                found[os.path.relpath(os.path.join(top, name), path)] = f.read()
+    return found
+
+
 def write(path, text):
     with open(path, "w") as f:
         f.write(text)
@@ -134,7 +143,7 @@ class PruneScenario(Case):
         self.work = os.path.join(self.root, "work")
         os.makedirs(self.work)
         self.outside = os.path.join(self.root, "outside")
-        os.makedirs(os.path.join(self.outside, "dotgit"))
+        os.makedirs(self.outside)
         write(os.path.join(self.outside, "keep"), "x")
         self.logs = os.path.join(self.root, "logs")
         self.api = FakeApi()
@@ -160,8 +169,9 @@ class PruneScenario(Case):
         )
         log.use_logs(self.logs)
 
-    def record(self, ident, sid, sessions, role="engineer"):
+    def record(self, ident, sid, sessions, role="engineer", *, agent=True):
         workdir = self.cfg.run_dir(ident)
+        os.makedirs(Layout(workdir).agent if agent else workdir, exist_ok=True)
         PruneDelegate("dummy", Spec("", workdir, sid=sid)).detach()
         PruneDelegate.owners[workdir] = self
         self.addCleanup(PruneDelegate.owners.pop, workdir, None)
@@ -192,8 +202,24 @@ class PruneScenario(Case):
     def closed(self):
         return [c[1] for c in self.api.order if c[0] == "close"]
 
+    def agent(self, ident):
+        return Layout(os.path.join(self.work, ident)).agent
+
+    def run_files(self, ident):
+        run = Layout(os.path.join(self.work, ident)).run
+        os.makedirs(os.path.join(run, "nested"))
+        for name in ("delegate.json", "run.jsonl", "out.md", "writeback.json", "nested/x"):
+            write(os.path.join(run, name), f"{name}\n")
+        return tree(run)
+
+    def fake_clone(self):
+        clone = os.path.join(self.root, "clone")
+        os.makedirs(os.path.join(clone, ".git", "worktrees", "x"))
+        write(os.path.join(clone, ".git", "worktrees", "x", "commondir"), "../..\n")
+        return clone
+
     def mkc(self, ident, *parts):
-        path = os.path.join(self.work, ident, *parts)
+        path = os.path.join(self.agent(ident), *parts)
         os.makedirs(os.path.join(path, ".git", "objects"))
         write(os.path.join(path, ".git", "HEAD"), "ref: refs/heads/main\n")
         pack = os.path.join(path, ".git", "objects", "pack.idx")
@@ -225,22 +251,15 @@ class PruneScenario(Case):
         self.assertEqual({e["src"] for e in logged(self.logs)[before:] + copies} - {"prune"}, set())
         return (code, "\n".join(show(e) for e in logged(self.logs)[before:] + copies))
 
-    def mkg(self, ident, *parts, git="file"):
-        path = os.path.join(self.work, ident, *parts)
+    def mkg(self, ident, *parts):
+        path = os.path.join(self.agent(ident), *parts)
         os.makedirs(path)
-        if git:
-            write(os.path.join(path, ".git"), f"gitdir: {self.root}/clone/.git/worktrees/x\n")
+        write(os.path.join(path, ".git"), f"gitdir: {self.root}/clone/.git/worktrees/x\n")
         return path
 
     def fresh(self):
         shutil.rmtree(self.work)
         os.makedirs(self.work)
-
-    def symlinked_dot_git(self, ident, *parts):
-        path = self.mkc(ident, *parts)
-        shutil.rmtree(os.path.join(path, ".git"))
-        os.symlink(os.path.join(self.outside, "dotgit"), os.path.join(path, ".git"))
-        return path
 
     def tick(self, prune_gql):
         write(

@@ -1,7 +1,7 @@
 """promote.py as a subprocess over FakeLinear: a Handoff issue becomes the next role's issue (its
 client id), related, the source Done; a failed move or a Linear outage is retried without a second
 child; the tick's prune closes a finished issue's TUI session on a private tmux server, deletes its
-checkouts and archives it.
+agent dir and archives it.
 """
 
 import json
@@ -222,8 +222,10 @@ class Prune(Tick, TmuxFlow):
             assignee=engineer,
             project=PROJECT,
         )
-        gone = [os.path.join(self.runs_dir, DONE, *p) for p in (CLONE, ("publish",), ("tmp",))]
-        kept = os.path.join(self.runs_dir, OPEN, *CLONE)
+        workdir = os.path.join(self.runs_dir, DONE)
+        agent = delegate.Layout(workdir).agent
+        gone = [os.path.join(agent, *p) for p in (CLONE, ("publish",), ("tmp",))]
+        kept = os.path.join(delegate.Layout(os.path.join(self.runs_dir, OPEN)).agent, *CLONE)
         for path in (*gone[:2], kept):
             self.git_init(path)
         os.makedirs(gone[2])
@@ -233,7 +235,6 @@ class Prune(Tick, TmuxFlow):
         self.assertEqual(made.returncode, 0, made.stderr)
         self.assertTrue(self.live(TUI))
         sid = "0123abcd-1234-4567-89ab-0123456789ab"
-        workdir = os.path.join(self.runs_dir, DONE)
         PruneSessionDelegate("engineer", delegate.Spec("", workdir, sid=sid, name=TUI)).detach()
         runs.note(
             os.path.join(self.logs, "runs.jsonl"),
@@ -256,21 +257,18 @@ class Prune(Tick, TmuxFlow):
             )
 
         self.tick()
-        self.assertEqual([p for p in gone if os.path.lexists(p)], [], self.events())
+        self.assertFalse(os.path.lexists(agent), self.events())
+        self.assertTrue(os.path.isdir(workdir))
         self.assertFalse(self.live(TUI))
         self.assertTrue(os.path.isdir(os.path.join(kept, ".git")))
         self.assertEqual([self.issue(i)["archived"] for i in (DONE, OPEN)], [True, False])
         self.assertEqual(self.sent("prune.M_ARCHIVE"), [{"i": done_id}])
         self.assert_requests(["prune.M_ARCHIVE"])
-        removed = (("src/acme/widgets", "clone"), ("publish", "clone"), ("tmp", "temp files"))
         self.assertEqual(
             self.events(),
             [
                 {"src": "prune", "kind": "prune-closed", "issue": DONE, "session": sid},
-                *(
-                    {"src": "prune", "kind": "prune-removed", "entry": f"{DONE}/{e}", "what": w}
-                    for e, w in removed
-                ),
+                {"src": "prune", "kind": "prune-removed", "issue": DONE, "what": "agent dir"},
                 {"src": "prune", "kind": "prune-archived", "issue": DONE},
             ],
         )

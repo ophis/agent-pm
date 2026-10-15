@@ -42,7 +42,7 @@ human instructions, relate it, and move the source to Done.
 Needs Python 3.11+ (tomllib). Events go to orchestrator.jsonl (event_log.log, src promote); an idle run writes none; a
 config error or Linear unavailable exits 1, logged once a day (event_log.config_error, event_log.linear_error).
 
-At the end of every tick, prune.py's Pruner removes the worktrees and clones of finished issues (TASK-49), closes
+At the end of every tick, prune.py's Pruner deletes the agent dirs of finished issues (TASK-49), closes
 their left-open TUI sessions and archives finished pm and engineer issues; a prune failure is logged and never breaks
 the Handoff work.
 """

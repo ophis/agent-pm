@@ -6,7 +6,7 @@ import subprocess
 from unittest import mock
 
 from orchestrator_tests.prune_fixtures import PruneScenario as UnitPruneScenario
-from orchestrator_tests.prune_fixtures import gql_for, write
+from orchestrator_tests.prune_fixtures import gql_for, tree, write
 
 from utils.tests.sandbox import clean_env, git, git_run
 
@@ -62,9 +62,10 @@ class RepositoryCleanup(PruneScenario):
     def test_finished_worktrees_go_with_their_records_and_pushed_branches(self):
         with self.git_env():
             clone = self.real_clone()
+            agent = self.agent("TASK-49")
             x, y = (
-                os.path.join(self.work, "TASK-49", "src", "o", "n-TASK-49"),
-                os.path.join(self.work, "TASK-49", "src", "p", "m-TASK-49"),
+                os.path.join(agent, "src", "o", "n-TASK-49"),
+                os.path.join(agent, "src", "p", "m-TASK-49"),
             )
             git("-C", clone, "worktree", "add", "-q", "-b", "TASK-49-x", x, "origin/main")
             git(
@@ -110,6 +111,7 @@ class RepositoryCleanup(PruneScenario):
                     ["status", "--porcelain"],
                 )
             ]
+            records = self.run_files("TASK-49")
             run = Git(real=True)
             code, out = self.prune(
                 gql_for({"TASK-49": ("Done", [(30, "Done")])}), git=run, writable=(self.work,)
@@ -118,17 +120,16 @@ class RepositoryCleanup(PruneScenario):
             self.assertEqual(
                 out.splitlines(),
                 [
-                    "prune-removed entry=TASK-49/src/o/n-TASK-49 what=worktree",
-                    "prune-removed entry=TASK-49/src/p/m-TASK-49 what=worktree",
+                    "prune-removed TASK-49 what=agent dir",
                     f"prune-removed TASK-49 what=branch TASK-49-x in {clone}",
                     f"prune-skip TASK-49 reason=branch TASK-49-y in {clone} kept: not pushed",
                     f"prune-removed TASK-49 what=branch TASK-49-z in {clone}",
                 ],
             )
-            self.assertFalse(os.path.lexists(x) or os.path.lexists(y))
+            self.assertFalse(os.path.lexists(agent))
+            self.assertEqual(tree(os.path.join(self.work, "TASK-49", "run")), records)
             listing = git("-C", clone, "worktree", "list", "--porcelain")
-            self.assertNotIn(x, listing)
-            self.assertNotIn(y, listing)
+            self.assertNotIn(agent, listing)
             self.assertIn(f"worktree {own}", listing)
             self.assertEqual(
                 sorted(git("-C", clone, "branch", "--format=%(refname:short)").split()),
@@ -161,16 +162,14 @@ class RetentionCleanup(PruneScenario):
             ):
                 with self.subTest(name):
                     clone = self.real_clone(at)
-                    wt = os.path.join(self.work, "TASK-49", "src", "o", "n")
+                    wt = os.path.join(self.agent("TASK-49"), "src", "o", "n")
                     git("-C", clone, "worktree", "add", "-q", "-b", "TASK-49-x", wt, "origin/main")
                     run = Git(real=True)
                     code, out = self.prune(
                         gql_for({"TASK-49": ("Done", [(30, "Done")])}), git=run, writable=writable
                     )
                     self.assertEqual((code, run.calls), (0, []))
-                    self.assertEqual(
-                        out.splitlines()[0], "prune-removed entry=TASK-49/src/o/n what=worktree"
-                    )
+                    self.assertEqual(out.splitlines()[0], "prune-removed TASK-49 what=agent dir")
                     self.assertTrue(
                         out.splitlines()[1].startswith(
                             f"prune-skip TASK-49 reason={clone} is under "
@@ -190,7 +189,7 @@ class RetentionCleanup(PruneScenario):
                 "-q",
                 "-b",
                 "TASK-49-x",
-                os.path.join(self.work, "TASK-49", "src", "o", "n"),
+                os.path.join(self.agent("TASK-49"), "src", "o", "n"),
             )
 
         def failing(argv, _timeout):
@@ -200,7 +199,7 @@ class RetentionCleanup(PruneScenario):
             gql_for({"TASK-49": ("Done", [(30, "Done")])}), git=failing, writable=(self.work,)
         )
         self.assertEqual(code, 3)
-        self.assertEqual(out.splitlines()[0], "prune-removed entry=TASK-49/src/o/n what=worktree")
+        self.assertEqual(out.splitlines()[0], "prune-removed TASK-49 what=agent dir")
         self.assertTrue(
             out.splitlines()[1].startswith("prune-error TASK-49 error=GitError: git --git-dir="),
             out,
@@ -210,7 +209,7 @@ class RetentionCleanup(PruneScenario):
     def test_dry_run_plans_the_clone_step_and_runs_no_git(self):
         with self.git_env():
             clone = self.real_clone()
-            wt = os.path.join(self.work, "TASK-49", "src", "o", "n")
+            wt = os.path.join(self.agent("TASK-49"), "src", "o", "n")
             git("-C", clone, "worktree", "add", "-q", "-b", "TASK-49-x", wt)
         code, out = self.prune(
             gql_for({"TASK-49": ("Done", [(30, "Done")])}), dry=True, writable=(self.work,)
@@ -220,7 +219,7 @@ class RetentionCleanup(PruneScenario):
             (
                 0,
                 [
-                    "prune-plan entry=TASK-49/src/o/n what=delete the worktree",
+                    "prune-plan TASK-49 what=delete the agent dir",
                     (
                         f"prune-plan TASK-49 what=prune {clone}'s worktree records and pushed TASK-49-* branches"
                     ),

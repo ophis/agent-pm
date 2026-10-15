@@ -1,19 +1,19 @@
 """Prune, for each issue Done or Canceled at least 24 hours ago (its latest move into either; unknown:
-skipped):
-- closes its recorded run through LinearRun, then has its Delegate forget the run (its files in the
-  State dir go; the workdir stays), before its checkouts go;
-- deletes <work_dir>/work/<ID>/src/<owner>/*, publish and tmp, each a real directory inside its own
-  folder, a src or publish entry only as a clone or worktree (.git a directory or a file),
-  uncommitted work included;
-- in a deleted worktree's local clone, unless it lies in <work_dir>/work or a temp dir: `worktree
-  prune`, then deletes each <ID>-* branch but the default that origin/<branch> or origin/<default>
-  holds, else keeps and reports it (git reads refs only, so code an agent run planted, such as
-  filters or hooks, never runs outside auto mode's review);
+skipped) whose agent dir (Layout(<work_dir>/work/<ID>).agent) exists:
+- closes its recorded run through LinearRun;
+- deletes the agent dir whole, uncommitted work included, only while it is a real directory in
+  place (else skipped, nothing deleted); the run dir and the rest of the workdir stay;
+- in the local clone of each worktree the agent dir held at src/<owner>/<name>, unless that clone
+  lies in <work_dir>/work or a temp dir: `worktree prune`, then deletes each <ID>-* branch but the
+  default that origin/<branch> or origin/<default> holds, else keeps and reports it (git reads refs
+  only, so code an agent run planted, such as filters or hooks, never runs outside auto mode's
+  review);
 - archives every finished issue of the team assigned to the pm or engineer role account.
 
-Run inventory unknown: an error, and no issue is pruned. Each step is logged (event_log.log, src prune);
-a failure is logged and the rest goes on (run returns 3), but Unavailable is raised. Promote prunes
-after each of its ticks; `agent-pm-linear prune` (main, HELP) runs one alone.
+An issue without an agent dir is neither attached, queried nor logged. Run inventory unknown: an
+error, and no issue is pruned. Each step is logged (event_log.log, src prune); a failure is logged
+and the rest goes on (run returns 3), but Unavailable is raised. Promote prunes after each of its
+ticks; `agent-pm-linear prune` (main, HELP) runs one alone.
 """
 
 import contextlib
@@ -26,7 +26,7 @@ import sys
 from datetime import UTC, datetime, timedelta
 
 from agent_pm.delegate import ConfigError as DelegateConfigError
-from agent_pm.delegate import SessionError
+from agent_pm.delegate import Layout, SessionError
 from agent_pm.linear_orchestrator.engine import config, runs
 from agent_pm.linear_orchestrator.engine import log as event_log
 from agent_pm.linear_orchestrator.engine.client import linear_gql
@@ -46,9 +46,6 @@ from agent_pm.utils import run_git as git
 QUARANTINE = timedelta(hours=24)
 IDENT_RE = re.compile(ISSUE_ID)
 ARCHIVE_ROLES = ("pm", "engineer")
-FOLDERS = (CLONES[0],)
-PUBLISH = CLONES[1]
-TMP = "tmp"  # delegate/team/principles.md: an agent run's temp files
 Q_ISSUE = "query($i: String!) { issue(id: $i) { state { id } " + HISTORY + " } }"
 Q_FINISHED = (
     """query($t: ID, $s: [ID!], $a: [ID!], $c: String) { issues(filter: { team: { id: { eq: $t } },
@@ -61,15 +58,11 @@ Q_FINISHED = (
 M_ARCHIVE = "mutation($i: String!) { issueArchive(id: $i) { success } }"
 HELP = """usage: agent-pm-linear prune [--dry-run]
 
-One prune tick: close finished issues' recorded runs, delete their checkouts, archive them.
+One prune tick: close finished issues' recorded runs, delete their agent dirs, archive them.
 --dry-run   Change nothing; print what would happen.
 --help      Print this; exit 0.
 Events go to orchestrator.jsonl (src prune). A config error or Linear unavailable exits 1, logged once
 a day; a failed step exits 1 after the rest; else 0. Bad arguments exit 2."""
-
-
-class Skip(Exception):
-    pass
 
 
 class Pruner:
@@ -85,66 +78,6 @@ class Pruner:
     def error(self, issue=None, **fields):
         self.errors += 1
         self.say("prune-error", issue, **fields)
-
-    def entries(self, ident):
-        found = []
-        for folder in FOLDERS:
-            base = os.path.join(self.work, ident, folder)
-            try:
-                names = [n for n in sorted(os.listdir(base)) if not n.startswith(".")]
-            except OSError:
-                continue
-            for n in names:
-                entry = os.path.join(base, n)
-                if os.path.islink(entry) or not os.path.isdir(entry):
-                    found.append((folder, n))
-                    continue
-                with contextlib.suppress(OSError):
-                    found += [
-                        (folder, n, m)
-                        for m in sorted(os.listdir(entry))
-                        if not m.startswith(".") or os.path.isdir(os.path.join(entry, m))
-                    ]
-        found += [
-            (d,) for d in (PUBLISH, TMP) if os.path.lexists(os.path.join(self.work, ident, d))
-        ]
-        return found
-
-    def prune(self, ident, parts):
-        entry = os.path.join(self.work, ident, *parts)
-        path = os.path.join(os.path.realpath(self.work), ident, *parts)
-        key = "/".join((ident, *parts))
-        try:
-            if os.path.islink(entry) or not os.path.isdir(entry) or os.path.realpath(entry) != path:
-                raise Skip(
-                    f"not a real directory inside {'/'.join((ident, *parts[:-1]))}/, refusing to touch"
-                )
-            if parts == (TMP,):
-                self.delete(key, path, "temp files")
-                return None
-            dotgit = os.path.join(path, ".git")
-            if os.path.islink(dotgit) or not (os.path.isdir(dotgit) or os.path.isfile(dotgit)):
-                raise Skip("not a clone or worktree")
-            common = common_dir(path) if os.path.isfile(dotgit) else None
-            return (
-                common
-                if self.delete(key, path, "worktree" if os.path.isfile(dotgit) else "clone")
-                else None
-            )
-        except Skip as e:
-            self.say("prune-skip", once=True, entry=key, reason=str(e))
-
-    def delete(self, key, path, what):
-        if self.dry:
-            self.say("prune-plan", entry=key, what=f"delete the {what}")
-            return True
-        try:
-            shutil.rmtree(path)
-        except OSError as e:
-            self.error(entry=key, error=f"rmtree: {one_line(e)}")
-            return False
-        self.say("prune-removed", entry=key, what=what)
-        return True
 
     def clean_clone(self, ident, common):
         clone = os.path.dirname(common)
@@ -208,11 +141,6 @@ class Pruner:
         except (GitError, OSError, subprocess.TimeoutExpired) as e:
             self.error(ident, error=one_line(e))
 
-    def rmdir_owners(self, ident, owners):
-        for owner in sorted(owners):
-            with contextlib.suppress(OSError):
-                os.rmdir(os.path.join(self.work, ident, *owner))
-
     def inventory(self):
         """A run whose view cannot load has nothing to close, logged once; inventory unknown: None."""
         found = {}
@@ -221,7 +149,7 @@ class Pruner:
         except (OSError, ValueError):
             return None
         for ident, entry in sorted(latest.items()):
-            if entry.role not in self.roles.values():
+            if entry.role not in self.roles.values() or not os.path.lexists(self.agent(ident)):
                 continue
             try:
                 view = LinearRun.attach(ident, cfg=self.cfg, sid=entry.sid)
@@ -240,9 +168,7 @@ class Pruner:
         if view is None:
             return
         if self.dry:
-            self.say(
-                "prune-plan", ident, session=view.sid, what="close the run and forget its state"
-            )
+            self.say("prune-plan", ident, session=view.sid, what="close the run")
             return
         try:
             view.close()
@@ -256,10 +182,6 @@ class Pruner:
             self.error(ident, session=view.sid, error=one_line(error))
             return
         self.say("prune-closed", ident, session=view.sid)
-        try:
-            view.forget()
-        except (DelegateConfigError, OSError) as error:
-            self.error(ident, session=view.sid, error=one_line(error))
 
     def finished_issues(self, finished):
         ids = [uid for uid, role in self.roles.items() if role in ARCHIVE_ROLES]
@@ -316,12 +238,11 @@ class Pruner:
                 idents = [
                     n
                     for n in sorted(os.listdir(self.work))
-                    if IDENT_RE.fullmatch(n)
-                    and any(os.path.isdir(os.path.join(self.work, n, *p)) for p in self.entries(n))
+                    if IDENT_RE.fullmatch(n) and os.path.lexists(self.agent(n))
                 ]
             except OSError:
                 idents = []
-            for ident in sorted(set(idents) | set(self.views)):
+            for ident in idents:
                 self.prune_issue(ident, finished)
         self.archive(finished)
         return 3 if self.errors else 0
@@ -341,12 +262,45 @@ class Pruner:
             self.say("prune-skip", ident, once=True, reason="finish time unknown")
         elif self.now - since >= QUARANTINE:
             self.close_sessions(ident)
-            entries = self.entries(ident)
-            commons = {c for parts in entries if (c := self.prune(ident, parts))}
-            if not self.dry:
-                self.rmdir_owners(ident, {parts[:-1] for parts in entries if len(parts) == 3})
-            for common in sorted(commons):
-                self.clean_clone(ident, common)
+            self.remove_agent(ident)
+
+    def agent(self, ident):
+        return Layout(os.path.join(self.work, ident)).agent
+
+    def remove_agent(self, ident):
+        agent = self.agent(ident)
+        real = Layout(os.path.join(os.path.realpath(self.work), ident)).agent
+        if os.path.islink(agent) or not os.path.isdir(agent) or os.path.realpath(agent) != real:
+            self.say(
+                "prune-skip",
+                ident,
+                once=True,
+                reason=f"not a real directory: {agent}, refusing to touch",
+            )
+            return
+        commons = {c for wt in self.checkouts(real) if (c := common_dir(wt))}
+        if self.dry:
+            self.say("prune-plan", ident, what="delete the agent dir")
+        else:
+            try:
+                shutil.rmtree(agent)
+            except OSError as e:
+                self.error(ident, error=f"rmtree: {one_line(e)}")
+                return
+            self.say("prune-removed", ident, what="agent dir")
+        for common in sorted(commons):
+            self.clean_clone(ident, common)
+
+    @staticmethod
+    def checkouts(agent):
+        """src/<owner>/<name> under the real agent dir, none reached through a symlink."""
+        src, found = os.path.join(agent, CLONES[0]), []
+        with contextlib.suppress(OSError):
+            for owner in sorted(os.listdir(src)):
+                with contextlib.suppress(OSError):
+                    names = sorted(os.listdir(os.path.join(src, owner)))
+                    found += [os.path.join(src, owner, name) for name in names]
+        return [path for path in found if os.path.realpath(path) == path]
 
 
 def main(argv, *, gql=linear_gql, now=None, config_path=None, pruner=Pruner):
