@@ -4,7 +4,6 @@ child; the tick's prune closes a finished issue's TUI session on a private tmux 
 agent dir and archives it.
 """
 
-import json
 import os
 import unittest
 from datetime import UTC, datetime, timedelta
@@ -25,6 +24,7 @@ from orchestrator_tests.integration.flow_fixtures import (
 )
 
 from delegate.tests.fakes.delegate import FakeDelegate
+from delegate.tests.workdir import checkout_path
 from utils.tests.sandbox import git_run
 
 SOURCE, TITLE = "TASK-12", "Session registries in agent harnesses"
@@ -33,7 +33,7 @@ MUTATIONS = {op for op, text in fake_linear.texts().items() if text.startswith("
 WRITES = ["promote.M_CREATE", "promote.M_RELATE", "linear.M_STATE", "linear.M_COMMENT"]
 DONE, OPEN = "TASK-20", "TASK-21"
 TUI = f"engineer-{DONE}-0123abcd"
-CLONE = ("src", "acme", "widgets")
+CLONE = ("acme", "widgets")
 
 
 class Tick(Flow):
@@ -183,10 +183,8 @@ class PruneSessionDelegate(FakeDelegate):
         return HARNESS_DELEGATE.resolve(role, task, overlays=overlays)
 
     def close(self):
-        with open(os.path.join(delegate.Layout(self.workdir).run, "delegate.json")) as stream:
-            state = json.load(stream)
         Session.configure_from(delegate.read_config())
-        Session.host().attach(state["name"]).close()
+        Session.host().attach(self.status().name).close()
         super().close()
 
 
@@ -223,14 +221,9 @@ class Prune(Tick, TmuxFlow):
             project=PROJECT,
         )
         workdir = os.path.join(self.workdirs, DONE)
-        agent = delegate.Layout(workdir).agent
-        gone = [os.path.join(agent, *p) for p in (CLONE, ("publish",), ("tmp",))]
-        kept = os.path.join(delegate.Layout(os.path.join(self.workdirs, OPEN)).agent, *CLONE)
-        for path in (*gone[:2], kept):
+        kept = checkout_path(os.path.join(self.workdirs, OPEN), *CLONE, OPEN)
+        for path in (checkout_path(workdir, *CLONE, DONE), kept):
             self.git_init(path)
-        os.makedirs(gone[2])
-        with open(os.path.join(gone[2], "x"), "w"):
-            pass
         made = self.server.tmux("new-session", "-d", "-s", TUI, "cat", "-")
         self.assertEqual(made.returncode, 0, made.stderr)
         self.assertTrue(self.live(TUI))
@@ -257,7 +250,7 @@ class Prune(Tick, TmuxFlow):
             )
 
         self.tick()
-        self.assertFalse(os.path.lexists(agent), self.events())
+        self.assertIsNone(PruneSessionDelegate.checkouts(workdir), self.events())
         self.assertTrue(os.path.isdir(workdir))
         self.assertFalse(self.live(TUI))
         self.assertTrue(os.path.isdir(os.path.join(kept, ".git")))

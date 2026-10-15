@@ -41,6 +41,10 @@ class SpecTest(Case):
 
 
 class LayoutTest(Case):
+    def test_layout_stays_inside_delegate(self):
+        self.assertNotIn("Layout", delegate.__all__)
+        self.assertFalse(hasattr(delegate, "Layout"))
+
     def test_checkouts_are_where_core_config_commands_clone(self):
         with files("agent_pm.delegate").joinpath("config.toml").open() as f:
             dirs = set(re.findall(r"--dir \{\{workdir\}\}/([^\s\"]+)", f.read()))

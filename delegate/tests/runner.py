@@ -9,10 +9,11 @@ from contextlib import redirect_stderr
 from dataclasses import replace
 from unittest import mock
 
-from agent_pm.delegate import Layout, Result, RunConfig, Spec
+from agent_pm.delegate import Result, RunConfig, Spec
 from agent_pm.delegate.composer import Composer
 from agent_pm.delegate.engine.plan import plan
 from agent_pm.delegate.engine.runner import execute
+from agent_pm.delegate.engine.types import Layout
 
 from delegate.tests.case import Case
 from delegate.tests.unit.runs import DONE, NAME, turn

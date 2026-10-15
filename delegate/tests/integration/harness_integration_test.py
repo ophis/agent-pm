@@ -17,7 +17,6 @@ from agent_pm.delegate import (
     ConfigError,
     DelegateEvent,
     Finished,
-    Layout,
     Limit,
     Outcome,
     Progress,
@@ -27,6 +26,7 @@ from agent_pm.delegate import (
 from agent_pm.delegate.engine.drivers import InstructionDriver
 from agent_pm.delegate.engine.harness_delegate import HarnessDelegate
 from agent_pm.delegate.engine.state import RunState
+from agent_pm.delegate.engine.types import Layout
 from agent_pm.session import (
     SIGNALS,
     Access,

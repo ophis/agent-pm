@@ -11,8 +11,8 @@ import subprocess
 import tempfile
 import unittest
 
-from agent_pm.delegate import Layout
 from agent_pm.delegate.composer import Composer, RunParams
+from agent_pm.delegate.engine.types import Layout
 
 from delegate.tests.case import REPO as CHECKOUT
 from delegate.tests.case import Case

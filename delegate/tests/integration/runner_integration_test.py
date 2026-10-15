@@ -13,10 +13,10 @@ from datetime import datetime
 from types import SimpleNamespace
 from unittest import mock
 
-from agent_pm.delegate import Begun, ConfigError, Finished, Layout, Limit, Progress, Result
+from agent_pm.delegate import Begun, ConfigError, Finished, Limit, Progress, Result
 from agent_pm.delegate.engine import runner
 from agent_pm.delegate.engine.runner import FIX
-from agent_pm.delegate.engine.types import Stopped
+from agent_pm.delegate.engine.types import Layout, Stopped
 from agent_pm.utils import printable
 
 from delegate.tests.replies import bare, block, running

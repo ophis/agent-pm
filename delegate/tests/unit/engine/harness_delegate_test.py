@@ -12,11 +12,12 @@ import os
 import shutil
 from unittest import mock
 
-from agent_pm.delegate import ConfigError, Finished, Layout, Result, Spec
+from agent_pm.delegate import ConfigError, Finished, Result, Spec
 from agent_pm.delegate.composer import Composer, RunParams
 from agent_pm.delegate.engine import harness_delegate
 from agent_pm.delegate.engine.harness_delegate import HarnessDelegate
 from agent_pm.delegate.engine.state import RunState
+from agent_pm.delegate.engine.types import Layout
 from agent_pm.session import Access, Exited, Liveness, Mode, Reply, SessionError
 from agent_pm.session import ConfigError as SessionConfigError
 from agent_pm.session import Spec as SessionSpec

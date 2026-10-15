@@ -12,7 +12,6 @@ import re
 import sys
 import unittest
 
-from agent_pm.delegate import Layout
 from orchestrator_tests.case import REPO as WORKTREE
 from orchestrator_tests.integration import fake_gh
 from orchestrator_tests.integration.flow_fixtures import (
@@ -24,6 +23,7 @@ from orchestrator_tests.integration.flow_fixtures import (
 )
 
 from delegate.tests.replies import block, mark
+from delegate.tests.workdir import checkout_root
 
 ENGINEER = ACCOUNTS["engineer"]
 ID, TITLE, BRANCH = "TASK-7", "ENG: Session registry", "TASK-7-session-registry"
@@ -92,7 +92,7 @@ class Rework(BinFlow):
                 TOOL,
                 command,
                 "--dir",
-                os.path.join(Layout(os.path.join(self.workdirs, ID)).agent, "src"),
+                checkout_root(os.path.join(self.workdirs, ID)),
                 "--branch",
                 BRANCH,
                 "--name",

@@ -9,17 +9,9 @@ import sys
 from dataclasses import asdict
 from unittest import mock
 
-from agent_pm.delegate import (
-    Begun,
-    ConfigError,
-    DelegateEvent,
-    Finished,
-    Layout,
-    Limit,
-    Progress,
-    Spec,
-)
+from agent_pm.delegate import Begun, ConfigError, DelegateEvent, Finished, Limit, Progress, Spec
 from agent_pm.delegate.engine.harness_delegate import HarnessDelegate
+from agent_pm.delegate.engine.types import Layout
 from agent_pm.session import ConfigError as SessionConfigError
 from agent_pm.session import Exited, LimitHit, Reply
 from agent_pm.utils import Stopped

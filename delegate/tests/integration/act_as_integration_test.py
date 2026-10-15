@@ -3,9 +3,9 @@
 import os
 import subprocess
 
-from agent_pm.delegate import Layout
 from agent_pm.delegate.cli import listing
 from agent_pm.delegate.composer import Composer, RunParams
+from agent_pm.delegate.engine.types import Layout
 
 from delegate.tests.case import REPO, Case
 from delegate.tests.skills.act_as import argv, command

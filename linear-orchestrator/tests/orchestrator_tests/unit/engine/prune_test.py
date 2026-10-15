@@ -26,6 +26,8 @@ from orchestrator_tests.unit import promote_fixtures as tp
 from orchestrator_tests.unit.board_ids import STATES as IDS_BY_KEY
 from orchestrator_tests.unit.run_fixtures import CORE_LOCAL, HARNESS, logged, show
 
+from delegate.tests.workdir import checkout_path
+
 A, B = "engineer-TASK-7-0b6f2c1e", "dummy-tester-TASK-7-7c1d9e2f"
 SID = "0b6f2c1e-6d0a-4c1b-9a51-3f1f6b0e2a7d"
 OTHER_SID = "7c1d9e2f-0a3b-4c5d-8e6f-1a2b3c4d5e6f"
@@ -115,7 +117,7 @@ class RepositoryCleanup(PruneScenario):
         old = os.path.join(self.work, "TASK-49", "src", "o", "repo")
         os.makedirs(os.path.join(old, ".git"))
         self.record("TASK-48", OTHER_SID, [B], agent=False)
-        os.makedirs(os.path.join(self.work, "notes", "agent"))
+        os.makedirs(checkout_path(os.path.join(self.work, "notes"), "o", "repo", "notes"))
         gql = gql_for(dict.fromkeys(("TASK-48", "TASK-49"), ("Done", [(30, "Done")])))
         self.assertEqual(self.prune(gql), (0, ""))
         self.assertNotIn(prune.Q_ISSUE, gql.calls)

@@ -11,13 +11,14 @@ from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest import mock
 
-from agent_pm.delegate import ConfigError, Layout, Outcome, Spec, cli
+from agent_pm.delegate import ConfigError, Outcome, Spec, cli
 from agent_pm.delegate.composer import Composer, RunParams
 from agent_pm.delegate.composer.base import TEAM
 from agent_pm.delegate.composer.prompt import RESUME
 from agent_pm.delegate.engine.harness_delegate import HarnessDelegate
 from agent_pm.delegate.engine.runner import STOP_LIMIT
 from agent_pm.delegate.engine.state import RunState
+from agent_pm.delegate.engine.types import Layout
 from agent_pm.session import NotDisplayable, SessionError
 from agent_pm.utils import Record, Status
 

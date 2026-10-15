@@ -10,8 +10,8 @@ import os
 import unittest
 from unittest import mock
 
-from agent_pm.delegate import Layout
 from agent_pm.delegate.engine.runner import FIX
+from agent_pm.delegate.engine.types import Layout
 
 from delegate.tests.integration.cli import (
     DONE,

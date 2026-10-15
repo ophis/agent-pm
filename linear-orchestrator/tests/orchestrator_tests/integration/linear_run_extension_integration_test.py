@@ -5,7 +5,6 @@ import os
 import subprocess
 from pathlib import Path
 
-from agent_pm.delegate import Layout
 from agent_pm.utils import Record, Status
 from orchestrator_tests.case import PY, Case, child_env
 from orchestrator_tests.config_fixtures import PIPELINE, ConfigFile
@@ -100,8 +99,7 @@ class Extension(ConfigFile, Case):
             "print(view.resume().to_line())\n"
         )
         self.assertEqual(Record.parse(output), record)
-        state = Path(Layout(record.workdir).run) / "delegate.json"
-        self.assertEqual(json.loads(state.read_text(encoding="utf-8"))["starts"], 1)
+        self.assertEqual(fake_delegate.FakeDelegate.starts(record.workdir), 1)
         for transition, starts in (("finish", 1), ("end", 2)):
             output = self.child(
                 "from external_delegate import ExtensionDelegate\n"
@@ -110,7 +108,7 @@ class Extension(ConfigFile, Case):
                 "raise SystemExit(cli.main(['resume', 'TASK-1']))\n"
             )
             self.assertEqual(Record.parse(output), record)
-            self.assertEqual(json.loads(state.read_text(encoding="utf-8"))["starts"], starts)
+            self.assertEqual(fake_delegate.FakeDelegate.starts(record.workdir), starts)
 
     def test_cli_batch_status_and_resume_run_in_another_process(self):
         first, second = self.start("TASK-1"), self.start("TASK-2")

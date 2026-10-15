@@ -10,7 +10,7 @@ import subprocess
 import tempfile
 import unittest
 
-from agent_pm.delegate import Layout
+from agent_pm.delegate.engine.types import Layout
 from agent_pm.session import Host
 from agent_pm.utils import Record, load_class
 

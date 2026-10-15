@@ -6,7 +6,7 @@ harness_starts_agent is False.
 import json
 import os
 
-from agent_pm.delegate import Layout
+from agent_pm.delegate.engine.types import Layout
 from agent_pm.session import (
     Access,
     Displayable,

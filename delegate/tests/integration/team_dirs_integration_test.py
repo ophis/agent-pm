@@ -12,8 +12,8 @@ import os
 import re
 import unittest
 
-from agent_pm.delegate import Layout
 from agent_pm.delegate.composer.prompt import RESUME, RETURN
+from agent_pm.delegate.engine.types import Layout
 
 from delegate.tests.case import REPO
 from delegate.tests.integration.cli import NATIVE, RUN, CodexIntegration, Integration, codex_said

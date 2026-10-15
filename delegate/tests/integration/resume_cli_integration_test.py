@@ -10,8 +10,9 @@ import shutil
 import subprocess
 import uuid
 
-from agent_pm.delegate import Layout, Spec
+from agent_pm.delegate import Spec
 from agent_pm.delegate.engine.harness_delegate import HarnessDelegate
+from agent_pm.delegate.engine.types import Layout
 from agent_pm.utils import Record
 
 from delegate.tests.case import PY, REPO, child_env

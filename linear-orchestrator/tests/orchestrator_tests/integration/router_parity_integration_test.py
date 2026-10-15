@@ -11,7 +11,6 @@ import time
 import unittest
 from datetime import UTC, datetime, timedelta
 
-from agent_pm.delegate import Layout
 from agent_pm.linear_orchestrator.engine.router import BUSY, LIVE
 from orchestrator_tests.integration.flow_fixtures import (
     ACCOUNTS,
@@ -29,6 +28,7 @@ from orchestrator_tests.integration.segments import agent_calls
 from orchestrator_tests.unit.board_ids import TASK_GROUP
 
 from delegate.tests.replies import block, mark, option
+from delegate.tests.workdir import session_cwd
 from session.tests import live_tmux
 
 ENGINEER = ACCOUNTS["engineer"]
@@ -170,8 +170,8 @@ class Recover(Parity):
 
     def transcript(self, sid):
         """The Claude adapter's transcript of sid in ID's agent dir and the files beside it."""
-        agent = Layout(os.path.join(self.workdirs, ID)).agent
-        project = re.sub(r"[^A-Za-z0-9]", "-", os.path.realpath(agent))
+        cwd = session_cwd(os.path.join(self.workdirs, ID))
+        project = re.sub(r"[^A-Za-z0-9]", "-", os.path.realpath(cwd))
         path = os.path.join(self.root, "claude-config", "projects", project, f"{sid}.jsonl")
         self.assertTrue(os.path.isfile(path), path)
         beside = os.walk(os.path.splitext(path)[0])

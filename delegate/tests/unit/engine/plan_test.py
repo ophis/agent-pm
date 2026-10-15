@@ -11,12 +11,13 @@ from contextlib import redirect_stderr
 from dataclasses import replace
 from unittest import mock
 
-from agent_pm.delegate import ConfigError, Layout, Spec
+from agent_pm.delegate import ConfigError, Spec
 from agent_pm.delegate.composer import Composer, RunConfig, RunParams, teams
 from agent_pm.delegate.composer.base import TEAM
 from agent_pm.delegate.composer.prompt import RESUME
 from agent_pm.delegate.engine.drivers import AgentDriver, InstructionDriver
 from agent_pm.delegate.engine.plan import place, plan
+from agent_pm.delegate.engine.types import Layout
 from agent_pm.delegate.event.reply import OUTCOME, PROGRESS
 from agent_pm.session import Access, RunLog
 

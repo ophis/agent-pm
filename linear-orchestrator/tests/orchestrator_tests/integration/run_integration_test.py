@@ -11,7 +11,6 @@ import shlex
 import unittest
 from datetime import UTC, datetime
 
-from agent_pm.delegate import Layout
 from agent_pm.linear_orchestrator.engine import ops
 from orchestrator_tests.integration.flow_fixtures import (
     ACCOUNTS,
@@ -28,6 +27,7 @@ from orchestrator_tests.unit.run_fixtures import ID, SESSION, SID, UUID
 from orchestrator_tests.unit.writeback_fixtures import APPROVE_MAPPED, DOC, PR, PRD
 
 from delegate.tests.replies import block, mark, option
+from delegate.tests.workdir import session_cwd
 
 T = datetime(2026, 10, 11, 10, 0, tzinfo=UTC).timestamp()
 RESETS = "2026-10-11T10:00:00+00:00"  # T in the runs' TZ
@@ -119,7 +119,7 @@ class Run(TmuxFlow):
         for _, _, v, _ in self.wrote(since):
             if v.get("c") == SESSION and "b" in v and v["b"] not in bodies[-1:]:
                 bodies.append(v["b"])
-        cwd = re.escape(shlex.quote(Layout(self.rd).agent))
+        cwd = re.escape(shlex.quote(session_cwd(self.rd)))
         command = (
             rf"\n\n```\ncd {cwd} && agent-pm-session client-resume claude \S+ {cwd} {SID}\n```"
         )

@@ -3,9 +3,10 @@
 import json
 import os
 
-from agent_pm.delegate import Layout, Spec
+from agent_pm.delegate import Spec
 from agent_pm.delegate.engine.harness_delegate import HarnessDelegate
 from agent_pm.delegate.engine.state import RunState
+from agent_pm.delegate.engine.types import Layout
 from agent_pm.session import Exited, Reply
 
 from delegate.tests.case import REPO, Case

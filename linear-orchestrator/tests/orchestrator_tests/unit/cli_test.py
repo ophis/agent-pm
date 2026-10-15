@@ -9,7 +9,6 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest import mock
 
-from agent_pm.delegate import Layout
 from agent_pm.linear_orchestrator import cli
 from agent_pm.linear_orchestrator.engine import runs
 from agent_pm.utils import Record, Status
@@ -154,12 +153,10 @@ class Queries(RunCase):
             result, output, errors = self.call(["resume", "TASK-1"])
             self.assertEqual((result, errors), (0, ""))
             self.assertEqual(Record.parse(output), record)
-            with open(
-                os.path.join(Layout(record.workdir).run, "delegate.json"), encoding="utf-8"
-            ) as file:
-                self.assertEqual(
-                    json.load(file)["starts"], 2 if state in ("interrupted", "live-again") else 1
-                )
+            self.assertEqual(
+                FakeDelegate.starts(record.workdir),
+                2 if state in ("interrupted", "live-again") else 1,
+            )
         self.assertEqual(ReadyDelegate.usage_calls, ["researcher"])
 
     def test_interrupted_batch_probes_a_shared_recorded_key_once(self):

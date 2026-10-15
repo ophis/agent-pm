@@ -12,9 +12,9 @@ import unittest
 from datetime import UTC, datetime
 from unittest import mock
 
-from agent_pm.delegate import Layout
 from agent_pm.delegate.composer.prompt import RESUME
 from agent_pm.delegate.engine.runner import FIX
+from agent_pm.delegate.engine.types import Layout
 from agent_pm.session import Access, Spec
 
 from delegate.tests.case import packaged

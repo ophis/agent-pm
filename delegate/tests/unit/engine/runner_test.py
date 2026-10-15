@@ -7,19 +7,11 @@ from contextlib import redirect_stderr
 from datetime import datetime
 from unittest import mock
 
-from agent_pm.delegate import (
-    Begun,
-    ConfigError,
-    Finished,
-    Layout,
-    Limit,
-    Progress,
-    Result,
-    Spec,
-)
+from agent_pm.delegate import Begun, ConfigError, Finished, Limit, Progress, Result, Spec
 from agent_pm.delegate.composer import Composer
 from agent_pm.delegate.engine.plan import plan
 from agent_pm.delegate.engine.runner import FIX, NUDGE, POLICIES, STOP_LIMIT, execute, stopped
+from agent_pm.delegate.engine.types import Layout
 from agent_pm.delegate.event.reply import marks
 from agent_pm.session import (
     Activity,

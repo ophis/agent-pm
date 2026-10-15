@@ -23,7 +23,8 @@ import sys
 import tempfile
 import unittest
 
-from agent_pm.delegate import DelegateEvent, Layout
+from agent_pm.delegate import DelegateEvent
+from agent_pm.delegate.engine.types import Layout
 from agent_pm.utils import Record
 
 from delegate.tests.case import PY, PYTHONPATH, Case

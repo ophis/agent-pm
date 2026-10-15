@@ -12,7 +12,7 @@ import subprocess
 import tempfile
 import unittest
 
-from agent_pm.delegate import Layout
+from agent_pm.delegate.engine.types import Layout
 from agent_pm.session import SessionError
 from agent_pm.utils import Record
 

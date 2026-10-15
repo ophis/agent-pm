@@ -14,7 +14,7 @@ import sys
 import tempfile
 import time
 
-from agent_pm.delegate import Layout
+from agent_pm.delegate.engine.types import Layout
 
 from delegate.tests.case import PY, REPO, Case, child_env
 from session.tests.integration.adapters.claude import fake_claude
