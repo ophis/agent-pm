@@ -10,7 +10,8 @@ worktree prints {"repo", "host", "default", "branch", "commit", "worktree", "per
 "base", "plan_docs", "since", "user", "others"}. `pr` is B's PR {"number", "url", "state",
 "baseRefName"} or null; `base` is the PR's baseRefName, else BASE, else the default branch. `user`
 and `others` are PR comments and reviews by the user (core config's `users`, else the gh login) and
-by anyone else since the latest plan doc commit.
+by anyone else since B's latest own commit. `plan_docs` are B's autopilot plan docs in
+<worktree>/.autopilot/ {"path", "phase"}, phase `S<n>` or `done`.
 
 SLUG: 1-100 of [A-Za-z0-9._-], default B with / → -. REPO is `owner/name`, `host/owner/name`,
 `https://host/owner/name` or a local clone's path (/ or ~), named by its origin and outside the temp
@@ -24,6 +25,7 @@ origin/BASE. Errors mask URL userinfo.
 """
 
 import argparse
+import glob
 import json
 import os
 import re
@@ -269,24 +271,15 @@ def worktree(
 
 def plan_docs(wt: str, branch: str) -> list[dict]:
     found = []
-    for parent, dirs, files in os.walk(wt):
-        dirs[:] = [
-            d
-            for d in dirs
-            if d not in (".git", "node_modules")
-            and not os.path.lexists(os.path.join(parent, d, ".git"))
-        ]
-        for f in files:
-            if f.endswith(".md"):
-                p = os.path.join(parent, f)
-                try:
-                    with open(p, errors="replace") as fh:
-                        m = re.search(r"RESUME: phase=(S\d)([^\n]*)", fh.read())
-                except OSError:
-                    continue
-                if m and f"branch={branch}" in m.group(2).split():
-                    found.append({"path": p, "phase": m.group(1)})
-    return sorted(found, key=lambda d: d["path"])
+    for p in sorted(glob.glob(os.path.join(wt, ".autopilot", "*plan.md"))):
+        try:
+            with open(p, errors="replace") as fh:
+                m = re.search(r"RESUME: phase=(S\d|done)([^\n]*)", fh.read())
+        except OSError:
+            continue
+        if m and f"branch={branch}" in m.group(2).split():
+            found.append({"path": p, "phase": m.group(1)})
+    return found
 
 
 def _author(row: dict, key: str) -> str | None:
@@ -314,11 +307,7 @@ def status(
     if not exists:
         raise Invalid(f"{wt} missing: run worktree first")
     docs = plan_docs(wt, branch)
-    since = (
-        git(wt, "log", "-1", "--format=%cI", "--", *[d["path"] for d in docs], run=run).strip()
-        if docs
-        else ""
-    )
+    since = git(wt, "log", "-1", "--first-parent", "--no-merges", "--format=%cI", run=run).strip()
     account = gh_json(run, ["api", "--hostname", repo.host, "user"])
     if (
         not isinstance(account, dict)

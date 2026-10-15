@@ -74,37 +74,34 @@ class MalformedGh(Base):
 
 
 class PlanDocs(Case):
-    def test_nested_checkouts_node_modules_and_git_are_skipped_but_not_dot_dirs(self):
-        """A subdir holding a .git file (a worktree) or dir (a clone) is a checkout of its own."""
+    def test_only_autopilot_plan_docs_of_the_branch_count_at_a_step_or_done(self):
+        """Autopilot resumes only from <worktree>/.autopilot/; a copy elsewhere is not a plan doc."""
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         wt = tmp.name
 
-        def doc(*parts):
-            path = os.path.join(wt, *parts, "plan.md")
+        def doc(path, resume):
+            path = os.path.join(wt, path)
             os.makedirs(os.path.dirname(path), exist_ok=True)
             with open(path, "w") as f:
-                f.write("RESUME: phase=S5 branch=b\n")
+                f.write(f"Rules: x\nRESUME: {resume}\n")
             return path
 
-        found = doc("docs", ".autopilot")
-        for parts in (
-            ("wt", "x", "worktrees", "y"),
-            ("vendor", "clone"),
-            ("node_modules", "p"),
-            (".git",),
-        ):
-            doc(*parts)
-        with open(os.path.join(wt, "wt", "x", "worktrees", "y", ".git"), "w") as f:
-            f.write("gitdir: /elsewhere/.git/worktrees/y\n")
-        os.makedirs(os.path.join(wt, "vendor", "clone", ".git"))
-        self.assertEqual(repo.plan_docs(wt, "b"), [{"path": found, "phase": "S5"}])
+        done = doc(".autopilot/a-plan.md", "phase=done worktree=/w branch=b")
+        open_ = doc(".autopilot/b-plan.md", "phase=S5 worktree=/w branch=b")
+        doc(".autopilot/c-plan.md", "phase=S5 worktree=/w branch=other")
+        doc(".autopilot/a-spec.md", "phase=S5 worktree=/w branch=b")
+        doc("docs/a-plan.md", "phase=S7 worktree=/w branch=b")
+        self.assertEqual(
+            repo.plan_docs(wt, "b"),
+            [{"path": done, "phase": "done"}, {"path": open_, "phase": "S5"}],
+        )
 
 
 class Status(Base):
-    def plan_doc(self, branch="TASK-1-x", phase="S8"):
-        os.makedirs(os.path.join(self.wt, "docs"), exist_ok=True)
-        path = os.path.join(self.wt, "docs", "plan.md")
+    def plan_doc(self, branch="TASK-1-x", phase="S5"):
+        os.makedirs(os.path.join(self.wt, ".autopilot"), exist_ok=True)
+        path = os.path.join(self.wt, ".autopilot", "x-plan.md")
         with open(path, "w") as f:
             f.write(f"# Plan\n\nRESUME: phase={phase} branch={branch}\n")
         return path
@@ -119,7 +116,7 @@ class Status(Base):
         )
         return code, json.loads(out) if code == 0 else err, run
 
-    def test_pr_plan_docs_and_feedback_since_the_latest_plan_doc_commit(self):
+    def test_pr_plan_docs_and_feedback_since_the_branchs_latest_own_commit(self):
         path = self.plan_doc()
         comments = [
             [
@@ -139,7 +136,10 @@ class Status(Base):
             ]
         ]
         code, r, run = self.status(
-            (lambda a: a[3:5] == ["log", "-1"], ok("2026-10-02T00:00:00+00:00\n")),
+            (
+                lambda a: a[3:] == ["log", "-1", "--first-parent", "--no-merges", "--format=%cI"],
+                ok("2026-10-02T00:00:00+00:00\n"),
+            ),
             pr_list(
                 [
                     {
@@ -164,7 +164,7 @@ class Status(Base):
             "number,url,state,baseRefName,isCrossRepository,author",
             next(c for c in run.calls if c[1] == "pr"),
         )
-        self.assertEqual(r["plan_docs"], [{"path": path, "phase": "S8"}])
+        self.assertEqual(r["plan_docs"], [{"path": path, "phase": "S5"}])
         self.assertEqual([e["body"] for e in r["user"]], ["do Y"])
         self.assertEqual([(e["body"], e["state"]) for e in r["others"]], [("nit", "COMMENTED")])
 
