@@ -658,6 +658,7 @@ class StartTest(Base):
                 "KEEP": "k",
                 "LAUNCH_SET": "1",
                 "PWD": self.tmp,
+                "AGENT_PM_AGENT_SESSION": "1",
             },
         )
 
