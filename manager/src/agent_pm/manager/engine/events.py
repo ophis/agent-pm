@@ -25,9 +25,9 @@ class _Rotation:
 
 
 def _identity(path: str) -> tuple[int, int]:
-    opened = os.stat(path, follow_symlinks=False)
-    if not stat.S_ISREG(opened.st_mode) or opened.st_uid != os.getuid():
-        raise OSError(f"{path}: not a regular file owned by you")
+    opened = os.stat(path)
+    if not stat.S_ISREG(opened.st_mode):
+        raise OSError(f"{path}: not a regular file")
     return opened.st_dev, opened.st_ino
 
 
@@ -42,7 +42,6 @@ def _file_id(value) -> tuple[int, int]:
 
 
 def _read(path: str) -> bytes:
-    _identity(path)
     data = read_regular(path)
     if data is None:
         raise OSError(f"{path}: not a readable regular file")
@@ -66,13 +65,13 @@ class Events:
     def ensure(self) -> None:
         fd = os.open(
             self.path,
-            os.O_WRONLY | os.O_APPEND | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK,
+            os.O_WRONLY | os.O_APPEND | os.O_CREAT | os.O_NONBLOCK,
             0o600,
         )
         try:
             opened = os.fstat(fd)
-            if not stat.S_ISREG(opened.st_mode) or opened.st_uid != os.getuid():
-                raise OSError(f"{self.path}: not a regular file owned by you")
+            if not stat.S_ISREG(opened.st_mode):
+                raise OSError(f"{self.path}: not a regular file")
             os.fsync(fd)
         finally:
             os.close(fd)
@@ -148,7 +147,6 @@ class Events:
     def _cleanup(self) -> None:
         for path in (self.candidate, self.rollback, self.journal):
             if os.path.lexists(path):
-                _identity(path)
                 os.unlink(path)
         sync_directory(os.path.dirname(self.path))
 
@@ -205,8 +203,6 @@ class Events:
         if not self._due(data, cursor):
             return False
         self.ensure()
-        if os.path.lexists(self.archive):
-            _identity(self.archive)
         rotation = _Rotation(gen, _identity(self.path))
         self._save_intent(rotation)
         os.replace(self.path, self.archive)

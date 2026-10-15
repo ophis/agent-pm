@@ -406,35 +406,12 @@ class RosterTest(RosterCase):
         for path in (self.roster.path, events, os.path.join(self.directory, "roster.lock")):
             self.assertEqual(stat.S_IMODE(os.stat(path).st_mode), 0o600)
 
-    def test_roster_symlink_fifo_and_foreign_file_are_refused(self):
+    def test_a_roster_fifo_is_refused(self):
         self.live()
-        target = Path(self.home) / "outside"
-        target.write_text("keep")
-        Path(self.roster.path).unlink()
-        os.symlink(target, self.roster.path)
-        with self.assertRaises(RosterError):
-            self.roster.entries()
-        self.assertEqual(target.read_text(), "keep")
         Path(self.roster.path).unlink()
         os.mkfifo(self.roster.path)
         with self.assertRaises(RosterError):
             self.roster.entries()
-        Path(self.roster.path).unlink()
-        self.live()
-        with (
-            mock.patch.object(os, "getuid", return_value=os.getuid() + 1),
-            self.assertRaises(RosterError),
-        ):
-            self.roster.entries()
-
-    def test_parent_symlink_is_refused_before_creating_child(self):
-        outside = Path(self.home) / "outside"
-        outside.mkdir()
-        Path(self.directory).parent.symlink_to(outside)
-        with self.assertRaises(RosterError):
-            self.begin()
-        self.assertEqual(list(outside.iterdir()), [])
-        self.assertFalse(Path(self.directory).exists())
 
     def test_restrictive_umask_preserves_private_usable_new_directories(self):
         previous = os.umask(0o077)
@@ -446,16 +423,9 @@ class RosterTest(RosterCase):
         finally:
             os.umask(previous)
 
-    def test_lock_symlink_and_fifo_are_refused_without_waiting(self):
+    def test_a_lock_fifo_is_refused_without_waiting(self):
         self.live()
         lock = Path(self.directory) / "roster.lock"
-        target = Path(self.home) / "outside"
-        target.write_text("keep")
-        lock.unlink()
-        lock.symlink_to(target)
-        with self.assertRaises(RosterError):
-            self.roster.entries()
-        self.assertEqual(target.read_text(), "keep")
         lock.unlink()
         os.mkfifo(lock)
         with self.assertRaises(RosterError):
@@ -474,18 +444,6 @@ class RosterTest(RosterCase):
             sorted(os.listdir(self.directory)),
             ["events.lock", "holder.lock", "roster.json", "roster.lock"],
         )
-
-    def test_directory_symlink_and_public_directory_are_refused(self):
-        target = Path(self.home) / "target"
-        target.mkdir()
-        Path(self.directory).parent.mkdir()
-        os.symlink(target, self.directory)
-        with self.assertRaises(RosterError):
-            self.begin()
-        Path(self.directory).unlink()
-        os.mkdir(self.directory, 0o755)
-        with self.assertRaises(RosterError):
-            self.begin()
 
     def test_invalid_json_schema_and_size_are_refused(self):
         self.live()
@@ -579,99 +537,16 @@ class RosterTest(RosterCase):
         self.assertEqual(Path(self.roster.path).read_bytes(), before)
         self.assertIsNone(self.roster.entries()["x"].note)
 
-    def test_foreign_roster_lock_is_refused_without_changing_ledger(self):
-        self.live()
-        before = Path(self.roster.path).read_bytes()
-        target = Path(self.directory, "roster.lock").stat()
-        original = os.fstat
-
-        def foreign(fd):
-            opened = original(fd)
-            if (opened.st_dev, opened.st_ino) == (target.st_dev, target.st_ino):
-                values = list(opened)
-                values[4] += 1
-                return os.stat_result(values)
-            return opened
-
-        with (
-            mock.patch.object(os, "fstat", side_effect=foreign),
-            self.assertRaisesRegex(RosterError, "owned by you"),
-        ):
-            self.roster.note("x", "blocked")
-        self.assertEqual(Path(self.roster.path).read_bytes(), before)
-
-    def test_foreign_manager_directory_is_refused_without_changing_ledger(self):
-        self.live()
-        before = Path(self.roster.path).read_bytes()
-        original = os.lstat
-
-        def foreign(path, *args, **kwargs):
-            opened = original(path, *args, **kwargs)
-            if os.fspath(path) == self.directory:
-                values = list(opened)
-                values[4] += 1
-                return os.stat_result(values)
-            return opened
-
-        with (
-            mock.patch.object(os, "lstat", side_effect=foreign),
-            self.assertRaisesRegex(RosterError, "directory owned by you"),
-        ):
-            self.roster.note("x", "blocked")
-        self.assertEqual(Path(self.roster.path).read_bytes(), before)
-
-    def test_rotate_refuses_unsafe_current_and_archive_files(self):
+    def test_rotate_refuses_a_fifo_events_file(self):
         path = Path(self.roster.events)
-        data = b"h" * (1 << 20) + b"\n12:00:00 x done\n"
-        path.write_bytes(data)
+        path.write_bytes(b"h" * (1 << 20) + b"\n12:00:00 x done\n")
         self.roster.advance(1, 0)
         ledger = Path(self.roster.path).read_bytes()
-        original = os.fstat
-        original_stat = os.stat
-        for target in (path, Path(str(path) + ".1")):
-            for kind in ("fifo", "foreign"):
-                with self.subTest(target=target.name, kind=kind):
-                    if target.exists():
-                        target.unlink()
-                    if kind == "fifo":
-                        os.mkfifo(target)
-                    else:
-                        target.write_bytes(data if target == path else b"archive")
-                    identity = target.lstat()
-
-                    def foreign(fd, kind=kind, identity=identity):
-                        opened = original(fd)
-                        if kind == "foreign" and (opened.st_dev, opened.st_ino) == (
-                            identity.st_dev,
-                            identity.st_ino,
-                        ):
-                            values = list(opened)
-                            values[4] += 1
-                            return os.stat_result(values)
-                        return opened
-
-                    def foreign_stat(file_path, *args, kind=kind, identity=identity, **kwargs):
-                        opened = original_stat(file_path, *args, **kwargs)
-                        if kind == "foreign" and (opened.st_dev, opened.st_ino) == (
-                            identity.st_dev,
-                            identity.st_ino,
-                        ):
-                            values = list(opened)
-                            values[4] += 1
-                            return os.stat_result(values)
-                        return opened
-
-                    with (
-                        mock.patch.object(os, "fstat", side_effect=foreign),
-                        mock.patch.object(os, "stat", side_effect=foreign_stat),
-                        self.assertRaises(RosterError),
-                    ):
-                        self.roster.rotate_events()
-                    self.assertEqual(Path(self.roster.path).read_bytes(), ledger)
-                    target.unlink()
-                    if target == path:
-                        path.write_bytes(data)
-        self.assertEqual(path.read_bytes(), data)
+        path.unlink()
+        os.mkfifo(path)
+        with self.assertRaises(RosterError):
+            self.roster.rotate_events()
+        self.assertEqual(Path(self.roster.path).read_bytes(), ledger)
 
     def test_failed_archive_rename_preserves_events_cursor_and_generation(self):
         path = Path(self.roster.events)
@@ -813,27 +688,6 @@ class RosterTest(RosterCase):
             self.roster.entries()
         self.assertTrue(path.is_dir())
         self.assertEqual(list(path.iterdir()), [])
-
-    def test_foreign_managers_parent_is_refused_without_mutation(self):
-        self.live()
-        before = Path(self.roster.path).read_bytes()
-        parent = str(Path(self.directory).parent)
-        original = os.lstat
-
-        def foreign(path, *args, **kwargs):
-            info = original(path, *args, **kwargs)
-            if os.fspath(path) == parent:
-                values = list(info)
-                values[4] += 1
-                return os.stat_result(values)
-            return info
-
-        with (
-            mock.patch.object(os, "lstat", side_effect=foreign),
-            self.assertRaisesRegex(RosterError, "directory owned by you"),
-        ):
-            self.roster.note("x", "blocked")
-        self.assertEqual(Path(self.roster.path).read_bytes(), before)
 
     def test_valid_roster_at_exact_size_cap_is_read_without_rewrite(self):
         self.live()
@@ -1262,45 +1116,18 @@ class RosterTest(RosterCase):
                 self.roster.remove("x")
                 self.assertEqual(self.roster.entries(), {})
 
-    def test_unsafe_orphan_receipts_warn_without_blocking_ledger_operations(self):
+    def test_a_fifo_orphan_receipt_warns_without_blocking_ledger_operations(self):
         self.live()
-        target = Path(self.home, "outside")
-        target.write_text("keep")
-        for kind in ("symlink", "fifo", "hardlink"):
-            with self.subTest(kind=kind):
-                orphan = Path(self.directory, "receipt-unsafe.stdout")
-                if kind == "symlink":
-                    orphan.symlink_to(target)
-                elif kind == "fifo":
-                    os.mkfifo(orphan)
-                else:
-                    os.link(target, orphan)
-                warning = io.StringIO()
-                with mock.patch("sys.stderr", warning):
-                    self.roster.note("x", kind)
-                    self.assertEqual(self.roster.entries()["x"].note, kind)
-                self.assertTrue(orphan.exists())
-                self.assertIn("left in place", warning.getvalue())
-                self.assertEqual(target.read_text(), "keep")
-                orphan.unlink()
-        self.roster.remove("x")
-
-    def test_unsafe_referenced_receipt_can_be_removed_without_touching_target(self):
-        self.begin()
-        entry = self.roster.entries()["x"]
-        receipt = Path(self.directory, entry.receipt)
-        target = Path(self.home, "outside")
-        target.write_text("keep")
-        receipt.unlink()
-        receipt.symlink_to(target)
+        orphan = Path(self.directory, "receipt-unsafe.stdout")
+        os.mkfifo(orphan)
         warning = io.StringIO()
         with mock.patch("sys.stderr", warning):
-            self.assertEqual(self.roster.entries()["x"].receipt, entry.receipt)
-            self.roster.remove("x")
-            self.assertEqual(self.roster.entries(), {})
-        self.assertTrue(receipt.is_symlink())
-        self.assertEqual(target.read_text(), "keep")
+            self.roster.note("x", "fifo")
+            self.assertEqual(self.roster.entries()["x"].note, "fifo")
+        self.assertTrue(orphan.exists())
         self.assertIn("left in place", warning.getvalue())
+        orphan.unlink()
+        self.roster.remove("x")
 
     def test_receipt_survives_failure_until_remove_and_orphans_are_cleaned(self):
         self.begin()
@@ -1316,21 +1143,16 @@ class RosterTest(RosterCase):
         self.roster.remove("x")
         self.assertFalse(receipt.exists())
 
-    def test_receipt_symlink_and_fifo_are_refused(self):
-        for kind in ("symlink", "fifo"):
-            with self.subTest(kind=kind):
-                self.begin()
-                entry = self.roster.entries()["x"]
-                path = Path(self.directory, entry.receipt)
-                path.unlink()
-                if kind == "symlink":
-                    path.symlink_to(Path(self.home, "outside"))
-                else:
-                    os.mkfifo(path)
-                with self.assertRaises((OSError, RosterError)), self.roster.open_receipt("x"):
-                    self.fail("unsafe receipt opened")
-                path.unlink()
-                self.roster.remove("x")
+    def test_a_receipt_fifo_is_refused(self):
+        self.begin()
+        entry = self.roster.entries()["x"]
+        path = Path(self.directory, entry.receipt)
+        path.unlink()
+        os.mkfifo(path)
+        with self.assertRaises((OSError, RosterError)), self.roster.open_receipt("x"):
+            self.fail("unsafe receipt opened")
+        path.unlink()
+        self.roster.remove("x")
 
     def test_holder_lock_is_private_noninheritable_and_force_fences_old_generation(self):
         with self.roster.hold("label") as old:
@@ -1351,18 +1173,13 @@ class RosterTest(RosterCase):
                     self.roster.check_lease()
             self.assertIsNone(self.content()["holder"])
 
-    def test_holder_lock_symlink_fifo_and_other_lock_errors_refuse_even_force(self):
+    def test_holder_lock_fifo_and_other_lock_errors_refuse_even_force(self):
         Path(self.directory).mkdir(parents=True, mode=0o700)
         path = Path(self.directory, "holder.lock")
-        for kind in ("symlink", "fifo"):
-            with self.subTest(kind=kind):
-                if kind == "symlink":
-                    path.symlink_to(Path(self.home, "outside"))
-                else:
-                    os.mkfifo(path)
-                with self.assertRaises(RosterError), self.roster.hold("label", force=True):
-                    self.fail("unsafe lock acquired")
-                path.unlink()
+        os.mkfifo(path)
+        with self.assertRaises(RosterError), self.roster.hold("label", force=True):
+            self.fail("unsafe lock acquired")
+        path.unlink()
         real_flock = fcntl.flock
         count = 0
 

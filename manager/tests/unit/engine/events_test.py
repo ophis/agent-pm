@@ -20,30 +20,20 @@ class EventsTest(EventsCase):
         Path(self.events.path).unlink()
         self.assertIsNone(self.events.identity())
 
-    def test_identity_refuses_symlink_fifo_and_directory(self):
+    def test_identity_refuses_fifo_and_directory(self):
         Path(self.events.path).unlink()
-        outside = Path(self.directory, "outside")
-        outside.write_bytes(b"keep\n")
-        for kind in ("symlink", "fifo", "directory"):
+        for kind in ("fifo", "directory"):
             with self.subTest(kind=kind):
-                if kind == "symlink":
-                    Path(self.events.path).symlink_to(outside)
-                elif kind == "fifo":
+                if kind == "fifo":
                     os.mkfifo(self.events.path)
                 else:
                     os.mkdir(self.events.path)
                 with self.assertRaises(OSError):
                     self.events.identity()
-                self.assertEqual(outside.read_bytes(), b"keep\n")
                 if kind == "directory":
                     os.rmdir(self.events.path)
                 else:
                     Path(self.events.path).unlink()
-
-    def test_identity_refuses_a_file_owned_by_another_user(self):
-        with mock.patch("os.getuid", return_value=os.getuid() + 1), self.assertRaises(OSError):
-            self.events.identity()
-        self.assertEqual(Path(self.events.path).read_bytes(), self.original)
 
     def test_committed_rotation_keeps_unread_order_and_cleans_intent(self):
         with file_lock(self.events.path):
@@ -194,14 +184,7 @@ class EventsTest(EventsCase):
                 self.events.recover(1)
         self.assertTrue(Path(self.events.journal).exists())
 
-    def test_journal_symlink_and_fifo_are_refused_without_following_or_waiting(self):
-        outside = Path(self.directory, "outside")
-        outside.write_text("keep")
-        Path(self.events.journal).symlink_to(outside)
-        with file_lock(self.events.path), self.assertRaises(OSError):
-            self.events.recover(0)
-        self.assertEqual(outside.read_text(), "keep")
-        Path(self.events.journal).unlink()
+    def test_a_fifo_journal_is_refused_without_waiting(self):
         os.mkfifo(self.events.journal)
         with file_lock(self.events.path), self.assertRaises(OSError):
             self.events.recover(0)

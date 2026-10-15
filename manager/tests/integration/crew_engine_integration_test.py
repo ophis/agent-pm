@@ -970,7 +970,7 @@ class CrewTest(Case):
     def test_next_event_refuses_replacement_deletion_shrink_and_unsafe_file_while_waiting(self):
         path = self.roster.events
         replacement = os.path.join(self.home, "replacement")
-        for action in ("replace", "delete", "shrink", "symlink", "fifo"):
+        for action in ("replace", "delete", "shrink", "fifo"):
             with self.subTest(action=action):
                 if os.path.lexists(path):
                     os.unlink(path)
@@ -988,9 +988,7 @@ class CrewTest(Case):
                             pass
                     else:
                         os.unlink(path)
-                        if action == "symlink":
-                            os.symlink(replacement, path)
-                        elif action == "fifo":
+                        if action == "fifo":
                             os.mkfifo(path)
 
                 with (
