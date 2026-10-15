@@ -547,9 +547,13 @@ def replay(
     its ledger has it complete; else whether it now is (dry: True, nothing written). Raises
     ConfigError or ValueError on a start row it cannot write back as.
     """
-    attempts = [e for e in runs.parse_log(cfg.runs_log) if (e.issue, e.sid) == (issue, sid)]
+    rows = [e for e in runs.parse_log(cfg.runs_log) if (e.issue, e.sid) == (issue, sid)]
     claim = _claim(cfg, issue, sid)
-    ctx = for_claim(cfg, claim, gql, attempt=len(attempts))
+    ctx = for_claim(cfg, claim, gql, attempt=len(rows))
+    # a resume refused before its launch has a row but no attempt: the latest Begun's counts
+    begun = [int(a) for a in _ledger(ctx).get(sid, {}).get("attempts", {}) if a.isdigit()]
+    attempt = max(begun, default=len(rows))
+    ctx = replace(ctx, resume=attempt > 1)
     if "outcome" in _done(ctx):
         return None
     if dry:
@@ -559,7 +563,7 @@ def replay(
             return False
         done = "outcome" in _done(ctx) or finish(ctx, outcome)
         end = (None, outcome, False)
-        _session(ctx, cfg, claim.client, len(attempts), gql=gql, now=now, end=end)
+        _session(ctx, cfg, claim.client, attempt, gql=gql, now=now, end=end)
         return done
 
 

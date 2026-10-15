@@ -2223,6 +2223,24 @@ class RecoverReplay(Events):
             now=lambda: next(self.now),
         )
 
+    def test_a_replay_ends_the_attempt_its_begun_recorded_past_a_failed_resume_row(self):
+        for _ in range(2):  # a resume refused before its launch, then the one that ran
+            runs.note(
+                self.cfg.runs_log,
+                "resume",
+                issue=RUN_ISSUE,
+                sid=RUN_SID,
+                role="engineer",
+                client="fake",
+                delegate_kind="fake",
+            )
+        self.assertTrue(self.deliver(delegate_event("begun", 2)))
+        self.assertTrue(self.replay())
+        self.assertEqual(
+            self.linear.comments[RUN_SESSION]["body"],
+            session_body(f"done · #2 · {STARTED} → {RESTARTED}"),
+        )
+
     def test_a_replay_of_a_lost_finished_ends_its_session_comment_once(self):
         self.assertTrue(self.deliver(delegate_event("begun")))
         self.assertTrue(self.replay())
