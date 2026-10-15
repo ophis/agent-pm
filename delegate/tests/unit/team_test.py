@@ -202,9 +202,11 @@ class Shipped(Case):
             )
             self.assertIn(
                 "\n   - The newest plan doc (`plan_docs`' last) not at `done` → continue it, its verbatim input "
-                "the requirement; once it resumes, give it the rest as mid-run input, each logged in its "
-                "progress log: the user's requirements, the review input (marked as "
-                "[Engineer › Autopilot](#autopilot) says), failing merge checks. Added to its input, they "
+                "the requirement; autopilot's resolver `mode` not `resume` → `needs_input` naming the plan doc; "
+                "stop. Once it resumes, give it the rest as mid-run input, each logged in its progress log: the "
+                "user's requirements, the review input (marked as [Engineer › Autopilot](#autopilot) says), "
+                "failing merge checks, and with a user requirement 2 review rounds beyond its cap (a capped "
+                "plan doc stops again at once). Added to its input, they "
                 "would start a new plan doc at HEAD, leaving its commits unreviewed.\n"
                 "   - Else a plan doc or a `pr` (a **finished build**) and a user requirement → a new build",
                 text,
