@@ -213,5 +213,33 @@ class HarnessHosts(Case):
             self.assertEqual(file.read(), DONE["deliverable"])
 
 
+class OutcomeOnly(HarnessHosts):
+    """TASK-447 repro, to delete before merge: the configured fake host case with main's
+    outcome-only wait, ten times a run, so CI names the late writer.
+    """
+
+    test_an_injected_fake_host_runs_the_harness_while_tmux_runs_the_agent = None
+    test_a_detached_extension_client_reaches_its_outcome = None
+    test_a_configured_fake_harness_host_imports_and_routes_the_harness = None
+
+    def outcome(self, status: str = "done") -> None:
+        def ended():
+            self.server.tmux("run-shell", "-b", "true")
+            return any(
+                line.endswith(f" {HARNESS} outcome {status}")
+                for line in live_tmux.events(self.events)
+            )
+
+        live_tmux.wait(ended, WAIT, what=f"`{HARNESS} outcome {status}`")
+
+
+for _k in range(10):
+    setattr(
+        OutcomeOnly,
+        f"test_configured_{_k}",
+        HarnessHosts.test_a_configured_fake_harness_host_imports_and_routes_the_harness,
+    )
+
+
 if __name__ == "__main__":
     unittest.main()
