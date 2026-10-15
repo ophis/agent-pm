@@ -201,7 +201,7 @@ class LostClaim(FakeLinear):
 
 
 class ClaimLinear(FakeLinear):
-    """FakeLinear plus the outer's issue read, answered with `node`."""
+    """FakeLinear plus the outer's issue read, answered with `node` or raising it."""
 
     def __init__(self, todo, node):
         super().__init__([todo])
@@ -210,6 +210,8 @@ class ClaimLinear(FakeLinear):
     def __call__(self, query, **v):
         if query == issues.Q_ISSUE:
             self.queries.append((query, v))
+            if isinstance(self.node, Exception):
+                raise self.node
             return {"issue": self.node}
         return super().__call__(query, **v)
 
@@ -841,11 +843,24 @@ class RouterEntry(OuterBase):
                 self.assertIn("claim TASK-7 role=engineer client=a", said)
                 self.assertEqual(said[-1], "launch TASK-7 exit=0")
 
-    def test_a_new_run_failing_before_its_linear_run_counts_toward_the_cap(self):
+    def test_a_missing_role_key_skips_the_claim_and_leaves_the_issue_todo(self):
         self.missing.add(KEY)
+        for argv, rc in ((("--issue", ID), 1), (("--now",), 0)):
+            with self.subTest(argv=argv):
+                self.assertEqual(self.entry(*argv), rc)
+                self.assertIn(
+                    f"claim-skip TASK-7 reason=no Keychain item for role key {KEY}", self.said()
+                )
+                self.assertEqual(
+                    (self.todo["state"], self.fake.mutations, self.api.detached, self.raw_runs()),
+                    ("Todo", [], [], ""),
+                )
+
+    def test_a_new_run_failing_before_its_linear_run_counts_toward_the_cap(self):
+        self.fake.node = OSError("down")
         for _ in range(router.CAP):
             self.todo["state"] = "Todo"
-            self.assertEqual(self.entry("--issue", ID), 2)
+            self.assertEqual(self.entry("--issue", ID), 3)
             self.assertEqual(self.todo["state"], "In Progress")
             self.lines = self.raw_runs().splitlines()
         rows = [json.loads(line) for line in self.lines]

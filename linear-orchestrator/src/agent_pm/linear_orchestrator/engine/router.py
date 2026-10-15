@@ -205,9 +205,9 @@ def q_issues(fields=""):
 
 
 class Board:
-    def __init__(self, gql, entries, cfg, *, now, dry, gate=None, say=None):
+    def __init__(self, gql, entries, cfg, *, now, dry, keychain, gate=None, say=None):
         self.gql, self.entries, self.now, self.dry = gql, entries, now, dry
-        self.cfg, self.gate = cfg, gate
+        self.cfg, self.keychain, self.gate = cfg, keychain, gate
         self.say: Callable[..., None] = say or functools.partial(log, "router", dry=dry)
         self.hist, self.ready, self.blocked, self.live, self.statuses = {}, None, {}, set(), {}
         self.status_errors, self.replays = {}, {}
@@ -461,6 +461,8 @@ class Board:
             skip = f"{role} is full"
         elif current["project"] is None:
             skip = "no project"
+        elif not self.keychain(key := self.cfg.roles[role].key):
+            skip = f"no Keychain item for role key {key}"
         else:
             skip = None
         if skip:
@@ -750,7 +752,7 @@ def choose(board, gate, live_ids, full, counts, *, new_sid):
     return Spec.from_issue(issue, mode="new", sid=new_sid, task=task, client=client)
 
 
-def tick(opts, cfg, gql, *, start, clock=datetime.now, hour=None, launch_sid=None):
+def tick(opts, cfg, gql, *, start, keychain, clock=datetime.now, hour=None, launch_sid=None):
     now = clock().astimezone(UTC)
     hour = now.astimezone().hour if hour is None else hour
     dry, runs = opts["dry"], cfg.runs_log
@@ -783,7 +785,9 @@ def tick(opts, cfg, gql, *, start, clock=datetime.now, hour=None, launch_sid=Non
                 say("skip", reason="trim failed", error=one_line(e))
         with Held(dry) as walk:
             gate = Gate(runs, now, dry=dry, say=walk, cfg=cfg)
-            board = Board(gql, entries, cfg, now=now, dry=dry, gate=gate, say=walk)
+            board = Board(
+                gql, entries, cfg, now=now, dry=dry, keychain=keychain, gate=gate, say=walk
+            )
             live_ids = {i for ids in live.values() for i in ids}
             new_sid = launch_sid or str(uuid.uuid4())
             spec = choose(board, gate, live_ids, full, counts, new_sid=new_sid)
@@ -800,7 +804,7 @@ def tick(opts, cfg, gql, *, start, clock=datetime.now, hour=None, launch_sid=Non
             return start_run(start, begin(cfg, spec), walk)
 
 
-def run_issue(opts, cfg, gql, start, *, clock=datetime.now, launch_sid=None):
+def run_issue(opts, cfg, gql, start, *, keychain, clock=datetime.now, launch_sid=None):
     now = clock().astimezone(UTC)
     ident, dry, runs = opts["issue"], opts["dry"], cfg.runs_log
     stop = 0 if dry else 1
@@ -819,7 +823,7 @@ def run_issue(opts, cfg, gql, start, *, clock=datetime.now, launch_sid=None):
             print(f"router.py: {ident} has a live agent run: {attach}", file=sys.stderr)
             return stop
         entries = parse_log(runs)
-        board = Board(gql, entries, cfg, now=now, dry=dry)
+        board = Board(gql, entries, cfg, now=now, dry=dry, keychain=keychain)
         if issue := next(
             (i for i in board.issues("in_progress") if i["identifier"] == ident), None
         ):
@@ -947,13 +951,16 @@ def main(
         )
     try:
         if opts["issue"]:
-            return run_issue(opts, cfg, gql, start, clock=now, launch_sid=launch_sid)
+            return run_issue(
+                opts, cfg, gql, start, keychain=keychain, clock=now, launch_sid=launch_sid
+            )
         return tick(
             opts,
             cfg,
             gql,
             hour=hour,
             start=start,
+            keychain=keychain,
             clock=now,
             launch_sid=launch_sid,
         )
