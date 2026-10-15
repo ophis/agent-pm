@@ -1042,6 +1042,7 @@ class RunDir(HarnessCase):
         with open(os.path.join(layout.run, "run.jsonl"), encoding="utf-8") as file:
             kinds = {json.loads(line)["kind"] for line in file}
         self.assertTrue({"input", "result", "end"} <= kinds, kinds)
+        self.assertEqual(HarnessSession.started[-1]["spec"].workdir, layout.run)
 
     def test_no_state_dir_under_home(self):
         self.make().run()
