@@ -761,3 +761,91 @@ class Gate(Case):
             self.result(self.run_fake(*ClaudeAdapter({}).usage_probe().argv[1:])), "OK"
         )
         self.assertFalse(os.path.exists(gate))
+
+
+class Readiness(Case):
+    def commands(self) -> list[dict]:
+        return [json.loads(line) for line in live_tmux.events(self.commands_file)]
+
+    def setUp(self):
+        super().setUp()
+        self.commands_file = os.path.join(self.root, "commands.jsonl")
+
+    def write(self, proc: subprocess.Popen, text: str) -> None:
+        proc.stdin.write(text)
+        proc.stdin.flush()
+
+    def test_session_start_and_local_commands(self):
+        self.scene(
+            steps=[{"kind": "dialog", "text": TRUST}, "Hi."],
+            turns=[["Again."]],
+            commands=self.commands_file,
+        )
+        events = ("SessionStart", "UserPromptSubmit", "Stop")
+        proc = self.popen(*SESSION, "--settings", self.settings(*events), "--", "hello")
+        self.assertEqual(proc.stdout.readline(), TRUST + "\n")
+        time.sleep(fake_claude.READY + 0.2)
+        self.write(proc, "/color\n")
+        live_tmux.wait(self.commands, what="the command during the dialog")
+        self.write(proc, "yes\n")
+        live_tmux.wait(
+            lambda: self.names().count("SessionStart") == 2, what="SessionStart after the dialog"
+        )
+        time.sleep(fake_claude.READY + 0.2)
+        out, err = proc.communicate("/color\nmore\n", timeout=30)
+        self.assertEqual((proc.returncode, out), (0, "Hi.\nAgain.\n"), err)
+        self.assertEqual(
+            self.names(),
+            [
+                "SessionStart",
+                "UserPromptSubmit",
+                "SessionStart",
+                "Stop",
+                "UserPromptSubmit",
+                "Stop",
+            ],
+        )
+        self.assertEqual(self.fired()[0]["source"], "startup")
+        self.assertEqual(
+            [(c["pid"], c["line"], c["dialog"]) for c in self.commands()],
+            [(proc.pid, "/color", True), (proc.pid, "/color", False)],
+        )
+        self.assertEqual(self.users(), ["hello", "more"])
+
+    def test_a_resume_starts_with_source_resume(self):
+        self.scene()
+        self.assertEqual(self.run_fake("hello", *SESSION).returncode, 0)
+        res = self.run_fake("--resume", SID, "--settings", self.settings("SessionStart"))
+        self.assertEqual(res.returncode, 0, res.stderr)
+        self.assertEqual([h["source"] for h in self.fired()], ["resume"])
+
+    def test_a_matcher_searches_the_source(self):
+        self.scene()
+        tagged = {
+            "hooks": {
+                "SessionStart": [
+                    {"matcher": "^(startup|resume)$", "hooks": [self.tag("start")]},
+                    {"matcher": "^clear$", "hooks": [self.tag("clear")]},
+                ]
+            }
+        }
+        res = self.run_fake(*SESSION, "--settings", json.dumps(tagged))
+        self.assertEqual(res.returncode, 0, res.stderr)
+        self.assertEqual(live_tmux.events(self.hooklog), ["start"])
+
+    def test_input_dropped_after_session_start(self):
+        self.scene(steps=["Hi."], commands=self.commands_file)
+        proc = self.popen(*SESSION, "--settings", self.settings("SessionStart"))
+        live_tmux.wait(self.names, what="SessionStart")
+        self.write(proc, "/early\nearly\n")
+        time.sleep(fake_claude.READY + 0.3)
+        out, err = proc.communicate("late\n", timeout=30)
+        self.assertEqual((proc.returncode, out), (0, "Hi.\n"), err)
+        self.assertEqual(self.users(), ["late"])
+        self.assertEqual(self.commands(), [])
+
+    def test_input_before_session_start_is_kept(self):
+        self.scene(steps=["Hi."])
+        res = self.run_fake(*SESSION, "--settings", self.settings("SessionStart"), stdin="go\n")
+        self.assertEqual((res.returncode, res.stdout), (0, "Hi.\n"), res.stderr)
+        self.assertEqual(self.users(), ["go"])
