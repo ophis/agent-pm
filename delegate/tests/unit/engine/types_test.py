@@ -1,9 +1,13 @@
-"""Delegate Spec fields, defaults and immutability."""
+"""Delegate Spec fields, defaults and immutability; Layout's checkouts follow the core config's."""
 
 import dataclasses
+import os
+import re
 import unittest
+from importlib.resources import files
 
 from agent_pm import delegate
+from agent_pm.delegate.engine.types import Layout
 
 from delegate.tests.case import Case
 from delegate.tests.plans import Base
@@ -34,6 +38,17 @@ class SpecTest(Case):
         self.assertEqual(found, SPEC)
         with self.assertRaises(dataclasses.FrozenInstanceError):
             delegate.Spec("x", "/w").sid = "s"
+
+
+class LayoutTest(Case):
+    def test_checkouts_are_where_core_config_commands_clone(self):
+        with files("agent_pm.delegate").joinpath("config.toml").open() as f:
+            dirs = set(re.findall(r"--dir \{\{workdir\}\}/([^\s\"]+)", f.read()))
+        self.assertEqual(len(dirs), 1)
+        layout = Layout(os.path.join(self.home, "w"))
+        checkout = os.path.join(layout.agent, *dirs, "o", "n-TASK-1")
+        os.makedirs(checkout)
+        self.assertEqual(layout.checkouts(), (os.path.realpath(checkout),))
 
 
 class ResultTest(Case):

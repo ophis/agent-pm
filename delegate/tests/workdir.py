@@ -1,6 +1,4 @@
-"""A run's workdir as tests outside delegate need it, its layout staying delegate's: where a run's
-checkout of a repo lives (the team text's <Workdir>/src/<owner>/<name>-<slug>).
-"""
+"""Workdir paths other projects' tests need; the layout stays delegate's."""
 
 import os
 

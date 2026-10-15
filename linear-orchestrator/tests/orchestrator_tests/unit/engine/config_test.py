@@ -5,7 +5,6 @@ import dataclasses
 import io
 import json
 import os
-import re
 import tomllib
 from importlib.resources import files
 from pathlib import Path
@@ -869,32 +868,6 @@ class RunnableRoles(ConfigFile, Case):
             self.assertEqual(config.role_for(roles, email), "researcher")
         for email in ("nobody@x.com", None, ""):
             self.assertIsNone(config.role_for(roles, email))
-
-    def test_clones_match_core(self):
-        self.assertEqual(config.CLONES, ("src", "publish"))
-        packaged = files("agent_pm.delegate").joinpath("config.toml")
-        with packaged.open() as f:
-            dirs = re.findall(r"--dir \{\{workdir\}\}/([^\s\"]+)", f.read())
-        self.assertTrue(dirs)
-        self.assertEqual(set(dirs), {config.CLONES[0]})
-        with open(
-            os.path.join(
-                REPO,
-                "delegate",
-                "src",
-                "agent_pm",
-                "delegate",
-                "team",
-                "output",
-                "destinations",
-                "github.md",
-            )
-        ) as f:
-            self.assertIn(f"`<Workdir>/{config.CLONES[1]}`", f.read())
-        self.assertEqual(
-            str(packaged),
-            os.path.join(REPO, "delegate", "src", "agent_pm", "delegate", "config.toml"),
-        )
 
 
 class ConfigurationRoot(ConfigFile, Case):

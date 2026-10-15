@@ -1,4 +1,4 @@
-"""Shared HarnessDelegate integration fixtures with caller-owned configuration and Sessions."""
+"""Shared HarnessDelegate fixtures with caller-owned configuration and Sessions."""
 
 import json
 import os

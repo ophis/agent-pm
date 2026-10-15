@@ -9,7 +9,7 @@ from contextlib import redirect_stderr, redirect_stdout
 from dataclasses import replace
 from datetime import timedelta
 
-from agent_pm.delegate import ConfigError, Layout, SessionError, Spec
+from agent_pm.delegate import ConfigError, SessionError, Spec
 from agent_pm.linear_orchestrator.engine import config, log, ops, promote, prune, runs
 from agent_pm.linear_orchestrator.engine.types import LinearError
 from orchestrator_tests.case import Case
@@ -21,6 +21,7 @@ from orchestrator_tests.unit.outage import FAILURES, FIELDS, failing
 from orchestrator_tests.unit.run_fixtures import CORE_LOCAL, logged, show
 
 from delegate.tests.fakes.delegate import FakeDelegate
+from delegate.tests.workdir import checkout_path
 
 NOW = tp.NOW
 
@@ -171,9 +172,10 @@ class PruneScenario(Case):
 
     def record(self, ident, sid, sessions, role="engineer", *, agent=True):
         workdir = self.cfg.issue_workdir(ident)
-        PruneDelegate("dummy", Spec("", workdir, sid=sid)).detach()
+        run = PruneDelegate("dummy", Spec("", workdir, sid=sid))
         if not agent:
-            os.rmdir(Layout(workdir).agent)
+            PruneDelegate.clean(workdir)
+        run.detach()
         PruneDelegate.owners[workdir] = self
         self.addCleanup(PruneDelegate.owners.pop, workdir, None)
         self.sessions[workdir] = sessions
@@ -203,15 +205,8 @@ class PruneScenario(Case):
     def closed(self):
         return [c[1] for c in self.api.order if c[0] == "close"]
 
-    def agent(self, ident):
-        return Layout(os.path.join(self.work, ident)).agent
-
-    def run_files(self, ident):
-        run = Layout(os.path.join(self.work, ident)).run
-        os.makedirs(os.path.join(run, "nested"))
-        for name in ("delegate.json", "run.jsonl", "out.md", "writeback.json", "nested/x"):
-            write(os.path.join(run, name), f"{name}\n")
-        return tree(run)
+    def checkouts(self, ident):
+        return PruneDelegate.checkouts(self.cfg.issue_workdir(ident))
 
     def fake_clone(self):
         clone = os.path.join(self.root, "clone")
@@ -219,8 +214,8 @@ class PruneScenario(Case):
         write(os.path.join(clone, ".git", "worktrees", "x", "commondir"), "../..\n")
         return clone
 
-    def mkc(self, ident, *parts):
-        path = os.path.join(self.agent(ident), *parts)
+    def mkc(self, ident, owner="o", name="repo"):
+        path = checkout_path(self.cfg.issue_workdir(ident), owner, name, ident)
         os.makedirs(os.path.join(path, ".git", "objects"))
         write(os.path.join(path, ".git", "HEAD"), "ref: refs/heads/main\n")
         pack = os.path.join(path, ".git", "objects", "pack.idx")
@@ -252,8 +247,8 @@ class PruneScenario(Case):
         self.assertEqual({e["src"] for e in logged(self.logs)[before:] + copies} - {"prune"}, set())
         return (code, "\n".join(show(e) for e in logged(self.logs)[before:] + copies))
 
-    def mkg(self, ident, *parts):
-        path = os.path.join(self.agent(ident), *parts)
+    def mkg(self, ident, owner="o", name="n"):
+        path = checkout_path(self.cfg.issue_workdir(ident), owner, name, ident)
         os.makedirs(path)
         write(os.path.join(path, ".git"), f"gitdir: {self.root}/clone/.git/worktrees/x\n")
         return path

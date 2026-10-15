@@ -5,13 +5,13 @@ import json
 import os
 import shutil
 from contextlib import redirect_stderr, redirect_stdout
+from dataclasses import replace
 from unittest import mock
 
-from agent_pm.delegate import ConfigError, Layout, SessionError
-from agent_pm.linear_orchestrator.engine import config, ops, prune
+from agent_pm.delegate import ConfigError, SessionError
+from agent_pm.linear_orchestrator.engine import ops, prune
 from agent_pm.linear_orchestrator.engine.types import LinearError
 from agent_pm.utils import temp_dirs
-from orchestrator_tests.case import Case
 from orchestrator_tests.process_fixtures import CompletedProcess
 from orchestrator_tests.prune_fixtures import (
     NOW,
@@ -20,7 +20,6 @@ from orchestrator_tests.prune_fixtures import (
     PruneDelegate,
     PruneScenario,
     gql_for,
-    tree,
     write,
 )
 from orchestrator_tests.unit import promote_fixtures as tp
@@ -33,18 +32,12 @@ OTHER_SID = "7c1d9e2f-0a3b-4c5d-8e6f-1a2b3c4d5e6f"
 
 
 class RepositoryCleanup(PruneScenario):
-    def test_prune_deletes_only_agent_dir(self):
-        agent = self.agent("TASK-49")
-        self.mkc("TASK-49", "src", "o", "repo")
-        self.mkc("TASK-49", "publish")
-        self.mkg("TASK-49", "src", "o", "wt")
-        os.makedirs(os.path.join(agent, "tmp", "deep"))
-        write(os.path.join(agent, "tmp", "deep", "pr.md"), "x")
-        os.chmod(os.path.join(agent, "tmp", "deep", "pr.md"), 0o444)
-        run = self.run_files("TASK-49")
+    def test_prune_cleans_through_the_delegate(self):
+        self.mkc("TASK-49")
+        self.mkg("TASK-49", "o", "wt")
         beside = os.path.join(self.work, "TASK-49", "notes.md")
         write(beside, "x")
-        busy = self.mkc("TASK-50", "src", "o", "repo")
+        busy = self.mkc("TASK-50")
         gql = gql_for(
             {
                 "TASK-49": ("Done", [(30, "In Progress"), (24, "Done")]),
@@ -53,45 +46,55 @@ class RepositoryCleanup(PruneScenario):
         )
         code, out = self.prune(gql)
         self.assertEqual((code, out.splitlines()), (0, ["prune-removed TASK-49 what=agent dir"]))
-        self.assertFalse(os.path.lexists(agent))
-        self.assertEqual(tree(os.path.join(self.work, "TASK-49", "run")), run)
+        self.assertIsNone(self.checkouts("TASK-49"))
         self.assertTrue(os.path.isfile(beside))
         self.assertTrue(os.path.isdir(busy))
         self.assertOutsideKept()
         self.assertNotIn(ops.Q_TEAM, gql.calls)
         self.assertIn("state { id }", prune.Q_ISSUE)
 
-    def test_agent_symlink_is_skipped(self):
-        elsewhere = os.path.join(self.root, "elsewhere")
+    def test_clean_refusal_is_a_skip_once_and_cleans_no_clone(self):
+        self.fake_clone()
+        wt = self.mkg("TASK-49")
+        refusal = ConfigError("not a real directory: x, refusing to touch")
+        gql = gql_for({"TASK-49": ("Done", [(30, "Done")])})
+        with mock.patch.object(PruneDelegate, "clean", side_effect=refusal) as clean:
+            for out in (
+                "prune-skip TASK-49 reason=ConfigError: not a real directory: x, refusing to touch",
+                "",
+            ):
+                self.assertEqual(self.prune(gql, writable=(self.work,)), (0, out))
+        self.assertEqual(clean.call_args.args, (self.cfg.issue_workdir("TASK-49"),))
+        self.assertEqual(clean.call_args.kwargs, {"dry": False})
+        self.assertTrue(os.path.isfile(os.path.join(wt, ".git")))
 
-        def agent_symlink(ident):
-            os.makedirs(os.path.join(self.work, ident))
-            os.symlink(self.outside, self.agent(ident))
+    def test_prune_uses_the_recorded_delegate_kind(self):
+        class Recorded(PruneDelegate):
+            cleaned = []
 
-        def agent_file(ident):
-            os.makedirs(os.path.join(self.work, ident))
-            write(self.agent(ident), "x")
+            @classmethod
+            def clean(cls, workdir, *, dry=False):
+                cls.cleaned.append(workdir)
+                super().clean(workdir, dry=dry)
 
-        def issue_dir_symlink(ident):
-            os.makedirs(os.path.join(elsewhere, "agent"))
-            write(os.path.join(elsewhere, "agent", "keep"), "x")
-            os.symlink(elsewhere, os.path.join(self.work, ident))
-
-        for n, make in enumerate((agent_symlink, agent_file, issue_dir_symlink), 41):
-            with self.subTest(make.__name__):
-                ident = f"TASK-{n}"
-                make(ident)
-                gql = gql_for({ident: ("Done", [(30, "Done")])})
-                skip = (
-                    f"prune-skip {ident} reason=not a real directory: {self.agent(ident)}, "
-                    "refusing to touch"
-                )
-                self.assertEqual(self.prune(gql), (0, skip))
-                self.assertEqual(self.prune(gql), (0, ""))
-                self.assertTrue(os.path.lexists(self.agent(ident)))
-                self.assertOutsideKept()
-                self.fresh()
-        self.assertTrue(os.path.isfile(os.path.join(elsewhere, "agent", "keep")))
+        self.record("TASK-7", SID, [A])
+        with open(self.cfg.runs_log) as f:
+            rows = f.read().replace('"delegate_kind": "harness"', '"delegate_kind": "recorded"')
+        write(self.cfg.runs_log, rows)
+        gql = gql_for({"TASK-7": ("Done", [(30, "Done")])})
+        self.cfg = replace(self.cfg, delegates={"harness": PruneDelegate})
+        unknown = (
+            "prune-skip TASK-7 reason=ConfigError: delegate kind 'recorded' is no longer configured"
+        )
+        self.assertEqual(self.prune(gql), (0, unknown))
+        self.assertEqual(self.prune(gql), (0, ""))
+        self.assertEqual(self.checkouts("TASK-7"), ())
+        self.cfg = replace(self.cfg, delegates={"harness": PruneDelegate, "recorded": Recorded})
+        self.assertEqual(
+            self.prune(gql),
+            (0, f"prune-closed TASK-7 session={SID}\nprune-removed TASK-7 what=agent dir"),
+        )
+        self.assertEqual(Recorded.cleaned, [self.cfg.issue_workdir("TASK-7")])
 
     def test_pruned_issue_is_left_alone(self):
         self.record("TASK-7", SID, [A])
@@ -101,20 +104,17 @@ class RepositoryCleanup(PruneScenario):
             (0, f"prune-closed TASK-7 session={SID}\nprune-removed TASK-7 what=agent dir"),
         )
         self.record("TASK-8", OTHER_SID, [B], agent=False)
-        os.unlink(os.path.join(Layout(self.cfg.issue_workdir("TASK-8")).run, "delegate.json"))
-        run = self.run_files("TASK-8")
         again = gql_for(dict.fromkeys(("TASK-7", "TASK-8"), ("Done", [(30, "Done")])))
         with mock.patch.object(PruneDelegate, "attach", side_effect=AssertionError("attached")):
             self.assertEqual(self.prune(again), (0, ""))
             self.assertEqual(self.prune(again), (0, ""))
         self.assertNotIn(prune.Q_ISSUE, again.calls)
         self.assertEqual(self.closed(), [A])
-        self.assertEqual(tree(os.path.join(self.work, "TASK-8", "run")), run)
 
-    def test_no_agent_dir_no_candidate(self):
+    def test_no_agent_files_no_candidate(self):
         old = os.path.join(self.work, "TASK-49", "src", "o", "repo")
         os.makedirs(os.path.join(old, ".git"))
-        self.run_files("TASK-48")
+        self.record("TASK-48", OTHER_SID, [B], agent=False)
         os.makedirs(os.path.join(self.work, "notes", "agent"))
         gql = gql_for(dict.fromkeys(("TASK-48", "TASK-49"), ("Done", [(30, "Done")])))
         self.assertEqual(self.prune(gql), (0, ""))
@@ -122,8 +122,8 @@ class RepositoryCleanup(PruneScenario):
         self.assertTrue(os.path.isdir(os.path.join(old, ".git")))
 
     def test_young_and_in_progress_untouched(self):
-        path = self.mkc("TASK-48", "src", "o", "repo")
-        busy = self.mkc("TASK-50", "src", "o", "repo")
+        path = self.mkc("TASK-48")
+        busy = self.mkc("TASK-50")
         self.api.live = ["engineer-TASK-48-aaaaaaaa", "engineer-TASK-50-bbbbbbbb"]
         gql = gql_for(
             {
@@ -136,22 +136,21 @@ class RepositoryCleanup(PruneScenario):
         self.assertEqual(self.api.order, [])
 
     def test_unknown_finish_time_skipped(self):
-        path = self.mkc("TASK-49", "src", "o", "repo")
+        path = self.mkc("TASK-49")
         code, out = self.prune(gql_for({"TASK-49": ("Done", [])}))
         self.assertEqual(code, 0)
         self.assertIn("prune-skip TASK-49 reason=finish time unknown", out)
         self.assertTrue(os.path.isdir(path))
 
-    def test_worktree_clones_are_cleaned_once_after_the_agent_dir_goes(self):
+    def test_worktree_clones_are_cleaned_once_after_the_agent_files_go(self):
         clone = self.fake_clone()
-        agent = self.agent("TASK-49")
         for owner, name in (("o", "a"), ("p", "b")):
-            self.mkg("TASK-49", "src", owner, name)
-        write(os.path.join(self.mkg("TASK-49", "src", "o", "c"), "notes.md"), "uncommitted")
+            self.mkg("TASK-49", owner, name)
+        write(os.path.join(self.mkg("TASK-49", "o", "c"), "notes.md"), "uncommitted")
         calls = []
 
         def git(argv, _timeout):
-            calls.append((os.path.lexists(agent), argv))
+            calls.append((self.checkouts("TASK-49"), argv))
             return CompletedProcess(argv, 0, "", "")
 
         code, out = self.prune(
@@ -163,33 +162,13 @@ class RepositoryCleanup(PruneScenario):
         )
         self.assertEqual(
             {(there, tuple(argv[5:8])) for there, argv in calls},
-            {(False, ("-C", clone, f"--git-dir={clone}/.git"))},
+            {(None, ("-C", clone, f"--git-dir={clone}/.git"))},
         )
 
-    def test_symlinked_checkouts_are_not_followed_to_their_clones(self):
+    def test_a_failed_clean_logs_the_error_and_cleans_no_clone(self):
         self.fake_clone()
-        os.makedirs(os.path.join(self.outside, "o", "n"))
-        write(
-            os.path.join(self.outside, "o", "n", ".git"),
-            f"gitdir: {self.root}/clone/.git/worktrees/x\n",
-        )
-        os.makedirs(os.path.join(self.agent("TASK-49"), "src", "p"))
-        os.symlink(os.path.join(self.outside, "o"), os.path.join(self.agent("TASK-49"), "src", "o"))
-        os.symlink(
-            os.path.join(self.outside, "o", "n"),
-            os.path.join(self.agent("TASK-49"), "src", "p", "n"),
-        )
-        code, out = self.prune(
-            gql_for({"TASK-49": ("Done", [(30, "Done")])}), writable=(self.work,)
-        )
-        self.assertEqual((code, out.splitlines()), (0, ["prune-removed TASK-49 what=agent dir"]))
-        self.assertTrue(os.path.isfile(os.path.join(self.outside, "o", "n", ".git")))
-        self.assertOutsideKept()
-
-    def test_a_failed_delete_logs_the_error_and_cleans_no_clone(self):
-        self.fake_clone()
-        kept = self.mkg("TASK-48", "src", "o", "n")
-        self.mkc("TASK-49", "src", "o", "repo")
+        kept = self.mkg("TASK-48")
+        self.mkc("TASK-49")
         with mock.patch.object(
             shutil, "rmtree", side_effect=[PermissionError("denied\nby os"), None]
         ) as rmtree:
@@ -197,15 +176,11 @@ class RepositoryCleanup(PruneScenario):
                 gql_for(dict.fromkeys(("TASK-48", "TASK-49"), ("Done", [(30, "Done")]))),
                 writable=(self.work,),
             )
-        self.assertEqual(code, 3)
-        self.assertEqual(
-            [c.args for c in rmtree.call_args_list],
-            [(self.agent("TASK-48"),), (self.agent("TASK-49"),)],
-        )
+        self.assertEqual((code, rmtree.call_count), (3, 2))
         self.assertEqual(
             out.splitlines(),
             [
-                "prune-error TASK-48 error=rmtree: PermissionError: denied by os",
+                "prune-error TASK-48 error=clean: PermissionError: denied by os",
                 "prune-removed TASK-49 what=agent dir",
             ],
         )
@@ -214,9 +189,10 @@ class RepositoryCleanup(PruneScenario):
     def test_dry_run_plans_and_touches_nothing(self):
         clone = self.fake_clone()
         self.record("TASK-7", SID, [A])
-        wt = self.mkg("TASK-7", "src", "o", "n")
+        wt = self.mkg("TASK-7")
         gql = gql_for({"TASK-7": ("Done", [(30, "Done")])}, owners={"TASK-7": "u-pm"})
-        code, out = self.prune(gql, dry=True, writable=(self.work,))
+        with mock.patch.object(PruneDelegate, "clean", side_effect=AssertionError("cleaned")):
+            code, out = self.prune(gql, dry=True, writable=(self.work,))
         self.assertEqual(
             (code, out.splitlines()),
             (
@@ -233,6 +209,9 @@ class RepositoryCleanup(PruneScenario):
         self.assertTrue(os.path.isfile(os.path.join(wt, ".git")))
         self.assertEqual(self.api.order, [])
         PruneDelegate.attach(self.cfg.issue_workdir("TASK-7"))
+        PruneDelegate.end(self.cfg.issue_workdir("TASK-7"))
+        self.assertEqual(self.prune(gql, dry=True, writable=(self.work,))[0], 0)
+        self.assertEqual(self.checkouts("TASK-7"), (wt,))
 
 
 class RetentionCleanup(PruneScenario):
@@ -339,7 +318,7 @@ class RetentionCleanup(PruneScenario):
         self.assertEqual([v["c"] for v in gql.finished], [None, "2"])
 
     def test_candidate_query_failure_keeps_clone_step(self):
-        clone = self.mkc("TASK-49", "src", "o", "repo")
+        clone = self.mkc("TASK-49")
         issues = gql_for({"TASK-49": ("Done", [(30, "Done")])})
 
         def gql(query, **v):
@@ -386,13 +365,14 @@ class RetentionCleanup(PruneScenario):
             [
                 f"prune-closed TASK-7 session={SID}",
                 "prune-removed TASK-7 what=agent dir",
-                "prune-removed TASK-9 what=agent dir",
+                f"prune-skip TASK-9 reason=ConfigError: {self.cfg.issue_workdir('TASK-9')}: "
+                "delegate is still alive",
             ],
         )
         self.assertEqual(self.closed(), [A])
 
     def test_clone_and_session_issue_queried_once_sessions_first(self):
-        clone = self.mkc("TASK-7", "src", "o", "repo")
+        clone = self.mkc("TASK-7")
         self.record("TASK-7", SID, [A])
         seen, close = [], self.api.close
         gql = gql_for({"TASK-7": ("Canceled", [(30, "Canceled")])})
@@ -439,7 +419,7 @@ class RetentionCleanup(PruneScenario):
             with self.subTest(dry=dry):
                 self.fresh()
                 self.api.order.clear()
-                kept = [self.mkc("TASK-49", "src", "o", "repo"), self.mkc("TASK-49", "publish")]
+                kept = [self.mkc("TASK-49"), self.mkc("TASK-49", "p", "q")]
                 self.record("TASK-49", SID, [A])
                 self.unknown = True
                 gql = gql_for({"TASK-49": ("Done", [(30, "Done")])}, owners={"TASK-49": "u-pm"})
@@ -466,10 +446,10 @@ class RetentionCleanup(PruneScenario):
                     [f"prune-error TASK-7 session={SID} error={type(error).__name__}: {error}"],
                 )
                 self.assertEqual(self.closed(), [B, A])
-                self.assertTrue(os.path.isdir(self.agent("TASK-7")))
+                self.assertEqual(self.checkouts("TASK-7"), ())
 
     def test_a_failed_close_keeps_the_agent_dir_until_a_later_tick_closes_the_run(self):
-        clone = self.mkc("TASK-7", "src", "o", "repo")
+        clone = self.mkc("TASK-7")
         self.record("TASK-7", SID, [B, A])
         self.api.errors = {B: SessionError("boom")}
         gql = gql_for({"TASK-7": ("Done", [(30, "Done")])})
@@ -490,7 +470,7 @@ class RetentionCleanup(PruneScenario):
                 [B, A],
             ),
         )
-        self.assertFalse(os.path.exists(self.agent("TASK-7")))
+        self.assertIsNone(self.checkouts("TASK-7"))
 
     def test_failed_run_close_does_not_stop_another_finished_issue(self):
         self.record("TASK-7", SID, [A])
@@ -510,10 +490,10 @@ class RetentionCleanup(PruneScenario):
         )
 
     def test_a_run_without_delegate_state_skips_once_and_other_issues_still_prune(self):
-        clone = self.mkc("TASK-7", "src", "o", "repo")
+        clone = self.mkc("TASK-7")
         self.record("TASK-7", SID, [A])
         self.record("TASK-8", OTHER_SID, ["other-host-agent"])
-        os.unlink(os.path.join(Layout(self.cfg.issue_workdir("TASK-7")).run, "delegate.json"))
+        PruneDelegate.lose(self.cfg.issue_workdir("TASK-7"))
         gql = gql_for(dict.fromkeys(("TASK-7", "TASK-8"), ("Done", [(30, "Done")])))
         skip = (
             f"prune-skip TASK-7 sid={SID} reason=ConfigError: "
@@ -542,7 +522,7 @@ class RetentionCleanup(PruneScenario):
         self.assertEqual(self.api.order, [("close", A)])
 
     def test_prune_failure_leaves_handoff_alone(self):
-        clone = self.mkc("TASK-49", "src", "o", "repo")
+        clone = self.mkc("TASK-49")
 
         def down(_query, **_v):
             raise LinearError("linear api error: down")
@@ -553,7 +533,7 @@ class RetentionCleanup(PruneScenario):
         self.assertTrue(os.path.isdir(clone))
 
     def test_an_outage_reading_an_issue_stops_prune(self):
-        clones = [self.mkc(ident, "src", "o", "repo") for ident in ("TASK-48", "TASK-49")]
+        clones = [self.mkc(ident) for ident in ("TASK-48", "TASK-49")]
         issues = gql_for(dict.fromkeys(("TASK-48", "TASK-49"), ("Done", [(30, "Done")])))
         self.outage("issue", issues, [(prune.Q_ISSUE, {"service": HARNESS, "i": "TASK-48"})])
         self.assertEqual(issues.calls, [])
@@ -599,7 +579,7 @@ class PruneCommand(PruneScenario):
         return code, out.getvalue(), rest, said
 
     def test_a_tick_deletes_finished_checkouts_and_archives(self):
-        clone = self.mkc("TASK-49", "src", "o", "repo")
+        clone = self.mkc("TASK-49")
         gql = gql_for({"TASK-49": ("Done", [(30, "Done")])}, owners={"TASK-49": "u-pm"})
         self.assertEqual(self.command(gql)[:3], (0, "", ""))
         self.assertFalse(os.path.exists(clone))
@@ -607,7 +587,7 @@ class PruneCommand(PruneScenario):
         self.assertOutsideKept()
 
     def test_a_dry_run_plans_and_changes_nothing(self):
-        clone = self.mkc("TASK-49", "src", "o", "repo")
+        clone = self.mkc("TASK-49")
         gql = gql_for({"TASK-49": ("Done", [(30, "Done")])}, owners={"TASK-49": "u-pm"})
         code, out, err, said = self.command(gql, "--dry-run")
         self.assertEqual((code, out, err), (0, "", ""))
@@ -627,7 +607,7 @@ class PruneCommand(PruneScenario):
                 raise LinearError("linear api error: down")
             return gql_for({})(query, **v)
 
-        self.mkc("TASK-49", "src", "o", "repo")
+        self.mkc("TASK-49")
         code, _, _, said = self.command(down)
         self.assertEqual(code, 1)
         self.assertIn("prune-error TASK-49 error=Linear: LinearError: linear api error: down", said)
@@ -638,8 +618,3 @@ class PruneCommand(PruneScenario):
                 code, out, err, said = self.command(gql_for({}), *argv)
                 self.assertEqual((code, out, said), (2, "", ""))
                 self.assertIn("agent-pm-linear prune", err)
-
-
-class CloneConfiguration(Case):
-    def test_clones_are_configs(self):
-        self.assertIs(prune.CLONES, config.CLONES)

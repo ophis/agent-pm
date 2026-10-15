@@ -1,7 +1,7 @@
 """FakeDelegate, a Delegate with one session that runs nothing: it lays its workdir out per Layout,
 its state the run dir's delegate.json, so a view from attach and the Delegate that wrote it agree;
 clean refuses only while it is alive. end(workdir) and finish(workdir) stand for its sessions
-ending, without and with an outcome.
+ending, without and with an outcome; lose(workdir) for its state lost.
 """
 
 import json
@@ -144,6 +144,10 @@ class FakeDelegate(Delegate):
     @classmethod
     def finish(cls, workdir: str) -> None:
         _update(workdir, alive=False, outcome=asdict(cls.outcome_result))
+
+    @classmethod
+    def lose(cls, workdir: str) -> None:
+        os.unlink(_path(workdir))
 
     def _record(self, state: dict) -> Record:
         name = state["name"]

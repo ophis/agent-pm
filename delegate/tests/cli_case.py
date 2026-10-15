@@ -1,4 +1,4 @@
-"""Shared CLI fixtures for unit and integration coverage over the configured fake client."""
+"""Shared CLI fixtures over the configured fake client."""
 
 import io
 import json
