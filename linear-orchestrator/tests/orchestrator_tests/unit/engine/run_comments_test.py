@@ -147,7 +147,7 @@ class Record(Case):
     def test_post_creates_by_session_id_then_updates_it(self):
         for rc, line in (
             (None, f"running · #1 · {T1}"),
-            (0, f"done · #2 · {T1} → {T2} · exit 0"),
+            (0, f"no outcome · #2 · {T1} → {T2} · exit 0"),
             (3, f"interrupted · #2 · {T1} → {T2} · exit 3"),
         ):
             with self.subTest(rc=rc):
@@ -182,7 +182,9 @@ class Record(Case):
     def test_each_body_takes_the_next_seq(self):
         rec = self.record()
         self.assertEqual(run_comments.body(rec), text(f"running · #1 · {T1}"))
-        self.assertEqual(run_comments.body(rec, 0, T2), text(f"done · #2 · {T1} → {T2} · exit 0"))
+        self.assertEqual(
+            run_comments.body(rec, 0, T2), text(f"no outcome · #2 · {T1} → {T2} · exit 0")
+        )
         self.assertEqual(rec["seq"], 2)
 
     def test_terminal_outcome_keeps_status_and_native_exit_diagnostic(self):
@@ -256,7 +258,7 @@ class Record(Case):
         self.assertEqual(
             fake.calls, ["commentUpdate", "commentCreate", "commentUpdate", "commentCreate"]
         )
-        self.assertEqual(fake.only()["body"], text(f"done · #2 · {T1} → {T2} · exit 0"))
+        self.assertEqual(fake.only()["body"], text(f"no outcome · #2 · {T1} → {T2} · exit 0"))
 
     def test_writes_only_its_session_id(self):
         mine = f"Run {SID} · running · #1 · {T1}"
@@ -439,14 +441,14 @@ class Repair(Case):
         self.assertEqual(start(late, self.rec, timeout=0.1), "timed out after 0.1s")
         self.assertTrue(late.held.wait(5))
         self.assertIsNone(end(late, self.rec, 0))
-        self.assertEqual(self.fake.only()["body"], text(f"done · #2 · {self.DONE}"))
+        self.assertEqual(self.fake.only()["body"], text(f"no outcome · #2 · {self.DONE}"))
         late.release.set()
         self.assertTrue(late.landed.wait(5))
         self.assertEqual(self.fake.only()["body"], text(f"running · #1 · {T1}"))
         self.fake.calls.clear()
         self.assertIsNone(self.repair(late))
         self.assertEqual(self.fake.calls, ["comment", "commentUpdate"])
-        self.assertEqual(self.fake.only()["body"], text(f"done · #3 · {self.DONE}"))
+        self.assertEqual(self.fake.only()["body"], text(f"no outcome · #3 · {self.DONE}"))
 
     def test_no_late_write_reads_and_does_not_rewrite(self):
         start(self.fake, self.rec)
@@ -454,7 +456,7 @@ class Repair(Case):
         self.fake.calls.clear()
         self.assertIsNone(self.repair())
         self.assertEqual(self.fake.calls, ["comment"])
-        self.assertEqual(self.fake.only()["body"], text(f"done · #2 · {self.DONE}"))
+        self.assertEqual(self.fake.only()["body"], text(f"no outcome · #2 · {self.DONE}"))
 
     def test_no_parseable_seq_rewrites(self):
         start(self.fake, self.rec)
@@ -463,14 +465,14 @@ class Repair(Case):
         self.fake.calls.clear()
         self.assertIsNone(self.repair())
         self.assertEqual(self.fake.calls, ["comment", "commentUpdate"])
-        self.assertEqual(self.fake.only()["body"], text(f"done · #3 · {self.DONE}"))
+        self.assertEqual(self.fake.only()["body"], text(f"no outcome · #3 · {self.DONE}"))
 
     def test_not_found_creates_it_by_session_id(self):
         down = FakeLinear(fail={"commentCreate": RuntimeError("down")})
         self.assertEqual(end(down, self.rec, 0), "RuntimeError: down")
         self.assertIsNone(self.repair())
         self.assertEqual(self.fake.calls, ["comment", "commentUpdate", "commentCreate"])
-        self.assertEqual(self.fake.only()["body"], text(f"done · #2 · {self.DONE}"))
+        self.assertEqual(self.fake.only()["body"], text(f"no outcome · #2 · {self.DONE}"))
 
     def test_a_limit_end_is_rewritten_as_limit(self):
         down = FakeLinear(fail={"commentCreate": RuntimeError("down")})
@@ -496,7 +498,7 @@ class Repair(Case):
         self.fake = FakeLinear(comment(CID, text(f"done · #3 · {self.DONE}")))
         self.assertIsNone(self.repair())
         self.assertEqual(self.fake.calls, ["comment", "commentUpdate"])
-        self.assertEqual(self.fake.only()["body"], text(f"done · #3 · {T2} → {T3} · exit 0"))
+        self.assertEqual(self.fake.only()["body"], text(f"no outcome · #3 · {T2} → {T3} · exit 0"))
 
     def test_errors_return_a_string_and_write_nothing(self):
         theirs = f"LinearError: comment {CID} is not ours"

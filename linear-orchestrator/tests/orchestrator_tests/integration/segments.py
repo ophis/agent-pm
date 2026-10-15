@@ -50,7 +50,7 @@ CLIENT = "claude"
 
 RUN_KEYS = ("kind", "issue", "sid", "role", "client")
 
-SESSION = re.compile(r"(running|done|failed|needs_input|interrupted|limit) · ")
+SESSION = re.compile(r"(running|done|failed|needs_input|interrupted|limit|no outcome) · ")
 
 FIRST_WRITE = ("sessions.M_UPDATE", HARNESS_EMAIL, "error")
 
@@ -399,7 +399,7 @@ class Segment(TmuxFlow):
                 ACCOUNTS[p.role],
                 p.script.report,
             )
-            self.expect_session(p.ident, p.sid, report["status"] if report else "done")
+            self.expect_session(p.ident, p.sid, report["status"] if report else "no outcome")
             ledgered = want.ledger.get(p.sid, [])
             first = "start" not in ledgered
             comments, steps, changes = [(account, "start")] if first else [], ["start"], {}

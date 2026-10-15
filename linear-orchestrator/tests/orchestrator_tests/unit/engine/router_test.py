@@ -8,6 +8,7 @@ import json
 import os
 import re
 import sys
+import urllib.error
 from contextlib import redirect_stderr, redirect_stdout
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
@@ -15,7 +16,7 @@ from unittest import mock
 
 from agent_pm.delegate import ConfigError as DelegateConfigError
 from agent_pm.delegate import Outcome, OutcomeStatus
-from agent_pm.linear_orchestrator.engine import config, inputs, issues, ops, router, runs
+from agent_pm.linear_orchestrator.engine import client, config, inputs, issues, ops, router, runs
 from agent_pm.linear_orchestrator.engine import gate as quota
 from agent_pm.linear_orchestrator.engine.types import LinearError, Spec, Unavailable
 from agent_pm.session import ConfigError, SessionError, SessionStatus, Window
@@ -200,7 +201,7 @@ class LostClaim(FakeLinear):
 
 
 class ClaimLinear(FakeLinear):
-    """FakeLinear plus the outer's issue read, answered with `node`."""
+    """FakeLinear plus the outer's issue read, answered with `node` or raising it."""
 
     def __init__(self, todo, node):
         super().__init__([todo])
@@ -209,6 +210,8 @@ class ClaimLinear(FakeLinear):
     def __call__(self, query, **v):
         if query == issues.Q_ISSUE:
             self.queries.append((query, v))
+            if isinstance(self.node, Exception):
+                raise self.node
             return {"issue": self.node}
         return super().__call__(query, **v)
 
@@ -732,7 +735,7 @@ class RouterEntry(OuterBase):
                 self.assertEqual((entry.kind, entry.ts), (kind, written))
                 self.assertEqual(
                     sorted(os.listdir(os.path.dirname(self.runs))),
-                    ["orchestrator.jsonl", "router.lock", "runs.jsonl"],
+                    ["orchestrator.jsonl", "router.lock", "runs.jsonl", "runs.jsonl.lock"],
                 )
 
     def test_a_new_run_closes_only_its_issues_recorded_run_first(self):
@@ -754,6 +757,19 @@ class RouterEntry(OuterBase):
                 )
                 self.assertIn(said, self.said())
                 self.assertEqual(self.last_run()[:2], ("start", ID))
+
+    def test_a_new_run_closes_the_recorded_run_past_a_newer_failed_launch(self):
+        self.add(kind="start", ident=ID, sid="old", minutes_ago=600, role="engineer")
+        at = (NOW - timedelta(minutes=300)).isoformat(timespec="seconds")
+        failed = {"ts": at, "kind": "failed", "issue": ID, "sid": self.sid("failed")}
+        self.lines.append(json.dumps(failed))
+        self.assertEqual(self.entry("--issue", ID), 0)
+        harness = f"agent-pm-engineer-{ID}"
+        self.assertEqual(
+            [o for o in self.api.order if o[0] in ("close", "detach")],
+            [("close", harness), ("detach", harness)],
+        )
+        self.assertIn(f"tui-closed {ID}", self.said())
 
     def test_an_unloadable_recorded_run_is_a_tui_error_and_the_run_starts(self):
         self.add(kind="start", ident=ID, sid="old", minutes_ago=600, role="engineer")
@@ -840,11 +856,24 @@ class RouterEntry(OuterBase):
                 self.assertIn("claim TASK-7 role=engineer client=a", said)
                 self.assertEqual(said[-1], "launch TASK-7 exit=0")
 
-    def test_a_new_run_failing_before_its_linear_run_counts_toward_the_cap(self):
+    def test_a_missing_role_key_skips_the_claim_and_leaves_the_issue_todo(self):
         self.missing.add(KEY)
+        for argv, rc in ((("--issue", ID), 1), (("--now",), 0)):
+            with self.subTest(argv=argv):
+                self.assertEqual(self.entry(*argv), rc)
+                self.assertIn(
+                    f"claim-skip TASK-7 reason=no Keychain item for role key {KEY}", self.said()
+                )
+                self.assertEqual(
+                    (self.todo["state"], self.fake.mutations, self.api.detached, self.raw_runs()),
+                    ("Todo", [], [], ""),
+                )
+
+    def test_a_new_run_failing_before_its_linear_run_counts_toward_the_cap(self):
+        self.fake.node = OSError("down")
         for _ in range(router.CAP):
             self.todo["state"] = "Todo"
-            self.assertEqual(self.entry("--issue", ID), 2)
+            self.assertEqual(self.entry("--issue", ID), 3)
             self.assertEqual(self.todo["state"], "In Progress")
             self.lines = self.raw_runs().splitlines()
         rows = [json.loads(line) for line in self.lines]
@@ -1314,6 +1343,19 @@ class RouterOutages(TickBase):
                     fake = FakeLinear([issue("TASK-1", "Todo", "researcher")])
                     self.assertEqual(self.tick(fake, *argv), 0)
                     self.assertEqual(self.launched_runs(), [("TASK-1", "new")])
+
+    def test_a_rejected_key_at_board_setup_is_one_config_error_a_day(self):
+        def unauthorized():
+            return urllib.error.HTTPError(client.URL, 401, "Unauthorized", {}, io.BytesIO())
+
+        logged = "config-error reason=linear api error: teams: HTTP 401"
+        for argv in (("--now",), ("--issue", "TASK-1")):
+            with self.subTest(argv=argv):
+                for again in (False, True):
+                    self.assertEqual(self.tick(failing(unauthorized), *argv, again=again), 1)
+                    said = [] if again else [logged]
+                    self.assertEqual((self.said(), self.raw), (said, ""))
+                    self.assertEqual((self.start.launches, self.state), ([], ""))
 
     def test_a_dry_run_prints_it_and_writes_nothing(self):
         for argv in (("--now", "--dry-run"), ("--issue", "TASK-1", "--dry-run")):
@@ -2599,6 +2641,28 @@ class ExplicitIssueRuns(TickBase):
                         (fake.queries, self.api.order, self.state, self.start.launches),
                         ([], SESSIONS, self.before(), []),
                     )
+
+    def test_a_live_agent_run_past_a_newer_failed_launch_is_still_live(self):
+        live = ["agent-pm-engineer-TASK-1"]
+        self.add(
+            kind="start", ident="TASK-1", sid=f"live:{live[0]}", minutes_ago=10, role="engineer"
+        )
+        at = (NOW - timedelta(minutes=5)).isoformat(timespec="seconds")
+        failed = {"ts": at, "kind": "failed", "issue": "TASK-1", "sid": self.sid("failed")}
+        self.lines.append(json.dumps(failed))
+        fake = FakeLinear([issue("TASK-1", "Todo", "engineer")])
+        self.assertEqual(self.tick(fake, "--issue", "TASK-1", live=live), 1)
+        self.assertEqual(
+            self.err, "router.py: TASK-1 has a live agent run: attach agent-pm-engineer-TASK-1\n"
+        )
+
+    def test_a_live_agent_run_without_an_attach_command_is_refused_without_one(self):
+        fake = FakeLinear([issue("TASK-1", "Todo", "engineer")])
+        with mock.patch.object(self.api, "attach_command", return_value=None):
+            self.assertEqual(
+                self.tick(fake, "--issue", "TASK-1", live=["agent-pm-engineer-TASK-1"]), 1
+            )
+        self.assertEqual(self.err, "router.py: TASK-1 has a live agent run\n")
 
     def test_in_progress_resumes_inside_recovers_time_windows(self):
         fake = self.fake(issue("TASK-1", "In Progress", "researcher"))

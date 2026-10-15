@@ -182,6 +182,7 @@ class Queries(RunCase):
             client="fake",
             delegate_kind="fake",
             resets_at=(datetime.now(UTC) + timedelta(hours=1)).isoformat(),
+            attempt=1,
         )
         for tty in (False, True):
             result, output, errors = self.call(["resume", "TASK-1"], tty=tty)

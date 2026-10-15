@@ -270,11 +270,10 @@ class GraphQLProjection(ServerCase):
             mock.patch.dict(
                 os.environ, {"FAKE_LINEAR_TRANSPORT": fake_linear.seam(self, stranger, self.url)}
             ),
-            self.assertRaises(urllib.error.HTTPError) as cm,
+            self.assertRaises(LinearError) as cm,
         ):
             client.linear_gql(ops.Q_USER, service="stranger", e="me@x.com")
-        cm.exception.close()
-        self.assertEqual(cm.exception.code, 401)
+        self.assertEqual(str(cm.exception), "linear api error: users: HTTP 401")
         self.assertEqual(
             self.fake.requests,
             [
