@@ -638,6 +638,16 @@ class SuppliedFlagsTest(Base):
             )
         return launch, json.loads(launch.argv[-1])
 
+    def test_the_configs_flags_reach_the_client_before_the_specs(self):
+        own = ("-c", "plugins.x@m.enabled=false")
+        self.adapter = CodexAdapter({**self.adapter.config, "flags": list(own)})
+        spec = dataclasses.replace(self.spec, flags=("--enable", "web"))
+        _, data = self.launch(spec)
+        snapshot = self.common.load(data["workdir"], data["sid"]).snapshot
+        argv = tui.execution_argv(tui.decode(data), snapshot, "hooks.state={trusted}")
+        start = argv.index(own[1]) - 1
+        self.assertEqual(argv[start : start + 4], [*own, "--enable", "web"])
+
     def test_supplied_flags_env_and_hooks_share_one_path(self):
         flags = ("--add-dir", "../../added", '--config=model_verbosity="low"', "--enable", "web")
         spec = dataclasses.replace(self.spec, flags=flags, env={"S": "s"})

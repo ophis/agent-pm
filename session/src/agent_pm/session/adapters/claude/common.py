@@ -12,7 +12,7 @@ from collections.abc import Iterator, Mapping
 from types import MappingProxyType
 
 from agent_pm.session.adapters import common
-from agent_pm.session.adapters.common import UUID, scan
+from agent_pm.session.adapters.common import UUID, scan, strings
 from agent_pm.session.engine.types import (
     COMMAND,
     ConfigError,
@@ -106,10 +106,6 @@ def _full(window: Window | None, resets: float | None) -> Window:
     )
 
 
-def _strings(value) -> bool:
-    return isinstance(value, list) and all(isinstance(s, str) for s in value)
-
-
 def _read_dir(path: str) -> str:
     if not printable_abs(path) or any(c in NOT_LITERAL for c in path):
         raise ConfigError(
@@ -156,7 +152,7 @@ def _load(store: str, cwd: str, sid: str) -> dict:
         and state["sid"] == sid
         and isinstance(state["cwd"], str)
         and os.path.realpath(state["cwd"]) == os.path.realpath(cwd)
-        and _strings(state["dirs"])
+        and strings(state["dirs"])
         and isinstance(state["env"], dict)
         and environment_ok(state["env"])
     ):
@@ -165,8 +161,8 @@ def _load(store: str, cwd: str, sid: str) -> dict:
 
 
 CHECKS = (
-    ("flags", _strings, "a list of strings"),
-    ("allow", _strings, "a list of strings"),
+    common.FLAGS,
+    ("allow", strings, "a list of strings"),
     *common.CHECKS,
 )
 
