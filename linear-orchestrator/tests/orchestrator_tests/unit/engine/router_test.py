@@ -2161,6 +2161,11 @@ class RunLaunching(OuterBase):
                 self.write_config(OUTER + f'[project_reads]\n"{project}" = ["{material}"]\n')
                 self.assertEqual(self.outer(), 0)
                 self.assertEqual(self.detached(), replace(self.expected(), read=want))
+        self.assertEqual(self.outer(mode="resume"), 0)
+        self.assertEqual(self.detached().read, ())
+        self.write_config(OUTER + f'[project_reads]\n"{PROJECT}" = ["{material}"]\n')
+        self.assertEqual(self.outer(mode="resume"), 0)
+        self.assertEqual(self.detached(), replace(self.expected(resume=True), read=(material,)))
 
     def test_a_given_task_reaches_the_run(self):
         self.assertEqual(self.outer(task="light-build"), 0)

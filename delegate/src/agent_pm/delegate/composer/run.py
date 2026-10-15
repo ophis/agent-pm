@@ -141,22 +141,23 @@ def access(
         for entry in entries:
             if (p := bind(fill(entry, roots, key))) not in paths[key]:
                 paths[key].append(p)
-    for p in map(bind, reads):
+    for entry in reads:
+        p = bind(entry) if entry else entry
         if not os.path.isdir(p):
-            raise ConfigError(f"read dir {p} is not a directory")
+            raise ConfigError(f"read dir {p or repr(p)} is not a directory")
         if p not in paths["read"]:
             paths["read"].append(p)
     dirs = [workdir] if os.path.realpath(cwd) != os.path.realpath(workdir) else []
     dirs += [p for p in paths["write"] if p not in dirs]
-    seen, reads = set(map(os.path.realpath, dirs)), []
+    seen, granted = set(map(os.path.realpath, dirs)), []
     for p in (tasks_path(run.role, team), *paths["read"]):
         if (real := os.path.realpath(p)) not in seen:
             seen.add(real)
-            reads.append(p)
+            granted.append(p)
     commands = tuple(c.rule for c in approved(run, workdir, team))
     return Intent(
         dirs=tuple(dirs),
-        reads=tuple(reads),
+        reads=tuple(granted),
         writes=tuple(paths["write"]),
         commands=commands,
         gate=run.gate,

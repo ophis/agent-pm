@@ -386,11 +386,12 @@ class Access(Fake):
         a_file = os.path.join(self.tmp, "file")
         with open(a_file, "w", encoding="utf-8"):
             pass
-        for path in (os.path.join(self.tmp, "missing"), a_file):
+        missing = os.path.join(self.tmp, "missing")
+        for path, shown in ((missing, missing), (a_file, a_file), ("", "''")):
             with self.subTest(path=path):
                 with self.assertRaises(ConfigError) as cm:
                     self.intent(reads=(path,))
-                self.assertEqual(str(cm.exception), f"read dir {path} is not a directory")
+                self.assertEqual(str(cm.exception), f"read dir {shown} is not a directory")
 
     def test_a_cwd_that_is_not_an_absolute_path(self):
         for cwd in ("", "work"):

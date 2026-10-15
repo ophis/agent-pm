@@ -89,7 +89,9 @@ def plan(run: RunConfig, spec: Spec, *, driver: Driver, composition: Composer) -
         client=client,
         sid=spec.sid if spec.sid is not None else str(uuid.uuid4()),
         team=composition.team,
-        read=tuple(dict.fromkeys(os.path.abspath(os.path.expanduser(p)) for p in spec.read)),
+        read=tuple(
+            dict.fromkeys(os.path.abspath(os.path.expanduser(p)) if p else p for p in spec.read)
+        ),
     )
     resume = spec.sid if spec.resume else None
     here, project = place(
