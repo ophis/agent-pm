@@ -77,7 +77,7 @@ class Names(Case):
         self.assertTrue(os.access(os.path.join(SKILLS, "tmux", "scripts", "ctmux"), os.X_OK))
 
     def test_the_grid_keys_it_names_are_the_tmux_hosts(self):
-        [config] = [p for p in paths("tmux") if p.endswith("config.toml")]
+        [config] = {p for p in paths("tmux") if p.endswith("config.toml")}
         with open(config, "rb") as f:
             tmux = tomllib.load(f)["hosts"]["tmux"]
         for key in ("workers_per_column", "grid_retile"):

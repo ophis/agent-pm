@@ -16,7 +16,13 @@ from agent_pm.session.engine.types import (
     TurnEnd,
 )
 
-from session.tests.unit.adapters.codex.support import NATIVE, Base, committed_headless
+from session.tests.unit.adapters.codex.support import (
+    NATIVE,
+    PLUGIN_OFF,
+    Base,
+    committed_headless,
+    packaged,
+)
 
 CODEX = ("-s", "danger-full-access", "-c", 'approval_policy="on-request"')
 
@@ -305,6 +311,12 @@ class ConfiguredFlags(Base):
             self.adapter, dataclasses.replace(spec, prompt="two", resume=True)
         )
         self.assertIn(self.OWN[1], resumed.argv)
+
+    def test_the_packaged_config_turns_the_agent_pm_plugin_off(self):
+        spec = dataclasses.replace(self.spec, flags=CODEX, prompt="hi")
+        argv = committed_headless(packaged(), spec).argv
+        start = argv.index(PLUGIN_OFF[1]) - 1
+        self.assertEqual(argv[start : start + 2], PLUGIN_OFF)
 
     def test_bad_configured_flags_are_refused(self):
         for flags, message in (

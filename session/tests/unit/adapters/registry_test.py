@@ -9,6 +9,7 @@ import abc
 import importlib
 import importlib.abc
 import importlib.util
+import json
 import operator
 import os
 import sys
@@ -556,6 +557,7 @@ class AdapterTest(Base):
 
 
 SID = "0f8fad5b-d9cb-469f-a165-70867728950e"
+PLUGIN_OFF = '{"enabledPlugins": {"agent-pm@agent-pm": false}}'
 
 
 def committed() -> dict:
@@ -589,7 +591,7 @@ class Committed(Case):
             tables["claude"],
             {
                 "implementation": "agent_pm.session.adapters.claude:ClaudeAdapter",
-                "flags": [],
+                "flags": ["--settings", PLUGIN_OFF],
                 "allow": [],
                 "env": {},
                 "tiers": {"1": "fable", "2": "opus", "3": "sonnet", "4": "haiku"},
@@ -608,6 +610,23 @@ class Committed(Case):
             argv[4:10],
             ("--model", "haiku", "--effort", "low", "--setting-sources", "user"),
         )
+
+    def test_every_committed_claude_session_turns_the_agent_pm_plugin_off(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.enterContext(
+            mock.patch.dict(os.environ, {"CLAUDE_CONFIG_DIR": os.path.join(tmp.name, "config")})
+        )
+        adapter = registry_of(configured(committed())).adapter("claude")
+        policy = ("--settings", '{"enabledPlugins": {"agent-pm@agent-pm": false}, "model": "x"}')
+        for flags in ((), policy):
+            spec = Spec(workdir=tmp.name, sid=SID, prompt="hi", flags=flags)
+            for launch in (adapter.headless().launch(spec), adapter.tui().launch(spec, ("h",))):
+                with self.subTest(flags=flags, argv=launch.argv[1]):
+                    argv = launch.argv
+                    self.assertEqual(argv.count("--settings"), 1)
+                    settings = json.loads(argv[argv.index("--settings") + 1])
+                    self.assertEqual(settings["enabledPlugins"], {"agent-pm@agent-pm": False})
 
 
 if __name__ == "__main__":

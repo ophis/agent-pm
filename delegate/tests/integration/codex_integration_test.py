@@ -49,20 +49,24 @@ class Codex(CodexIntegration):
         self.assertEqual(res.returncode, 0, res.stderr)
         (call,) = self.calls()
         self.assertEqual(
-            call["argv"][:9],
+            call["argv"][:13],
             [
                 "exec",
                 "--json",
                 "--skip-git-repo-check",
+                "-c",
+                "plugins.agent-pm@agent-pm.enabled=false",
                 "-s",
                 "danger-full-access",
                 "-c",
                 'approval_policy="on-request"',
                 "-c",
                 'approvals_reviewer="auto_review"',
+                "-c",
+                "plugins.agent-pm@agent-pm.enabled=false",
             ],
         )
-        self.assertNotIn("-s", call["argv"][9:])
+        self.assertNotIn("-s", call["argv"][13:])
         self.assertFalse([w for w in call["argv"] if w.startswith("sandbox_workspace_write.")])
 
     def test_two_runs_resume_the_same_native_session_and_keep_previous_progress(self):

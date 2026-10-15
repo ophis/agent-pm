@@ -223,7 +223,8 @@ class WorkerCase(CliCase):
             ],
         )
         settings = json.loads(argv[7])
-        self.assertEqual(set(settings), {"hooks"})
+        self.assertEqual(set(settings), {"enabledPlugins", "hooks"})
+        self.assertEqual(settings["enabledPlugins"], {"agent-pm@agent-pm": False})
         self.assertEqual(set(settings["hooks"]), CLAUDE_HOOKS)
         self.assertFalse([word for word in argv if word.startswith(POLICY)], argv)
 

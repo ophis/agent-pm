@@ -413,6 +413,8 @@ class Policy(Base):
                 'approval_policy="on-request"',
                 "-c",
                 'approvals_reviewer="auto_review"',
+                "-c",
+                "plugins.agent-pm@agent-pm.enabled=false",
             ),
             {},
         ),

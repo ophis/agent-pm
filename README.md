@@ -115,7 +115,7 @@ Nothing checks these. A missing one fails the agent run.
 | `git`, `gh` logged in | checkouts, GitHub and pull-request destinations |
 | iTerm2 running | the default iTerm2 split |
 
-Agent runs load your user settings (plugins except `agent-pm`) and no MCP servers. A trusted cwd adds its project settings (`trusted_dirs` in `delegate/src/agent_pm/delegate/config.toml`).
+Every session agent-pm starts, agent runs and workers, loads your user settings with every plugin except `agent-pm` (`[adapters.<client>] flags` in `session/src/agent_pm/session/config.toml`): only a client you start, the commander, has `/agent-pm:tmux`. Agent runs load no MCP servers. A trusted cwd adds its project settings (`trusted_dirs` in `delegate/src/agent_pm/delegate/config.toml`).
 
 | Command | Does |
 |---|---|
@@ -236,11 +236,11 @@ Each session's `Run <sid>` comment holds its resume command. Move the issue out 
 
 ## Client policy
 
-Role runs' client flags are `[policy.claude]` and `[policy.codex]` in `delegate/src/agent_pm/delegate/config.toml`. A local list replaces the default whole. Codex defaults to `danger-full-access`, which ignores writable roots and team dirs. For `workspace-write`:
+Role runs' client flags are `[policy.claude]` and `[policy.codex]` in `delegate/src/agent_pm/delegate/config.toml`. A local list replaces the default whole: keep its agent-pm plugin flag. Codex defaults to `danger-full-access`, which ignores writable roots and team dirs. For `workspace-write`:
 
 ```toml
 [delegate.policy.codex]
-flags = ["-s", "workspace-write", "-c", 'approval_policy="on-request"', "-c", 'approvals_reviewer="auto_review"', "-c", "sandbox_workspace_write.network_access=false", "-c", "sandbox_workspace_write.writable_roots=[]"]
+flags = ["-s", "workspace-write", "-c", 'approval_policy="on-request"', "-c", 'approvals_reviewer="auto_review"', "-c", "plugins.agent-pm@agent-pm.enabled=false", "-c", "sandbox_workspace_write.network_access=false", "-c", "sandbox_workspace_write.writable_roots=[]"]
 ```
 
 ## Switching from v1
