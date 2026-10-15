@@ -20,8 +20,8 @@
 #   client          required: the Adapter that runs the agent run (an [adapters.<name>] name); the orchestrator's
 #                   overlay may set it per role. The Composer passes it through unchecked
 #   language        the language reports and PRDs are written in (one line); "" → no rule: the model's default
-#   cwd             the dir the agent run starts in (absolute or ~ path); "" → the caller's current directory
-#                   (the orchestrator's runs: the workdir). A resume reuses its recorded one (<workdir>/run.jsonl)
+#   cwd             the dir the agent run starts in (absolute or ~ path); "" → <workdir>/agent. A resume reuses
+#                   its recorded one (<workdir>/run/run.jsonl)
 #   idle_timeout    positive finite seconds without a session event. In tui mode the run gives up, leaving the
 #                   session open; other modes record the idle event and continue
 #   show            how a started tui session is shown, when its Host can display: "" → a pane (the tmux Host: in
@@ -98,11 +98,11 @@ host = ""
 #                 as ~ pre-approves reads of its whole tree; a path with any of *?[]{}()\, refuses the run. Codex adds
 #                 nothing (no read-only grant usable with -s): its workspace-write sandbox reads the whole disk; the
 #                 default danger-full-access can write there too (README.md › Client policy). A dir also in write,
-#                 or inside the cwd, the workdir or a write dir, stays writable; shell commands can write there
+#                 or inside the cwd, <workdir>/agent or a write dir, stays writable; shell commands can write there
 #                 regardless
-#   write         extra dirs the agent run needs to write; the workdir is always reachable; [] → none
+#   write         extra dirs the agent run needs to write; <workdir>/agent is always reachable; [] → none
 #   commands      requested shell commands (a trailing ` *` matches any arguments); the client's Adapter decides how
-#                 they are approved. {{workdir}} is the agent run's workdir, {{team}} core's team/ dir, {{role_team}}
+#                 they are approved. {{workdir}} is <workdir>/agent, {{team}} core's team/ dir, {{role_team}}
 #                 as in read; a word holding one is shell-quoted once filled, and a prompt text writing the command
 #                 with <Workdir>, <team> or <role team> gets it as approved when that quoting changed it; [] → none
 #   gate          a usage-gate command the researcher runs before a costly step (deep research: before a second

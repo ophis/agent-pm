@@ -304,7 +304,7 @@ python3 -c 'import fcntl, os, time; f = open(os.path.expanduser("~/.agent-pm/log
 bin/agent-pm-linear router --issue <H>
 ```
 
-On a failure, read `<work_dir>/logs/orchestrator.jsonl` and `<work_dir>/work/<ID>/run.jsonl`. End a stuck run with `bin/agent-pm-linear close <ID>`. A check that passes when it should fail (steps 2, 4, 9) is a bug: report it.
+On a failure, read `<work_dir>/logs/orchestrator.jsonl` and `<work_dir>/work/<ID>/run/run.jsonl`. End a stuck run with `bin/agent-pm-linear close <ID>`. A check that passes when it should fail (steps 2, 4, 9) is a bug: report it.
 
 ## Upgrading
 
@@ -323,6 +323,22 @@ Nothing migrates automatically. Do each step that applies, once, by hand or thro
 | an issue In Progress across the trigger-only router or `runs.jsonl` deploys | Deploy with nothing In Progress. |
 | Claude runs started before `agent-pm-session client-resume claude` | Resume them by hand: their `Run <sid>` command has no saved launch to replay. |
 | old logs in `<work_dir>/logs/` | `rm -rf ~/.agent-pm/logs/runs.log ~/.agent-pm/logs/router.log ~/.agent-pm/logs/promote.log ~/.agent-pm/logs/projects ~/.agent-pm/logs/tui` |
+| `src/` or `run.jsonl` directly in a `<work_dir>/work/<ID>/`, or `~/.agent-pm/delegates/` | [Workdir split](#workdir-split). |
+
+### Workdir split
+
+A run's workdir `<work_dir>/work/<ID>/` now holds `agent/` and `run/`. Nothing reads the old layout: until moved, an issue's run cannot resume and prune skips its checkouts. Old runs cannot resume after the move either (their cwd moved); their Codex recovery state stays as a record.
+
+1. With no live run and nothing In Progress, move each workdir's files:
+   ```bash
+   for w in <work_dir>/work/*/; do
+     [ -d "$w/run" ] && continue
+     mkdir "$w/agent" "$w/run"
+     for f in src publish tmp; do [ -e "$w/$f" ] && mv "$w/$f" "$w/agent/"; done
+     for f in run.jsonl out.md delegate.json writeback.json writeback.lock delegate.lock; do [ -e "$w/$f" ] && mv "$w/$f" "$w/run/"; done
+   done
+   ```
+2. `rm -rf ~/.agent-pm/delegates`
 
 ## Tests
 

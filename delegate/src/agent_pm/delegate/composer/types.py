@@ -11,7 +11,7 @@ from pathlib import Path
 from agent_pm.session import Effort
 from agent_pm.utils import freeze
 
-DELIVERABLE = os.path.join("tmp", "deliverable.md")  # under the workdir, without `out`
+DELIVERABLE = os.path.join("tmp", "deliverable.md")  # under the agent dir, without `out`
 
 
 class ConfigError(Exception):
