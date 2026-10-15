@@ -336,6 +336,15 @@ class Methods(Case):
         for text in (task_text("deep-research"), method("deep-research")):
             self.assertNotIn("internal names", text)
 
+    def test_a_local_dir_is_read_inside_read_dirs_and_access_is_never_asked(self):
+        with open(os.path.join(TEAM, "roles", "researcher.md")) as f:
+            researcher = f.read()
+        for text in (researcher, task_text("product-design")):
+            self.assertIn("inside a read dir ([Principles › Work › Read dirs](#work))", text)
+            self.assertIn("never ask for access", text)
+        self.assertIn("like a repo whose checkout exits 1", researcher)
+        self.assertIn("outside them → under Risks", task_text("product-design"))
+
     def test_the_researcher_charter_and_methods_are_harness_neutral(self):
         with open(os.path.join(TEAM, "roles", "researcher.md")) as f:
             texts = {"roles/researcher.md": (f.read(), ())} | {

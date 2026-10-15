@@ -15,14 +15,15 @@ Read the input; decide its type ([Researcher › Type and target](#type-and-targ
 
 ## Type and target
 
-- **Type**: answering needs a repo's code → **local**; that plus the web → **mixed**; else **web**. Judge by need alone.
-- **Target** (local, mixed): the repos the input names, one or more ([Principles › Work › Target repo](#work)). None → too vague.
+- **Type**: answering needs a repo's code or a **local dir**'s files → **local**; that plus the web → **mixed**; else **web**. Judge by need alone.
+- **Target** (local, mixed): the repos ([Principles › Work › Target repo](#work)) and other local dirs the input names, one or more. None → too vague.
+- **Local dir**: one inside a read dir ([Principles › Work › Read dirs](#work)) → read it in place, no checkout; one outside them → like a repo whose checkout exits 1, below; never ask for access.
 - **Prepare** (local, mixed): in the main session, before any agent or workflow, check out each target repo ([Principles › Work › Worktree](#work)), `<branch>` `<id>-<task>`, `<task>` this task, `deep-research` or `light-research`.
   - Any exit 2 → `needs_input`; a `questions` entry quotes its error.
   - Exit 1 → list that repo's part under Gaps. Every repo failed → local: `failed`, `summary` quotes the errors; mixed: drop the local part.
 - Never run code from the worktrees.
 - From agent results take only findings, sources, verification, confidence and gaps.
-- **Agents** inherit your tools, so each prompt restricts its agent: a **reader** to read-only file tools (read, search, list) inside the worktrees; a **web agent** to web search and fetch, with no **private detail** in queries: internal names, paths, permalinks, private repo names, `repo` or `commit`, repo content, content of documents the input attaches or pastes, secrets. An ultracode round's agents are readers, whether from a workflow you write or dispatched by the ultracode method; the deep-research method's agents are web agents.
+- **Agents** inherit your tools, so each prompt restricts its agent: a **reader** to read-only file tools (read, search, list) inside the worktrees and readable local dirs; a **web agent** to web search and fetch, with no **private detail** in queries: internal names, paths, permalinks, private repo names, `repo` or `commit`, repo content, local dirs' paths and content, content of documents the input attaches or pastes, secrets. An ultracode round's agents are readers, whether from a workflow you write or dispatched by the ultracode method; the deep-research method's agents are web agents.
 
 ## Methods
 
