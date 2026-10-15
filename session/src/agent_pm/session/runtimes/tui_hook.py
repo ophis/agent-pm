@@ -2,7 +2,7 @@
 sources, binds client identity, and appends one hooks.jsonl record before notifying its optional
 Host callback. Never stdout, always exits 0; failures retain a traceback and one stderr line.
 session.json's adapter_hook and host_hook are HookCallback.fields(): a callback module is found over
-the hook's own source roots, then the callback's declared roots, then sys.path, each its on_hook
+the hook's own source roots, then every callback's declared roots, then sys.path, each its on_hook
 given a HookCall; one outside sys.path loads from its roots, sys.path unchanged.
 """
 
@@ -70,7 +70,7 @@ SESSION_STATE = {  # what this hook or an adapter_hook reads
 
 def _prepare(argv: Sequence[str], roots: Sequence[str]):
     """The session dir, label and state, and each callback's module specs, found over `roots`,
-    then each callback's own roots, then sys.path.
+    then every callback's roots, then sys.path.
     """
     folder, label = _arguments(argv)
     path = os.path.join(folder, STATE)

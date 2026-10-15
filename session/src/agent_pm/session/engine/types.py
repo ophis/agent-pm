@@ -137,7 +137,8 @@ class HookError(Exception):
 @dataclass(frozen=True)
 class HookCallback:
     """A Tui's or Host's tui hook callback: module's on_hook, a regular file found over the
-    session's source roots, then roots (its own install's), then sys.path; state: its JSON data.
+    session's source roots, then every callback's roots (each its install's), then sys.path;
+    state: its JSON data.
     """
 
     module: str

@@ -207,6 +207,26 @@ class DeclaredRootCallback(Case):
         module = f"{top}.nested.callback"
         self.assertEqual(self.run_hook(module, roots), ("", [{"loaded": module}]))
 
+    def test_a_callback_is_found_over_another_callbacks_roots(self):
+        module, host = f"adapter_{uuid.uuid4().hex}", f"host_{uuid.uuid4().hex}"
+        self.write("other", f"{module}.py")
+        self.write("other", f"{host}.py", text="def on_hook(call):\n    pass\n")
+        other = os.path.join(self.root, "other")
+        state_ = {
+            **state(self.root, None),
+            "words": {},
+            "adapter_hook": {"module": module, "state": {}, "roots": []},
+            "host_hook": {"module": host, "state": {}, "roots": [other]},
+        }
+        write_state(self.dir, state_)
+        with redirect_stderr(io.StringIO()) as stderr:
+            tui_hook.run(
+                [self.dir, "stop"], types.SimpleNamespace(buffer=io.BytesIO(b"{}")), roots=ROOTS
+            )
+        with open(os.path.join(self.dir, "hooks.jsonl"), encoding="utf-8") as f:
+            payloads = [json.loads(line)["payload"] for line in f]
+        self.assertEqual((stderr.getvalue(), payloads), ("", [{"loaded": module}]))
+
 
 class Source(Case):
     def test_no_client_name(self):
