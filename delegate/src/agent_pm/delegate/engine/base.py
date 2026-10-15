@@ -13,7 +13,10 @@ from agent_pm.utils import Display, Record, Status
 
 
 class Delegate(ABC):
-    """One role run and its durable view; implementations own construction and placement."""
+    """One role run and its durable view; implementations own construction and placement. Every
+    implementation lays a run's workdir out per Layout (its agent dir and run dir): prune, target
+    and write-back rely on it.
+    """
 
     @classmethod
     @abstractmethod
@@ -69,12 +72,6 @@ class Delegate(ABC):
 
     @abstractmethod
     def close(self) -> None: ...
-
-    @abstractmethod
-    def forget(self) -> None:
-        """Deletes the run's state, so attach raises ConfigError; its workdir stays. Idempotent;
-        ConfigError while the run is running.
-        """
 
     @abstractmethod
     def session_info(self) -> SessionStatus: ...

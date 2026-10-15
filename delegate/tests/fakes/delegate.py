@@ -1,9 +1,8 @@
-"""FakeDelegate, a Delegate with one session that runs nothing: its state is <workdir>/delegate.json
-(0600), so a view from attach and the Delegate that wrote it agree. end(workdir) and finish(workdir)
-stand for its sessions ending, without and with an outcome.
+"""FakeDelegate, a Delegate with one session that runs nothing: it lays its workdir out per Layout,
+its state the run dir's delegate.json, so a view from attach and the Delegate that wrote it agree.
+end(workdir) and finish(workdir) stand for its sessions ending, without and with an outcome.
 """
 
-import contextlib
 import json
 import os
 import uuid
@@ -14,6 +13,7 @@ from agent_pm.delegate import (
     ConfigError,
     Delegate,
     Finished,
+    Layout,
     Outcome,
     Progress,
     Result,
@@ -25,16 +25,20 @@ from agent_pm.utils import Record, Status, save
 FILE = "delegate.json"
 
 
+def _path(workdir: str) -> str:
+    return os.path.join(Layout(workdir).run, FILE)
+
+
 def _load(workdir) -> dict:
     try:
-        with open(os.path.join(workdir, FILE), encoding="utf-8") as f:
+        with open(_path(workdir), encoding="utf-8") as f:
             return json.load(f)
     except (OSError, TypeError, ValueError):
         raise ConfigError(f"{workdir!r}: no {FILE}") from None
 
 
 def _save(workdir: str, state: dict) -> dict:
-    save(os.path.join(workdir, FILE), json.dumps(state))
+    save(_path(workdir), json.dumps(state))
     return state
 
 
@@ -66,6 +70,7 @@ class FakeDelegate(Delegate):
         self.workdir, self.input = os.path.abspath(spec.workdir), spec.input
         name = spec.name or f"{role}-{sid[:8]}"
         state = {"role": role, "sid": sid, "name": name, "display": display}
+        os.makedirs(Layout(self.workdir).agent, exist_ok=True)
         _save(self.workdir, {**state, "outer": {}, "alive": False, "outcome": None, "starts": 0})
 
     @classmethod
@@ -180,10 +185,6 @@ class FakeDelegate(Delegate):
 
     def session_info(self):
         return SessionStatus("yes", None, "")
-
-    def forget(self):
-        with contextlib.suppress(FileNotFoundError):
-            os.remove(os.path.join(self.workdir, FILE))
 
     def resume(self, *, mode=None):
         state = _load(self.workdir)

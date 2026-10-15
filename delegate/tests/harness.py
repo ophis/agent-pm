@@ -3,7 +3,7 @@
 import json
 import os
 
-from agent_pm.delegate import Spec
+from agent_pm.delegate import Layout, Spec
 from agent_pm.delegate.engine.harness_delegate import HarnessDelegate
 from agent_pm.delegate.engine.state import RunState
 from agent_pm.session import Exited, Reply
@@ -70,10 +70,10 @@ class HarnessCase(Case):
         return HarnessDelegate(role, spec, session_cls=session_cls, **kw)
 
     def state_record(self) -> str:
-        return RunState(self.work).record
+        return RunState(Layout(self.work)).record
 
     def metadata(self):
-        with open(os.path.join(self.work, "delegate.json"), encoding="utf-8") as file:
+        with open(self.state_record(), encoding="utf-8") as file:
             return json.load(file)
 
     def stop(self, record):

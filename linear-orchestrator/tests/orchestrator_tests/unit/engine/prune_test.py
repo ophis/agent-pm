@@ -8,7 +8,7 @@ import subprocess
 from contextlib import redirect_stderr, redirect_stdout
 from unittest import mock
 
-from agent_pm.delegate import ConfigError, SessionError
+from agent_pm.delegate import ConfigError, Layout, SessionError
 from agent_pm.linear_orchestrator.engine import config, ops, prune
 from agent_pm.linear_orchestrator.engine.types import LinearError
 from agent_pm.utils import temp_dirs
@@ -101,7 +101,7 @@ class RepositoryCleanup(PruneScenario):
             (0, f"prune-closed TASK-7 session={SID}\nprune-removed TASK-7 what=agent dir"),
         )
         self.record("TASK-8", OTHER_SID, [B], agent=False)
-        os.unlink(os.path.join(self.cfg.run_dir("TASK-8"), "delegate.json"))
+        os.unlink(os.path.join(Layout(self.cfg.run_dir("TASK-8")).run, "delegate.json"))
         run = self.run_files("TASK-8")
         again = gql_for(dict.fromkeys(("TASK-7", "TASK-8"), ("Done", [(30, "Done")])))
         with mock.patch.object(PruneDelegate, "attach", side_effect=AssertionError("attached")):
@@ -508,7 +508,7 @@ class RetentionCleanup(PruneScenario):
         clone = self.mkc("TASK-7", "src", "o", "repo")
         self.record("TASK-7", SID, [A])
         self.record("TASK-8", OTHER_SID, ["other-host-agent"])
-        os.unlink(os.path.join(self.cfg.run_dir("TASK-7"), "delegate.json"))
+        os.unlink(os.path.join(Layout(self.cfg.run_dir("TASK-7")).run, "delegate.json"))
         gql = gql_for(dict.fromkeys(("TASK-7", "TASK-8"), ("Done", [(30, "Done")])))
         skip = (
             f"prune-skip TASK-7 sid={SID} reason=ConfigError: "

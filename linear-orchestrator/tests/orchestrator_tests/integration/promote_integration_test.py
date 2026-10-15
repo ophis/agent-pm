@@ -183,7 +183,7 @@ class PruneSessionDelegate(FakeDelegate):
         return HARNESS_DELEGATE.resolve(role, task, overlays=overlays)
 
     def close(self):
-        with open(os.path.join(self.workdir, "delegate.json")) as stream:
+        with open(os.path.join(delegate.Layout(self.workdir).run, "delegate.json")) as stream:
             state = json.load(stream)
         Session.configure_from(delegate.read_config())
         Session.host().attach(state["name"]).close()

@@ -206,7 +206,8 @@ class HarnessDelegate(Delegate):
             session=replace(accepted.session, name=name if tui else None),
         )
         self.workdir = accepted.spec.workdir
-        self.store = RunState(self.workdir)
+        self.layout = Layout(self.workdir)
+        self.store = RunState(self.layout)
         self._state = _State(
             role,
             accepted,
@@ -230,21 +231,30 @@ class HarnessDelegate(Delegate):
             raise ConfigError(str(error)) from None
 
     def _persist_new(self) -> None:
-        """The session preflight follows the replaced run's refusal and cleanup."""
+        """Every refusal precedes every write: a fresh workdir's session preflight runs before its
+        run dir is made; otherwise it follows the replaced run's refusal and cleanup, under the
+        mutex. The agent dir is made last, just before the run record.
+        """
+        fresh = not os.path.lexists(self.layout.run)
         try:
+            if fresh:
+                self._preflight()
+            os.makedirs(self.layout.run, exist_ok=True)
             with self.store.mutex():
                 payload = self.store.read()
                 if payload is not None:
                     self._state = replace(self._state, attempt=self._replacing(payload))
-                try:
-                    self.driver.preflight(self._state.plan.session)
-                except (SessionConfigError, SessionError) as error:
-                    raise ConfigError(str(error)) from None
-                layout = Layout(self.workdir)
-                for made in (layout.agent, layout.run):
-                    os.makedirs(made, exist_ok=True)
+                if not fresh or payload is not None:
+                    self._preflight()
+                os.makedirs(self.layout.agent, exist_ok=True)
                 self._save(self._state)
         except OSError as error:
+            raise ConfigError(str(error)) from None
+
+    def _preflight(self) -> None:
+        try:
+            self.driver.preflight(self._state.plan.session)
+        except (SessionConfigError, SessionError) as error:
             raise ConfigError(str(error)) from None
 
     def _replacing(self, payload: bytes) -> int:
@@ -365,7 +375,7 @@ class HarnessDelegate(Delegate):
             if type(state.attempt) is not int or state.attempt < 1:
                 raise ValueError("invalid attempt")
         except (AttributeError, KeyError, TypeError, ValueError, SessionConfigError) as error:
-            raise ConfigError(f"{self.workdir}: invalid delegate.json: {error}") from None
+            raise ConfigError(f"invalid {self.store.record}: {error}") from None
         else:
             return state
 
@@ -386,8 +396,9 @@ class HarnessDelegate(Delegate):
         if workdir is None:
             raise ConfigError("record has no workdir")
         view = cls.__new__(cls)
-        view.workdir = os.path.abspath(workdir)
-        view.store = RunState(view.workdir)
+        view.layout = Layout(workdir)
+        view.workdir = view.layout.workdir
+        view.store = RunState(view.layout)
         view._state = view._read()
         if sid is not None and sid != view._state.plan.sid:
             raise ConfigError(f"sid {sid} is not the run's (its sid: {view._state.plan.sid})")
@@ -593,9 +604,6 @@ class HarnessDelegate(Delegate):
             except SessionError as error:
                 raise SessionError(f"close {state.harness_name}: {error}") from error
 
-    def forget(self) -> None:
-        self.store.remove()
-
     def session_info(self) -> SessionStatus:
         """Its own live agent session's status, else the plan's: an attached one lacks its env;
         never recorded (its launch failed): not resumable.
@@ -622,7 +630,7 @@ class HarnessDelegate(Delegate):
             with self.store.mutex():
                 if self._current().completed:
                     raise ConfigError(f"{self.workdir}: delegate run already completed")
-            run_dir = Layout(self.workdir).run
+            run_dir = self.layout.run
             callback = (
                 None
                 if self._state.callback is None
@@ -714,7 +722,7 @@ class HarnessDelegate(Delegate):
         environment.update(source_path(roots))
         return Launch(
             (sys.executable, "-P", "-s", "-m", "agent_pm.delegate.engine.harness", self.workdir),
-            cwd=Layout(self.workdir).run,
+            cwd=self.layout.run,
             env=environment,
             blocked_signals=SIGNALS,
         )

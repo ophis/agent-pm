@@ -9,7 +9,6 @@
  "agent_pm.delegate.Delegate.check_tui": "classmethod(cls:POSITIONAL_OR_KEYWORD, display:KEYWORD_ONLY=None, events:KEYWORD_ONLY=None)",
  "agent_pm.delegate.Delegate.close": "def(self:POSITIONAL_OR_KEYWORD)",
  "agent_pm.delegate.Delegate.detach": "def(self:POSITIONAL_OR_KEYWORD, outer:KEYWORD_ONLY=None)",
- "agent_pm.delegate.Delegate.forget": "def(self:POSITIONAL_OR_KEYWORD)",
  "agent_pm.delegate.Delegate.outcome": "def(self:POSITIONAL_OR_KEYWORD)",
  "agent_pm.delegate.Delegate.resolve": "classmethod(cls:POSITIONAL_OR_KEYWORD, role:POSITIONAL_OR_KEYWORD, task:POSITIONAL_OR_KEYWORD=None, overlays:KEYWORD_ONLY=tuple())",
  "agent_pm.delegate.Delegate.resume": "def(self:POSITIONAL_OR_KEYWORD, mode:KEYWORD_ONLY=None)",

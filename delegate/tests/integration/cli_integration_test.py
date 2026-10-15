@@ -76,10 +76,7 @@ class NewRun(Integration):
                 {"kind": "end", "sid": SID, "rc": 0},
             ],
         )
-        self.assertEqual(
-            set(os.listdir(self.work)),
-            {"agent", "run", "out.md", "delegate.json"},
-        )
+        self.assertEqual(set(os.listdir(self.work)), {"agent", "run", "out.md"})
         self.assertTrue(os.path.isfile(self.transcript))
         (call,) = self.calls()
         self.assertEqual(
@@ -262,7 +259,7 @@ class NeedsInput(Integration):
         self.assertFalse(os.path.exists(self.out), "a deliverable before the answer")
         res = self.drive([block(DONE)], "--resume", "--input", ANSWER)
         self.assertEqual(res.returncode, 0, res.stderr)
-        with open(os.path.join(self.work, "delegate.json")) as f:
+        with open(os.path.join(Layout(self.work).run, "delegate.json")) as f:
             self.assertEqual(json.load(f)["attempt"], 2)
         records = self.records()
         self.assertEqual(

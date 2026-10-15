@@ -504,20 +504,23 @@ class InProcess(Base):
         code, out, err = self.runs("--mode", "in_process", "--sid", SID)
         self.assertEqual((code, out), (0, ""), err)
         self.assertIn(f"delegate: deliverable {self.out}\n", err)
-        with open(os.path.join(self.work, "delegate.json")) as f:
+        with open(RunState(Layout(self.work)).record) as f:
             state = json.load(f)
         self.assertEqual(
             (state["role"], state["attempt"], state["completed"]), ("dummy-tester", 1, True)
         )
         self.assertEqual(
-            (sorted(os.listdir(self.work)), os.listdir(Layout(self.work).run)),
-            (["agent", "delegate.json", "out.md", "run"], ["run.jsonl"]),
+            (sorted(os.listdir(self.work)), sorted(os.listdir(Layout(self.work).run))),
+            (
+                ["agent", "out.md", "run"],
+                ["delegate.json", "delegate.lock", "delegate.run.lock", "run.jsonl"],
+            ),
         )
 
     def test_an_answer_while_the_run_is_alive_exits_2_and_starts_nothing(self):
         spec = Spec("Hello.", self.work, task="echo", mode="in_process", client="fake", sid=SID)
         self.delegate_cls()("dummy-tester", spec)
-        with RunState(self.work).run_lock():
+        with RunState(Layout(self.work)).run_lock():
             code, out, err = self.runs("--mode", "in_process", "--sid", SID, "--resume")
         self.assertEqual(
             (code, out, err), (2, "", f"delegate: {self.work}: delegate is still alive\n")

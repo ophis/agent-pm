@@ -419,7 +419,7 @@ class Answer(Detach):
         self.assertEqual(shape(live_tmux.events(self.second)), shaped)
 
     def attempt(self) -> int:
-        with open(os.path.join(self.work, "delegate.json")) as f:
+        with open(os.path.join(Layout(self.work).run, "delegate.json")) as f:
             return json.load(f)["attempt"]
 
     def test_headless_needs_input_answered_by_a_detached_resume(self):

@@ -125,7 +125,10 @@ class Deliverable(Base):
         self.assertTrue(err.endswith("delegate: status done\n"), err)
         self.assertEqual(
             (set(os.listdir(self.work)), set(os.listdir(Layout(self.work).run))),
-            ({"agent", "run", "delegate.json"}, {"run.jsonl", "out.md"}),
+            (
+                {"agent", "run"},
+                {"delegate.json", "delegate.lock", "delegate.run.lock", "run.jsonl", "out.md"},
+            ),
         )
 
     def test_out_dash_drops_control_characters_but_newlines_and_tabs(self):

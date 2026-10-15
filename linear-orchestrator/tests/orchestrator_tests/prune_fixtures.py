@@ -171,8 +171,9 @@ class PruneScenario(Case):
 
     def record(self, ident, sid, sessions, role="engineer", *, agent=True):
         workdir = self.cfg.run_dir(ident)
-        os.makedirs(Layout(workdir).agent if agent else workdir, exist_ok=True)
         PruneDelegate("dummy", Spec("", workdir, sid=sid)).detach()
+        if not agent:
+            os.rmdir(Layout(workdir).agent)
         PruneDelegate.owners[workdir] = self
         self.addCleanup(PruneDelegate.owners.pop, workdir, None)
         self.sessions[workdir] = sessions

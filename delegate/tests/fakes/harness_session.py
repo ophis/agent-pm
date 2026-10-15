@@ -6,6 +6,7 @@ harness_starts_agent is False.
 import json
 import os
 
+from agent_pm.delegate import Layout
 from agent_pm.session import (
     Access,
     Displayable,
@@ -98,12 +99,13 @@ class RecordingHost(Host):
 
 def _start_agent(record, display):
     """The run's agent session on its agent Host, through its stored session class."""
-    with open(os.path.join(record.workdir, "delegate.json"), encoding="utf-8") as file:
+    layout = Layout(record.workdir)
+    with open(os.path.join(layout.run, "delegate.json"), encoding="utf-8") as file:
         state = json.load(file)
     session_cls = load_class(state["session_cls"], Session)
     spec = SessionSpec(
-        workdir=record.workdir,
-        access=Access(cwd=record.workdir),
+        workdir=layout.run,
+        access=Access(cwd=layout.agent),
         client=state["plan"]["session"]["client"],
         mode=Mode.TUI,
         sid=record.sid,

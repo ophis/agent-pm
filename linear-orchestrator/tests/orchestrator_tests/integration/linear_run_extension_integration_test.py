@@ -5,6 +5,7 @@ import os
 import subprocess
 from pathlib import Path
 
+from agent_pm.delegate import Layout
 from agent_pm.utils import Record, Status
 from orchestrator_tests.case import PY, Case, child_env
 from orchestrator_tests.config_fixtures import PIPELINE, ConfigFile
@@ -99,7 +100,7 @@ class Extension(ConfigFile, Case):
             "print(view.resume().to_line())\n"
         )
         self.assertEqual(Record.parse(output), record)
-        state = Path(record.workdir) / "delegate.json"
+        state = Path(Layout(record.workdir).run) / "delegate.json"
         self.assertEqual(json.loads(state.read_text(encoding="utf-8"))["starts"], 1)
         for transition, starts in (("finish", 1), ("end", 2)):
             output = self.child(

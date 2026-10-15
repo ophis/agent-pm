@@ -8,7 +8,7 @@ Each case uses only the Delegate ABC and these hooks.
 import os
 import uuid
 
-from agent_pm.delegate import Begun, ConfigError, Delegate, Finished
+from agent_pm.delegate import Begun, ConfigError, Delegate, Finished, Layout
 from agent_pm.session import NotDisplayable, Usage
 from agent_pm.utils import Record, Status
 
@@ -99,16 +99,12 @@ class DelegateContract:
         self.assertFalse(view.alive())
         self.assertFalse(self.delegate_cls.attach(record).alive())
 
-    def test_forget_after_close_deletes_the_run_keeps_its_workdir_and_is_idempotent(self):
+    def test_construction_lays_the_workdir_out_per_layout(self):
         workdir = self.workdir()
-        record = self.make(workdir).detach()
-        view = self.delegate_cls.attach(record)
-        view.close()
-        view.forget()
-        view.forget()
-        with self.assertRaises(ConfigError):
-            self.delegate_cls.attach(workdir)
-        self.assertTrue(os.path.isdir(workdir))
+        self.make(workdir)
+        layout = Layout(workdir)
+        self.assertEqual(sorted(os.listdir(workdir)), ["agent", "run"])
+        self.assertTrue(os.path.isdir(layout.agent) and os.path.isdir(layout.run))
 
     def test_resume_after_its_sessions_ended_starts_them_once_with_the_same_sid(self):
         record, _ = self.detached()

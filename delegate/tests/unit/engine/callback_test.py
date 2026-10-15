@@ -1,5 +1,5 @@
 """Domain events encode through the existing one-line DelegateEvent contract; each is delivered to
-the callback argv from the State dir in its own process group; a failed delivery is one
+the callback argv from its given cwd in its own process group; a failed delivery is one
 callback_error row.
 """
 
@@ -108,7 +108,7 @@ class Child:
 class Delivery(Case):
     def setUp(self):
         self.work = os.path.join(self.home, "run")
-        self.state = os.path.join(self.agent_pm, "delegates")
+        self.cwd = os.path.join(self.home, "cwd")
         os.mkdir(self.work)
         Child.outcome, Child.calls = 0, []
         self.popen = self.enterContext(mock.patch("subprocess.Popen", side_effect=Child))
@@ -118,7 +118,7 @@ class Delivery(Case):
                 side_effect=lambda pid, signum: Child.calls.append(("killpg", pid, signum)),
             )
         )
-        self.callback = EventCallback(ARGV, self.work, cwd=self.state, **RUN)
+        self.callback = EventCallback(ARGV, self.work, cwd=self.cwd, **RUN)
 
     def errors(self, work=None) -> list[dict]:
         try:
@@ -139,7 +139,7 @@ class Delivery(Case):
         self.assertEqual(tuple(argv), ARGV)
         self.assertEqual(
             (kwargs["cwd"], kwargs["stdin"], kwargs["stdout"], kwargs["process_group"]),
-            (self.state, PIPE, DEVNULL, 0),
+            (self.cwd, PIPE, DEVNULL, 0),
         )
         self.assertNotIn("shell", kwargs)
         _, given, timeout = communicate
@@ -164,7 +164,7 @@ class Delivery(Case):
                 work = os.path.join(self.home, f"failed-{index}")
                 os.mkdir(work)
                 Child.outcome, Child.calls = outcome, []
-                callback = EventCallback(ARGV, work, cwd=self.state, **RUN)
+                callback = EventCallback(ARGV, work, cwd=self.cwd, **RUN)
                 self.assertIsNone(callback(Begun(SID)))
                 self.assertEqual([call[0] for call in Child.calls], ["spawn", *ending])
                 if "killpg" in ending:

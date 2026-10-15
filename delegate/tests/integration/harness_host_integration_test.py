@@ -11,6 +11,7 @@ import subprocess
 import tempfile
 import unittest
 
+from agent_pm.delegate import Layout
 from agent_pm.utils import Record
 
 from delegate.tests.case import PY, PYTHONPATH, REPO, Case
@@ -107,7 +108,7 @@ class HarnessHosts(Case):
         live_tmux.wait(ended, WAIT, what=f"`{HARNESS} outcome {status}`")
 
     def metadata(self) -> dict:
-        with open(os.path.join(self.work, "delegate.json"), encoding="utf-8") as file:
+        with open(os.path.join(Layout(self.work).run, "delegate.json"), encoding="utf-8") as file:
             return json.load(file)
 
     def test_an_injected_fake_host_runs_the_harness_while_tmux_runs_the_agent(self):

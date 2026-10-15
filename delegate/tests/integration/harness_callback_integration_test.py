@@ -1,5 +1,5 @@
 """Persisted callbacks consume real HarnessDelegate events, each delivered to a real recorder child
-(delegate/tests/fakes/callback_recorder.py) from the State dir, without affecting the agent
+(delegate/tests/fakes/callback_recorder.py) from the run dir, without affecting the agent
 result.
 """
 
