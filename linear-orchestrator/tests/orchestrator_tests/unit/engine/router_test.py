@@ -735,7 +735,7 @@ class RouterEntry(OuterBase):
                 self.assertEqual((entry.kind, entry.ts), (kind, written))
                 self.assertEqual(
                     sorted(os.listdir(os.path.dirname(self.runs))),
-                    ["orchestrator.jsonl", "router.lock", "runs.jsonl"],
+                    ["orchestrator.jsonl", "router.lock", "runs.jsonl", "runs.jsonl.lock"],
                 )
 
     def test_a_new_run_closes_only_its_issues_recorded_run_first(self):
