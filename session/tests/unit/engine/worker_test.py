@@ -252,42 +252,41 @@ class StartTest(Base):
 class ColorWatchTest(Base):
     UNSET = "session w1: color not set: {}; agent-pm-session send w1 '/color'"
 
-    def watch(self, pending: tuple[bool, ...], events=None) -> int:
-        """Starts w1 on a clock ticking 1 s per call, opening_pending giving `pending` in turn, then
-        its last; the ticks used.
+    def watch(self, sent: float, events=None) -> int:
+        """Starts w1 on a clock ticking 1 s per call, its opening pending until tick `sent`; the
+        ticks used. opening_pending's call count varies by Python (3.11's isinstance calls it).
         """
         ticks = itertools.count()
-        given = iter(pending)
-        last = [pending[0]]
+        now = [0]
 
-        def opening():
-            last[0] = next(given, last[0])
-            return last[0]
+        def tick():
+            now[0] = next(ticks)
+            return now[0]
 
-        type(self.session).opening_pending = mock.PropertyMock(side_effect=opening)
+        type(self.session).opening_pending = mock.PropertyMock(side_effect=lambda: now[0] < sent)
         self.session.events.return_value = events or itertools.repeat(IdleTimeout(worker.TICK))
-        Worker(
-            state(), session_cls=self.session_cls, say=self.said.append, clock=lambda: next(ticks)
-        ).start(prompt="", resume=False)
+        Worker(state(), session_cls=self.session_cls, say=self.said.append, clock=tick).start(
+            prompt="", resume=False
+        )
         return next(ticks)
 
     def test_sent_by_the_early_deadline_returns_at_it(self):
-        self.assertEqual(self.watch((False,)), worker.EARLY + 1)
+        self.assertEqual(self.watch(0), worker.EARLY + 1)
         self.assertEqual(self.said, [])
         self.handle.publish.assert_called_once()
 
     def test_pending_keeps_watching_until_sent(self):
-        self.assertEqual(self.watch((True, True, True, False)), 9)
+        self.assertEqual(self.watch(8), 9)
         self.assertEqual(self.said, [])
         self.handle.publish.assert_called_once()
 
     def test_pending_at_the_cap_says_color_not_set(self):
-        self.assertEqual(self.watch((True,)), worker.COLOR_CAP + 1)
+        self.assertEqual(self.watch(float("inf")), worker.COLOR_CAP + 1)
         self.assertEqual(self.said, [self.UNSET.format("not ready within 15 s")])
         self.handle.publish.assert_called_once()
 
     def test_a_dialog_while_pending_says_both(self):
-        self.watch((True,), events=iter([Blocked("Trust")]))
+        self.watch(float("inf"), events=iter([Blocked("Trust")]))
         self.assertEqual(
             self.said,
             ["session w1: waits on a dialog: Trust", self.UNSET.format("waits on a dialog")],
@@ -296,7 +295,7 @@ class ColorWatchTest(Base):
 
     def test_an_exit_while_pending_fails_without_the_color_line(self):
         with self.assertRaises(SessionError):
-            self.watch((True,), events=iter([Exited(1)]))
+            self.watch(float("inf"), events=iter([Exited(1)]))
         self.assertEqual(self.said, [])
         self.handle.publish.assert_not_called()
 

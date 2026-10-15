@@ -482,16 +482,22 @@ class ClaudeTuiLaunch(Case):
         self.assertEqual(
             [label for label, _ in labels],
             [
+                "SessionStart",
                 "UserPromptSubmit",
                 "PostToolUse",
                 "PermissionRequest",
                 "Notification",
                 "Stop",
+                "SessionStart",
                 "UserPromptSubmit",
                 "Stop",
             ],
         )
-        payloads = {label: json.loads(payload) for label, payload in labels[:5]}
+        self.assertEqual(
+            [json.loads(p)["source"] for label, p in labels if label == "SessionStart"],
+            ["startup", "resume"],
+        )
+        payloads = {label: json.loads(payload) for label, payload in labels[:6]}
         self.assertEqual(payloads["Notification"]["notification_type"], "permission_prompt")
         self.assertEqual(
             (

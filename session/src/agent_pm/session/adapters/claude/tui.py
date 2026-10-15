@@ -89,7 +89,7 @@ class ClaudeTui(Tui):
     def launch(self, spec: Spec, hook):
         common = self.common
         self.sid, self.spec = spec.sid or "", spec
-        matchers = {"Notification": self.MATCHER, "SessionStart": self.START_MATCHER}
+        matchers = {"Notification": self.MATCHER, self.START: self.START_MATCHER}
         hooks = {
             label: [
                 {

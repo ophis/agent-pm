@@ -849,10 +849,10 @@ class EventsOverARuntimeTest(Case):
 
     def test_opening_pending_is_its_runtimes(self):
         session = self.session()
-        self.assertIsInstance(session, worker._Opens)
         for pending in (True, False):
             with self.subTest(pending=pending):
                 self.mode.opening_pending = pending
+                self.assertIsInstance(session, worker._Opens)
                 self.assertIs(session.opening_pending, pending)
 
     def test_binding_and_late_metadata_preserve_completion(self):

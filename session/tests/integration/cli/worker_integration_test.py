@@ -181,7 +181,7 @@ class ColorTest(WorkerCase):
         )
 
     def test_exit_after_color_still_fails_start(self):
-        res = self.start("w1", steps=[{"kind": "sleep", "seconds": 2}, {"kind": "exit"}])
+        res = self.start("w1", steps=[{"kind": "sleep", "seconds": 3}, {"kind": "exit"}])
         self.assertEqual((res.returncode, res.stdout), (1, ""), res.stderr)
         lines = res.stderr.splitlines()
         head = "agent-pm-session: w1: claude exited 0 at once; its last lines:"

@@ -319,6 +319,7 @@ class TuiRuntime(Runtime):
         *,
         offset: int = 0,
         replayed: tuple[SessionEvent | Stderr | ClientBound, ...] = (),
+        opening: tuple[str, str] | None = None,
     ) -> None:
         """offset: its hook log's next record."""
         super().__init__(prepared)
@@ -326,7 +327,7 @@ class TuiRuntime(Runtime):
         self._store, self._replayed, self._generation = store, replayed, generation
         self._offset, self._dialogs, self._limit, self._code = offset, frozenset(), None, None
         self._live, self._gone = True, False
-        self._opening: tuple[str, str] | None = None  # start's: sent once, OPEN_AFTER s after
+        self._opening = opening  # start's: sent once, OPEN_AFTER s after
         self._due: float | None = None  # its label's latest record
         self._held, self._checked = False, -POLL_SCREEN
 
@@ -418,9 +419,8 @@ class TuiRuntime(Runtime):
             record(prepared.info)
 
         terminal = store.start(pending.state, commit, launch, check_name=check_name)
-        runtime = cls(prepared, run, terminal, store, pending.state["generation"])
-        runtime._opening = run.opening
-        return runtime
+        generation = pending.state["generation"]
+        return cls(prepared, run, terminal, store, generation, opening=run.opening)
 
     @classmethod
     def snapshot(cls, name: str) -> dict:
