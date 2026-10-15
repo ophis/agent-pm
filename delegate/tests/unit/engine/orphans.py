@@ -22,7 +22,7 @@ class Clock:
 class Orphan:
     """A callback lock `text` held by another open file, and an os.killpg fake over its group: the
     group ends on SIGKILL when `dies` (or is gone once `alive` is false), freeing the lock unless
-    `keeps`; a 0 probe raises `probe_error` when set.
+    `keeps`; a signal in `errors` raises its error.
     """
 
     def __init__(self, case: unittest.TestCase, lock: str, text: str):
@@ -33,7 +33,7 @@ class Orphan:
         case.addCleanup(self.free)
         self.calls: list = []
         self.alive, self.dies, self.keeps = True, True, False
-        self.probe_error: BaseException | None = None
+        self.errors: dict[int, BaseException] = {}
 
     def free(self):
         if self.holder is not None:
@@ -42,8 +42,8 @@ class Orphan:
 
     def killpg(self, pid, signum):
         self.calls.append((pid, signum))
-        if signum == 0 and self.probe_error is not None:
-            raise self.probe_error
+        if signum in self.errors:
+            raise self.errors[signum]
         if signum == signal.SIGKILL and self.dies:
             self.alive = False
         if not self.alive:

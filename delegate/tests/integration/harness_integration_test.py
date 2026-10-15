@@ -1034,6 +1034,7 @@ class RunDir(HarnessCase):
                     "delegate.json",
                     "delegate.lock",
                     "delegate.run.lock",
+                    "delegate.callback.lock",
                     "run.jsonl",
                     "out.md",
                 )

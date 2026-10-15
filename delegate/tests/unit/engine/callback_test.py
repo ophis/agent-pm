@@ -290,7 +290,7 @@ class Sweep(Case):
         self.killpg.assert_not_called()
         self.assertEqual(self.clock.now, 0.0)
 
-    def test_a_dead_harnesss_live_group_is_killed_then_its_lock_awaited(self):
+    def test_the_live_group_a_dead_harness_left_is_killed_then_its_lock_awaited(self):
         orphan = self.orphan()
         sweep(self.store)
         self.assertEqual(orphan.calls, [(PID, 0), (PID, signal.SIGKILL), (PID, 0)])
@@ -349,14 +349,15 @@ class Sweep(Case):
                 orphan.free()
 
     def test_a_group_it_may_not_signal_or_no_pid_at_all_is_a_config_error(self):
-        huge = 2**80
-        for text, error, calls in (
-            (f"{PID}\n", PermissionError(1, "Operation not permitted"), [(PID, 0)]),
-            (f"{huge}\n", OverflowError("signed integer is greater than maximum"), [(huge, 0)]),
+        huge, denied = 2**80, PermissionError(1, "Operation not permitted")
+        for text, signum, error, calls in (
+            (f"{PID}\n", 0, denied, [(PID, 0)]),
+            (f"{PID}\n", signal.SIGKILL, denied, [(PID, 0), (PID, signal.SIGKILL)]),
+            (f"{huge}\n", 0, OverflowError("signed integer is greater than maximum"), [(huge, 0)]),
         ):
-            with self.subTest(error=error):
+            with self.subTest(signum=signum, error=error):
                 orphan = self.orphan(text)
-                orphan.probe_error = error
+                orphan.errors[signum] = error
                 pid = int(text)
                 with self.assertRaises(ConfigError) as caught:
                     sweep(self.store)
