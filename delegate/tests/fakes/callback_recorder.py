@@ -1,10 +1,12 @@
 """A callback command for tests: `python3 -P -S callback_recorder.py LOG [--exit KIND:CODE]...
 [--block KIND]`. Reads its event line from stdin, prints noise on stdout, appends one JSON line to
-LOG: the stdin text, its cwd, pid, process group and blocked signals. --exit: exit CODE on an event of KIND.
+LOG: the stdin text, its cwd, pid, parent, process group and blocked signals, and whether the
+callback lock in its cwd is held and what it says. --exit: exit CODE on an event of KIND.
 --block: on an event of KIND, start a grandchild in its group, log its pid too, then sleep.
 """
 
 import argparse
+import fcntl
 import json
 import os
 import signal
@@ -13,6 +15,7 @@ import sys
 import time
 
 NOISE = "callback stdout noise"
+LOCK = "delegate.callback.lock"
 BLOCK = 600  # seconds: longer than any test waits
 
 
@@ -29,8 +32,10 @@ def main(argv: list[str]) -> int:
         "line": line,
         "cwd": os.getcwd(),
         "pid": os.getpid(),
+        "ppid": os.getppid(),
         "pgid": os.getpgid(0),
         "sigmask": sorted(int(signum) for signum in signal.pthread_sigmask(signal.SIG_BLOCK, [])),
+        **lock(),
     }
     if kind == a.block:
         sleeper = (sys.executable, "-P", "-S", "-c", f"import time; time.sleep({BLOCK})")
@@ -41,6 +46,20 @@ def main(argv: list[str]) -> int:
         time.sleep(BLOCK)
     codes = dict(rule.split(":") for rule in a.exit)
     return int(codes.get(kind, 0))
+
+
+def lock() -> dict:
+    """The callback lock in the cwd: its text, and whether another open file holds it."""
+    try:
+        with open(LOCK, encoding="utf-8") as file:
+            text = file.read()
+            try:
+                fcntl.flock(file, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                return {"lock": text, "held": True}
+            return {"lock": text, "held": False}
+    except FileNotFoundError:
+        return {"lock": None, "held": False}
 
 
 if __name__ == "__main__":

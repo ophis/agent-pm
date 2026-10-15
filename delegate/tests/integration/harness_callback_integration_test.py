@@ -11,6 +11,7 @@ from unittest import mock
 
 from agent_pm.delegate import Begun, ConfigError, DelegateEvent, Finished, Limit, Progress, Spec
 from agent_pm.delegate.engine.harness_delegate import HarnessDelegate
+from agent_pm.delegate.engine.state import RunState
 from agent_pm.delegate.engine.types import Layout
 from agent_pm.session import ConfigError as SessionConfigError
 from agent_pm.session import Exited, LimitHit, Reply
@@ -64,6 +65,9 @@ class Callbacks(CallbackCase):
             self.assertTrue(entry["line"].endswith("\n"))
             self.assertEqual(entry["cwd"], os.path.realpath(Layout(self.work).run))
             self.assertEqual(entry["pgid"], entry["pid"])
+            self.assertEqual((entry["held"], entry["lock"]), (True, f"{entry['pid']}\n"))
+        store = RunState(Layout(self.work))
+        self.assertFalse(store.held(store.callback_lock))
         events = self.events()
         self.assertEqual([event.kind for event in events], ["begun", "progress", "finished"])
         self.assertEqual({(event.sid, event.attempt) for event in events}, {(SID, 1)})

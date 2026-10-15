@@ -1,8 +1,9 @@
 """Domain events encode through the existing one-line DelegateEvent contract; each is delivered to
-the callback argv from its given cwd in its own process group; a failed delivery is one
-callback_error row.
+the callback argv from the run dir in its own process group, holding the callback lock that names its
+pid; a failed delivery is one callback_error row.
 """
 
+import fcntl
 import json
 import os
 import signal
@@ -20,6 +21,8 @@ from agent_pm.delegate import (
     Result,
 )
 from agent_pm.delegate.engine.callback import CALLBACK_TIMEOUT, EventCallback
+from agent_pm.delegate.engine.state import RunState
+from agent_pm.delegate.engine.types import Layout
 from agent_pm.utils import Stopped
 
 from delegate.tests.case import Case
@@ -61,7 +64,7 @@ class Codec(Case):
                 ),
             ),
         )
-        callback = EventCallback(("record",), "/unused", cwd="/unused-state", **RUN)
+        callback = EventCallback(("record",), RunState(Layout("/unused")), **RUN)
         for event, expected in events:
             with self.subTest(event=event):
                 encoded = callback.encode(event)
@@ -105,11 +108,30 @@ class Child:
         Child.calls.append(("kill",))
 
 
+def store(workdir: str) -> RunState:
+    """A RunState whose run dir exists."""
+    layout = Layout(workdir)
+    os.makedirs(layout.run)
+    return RunState(layout)
+
+
+def failing_first_write(error: BaseException):
+    """os.write raising `error` once: the pid write, the first write of a delivery."""
+    write, raised = os.write, []
+
+    def first(descriptor, data):
+        if not raised:
+            raised.append(error)
+            raise error
+        return write(descriptor, data)
+
+    return mock.patch("os.write", side_effect=first)
+
+
 class Delivery(Case):
     def setUp(self):
-        self.work = os.path.join(self.home, "run")
-        self.cwd = os.path.join(self.home, "cwd")
-        os.mkdir(self.work)
+        self.store = store(os.path.join(self.home, "w"))
+        self.work = self.store.layout.run
         Child.outcome, Child.calls = 0, []
         self.popen = self.enterContext(mock.patch("subprocess.Popen", side_effect=Child))
         self.killpg = self.enterContext(
@@ -118,7 +140,7 @@ class Delivery(Case):
                 side_effect=lambda pid, signum: Child.calls.append(("killpg", pid, signum)),
             )
         )
-        self.callback = EventCallback(ARGV, self.work, cwd=self.cwd, **RUN)
+        self.callback = EventCallback(ARGV, self.store, **RUN)
 
     def errors(self, work=None) -> list[dict]:
         try:
@@ -131,7 +153,11 @@ class Delivery(Case):
     def test_the_timeout_is_a_300_second_module_constant(self):
         self.assertEqual(CALLBACK_TIMEOUT, 300)
 
-    def test_one_line_on_stdin_of_the_argv_from_the_state_dir_in_its_own_group(self):
+    def lock_text(self) -> str:
+        with open(self.store.callback_lock, encoding="utf-8") as file:
+            return file.read()
+
+    def test_one_line_on_stdin_of_the_argv_from_the_run_dir_in_its_own_group(self):
         event = Progress("draft", "one\n二")
         self.assertIsNone(self.callback(event))
         (spawn, communicate, _exit) = Child.calls
@@ -139,7 +165,7 @@ class Delivery(Case):
         self.assertEqual(tuple(argv), ARGV)
         self.assertEqual(
             (kwargs["cwd"], kwargs["stdin"], kwargs["stdout"], kwargs["process_group"]),
-            (self.cwd, PIPE, DEVNULL, 0),
+            (self.work, PIPE, DEVNULL, 0),
         )
         self.assertNotIn("shell", kwargs)
         _, given, timeout = communicate
@@ -161,10 +187,10 @@ class Delivery(Case):
             )
         ):
             with self.subTest(outcome=outcome):
-                work = os.path.join(self.home, f"failed-{index}")
-                os.mkdir(work)
+                failed = store(os.path.join(self.home, f"failed-{index}"))
+                work = failed.layout.run
                 Child.outcome, Child.calls = outcome, []
-                callback = EventCallback(ARGV, work, cwd=self.cwd, **RUN)
+                callback = EventCallback(ARGV, failed, **RUN)
                 self.assertIsNone(callback(Begun(SID)))
                 self.assertEqual([call[0] for call in Child.calls], ["spawn", *ending])
                 if "killpg" in ending:
@@ -189,3 +215,46 @@ class Delivery(Case):
         )
         self.assertEqual(Child.calls[2], ("killpg", PID, signal.SIGKILL))
         self.assertEqual(self.errors(), [])
+
+    def test_the_child_inherits_the_held_callback_lock_naming_its_pid(self):
+        seen = []
+
+        def spawned(argv, **kwargs):
+            seen.append((len(kwargs["pass_fds"]), self.store.held(self.store.callback_lock)))
+            seen.append(self.lock_text())
+            return Child(argv, **kwargs)
+
+        self.popen.side_effect = spawned
+        self.callback(Begun(SID))
+        self.assertEqual(seen, [(1, True), ""])
+        self.assertEqual(self.lock_text(), f"{PID}\n")
+        self.assertFalse(self.store.held(self.store.callback_lock))
+
+    def test_a_held_callback_lock_spawns_nothing_and_is_one_callback_error_row(self):
+        holder = os.open(self.store.callback_lock, os.O_RDWR | os.O_CREAT, 0o600)
+        self.addCleanup(os.close, holder)
+        fcntl.flock(holder, fcntl.LOCK_EX)
+        self.assertIsNone(self.callback(Begun(SID)))
+        self.assertEqual(Child.calls, [])
+        self.assertEqual(
+            [row["error"] for row in self.errors()],
+            [f"callback lock {self.store.callback_lock} held: an earlier callback still runs"],
+        )
+
+    def test_a_signal_while_naming_the_pid_kills_and_reaps_the_group_then_propagates(self):
+        stopped = Stopped(143)
+        with failing_first_write(stopped), self.assertRaises(Stopped) as raised:
+            self.callback(Begun(SID))
+        self.assertIs(raised.exception, stopped)
+        self.assertEqual([call[0] for call in Child.calls], ["spawn", "killpg", "wait", "exit"])
+        self.assertFalse(self.store.held(self.store.callback_lock))
+
+    def test_a_failed_pid_write_kills_the_group_and_is_one_callback_error_row(self):
+        failure = OSError(28, "No space left on device")
+        with failing_first_write(failure):
+            self.assertIsNone(self.callback(Begun(SID)))
+        self.assertEqual([call[0] for call in Child.calls], ["spawn", "killpg", "wait", "exit"])
+        self.assertEqual(
+            [row["error"] for row in self.errors()],
+            [f"callback lock {self.store.callback_lock}: [Errno 28] No space left on device"],
+        )

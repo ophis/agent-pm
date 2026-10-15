@@ -675,8 +675,7 @@ class HarnessDelegate(Delegate):
                 if self._state.callback is None
                 else EventCallback(
                     self._state.callback,
-                    run_dir,
-                    cwd=run_dir,
+                    self.store,
                     sid=self._state.plan.sid,
                     attempt=self._state.attempt,
                 )

@@ -1,8 +1,9 @@
 """A Delegate run's state, in its run dir (Layout.run), outside the agent dir it may write.
 
 The run dir holds `delegate.json`, the run record (the run's only state); `delegate.lock`, the
-mutex; `delegate.run.lock`, the run lock a running Delegate holds. The Delegate makes the run dir
-before it takes either lock.
+mutex; `delegate.run.lock`, the run lock a running Delegate holds; `delegate.callback.lock`, the
+callback lock (its protocol: engine/callback.py). The Delegate makes the run dir before it takes
+any lock.
 """
 
 import contextlib
@@ -22,6 +23,7 @@ class RunState:
         self.layout = layout
         self.record = os.path.join(layout.run, "delegate.json")
         self._lock = os.path.join(layout.run, "delegate")
+        self.callback_lock = f"{self._lock}.callback.lock"
 
     def read(self) -> bytes | None:
         return read_regular(self.record)
@@ -41,13 +43,17 @@ class RunState:
 
     def running(self) -> bool:
         """Whether a run holds the run lock."""
+        return self.held(f"{self._lock}.run.lock")
+
+    def held(self, lock: str) -> bool:
+        """Whether another open file holds `lock`; a missing one is not."""
         try:
-            descriptor = os.open(f"{self._lock}.run.lock", os.O_RDONLY | os.O_NONBLOCK)
+            descriptor = os.open(lock, os.O_RDONLY | os.O_NONBLOCK)
         except FileNotFoundError:
             return False
         try:
             if not stat.S_ISREG(os.fstat(descriptor).st_mode):
-                raise ConfigError(f"{self.layout.workdir}: invalid delegate run lock")
+                raise ConfigError(f"{self.layout.workdir}: invalid {os.path.basename(lock)}")
             try:
                 fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
             except BlockingIOError:
