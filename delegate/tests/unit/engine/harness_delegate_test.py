@@ -301,11 +301,11 @@ class ResumeModeTest(HarnessCase):
 
 
 class CrashTest(HarnessCase):
-    def crashed(self):
+    def crashed(self, cwd=None):
         """A tui run whose process died mid-run: no outcome stored, no run lock held, its agent
         session left live as the run started it.
         """
-        spec = Spec("input", self.work, mode="tui", client="fake", sid=SID, cwd=self.work)
+        spec = Spec("input", self.work, mode="tui", client="fake", sid=SID, cwd=cwd or self.work)
         self.make(spec=spec)
         state = self.metadata()
         agent = SessionSpec(
@@ -329,6 +329,30 @@ class CrashTest(HarnessCase):
         self.assertEqual(left.state(), Liveness.ABSENT)
         self.assertEqual(record.sid, SID)
         self.assertEqual(self.metadata()["attempt"], 2)
+
+    def test_a_resume_refused_for_an_untrusted_cwd_leaves_the_agent_session_live(self):
+        project = os.path.join(self.home, "project")
+        os.mkdir(project)
+        self.settings(trusted_dirs=(project,))
+        _view, name = self.crashed(cwd=project)
+        self.settings()
+        left, launches = HarnessSession.live[name], len(harness_launches())
+        view = HarnessDelegate.attach(self.work, session_cls=HarnessSession)
+        with self.assertRaisesRegex(ConfigError, "no longer in trusted_dirs"):
+            view.resume()
+        self.assertEqual(left.state(), Liveness.LIVE)
+        self.assertEqual(len(harness_launches()), launches)
+
+    def test_resume_refuses_a_run_replaced_since_its_attach(self):
+        view, _name = self.crashed()
+        other = "0b6f2c1e-6d0a-4c1b-9a51-3f1f6b0e2a7d"
+        self.make(spec=Spec("input", self.work, task="echo", sid=other, cwd=self.work))
+        launches = len(harness_launches())
+        with self.assertRaisesRegex(ConfigError, f"run {SID} was replaced by {other}"):
+            view.resume()
+        self.assertEqual(
+            (len(harness_launches()), self.metadata()["spec"]["sid"]), (launches, other)
+        )
 
     def test_the_status_of_an_agent_session_another_process_started_comes_from_its_plan(self):
         view, _name = self.crashed()

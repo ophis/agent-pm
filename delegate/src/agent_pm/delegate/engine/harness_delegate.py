@@ -791,12 +791,14 @@ class HarnessDelegate(Delegate):
         if mode not in (None, Mode.HEADLESS, Mode.TUI):
             raise ConfigError(f"resume: mode must be headless or tui, got {mode!r}")
         with self.store.mutex():
-            state = previous = self._state = self._read()
+            state = self._read()
+            if state.plan.sid != self._state.plan.sid:
+                raise ConfigError(
+                    f"{self.workdir}: run {self._state.plan.sid} was replaced by {state.plan.sid}"
+                )
+            previous = self._state = state
             if self._alive(state) or state.result is not None and state.result.outcome is not None:
                 return self._record(state)
-            agent = self._agent(state)
-            if agent is not None:
-                agent.close()
             original = state.plan.session.access
             if (
                 original.project
@@ -829,6 +831,10 @@ class HarnessDelegate(Delegate):
                     ),
                 ),
             )
+            # after the plan's checks; before preflight, which refuses the live same-named agent
+            agent = self._agent(state)
+            if agent is not None:
+                agent.close()
             try:
                 self.driver.preflight(accepted.session)
             except SessionConfigError as error:
