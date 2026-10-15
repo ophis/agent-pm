@@ -356,22 +356,27 @@ class SessionTuiTest(Base):
         )
         self.assertEqual(argv[at + 2 :], ("--verbose", "--", "hi"))
 
-    def test_a_malformed_settings_flag_is_refused(self):
-        long = "x" * 100
-        for flags, value in (
-            (("--settings",), ""),
-            (("--settings", "--"), "--"),
-            (("--settings", "/a/settings.json"), "/a/settings.json"),
-            (("--settings=[]",), "[]"),
-            (("--settings", '{"hooks": null}'), '{"hooks": null}'),
-            (("--settings", '{"hooks": []}'), '{"hooks": []}'),
-            (("--settings", '{"hooks": {"Stop": {}}}'), '{"hooks": {"Stop": {}}}'),
-            (("--settings", long), long),
-        ):
-            with self.subTest(flags=flags):
+    def test_a_malformed_inline_settings_flag_is_refused(self):
+        for value in ('{"hooks": null}', '{"hooks": []}', '{"hooks": {"Stop": {}}}', "{x"):
+            with self.subTest(value=value):
                 self.refused(
-                    lambda *, flags=flags: self.session(flags=flags),
+                    lambda *, value=value: self.session(flags=("--settings", value)),
                     f"--settings {value!r:.80}: {WANT_SETTINGS}",
+                )
+
+    def test_a_settings_file_merges_with_the_hooks(self):
+        mine = {"type": "command", "command": "mine"}
+        path = os.path.join(self.work, "s.json")
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump({"model": "x", "hooks": {"Stop": [mine]}}, f)
+        for value in (path, "s.json"):
+            with self.subTest(value=value):
+                self.assertEqual(
+                    self.settings(("--settings", value)),
+                    (
+                        {"model": "x", "hooks": {**TUI_HOOKS, "Stop": [mine, *TUI_HOOKS["Stop"]]}},
+                        ("--", "hi"),
+                    ),
                 )
 
 

@@ -40,6 +40,7 @@ NOT_LITERAL = "*?[]{}()\\,"
 STORE = f"{STATE}/sessions/claude"  # under HOME, resolved per call
 STATE_KEYS = frozenset({"version", "cwd", "sid", "dirs", "env"})
 STATE_MAX = 64 * 1024
+SETTINGS_MAX = 2 * 1024 * 1024
 
 
 def added_dirs(flags: tuple[str, ...]) -> Iterator[str]:
@@ -51,9 +52,29 @@ def added_dirs(flags: tuple[str, ...]) -> Iterator[str]:
     )
 
 
-def _parsed(value: str) -> dict:
+def _read(value: str, cwd: str) -> str:
+    """The settings file `value` names, relative to `cwd`: Claude's limits, a regular file of at
+    most 2 MiB.
+    """
+    path = os.path.join(cwd, value)
     try:
-        settings = json.loads(value)
+        fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK)
+        try:
+            found = os.fstat(fd)
+            if not stat.S_ISREG(found.st_mode) or found.st_size > SETTINGS_MAX:
+                raise ConfigError(f"--settings {value!r:.80}: want a regular file of at most 2 MiB")
+            return b"".join(iter(lambda: os.read(fd, SETTINGS_MAX), b"")).decode()
+        finally:
+            os.close(fd)
+    except (OSError, UnicodeDecodeError) as error:
+        raise ConfigError(f"--settings {value!r:.80}: {error}") from None
+
+
+def _parsed(value: str, cwd: str) -> dict:
+    """A --settings value: inline JSON when it starts with "{", else a settings file's path."""
+    text = value if value.lstrip().startswith("{") else _read(value, cwd)
+    try:
+        settings = json.loads(text)
     except (ValueError, RecursionError):
         settings = None
     hooks = settings.get("hooks", {}) if isinstance(settings, dict) else None
@@ -68,15 +89,20 @@ def _parsed(value: str) -> dict:
     return settings
 
 
-def _split(flags: tuple[str, ...]) -> tuple[list[dict], tuple[str, ...]]:
+def _split(flags: tuple[str, ...], cwd: str) -> tuple[list[dict], tuple[str, ...]]:
     """Each --settings value before "--", parsed, and the flags without them."""
     found, rest, at = [], [], 0
     for flag in scan(flags, {"--settings": "--settings"}):
         if flag.word == "--settings" and flag.value is not None:
-            found.append(_parsed(flag.value))
+            found.append(_parsed(flag.value, cwd))
             rest.extend(flags[at : flag.start])
             at = flag.end
     return found, (*rest, *flags[at:])
+
+
+def _settings(*parts: Mapping) -> tuple[str, ...]:
+    """Claude's one --settings: `parts` merged, the later winning; none without parts."""
+    return ("--settings", json.dumps(functools.reduce(_merge, parts, {}))) if parts else ()
 
 
 def _merge(base: dict, over: Mapping) -> dict:
@@ -275,8 +301,8 @@ class ClaudeCommon:
             raise ConfigError(f"claude resume state: {error}") from None
 
     def resume_main(self, argv) -> int:
-        """resume()'s run (STORE CWD SID): execs claude resuming SID with the saved dirs and env
-        over this environment, in CWD; 1 and one stderr line when it cannot.
+        """resume()'s run (STORE CWD SID): execs claude resuming SID with the config's flags, the
+        saved dirs and env over this environment, in CWD; 1 and one stderr line when it cannot.
         """
         try:
             store, cwd, sid = argv
@@ -287,7 +313,14 @@ class ClaudeCommon:
             state = _load(store, cwd, self.uuid(sid))
             added = (arg for d in state["dirs"] for arg in ("--add-dir", d))
             os.chdir(state["cwd"])
-            command = ["claude", *self.selector(sid, resume=True), *added]
+            configured, own = _split(self.flags, state["cwd"])
+            command = [
+                "claude",
+                *self.selector(sid, resume=True),
+                *own,
+                *_settings(*configured),
+                *added,
+            ]
             os.execvpe(command[0], command, {**os.environ, **state["env"]})
         except (ConfigError, OSError) as exc:
             print(f"claude resume: {exc}", file=sys.stderr)
@@ -311,20 +344,20 @@ class ClaudeCommon:
         env: Mapping[str, str] = MappingProxyType({}),
     ) -> Launch:
         """Build a Claude command with configured settings, access grants, output arguments and
-        spec.flags before `tail`; env under the config's. Claude keeps only its last --settings, so
-        the config's, then spec.flags', then `hooks` merge into one. --mcp-config keeps a project's
-        .mcp.json that a --strict-mcp-config in spec.flags would drop.
+        spec.flags before `tail`; env under the config's. Exactly one --settings: the config's,
+        then spec.flags', then `hooks`, merged (a file path read relative to the cwd), since the
+        docs leave a repeated --settings undefined. --mcp-config keeps a project's .mcp.json that
+        a --strict-mcp-config in spec.flags would drop.
         """
         if any(flag.word == "--setting-sources" for flag in scan(spec.flags)):
             raise ConfigError("--setting-sources is set by the Claude adapter: use Access.project")
-        configured, own = _split(self.flags)
-        supplied, flags = _split(spec.flags)
-        parts = (*configured, *supplied, *(({"hooks": dict(hooks)},) if hooks else ()))
-        settings = functools.reduce(_merge, parts, {}) if parts else None
         sid = spec.sid
         model, effort = self.model(spec.tier), self.effort(spec.effort)
         access = spec.access
         cwd = access.cwd or spec.workdir
+        configured, own = _split(self.flags, cwd)
+        supplied, flags = _split(spec.flags, cwd)
+        hooked = ({"hooks": dict(hooks)},) if hooks else ()
         mcp = os.path.join(cwd, ".mcp.json")
         allow = (
             *(f"Bash({command})" for command in access.commands),
@@ -347,7 +380,7 @@ class ClaudeCommon:
             "user,project,local" if access.project else "user",
             *(("--mcp-config", mcp) if access.project and strict and os.path.isfile(mcp) else ()),
             *output,
-            *(("--settings", json.dumps(settings)) if settings is not None else ()),
+            *_settings(*configured, *supplied, *hooked),
             *(arg for d in access.dirs for arg in ("--add-dir", d)),
             *(("--allowedTools", *allow) if allow else ()),
             *flags,

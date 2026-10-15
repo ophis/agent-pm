@@ -117,11 +117,46 @@ class ArgvTest(Base):
         self.assertEqual(argv[-3:], ("--verbose", "--", "hi"))
         self.assertNotIn("--settings", self.launch(config={}).argv)
 
-    def test_a_settings_flag_that_is_no_json_object_is_refused(self):
-        self.refused(
-            lambda: self.launch(config={}, flags=("--settings", "/a/settings.json")),
-            f"--settings '/a/settings.json': {WANT_SETTINGS}",
+    def test_settings_files_and_inline_json_reach_claude_as_one(self):
+        cwd = os.path.join(self.tmp, "cwd")
+        os.mkdir(cwd)
+        own = os.path.join(self.tmp, "own.json")
+        with open(own, "w", encoding="utf-8") as f:
+            json.dump({"enabledPlugins": {"a@m": False}, "model": "x"}, f)
+        with open(os.path.join(cwd, "run.json"), "w", encoding="utf-8") as f:
+            json.dump({"enabledPlugins": {"b@m": True}}, f)
+        flags = ("--settings", "run.json", "--settings", '{"model": "y"}')
+        argv = self.launch(
+            config={"flags": ["--settings", own]}, access=Access(cwd=cwd), flags=flags
+        ).argv
+        self.assertEqual(argv.count("--settings"), 1)
+        self.assertEqual(
+            json.loads(argv[argv.index("--settings") + 1]),
+            {"enabledPlugins": {"a@m": False, "b@m": True}, "model": "y"},
         )
+
+    def test_a_settings_path_claude_could_not_load_is_refused(self):
+        big = os.path.join(self.work, "big.json")
+        with open(big, "wb") as f:
+            f.truncate(2 * 1024 * 1024 + 1)
+        listed = os.path.join(self.work, "list.json")
+        with open(listed, "w", encoding="utf-8") as f:
+            f.write("[]")
+        limit = "want a regular file of at most 2 MiB"
+        for value, message in (
+            (self.work, limit),
+            (big, limit),
+            (listed, WANT_SETTINGS),
+            (
+                "missing.json",
+                f"[Errno 2] No such file or directory: {self.work + '/missing.json'!r}",
+            ),
+        ):
+            with self.subTest(value=value):
+                self.refused(
+                    lambda *, value=value: self.launch(config={}, flags=("--settings", value)),
+                    f"--settings {value!r:.80}: {message}",
+                )
 
     def test_a_prompt_starting_with_a_dash_stays_last_after_the_separator(self):
         self.assertEqual(self.launch("-p --help", config={}).argv[-2:], ("--", "-p --help"))
