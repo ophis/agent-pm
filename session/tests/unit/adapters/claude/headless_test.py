@@ -1,5 +1,6 @@
 """Claude headless behavior."""
 
+import json
 import os
 import time
 from unittest import mock
@@ -20,6 +21,7 @@ from session.tests.unit.adapters.claude.support import (
     INIT,
     NOW,
     SID,
+    WANT_SETTINGS,
     Base,
     ClaudeCommon,
     assistant,
@@ -102,6 +104,60 @@ class ArgvTest(Base):
             self.launch(config={"allow": ["Read"]}).argv[-4:],
             ("--allowedTools", "Read", "--", "hi"),
         )
+
+    def test_the_configs_and_specs_settings_reach_claude_as_one(self):
+        config = {"flags": ["--settings", '{"enabledPlugins": {"a@m": false}, "model": "x"}']}
+        flags = ("--verbose", "--settings", '{"enabledPlugins": {"b@m": true}, "model": "y"}')
+        argv = self.launch(config=config, flags=flags).argv
+        self.assertEqual(argv.count("--settings"), 1)
+        at = argv.index("--settings")
+        self.assertEqual(
+            json.loads(argv[at + 1]), {"enabledPlugins": {"a@m": False, "b@m": True}, "model": "y"}
+        )
+        self.assertEqual(argv[-3:], ("--verbose", "--", "hi"))
+        self.assertNotIn("--settings", self.launch(config={}).argv)
+
+    def test_settings_files_and_inline_json_reach_claude_as_one(self):
+        cwd = os.path.join(self.tmp, "cwd")
+        os.mkdir(cwd)
+        own = os.path.join(self.tmp, "own.json")
+        with open(own, "w", encoding="utf-8") as f:
+            json.dump({"enabledPlugins": {"a@m": False}, "model": "x"}, f)
+        with open(os.path.join(cwd, "run.json"), "w", encoding="utf-8") as f:
+            json.dump({"enabledPlugins": {"b@m": True}}, f)
+        flags = ("--settings", "run.json", "--settings", '{"model": "y"}')
+        argv = self.launch(
+            config={"flags": ["--settings", own]}, access=Access(cwd=cwd), flags=flags
+        ).argv
+        self.assertEqual(argv.count("--settings"), 1)
+        self.assertEqual(
+            json.loads(argv[argv.index("--settings") + 1]),
+            {"enabledPlugins": {"a@m": False, "b@m": True}, "model": "y"},
+        )
+
+    def test_a_settings_path_claude_could_not_load_is_refused_by_its_full_path(self):
+        deep = os.path.join(self.work, "d" * 90)
+        os.mkdir(deep)
+        big = os.path.join(deep, "big.json")
+        with open(big, "wb") as f:
+            f.truncate(2 * 1024 * 1024 + 1)
+        listed = os.path.join(deep, "list.json")
+        with open(listed, "w", encoding="utf-8") as f:
+            f.write("[]")
+        limit = "want a regular file of at most 2 MiB"
+        far = os.path.join(deep, "missing.json")
+        for value, message in (
+            (deep, limit),
+            (big, limit),
+            (listed, WANT_SETTINGS),
+            ("missing.json", "No such file or directory"),
+            (far, "No such file or directory"),
+        ):
+            with self.subTest(value=value):
+                self.refused(
+                    lambda *, value=value: self.launch(config={}, flags=("--settings", value)),
+                    f"--settings {os.path.join(self.work, value)!r}: {message}",
+                )
 
     def test_a_prompt_starting_with_a_dash_stays_last_after_the_separator(self):
         self.assertEqual(self.launch("-p --help", config={}).argv[-2:], ("--", "-p --help"))

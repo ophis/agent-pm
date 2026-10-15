@@ -36,7 +36,8 @@ def linear_gql(query, *, service, timeout=30, **variables):
         elif e.code == 400 and _rate_limited(e):
             reason = "RATELIMITED"
         else:
-            raise
+            e.close()
+            raise LinearError(f"linear api error: {operation(query)}: HTTP {e.code}") from None
         e.close()
         raise Unavailable(operation(query), status=e.code, reason=reason) from None
     except (OSError, http.client.HTTPException) as e:

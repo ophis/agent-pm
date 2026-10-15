@@ -655,6 +655,23 @@ class ResumeTest(Base):
                     ],
                 )
 
+    def test_the_resume_replays_the_configs_flags_with_one_settings(self):
+        with open(os.path.join(self.cwd, "s.json"), "w", encoding="utf-8") as f:
+            json.dump({"model": "x"}, f)
+        plugin = '{"enabledPlugins": {"agent-pm@agent-pm": false}}'
+        flags = ["--permission-mode", "auto", "--settings", plugin, "--settings", "s.json"]
+        self.adapter = ClaudeAdapter({**self.adapter.config, "flags": flags})
+        words = shlex.split(self.committed().resume)
+        _, _, _, execute = self.resumed(words[6:])
+        argv = execute[0].args[1]
+        self.assertEqual(argv[:5], ["claude", "--resume", SID, "--permission-mode", "auto"])
+        self.assertEqual(argv.count("--settings"), 1)
+        self.assertEqual(
+            json.loads(argv[argv.index("--settings") + 1]),
+            {"enabledPlugins": {"agent-pm@agent-pm": False}, "model": "x"},
+        )
+        self.assertEqual(argv[-4:], ["--add-dir", "/o x", "--add-dir", "/p"])
+
     def test_the_state_is_private(self):
         self.committed()
         (name,) = os.listdir(store())

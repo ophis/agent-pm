@@ -77,12 +77,41 @@ class Names(Case):
         self.assertTrue(os.access(os.path.join(SKILLS, "tmux", "scripts", "ctmux"), os.X_OK))
 
     def test_the_grid_keys_it_names_are_the_tmux_hosts(self):
-        [config] = [p for p in paths("tmux") if p.endswith("config.toml")]
+        [config] = {p for p in paths("tmux") if p.endswith("config.toml")}
         with open(config, "rb") as f:
             tmux = tomllib.load(f)["hosts"]["tmux"]
         for key in ("workers_per_column", "grid_retile"):
             self.assertIn(key, tmux)
             self.assertIn(f"`{key}`", body("tmux"))
+
+    def test_only_the_commander_has_it_as_the_session_config_turns_it_off(self):
+        self.assertIn("so a worker or role run starts no sessions of its own", body("tmux"))
+        [config] = {p for p in paths("tmux") if p.endswith("config.toml")}
+        with open(config, "rb") as f:
+            adapters = tomllib.load(f)["adapters"]
+        for client in ("claude", "codex"):
+            self.assertTrue(
+                any("agent-pm@agent-pm" in flag for flag in adapters[client]["flags"]), client
+            )
+
+    def test_the_upgrading_row_carries_the_one_home_of_each_plugin_off_entry(self):
+        with open(os.path.join(REPO, "README.md"), encoding="utf-8") as f:
+            [row] = [line for line in f if line.startswith("| a local `flags` list")]
+        with open(os.path.join(REPO, "session/src/agent_pm/session/config.toml"), "rb") as f:
+            adapters = tomllib.load(f)["adapters"]
+        with open(os.path.join(REPO, "delegate/src/agent_pm/delegate/config.toml"), "rb") as f:
+            policy = tomllib.load(f)["policy"]
+        for client in ("claude", "codex"):
+            flags = adapters[client]["flags"]
+            [at] = [i for i, flag in enumerate(flags) if "agent-pm@agent-pm" in flag]
+            entry = f'"{flags[at - 1]}", ' + (
+                f"'{flags[at]}'" if '"' in flags[at] else f'"{flags[at]}"'
+            )
+            with self.subTest(client=client):
+                self.assertIn(f"`[session.adapters.{client}]`", row)
+                self.assertIn(entry, row)
+                self.assertFalse([f for f in policy[client]["flags"] if "agent-pm@agent-pm" in f])
+        self.assertNotIn("delegate.policy", row)
 
     def test_the_skills_it_names_are_this_plugins(self):
         for skill in re.findall(r"`/agent-pm:([a-z-]+)`", body("tmux") + body("manage")):

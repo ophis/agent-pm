@@ -40,6 +40,7 @@ from session.tests.case import Case
 from session.tests.hosted_support import SID, listed
 from session.tests.tmux_fixtures import (
     EXITED,
+    EXITED_HOOK,
     FAILED,
     FORMAT,
     INSIDE,
@@ -991,12 +992,13 @@ class DetachHandoverTest(StartFixture):
                 "@events",
                 events,
                 ";",
-                "set-hook",
+                "set-option",
                 "-p",
+                "-F",
                 "-t",
                 "=d:",
                 "pane-died",
-                EXITED,
+                EXITED_HOOK,
                 ";",
                 "set-option",
                 "-t",
@@ -1054,7 +1056,9 @@ class DetachHandoverTest(StartFixture):
             ],
         )
 
-    def test_the_exited_hook_is_a_constant_reading_its_values_only_through_tmux_formats(self):
+    def test_the_exited_hook_reads_its_values_only_through_tmux_formats_and_kills_its_pane_by_id(
+        self,
+    ):
         self.assertEqual(EXITED_EVENT, EXITED)
         self.assertEqual(
             set(re.findall(r"#\{[^{}]*\}", EXITED)),
@@ -1073,7 +1077,7 @@ class DetachHandoverTest(StartFixture):
             fake = FakeTmux()
             self.detach(fake, session=session, events=os.path.join(self.root, events))
             hooks.append(fake.calls[0][fake.calls[0].index("pane-died") + 1])
-        self.assertEqual(hooks, [EXITED, EXITED])
+        self.assertEqual(hooks, [EXITED_HOOK, EXITED_HOOK])
 
     def test_a_bad_display_record_or_events_is_refused_before_tmux(self):
         for kw, error in (

@@ -148,16 +148,10 @@ effort = "low"
 [delegates]
 harness_host = ""
 
-# [policy.<client>]   a role run's flags and env, the Delegate's (README.md › Client policy); in claude's
-#                     --settings, this core's own plugin (<plugin>@<marketplace>) stays off, the user's others load
+# [policy.<client>]   a role run's flags and env, the Delegate's (README.md › Client policy); agent-pm's own plugin
+#                     stays off through the session's [adapters.<client>] flags (session/src/agent_pm/session/config.toml)
 [policy.claude]
-flags = [
-  "--permission-mode",
-  "auto",
-  "--strict-mcp-config",
-  "--settings",
-  '{"enabledPlugins": {"agent-pm@agent-pm": false}}',
-]
+flags = ["--permission-mode", "auto", "--strict-mcp-config"]
 
 [policy.codex]
 flags = ["-s", "danger-full-access", "-c", 'approval_policy="on-request"', "-c", 'approvals_reviewer="auto_review"']

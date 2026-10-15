@@ -1,4 +1,4 @@
-"""Private event and ledger fixtures shared by logic and process-death tests."""
+"""Event and ledger fixtures shared by logic and process-death tests."""
 
 import json
 import os

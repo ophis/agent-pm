@@ -9,7 +9,7 @@ from datetime import UTC, datetime, timedelta
 from typing import NamedTuple
 
 from agent_pm.linear_orchestrator.engine.types import UUID_RE, Claim, ConfigError
-from agent_pm.utils import append_line, repo_slug, save, timestamp
+from agent_pm.utils import append_line, file_lock, repo_slug, save, timestamp
 
 KEEP = timedelta(days=7)
 ERRORS = (ValueError, TypeError, KeyError, OverflowError)
@@ -30,22 +30,38 @@ class Failure(NamedTuple):
     issue: str
 
 
+def _row(kind, now, fields):
+    return json.dumps({"ts": timestamp(now=now), "kind": kind, **fields}, ensure_ascii=False) + "\n"
+
+
 def note(path, kind, *, now=datetime.now, **fields):
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    line = json.dumps({"ts": timestamp(now=now), "kind": kind, **fields}, ensure_ascii=False)
-    append_line(path, line + "\n", durable=True)
+    append_line(path, _row(kind, now, fields), durable=True, locked=True)
 
 
-def note_limit(path, *, issue, sid, client, resets_at, delegate_kind):
-    note(
-        path,
-        "limit",
-        issue=issue,
-        sid=sid,
-        client=client,
-        resets_at=resets_at,
-        delegate_kind=delegate_kind,
-    )
+def note_limit(path, *, issue, sid, client, resets_at, delegate_kind, attempt):
+    """Once per (issue, sid, attempt): a redelivery after a lost ledger write appends none."""
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    fields = {
+        "issue": issue,
+        "sid": sid,
+        "client": client,
+        "resets_at": resets_at,
+        "delegate_kind": delegate_kind,
+        "attempt": attempt,
+    }
+    key = ("limit", issue, sid, attempt)
+    with file_lock(path):
+        if not any(_limit_key(line) == key for line in _lines(path)):
+            append_line(path, _row("limit", datetime.now, fields), durable=True)
+
+
+def _limit_key(line):
+    try:
+        d = json.loads(line)
+    except ValueError:
+        return None
+    return isinstance(d, dict) and tuple(d.get(k) for k in ("kind", "issue", "sid", "attempt"))
 
 
 def _client(d):
@@ -180,20 +196,21 @@ def latest(entries):
 
 
 def trim(path, now):
-    lines = _lines(path)
-    entries = [e for line in lines if (e := parse_line(line))]
-    newest = latest(entries)
-    keep = [
-        line
-        for line in lines
-        if (e := parse_line(line))
-        and (e.ts >= now - KEEP or e.sid == newest[e.issue].sid)
-        or _limit(line, now)
-        or (f := _failure(line))
-        and f.ts >= now - KEEP
-    ]
-    if len(keep) < len(lines):
-        save(path, "".join(keep))
+    with file_lock(path):
+        lines = _lines(path)
+        entries = [e for line in lines if (e := parse_line(line))]
+        newest = latest(entries)
+        keep = [
+            line
+            for line in lines
+            if (e := parse_line(line))
+            and (e.ts >= now - KEEP or e.sid == newest[e.issue].sid)
+            or _limit(line, now)
+            or (f := _failure(line))
+            and f.ts >= now - KEEP
+        ]
+        if len(keep) < len(lines):
+            save(path, "".join(keep))
 
 
 def client_of(entries, sid):

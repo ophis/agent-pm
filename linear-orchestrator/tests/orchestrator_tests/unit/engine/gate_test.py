@@ -34,6 +34,7 @@ class DelegateQuotaKeys(Case):
             client="overlay-client",
             resets_at=(NOW + timedelta(hours=1)).isoformat(),
             delegate_kind="first",
+            attempt=1,
         )
         gate = self.gate(provider, client="overlay-client", core=core, log=log)
         self.assertTrue(gate.blocked("engineer", "TASK-1"))

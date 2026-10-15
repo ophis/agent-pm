@@ -148,6 +148,7 @@ class CliCase(Case):
 
     def wait_event(self, name: str, word: str, count: int = 1, events: str | None = None):
         def found():
+            self.poke()
             lines = live_tmux.events(events or self.events)
             hits = [line for line in lines if line.split(" ")[1:3] == [name, word]]
             return lines if len(hits) >= count else None
@@ -223,7 +224,8 @@ class WorkerCase(CliCase):
             ],
         )
         settings = json.loads(argv[7])
-        self.assertEqual(set(settings), {"hooks"})
+        self.assertEqual(set(settings), {"enabledPlugins", "hooks"})
+        self.assertEqual(settings["enabledPlugins"], {"agent-pm@agent-pm": False})
         self.assertEqual(set(settings["hooks"]), CLAUDE_HOOKS)
         self.assertFalse([word for word in argv if word.startswith(POLICY)], argv)
 

@@ -8,7 +8,7 @@ import tempfile
 import threading
 import time
 from dataclasses import replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from unittest import mock
 
 from agent_pm.delegate import (
@@ -1415,6 +1415,7 @@ RUN_ISSUE = "TASK-1"
 CLAIM_KEY = "agent-pm-engineer-at-claim"
 
 STARTED, RESTARTED = "2026-10-14T09:00:00+08:00", "2026-10-14T10:00:00+08:00"
+BEFORE = datetime.fromisoformat(STARTED) - timedelta(hours=1)  # a row, then its run's Begun
 
 LATER, LATEST = "2026-10-14T11:00:00+08:00", "2026-10-14T12:00:00+08:00"
 
@@ -1525,6 +1526,7 @@ class Events(RunCase):
         runs.note(
             self.cfg.runs_log,
             "start",
+            now=lambda: BEFORE,
             issue=RUN_ISSUE,
             sid=sid,
             role="engineer",
@@ -1864,6 +1866,15 @@ class FinishedEvents(Events):
         )
         self.assertNotIn("steps", self.ledger()[RUN_SID])
 
+    def test_a_clean_exit_without_an_outcome_ends_the_session_as_no_outcome(self):
+        self.assertTrue(self.deliver(delegate_event("begun")))
+        self.assertTrue(self.deliver(self.finished(0)))
+        self.assertEqual(
+            self.linear.comments[RUN_SESSION]["body"],
+            session_body(f"no outcome · #2 · {STARTED} → {RESTARTED} · exit 0"),
+        )
+        self.assertEqual(self.linear.state, self.cfg.states["in_progress"])
+
     def test_a_finished_without_begun_starts_its_session_then(self):
         self.assertTrue(self.deliver(self.finished(1, error="launch failed")))
         body = session_body(f"interrupted · #1 · {STARTED} → {RESTARTED} · exit 1")
@@ -1922,7 +1933,7 @@ class LimitEvents(Events):
             if row["kind"] == "limit"
         ]
 
-    def row(self, resets_at="2026-10-11T18:00:00+08:00"):
+    def row(self, resets_at="2026-10-11T18:00:00+08:00", attempt=1):
         return {
             "kind": "limit",
             "issue": RUN_ISSUE,
@@ -1930,6 +1941,7 @@ class LimitEvents(Events):
             "client": "fake",
             "resets_at": resets_at,
             "delegate_kind": "fake",
+            "attempt": attempt,
         }
 
     def test_a_limit_comments_moves_and_records_its_row_then_ends_the_session(self):
@@ -2100,7 +2112,7 @@ class LimitEvents(Events):
             ["reread", "state"],
         )
         self.assertEqual(len([c for c in self.linear.comments if c != RUN_SESSION]), 1)
-        self.assertEqual(self.rows(), [self.row(), self.row()])
+        self.assertEqual(self.rows(), [self.row(), self.row(attempt=2)])
         self.assertEqual(
             self.ledger()[RUN_SID]["steps"],
             ["limit", "limit-move:1", "limit-row:1", "limit-move:2", "limit-row:2"],
@@ -2135,6 +2147,22 @@ class LimitEvents(Events):
         limit = ops.client_id(RUN_SID, "limit")
         self.assertEqual(len([v for _, v in self.linear.writes("comment") if v["c"] == limit]), 1)
 
+    def test_a_ledger_write_lost_after_the_row_records_one_row_on_redelivery(self):
+        real, ledger, lost = os.replace, os.path.join(self.workdir, writeback.LEDGER), []
+
+        def replace(src, dst):
+            if str(dst) == ledger and self.rows() and not lost:
+                lost.append(str(dst))
+                raise OSError("disk full")
+            real(src, dst)
+
+        with mock.patch.object(os, "replace", replace):
+            self.assertFalse(self.deliver(self.limited()))
+        self.assertEqual((lost, self.rows()), ([ledger], [self.row()]))
+        self.assertTrue(self.deliver(self.limited()))
+        self.assertEqual(self.rows(), [self.row()])
+        self.assertEqual(self.ledger()[RUN_SID]["steps"], ["limit", "limit-move:1", "limit-row:1"])
+
     def test_two_writers_lose_no_step(self):
         one, two = (delegate_event("progress", name="build", text=t) for t in ("one", "two"))
         results, threads = self.racing(writeback, "save", lambda: self.deliver(two))
@@ -2156,7 +2184,54 @@ class RecoverReplay(Events):
         return Outcome(**data | {"status": OutcomeStatus(data["status"])})
 
     def replay(self):
-        return writeback.replay(self.cfg, RUN_ISSUE, RUN_SID, self.outcome(), gql=self.linear)
+        return writeback.replay(
+            self.cfg,
+            RUN_ISSUE,
+            RUN_SID,
+            self.outcome(),
+            gql=self.linear,
+            now=lambda: next(self.now),
+        )
+
+    def test_a_replay_ends_the_attempt_its_begun_recorded_past_a_failed_resume_row(self):
+        for _ in range(2):  # a resume refused before its launch, then the one that ran
+            self.resumed(BEFORE)
+        self.assertTrue(self.deliver(delegate_event("begun", 2)))
+        self.assertTrue(self.replay())
+        self.assertEqual(
+            self.linear.comments[RUN_SESSION]["body"],
+            session_body(f"done · #2 · {STARTED} → {RESTARTED}"),
+        )
+
+    def resumed(self, at):
+        runs.note(
+            self.cfg.runs_log,
+            "resume",
+            now=lambda: at,
+            issue=RUN_ISSUE,
+            sid=RUN_SID,
+            role="engineer",
+            client="fake",
+            delegate_kind="fake",
+        )
+
+    def test_a_replay_ends_a_resumed_attempt_whose_begun_was_lost_too(self):
+        self.assertTrue(self.deliver(delegate_event("begun")))
+        self.resumed(datetime.fromisoformat(STARTED) + timedelta(minutes=30))
+        self.assertTrue(self.replay())
+        self.assertEqual(
+            self.linear.comments[RUN_SESSION]["body"],
+            session_body(f"done · #1 · {RESTARTED} → {LATER}"),
+        )
+        self.assertEqual(sorted(self.ledger()[RUN_SID]["attempts"]), ["1", "2"])
+
+    def test_a_replay_of_a_lost_finished_ends_its_session_comment_once(self):
+        self.assertTrue(self.deliver(delegate_event("begun")))
+        self.assertTrue(self.replay())
+        ended = session_body(f"done · #2 · {STARTED} → {RESTARTED}")
+        self.assertEqual(self.linear.comments[RUN_SESSION]["body"], ended)
+        self.assertTrue(self.deliver(self.finished(outcome=outcome_data())))
+        self.assertEqual(self.linear.comments[RUN_SESSION]["body"], ended)
 
     def test_a_callback_and_recover_at_once_write_each_step_once(self):
         results, threads = self.racing(writeback, "save", self.replay)

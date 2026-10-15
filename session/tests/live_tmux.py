@@ -279,7 +279,7 @@ class Server:
         self.tmux("kill-server")
         pids = {int(p) for p in res.stdout.split() if p.isdigit()} if res.returncode == 0 else set()
         wait(
-            lambda: not any(map(_alive, pids)),
+            lambda: not any(map(alive, pids)),
             what=f"the tmux server and its panes' processes {sorted(pids)} to end",
         )
 
@@ -304,7 +304,7 @@ def _drain(master: int, stop: threading.Event) -> None:
             return
 
 
-def _alive(pid: int) -> bool:
+def alive(pid: int) -> bool:
     try:
         os.kill(pid, 0)
     except ProcessLookupError:

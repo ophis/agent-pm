@@ -501,6 +501,7 @@ def _limited(ctx, runs_log, claim, attempt, resets_at) -> bool:
             client=claim.client,
             resets_at=at,
             delegate_kind=claim.delegate_kind,
+            attempt=attempt,
         ),
     )
     return moved and noted is None
@@ -536,19 +537,42 @@ def _claim(cfg, issue, sid) -> Claim:
     return claim
 
 
-def replay(cfg, issue: str, sid: str, outcome: Outcome, *, gql, dry=False) -> bool | None:
-    """Recover's write-back of the ended (issue, sid) run's outcome, in process and each step once,
-    as its callback's: None when its ledger has it complete; else whether it now is (dry: True,
-    nothing written). Raises ConfigError or ValueError on a start row it cannot write back as.
+def _replayed_attempt(begun, rows) -> int:
+    """The latest Begun's attempt, the next one when a start or resume row came after it (a
+    launch whose Begun was lost); without a Begun, the rows' count. A row refused before its launch
+    precedes the Begun of the attempt that ran, or leaves no outcome to replay.
     """
-    attempts = [e for e in runs.parse_log(cfg.runs_log) if (e.issue, e.sid) == (issue, sid)]
-    ctx = for_claim(cfg, _claim(cfg, issue, sid), gql, attempt=len(attempts))
+    if not begun:
+        return len(rows)
+    last = max(int(n) for n in begun)
+    since = datetime.fromisoformat(begun[str(last)]["started_at"]).astimezone()
+    return last + any(e.ts > since for e in rows)
+
+
+def replay(
+    cfg, issue: str, sid: str, outcome: Outcome, *, gql, dry=False, now=timestamp
+) -> bool | None:
+    """Recover's write-back of the ended (issue, sid) run's outcome, in process and each step once,
+    as its callback's, then its session comment's end unless the callback's wrote it: None when
+    its ledger has it complete; else whether it now is (dry: True, nothing written). Raises
+    ConfigError or ValueError on a start row it cannot write back as.
+    """
+    rows = [e for e in runs.parse_log(cfg.runs_log) if (e.issue, e.sid) == (issue, sid)]
+    claim = _claim(cfg, issue, sid)
+    ctx = for_claim(cfg, claim, gql, attempt=len(rows))
+    attempt = _replayed_attempt(_ledger(ctx).get(sid, {}).get("attempts", {}), rows)
+    ctx = replace(ctx, resume=attempt > 1)
     if "outcome" in _done(ctx):
         return None
     if dry:
         return True
     with _exclusive(ctx) as held:
-        return held and ("outcome" in _done(ctx) or finish(ctx, outcome))
+        if not held:
+            return False
+        done = "outcome" in _done(ctx) or finish(ctx, outcome)
+        end = (None, outcome, False)
+        _session(ctx, cfg, claim.client, attempt, gql=gql, now=now, end=end)
+        return done
 
 
 def deliver(cfg, issue: str, workdir: str, event: DelegateEvent, *, gql, now=timestamp) -> bool:

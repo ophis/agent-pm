@@ -97,8 +97,7 @@ class ClaudeTui(Tui):
             for label in self.hooks
         }
         tail = ("--", spec.prompt) if spec.prompt else ()
-        settings, flags = common.merged(spec.flags, hooks)
-        launch = common.launch(spec, settings, tail=(*flags, *tail))
+        launch = common.launch(spec, hooks, tail=tail)
         self.transcript = launch.transcript
         self.start = self.offset = _size(launch.transcript)
         return launch

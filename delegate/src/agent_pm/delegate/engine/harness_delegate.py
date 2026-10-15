@@ -57,6 +57,7 @@ from agent_pm.session import (
     Spec as SessionSpec,
 )
 from agent_pm.utils import (
+    LEASE_ENV,
     Display,
     Record,
     Status,
@@ -606,10 +607,11 @@ class HarnessDelegate(Delegate):
             return SessionStatus(Resumable.NO, None, "")
 
     def run(self, on_event: Callable[[Event], None] | None = None) -> Result:
-        """Each event goes to the callback, then `on_event`; a Finished is stored first. A run that
-        raises before its Finished stores and calls back a stopped one (not to `on_event`), then
-        re-raises; a crash (an Exception or SystemExit, not a signal's Stopped or an interrupt) is
-        also a run.jsonl run_error row with its traceback.
+        """Each event goes to the callback, then `on_event`; a Finished is stored first, a failed
+        store printed and the Finished still sent. A run that raises before its Finished stores and
+        calls back a stopped one (not to `on_event`), then re-raises; a crash (an Exception or
+        SystemExit, not a signal's Stopped or an interrupt) is also a run.jsonl run_error row with
+        its traceback.
         """
         state = self._state
         if state.events is not None and not state.detached and state.plan.spec.mode != Mode.TUI:
@@ -635,8 +637,11 @@ class HarnessDelegate(Delegate):
             def emit(event: Event) -> None:
                 nonlocal finished
                 if isinstance(event, Finished):
-                    self._complete(event.result)
                     finished = True
+                    try:
+                        self._complete(event.result)
+                    except (ConfigError, OSError) as failure:
+                        say(f"delegate: {failure}")
                 if callback is not None:
                     callback(event)
                 if on_event is not None:
@@ -704,7 +709,7 @@ class HarnessDelegate(Delegate):
         environment = {
             key: value
             for key, value in os.environ.items()
-            if key not in ("PYTHONPATH", SID_ENV, EVENTS_ENV)
+            if key not in ("PYTHONPATH", SID_ENV, EVENTS_ENV, *LEASE_ENV)
         }
         environment.update(source_path(roots))
         return Launch(
@@ -791,12 +796,14 @@ class HarnessDelegate(Delegate):
         if mode not in (None, Mode.HEADLESS, Mode.TUI):
             raise ConfigError(f"resume: mode must be headless or tui, got {mode!r}")
         with self.store.mutex():
-            state = previous = self._state = self._read()
+            state = self._read()
+            if state.plan.sid != self._state.plan.sid:
+                raise ConfigError(
+                    f"{self.workdir}: run {self._state.plan.sid} was replaced by {state.plan.sid}"
+                )
+            previous = self._state = state
             if self._alive(state) or state.result is not None and state.result.outcome is not None:
                 return self._record(state)
-            agent = self._agent(state)
-            if agent is not None:
-                agent.close()
             original = state.plan.session.access
             if (
                 original.project
@@ -829,10 +836,17 @@ class HarnessDelegate(Delegate):
                     ),
                 ),
             )
+            agent = self._agent(state)
+            probe = accepted.session
+            if agent is not None and probe.name == state.agent_name:
+                # the tui preflight refuses a live same-named session: the one this closes
+                probe = replace(probe, name=f"{probe.name}-preflight")
             try:
-                self.driver.preflight(accepted.session)
+                self.driver.preflight(probe)
             except SessionConfigError as error:
                 raise ConfigError(str(error)) from None
+            if agent is not None:
+                agent.close()
             state = replace(
                 state, plan=accepted, completed=False, result=None, attempt=state.attempt + 1
             )

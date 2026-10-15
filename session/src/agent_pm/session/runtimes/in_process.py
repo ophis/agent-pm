@@ -31,6 +31,7 @@ from agent_pm.session.runtimes.base import Runtime
 from agent_pm.utils import Display
 
 END = object()
+RUN_THREAD = "in_process run"
 
 
 class InProcessRuntime(Runtime):
@@ -90,7 +91,9 @@ class InProcessRuntime(Runtime):
         record(prepared.info)
         mode = cls(prepared)
         try:
-            threading.Thread(target=mode._pump, args=(run, prepared.spec), daemon=True).start()
+            threading.Thread(
+                target=mode._pump, args=(run, prepared.spec), name=RUN_THREAD, daemon=True
+            ).start()
         except RuntimeError as e:
             raise SessionError(f"cannot start the in_process run: {e}") from e
         return mode
