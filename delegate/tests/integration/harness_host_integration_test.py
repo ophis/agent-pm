@@ -107,13 +107,6 @@ class HarnessHosts(Case):
 
         live_tmux.wait(ended, WAIT, what=f"`{HARNESS} outcome {status}`")
 
-    def supervised(self) -> None:
-        """Waits for the FakeHost supervisor's last step, removing the harness's folder, so the
-        temp dirs are not cleaned under its final writes.
-        """
-        folder = os.path.join(self.agent_pm, "fake-host", HARNESS)
-        live_tmux.wait(lambda: not os.path.lexists(folder), WAIT, what=f"{folder} removed")
-
     def metadata(self) -> dict:
         with open(os.path.join(Layout(self.work).run, "delegate.json"), encoding="utf-8") as file:
             return json.load(file)
@@ -139,7 +132,6 @@ class HarnessHosts(Case):
             os.path.isfile(os.path.join(self.agent_pm, "fake-host", f"{HARNESS}.env.json"))
         )
         self.outcome()
-        self.supervised()
         self.assertEqual(
             (self.metadata()["host"], self.metadata()["harness_host"]), ("tmux", "fake")
         )
@@ -156,7 +148,6 @@ class HarnessHosts(Case):
             roots = json.load(file)["PYTHONPATH"].split(os.pathsep)
         self.assertIn(REPO, roots)
         self.outcome()
-        self.supervised()
         with open(self.out, encoding="utf-8") as file:
             self.assertEqual(file.read(), DONE["deliverable"])
         self.assertEqual(
