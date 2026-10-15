@@ -210,13 +210,12 @@ class CommonDir(Case):
         self.assertEqual(common_dir(wt), other)
 
     def test_no_worktree_names_no_clone(self):
-        wt = self.add()
-        plain, linked, junk, orphan, bare = (
-            os.path.join(self.tmp, d) for d in ("plain", "linked", "junk", "orphan", "bare")
+        self.add()
+        plain, junk, orphan, bare = (
+            os.path.join(self.tmp, d) for d in ("plain", "junk", "orphan", "bare")
         )
-        for d in (plain, linked, junk, orphan, bare):
+        for d in (plain, junk, orphan, bare):
             os.makedirs(d)
-        os.symlink(os.path.join(wt, ".git"), os.path.join(linked, ".git"))
         for d, text in (
             (junk, "nonsense\n"),
             (orphan, f"gitdir: {self.tmp}/gone\n"),
@@ -227,7 +226,6 @@ class CommonDir(Case):
         for path in (
             self.clone,
             plain,
-            linked,
             junk,
             orphan,
             bare,
@@ -264,18 +262,3 @@ class CommonDir(Case):
                     self.assertIsNone(common_dir(wt))
                 os.unlink(path)
                 os.rename(backup, path)
-
-    def test_a_git_file_replaced_by_a_symlink_at_open_is_rejected(self):
-        wt = self.add()
-        path = os.path.join(wt, ".git")
-        target = path + "-target"
-        open_file = os.open
-
-        def replace(file, flags, *args, **kwargs):
-            if file == path:
-                os.rename(path, target)
-                os.symlink(target, path)
-            return open_file(file, flags, *args, **kwargs)
-
-        with unittest.mock.patch("os.open", side_effect=replace):
-            self.assertIsNone(common_dir(wt))

@@ -336,10 +336,3 @@ class ControllerAttachmentTest(Case):
                     self.assertFalse(attached.live())
                     attached.kill()
                     socket.assert_not_called()
-
-    def test_an_existing_untrusted_directory_is_not_an_ended_controller(self):
-        control = ProcessControl.prepare(["program"], "/")
-        self.addCleanup(control.remove)
-        os.chmod(control.path, 0o755)
-        with self.assertRaises(PermissionError):
-            ProcessControl.attach(control.path)

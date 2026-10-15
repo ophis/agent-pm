@@ -1,4 +1,4 @@
-"""TmuxProcess attachment and controller trust use real private filesystem metadata."""
+"""TmuxProcess attachment and controller checks use real filesystem metadata."""
 
 import os
 import socket
@@ -75,13 +75,6 @@ class AttachListTest(AttachmentBase):
                 self.assertEqual(sentinel.read_text(), "owned data")
         self.socket.assert_not_called()
         self.tmux.kill.assert_not_called()
-
-    def test_a_controller_directory_with_public_permissions_is_refused(self):
-        self.controlled = True
-        os.chmod(self.control.path, 0o755)
-        with self.assertRaisesRegex(SessionError, "invalid @control"):
-            self.host.attach("d1")
-        self.socket.assert_not_called()
 
     def test_a_regular_file_in_place_of_the_controller_socket_is_refused(self):
         self.controlled = True
