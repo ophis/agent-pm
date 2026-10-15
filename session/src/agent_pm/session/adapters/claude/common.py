@@ -248,7 +248,6 @@ class ClaudeCommon:
         }
         try:
             os.makedirs(self.store, 0o700, exist_ok=True)
-            os.chmod(self.store, 0o700)
             save(_state_path(self.store, cwd, sid), json.dumps(state), durable=True)
         except OSError as error:
             raise ConfigError(f"claude resume state: {error}") from None

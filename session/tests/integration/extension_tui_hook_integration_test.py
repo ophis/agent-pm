@@ -1,6 +1,6 @@
 """A TUI adapter installed outside the session's package roots (its own directory, importing only
 agent_pm.session.extension) declares its hook callback with its own root: `agent-pm-session hook`, on
-only the session's source roots, trusts and runs it; undeclared, the callback is refused.
+only the session's source roots, finds and runs it; undeclared, the callback is not found.
 """
 
 import json

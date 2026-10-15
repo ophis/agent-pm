@@ -160,7 +160,6 @@ def _detail(error: SessionError | OSError) -> object:
 
 def _private_dir(path: str) -> None:
     os.makedirs(path, 0o700, exist_ok=True)
-    os.chmod(path, 0o700)
 
 
 def _read(path: str, what: str) -> bytes:

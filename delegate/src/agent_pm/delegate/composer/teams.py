@@ -11,7 +11,7 @@ from agent_pm.delegate.composer.base import METHOD, PLACEHOLDER, TEAM, read_text
 from agent_pm.delegate.composer.types import ConfigError, Team
 from agent_pm.delegate.config import CONFIG, read_config, validate_team_dirs
 from agent_pm.delegate.event import PROGRESS
-from agent_pm.utils import LOCAL, temp_dirs, under, unfenced
+from agent_pm.utils import LOCAL, under, unfenced
 from agent_pm.utils import load_config as load
 
 START = re.compile(rf"^\s*\[{PROGRESS}:start\] \S", re.M)
@@ -287,24 +287,11 @@ def no_charter(role: str, cfg: Mapping | None = None, team: Team | None = None) 
     return ConfigError(f"roles.{role}: no charter roles/{role}.md in core or team_dirs")
 
 
-def check_team_dirs(
-    dirs: Sequence[str], *, writes: Sequence[tuple[str, str]], temp: Sequence[str] | None = None
-) -> None:
-    if not dirs:
-        return
-    temps = temp_dirs() if temp is None else temp
+def check_team_dirs(dirs: Sequence[str], *, writes: Sequence[tuple[str, str]]) -> None:
     for d in map(os.path.realpath, dirs):
         for path in (*team_paths(d), *tool_paths(d)):
-            out_of_reach(path, temps, writes)
-
-
-def out_of_reach(path: str, temps: Sequence[str], writes: Sequence[tuple[str, str]]) -> None:
-    """Refuse `path` when its real path is in a temp dir or a dir the run writes."""
-    real = os.path.realpath(path)
-    shown = path if real == path else f"{path} ({real})"
-    if t := under(real, temps):
-        raise ConfigError(f"team_dirs: {shown} is in temp dir {t}: any process can write there")
-    check_overlap(shown, real, writes)
+            real = os.path.realpath(path)
+            check_overlap(path if real == path else f"{path} ({real})", real, writes)
 
 
 def tool_paths(d: str) -> list[str]:

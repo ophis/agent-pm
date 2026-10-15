@@ -208,7 +208,6 @@ class _Store:
     def _root(self) -> None:
         try:
             os.makedirs(self.root, 0o700, exist_ok=True)
-            os.chmod(self.root, 0o700)
         except OSError as e:
             raise SessionError(f"{self.root}: {e.strerror or e}") from None
 

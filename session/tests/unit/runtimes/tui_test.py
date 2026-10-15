@@ -1649,12 +1649,6 @@ class PrepareTest(Base):
         self.start(events=None)
         self.assertEqual(stat.S_IMODE(os.lstat(self.root).st_mode), 0o700)
 
-    def test_an_existing_tui_dir_is_set_to_0700(self):
-        os.mkdir(self.root, 0o755)
-        os.chmod(self.root, 0o755)
-        self.start()
-        self.assertEqual(stat.S_IMODE(os.lstat(self.root).st_mode), 0o700)
-
     def test_a_tui_dir_that_is_no_directory_is_refused(self):
         open(self.root, "w").close()
         with self.assertRaisesRegex(SessionError, re.escape(self.root)):

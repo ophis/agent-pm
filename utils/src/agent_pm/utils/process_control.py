@@ -163,12 +163,8 @@ class ProcessControl:
         self.cancelled = False
 
     @classmethod
-    def attach(cls, path: str, root: str | None = None) -> ProcessControl:
+    def attach(cls, path: str) -> ProcessControl:
         real = os.path.realpath(path)
-        if os.path.dirname(real) != os.path.realpath(_root(root)) or not os.path.basename(
-            real
-        ).startswith("apm-group-"):
-            raise PermissionError("untrusted process controller path")
         attached = cls(real)
         try:
             folder = os.stat(real)

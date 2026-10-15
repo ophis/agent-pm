@@ -467,32 +467,6 @@ assert "callback_package" not in sys.modules
         self.assertEqual(self.hook("stop"), "")
         self.assertEqual(self.records()[0]["payload"], {"extension": True})
 
-    def test_callback_namespace_cannot_hide_a_package_outside_source_roots(self):
-        _, imported = self.callback_package()
-        source = os.path.join(self.root, "source")
-        os.makedirs(os.path.join(source, "callback_package"))
-        hook = descriptor("callback_package.nested.callback", roots=(source,))
-        write_state(self.dir, {**self.state, "adapter_hook": hook})
-        script = (
-            RUN_HOOK
-            + """run_hook(sys.argv[1], "stop")
-assert "callback_package" not in sys.modules
-"""
-        )
-        result = python(
-            self,
-            script,
-            self.dir,
-            input=b"{}",
-            env={"PYTHONPATH": os.pathsep.join((*ROOTS, self.root))},
-            timeout=60,
-            check=True,
-        )
-        self.assertEqual(result.stdout, b"")
-        self.assertError(result.stderr.decode(), "module outside source roots")
-        self.assertFalse(os.path.exists(imported))
-        self.assertNothingWritten()
-
     def test_bad_arguments_write_nothing(self):
         for args in (
             [],

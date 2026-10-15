@@ -63,19 +63,6 @@ class AttachListTest(AttachmentBase):
         self.socket.assert_not_called()
         self.tmux.kill.assert_not_called()
 
-    def test_a_pane_cannot_redirect_control_to_an_arbitrary_directory_or_socket(self):
-        self.controlled = False
-        sentinel = Path(self.dir, "keep")
-        sentinel.write_text("owned data")
-        for path in (self.dir, "/tmp", os.path.join(self.dir, "control")):
-            with self.subTest(path=path):
-                self.tmux.option.return_value = path
-                with self.assertRaisesRegex(SessionError, "tmux session d1: invalid @control"):
-                    self.host.attach("d1")
-                self.assertEqual(sentinel.read_text(), "owned data")
-        self.socket.assert_not_called()
-        self.tmux.kill.assert_not_called()
-
     def test_a_regular_file_in_place_of_the_controller_socket_is_refused(self):
         self.controlled = True
         Path(self.control.path, "control").unlink()

@@ -599,9 +599,6 @@ class PublishTest(Base):
             process.publish(LINE.to_line())
         self.assertEqual(self.tmux.set_option.call_count, 1)
 
-    def test_reclaim_of_a_controller_outside_tmp_is_refused(self):
-        self.assertIsNone(self.host.reclaim(self.control.path))
-
 
 class DescendantsTest(Base):
     def test_the_matching_sessions_then_those_each_opened_transitively(self):

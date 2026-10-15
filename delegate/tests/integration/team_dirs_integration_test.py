@@ -13,7 +13,6 @@ import re
 import unittest
 
 from agent_pm.delegate.composer.prompt import RESUME, RETURN
-from agent_pm.utils import temp_dirs, under
 
 from delegate.tests.case import REPO
 from delegate.tests.integration.cli import NATIVE, RUN, CodexIntegration, Integration, codex_said
@@ -21,9 +20,8 @@ from delegate.tests.integration.composer import child
 from delegate.tests.replies import block, mark
 from utils.tests.sandbox import owned_directory
 
-# outside every temp dir (check_team_dirs refuses one there): the repo's gitignored work/
+# the repo's gitignored work/
 TEAMS = os.path.join(REPO, "work")
-IN_TEMP = under(os.path.realpath(TEAMS), temp_dirs()) is not None
 CORE_TASKS = os.path.join(REPO, "delegate", "src", "agent_pm", "delegate", "team", "tasks")
 MARK = "[agent-pm-progress:start] the topic"
 NOTE = (
@@ -69,7 +67,6 @@ def make_team(case: unittest.TestCase) -> str:
     return team
 
 
-@unittest.skipIf(IN_TEMP, f"{TEAMS} is in a temp dir, where check_team_dirs refuses a team dir")
 class ComposerTeamDirs(child.Case):
     """The Composer in a child process over role `writer` of a team dir of TEAM as the local
     `team_dirs`.
@@ -153,7 +150,6 @@ def added(argv: list[str]) -> list[str]:
     return [argv[i + 1] for i, a in enumerate(argv) if a == "--add-dir"]
 
 
-@unittest.skipIf(IN_TEMP, f"{TEAMS} is in a temp dir, where check_team_dirs refuses a team dir")
 class TeamDirs(Integration):
     """Role `writer` of a team dir (TEAM) as the local config's `team_dirs`."""
 
@@ -197,7 +193,6 @@ class TeamDirs(Integration):
         self.assertEqual(self.read(self.out), DONE["deliverable"])
 
 
-@unittest.skipIf(IN_TEMP, f"{TEAMS} is in a temp dir, where check_team_dirs refuses a team dir")
 class CodexTeamDirs(CodexIntegration):
     """--client codex over fake_codex, role `writer` of a team dir (TEAM) as the local config's
     `team_dirs`.

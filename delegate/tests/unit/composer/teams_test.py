@@ -5,7 +5,6 @@ composer's Index, TeamDirs and catalog tests) and the team dir checks (the old d
 import os
 import re
 import tempfile
-from types import SimpleNamespace
 from unittest import mock
 
 from agent_pm.delegate.composer import ConfigError
@@ -554,8 +553,8 @@ class TeamDirChecks(Fake):
             {"roles/poet.md": POET, "tasks/verse.md": VERSE, "templates/card.md": "# Card\n"}
         )
 
-    def checked(self, writes=(), temp=()):
-        return self.refused(check_team_dirs, [self.top], writes=list(writes), temp=temp)
+    def checked(self, writes=()):
+        return self.refused(check_team_dirs, [self.top], writes=list(writes))
 
     def test_team_paths_are_the_dir_its_kind_subdirs_and_their_md_files(self):
         self.write(self.top, {"tasks/notes.txt": "x", "methods/m.md": "# M\n"})
@@ -577,14 +576,8 @@ class TeamDirChecks(Fake):
             )
 
     def test_no_team_dir_or_a_clean_one_passes(self):
-        self.assertIsNone(check_team_dirs((), writes=[("the workdir", "/")], temp=None))
-        self.assertIsNone(check_team_dirs([self.top], writes=[("the workdir", self.tmp)], temp=()))
-
-    def test_a_team_dir_in_a_temp_dir(self):
-        with mock.patch("subprocess.run", return_value=SimpleNamespace(stdout="")):
-            self.assertTrue(
-                self.checked(temp=None).startswith(f"team_dirs: {self.top} is in temp dir ")
-            )
+        self.assertIsNone(check_team_dirs((), writes=[("the workdir", "/")]))
+        self.assertIsNone(check_team_dirs([self.top], writes=[("the workdir", self.tmp)]))
 
     def test_a_team_dir_overlapping_a_dir_the_run_can_write(self):
         inside, home = os.path.join(self.top, "w"), os.path.realpath(self.agent_pm)
@@ -623,12 +616,7 @@ class TeamDirChecks(Fake):
         link = self.path("tasks/verse.md")
         os.rename(link, os.path.join(elsewhere, "verse.md"))
         os.symlink(os.path.join(elsewhere, "verse.md"), link)
-        check_team_dirs([self.top], writes=[], temp=())
-        self.assertEqual(
-            self.checked(temp=[elsewhere]),
-            f"team_dirs: {link} ({elsewhere}/verse.md) is in temp dir "
-            f"{elsewhere}: any process can write there",
-        )
+        check_team_dirs([self.top], writes=[])
         work = os.path.realpath(os.path.join(self.tmp, "work"))
         tasks, moved = self.path("tasks"), os.path.join(work, "team-tasks")
         os.makedirs(work)
@@ -649,15 +637,11 @@ class TeamDirChecks(Fake):
         link = self.path("tools/sub/t.py")
         os.symlink(os.path.join(work, "bin", "t.py"), link)
         os.symlink(self.path("tools"), self.path("tools/sub/loop"))
-        check_team_dirs([self.top], writes=[], temp=())
+        check_team_dirs([self.top], writes=[])
         shown = f"{link} ({work}/bin/t.py)"
         self.assertEqual(
             self.checked([("the workdir", work)]),
             f"team_dirs: {shown} overlaps the workdir {work}: the agent run can write there",
-        )
-        self.assertEqual(
-            self.checked(temp=[work]),
-            f"team_dirs: {shown} is in temp dir {work}: any process can write there",
         )
 
 

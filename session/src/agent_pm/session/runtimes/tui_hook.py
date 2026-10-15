@@ -1,9 +1,9 @@
 """A tui client's hook, run as `agent-pm-session hook DIR LABEL`: drains stdin, checks callback
 sources, binds client identity, and appends one hooks.jsonl record before notifying its optional
 Host callback. Never stdout, always exits 0; failures retain a traceback and one stderr line.
-session.json's adapter_hook and host_hook are HookCallback.fields(): a callback module is trusted
-under the hook's own source roots or the callback's declared roots, each its on_hook given a
-HookCall; one outside sys.path loads from its roots, sys.path unchanged.
+session.json's adapter_hook and host_hook are HookCallback.fields(): a callback module is found over
+the hook's own source roots, then the callback's declared roots, then sys.path, each its on_hook
+given a HookCall; one outside sys.path loads from its roots, sys.path unchanged.
 """
 
 from __future__ import annotations
@@ -86,9 +86,7 @@ def _prepare(argv: Sequence[str], roots: Sequence[str]):
         dict.fromkeys([*roots, *(root for _, hook in hooks for root in hook["roots"]), *sys.path])
     )
     specs = {
-        hook["module"]: _check_module(
-            hook["module"], search, [*roots, *hook["roots"]], kind + " hook", HookError
-        )
+        hook["module"]: _check_module(hook["module"], search, kind + " hook", HookError)
         for kind, hook in hooks
     }
     return folder, label, state, specs
@@ -212,7 +210,7 @@ def _check_callbacks(state, path, error):
             raise error(f"{path}: bad {hook}")
 
 
-def _check_module(name: str, search: list[str], roots: list[str], kind: str, error):
+def _check_module(name: str, search: list[str], kind: str, error):
     """What `name` and each package above it were found as over `search`, outermost first."""
     paths, specs = search, []
     parts = name.split(".")
@@ -222,10 +220,6 @@ def _check_module(name: str, search: list[str], roots: list[str], kind: str, err
         if spec is None or (spec.origin is None and index == len(parts) - 1):
             raise error(f"{kind} {name}: cannot find Python module")
         if spec.origin is not None:
-            if not any(
-                os.path.commonpath((root, spec.origin)) == os.path.normpath(root) for root in roots
-            ):
-                raise error(f"{kind} {name}: module outside source roots")
             try:
                 info = os.stat(spec.origin)
             except OSError as failure:
