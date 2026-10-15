@@ -1349,6 +1349,120 @@ class PollTest(Base):
         self.assertEqual(mode.poll(0.1), ([], False))
 
 
+class Opening(ScanTui):
+    opening = ("ready", "/color")
+
+
+class OpeningTest(Base):
+    def opened(self) -> tui.TuiRuntime:
+        self.adapter.run = Opening(self.adapter)
+        mode = self.started()
+        self.sent_at = []
+        mode._terminal.calls.send.side_effect = lambda _action: self.sent_at.append(self.clock.now)
+        return mode
+
+    def sends(self, mode) -> list:
+        return [c.args[0] for c in mode._terminal.calls.send.call_args_list]
+
+    def test_sends_once_after_delay(self):
+        mode = self.opened()
+        self.assertTrue(mode.opening_pending)
+        mode.poll(2)
+        self.assertEqual(self.sends(mode), [])
+        self.append(record("ready"))
+        self.assertEqual(mode.poll(0), ([], False))
+        due = self.clock.now + tui.OPEN_AFTER
+        mode.poll(0.5)
+        self.assertEqual(self.sends(mode), [])
+        self.assertTrue(mode.opening_pending)
+        mode.poll(0.6)
+        self.assertEqual(self.sends(mode), [Paste("/color"), Key("Enter")])
+        self.assertGreaterEqual(self.sent_at[0], due)
+        self.assertFalse(mode.opening_pending)
+        self.append(record("ready"))
+        mode.poll(2)
+        self.assertEqual(len(self.sends(mode)), 2)
+
+    def test_later_trigger_restarts_wait(self):
+        mode = self.opened()
+        self.append(record("ready"))
+        mode.poll(0.8)
+        self.append(record("ready"))
+        mode.poll(0.5)
+        self.assertEqual(self.sends(mode), [])
+        mode.poll(0.6)
+        self.assertEqual(self.sends(mode), [Paste("/color"), Key("Enter")])
+
+    def test_held_while_dialog_shows(self):
+        mode = self.opened()
+        self.host.calls.screen.return_value = "Sign in"
+        self.append(record("ready"))
+        mode.poll(0)
+        for _ in range(4):
+            mode.poll(0.5)
+        self.assertEqual(self.sends(mode), [])
+        self.assertTrue(mode.opening_pending)
+        self.host.calls.screen.return_value = ""
+        mode.poll(0.6)
+        self.assertEqual(self.sends(mode), [Paste("/color"), Key("Enter")])
+
+    def test_a_dialog_shown_while_records_arrive_still_holds(self):
+        mode = self.opened()
+        self.append(record("ready"))
+        mode.poll(0)
+        self.host.calls.screen.return_value = "Trust this folder?"
+        self.append(record("tool"))
+        mode.poll(0)
+        mode.poll(1.5)
+        self.assertEqual(self.sends(mode), [])
+
+    def test_held_while_marked_blocked(self):
+        mode = self.opened()
+        self.append(record("ready"), record("ask", why="perm"))
+        mode.poll(0)
+        mode.poll(2)
+        self.assertEqual(self.sends(mode), [])
+        self.append(record("tool"))
+        mode.poll(0)
+        mode.poll(0.2)
+        self.assertEqual(self.sends(mode), [Paste("/color"), Key("Enter")])
+
+    def test_attached_never_sends(self):
+        mode = self.opened()
+        attached = tui.TuiRuntime.attach(
+            NAME, tui.TuiRuntime.snapshot(NAME), self.adapter, host=self.host
+        )
+        self.assertFalse(attached.opening_pending)
+        self.append(record("ready"))
+        attached.poll(0)
+        attached.poll(2)
+        self.assertEqual(self.sends(mode), [])
+
+    def test_send_error_clears_pending(self):
+        mode = self.opened()
+        mode._terminal.calls.send.side_effect = SessionError("gone")
+        self.append(record("ready"))
+        mode.poll(0)
+        mode.poll(1.2)
+        self.assertFalse(mode.opening_pending)
+        mode._terminal.calls.send.side_effect = None
+        self.append(record("ready"))
+        mode.poll(2)
+        self.assertEqual(len(self.sends(mode)), 1)
+
+    def test_no_opening_is_never_pending(self):
+        mode = self.started()
+        self.assertFalse(mode.opening_pending)
+        self.append(record("ready"))
+        mode.poll(2)
+        mode._terminal.calls.send.assert_not_called()
+
+    def test_an_ended_runtime_is_not_pending(self):
+        mode = self.opened()
+        mode.stop()
+        self.assertFalse(mode.opening_pending)
+
+
 class ScanTest(Base):
     def test_a_hook_arriving_during_capture_precedes_the_limit_seen_on_screen(self):
         mode = self.started()

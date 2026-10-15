@@ -847,6 +847,13 @@ class EventsOverARuntimeTest(Case):
         self.assertLess(len(found), 50, found)
         return found
 
+    def test_opening_pending_is_its_runtimes(self):
+        session = self.session()
+        for pending in (True, False):
+            with self.subTest(pending=pending):
+                self.mode.opening_pending = pending
+                self.assertIs(session.opening_pending, pending)
+
     def test_binding_and_late_metadata_preserve_completion(self):
         adapter = fake_adapter.FakeAdapter({})
         resolver = mock.Mock(side_effect=lambda info: dataclasses.replace(info, resume="resume n1"))
