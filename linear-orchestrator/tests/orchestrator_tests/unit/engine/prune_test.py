@@ -784,7 +784,7 @@ class StateDir(HarnessCase):
         )
         event_log.use_logs(cfg.logs_dir)
         self.work = cfg.run_dir("TASK-7")
-        spec = Spec("Echo input.", self.work, task="echo", sid=SID, cwd=self.work, client="fake")
+        spec = Spec("Echo input.", self.work, task="echo", sid=SID, client="fake")
         HARNESS_DELEGATE(
             "dummy-tester",
             spec,

@@ -17,6 +17,7 @@ from agent_pm.delegate import (
     ConfigError,
     DelegateEvent,
     Finished,
+    Layout,
     Limit,
     Outcome,
     Progress,
@@ -123,7 +124,7 @@ class Planning(HarnessCase):
         self.assertEqual((HarnessSession.started, RecordingHost.launches), ([], []))
 
     def test_invalid_role_task_and_mode_write_nothing(self):
-        original = Spec("input", self.work, cwd=self.work)
+        original = Spec("input", self.work)
         for role, spec in (
             ("absent-role", original),
             ("dummy-tester", replace(original, task="absent-task")),
@@ -280,7 +281,7 @@ class Planning(HarnessCase):
         self.assertNotIn("protect", metadata["plan"]["session"])
 
     def test_constructor_keeps_its_config_snapshot_when_local_file_changes(self):
-        delegate = self.make(spec=Spec("input", self.work, task="echo", cwd=self.work, sid=SID))
+        delegate = self.make(spec=Spec("input", self.work, task="echo", sid=SID))
         self.settings(language="French", client="another-client")
         delegate.run()
         launched = HarnessSession.started[-1]["spec"]
@@ -357,9 +358,7 @@ class Views(HarnessCase):
         )
 
     def test_a_completed_foreground_tui_left_open_is_not_alive(self):
-        spec = Spec(
-            "input", self.work, task="echo", sid=SID, cwd=self.work, client="fake", mode="tui"
-        )
+        spec = Spec("input", self.work, task="echo", sid=SID, client="fake", mode="tui")
         delegate = self.make(spec=spec)
         self.assertEqual(delegate.run().outcome.status, "done")
         agent = HarnessSession.attach(f"dummy-tester-{SID[:8]}")
@@ -445,7 +444,7 @@ class Views(HarnessCase):
     def test_resume_uses_attach_config_snapshot(self):
         team = self.team_dir()
         self.settings(team_dirs=(team,))
-        self.make(spec=Spec("input", self.work, task="echo", cwd=self.work, client="fake", sid=SID))
+        self.make(spec=Spec("input", self.work, task="echo", client="fake", sid=SID))
         self.settings(language="French", team_dirs=(team,))
         view = HarnessDelegate.attach(self.work)
         self.settings(
@@ -600,7 +599,7 @@ class Completion(HarnessCase):
         FailingSession.reset()
         delegate = HarnessDelegate(
             "dummy-tester",
-            Spec("input", self.work, cwd=self.work, client="fake"),
+            Spec("input", self.work, client="fake"),
             session_cls=FailingSession,
         )
         seen = []
@@ -685,13 +684,15 @@ class HarnessLaunch(HarnessCase):
         self.assertEqual(str(caught.exception), "[adapters.fake]: no x")
         self.assertFalse(os.path.lexists(self.work))
 
-    def test_the_harness_runs_in_the_agents_cwd_with_its_signals_blocked(self):
+    def test_the_harness_runs_in_the_run_dir_with_its_signals_blocked(self):
         project = os.path.join(self.home, "project")
         os.mkdir(project)
         spec = Spec("input", self.work, client="fake", sid=SID, cwd=project)
         self.make(spec=spec).detach()
         launch = RecordingHost.launches[0]
-        self.assertEqual((launch["cwd"], launch["blocked_signals"]), (project, SIGNALS))
+        self.assertEqual(
+            (launch["cwd"], launch["blocked_signals"]), (Layout(self.work).run, SIGNALS)
+        )
         self.assertEqual(
             launch["argv"],
             [sys.executable, "-P", "-s", "-m", "agent_pm.delegate.engine.harness", self.work],
@@ -707,7 +708,7 @@ class DeadOnArrival(RecordingHost):
 
 class TuiStart(HarnessCase):
     def tui(self, **placement):
-        spec = Spec("input", self.work, mode="tui", client="fake", sid=SID, cwd=self.work)
+        spec = Spec("input", self.work, mode="tui", client="fake", sid=SID)
         return self.make(spec=spec, host="agent", **placement)
 
     def test_detach_returns_once_the_agent_session_is_live(self):
@@ -844,7 +845,7 @@ class Names(HarnessCase):
         self.make(host="agent", harness_host="harness")
         ((host, name, launch),) = ValidatingHost.validated
         self.assertEqual((host, name), ("harness", f"dummy-tester-{SID[:8]}-drive"))
-        self.assertEqual(launch.cwd, self.work)
+        self.assertEqual(launch.cwd, Layout(self.work).run)
         self.assertEqual(RecordingHost.launches, [])
 
     def test_an_invalid_name_is_refused_writing_nothing(self):
@@ -920,7 +921,7 @@ class Display(HarnessCase):
     def test_completed_once_in_the_caller_and_passed_unchanged(self):
         CountingDisplay.calls = []
         CountingDisplay.reset()
-        spec = Spec("input", self.work, mode="tui", client="fake", sid=SID, cwd=self.work)
+        spec = Spec("input", self.work, mode="tui", client="fake", sid=SID)
         record = HarnessDelegate(
             "dummy-tester",
             spec,
@@ -945,7 +946,7 @@ class Display(HarnessCase):
         CountingDisplay.reset()
         HarnessDelegate(
             "dummy-tester",
-            Spec("input", self.work, client="fake", sid=SID, cwd=self.work),
+            Spec("input", self.work, client="fake", sid=SID),
             session_cls=CountingDisplay,
             display="given",
         ).run()
@@ -959,7 +960,7 @@ class ConcurrentDetach(HarnessCase):
             "from agent_pm.delegate import ConfigError, Spec\n"
             "from agent_pm.delegate.engine.harness_delegate import HarnessDelegate\n"
             "from delegate.tests.fakes.harness_session import PersistentSession\n"
-            "spec = Spec('input', sys.argv[1], cwd=sys.argv[1], client='fake', sid=sys.argv[4])\n"
+            "spec = Spec('input', sys.argv[1], client='fake', sid=sys.argv[4])\n"
             "delegate = HarnessDelegate('dummy-tester', spec, session_cls=PersistentSession,\n"
             "                           host='agent', harness_host='harness')\n"
             "open(sys.argv[2] + str(os.getpid()), 'w').close()\n"
@@ -1170,7 +1171,7 @@ class LiveNameSession(HarnessSession):
 class Answer(HarnessCase):
     def test_an_answer_closes_the_ended_runs_open_tui_and_detaches_its_next_attempt(self):
         LiveNameSession.reset()
-        tui = Spec("Hello.", self.work, cwd=self.work, client="fake", sid=SID, mode="tui")
+        tui = Spec("Hello.", self.work, client="fake", sid=SID, mode="tui")
         placed = {"host": "agent", "harness_host": "harness", "session_cls": LiveNameSession}
         record = self.make(spec=tui, **placed).detach()
         harness, agent = (
@@ -1195,7 +1196,7 @@ class ConcurrentResume(HarnessCase):
     def test_two_processes_resume_once_and_return_the_same_record(self):
         delegate = HarnessDelegate(
             "dummy-tester",
-            Spec("input", self.work, cwd=self.work, client="fake", sid=SID),
+            Spec("input", self.work, client="fake", sid=SID),
             session_cls=PersistentSession,
             host="agent",
             harness_host="harness",

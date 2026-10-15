@@ -58,7 +58,7 @@ class CustomTeam(Base):
     def test_one_overlapping_what_the_run_can_write_is_refused(self):
         inside, top = os.path.join(self.team, "w"), os.path.dirname(self.team)
         for kw, what in (
-            ({"workdir": inside}, f"the workdir {inside}"),
+            ({"workdir": inside}, f"the agent dir {os.path.join(inside, 'agent')}"),
             ({"cwd": top}, f"the cwd {top}"),
             ({"keys": {"write": [inside]}}, f"write dir {inside} {inside}"),
             ({"keys": {"write": [self.tasks]}}, f"write dir {self.tasks} {self.tasks}"),

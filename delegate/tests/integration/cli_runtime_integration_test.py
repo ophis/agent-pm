@@ -7,7 +7,7 @@ import subprocess
 from datetime import datetime
 from unittest import mock
 
-from agent_pm.delegate import Outcome, Result
+from agent_pm.delegate import Layout, Outcome, Result
 from agent_pm.delegate.composer import Composer
 from agent_pm.delegate.composer.prompt import RESUME
 
@@ -118,14 +118,14 @@ class Exits(Base):
 class Deliverable(Base):
     """--out -: the deliverable on stdout; --out PATH: a stderr line naming the file holding it."""
 
-    def test_out_dash_prints_the_deliverable_exactly_and_saves_nothing(self):
+    def test_out_dash_prints_the_deliverable_exactly_and_saves_it_only_in_the_run_dir(self):
         code, out, err = self.runs(out="-")
         self.assertEqual((code, out), (0, DONE["deliverable"]), err)
         self.assertNotIn("delegate: deliverable", err)
         self.assertTrue(err.endswith("delegate: status done\n"), err)
         self.assertEqual(
-            set(os.listdir(self.work)),
-            {"run.jsonl", "delegate.json"},
+            (set(os.listdir(self.work)), set(os.listdir(Layout(self.work).run))),
+            ({"agent", "run", "delegate.json"}, {"run.jsonl", "out.md"}),
         )
 
     def test_out_dash_drops_control_characters_but_newlines_and_tabs(self):
@@ -134,7 +134,7 @@ class Deliverable(Base):
         code, out, err = self.runs(out="-")
         self.assertEqual((code, out), (0, "a]0;xb\n\tc[2Jde\n"), err)
 
-    def test_a_dry_run_with_out_dash_plans_no_out(self):
+    def test_a_dry_run_with_out_dash_names_the_default_deliverable(self):
         code, out, err = self.runs("--dry-run", out="-")
         self.assertEqual(code, 0, err)
         self.assertIn("`<Workdir>/tmp/deliverable.md`", json.loads(out)["prompt"])

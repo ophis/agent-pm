@@ -19,6 +19,7 @@ import tempfile
 import tomllib
 from urllib.parse import quote
 
+from agent_pm.delegate import Layout
 from orchestrator_tests.case import PY, Case, child_env
 from orchestrator_tests.case import REPO as WORKTREE
 from orchestrator_tests.integration import fake_gh, fake_linear
@@ -206,7 +207,7 @@ class Flow(Case):
         return jsonl(self.claude_log)
 
     def records(self, ident):
-        return jsonl(os.path.join(self.runs_dir, ident, "run.jsonl"))
+        return jsonl(os.path.join(Layout(os.path.join(self.runs_dir, ident)).run, "run.jsonl"))
 
     def ledger(self, ident):
         """Each sid's write-back steps."""
@@ -354,7 +355,9 @@ class TmuxFlow(Flow):
                     "orchestrator.jsonl:",
                     *tail(os.path.join(self.logs, "orchestrator.jsonl")),
                     "run.jsonl:",
-                    *tail(os.path.join(self.runs_dir, ident, "run.jsonl")),
+                    *tail(
+                        os.path.join(Layout(os.path.join(self.runs_dir, ident)).run, "run.jsonl")
+                    ),
                 ]
             )
         )

@@ -25,7 +25,7 @@ class ResumeCommand(HarnessCase):
         super().setUp()
         self.record = HarnessDelegate(
             "dummy-tester",
-            Spec("input", self.work, cwd=self.work, client="fake", sid=SID),
+            Spec("input", self.work, client="fake", sid=SID),
             session_cls=PersistentSession,
             host="agent",
             harness_host="harness",

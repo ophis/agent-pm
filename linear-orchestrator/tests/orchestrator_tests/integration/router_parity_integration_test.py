@@ -11,6 +11,7 @@ import time
 import unittest
 from datetime import UTC, datetime, timedelta
 
+from agent_pm.delegate import Layout
 from agent_pm.linear_orchestrator.engine.router import BUSY, LIVE
 from orchestrator_tests.integration.flow_fixtures import (
     ACCOUNTS,
@@ -168,8 +169,9 @@ class Recover(Parity):
         self.seed(ID, "ENG: Session registry")
 
     def transcript(self, sid):
-        """The Claude adapter's transcript of sid in ID's run dir and the files beside it."""
-        project = re.sub(r"[^A-Za-z0-9]", "-", os.path.realpath(os.path.join(self.runs_dir, ID)))
+        """The Claude adapter's transcript of sid in ID's agent dir and the files beside it."""
+        agent = Layout(os.path.join(self.runs_dir, ID)).agent
+        project = re.sub(r"[^A-Za-z0-9]", "-", os.path.realpath(agent))
         path = os.path.join(self.root, "claude-config", "projects", project, f"{sid}.jsonl")
         self.assertTrue(os.path.isfile(path), path)
         beside = os.walk(os.path.splitext(path)[0])

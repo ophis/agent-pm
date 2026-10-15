@@ -1,5 +1,5 @@
 """Encode Delegate events, stamped with their run's sid and attempt, and deliver each line to the
-configured callback command: synchronously, in its own process group, from the State dir, its stdout
+configured callback command: synchronously, in its own process group, from the run dir, its stdout
 discarded. A delivery that fails (exit ≠ 0, CALLBACK_TIMEOUT, OSError) is one `callback_error` row
 in run.jsonl, never retried; an exception while waiting kills and reaps the group, then propagates.
 """

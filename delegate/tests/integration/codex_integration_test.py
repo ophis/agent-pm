@@ -10,6 +10,7 @@ import os
 import unittest
 from unittest import mock
 
+from agent_pm.delegate import Layout
 from agent_pm.delegate.engine.runner import FIX
 
 from delegate.tests.integration.cli import (
@@ -40,7 +41,7 @@ class Codex(CodexIntegration):
         self.assertTrue(call["stdin_eof"])
         self.assertEqual(
             (call["cwd"], call["argv"][:2], call["resume_id"]),
-            (self.work, ["exec", "--json"], None),
+            (Layout(self.work).agent, ["exec", "--json"], None),
         )
         self.assertIn("# Input\n\nHello.", call["prompt"])
 

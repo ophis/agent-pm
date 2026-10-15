@@ -44,7 +44,7 @@ class MissingTmuxSession(HarnessSession):
 
 class Refusals(HarnessCase):
     def construct(self, *, session_cls=HarnessSession, **placement):
-        spec = Spec("input", self.work, task="echo", cwd=self.work, client="fake")
+        spec = Spec("input", self.work, task="echo", client="fake")
         return HarnessDelegate("dummy-tester", spec, session_cls=session_cls, **placement)
 
     def test_host_display_and_harness_configuration_refusals_are_delegate_errors(self):
@@ -81,7 +81,7 @@ class Refusals(HarnessCase):
 
     def test_a_start_driver_error_is_the_result_with_one_finished(self):
         events = []
-        spec = Spec("input", self.work, task="echo", mode="tui", cwd=self.work, name="agent")
+        spec = Spec("input", self.work, task="echo", mode="tui", name="agent")
         result = executed(
             Composer().resolve("dummy-tester", "echo"),
             spec,

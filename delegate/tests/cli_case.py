@@ -7,7 +7,7 @@ import tempfile
 from contextlib import redirect_stderr, redirect_stdout
 from unittest import mock
 
-from agent_pm.delegate import cli
+from agent_pm.delegate import Layout, cli
 from agent_pm.delegate.engine.harness_delegate import HarnessDelegate
 from agent_pm.session import ConfigError
 
@@ -112,7 +112,7 @@ class Base(Case):
             return [json.loads(line) for line in f]
 
     def records(self) -> list[dict]:
-        with open(os.path.join(self.work, "run.jsonl")) as f:
+        with open(os.path.join(Layout(self.work).run, "run.jsonl")) as f:
             return [json.loads(line) for line in f]
 
     ran = None

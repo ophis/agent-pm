@@ -35,7 +35,7 @@ class Queries(Integration):
     def test_status_and_outcome_answer_from_the_workdir_or_its_record(self):
         line = (
             Status(
-                NAME, alive=False, state="absent", outcome="done", attach=None, cwd=self.proj
+                NAME, alive=False, state="absent", outcome="done", attach=None, cwd=self.agent
             ).to_line()
             + "\n"
         )
@@ -57,7 +57,7 @@ class Queries(Integration):
             (
                 2,
                 Status(
-                    NAME, alive=False, state="absent", outcome="done", attach=None, cwd=self.proj
+                    NAME, alive=False, state="absent", outcome="done", attach=None, cwd=self.agent
                 ).to_line()
                 + "\n",
             ),

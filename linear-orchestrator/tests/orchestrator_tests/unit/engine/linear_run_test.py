@@ -47,8 +47,7 @@ class Runs(RunCase):
             (spec.task, spec.client, spec.sid, spec.resume), ("light-research", "fake", SID, False)
         )
         self.assertEqual(spec.name, "researcher-TASK-1-1234abcd")
-        self.assertEqual(spec.cwd, spec.workdir)
-        self.assertEqual(spec.out, os.path.join(spec.workdir, "out.md"))
+        self.assertEqual((spec.cwd, spec.out), (None, None))
         self.assertEqual(
             options,
             {

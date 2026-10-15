@@ -11,6 +11,7 @@ import subprocess
 import tempfile
 import unittest
 
+from agent_pm.delegate import Layout
 from agent_pm.delegate.composer import Composer, RunParams
 
 from delegate.tests.case import REPO as CHECKOUT
@@ -70,7 +71,9 @@ class Instruction(Case):
         work = self.work(role)
         composition = Composer()
         run = composition.resolve(role)
-        params = RunParams(input=INPUT, out=os.path.join(work, "prompt.md"), workdir=work)
+        params = RunParams(
+            input=INPUT, out=os.path.join(work, "prompt.md"), workdir=Layout(work).agent
+        )
         return composition.render(run, params).encode("utf-8")
 
     def delivered(self, role):

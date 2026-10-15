@@ -202,8 +202,6 @@ class TeamDirectoryIsolation(ConfigFile, Case):
             self.work,
             client="claude",
             sid=SID,
-            out=os.path.join(self.work, "out.md"),
-            cwd=self.work,
         )
         plan = HARNESS_DELEGATE.preview("pm", spec, overlays=(cfg.core,)).plan
         return cfg.roles["pm"], plan.session, plan.run

@@ -13,7 +13,7 @@ from datetime import datetime
 from types import SimpleNamespace
 from unittest import mock
 
-from agent_pm.delegate import Begun, ConfigError, Finished, Limit, Progress, Result
+from agent_pm.delegate import Begun, ConfigError, Finished, Layout, Limit, Progress, Result
 from agent_pm.delegate.engine import runner
 from agent_pm.delegate.engine.runner import FIX
 from agent_pm.delegate.engine.types import Stopped
@@ -359,8 +359,8 @@ class Start(Base):
             (records[0]["sid"], kept["url"], r.outcome.deliverable), (sid, self.out, "# Doc\n")
         )
         self.assertEqual(
-            sorted(os.listdir(self.work)),
-            ["out.md", "run.jsonl"],
+            (sorted(os.listdir(self.work)), os.listdir(Layout(self.work).run)),
+            (["agent", "out.md", "run"], ["run.jsonl"]),
         )
 
     def test_a_destination_decides_the_url_and_each_saves_a_deliverable(self):
@@ -425,12 +425,17 @@ class Start(Base):
                 )
                 self.assertFalse(os.path.lexists(self.out))
 
-    def test_without_out_nothing_is_saved(self):
+    def test_without_out_the_deliverable_is_saved_in_the_run_dir(self):
         r = self.go(said(START, block(DONE)), out=None)
+        run_dir = Layout(self.work).run
         self.assertEqual(
-            (r.outcome.status, r.outcome.url, r.outcome.deliverable), ("done", "", "# Doc\n")
+            (r.outcome.status, r.outcome.url, r.outcome.deliverable),
+            ("done", os.path.join(run_dir, "out.md"), "# Doc\n"),
         )
-        self.assertEqual(sorted(os.listdir(self.work)), ["run.jsonl"])
+        self.assertEqual(
+            (sorted(os.listdir(self.work)), sorted(os.listdir(run_dir))),
+            (["agent", "run"], ["out.md", "run.jsonl"]),
+        )
 
     def test_a_stale_out_never_stands_for_the_deliverable(self):
         save_spy = self.spy_save()

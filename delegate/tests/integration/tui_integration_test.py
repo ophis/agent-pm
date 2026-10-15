@@ -16,7 +16,7 @@ import unittest
 from contextlib import redirect_stderr
 from unittest import mock
 
-from agent_pm.delegate import Progress, Spec
+from agent_pm.delegate import Layout, Progress, Spec
 from agent_pm.delegate.composer import Composer
 from agent_pm.delegate.engine.drivers import AgentDriver
 from agent_pm.delegate.engine.runner import FIX, NUDGE, STOP_LIMIT
@@ -106,7 +106,6 @@ class TuiRun(tui_live.Live):
                         sid=SID,
                         events=self.events,
                         out=self.out,
-                        cwd=self.workdir,
                     ),
                     on_event=on,
                     driver=self.driver,
@@ -133,7 +132,7 @@ class TuiRun(tui_live.Live):
         return ended[0]
 
     def records(self) -> list[dict]:
-        with open(os.path.join(self.workdir, "run.jsonl")) as f:
+        with open(os.path.join(Layout(self.workdir).run, "run.jsonl")) as f:
             return [json.loads(line) for line in f]
 
     def kinds(self) -> list[str]:

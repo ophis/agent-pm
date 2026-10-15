@@ -13,6 +13,7 @@ from agent_pm.utils import Stopped as Stopped
 
 __all__ = [
     "ConfigError",
+    "Layout",
     "Spec",
     "Plan",
     "Limit",
@@ -33,11 +34,32 @@ class Outer(TypedDict, total=False):
 
 
 @dataclass(frozen=True)
+class Layout:
+    """A run's workdir (Spec.workdir): `agent`, the agent's cwd and only write grant; `run`, the
+    harness's state and records.
+    """
+
+    workdir: str
+
+    def __post_init__(self):
+        object.__setattr__(self, "workdir", os.path.abspath(self.workdir))
+
+    @property
+    def agent(self) -> str:
+        return os.path.join(self.workdir, "agent")
+
+    @property
+    def run(self) -> str:
+        return os.path.join(self.workdir, "run")
+
+
+@dataclass(frozen=True)
 class Spec:
-    """One run to start: `resume` resumes session `sid`; client None: the role's; `out` None:
-    nothing is saved; `team` None: the built-in one. name and events: tui only for plan();
-    HarnessDelegate takes them in every mode (`name`: its agent session, `<name>-drive` its
-    harness's; `events`: also the detached harness's outcome line).
+    """One run to start: `workdir` is the run's workdir (Layout); `resume` resumes session `sid`;
+    client None: the role's; `out` None: `<run>/out.md` for a session run, else nothing is saved;
+    `team` None: the built-in one. name and events: tui only for plan(); HarnessDelegate takes them
+    in every mode (`name`: its agent session, `<name>-drive` its harness's; `events`: also the
+    detached harness's outcome line).
     """
 
     input: str
@@ -79,15 +101,16 @@ class Plan:
     def params(self) -> RunParams:
         return RunParams(
             input=self.spec.input,
-            out=self.spec.out or self.driver_spec.out,
-            workdir=self.spec.workdir,
+            out=self.driver_spec.out,
+            workdir=Layout(self.spec.workdir).agent,
             resume=self.spec.resume,
         )
 
     @property
     def driver_spec(self) -> DriverSpec:
         return DriverSpec(
-            self.session, self.spec.out or os.path.join(self.spec.workdir, DELIVERABLE)
+            self.session,
+            self.spec.out or os.path.join(Layout(self.spec.workdir).agent, DELIVERABLE),
         )
 
     @property

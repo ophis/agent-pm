@@ -12,6 +12,7 @@ import unittest
 from datetime import UTC, datetime
 from unittest import mock
 
+from agent_pm.delegate import Layout
 from agent_pm.delegate.composer.prompt import RESUME
 from agent_pm.delegate.engine.runner import FIX
 from agent_pm.session import Access, Spec
@@ -53,7 +54,7 @@ class NewRun(Integration):
         session = self.records()[0]
         self.assertEqual(
             (session["sid"], session["cwd"], session["project"], session["transcript"]),
-            (SID, self.proj, False, self.transcript),
+            (SID, self.agent, False, self.transcript),
         )
         self.assertEqual(
             [*map(bare, self.records()[1:])],
@@ -77,13 +78,13 @@ class NewRun(Integration):
         )
         self.assertEqual(
             set(os.listdir(self.work)),
-            {"out.md", "run.jsonl", "delegate.json"},
+            {"agent", "run", "out.md", "delegate.json"},
         )
         self.assertTrue(os.path.isfile(self.transcript))
         (call,) = self.calls()
         self.assertEqual(
             (call["cwd"], option(call, "--session-id"), option(call, "--output-format")),
-            (self.proj, SID, "stream-json"),
+            (self.agent, SID, "stream-json"),
         )
         self.assertIsNone(option(call, "--resume"))
 
@@ -237,7 +238,7 @@ class Resume(Integration):
         )
         self.assertEqual(res.returncode, 0, res.stderr)
         first, second = self.calls()
-        self.assertEqual(second["cwd"], self.proj)
+        self.assertEqual(second["cwd"], self.agent)
         self.assertEqual((option(second, "--resume"), option(second, "--session-id")), (SID, None))
         self.assertTrue(prompt(second).startswith(RESUME))
         self.assertTrue(prompt(second).endswith("\n# Input\n\nUse B.\n"))
@@ -248,7 +249,7 @@ class Resume(Integration):
         records = self.records()
         self.assertEqual([e["text"] for e in records if e["kind"] == "input"], ["Hello.", "Use B."])
         self.assertEqual(
-            [e["cwd"] for e in records if e["kind"] == "session"], [self.proj, self.proj]
+            [e["cwd"] for e in records if e["kind"] == "session"], [self.agent, self.agent]
         )
         self.assertEqual(self.last("result")["outcome"]["status"], "done")
 
@@ -283,7 +284,7 @@ class NeedsInput(Integration):
         self.assertEqual([e["text"] for e in records if e["kind"] == "input"], ["Hello.", ANSWER])
         self.assertEqual(
             [(e["sid"], e["cwd"]) for e in records if e["kind"] == "session"],
-            [(SID, self.proj)] * 2,
+            [(SID, self.agent)] * 2,
         )
         first, second = self.calls()
         self.assertEqual(
@@ -379,7 +380,12 @@ class UsageLimit(Integration):
         with mock.patch.dict(os.environ, {"CLAUDE_CONFIG_DIR": self.config}):
             self.assertEqual(
                 session_cls.inspect(
-                    Spec(workdir=self.work, access=Access(cwd=self.work), client="claude", sid=SID)
+                    Spec(
+                        workdir=Layout(self.work).run,
+                        access=Access(cwd=self.agent),
+                        client="claude",
+                        sid=SID,
+                    )
                 ).resumable,
                 "yes",
             )

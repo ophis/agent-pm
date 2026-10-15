@@ -40,7 +40,7 @@ class IdleTimeoutConfig(Case):
                     session_cls = SessionClass.scripted(turn(START, block(DONE)))
                     result = executed(
                         Composer().resolve("dummy-tester"),
-                        Spec("input", self.home, mode=mode, cwd=self.home),
+                        Spec("input", self.home, mode=mode),
                         driver=AgentDriver(session_cls),
                     )
                     self.assertEqual(result.outcome.status, "done")
@@ -55,7 +55,7 @@ class IdleTimeoutConfig(Case):
         with no_child():
             result = executed(
                 Composer().resolve("dummy-tester"),
-                Spec("input", self.home, mode="tui", cwd=self.home, sid=sid),
+                Spec("input", self.home, mode="tui", sid=sid),
                 driver=AgentDriver(session_cls),
             )
         self.assertIsNone(result.outcome)
@@ -166,7 +166,7 @@ class Drivers(Case):
         with no_child():
             result = executed(
                 Composer().resolve("dummy-tester"),
-                Spec("input", work, out=out, cwd=work),
+                Spec("input", work, out=out),
                 driver=FileDriver(),
                 on_event=events.append,
             )
@@ -285,7 +285,7 @@ class Drivers(Case):
     def test_instruction_run_bypasses_attempts_and_replies_but_finishes(self):
         work = os.path.join(self.home, "work")
         out = os.path.join(work, "prompt.md")
-        spec = Spec("[agent-pm-progress:start] source text", work, out=out, cwd=work)
+        spec = Spec("[agent-pm-progress:start] source text", work, out=out)
         composition = Composer()
         config = composition.resolve("dummy-tester")
         driver = InstructionDriver()

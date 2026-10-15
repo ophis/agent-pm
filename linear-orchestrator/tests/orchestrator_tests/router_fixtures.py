@@ -670,8 +670,6 @@ class OuterBase(TickBase):
             sid=sid,
             resume=resume,
             name=f"{role}-{ID}-{sid[:8]}",
-            out=os.path.join(self.rd, "out.md"),
-            cwd=self.rd,
         )
 
     def input(self, **kw):

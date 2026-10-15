@@ -65,7 +65,7 @@ class HarnessCase(Case):
 
     def make(self, *, role="dummy-tester", spec=None, session_cls=HarnessSession, **kw):
         spec = spec or Spec(
-            "Hello.\nLiteral input.", self.work, task="echo", sid=SID, cwd=self.work, client="fake"
+            "Hello.\nLiteral input.", self.work, task="echo", sid=SID, client="fake"
         )
         return HarnessDelegate(role, spec, session_cls=session_cls, **kw)
 

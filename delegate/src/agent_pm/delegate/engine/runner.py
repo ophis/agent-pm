@@ -1,7 +1,7 @@
 """One role's run to its Result: an invalid outcome gets one fix of the same session, a usage limit
-or a failed turn ends the run, the deliverable is saved to `out`; records go to <workdir>/run.jsonl. A Mode's policy
-(POLICIES) starts the session, sends the fix and answers each turn end and IdleTimeout: go on
-(None), END or GiveUp.
+or a failed turn ends the run, the deliverable is saved to `out`; records go to the run dir's
+run.jsonl (the session's workdir). A Mode's policy (POLICIES) starts the session, sends the fix and
+answers each turn end and IdleTimeout: go on (None), END or GiveUp.
 """
 
 import os
@@ -237,13 +237,13 @@ class _Attempts:
             on_event,
             POLICIES[Mode(p.spec.mode)](self.note, driver),
         )
-        self.workdir = p.spec.workdir
+        self.run_dir = p.session.workdir
         self.seen: set[str] = set()
         self.handle: Session | None = None
         self.refused = False  # the Driver refused the start: nothing to close
 
     def note(self, kind: str, **fields) -> None:
-        RunLog(self.workdir).note(kind, **fields)
+        RunLog(self.run_dir).note(kind, **fields)
 
     def close(self, result: dict, rc: int) -> None:
         """Best effort: an OSError is printed."""

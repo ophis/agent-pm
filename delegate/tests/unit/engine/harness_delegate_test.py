@@ -8,7 +8,7 @@ import json
 import os
 from unittest import mock
 
-from agent_pm.delegate import ConfigError, Result, Spec
+from agent_pm.delegate import ConfigError, Layout, Result, Spec
 from agent_pm.delegate.composer import Composer, RunParams
 from agent_pm.delegate.engine.harness_delegate import HarnessDelegate
 from agent_pm.delegate.engine.state import RunState
@@ -27,7 +27,7 @@ from delegate.tests.harness import SID, HarnessCase
 
 class CloseTest(HarnessCase):
     def test_a_failed_harness_close_names_the_harness_session(self):
-        spec = Spec("input", self.work, mode="tui", client="fake", sid=SID, cwd=self.work)
+        spec = Spec("input", self.work, mode="tui", client="fake", sid=SID)
         record = self.make(spec=spec, host="agent", harness_host="harness").detach()
         name = self.metadata()["harness_name"]
         process = RecordingHost.processes["harness", name]
@@ -47,7 +47,7 @@ class OuterTest(HarnessCase):
             "ctl": ("agent-pm-linear",),
             "resume": ("agent-pm-linear", "resume", "TASK-1"),
         }
-        spec = Spec("input", self.work, mode="tui", client="fake", sid=SID, cwd=self.work)
+        spec = Spec("input", self.work, mode="tui", client="fake", sid=SID)
         record = self.make(spec=spec).detach(outer=outer)
         stored = RecordingHost.processes["agent", self.metadata()["harness_name"]].record()
         self.assertEqual((record.name, stored), ("TASK-1", record))
@@ -131,7 +131,7 @@ class InstructTest(HarnessCase):
         composer = Composer()
         want = composer.render(
             composer.resolve("dummy-tester", "echo"),
-            RunParams(input="Hello.", out=out, workdir=self.work),
+            RunParams(input="Hello.", out=out, workdir=Layout(self.work).agent),
         )
         with open(out, encoding="utf-8") as file:
             self.assertEqual(file.read(), want)
@@ -236,7 +236,7 @@ class OverlayTest(HarnessCase):
 class ResumeModeTest(HarnessCase):
     def gave_up(self, mode):
         """A detached run whose harness ended without an outcome, a tui agent session left open."""
-        spec = Spec("input", self.work, mode=mode, client="fake", sid=SID, cwd=self.work)
+        spec = Spec("input", self.work, mode=mode, client="fake", sid=SID)
         self.make(spec=spec).detach()
         view = HarnessDelegate.attach(self.work, session_cls=HarnessSession)
         view.close()
@@ -305,7 +305,7 @@ class CrashTest(HarnessCase):
         """A tui run whose process died mid-run: no outcome stored, no run lock held, its agent
         session left live as the run started it.
         """
-        spec = Spec("input", self.work, mode="tui", client="fake", sid=SID, cwd=self.work)
+        spec = Spec("input", self.work, mode="tui", client="fake", sid=SID)
         self.make(spec=spec)
         state = self.metadata()
         agent = SessionSpec(

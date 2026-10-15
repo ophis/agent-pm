@@ -11,7 +11,7 @@ from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest import mock
 
-from agent_pm.delegate import ConfigError, Outcome, Spec, cli
+from agent_pm.delegate import ConfigError, Layout, Outcome, Spec, cli
 from agent_pm.delegate.composer import Composer, RunParams
 from agent_pm.delegate.composer.base import TEAM
 from agent_pm.delegate.composer.prompt import RESUME
@@ -401,7 +401,7 @@ class DryRun(Base):
                 "mode": "headless",
                 "sid": SID,
                 "resume": False,
-                "cwd": self.tmp,
+                "cwd": Layout(self.work).agent,
                 "project": False,
                 "tier": 3,
                 "effort": "low",
@@ -412,13 +412,11 @@ class DryRun(Base):
         )
         self.assertEqual(
             (shown["dirs"], shown["reads"], shown["commands"]),
-            ([self.work], [os.path.join(TEAM, "tasks")], []),
+            ([], [os.path.join(TEAM, "tasks")], []),
         )
         self.assertIn("**Your task**: `echo` (`<tasks>/echo.md`).", shown["prompt"])
         self.assertTrue(shown["prompt"].endswith("\n# Input\n\nHello.\n"))
-        self.assertEqual(
-            err, f"delegate: cwd {self.tmp} is not in trusted_dirs: its project settings are off\n"
-        )
+        self.assertEqual(err, "")
         self.assertEqual(
             (self.launches(), os.path.exists(self.work), os.listdir(self.agent_pm)), ([], False, [])
         )
@@ -436,7 +434,8 @@ class DryRun(Base):
         code, out, _ = self.runs("--sid", SID, "--resume", "--dry-run")
         shown = json.loads(out)
         self.assertEqual(
-            (code, shown["sid"], shown["resume"], shown["cwd"]), (0, SID, True, self.work)
+            (code, shown["sid"], shown["resume"], shown["cwd"]),
+            (0, SID, True, Layout(self.work).agent),
         )
         self.assertTrue(shown["prompt"].startswith(RESUME))
         self.assertFalse(os.path.exists(self.work))
@@ -511,8 +510,8 @@ class InProcess(Base):
             (state["role"], state["attempt"], state["completed"]), ("dummy-tester", 1, True)
         )
         self.assertEqual(
-            sorted(os.listdir(self.work)),
-            ["delegate.json", "out.md", "run.jsonl"],
+            (sorted(os.listdir(self.work)), os.listdir(Layout(self.work).run)),
+            (["agent", "delegate.json", "out.md", "run"], ["run.jsonl"]),
         )
 
     def test_an_answer_while_the_run_is_alive_exits_2_and_starts_nothing(self):
@@ -555,7 +554,8 @@ class InProcess(Base):
         code, out, err = self.runs("--mode", "in_process", client="refusing")
         self.assertEqual((code, out, err.splitlines()[-1]), (2, "", "delegate: refused by check"))
         self.assertEqual(
-            (os.path.exists(os.path.join(self.work, "run.jsonl")), self.launches()), (False, [])
+            (os.path.exists(os.path.join(Layout(self.work).run, "run.jsonl")), self.launches()),
+            (False, []),
         )
 
 
@@ -819,14 +819,14 @@ class Prompt(Case):
         composition = Composer()
         config = composition.resolve("dummy-tester", "echo")
         expected = composition.render(
-            config, RunParams(input="Hello.\n", out=self.out, workdir=self.work)
+            config, RunParams(input="Hello.\n", out=self.out, workdir=Layout(self.work).agent)
         )
         with mock.patch("subprocess.Popen", side_effect=AssertionError("session started")):
             self.assertEqual(
                 self.prompt(), (0, "", f"delegate: instruction delivered: {self.out}\n")
             )
         self.assertEqual(Path(self.out).read_bytes(), expected.encode("utf-8"))
-        log = Path(self.work, "run.jsonl")
+        log = Path(Layout(self.work).run, "run.jsonl")
         self.assertFalse(log.exists())
 
     def test_runtime_execution_options_are_usage_errors_before_writes(self):

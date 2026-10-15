@@ -475,11 +475,11 @@ class TuiPolicy(Base):
             self.assertEqual(self.go(mode="tui"), Result(1, None, "tui: no tmux"))
         self.assertEqual(self.kinds(), ["input", "result", "end"])
 
-    def test_the_runner_records_into_an_existing_workdir_only(self):
+    def test_the_runner_records_into_an_existing_run_dir_only(self):
         composition = Composer()
         accepted = plan(
             composition.resolve("dummy-tester"),
-            Spec("Echo me.", self.work, task="echo", client="fake", mode="tui", cwd=self.work),
+            Spec("Echo me.", self.work, task="echo", client="fake", mode="tui"),
             driver=self.driver,
             composition=composition,
         )

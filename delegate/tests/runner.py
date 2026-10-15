@@ -9,7 +9,7 @@ from contextlib import redirect_stderr
 from dataclasses import replace
 from unittest import mock
 
-from agent_pm.delegate import Result, RunConfig, Spec
+from agent_pm.delegate import Layout, Result, RunConfig, Spec
 from agent_pm.delegate.composer import Composer
 from agent_pm.delegate.engine.plan import plan
 from agent_pm.delegate.engine.runner import execute
@@ -49,17 +49,18 @@ PENDING = turn("Waiting for the build.", pending=1)
 
 
 def executed(config: RunConfig, spec: Spec, *, driver, on_event=None, composition=None) -> Result:
-    """plan() then execute(), a session's workdir made between."""
+    """plan() then execute(), a session run's agent and run dirs made between."""
     composition = Composer(team=spec.team) if composition is None else composition
     accepted = plan(config, spec, driver=driver, composition=composition)
     if driver.session_based:
-        os.makedirs(accepted.spec.workdir, exist_ok=True)
+        for made in (Layout(spec.workdir).agent, accepted.session.workdir):
+            os.makedirs(made, exist_ok=True)
     return execute(accepted, driver=driver, on_event=on_event)
 
 
 class Base(Case):
     """dummy-tester's echo over the fake client in workdir `work` (not made), out `out`, the cwd
-    the workdir.
+    its agent dir; `channel` its run.jsonl.
     """
 
     def setUp(self):
@@ -68,7 +69,7 @@ class Base(Case):
         self.tmp = os.path.realpath(tmp.name)
         self.work = os.path.join(self.tmp, "work")
         self.out = os.path.join(self.work, "out.md")
-        self.channel = os.path.join(self.work, "run.jsonl")
+        self.channel = os.path.join(Layout(self.work).run, "run.jsonl")
         self.scenario, self.log = (
             os.path.join(self.tmp, name) for name in ("scenario.json", "client.log")
         )
@@ -111,7 +112,6 @@ class Base(Case):
             "client": "fake",
             "mode": "headless",
             "out": self.out,
-            "cwd": self.work,
             "input": "Echo me.",
             **kw,
         }

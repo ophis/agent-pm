@@ -25,6 +25,7 @@ from agent_pm.delegate.engine.types import (
     ConfigError,
     Event,
     Finished,
+    Layout,
     Limit,
     Outer,
     Plan,
@@ -239,6 +240,9 @@ class HarnessDelegate(Delegate):
                     self.driver.preflight(self._state.plan.session)
                 except (SessionConfigError, SessionError) as error:
                     raise ConfigError(str(error)) from None
+                layout = Layout(self.workdir)
+                for made in (layout.agent, layout.run):
+                    os.makedirs(made, exist_ok=True)
                 self._save(self._state)
         except OSError as error:
             raise ConfigError(str(error)) from None
@@ -546,7 +550,7 @@ class HarnessDelegate(Delegate):
             if state.result is None or state.result.outcome is None
             else state.result.outcome.status,
             self.attach_command(),
-            state.plan.session.access.cwd or state.plan.session.workdir,
+            state.plan.session.access.cwd,
         )
 
     def attach_command(self) -> str | None:
@@ -618,13 +622,14 @@ class HarnessDelegate(Delegate):
             with self.store.mutex():
                 if self._current().completed:
                     raise ConfigError(f"{self.workdir}: delegate run already completed")
+            run_dir = Layout(self.workdir).run
             callback = (
                 None
                 if self._state.callback is None
                 else EventCallback(
                     self._state.callback,
-                    self.workdir,
-                    cwd=self.store.dir,
+                    run_dir,
+                    cwd=run_dir,
                     sid=self._state.plan.sid,
                     attempt=self._state.attempt,
                 )
@@ -648,7 +653,7 @@ class HarnessDelegate(Delegate):
                 if not finished:
                     ended = stopped(error)
                     if isinstance(error, (Exception, SystemExit)):
-                        RunLog(self.workdir).note(
+                        RunLog(run_dir).note(
                             "run_error",
                             error=ended.error,
                             traceback="".join(traceback.format_exception(error)),
@@ -709,7 +714,7 @@ class HarnessDelegate(Delegate):
         environment.update(source_path(roots))
         return Launch(
             (sys.executable, "-P", "-s", "-m", "agent_pm.delegate.engine.harness", self.workdir),
-            cwd=state.plan.session.access.cwd or self.workdir,
+            cwd=Layout(self.workdir).run,
             env=environment,
             blocked_signals=SIGNALS,
         )

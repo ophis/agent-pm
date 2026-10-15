@@ -11,6 +11,7 @@ import re
 import unittest
 from urllib.parse import unquote
 
+from agent_pm.delegate import Layout
 from agent_pm.linear_orchestrator.engine import config, issues, ops
 from orchestrator_tests.integration import fake_linear
 from orchestrator_tests.integration.flow_fixtures import HARNESS_EMAIL
@@ -23,8 +24,9 @@ PRD = "# PRD: Session registry\n\nThe registry maps each tmux session to its run
 
 class PmToEngineer(Segment):
     def transcript_path(self, ident, sid):
-        """The Claude adapter's transcript of sid run in ident's run dir."""
-        project = re.sub(r"[^A-Za-z0-9]", "-", os.path.realpath(os.path.join(self.runs_dir, ident)))
+        """The Claude adapter's transcript of sid run in ident's agent dir."""
+        agent = Layout(os.path.join(self.runs_dir, ident)).agent
+        project = re.sub(r"[^A-Za-z0-9]", "-", os.path.realpath(agent))
         return os.path.join(self.root, "claude-config", "projects", project, f"{sid}.jsonl")
 
     def test_b1_prd_to_an_engineer_issue(self):

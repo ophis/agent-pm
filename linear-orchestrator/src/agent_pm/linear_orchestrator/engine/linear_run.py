@@ -4,7 +4,6 @@ harness calls `agent-pm-linear writeback --issue ID --workdir <workdir>` on each
 
 from __future__ import annotations
 
-import os
 import re
 from dataclasses import replace
 
@@ -49,8 +48,6 @@ class LinearRun:
                 resume=resume,
                 name=config.tui_name(role, issue, sid),
                 events=events,
-                out=os.path.join(workdir, "out.md"),
-                cwd=workdir,
             ),
             display=display,
             callback=["agent-pm-linear", "writeback", "--issue", issue, "--workdir", workdir],

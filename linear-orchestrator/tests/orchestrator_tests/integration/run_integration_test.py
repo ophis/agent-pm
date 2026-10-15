@@ -11,6 +11,7 @@ import shlex
 import unittest
 from datetime import UTC, datetime
 
+from agent_pm.delegate import Layout
 from agent_pm.linear_orchestrator.engine import ops
 from orchestrator_tests.integration.flow_fixtures import (
     ACCOUNTS,
@@ -117,7 +118,7 @@ class Run(TmuxFlow):
         for _, _, v, _ in self.wrote(since):
             if v.get("c") == SESSION and "b" in v and v["b"] not in bodies[-1:]:
                 bodies.append(v["b"])
-        cwd = re.escape(shlex.quote(self.rd))
+        cwd = re.escape(shlex.quote(Layout(self.rd).agent))
         command = (
             rf"\n\n```\ncd {cwd} && agent-pm-session client-resume claude \S+ {cwd} {SID}\n```"
         )
