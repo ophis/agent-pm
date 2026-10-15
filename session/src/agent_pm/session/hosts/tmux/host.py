@@ -92,7 +92,7 @@ EXIT_STATUS = (
 EXITED_EVENT = (
     "run-shell 'echo "
     + SessionStatusLog.line("#{q:session_name}", "exited", EXIT_STATUS, at=CLOCK)
-    + " >> #{q:@events}' ; kill-pane"
+    + " >> #{q:@events}'"
 )
 
 
@@ -441,10 +441,13 @@ class Tmux:
         exited = []
         if events is not None:
             target = f"={session}:"
+            # -F stores the launched pane's id (## keeps the event's formats for the hook): a bare
+            # kill-pane, its pane closed during run-shell, kills another session's pane
+            on_exit = EXITED_EVENT.replace("#", "##") + " ; kill-pane -t #{pane_id}"
             exited = [
                 *(";", "set-option", "-p", "-t", target, "remain-on-exit", "on"),
                 *(";", "set-option", "-t", target, "@events", events_file(events)),
-                *(";", "set-hook", "-p", "-t", target, "pane-died", EXITED_EVENT),
+                *(";", "set-option", "-p", "-F", "-t", target, "pane-died", on_exit),
             ]
         for arg in argv:
             if "\0" in arg:

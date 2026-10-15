@@ -97,14 +97,16 @@ class HarnessHosts(Case):
         return self.server.tmux("has-session", "-t", f"={name}").returncode == 0
 
     def outcome(self, status: str = "done") -> None:
-        def ended():
+        """The harness's outcome, then its exit: its host logs `exited` into self.dir after it."""
+
+        def logged(event):
             self.server.tmux("run-shell", "-b", "true")
             return any(
-                line.endswith(f" {HARNESS} outcome {status}")
-                for line in live_tmux.events(self.events)
+                line.endswith(f" {HARNESS} {event}") for line in live_tmux.events(self.events)
             )
 
-        live_tmux.wait(ended, WAIT, what=f"`{HARNESS} outcome {status}`")
+        for event in (f"outcome {status}", "exited 0"):
+            live_tmux.wait(lambda e=event: logged(e), WAIT, what=f"`{HARNESS} {event}`")
 
     def metadata(self) -> dict:
         with open(os.path.join(self.work, "delegate.json"), encoding="utf-8") as file:
@@ -134,7 +136,6 @@ class HarnessHosts(Case):
         self.assertEqual(
             (self.metadata()["host"], self.metadata()["harness_host"]), ("tmux", "fake")
         )
-        self.assertFalse(self.live(HARNESS))
 
     def test_a_configured_fake_harness_host_imports_and_routes_the_harness(self):
         self.configure(f'[session.hosts.fake]\n{KEPT}[delegate.delegates]\nharness_host = "fake"\n')
@@ -152,7 +153,6 @@ class HarnessHosts(Case):
         self.assertEqual(
             (self.metadata()["host"], self.metadata()["harness_host"]), ("tmux", "fake")
         )
-        self.assertFalse(self.live(HARNESS))
 
     def test_a_detached_extension_client_reaches_its_outcome(self):
         extensions = os.path.join(self.dir, "extensions")
