@@ -460,10 +460,15 @@ def _runnable_inputs(cfg, roles):
         if reason := clone_error(path, key):
             raise ConfigError(f"linear-orchestrator/config.toml: local_clones.{key}: {reason}")
     for key, paths in cfg["project_reads"].items():
-        if missing := next((p for p in paths if not os.path.isdir(p)), None):
-            raise ConfigError(
-                f"linear-orchestrator/config.toml: project_reads.{key}: {missing} is not a directory"
-            )
+        for p in paths:
+            if not os.path.isdir(p):
+                raise ConfigError(
+                    f"linear-orchestrator/config.toml: project_reads.{key}: {p} is not a directory"
+                )
+            if any(c in utils.NOT_LITERAL for c in p + os.path.realpath(p)):
+                raise ConfigError(
+                    f"linear-orchestrator/config.toml: project_reads.{key}: {p} must not contain any of {utils.NOT_LITERAL}"
+                )
 
 
 def _docs(roles, local):

@@ -366,6 +366,19 @@ class ConfigurationLoading(ConfigFile, Case):
             with self.subTest(message):
                 self.fails(message, text)
 
+    def test_project_reads_with_a_claude_rule_character_rejected(self):
+        prefix = f"linear-orchestrator/config.toml: project_reads.{P1}"
+        for n, char in enumerate("*?[]{}()\\,"):
+            odd, link = os.path.join(self.home, f"a{char}b"), os.path.join(self.home, f"link{n}")
+            os.mkdir(odd)
+            os.symlink(odd, link)
+            for path in (odd, link):
+                with self.subTest(path=path):
+                    self.fails(
+                        f"{prefix}: {path} must not contain any of *?[]{{}}()\\,",
+                        PIPELINE + f"[project_reads]\n{json.dumps(P1)} = [{json.dumps(path)}]\n",
+                    )
+
     def test_bad_table_entry_rejected(self):
         cases = [
             ("project_repos", key, value)

@@ -25,6 +25,7 @@ from agent_pm.session.engine.types import (
 )
 from agent_pm.utils import (
     LOCAL_ENV_VARS,
+    NOT_LITERAL,
     STATE,
     environment_ok,
     json_records,
@@ -35,7 +36,6 @@ from agent_pm.utils import (
 )
 
 TABLE = "[adapters.claude]"
-NOT_LITERAL = "*?[]{}()\\,"
 STORE = f"{STATE}/sessions/claude"  # under HOME, resolved per call
 STATE_KEYS = frozenset({"version", "cwd", "sid", "dirs", "env"})
 STATE_MAX = 64 * 1024

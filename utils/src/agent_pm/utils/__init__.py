@@ -41,6 +41,7 @@ from agent_pm.utils.git import (
 from agent_pm.utils.git import git as run_git
 from agent_pm.utils.markdown import fenced, unfenced
 from agent_pm.utils.paths import (
+    NOT_LITERAL,
     STATE,
     import_env,
     module_roots,
@@ -86,6 +87,7 @@ __all__ = [
     "LOCAL_ENV_VARS",
     "LONG",
     "NAME",
+    "NOT_LITERAL",
     "OWNER",
     "Once",
     "ProcessControl",

@@ -109,8 +109,8 @@ max_runs = 3
 # Project read dirs; optional.
 #   "<project id>"  local: ["<path>", …] (absolute or ~): dirs every agent run on the Linear project's issues may read,
 #                   read-only, any role (agent-pm-delegate run --read): their content can reach its report, PRD or
-#                   PR. Each must be a dir, else load() stops; a path its client refuses
-#                   (delegate/src/agent_pm/delegate/config.toml's Roles `read`) fails the claim; empty table → none
+#                   PR. Each must be a dir whose path and real path hold none of *?[]{}()\, (rule glob
+#                   characters), else load() stops; empty table → none
 [project_reads]
 
 # local: [linear_orchestrator.project_reads]

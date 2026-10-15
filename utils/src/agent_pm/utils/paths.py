@@ -10,6 +10,7 @@ from collections.abc import Sequence
 from types import ModuleType
 
 STATE = "~/.agent-pm"
+NOT_LITERAL = "*?[]{}()\\,"
 
 
 def module_roots(*packages: ModuleType) -> tuple[str, ...]:
