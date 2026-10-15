@@ -81,7 +81,7 @@ class Shipped(Case):
 
     def test_each_charter_opens_with_its_index_naming_a_listed_default(self):
         defaults = {
-            "researcher": "deep-research",
+            "researcher": "research",
             "pm": "product-design",
             "engineer": "build",
             "dummy-tester": "echo",
@@ -220,9 +220,18 @@ class Shipped(Case):
             charter,
         )
 
-    def test_light_research_prepares_before_its_start_mark(self):
-        text = task_text("light-research")
-        self.assertLess(text.index("**Prepare**"), text.index("[agent-pm-progress:start]"))
+    def test_research_tasks_prepare_before_their_start_mark(self):
+        for task in ("research", "light-research"):
+            text = task_text(task)
+            self.assertLess(
+                text.index("**Prepare**"), text.index("[agent-pm-progress:start]"), task
+            )
+
+    def test_light_research_is_one_pass(self):
+        light = task_text("light-research")
+        self.assertIn("in one pass: no subagents, no workflow", light)
+        self.assertIn("one pass by one agent, no subagents, no verification stage", light)
+        self.assertNotIn("angles", light)
 
 
 class Real(RealConfig):
@@ -276,7 +285,7 @@ class Real(RealConfig):
                 self.assertNotIn(cap, prompt, (role, task, cap))
 
     def test_templates_put_the_summary_first_one_fact_per_item_and_point_to_the_diagram_rule(self):
-        pm, light = composed("pm", "product-design")[0], composed("researcher", "light-research")[0]
+        pm, light = composed("pm", "product-design")[0], composed("researcher", "research")[0]
         point = "[Principles › Writing › Diagrams and tables](#writing)"
         for text in (pm, light):
             self.assertIn("One fact per list item", text)
@@ -301,10 +310,11 @@ class Real(RealConfig):
             "`1. <URL or code permalink> (primary|secondary|code)`", section(light, "Sources")
         )
         self.assertEqual(light.count("type line"), 1)  # the Template's, deep research only
-        self.assertIn("Deep research's type line (light research gives its own)", light)
-        self.assertEqual(
-            task_text("light-research").count("`<Light Research type line, translated>`"), 1
+        self.assertIn(
+            "Deep research's type line (research and light research give their own)", light
         )
+        for task, line in (("research", "Research"), ("light-research", "Light Research")):
+            self.assertEqual(task_text(task).count(f"`<{line} type line, translated>`"), 1, task)
 
     def test_pm_and_researcher_point_to_writing_for_concision(self):
         for role, doc in (("pm", "the PRD"), ("researcher", "the report")):
@@ -315,9 +325,9 @@ class Real(RealConfig):
             )
 
     def test_the_guide_names_a_given_task_else_the_run_picks_it(self):
-        named = guide(composed("researcher", "light-research")[0])
+        named = guide(composed("researcher", "research")[0])
         self.assertIn(
-            "**Your task**: `light-research` (`<tasks>/light-research.md`). Read that task's file "
+            "**Your task**: `research` (`<tasks>/research.md`). Read that task's file "
             "(no other task's)",
             named,
         )
@@ -325,7 +335,7 @@ class Real(RealConfig):
         picked = guide(composed("researcher")[0])
         self.assertIn(PICK, picked)
         self.assertIn("Your start progress report names the task and why.", picked)
-        self.assertNotIn("light-research", picked)
+        self.assertNotIn("`research`", picked)
 
     def test_a_prompt_has_its_roles_index_and_no_task_steps(self):
         for role, task in runs():
@@ -388,23 +398,38 @@ class Real(RealConfig):
             ("builds fail without push permission", engineer, "`push` false → `failed`"),
             (
                 "research hand-off phrases",
+                task_text("research"),
+                "`<Research type line, translated>`",
+            ),
+            (
+                "research hand-off phrases",
+                task_text("research"),
+                "`Suggest upgrading to Deep Research: ",
+            ),
+            (
+                "research hand-off phrases",
                 task_text("light-research"),
                 "`<Light Research type line, translated>`",
             ),
             (
                 "research hand-off phrases",
                 task_text("light-research"),
-                "`Suggest upgrading to Deep Research: ",
+                "`Suggest upgrading to Research: ",
+            ),
+            (
+                "research hand-off phrases",
+                task_text("research"),
+                "Revising a Light Research report (its Light Research type line marks it",
             ),
             (
                 "research hand-off phrases",
                 task_text("deep-research"),
-                "its Light Research type line",
+                "Revising a Research or Light Research report (its type line marks it",
             ),
             (
                 "a read-only task's branch is <id>-<task>",
                 researcher,
-                "`<branch>` `<id>-<task>`, `<task>` this task, `deep-research` or `light-research`",
+                "`<branch>` `<id>-<task>`, `<task>` this task, `deep-research`, `research` or `light-research`",
             ),
             (
                 "a read-only task's branch is <id>-<task>",

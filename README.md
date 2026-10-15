@@ -13,7 +13,7 @@ Developers: `AGENTS.md`.
 
 ```mermaid
 flowchart LR
-    R["researcher<br>deep-research, light-research"] -->|"report → Approve → promote"| P["pm<br>product-design"]
+    R["researcher<br>deep-research, research, light-research"] -->|"report → Approve → promote"| P["pm<br>product-design"]
     P -->|"PRD → Approve → promote"| E["engineer<br>build, light-build"] -->|pull request| Y[you]
     T[agent-pm-linear router] -.->|claims Todo issues| R & P & E
 ```
@@ -205,7 +205,7 @@ flowchart LR
 
 ### Task labels
 
-A label from the `Tasks` group picks the role's task, mapped by `[task_labels]`. No label: the agent picks and says why in its start comment. A bad label (unmapped, another role's, or several): the issue goes to In Review with a comment. To upgrade Light Research to Deep Research, swap the label, comment the claims to verify, and move it back to Todo.
+A label from the `Tasks` group picks the role's task, mapped by `[task_labels]`. No label: the agent picks (unsure: the researcher runs Research, which has no label; the engineer Build) and says why in its start comment. A bad label (unmapped, another role's, or several): the issue goes to In Review with a comment. To upgrade a report (Light Research → Research → Deep Research), set the next task's label (to Research: remove the label), comment the claims to verify, and move it back to Todo.
 
 ## Operating
 

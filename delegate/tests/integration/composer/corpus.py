@@ -68,7 +68,7 @@ def corpus():
             }
         cases[f"destination/{destination}"] = (
             "researcher",
-            "light-research",
+            "research",
             ({"output": output},),
             RunParams(input=INPUT, out="/corpus/external/out.md", workdir=WORKDIR),
         )

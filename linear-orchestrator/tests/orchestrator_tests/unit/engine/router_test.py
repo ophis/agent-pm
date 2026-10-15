@@ -224,7 +224,7 @@ def two():
 
 class TaskLabelsScenario(Base):
     ORPHAN = (
-        'Task label "Orphan" is not one of researcher\'s tasks (deep-research, light-research). '
+        'Task label "Orphan" is not one of researcher\'s tasks (deep-research, research, light-research). '
         "Fix the label or the assignee, then move the issue back to Todo."
     )
 
@@ -2246,7 +2246,7 @@ class RunLaunching(OuterBase):
             ({"assignee": "x@y.com"}, "'x@y.com' is not a role account"),
             (
                 {"assignee": RESEARCHER, "task": "build"},
-                "task 'build' is not one of researcher's tasks (deep-research, light-research)",
+                "task 'build' is not one of researcher's tasks (deep-research, research, light-research)",
             ),
         ):
             with self.subTest(reason=reason):
