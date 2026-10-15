@@ -457,6 +457,16 @@ class NoteLimit(Case):
         )
         self.assertEqual(runs.limits(path, NOW), {("harness", "a"): datetime.fromisoformat(at)})
 
+    def test_a_sids_same_reset_is_one_row_and_a_new_reset_another(self):
+        first, later = (stamp(NOW + timedelta(hours=h), EAST) for h in (1, 2))
+        for at in (first, first, later):
+            runs.note_limit(
+                self.log, issue="TASK-1", sid="s", client="a", resets_at=at, delegate_kind="harness"
+            )
+        self.assertEqual(
+            [json.loads(line)["resets_at"] for line in self.read().splitlines()], [first, later]
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

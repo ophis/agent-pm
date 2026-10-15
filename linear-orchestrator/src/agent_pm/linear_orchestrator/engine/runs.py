@@ -30,22 +30,37 @@ class Failure(NamedTuple):
     issue: str
 
 
+def _row(kind, now, fields):
+    return json.dumps({"ts": timestamp(now=now), "kind": kind, **fields}, ensure_ascii=False) + "\n"
+
+
 def note(path, kind, *, now=datetime.now, **fields):
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    line = json.dumps({"ts": timestamp(now=now), "kind": kind, **fields}, ensure_ascii=False)
-    append_line(path, line + "\n", durable=True, locked=True)
+    append_line(path, _row(kind, now, fields), durable=True, locked=True)
 
 
 def note_limit(path, *, issue, sid, client, resets_at, delegate_kind):
-    note(
-        path,
-        "limit",
-        issue=issue,
-        sid=sid,
-        client=client,
-        resets_at=resets_at,
-        delegate_kind=delegate_kind,
-    )
+    """Once per (issue, sid, resets_at): a redelivery after a lost ledger write appends none."""
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    fields = {
+        "issue": issue,
+        "sid": sid,
+        "client": client,
+        "resets_at": resets_at,
+        "delegate_kind": delegate_kind,
+    }
+    with file_lock(path):
+        if not any(_limit_of(line, issue, sid, resets_at) for line in _lines(path)):
+            append_line(path, _row("limit", datetime.now, fields), durable=True)
+
+
+def _limit_of(line, issue, sid, resets_at):
+    try:
+        d = json.loads(line)
+    except ValueError:
+        return False
+    found = isinstance(d, dict) and (d.get("kind"), d.get("issue"), d.get("sid"))
+    return found == ("limit", issue, sid) and d.get("resets_at") == resets_at
 
 
 def _client(d):

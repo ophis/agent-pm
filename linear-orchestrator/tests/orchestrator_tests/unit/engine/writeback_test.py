@@ -2131,7 +2131,7 @@ class LimitEvents(Events):
         self.assertEqual(len(self.linear.writes("state")), 1)
         self.assertEqual(self.rows(), [self.row()])
 
-    def test_a_later_attempts_limit_moves_again_without_a_second_comment(self):
+    def test_a_later_attempts_limit_moves_again_without_a_second_comment_or_same_row(self):
         self.assertTrue(self.deliver(self.limited()))
         self.linear.state = self.cfg.states["in_progress"]
         n = len(self.linear.calls)
@@ -2141,7 +2141,7 @@ class LimitEvents(Events):
             ["reread", "state"],
         )
         self.assertEqual(len([c for c in self.linear.comments if c != RUN_SESSION]), 1)
-        self.assertEqual(self.rows(), [self.row(), self.row()])
+        self.assertEqual(self.rows(), [self.row()])
         self.assertEqual(
             self.ledger()[RUN_SID]["steps"],
             ["limit", "limit-move:1", "limit-row:1", "limit-move:2", "limit-row:2"],
@@ -2175,6 +2175,22 @@ class LimitEvents(Events):
         self.assertEqual(self.ledger()[RUN_SID]["steps"], ["limit", "limit-move:1", "limit-row:1"])
         limit = ops.client_id(RUN_SID, "limit")
         self.assertEqual(len([v for _, v in self.linear.writes("comment") if v["c"] == limit]), 1)
+
+    def test_a_ledger_write_lost_after_the_row_records_one_row_on_redelivery(self):
+        real, ledger, lost = os.replace, os.path.join(self.workdir, writeback.LEDGER), []
+
+        def replace(src, dst):
+            if str(dst) == ledger and self.rows() and not lost:
+                lost.append(str(dst))
+                raise OSError("disk full")
+            real(src, dst)
+
+        with mock.patch.object(os, "replace", replace):
+            self.assertFalse(self.deliver(self.limited()))
+        self.assertEqual((lost, self.rows()), ([ledger], [self.row()]))
+        self.assertTrue(self.deliver(self.limited()))
+        self.assertEqual(self.rows(), [self.row()])
+        self.assertEqual(self.ledger()[RUN_SID]["steps"], ["limit", "limit-move:1", "limit-row:1"])
 
     def test_two_writers_lose_no_step(self):
         one, two = (delegate_event("progress", name="build", text=t) for t in ("one", "two"))
