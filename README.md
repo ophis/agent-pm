@@ -241,11 +241,11 @@ agent-pm keeps its state in its state root, `~/.agent-pm/`. `work/` and `logs/` 
 │   ├── agent/                    the agent's cwd and only write grant
 │   │   ├── src/  publish/        the run's checkouts; the report repo's clone
 │   │   └── tmp/                  the run's temp files
-│   └── run/                      the harness's files, kept as the run's record
-│       ├── delegate.json         the run's state, beside its locks
-│       ├── run.jsonl             session records; resume reads them
-│       ├── writeback.json        the write-back ledger
-│       └── out.md                the deliverable
+│   ├── run/                      the harness's files, kept as the run's record
+│   │   ├── delegate.json         the run's state, beside its locks
+│   │   ├── run.jsonl             session records; resume reads them
+│   │   └── out.md                the deliverable
+│   └── writeback.json            the write-back ledger, beside its lock
 ├── logs/
 │   ├── runs.jsonl                each run's start, resume and limit rows
 │   ├── orchestrator.jsonl        the event log, also launchd's stdout and stderr
@@ -389,7 +389,7 @@ A run's workdir, `<work_dir>/work/<ID>/` or an ad-hoc `~/.agent-pm/adhoc/<date>-
      [ -d "$w" ] && [ ! -d "$w/run" ] || continue
      mkdir "$w/agent" "$w/run"
      for f in src publish tmp prompt.md; do [ -e "$w/$f" ] && mv "$w/$f" "$w/agent/"; done
-     for f in run.jsonl out.md delegate.json writeback.json writeback.lock delegate.lock; do [ -e "$w/$f" ] && mv "$w/$f" "$w/run/"; done
+     for f in run.jsonl out.md delegate.json delegate.lock; do [ -e "$w/$f" ] && mv "$w/$f" "$w/run/"; done
    done
    ```
 2. Reconnect each moved worktree (a checkout whose `.git` is a file) to its `[local_clones]` clone:
