@@ -539,6 +539,18 @@ def _claim(cfg, issue, sid) -> Claim:
     return claim
 
 
+def _replayed_attempt(begun, rows) -> int:
+    """The latest Begun's attempt, the next one when a start or resume row came after it (a
+    launch whose Begun was lost); without a Begun, the rows' count. A row refused before its launch
+    precedes the Begun of the attempt that ran, or leaves no outcome to replay.
+    """
+    if not begun:
+        return len(rows)
+    last = max(int(n) for n in begun)
+    since = datetime.fromisoformat(begun[str(last)]["started_at"]).astimezone()
+    return last + any(e.ts > since for e in rows)
+
+
 def replay(
     cfg, issue: str, sid: str, outcome: Outcome, *, gql, dry=False, now=timestamp
 ) -> bool | None:
@@ -550,9 +562,7 @@ def replay(
     rows = [e for e in runs.parse_log(cfg.runs_log) if (e.issue, e.sid) == (issue, sid)]
     claim = _claim(cfg, issue, sid)
     ctx = for_claim(cfg, claim, gql, attempt=len(rows))
-    # a resume refused before its launch has a row but no attempt: the latest Begun's counts
-    begun = [int(a) for a in _ledger(ctx).get(sid, {}).get("attempts", {}) if a.isdigit()]
-    attempt = max(begun, default=len(rows))
+    attempt = _replayed_attempt(_ledger(ctx).get(sid, {}).get("attempts", {}), rows)
     ctx = replace(ctx, resume=attempt > 1)
     if "outcome" in _done(ctx):
         return None

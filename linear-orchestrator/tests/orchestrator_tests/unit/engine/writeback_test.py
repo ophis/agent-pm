@@ -8,7 +8,7 @@ import tempfile
 import threading
 import time
 from dataclasses import replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from unittest import mock
 
 from agent_pm.delegate import (
@@ -1447,6 +1447,7 @@ RUN_ISSUE = "TASK-1"
 CLAIM_KEY = "agent-pm-engineer-at-claim"
 
 STARTED, RESTARTED = "2026-10-14T09:00:00+08:00", "2026-10-14T10:00:00+08:00"
+BEFORE = datetime.fromisoformat(STARTED) - timedelta(hours=1)  # a row, then its run's Begun
 
 LATER, LATEST = "2026-10-14T11:00:00+08:00", "2026-10-14T12:00:00+08:00"
 
@@ -1557,6 +1558,7 @@ class Events(RunCase):
         runs.note(
             self.cfg.runs_log,
             "start",
+            now=lambda: BEFORE,
             issue=RUN_ISSUE,
             sid=sid,
             role="engineer",
@@ -2225,21 +2227,35 @@ class RecoverReplay(Events):
 
     def test_a_replay_ends_the_attempt_its_begun_recorded_past_a_failed_resume_row(self):
         for _ in range(2):  # a resume refused before its launch, then the one that ran
-            runs.note(
-                self.cfg.runs_log,
-                "resume",
-                issue=RUN_ISSUE,
-                sid=RUN_SID,
-                role="engineer",
-                client="fake",
-                delegate_kind="fake",
-            )
+            self.resumed(BEFORE)
         self.assertTrue(self.deliver(delegate_event("begun", 2)))
         self.assertTrue(self.replay())
         self.assertEqual(
             self.linear.comments[RUN_SESSION]["body"],
             session_body(f"done · #2 · {STARTED} → {RESTARTED}"),
         )
+
+    def resumed(self, at):
+        runs.note(
+            self.cfg.runs_log,
+            "resume",
+            now=lambda: at,
+            issue=RUN_ISSUE,
+            sid=RUN_SID,
+            role="engineer",
+            client="fake",
+            delegate_kind="fake",
+        )
+
+    def test_a_replay_ends_a_resumed_attempt_whose_begun_was_lost_too(self):
+        self.assertTrue(self.deliver(delegate_event("begun")))
+        self.resumed(datetime.fromisoformat(STARTED) + timedelta(minutes=30))
+        self.assertTrue(self.replay())
+        self.assertEqual(
+            self.linear.comments[RUN_SESSION]["body"],
+            session_body(f"done · #1 · {RESTARTED} → {LATER}"),
+        )
+        self.assertEqual(sorted(self.ledger()[RUN_SID]["attempts"]), ["1", "2"])
 
     def test_a_replay_of_a_lost_finished_ends_its_session_comment_once(self):
         self.assertTrue(self.deliver(delegate_event("begun")))

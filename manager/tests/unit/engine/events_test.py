@@ -227,6 +227,27 @@ class EventsTest(EventsCase):
         self.assertIn(f"retained in {self.events.archive}", str(caught.exception))
         self.assertTrue(Path(self.events.archive).read_bytes().endswith(b"\nlate\n"))
 
+    def test_late_lines_neither_append_takes_are_reported_lost(self):
+        real_open = os.open
+        patched, writers = self.publishing(lambda fd: os.write(fd, b"late\n"))
+        refused = {self.events.path, self.events.archive}
+
+        def refuse(path, flags, *args):
+            if writers and str(path) in refused and flags & os.O_APPEND:
+                raise OSError(errno.EIO, "append failed")
+            return real_open(path, flags, *args)
+
+        with (
+            file_lock(self.events.path, own=True),
+            patched,
+            mock.patch("time.sleep"),
+            mock.patch("os.open", side_effect=refuse),
+            self.assertRaises(OSError) as caught,
+        ):
+            self.events.rotate(1, 0)
+        self.assertIn("5 bytes written while rotating lost", str(caught.exception))
+        self.assertNotIn("retained in", str(caught.exception))
+
     def test_rollback_keeps_fresh_bytes_already_in_prepared_candidate(self):
         real_replace = os.replace
 
