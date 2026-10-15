@@ -3,7 +3,8 @@ alive while api.live holds its harness name `agent-pm-<role>-<ID>`; a constructe
 (role, spec, options) in api.constructed (construct_error raises), its detach in api.detached
 (detach_error raises) with runs.jsonl's text then in api.runs_at_detach, and puts its name in
 api.live; its outcome is api.outcomes' for its issue; check_tui records its (display, events) in
-api.tui_checks (tui_error raises).
+api.tui_checks (tui_error raises); checkouts(W) is api.checkouts' for W, clean(W) appends W to
+api.cleaned.
 """
 
 import os
@@ -72,6 +73,14 @@ def provider(api, cfg):
             api.tui_checks.append((display, events))
             if api.tui_error is not None:
                 raise api.tui_error
+
+        @classmethod
+        def checkouts(cls, workdir):
+            return api.checkouts.get(workdir)
+
+        @classmethod
+        def clean(cls, workdir, *, dry=False):
+            api.cleaned.append(workdir)
 
         def alive(self):
             if api.live is None:

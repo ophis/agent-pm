@@ -5,6 +5,7 @@ from __future__ import annotations
 import contextlib
 import json
 import os
+import shutil
 import sys
 import time
 import traceback
@@ -71,6 +72,14 @@ from agent_pm.utils import (
 
 def _team(team: Team) -> Team:
     return teams.team(team.root, team.dirs)
+
+
+def _loaded(payload: bytes) -> dict:
+    try:
+        data = json.loads(payload)
+    except ValueError:
+        return {}
+    return data if isinstance(data, dict) else {}
 
 
 def _encode(value: object) -> object:
@@ -259,16 +268,17 @@ class HarnessDelegate(Delegate):
             raise ConfigError(str(error)) from None
 
     def _replacing(self, payload: bytes) -> int:
-        """The attempt replacing the run `payload` records (its session's next, else 1), refused
-        while that run is alive; the agent session it left open (a tui run's, after its outcome or
-        its process's death) is closed.
+        """The attempt replacing the run `payload` records (its session's next, else 1; a corrupt
+        record's readable attempt + 1), refused while that run is live; the agent session it left
+        open (a tui run's, after its outcome or its process's death) is closed.
         """
+        if self._live(payload):
+            raise ConfigError(f"{self.workdir}: delegate is still alive")
         try:
             previous = self._parse(payload)
         except ConfigError:
-            return self._salvaged(payload)
-        if self._alive(previous):
-            raise ConfigError(f"{self.workdir}: delegate is still alive")
+            attempt = _loaded(payload).get("attempt")
+            return attempt + 1 if type(attempt) is int and attempt >= 1 else 1
         agent = self._agent(previous)
         if agent is not None:
             try:
@@ -277,25 +287,24 @@ class HarnessDelegate(Delegate):
                 raise ConfigError(str(error)) from None
         return previous.attempt + 1 if previous.plan.sid == self._state.plan.sid else 1
 
-    def _salvaged(self, payload: bytes) -> int:
-        """A corrupt record's run counts as alive while its run lock is held or the harness it
-        names lives; its attempt is kept when readable.
+    def _live(self, payload: bytes | None) -> bool:
+        """Whether the run `payload` records is live: a readable record's per _alive; a corrupt
+        one's while its run lock is held or the harness it names lives; none: while the run lock
+        is held.
         """
+        if payload is None:
+            return self.store.running()
         try:
-            data = json.loads(payload)
-        except ValueError:
-            data = None
-        data = data if isinstance(data, dict) else {}
+            return self._alive(self._parse(payload))
+        except ConfigError:
+            data = _loaded(payload)
         host, name = data.get("harness_host"), data.get("harness_name")
-        if self.store.running() or (
+        return self.store.running() or (
             isinstance(host, str)
             and isinstance(name, str)
             and (process := self._process(host, name)) is not None
             and process.alive()
-        ):
-            raise ConfigError(f"{self.workdir}: delegate is still alive")
-        attempt = data.get("attempt")
-        return attempt + 1 if type(attempt) is int and attempt >= 1 else 1
+        )
 
     @property
     def _harness_host(self) -> Host:
@@ -443,6 +452,31 @@ class HarnessDelegate(Delegate):
     @classmethod
     def trusted_dirs(cls) -> frozenset[str]:
         return Composer().trusted_dirs()
+
+    @classmethod
+    def checkouts(cls, workdir: str) -> tuple[str, ...] | None:
+        return Layout(workdir).checkouts()
+
+    @classmethod
+    def clean(cls, workdir: str, *, dry: bool = False) -> None:
+        layout = Layout(workdir)
+        if not os.path.lexists(layout.agent):
+            return
+        if not layout.in_place():
+            raise ConfigError(f"not a real directory: {layout.agent}, refusing to touch")
+        store = RunState(layout)
+        with store.mutex() if os.path.isdir(layout.run) else contextlib.nullcontext():
+            payload = store.read()
+            try:
+                view = cls.attach(workdir)
+            except ConfigError:
+                view = cls.__new__(cls)
+                view.layout, view.workdir, view.store = layout, layout.workdir, store
+                view.session_cls, view._harness_override = Session, None
+            if view._live(payload):
+                raise ConfigError(f"{layout.workdir}: delegate is still alive")
+            if not dry:
+                shutil.rmtree(layout.agent)
 
     @classmethod
     def check_tui(

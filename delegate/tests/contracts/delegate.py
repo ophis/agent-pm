@@ -8,7 +8,7 @@ Each case uses only the Delegate ABC and these hooks.
 import os
 import uuid
 
-from agent_pm.delegate import Begun, ConfigError, Delegate, Finished, Layout
+from agent_pm.delegate import Begun, ConfigError, Delegate, Finished
 from agent_pm.session import NotDisplayable, Usage
 from agent_pm.utils import Record, Status
 
@@ -99,12 +99,34 @@ class DelegateContract:
         self.assertFalse(view.alive())
         self.assertFalse(self.delegate_cls.attach(record).alive())
 
-    def test_construction_lays_the_workdir_out_per_layout(self):
+    def test_checkouts_and_clean_reach_only_the_agent_files(self):
         workdir = self.workdir()
+        foreign = os.path.join(workdir, "writeback.json")
+        with open(foreign, "w", encoding="utf-8") as file:
+            file.write("ledger")
+        self.assertIsNone(self.delegate_cls.checkouts(workdir))
         self.make(workdir)
-        layout = Layout(workdir)
-        self.assertEqual(sorted(os.listdir(workdir)), ["agent", "run"])
-        self.assertTrue(os.path.isdir(layout.agent) and os.path.isdir(layout.run))
+        self.assertEqual(self.delegate_cls.checkouts(workdir), ())
+        view = self.delegate_cls.attach(workdir)
+        checkout = os.path.join(view.status().cwd, "src", "o", "n-TASK-1")
+        os.makedirs(checkout)
+        self.assertEqual(self.delegate_cls.checkouts(workdir), (os.path.realpath(checkout),))
+        name = view.status().name
+        self.delegate_cls.clean(workdir, dry=True)
+        self.assertEqual(self.delegate_cls.checkouts(workdir), (os.path.realpath(checkout),))
+        self.delegate_cls.clean(workdir)
+        self.delegate_cls.clean(workdir)
+        self.assertIsNone(self.delegate_cls.checkouts(workdir))
+        self.assertEqual(self.delegate_cls.attach(workdir).status().name, name)
+        with open(foreign, encoding="utf-8") as file:
+            self.assertEqual(file.read(), "ledger")
+
+    def test_clean_refuses_a_live_run_deleting_nothing(self):
+        _record, workdir = self.detached()
+        for dry in (False, True):
+            with self.subTest(dry=dry), self.assertRaises(ConfigError):
+                self.delegate_cls.clean(workdir, dry=dry)
+        self.assertEqual(self.delegate_cls.checkouts(workdir), ())
 
     def test_resume_after_its_sessions_ended_starts_them_once_with_the_same_sid(self):
         record, _ = self.detached()

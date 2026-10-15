@@ -13,9 +13,9 @@ from agent_pm.utils import Display, Record, Status
 
 
 class Delegate(ABC):
-    """One role run and its durable view; implementations own construction and placement. Every
-    implementation lays a run's workdir out per Layout (its agent dir and run dir): prune, target
-    and write-back rely on it.
+    """One role run and its durable view; implementations own construction and placement. Callers
+    know only the run's workdir W; checkouts and clean are its layout's only outside view. An
+    implementation touches only the W entries it creates, leaving every other one alone.
     """
 
     @classmethod
@@ -40,6 +40,22 @@ class Delegate(ABC):
     @classmethod
     @abstractmethod
     def trusted_dirs(cls) -> frozenset[str]: ...
+
+    @classmethod
+    @abstractmethod
+    def checkouts(cls, workdir: str) -> tuple[str, ...] | None:
+        """The repo checkouts W's agent files hold: directories whose last two components are the
+        repo's owner and `<name>-<slug>` (utils.checkout), real paths reached through no symlink;
+        () none; None: W has no agent files. Reads only.
+        """
+
+    @classmethod
+    @abstractmethod
+    def clean(cls, workdir: str, *, dry: bool = False) -> None:
+        """Deletes W's agent files, keeping its run records; idempotent. ConfigError, nothing
+        deleted, while the run is live or its agent files are not a real dir in place; dry: the
+        checks only.
+        """
 
     @classmethod
     @abstractmethod

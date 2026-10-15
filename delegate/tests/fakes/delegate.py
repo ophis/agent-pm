@@ -1,10 +1,12 @@
 """FakeDelegate, a Delegate with one session that runs nothing: it lays its workdir out per Layout,
-its state the run dir's delegate.json, so a view from attach and the Delegate that wrote it agree.
-end(workdir) and finish(workdir) stand for its sessions ending, without and with an outcome.
+its state the run dir's delegate.json, so a view from attach and the Delegate that wrote it agree;
+clean refuses only while it is alive. end(workdir) and finish(workdir) stand for its sessions
+ending, without and with an outcome.
 """
 
 import json
 import os
+import shutil
 import uuid
 from dataclasses import asdict
 
@@ -13,12 +15,12 @@ from agent_pm.delegate import (
     ConfigError,
     Delegate,
     Finished,
-    Layout,
     Outcome,
     Progress,
     Result,
 )
 from agent_pm.delegate.composer import RunConfig
+from agent_pm.delegate.engine.types import Layout
 from agent_pm.session import NotDisplayable, SessionStatus
 from agent_pm.utils import Record, Status, save
 
@@ -120,6 +122,22 @@ class FakeDelegate(Delegate):
         return None
 
     @classmethod
+    def checkouts(cls, workdir):
+        return Layout(workdir).checkouts()
+
+    @classmethod
+    def clean(cls, workdir, *, dry=False):
+        layout = Layout(workdir)
+        if not os.path.lexists(layout.agent):
+            return
+        if not layout.in_place():
+            raise ConfigError(f"not a real directory: {layout.agent}, refusing to touch")
+        if os.path.exists(_path(workdir)) and _load(workdir)["alive"]:
+            raise ConfigError(f"{layout.workdir}: delegate is still alive")
+        if not dry:
+            shutil.rmtree(layout.agent)
+
+    @classmethod
     def end(cls, workdir: str) -> None:
         _update(workdir, alive=False, outcome=None)
 
@@ -168,7 +186,9 @@ class FakeDelegate(Delegate):
         state = _load(self.workdir)
         outcome = state["outcome"] and state["outcome"]["status"]
         word = "working" if state["alive"] else "gone"
-        return Status(state["name"], state["alive"], word, outcome, None)
+        return Status(
+            state["name"], state["alive"], word, outcome, None, Layout(self.workdir).agent
+        )
 
     def outcome(self):
         found = _load(self.workdir)["outcome"]

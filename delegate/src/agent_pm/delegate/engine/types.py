@@ -1,5 +1,6 @@
 """The Delegate's shared types."""
 
+import contextlib
 import os
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -56,6 +57,31 @@ class Layout:
     def out(self) -> str:
         """A session run's default `out`."""
         return os.path.join(self.run, "out.md")
+
+    def in_place(self) -> bool:
+        """Whether `agent` is a real directory where it belongs, reached through no symlink."""
+        real = os.path.join(
+            os.path.realpath(os.path.dirname(self.workdir)), os.path.basename(self.workdir), "agent"
+        )
+        return (
+            not os.path.islink(self.agent)
+            and os.path.isdir(self.agent)
+            and os.path.realpath(self.agent) == real
+        )
+
+    def checkouts(self) -> tuple[str, ...] | None:
+        """Delegate.checkouts: the dirs at `agent`/src/<owner>/<name> that are their own real path."""
+        if not os.path.lexists(self.agent):
+            return None
+        if not self.in_place():
+            return ()
+        src, found = os.path.join(os.path.realpath(self.agent), "src"), []
+        with contextlib.suppress(OSError):
+            for owner in sorted(os.listdir(src)):
+                with contextlib.suppress(OSError):
+                    names = sorted(os.listdir(os.path.join(src, owner)))
+                    found += [os.path.join(src, owner, name) for name in names]
+        return tuple(p for p in found if os.path.realpath(p) == p and os.path.isdir(p))
 
 
 @dataclass(frozen=True)

@@ -2,9 +2,11 @@
 holds no launcher variable; a run's state lives only in its run dir, which counts attempts, and a
 refused start creates nothing; preview and instruct write no state; owner overlays shape its run;
 resume continues a run in the mode it records or in the one it is given, and a run whose process
-died, its tui agent session left open, at once.
+died, its tui agent session left open, at once; checkouts lists its agent dir's real checkouts and
+clean deletes that dir, refusing a live run or a dir out of place.
 """
 
+import fcntl
 import json
 import os
 import shutil
@@ -12,6 +14,7 @@ from unittest import mock
 
 from agent_pm.delegate import ConfigError, Finished, Layout, Result, Spec
 from agent_pm.delegate.composer import Composer, RunParams
+from agent_pm.delegate.engine import harness_delegate
 from agent_pm.delegate.engine.harness_delegate import HarnessDelegate
 from agent_pm.delegate.engine.state import RunState
 from agent_pm.session import Access, Exited, Liveness, Mode, Reply, SessionError
@@ -139,6 +142,131 @@ class RunDirTest(HarnessCase):
         with self.assertRaises(ConfigError) as caught:
             HarnessDelegate.attach(self.work, session_cls=HarnessSession)
         self.assertEqual(str(caught.exception), f"invalid {self.record()}: missing metadata")
+
+
+def tree(top):
+    found = {}
+    for root, _dirs, files in os.walk(top):
+        for name in files:
+            with open(os.path.join(root, name), "rb") as file:
+                found[os.path.relpath(os.path.join(root, name), top)] = file.read()
+    return found
+
+
+class CleanTest(HarnessCase):
+    def agent(self):
+        return Layout(self.work).agent
+
+    def refused(self, message, workdir=None):
+        for dry in (False, True):
+            with self.subTest(dry=dry), self.assertRaises(ConfigError) as caught:
+                HarnessDelegate.clean(workdir or self.work, dry=dry)
+            self.assertEqual(str(caught.exception), message)
+
+    def test_checkouts_lists_real_src_entries(self):
+        self.assertIsNone(HarnessDelegate.checkouts(self.work))
+        self.make()
+        self.assertEqual(HarnessDelegate.checkouts(self.work), ())
+        src = os.path.join(self.agent(), "src")
+        real = os.path.join(os.path.realpath(self.work), "agent", "src")
+        for path in ("o/r-TASK-1", "p/q-TASK-1"):
+            os.makedirs(os.path.join(src, path))
+        elsewhere = os.path.join(self.home, "elsewhere")
+        os.makedirs(os.path.join(elsewhere, "n-TASK-1"))
+        os.symlink(os.path.join(elsewhere, "n-TASK-1"), os.path.join(src, "o", "s-TASK-1"))
+        os.symlink(elsewhere, os.path.join(src, "x"))
+        with open(os.path.join(src, "o", "f-TASK-1"), "w") as file:
+            file.write("x")
+        self.assertEqual(
+            HarnessDelegate.checkouts(self.work),
+            (os.path.join(real, "o", "r-TASK-1"), os.path.join(real, "p", "q-TASK-1")),
+        )
+        moved = os.path.join(self.home, "moved")
+        os.replace(self.agent(), moved)
+        os.symlink(moved, self.agent())
+        self.assertEqual(HarnessDelegate.checkouts(self.work), ())
+
+    def test_clean_deletes_agent_files_and_keeps_run_records(self):
+        self.make()
+        deep = os.path.join(self.agent(), "tmp", "deep")
+        os.makedirs(deep)
+        os.makedirs(os.path.join(self.agent(), "src", "o", "r-TASK-1"))
+        with open(os.path.join(deep, "pr.md"), "w") as file:
+            file.write("x")
+        os.chmod(os.path.join(deep, "pr.md"), 0o444)
+        with open(os.path.join(self.work, "notes.md"), "w") as file:
+            file.write("kept")
+        run = tree(Layout(self.work).run)
+        name = HarnessDelegate.attach(self.work).status().name
+        HarnessDelegate.clean(self.work, dry=True)
+        self.assertTrue(os.path.isdir(deep))
+        self.assertIsNone(HarnessDelegate.clean(self.work))
+        self.assertFalse(os.path.lexists(self.agent()))
+        self.assertEqual(tree(Layout(self.work).run), run)
+        self.assertEqual(sorted(os.listdir(self.work)), ["notes.md", "run"])
+        self.assertIsNone(HarnessDelegate.checkouts(self.work))
+        self.assertEqual(HarnessDelegate.attach(self.work).status().name, name)
+        self.assertIsNone(HarnessDelegate.clean(self.work))
+        never = os.path.join(self.home, "never")
+        self.assertIsNone(HarnessDelegate.clean(never))
+        self.assertFalse(os.path.lexists(never))
+
+    def test_clean_refuses_a_live_run(self):
+        self.make()
+        with RunState(Layout(self.work)).run_lock():
+            self.refused(f"{self.work}: delegate is still alive")
+        with open(Layout(self.work).run + "/delegate.json", "w") as file:
+            file.write("not json")
+        with RunState(Layout(self.work)).run_lock():
+            self.refused(f"{self.work}: delegate is still alive")
+        self.assertTrue(os.path.isdir(self.agent()))
+
+    def test_clean_refuses_a_live_detached_run(self):
+        spec = Spec("input", self.work, mode="tui", client="fake", sid=SID)
+        self.make(spec=spec, host="agent", harness_host="harness").detach()
+        self.refused(f"{self.work}: delegate is still alive")
+        self.assertTrue(os.path.isdir(self.agent()))
+
+    def test_clean_refuses_an_agent_dir_out_of_place(self):
+        self.make()
+        elsewhere = os.path.join(self.home, "elsewhere")
+        os.makedirs(os.path.join(elsewhere, "keep"))
+        os.replace(self.agent(), os.path.join(self.home, "agent"))
+        os.symlink(elsewhere, self.agent())
+        self.refused(f"not a real directory: {self.agent()}, refusing to touch")
+        self.assertTrue(os.path.isdir(os.path.join(elsewhere, "keep")))
+        os.unlink(self.agent())
+        with open(self.agent(), "w") as file:
+            file.write("x")
+        self.refused(f"not a real directory: {self.agent()}, refusing to touch")
+        os.unlink(self.agent())
+        os.replace(os.path.join(self.home, "agent"), self.agent())
+        link = os.path.join(self.home, "link")
+        os.symlink(self.work, link)
+        self.refused(f"not a real directory: {link}/agent, refusing to touch", link)
+        self.assertTrue(os.path.isdir(self.agent()))
+
+    def test_clean_holds_the_run_mutex_while_it_deletes(self):
+        self.make()
+        held = []
+
+        def rmtree(path):
+            with open(Layout(self.work).run + "/delegate.lock", "rb") as file:
+                try:
+                    fcntl.flock(file, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                except BlockingIOError:
+                    held.append(path)
+
+        with mock.patch.object(harness_delegate.shutil, "rmtree", side_effect=rmtree):
+            HarnessDelegate.clean(self.work)
+        self.assertEqual(held, [self.agent()])
+
+    def test_a_new_run_after_clean_lays_out_again_with_the_next_attempt(self):
+        self.make()
+        HarnessDelegate.clean(self.work)
+        self.make()
+        self.assertTrue(os.path.isdir(self.agent()))
+        self.assertEqual(self.metadata()["attempt"], 2)
 
 
 class PreviewTest(HarnessCase):
