@@ -53,7 +53,7 @@ def main(
             help="none: one Record per stdin line",
         )
     prompt = commands.add_parser("prompt", help="write a role's prompt as an instruction file")
-    _common_options(prompt, out="where the deliverable is written; -: stdout")
+    _common_options(prompt, out="where the prompt is written")
     a = parser.parse_args(argv)
     if a.command == "run":
         return _run(a, run, argv[1:], delegate_cls, sid=sid, events=events)
@@ -68,15 +68,13 @@ def _common_options(ap: argparse.ArgumentParser, *, out: str) -> None:
     ap.add_argument(
         "--input", metavar="TEXT|-", help="the input text, even when it names a file; -: stdin's"
     )
-    ap.add_argument("--out", action=Once, metavar="PATH|-", help=out)
+    ap.add_argument("--out", action=Once, metavar="PATH", help=out)
     ap.add_argument("--workdir", action=Once)
     ap.add_argument("--repo")
 
 
 def _run_options(ap: argparse.ArgumentParser) -> None:
-    _common_options(
-        ap, out="where the deliverable is written; -: stdout; default <workdir>/run/out.md"
-    )
+    _common_options(ap, out="where the deliverable is saved; default <workdir>/run/out.md")
     ap.add_argument(
         "--cwd", action=Once, metavar="PATH", help="the agent's cwd; default <workdir>/agent"
     )
@@ -181,7 +179,7 @@ def spec_of(a, text: str) -> Spec:
         sid=a.sid,
         resume=a.resume,
         events=a.events,
-        out=None if a.out == "-" else a.out,
+        out=a.out,
         repo=a.repo,
         cwd=a.cwd,
     )
@@ -190,6 +188,7 @@ def spec_of(a, text: str) -> Spec:
 def _check(a: argparse.Namespace) -> None:
     if None in (a.input, a.workdir):
         raise ConfigError("--input and --workdir are required")
+    _check_out(a)
     if a.resume and a.sid is None:
         raise ConfigError("--resume needs --sid")
     if a.events is not None and not a.detach:
@@ -198,8 +197,6 @@ def _check(a: argparse.Namespace) -> None:
         raise ConfigError("--on-event needs --detach")
     if a.detach and a.events is None:
         raise ConfigError("--detach needs --events")
-    if a.detach and a.out == "-":
-        raise ConfigError("--detach needs --out PATH or no --out")
     if a.detach and a.mode == Mode.IN_PROCESS:
         raise ConfigError("--detach needs --mode headless or tui")
 
@@ -243,6 +240,11 @@ def _shown(preview: Preview, a: argparse.Namespace) -> dict:
     return shown
 
 
+def _check_out(a: argparse.Namespace) -> None:
+    if a.out == "-":
+        raise ConfigError("--out takes a PATH, not -")
+
+
 def _prompt(
     a: argparse.Namespace, ap: argparse.ArgumentParser, delegate_cls: type[HarnessDelegate]
 ) -> int:
@@ -251,8 +253,7 @@ def _prompt(
     try:
         if None in (a.input, a.out, a.workdir):
             raise ConfigError("--input, --out and --workdir are required")
-        if a.out == "-":
-            raise ConfigError("prompt needs --out PATH")
+        _check_out(a)
         spec = Spec(
             sys.stdin.read() if a.input == "-" else a.input,
             a.workdir,

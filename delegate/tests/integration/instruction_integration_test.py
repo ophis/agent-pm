@@ -149,7 +149,7 @@ class Instruction(Case):
     def test_stdout_delivery_exits_2_without_writes(self):
         res = self.cli("researcher", out="-")
         self.assertEqual((res.returncode, res.stdout), (2, ""))
-        self.assertEqual(res.stderr, "delegate: prompt needs --out PATH\n")
+        self.assertEqual(res.stderr, "delegate: --out takes a PATH, not -\n")
         self.assertFalse(os.path.exists(self.adhoc))
 
 

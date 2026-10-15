@@ -98,12 +98,10 @@ class Detach(Base):
             (("--detach",), None, "--detach needs --events"),
             (("--events", e), None, "--events needs --detach"),
             (("--events", e, "--mode", "tui"), None, "--events needs --detach"),
-            (("--detach", "--events", e), "-", "--detach needs --out PATH or no --out"),
-            (
-                ("--detach", "--events", e, "--dry-run"),
-                "-",
-                "--detach needs --out PATH or no --out",
-            ),
+            ((), "-", "--out takes a PATH, not -"),
+            (("--dry-run",), "-", "--out takes a PATH, not -"),
+            (("--detach", "--events", e), "-", "--out takes a PATH, not -"),
+            (("--detach", "--events", e, "--dry-run"), "-", "--out takes a PATH, not -"),
             (
                 ("--detach", "--events", e, "--mode", "in_process"),
                 None,
@@ -906,6 +904,16 @@ class Prompt(Case):
         code, out, err = self.prompt("--help")
         self.assertEqual((code, err), (0, ""))
         self.assertNotIn("--list", out)
+        self.assertFalse(os.path.exists(self.work))
+
+    def test_out_dash_is_refused(self):
+        err = io.StringIO()
+        with redirect_stderr(err):
+            code = cli.main(
+                ["prompt", "--role", "dummy-tester", "--input", "x"]
+                + ["--workdir", self.work, "--out", "-"]
+            )
+        self.assertEqual((code, err.getvalue()), (2, "delegate: --out takes a PATH, not -\n"))
         self.assertFalse(os.path.exists(self.work))
 
     def test_hidden_driver_option_is_removed(self):
