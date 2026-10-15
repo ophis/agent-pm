@@ -119,9 +119,11 @@ class NextEventContent(CliCase):
         self.calls = []
         self.answers = {}
 
-    def launched(self, name, *sessions):
+    def launched(self, name, *sessions, record_name=None):
         sid = str(uuid.uuid4())
-        record = replace(self.fake_record(name, sid=sid), sessions=sessions or (name,))
+        record = replace(
+            self.fake_record(record_name or name, sid=sid), sessions=sessions or (name,)
+        )
         self.roster.begin(Spec(name, ("start",)), sid=sid)
         self.roster.commit(name, record)
         return record
@@ -152,6 +154,20 @@ class NextEventContent(CliCase):
             (0, "1 12:00:00 w1 done\nthe answer\n", ""),
         )
 
+    def test_a_headless_harness_event_prints_its_entry_status(self):
+        record = self.launched("r1", "engineer-ab12-drive", record_name="engineer-ab12")
+        status = Status(record.name, alive=False, state="exited", outcome="done", attach=None)
+        self.answers[(*record.ctl, "status")] = (0, status.to_line() + "\n", "")
+        self.assertEqual(
+            self.next_event("12:00:00 engineer-ab12-drive outcome done", "--content"),
+            (
+                0,
+                f"1 12:00:00 engineer-ab12-drive outcome done\n{replace(status, name='r1').to_line()}\n",
+                "",
+            ),
+        )
+        self.assertNotIn(("agent-pm-session", "read", "engineer-ab12-drive"), self.calls)
+
     def test_a_worker_named_like_a_harness_prints_its_reply(self):
         self.launched("w1", "test-drive")
         self.answers[("agent-pm-session", "reply", "test-drive")] = (0, "the answer\n", "")
@@ -181,6 +197,15 @@ class NextEventContent(CliCase):
             ),
         )
         self.assertNotIn(("agent-pm-session", "read", "engineer-ab12-drive"), self.calls)
+
+    def test_an_event_naming_only_control_characters_still_exits_0(self):
+        self.launched("w1")
+        result, stdout, _ = self.next_event("12:00:00 \x01 done", "--content")
+        self.assertEqual(result, 0)
+        head, content = stdout.split("\n", 1)
+        self.assertEqual(head, "1 12:00:00  done")
+        self.assertTrue(content.startswith("content unavailable: "), content)
+        self.assertEqual(self.calls, [])
 
     def test_unreadable_content_still_prints_the_event_and_says_why(self):
         self.launched("w1")

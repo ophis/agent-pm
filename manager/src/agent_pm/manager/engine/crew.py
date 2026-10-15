@@ -397,11 +397,11 @@ class Crew:
 
     def event_content(self, event: str, session_command: tuple[str, ...]) -> str:
         """What a next_event line is about, newline-terminated: a harness's (`<tui>-drive`, its
-        entry holding both) entry Status, else by session_command a `done` session's reply or the
-        session's screen; else why it is unreadable.
+        entry's Record naming the tui) entry Status, else by session_command a `done` session's
+        reply or the session's screen; else why it is unreadable.
         """
-        _, session, word = event.split(maxsplit=3)[:3]
         try:
+            _, session, word = event.split(maxsplit=3)[:3]
             entries = self.roster.entries()
             name = _owner(session, entries)
             record = None if name is None else entries[name].record
@@ -410,7 +410,7 @@ class Crew:
                 name is not None
                 and record is not None
                 and tui != session
-                and tui in record.sessions
+                and tui in (record.name, *record.sessions)
             ):
                 content = "".join(status.to_line() + "\n" for status in self.status((name,)))
             else:
