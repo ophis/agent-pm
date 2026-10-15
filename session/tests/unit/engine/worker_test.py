@@ -253,8 +253,9 @@ class ColorWatchTest(Base):
     UNSET = "session w1: color not set: {}; agent-pm-session send w1 '/color'"
 
     def watch(self, sent: float, events=None, text="/color") -> int:
-        """Starts w1 on a clock ticking 1 s per call, its opening `text` pending until tick `sent`; the
-        ticks used. opening_pending's call count varies by Python (3.11's isinstance calls it).
+        """Starts w1 on a clock ticking 1 s per call, its opening `text` pending until tick
+        `sent`; the ticks used. opening_pending's call count varies by Python (3.11's isinstance
+        calls it).
         """
         ticks = itertools.count()
         now = [0]
