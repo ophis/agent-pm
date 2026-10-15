@@ -89,9 +89,6 @@ def plan(run: RunConfig, spec: Spec, *, driver: Driver, composition: Composer) -
         client=client,
         sid=spec.sid if spec.sid is not None else str(uuid.uuid4()),
         team=composition.team,
-        read=tuple(
-            dict.fromkeys(os.path.abspath(os.path.expanduser(p)) if p else p for p in spec.read)
-        ),
     )
     resume = spec.sid if spec.resume else None
     here, project = place(
@@ -103,6 +100,7 @@ def plan(run: RunConfig, spec: Spec, *, driver: Driver, composition: Composer) -
             file=sys.stderr,
         )
     intent = composition.access(run, workdir, cwd=here, project=project, reads=spec.read)
+    spec = replace(spec, read=intent.run_reads)
     access = Access(
         dirs=intent.dirs,
         commands=intent.commands + ((intent.gate,) if intent.gate else ()),

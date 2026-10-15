@@ -299,6 +299,16 @@ class Planned(Base):
         self.assertIn("`<Workdir>/tmp/deliverable.md`", got.prompt)
         self.assertEqual(got.params.deliverable, os.path.join(self.work, "tmp", "deliverable.md"))
 
+    def test_run_read_dirs_are_bound_once_for_the_spec_params_and_access(self):
+        base = os.path.dirname(self.work)
+        material = os.path.join(base, "material")
+        os.makedirs(material)
+        with mock.patch("os.getcwd", return_value=base):
+            got = self.planned(read=("material", f"{material}/"))[0]
+        self.assertEqual((got.spec.read, got.params.reads), ((material,), (material,)))
+        self.assertIn(material, got.session.access.reads)
+        self.assertEqual(self.refused(read=("",)), "read dir must be a non-empty path")
+
     def test_the_plan_holds_the_run_with_its_task_and_its_params(self):
         got = self.planned()[0]
         self.assertEqual(

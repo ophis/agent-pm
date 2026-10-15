@@ -318,6 +318,7 @@ class Access(Fake):
                         env=session,
                         cwd=self.work,
                         project=False,
+                        run_reads=tuple(dict.fromkeys(run_reads)),
                     ),
                 )
 
@@ -377,8 +378,9 @@ class Access(Fake):
         os.makedirs(inside)
         os.makedirs(self.repo)
         os.symlink(self.repo, link)
-        got = self.intent(write=[self.repo], reads=(self.work, inside, link, self.tasks))
+        got = self.intent(write=[self.repo], reads=(self.work, inside, link, self.tasks, link))
         self.assertEqual((got.dirs, got.reads), ((self.repo,), (self.tasks, self.work, inside)))
+        self.assertEqual(got.run_reads, (self.work, inside, link, self.tasks))
         with mock.patch("os.getcwd", return_value=self.tmp):
             self.assertEqual(self.intent(reads=("repo",)).reads, (self.tasks, self.repo))
 
@@ -387,11 +389,15 @@ class Access(Fake):
         with open(a_file, "w", encoding="utf-8"):
             pass
         missing = os.path.join(self.tmp, "missing")
-        for path, shown in ((missing, missing), (a_file, a_file), ("", "''")):
+        for path, message in (
+            (missing, f"read dir {missing} is not a directory"),
+            (a_file, f"read dir {a_file} is not a directory"),
+            ("", "read dir must be a non-empty path"),
+        ):
             with self.subTest(path=path):
                 with self.assertRaises(ConfigError) as cm:
                     self.intent(reads=(path,))
-                self.assertEqual(str(cm.exception), f"read dir {shown} is not a directory")
+                self.assertEqual(str(cm.exception), message)
 
     def test_a_cwd_that_is_not_an_absolute_path(self):
         for cwd in ("", "work"):

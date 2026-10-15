@@ -141,12 +141,15 @@ def access(
         for entry in entries:
             if (p := bind(fill(entry, roots, key))) not in paths[key]:
                 paths[key].append(p)
+    run_reads = []
     for entry in reads:
-        p = bind(entry) if entry else entry
-        if not os.path.isdir(p):
-            raise ConfigError(f"read dir {p or repr(p)} is not a directory")
-        if p not in paths["read"]:
-            paths["read"].append(p)
+        if not entry:
+            raise ConfigError("read dir must be a non-empty path")
+        if not os.path.isdir(p := bind(entry)):
+            raise ConfigError(f"read dir {p} is not a directory")
+        if p not in run_reads:
+            run_reads.append(p)
+    paths["read"] += [p for p in run_reads if p not in paths["read"]]
     dirs = [workdir] if os.path.realpath(cwd) != os.path.realpath(workdir) else []
     dirs += [p for p in paths["write"] if p not in dirs]
     seen, granted = set(map(os.path.realpath, dirs)), []
@@ -164,6 +167,7 @@ def access(
         env=utils.import_env(delegate_config, session, utils) if commands or run.gate else {},
         cwd=cwd,
         project=project,
+        run_reads=tuple(run_reads),
     )
 
 

@@ -152,3 +152,4 @@ class Intent:
     env: Mapping[str, str]
     cwd: str
     project: bool
+    run_reads: tuple[str, ...]
