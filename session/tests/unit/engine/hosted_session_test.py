@@ -315,7 +315,7 @@ class HistoricalRecordTest(Case):
         outside = self.root / "outside.jsonl"
         outside.write_text("{}\n", encoding="utf-8")
         os.utime(outside, (9000, 9000))
-        command = f"cd {shlex.quote(str(self.cwd))} && claude --resume {SID}"
+        command = adapter.common.resume(str(self.cwd), SID)
         self.forged("claude", outside, expected=SessionStatus("yes", 100.0, command))
 
     def test_codex_resume_is_built_fresh_and_a_forged_outside_transcript_is_refused(self):

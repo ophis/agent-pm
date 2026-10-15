@@ -2,8 +2,8 @@
 headless(), tui() and in_process() each give a fresh mode object, None if unsupported. Each mode
 reads what to run from the Spec alone. commit() persists a validated launch before starting;
 failed starts keep diagnostics. Headless launch(spec) (it may keep state for events) and Tui
-launch(spec, hook) build a Launch whose env and resume carry Access.env and Spec.env (the Adapter is
-their only owner), and turn the client's output into SessionEvents, Stderr and ClientBound
+launch(spec, hook) build a Launch whose env, never its resume, carries Access.env and Spec.env (the
+Adapter is their only owner), and turn the client's output into SessionEvents, Stderr and ClientBound
 (JsonHeadless: parse(record) per JSON line). InProcess check(spec) refuses with ConfigError;
 run(spec) runs the session on a thread of the caller's process, stopped at its next yield, changing
 no global state (cwd, environ, signals): it applies spec.access.cwd, not its env. Starts no process.

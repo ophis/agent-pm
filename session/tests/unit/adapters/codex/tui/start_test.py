@@ -164,17 +164,20 @@ class StartTest(Base):
                 (sys.executable, "-I", "/protected/hook.py", "/protected/session", ROOTS_JSON),
             )
         data = json.loads(launch.argv[-1])
-        for given, expected in ((None, None), ("/client lib", "/client lib")):
+        own = {k: v for k, v in launch.env.items() if k != tui.CLIENT_PYTHONPATH}
+        for given in (None, "/client lib"):
+            client = {} if given is None else {tui.CLIENT_PYTHONPATH: given}
             with (
                 self.subTest(given=given),
-                mock.patch.dict(os.environ, launch.env),
+                mock.patch.dict(os.environ, {**own, **client}),
                 contextlib.nullcontext(mock.Mock(return_value="hooks.state={exact}")) as trust,
                 mock.patch("os.chdir"),
                 mock.patch("os.execve") as execute,
             ):
-                tui_start.launch({**data, "pythonpath": given}, trust=trust)
+                tui_start.launch(data, trust=trust)
             for env in (execute.call_args.args[2], trust.call_args.kwargs["env"]):
-                self.assertEqual(env.get("PYTHONPATH"), expected)
+                self.assertEqual(env.get("PYTHONPATH"), given)
+                self.assertNotIn(tui.CLIENT_PYTHONPATH, env)
 
     def test_hooks_list_initializes_and_closes_mock_process(self):
         proc = mock.Mock()

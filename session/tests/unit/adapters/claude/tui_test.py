@@ -42,6 +42,7 @@ from session.tests.unit.adapters.claude.support import (
     Base,
     ClaudeCommon,
     epoch,
+    reference,
     said,
     text,
     tool,
@@ -272,7 +273,7 @@ class SessionTuiTest(Base):
                         UNSET,
                         "",
                         ClaudeCommon({}).transcript(cwd, SID),
-                        f"cd {shlex.quote(cwd)} && K=spec S=s claude --resume {SID} --add-dir /d1",
+                        reference(cwd),
                     ),
                 )
 
@@ -294,7 +295,7 @@ class SessionTuiTest(Base):
         )
         self.assertEqual(
             (dict(launch.env), launch.resume),
-            ({}, f"cd {shlex.quote(self.work)} && claude --resume {SID}"),
+            ({}, reference(self.work)),
         )
         self.assertEqual(self.session("-p --help").argv[-2:], ("--", "-p --help"))
 

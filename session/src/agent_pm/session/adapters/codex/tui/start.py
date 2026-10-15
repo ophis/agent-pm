@@ -223,10 +223,10 @@ def _start(plan: tui.LaunchPlan, termination, trust):
     env = {
         key: value
         for key, value in {**os.environ, "CODEX_HOME": state.snapshot.codex_home}.items()
-        if key not in common.LOCAL_ENV_VARS and key != "PYTHONPATH"
+        if key not in common.LOCAL_ENV_VARS and key not in ("PYTHONPATH", tui.CLIENT_PYTHONPATH)
     }
-    if plan.pythonpath is not None:
-        env["PYTHONPATH"] = plan.pythonpath
+    if (pythonpath := os.environ.get(tui.CLIENT_PYTHONPATH)) is not None:
+        env["PYTHONPATH"] = pythonpath
     cwd = state.snapshot.cwd
     termination.check()
     trusted_state = trust(

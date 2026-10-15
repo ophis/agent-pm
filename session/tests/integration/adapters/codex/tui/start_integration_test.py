@@ -63,7 +63,6 @@ class ModuleRunTest(Case):
             "workdir": self.home,
             "sid": "module",
             "store": "/uncreated-agent-pm-state/recovery/codex",
-            "pythonpath": None,
         }
 
     def run_module(self, *args, code=None, cwd=None, roots=ROOTS):

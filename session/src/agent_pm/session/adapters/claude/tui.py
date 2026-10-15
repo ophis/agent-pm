@@ -79,13 +79,14 @@ class ClaudeTui(Tui):
     def __init__(self, common: ClaudeCommon):
         self.common = common
         self.sid = ""
+        self.spec: Spec | None = None
         self.transcript, self.start, self.offset = "", 0, 0
         self.last = self.unseen = ""  # the turn's newest text; its turn end's text not yet read
         self.limited = False  # this turn's LimitHit given
 
     def launch(self, spec: Spec, hook):
         common = self.common
-        self.sid = spec.sid or ""
+        self.sid, self.spec = spec.sid or "", spec
         hooks = {
             label: [
                 {
@@ -101,6 +102,10 @@ class ClaudeTui(Tui):
         self.transcript = launch.transcript
         self.start = self.offset = _size(launch.transcript)
         return launch
+
+    def commit(self):
+        if self.spec is not None:
+            self.common.save(self.spec)
 
     def hook_callback(self):
         return HookCallback(__name__, {"transcript": self.transcript, "start": self.start})
