@@ -52,7 +52,7 @@ class CustomTeam(Base):
     def test_a_read_dir_holding_it_or_its_tasks_dir_is_read_unadded(self):
         self.read_unadded("poet", "verse", (self.tasks, self.team), keys={"read": [self.team]})
         self.read_unadded(
-            "researcher", "light-research", (TASKS, self.tasks), keys={"read": [self.tasks]}
+            "researcher", "research", (TASKS, self.tasks), keys={"read": [self.tasks]}
         )
 
     def test_one_overlapping_what_the_run_can_write_is_refused(self):

@@ -6,7 +6,6 @@ import io
 import json
 import os
 import re
-import shlex
 import tomllib
 from importlib.resources import files
 from pathlib import Path
@@ -60,7 +59,7 @@ ROLES = {
     "researcher": (
         "researcher@agents.test",
         "linear-api-key-researcher",
-        ("deep-research", "light-research"),
+        ("deep-research", "research", "light-research"),
         1,
         "pm",
     ),
@@ -708,23 +707,6 @@ class DeploymentDirectories(Case):
         )
         self.assertFalse(sibling.exists())
 
-    def test_pythonpath_skips_standard_installation_locations(self):
-        roots = (
-            f"{REPO}/linear-orchestrator/src",
-            f"{REPO}/delegate/src",
-            f"{REPO}/session/src",
-            f"{REPO}/utils/src",
-        )
-        self.assertEqual(config.pythonpath(), os.pathsep.join(roots))
-        with (
-            mock.patch(
-                "sysconfig.get_paths", return_value={"purelib": roots[0], "platlib": roots[0]}
-            ),
-            mock.patch("site.getsitepackages", return_value=list(roots)),
-            mock.patch("site.getusersitepackages", return_value=roots[0]),
-        ):
-            self.assertEqual(config.pythonpath(), "")
-
 
 class ExecutablePath(Case):
     def path(self, home, env):
@@ -1024,29 +1006,17 @@ class ConfigurationRoot(ConfigFile, Case):
         ):
             self.fails("core: roles/researcher.md: lists 'ghost' without tasks/ghost.md", PIPELINE)
 
-    def test_legacy_root_placeholder_names_its_replacement(self):
-        for text in (
-            '[core]\ncommands = ["ls {{root}}/a"]\n',
-            '[core.roles.researcher]\ngate = "python3 {{root}}/x"\n',
-        ):
-            with self.subTest(text=text):
-                self.fails(
-                    "linear-orchestrator/config.toml: {{root}} is no longer supported; use an explicit path, or {{pythonpath}} for Python imports",
-                    PIPELINE + text,
-                )
-
-    def test_overlay_fills_pythonpath_and_keeps_other_values(self):
+    def test_overlay_keeps_its_values_verbatim(self):
         cfg = self.load(
             PIPELINE
             + '[core]\ntier = 3\ncommands = ["env PYTHONPATH={{pythonpath}} python3 -P", "true"]\n'
-            + '[core.roles.researcher]\ngate = "env PYTHONPATH={{pythonpath}} python3 -P"\n'
+            + '[core.roles.researcher]\ngate = "python3 {{root}}/x"\n'
             + '[core.roles.pm]\nlanguage = "French"\n'
         )
-        q = shlex.quote(config.pythonpath())
         run = cfg.roles["researcher"].run
         self.assertEqual(
             (run.tier, run.commands, run.gate),
-            (3, [f"env PYTHONPATH={q} python3 -P", "true"], f"env PYTHONPATH={q} python3 -P"),
+            (3, ["env PYTHONPATH={{pythonpath}} python3 -P", "true"], "python3 {{root}}/x"),
         )
         self.assertEqual((cfg.roles["pm"].run.gate, cfg.roles["pm"].run.language), ("", "French"))
 

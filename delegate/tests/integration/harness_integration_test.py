@@ -172,7 +172,7 @@ class Planning(HarnessCase):
             self.make()
         self.assertEqual(
             str(caught.exception),
-            "[delegates] harness_host: want one of agent, changed, harness, tmux",
+            "[delegates] harness_host: want one of agent, changed, harness, pty, tmux",
         )
         self.assertFalse(os.path.lexists(self.work))
 
@@ -192,7 +192,8 @@ class Planning(HarnessCase):
         with self.assertRaises(ConfigError) as caught:
             self.make(harness_host=RecordingHost("ghost"))
         self.assertEqual(
-            str(caught.exception), "harness_host ghost: want one of agent, changed, harness, tmux"
+            str(caught.exception),
+            "harness_host ghost: want one of agent, changed, harness, pty, tmux",
         )
         self.assertFalse(os.path.lexists(self.work))
 
@@ -501,7 +502,7 @@ class UsageQueries(HarnessCase):
         self.assertIs(HarnessDelegate.usage("dummy-tester", session_cls=Probe), sentinel)
         self.assertEqual(asked, ["fake"])
         self.assertEqual(
-            sorted(Probe.configured["hosts"].tables), ["agent", "changed", "harness", "tmux"]
+            sorted(Probe.configured["hosts"].tables), ["agent", "changed", "harness", "pty", "tmux"]
         )
 
     def test_session_config_errors_are_the_delegates(self):
@@ -517,7 +518,7 @@ class UsageQueries(HarnessCase):
         with self.assertRaises(ConfigError) as caught:
             HarnessDelegate.usage("dummy-tester", session_cls=SessionClass)
         self.assertEqual(
-            str(caught.exception), "[hosts] default: want one of agent, changed, harness, tmux"
+            str(caught.exception), "[hosts] default: want one of agent, changed, harness, pty, tmux"
         )
 
 

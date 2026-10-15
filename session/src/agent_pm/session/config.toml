@@ -70,6 +70,8 @@ max = "max"
 #   workers_per_column panes per tmux grid column (the tmux Host's show), 1..9999
 #   grid_retile       when a tmux grid re-tiles: "open-close" (a pane opens or closes), "all" (also a drag or a
 #                     window resize), "off" (never by itself: agent-pm-session tile @N)
+# [hosts.pty]         a pty per session, held by its own supervisor; state in ~/.agent-pm/pty/<name>/; cannot display:
+#   outer_terminal    variables of an enclosing terminal a tui program on the pty never gets (its TERM: xterm-256color)
 [hosts]
 default = "tmux"
 
@@ -83,3 +85,8 @@ grid_retile = "open-close"
 # local: status_line = true
 # local: workers_per_column = 2
 # local: grid_retile = "all"
+
+[hosts.pty]
+# PtyHost (session/src/agent_pm/session/hosts/pty/host.py)
+implementation = "agent_pm.session.hosts.pty:PtyHost"
+outer_terminal = ["TMUX", "TMUX_PANE"]

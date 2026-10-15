@@ -70,9 +70,7 @@ class Base(Case):
         fake = {"implementation": "agent_pm.session.adapters.fake:FakeAdapter"}
         self.configure_session(committed(local) | {"fake": fake})
 
-    def planned(
-        self, role="researcher", task="light-research", *, keys=None, team=None, run=None, **kw
-    ):
+    def planned(self, role="researcher", task="research", *, keys=None, team=None, run=None, **kw):
         """(Plan, stderr) of `run`, else `role` resolved with run keys `keys`: input "Research X.",
         client "fake", headless, out self.out, workdir self.work, the cwd its agent dir, unless `kw`
         says otherwise.

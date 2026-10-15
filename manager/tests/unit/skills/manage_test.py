@@ -51,14 +51,14 @@ class Manage(Case):
         self.assertIn("`agent-pm-crew stop <name>`", close)
         self.assertRegex(close, r"tmux only for sessions outside the Roster")
 
-    def test_a_codex_issue_worker_starts_by_name_with_its_prompt_and_closes_at_in_review(self):
+    def test_a_codex_issue_worker_starts_by_name_with_its_prompt_and_closes_on_merge(self):
         codex = rule("An issue for Codex")
         self.assertRegex(
             codex,
             r"`agent-pm-crew run <name> -- agent-pm-session start <name> --client codex "
             r"--cwd <work dir>/agent --prompt 'Read <work dir>/agent/prompt\.md[^`]+'",
         )
-        self.assertRegex(codex, r"[Cc]lose it .*In Review")
+        self.assertRegex(codex, r"[Cc]lose it .*PR merges")
 
     def test_one_decision_marker_and_one_commit_exception(self):
         self.assertIn("`(the user, <YYYY-MM-DD>)`", rule("Record each decision"))

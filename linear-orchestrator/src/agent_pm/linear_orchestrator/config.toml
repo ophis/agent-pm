@@ -116,8 +116,7 @@ max_runs = 3
 # local: "<owner>/<name>" = "~/src/<name>"
 
 # The overlay; optional: core run keys for the Linear orchestrator's agent runs, in delegate/config.toml's layout under
-# [core], the last of delegate/config.toml's layers. {{pythonpath}} supplies the loaded packages' source import roots,
-# shell-quoted; installed import roots need no PYTHONPATH. Use explicit paths for external files.
+# [core], the last of delegate/config.toml's layers. Use explicit paths for external files.
 #   <run key>  as in delegate/config.toml, local keys included (e.g. a trusted cwd); users, trusted_dirs,
 #              and [clients] tables are refused; a role table holding the old
 #              task-level keys is an error

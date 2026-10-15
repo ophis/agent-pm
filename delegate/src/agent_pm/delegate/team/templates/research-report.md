@@ -2,7 +2,7 @@
 
 Title: no gloss; `[Title]` never repeats `[Reference]`. Combining several reports: each id appears once, in its sub-report's heading. One fact per list item; its reason goes in the synthesis or under Gaps, not on that line.
 
-Deep research's type line (light research gives its own): the type; for local or mixed, each `<repo>` at `<commit>`.
+Deep research's type line (research and light research give their own): the type; for local or mixed, each `<repo>` at `<commit>`.
 
 ## Conclusion and recommendation
 Opens with one sentence answering the question, with an overall confidence. Then list items: the findings it rests on and the recommendation, labeled as your synthesis.

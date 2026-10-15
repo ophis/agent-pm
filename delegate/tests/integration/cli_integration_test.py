@@ -319,7 +319,7 @@ class NeedsInput(Integration):
 
 class RolePicks(Integration):
     ROLE = "researcher"
-    PICK = mark("start", "light-research: a quick, good-enough answer will do")
+    PICK = mark("start", "research: a quick, good-enough answer will do")
     REPORT = {
         "status": "done",
         "title": "Greetings",
@@ -331,7 +331,7 @@ class RolePicks(Integration):
         picked = {
             "kind": "progress",
             "name": "start",
-            "text": "light-research: a quick, good-enough answer will do",
+            "text": "research: a quick, good-enough answer will do",
         }
         res = self.drive([self.PICK])
         self.assertEqual(res.returncode, 1, res.stderr)
