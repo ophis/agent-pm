@@ -37,6 +37,8 @@ from agent_pm.session.engine.types import (
     SessionInfo,
     Spec,
     Stderr,
+    TurnEnd,
+    TurnFailed,
     Word,
 )
 from agent_pm.session.hosts.base import Displayable, Host, HostProcess, Terminal
@@ -53,6 +55,8 @@ WORDS = {
     HookKind.ACTIVITY: Word.WORKING,
 }
 SLICE = 0.1
+OPEN_AFTER = 1.0  # keys sent before a client's input box shows are lost
+POLL_SCREEN = 0.5
 
 
 def checked_name(name) -> str:
@@ -316,6 +320,7 @@ class TuiRuntime(Runtime):
         *,
         offset: int = 0,
         replayed: tuple[SessionEvent | Stderr | ClientBound, ...] = (),
+        opening: tuple[str, str] | None = None,
     ) -> None:
         """offset: its hook log's next record."""
         super().__init__(prepared)
@@ -323,6 +328,9 @@ class TuiRuntime(Runtime):
         self._store, self._replayed, self._generation = store, replayed, generation
         self._offset, self._dialogs, self._limit, self._code = offset, frozenset(), None, None
         self._live, self._gone = True, False
+        self._opening = opening  # start's: sent once, OPEN_AFTER s after
+        self._due: float | None = None  # its label's latest record
+        self._held, self._checked = False, -POLL_SCREEN
 
     @classmethod
     def preflight(
@@ -412,7 +420,8 @@ class TuiRuntime(Runtime):
             record(prepared.info)
 
         terminal = store.start(pending.state, commit, launch, check_name=check_name)
-        return cls(prepared, run, terminal, store, pending.state["generation"])
+        generation = pending.state["generation"]
+        return cls(prepared, run, terminal, store, generation, opening=run.opening)
 
     @classmethod
     def snapshot(cls, name: str) -> dict:
@@ -476,6 +485,10 @@ class TuiRuntime(Runtime):
         """Attached: its client record's, then its hook log's events so far."""
         return self._replayed
 
+    @property
+    def opening_pending(self) -> str | None:
+        return None if self._opening is None or self._gone else self._opening[1]
+
     def marked_blocked(self) -> bool:
         return self._terminal.activity() == Word.BLOCKED
 
@@ -502,11 +515,36 @@ class TuiRuntime(Runtime):
                             and not self._replaced(self._terminal.state())
                         ):
                             found = self._scan(screen)
+        self._open()
         deadline = time.monotonic() + timeout
         while not found and not self._gone and (left := deadline - time.monotonic()) > 0:
             time.sleep(min(SLICE, left))
             found = self._read()
+            self._open()
         return found, self._gone
+
+    def _open(self) -> None:
+        """Submits the opening once it is due, unless a dialog shows or the client is blocked."""
+        now = time.monotonic()
+        if self._opening is None or self._due is None or self._gone or now < self._due:
+            return
+        if self._held or now < self._checked + POLL_SCREEN:
+            return
+        if isinstance(self.host, Displayable):
+            self._checked = now
+            try:
+                if self._shown(self.host.screen(self._terminal)):
+                    return
+            except SessionError:
+                return
+        text, self._opening = self._opening[1], None
+        with contextlib.suppress(SessionError):
+            self.send(text)
+
+    def _track(self, events: list[SessionEvent | Stderr | ClientBound]) -> None:
+        for event in events:
+            if isinstance(event, Blocked | Activity | TurnEnd | TurnFailed):
+                self._held = isinstance(event, Blocked)
 
     def _end(self) -> None:
         self._gone = True
@@ -523,7 +561,11 @@ class TuiRuntime(Runtime):
         if end == self._offset and not observed or self._replaced(self._terminal.state()):
             return []
         self._offset = end
-        return [*observed, *_translated(self.run, records)]
+        if self._opening is not None and any(label == self._opening[0] for label, _ in records):
+            self._due = time.monotonic() + OPEN_AFTER
+        found = [*observed, *_translated(self.run, records)]
+        self._track(found)
+        return found
 
     def _replaced(self, state: Liveness) -> bool:
         """Ended once another terminal holds its name or session.json is another generation's."""
@@ -546,7 +588,7 @@ class TuiRuntime(Runtime):
         """Since the last scan: Activity("") once a dialog went, Blocked per new dialog, LimitHit
         per appearance.
         """
-        shown = frozenset(d for d in self.run.dialogs if self.run.shows(d, screen))
+        shown = self._shown(screen)
         screen = " ".join(screen.split())
         found: list[SessionEvent | Stderr | ClientBound] = (
             [Activity("")] if self._dialogs - shown else []
@@ -558,7 +600,11 @@ class TuiRuntime(Runtime):
         if shown - self._dialogs:
             self._mark_blocked()
         self._dialogs, self._limit = shown, limit
+        self._track(found)
         return found
+
+    def _shown(self, screen: str) -> frozenset[str]:
+        return frozenset(d for d in self.run.dialogs if self.run.shows(d, screen))
 
     def _mark_blocked(self) -> None:
         with contextlib.suppress(SessionError):

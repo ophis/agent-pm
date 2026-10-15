@@ -161,7 +161,6 @@ class Flows(Case):
             "`agent-pm-session read <name> [--lines <n>]`",
             "`agent-pm-session reply <name>`",
             "`agent-pm-session restart <name>`",
-            "`agent-pm-session send <name> '/color <color>'`",
             "`agent-pm-crew note <name> '<text>'`",
             "`''` clears",
             "`agent-pm-crew status [<name>…]`",
@@ -172,6 +171,15 @@ class Flows(Case):
             "`agent-pm-crew release`",
         ):
             self.assertIn(phrase, direct)
+
+    def test_color_is_left_to_the_session_but_a_start_dialog(self):
+        (worker,) = [
+            line for line in section("tmux", "Launch").splitlines() if "**Worker**" in line
+        ]
+        self.assertEqual(body("tmux").count("/color"), 1)
+        self.assertIn("/color", worker)
+        self.assertIn('"color not set"', worker)
+        self.assertNotIn("Color", section("tmux", "Direct"))
 
     def test_events_handles_every_word(self):
         events = section("tmux", "Events")

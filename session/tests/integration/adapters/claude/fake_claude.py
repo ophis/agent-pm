@@ -2,7 +2,10 @@
 neither (interactive); install() puts it on PATH. An option src/agent_pm/session/adapters/claude/
 never emits exits 2. Interactive: PROMPT, else the first stdin line, is turn 1; each later line runs
 the next of [steps, *turns] between UserPromptSubmit and Stop hooks. Stdin's end exits `exit`;
-orphaned or HANG_CAP s idle, 1.
+orphaned or HANG_CAP s idle, 1. Interactive readiness: SessionStart (source startup, or resume on
+--resume; matched on source) fires before turn 1 and after each dialog's answer; input arriving from
+then until READY s after it is dropped, as Claude drops keys before its input box. A stdin line
+starting with / is a local command: logged to `commands`, never a prompt, an answer or a turn.
 
 Scenario: the JSON object in $FAKE_CLAUDE_SCENARIO's file (bad: exit 1):
 - steps: a string is assistant text; {"kind": "tool", "name": N} is a tool_use (interactive: then
@@ -12,7 +15,8 @@ with error "rate_limit". {"kind": "write", "path": P, "text": T} writes T to P (
 "argv": A, "path": P} runs A in the cwd and writes its {"returncode", "stdout", "stderr"} to P
 (relative to cwd; returncode null when A could not start or ran over 60 s).
 Interactive {"kind": "limit", "text": S} prints S, keeps it as a rate_limit API error and ends the
-turn with StopFailure; {"kind": "dialog", "text": S} prints S and reads another line. Other steps: {"kind": "hook", "event": E, ...}; {"kind": "sleep", "seconds": X}.
+turn with StopFailure; {"kind": "dialog", "text": S} prints S and reads another line. Other steps: {"kind": "hook", "event": E, ...}; {"kind": "sleep", "seconds": X};
+{"kind": "exit"} exits at once with `exit`.
 - turns: interactive steps of turn 2 on.
 - background: interactive background_tasks per Stop.
 - resume: print steps run instead of `steps` on --resume.
@@ -21,6 +25,8 @@ turn with StopFailure; {"kind": "dialog", "text": S} prints S and reads another 
 - hang: in print, true sleeps after steps until orphaned or HANG_CAP s, then exits 1.
 - log: a file each start appends {"pid", "argv", "cwd"} to.
 - gate: a file a --session-id or --resume run waits for after its log line, as hang does.
+- commands: a file each local command appends {"pid", "line", "time", "dialog"} to; dialog: read
+while a dialog step waited.
 """
 
 import argparse
@@ -39,6 +45,7 @@ from dataclasses import dataclass
 ENV = "FAKE_CLAUDE_SCENARIO"
 HANG_CAP = 120
 HOOK_TIMEOUT = 60
+READY = 0.3
 DEFAULTS = {
     "steps": [],
     "resume": None,
@@ -49,6 +56,7 @@ DEFAULTS = {
     "hang": False,
     "log": None,
     "gate": None,
+    "commands": None,
 }
 LIMIT = "You've hit your usage limit."
 
@@ -85,6 +93,7 @@ TUI = {
     "limit": {"text": _text},
     "dialog": {"text": _text},
     "sleep": {"seconds": lambda v: _number(v) and 0 <= v <= HANG_CAP},
+    "exit": {},
 }
 
 
@@ -114,6 +123,7 @@ CHECKS = {
     "hang": lambda v: isinstance(v, bool),
     "log": lambda v: v is None or isinstance(v, str),
     "gate": lambda v: v is None or isinstance(v, str),
+    "commands": lambda v: v is None or isinstance(v, str),
 }
 
 
@@ -235,20 +245,51 @@ class Stranded(Exception):
 class Stdin:
     """By os.read: select can't see what a buffered reader holds."""
 
-    def __init__(self, parent: int):
+    def __init__(self, parent: int, commands: str | None = None):
         self.parent, self.buf, self.eof = parent, b"", False
+        self.commands, self.dialog = commands, False
+
+    def read(self, wait: float) -> bytes | None:
+        """What arrived within `wait` s (b"" at its end; None: nothing)."""
+        try:
+            chunk = os.read(0, 65536) if select.select([0], [], [], wait)[0] else None
+        except (OSError, ValueError):
+            chunk = b""
+        self.eof = self.eof or chunk == b""
+        return chunk
+
+    def keep(self) -> None:
+        """Buffers what has arrived so far."""
+        while not self.eof and (chunk := self.read(0)):
+            self.buf += chunk
+
+    def drop(self, until: float) -> None:
+        """Discards what arrives before monotonic `until`."""
+        while not self.eof and (left := until - time.monotonic()) > 0:
+            self.read(left)
 
     def line(self) -> str:
+        """The next line that is no local command; each local command logged on the way."""
+        while True:
+            line = self.raw()
+            if not line.startswith("/"):
+                return line
+            if self.commands:
+                entry = {
+                    "pid": os.getpid(),
+                    "line": line,
+                    "time": time.time(),
+                    "dialog": self.dialog,
+                }
+                with open(self.commands, "a", encoding="utf-8") as f:
+                    f.write(json.dumps(entry) + "\n")
+
+    def raw(self) -> str:
         until = time.monotonic() + HANG_CAP
         while b"\n" not in self.buf and not self.eof:
             if os.getppid() != self.parent or time.monotonic() > until:
                 raise Stranded
-            try:
-                chunk = os.read(0, 65536) if select.select([0], [], [], 0.1)[0] else None
-            except (OSError, ValueError):
-                chunk = b""
-            self.eof = chunk == b""
-            self.buf += chunk or b""
+            self.buf += self.read(0.1) or b""
         if not self.buf:
             raise EOFError
         line, _, self.buf = self.buf.partition(b"\n")
@@ -264,6 +305,7 @@ class InteractiveRequest:
     keep: object
     stdin: Stdin
     prompt: str | None
+    source: str
 
 
 class InteractiveSession:
@@ -272,8 +314,18 @@ class InteractiveSession:
 
     def hook(self, event: str, fields: dict) -> None:
         payload = {**self.request.payload, "hook_event_name": event, **fields}
-        field = payload.get("notification_type" if event == "Notification" else "tool_name")
+        key = {"Notification": "notification_type", "SessionStart": "source"}.get(
+            event, "tool_name"
+        )
+        field = payload.get(key)
         run_hooks(self.request.hooks, event, payload, field if isinstance(field, str) else "")
+
+    def ready(self) -> None:
+        """SessionStart; input that arrives from then until READY s after it is dropped."""
+        stdin = self.request.stdin
+        stdin.keep()
+        self.hook("SessionStart", {"source": self.request.source})
+        stdin.drop(time.monotonic() + READY)
 
     def turn(self, text: str, steps: list) -> None:
         self.hook("UserPromptSubmit", {"prompt": text})
@@ -298,6 +350,8 @@ class InteractiveSession:
                 )
             elif kind == "sleep":
                 time.sleep(step["seconds"])
+            elif kind == "exit":
+                sys.exit(self.request.scenario["exit"])
             else:
                 print(step["text"], flush=True)
                 if kind == "limit":
@@ -310,7 +364,7 @@ class InteractiveSession:
                         {"error": "rate_limit", "last_assistant_message": step["text"]},
                     )
                     return
-                self.request.stdin.line()
+                self.answer()
         self.hook(
             "Stop",
             {
@@ -320,8 +374,18 @@ class InteractiveSession:
             },
         )
 
+    def answer(self) -> None:
+        stdin = self.request.stdin
+        stdin.dialog = True
+        try:
+            stdin.line()
+        finally:
+            stdin.dialog = False
+        self.ready()
+
     def run(self):
         try:
+            self.ready()
             prompt = self.request.prompt or self.request.stdin.line()
             for k in itertools.count():
                 self.turn(prompt, self.request.turns[k] if k < len(self.request.turns) else [])
@@ -482,8 +546,9 @@ def main(argv: list[str]) -> int:
                 hooks=a.hooks,
                 payload={"session_id": sid, "transcript_path": transcript, "cwd": cwd},
                 keep=journal.keep,
-                stdin=Stdin(parent),
+                stdin=Stdin(parent, s["commands"]),
                 prompt=a.prompt,
+                source="resume" if a.resume else "startup",
             )
         ).run()
     return printed(s, a, journal, parent)

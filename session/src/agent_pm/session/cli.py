@@ -103,7 +103,8 @@ def _parser(hosts: Hosts | None) -> argparse.ArgumentParser:
         description="Start worker NAME, a plain tui session of CLIENT; everything after -- is "
         "its client's flags, verbatim. Its session id: --resume SID (resumes that "
         "conversation), else $AGENT_PM_SID, else a new one; the two must agree. Prints its "
-        "Record once it has run 5 s without exiting.",
+        "Record once it has run 5 s without exiting (up to 15 s while its launch input is "
+        "pending).",
     )
     p.add_argument("name", type=_name)
     p.add_argument("--client", required=True, help="its client, an [adapters.<name>]")

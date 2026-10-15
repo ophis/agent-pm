@@ -3,13 +3,14 @@ FR-36 replace ladder (no process, no tmux; files only under the test's HOME).
 """
 
 import errno
+import itertools
 import json
 import os
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from unittest import mock
 
-from agent_pm.session import ConfigError, Host, HostProcess, Mode, SessionError
+from agent_pm.session import ConfigError, Host, HostProcess, Mode, Session, SessionError
 from agent_pm.session.engine import worker
 from agent_pm.session.engine.types import Blocked, Exited, IdleTimeout, Reply
 from agent_pm.session.engine.worker import Worker, WorkerState
@@ -72,6 +73,7 @@ class Base(Case):
         self.session_cls.host.return_value = self.host
         self.session = self.session_cls.start.return_value
         self.session.displayable = False
+        self.session.opening_pending = None
         self.session.events.return_value = iter([IdleTimeout(worker.EARLY)])
         self.order.attach_mock(self.session_cls.retire, "retire")
         self.order.attach_mock(self.session_cls.start, "start")
@@ -160,7 +162,7 @@ class StartTest(Base):
         saved = Worker.load("w1")
         self.assertEqual(saved.state, state(token="/tmp/apm-group-1"))
         _, kwargs = self.session_cls.start.call_args
-        self.assertEqual(kwargs, {"display": "mgr", "host": "tmux", "idle_timeout": worker.EARLY})
+        self.assertEqual(kwargs, {"display": "mgr", "host": "tmux", "idle_timeout": worker.TICK})
 
     def test_a_dialog_ends_the_watch_at_once_and_still_publishes(self):
         self.session.events.return_value = iter([Reply("x"), Blocked("Edit"), Exited(1)])
@@ -245,6 +247,82 @@ class StartTest(Base):
         self.session.close.assert_called_once_with()
         self.handle.publish.assert_not_called()
         self.assertFalse(os.path.exists(state_path()))
+
+
+class ColorWatchTest(Base):
+    UNSET = "session w1: color not set: {}; agent-pm-session send w1 '/color'"
+
+    def watch(self, sent: float, events=None, text="/color") -> int:
+        """Starts w1 on a clock ticking 1 s per call, its opening `text` pending until tick
+        `sent`; the ticks used. opening_pending's call count varies by Python (3.11's isinstance
+        calls it).
+        """
+        ticks = itertools.count()
+        now = [0]
+
+        def tick():
+            now[0] = next(ticks)
+            return now[0]
+
+        type(self.session).opening_pending = mock.PropertyMock(
+            side_effect=lambda: text if now[0] < sent else None
+        )
+        self.session.events.return_value = events or itertools.repeat(IdleTimeout(worker.TICK))
+        Worker(state(), session_cls=self.session_cls, say=self.said.append, clock=tick).start(
+            prompt="", resume=False
+        )
+        return next(ticks)
+
+    def test_sent_by_the_early_deadline_returns_at_it(self):
+        self.assertEqual(self.watch(0), worker.EARLY + 1)
+        self.assertEqual(self.said, [])
+        self.handle.publish.assert_called_once()
+
+    def test_pending_keeps_watching_until_sent(self):
+        self.assertEqual(self.watch(8), 9)
+        self.assertEqual(self.said, [])
+        self.handle.publish.assert_called_once()
+
+    def test_pending_at_the_cap_says_color_not_set(self):
+        self.assertEqual(self.watch(float("inf")), worker.COLOR_CAP + 1)
+        self.assertEqual(self.said, [self.UNSET.format("not ready within 15 s")])
+        self.handle.publish.assert_called_once()
+
+    def test_a_dialog_while_pending_says_both(self):
+        self.watch(float("inf"), events=iter([Blocked("Trust")]))
+        self.assertEqual(
+            self.said,
+            ["session w1: waits on a dialog: Trust", self.UNSET.format("waits on a dialog")],
+        )
+        self.handle.publish.assert_called_once()
+
+    def test_the_line_names_the_pending_text(self):
+        self.watch(float("inf"), text="/x 'y'")
+        self.assertEqual(
+            self.said,
+            [
+                "session w1: color not set: not ready within 15 s; "
+                "agent-pm-session send w1 '/x '\\''y'\\'''"
+            ],
+        )
+
+    def test_an_exit_while_pending_fails_without_the_color_line(self):
+        with self.assertRaises(SessionError):
+            self.watch(float("inf"), events=iter([Exited(1)]))
+        self.assertEqual(self.said, [])
+        self.handle.publish.assert_not_called()
+
+    def test_a_session_without_an_opening_returns_at_the_early_deadline(self):
+        plain = mock.create_autospec(Session, instance=True)
+        plain.displayable = False
+        plain.events.return_value = itertools.repeat(IdleTimeout(worker.TICK))
+        self.session_cls.start.return_value = plain
+        ticks = itertools.count()
+        Worker(
+            state(), session_cls=self.session_cls, say=self.said.append, clock=lambda: next(ticks)
+        ).start(prompt="", resume=False)
+        self.assertEqual(next(ticks), worker.EARLY + 1)
+        self.assertEqual(self.said, [])
 
 
 class LoadTest(Base):

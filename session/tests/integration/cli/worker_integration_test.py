@@ -1,7 +1,7 @@
 """agent-pm-session's worker lifecycle through bin/agent-pm-session on a private tmux server: the
 client's exact cwd, argv and env from start (Q03), reply from another process (Q09), a client
-that exits at once (Q10, D3), and a start whose early watch ends on a dialog (a Claude hook, the
-Codex trust screen).
+that exits at once (Q10, D3), a start whose early watch ends on a dialog (a Claude hook, the
+Codex trust screen), and a Claude start's /color: quiet once sent, said when a dialog holds it.
 """
 
 import json
@@ -9,11 +9,14 @@ import os
 import shutil
 import tempfile
 
+from session.tests import live_tmux
 from session.tests.case import REPO
 from session.tests.cli_support import MANAGER, WorkerCase, logged
 from session.tests.integration.adapters.codex import fake_tui
 
 PERMISSION = {"kind": "hook", "event": "PermissionRequest", "tool_name": "Edit"}
+TRUST = "Quick safety check: Is this a project you created or one you trust? 1. Yes, I trust this folder 2. No, exit"
+ATTACH = "session w1: tmux attach -t '=w1'"
 
 
 class StartArgvTest(WorkerCase):
@@ -165,3 +168,37 @@ class DialogTest(WorkerCase):
         self.assertIn("session w1: waits on a dialog: Trust this folder?", res.stderr.splitlines())
         self.wait_event("w1", "blocked", events=events)
         self.assertEqual(self.server.option("w1", "@state"), "blocked")
+
+
+class ColorTest(WorkerCase):
+    def test_start_colors_quietly(self):
+        res = self.start("w1")
+        self.assertEqual((self.record(res).name, res.stderr), ("w1", ATTACH + "\n"))
+        (call,) = self.calls("w1")
+        colored = live_tmux.wait(lambda: self.commands("w1"), what="w1's /color")
+        self.assertEqual(
+            [(c["pid"], c["line"], c["dialog"]) for c in colored], [(call["pid"], "/color", False)]
+        )
+
+    def test_exit_after_color_still_fails_start(self):
+        res = self.start("w1", steps=[{"kind": "sleep", "seconds": 3}, {"kind": "exit"}])
+        self.assertEqual((res.returncode, res.stdout), (1, ""), res.stderr)
+        lines = res.stderr.splitlines()
+        head = "agent-pm-session: w1: claude exited 0 at once; its last lines:"
+        self.assertIn(head, lines, res.stderr)
+        self.assertEqual(lines[: lines.index(head)], [ATTACH], res.stderr)
+        self.assertIn("/color", lines[lines.index(head) + 1 :])
+        self.assertEqual(self.ok(self.session("ls", "--records")).stdout, "")
+
+    def test_dialog_start_says_color_not_set(self):
+        res = self.start("w1", steps=[{"kind": "dialog", "text": TRUST}, "Trusted."])
+        self.assertEqual(self.record(res).name, "w1")
+        self.assertEqual(
+            res.stderr.splitlines(),
+            [
+                ATTACH,
+                "session w1: waits on a dialog: Quick safety check",
+                "session w1: color not set: waits on a dialog; agent-pm-session send w1 '/color'",
+            ],
+        )
+        self.assertEqual(self.commands("w1"), [])

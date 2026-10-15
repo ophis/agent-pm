@@ -109,6 +109,11 @@ class Runtime(ABC):
         selected execution Host; display: a tui session's, kept as given (other Runtimes refuse one).
         """
 
+    @property
+    def opening_pending(self) -> str | None:
+        """The launch input not yet sent (tui only), else None."""
+        return None
+
     @abstractmethod
     def poll(self, timeout: float) -> tuple[list[SessionEvent | Stderr | ClientBound], bool]:
         """Events within `timeout` s and whether they ended; raises the Runtime's own failures."""

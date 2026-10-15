@@ -128,10 +128,24 @@ class TuiArgvTest(Base):
         for kind in ClaudeTui.hooks.values():
             self.assertIs(type(kind), HookKind)
         hooks = json.loads(self.tui(config={}).argv[6])["hooks"]
-        self.assertEqual(list(hooks), list(HOOKS))
+        self.assertEqual(list(hooks), [*HOOKS, "SessionStart"])
         for label, entries in hooks.items():
             with self.subTest(label=label):
                 self.assertEqual(shlex.split(entries[0]["hooks"][0]["command"]), [*HOOK, label])
+
+    def test_session_start_hook_outside_hooks(self):
+        self.assertEqual(ClaudeTui.opening, ("SessionStart", "/color"))
+        self.assertNotIn("SessionStart", ClaudeTui.hooks)
+        (entry,) = json.loads(self.tui(config={}).argv[6])["hooks"]["SessionStart"]
+        self.assertEqual(entry["matcher"], "^(startup|resume)$")
+        for source, hit in (
+            ("startup", True),
+            ("resume", True),
+            ("clear", False),
+            ("compact", False),
+        ):
+            with self.subTest(source=source):
+                self.assertEqual(re.search(entry["matcher"], source) is not None, hit)
 
     def test_the_notification_matcher_takes_only_the_types_waiting_on_the_user(self):
         for kind, hit in ((k, k in WAITING) for k in (*WAITING, *NOT_WAITING)):
@@ -312,7 +326,7 @@ class SessionTuiTest(Base):
             "hooks": {
                 **TUI_HOOKS,
                 "PostToolUse": [mine, *TUI_HOOKS["PostToolUse"]],
-                "SessionStart": [mine],
+                "SessionStart": [mine, *TUI_HOOKS["SessionStart"]],
             },
         }
         for flags in (

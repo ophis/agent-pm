@@ -116,12 +116,13 @@ class JsonHeadless(Headless):
 class Tui(ABC):
     hooks: Mapping[str, HookKind] = MappingProxyType({})  # hook label → its kind
     dialogs: tuple[str, ...] = ()
+    opening: tuple[str, str] | None = None  # (hook label, text)
     client = ""  # last ClientBound's id
 
     @abstractmethod
     def launch(self, spec: Spec, hook: tuple[str, ...]) -> Launch:
-        """As Headless.launch, plus each label L of `hooks` as a hook running `hook + (L,)`, its
-        payload on stdin.
+        """As Headless.launch, plus each label L of `hooks` and `opening` as a hook running
+        `hook + (L,)`, its payload on stdin.
         """
 
     def commit(self) -> None:
