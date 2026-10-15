@@ -663,7 +663,7 @@ class Configures(Base):
         for text, want in (
             (
                 '[delegates]\nharness_host = "nope"\n',
-                "delegate: [delegates] harness_host: want one of tmux",
+                "delegate: [delegates] harness_host: want one of pty, tmux",
             ),
             (
                 "[delegates]\nkind = 1\n",
