@@ -25,6 +25,7 @@ import unittest
 
 from agent_pm.delegate import DelegateEvent
 from agent_pm.delegate.engine.types import Layout
+from agent_pm.session import SIGNALS
 from agent_pm.utils import Record
 
 from delegate.tests.case import PY, PYTHONPATH, Case
@@ -370,13 +371,35 @@ class Headless(Detach):
         self.assertEqual(self.ended(), ["outcome error", "exited 143"])
         for pid in ("pid", "grandchild"):
             live_tmux.wait(lambda pid=pid: not running(blocked[pid]), WAIT, what=f"{pid} gone")
-        events = [DelegateEvent.parse(entry["line"]) for entry in self.delivered()]
+        entries = self.delivered()
+        events = [DelegateEvent.parse(entry["line"]) for entry in entries]
         self.assertEqual([event.kind for event in events], ["begun", "progress", "finished"])
         finished = events[-1]
         self.assertEqual(
             (finished.kind, finished.returncode, finished.outcome, finished.error),
             ("finished", 143, None, "stopped: Stopped: 143"),
         )
+        self.assertFalse(set(entries[-1]["sigmask"]) & set(SIGNALS), entries[-1]["sigmask"])
+
+    def test_a_sigkilled_harness_leaves_its_callback_group_until_resume_kills_it_first(self):
+        res = self.detach(*self.on_event("--block", "progress:1"), steps=[START, block(DONE)])
+        self.said(res, tui=False)
+        (blocked,) = live_tmux.wait(
+            lambda: [e for e in self.delivered() if json.loads(e["line"])["kind"] == "progress"],
+            WAIT,
+            what="the blocked progress callback",
+        )
+        os.kill(blocked["ppid"], signal.SIGKILL)
+        self.until(lambda: not self.live(HARNESS), f"{HARNESS} gone")
+        self.assertTrue(all(running(blocked[pid]) for pid in ("pid", "grandchild")))
+        resumed = self.cli([*RESUME, self.work])
+        self.assertEqual(resumed.returncode, 0, resumed.stderr)
+        self.assertFalse(any(running(blocked[pid]) for pid in ("pid", "grandchild")))
+        self.until(lambda: "result" in self.kinds(), "the resumed run's result")
+        self.assertEqual(self.last("result")["outcome"]["status"], "done")
+        with open(os.path.join(Layout(self.work).run, "delegate.json")) as f:
+            self.assertEqual(json.load(f)["attempt"], 2)
+        self.until(lambda: not self.live(HARNESS), f"the resumed {HARNESS} gone")
 
     def test_the_launchers_events_file_gets_one_outcome_line(self):
         res = self.detach(steps=[START, block(DONE)], launcher=True)

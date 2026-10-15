@@ -2,14 +2,16 @@
 holds no launcher variable; a run's state lives only in its run dir, which counts attempts, and a
 refused start creates nothing; preview and instruct write no state; owner overlays shape its run;
 resume continues a run in the mode it records or in the one it is given, and a run whose process
-died, its tui agent session left open, at once; checkouts lists its agent dir's real checkouts and
-clean deletes that dir, refusing a live run or a dir out of place.
+died, its tui agent session left open, at once; replace, resume and detach first kill the callback
+group a dead harness left; checkouts lists its agent dir's real checkouts and clean deletes that
+dir, refusing a live run or a dir out of place.
 """
 
 import fcntl
 import json
 import os
 import shutil
+import signal
 from unittest import mock
 
 from agent_pm.delegate import ConfigError, Finished, Result, Spec
@@ -29,6 +31,9 @@ from delegate.tests.fakes.harness_session import (
     harness_launches,
 )
 from delegate.tests.harness import SID, HarnessCase
+from delegate.tests.unit.engine.orphans import Clock, Orphan
+
+ORPHAN = 4242
 
 
 class CloseTest(HarnessCase):
@@ -604,3 +609,98 @@ class CrashTest(HarnessCase):
         self.assertEqual(view.session_info(), HarnessSession.history)
         (inspected,) = HarnessSession.inspected
         self.assertEqual((inspected.sid, inspected.mode, inspected.client), (SID, "tui", "fake"))
+
+
+class SweepTest(HarnessCase):
+    """A callback group left by a dead harness (orphans.Orphan) is killed before anything starts."""
+
+    def setUp(self):
+        super().setUp()
+        Clock(self)
+        self.killpg = self.enterContext(mock.patch("os.killpg"))
+        self.seen = []
+
+    def orphan(self) -> Orphan:
+        orphan = Orphan(self, RunState(Layout(self.work)).callback_lock, f"{ORPHAN}\n")
+
+        def killpg(pid, signum):
+            if signum == signal.SIGKILL:
+                self.seen.append((self.metadata()["attempt"], len(harness_launches())))
+            orphan.killpg(pid, signum)
+
+        self.killpg.side_effect = killpg
+        return orphan
+
+    def record(self) -> bytes:
+        with open(self.state_record(), "rb") as file:
+            return file.read()
+
+    def kills(self, orphan) -> list:
+        return [call for call in orphan.calls if call[1] == signal.SIGKILL]
+
+    def test_a_new_run_kills_the_left_group_before_its_record_replaces_the_old(self):
+        self.make()
+        orphan = self.orphan()
+        self.make()
+        self.assertEqual(self.kills(orphan), [(ORPHAN, signal.SIGKILL)])
+        self.assertEqual(self.seen, [(1, 0)])
+        self.assertEqual(self.metadata()["attempt"], 2)
+
+    def test_resume_kills_the_left_group_before_it_launches_a_harness(self):
+        view = self.crashed()
+        orphan = self.orphan()
+        launches = len(harness_launches())
+        view.resume()
+        self.assertEqual(self.seen, [(1, launches)])
+        self.assertEqual(len(harness_launches()), launches + 1)
+        self.assertEqual(self.kills(orphan), [(ORPHAN, signal.SIGKILL)])
+
+    def test_detach_kills_the_left_group_before_it_launches_a_harness(self):
+        delegate = self.make()
+        orphan = self.orphan()
+        delegate.detach()
+        self.assertEqual(self.seen, [(1, 0)])
+        self.assertEqual(len(harness_launches()), 1)
+        self.assertEqual(self.kills(orphan), [(ORPHAN, signal.SIGKILL)])
+
+    def test_a_group_that_will_not_end_refuses_each_start_changing_nothing(self):
+        view = self.crashed()
+        orphan = self.orphan()
+        orphan.dies = False
+        before, launches = self.record(), len(harness_launches())
+        left = HarnessSession.live[self.metadata()["agent_name"]]
+        for start in (view.resume, HarnessDelegate.attach(self.work).detach, self.make):
+            with self.subTest(start=start), self.assertRaisesRegex(ConfigError, "still exists"):
+                start()
+            self.assertEqual((self.record(), len(harness_launches())), (before, launches))
+            if start == view.resume:
+                self.assertEqual(left.state(), Liveness.LIVE)
+
+    def test_a_held_run_lock_refuses_a_new_run_though_its_record_says_completed(self):
+        self.make().run()
+        self.assertTrue(self.metadata()["completed"])
+        self.orphan()
+        before = self.record()
+        with (
+            RunState(Layout(self.work)).run_lock(),
+            self.assertRaisesRegex(ConfigError, "delegate is still alive"),
+        ):
+            self.make()
+        self.killpg.assert_not_called()
+        self.assertEqual(self.record(), before)
+
+    def crashed(self) -> HarnessDelegate:
+        """A tui run whose harness died, its agent session left live."""
+        spec = Spec("input", self.work, mode="tui", client="fake", sid=SID)
+        self.make(spec=spec)
+        state = self.metadata()
+        agent = SessionSpec(
+            workdir=self.work,
+            access=Access(cwd=self.work),
+            client="fake",
+            mode=Mode.TUI,
+            sid=SID,
+            name=state["agent_name"],
+        )
+        HarnessSession.start(agent, host=state["host"])
+        return HarnessDelegate.attach(self.work, session_cls=HarnessSession)

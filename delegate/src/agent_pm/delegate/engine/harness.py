@@ -4,7 +4,8 @@ appends the run's one events outcome line.
 
 Exits 0 on a valid outcome, 1 without one, 2 when the run is refused (usage, its state, config),
 128 + n on signal n. Host.detach starts it with SIGNALS blocked; they are unblocked only while the
-run executes, so a late signal cannot drop the outcome line.
+run executes, so a late signal cannot drop the outcome line. The first stop signal ignores later
+ones instead of blocking them, since a callback started afterwards would inherit a blocked mask.
 """
 
 import signal
@@ -55,8 +56,14 @@ def _said(event: Event) -> None:
 
 
 def _stop(signum, _frame):
-    signal.pthread_sigmask(signal.SIG_BLOCK, SIGNALS)
+    for each in SIGNALS:
+        # not SIG_IGN: exec keeps an ignored disposition, it resets a handled one
+        signal.signal(each, _ignore)
     raise Stopped(128 + signum)
+
+
+def _ignore(_signum, _frame):
+    pass
 
 
 if __name__ == "__main__":
