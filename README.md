@@ -110,7 +110,6 @@ Nothing checks these. A missing one fails the agent run.
 | Requirement | For |
 |---|---|
 | `claude` CLI, Python 3.11+, the `autopilot` plugin | every agent run |
-| `superpowers` plugin | the `build` task |
 | tmux 3.3+ | tui runs on the `tmux` Host |
 | `git`, `gh` logged in | checkouts, GitHub and pull-request destinations |
 | iTerm2 running | the default iTerm2 split |
