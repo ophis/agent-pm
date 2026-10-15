@@ -150,6 +150,7 @@ class PruneScenario(Case):
             task_labels={},
             roles={},
             project_repos={},
+            project_reads={},
             local_clones={},
             work_dir=self.root,
             docs=config.Docs("", "", {}),

@@ -106,6 +106,16 @@ max_runs = 3
 # local: [linear_orchestrator.project_repos]
 # local: "00000000-0000-0000-0000-000000000000" = "<owner>/<name>"
 
+# Project read dirs; optional.
+#   "<project id>"  local: ["<path>", …] (absolute or ~): dirs every agent run on the Linear project's issues may read,
+#                   read-only (agent-pm-delegate run --read; delegate/config.toml's Roles `read`), any role: their
+#                   content can reach its report, PRD or PR. Each must be a dir, else load() stops; a path its client
+#                   refuses (delegate/config.toml's Roles `read`) fails the claim; empty table → none
+[project_reads]
+
+# local: [linear_orchestrator.project_reads]
+# local: "00000000-0000-0000-0000-000000000000" = ["~/docs/<name>"]
+
 # Local clones; optional, an unlisted repo gets a fresh clone.
 #   "<owner>/<name>"  local: "<path>" (absolute or ~) of the repo's local clone. The input's Repo: line names the path,
 #                     so the agent run gets a git worktree of the clone; load() checks it is a clone of that

@@ -33,6 +33,7 @@ class HarnessRun(HarnessCase):
             task_labels={},
             roles={},
             project_repos={},
+            project_reads={},
             local_clones={},
             work_dir=os.path.join(self.home, "pipeline"),
             docs=Docs("", "", {}),

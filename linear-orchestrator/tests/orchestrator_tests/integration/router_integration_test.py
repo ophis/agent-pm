@@ -338,6 +338,19 @@ class Router(TmuxFlow):
         self.assertIn(f"\n\n{LONG}\n\n", self.input(sid))
         self.assert_built(sid)
 
+    def test_project_read_dirs_reach_the_run(self):
+        material = os.path.join(self.root, "material")
+        os.mkdir(material)
+        with open(os.path.join(self.agent_pm, "config.local.toml"), "a") as f:
+            f.write(f'\n[linear_orchestrator.project_reads]\n"{PROJECT["id"]}" = ["{material}"]\n')
+        self.scene([START, DONE])
+        sid = self.claim()
+        self.wait_end(sid, ID)
+        [call] = agent_calls(self.calls())
+        self.assertIn(f"Read(/{material}/**)", call["argv"])
+        self.assertIn(f"- `<read dirs>`: `{material}`\n", call["argv"][-1])
+        self.assert_built(sid)
+
     def test_a_sigtermed_run_ends_its_run_and_its_agent(self):
         self.scene([START], hang=True)
         sid = self.claim()

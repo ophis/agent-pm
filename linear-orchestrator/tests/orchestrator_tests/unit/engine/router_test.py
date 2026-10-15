@@ -2152,6 +2152,16 @@ class RunLaunching(OuterBase):
         )
         self.assertEqual((self.err, self.said()), ("", []))
 
+    def test_project_read_dirs_reach_the_run(self):
+        material = os.path.join(self.home, "material")
+        os.mkdir(material)
+        other = "00000000-0000-4000-8000-000000000099"
+        for project, want in ((PROJECT, (material,)), (other, ())):
+            with self.subTest(project=project):
+                self.write_config(OUTER + f'[project_reads]\n"{project}" = ["{material}"]\n')
+                self.assertEqual(self.outer(), 0)
+                self.assertEqual(self.detached(), replace(self.expected(), read=want))
+
     def test_a_given_task_reaches_the_run(self):
         self.assertEqual(self.outer(task="light-build"), 0)
         self.assertEqual(self.detached(), self.expected(task="light-build"))

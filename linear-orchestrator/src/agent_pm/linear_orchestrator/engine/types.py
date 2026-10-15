@@ -39,6 +39,7 @@ class Config:
     task_labels: Mapping[str, str]
     roles: Mapping[str, Role]
     project_repos: Mapping[str, str]
+    project_reads: Mapping[str, tuple[str, ...]]
     local_clones: Mapping[str, str]
     work_dir: str
     docs: Docs

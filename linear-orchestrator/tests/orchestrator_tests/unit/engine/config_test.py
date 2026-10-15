@@ -143,6 +143,7 @@ DEPLOYMENT = {
     "task_label_group",
     "task_labels",
     "project_repos",
+    "project_reads",
     "local_clones",
     "work_dir",
 }
@@ -322,6 +323,50 @@ class ConfigurationLoading(ConfigFile, Case):
             with self.subTest(message, text=text):
                 self.fails("linear-orchestrator/config.toml: " + message, text)
 
+    def test_project_reads_load_expanded_in_order_without_duplicates(self):
+        a, b = os.path.join(self.home, "a"), os.path.join(self.home, "b c")
+        for d in (a, b):
+            os.mkdir(d)
+        cfg = self.load(
+            PIPELINE + f'[project_reads]\n"{P1}" = ["{b}", "~/a", "{a}/"]\n"{P2}" = []\n'
+        )
+        self.assertEqual(cfg.project_reads, {P1: (b, a), P2: ()})
+
+    def test_bad_project_reads_rejected(self):
+        a_file = os.path.join(self.home, "file")
+        write(a_file, "")
+        missing = os.path.join(self.home, "missing")
+        prefix = "linear-orchestrator/config.toml: project_reads"
+        for text, message in (
+            (
+                HEADER + 'project_reads = "x"\n' + BASE[BASE.index("[roles") :],
+                f'{prefix} must be a table of "<Linear project id>" = ["<path>", …]',
+            ),
+            *[
+                (
+                    BASE + f'[project_reads]\n"{key}" = {json.dumps(value)}\n',
+                    f"{prefix}.{key} must map a Linear project id (UUID) to a list of printable "
+                    f"paths starting with / or ~: {value!r}",
+                )
+                for key, value in (
+                    ("not-a-uuid", ["/x"]),
+                    (P1, "/x"),
+                    (P1, [42]),
+                    (P1, ["x"]),
+                    (P1, ["/x\ny"]),
+                )
+            ],
+            *[
+                (
+                    PIPELINE + f'[project_reads]\n"{P1}" = ["{path}"]\n',
+                    f"{prefix}.{P1}: {path} is not a directory",
+                )
+                for path in (missing, a_file)
+            ],
+        ):
+            with self.subTest(message):
+                self.fails(message, text)
+
     def test_bad_table_entry_rejected(self):
         cases = [
             ("project_repos", key, value)
@@ -379,9 +424,10 @@ class ConfigurationLoading(ConfigFile, Case):
             ("pm@agents.test", "linear-api-key-pm", "engineer", 1, True),
         )
         self.assertEqual(
-            (cfg.task_labels, cfg.project_repos, cfg.local_clones, cfg.human_members),
-            ({}, {}, {}, ()),
+            (cfg.task_labels, cfg.project_repos, cfg.project_reads, cfg.local_clones),
+            ({}, {}, {}, {}),
         )
+        self.assertEqual(cfg.human_members, ())
         cfg = self.load(
             PIPELINE.replace(
                 role("engineer"), role("engineer", "max_runs = 3", "require_instructions = false")
@@ -417,6 +463,7 @@ class ConfigurationLoading(ConfigFile, Case):
             "roles",
             "task_labels",
             "project_repos",
+            "project_reads",
             "local_clones",
             "stages",
             "delegates",
@@ -484,7 +531,9 @@ class CommittedConfiguration(Case):
                 **dict.fromkeys(("team", "harness_key", "task_label_group"), ""),
                 "states": dict.fromkeys(State, ""),
                 "human_members": [],
-                **dict.fromkeys(("task_labels", "project_repos", "local_clones"), {}),
+                **dict.fromkeys(
+                    ("task_labels", "project_repos", "project_reads", "local_clones"), {}
+                ),
                 "work_dir": "~/.agent-pm",
             },
         )

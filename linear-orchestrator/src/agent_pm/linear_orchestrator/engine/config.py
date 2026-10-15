@@ -39,6 +39,7 @@ TOP_KEYS = {
     "task_labels",
     "roles",
     "project_repos",
+    "project_reads",
     "local_clones",
     "core",
     "work_dir",
@@ -200,7 +201,7 @@ def _load(cfg, work):
     docs = _docs(roles, LOCAL)
     frozen = {
         k: MappingProxyType(dict(cfg[k]))
-        for k in ("states", "task_labels", "project_repos", "local_clones")
+        for k in ("states", "task_labels", "project_repos", "project_reads", "local_clones")
     }
     return Config(
         team=cfg["team"],
@@ -214,6 +215,7 @@ def _load(cfg, work):
         states=frozen["states"],
         task_labels=frozen["task_labels"],
         project_repos=frozen["project_repos"],
+        project_reads=frozen["project_reads"],
         local_clones=frozen["local_clones"],
         delegate_kind=kind,
         delegates=MappingProxyType(delegates),
@@ -288,6 +290,7 @@ def _load_config(cfg, local):
     _role_fields(cfg)
     _next_chains(cfg["roles"])
     _project_repos(cfg)
+    _project_reads(cfg)
     _local_clones(cfg)
     _work_dir(cfg, cfg["local_clones"])
     _task_labels(cfg)
@@ -335,6 +338,24 @@ def _project_repos(cfg):
             raise ConfigError(
                 f"linear-orchestrator/config.toml: project_repos.{k} must map a Linear project id (UUID) to <owner>/<name>: {v!r}"
             )
+
+
+def _project_reads(cfg):
+    projects = cfg.setdefault("project_reads", {})
+    if not isinstance(projects, dict):
+        raise ConfigError(
+            'linear-orchestrator/config.toml: project_reads must be a table of "<Linear project id>" = ["<path>", …]'
+        )
+    for k, v in projects.items():
+        if not (
+            _uuid(k)
+            and isinstance(v, list)
+            and all(isinstance(p, str) and p.startswith(("/", "~")) and p.isprintable() for p in v)
+        ):
+            raise ConfigError(
+                f"linear-orchestrator/config.toml: project_reads.{k} must map a Linear project id (UUID) to a list of printable paths starting with / or ~: {v!r}"
+            )
+        projects[k] = tuple(dict.fromkeys(os.path.abspath(os.path.expanduser(p)) for p in v))
 
 
 def _local_clones(cfg):
@@ -476,6 +497,11 @@ def _runnable_inputs(cfg, roles):
     for key, path in cfg["local_clones"].items():
         if reason := clone_error(path, key):
             raise ConfigError(f"linear-orchestrator/config.toml: local_clones.{key}: {reason}")
+    for key, paths in cfg["project_reads"].items():
+        if missing := next((p for p in paths if not os.path.isdir(p)), None):
+            raise ConfigError(
+                f"linear-orchestrator/config.toml: project_reads.{key}: {missing} is not a directory"
+            )
 
 
 def _docs(roles, local):

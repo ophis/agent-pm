@@ -636,6 +636,7 @@ def _outer(a, cfg, *, gql, run, keychain, now, attended):
             client=a.client,
             resume=a.mode == "resume",
             delegate_kind=kind,
+            read=cfg.project_reads.get(issue.project_id, ()),
             **(
                 {"mode": "tui", "display": attended.display, "events": attended.events}
                 if attended

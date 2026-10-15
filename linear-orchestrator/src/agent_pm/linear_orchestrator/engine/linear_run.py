@@ -32,6 +32,7 @@ class LinearRun:
         display: Display = None,
         delegate_kind: str | None = None,
         delegate_cls: type | None = None,
+        read: tuple[str, ...] = (),
     ):
         self._identity(issue, sid)
         self.issue, self.sid = issue, sid
@@ -50,6 +51,7 @@ class LinearRun:
                 name=config.tui_name(role, issue, sid),
                 events=events,
                 out=os.path.join(workdir, "out.md"),
+                read=read,
                 cwd=workdir,
             ),
             display=display,
