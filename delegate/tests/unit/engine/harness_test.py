@@ -129,9 +129,20 @@ class Entry(Case):
         self.masks.clear()
         with self.assertRaises(Stopped) as caught:
             self.handlers[signal.SIGHUP](signal.SIGHUP, None)
-        self.assertEqual(
-            (caught.exception.code, self.masks), (128 + signal.SIGHUP, [("block", SIGNALS)])
-        )
+        self.assertEqual((caught.exception.code, self.masks), (128 + signal.SIGHUP, []))
+
+    def test_a_stop_signal_leaves_signals_unblocked_and_ignores_later_ones(self):
+        self.main()
+        stop = self.handlers[signal.SIGTERM]
+        self.masks.clear()
+        with self.assertRaises(Stopped):
+            stop(signal.SIGTERM, None)
+        self.assertEqual(self.masks, [])
+        self.assertEqual(set(self.handlers), set(SIGNALS))
+        for signum in SIGNALS:
+            self.assertIsNot(self.handlers[signum], stop)
+            self.assertNotIn(self.handlers[signum], (signal.SIG_IGN, signal.SIG_DFL))
+            self.assertIsNone(self.handlers[signum](signum, None))
 
     def test_the_harness_reads_no_stdin(self):
         with mock.patch("sys.stdin", mock.Mock(read=mock.Mock(side_effect=AssertionError("read")))):

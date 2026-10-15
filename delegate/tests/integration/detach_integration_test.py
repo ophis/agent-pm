@@ -25,6 +25,7 @@ import unittest
 
 from agent_pm.delegate import DelegateEvent
 from agent_pm.delegate.engine.types import Layout
+from agent_pm.session import SIGNALS
 from agent_pm.utils import Record
 
 from delegate.tests.case import PY, PYTHONPATH, Case
@@ -370,13 +371,15 @@ class Headless(Detach):
         self.assertEqual(self.ended(), ["outcome error", "exited 143"])
         for pid in ("pid", "grandchild"):
             live_tmux.wait(lambda pid=pid: not running(blocked[pid]), WAIT, what=f"{pid} gone")
-        events = [DelegateEvent.parse(entry["line"]) for entry in self.delivered()]
+        entries = self.delivered()
+        events = [DelegateEvent.parse(entry["line"]) for entry in entries]
         self.assertEqual([event.kind for event in events], ["begun", "progress", "finished"])
         finished = events[-1]
         self.assertEqual(
             (finished.kind, finished.returncode, finished.outcome, finished.error),
             ("finished", 143, None, "stopped: Stopped: 143"),
         )
+        self.assertFalse(set(entries[-1]["sigmask"]) & set(SIGNALS), entries[-1]["sigmask"])
 
     def test_the_launchers_events_file_gets_one_outcome_line(self):
         res = self.detach(steps=[START, block(DONE)], launcher=True)
