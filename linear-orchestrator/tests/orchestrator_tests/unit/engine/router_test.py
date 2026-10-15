@@ -8,6 +8,7 @@ import json
 import os
 import re
 import sys
+import urllib.error
 from contextlib import redirect_stderr, redirect_stdout
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
@@ -15,7 +16,7 @@ from unittest import mock
 
 from agent_pm.delegate import ConfigError as DelegateConfigError
 from agent_pm.delegate import Outcome, OutcomeStatus
-from agent_pm.linear_orchestrator.engine import config, inputs, issues, ops, router, runs
+from agent_pm.linear_orchestrator.engine import client, config, inputs, issues, ops, router, runs
 from agent_pm.linear_orchestrator.engine import gate as quota
 from agent_pm.linear_orchestrator.engine.types import LinearError, Spec, Unavailable
 from agent_pm.session import ConfigError, SessionError, SessionStatus, Window
@@ -1314,6 +1315,19 @@ class RouterOutages(TickBase):
                     fake = FakeLinear([issue("TASK-1", "Todo", "researcher")])
                     self.assertEqual(self.tick(fake, *argv), 0)
                     self.assertEqual(self.launched_runs(), [("TASK-1", "new")])
+
+    def test_a_rejected_key_at_board_setup_is_one_config_error_a_day(self):
+        def unauthorized():
+            return urllib.error.HTTPError(client.URL, 401, "Unauthorized", {}, io.BytesIO())
+
+        logged = "config-error reason=linear api error: teams: HTTP 401"
+        for argv in (("--now",), ("--issue", "TASK-1")):
+            with self.subTest(argv=argv):
+                for again in (False, True):
+                    self.assertEqual(self.tick(failing(unauthorized), *argv, again=again), 1)
+                    said = [] if again else [logged]
+                    self.assertEqual((self.said(), self.raw), (said, ""))
+                    self.assertEqual((self.start.launches, self.state), ([], ""))
 
     def test_a_dry_run_prints_it_and_writes_nothing(self):
         for argv in (("--now", "--dry-run"), ("--issue", "TASK-1", "--dry-run")):
