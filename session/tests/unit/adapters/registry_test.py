@@ -361,6 +361,12 @@ class TuiTest(Base):
                         fake_adapter.FakeAdapter,
                     )
 
+    def test_an_unknown_hosts_tmux_key_is_a_config_error_naming_it(self):
+        self.configure(FAKE, {"workers_per_colum": 2})
+        self.refused(
+            "unknown key 'workers_per_colum' in [hosts.tmux]", lambda: tui(self.session_cls)
+        )
+
 
 class CountedAdapter(fake_adapter.FakeAdapter):
     built: list = []

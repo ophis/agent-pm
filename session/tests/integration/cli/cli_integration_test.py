@@ -196,6 +196,30 @@ class ConfigTest(SessionCliCase):
                 self.local_config(text)
                 self.assert_refused(self.start_w1(), f"{PROG}: config: {reason}\n")
 
+    def test_a_bad_host_or_adapter_override_exits_2_naming_its_key_before_anything_starts(self):
+        for text, reason in (
+            ('[session.hosts.tmux]\nstatus_line = "yes"\n', "status_line: want true or false"),
+            (
+                '[session.hosts.tmux]\ngrid_retile = "never"\n',
+                "grid_retile: want one of all, open-close, off",
+            ),
+            (
+                "[session.hosts.tmux]\nworkers_per_colum = 2\n",
+                "unknown key 'workers_per_colum' in [hosts.tmux]",
+            ),
+            (
+                '[session.adapters.claude]\nmodel = "opus"\n',
+                "unknown key 'model' in ClaudeAdapter's config",
+            ),
+            (
+                '[session.adapters.claude]\nflags = "--x"\n',
+                "[adapters.claude].flags must be a list of strings",
+            ),
+        ):
+            with self.subTest(config=text):
+                self.local_config(text)
+                self.assert_refused(self.start_w1(), f"{PROG}: {reason}\n")
+
     def test_malformed_toml_exits_2_with_its_reason_before_anything_starts(self):
         self.local_config("[session\n")
         result = self.start_w1()

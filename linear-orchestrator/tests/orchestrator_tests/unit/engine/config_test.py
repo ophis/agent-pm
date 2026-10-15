@@ -1208,3 +1208,26 @@ class LocalOverlay(ConfigFile, Case):
             ),
             BASE,
         )
+
+    def test_a_wrong_type_or_unknown_local_key_is_rejected_by_name(self):
+        for local, message in (
+            (
+                "harness_key = 1\n",
+                "linear-orchestrator/config.toml: harness_key must be a Keychain service name: 1",
+            ),
+            (
+                role("researcher", 'max_runs = "2"'),
+                "linear-orchestrator/config.toml: [roles.researcher] max_runs must be a whole number >= 1: '2'",
+            ),
+            (
+                "bogus = 1\n",
+                "linear-orchestrator/config.toml: ~/.agent-pm/config.local.toml: unknown key 'bogus' in [linear_orchestrator]",
+            ),
+            (
+                role("researcher", "bogus = 1"),
+                "linear-orchestrator/config.toml: [roles.researcher] has unknown keys: bogus",
+            ),
+        ):
+            with self.subTest(local=local):
+                self.local(local)
+                self.fails(message, BASE)
