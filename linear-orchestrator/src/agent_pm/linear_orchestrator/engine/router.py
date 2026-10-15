@@ -820,7 +820,8 @@ def run_issue(opts, cfg, gql, start, *, keychain, clock=datetime.now, launch_sid
             return stop
         if any(ident in ids for ids in live.values()):
             attach = LinearRun.attach(ident, cfg=cfg).attach_command()
-            print(f"router.py: {ident} has a live agent run: {attach}", file=sys.stderr)
+            shown = f": {attach}" if attach else ""
+            print(f"router.py: {ident} has a live agent run{shown}", file=sys.stderr)
             return stop
         entries = parse_log(runs)
         board = Board(gql, entries, cfg, now=now, dry=dry, keychain=keychain)

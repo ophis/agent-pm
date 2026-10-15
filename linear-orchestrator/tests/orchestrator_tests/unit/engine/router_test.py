@@ -2629,6 +2629,14 @@ class ExplicitIssueRuns(TickBase):
                         ([], SESSIONS, self.before(), []),
                     )
 
+    def test_a_live_agent_run_without_an_attach_command_is_refused_without_one(self):
+        fake = FakeLinear([issue("TASK-1", "Todo", "engineer")])
+        with mock.patch.object(self.api, "attach_command", return_value=None):
+            self.assertEqual(
+                self.tick(fake, "--issue", "TASK-1", live=["agent-pm-engineer-TASK-1"]), 1
+            )
+        self.assertEqual(self.err, "router.py: TASK-1 has a live agent run\n")
+
     def test_in_progress_resumes_inside_recovers_time_windows(self):
         fake = self.fake(issue("TASK-1", "In Progress", "researcher"))
         self.resumable("TASK-1", "a", 20)
