@@ -24,7 +24,8 @@ agent-pm-linear router [--now] [--dry-run] [--issue ID] [--tui [--display D] [--
 --help        Print this; exit 0. Bad arguments exit 2.
 
 $AGENT_PM_SID (agent-pm-crew run's), read once and removed, is a new run's session id; a resume of
-another session exits 2, starting nothing (a dry run: 0).
+another session exits 2, starting nothing (a dry run: 0). Under $AGENT_PM_AGENT_SESSION, a tick and
+--issue (not --dry-run, --brake) exit 2, starting nothing.
 
 Events go to orchestrator.jsonl (event_log.log, src router); an idle tick writes none, a usage-blocked
 one only its usage-skip lines."""
