@@ -1,8 +1,9 @@
 """bin/agent-pm-session as installed, run from an unrelated cwd with no PYTHONPATH (Q01): --help's
 subcommands and each configured Host's display help; usage errors exit 2 on stderr alone and start
 nothing; no default client (D1); the client sees the wrapper's bin dir first on PATH and gets
-arguments with spaces verbatim. Its config (Q02): a local overlay is honoured; a bad config or an
-unknown client exits 2 with the reason on stderr before anything starts.
+arguments with spaces verbatim; inside an agent session every start command exits 2. Its config
+(Q02): a local overlay is honoured; a bad config or an unknown client exits 2 with the reason on
+stderr before anything starts.
 """
 
 import os
@@ -67,6 +68,21 @@ class SessionCliCase(CliCase):
         return self.session(
             "start", "w1", "--client", "claude", "--cwd", self.cwd, **self.scene("w1")
         )
+
+
+class InsideAnAgentSessionTest(SessionCliCase):
+    def test_each_start_command_exits_2_before_anything_starts_and_the_rest_run(self):
+        refused = (
+            f"{PROG}: refused inside an agent session agent-pm started ($AGENT_PM_AGENT_SESSION "
+            "is set): only a client you start starts sessions and runs\n"
+        )
+        marked = {"AGENT_PM_AGENT_SESSION": "1"}
+        start = ("start", "w1", "--client", "claude", "--cwd", self.cwd)
+        for argv in (start, ("restart", "w1"), ("resume", "w1"), ("client-resume", "claude", "x")):
+            with self.subTest(argv=argv):
+                self.assert_refused(self.session(*argv, **marked, **self.scene("w1")), refused)
+        self.ok(self.session("--help", **marked))
+        self.assertEqual(self.ok(self.session("ls", **marked)).stderr, "")
 
 
 class HelpTest(SessionCliCase):

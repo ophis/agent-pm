@@ -75,7 +75,7 @@ def clean_env(base=None, *import_roots):
         key: value
         for key, value in source.items()
         if not key.startswith(("GIT_", "PYTHON"))
-        and key not in {"TMUX", "TMUX_PANE", "TMUX_TMPDIR"}
+        and key not in {"TMUX", "TMUX_PANE", "TMUX_TMPDIR", "AGENT_PM_AGENT_SESSION"}
     }
     env.update(GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM="1")
     env["TMUX_TMPDIR"] = _tmux_directory()

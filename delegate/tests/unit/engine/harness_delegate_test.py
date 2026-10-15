@@ -385,6 +385,12 @@ class LaunchTest(HarnessCase):
             self.assertNotIn(name, environment)
         self.assertEqual(environment["KEPT"], "kept")
 
+    def test_the_harness_is_no_agent_session_so_carries_no_marker(self):
+        with mock.patch.dict(os.environ):
+            os.environ.pop("AGENT_PM_AGENT_SESSION", None)
+            self.make().detach()
+        self.assertNotIn("AGENT_PM_AGENT_SESSION", RecordingHost.launches[0]["env"])
+
 
 class SaveFailureTest(HarnessCase):
     def test_a_failed_result_save_still_hands_on_the_runs_real_finished(self):

@@ -11,7 +11,7 @@ from agent_pm.utils.config_file import (
     unset,
 )
 from agent_pm.utils.config_file import load as load_config
-from agent_pm.utils.environment import LEASE_ENV, environment_ok
+from agent_pm.utils.environment import AGENT_SESSION_ENV, LEASE_ENV, environment_ok, nested_start
 from agent_pm.utils.files import (
     ConfinedFileError,
     ConfinedReason,
@@ -73,6 +73,7 @@ from agent_pm.utils.shell import (
 from agent_pm.utils.text import one_line, parse_time, printable, sid_error, timestamp
 
 __all__ = [
+    "AGENT_SESSION_ENV",
     "CLASS_PATH",
     "CONFIG_NAME",
     "ConfigFileError",
@@ -116,6 +117,7 @@ __all__ = [
     "load_class",
     "load_config",
     "module_roots",
+    "nested_start",
     "number",
     "one_line",
     "origin",

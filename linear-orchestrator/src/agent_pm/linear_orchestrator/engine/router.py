@@ -24,7 +24,8 @@ agent-pm-linear router [--now] [--dry-run] [--issue ID] [--tui [--display D] [--
 --help        Print this; exit 0. Bad arguments exit 2.
 
 $AGENT_PM_SID (agent-pm-crew run's), read once and removed, is a new run's session id; a resume of
-another session exits 2, starting nothing (a dry run: 0).
+another session exits 2, starting nothing (a dry run: 0). Under $AGENT_PM_AGENT_SESSION, a tick and
+--issue (not --dry-run, --brake) exit 2, starting nothing.
 
 Events go to orchestrator.jsonl (event_log.log, src router); an idle tick writes none, a usage-blocked
 one only its usage-skip lines."""
@@ -78,7 +79,7 @@ from agent_pm.linear_orchestrator.engine.types import (
     Transient,
     Unavailable,
 )
-from agent_pm.utils import one_line, parse_time
+from agent_pm.utils import nested_start, one_line, parse_time
 
 STALE = timedelta(hours=2)
 LIVE = timedelta(minutes=30)
@@ -923,6 +924,10 @@ def main(
     opts = options(argv)
     if opts is None:
         print(USAGE, file=sys.stderr)
+        return 2
+    starts = opts["brake"] is None and not opts["dry"]
+    if starts and (refused := nested_start()):
+        print(f"router.py: {refused}", file=sys.stderr)
         return 2
     if opts["issue"] is not None and not re.fullmatch(ISSUE_ID, opts["issue"]):
         print(f"router.py: bad issue id: {opts['issue']}", file=sys.stderr)

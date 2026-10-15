@@ -28,7 +28,13 @@ from agent_pm.session.engine.types import (
     Stderr,
 )
 from agent_pm.session.hosts.base import Host
-from agent_pm.utils import LEASE_ENV, Display, command_path
+from agent_pm.utils import (
+    AGENT_SESSION_ENV,
+    LEASE_ENV,
+    Display,
+    command_path,
+    nested_start,
+)
 
 START_SID = "AGENT_PM_SID"
 
@@ -36,11 +42,11 @@ EVENTS = "AGENT_PM_EVENTS"
 
 
 def child_env(launch: Launch, cwd: str, drop: Collection[str] = ()) -> dict[str, str]:
-    """The environment less drop and unset, then the launch env and PWD; PATH led by the running
-    plugin's bin/, where PATH finds COMMAND (FR-32), when it does.
+    """The environment less drop and unset, then the launch env, PWD and AGENT_SESSION_ENV; PATH
+    led by the running plugin's bin/, where PATH finds COMMAND (FR-32), when it does.
     """
     env = {k: v for k, v in os.environ.items() if k not in drop and k not in launch.unset}
-    env = {**env, **launch.env, "PWD": cwd}
+    env = {**env, **launch.env, "PWD": cwd, AGENT_SESSION_ENV: "1"}
     command = command_path(COMMAND)
     if command is not None:
         plugin = os.path.dirname(command)
@@ -148,6 +154,8 @@ class Runtime(ABC):
 
     @staticmethod
     def _launched(spec: Spec, launch: Callable[[Spec], Launch], drop: Collection[str]) -> Prepared:
+        if refused := nested_start():
+            raise ConfigError(refused)
         if spec.sid is None:
             raise ConfigError("sid: missing")
         command = launch(spec)

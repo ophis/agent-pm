@@ -56,6 +56,19 @@ class Commands(Case):
                 self.assertIn("agent-pm-linear", output.getvalue())
 
 
+class InsideAnAgentSession(Case):
+    def test_resume_exits_2_before_config_and_status_still_runs(self):
+        with mock.patch.dict(os.environ, {"AGENT_PM_AGENT_SESSION": "1"}):
+            for command, first in (
+                ("resume", "agent-pm-linear: refused inside an agent session"),
+                ("status", "agent-pm-linear: linear-orchestrator/config.toml: required, unset:"),
+            ):
+                errors = io.StringIO()
+                with self.subTest(command=command), redirect_stderr(errors):
+                    self.assertEqual(cli.main([command, "TASK-1"]), 2)
+                self.assertTrue(errors.getvalue().startswith(first), errors.getvalue())
+
+
 DEPLOY = "/Users/francis/playground/agent-pm"
 LOG = "/Users/francis/.agent-pm/logs/orchestrator.jsonl"
 JOBS = {"router": ["--now"], "promote": []}

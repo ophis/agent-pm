@@ -4,7 +4,8 @@
 `--on-event CMD` makes the harness deliver each event to CMD (split once, never a shell). main reads
 $AGENT_PM_SID and $AGENT_PM_EVENTS once and removes them from its environment: `run`'s sid is --sid,
 else $AGENT_PM_SID (the two must agree); `resume` refuses a run of another $AGENT_PM_SID;
-`run --detach`'s events file is --events, else $AGENT_PM_EVENTS.
+`run --detach`'s events file is --events, else $AGENT_PM_EVENTS. Under $AGENT_PM_AGENT_SESSION,
+`run` (but --list and --dry-run) and `resume` refuse.
 
 Exits 0 on success, 2 on usage or config errors, 1 on other failures.
 """
@@ -23,7 +24,7 @@ from agent_pm.delegate.engine.runner import report, say
 from agent_pm.delegate.engine.types import Begun, ConfigError, Layout, Preview, Spec
 from agent_pm.session import ConfigError as SessionConfigError
 from agent_pm.session import Mode, NotDisplayable, SessionError
-from agent_pm.utils import Once, answer_keys
+from agent_pm.utils import Once, answer_keys, nested_start
 
 LIST_PARAMS = RunParams(input="", out="/agent-pm-list/work/out.md", workdir="/agent-pm-list/work")
 
@@ -55,6 +56,10 @@ def main(
     prompt = commands.add_parser("prompt", help="write a role's prompt as an instruction file")
     _common_options(prompt, out="where the prompt is written")
     a = parser.parse_args(argv)
+    starts = a.command == "resume" or (a.command == "run" and not (a.list or a.dry_run))
+    if starts and (refused := nested_start()):
+        say(f"delegate: {refused}")
+        return 2
     if a.command == "run":
         return _run(a, run, argv[1:], delegate_cls, sid=sid, events=events)
     if a.command == "prompt":

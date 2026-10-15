@@ -9,7 +9,7 @@ import os
 import tempfile
 from unittest import mock
 
-from agent_pm.session.adapters.base import Adapter
+from agent_pm.session.adapters.base import Adapter, Headless
 from agent_pm.session.adapters.codex import CodexAdapter
 from agent_pm.session.adapters.registry import Registry
 from agent_pm.session.engine.types import Access, ConfigError, Launch, Mode, Spec
@@ -36,6 +36,29 @@ IDENTITIES = {
     "OTHER_SESSION",
     "OTHER_ID",
 }
+
+
+class Launches(Headless):
+    """A headless mode recording each launch it is asked for."""
+
+    def __init__(self):
+        self.asked = []
+
+    def launch(self, spec):
+        self.asked.append(spec)
+        return Launch(("x",))
+
+    def events(self, lines):
+        return iter(())
+
+
+class HeadlessAdapter(Adapter):
+    def __init__(self, config):
+        super().__init__(config)
+        self.mode = Launches()
+
+    def headless(self):
+        return self.mode
 
 
 class NoModeAdapter(Adapter):
@@ -120,6 +143,19 @@ class RuntimeTest(Case):
             )
             self.assertEqual(recorded, [])
 
+    def test_a_start_inside_an_agent_session_is_refused_before_its_launch(self):
+        adapter, recorded = HeadlessAdapter({}), []
+        spec = Spec(workdir="/w", access=Access(cwd="/w"), client="headless", sid="s1")
+        with (
+            mock.patch.dict(os.environ, {"AGENT_PM_AGENT_SESSION": "1"}),
+            self.assertRaises(ConfigError) as caught,
+        ):
+            headless.HeadlessRuntime.start(
+                spec, adapter, registry=registry(), record=recorded.append, host=MemoryHost()
+            )
+        self.assertTrue(str(caught.exception).startswith("refused inside an agent session"))
+        self.assertEqual((adapter.mode.asked, recorded), ([], []))
+
 
 class ChildEnvTest(Case):
     def environ(self, **values):
@@ -132,7 +168,14 @@ class ChildEnvTest(Case):
         launch = Launch(("x",), env={"SET": "new", "ADDED": "1"}, unset=("UNSET",))
         self.assertEqual(
             child_env(launch, "/cwd", {"DROPPED"}),
-            {"HOME": os.environ["HOME"], "KEEP": "k", "SET": "new", "ADDED": "1", "PWD": "/cwd"},
+            {
+                "HOME": os.environ["HOME"],
+                "KEEP": "k",
+                "SET": "new",
+                "ADDED": "1",
+                "PWD": "/cwd",
+                "AGENT_PM_AGENT_SESSION": "1",
+            },
         )
         self.assertEqual(child_env(launch, "/c")["PWD"], "/c")
 
@@ -144,6 +187,18 @@ class ChildEnvTest(Case):
             {k: env[k] for k in ("KEEP", "EDITOR", "ZED", "OTHER_MODE")},
             {"KEEP": "k", "EDITOR": "vi", "ZED": "1", "OTHER_MODE": "on"},
         )
+
+    def test_every_client_carries_the_agent_session_marker_whatever_it_inherits_or_is_given(self):
+        self.assertEqual(child_env(Launch(("x",)), "/cwd")["AGENT_PM_AGENT_SESSION"], "1")
+        self.environ(AGENT_PM_AGENT_SESSION="0")
+        for launch in (
+            Launch(("x",)),
+            Launch(("x",), env={"AGENT_PM_AGENT_SESSION": ""}),
+            Launch(("x",), unset=("AGENT_PM_AGENT_SESSION",)),
+        ):
+            with self.subTest(launch=launch):
+                env = child_env(launch, "/cwd", {"AGENT_PM_AGENT_SESSION"})
+                self.assertEqual(env["AGENT_PM_AGENT_SESSION"], "1")
 
 
 class PluginPathTest(ChildEnvTest):
