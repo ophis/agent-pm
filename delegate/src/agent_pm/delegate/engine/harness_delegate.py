@@ -836,14 +836,17 @@ class HarnessDelegate(Delegate):
                     ),
                 ),
             )
-            # after the plan's checks; before preflight, which refuses the live same-named agent
             agent = self._agent(state)
-            if agent is not None:
-                agent.close()
+            probe = accepted.session
+            if agent is not None and probe.name == state.agent_name:
+                # the tui preflight refuses a live same-named session: the one this closes
+                probe = replace(probe, name=f"{probe.name}-preflight")
             try:
-                self.driver.preflight(accepted.session)
+                self.driver.preflight(probe)
             except SessionConfigError as error:
                 raise ConfigError(str(error)) from None
+            if agent is not None:
+                agent.close()
             state = replace(
                 state, plan=accepted, completed=False, result=None, attempt=state.attempt + 1
             )

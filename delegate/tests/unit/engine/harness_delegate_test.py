@@ -361,6 +361,21 @@ class CrashTest(HarnessCase):
         self.assertEqual(left.state(), Liveness.LIVE)
         self.assertEqual(len(harness_launches()), launches)
 
+    def test_a_resume_its_preflight_refuses_leaves_the_agent_session_live(self):
+        _view, name = self.crashed()
+        left, launches = HarnessSession.live[name], len(harness_launches())
+        HarnessSession.preflight_error = SessionConfigError("fake: no client binary")
+        view = HarnessDelegate.attach(self.work, session_cls=HarnessSession)
+        with self.assertRaisesRegex(ConfigError, "no client binary"):
+            view.resume()
+        self.assertEqual((left.state(), len(harness_launches())), (Liveness.LIVE, launches))
+
+    def test_resume_preflights_the_live_agents_name_under_a_probe_name(self):
+        view, name = self.crashed()
+        view.resume()
+        self.assertNotEqual(HarnessSession.preflights[-1]["spec"].name, name)
+        self.assertEqual(self.metadata()["plan"]["session"]["name"], name)
+
     def test_resume_refuses_a_run_replaced_since_its_attach(self):
         view, _name = self.crashed()
         other = "0b6f2c1e-6d0a-4c1b-9a51-3f1f6b0e2a7d"
