@@ -508,7 +508,7 @@ class HostedSession(Session):
         )
 
     @property
-    def opening_pending(self) -> bool:
+    def opening_pending(self) -> str | None:
         return self._running.opening_pending
 
     def send(self, text: str) -> None:

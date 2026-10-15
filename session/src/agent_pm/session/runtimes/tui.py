@@ -486,8 +486,8 @@ class TuiRuntime(Runtime):
         return self._replayed
 
     @property
-    def opening_pending(self) -> bool:
-        return self._opening is not None and not self._gone
+    def opening_pending(self) -> str | None:
+        return None if self._opening is None or self._gone else self._opening[1]
 
     def marked_blocked(self) -> bool:
         return self._terminal.activity() == Word.BLOCKED

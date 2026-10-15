@@ -878,7 +878,7 @@ class EventsOverARuntimeTest(Case):
 
     def test_opening_pending_is_its_runtimes(self):
         session = self.session()
-        for pending in (True, False):
+        for pending in ("/color", None):
             with self.subTest(pending=pending):
                 self.mode.opening_pending = pending
                 self.assertIsInstance(session, worker._Opens)

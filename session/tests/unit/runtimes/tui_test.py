@@ -1369,7 +1369,7 @@ class OpeningTest(Base):
 
     def test_sends_once_after_delay(self):
         mode = self.opened()
-        self.assertTrue(mode.opening_pending)
+        self.assertEqual(mode.opening_pending, "/color")
         mode.poll(2)
         self.assertEqual(self.sends(mode), [])
         self.append(record("ready"))
@@ -1377,11 +1377,11 @@ class OpeningTest(Base):
         due = self.clock.now + tui.OPEN_AFTER
         mode.poll(0.5)
         self.assertEqual(self.sends(mode), [])
-        self.assertTrue(mode.opening_pending)
+        self.assertEqual(mode.opening_pending, "/color")
         mode.poll(0.6)
         self.assertEqual(self.sends(mode), [Paste("/color"), Key("Enter")])
         self.assertGreaterEqual(self.sent_at[0], due)
-        self.assertFalse(mode.opening_pending)
+        self.assertIsNone(mode.opening_pending)
         self.append(record("ready"))
         mode.poll(2)
         self.assertEqual(len(self.sends(mode)), 2)
@@ -1404,7 +1404,7 @@ class OpeningTest(Base):
         for _ in range(4):
             mode.poll(0.5)
         self.assertEqual(self.sends(mode), [])
-        self.assertTrue(mode.opening_pending)
+        self.assertEqual(mode.opening_pending, "/color")
         self.host.calls.screen.return_value = ""
         mode.poll(0.6)
         self.assertEqual(self.sends(mode), [Paste("/color"), Key("Enter")])
@@ -1435,7 +1435,7 @@ class OpeningTest(Base):
         attached = tui.TuiRuntime.attach(
             NAME, tui.TuiRuntime.snapshot(NAME), self.adapter, host=self.host
         )
-        self.assertFalse(attached.opening_pending)
+        self.assertIsNone(attached.opening_pending)
         self.append(record("ready"))
         attached.poll(0)
         attached.poll(2)
@@ -1447,7 +1447,7 @@ class OpeningTest(Base):
         self.append(record("ready"))
         mode.poll(0)
         mode.poll(1.2)
-        self.assertFalse(mode.opening_pending)
+        self.assertIsNone(mode.opening_pending)
         mode._terminal.calls.send.side_effect = None
         self.append(record("ready"))
         mode.poll(2)
@@ -1455,7 +1455,7 @@ class OpeningTest(Base):
 
     def test_no_opening_is_never_pending(self):
         mode = self.started()
-        self.assertFalse(mode.opening_pending)
+        self.assertIsNone(mode.opening_pending)
         self.append(record("ready"))
         mode.poll(2)
         mode._terminal.calls.send.assert_not_called()
@@ -1463,7 +1463,7 @@ class OpeningTest(Base):
     def test_an_ended_runtime_is_not_pending(self):
         mode = self.opened()
         mode.stop()
-        self.assertFalse(mode.opening_pending)
+        self.assertIsNone(mode.opening_pending)
 
 
 class ScanTest(Base):

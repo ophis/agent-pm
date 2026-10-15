@@ -110,9 +110,9 @@ class Runtime(ABC):
         """
 
     @property
-    def opening_pending(self) -> bool:
-        """A launch input not yet sent (tui only)."""
-        return False
+    def opening_pending(self) -> str | None:
+        """The launch input not yet sent (tui only), else None."""
+        return None
 
     @abstractmethod
     def poll(self, timeout: float) -> tuple[list[SessionEvent | Stderr | ClientBound], bool]:

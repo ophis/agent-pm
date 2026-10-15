@@ -59,7 +59,7 @@ KIND = "worker"
 @runtime_checkable
 class _Opens(Protocol):
     @property
-    def opening_pending(self) -> bool: ...
+    def opening_pending(self) -> str | None: ...
 
 
 def _say(text: str) -> None:
@@ -162,8 +162,12 @@ class WorkerState:
         )
 
 
-def _pending(session: Session) -> bool:
-    return isinstance(session, _Opens) and session.opening_pending
+def _pending(session: Session) -> str | None:
+    return session.opening_pending if isinstance(session, _Opens) else None
+
+
+def _quoted(text: str) -> str:
+    return "'" + text.replace("'", "'\\''") + "'"
 
 
 def _detail(error: SessionError | OSError) -> object:
@@ -411,13 +415,16 @@ class Worker:
             if elapsed >= COLOR_CAP:
                 self._uncolored(session, f"not ready within {COLOR_CAP} s")
                 return
-            if elapsed >= EARLY and not _pending(session):
+            if elapsed >= EARLY and _pending(session) is None:
                 return
 
     def _uncolored(self, session: Session, reason: str) -> None:
-        if _pending(session):
+        text = _pending(session)
+        if text is not None:
             name = self.state.name
-            self.say(f"session {name}: color not set: {reason}; {COMMAND} send {name} '/color'")
+            self.say(
+                f"session {name}: color not set: {reason}; {COMMAND} send {name} {_quoted(text)}"
+            )
 
     def _died(self, code: int) -> str:
         head = f"{self.state.name}: {self.state.client} exited {code} at once"

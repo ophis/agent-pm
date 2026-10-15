@@ -73,7 +73,7 @@ class Base(Case):
         self.session_cls.host.return_value = self.host
         self.session = self.session_cls.start.return_value
         self.session.displayable = False
-        self.session.opening_pending = False
+        self.session.opening_pending = None
         self.session.events.return_value = iter([IdleTimeout(worker.EARLY)])
         self.order.attach_mock(self.session_cls.retire, "retire")
         self.order.attach_mock(self.session_cls.start, "start")
@@ -252,8 +252,8 @@ class StartTest(Base):
 class ColorWatchTest(Base):
     UNSET = "session w1: color not set: {}; agent-pm-session send w1 '/color'"
 
-    def watch(self, sent: float, events=None) -> int:
-        """Starts w1 on a clock ticking 1 s per call, its opening pending until tick `sent`; the
+    def watch(self, sent: float, events=None, text="/color") -> int:
+        """Starts w1 on a clock ticking 1 s per call, its opening `text` pending until tick `sent`; the
         ticks used. opening_pending's call count varies by Python (3.11's isinstance calls it).
         """
         ticks = itertools.count()
@@ -263,7 +263,9 @@ class ColorWatchTest(Base):
             now[0] = next(ticks)
             return now[0]
 
-        type(self.session).opening_pending = mock.PropertyMock(side_effect=lambda: now[0] < sent)
+        type(self.session).opening_pending = mock.PropertyMock(
+            side_effect=lambda: text if now[0] < sent else None
+        )
         self.session.events.return_value = events or itertools.repeat(IdleTimeout(worker.TICK))
         Worker(state(), session_cls=self.session_cls, say=self.said.append, clock=tick).start(
             prompt="", resume=False
@@ -292,6 +294,16 @@ class ColorWatchTest(Base):
             ["session w1: waits on a dialog: Trust", self.UNSET.format("waits on a dialog")],
         )
         self.handle.publish.assert_called_once()
+
+    def test_the_line_names_the_pending_text(self):
+        self.watch(float("inf"), text="/x 'y'")
+        self.assertEqual(
+            self.said,
+            [
+                "session w1: color not set: not ready within 15 s; "
+                "agent-pm-session send w1 '/x '\\''y'\\'''"
+            ],
+        )
 
     def test_an_exit_while_pending_fails_without_the_color_line(self):
         with self.assertRaises(SessionError):

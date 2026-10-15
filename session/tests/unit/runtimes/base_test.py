@@ -116,6 +116,11 @@ class RuntimeTest(Case):
                 self.assertEqual(params(getattr(mode, name)), params(getattr(Runtime, name)))
         self.assertEqual({mode: mode.kind for mode in KINDS}, KINDS)
 
+    def test_only_a_tui_runtime_may_have_a_launch_input_pending(self):
+        for cls in (headless.HeadlessRuntime, in_process.InProcessRuntime):
+            with self.subTest(cls=cls.__name__):
+                self.assertIsNone(object.__new__(cls).opening_pending)
+
     def test_start_is_the_class_entry_and_no_session_is_built_without_its_prepared(self):
         for mode in (Runtime, *KINDS):
             with self.subTest(mode=mode.__name__):
