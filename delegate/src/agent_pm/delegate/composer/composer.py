@@ -98,10 +98,5 @@ class Composer:
     def check_all(self) -> None:
         teams.check_all(self.team, thaw(self.config.values))
 
-    def check_team_dirs(
-        self,
-        *,
-        writes: Sequence[tuple[str, str]],
-        temp: Sequence[str] | None = None,
-    ) -> None:
-        teams.check_team_dirs(self.team.dirs, writes=writes, temp=temp)
+    def check_team_dirs(self, *, writes: Sequence[tuple[str, str]]) -> None:
+        teams.check_team_dirs(self.team.dirs, writes=writes)

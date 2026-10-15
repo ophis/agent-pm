@@ -200,7 +200,7 @@ class Host(ABC):
     def prepare_events(self, events: str | None) -> str | None:
         if events is not None:
             try:
-                append_line(events, "", own=True)
+                append_line(events, "")
             except OSError as error:
                 raise SessionError(f"events file {events}: {error.strerror}") from error
         return events

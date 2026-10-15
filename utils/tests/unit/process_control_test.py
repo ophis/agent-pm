@@ -101,21 +101,13 @@ class ControlTest(Case):
                     self.addCleanup(control.remove)
                     self.assertEqual(os.path.dirname(control.path), expected)
                     self.assertTrue(os.path.basename(control.path).startswith("apm-group-"))
-                    self.assertEqual(
-                        ProcessControl.attach(control.path, root=root).path, control.path
-                    )
-            control = ProcessControl.prepare(["program"], "/", root=caller)
-            self.addCleanup(control.remove)
-            with self.assertRaisesRegex(PermissionError, "untrusted process controller path"):
-                ProcessControl.attach(control.path)
+                    self.assertEqual(ProcessControl.attach(control.path).path, control.path)
         with (
             mock.patch.dict(os.environ, clear=True),
             mock.patch("tempfile.mkdtemp", return_value=control.path) as allocate,
         ):
             ProcessControl.prepare(["program"], "/")
             allocate.assert_called_once_with(prefix="apm-group-", dir="/tmp")
-            with self.assertRaisesRegex(PermissionError, "untrusted process controller path"):
-                ProcessControl.attach(control.path)
 
     def owned(self, name):
         path = os.path.join(self.home, name)

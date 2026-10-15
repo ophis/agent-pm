@@ -52,9 +52,8 @@ def git(wt: str, *args: str, run: Runner, timeout: int = SHORT, pre: tuple[str, 
 
 def common_dir(wt: str) -> str | None:
     # never runs git: reads the files as git does (whole file, trailing CR/LF dropped)
-    def read(path, *, follow=True):
-        flags = os.O_RDONLY | os.O_NONBLOCK | (0 if follow else os.O_NOFOLLOW)
-        fd = os.open(path, flags)
+    def read(path):
+        fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK)
         try:
             if not stat.S_ISREG(os.fstat(fd).st_mode):
                 return None
@@ -65,7 +64,7 @@ def common_dir(wt: str) -> str | None:
 
     try:
         dotgit = os.path.join(wt, ".git")
-        text = read(dotgit, follow=False)
+        text = read(dotgit)
         if not text or not text.startswith("gitdir: "):
             return None
         gitdir = os.path.realpath(os.path.join(wt, text[len("gitdir: ") :]))
@@ -144,7 +143,7 @@ def resolve(spec: str, *, run: Runner) -> tuple[Repo, str | None]:
         return Repo.parse(spec), None
     clone = os.path.realpath(os.path.expanduser(spec))
     dotgit = os.path.join(clone, ".git")
-    if os.path.islink(dotgit) or not os.path.isdir(dotgit):
+    if not os.path.isdir(dotgit):
         raise Invalid(f"{clone} is not a git clone")
     res = run(["git", "-C", clone, "remote", "get-url", "origin"], SHORT)
     slug = url_slug(res.stdout) if res.returncode == 0 else None

@@ -5,7 +5,6 @@ import json
 import os
 import shutil
 from contextlib import redirect_stderr, redirect_stdout
-from functools import partial
 from unittest import mock
 
 from agent_pm.delegate import ConfigError, Delegate, SessionError, Spec
@@ -38,19 +37,11 @@ OTHER_SID = "7c1d9e2f-0a3b-4c5d-8e6f-1a2b3c4d5e6f"
 
 class RepositoryCleanup(PruneScenario):
     def test_entries_that_are_no_clone_or_worktree_are_skipped_and_kept(self):
-        rows = [
-            (dot_git, make, parts)
-            for dot_git, make in (
-                ("none", partial(self.mkg, git=None)),
-                ("symlinked", self.symlinked_dot_git),
-            )
-            for parts in (("src", "o", "bare"), ("publish",))
-        ]
-        for n, (dot_git, make, parts) in enumerate(rows, 41):
-            with self.subTest(dot_git=dot_git, parts=parts):
+        for n, parts in enumerate((("src", "o", "bare"), ("publish",)), 41):
+            with self.subTest(parts=parts):
                 ident = f"TASK-{n}"
                 self.fresh()
-                path = make(ident, *parts)
+                path = self.mkg(ident, *parts, git=None)
                 code, out = self.prune(gql_for({ident: ("Done", [(30, "Done")])}))
                 self.assertEqual(code, 0)
                 self.assertEqual(
@@ -58,9 +49,6 @@ class RepositoryCleanup(PruneScenario):
                     [f"prune-skip entry={ident}/{'/'.join(parts)} reason=not a clone or worktree"],
                 )
                 self.assertTrue(os.path.isdir(path))
-                if dot_git == "symlinked":
-                    self.assertTrue(os.path.isfile(os.path.join(path, "notes.md")))
-                    self.assertTrue(os.path.isdir(os.path.join(self.outside, "dotgit")))
 
     def test_the_same_skip_twice_is_one_line(self):
         self.mkg("TASK-49", "publish", git=None)

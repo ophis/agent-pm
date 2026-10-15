@@ -47,9 +47,6 @@ class Clones(ConfigFile, Case):
         dotgit_file = os.path.join(self.dir, "file")
         os.makedirs(dotgit_file)
         write(os.path.join(dotgit_file, ".git"), "gitdir: /elsewhere\n")
-        linked = os.path.join(self.dir, "linked")
-        os.makedirs(linked)
-        os.symlink(os.path.join(self.clone("real"), ".git"), os.path.join(linked, ".git"))
         missing = os.path.join(self.dir, "missing")
         no_origin = self.clone("no-origin", origin="")
         gitlab = self.clone("gitlab", "https://gitlab.com/ophis/agent-pm.git")
@@ -57,7 +54,6 @@ class Clones(ConfigFile, Case):
         return [
             ("missing", missing, f"{missing} does not exist"),
             (".git a file", dotgit_file, f"{dotgit_file} is not a git clone"),
-            (".git a symlink", linked, f"{linked} is not a git clone"),
             ("no origin", no_origin, f"{no_origin}: no origin URL naming host/owner/name"),
             (
                 "non-github host",

@@ -134,7 +134,7 @@ class PruneScenario(Case):
         self.work = os.path.join(self.root, "work")
         os.makedirs(self.work)
         self.outside = os.path.join(self.root, "outside")
-        os.makedirs(os.path.join(self.outside, "dotgit"))
+        os.makedirs(self.outside)
         write(os.path.join(self.outside, "keep"), "x")
         self.logs = os.path.join(self.root, "logs")
         self.api = FakeApi()
@@ -235,12 +235,6 @@ class PruneScenario(Case):
     def fresh(self):
         shutil.rmtree(self.work)
         os.makedirs(self.work)
-
-    def symlinked_dot_git(self, ident, *parts):
-        path = self.mkc(ident, *parts)
-        shutil.rmtree(os.path.join(path, ".git"))
-        os.symlink(os.path.join(self.outside, "dotgit"), os.path.join(path, ".git"))
-        return path
 
     def tick(self, prune_gql):
         write(

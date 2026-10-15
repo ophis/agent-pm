@@ -541,7 +541,6 @@ class Start(Base):
         cases += [
             ("fifo", lambda: os.mkfifo(self.out), None),
             ("symlink", link("mine"), "mine"),
-            ("symlink to the deliverable", link("# Doc\n"), "# Doc\n"),
         ]
         for name, plant, kept in cases:
             with self.subTest(name):

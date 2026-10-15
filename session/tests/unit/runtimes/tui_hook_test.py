@@ -51,17 +51,14 @@ class InProcess(Case):
             ]
         )
 
-    def faked(self, uid=None, mode=None, *, executable=True):
+    def faked(self, mode=None, *, executable=True):
         real_stat, real_access = os.stat, os.access
 
         def fake_stat(path, *args, **kwargs):
             st = real_stat(path, *args, **kwargs)
             if path != self.tmux:
                 return st
-            return types.SimpleNamespace(
-                st_mode=st.st_mode if mode is None else mode,
-                st_uid=st.st_uid if uid is None else uid,
-            )
+            return types.SimpleNamespace(st_mode=st.st_mode if mode is None else mode)
 
         def fake_access(path, how, *args, **kwargs):
             return executable if path == self.tmux else real_access(path, how, *args, **kwargs)
@@ -73,24 +70,20 @@ class InProcess(Case):
         ):
             tui_hook.main([self.dir, "tool"], io.BytesIO(b"{}"), roots=ROOTS)
 
-    def test_a_tmux_of_yours_or_roots_marks(self):
-        for uid in (os.getuid(), 0):
-            with self.subTest(uid=uid):
-                self.mark.reset_mock(side_effect=True)
-                self.mark.side_effect = [
-                    unittest.mock.Mock(returncode=0, stdout=self.lookup, stderr=""),
-                    unittest.mock.Mock(returncode=0, stdout="", stderr=""),
-                ]
-                self.faked(uid=uid)
-                self.assertEqual(
-                    self.mark.call_args.args[0],
-                    [self.tmux, "set-option", "-t", "%3", "@state", "working"],
-                )
-                self.assertEqual(self.mark.call_count, 2)
+    def test_a_regular_executable_tmux_marks(self):
+        self.mark.side_effect = [
+            unittest.mock.Mock(returncode=0, stdout=self.lookup, stderr=""),
+            unittest.mock.Mock(returncode=0, stdout="", stderr=""),
+        ]
+        self.faked()
+        self.assertEqual(
+            self.mark.call_args.args[0],
+            [self.tmux, "set-option", "-t", "%3", "@state", "working"],
+        )
+        self.assertEqual(self.mark.call_count, 2)
 
-    def test_a_foreign_non_regular_or_non_executable_tmux_is_refused_after_the_record(self):
+    def test_a_non_regular_or_non_executable_tmux_is_refused_after_the_record(self):
         for case, kwargs in (
-            ("foreign", {"uid": os.getuid() + 1}),
             ("directory", {"mode": stat.S_IFDIR | 0o755}),
             ("not executable", {"executable": False}),
         ):
@@ -101,7 +94,7 @@ class InProcess(Case):
                 self.faked(**kwargs)
         self.mark.assert_not_called()
         with open(os.path.join(self.dir, "hooks.jsonl"), "rb") as f:
-            self.assertEqual(len(f.read().splitlines()), 3)
+            self.assertEqual(len(f.read().splitlines()), 2)
 
     def test_one_write_under_an_exclusive_flock_then_the_mark(self):
         calls = unittest.mock.Mock()
@@ -213,6 +206,26 @@ class DeclaredRootCallback(Case):
         roots = [os.path.join(self.root, "left"), os.path.join(self.root, "right")]
         module = f"{top}.nested.callback"
         self.assertEqual(self.run_hook(module, roots), ("", [{"loaded": module}]))
+
+    def test_a_callback_is_found_over_another_callbacks_roots(self):
+        module, host = f"adapter_{uuid.uuid4().hex}", f"host_{uuid.uuid4().hex}"
+        self.write("other", f"{module}.py")
+        self.write("other", f"{host}.py", text="def on_hook(call):\n    pass\n")
+        other = os.path.join(self.root, "other")
+        state_ = {
+            **state(self.root, None),
+            "words": {},
+            "adapter_hook": {"module": module, "state": {}, "roots": []},
+            "host_hook": {"module": host, "state": {}, "roots": [other]},
+        }
+        write_state(self.dir, state_)
+        with redirect_stderr(io.StringIO()) as stderr:
+            tui_hook.run(
+                [self.dir, "stop"], types.SimpleNamespace(buffer=io.BytesIO(b"{}")), roots=ROOTS
+            )
+        with open(os.path.join(self.dir, "hooks.jsonl"), encoding="utf-8") as f:
+            payloads = [json.loads(line)["payload"] for line in f]
+        self.assertEqual((stderr.getvalue(), payloads), ("", [{"loaded": module}]))
 
 
 class Source(Case):

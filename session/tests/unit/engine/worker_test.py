@@ -2,6 +2,7 @@
 FR-36 replace ladder (no process, no tmux; files only under the test's HOME).
 """
 
+import errno
 import json
 import os
 import threading
@@ -223,7 +224,9 @@ class StartTest(Base):
 
     def test_a_state_it_cannot_save_starts_nothing(self):
         os.makedirs(pointer(), 0o700)
-        with self.assertRaisesRegex(SessionError, "^w1: not a regular file; nothing started$"):
+        with self.assertRaisesRegex(
+            SessionError, f"^w1: {os.strerror(errno.EISDIR)}; nothing started$"
+        ):
             self.worker().start(prompt="", resume=False)
         self.session_cls.start.assert_not_called()
         self.assertFalse(os.path.exists(state_path()))
@@ -235,7 +238,9 @@ class StartTest(Base):
             return self.session
 
         self.session_cls.start.side_effect = launch
-        with self.assertRaisesRegex(SessionError, "^w1: not a regular file; start undone$"):
+        with self.assertRaisesRegex(
+            SessionError, f"^w1: {os.strerror(errno.EISDIR)}; start undone$"
+        ):
             self.worker().start(prompt="", resume=False)
         self.session.close.assert_called_once_with()
         self.handle.publish.assert_not_called()

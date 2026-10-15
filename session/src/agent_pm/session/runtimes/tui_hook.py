@@ -1,9 +1,9 @@
 """A tui client's hook, run as `agent-pm-session hook DIR LABEL`: drains stdin, checks callback
 sources, binds client identity, and appends one hooks.jsonl record before notifying its optional
 Host callback. Never stdout, always exits 0; failures retain a traceback and one stderr line.
-session.json's adapter_hook and host_hook are HookCallback.fields(): a callback module is trusted
-under the hook's own source roots or the callback's declared roots, each its on_hook given a
-HookCall; one outside sys.path loads from its roots, sys.path unchanged.
+session.json's adapter_hook and host_hook are HookCallback.fields(): a callback module is found over
+the hook's own source roots, then every callback's declared roots, then sys.path, each its on_hook
+given a HookCall; one outside sys.path loads from its roots, sys.path unchanged.
 """
 
 from __future__ import annotations
@@ -70,7 +70,7 @@ SESSION_STATE = {  # what this hook or an adapter_hook reads
 
 def _prepare(argv: Sequence[str], roots: Sequence[str]):
     """The session dir, label and state, and each callback's module specs, found over `roots`,
-    then each callback's own roots, then sys.path.
+    then every callback's roots, then sys.path.
     """
     folder, label = _arguments(argv)
     path = os.path.join(folder, STATE)
@@ -86,9 +86,7 @@ def _prepare(argv: Sequence[str], roots: Sequence[str]):
         dict.fromkeys([*roots, *(root for _, hook in hooks for root in hook["roots"]), *sys.path])
     )
     specs = {
-        hook["module"]: _check_module(
-            hook["module"], search, [*roots, *hook["roots"]], kind + " hook", HookError
-        )
+        hook["module"]: _check_module(hook["module"], search, kind + " hook", HookError)
         for kind, hook in hooks
     }
     return folder, label, state, specs
@@ -155,7 +153,7 @@ def read_payload(stream) -> dict:
 
 
 def read_state(path: str, *, error: type[Exception] | None = None) -> dict:
-    """session.json: a regular file (never followed), at most STATE_MAX bytes, its fields passing
+    """session.json: a regular file, at most STATE_MAX bytes, its fields passing
     SESSION_STATE; else `error`.
     """
     error = HookError if error is None else error
@@ -167,7 +165,7 @@ def read_state(path: str, *, error: type[Exception] | None = None) -> dict:
 
 def _read_state(path, error):
     try:
-        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK)
         try:
             if not stat.S_ISREG(
                 os.fstat(fd).st_mode
@@ -212,7 +210,7 @@ def _check_callbacks(state, path, error):
             raise error(f"{path}: bad {hook}")
 
 
-def _check_module(name: str, search: list[str], roots: list[str], kind: str, error):
+def _check_module(name: str, search: list[str], kind: str, error):
     """What `name` and each package above it were found as over `search`, outermost first."""
     paths, specs = search, []
     parts = name.split(".")
@@ -222,16 +220,12 @@ def _check_module(name: str, search: list[str], roots: list[str], kind: str, err
         if spec is None or (spec.origin is None and index == len(parts) - 1):
             raise error(f"{kind} {name}: cannot find Python module")
         if spec.origin is not None:
-            if not any(
-                os.path.commonpath((root, spec.origin)) == os.path.normpath(root) for root in roots
-            ):
-                raise error(f"{kind} {name}: module outside source roots")
             try:
-                info = os.lstat(spec.origin)
+                info = os.stat(spec.origin)
             except OSError as failure:
                 raise error(f"{kind} {name}: {failure.strerror}") from failure
-            if not stat.S_ISREG(info.st_mode) or info.st_uid not in (0, os.getuid()):
-                raise error(f"{kind} {name}: not a regular file owned by you or root")
+            if not stat.S_ISREG(info.st_mode):
+                raise error(f"{kind} {name}: not a regular file")
         paths = list(spec.submodule_search_locations or ())
         specs.append(spec)
     return specs
@@ -286,13 +280,11 @@ def cut(value):
 
 
 def append(path: str, record: dict) -> None:
-    """One write under an exclusive flock to a regular file, created 0600, never followed."""
+    """One write under an exclusive flock to a regular file, created 0600."""
     line = (json.dumps(record) + "\n").encode()
     try:
         # O_NONBLOCK: a FIFO put there fails instead of hanging the hook
-        fd = os.open(
-            path, os.O_WRONLY | os.O_APPEND | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK, 0o600
-        )
+        fd = os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT | os.O_NONBLOCK, 0o600)
         try:
             if not stat.S_ISREG(os.fstat(fd).st_mode):
                 raise HookError(f"{path}: not a regular file")

@@ -293,8 +293,8 @@ class TargetValidation(Case):
             (
                 "symlinked .git",
                 lambda: link(os.path.join(elsewhere, ".git")),
-                "TASK-26-planted",
-                remote,
+                "TASK-26-local",
+                local,
             ),
             (
                 "dangling .git symlink",

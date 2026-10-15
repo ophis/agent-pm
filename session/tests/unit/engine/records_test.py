@@ -137,13 +137,7 @@ class Read(Base):
         self.write()
         self.assertEqual(self.log.read(), [])
 
-    def test_a_symlink_fifo_or_directory_is_never_read(self):
-        target = os.path.join(self.dir, "planted.jsonl")
-        with open(target, "w") as f:
-            f.write(json.dumps({"kind": "session"}) + "\n")
-        os.symlink(target, self.path)
-        self.assertEqual(self.log.read(), [])
-        os.remove(self.path)
+    def test_a_fifo_or_directory_is_never_read(self):
         os.mkfifo(self.path)
         self.assertEqual(self.promptly(self.log.read), [])
         os.remove(self.path)

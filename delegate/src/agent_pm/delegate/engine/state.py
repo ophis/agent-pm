@@ -31,24 +31,24 @@ class RunState:
         self.published = os.path.join(self.workdir, PUBLISHED)
 
     def read(self) -> bytes | None:
-        return read_regular(self.record, own=True)
+        return read_regular(self.record)
 
     def write(self, payload: str) -> None:
         """The state record, then its published copy (making the workdir)."""
         self._made()
         for path in (self.record, self.published):
-            save(path, payload, own=True, durable=True)
+            save(path, payload, durable=True)
 
     @contextlib.contextmanager
     def mutex(self) -> Iterator[None]:
         self._made()
-        with file_lock(self.base, own=True):
+        with file_lock(self.base):
             yield
 
     @contextlib.contextmanager
     def run_lock(self) -> Iterator[None]:
         self._made()
-        with file_lock(f"{self.base}.run", own=True):
+        with file_lock(f"{self.base}.run"):
             yield
 
     def remove(self) -> None:
@@ -65,14 +65,11 @@ class RunState:
     def running(self) -> bool:
         """Whether a run holds the run lock."""
         try:
-            descriptor = os.open(
-                f"{self.base}.run.lock", os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK
-            )
+            descriptor = os.open(f"{self.base}.run.lock", os.O_RDONLY | os.O_NONBLOCK)
         except FileNotFoundError:
             return False
         try:
-            opened = os.fstat(descriptor)
-            if not stat.S_ISREG(opened.st_mode) or opened.st_uid != os.getuid():
+            if not stat.S_ISREG(os.fstat(descriptor).st_mode):
                 raise ConfigError(f"{self.workdir}: invalid delegate run lock")
             try:
                 fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)

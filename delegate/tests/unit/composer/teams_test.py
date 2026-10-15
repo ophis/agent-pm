@@ -5,7 +5,6 @@ composer's Index, TeamDirs and catalog tests) and the team dir checks (the old d
 import os
 import re
 import tempfile
-from types import SimpleNamespace
 from unittest import mock
 
 from agent_pm.delegate.composer import ConfigError
@@ -74,7 +73,6 @@ class Fake(Case):
         self.local_file = os.path.join(tmp.name, "config.local.toml")
         self.write(self.root, FILES)
         self.configure(CONFIG)
-        os.chmod(self.agent_pm, 0o755)
 
     @staticmethod
     def write(top, files):
@@ -109,18 +107,9 @@ class Fake(Case):
         return str(cm.exception)
 
     def team_dir(self, files, name="team"):
-        """Writes {rel: text} under ~/.agent-pm/<name> (files 0o644, dirs 0o755) and returns its
-        real path.
-        """
+        """Writes {rel: text} under ~/.agent-pm/<name> and returns its real path."""
         top = os.path.realpath(os.path.join(self.agent_pm, name))
-        for rel, text in files.items():
-            path = os.path.join(top, rel)
-            for d in (top, os.path.dirname(path)):
-                os.makedirs(d, exist_ok=True)
-                os.chmod(d, 0o755)
-            with open(path, "w") as f:
-                f.write(text)
-            os.chmod(path, 0o644)
+        self.write(top, files)
         return top
 
     def with_dir(self, files, name="team"):
@@ -564,8 +553,8 @@ class TeamDirChecks(Fake):
             {"roles/poet.md": POET, "tasks/verse.md": VERSE, "templates/card.md": "# Card\n"}
         )
 
-    def checked(self, writes=(), temp=()):
-        return self.refused(check_team_dirs, [self.top], writes=list(writes), temp=temp)
+    def checked(self, writes=()):
+        return self.refused(check_team_dirs, [self.top], writes=list(writes))
 
     def test_team_paths_are_the_dir_its_kind_subdirs_and_their_md_files(self):
         self.write(self.top, {"tasks/notes.txt": "x", "methods/m.md": "# M\n"})
@@ -587,14 +576,8 @@ class TeamDirChecks(Fake):
             )
 
     def test_no_team_dir_or_a_clean_one_passes(self):
-        self.assertIsNone(check_team_dirs((), writes=[("the workdir", "/")], temp=None))
-        self.assertIsNone(check_team_dirs([self.top], writes=[("the workdir", self.tmp)], temp=()))
-
-    def test_a_team_dir_in_a_temp_dir(self):
-        with mock.patch("subprocess.run", return_value=SimpleNamespace(stdout="")):
-            self.assertTrue(
-                self.checked(temp=None).startswith(f"team_dirs: {self.top} is in temp dir ")
-            )
+        self.assertIsNone(check_team_dirs((), writes=[("the workdir", "/")]))
+        self.assertIsNone(check_team_dirs([self.top], writes=[("the workdir", self.tmp)]))
 
     def test_a_team_dir_overlapping_a_dir_the_run_can_write(self):
         inside, home = os.path.join(self.top, "w"), os.path.realpath(self.agent_pm)
@@ -627,63 +610,13 @@ class TeamDirChecks(Fake):
                     f"team_dirs: x overlaps the cwd {p}: the agent run can write there",
                 )
 
-    def test_a_team_dir_others_can_write(self):
-        for rel, mode in (("tasks/verse.md", 0o664), ("tasks", 0o757), ("", 0o775)):
-            with self.subTest(rel=rel):
-                path = self.path(rel).rstrip("/")
-                os.chmod(path, mode)
-                self.assertEqual(
-                    self.checked(),
-                    f"team_dirs: {path} is writable by group or others: chmod go-w it",
-                )
-                os.chmod(path, 0o644 if rel.endswith(".md") else 0o755)
-        check_team_dirs([self.top], writes=[], temp=())
-
-    def test_a_team_dir_owned_by_another_user(self):
-        me = os.getuid()
-        with mock.patch.object(os, "getuid", return_value=me + 1):
-            self.assertEqual(
-                self.checked(),
-                f"team_dirs: {self.top} is owned by uid {me}, not you (uid {me + 1}): chown it",
-            )
-
-    def test_a_parent_dir_others_could_replace_it_from(self):
-        parent = os.path.dirname(self.top)
-        os.chmod(parent, 0o775)
-        self.assertEqual(
-            self.checked(),
-            f"team_dirs: {self.top}'s parent dir {parent} is writable by group or others: "
-            "they could replace the team dir",
-        )
-        os.chmod(parent, 0o1777)
-        check_team_dirs([self.top], writes=[], temp=())
-        os.chmod(parent, 0o755)
-        real = os.stat
-
-        def stat_(path, *a, **kw):
-            st = real(path, *a, **kw)
-            return os.stat_result((*st[:4], 4242, *st[5:])) if os.fspath(path) == parent else st
-
-        with mock.patch.object(os, "stat", stat_):
-            self.assertEqual(
-                self.checked(),
-                f"team_dirs: {self.top}'s parent dir {parent} is owned by uid 4242, not "
-                "you or root: they could replace the team dir",
-            )
-        check_team_dirs([self.top], writes=[], temp=())
-
     def test_a_symlink_is_checked_by_its_real_path(self):
         elsewhere = os.path.realpath(os.path.join(self.tmp, "elsewhere"))
         os.makedirs(elsewhere)
         link = self.path("tasks/verse.md")
         os.rename(link, os.path.join(elsewhere, "verse.md"))
         os.symlink(os.path.join(elsewhere, "verse.md"), link)
-        check_team_dirs([self.top], writes=[], temp=())
-        self.assertEqual(
-            self.checked(temp=[elsewhere]),
-            f"team_dirs: {link} ({elsewhere}/verse.md) is in temp dir "
-            f"{elsewhere}: any process can write there",
-        )
+        check_team_dirs([self.top], writes=[])
         work = os.path.realpath(os.path.join(self.tmp, "work"))
         tasks, moved = self.path("tasks"), os.path.join(work, "team-tasks")
         os.makedirs(work)
@@ -695,14 +628,8 @@ class TeamDirChecks(Fake):
                 f"team_dirs: {tasks} ({moved}) overlaps the workdir {work}: the agent run can write there"
             ),
         )
-        os.chmod(os.path.join(elsewhere, "verse.md"), 0o666)
-        self.assertEqual(
-            self.checked(),
-            f"team_dirs: {link} ({elsewhere}/verse.md) is writable by group or others: "
-            "chmod go-w it",
-        )
 
-    def test_its_tools_tree_is_checked_by_real_path_for_temp_and_overlap_only(self):
+    def test_its_tools_tree_is_checked_by_real_path(self):
         work = os.path.realpath(os.path.join(self.tmp, "work"))
         os.makedirs(os.path.join(work, "bin"))
         self.write(work, {"bin/t.py": ""})
@@ -710,16 +637,11 @@ class TeamDirChecks(Fake):
         link = self.path("tools/sub/t.py")
         os.symlink(os.path.join(work, "bin", "t.py"), link)
         os.symlink(self.path("tools"), self.path("tools/sub/loop"))
-        os.chmod(self.path("tools/own.py"), 0o666)
-        check_team_dirs([self.top], writes=[], temp=())
+        check_team_dirs([self.top], writes=[])
         shown = f"{link} ({work}/bin/t.py)"
         self.assertEqual(
             self.checked([("the workdir", work)]),
             f"team_dirs: {shown} overlaps the workdir {work}: the agent run can write there",
-        )
-        self.assertEqual(
-            self.checked(temp=[work]),
-            f"team_dirs: {shown} is in temp dir {work}: any process can write there",
         )
 
 

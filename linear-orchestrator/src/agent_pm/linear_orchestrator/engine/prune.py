@@ -123,7 +123,7 @@ class Pruner:
                 self.delete(key, path, "temp files")
                 return None
             dotgit = os.path.join(path, ".git")
-            if os.path.islink(dotgit) or not (os.path.isdir(dotgit) or os.path.isfile(dotgit)):
+            if not (os.path.isdir(dotgit) or os.path.isfile(dotgit)):
                 raise Skip("not a clone or worktree")
             common = common_dir(path) if os.path.isfile(dotgit) else None
             return (

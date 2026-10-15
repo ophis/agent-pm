@@ -109,17 +109,8 @@ class Roster:
         parent = os.path.dirname(self.directory)
         os.makedirs(os.path.dirname(parent), mode=0o700, exist_ok=True)
         for path in (parent, self.directory):
-            try:
+            with contextlib.suppress(FileExistsError):
                 os.mkdir(path, 0o700)
-            except FileExistsError:
-                pass
-            else:
-                os.chmod(path, 0o700, follow_symlinks=False)
-            opened = os.lstat(path)
-            if not stat.S_ISDIR(opened.st_mode) or opened.st_uid != os.getuid():
-                raise RosterError(f"{path}: not a directory owned by you")
-        if opened.st_mode & 0o077:
-            raise RosterError(f"{self.directory}: group or other permission bits set")
 
     @contextlib.contextmanager
     def _locked(self, *, create: bool = False) -> Iterator[dict]:
@@ -129,11 +120,10 @@ class Roster:
                 return
             self._ensure()
             lock = os.path.join(self.directory, "roster.lock")
-            fd = os.open(lock, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK, 0o600)
+            fd = os.open(lock, os.O_RDWR | os.O_CREAT | os.O_NONBLOCK, 0o600)
             try:
-                opened = os.fstat(fd)
-                if not stat.S_ISREG(opened.st_mode) or opened.st_uid != os.getuid():
-                    raise RosterError(f"{lock}: not a regular file owned by you")
+                if not stat.S_ISREG(os.fstat(fd).st_mode):
+                    raise RosterError(f"{lock}: not a regular file")
                 deadline = time.monotonic() + LOCK_TIMEOUT
                 while True:
                     try:
@@ -144,7 +134,7 @@ class Roster:
                             raise RosterError(f"{lock}: busy") from None
                         time.sleep(POLL)
                 data = self._read()
-                with file_lock(self._events.path, own=True):
+                with file_lock(self._events.path):
                     self._events.recover(data["gen"])
                     before = json.dumps(data, sort_keys=True)
                     try:
@@ -156,7 +146,6 @@ class Roster:
                             save(
                                 self.path,
                                 json.dumps(data, indent=2, sort_keys=True) + "\n",
-                                own=True,
                                 durable=True,
                             )
                     except BaseException:
@@ -173,10 +162,10 @@ class Roster:
             raise RosterError(str(error)) from error
 
     def _read(self) -> dict:
-        raw = read_regular(self.path, limit=ROSTER_MAX + 1, own=True)
+        raw = read_regular(self.path, limit=ROSTER_MAX + 1)
         if raw is None:
             if os.path.lexists(self.path):
-                raise RosterError(f"{self.path}: not a readable regular file owned by you")
+                raise RosterError(f"{self.path}: not a readable regular file")
             return {
                 "version": VERSION,
                 "holder": None,
@@ -230,11 +219,10 @@ class Roster:
 
     def _open_holder(self) -> int:
         path = os.path.join(self.directory, "holder.lock")
-        fd = os.open(path, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK, 0o600)
+        fd = os.open(path, os.O_RDWR | os.O_CREAT | os.O_NONBLOCK, 0o600)
         try:
-            info = os.fstat(fd)
-            if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or info.st_nlink != 1:
-                raise RosterError(f"{path}: not a regular holder lock owned by you")
+            if not stat.S_ISREG(os.fstat(fd).st_mode):
+                raise RosterError(f"{path}: not a regular holder lock")
         except BaseException:
             os.close(fd)
             raise
@@ -365,22 +353,16 @@ class Roster:
                 if RECEIPT_FILE.fullmatch(item.name) is None or item.name in referenced:
                     continue
                 try:
-                    fd = os.open(item.path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+                    fd = os.open(item.path, os.O_RDONLY | os.O_NONBLOCK)
                     try:
                         info = os.fstat(fd)
-                        if (
-                            not stat.S_ISREG(info.st_mode)
-                            or info.st_uid != os.getuid()
-                            or info.st_nlink != 1
-                        ):
-                            raise RosterError(
-                                f"{item.path}: not a private regular receipt owned by you"
-                            )
+                        if not stat.S_ISREG(info.st_mode):
+                            raise RosterError(f"{item.path}: not a regular receipt")
                         try:
                             fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
                         except BlockingIOError:
                             continue
-                        current = item.stat(follow_symlinks=False)
+                        current = item.stat()
                         if (current.st_dev, current.st_ino) != (info.st_dev, info.st_ino):
                             raise RosterError(f"{item.path}: receipt replaced during cleanup")
                         os.unlink(item.path)
@@ -428,15 +410,10 @@ class Roster:
             if entry.receipt is None:
                 raise RosterError(f"{name}: no launch receipt")
             path = os.path.join(self.directory, entry.receipt)
-            fd = os.open(path, os.O_WRONLY | os.O_APPEND | os.O_NOFOLLOW | os.O_NONBLOCK)
+            fd = os.open(path, os.O_WRONLY | os.O_APPEND | os.O_NONBLOCK)
             try:
-                info = os.fstat(fd)
-                if (
-                    not stat.S_ISREG(info.st_mode)
-                    or info.st_uid != os.getuid()
-                    or info.st_nlink != 1
-                ):
-                    raise RosterError(f"{path}: not a private regular receipt owned by you")
+                if not stat.S_ISREG(os.fstat(fd).st_mode):
+                    raise RosterError(f"{path}: not a regular receipt")
                 fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
             except BaseException:
                 os.close(fd)
@@ -448,9 +425,9 @@ class Roster:
         if entry.receipt is None:
             raise RosterError("no launch receipt")
         path = os.path.join(self.directory, entry.receipt)
-        raw = read_regular(path, limit=ROSTER_MAX, tail=True, own=True)
+        raw = read_regular(path, limit=ROSTER_MAX, tail=True)
         if raw is None:
-            raise RosterError(f"{path}: not a readable receipt owned by you")
+            raise RosterError(f"{path}: not a readable receipt")
         lines = [line for line in raw.splitlines() if line.decode(errors="replace").strip()]
         if not lines:
             raise RosterError("no Record received")
@@ -471,7 +448,7 @@ class Roster:
                 continue
             path = os.path.join(self.directory, entry.receipt)
             try:
-                fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+                fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK)
             except FileNotFoundError:
                 data["entries"][name] = asdict(replace(entry, receipt=None))
                 print(
@@ -482,14 +459,9 @@ class Roster:
                 print(f"manager: receipt: {error}; left in place", file=sys.stderr)
                 continue
             try:
-                info = os.fstat(fd)
-                if (
-                    not stat.S_ISREG(info.st_mode)
-                    or info.st_uid != os.getuid()
-                    or info.st_nlink != 1
-                ):
+                if not stat.S_ISREG(os.fstat(fd).st_mode):
                     print(
-                        f"manager: receipt {path}: not a private regular file owned by you; left in place",
+                        f"manager: receipt {path}: not a regular file; left in place",
                         file=sys.stderr,
                     )
                     continue

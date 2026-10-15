@@ -1122,14 +1122,6 @@ class Corrupt(HarnessCase):
         with open(self.state_record(), encoding="utf-8") as file:
             self.assertEqual(json.load(file)["harness_host"], "ghost")
 
-    def test_a_symlinked_state_record_is_refused(self):
-        self.make()
-        target = os.path.join(self.home, "elsewhere.json")
-        os.replace(self.state_record(), target)
-        os.symlink(target, self.state_record())
-        with self.assertRaises(ConfigError):
-            HarnessDelegate.attach(self.work)
-
 
 class Attempts(HarnessCase):
     def test_resume_counts_an_attempt_and_its_run_stamps_it(self):
