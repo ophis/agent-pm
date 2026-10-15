@@ -135,17 +135,19 @@ class ArgvTest(Base):
             {"enabledPlugins": {"a@m": False, "b@m": True}, "model": "y"},
         )
 
-    def test_a_settings_path_claude_could_not_load_is_refused(self):
-        big = os.path.join(self.work, "big.json")
+    def test_a_settings_path_claude_could_not_load_is_refused_by_its_full_path(self):
+        deep = os.path.join(self.work, "d" * 90)
+        os.mkdir(deep)
+        big = os.path.join(deep, "big.json")
         with open(big, "wb") as f:
             f.truncate(2 * 1024 * 1024 + 1)
-        listed = os.path.join(self.work, "list.json")
+        listed = os.path.join(deep, "list.json")
         with open(listed, "w", encoding="utf-8") as f:
             f.write("[]")
         limit = "want a regular file of at most 2 MiB"
-        far = os.path.join(self.work, "d" * 90, "missing.json")
+        far = os.path.join(deep, "missing.json")
         for value, message in (
-            (self.work, limit),
+            (deep, limit),
             (big, limit),
             (listed, WANT_SETTINGS),
             (
