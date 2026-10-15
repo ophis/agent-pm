@@ -1,18 +1,26 @@
 #!/usr/bin/env bash
 # A tmux session for the manager, attached via iTerm2 tmux integration (-CC). Its shell runs under
-# agent-pm-crew hold, which keeps the manager's lease while the shell lives; start the client there.
+# this plugin's bin/agent-pm-crew hold, which keeps the manager's lease while the shell lives; start
+# the client there.
+# --install (re)writes ~/.agent-pm/bin's launchers, each running this command from the plugin
+# installed at the time.
 if [ "$1" = --install ]; then
-  dst=$HOME/.agent-pm/bin/ctmux
-  mkdir -p "${dst%/*}" && { [ "$0" -ef "$dst" ] || install -m 755 "$0" "$dst"; } && echo "$dst"
+  bin=$HOME/.agent-pm/bin
+  mkdir -p "$bin" || exit
+  for name in ctmux agent-pm-crew agent-pm-session agent-pm-delegate agent-pm-linear; do
+    install -m 755 "$(dirname -- "$0")/launcher" "$bin/$name" && echo "$bin/$name" || exit
+  done
   exit
 fi
 s=${1:?usage: ctmux <session-name> | ctmux --install}
 dir=$PWD
+crew=$(CDPATH= cd -- "$(dirname -- "$0")/../../../.." && pwd)/bin/agent-pm-crew
 tmux has -t "=$s" 2>/dev/null || {
+  [ -x "$crew" ] || { echo "ctmux: no $crew" >&2; exit 1; }
   # Start from ~ so the tmux server never sits in a directory that later gets deleted.
   (cd ~ && tmux start-server \; set -g mouse on \; set -g history-limit 50000 \
     \; set -s extended-keys on \; set -s 'terminal-features[99]' 'xterm*:extkeys' \
-    \; new -d -s "$s" -c "$dir" agent-pm-crew hold "--manager=$s" "--session=$s" \
+    \; new -d -s "$s" -c "$dir" "$crew" hold "--manager=$s" "--session=$s" \
     -- "${SHELL:-/bin/sh}" -l)
 }
 exec tmux -CC attach -t "=$s"
