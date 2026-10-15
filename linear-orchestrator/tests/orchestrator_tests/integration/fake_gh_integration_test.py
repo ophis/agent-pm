@@ -286,6 +286,126 @@ class Contents(Case):
         self.assertIn("fake_gh.py:", res.stderr)
 
 
+PR = {
+    "number": 1,
+    "url": "https://github.com/acme/widgets/pull/1",
+    "state": "OPEN",
+    "baseRefName": "main",
+    "headRefName": "TASK-7-x",
+}
+COMMENT = {"created_at": "2026-10-14T00:00:00Z", "user": {"login": "me"}, "body": "Rename it."}
+LIST = ("--state", "all", "--json", "number,url,headRefName", "--limit", "100")
+
+
+class Pulls(Case):
+    def setUp(self):
+        super().setUp()
+        self.write(
+            {
+                "repos": {"acme/widgets": REPO},
+                "login": "me",
+                "pulls": {"acme/widgets": [PR, {**PR, "number": 2, "headRefName": "other"}]},
+                "threads": {"acme/widgets": {"issues/1/comments": [COMMENT]}},
+            }
+        )
+
+    def ok(self, *argv):
+        res = self.gh(*argv)
+        self.assertEqual((res.returncode, res.stderr), (0, ""))
+        return json.loads(res.stdout)
+
+    def test_user_is_the_scenarios_login(self):
+        self.assertEqual(self.ok("api", "--hostname", "github.com", "user"), {"login": "me"})
+
+    def test_no_login_is_an_error(self):
+        self.write({"repos": {"acme/widgets": REPO}})
+        res = self.gh("api", "--hostname", "github.com", "user")
+        self.assertEqual((res.returncode, res.stdout), (1, ""))
+        self.assertIn("fake_gh.py:", res.stderr)
+
+    def test_pr_list_gives_the_branch_prs_with_the_asked_fields(self):
+        for repo in ("acme/widgets", "github.com/acme/widgets"):
+            with self.subTest(repo):
+                self.assertEqual(
+                    self.ok("pr", "list", "--repo", repo, "--head", "TASK-7-x", *LIST),
+                    [{"number": 1, "url": PR["url"], "headRefName": "TASK-7-x"}],
+                )
+        self.assertEqual(
+            self.ok("pr", "list", "--repo", "acme/widgets", "--head", "TASK-8-y", *LIST), []
+        )
+
+    def test_a_thread_is_one_page_and_an_unlisted_one_empty(self):
+        api = ("api", "--hostname", "github.com", "--paginate", "--slurp")
+        self.assertEqual(self.ok(*api, "repos/acme/widgets/issues/1/comments"), [[COMMENT]])
+        self.assertEqual(self.ok(*api, "repos/acme/widgets/pulls/1/reviews"), [[]])
+        res = self.gh(*api, "repos/acme/nope/pulls/1/comments")
+        self.assertEqual(
+            (res.returncode, res.stdout, res.stderr), (1, "", "gh: Not Found (HTTP 404)\n")
+        )
+
+    def test_hostname_keeps_the_repo_api(self):
+        self.assertEqual(self.ok("api", "--hostname", "github.com", "repos/acme/widgets"), REPO)
+
+    def test_any_other_argv_is_a_usage_error(self):
+        api = ("api", "--hostname", "github.com")
+        for argv in (
+            ("api", "--hostname", "example.com", "user"),
+            (*api, "--paginate", "repos/acme/widgets/issues/1/comments"),
+            (*api, "--paginate", "--slurp", "repos/acme/widgets/issues/x/comments"),
+            ("pr", "list", "--repo", "acme/widgets", "--head", "TASK-7-x"),
+            ("pr", "list", "--head", "TASK-7-x", "--repo", "acme/widgets", *LIST),
+            ("pr", "list", "--repo", "acme/widgets", "--head", "TASK-7-x", *LIST[:-1], "10"),
+            ("pr", "view", "1"),
+        ):
+            with self.subTest(argv):
+                res = self.gh(*argv)
+                self.assertEqual((res.returncode, res.stdout), (1, ""))
+                self.assertIn("fake_gh.py:", res.stderr)
+
+    def test_bad_login_pulls_or_threads_are_errors(self):
+        for name, scenario in {
+            "a login not a string": {"login": 1},
+            "pulls a list": {"pulls": []},
+            "a pull not an object": {"pulls": {"acme/widgets": [1]}},
+            "a pull without headRefName": {"pulls": {"acme/widgets": [{"number": 1}]}},
+            "threads of a list": {"threads": {"acme/widgets": []}},
+            "a comment not an object": {"threads": {"acme/widgets": {"issues/1/comments": [1]}}},
+        }.items():
+            with self.subTest(name):
+                self.write({"repos": {"acme/widgets": REPO}, **scenario})
+                res = self.gh("api", "repos/acme/widgets")
+                self.assertEqual((res.returncode, res.stdout), (1, ""))
+                self.assertIn("fake_gh.py:", res.stderr)
+
+
+class Clone(Case):
+    def test_repo_clone_gives_a_checkout_whose_ssh_origin_fetches_the_bare_repo(self):
+        fake_gh.bare(self.repos, "acme", "widgets", branches=("main",))
+        fake_gh.gitconfig(self.home, self.repos)
+        self.write({"repos": {"acme/widgets": REPO}})
+        wt = os.path.join(self.root, "wt")
+        res = self.gh("repo", "clone", "github.com/acme/widgets", wt, "--", "--filter=blob:none")
+        self.assertEqual(res.returncode, 0, res.stderr)
+        url = self.run_cmd("git", "-C", wt, "remote", "get-url", "origin")
+        self.assertEqual(url.stdout, "ssh://git@github.com/acme/widgets.git\n", url.stderr)
+        fetch = self.run_cmd("git", "-C", wt, "fetch", "origin")
+        self.assertEqual(fetch.returncode, 0, fetch.stderr)
+        head = self.run_cmd("git", "-C", wt, "rev-parse", "--verify", "origin/main")
+        self.assertEqual(head.returncode, 0, head.stderr)
+
+    def test_a_bad_clone_argv_is_a_usage_error(self):
+        self.write({"repos": {"acme/widgets": REPO}})
+        for argv in (
+            ("repo", "clone", "acme/widgets"),
+            ("repo", "clone", "acme/widgets", "wt", "-x"),
+            ("repo", "clone", "acme", "wt", "--"),
+        ):
+            with self.subTest(argv):
+                res = self.gh(*argv)
+                self.assertEqual((res.returncode, res.stdout), (1, ""))
+                self.assertIn("fake_gh.py:", res.stderr)
+
+
 class Bare(Case):
     def refs(self, path):
         res = self.run_cmd("git", "--git-dir", path, "for-each-ref", "--format=%(refname)")

@@ -3,6 +3,7 @@ import os
 import re
 import shlex
 import shutil
+import subprocess
 import sys
 import tempfile
 from urllib.parse import unquote
@@ -12,14 +13,24 @@ from utils.tests.sandbox import clean_env, git_run
 ENV = "FAKE_GH_SCENARIO"
 RAW = "Accept: application/vnd.github.raw+json"
 API = re.compile(r"repos/([^/]+)/([^/]+)(?:/contents/([^?]+)\?ref=([^?]+))?")
+THREAD = re.compile(r"repos/([^/]+)/([^/]+)/(issues/\d+/comments|pulls/\d+/(?:reviews|comments))")
+HOST = "github.com"
+PR_LIST = ("--repo", "--head", "--state", "--json", "--limit")
+KEYS = {"repos", "contents", "login", "pulls", "threads"}
+CLONE = re.compile(r"(?:github\.com/)?([^/]+)/([^/]+)")
+# git's ssh, variant simple: HOST "git-upload-pack '/O/N.git'"; it serves the one bare repo
+SSH = '#!/bin/sh\nset -- $2\nexec git "${1#git-}" %s\n'
 TAIL = "/usr/bin:/bin"
+# the repo root, for utils.tests.sandbox: an agent run's PYTHONPATH holds only the src roots
+ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), *[os.pardir] * 4))
 
 
 def install(bin_dir: str) -> str:
     path = os.path.join(bin_dir, "gh")
     with open(path, "w") as f:
         f.write(
-            f'#!/bin/sh\nexec {shlex.quote(sys.executable)} -P -S {shlex.quote(os.path.abspath(__file__))} "$@"\n'
+            f"#!/bin/sh\nPYTHONPATH={shlex.quote(ROOT)} exec {shlex.quote(sys.executable)} -P -S "
+            f'{shlex.quote(os.path.abspath(__file__))} "$@"\n'
         )
     os.chmod(path, 0o755)
     return path
@@ -93,9 +104,10 @@ def scenario() -> dict:
             data = json.load(f)
     except (OSError, ValueError) as e:
         sys.exit(f"fake_gh.py: {ENV}: {e}")
-    if not isinstance(data, dict) or not {"repos"} <= set(data) <= {"repos", "contents"}:
+    if not isinstance(data, dict) or not {"repos"} <= set(data) <= KEYS:
         sys.exit(
-            'fake_gh.py: the scenario is no JSON object with the key "repos" and optionally "contents"'
+            'fake_gh.py: the scenario is no JSON object with the key "repos" and optionally '
+            '"contents", "login", "pulls" and "threads"'
         )
     if not isinstance(data["repos"], dict) or not all(
         isinstance(v, dict) for v in data["repos"].values()
@@ -103,7 +115,25 @@ def scenario() -> dict:
         sys.exit('fake_gh.py: "repos" is no object of objects')
     if not nested(data.setdefault("contents", {}), 3):
         sys.exit('fake_gh.py: "contents" is no object of objects of objects of strings')
+    if not isinstance(data.setdefault("login", ""), str):
+        sys.exit('fake_gh.py: "login" is no string')
+    pulls = data.setdefault("pulls", {})
+    if not objects(pulls, 1) or not all(
+        isinstance(p.get("headRefName"), str) for prs in pulls.values() for p in prs
+    ):
+        sys.exit('fake_gh.py: "pulls" is no object of lists of objects with a headRefName')
+    if not objects(data.setdefault("threads", {}), 2):
+        sys.exit('fake_gh.py: "threads" is no object of objects of lists of objects')
     return data
+
+
+def objects(value, depth: int) -> bool:
+    """`depth` levels of objects over lists of objects."""
+    return (
+        isinstance(value, list) and all(isinstance(v, dict) for v in value)
+        if depth == 0
+        else isinstance(value, dict) and all(objects(v, depth - 1) for v in value.values())
+    )
 
 
 def entries(files: dict, path: str) -> list[dict] | None:
@@ -114,7 +144,82 @@ def entries(files: dict, path: str) -> list[dict] | None:
     return [{"name": n, "path": f"{path}/{n}", "type": kinds[n]} for n in sorted(kinds)]
 
 
+def login() -> None:
+    if not (name := scenario()["login"]):
+        sys.exit("fake_gh.py: the scenario has no login")
+    print(json.dumps({"login": name}))
+
+
+def thread(m: re.Match) -> None:
+    data, repo = scenario(), f"{m[1]}/{m[2]}"
+    if repo not in data["repos"]:
+        sys.exit("gh: Not Found (HTTP 404)")
+    print(json.dumps([data["threads"].get(repo, {}).get(m[3], [])]))
+
+
+def pr_list(rest: list[str]) -> None:
+    options = dict(zip(rest[::2], rest[1::2], strict=False))
+    if (
+        tuple(rest[::2]) != PR_LIST
+        or len(rest) != 2 * len(PR_LIST)
+        or (options["--state"], options["--limit"]) != ("all", "100")
+    ):
+        sys.exit(f"fake_gh.py: usage: gh pr list {' '.join(f'{o} X' for o in PR_LIST)}")
+    repo, fields = options["--repo"].removeprefix(HOST + "/"), options["--json"].split(",")
+    print(
+        json.dumps(
+            [
+                {f: p[f] for f in fields if f in p}
+                for p in scenario()["pulls"].get(repo, [])
+                if p["headRefName"] == options["--head"]
+            ]
+        )
+    )
+
+
+def git(*argv: str) -> str:
+    done = subprocess.run(["git", *argv], capture_output=True, text=True, timeout=60)
+    if done.returncode != 0:
+        sys.stderr.write(done.stderr)
+        sys.exit(done.returncode)
+    return done.stdout.strip()
+
+
+def repo_clone(rest: list[str]) -> None:
+    """`gh repo clone O/N DIR -- FLAGS`: git clone through HOME's gitconfig, then origin over a
+    local ssh: `git remote get-url` expands that gitconfig's insteadOf, which repo.py checks.
+    """
+    m = CLONE.fullmatch(rest[0]) if len(rest) >= 3 and rest[2] == "--" else None
+    if not m:
+        sys.exit("fake_gh.py: usage: gh repo clone [github.com/]O/N DIR -- [GIT FLAGS]")
+    wt = rest[1]
+    git("clone", *rest[3:], f"https://{HOST}/{m[1]}/{m[2]}.git", wt)
+    bare = git("-C", wt, "remote", "get-url", "origin").removeprefix("file://")
+    ssh = os.path.join(wt, ".git", "fake-ssh")
+    with open(ssh, "w") as f:
+        f.write(SSH % shlex.quote(bare))
+    os.chmod(ssh, 0o700)
+    for key, value in (
+        ("remote.origin.url", f"ssh://git@{HOST}/{m[1]}/{m[2]}.git"),
+        ("core.sshCommand", ssh),
+        ("ssh.variant", "simple"),
+        ("protocol.ssh.allow", "always"),
+    ):
+        git("-C", wt, "config", key, value)
+
+
 def main(argv: list[str]) -> None:
+    if argv[:2] == ["pr", "list"]:
+        return pr_list(argv[2:])
+    if argv[:2] == ["repo", "clone"]:
+        return repo_clone(argv[2:])
+    if argv[:3] == ["api", "--hostname", HOST]:
+        rest = argv[3:]
+        if rest == ["user"]:
+            return login()
+        if rest[:2] == ["--paginate", "--slurp"] and (m := THREAD.fullmatch(" ".join(rest[2:]))):
+            return thread(m)
+        argv = ["api", *rest]
     raw = argv[1:3] == ["-H", RAW]
     rest = argv[3:] if raw else argv[1:]
     m = API.fullmatch(rest[0]) if argv[:1] == ["api"] and len(rest) == 1 else None
