@@ -115,17 +115,13 @@ def _load(store: str, cwd: str, sid: str) -> dict:
         raise ConfigError("the store must be an absolute path")
     path = _state_path(store, cwd, sid)
     try:
-        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK)
     except FileNotFoundError:
         raise ConfigError(f"no resume state for session {sid}") from None
     with os.fdopen(fd, "rb") as f:
         found = os.fstat(f.fileno())
-        if not (
-            stat.S_ISREG(found.st_mode)
-            and found.st_uid == os.getuid()
-            and stat.S_IMODE(found.st_mode) == 0o600
-        ):
-            raise ConfigError(f"{path}: not a private file of yours")
+        if not stat.S_ISREG(found.st_mode):
+            raise ConfigError(f"{path}: not a regular file")
         data = f.read(STATE_MAX + 1)
     try:
         state = json.loads(data)
@@ -252,9 +248,6 @@ class ClaudeCommon:
         }
         try:
             os.makedirs(self.store, 0o700, exist_ok=True)
-            found = os.lstat(self.store)
-            if not stat.S_ISDIR(found.st_mode) or found.st_uid != os.getuid():
-                raise ConfigError(f"{self.store}: not a directory of yours")
             os.chmod(self.store, 0o700)
             save(_state_path(self.store, cwd, sid), json.dumps(state), durable=True)
         except OSError as error:
@@ -400,11 +393,11 @@ class ClaudeCommon:
             with contextlib.suppress(OSError):
                 recorded = os.path.realpath(transcript)
                 if os.path.commonpath((recorded, root)) == root and stat.S_ISREG(
-                    os.lstat(transcript).st_mode
+                    os.stat(transcript).st_mode
                 ):
                     path = recorded
         try:
-            mode = os.lstat(path).st_mode
+            mode = os.stat(path).st_mode
         except (FileNotFoundError, NotADirectoryError):
             resumable = Resumable.NO
         except OSError:
@@ -413,9 +406,7 @@ class ClaudeCommon:
             resumable = Resumable.YES if stat.S_ISREG(mode) else Resumable.UNKNOWN
         paths = [path]
         folder = os.path.splitext(path)[0]
-        if os.path.commonpath((os.path.realpath(folder), root)) == root and not os.path.islink(
-            folder
-        ):
+        if os.path.commonpath((os.path.realpath(folder), root)) == root:
             for top, _, files in os.walk(folder):
                 paths += (os.path.join(top, name) for name in files)
         times = []

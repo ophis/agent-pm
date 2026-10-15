@@ -409,7 +409,9 @@ class TuiTest(Base):
         fresh = self.adapter.tui()
         fresh.restore(dataclasses.replace(self.spec, sid="other-id"), {})
         self.assertEqual((fresh.state, fresh.native), (None, ""))
-        for state in ({"store": "relative/store"}, {"store": str(self.extra)}):
+        not_a_directory = self.extra / "store"
+        not_a_directory.write_text("")
+        for state in ({"store": "relative/store"}, {"store": str(not_a_directory)}):
             with self.subTest(state=state), self.assertRaises(ConfigError):
                 self.adapter.tui().restore(self.spec, state)
 
@@ -1059,20 +1061,13 @@ class HookTest(Base):
         self.assertEqual(self.common.load(str(self.work), self.spec.sid).native_id, NATIVE)
         self.assertFalse((client_home / ".agent-pm").exists())
 
-    def test_explicit_store_keeps_symlink_mode_and_implicit_root_guards(self):
+    def test_explicit_store_keeps_relative_and_implicit_root_guards(self):
         self.prepare()
         store = self.record().parent
-        alias = self.root / "alias"
-        alias.symlink_to(store, target_is_directory=True)
-        for path in (str(alias), "relative", str(store)):
-            with self.subTest(path=path):
-                if path == str(store):
-                    store.chmod(0o755)
-                with contextlib.redirect_stderr(io.StringIO()):
-                    self.assertFalse(
-                        tui.bind("Stop", self.payload(), str(self.work), self.spec.sid, root=path)
-                    )
-                store.chmod(0o700)
+        with contextlib.redirect_stderr(io.StringIO()):
+            self.assertFalse(
+                tui.bind("Stop", self.payload(), str(self.work), self.spec.sid, root="relative")
+            )
         with (
             mock.patch.dict(os.environ, {"TMPDIR": str(store.parent)}),
             contextlib.redirect_stderr(io.StringIO()),

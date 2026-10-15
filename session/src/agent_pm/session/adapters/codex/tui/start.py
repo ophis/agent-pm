@@ -10,6 +10,7 @@ import json
 import os
 import re
 import signal
+import stat
 import sys
 import time
 from collections.abc import Mapping
@@ -106,13 +107,12 @@ def hook_trust(
         root, hashlib.sha256(env["CODEX_HOME"].encode()).hexdigest() + ".start.lock"
     )
     try:
-        fd = os.open(lock, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+        fd = os.open(lock, os.O_RDWR | os.O_CREAT, 0o600)
     except OSError as e:
         raise StartError(f"codex hooks/list: {lock}: {e.strerror}") from e
     try:
-        info = os.fstat(fd)
-        if not common.private_file(info):
-            raise StartError("codex hooks/list: unsafe startup lock")
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            raise StartError("codex hooks/list: startup lock is not a regular file")
         _acquire_lock(fd, lock, termination)
         try:
             result = listing(exe, args, cwd, env, termination=termination)
