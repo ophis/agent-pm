@@ -17,9 +17,10 @@ def version(path):
 
 try:
     with open(record, encoding="utf-8") as f:
-        roots = [entry["installPath"] for entry in json.load(f)["plugins"]["agent-pm@agent-pm"]]
+        entries = json.load(f)["plugins"]["agent-pm@agent-pm"]
 except (OSError, ValueError, LookupError, TypeError):
-    roots = []
+    entries = []
+roots = [entry.get("installPath") for entry in entries if isinstance(entry, dict)] if isinstance(entries, list) else []
 roots += sorted(glob.glob(os.path.join(glob.escape(cache), "*")), key=version, reverse=True)
 for root in roots:
     if isinstance(root, str) and os.access(path := os.path.join(root, rel), os.X_OK):

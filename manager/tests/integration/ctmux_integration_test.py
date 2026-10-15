@@ -91,11 +91,11 @@ def plugin(root: str) -> str:
     return root
 
 
-def record(home: str, *roots: str) -> None:
-    """Claude Code's install record in home, listing roots for agent-pm@agent-pm."""
+def record(home: str, *roots: str | dict) -> None:
+    """Claude Code's install record in home, listing roots (or raw entries) for agent-pm@agent-pm."""
     path = os.path.join(home, ".claude", "plugins", "installed_plugins.json")
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    entries = [{"scope": "user", "installPath": root} for root in roots]
+    entries = [r if isinstance(r, dict) else {"scope": "user", "installPath": r} for r in roots]
     with open(path, "w", encoding="utf-8") as f:
         json.dump({"version": 2, "plugins": {"agent-pm@agent-pm": entries}}, f)
 
@@ -286,6 +286,24 @@ class FakeTmux(Case):
         )
         crew = os.path.join(root, "bin", "agent-pm-crew")
         self.assertEqual((done.returncode, done.stdout), (3, f"{crew}|status|--manager|a b|in"))
+
+    def test_a_claude_record_entry_without_an_install_path_is_skipped(self):
+        self.install()
+        record(
+            self.home, {"scope": "user"}, root := plugin(os.path.join(self.home, "cache", "0.5.0"))
+        )
+        _, _, err, calls = self.ctmux("s1", script=self.dst)
+        self.assertEqual(err, "")
+        self.assertEqual(calls[1][2:], created("s1", self.cwd, "/bin/zsh", root))
+
+    def test_a_ctmux_away_from_its_plugin_fails_before_creating_a_session(self):
+        away = os.path.join(self.home, "away")
+        os.mkdir(away)
+        copy = shutil.copy2(CTMUX, os.path.join(away, "ctmux"))
+        process, out, err, calls = self.ctmux("s1", script=copy)
+        self.assertEqual((process.returncode, out), (1, ""))
+        self.assertRegex(err, r"\Actmux: no /.*/bin/agent-pm-crew\n\Z")
+        self.assertEqual([call[2] for call in calls], ["has"])
 
     def test_with_no_install_a_launcher_fails_naming_where_it_looked(self):
         self.install()

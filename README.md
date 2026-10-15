@@ -256,7 +256,7 @@ agent-pm keeps its state in its state root, `~/.agent-pm/`. `work/` and `logs/` 
 ├── managers/<name>/              a manager's Roster and events file
 ├── adhoc/<date>-<role>-<name>/   workdirs of /agent-pm:act-as and /agent-pm:tmux role runs
 ├── probe/                        the empty cwd of the client usage check
-└── bin/                         ctmux --install's launchers
+└── bin/                          ctmux --install's launchers
 ```
 
 | Entry | Cleaned by | Safe to delete by hand |

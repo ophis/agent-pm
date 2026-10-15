@@ -16,6 +16,7 @@ s=${1:?usage: ctmux <session-name> | ctmux --install}
 dir=$PWD
 crew=$(CDPATH= cd -- "$(dirname -- "$0")/../../../.." && pwd)/bin/agent-pm-crew
 tmux has -t "=$s" 2>/dev/null || {
+  [ -x "$crew" ] || { echo "ctmux: no $crew" >&2; exit 1; }
   # Start from ~ so the tmux server never sits in a directory that later gets deleted.
   (cd ~ && tmux start-server \; set -g mouse on \; set -g history-limit 50000 \
     \; set -s extended-keys on \; set -s 'terminal-features[99]' 'xterm*:extkeys' \
