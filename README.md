@@ -56,7 +56,7 @@ flowchart TB
   end
   subgraph SE[agent_pm.session]
     SC["cli.py<br>agent-pm-session"]
-    DR["engine/: base · hosted_session · worker · types · records<br>runtimes/: headless · tui · in_process<br>hosts/tmux/: host · transport · placement · grid"]
+    DR["engine/: base · hosted_session · worker · types · records<br>runtimes/: headless · tui · in_process<br>hosts/tmux/: host · transport · placement · grid<br>hosts/pty/: host · supervisor · keys"]
     subgraph AD[adapters/]
       CL[claude]
       CX[codex]
@@ -233,6 +233,8 @@ Each session's `Run <sid>` comment holds its resume command. Move the issue out 
 ## agent-pm-session
 
 `bin/agent-pm-session --help` lists its subcommands. `ls` prints a header, then one tab-separated row per session: `name`, `state` (`working`, `done`, `blocked`, `dead`), `client`, `sid`, `display`, with `-` for an empty value.
+
+Sessions run on `[session.hosts] default`: `tmux`, or `pty` (each on a pty its own supervisor holds, state in `~/.agent-pm/pty/<name>/`). A `pty` session cannot be shown: `show`, `attach-command`, `read` and `tile` exit 1, and its `status` `attach` is null. `[delegate.delegates] harness_host = "pty"` puts only detached runs' harnesses there.
 
 ## Client policy
 

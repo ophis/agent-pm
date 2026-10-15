@@ -503,7 +503,7 @@ class UsageQueries(HarnessCase):
         self.assertIs(HarnessDelegate.usage("dummy-tester", session_cls=Probe), sentinel)
         self.assertEqual(asked, ["fake"])
         self.assertEqual(
-            sorted(Probe.configured["hosts"].tables), ["agent", "changed", "harness", "tmux"]
+            sorted(Probe.configured["hosts"].tables), ["agent", "changed", "harness", "pty", "tmux"]
         )
 
     def test_session_config_errors_are_the_delegates(self):
