@@ -16,7 +16,7 @@ import agent_pm.utils as utils_package
 from agent_pm.delegate import config
 from agent_pm.delegate.composer import Composer, DelegateConfig, RunConfig, Team, teams
 from agent_pm.delegate.engine.base import Delegate
-from agent_pm.delegate.engine.callback import EventCallback
+from agent_pm.delegate.engine.callback import EventCallback, sweep
 from agent_pm.delegate.engine.config import module_roots
 from agent_pm.delegate.engine.drivers import AgentDriver, Driver, InstructionDriver
 from agent_pm.delegate.engine.plan import plan
@@ -254,6 +254,7 @@ class HarnessDelegate(Delegate):
                 payload = self.store.read()
                 if payload is not None:
                     self._state = replace(self._state, attempt=self._replacing(payload))
+                    self._sweep()
                 if not fresh or payload is not None:
                     self._preflight()
                 os.makedirs(self.layout.agent, exist_ok=True)
@@ -286,6 +287,12 @@ class HarnessDelegate(Delegate):
             except SessionError as error:
                 raise ConfigError(str(error)) from None
         return previous.attempt + 1 if previous.plan.sid == self._state.plan.sid else 1
+
+    def _sweep(self) -> None:
+        try:
+            sweep(self.store)
+        except OSError as error:
+            raise ConfigError(str(error)) from None
 
     def _live(self, payload: bytes | None) -> bool:
         """Whether the run `payload` records is live: a readable record's per _alive; a corrupt
@@ -811,6 +818,7 @@ class HarnessDelegate(Delegate):
                 raise ConfigError(f"{self.workdir}: delegate run already completed")
             if self.store.running():
                 raise ConfigError(f"{self.workdir}: delegate is still alive")
+            self._sweep()
             record = self._launch(previous, replace(previous, outer=given))
         self._started(self._state)
         return record
@@ -853,6 +861,7 @@ class HarnessDelegate(Delegate):
             previous = self._state = state
             if self._alive(state) or state.result is not None and state.result.outcome is not None:
                 return self._record(state)
+            self._sweep()
             original = state.plan.session.access
             if (
                 original.project

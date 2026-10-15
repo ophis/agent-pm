@@ -3,23 +3,30 @@ configured callback command: synchronously, in its own process group, from the r
 discarded. A delivery that fails (exit ≠ 0, CALLBACK_TIMEOUT, OSError) is one `callback_error` row
 in run.jsonl, never retried; an exception once the child exists kills and reaps the group, then
 propagates. The child inherits the held, emptied callback lock, then the lock gets its pid.
+sweep kills the group a dead harness's held lock names.
 """
 
+import contextlib
 import errno
 import fcntl
 import os
+import re
+import signal
 import stat
 import subprocess
-from collections.abc import Sequence
+import time
+from collections.abc import Callable, Sequence
 from dataclasses import asdict
 
 from agent_pm.delegate.engine.state import RunState
-from agent_pm.delegate.engine.types import Begun, Event, Progress
+from agent_pm.delegate.engine.types import Begun, ConfigError, Event, Progress
 from agent_pm.delegate.event import DelegateEvent
 from agent_pm.session import RunLog
 from agent_pm.utils import kill_group
 
 CALLBACK_TIMEOUT = 300  # seconds: longer than the worst-case write-back
+CALLBACK_STOP_WAIT = 5  # seconds: a killed group to end, then its lock to free
+POLL = 0.05  # seconds
 
 
 class EventCallback:
@@ -115,3 +122,51 @@ def _hold(lock: str) -> int:
         os.close(descriptor)
         raise
     return descriptor
+
+
+def sweep(store: RunState) -> None:
+    """Kills the callback group a dead harness left, then awaits its lock; ConfigError while the
+    run lock is held or past CALLBACK_STOP_WAIT.
+    """
+    if store.running():
+        raise ConfigError(f"{store.layout.workdir}: delegate is still alive")
+    lock = store.callback_lock
+    if not store.held(lock):
+        return
+    with open(lock, encoding="utf-8", errors="replace") as file:
+        text = file.read()
+    if not re.fullmatch(r"[0-9]+\n?", text) or int(text) <= 1:
+        raise ConfigError(f"{lock}: invalid callback pid {text!r}")
+    pid = int(text)
+    try:
+        if not _gone(pid):
+            with contextlib.suppress(ProcessLookupError):
+                os.killpg(pid, signal.SIGKILL)
+            if not _within(lambda: _gone(pid)):
+                raise ConfigError(
+                    f"{lock}: callback process group {pid} still exists "
+                    f"{CALLBACK_STOP_WAIT} s after SIGKILL"
+                )
+    except (PermissionError, OverflowError) as error:
+        raise ConfigError(f"{lock}: cannot signal callback process group {pid}: {error}") from None
+    if not _within(lambda: not store.held(lock)):
+        raise ConfigError(
+            f"{lock}: callback lock still held {CALLBACK_STOP_WAIT} s after its group ended"
+        )
+
+
+def _gone(group: int) -> bool:
+    try:
+        os.killpg(group, 0)
+    except ProcessLookupError:
+        return True
+    return False
+
+
+def _within(done: Callable[[], bool]) -> bool:
+    deadline = time.monotonic() + CALLBACK_STOP_WAIT
+    while not done():
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(POLL)
+    return True

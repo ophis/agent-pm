@@ -1,8 +1,9 @@
 """A callback command for tests: `python3 -P -S callback_recorder.py LOG [--exit KIND:CODE]...
-[--block KIND]`. Reads its event line from stdin, prints noise on stdout, appends one JSON line to
+[--block KIND[:ATTEMPT]]`. Reads its event line from stdin, prints noise on stdout, appends one JSON line to
 LOG: the stdin text, its cwd, pid, parent, process group and blocked signals, and whether the
 callback lock in its cwd is held and what it says. --exit: exit CODE on an event of KIND.
---block: on an event of KIND, start a grandchild in its group, log its pid too, then sleep.
+--block: on an event of KIND (of that ATTEMPT only, when given), start a grandchild in its
+group, log its pid too, then sleep.
 """
 
 import argparse
@@ -26,7 +27,10 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--block")
     a = parser.parse_args(argv)
     line = sys.stdin.read()
-    kind = json.loads(line)["kind"]
+    event = json.loads(line)
+    kind = event["kind"]
+    block, _, attempt = (a.block or "").partition(":")
+    blocking = kind == block and attempt in ("", str(event["attempt"]))
     print(NOISE, flush=True)
     entry = {
         "line": line,
@@ -37,12 +41,12 @@ def main(argv: list[str]) -> int:
         "sigmask": sorted(int(signum) for signum in signal.pthread_sigmask(signal.SIG_BLOCK, [])),
         **lock(),
     }
-    if kind == a.block:
+    if blocking:
         sleeper = (sys.executable, "-P", "-S", "-c", f"import time; time.sleep({BLOCK})")
         entry["grandchild"] = subprocess.Popen(sleeper).pid
     with open(a.log, "a", encoding="utf-8") as log:
         log.write(json.dumps(entry) + "\n")
-    if kind == a.block:
+    if blocking:
         time.sleep(BLOCK)
     codes = dict(rule.split(":") for rule in a.exit)
     return int(codes.get(kind, 0))

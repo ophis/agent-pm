@@ -1,6 +1,7 @@
 """Domain events encode through the existing one-line DelegateEvent contract; each is delivered to
 the callback argv from the run dir in its own process group, holding the callback lock that names its
-pid; a failed delivery is one callback_error row.
+pid; a failed delivery is one callback_error row. sweep kills the group a dead harness's callback lock
+names, then waits for that lock.
 """
 
 import fcntl
@@ -12,6 +13,7 @@ from unittest import mock
 
 from agent_pm.delegate import (
     Begun,
+    ConfigError,
     DelegateEvent,
     Finished,
     Limit,
@@ -20,13 +22,19 @@ from agent_pm.delegate import (
     Progress,
     Result,
 )
-from agent_pm.delegate.engine.callback import CALLBACK_TIMEOUT, EventCallback
+from agent_pm.delegate.engine.callback import (
+    CALLBACK_STOP_WAIT,
+    CALLBACK_TIMEOUT,
+    EventCallback,
+    sweep,
+)
 from agent_pm.delegate.engine.state import RunState
 from agent_pm.delegate.engine.types import Layout
 from agent_pm.utils import Stopped
 
 from delegate.tests.case import Case
 from delegate.tests.harness import SID
+from delegate.tests.unit.engine.orphans import Clock, Orphan
 from utils.tests.process_fixtures import DEVNULL, PIPE, TimeoutExpired
 
 RUN = {"sid": SID, "attempt": 3}
@@ -258,3 +266,113 @@ class Delivery(Case):
             [row["error"] for row in self.errors()],
             [f"callback lock {self.store.callback_lock}: [Errno 28] No space left on device"],
         )
+
+
+class Sweep(Case):
+    def setUp(self):
+        self.store = store(os.path.join(self.home, "w"))
+        self.clock = Clock(self)
+        self.killpg = self.enterContext(mock.patch("os.killpg"))
+
+    def orphan(self, text: str = f"{PID}\n") -> Orphan:
+        orphan = Orphan(self, self.store.callback_lock, text)
+        self.killpg.side_effect = orphan.killpg
+        return orphan
+
+    def held(self) -> bool:
+        return self.store.held(self.store.callback_lock)
+
+    def test_no_lock_or_a_free_one_sends_no_signal(self):
+        sweep(self.store)
+        with open(self.store.callback_lock, "w", encoding="utf-8") as file:
+            file.write(f"{PID}\n")
+        sweep(self.store)
+        self.killpg.assert_not_called()
+        self.assertEqual(self.clock.now, 0.0)
+
+    def test_a_dead_harnesss_live_group_is_killed_then_its_lock_awaited(self):
+        orphan = self.orphan()
+        sweep(self.store)
+        self.assertEqual(orphan.calls, [(PID, 0), (PID, signal.SIGKILL), (PID, 0)])
+        self.assertFalse(self.held())
+
+    def test_a_group_already_gone_gets_no_signal_and_its_lock_is_awaited(self):
+        orphan = self.orphan()
+        orphan.alive = False
+        sweep(self.store)
+        self.assertEqual(orphan.calls, [(PID, 0)])
+
+    def test_a_group_alive_5_s_after_sigkill_is_a_config_error(self):
+        orphan = self.orphan()
+        orphan.dies = False
+        with self.assertRaises(ConfigError) as caught:
+            sweep(self.store)
+        self.assertEqual(
+            str(caught.exception),
+            f"{self.store.callback_lock}: callback process group {PID} still exists "
+            f"{CALLBACK_STOP_WAIT} s after SIGKILL",
+        )
+        self.assertEqual(orphan.calls[:2], [(PID, 0), (PID, signal.SIGKILL)])
+        self.assertEqual(set(orphan.calls[2:]), {(PID, 0)})
+        self.assertGreaterEqual(self.clock.now, CALLBACK_STOP_WAIT)
+
+    def test_a_lock_still_held_5_s_after_its_group_ended_is_a_config_error(self):
+        for alive, calls in (
+            (True, [(PID, 0), (PID, signal.SIGKILL), (PID, 0)]),
+            (False, [(PID, 0)]),
+        ):
+            with self.subTest(alive=alive):
+                self.clock.now = 0.0
+                orphan = self.orphan()
+                orphan.alive, orphan.keeps = alive, True
+                with self.assertRaises(ConfigError) as caught:
+                    sweep(self.store)
+                self.assertEqual(
+                    str(caught.exception),
+                    f"{self.store.callback_lock}: callback lock still held "
+                    f"{CALLBACK_STOP_WAIT} s after its group ended",
+                )
+                self.assertEqual(orphan.calls, calls)
+                orphan.free()
+
+    def test_a_held_lock_without_a_pid_above_1_sends_no_signal(self):
+        for text in ("", "x", "1", "0", "-3", " 12a", "12 ", "١٢"):
+            with self.subTest(text=text):
+                orphan = self.orphan(text)
+                with self.assertRaises(ConfigError) as caught:
+                    sweep(self.store)
+                self.assertEqual(
+                    str(caught.exception),
+                    f"{self.store.callback_lock}: invalid callback pid {text!r}",
+                )
+                self.killpg.assert_not_called()
+                orphan.free()
+
+    def test_a_group_it_may_not_signal_or_no_pid_at_all_is_a_config_error(self):
+        huge = 2**80
+        for text, error, calls in (
+            (f"{PID}\n", PermissionError(1, "Operation not permitted"), [(PID, 0)]),
+            (f"{huge}\n", OverflowError("signed integer is greater than maximum"), [(huge, 0)]),
+        ):
+            with self.subTest(error=error):
+                orphan = self.orphan(text)
+                orphan.probe_error = error
+                pid = int(text)
+                with self.assertRaises(ConfigError) as caught:
+                    sweep(self.store)
+                self.assertEqual(
+                    str(caught.exception),
+                    f"{self.store.callback_lock}: cannot signal callback process group {pid}: "
+                    f"{error}",
+                )
+                self.assertEqual(orphan.calls, calls)
+                orphan.free()
+
+    def test_a_held_run_lock_is_a_live_run_whose_callback_it_never_signals(self):
+        self.orphan()
+        with self.store.run_lock(), self.assertRaises(ConfigError) as caught:
+            sweep(self.store)
+        self.assertEqual(
+            str(caught.exception), f"{self.store.layout.workdir}: delegate is still alive"
+        )
+        self.killpg.assert_not_called()

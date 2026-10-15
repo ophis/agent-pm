@@ -381,6 +381,26 @@ class Headless(Detach):
         )
         self.assertFalse(set(entries[-1]["sigmask"]) & set(SIGNALS), entries[-1]["sigmask"])
 
+    def test_a_sigkilled_harness_leaves_its_callback_group_until_resume_kills_it_first(self):
+        res = self.detach(*self.on_event("--block", "progress:1"), steps=[START, block(DONE)])
+        self.said(res, tui=False)
+        (blocked,) = live_tmux.wait(
+            lambda: [e for e in self.delivered() if json.loads(e["line"])["kind"] == "progress"],
+            WAIT,
+            what="the blocked progress callback",
+        )
+        os.kill(blocked["ppid"], signal.SIGKILL)
+        self.until(lambda: not self.live(HARNESS), f"{HARNESS} gone")
+        self.assertTrue(all(running(blocked[pid]) for pid in ("pid", "grandchild")))
+        resumed = self.cli([*RESUME, self.work])
+        self.assertEqual(resumed.returncode, 0, resumed.stderr)
+        self.assertFalse(any(running(blocked[pid]) for pid in ("pid", "grandchild")))
+        self.until(lambda: "result" in self.kinds(), "the resumed run's result")
+        self.assertEqual(self.last("result")["outcome"]["status"], "done")
+        with open(os.path.join(Layout(self.work).run, "delegate.json")) as f:
+            self.assertEqual(json.load(f)["attempt"], 2)
+        self.until(lambda: not self.live(HARNESS), f"the resumed {HARNESS} gone")
+
     def test_the_launchers_events_file_gets_one_outcome_line(self):
         res = self.detach(steps=[START, block(DONE)], launcher=True)
         self.said(res, tui=False)
