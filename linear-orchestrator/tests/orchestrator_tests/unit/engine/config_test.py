@@ -59,7 +59,7 @@ ROLES = {
     "researcher": (
         "researcher@agents.test",
         "linear-api-key-researcher",
-        ("deep-research", "light-research"),
+        ("deep-research", "research", "light-research"),
         1,
         "pm",
     ),

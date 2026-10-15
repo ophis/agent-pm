@@ -869,7 +869,7 @@ class Real(RealConfig):
             ),
             *(
                 ("researcher", task, *researcher)
-                for task in (None, "deep-research", "light-research")
+                for task in (None, "deep-research", "research", "light-research")
             ),
         ):
             with self.subTest(role=role, task=task):

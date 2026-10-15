@@ -13,7 +13,7 @@ A persona with standards and boundaries (researcher, pm, engineer, dummy-tester)
 _Avoid_: agent, persona
 
 **Task**:
-One job a role can do (deep research, light research, product design, build, light build, echo), defined by its task file's steps and listed in its role's task index.
+One job a role can do (deep research, research, light research, product design, build, light build, echo), defined by its task file's steps and listed in its role's task index.
 _Avoid_: skill, job
 
 **Principles**:
@@ -63,7 +63,7 @@ The code that wraps one client (Claude Code, Codex) for the session layer: its l
 _Avoid_: client (what it wraps), backend, vehicle
 
 **Mode**:
-How the session layer hosts a client: headless (e.g. `claude -p`, on a pipe, ends when it exits), tui (its interactive command in a tmux session, ends when its caller stops it) or in_process (the Adapter's run inside the caller's process, no process started, ends when the run returns). In code: `Mode` (`mode = headless/tui/in_process`), the Delegate CLI's `--mode`; its Runtime runs it.
+How the session layer hosts a client: headless (e.g. `claude -p`, on a pipe, ends when it exits), tui (its interactive command in a terminal on its Host, ends when its caller stops it) or in_process (the Adapter's run inside the caller's process, no process started, ends when the run returns). In code: `Mode` (`mode = headless/tui/in_process`), the Delegate CLI's `--mode`; its Runtime runs it.
 _Avoid_: runtime (the class that runs it)
 
 **Runtime**:
@@ -78,7 +78,7 @@ _Avoid_: agent run (a role's run, in a session)
 What a caller asks the session layer to run: workdir, Access, tier, effort, flags, env, the sid to resume. In code: `session/src/agent_pm/session/engine/types.py`.
 
 **Host**:
-Where the session layer runs processes by name (e.g. in tmux sessions). A Displayable Host also shows them and reads their screen. In code: `session/src/agent_pm/session/hosts/`.
+Where the session layer runs processes by name (e.g. in tmux sessions, or each on a pty its own supervisor holds). A Displayable Host also shows them and reads their screen. In code: `session/src/agent_pm/session/hosts/`.
 
 **Record**:
 A versioned JSON line naming a started thing, its session identity and display, with commands to control and resume it. In code: `utils/src/agent_pm/utils/record.py`.
