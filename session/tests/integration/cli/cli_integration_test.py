@@ -204,8 +204,8 @@ class ConfigTest(SessionCliCase):
                 "grid_retile: want one of all, open-close, off",
             ),
             (
-                "[session.hosts.tmux]\nworkers_per_colum = 2\n",
-                "unknown key 'workers_per_colum' in [hosts.tmux]",
+                "[session.hosts.tmux]\nno_such_key = 2\n",
+                "unknown key 'no_such_key' in [hosts.tmux]",
             ),
             (
                 '[session.adapters.claude]\nmodel = "opus"\n',
