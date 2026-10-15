@@ -29,10 +29,9 @@ class ClaudeHeadless(JsonHeadless):
         self.sid, self.spec = spec.sid or "", spec
         return common.launch(
             spec,
-            None,
             head=("-p",),
             output=("--output-format", "stream-json", "--verbose"),
-            tail=(*spec.flags, "--", spec.prompt),
+            tail=("--", spec.prompt),
             env=common.ENV,
         )
 

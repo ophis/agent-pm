@@ -16,6 +16,12 @@ def _names(value, keys) -> bool:
     )
 
 
+def strings(value) -> bool:
+    return isinstance(value, list) and all(isinstance(s, str) for s in value)
+
+
+FLAGS = ("flags", strings, "a list of strings")
+
 CHECKS = (
     ("tiers", lambda v: _names(v, tuple(Tier)), 'a table from tier "1"–"4" to a model name'),
     (

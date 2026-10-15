@@ -1,6 +1,7 @@
 """Claude Code client options, Access grants, launch metadata, usage and session inspection."""
 
 import contextlib
+import functools
 import hashlib
 import json
 import os
@@ -11,7 +12,7 @@ from collections.abc import Iterator, Mapping
 from types import MappingProxyType
 
 from agent_pm.session.adapters import common
-from agent_pm.session.adapters.common import UUID, scan
+from agent_pm.session.adapters.common import UUID, scan, strings
 from agent_pm.session.engine.types import (
     COMMAND,
     ConfigError,
@@ -39,6 +40,7 @@ NOT_LITERAL = "*?[]{}()\\,"
 STORE = f"{STATE}/sessions/claude"  # under HOME, resolved per call
 STATE_KEYS = frozenset({"version", "cwd", "sid", "dirs", "env"})
 STATE_MAX = 64 * 1024
+SETTINGS_MAX = 2 * 1024 * 1024
 
 
 def added_dirs(flags: tuple[str, ...]) -> Iterator[str]:
@@ -50,28 +52,72 @@ def added_dirs(flags: tuple[str, ...]) -> Iterator[str]:
     )
 
 
-def _merged(flags: tuple[str, ...], hooks: Mapping) -> tuple[dict, tuple[str, ...]]:
-    for flag in scan(flags, {"--settings": "--settings"}):
-        if flag.word != "--settings" or flag.value is None:
-            continue
-        value = flag.value
+def _read(path: str) -> str:
+    """A settings file within Claude's limits: a regular file of at most 2 MiB."""
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK)
         try:
-            settings = json.loads(value)
-        except (ValueError, RecursionError):
-            settings = None
-        own = settings.setdefault("hooks", {}) if isinstance(settings, dict) else None
-        if (
-            not isinstance(settings, dict)
-            or not isinstance(own, dict)
-            or not all(isinstance(own.get(e, []), list) for e in hooks)
-        ):
-            raise ConfigError(
-                f"--settings {value!r:.80}: want a JSON object with a list of hooks per event"
-            )
-        for event, entries in hooks.items():
-            own[event] = [*own.get(event, []), *entries]
-        return settings, (*flags[: flag.start], *flags[flag.end :])
-    return {"hooks": dict(hooks)}, flags
+            found = os.fstat(fd)
+            if not stat.S_ISREG(found.st_mode) or found.st_size > SETTINGS_MAX:
+                raise ConfigError(f"--settings {path!r}: want a regular file of at most 2 MiB")
+            return b"".join(iter(lambda: os.read(fd, SETTINGS_MAX), b"")).decode()
+        finally:
+            os.close(fd)
+    except (OSError, UnicodeDecodeError) as error:
+        raise ConfigError(
+            f"--settings {path!r}: {getattr(error, 'strerror', None) or error}"
+        ) from None
+
+
+def _parsed(value: str, cwd: str) -> dict:
+    """A --settings value: inline JSON when it starts with "{", else a settings file's path,
+    relative to `cwd`; errors name the file by that resolved path.
+    """
+    inline = value.lstrip().startswith("{")
+    path = os.path.join(cwd, value)
+    text = value if inline else _read(path)
+    try:
+        settings = json.loads(text)
+    except (ValueError, RecursionError):
+        settings = None
+    hooks = settings.get("hooks", {}) if isinstance(settings, dict) else None
+    if (
+        not isinstance(settings, dict)
+        or not isinstance(hooks, dict)
+        or not all(isinstance(e, list) for e in hooks.values())
+    ):
+        shown = f"{value!r:.80}" if inline else repr(path)
+        raise ConfigError(f"--settings {shown}: want a JSON object with a list of hooks per event")
+    return settings
+
+
+def _split(flags: tuple[str, ...], cwd: str) -> tuple[list[dict], tuple[str, ...]]:
+    """Each --settings value before "--", parsed, and the flags without them."""
+    found, rest, at = [], [], 0
+    for flag in scan(flags, {"--settings": "--settings"}):
+        if flag.word == "--settings" and flag.value is not None:
+            found.append(_parsed(flag.value, cwd))
+            rest.extend(flags[at : flag.start])
+            at = flag.end
+    return found, (*rest, *flags[at:])
+
+
+def _settings(*parts: Mapping) -> tuple[str, ...]:
+    """Claude's one --settings: `parts` merged, the later winning; none without parts."""
+    return ("--settings", json.dumps(functools.reduce(_merge, parts, {}))) if parts else ()
+
+
+def _merge(base: dict, over: Mapping) -> dict:
+    """Tables merge, lists concatenate, else `over`'s value wins."""
+    for key, value in over.items():
+        mine = base.get(key)
+        if isinstance(mine, dict) and isinstance(value, dict):
+            _merge(mine, value)
+        elif isinstance(mine, list) and isinstance(value, list):
+            base[key] = [*mine, *value]
+        else:
+            base[key] = value
+    return base
 
 
 def _window(value) -> Window | None:
@@ -86,10 +132,6 @@ def _full(window: Window | None, resets: float | None) -> Window:
     return Window(
         max(window.used_percent, 100.0), resets if window.resets_at is None else window.resets_at
     )
-
-
-def _strings(value) -> bool:
-    return isinstance(value, list) and all(isinstance(s, str) for s in value)
 
 
 def _read_dir(path: str) -> str:
@@ -138,7 +180,7 @@ def _load(store: str, cwd: str, sid: str) -> dict:
         and state["sid"] == sid
         and isinstance(state["cwd"], str)
         and os.path.realpath(state["cwd"]) == os.path.realpath(cwd)
-        and _strings(state["dirs"])
+        and strings(state["dirs"])
         and isinstance(state["env"], dict)
         and environment_ok(state["env"])
     ):
@@ -147,8 +189,8 @@ def _load(store: str, cwd: str, sid: str) -> dict:
 
 
 CHECKS = (
-    ("flags", _strings, "a list of strings"),
-    ("allow", _strings, "a list of strings"),
+    common.FLAGS,
+    ("allow", strings, "a list of strings"),
     *common.CHECKS,
 )
 
@@ -261,8 +303,8 @@ class ClaudeCommon:
             raise ConfigError(f"claude resume state: {error}") from None
 
     def resume_main(self, argv) -> int:
-        """resume()'s run (STORE CWD SID): execs claude resuming SID with the saved dirs and env
-        over this environment, in CWD; 1 and one stderr line when it cannot.
+        """resume()'s run (STORE CWD SID): execs claude resuming SID with the config's flags, the
+        saved dirs and env over this environment, in CWD; 1 and one stderr line when it cannot.
         """
         try:
             store, cwd, sid = argv
@@ -273,7 +315,14 @@ class ClaudeCommon:
             state = _load(store, cwd, self.uuid(sid))
             added = (arg for d in state["dirs"] for arg in ("--add-dir", d))
             os.chdir(state["cwd"])
-            command = ["claude", *self.selector(sid, resume=True), *added]
+            configured, own = _split(self.flags, state["cwd"])
+            command = [
+                "claude",
+                *self.selector(sid, resume=True),
+                *own,
+                *_settings(*configured),
+                *added,
+            ]
             os.execvpe(command[0], command, {**os.environ, **state["env"]})
         except (ConfigError, OSError) as exc:
             print(f"claude resume: {exc}", file=sys.stderr)
@@ -289,16 +338,18 @@ class ClaudeCommon:
     def launch(
         self,
         spec: Spec,
-        settings: Mapping | None,
+        hooks: Mapping = MappingProxyType({}),
         *,
         head: tuple[str, ...] = (),
         output: tuple[str, ...] = (),
         tail: tuple[str, ...] = (),
         env: Mapping[str, str] = MappingProxyType({}),
     ) -> Launch:
-        """Build a Claude command with configured settings, access grants and output arguments; env
-        under the config's. --mcp-config keeps a project's .mcp.json that a --strict-mcp-config in
-        spec.flags would drop.
+        """Build a Claude command with configured settings, access grants, output arguments and
+        spec.flags before `tail`; env under the config's. Exactly one --settings: the config's,
+        then spec.flags', then `hooks`, merged (a file path read relative to the cwd), since the
+        docs leave a repeated --settings undefined. --mcp-config keeps a project's .mcp.json that
+        a --strict-mcp-config in spec.flags would drop.
         """
         if any(flag.word == "--setting-sources" for flag in scan(spec.flags)):
             raise ConfigError("--setting-sources is set by the Claude adapter: use Access.project")
@@ -306,6 +357,9 @@ class ClaudeCommon:
         model, effort = self.model(spec.tier), self.effort(spec.effort)
         access = spec.access
         cwd = access.cwd or spec.workdir
+        configured, own = _split(self.flags, cwd)
+        supplied, flags = _split(spec.flags, cwd)
+        hooked = ({"hooks": dict(hooks)},) if hooks else ()
         mcp = os.path.join(cwd, ".mcp.json")
         allow = (
             *(f"Bash({command})" for command in access.commands),
@@ -323,14 +377,15 @@ class ClaudeCommon:
             *(("--model", model) if model is not None else ()),
             *(("--effort", effort) if effort is not None else ()),
             *(("--name", spec.name) if spec.name is not None else ()),
-            *self.flags,
+            *own,
             "--setting-sources",
             "user,project,local" if access.project else "user",
             *(("--mcp-config", mcp) if access.project and strict and os.path.isfile(mcp) else ()),
             *output,
-            *(("--settings", json.dumps(settings)) if settings is not None else ()),
+            *_settings(*configured, *supplied, *hooked),
             *(arg for d in access.dirs for arg in ("--add-dir", d)),
             *(("--allowedTools", *allow) if allow else ()),
+            *flags,
             *tail,
         )
         merged = {
@@ -345,8 +400,6 @@ class ClaudeCommon:
             transcript=self.transcript(cwd, sid, merged),
             resume=self.resume(cwd, sid),
         )
-
-    merged = staticmethod(_merged)
 
     def probe(self) -> Launch:
         return Launch(self.PROBE, env={**self.ENV, **self.env()}, unset=self.UNSET)

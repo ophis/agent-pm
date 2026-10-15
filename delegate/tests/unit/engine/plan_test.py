@@ -400,8 +400,6 @@ class Policy(Base):
                 "--permission-mode",
                 "auto",
                 "--strict-mcp-config",
-                "--settings",
-                '{"enabledPlugins": {"agent-pm@agent-pm": false}}',
             ),
             {},
         ),

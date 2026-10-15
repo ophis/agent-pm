@@ -6,14 +6,24 @@ import tempfile
 from pathlib import Path
 from unittest import mock
 
+from agent_pm.session import read_config
+from agent_pm.session.adapters import registry
 from agent_pm.session.adapters.codex import CodexAdapter
 from agent_pm.session.adapters.codex.common import SessionStore
 from agent_pm.session.engine.types import Access, Launch, Spec
 
 from session.tests.case import REPO, Case
 
+PLUGIN_OFF = ("-c", "plugins.agent-pm@agent-pm.enabled=false")
 NATIVE = "11111111-2222-3333-4444-555555555555"
 CHILD = "aaaaaaaa-2222-3333-4444-555555555555"
+
+
+def packaged() -> CodexAdapter:
+    """The adapter the packaged session config.toml builds."""
+    table = dict(registry.settings(read_config(local=os.devnull))["adapters"]["codex"])
+    table.pop("implementation")
+    return CodexAdapter(table)
 
 
 def committed_headless(adapter: CodexAdapter, spec: Spec) -> Launch:
