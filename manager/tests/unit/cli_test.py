@@ -3,10 +3,10 @@
 import contextlib
 import io
 import os
-import subprocess
 import uuid
 from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 
 from agent_pm.manager import Spec
@@ -132,7 +132,7 @@ class NextEventContent(CliCase):
         def run(argv, **_):
             self.calls.append(tuple(argv))
             code, out, err = self.answers.get(tuple(argv), (1, "", "no such session"))
-            return subprocess.CompletedProcess(argv, code, out, err)
+            return SimpleNamespace(returncode=code, stdout=out, stderr=err)
 
         with mock.patch("subprocess.run", side_effect=run):
             return self.invoke(
@@ -150,6 +150,14 @@ class NextEventContent(CliCase):
         self.assertEqual(
             self.next_event("12:00:00 w1 done", "--content"),
             (0, "1 12:00:00 w1 done\nthe answer\n", ""),
+        )
+
+    def test_a_worker_named_like_a_harness_prints_its_reply(self):
+        self.launched("w1", "test-drive")
+        self.answers[("agent-pm-session", "reply", "test-drive")] = (0, "the answer\n", "")
+        self.assertEqual(
+            self.next_event("12:00:00 test-drive done", "--content"),
+            (0, "1 12:00:00 test-drive done\nthe answer\n", ""),
         )
 
     def test_blocked_prints_the_sessions_screen(self):

@@ -396,16 +396,22 @@ class Crew:
                 time.sleep(0.5)
 
     def event_content(self, event: str, session_command: tuple[str, ...]) -> str:
-        """What a next_event line is about, newline-terminated: a `done` session's reply, a
-        harness's (`<tui>-drive`) entry Status, else the session's screen (both by
-        session_command); else why it is unreadable.
+        """What a next_event line is about, newline-terminated: a harness's (`<tui>-drive`, its
+        entry holding both) entry Status, else by session_command a `done` session's reply or the
+        session's screen; else why it is unreadable.
         """
         _, session, word = event.split(maxsplit=3)[:3]
         try:
-            if session.endswith(HARNESS_SUFFIX):
-                name = _owner(session, self.roster.entries())
-                if name is None:
-                    raise RuntimeError(f"{session}: no roster entry holds this session")
+            entries = self.roster.entries()
+            name = _owner(session, entries)
+            record = None if name is None else entries[name].record
+            tui = session.removesuffix(HARNESS_SUFFIX)
+            if (
+                name is not None
+                and record is not None
+                and tui != session
+                and tui in record.sessions
+            ):
                 content = "".join(status.to_line() + "\n" for status in self.status((name,)))
             else:
                 verb = "reply" if word == "done" else "read"
