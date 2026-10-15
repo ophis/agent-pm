@@ -50,7 +50,7 @@ CLIENT = "claude"
 
 RUN_KEYS = ("kind", "issue", "sid", "role", "client")
 
-SESSION = re.compile(r"(running|done|failed|needs_input|interrupted|limit) · ")
+SESSION = re.compile(r"(running|done|failed|needs_input|interrupted|limit|no outcome) · ")
 
 FIRST_WRITE = ("sessions.M_UPDATE", HARNESS_EMAIL, "error")
 

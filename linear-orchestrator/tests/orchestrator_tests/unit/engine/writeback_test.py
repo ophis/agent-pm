@@ -1896,6 +1896,15 @@ class FinishedEvents(Events):
         )
         self.assertNotIn("steps", self.ledger()[RUN_SID])
 
+    def test_a_clean_exit_without_an_outcome_ends_the_session_as_no_outcome(self):
+        self.assertTrue(self.deliver(delegate_event("begun")))
+        self.assertTrue(self.deliver(self.finished(0)))
+        self.assertEqual(
+            self.linear.comments[RUN_SESSION]["body"],
+            session_body(f"no outcome · #2 · {STARTED} → {RESTARTED} · exit 0"),
+        )
+        self.assertEqual(self.linear.state, self.cfg.states["in_progress"])
+
     def test_a_finished_without_begun_starts_its_session_then(self):
         self.assertTrue(self.deliver(self.finished(1, error="launch failed")))
         body = session_body(f"interrupted · #1 · {STARTED} → {RESTARTED} · exit 1")

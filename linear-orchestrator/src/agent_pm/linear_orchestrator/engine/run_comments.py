@@ -61,7 +61,7 @@ def _status(rc, outcome, limit):
         return outcome.status
     if limit:
         return "limit"
-    return "done" if rc == 0 else "interrupted"
+    return "no outcome" if rc == 0 else "interrupted"
 
 
 def body(rec, rc=None, ended_at=None, *, outcome=None, limit=False):
