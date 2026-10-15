@@ -74,12 +74,10 @@ class Log(Logs):
         self.assertEqual(os.listdir(self.tmp), [])
 
     def test_an_oserror_from_the_file_never_raises(self):
-        os.makedirs(self.logs)
-        os.symlink(os.path.join(self.tmp, "elsewhere"), self.path)
+        os.makedirs(self.path)
         self.assertEqual(
             self.log("run", "end", "TASK-1", tty=True), self.json("run", "end", "TASK-1")
         )
-        self.assertFalse(os.path.exists(os.path.join(self.tmp, "elsewhere")))
         file = os.path.join(self.tmp, "file")
         open(file, "w").close()
         with logs_at(os.path.join(file, "logs")):

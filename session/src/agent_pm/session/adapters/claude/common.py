@@ -256,7 +256,7 @@ class ClaudeCommon:
             if not stat.S_ISDIR(found.st_mode) or found.st_uid != os.getuid():
                 raise ConfigError(f"{self.store}: not a directory of yours")
             os.chmod(self.store, 0o700)
-            save(_state_path(self.store, cwd, sid), json.dumps(state), own=True, durable=True)
+            save(_state_path(self.store, cwd, sid), json.dumps(state), durable=True)
         except OSError as error:
             raise ConfigError(f"claude resume state: {error}") from None
 

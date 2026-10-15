@@ -1995,15 +1995,13 @@ class ChecksTest(Base):
 
     def test_a_failed_session_line_propagates_before_the_start(self):
         os.mkdir(self.workdir)
-        target = os.path.join(self.dir, "elsewhere")
-        os.symlink(target, RunLog(self.workdir).path)
+        os.mkdir(RunLog(self.workdir).path)
         with (
             mock.patch("subprocess.Popen", side_effect=AssertionError("started")) as popen,
             self.assertRaises(OSError),
         ):
             self.start()
         popen.assert_not_called()
-        self.assertFalse(os.path.exists(target))
 
 
 class ModulesTest(Case):

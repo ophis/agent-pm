@@ -144,7 +144,7 @@ class Roster:
                             raise RosterError(f"{lock}: busy") from None
                         time.sleep(POLL)
                 data = self._read()
-                with file_lock(self._events.path, own=True):
+                with file_lock(self._events.path):
                     self._events.recover(data["gen"])
                     before = json.dumps(data, sort_keys=True)
                     try:
@@ -156,7 +156,6 @@ class Roster:
                             save(
                                 self.path,
                                 json.dumps(data, indent=2, sort_keys=True) + "\n",
-                                own=True,
                                 durable=True,
                             )
                     except BaseException:
@@ -173,10 +172,10 @@ class Roster:
             raise RosterError(str(error)) from error
 
     def _read(self) -> dict:
-        raw = read_regular(self.path, limit=ROSTER_MAX + 1, own=True)
+        raw = read_regular(self.path, limit=ROSTER_MAX + 1)
         if raw is None:
             if os.path.lexists(self.path):
-                raise RosterError(f"{self.path}: not a readable regular file owned by you")
+                raise RosterError(f"{self.path}: not a readable regular file")
             return {
                 "version": VERSION,
                 "holder": None,
@@ -448,9 +447,9 @@ class Roster:
         if entry.receipt is None:
             raise RosterError("no launch receipt")
         path = os.path.join(self.directory, entry.receipt)
-        raw = read_regular(path, limit=ROSTER_MAX, tail=True, own=True)
+        raw = read_regular(path, limit=ROSTER_MAX, tail=True)
         if raw is None:
-            raise RosterError(f"{path}: not a readable receipt owned by you")
+            raise RosterError(f"{path}: not a readable receipt")
         lines = [line for line in raw.splitlines() if line.decode(errors="replace").strip()]
         if not lines:
             raise RosterError("no Record received")

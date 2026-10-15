@@ -300,10 +300,8 @@ def _read_file(path, workdir):
     except ConfinedFileError as error:
         reasons = {
             ConfinedReason.REGULAR: "not a regular file",
-            ConfinedReason.SINGLE_LINK: "not a single-link file",
             ConfinedReason.SUFFIX: "not a .md file",
             ConfinedReason.OUTSIDE: "not under the workdir",
-            ConfinedReason.REPLACED: "file changed while reading",
             ConfinedReason.TOO_LARGE: f"over {MAX_FILE} bytes",
         }
         raise ValueError(reasons[error.reason]) from None

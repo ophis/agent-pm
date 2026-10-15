@@ -1260,14 +1260,8 @@ class PollTest(Base):
 
     def test_a_hooks_file_that_is_no_regular_file_gives_no_records(self):
         mode = self.started()
-        real = os.path.join(self.tmp, "real.jsonl")
-        with open(real, "w") as f:
-            f.write(json.dumps(record("tool")) + "\n")
-        for make in (lambda: os.symlink(real, self.hooks), lambda: os.mkfifo(self.hooks)):
-            make()
-            with self.subTest(stat.filemode(os.lstat(self.hooks).st_mode)):
-                self.assertEqual(mode.poll(0), ([], False))
-            os.unlink(self.hooks)
+        os.mkfifo(self.hooks)
+        self.assertEqual(mode.poll(0), ([], False))
 
     def test_empty_poll_checks_the_terminal_and_waits_in_slices(self):
         mode = self.started()

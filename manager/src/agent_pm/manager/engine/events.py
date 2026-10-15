@@ -43,9 +43,9 @@ def _file_id(value) -> tuple[int, int]:
 
 def _read(path: str) -> bytes:
     _identity(path)
-    data = read_regular(path, own=True)
+    data = read_regular(path)
     if data is None:
-        raise OSError(f"{path}: not a readable regular file owned by you")
+        raise OSError(f"{path}: not a readable regular file")
     return data
 
 
@@ -79,10 +79,10 @@ class Events:
         sync_directory(os.path.dirname(self.path))
 
     def read(self) -> bytes:
-        data = read_regular(self.path, own=True)
+        data = read_regular(self.path)
         if data is None:
             if os.path.lexists(self.path):
-                raise OSError(f"{self.path}: not a readable regular file owned by you")
+                raise OSError(f"{self.path}: not a readable regular file")
             return b""
         return data
 
@@ -101,10 +101,10 @@ class Events:
         return self._due(self.read(), cursor)
 
     def _intent(self) -> _Rotation | None:
-        raw = read_regular(self.journal, limit=65537, own=True)
+        raw = read_regular(self.journal, limit=65537)
         if raw is None:
             if os.path.lexists(self.journal):
-                raise OSError(f"{self.journal}: not a readable regular file owned by you")
+                raise OSError(f"{self.journal}: not a readable regular file")
             return None
         if len(raw) > 65536:
             raise OSError(f"{self.journal}: oversized rotation journal")
@@ -143,7 +143,7 @@ class Events:
         )
 
     def _save_intent(self, rotation: _Rotation) -> None:
-        save(self.journal, json.dumps(asdict(rotation)) + "\n", own=True, durable=True)
+        save(self.journal, json.dumps(asdict(rotation)) + "\n", durable=True)
 
     def _cleanup(self) -> None:
         for path in (self.candidate, self.rollback, self.journal):
@@ -189,7 +189,7 @@ class Events:
         if _identity(self.archive) != rotation.original:
             raise OSError(f"{self.archive}: rotation archive changed")
         restored = _read(self.archive) + self._suffix(rotation, identity)
-        save(self.rollback, restored, own=True, durable=True)
+        save(self.rollback, restored, durable=True)
         rotation = replace(rotation, rollback=_identity(self.rollback))
         self._save_intent(rotation)
         os.replace(self.rollback, self.path)
@@ -217,7 +217,7 @@ class Events:
             tail = _read(self.archive).split(b"\n", cursor)[-1]
             if tail and not tail.endswith(b"\n"):
                 tail += b"\n"
-            save(self.candidate, tail + self.read(), own=True, durable=True)
+            save(self.candidate, tail + self.read(), durable=True)
             rotation = replace(
                 rotation,
                 candidate=_identity(self.candidate),

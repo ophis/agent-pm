@@ -90,12 +90,6 @@ class ReadRegular(Base):
                     files.read_regular(self.path, offset=offset, limit=limit, tail=tail), want
                 )
 
-    def test_a_symlink_is_none(self):
-        target = os.path.join(self.dir, "target")
-        self.write(path=target)
-        os.symlink(target, self.path)
-        self.assertIsNone(files.read_regular(self.path))
-
     def test_a_fifo_or_directory_is_none_without_blocking(self):
         os.mkfifo(self.path)
         self.assertIsNone(self.promptly(lambda: files.read_regular(self.path)))
@@ -111,13 +105,6 @@ class ReadRegular(Base):
     def test_missing_is_none(self):
         self.assertIsNone(files.read_regular(self.path))
         self.assertIsNone(files.read_regular(os.path.join(self.path, "under-a-missing-dir")))
-
-    def test_own_checks_owner_without_affecting_default_reads(self):
-        self.write()
-        self.assertEqual(files.read_regular(self.path, own=True), DATA)
-        with mock.patch.object(os, "getuid", return_value=os.getuid() + 1):
-            self.assertIsNone(files.read_regular(self.path, own=True))
-            self.assertEqual(files.read_regular(self.path), DATA)
 
     def test_an_os_error_while_reading_is_none(self):
         self.write()
@@ -147,15 +134,15 @@ class AppendLine(Base):
             return fd
 
         def append():
-            files.append_line(self.path, "appended\n", own=True, locked=True)
+            files.append_line(self.path, "appended\n", locked=True)
             finished.set()
 
-        with files.file_lock(self.path, own=True), mock.patch("os.open", side_effect=opened):
+        with files.file_lock(self.path), mock.patch("os.open", side_effect=opened):
             thread = threading.Thread(target=append)
             thread.start()
             self.assertTrue(waiting.wait(5))
             self.assertFalse(finished.wait(0.05))
-            files.save(self.path, "replacement\n", own=True)
+            files.save(self.path, "replacement\n")
             self.assertEqual(self.content(), b"replacement\n")
         thread.join(5)
         self.assertTrue(finished.is_set())
@@ -180,16 +167,6 @@ class AppendLine(Base):
             files.append_line(self.path, "héllo wörld\n")
         self.assertEqual((write.call_count, self.content()), (5, "héllo wörld\n".encode()))
 
-    def test_a_symlink_is_refused(self):
-        target = os.path.join(self.dir, "target")
-        with open(target, "w") as f:
-            f.write("keep\n")
-        os.symlink(target, self.path)
-        with self.assertRaises(OSError):
-            files.append_line(self.path, "x\n")
-        with open(target) as f:
-            self.assertEqual(f.read(), "keep\n")
-
     def test_a_fifo_is_refused_without_blocking_with_or_without_a_reader(self):
         os.mkfifo(self.path)
         with self.assertRaises(OSError) as e:
@@ -205,34 +182,6 @@ class AppendLine(Base):
         files.append_line(self.path, json.dumps({"text": "a\ud800b"}, ensure_ascii=False) + "\n")
         self.assertEqual(self.content(), b'{"text": "a?b"}\n')
 
-    def test_own_refuses_another_owners_file_and_writes_nothing(self):
-        files.append_line(self.path, "keep\n")
-        with (
-            unittest.mock.patch.object(os, "getuid", return_value=os.getuid() + 1),
-            self.assertRaises(OSError) as e,
-        ):
-            files.append_line(self.path, "x\n", own=True)
-        self.assertEqual(
-            (e.exception.errno, e.exception.strerror, e.exception.filename),
-            (errno.EPERM, "not owned by you", self.path),
-        )
-        self.assertEqual(self.content(), b"keep\n")
-
-    def test_own_appends_to_your_own_file(self):
-        files.append_line(self.path, "one\n")
-        files.append_line(self.path, "two\n", own=True)
-        self.assertEqual(self.content(), b"one\ntwo\n")
-
-    def test_by_default_the_owner_is_not_checked(self):
-        files.append_line(self.path, "one\n")
-        with unittest.mock.patch.object(os, "getuid", return_value=os.getuid() + 1):
-            files.append_line(self.path, "two\n")
-        self.assertEqual(self.content(), b"one\ntwo\n")
-
-    def test_own_with_an_empty_text_creates_a_missing_file_owner_only(self):
-        files.append_line(self.path, "", own=True)
-        self.assertEqual((stat.S_IMODE(os.stat(self.path).st_mode), self.content()), (0o600, b""))
-
 
 class Holds(Base):
     def test_is_exported(self):
@@ -247,13 +196,7 @@ class Holds(Base):
         for text in ("héll", "héllo!", "", "other"):
             self.assertFalse(files.holds(self.path, text), text)
 
-    def test_a_symlink_or_fifo_is_no_without_blocking(self):
-        target = os.path.join(self.dir, "target")
-        with open(target, "w") as f:
-            f.write("x")
-        os.symlink(target, self.path)
-        self.assertFalse(files.holds(self.path, "x"))
-        os.remove(self.path)
+    def test_a_fifo_is_no_without_blocking(self):
         os.mkfifo(self.path)
         self.assertFalse(self.promptly(lambda: files.holds(self.path, "")))
 
@@ -269,7 +212,7 @@ class FileLock(Base):
                 descriptors.append(fd)
             return fd
 
-        with mock.patch("os.open", side_effect=opened), files.file_lock(self.path, own=True):
+        with mock.patch("os.open", side_effect=opened), files.file_lock(self.path):
             self.assertEqual(len(descriptors), 1)
             self.assertFalse(os.get_inheritable(descriptors[0]))
             self.assertEqual(stat.S_IMODE(os.stat(self.path + ".lock").st_mode), 0o600)
@@ -277,27 +220,10 @@ class FileLock(Base):
             os.fstat(descriptors[0])
         self.assertFalse(Path(self.path).exists())
 
-    def test_symlink_fifo_and_foreign_lock_are_refused(self):
-        lock = self.path + ".lock"
-        outside = Path(self.dir, "outside")
-        outside.write_text("keep")
-        Path(lock).symlink_to(outside)
-        with self.assertRaises(OSError), files.file_lock(self.path, own=True):
-            self.fail("followed lock symlink")
-        self.assertEqual(outside.read_text(), "keep")
-        Path(lock).unlink()
-        os.mkfifo(lock)
-        with self.assertRaises(OSError), files.file_lock(self.path, own=True):
+    def test_a_fifo_lock_is_refused(self):
+        os.mkfifo(self.path + ".lock")
+        with self.assertRaises(OSError), files.file_lock(self.path):
             self.fail("accepted FIFO lock")
-        Path(lock).unlink()
-        Path(lock).touch()
-        with (
-            mock.patch("os.getuid", return_value=os.getuid() + 1),
-            self.assertRaises(OSError) as error,
-            files.file_lock(self.path, own=True),
-        ):
-            self.fail("accepted foreign lock")
-        self.assertEqual(error.exception.errno, errno.EPERM)
 
 
 class Save(Base):
@@ -313,7 +239,7 @@ class Save(Base):
         self.assertEqual(os.listdir(os.path.dirname(self.path)), ["f.txt"])
 
     def test_binary_data_is_preserved_during_atomic_durable_save(self):
-        files.save(self.path, b"raw\xff\x00\n", own=True, durable=True)
+        files.save(self.path, b"raw\xff\x00\n", durable=True)
         self.assertEqual(Path(self.path).read_bytes(), b"raw\xff\x00\n")
 
     def test_a_planted_symlink_is_replaced_not_followed(self):
@@ -327,29 +253,6 @@ class Save(Base):
             self.assertEqual(
                 (os.path.islink(self.path), f.read(), g.read()), (False, "new\n", "keep\n")
             )
-
-    def test_own_refuses_foreign_destination_without_changing_it(self):
-        files.save(self.path, "keep")
-        with (
-            mock.patch.object(os, "getuid", return_value=os.getuid() + 1),
-            self.assertRaises(OSError) as error,
-        ):
-            files.save(self.path, "new", own=True)
-        self.assertEqual(error.exception.errno, errno.EPERM)
-        self.assertEqual(Path(self.path).read_text(), "keep")
-
-    def test_own_refuses_symlink_and_fifo_destination(self):
-        Path(self.path).parent.mkdir()
-        outside = Path(self.dir) / "outside"
-        outside.write_text("keep")
-        Path(self.path).symlink_to(outside)
-        with self.assertRaises(OSError):
-            files.save(self.path, "new", own=True)
-        self.assertEqual(outside.read_text(), "keep")
-        Path(self.path).unlink()
-        os.mkfifo(self.path)
-        with self.assertRaises(OSError):
-            self.promptly(lambda: files.save(self.path, "new", own=True))
 
     def test_durable_syncs_temp_before_replace_and_directory_after(self):
         events = []
@@ -367,7 +270,7 @@ class Save(Base):
             mock.patch.object(os, "fsync", side_effect=synced),
             mock.patch.object(os, "replace", side_effect=replaced),
         ):
-            files.save(self.path, "durable", own=True, durable=True)
+            files.save(self.path, "durable", durable=True)
         self.assertEqual(events, ["file", "replace", "directory"])
         self.assertEqual(Path(self.path).read_text(), "durable")
 
@@ -399,7 +302,7 @@ class ConfinedRead(Case):
         return error.exception
 
     def test_reasons_are_a_str_enum_of_their_values(self):
-        values = ["regular", "single_link", "suffix", "outside", "replaced", "too_large"]
+        values = ["regular", "suffix", "outside", "too_large"]
         self.assertEqual([r.value for r in ConfinedReason], values)
         self.assertEqual(list(ConfinedReason), values)
 
@@ -412,12 +315,9 @@ class ConfinedRead(Case):
         self.path.write_bytes(b"too large")
         self.assertEqual(self.refused(ConfinedReason.TOO_LARGE).limit, 8)
 
-    def test_symlink_and_missing_file_report_filesystem_failures(self):
-        link = self.root / "link.md"
-        link.symlink_to(self.path)
-        for path in (link, self.root / "absent.md"):
-            with self.subTest(path=path), self.assertRaises(OSError):
-                read_confined(str(path), str(self.root), limit=8)
+    def test_a_missing_file_reports_a_filesystem_failure(self):
+        with self.assertRaises(OSError):
+            read_confined(str(self.root / "absent.md"), str(self.root), limit=8)
 
     def test_directory_and_fifo_are_refused(self):
         fifo = self.root / "fifo.md"
@@ -425,10 +325,6 @@ class ConfinedRead(Case):
         for path in (self.root, fifo):
             with self.subTest(path=path):
                 self.refused(ConfinedReason.REGULAR, path)
-
-    def test_hard_link_is_refused(self):
-        os.link(self.path, self.root / "linked.md")
-        self.refused(ConfinedReason.SINGLE_LINK)
 
     def test_descriptor_suffix_is_checked(self):
         other = self.root / "result.txt"
@@ -445,39 +341,13 @@ class ConfinedRead(Case):
             read_confined(str(self.path), str(child), limit=8)
         self.assertIs(error.exception.reason, ConfinedReason.OUTSIDE)
 
-    def test_replacement_after_open_is_refused(self):
-        original_open = os.open
-
-        def replaced(path, *args, **kwargs):
-            fd = original_open(path, *args, **kwargs)
-            self.path.rename(self.root / "previous.md")
-            self.path.write_bytes(b"changed")
-            return fd
-
-        with mock.patch.object(os, "open", side_effect=replaced):
-            self.refused(ConfinedReason.REPLACED)
-
-    def test_path_is_rechecked_after_read(self):
-        original_stat = os.fstat
-        seen = []
-
-        def replaced(fd):
-            seen.append(fd)
-            if len(seen) == 2:
-                self.path.rename(self.root / "previous.md")
-                self.path.write_bytes(b"changed")
-            return original_stat(fd)
-
-        with mock.patch.object(os, "fstat", side_effect=replaced):
-            self.refused(ConfinedReason.REPLACED)
-
     def test_ubuntu_descriptor_path_uses_proc(self):
         with (
             mock.patch.object(os, "readlink", return_value=str(self.path)) as readlink,
             mock.patch("sys.platform", "linux"),
         ):
             self.assertEqual(read_confined(str(self.path), str(self.root), limit=8), b"complete")
-        self.assertEqual(readlink.call_count, 2)
+        self.assertEqual(readlink.call_count, 1)
         self.assertTrue(
             all(call.args[0].startswith("/proc/self/fd/") for call in readlink.call_args_list)
         )

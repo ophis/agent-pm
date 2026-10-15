@@ -157,18 +157,16 @@ def _file(path, workdir: str) -> str:
 
 
 def _read_file(real: str, workdir: str) -> str:
-    """The file _file checked, rechecked through the open fd: a swap after the check is refused."""
+    """The file _file checked, its type and place rechecked through the open fd."""
     cap = 4 * _schema()["properties"]["deliverable"]["maxLength"]
     try:
         data = read_confined(real, workdir, limit=cap)
     except ConfinedFileError as error:
         path = str(real)[:200]
         messages = {
-            ConfinedReason.REGULAR: f"deliverable_file {path!r}: not a single-link regular file",
-            ConfinedReason.SINGLE_LINK: f"deliverable_file {path!r}: not a single-link regular file",
-            ConfinedReason.SUFFIX: f"file {path!r} is not a single-link .md file under the workdir",
+            ConfinedReason.REGULAR: f"deliverable_file {path!r}: not a regular file",
+            ConfinedReason.SUFFIX: f"file {path!r} is not a .md file under the workdir",
             ConfinedReason.OUTSIDE: f"deliverable_file {path!r}: no longer under the workdir",
-            ConfinedReason.REPLACED: f"deliverable_file {path!r}: replaced while it was opened",
             ConfinedReason.TOO_LARGE: f"deliverable_file {path!r}: too large (over {cap} bytes)",
         }
         raise InvalidOutcome(messages[error.reason]) from None

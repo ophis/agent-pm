@@ -37,12 +37,8 @@ class StateFileTest(Case):
                 self.assertEqual(self.mode(path), 0o600)
         self.assertEqual(Worker.load("w1").state, self.state)
 
-    def test_a_state_file_that_is_no_regular_file_of_ours_is_refused(self):
-        elsewhere = os.path.join(self.home, "elsewhere.json")
-        with open(self.path, encoding="utf-8") as f, open(elsewhere, "w", encoding="utf-8") as out:
-            out.write(f.read())
+    def test_a_state_file_that_is_no_regular_file_is_refused(self):
         for make in (
-            lambda: os.symlink(elsewhere, self.path),
             lambda: os.mkfifo(self.path, 0o600),
             lambda: os.mkdir(self.path, 0o700),
             lambda: self.write(self.path, "x" * (worker.STATE_MAX + 1)),
@@ -50,16 +46,10 @@ class StateFileTest(Case):
             with self.subTest(make=make):
                 self.remove(self.path)
                 make()
-                with self.assertRaisesRegex(SessionError, "missing, not a regular file of yours"):
+                with self.assertRaisesRegex(SessionError, "missing, not a regular file"):
                     Worker.load("w1")
 
-    def test_a_pointer_that_is_a_symlink_or_holds_no_sid_is_refused(self):
-        target = os.path.join(self.home, "sid")
-        self.write(target, SID)
-        self.remove(self.pointer)
-        os.symlink(target, self.pointer)
-        with self.assertRaisesRegex(SessionError, "^w1: not a worker"):
-            Worker.load("w1")
+    def test_a_pointer_that_holds_no_sid_is_refused(self):
         self.remove(self.pointer)
         self.write(self.pointer, "../../x\n")
         with self.assertRaisesRegex(SessionError, "holds no session id"):

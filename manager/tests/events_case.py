@@ -16,13 +16,13 @@ class EventsCase(Case):
         os.mkdir(self.directory, 0o700)
         self.events = Events(self.directory)
         self.original = b"h" * EVENTS_MAX + b"\nold\n"
-        append_line(self.events.path, self.original, own=True, locked=True)
+        append_line(self.events.path, self.original, locked=True)
         self.ledger = Path(self.directory, "ledger.json")
-        save(self.ledger, '{"gen":0,"cursor":1}\n', own=True, durable=True)
+        save(self.ledger, '{"gen":0,"cursor":1}\n', durable=True)
 
     def generation(self):
         return json.loads(self.ledger.read_text())["gen"]
 
     def recover(self):
-        with file_lock(self.events.path, own=True):
+        with file_lock(self.events.path):
             self.events.recover(self.generation())

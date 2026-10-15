@@ -408,7 +408,7 @@ class FailureTest(Base):
     def test_a_failed_client_session_line_stops_the_process_and_propagates(self):
         self.steps(out("session", id="native-1"), {"sleep": 60})
         handle = self.start()
-        os.replace(self.redirected(), RunLog(self.workdir).path)
+        self.unwritable()
         with self.assertRaises(OSError):
             self.drain(handle)
         self.assertFalse(running(self.logged()[0]["pid"]))
@@ -416,16 +416,17 @@ class FailureTest(Base):
     def test_a_failed_stderr_record_loses_the_line_not_the_run(self):
         self.steps({"err": "lost"})
         handle = self.start()
-        os.replace(self.redirected(), RunLog(self.workdir).path)
+        self.unwritable()
         with mock.patch("sys.stderr", io.StringIO()) as printed:
             self.assertEqual(self.drain(handle), [Stderr("lost"), Exited(0)])
         self.assertIn("records: ", printed.getvalue())
 
-    def redirected(self) -> str:
-        """A symlink to a file that is not there, which a record write refuses."""
-        link = os.path.join(self.dir, "link")
-        os.symlink(os.path.join(self.dir, "absent"), link)
-        return link
+    def unwritable(self) -> None:
+        """A directory in place of the run log, which a record write refuses."""
+        path = RunLog(self.workdir).path
+        with contextlib.suppress(FileNotFoundError):
+            os.unlink(path)
+        os.mkdir(path)
 
 
 class LaunchEnvironmentTest(Base):

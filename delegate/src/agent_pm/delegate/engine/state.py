@@ -31,24 +31,24 @@ class RunState:
         self.published = os.path.join(self.workdir, PUBLISHED)
 
     def read(self) -> bytes | None:
-        return read_regular(self.record, own=True)
+        return read_regular(self.record)
 
     def write(self, payload: str) -> None:
         """The state record, then its published copy (making the workdir)."""
         self._made()
         for path in (self.record, self.published):
-            save(path, payload, own=True, durable=True)
+            save(path, payload, durable=True)
 
     @contextlib.contextmanager
     def mutex(self) -> Iterator[None]:
         self._made()
-        with file_lock(self.base, own=True):
+        with file_lock(self.base):
             yield
 
     @contextlib.contextmanager
     def run_lock(self) -> Iterator[None]:
         self._made()
-        with file_lock(f"{self.base}.run", own=True):
+        with file_lock(f"{self.base}.run"):
             yield
 
     def remove(self) -> None:

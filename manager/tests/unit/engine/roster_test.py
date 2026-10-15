@@ -626,18 +626,14 @@ class RosterTest(RosterCase):
         path.write_bytes(data)
         self.roster.advance(1, 0)
         ledger = Path(self.roster.path).read_bytes()
-        outside = Path(self.home, "outside")
-        outside.write_bytes(b"keep")
         original = os.fstat
         original_stat = os.stat
         for target in (path, Path(str(path) + ".1")):
-            for kind in ("symlink", "fifo", "foreign"):
+            for kind in ("fifo", "foreign"):
                 with self.subTest(target=target.name, kind=kind):
                     if target.exists():
                         target.unlink()
-                    if kind == "symlink":
-                        target.symlink_to(outside)
-                    elif kind == "fifo":
+                    if kind == "fifo":
                         os.mkfifo(target)
                     else:
                         target.write_bytes(data if target == path else b"archive")
@@ -672,7 +668,6 @@ class RosterTest(RosterCase):
                     ):
                         self.roster.rotate_events()
                     self.assertEqual(Path(self.roster.path).read_bytes(), ledger)
-                    self.assertEqual(outside.read_bytes(), b"keep")
                     target.unlink()
                     if target == path:
                         path.write_bytes(data)
@@ -995,15 +990,8 @@ class RosterTest(RosterCase):
         self.assertTrue(barrier.is_set())
         self.assertCountEqual(self.roster.backlog()[2], ["old", "inflight", "new"])
 
-    def test_events_symlink_and_fifo_are_refused(self):
+    def test_an_events_fifo_is_refused(self):
         path = self.roster.events
-        target = Path(self.home) / "outside"
-        target.write_text("keep")
-        Path(path).unlink()
-        os.symlink(target, path)
-        with self.assertRaises(RosterError):
-            self.roster.backlog()
-        self.assertEqual(target.read_text(), "keep")
         Path(path).unlink()
         os.mkfifo(path)
         with self.assertRaises(RosterError):

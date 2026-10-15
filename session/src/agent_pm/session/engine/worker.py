@@ -168,9 +168,9 @@ def _private_dir(path: str) -> None:
 
 
 def _read(path: str, what: str) -> bytes:
-    data = read_regular(path, limit=STATE_MAX + 1, own=True)
+    data = read_regular(path, limit=STATE_MAX + 1)
     if data is None or len(data) > STATE_MAX:
-        raise SessionError(f"{what}: {path}: missing, not a regular file of yours, or too large")
+        raise SessionError(f"{what}: {path}: missing, not a regular file, or too large")
     return data
 
 
@@ -201,7 +201,7 @@ class Worker:
         given = sid is not None
         if given and (not isinstance(sid, str) or not SID.fullmatch(sid)):
             raise ConfigError(f"sid {sid!r:.80}: want a session id")
-        latest = read_regular(os.path.join(root, BY_NAME, name), limit=STATE_MAX, own=True)
+        latest = read_regular(os.path.join(root, BY_NAME, name), limit=STATE_MAX)
         latest = None if latest is None else latest.decode(errors="replace").strip()
         if sid is None:
             if latest is None:
@@ -227,7 +227,7 @@ class Worker:
         try:
             _private_dir(os.path.dirname(workdir))
             _private_dir(workdir)
-            with file_lock(os.path.join(workdir, "worker"), own=True):
+            with file_lock(os.path.join(workdir, "worker")):
                 yield
         except OSError as error:
             raise SessionError(f"{self.state.name}: {workdir}: {error.strerror or error}") from None
@@ -361,28 +361,26 @@ class Worker:
     def _saved(self) -> tuple[bytes | None, bytes | None]:
         state, latest = self._files()
         limit = STATE_MAX + 1
-        return read_regular(state, limit=limit, own=True), read_regular(
-            latest, limit=limit, own=True
-        )
+        return read_regular(state, limit=limit), read_regular(latest, limit=limit)
 
     def _save(self) -> None:
         state, latest = self._files()
-        save(state, self.state.to_json(), own=True)
+        save(state, self.state.to_json())
         _private_dir(os.path.dirname(latest))
-        save(latest, self.state.sid + "\n", own=True)
+        save(latest, self.state.sid + "\n")
 
     def _put_back(self, before: tuple[bytes | None, bytes | None]) -> None:
         """Its own files as `before` (None: removed); the pointer only while it names its sid."""
         state, latest = self._files()
-        mine = read_regular(latest, limit=STATE_MAX, own=True) == f"{self.state.sid}\n".encode()
+        mine = read_regular(latest, limit=STATE_MAX) == f"{self.state.sid}\n".encode()
         for path, data in [(state, before[0]), *([(latest, before[1])] if mine else [])]:
-            if read_regular(path, limit=0, own=True) is None:
+            if read_regular(path, limit=0) is None:
                 continue
             with contextlib.suppress(OSError):
                 if data is None:
                     os.unlink(path)
                 else:
-                    save(path, data, own=True)
+                    save(path, data)
 
     def _show(self, session: Session) -> None:
         name = self.state.name

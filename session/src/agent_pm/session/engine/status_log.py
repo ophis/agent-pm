@@ -35,5 +35,5 @@ class SessionStatusLog:
         return " ".join([clock, *head, *texts])
 
     def write(self, name: str, word: str, *fields) -> None:
-        """OSError (a symlink, not a regular file, another user's) propagates."""
-        append_line(self.path, self.line(name, word, *fields) + "\n", own=True)
+        """OSError (not a regular file) propagates."""
+        append_line(self.path, self.line(name, word, *fields) + "\n")
