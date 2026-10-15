@@ -5,8 +5,10 @@ import unittest
 from agent_pm.session import ConfigError, Displayable
 from agent_pm.session.hosts.pty import PtyHost
 
+from session.tests.case import Case
 
-class Settings(unittest.TestCase):
+
+class Settings(Case):
     def test_outer_terminal_is_its_only_key_a_list_of_variable_names(self):
         self.assertEqual(
             PtyHost("pty", {"outer_terminal": ["A", "B"]}).outer_terminal, frozenset({"A", "B"})

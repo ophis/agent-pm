@@ -74,7 +74,7 @@ class PtyRun(TmuxFlow):
         self.assertEqual(self.state(ID), "in_review")
         (status,) = map(json.loads, self.linear("status", ID).splitlines())
         self.assertEqual(
-            (status["alive"], status["attach"], status["outcome"]["status"]), (False, None, "done")
+            (status["alive"], status["attach"], status["outcome"]), (False, None, "done")
         )
         starts = len(agent_calls(self.calls()))
         record = Record.parse(self.linear("resume", ID))

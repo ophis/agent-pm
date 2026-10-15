@@ -7,10 +7,12 @@ import unittest
 
 from agent_pm.session.hosts.pty.supervisor import bracketing, request
 
+from session.tests.case import Case
+
 ON, OFF = b"\x1b[?2004h", b"\x1b[?2004l"
 
 
-class Bracketing(unittest.TestCase):
+class Bracketing(Case):
     def test_the_last_request_in_the_output_wins_else_it_stays(self):
         cases = [
             (b"text", False, False),
@@ -25,7 +27,7 @@ class Bracketing(unittest.TestCase):
                 self.assertEqual(bracketing(seen, was=was), now)
 
 
-class Request(unittest.TestCase):
+class Request(Case):
     def test_a_paste_is_its_utf_8_bracketed_when_asked(self):
         line = json.dumps({"paste": "é\nx"}).encode()
         self.assertEqual(request(line, bracketed=False), "é\nx".encode())

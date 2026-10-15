@@ -6,6 +6,8 @@ from agent_pm.session import ConfigError
 from agent_pm.session.engine.types import KeyPress, NamedKey
 from agent_pm.session.hosts.pty.keys import encode
 
+from session.tests.case import Case
+
 NAMED = {
     "Enter": b"\r",
     "Escape": b"\x1b",
@@ -39,7 +41,7 @@ def sent(text: str) -> bytes:
     return encode(KeyPress.parse(text))
 
 
-class Encode(unittest.TestCase):
+class Encode(Case):
     def test_every_named_key_is_its_xterm_sequence(self):
         self.assertEqual(set(NAMED), set(NamedKey))
         for name, data in NAMED.items():

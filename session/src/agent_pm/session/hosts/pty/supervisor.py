@@ -94,7 +94,7 @@ class Supervisor:
                     line = stream.readline(REQUEST_MAX)
                 self.pending += request(line, bracketed=self.bracketed)
                 reply = {"ok": True}
-            except (OSError, ValueError) as error:
+            except (OSError, ValueError, RecursionError) as error:
                 reply = {"error": str(error)}
             with contextlib.suppress(OSError):
                 connection.sendall(json.dumps(reply).encode() + b"\n")
