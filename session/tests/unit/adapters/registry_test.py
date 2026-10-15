@@ -630,8 +630,7 @@ class Committed(Case):
             mock.patch.dict(os.environ, {"CLAUDE_CONFIG_DIR": os.path.join(tmp.name, "config")})
         )
         adapter = registry_of(configured(committed())).adapter("claude")
-        policy = ("--settings", '{"enabledPlugins": {"agent-pm@agent-pm": false}, "model": "x"}')
-        for flags in ((), policy):
+        for flags in ((), ("--settings", '{"model": "x"}')):
             spec = Spec(workdir=tmp.name, sid=SID, prompt="hi", flags=flags)
             for launch in (adapter.headless().launch(spec), adapter.tui().launch(spec, ("h",))):
                 with self.subTest(flags=flags, argv=launch.argv[1]):

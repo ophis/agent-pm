@@ -94,25 +94,24 @@ class Names(Case):
                 any("agent-pm@agent-pm" in flag for flag in adapters[client]["flags"]), client
             )
 
-    def test_the_upgrading_row_carries_each_packaged_plugin_off_entry(self):
+    def test_the_upgrading_row_carries_the_one_home_of_each_plugin_off_entry(self):
         with open(os.path.join(REPO, "README.md"), encoding="utf-8") as f:
             [row] = [line for line in f if line.startswith("| a local `flags` list")]
-        configs = {
-            ("session", "adapters"): "session/src/agent_pm/session/config.toml",
-            ("delegate", "policy"): "delegate/src/agent_pm/delegate/config.toml",
-        }
-        for (layer, table), path in configs.items():
-            with open(os.path.join(REPO, path), "rb") as f:
-                tables = tomllib.load(f)[table]
-            for client in ("claude", "codex"):
-                flags = tables[client]["flags"]
-                [at] = [i for i, flag in enumerate(flags) if "agent-pm@agent-pm" in flag]
-                entry = f'"{flags[at - 1]}", ' + (
-                    f"'{flags[at]}'" if '"' in flags[at] else f'"{flags[at]}"'
-                )
-                with self.subTest(table=f"{layer}.{table}.{client}"):
-                    self.assertIn(f"`[{layer}.{table}.{client}]`", row)
-                    self.assertIn(entry, row)
+        with open(os.path.join(REPO, "session/src/agent_pm/session/config.toml"), "rb") as f:
+            adapters = tomllib.load(f)["adapters"]
+        with open(os.path.join(REPO, "delegate/src/agent_pm/delegate/config.toml"), "rb") as f:
+            policy = tomllib.load(f)["policy"]
+        for client in ("claude", "codex"):
+            flags = adapters[client]["flags"]
+            [at] = [i for i, flag in enumerate(flags) if "agent-pm@agent-pm" in flag]
+            entry = f'"{flags[at - 1]}", ' + (
+                f"'{flags[at]}'" if '"' in flags[at] else f'"{flags[at]}"'
+            )
+            with self.subTest(client=client):
+                self.assertIn(f"`[session.adapters.{client}]`", row)
+                self.assertIn(entry, row)
+                self.assertFalse([f for f in policy[client]["flags"] if "agent-pm@agent-pm" in f])
+        self.assertNotIn("delegate.policy", row)
 
     def test_the_skills_it_names_are_this_plugins(self):
         for skill in re.findall(r"`/agent-pm:([a-z-]+)`", body("tmux") + body("manage")):
