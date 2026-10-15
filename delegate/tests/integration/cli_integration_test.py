@@ -104,6 +104,20 @@ class NewRun(Integration):
         for flag in ("--permission-mode", "--strict-mcp-config", "--settings"):
             self.assertEqual(argv.count(flag), 1, flag)
 
+    def test_add_dirs_never_hold_the_workdir_or_its_run_dir(self):
+        layout = Layout(self.work)
+        for extra, cwd, want in (
+            ((), self.agent, []),
+            (("--cwd", self.proj), self.proj, [self.agent]),
+        ):
+            with self.subTest(cwd=cwd):
+                res = self.drive([mark("start", "echoing"), block(DONE)], *extra)
+                self.assertEqual(res.returncode, 0, res.stderr)
+                argv = self.calls()[-1]["argv"]
+                added = [argv[i + 1] for i, word in enumerate(argv) if word == "--add-dir"]
+                self.assertEqual((self.calls()[-1]["cwd"], added), (cwd, want))
+                self.assertFalse({self.work, layout.run} & set(map(os.path.realpath, added)))
+
     def test_a_deliverable_file_the_agent_wrote_is_saved_to_out(self):
         report = os.path.join(self.agent, "report.md")
         res = self.drive(

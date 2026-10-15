@@ -463,28 +463,34 @@ class RetentionCleanup(PruneScenario):
                 self.assertEqual(code, 3)
                 self.assertEqual(
                     out.splitlines(),
-                    [
-                        f"prune-error TASK-7 session={SID} error={type(error).__name__}: {error}",
-                        "prune-removed TASK-7 what=agent dir",
-                    ],
+                    [f"prune-error TASK-7 session={SID} error={type(error).__name__}: {error}"],
                 )
                 self.assertEqual(self.closed(), [B, A])
+                self.assertTrue(os.path.isdir(self.agent("TASK-7")))
 
-    def test_close_failure_still_closes_other_runs_and_deletes_workspace(self):
+    def test_a_failed_close_keeps_the_agent_dir_until_a_later_tick_closes_the_run(self):
         clone = self.mkc("TASK-7", "src", "o", "repo")
         self.record("TASK-7", SID, [B, A])
         self.api.errors = {B: SessionError("boom")}
-        code, out = self.prune(gql_for({"TASK-7": ("Done", [(30, "Done")])}))
-        self.assertEqual(code, 3)
-        self.assertEqual(self.closed(), [B, A])
-        self.assertFalse(os.path.exists(clone))
+        gql = gql_for({"TASK-7": ("Done", [(30, "Done")])})
+        code, out = self.prune(gql)
         self.assertEqual(
-            out.splitlines(),
-            [
-                f"prune-error TASK-7 session={SID} error=SessionError: boom",
-                "prune-removed TASK-7 what=agent dir",
-            ],
+            (code, out.splitlines(), self.closed()),
+            (3, [f"prune-error TASK-7 session={SID} error=SessionError: boom"], [B, A]),
         )
+        self.assertTrue(os.path.isdir(clone))
+        self.api.errors = {}
+        self.api.order.clear()
+        code, out = self.prune(gql)
+        self.assertEqual(
+            (code, out.splitlines(), self.closed()),
+            (
+                0,
+                [f"prune-closed TASK-7 session={SID}", "prune-removed TASK-7 what=agent dir"],
+                [B, A],
+            ),
+        )
+        self.assertFalse(os.path.exists(self.agent("TASK-7")))
 
     def test_failed_run_close_does_not_stop_another_finished_issue(self):
         self.record("TASK-7", SID, [A])
@@ -498,7 +504,6 @@ class RetentionCleanup(PruneScenario):
             out.splitlines(),
             [
                 f"prune-error TASK-7 session={SID} error=SessionError: boom",
-                "prune-removed TASK-7 what=agent dir",
                 f"prune-closed TASK-8 session={OTHER_SID}",
                 "prune-removed TASK-8 what=agent dir",
             ],

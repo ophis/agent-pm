@@ -45,6 +45,27 @@ class Codex(CodexIntegration):
         )
         self.assertIn("# Input\n\nHello.", call["prompt"])
 
+    def test_writable_roots_never_hold_the_workdir_or_its_run_dir(self):
+        extra, layout = os.path.join(self.home, "extra"), Layout(self.work)
+        os.mkdir(extra)
+        os.makedirs(os.path.join(self.home, ".agent-pm"))
+        with open(os.path.join(self.home, ".agent-pm", "config.local.toml"), "w") as f:
+            f.write(f"[delegate.roles.{self.ROLE}]\nwrite = {json.dumps([extra])}\n")
+        res = self.drive(said(block(DONE)))
+        self.assertEqual(res.returncode, 0, res.stderr)
+        (call,) = self.calls()
+        argv = call["argv"]
+        added = [argv[i + 1] for i, word in enumerate(argv) if word == "--add-dir"]
+        recorded = []
+        for top, _dirs, names in os.walk(os.path.join(self.home, ".agent-pm", "sessions")):
+            for name in names:
+                with open(os.path.join(top, name)) as f:
+                    recorded += json.load(f).get("writable_roots", [])
+        self.assertEqual((call["cwd"], added), (layout.agent, [extra]))
+        self.assertTrue({layout.agent, extra} <= set(recorded), recorded)
+        for root in (*added, *recorded):
+            self.assertNotIn(os.path.realpath(root), {self.work, layout.run})
+
     def test_the_default_policy_reaches_the_argv_as_before_its_move(self):
         res = self.drive(said(block(DONE)))
         self.assertEqual(res.returncode, 0, res.stderr)

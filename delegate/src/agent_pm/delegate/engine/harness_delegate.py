@@ -849,6 +849,10 @@ class HarnessDelegate(Delegate):
             state = replace(
                 state, plan=accepted, completed=False, result=None, attempt=state.attempt + 1
             )
+            try:
+                os.makedirs(self.layout.agent, exist_ok=True)
+            except OSError as error:
+                raise ConfigError(str(error)) from None
             record = self._launch(previous, state)
         self._started(self._state)
         return record

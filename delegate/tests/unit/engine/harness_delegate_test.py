@@ -7,6 +7,7 @@ died, its tui agent session left open, at once.
 
 import json
 import os
+import shutil
 from unittest import mock
 
 from agent_pm.delegate import ConfigError, Layout, Result, Spec
@@ -397,6 +398,13 @@ class CrashTest(HarnessCase):
         self.assertEqual(len(harness_launches()), launches + 1)
         self.assertEqual(left.state(), Liveness.ABSENT)
         self.assertEqual(record.sid, SID)
+        self.assertEqual(self.metadata()["attempt"], 2)
+
+    def test_a_resume_after_its_agent_dir_was_pruned_makes_it_again(self):
+        view, _name = self.crashed()
+        shutil.rmtree(Layout(self.work).agent)
+        view.resume()
+        self.assertTrue(os.path.isdir(Layout(self.work).agent))
         self.assertEqual(self.metadata()["attempt"], 2)
 
     def test_the_status_of_an_agent_session_another_process_started_comes_from_its_plan(self):

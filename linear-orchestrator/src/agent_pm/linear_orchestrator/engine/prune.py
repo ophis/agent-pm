@@ -1,6 +1,6 @@
 """Prune, for each issue Done or Canceled at least 24 hours ago (its latest move into either; unknown:
 skipped) whose agent dir (Layout(<work_dir>/work/<ID>).agent) exists:
-- closes its recorded run through LinearRun;
+- closes its recorded run through LinearRun; a failed close leaves the rest for a later tick;
 - deletes the agent dir whole, uncommitted work included, only while it is a real directory in
   place (else skipped, nothing deleted); the run dir and the rest of the workdir stay;
 - in the local clone of each worktree the agent dir held at src/<owner>/<name>, unless that clone
@@ -166,10 +166,10 @@ class Pruner:
     def close_sessions(self, ident):
         view = self.views.get(ident)
         if view is None:
-            return
+            return True
         if self.dry:
             self.say("prune-plan", ident, session=view.sid, what="close the run")
-            return
+            return True
         try:
             view.close()
         except (
@@ -180,8 +180,9 @@ class Pruner:
             ValueError,
         ) as error:
             self.error(ident, session=view.sid, error=one_line(error))
-            return
+            return False
         self.say("prune-closed", ident, session=view.sid)
+        return True
 
     def finished_issues(self, finished):
         ids = [uid for uid, role in self.roles.items() if role in ARCHIVE_ROLES]
@@ -260,8 +261,7 @@ class Pruner:
         since = last_move(issue["history"]["nodes"], finished)
         if since is None:
             self.say("prune-skip", ident, once=True, reason="finish time unknown")
-        elif self.now - since >= QUARANTINE:
-            self.close_sessions(ident)
+        elif self.now - since >= QUARANTINE and self.close_sessions(ident):
             self.remove_agent(ident)
 
     def agent(self, ident):
