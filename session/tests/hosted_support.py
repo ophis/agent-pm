@@ -17,6 +17,7 @@ from agent_pm.session.engine.records import RunLog
 from agent_pm.session.engine.types import Access, ConfigError, Exited, Launch, Spec
 from agent_pm.session.hosts.tmux import transport
 from agent_pm.session.hosts.tmux.host import Tmux, events_file, validate_events, validate_start
+from agent_pm.session.runtimes.in_process import RUN_THREAD
 
 from session.tests import fake_adapter
 from session.tests.case import Case
@@ -179,6 +180,7 @@ class Base(Case):
         self.probe_dir = os.path.join(self.agent_pm, "probe")
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
+        self.addCleanup(self.join_runs)
         self.dir = os.path.realpath(tmp.name)
         self.workdir = os.path.join(self.dir, "work")
         self.scenario = os.path.join(self.dir, "scenario.json")
@@ -194,6 +196,15 @@ class Base(Case):
     def configure_session(self, adapters, tmux=None) -> None:
         super().configure_session(adapters, tmux)
         self.session = self.session_cls
+
+    def join_runs(self) -> None:
+        """A stopped in_process run goes on to its next yield, the fake's first logging in self.dir."""
+        for thread in threading.enumerate():
+            if thread.name == RUN_THREAD:
+                thread.join(WAIT)
+                self.assertFalse(
+                    thread.is_alive(), f"an in_process run outlived its test by {WAIT} s"
+                )
 
     def steps(self, *steps):
         with open(self.scenario, "w", encoding="utf-8") as f:
