@@ -299,6 +299,7 @@ class Resources(Case):
                 "session = 1\n",
                 r"^~/.agent-pm/config.local.toml: \[session\]: want a table$",
             ),
+            ("utils = 1\n", r"^~/.agent-pm/config.local.toml: \[utils\]: want a table$"),
         ):
             self.local(text)
             with self.subTest(text=text), self.assertRaisesRegex(ConfigFileError, error):

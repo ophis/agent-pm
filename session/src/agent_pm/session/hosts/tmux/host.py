@@ -887,6 +887,10 @@ class TmuxHost(Host, Displayable):
         self, name: str, settings: Mapping | None = None, *, tmux: Tmux | None = None
     ) -> None:
         super().__init__(name, settings)
+        if extra := sorted(
+            set(self.settings) - {"status_line", "workers_per_column", "grid_retile"}
+        ):
+            raise ConfigError(f"unknown key {extra[0]!r} in [hosts.{name}]")
         self.tmux = Tmux() if tmux is None else tmux
 
     @classmethod
