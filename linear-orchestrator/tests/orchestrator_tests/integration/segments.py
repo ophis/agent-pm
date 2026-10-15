@@ -128,7 +128,7 @@ class Pending(NamedTuple):
     gate: str
     resumed: bool
     tui: bool
-    ended: int  # its session's write-back ends before it: a closed harness may leave none
+    after_stop: bool  # a stopped harness's last write-back may or may not have run before it
 
 
 class Segment(TmuxFlow):
@@ -295,7 +295,7 @@ class Segment(TmuxFlow):
         text = report["questions"][0] if outcome == "needs_input" else report["summary"]
         return Script(outcome, [*steps, block(report)], report, {text: TEXT_KINDS[outcome]})
 
-    def launch(self, ident, role, script, *, resumed, tui=False, tick=False):
+    def launch(self, ident, role, script, *, resumed, tui=False, tick=False, after_stop=False):
         """router.py --issue ident (tick: a --now tick) with script behind a new gate, until its
         fake_claude waits there and write-back has its session comment saying running; returns the
         runs.jsonl line, fake_claude's call and the events since. tui: --tui from MANAGER's pane,
@@ -354,9 +354,7 @@ class Segment(TmuxFlow):
             [("router", "tui-closed")] if had_prior and not resumed else [],
         )
         self.texts.update(script.texts)
-        end = ("writeback", "end", line["sid"])
-        ended = sum((e["src"], e["kind"], e.get("sid")) == end for e in self.logged())
-        self.pending = Pending(ident, role, line["sid"], script, gate, resumed, tui, ended)
+        self.pending = Pending(ident, role, line["sid"], script, gate, resumed, tui, after_stop)
         return line, call, logged
 
     def attended(self, ident, role, sid, res):
@@ -387,7 +385,11 @@ class Segment(TmuxFlow):
         with self.step(RUN_STEPS[p.script.outcome]):
             with open(p.gate, "w"):
                 pass
-            self.wait_end(p.sid, p.ident, p.ended + 1, p.role)
+            if p.after_stop:
+                self.wait_written_back(p)
+            else:
+                ends = sum(line[0] != "limit" and line[2] == p.sid for line in self.want_runs)
+                self.wait_end(p.sid, p.ident, ends, p.role)
             self.pending = None
             if p.tui:  # left open after the outcome or the give-up
                 self.assertTrue(self.live(config.tui_name(p.role, p.ident, p.sid)))
@@ -422,6 +424,20 @@ class Segment(TmuxFlow):
             posts = [s for s in ("start", "comment") if s in steps and s not in ledgered]
             self.expect_problem(*[lookup(account)] * len(posts))
             self.expect(p.ident, comments=comments, ledger={p.sid: steps}, **changes)
+
+    def wait_written_back(self, p):
+        """Until p's outcome is written back (its ledger's last step) and its harness is gone: a
+        run after a stop, whose session's count of write-back ends is unknown.
+        """
+        self.assertIsNotNone(p.script.report, "a run after a stop waits for its outcome")
+        harness = self.harness(p.role, p.ident, p.sid)
+        live_tmux.wait(
+            lambda: (
+                self.ledger(p.ident).get(p.sid, [])[-1:] == ["outcome"] and not self.live(harness)
+            ),
+            TIMEOUT,
+            f"{p.sid}'s outcome written back and {harness} gone",
+        )
 
     def backlog_issue(self, role, title, description, labels=()):
         ident = self.fake.issue(
@@ -510,9 +526,11 @@ class Segment(TmuxFlow):
             self.expect_problem(FIRST_WRITE)
         return sid
 
-    def resume(self, ident, role, sid, script, *, tui=False):
+    def resume(self, ident, role, sid, script, *, tui=False, after_stop=False):
         with self.step("router: resume"):
-            line, call, _ = self.launch(ident, role, script, resumed=True, tui=tui)
+            line, call, _ = self.launch(
+                ident, role, script, resumed=True, tui=tui, after_stop=after_stop
+            )
             self.assertEqual(tuple(line[k] for k in RUN_KEYS), ("resume", ident, sid, role, CLIENT))
             self.assertEqual((option(call, "--resume"), option(call, "--session-id")), (sid, None))
             self.expect_runs(("resume", ident, sid, role, CLIENT))

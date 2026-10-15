@@ -95,11 +95,26 @@ class Attended(Segment):
             res = self.router("--now", "--tui", AGENT_PM_EVENTS=self.events, **self.in_manager())
             self.assertEqual((res.returncode, res.stdout), (0, ""), res.stderr)
 
-    def interrupted(self, stop, *, written_back=True):
-        """An attended run waiting on after its start mark, its harness ended by stop(ident, sid):
-        its TUI ends too, the issue stays In Progress; router.py --issue --tui resumes it to done.
-        written_back False: the stop may kill the harness's last callback before or after it updates
-        the session comment.
+    def run_processes(self, ident):
+        """Whether ident's run still has a harness or write-back process: the session list can drop
+        a stopped harness before its process ends, and its last callback, in its own process group,
+        outlives it.
+        """
+        workdir = os.path.join(self.runs_dir, ident)
+        marks = (
+            f"agent_pm.delegate.engine.harness {workdir}",
+            f"--issue {ident} --workdir {workdir}",
+        )
+        ps = subprocess.run(
+            ["ps", "-A", "-o", "command="], capture_output=True, text=True, check=True
+        )
+        return any(mark in c for c in ps.stdout.splitlines() for mark in marks)
+
+    def interrupted(self, stop):
+        """An attended run waiting on after its start mark, its harness stopped by stop(ident, sid):
+        its TUI ends too and the issue stays In Progress; router.py --issue --tui resumes it to done.
+        The stopped harness's last write-back may or may not have run: its session comment says
+        running or interrupted, and no write-back end of the session is counted after the stop.
         """
         ident, account = self.pm_ready(), ACCOUNTS["pm"]
         sid = self.claim(ident, "pm", self.agent_script("pm", "open", ident), tui=True)
@@ -111,19 +126,19 @@ class Attended(Segment):
             )
             self.expect(ident, comments=[(account, "start")], ledger={sid: ["start"]})
             self.expect_problem(lookup(account))
-        with self.step("harness ended"):
+        with self.step("harness stopped"):
             stop(ident, sid)
-            if written_back:
-                self.wait_end(sid, ident, role="pm")
             harness, tui = self.harness("pm", ident, sid), config.tui_name("pm", ident, sid)
             for name in (harness, tui):
                 live_tmux.wait(lambda name=name: not self.live(name), TIMEOUT, f"{name} gone")
+            live_tmux.wait(lambda: not self.run_processes(ident), TIMEOUT, "its processes ended")
             self.pending = None
             self.assertEqual(self.state(ident), "in_progress")
-            status = "interrupted" if written_back else self.session_status(ident, sid)
+            status = self.session_status(ident, sid)
             self.assertIn(status, ("running", "interrupted"))
             self.expect_session(ident, sid, status)
-        self.resume(ident, "pm", sid, self.agent_script("pm", "done", ident), tui=True)
+        script = self.agent_script("pm", "done", ident)
+        self.resume(ident, "pm", sid, script, tui=True, after_stop=True)
         self.agent_run()
 
     def test_killing_the_harness_session_ends_the_tui_and_the_next_router_run_resumes(self):
@@ -139,7 +154,7 @@ class Attended(Segment):
             res = self.script(ENTRY, "close", ident)
             self.assertEqual((res.returncode, res.stdout, res.stderr), (0, "", ""))
 
-        self.interrupted(close, written_back=False)
+        self.interrupted(close)
 
     def test_resume_brings_a_closed_tui_back_attended_at_its_display_its_record_unchanged(self):
         ident = self.pm_ready()
