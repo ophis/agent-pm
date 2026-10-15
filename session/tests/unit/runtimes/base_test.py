@@ -188,7 +188,6 @@ class ChildEnvTest(Case):
             {"KEEP": "k", "EDITOR": "vi", "ZED": "1", "OTHER_MODE": "on"},
         )
 
-
     def test_every_client_carries_the_agent_session_marker_whatever_it_inherits_or_is_given(self):
         self.assertEqual(child_env(Launch(("x",)), "/cwd")["AGENT_PM_AGENT_SESSION"], "1")
         self.environ(AGENT_PM_AGENT_SESSION="0")

@@ -918,12 +918,13 @@ def main(
     if argv in (["--help"], ["-h"]):
         print(__doc__)
         return 0
-    if refused := nested_start():
-        print(f"router.py: {refused}", file=sys.stderr)
-        return 2
     opts = options(argv)
     if opts is None:
         print(USAGE, file=sys.stderr)
+        return 2
+    starts = opts["brake"] is None and not opts["dry"]
+    if starts and (refused := nested_start()):
+        print(f"router.py: {refused}", file=sys.stderr)
         return 2
     if opts["issue"] is not None and not re.fullmatch(ISSUE_ID, opts["issue"]):
         print(f"router.py: bad issue id: {opts['issue']}", file=sys.stderr)

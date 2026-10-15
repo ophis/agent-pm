@@ -4262,12 +4262,16 @@ class RecoverWriteBack(TickBase):
 
 
 class InsideAnAgentSession(RouterArguments):
-    def test_a_tick_an_issue_or_a_bad_option_is_refused_and_help_still_runs(self):
+    def test_a_tick_or_an_issue_is_refused_and_help_brake_and_dry_run_still_run(self):
+        refused = "router.py: refused inside an agent session"
         with mock.patch.dict(os.environ, {"AGENT_PM_AGENT_SESSION": "1"}):
-            for argv in ([], ["--issue", "TASK-1"], ["--bogus"]):
+            for argv in ([], ["--now"], ["--issue", "TASK-1"]):
                 with self.subTest(argv=argv):
                     rc, err = self.main(argv)
                     self.assertEqual(rc, 2)
-                    self.assertTrue(err.startswith("router.py: refused inside an agent session"))
+                    self.assertTrue(err.startswith(refused), err)
+            for argv in (["--brake", "researcher"], ["--dry-run"], ["--bogus"]):
+                with self.subTest(argv=argv), redirect_stdout(io.StringIO()):
+                    self.assertNotIn(refused, self.main(argv)[1])
             with redirect_stdout(io.StringIO()):
                 self.assertEqual(self.main(["--help"]), (0, ""))
