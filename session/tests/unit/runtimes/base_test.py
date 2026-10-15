@@ -145,7 +145,7 @@ class RuntimeTest(Case):
 
     def test_a_start_inside_an_agent_session_is_refused_before_its_launch(self):
         adapter, recorded = HeadlessAdapter({}), []
-        spec = Spec(workdir="/w", client="headless", sid="s1")
+        spec = Spec(workdir="/w", access=Access(cwd="/w"), client="headless", sid="s1")
         with (
             mock.patch.dict(os.environ, {"AGENT_PM_AGENT_SESSION": "1"}),
             self.assertRaises(ConfigError) as caught,
