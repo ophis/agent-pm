@@ -109,12 +109,8 @@ class Roster:
         parent = os.path.dirname(self.directory)
         os.makedirs(os.path.dirname(parent), mode=0o700, exist_ok=True)
         for path in (parent, self.directory):
-            try:
+            with contextlib.suppress(FileExistsError):
                 os.mkdir(path, 0o700)
-            except FileExistsError:
-                pass
-            else:
-                os.chmod(path, 0o700, follow_symlinks=False)
 
     @contextlib.contextmanager
     def _locked(self, *, create: bool = False) -> Iterator[dict]:

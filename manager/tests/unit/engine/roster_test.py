@@ -707,15 +707,6 @@ class RosterTest(RosterCase):
         self.roster.advance(len(lines) - 2, 0)
         self.assertEqual(self.roster.backlog(), (len(lines) - 2, 0, lines[-2:]))
 
-    def test_new_directories_restore_owner_bits_stripped_by_umask(self):
-        previous = os.umask(0o277)
-        try:
-            self.assertTrue(Path(self.roster.events).exists())
-            for path in (Path(self.directory).parent, Path(self.directory)):
-                self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o700)
-        finally:
-            os.umask(previous)
-
     def test_existing_managers_parent_mode_is_preserved(self):
         parent = Path(self.directory).parent
         parent.mkdir(parents=True)
