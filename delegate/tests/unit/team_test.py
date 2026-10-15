@@ -135,9 +135,10 @@ class Shipped(Case):
             ),
             "Commits merged from `origin/<base>` are not this build's work.",
             "Every local check, in every phase: only lint and the unit tests of the projects you changed; never "
-            "integration tests or full suites locally: CI runs them on the PR.",
-            "Skip S7; keep the commits. After <your task's push points>, run exactly "
-            "`git -C <worktree> push -u origin <branch>`.",
+            "integration tests or full suites: the verification reviewer runs them, on the PR's CI when the repo "
+            "has a `pull_request` workflow, else locally.",
+            "Ask for no pull request: the caller opens it.",
+            "After <your task's push points>, run exactly `git -C <worktree> push -u origin <branch>`.",
         )
         self.assertIn(
             "\nAdd verbatim, placeholders filled in:\n\n```\n" + "\n".join(lines) + "\n```\n",
@@ -147,14 +148,14 @@ class Shipped(Case):
     def test_a_builds_files_are_its_spec_and_plan_doc(self):
         self.assertIn(
             (
-                "adding `files`: this build's spec (its plan doc's `spec_file=`) and plan doc (on failure, those "
-                "that exist);"
+                "adding `files`: this build's spec (the `-spec.md` beside its `-plan.md` plan doc) and plan doc "
+                "(on failure, those that exist);"
             ),
             task_text("build"),
         )
 
     def test_builds_report_each_s5_task_against_their_task_count(self):
-        for task, doc in (("build", "the plan doc's"), ("light-build", "the state file's")):
+        for task, doc in (("build", "the plan doc's"), ("light-build", "the plan doc's")):
             text = task_text(task)
             self.assertIn(
                 (
@@ -173,20 +174,50 @@ class Shipped(Case):
                 task,
             )
 
-    def test_light_build_always_writes_a_state_file_with_a_task_list(self):
+    def test_builds_leave_their_docs_where_autopilot_puts_them(self):
         self.assertIn(
             (
-                'docs line "The state file goes where the repo keeps design docs, else in `docs/.autopilot/`; '
-                'never `git add -f` it."'
+                'docs line "Spec and plan doc stay where autopilot puts them; S7 copies them to where the repo '
+                'keeps design docs; never `git add -f` them."'
+            ),
+            task_text("build"),
+        )
+        self.assertIn(
+            (
+                'docs line "The plan doc stays where autopilot puts it; S7 copies it to where the repo keeps '
+                'design docs; never `git add -f` it."'
             ),
             task_text("light-build"),
         )
         self.assertIn(
-            (
-                "(a task list in its state file, implementation, verification, a light review, no spec or plan "
-                "docs)"
-            ),
+            "(a task list in its plan doc, implementation, verification, a light review, no spec doc)",
             catalog()["engineer"]["light-build"],
+        )
+
+    def test_builds_continue_a_plan_doc_until_done(self):
+        for task, finished in (
+            (
+                "build",
+                "   - Else a plan doc at `done` (a **finished build**) and a user requirement",
+            ),
+            ("light-build", "   - Else a `pr` (a **finished build**) and a user requirement"),
+        ):
+            text = task_text(task)
+            self.assertIn(
+                "2. **Repo** ([Engineer › Repo](#repo)); from status, act on `plan_docs` too.", text
+            )
+            self.assertIn("   - A plan doc not at `done` → continue it,", text, task)
+            self.assertIn(finished, text, task)
+
+    def test_engineer_adopts_the_draft_pr_the_build_opened(self):
+        with open(os.path.join(TEAM, "roles", "engineer.md")) as f:
+            charter = f.read()
+        self.assertIn(
+            (
+                "[Engineer › Repo › Merge](#repo), then [Engineer › Repo](#repo) step 2 again (its `pr` now the "
+                "draft PR the build may have opened), then `status: done`;"
+            ),
+            charter,
         )
 
     def test_light_research_prepares_before_its_start_mark(self):
@@ -355,11 +386,6 @@ class Real(RealConfig):
         engineer, researcher = composed("engineer")[0], composed("researcher")[0]
         for why, text, literal in (
             ("builds fail without push permission", engineer, "`push` false → `failed`"),
-            (
-                "light-build's cutoff skips merge commits",
-                task_text("light-build"),
-                "`git -C <worktree> log -1 --first-parent --no-merges --format=%cI`",
-            ),
             (
                 "research hand-off phrases",
                 task_text("light-research"),

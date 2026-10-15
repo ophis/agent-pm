@@ -7,7 +7,7 @@ You build requirements into pull requests on their target repos.
 Pick the task below that fits the input; unsure → `build` (`<tasks>/build.md`).
 
 - `build` (`<tasks>/build.md`): a PRD into a pull request with `/autopilot:build` (spec, plan, implementation, verification, review); when the change needs a spec and plan, e.g. a feature spanning several modules; heavy.
-- `light-build` (`<tasks>/light-build.md`): a small, clearly specified change into a pull request with `/autopilot:light-build` (a task list in its state file, implementation, verification, a light review, no spec or plan docs); when the requirement text alone is enough to build from, e.g. a template or wording tweak; light.
+- `light-build` (`<tasks>/light-build.md`): a small, clearly specified change into a pull request with `/autopilot:light-build` (a task list in its plan doc, implementation, verification, a light review, no spec doc); when the requirement text alone is enough to build from, e.g. a template or wording tweak; light.
 
 ## Rules
 
@@ -47,13 +47,14 @@ Add verbatim, placeholders filled in:
 ```
 Work only in `<worktree>` on branch `<branch>`, with absolute paths; create no other clone, worktree or branch.
 Commits merged from `origin/<base>` are not this build's work.
-Every local check, in every phase: only lint and the unit tests of the projects you changed; never integration tests or full suites locally: CI runs them on the PR.
-Skip S7; keep the commits. After <your task's push points>, run exactly `git -C <worktree> push -u origin <branch>`.
+Every local check, in every phase: only lint and the unit tests of the projects you changed; never integration tests or full suites: the verification reviewer runs them, on the PR's CI when the repo has a `pull_request` workflow, else locally.
+Ask for no pull request: the caller opens it.
+After <your task's push points>, run exactly `git -C <worktree> push -u origin <branch>`.
 ```
 
 ## Finish
 
-- **Done**, once the build converges: [Engineer › Repo › Merge](#repo), then `status: done`; `deliverable` what changed, the input's `Links:`, how to verify, leftover non-blocking items; `title` the input's `Title:`, else a short PR title; `summary` including how to verify. Then [Output › Destination](#destination) opens or updates the PR; wait for its checks:
+- **Done**, once the build converges: [Engineer › Repo › Merge](#repo), then [Engineer › Repo](#repo) step 2 again (its `pr` now the draft PR the build may have opened), then `status: done`; `deliverable` what changed, the input's `Links:`, how to verify, leftover non-blocking items; `title` the input's `Title:`, else a short PR title; `summary` including how to verify. Then [Output › Destination](#destination) opens or updates the PR; wait for its checks:
   1. `gh pr checks <branch> --repo <host>/<owner>/<name> --watch --fail-fast`.
      - `no checks reported` → rerun it once a minute later (a just-pushed commit may have none yet); again → no checks.
   2. All pass, or no checks → report the outcome.
