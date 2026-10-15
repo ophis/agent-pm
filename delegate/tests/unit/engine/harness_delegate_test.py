@@ -12,8 +12,8 @@ from agent_pm.delegate import ConfigError, Result, Spec
 from agent_pm.delegate.composer import Composer, RunParams
 from agent_pm.delegate.engine.harness_delegate import HarnessDelegate
 from agent_pm.delegate.engine.state import RunState
+from agent_pm.session import Access, Exited, Liveness, Mode, Reply, SessionError
 from agent_pm.session import ConfigError as SessionConfigError
-from agent_pm.session import Exited, Liveness, Mode, Reply, SessionError
 from agent_pm.session import Spec as SessionSpec
 
 from delegate.tests.fakes.harness_session import (
@@ -309,7 +309,12 @@ class CrashTest(HarnessCase):
         self.make(spec=spec)
         state = self.metadata()
         agent = SessionSpec(
-            workdir=self.work, client="fake", mode=Mode.TUI, sid=SID, name=state["agent_name"]
+            workdir=self.work,
+            access=Access(cwd=self.work),
+            client="fake",
+            mode=Mode.TUI,
+            sid=SID,
+            name=state["agent_name"],
         )
         HarnessSession.start(agent, host=state["host"])
         return HarnessDelegate.attach(self.work, session_cls=HarnessSession), state["agent_name"]

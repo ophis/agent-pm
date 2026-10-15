@@ -7,6 +7,7 @@ import json
 import os
 
 from agent_pm.session import (
+    Access,
     Displayable,
     Exited,
     Host,
@@ -102,6 +103,7 @@ def _start_agent(record, display):
     session_cls = load_class(state["session_cls"], Session)
     spec = SessionSpec(
         workdir=record.workdir,
+        access=Access(cwd=record.workdir),
         client=state["plan"]["session"]["client"],
         mode=Mode.TUI,
         sid=record.sid,

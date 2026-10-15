@@ -14,7 +14,7 @@ from unittest import mock
 
 from agent_pm.delegate.composer.prompt import RESUME
 from agent_pm.delegate.engine.runner import FIX
-from agent_pm.session import Spec
+from agent_pm.session import Access, Spec
 
 from delegate.tests.case import packaged
 from delegate.tests.integration.cli import (
@@ -378,7 +378,9 @@ class UsageLimit(Integration):
         session_cls = packaged()
         with mock.patch.dict(os.environ, {"CLAUDE_CONFIG_DIR": self.config}):
             self.assertEqual(
-                session_cls.inspect(Spec(workdir=self.work, client="claude", sid=SID)).resumable,
+                session_cls.inspect(
+                    Spec(workdir=self.work, access=Access(cwd=self.work), client="claude", sid=SID)
+                ).resumable,
                 "yes",
             )
 

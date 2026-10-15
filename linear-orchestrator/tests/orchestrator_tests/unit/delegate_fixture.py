@@ -11,8 +11,8 @@ from dataclasses import replace
 
 from agent_pm.delegate import ConfigError, Delegate, SessionError
 from agent_pm.linear_orchestrator.engine import runs
+from agent_pm.session import Access, NoRecordedSession, SessionStatus
 from agent_pm.session import ConfigError as SessionConfigError
-from agent_pm.session import NoRecordedSession, SessionStatus
 from agent_pm.session import Spec as SessionSpec
 from agent_pm.utils import Record, Status
 
@@ -100,7 +100,12 @@ def provider(api, cfg):
             client = runs.client_of(runs.parse_log(cfg.runs_log), self.entry.sid)
             try:
                 return api.inspect(
-                    SessionSpec(workdir=self.workdir, client=client, sid=self.entry.sid)
+                    SessionSpec(
+                        workdir=self.workdir,
+                        access=Access(cwd=self.workdir),
+                        client=client,
+                        sid=self.entry.sid,
+                    )
                 )
             except NoRecordedSession:
                 return SessionStatus("no", None, "")

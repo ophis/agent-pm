@@ -906,8 +906,7 @@ class CodexCommon:
         return self.store.create(workdir, sid, snapshot, roots)
 
     def _new_roots(self, spec: Spec, environment: Mapping[str, str]) -> list[str]:
-        workdir = absolute_path(spec.workdir, "workdir")
-        cwd = absolute_path(spec.access.cwd or workdir, "cwd")
+        cwd = absolute_path(spec.access.cwd, "cwd")
         home = absolute_path(
             _config_home(cwd, environment.get("CODEX_HOME")),
             "codex_home",

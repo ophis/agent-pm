@@ -134,7 +134,9 @@ class ConfiguredTest(Case):
 
     def test_an_unconfigured_class_refuses_each_class_method(self):
         fresh = type("Fresh", (HostedSession,), {})
-        spec = Spec(workdir=self.home, client="fake", mode=Mode.HEADLESS)
+        spec = Spec(
+            workdir=self.home, access=Access(cwd=self.home), client="fake", mode=Mode.HEADLESS
+        )
         for name, call in (
             ("list", fresh.list),
             ("list display ''", lambda: fresh.list(display="")),
@@ -204,12 +206,16 @@ class InspectTest(Base):
         log.note("session", **info.persisted())
         log.note("session_metadata", sid=SID, transcript="/saved/transcript", resume="saved resume")
         self.assertEqual(
-            self.inspect(Spec(workdir=self.workdir, client="history", sid=SID)),
+            self.inspect(
+                Spec(
+                    workdir=self.workdir, access=Access(cwd=self.workdir), client="history", sid=SID
+                )
+            ),
             SessionStatus("yes", 1.5, f"{SID} {self.dir} /saved/transcript saved resume"),
         )
 
     def test_a_sid_without_a_record_is_an_error_without_starting_a_process(self):
-        spec = Spec(workdir=self.workdir, client="probe", sid=SID)
+        spec = Spec(workdir=self.workdir, access=Access(cwd=self.workdir), client="probe", sid=SID)
         with self.assertRaisesRegex(NoRecordedSession, "no recorded session"):
             self.inspect(spec)
         self.assertFalse(os.path.exists(self.workdir))
@@ -220,7 +226,7 @@ class InspectTest(Base):
         RunLog(self.workdir).note(
             "session", sid="s1", cwd=self.dir, project=False, transcript="", resume=""
         )
-        return Spec(workdir=self.workdir, client=client, sid="s1")
+        return Spec(workdir=self.workdir, access=Access(cwd=self.workdir), client=client, sid="s1")
 
     def test_an_adapters_driver_error_propagates_as_raised(self):
         error = SessionError("inspection refused")
@@ -241,7 +247,9 @@ class InspectTest(Base):
 
     def test_inspection_gives_the_adapter_the_specs_launch_env(self):
         spec = dataclasses.replace(
-            self.recorded(), access=Access(env={"A": "access", "B": "access"}), env={"B": "spec"}
+            self.recorded(),
+            access=Access(cwd=self.workdir, env={"A": "access", "B": "access"}),
+            env={"B": "spec"},
         )
         with mock.patch.object(
             ProbeAdapter,
@@ -262,8 +270,14 @@ class InspectTest(Base):
 
     def test_inspection_requires_client_and_sid(self):
         for spec, message in (
-            (Spec(workdir=self.workdir, sid=SID), "spec.client: required to inspect"),
-            (Spec(workdir=self.workdir, client="probe"), "spec.sid: required to inspect"),
+            (
+                Spec(workdir=self.workdir, access=Access(cwd=self.workdir), sid=SID),
+                "spec.client: required to inspect",
+            ),
+            (
+                Spec(workdir=self.workdir, access=Access(cwd=self.workdir), client="probe"),
+                "spec.sid: required to inspect",
+            ),
         ):
             with self.subTest(spec=spec), self.assertRaises(ConfigError) as caught:
                 self.inspect(spec)
@@ -290,7 +304,9 @@ class HistoricalRecordTest(Case):
         info = SessionInfo(sid=SID, cwd=str(self.cwd), project=True, transcript="", resume="")
         log.note("session", **info.persisted())
         log.note("session_metadata", sid=SID, transcript=str(transcript), resume="rm -rf ~")
-        request = Spec(workdir=str(self.work), client=client, sid=SID)
+        request = Spec(
+            workdir=str(self.work), access=Access(cwd=str(self.work)), client=client, sid=SID
+        )
         self.assertEqual(self.session_cls.inspect(request), expected)
         log.note("session_metadata", sid=SID, transcript="", resume="printf forged-command")
         fresh = self.session_cls.inspect(request)
@@ -622,7 +638,13 @@ class InProcessTest(Base):
             {"out": {"type": "result", "text": "done"}},
         )
         session = self.session.start(
-            Spec(workdir=self.workdir, client="fake", mode=Mode.IN_PROCESS, prompt="hello")
+            Spec(
+                workdir=self.workdir,
+                access=Access(cwd=self.workdir),
+                client="fake",
+                mode=Mode.IN_PROCESS,
+                prompt="hello",
+            )
         )
         self.addCleanup(session.stop)
         self.assertEqual(self.drain(session), [Reply("hi"), TurnEnd("done", 0), Exited(0)])
@@ -635,21 +657,21 @@ class InProcessTest(Base):
         self.assertEqual(found, [Exited(0)])
         self.assertEqual((LAUNCHED[0].flags, dict(LAUNCHED[0].env)), (spec.flags, dict(spec.env)))
 
-    def test_records_the_session_its_cwd_access_cwd_else_the_workdir_then_runs_it(self):
+    def test_records_the_session_its_cwd_the_access_cwd_then_runs_it(self):
         cwd = os.path.join(self.dir, "cwd")
         os.mkdir(cwd)
-        for given, project in (("", False), (cwd, True)):
-            with self.subTest(cwd=given):
+        for project in (False, True):
+            with self.subTest(project=project):
                 self.workdir = os.path.join(self.dir, f"work-{project}")
                 session, found = self.run_in_process(
-                    spec=self.spec(access=Access(cwd=given, project=project)), sid=SID
+                    spec=self.spec(access=Access(cwd=cwd, project=project)), sid=SID
                 )
                 self.assertEqual(found, [Exited(0)])
                 self.assertEqual(
                     (session.sid, session.client, session.mode, session.name),
                     (SID, "fake", "in_process", None),
                 )
-                info = SessionInfo(SID, given or self.workdir, project, "", "")
+                info = SessionInfo(SID, cwd, project, "", "")
                 self.assertEqual(session.info(), info)
                 (line,) = self.written()
                 self.assertEqual(
@@ -693,7 +715,9 @@ class InProcessTest(Base):
     def test_the_client_note_follows_the_prompt_only_with_commands(self):
         for commands, prompt in (((), "hello"), (("git",), "hello\n\nFAKE NOTE")):
             with self.subTest(commands=commands):
-                self.run_in_process(spec=self.spec(access=Access(commands=commands)))
+                self.run_in_process(
+                    spec=self.spec(access=Access(cwd=self.workdir, commands=commands))
+                )
                 self.assertEqual(self.logged()[-1]["prompt"], prompt)
 
     def test_resume_continues_that_session(self):
@@ -820,7 +844,12 @@ class EventsOverARuntimeTest(Case):
         return self.configured(
             "fake",
             Mode.TUI,
-            Spec(workdir=self.dir, sid="s1", name=kwargs.pop("name", None)),
+            Spec(
+                workdir=self.dir,
+                access=Access(cwd=self.dir),
+                sid="s1",
+                name=kwargs.pop("name", None),
+            ),
             info=SessionInfo(
                 sid="s1",
                 cwd=self.dir,
@@ -1308,7 +1337,8 @@ class TuiStartTest(HostedTuiBase):
                 mock.patch.object(fake_adapter.FakeTui, "launch", launch),
             ):
                 session = self.tui(
-                    name=f"project-{project}", spec=self.spec(access=Access(project=not project))
+                    name=f"project-{project}",
+                    spec=self.spec(access=Access(cwd=self.workdir, project=not project)),
                 )
             self.assertIs(session.info().project, project)
             self.assertIs(RunLog(self.workdir).session(session.sid).project, project)
@@ -1448,7 +1478,7 @@ class TuiStartTest(HostedTuiBase):
 
     def test_a_started_sessions_status_gives_the_adapter_its_launch_env(self):
         self.configure("probe", tui=True)
-        spec = self.spec(access=Access(env={"A": "access"}), env={"B": "spec"})
+        spec = self.spec(access=Access(cwd=self.workdir, env={"A": "access"}), env={"B": "spec"})
         session = self.tui(client="probe", name="w1", spec=spec)
         with mock.patch.object(
             ProbeAdapter,
@@ -1835,6 +1865,7 @@ class MultipleHostsTest(HostedTuiBase):
                 sessions[host] = self.session.start(
                     Spec(
                         workdir=os.path.join(self.dir, host),
+                        access=Access(cwd=os.path.join(self.dir, host)),
                         client="fake",
                         mode=Mode.TUI,
                         sid=SID,

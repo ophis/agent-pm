@@ -127,7 +127,7 @@ class Base(Case):
     def start(self, prompt="hello", spec=None, *, idle_timeout=None, **fields) -> Session:
         """A headless claude session on `prompt`: `spec` (else one in self.workdir) with `fields`."""
         spec = dataclasses.replace(
-            spec or Spec(workdir=self.workdir),
+            spec or Spec(workdir=self.workdir, access=Access(cwd=self.workdir)),
             client="claude",
             mode=Mode.HEADLESS,
             prompt=prompt,
@@ -138,7 +138,9 @@ class Base(Case):
         return handle
 
     def inspect(self, sid: str) -> SessionStatus:
-        return self.session_cls.inspect(Spec(workdir=self.workdir, client="claude", sid=sid))
+        return self.session_cls.inspect(
+            Spec(workdir=self.workdir, access=Access(cwd=self.workdir), client="claude", sid=sid)
+        )
 
     def drain(self, handle, on=lambda _event: None) -> list:
         """handle.events() to its end, each event passed to on(event) as it comes; fails, stopping
@@ -207,7 +209,7 @@ class RunTest(Base):
     def test_start_and_resume_exclude_project_sources_unless_access_enables_them(self):
         for project, sources in ((False, "user"), (True, "user,project,local")):
             with self.subTest(project=project):
-                spec = Spec(workdir=self.workdir, access=Access(project=project))
+                spec = Spec(workdir=self.workdir, access=Access(cwd=self.workdir, project=project))
                 first = self.start(spec=spec)
                 self.assertEqual(self.drain(first)[-1], Exited(0))
                 again = self.start("more", spec=spec, sid=first.sid, resume=True)
@@ -221,7 +223,9 @@ class RunTest(Base):
             steps=["one", {"kind": "tool", "name": "Read"}, "two", "three"],
             rate_limit={"status": "allowed", "unifiedWindows": {"five_hour": {"utilization": 0.1}}},
         )
-        handle = self.start(spec=Spec(workdir=self.workdir, tier=4, effort="low"))
+        handle = self.start(
+            spec=Spec(workdir=self.workdir, access=Access(cwd=self.workdir), tier=4, effort="low")
+        )
         sid = handle.sid
         self.assertEqual(
             self.drain(handle),
@@ -503,7 +507,9 @@ class SessionInfoTest(Base):
     def test_fake_credentials_stay_out_of_public_text_and_replay_on_resume(self):
         secrets = {"CFG_TOKEN": "sk-fake-1", "ACCESS_TOKEN": "sk-fake-2", "SPEC_TOKEN": "sk-fake-3"}
         self.configure_session({"claude": {**TABLE, "env": {"CFG_TOKEN": "sk-fake-1"}}})
-        spec = Spec(workdir=self.workdir, access=Access(env={"ACCESS_TOKEN": "sk-fake-2"}))
+        spec = Spec(
+            workdir=self.workdir, access=Access(cwd=self.workdir, env={"ACCESS_TOKEN": "sk-fake-2"})
+        )
         handle = self.start(spec=spec, sid=SID, env={"SPEC_TOKEN": "sk-fake-3"})
         self.assertEqual(self.drain(handle)[-1], Exited(0))
         resume = handle.info().resume

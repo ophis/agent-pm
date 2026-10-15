@@ -20,6 +20,7 @@ from agent_pm.session.adapters.registry import Registry
 from agent_pm.session.engine.types import (
     COMMAND,
     TAG,
+    Access,
     Activity,
     Blocked,
     ClientBound,
@@ -449,6 +450,7 @@ class TuiRuntime(Runtime):
             raise SessionError(f"no tui session {name}")
         spec = Spec(
             workdir=state["workdir"],
+            access=Access(cwd=info.cwd),
             client=state["client"],
             mode=Mode.TUI,
             sid=info.sid,

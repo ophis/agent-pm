@@ -35,7 +35,12 @@ CLAUDE = ("--permission-mode", "auto", "--strict-mcp-config")
 
 class ArgvTest(Base):
     def test_a_new_session_with_every_part(self):
-        access = Access(dirs=("/d1", "/d 2"), commands=("git status", "ls"), reads=("/r1", "/r 2/"))
+        access = Access(
+            cwd=self.work,
+            dirs=("/d1", "/d 2"),
+            commands=("git status", "ls"),
+            reads=("/r1", "/r 2/"),
+        )
         self.assertEqual(
             self.launch("do it", tier=4, effort="low", access=access).argv,
             (
@@ -95,7 +100,7 @@ class ArgvTest(Base):
 
     def test_allowed_tools_from_commands_or_allow_alone(self):
         self.assertEqual(
-            self.launch(config={}, access=Access(commands=("ls",))).argv[-4:],
+            self.launch(config={}, access=Access(cwd=self.work, commands=("ls",))).argv[-4:],
             ("--allowedTools", "Bash(ls)", "--", "hi"),
         )
         self.assertEqual(
@@ -128,7 +133,9 @@ class ArgvTest(Base):
             ),
         )
         self.assertEqual(
-            self.launch(config={}, access=Access(project=True), flags=strict).argv[6:8],
+            self.launch(config={}, access=Access(cwd=self.work, project=True), flags=strict).argv[
+                6:8
+            ],
             ("--mcp-config", os.path.join(self.work, ".mcp.json")),
         )
         self.assertNotIn(
@@ -140,7 +147,9 @@ class ArgvTest(Base):
         self.assertNotIn(
             "--mcp-config",
             self.launch(
-                config={}, access=Access(project=True), flags=("--strict-mcp-config",)
+                config={},
+                access=Access(cwd=self.work, project=True),
+                flags=("--strict-mcp-config",),
             ).argv,
         )
 
@@ -169,7 +178,7 @@ class ParseTest(Base):
     def setUp(self):
         super().setUp()
         self.run = ClaudeAdapter({}).headless()
-        self.run.launch(Spec(workdir=self.work, sid=SID, prompt="hi"))
+        self.run.launch(Spec(workdir=self.work, access=Access(cwd=self.work), sid=SID, prompt="hi"))
 
     def parse(self, *records):
         return [event for record in records for event in self.run.parse(record)]
@@ -450,7 +459,13 @@ class SuppliedPolicy(Base):
     def test_a_policy_reaches_both_client_launches(self):
         flags = CLAUDE
         adapter = ClaudeAdapter({})
-        spec = Spec(workdir=str(self.work), sid=SID, flags=flags, prompt="hi")
+        spec = Spec(
+            workdir=str(self.work),
+            access=Access(cwd=str(self.work)),
+            sid=SID,
+            flags=flags,
+            prompt="hi",
+        )
         launch = adapter.headless().launch(spec)
         start = launch.argv.index(flags[0])
         self.assertEqual(launch.argv[start : start + len(flags)], flags)

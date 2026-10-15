@@ -70,8 +70,9 @@ class InProcessRuntime(Runtime):
         if spec.sid is None:
             raise ConfigError("sid: missing")
         run.check(spec)
-        cwd = spec.access.cwd or spec.workdir
-        prepared = Prepared(spec, SessionInfo(spec.sid, cwd, spec.access.project, "", ""))
+        prepared = Prepared(
+            spec, SessionInfo(spec.sid, spec.access.cwd, spec.access.project, "", "")
+        )
         return prepared, run
 
     @classmethod

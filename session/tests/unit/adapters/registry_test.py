@@ -20,7 +20,7 @@ from typing import Any
 from unittest import mock
 
 import agent_pm.session.hosts.tmux
-from agent_pm.session import Host, Hosts, Spec, read_config
+from agent_pm.session import Access, Host, Hosts, Spec, read_config
 from agent_pm.session.adapters import registry
 from agent_pm.session.adapters.base import Adapter
 from agent_pm.session.adapters.claude import ClaudeAdapter
@@ -601,7 +601,16 @@ class Committed(Case):
         self.assertIs(type(adapter), ClaudeAdapter)
         argv = (
             adapter.headless()
-            .launch(Spec(workdir=tmp.name, tier=4, effort="low", sid=SID, prompt="hi"))
+            .launch(
+                Spec(
+                    workdir=tmp.name,
+                    access=Access(cwd=tmp.name),
+                    tier=4,
+                    effort="low",
+                    sid=SID,
+                    prompt="hi",
+                )
+            )
             .argv
         )
         self.assertEqual(

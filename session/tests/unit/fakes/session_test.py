@@ -6,7 +6,7 @@ import inspect
 import unittest
 
 from agent_pm.session import Displayable, Hosts, Mode, NotDisplayable, Session, SessionError, Usage
-from agent_pm.session.engine.types import ConfigError, Exited, Reply, Spec, TurnEnd
+from agent_pm.session.engine.types import Access, ConfigError, Exited, Reply, Spec, TurnEnd
 
 from session.tests.case import Case
 from session.tests.fakes.host import FakeHost
@@ -16,7 +16,14 @@ from session.tests.fakes.session import FakeSession
 class Scripted(Case):
     def spec(self, **fields) -> Spec:
         return Spec(
-            workdir=self.home, client="fake", mode=Mode.HEADLESS, prompt="the prompt", **fields
+            **{
+                "workdir": self.home,
+                "access": Access(cwd=self.home),
+                "client": "fake",
+                "mode": Mode.HEADLESS,
+                "prompt": "the prompt",
+                **fields,
+            }
         )
 
     def start(self, cls, name=None, display=None, idle_timeout=None, **fields):
@@ -65,7 +72,11 @@ class Scripted(Case):
 
     def test_a_spec_without_client_or_mode_is_refused(self):
         for field in ("client", "mode"):
-            spec = Spec(workdir=self.home, **{"client": "fake", "mode": Mode.TUI, field: None})
+            spec = Spec(
+                workdir=self.home,
+                access=Access(cwd=self.home),
+                **{"client": "fake", "mode": Mode.TUI, field: None},
+            )
             with self.subTest(field=field), self.assertRaises(ConfigError) as caught:
                 FakeSession.scripted().start(spec)
             self.assertEqual(str(caught.exception), f"spec.{field}: required to start")

@@ -441,7 +441,7 @@ class ClaudeTuiLaunch(Case):
             sid=SID,
             tier=1,
             effort="high",
-            access=Access(dirs=(self.root,), commands=("git status",), project=True),
+            access=Access(cwd=self.proj, dirs=(self.root,), commands=("git status",), project=True),
         )
         q = shlex.quote(self.hooklog)
         hook = ("/bin/sh", "-c", f'printf "%s " "$0" >> {q}; cat >> {q}; echo >> {q}')

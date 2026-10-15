@@ -56,7 +56,17 @@ class Preflight(Case):
         return kind(name, settings, tmux=self.tmux)
 
     def spec(self, mode=Mode.HEADLESS, **changes):
-        return Spec(workdir=self.work, client="fake", mode=mode, prompt="input", sid=SID, **changes)
+        return Spec(
+            **{
+                "workdir": self.work,
+                "access": Access(cwd=self.work),
+                "client": "fake",
+                "mode": mode,
+                "prompt": "input",
+                "sid": SID,
+                **changes,
+            }
+        )
 
     def tree(self):
         return sorted(
@@ -103,6 +113,7 @@ class Preflight(Case):
         for name in (None, "named-worker"):
             spec = Spec(
                 workdir=self.work,
+                access=Access(cwd=self.work),
                 client="claude",
                 mode=Mode.TUI,
                 sid=SID,
@@ -324,6 +335,7 @@ print(json.dumps([result, PreflightAdapter.prepared[-1].sid, PreflightAdapter.co
         )
         spec = Spec(
             workdir=self.work,
+            access=Access(cwd=self.work),
             client="codex",
             mode=Mode.HEADLESS,
             sid=SID,

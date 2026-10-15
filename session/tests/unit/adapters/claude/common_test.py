@@ -82,7 +82,13 @@ class SettingSourcesTest(Base):
             ("--setting-sources=user,project,local",),
         ):
             for resume in (False, True):
-                spec = Spec(workdir=self.work, sid=SID, flags=flags, resume=resume)
+                spec = Spec(
+                    workdir=self.work,
+                    access=Access(cwd=self.work),
+                    sid=SID,
+                    flags=flags,
+                    resume=resume,
+                )
                 adapter = ClaudeAdapter({})
                 for launch in (
                     lambda adapter=adapter, spec=spec: adapter.headless().launch(spec),
@@ -97,7 +103,13 @@ class SettingSourcesTest(Base):
 
 class ReadRulesTest(Base):
     def modes(self, *, resume=False, config=None, **access):
-        spec = Spec(workdir=self.work, sid=SID, access=Access(**access), prompt="hi", resume=resume)
+        spec = Spec(
+            workdir=self.work,
+            sid=SID,
+            access=Access(cwd=self.work, **access),
+            prompt="hi",
+            resume=resume,
+        )
         adapter = ClaudeAdapter({} if config is None else config)
         return (
             lambda adapter=adapter, spec=spec: adapter.headless().launch(spec),
@@ -165,7 +177,7 @@ class ReadRulesTest(Base):
                     spec = Spec(
                         workdir=self.work,
                         sid=SID,
-                        access=Access(reads=("/ok", read)),
+                        access=Access(cwd=self.work, reads=("/ok", read)),
                         client="claude",
                         mode=mode,
                         prompt="hi",
@@ -200,7 +212,7 @@ class EnvTest(Base):
                 workdir=self.work,
                 sid=SID,
                 resume=resume,
-                access=Access(env=git_env),
+                access=Access(cwd=self.work, env=git_env),
                 env=git_env,
             )
             adapter = ClaudeAdapter(config)
@@ -236,7 +248,7 @@ class EnvTest(Base):
 
     def test_the_session_env_wins_over_the_config_env(self):
         config = {**CONFIG, "env": {"K": "v", "PYTHONPATH": "/config"}}
-        access = Access(env={"PYTHONPATH": "/root", "S": "s"})
+        access = Access(cwd=self.work, env={"PYTHONPATH": "/root", "S": "s"})
         self.env({"PYTHONPATH": "/parent"})
         for launch, defaults in (
             (self.launch(config=config, access=access), CEILING),
@@ -553,11 +565,14 @@ class TranscriptTest(Base):
         given = {**CONFIG, "env": {"CLAUDE_CONFIG_DIR": "/given"}}
         for launch in (self.launch, partial(tui_launch, self.work)):
             for fields, root in (
-                ({"access": Access(env={"CLAUDE_CONFIG_DIR": "/access"})}, "/access"),
+                (
+                    {"access": Access(cwd=self.work, env={"CLAUDE_CONFIG_DIR": "/access"})},
+                    "/access",
+                ),
                 ({"env": {"CLAUDE_CONFIG_DIR": "/policy"}}, "/policy"),
                 (
                     {
-                        "access": Access(env={"CLAUDE_CONFIG_DIR": "/access"}),
+                        "access": Access(cwd=self.work, env={"CLAUDE_CONFIG_DIR": "/access"}),
                         "env": {"CLAUDE_CONFIG_DIR": "/policy"},
                     },
                     "/policy",

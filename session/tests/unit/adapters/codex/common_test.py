@@ -152,7 +152,9 @@ class CommonTest(Base):
                 "env": {"CODEX_HOME": str(self.root / "elsewhere")},
             },
         )
-        spec = dataclasses.replace(self.spec, access=Access(project=True), tier=None, effort=None)
+        spec = dataclasses.replace(
+            self.spec, access=Access(cwd=self.spec.workdir, project=True), tier=None, effort=None
+        )
         resumed = other.common.prepare(dataclasses.replace(spec, resume=True))
         self.assertEqual(resumed.snapshot, saved.snapshot)
         launch = committed_headless(other, dataclasses.replace(spec, prompt="again", resume=True))
@@ -175,7 +177,7 @@ class CommonTest(Base):
         )
         state = self.common.bind(str(self.work), self.spec.sid, NATIVE)
         self.rollout()
-        spec = dataclasses.replace(self.spec, access=Access())
+        spec = dataclasses.replace(self.spec, access=Access(cwd=self.spec.workdir))
         resumed = committed_headless(
             adapter, dataclasses.replace(spec, prompt="again", resume=True)
         )
@@ -341,7 +343,9 @@ class CommonTest(Base):
             with self.subTest(grant=grant), self.assertRaisesRegex(ConfigError, "writable"):
                 self.common.save(
                     self.common.prepare(
-                        dataclasses.replace(self.spec, access=Access(dirs=(str(grant),)))
+                        dataclasses.replace(
+                            self.spec, access=Access(cwd=self.spec.workdir, dirs=(str(grant),))
+                        )
                     )
                 )
         with (
@@ -636,7 +640,7 @@ class WritableDirsTest(Base):
         record = self.record().read_bytes()
         elsewhere = str(self.root / "elsewhere")
         other = CodexAdapter(self.adapter.config | {"env": {"CODEX_HOME": elsewhere}})
-        spec = dataclasses.replace(self.spec, access=Access(project=True))
+        spec = dataclasses.replace(self.spec, access=Access(cwd=self.spec.workdir, project=True))
         self.assertIn(elsewhere, other.writable_dirs(spec))
         dirs = other.writable_dirs(dataclasses.replace(spec, resume=True))
         self.assertEqual(tuple(dirs[: len(saved)]), saved)
@@ -993,7 +997,7 @@ class SnapshotEnvTest(Base):
     def test_keeps_an_env_access_env_accepts(self):
         for env in GOOD:
             with self.subTest(env=env):
-                self.assertEqual(Access(env=env).env, env)
+                self.assertEqual(Access(cwd="/c", env=env).env, env)
                 self.assertEqual(CodexAdapter({"env": env}).config["env"], env)
                 self.assertEqual(validate_snapshot(self.snapshot(env=env)).env, env)
 
@@ -1001,7 +1005,7 @@ class SnapshotEnvTest(Base):
         for env in BAD:
             with self.subTest(env=env):
                 with self.assertRaises(ConfigError):
-                    Access(env=env)
+                    Access(cwd="/c", env=env)
                 with self.assertRaises(RecoveryError) as caught:
                     validate_snapshot(self.snapshot(env=env))
                 self.assertEqual(str(caught.exception), "invalid Codex recovery snapshot env")

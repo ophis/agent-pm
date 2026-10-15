@@ -28,6 +28,7 @@ from agent_pm.delegate.engine.harness_delegate import HarnessDelegate
 from agent_pm.delegate.engine.state import RunState
 from agent_pm.session import (
     SIGNALS,
+    Access,
     Exited,
     Launch,
     LimitHit,
@@ -747,7 +748,14 @@ class TuiStart(HarnessCase):
         delegate = self.make(spec=spec, host="agent", harness_host="harness")
         other = "22222222-0000-4000-8000-000000000000"
         HarnessSession.start(
-            SessionSpec(workdir=self.home, client="fake", mode=Mode.TUI, sid=other, name="X"),
+            SessionSpec(
+                workdir=self.home,
+                access=Access(cwd=self.home),
+                client="fake",
+                mode=Mode.TUI,
+                sid=other,
+                name="X",
+            ),
             host="agent",
         )
         RecordingHost.harness_starts_agent = False

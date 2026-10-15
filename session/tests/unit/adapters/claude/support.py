@@ -12,6 +12,7 @@ from agent_pm.session.adapters.claude import ClaudeAdapter
 from agent_pm.session.adapters.claude.common import ClaudeCommon as UnconfiguredCommon
 from agent_pm.session.adapters.common import select
 from agent_pm.session.engine.types import (
+    Access,
     ConfigError,
     HookKind,
     Launch,
@@ -115,7 +116,14 @@ class Base(Case):
 
     def launch(self, prompt="hi", config=CONFIG, *, resume=False, **spec) -> Launch:
         spec = Spec(
-            **{"workdir": self.work, "sid": SID, "prompt": prompt, "resume": resume, **spec}
+            **{
+                "workdir": self.work,
+                "access": Access(cwd=self.work),
+                "sid": SID,
+                "prompt": prompt,
+                "resume": resume,
+                **spec,
+            }
         )
         return ClaudeAdapter(config).headless().launch(spec)
 
@@ -274,7 +282,16 @@ def reference(cwd: str, sid: str = SID) -> str:
 
 
 def tui_launch(work, prompt="hi", config=CONFIG, *, resume=False, **spec) -> Launch:
-    spec = Spec(**{"workdir": work, "sid": SID, "prompt": prompt, "resume": resume, **spec})
+    spec = Spec(
+        **{
+            "workdir": work,
+            "access": Access(cwd=work),
+            "sid": SID,
+            "prompt": prompt,
+            "resume": resume,
+            **spec,
+        }
+    )
     return ClaudeAdapter(config).tui().launch(spec, HOOK)
 
 
