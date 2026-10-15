@@ -15,6 +15,7 @@ import time
 from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass, field, replace
 from types import MappingProxyType
+from typing import Protocol, runtime_checkable
 
 from agent_pm.session.engine.base import Session
 from agent_pm.session.engine.types import (
@@ -23,7 +24,6 @@ from agent_pm.session.engine.types import (
     Blocked,
     ConfigError,
     Exited,
-    IdleTimeout,
     Mode,
     SessionError,
     Spec,
@@ -47,11 +47,19 @@ STATE_FILE = "worker.json"
 STATE_MAX = 64 << 10
 VERSION = 1
 EARLY = 5
+TICK = 1
+COLOR_CAP = 15
 WAIT = 10
 REPORT_LINES = 20
 SCREEN_LINES = 2000
 COMMAND = "agent-pm-session"
 KIND = "worker"
+
+
+@runtime_checkable
+class _Opens(Protocol):
+    @property
+    def opening_pending(self) -> bool: ...
 
 
 def _say(text: str) -> None:
@@ -154,6 +162,10 @@ class WorkerState:
         )
 
 
+def _pending(session: Session) -> bool:
+    return isinstance(session, _Opens) and session.opening_pending
+
+
 def _detail(error: SessionError | OSError) -> object:
     return error.strerror if isinstance(error, OSError) else error
 
@@ -236,9 +248,10 @@ class Worker:
         )
 
     def start(self, *, prompt: str, resume: bool) -> Record:
-        """Claim its sid, save its state, start its client, save its token, show it, watch it;
-        then publish its Record and return it. A failed save or start puts its files back. Its
-        client exiting in the watch: SessionError with its last lines, its terminal kept, no Record.
+        """Claim its sid, save its state, start its client, save its token, show it, watch it
+        (EARLY s, up to COLOR_CAP s while its opening is pending); then publish its Record and
+        return it. A failed save or start puts its files back. Its client exiting in the watch:
+        SessionError with its last lines, its terminal kept, no Record.
         """
         name = self.state.name
         self._claim()
@@ -254,7 +267,7 @@ class Worker:
                 self.state.spec(prompt=prompt, resume=resume),
                 display=self.state.display,
                 host=self.state.host,
-                idle_timeout=EARLY,
+                idle_timeout=TICK,
             )
         except (SessionError, ConfigError):
             self._put_back(before)
@@ -386,15 +399,25 @@ class Worker:
             self.say(f"session {name}: not shown: {error}")
 
     def _watch(self, session: Session) -> None:
-        deadline = self.clock() + EARLY
+        began = self.clock()
         for event in session.events():
             if isinstance(event, Exited):
                 raise SessionError(self._died(event.returncode))
             if isinstance(event, Blocked):
                 self.say(f"session {self.state.name}: waits on a dialog: {event.reason}")
+                self._uncolored(session, "waits on a dialog")
                 return
-            if isinstance(event, IdleTimeout) or self.clock() >= deadline:
+            elapsed = self.clock() - began
+            if elapsed >= COLOR_CAP:
+                self._uncolored(session, f"not ready within {COLOR_CAP} s")
                 return
+            if elapsed >= EARLY and not _pending(session):
+                return
+
+    def _uncolored(self, session: Session, reason: str) -> None:
+        if _pending(session):
+            name = self.state.name
+            self.say(f"session {name}: color not set: {reason}; {COMMAND} send {name} '/color'")
 
     def _died(self, code: int) -> str:
         head = f"{self.state.name}: {self.state.client} exited {code} at once"
