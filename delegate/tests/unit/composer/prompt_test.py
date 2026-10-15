@@ -1030,7 +1030,7 @@ class Real(RealConfig):
 
     def test_every_researcher_run_names_the_gate_default_none(self):
         gate = "python3 /u/usage.py --below 80"
-        for task in (None, "deep-research", "light-research"):
+        for task in (None, "deep-research", "research", "light-research"):
             prompt = composed("researcher", task)[0]
             self.assertIn("the gate is `<gate>`", prompt, task)
             self.assertEqual(parameters(prompt)["<gate>"], "`none`", task)

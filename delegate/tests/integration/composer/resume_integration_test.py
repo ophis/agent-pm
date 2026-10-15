@@ -40,7 +40,7 @@ class RolePicks(child.Case):
         self.assertEqual([t for t in self.tasks if f"`{t}`" in guide], [], "tasks the guide names")
 
     def test_the_role_picks_and_its_resume_prompt_too(self):
-        self.assertEqual(self.tasks, ["deep-research", "light-research"])
+        self.assertEqual(self.tasks, ["deep-research", "research", "light-research"])
         text = self.compose(self.ROLE)["prompt"]
         self.assertIn(self.index, text, "the task index")
         for t in self.tasks:
