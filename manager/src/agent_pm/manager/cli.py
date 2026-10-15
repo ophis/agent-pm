@@ -12,7 +12,7 @@ from pathlib import Path
 from agent_pm.manager import Crew, Roster, RosterError, Spec, State
 from agent_pm.manager.engine.holder import Holder
 from agent_pm.manager.engine.types import Lease, StatusError
-from agent_pm.utils import STATE
+from agent_pm.utils import STATE, nested_start
 
 
 def _number(value: str) -> int:
@@ -216,6 +216,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         parser.error("only run and hold accept a command after --")
     if args.func is _attach and (args.after is None) != (args.gen is None):
         parser.error("--after and --gen go together")
+    if args.func in {_run, _hold, _resume} and (refused := nested_start()):
+        print(f"crew: {refused}", file=sys.stderr)
+        return 2
     try:
         return args.func(args)
     except ValueError as error:

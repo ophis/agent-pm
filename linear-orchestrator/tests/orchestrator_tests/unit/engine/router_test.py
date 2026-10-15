@@ -4259,3 +4259,15 @@ class RecoverWriteBack(TickBase):
         self.assertEqual(self.launched_runs(), [("TASK-1", "resume")])
         self.assertEqual(self.steps(), ["comment"])
         self.assertEqual(self.linear.mutations, [])
+
+
+class InsideAnAgentSession(RouterArguments):
+    def test_a_tick_an_issue_or_a_bad_option_is_refused_and_help_still_runs(self):
+        with mock.patch.dict(os.environ, {"AGENT_PM_AGENT_SESSION": "1"}):
+            for argv in ([], ["--issue", "TASK-1"], ["--bogus"]):
+                with self.subTest(argv=argv):
+                    rc, err = self.main(argv)
+                    self.assertEqual(rc, 2)
+                    self.assertTrue(err.startswith("router.py: refused inside an agent session"))
+            with redirect_stdout(io.StringIO()):
+                self.assertEqual(self.main(["--help"]), (0, ""))

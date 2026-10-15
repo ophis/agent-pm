@@ -78,7 +78,7 @@ from agent_pm.linear_orchestrator.engine.types import (
     Transient,
     Unavailable,
 )
-from agent_pm.utils import one_line, parse_time
+from agent_pm.utils import nested_start, one_line, parse_time
 
 STALE = timedelta(hours=2)
 LIVE = timedelta(minutes=30)
@@ -918,6 +918,9 @@ def main(
     if argv in (["--help"], ["-h"]):
         print(__doc__)
         return 0
+    if refused := nested_start():
+        print(f"router.py: {refused}", file=sys.stderr)
+        return 2
     opts = options(argv)
     if opts is None:
         print(USAGE, file=sys.stderr)

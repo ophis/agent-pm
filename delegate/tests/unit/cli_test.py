@@ -92,6 +92,21 @@ class Detach(Base):
     def detaches(self, *extra, events=None, **kw):
         return self.runs("--sid", SID, "--detach", "--events", events or self.events, *extra, **kw)
 
+    def test_inside_an_agent_session_a_run_detached_or_not_exits_2_and_constructs_nothing(self):
+        with mock.patch.dict(os.environ, {"AGENT_PM_AGENT_SESSION": "1"}):
+            for code, out, err in (self.detaches(), self.runs("--sid", SID)):
+                self.assertEqual((code, out), (2, ""))
+                self.assertTrue(err.startswith("delegate: refused inside an agent session"), err)
+        self.assertEqual(Detaching.made, [])
+
+    def test_inside_an_agent_session_list_dry_run_and_help_still_run(self):
+        self.detaching = False
+        with mock.patch.dict(os.environ, {"AGENT_PM_AGENT_SESSION": "1"}):
+            self.assertEqual(self.cli("run", "--list")[0], 0)
+            code, _, err = self.runs("--sid", SID, "--dry-run")
+            self.assertEqual(code, 0, err)
+            self.assertEqual(self.cli("--help")[0], 0)
+
     def test_usage_errors_exit_2_and_construct_nothing(self):
         e = self.events
         for argv, out, want in (
@@ -1054,6 +1069,14 @@ class Queries(Case):
             self.query("attach-command", "a", a=View("a")),
             (1, "", "delegate: a: no displayable session\n"),
         )
+
+    def test_resume_inside_an_agent_session_exits_2_and_status_still_answers(self):
+        a = View("a")
+        with mock.patch.dict(os.environ, {"AGENT_PM_AGENT_SESSION": "1"}):
+            code, out, err = self.query("resume", "a", a=a)
+            self.assertEqual((code, out), (2, ""))
+            self.assertTrue(err.startswith("delegate: refused inside an agent session"), err)
+            self.assertEqual(self.query("status", "a", a=a)[0], 0)
 
     def test_resume_prints_the_record_line(self):
         self.assertEqual(

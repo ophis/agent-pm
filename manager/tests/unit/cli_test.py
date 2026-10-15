@@ -106,3 +106,30 @@ class CliTest(CliCase):
         self.assertEqual(result, 0, stderr)
         self.assertEqual(stdout, "nothing to stop\n")
         self.assertFalse(os.path.exists(self.directory))
+
+
+class InsideAnAgentSession(CliCase):
+    def test_run_hold_and_resume_exit_2_and_write_nothing(self):
+        for argv in (
+            ("run", "--manager", "mgr", "w1", "--", "true"),
+            ("hold", "--manager", "mgr", "--", "true"),
+            ("resume", "--manager", "mgr", "w1"),
+        ):
+            with (
+                self.subTest(argv=argv),
+                mock.patch.dict(os.environ, {"AGENT_PM_AGENT_SESSION": "1"}),
+            ):
+                result, stdout, stderr = self.invoke(*argv)
+                self.assertEqual((result, stdout), (2, ""))
+                self.assertTrue(stderr.startswith("crew: refused inside an agent session"), stderr)
+                self.assertFalse(os.path.exists(self.directory))
+
+    def test_help_and_control_commands_still_run(self):
+        with mock.patch.dict(os.environ, {"AGENT_PM_AGENT_SESSION": "1"}):
+            with (
+                self.assertRaises(SystemExit) as raised,
+                contextlib.redirect_stdout(io.StringIO()),
+            ):
+                main(["--help"])
+            self.assertEqual(raised.exception.code, 0)
+            self.assertNotIn("refused", self.invoke("status", "--manager", "mgr")[2])

@@ -56,6 +56,22 @@ class Commands(Case):
                 self.assertIn("agent-pm-linear", output.getvalue())
 
 
+class InsideAnAgentSession(Case):
+    def test_resume_exits_2_before_config_and_status_still_runs(self):
+        with mock.patch.dict(os.environ, {"AGENT_PM_AGENT_SESSION": "1"}):
+            for command, refused in (("resume", True), ("status", False)):
+                errors = io.StringIO()
+                with self.subTest(command=command), redirect_stderr(errors):
+                    cli.main([command, "TASK-1"])
+                    self.assertEqual(
+                        errors.getvalue().startswith(
+                            "agent-pm-linear: refused inside an agent session"
+                        ),
+                        refused,
+                        errors.getvalue(),
+                    )
+
+
 DEPLOY = "/Users/francis/playground/agent-pm"
 LOG = "/Users/francis/.agent-pm/logs/orchestrator.jsonl"
 JOBS = {"router": ["--now"], "promote": []}
