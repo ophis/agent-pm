@@ -3,8 +3,8 @@ holds no launcher variable; a run's state lives only in its run dir, which count
 refused start creates nothing; preview and instruct write no state; owner overlays shape its run;
 resume continues a run in the mode it records or in the one it is given, and a run whose process
 died, its tui agent session left open, at once; replace, resume and detach first kill the callback
-group a dead harness left; checkouts lists its agent dir's real checkouts and clean deletes that dir,
-refusing a live run or a dir out of place.
+group a dead harness left; checkouts lists its agent dir's real checkouts and clean deletes that
+dir, refusing a live run or a dir out of place.
 """
 
 import fcntl

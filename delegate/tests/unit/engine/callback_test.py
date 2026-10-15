@@ -1,7 +1,7 @@
 """Domain events encode through the existing one-line DelegateEvent contract; each is delivered to
-the callback argv from the run dir in its own process group, holding the callback lock that names its
-pid; a failed delivery is one callback_error row. sweep kills the group a dead harness's callback lock
-names, then waits for that lock.
+the callback argv from the run dir in its own process group, holding the callback lock that names
+its pid; a failed delivery is one callback_error row. sweep kills the group a dead harness's
+callback lock names, then waits for that lock.
 """
 
 import contextlib
