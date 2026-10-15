@@ -218,9 +218,12 @@ flowchart LR
 ```
 
 ```bash
-bin/agent-pm-linear router --issue <ID>   # run one issue now, skipping the hours, max_runs and usage gates
-bin/agent-pm-linear attach-command <ID>   # the command that shows its agent run
-tmux ls                                   # running agent runs
+bin/agent-pm-linear router --issue <ID>         # run one issue now, skipping the hours, max_runs and usage gates
+bin/agent-pm-linear router --issue <ID> --tui   # the same, attended in a TUI (display, events file, exit codes: --help)
+bin/agent-pm-linear attach-command <ID>         # the command that shows its agent run
+bin/agent-pm-linear close <ID>                  # end the run and its TUI; the issue stays In Progress for Recover
+bin/agent-pm-linear resume <ID>                 # resume an attended run where it was shown
+tmux ls                                         # running agent runs
 ```
 
 Run `bin/agent-pm-linear` by its absolute path; `--help` lists each command's options. Events go to `<work_dir>/logs/orchestrator.jsonl`. Keep `<work_dir>/logs/runs.jsonl`: resume, Recover and write-back read it.
@@ -254,7 +257,7 @@ v1 is the `v1-runtime` checkout: `core/`, `orchestrator/`, and overrides in `~/.
 4. **Update the plugin:** `claude plugin marketplace update agent-pm && claude plugin update agent-pm@agent-pm` (Codex: [Install](#install)), then `ctmux --install`.
 5. **Move the overrides** into `~/.agent-pm/config.local.toml` by the table below, values unchanged, then delete the two v1 files. `bin/agent-pm-linear router --dry-run` must print no `config-error`.
 6. **Do the [Upgrading](#upgrading) rows** that apply. Rotate any real credential ever passed in a Claude run's env: earlier resume commands printed it into `run.jsonl` and session comments.
-7. **Smoke-test.**
+7. **Run the [Smoke checklist](#smoke-checklist).**
 8. launchd stays off until [TASK-379](https://linear.app/ophis-workgroup/issue/TASK-379) reinstalls it after the smoke test.
 
 `show` changed meaning: v1's `""` opened nothing. Now `""` opens a pane and `"none"` opens nothing.
@@ -271,6 +274,37 @@ v1 is the `v1-runtime` checkout: `core/`, `orchestrator/`, and overrides in `~/.
 | `core.local.toml` `[clients.skill.…]`, `[clients.<name>]` `implementation` | drop |
 | `orchestrator.local.toml` top-level keys | `[linear_orchestrator]` |
 | `orchestrator.local.toml` `[states]`, `[task_labels]`, `[project_repos]`, `[local_clones]`, `[roles.<role>]`, `[core]` | the same tables under `linear_orchestrator.`; drop a `gate` copied into `[core]` |
+
+## Smoke checklist
+
+Run it right after switching to `main`, in order, from the checkout root inside tmux; stop at the first failure. Steps 1–6 change nothing in Linear. Steps 7–9 need two throwaway Todo issues in a test project: `<H>` for the engineer (Light Build, a `Repo: <owner>/<scratch repo>` line and a one-line change) and `<T>` for the researcher (Light Research, a one-line question).
+
+| # | Check | Run | Passes when |
+|---|---|---|---|
+| 1 | Commands | each `bin/` command's `--help`, then `agent-pm-session ls`, `agent-pm-delegate run --list`, `agent-pm-crew status --manager <name>` | all exit 0; `run --list` shows researcher, pm, engineer and dummy-tester |
+| 2 | Config validation | the block below | each command fails with `unknown key 'smoke_bad_key' in [<section>]` before any Linear call |
+| 3 | Claude Code plugin | `/agent-pm:act-as dummy-tester:echo smoke` in a throwaway session | it echoes `smoke`; `/agent-pm:tmux` and `/agent-pm:manage` load |
+| 4 | Codex plugin | `codex --version`; in a Codex session, pick agent-pm's `tmux` and ask it to run `agent-pm-session ls` | 0.156.0+; Codex runs `bin/agent-pm-session` by absolute path, with no literal `${CLAUDE_SKILL_DIR}` |
+| 5 | Dry runs | `bin/agent-pm-linear` `router --dry-run`, `router --issue <H> --tui --events "$(mktemp)" --dry-run`, `promote --dry-run`, `prune --dry-run` | each prints the plan you expect and exits 0; no issue moves, no tmux session starts |
+| 6 | Brake | `bin/agent-pm-linear router --brake researcher` | exit 0 or 1, not 2 |
+| 7 | Headless run | `bin/agent-pm-linear router --issue <H>` | `<H>` goes In Progress with its start and `Run <sid>` comments and an `engineer-<H>-<sid8>-drive` session; it ends with a PR on the scratch repo linked in a comment, `<H>` In Review, the session gone |
+| 8 | Attended run | `bin/agent-pm-linear router --issue <T> --tui --events "$(mktemp)"` | as step 7, with a `researcher-<T>-<sid8>` TUI; the report is published, linked, and `<T>` is In Review |
+| 9 | Router lock | the block below, with `<H>` In Review | `router.py: another router is running; try again`, exit 1 |
+
+```bash
+# step 2: before each command, put `smoke_bad_key = 1` under only that section of the copy
+smoke=$(mktemp -d) && mkdir "$smoke/.agent-pm" && cp ~/.agent-pm/config.local.toml "$smoke/.agent-pm/"
+HOME=$smoke bin/agent-pm-session ls                 # [session]
+HOME=$smoke bin/agent-pm-delegate run --list        # [delegate]
+HOME=$smoke bin/agent-pm-linear router --dry-run    # [linear_orchestrator]
+rm -r "${smoke:?}"
+
+# step 9: hold <work_dir>/logs/router.lock for 60 s, then run the router
+python3 -c 'import fcntl, os, time; f = open(os.path.expanduser("~/.agent-pm/logs/router.lock"), "a"); fcntl.flock(f, fcntl.LOCK_EX); time.sleep(60)' &
+bin/agent-pm-linear router --issue <H>
+```
+
+On a failure, read `<work_dir>/logs/orchestrator.jsonl` and `<work_dir>/work/<ID>/run.jsonl`. End a stuck run with `bin/agent-pm-linear close <ID>`. A check that passes when it should fail (steps 2, 4, 9) is a bug: report it.
 
 ## Upgrading
 
