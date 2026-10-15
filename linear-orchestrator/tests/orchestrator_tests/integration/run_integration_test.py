@@ -317,7 +317,7 @@ class Undone(Run):
         script = [mark("start", PICK), block(RESEARCH)]
         self.launch(script)
         ledger = self.ledger(ID)
-        os.remove(os.path.join(Layout(self.rd).run, "writeback.json"))
+        os.remove(os.path.join(self.rd, "writeback.json"))
         n, said = len(self.requests()), len(self.said())
         self.launch(script, mode="resume", resume=script)
         self.assertEqual(
