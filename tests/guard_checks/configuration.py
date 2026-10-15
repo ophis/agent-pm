@@ -44,12 +44,7 @@ def config_once(repo: str) -> list[str]:
 def explicit_keys(repo: str) -> list[str]:
     real, examples, found = set(), {}, set()
     for rel in (
-        path
-        for project, package in PROJECTS.items()
-        for path in (
-            f"{project}/config.toml",
-            f"{project}/src/{PKG}/{package}/config.toml",
-        )
+        f"{project}/src/{PKG}/{package}/config.toml" for project, package in PROJECTS.items()
     ):
         path = os.path.join(repo, rel)
         if not os.path.isfile(path):

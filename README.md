@@ -103,7 +103,7 @@ Each client installs the plugin itself, with your git credentials (the repo is p
 | Client | Install |
 |---|---|
 | Claude Code | `/plugin marketplace add ophis/agent-pm`, then `/plugin install agent-pm@agent-pm` |
-| Codex 0.156.0+ | `codex plugin marketplace add ophis/agent-pm`, then `codex plugin add agent-pm@agent-pm` |
+| Codex 0.156.0+ | `codex plugin marketplace add ophis/agent-pm` (to refresh an added one: `codex plugin marketplace upgrade agent-pm`), then `codex plugin add agent-pm@agent-pm`. `codex plugin list -m agent-pm` must show it installed and enabled. |
 
 Nothing checks these. A missing one fails the agent run.
 
@@ -230,6 +230,49 @@ Run `bin/agent-pm-linear` by its absolute path; `--help` lists each command's op
 
 Each session's `Run <sid>` comment holds its resume command. Move the issue out of In Progress before opening it, or the router may resume it after 30 idle minutes.
 
+## State root
+
+agent-pm keeps its state in its state root, `~/.agent-pm/`. `work/` and `logs/` are in `<work_dir>` instead, `~/.agent-pm` by default.
+
+```text
+~/.agent-pm/
+├── config.local.toml             this machine's settings
+├── work/<ID>/                    an issue's agent-run workdir
+│   ├── src/  publish/            the run's checkouts; the report repo's clone
+│   ├── tmp/                      the run's temp files
+│   ├── run.jsonl                 session records; resume reads them
+│   ├── writeback.json            the write-back ledger
+│   └── delegate.json  out.md     a copy of the run's state; the deliverable
+├── logs/
+│   ├── runs.jsonl                each run's start, resume and limit rows
+│   ├── orchestrator.jsonl        the event log, also launchd's stdout and stderr
+│   └── router.lock               one router at a time
+├── delegates/<key>.json          a Delegate run's state and locks; <key>: sha256 of its workdir path
+├── sessions/claude/  codex/      what a client session's resume command replays
+├── tui/<name>/                   a running tui session's state and hook log
+├── workers/<sid>/                a worker's state; by-name/<name>: its latest sid
+├── managers/<name>/              a manager's Roster and events file
+├── adhoc/<date>-<role>-<name>/   workdirs of /agent-pm:act-as and /agent-pm:tmux role runs
+├── probe/                        the empty cwd of the client usage check
+└── bin/ctmux                     ctmux --install's copy
+```
+
+| Entry | Cleaned by | Safe to delete by hand |
+|---|---|---|
+| `config.local.toml` | nobody | never: your settings |
+| `work/<ID>/src/`, `publish/`, `tmp/` | prune ([Finish](#using-the-board)) | no: prune also drops the issue's worktrees and pushed branches in a `[local_clones]` clone |
+| the rest of `work/<ID>/` | nobody | once prune has run for the finished issue |
+| `logs/runs.jsonl` | the router: rows over 7 days old, except each issue's latest run | never ([Operating](#operating)) |
+| `logs/orchestrator.jsonl` | nobody | any time; keep `logs/` ([Setup](#setup) step 6) |
+| `logs/router.lock` | nobody | while no router runs |
+| `delegates/` | prune forgets a finished issue's latest run | a run's files once it ended and you won't attach or resume it |
+| `sessions/` | nobody | an entry once its session ended and you won't resume it |
+| `tui/<name>/` | closing or stopping the session | no: closing the session removes it; a `<name>.lock` while no session of that name starts or closes |
+| `workers/<sid>/` | nobody | once you won't restart or resume the worker |
+| `managers/<name>/` | `agent-pm-crew forget` drops an entry; `events` rotates to `events.1` past 1 MiB | while no manager holds it; its Roster is lost |
+| `adhoc/` | nobody | a finished run's folder |
+| `probe/`, `bin/ctmux` | nobody | any time; `ctmux --install` restores `bin/ctmux` |
+
 ## agent-pm-session
 
 `bin/agent-pm-session --help` lists its subcommands. `ls` prints a header, then one tab-separated row per session: `name`, `state` (`working`, `done`, `blocked`, `dead`), `client`, `sid`, `display`, with `-` for an empty value.
@@ -253,12 +296,18 @@ v1 is the `v1-runtime` checkout: `core/`, `orchestrator/`, and overrides in `~/.
    for job in router promote; do launchctl bootout gui/$(id -u)/com.ophis.agent-pm.$job; done
    tmux kill-session -t '=<name>'   # each agent-pm session tmux ls lists
    ```
-3. **Switch to main:** `git switch main && git pull --ff-only`.
-4. **Update the plugin:** `claude plugin marketplace update agent-pm && claude plugin update agent-pm@agent-pm` (Codex: [Install](#install)), then `ctmux --install`.
+3. **Switch to main:** `git switch main && git pull --ff-only`. It fails while another worktree of the repo has `main` checked out: run `git switch --detach` there first. Then move `core/` and `orchestrator/` to the Trash if they remain: untracked, they hold only `__pycache__`.
+4. **Reinstall the plugin.** v1 was also 0.4.0, so `claude plugin update` keeps v1's files. Reinstall it, then run `/reload-plugins` in each open Claude Code session:
+   ```bash
+   claude plugin uninstall agent-pm@agent-pm
+   claude plugin marketplace update agent-pm
+   claude plugin install agent-pm@agent-pm
+   ```
+   `~/.claude/plugins/cache/agent-pm/agent-pm/<version>/` must hold `delegate/` and `manager/`, not v1's `skills/`, `src/` and `team/`. Codex: [Install](#install), refreshing the added marketplace. Then `ctmux --install`.
 5. **Move the overrides** into `~/.agent-pm/config.local.toml` by the table below, values unchanged, then delete the two v1 files. `bin/agent-pm-linear router --dry-run` must print no `config-error`.
 6. **Do the [Upgrading](#upgrading) rows** that apply. Rotate any real credential ever passed in a Claude run's env: earlier resume commands printed it into `run.jsonl` and session comments.
 7. **Run the [Smoke checklist](#smoke-checklist).**
-8. launchd stays off until [TASK-379](https://linear.app/ophis-workgroup/issue/TASK-379) reinstalls it after the smoke test.
+8. **Install launchd** by [Setup](#setup) step 6 once the smoke checklist passes. Its first runs clear v1's leftovers: promote's prune deletes the checkouts and temp files `prune --dry-run` listed, and the router's Recover moves an issue left In Progress by v1 back to Todo (`recover`, `"reason": "no session"`).
 
 `show` changed meaning: v1's `""` opened nothing. Now `""` opens a pane and `"none"` opens nothing.
 
@@ -316,6 +365,7 @@ Nothing migrates automatically. Do each step that applies, once, by hand or thro
 | a flat `config.local.toml` | Move top-level values under `[session]`, `[delegate]` or `[linear_orchestrator]`, per the layer's packaged `config.toml`, and prefix tables with that section: `[roles.engineer]` becomes `[delegate.roles.engineer]` (run) or `[linear_orchestrator.roles.engineer]` (board). `show` goes under `[delegate]` or `[delegate.roles.<role>]`. `core-new.local.toml` goes under `delegate`, `linear-new.local.toml` under `linear_orchestrator`. |
 | a `runtime` key or `--runtime` | Rename it `client` everywhere. Records written with `runtime` are not read. |
 | `~/.agent-pm/core-new-sessions/codex` | Close Codex TUI sessions, then `mkdir -m 700 -p ~/.agent-pm/sessions && mv ~/.agent-pm/core-new-sessions/codex ~/.agent-pm/sessions/ && rmdir ~/.agent-pm/core-new-sessions`. |
+| a v1 manager roster: `~/.agent-pm/managers/<name>/roster.json` with `"version": 1`, which fails `agent-pm-crew status` and `attach` with `want roster fields` | Back up `~/.agent-pm/managers/`, then move its contents to the Trash. The next `agent-pm-crew attach` starts an empty roster. |
 | `default_task` or `tasks` in a role table | Drop `default_task`. Move each `<prefix>.roles.<role>.tasks.<task>` table's keys to `<prefix>.roles.<role>`, for the prefixes `delegate`, `delegate.clients.<name>` and `linear_orchestrator.core`. |
 | `[session.adapters.codex]` `sandbox`, `shell_network` | Express them in `[delegate.policy.codex]` `flags`. |
 | `--permission-mode`, `--strict-mcp-config` in `[session.adapters.claude]` | Move them to `[delegate.policy.claude]`; keep there only flags every session needs. |

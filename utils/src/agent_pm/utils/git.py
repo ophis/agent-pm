@@ -5,9 +5,7 @@ worktree's clone. Repository specs, origin URLs and checkout paths identify and 
 import os
 import re
 import stat
-import subprocess
 import time
-from collections.abc import Callable
 from dataclasses import dataclass
 
 from agent_pm.utils.shell import SHORT, Runner, err_text
@@ -33,87 +31,6 @@ LOCAL_ENV_VARS = frozenset(
         "GIT_COMMON_DIR",
     }
 )
-
-
-@dataclass(frozen=True)
-class Checkouts:
-    """Inner-to-outer checkout roots; error prevents treating partial discovery as complete."""
-
-    roots: tuple[str, ...]
-    error: str | None = None
-
-
-def find_checkouts(
-    path: str,
-    *,
-    runner: Callable[[list[str], int, dict[str, str]], subprocess.CompletedProcess[str]],
-    timeout: int,
-) -> Checkouts:
-    """Find every containing checkout; runner(argv, timeout, env) runs only on invocation."""
-    roots = []
-    env = {k: v for k, v in os.environ.items() if k not in LOCAL_ENV_VARS}
-    env["LC_ALL"] = "C"
-    try:
-        current = _existing_directory(os.path.realpath(os.path.expanduser(path)))
-        while True:
-            marker = False
-            try:
-                os.lstat(os.path.join(current, ".git"))
-                marker = True
-            except FileNotFoundError:
-                pass
-            result = runner(
-                [
-                    "git",
-                    *GUARD,
-                    "-C",
-                    current,
-                    "rev-parse",
-                    "--is-inside-work-tree",
-                    "--show-toplevel",
-                ],
-                timeout,
-                env,
-            )
-            inside, _, top = result.stdout.partition("\n")
-            if result.returncode == 0:
-                top = top.removesuffix("\n")
-                if inside != "true" or not os.path.isabs(top):
-                    return Checkouts(tuple(roots), f"{current}: invalid git rev-parse output")
-                root = os.path.realpath(top)
-                if marker and not os.path.samefile(root, current):
-                    return Checkouts(tuple(roots), f"{current}: invalid .git metadata")
-                if not any(os.path.samefile(root, previous) for previous in roots):
-                    roots.append(root)
-            elif not (
-                not marker
-                and result.returncode == 128
-                and (
-                    result.stderr.startswith("fatal: not a git repository")
-                    or inside == "false"
-                    and result.stderr.strip() == "fatal: this operation must be run in a work tree"
-                )
-            ):
-                return Checkouts(tuple(roots), f"{current}: {err_text(result)}")
-            parent = os.path.dirname(current)
-            if parent == current:
-                return Checkouts(tuple(roots))
-            current = parent
-    except (OSError, subprocess.SubprocessError) as error:
-        return Checkouts(tuple(roots), f"{path}: {error}")
-
-
-def _existing_directory(path: str) -> str:
-    while True:
-        try:
-            if stat.S_ISDIR(os.stat(path).st_mode):
-                return path
-        except (FileNotFoundError, NotADirectoryError):
-            pass
-        parent = os.path.dirname(path)
-        if parent == path:
-            raise FileNotFoundError(path)
-        path = parent
 
 
 class GitError(RuntimeError):
