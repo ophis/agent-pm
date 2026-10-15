@@ -35,7 +35,7 @@ class LinearRun:
         self._identity(issue, sid)
         self.issue, self.sid = issue, sid
         self.delegate_kind = delegate_kind or cfg.delegate_kind
-        provider = delegate_cls or self._provider(cfg, self.delegate_kind)
+        provider = delegate_cls or self.kind_cls(cfg, self.delegate_kind)
         self.delegate: Delegate = provider(
             role,
             Spec(
@@ -60,17 +60,27 @@ class LinearRun:
             raise ConfigError(f"bad issue or session id: {issue} {sid}")
 
     @staticmethod
-    def _provider(cfg: Config, kind: str) -> type:
+    def kind_cls(cfg: Config, kind: str) -> type:
         if kind not in cfg.delegates:
             raise ConfigError(f"delegate kind {kind!r} is no longer configured")
         return cfg.delegates[kind]
+
+    @classmethod
+    def provider(cls, issue: str, *, cfg: Config) -> type:
+        """The Delegate class of the issue's latest recorded run, else the configured one;
+        ConfigError when its kind is no longer configured.
+        """
+        entries = [entry for entry in runs.parse_log(cfg.runs_log) if entry.issue == issue]
+        if not entries:
+            return cfg.delegate_cls
+        return cls.kind_cls(cfg, runs.delegate_of(entries, runs.latest(entries)[issue].sid))
 
     @classmethod
     def check_tui(cls, *, cfg: Config, display: Display, events: str) -> None:
         """ConfigError unless an attended run of the configured Delegate kind could show at
         display and write events (Delegate.check_tui).
         """
-        cls._provider(cfg, cfg.delegate_kind).check_tui(display=display, events=events)
+        cls.kind_cls(cfg, cfg.delegate_kind).check_tui(display=display, events=events)
 
     @classmethod
     def attach(
@@ -94,7 +104,7 @@ class LinearRun:
         view = cls.__new__(cls)
         view.issue, view.sid = issue, latest.sid
         view.delegate_kind = runs.delegate_of(entries, latest.sid)
-        provider = delegate_cls or cls._provider(cfg, view.delegate_kind)
+        provider = delegate_cls or cls.kind_cls(cfg, view.delegate_kind)
         view.delegate = provider.attach(cfg.issue_workdir(issue), sid=latest.sid)
         return view
 

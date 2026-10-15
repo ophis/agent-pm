@@ -130,6 +130,19 @@ class Runs(RunCase):
         self.assertEqual(view.resume(), record)
         self.assertTrue(owner.alive())
 
+    def test_provider_picks_the_recorded_kind(self):
+        changed = replace(
+            self.cfg,
+            delegate_kind="other",
+            delegates={**self.cfg.delegates, "other": OtherDelegate},
+        )
+        self.assertIs(LinearRun.provider("TASK-1", cfg=changed), OtherDelegate)
+        self.start()
+        self.assertIs(LinearRun.provider("TASK-1", cfg=changed), self.cfg.delegates["fake"])
+        self.assertIs(LinearRun.kind_cls(changed, "other"), OtherDelegate)
+        with self.assertRaisesRegex(ConfigError, "no longer configured"):
+            LinearRun.provider("TASK-1", cfg=replace(self.cfg, delegates={}))
+
     def test_missing_record_provider_or_invalid_identity_refuses_attach(self):
         with self.assertRaisesRegex(ConfigError, "no recorded run"):
             LinearRun.attach("TASK-1", cfg=self.cfg)
