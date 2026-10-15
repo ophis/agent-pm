@@ -85,7 +85,10 @@ class HelpTest(SessionCliCase):
         self.assertEqual(subcommands(result.stdout), SUBCOMMANDS)
         tmux = TmuxHost("tmux").display_help()
         self.assertTrue(tmux)
-        self.assertTrue(result.stdout.endswith(f"{DISPLAY_HELP}  tmux: {tmux}\n"), result.stdout)
+        self.assertTrue(
+            result.stdout.endswith(f"{DISPLAY_HELP}  tmux: {tmux}\n  pty: as given\n"),
+            result.stdout,
+        )
 
     def test_help_gives_a_second_configured_hosts_display_line_too(self):
         self.fake_host()
@@ -93,7 +96,9 @@ class HelpTest(SessionCliCase):
         tmux = TmuxHost("tmux").display_help()
         self.assertEqual(subcommands(result.stdout), SUBCOMMANDS)
         self.assertTrue(
-            result.stdout.endswith(f"{DISPLAY_HELP}  tmux: {tmux}\n  fake: as given\n"),
+            result.stdout.endswith(
+                f"{DISPLAY_HELP}  tmux: {tmux}\n  pty: as given\n  fake: as given\n"
+            ),
             result.stdout,
         )
 
@@ -190,7 +195,7 @@ class ConfigTest(SessionCliCase):
                 "layer has it; move it under its owning layer's section",
             ),
             ("[session]\nbogus = 1\n", f"{local}: unknown key 'bogus' in [session]"),
-            ('[session.hosts]\ndefault = "nope"\n', "[hosts] default: want one of tmux"),
+            ('[session.hosts]\ndefault = "nope"\n', "[hosts] default: want one of pty, tmux"),
         ):
             with self.subTest(config=text):
                 self.local_config(text)

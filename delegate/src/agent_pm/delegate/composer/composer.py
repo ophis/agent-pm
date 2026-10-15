@@ -92,14 +92,8 @@ class Composer:
             config, workdir, cwd=cwd, project=project, repo_dir=repo_dir, team=self.team
         )
 
-    def lookup(self, kind: str, name: str) -> str | None:
-        return teams.lookup(self.team, kind, name)
-
     def path_for(self, kind: str, name: str) -> str:
         return teams.path_for(self.team, kind, name)
-
-    def tasks_path(self, role: str) -> str:
-        return teams.tasks_path(role, self.team)
 
     def check_all(self) -> None:
         teams.check_all(self.team, thaw(self.config.values))

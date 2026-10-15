@@ -302,7 +302,7 @@ class Planned(Base):
     def test_the_plan_holds_the_run_with_its_task_and_its_params(self):
         got = self.planned()[0]
         self.assertEqual(
-            (got.spec.client, got.spec.mode, got.run.task), ("fake", "headless", "light-research")
+            (got.spec.client, got.spec.mode, got.run.task), ("fake", "headless", "research")
         )
         self.assertEqual((got.spec.name, got.spec.events), (None, None))
         self.assertEqual(
