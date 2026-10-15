@@ -230,6 +230,49 @@ Run `bin/agent-pm-linear` by its absolute path; `--help` lists each command's op
 
 Each session's `Run <sid>` comment holds its resume command. Move the issue out of In Progress before opening it, or the router may resume it after 30 idle minutes.
 
+## State root
+
+agent-pm keeps its state in its state root, `~/.agent-pm/`. `work/` and `logs/` are in `<work_dir>` instead, `~/.agent-pm` by default.
+
+```text
+~/.agent-pm/
+├── config.local.toml             this machine's settings
+├── work/<ID>/                    an issue's agent-run workdir
+│   ├── src/  publish/            the run's checkouts; the report repo's clone
+│   ├── tmp/                      the run's temp files
+│   ├── run.jsonl                 session records; resume reads them
+│   ├── writeback.json            the write-back ledger
+│   └── delegate.json  out.md     a copy of the run's state; the deliverable
+├── logs/
+│   ├── runs.jsonl                each run's start, resume and limit rows
+│   ├── orchestrator.jsonl        the event log, also launchd's stdout and stderr
+│   └── router.lock               one router at a time
+├── delegates/<key>.json          a Delegate run's state and locks; <key>: sha256 of its workdir path
+├── sessions/claude/  codex/      what a client session's resume command replays
+├── tui/<name>/                   a running tui session's state and hook log
+├── workers/<sid>/                a worker's state; by-name/<name>: its latest sid
+├── managers/<name>/              a manager's Roster and events file
+├── adhoc/<date>-<role>-<name>/   workdirs of /agent-pm:act-as and /agent-pm:tmux role runs
+├── probe/                        the empty cwd of the client usage check
+└── bin/ctmux                     ctmux --install's copy
+```
+
+| Entry | Cleaned by | Safe to delete by hand |
+|---|---|---|
+| `config.local.toml` | nobody | never: your settings |
+| `work/<ID>/src/`, `publish/`, `tmp/` | prune ([Finish](#using-the-board)) | no: prune also drops the issue's worktrees and pushed branches in a `[local_clones]` clone |
+| the rest of `work/<ID>/` | nobody | once prune has run for the finished issue |
+| `logs/runs.jsonl` | the router: rows over 7 days old, except each issue's latest run | never ([Operating](#operating)) |
+| `logs/orchestrator.jsonl` | nobody | any time; keep `logs/` ([Setup](#setup) step 6) |
+| `logs/router.lock` | nobody | while no router runs |
+| `delegates/` | prune forgets a finished issue's latest run | a run's files once it ended and you won't attach or resume it |
+| `sessions/` | nobody | an entry once its session ended and you won't resume it |
+| `tui/<name>/` | closing or stopping the session | no: closing the session removes it; a `<name>.lock` while no session of that name starts or closes |
+| `workers/<sid>/` | nobody | once you won't restart or resume the worker |
+| `managers/<name>/` | `agent-pm-crew forget` drops an entry; `events` rotates to `events.1` past 1 MiB | while no manager holds it; its Roster is lost |
+| `adhoc/` | nobody | a finished run's folder |
+| `probe/`, `bin/ctmux` | nobody | any time; `ctmux --install` restores `bin/ctmux` |
+
 ## agent-pm-session
 
 `bin/agent-pm-session --help` lists its subcommands. `ls` prints a header, then one tab-separated row per session: `name`, `state` (`working`, `done`, `blocked`, `dead`), `client`, `sid`, `display`, with `-` for an empty value.
@@ -266,7 +309,7 @@ v1 is the `v1-runtime` checkout: `core/`, `orchestrator/`, and overrides in `~/.
 5. **Move the overrides** into `~/.agent-pm/config.local.toml` by the table below, values unchanged, then delete the two v1 files. `bin/agent-pm-linear router --dry-run` must print no `config-error`.
 6. **Do the [Upgrading](#upgrading) rows** that apply. Rotate any real credential ever passed in a Claude run's env: earlier resume commands printed it into `run.jsonl` and session comments.
 7. **Run the [Smoke checklist](#smoke-checklist).**
-8. **Install launchd** by [Setup](#setup) step 6 once the smoke checklist passes. Its first runs clear v1's leftovers: promote's prune deletes the work dirs `prune --dry-run` listed, and the router's Recover moves an issue left In Progress by v1 back to Todo (`recover`, `"reason": "no session"`).
+8. **Install launchd** by [Setup](#setup) step 6 once the smoke checklist passes. Its first runs clear v1's leftovers: promote's prune deletes the checkouts and temp files `prune --dry-run` listed, and the router's Recover moves an issue left In Progress by v1 back to Todo (`recover`, `"reason": "no session"`).
 
 `show` changed meaning: v1's `""` opened nothing. Now `""` opens a pane and `"none"` opens nothing.
 
