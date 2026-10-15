@@ -87,7 +87,7 @@ dir = ""
 host = ""
 
 # Roles: [roles.<role>], a role's run keys; its tasks are its charter's index (core's team/roles/<role>.md › Tasks). A
-# role table holding the old task-level keys is an error (root README › Task labels: Upgrade).
+# role table holding the old task-level keys is an error (root README › Upgrading).
 #   templates     names of team/templates/*.md inlined into the prompt; [] → none
 #   read          extra dirs the agent run needs to read; `repo` is the caller's repo dir, {{team}} core's team/,
 #                 {{role_team}} the role's team root (its team dir: team_dirs; core's team/ for a core role);
