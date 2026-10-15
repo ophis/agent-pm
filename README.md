@@ -103,7 +103,7 @@ Each client installs the plugin itself, with your git credentials (the repo is p
 | Client | Install |
 |---|---|
 | Claude Code | `/plugin marketplace add ophis/agent-pm`, then `/plugin install agent-pm@agent-pm` |
-| Codex 0.156.0+ | `codex plugin marketplace add ophis/agent-pm`, then `codex plugin add agent-pm@agent-pm` |
+| Codex 0.156.0+ | `codex plugin marketplace add ophis/agent-pm` (to refresh an added one: `codex plugin marketplace upgrade agent-pm`), then `codex plugin add agent-pm@agent-pm`. `codex plugin list -m agent-pm` must show it installed and enabled. |
 
 Nothing checks these. A missing one fails the agent run.
 
@@ -253,12 +253,18 @@ v1 is the `v1-runtime` checkout: `core/`, `orchestrator/`, and overrides in `~/.
    for job in router promote; do launchctl bootout gui/$(id -u)/com.ophis.agent-pm.$job; done
    tmux kill-session -t '=<name>'   # each agent-pm session tmux ls lists
    ```
-3. **Switch to main:** `git switch main && git pull --ff-only`.
-4. **Update the plugin:** `claude plugin marketplace update agent-pm && claude plugin update agent-pm@agent-pm` (Codex: [Install](#install)), then `ctmux --install`.
+3. **Switch to main:** `git switch main && git pull --ff-only`. It fails while another worktree of the repo has `main` checked out: run `git switch --detach` there first. Then move `core/` and `orchestrator/` to the Trash if they remain: untracked, they hold only `__pycache__`.
+4. **Reinstall the plugin.** v1 was also 0.4.0, so `claude plugin update` keeps v1's files. Reinstall it, then run `/reload-plugins` in each open Claude Code session:
+   ```bash
+   claude plugin uninstall agent-pm@agent-pm
+   claude plugin marketplace update agent-pm
+   claude plugin install agent-pm@agent-pm
+   ```
+   `~/.claude/plugins/cache/agent-pm/agent-pm/<version>/` must hold `delegate/` and `manager/`, not v1's `skills/`, `src/` and `team/`. Codex: [Install](#install), refreshing the added marketplace. Then `ctmux --install`.
 5. **Move the overrides** into `~/.agent-pm/config.local.toml` by the table below, values unchanged, then delete the two v1 files. `bin/agent-pm-linear router --dry-run` must print no `config-error`.
 6. **Do the [Upgrading](#upgrading) rows** that apply. Rotate any real credential ever passed in a Claude run's env: earlier resume commands printed it into `run.jsonl` and session comments.
 7. **Run the [Smoke checklist](#smoke-checklist).**
-8. launchd stays off until [TASK-379](https://linear.app/ophis-workgroup/issue/TASK-379) reinstalls it after the smoke test.
+8. **Install launchd** by [Setup](#setup) step 6 once the smoke checklist passes. Its first runs clear v1's leftovers: promote's prune deletes the work dirs `prune --dry-run` listed, and the router's Recover moves an issue left In Progress by v1 back to Todo (`recover`, `"reason": "no session"`).
 
 `show` changed meaning: v1's `""` opened nothing. Now `""` opens a pane and `"none"` opens nothing.
 
@@ -316,6 +322,7 @@ Nothing migrates automatically. Do each step that applies, once, by hand or thro
 | a flat `config.local.toml` | Move top-level values under `[session]`, `[delegate]` or `[linear_orchestrator]`, per the layer's packaged `config.toml`, and prefix tables with that section: `[roles.engineer]` becomes `[delegate.roles.engineer]` (run) or `[linear_orchestrator.roles.engineer]` (board). `show` goes under `[delegate]` or `[delegate.roles.<role>]`. `core-new.local.toml` goes under `delegate`, `linear-new.local.toml` under `linear_orchestrator`. |
 | a `runtime` key or `--runtime` | Rename it `client` everywhere. Records written with `runtime` are not read. |
 | `~/.agent-pm/core-new-sessions/codex` | Close Codex TUI sessions, then `mkdir -m 700 -p ~/.agent-pm/sessions && mv ~/.agent-pm/core-new-sessions/codex ~/.agent-pm/sessions/ && rmdir ~/.agent-pm/core-new-sessions`. |
+| a v1 manager roster: `~/.agent-pm/managers/<name>/roster.json` with `"version": 1`, which fails `agent-pm-crew status` and `attach` with `want roster fields` | Back up `~/.agent-pm/managers/`, then move its contents to the Trash. The next `agent-pm-crew attach` starts an empty roster. |
 | `default_task` or `tasks` in a role table | Drop `default_task`. Move each `<prefix>.roles.<role>.tasks.<task>` table's keys to `<prefix>.roles.<role>`, for the prefixes `delegate`, `delegate.clients.<name>` and `linear_orchestrator.core`. |
 | `[session.adapters.codex]` `sandbox`, `shell_network` | Express them in `[delegate.policy.codex]` `flags`. |
 | `--permission-mode`, `--strict-mcp-config` in `[session.adapters.claude]` | Move them to `[delegate.policy.claude]`; keep there only flags every session needs. |
