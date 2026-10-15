@@ -52,28 +52,30 @@ def added_dirs(flags: tuple[str, ...]) -> Iterator[str]:
     )
 
 
-def _read(value: str, cwd: str) -> str:
-    """The settings file `value` names, relative to `cwd`: Claude's limits, a regular file of at
-    most 2 MiB.
-    """
-    path = os.path.join(cwd, value)
+def _read(path: str) -> str:
+    """A settings file within Claude's limits: a regular file of at most 2 MiB."""
     try:
         fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK)
         try:
             found = os.fstat(fd)
             if not stat.S_ISREG(found.st_mode) or found.st_size > SETTINGS_MAX:
-                raise ConfigError(f"--settings {value!r}: want a regular file of at most 2 MiB")
+                raise ConfigError(f"--settings {path!r}: want a regular file of at most 2 MiB")
             return b"".join(iter(lambda: os.read(fd, SETTINGS_MAX), b"")).decode()
         finally:
             os.close(fd)
     except (OSError, UnicodeDecodeError) as error:
-        raise ConfigError(f"--settings {value!r}: {error}") from None
+        raise ConfigError(
+            f"--settings {path!r}: {getattr(error, 'strerror', None) or error}"
+        ) from None
 
 
 def _parsed(value: str, cwd: str) -> dict:
-    """A --settings value: inline JSON when it starts with "{", else a settings file's path."""
+    """A --settings value: inline JSON when it starts with "{", else a settings file's path,
+    relative to `cwd`; errors name the file by that resolved path.
+    """
     inline = value.lstrip().startswith("{")
-    text = value if inline else _read(value, cwd)
+    path = os.path.join(cwd, value)
+    text = value if inline else _read(path)
     try:
         settings = json.loads(text)
     except (ValueError, RecursionError):
@@ -84,7 +86,7 @@ def _parsed(value: str, cwd: str) -> dict:
         or not isinstance(hooks, dict)
         or not all(isinstance(e, list) for e in hooks.values())
     ):
-        shown = f"{value!r:.80}" if inline else repr(value)
+        shown = f"{value!r:.80}" if inline else repr(path)
         raise ConfigError(f"--settings {shown}: want a JSON object with a list of hooks per event")
     return settings
 

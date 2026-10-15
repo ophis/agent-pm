@@ -150,16 +150,13 @@ class ArgvTest(Base):
             (deep, limit),
             (big, limit),
             (listed, WANT_SETTINGS),
-            (
-                "missing.json",
-                f"[Errno 2] No such file or directory: {self.work + '/missing.json'!r}",
-            ),
-            (far, f"[Errno 2] No such file or directory: {far!r}"),
+            ("missing.json", "No such file or directory"),
+            (far, "No such file or directory"),
         ):
             with self.subTest(value=value):
                 self.refused(
                     lambda *, value=value: self.launch(config={}, flags=("--settings", value)),
-                    f"--settings {value!r}: {message}",
+                    f"--settings {os.path.join(self.work, value)!r}: {message}",
                 )
 
     def test_a_prompt_starting_with_a_dash_stays_last_after_the_separator(self):

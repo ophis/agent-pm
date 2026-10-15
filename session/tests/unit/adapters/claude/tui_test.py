@@ -364,6 +364,18 @@ class SessionTuiTest(Base):
                     f"--settings {value!r:.80}: {WANT_SETTINGS}",
                 )
 
+    def test_an_empty_or_separator_settings_value_is_a_path_that_is_refused(self):
+        limit = "want a regular file of at most 2 MiB"
+        for flags, message in (
+            (("--settings",), f"{self.work + '/'!r}: {limit}"),
+            (("--settings", ""), f"{self.work + '/'!r}: {limit}"),
+            (("--settings", "--"), f"{self.work + '/--'!r}: No such file or directory"),
+        ):
+            with self.subTest(flags=flags):
+                self.refused(
+                    lambda *, flags=flags: self.session(flags=flags), f"--settings {message}"
+                )
+
     def test_a_settings_file_merges_with_the_hooks(self):
         mine = {"type": "command", "command": "mine"}
         path = os.path.join(self.work, "s.json")
