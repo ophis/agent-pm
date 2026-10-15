@@ -67,7 +67,7 @@ class EventCallback:
         finally:
             os.close(descriptor)
 
-    def _deliver(self, line: str, lock: int) -> None:
+    def _deliver(self, line: str, descriptor: int) -> None:
         child = None
         try:
             try:
@@ -78,7 +78,7 @@ class EventCallback:
                     stdout=subprocess.DEVNULL,
                     text=True,
                     process_group=0,
-                    pass_fds=(lock,),
+                    pass_fds=(descriptor,),
                 )
             except OSError as error:
                 self._failed(str(error))
@@ -86,7 +86,7 @@ class EventCallback:
             with child:
                 try:
                     try:
-                        os.write(lock, f"{child.pid}\n".encode())
+                        os.write(descriptor, f"{child.pid}\n".encode())
                     except OSError as error:
                         kill_group(child)
                         self._failed(f"callback lock {self.store.callback_lock}: {error}")
@@ -116,7 +116,9 @@ def _hold(lock: str) -> int:
     try:
         if not stat.S_ISREG(os.fstat(descriptor).st_mode):
             raise OSError(errno.EINVAL, "not a regular lock file", lock)
-        fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        # a killed group's members hold it until they exit
+        if not _within(lambda: _locked(descriptor)):
+            raise BlockingIOError(errno.EWOULDBLOCK, "callback lock held", lock)
         os.ftruncate(descriptor, 0)
     except BaseException:
         os.close(descriptor)
@@ -135,7 +137,7 @@ def sweep(store: RunState) -> None:
         return
     with open(lock, encoding="utf-8", errors="replace") as file:
         text = file.read()
-    if not re.fullmatch(r"[0-9]+\n?", text) or int(text) <= 1:
+    if not re.fullmatch(r"[0-9]{1,19}\n?", text) or int(text) <= 1:
         raise ConfigError(f"{lock}: invalid callback pid {text!r}")
     pid = int(text)
     try:
@@ -153,6 +155,14 @@ def sweep(store: RunState) -> None:
         raise ConfigError(
             f"{lock}: callback lock still held {CALLBACK_STOP_WAIT} s after its group ended"
         )
+
+
+def _locked(descriptor: int) -> bool:
+    try:
+        fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        return False
+    return True
 
 
 def _gone(group: int) -> bool:

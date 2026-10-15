@@ -53,7 +53,8 @@ class RunState:
             return False
         try:
             if not stat.S_ISREG(os.fstat(descriptor).st_mode):
-                raise ConfigError(f"{self.layout.workdir}: invalid {os.path.basename(lock)}")
+                name = os.path.basename(lock).removesuffix(".lock").replace(".", " ")
+                raise ConfigError(f"{self.layout.workdir}: invalid {name} lock")
             try:
                 fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
             except BlockingIOError:

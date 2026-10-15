@@ -4,6 +4,7 @@ pid; a failed delivery is one callback_error row. sweep kills the group a dead h
 names, then waits for that lock.
 """
 
+import contextlib
 import fcntl
 import json
 import os
@@ -123,6 +124,11 @@ def store(workdir: str) -> RunState:
     return RunState(layout)
 
 
+def close(descriptor: int) -> None:
+    with contextlib.suppress(OSError):
+        os.close(descriptor)
+
+
 def failing_first_write(error: BaseException):
     """os.write raising `error` once: the pid write, the first write of a delivery."""
     write, raised = os.write, []
@@ -238,16 +244,37 @@ class Delivery(Case):
         self.assertEqual(self.lock_text(), f"{PID}\n")
         self.assertFalse(self.store.held(self.store.callback_lock))
 
-    def test_a_held_callback_lock_spawns_nothing_and_is_one_callback_error_row(self):
+    def hold(self) -> int:
         holder = os.open(self.store.callback_lock, os.O_RDWR | os.O_CREAT, 0o600)
-        self.addCleanup(os.close, holder)
+        self.addCleanup(close, holder)
         fcntl.flock(holder, fcntl.LOCK_EX)
+        return holder
+
+    def test_a_callback_lock_held_5_s_spawns_nothing_and_is_one_callback_error_row(self):
+        self.hold()
+        clock = Clock(self)
         self.assertIsNone(self.callback(Begun(SID)))
         self.assertEqual(Child.calls, [])
+        self.assertGreaterEqual(clock.now, CALLBACK_STOP_WAIT)
         self.assertEqual(
             [row["error"] for row in self.errors()],
             [f"callback lock {self.store.callback_lock} held: an earlier callback still runs"],
         )
+
+    def test_a_callback_lock_freed_within_5_s_delivers(self):
+        # a killed group's other members can hold the lock until they finish exiting
+        holder = self.hold()
+        self.enterContext(mock.patch("time.sleep", side_effect=lambda _seconds: os.close(holder)))
+        self.assertIsNone(self.callback(Begun(SID)))
+        self.assertEqual([call[0] for call in Child.calls], ["spawn", "communicate", "exit"])
+        self.assertEqual(self.errors(), [])
+
+    def test_a_callback_lock_that_is_no_regular_file_spawns_nothing_and_is_one_row(self):
+        os.mkfifo(self.store.callback_lock)
+        self.assertIsNone(self.callback(Begun(SID)))
+        self.assertEqual(Child.calls, [])
+        (error,) = [row["error"] for row in self.errors()]
+        self.assertIn("not a regular lock file", error)
 
     def test_a_signal_while_naming_the_pid_kills_and_reaps_the_group_then_propagates(self):
         stopped = Stopped(143)
@@ -336,8 +363,8 @@ class Sweep(Case):
                 orphan.free()
 
     def test_a_held_lock_without_a_pid_above_1_sends_no_signal(self):
-        for text in ("", "x", "1", "0", "-3", " 12a", "12 ", "١٢"):
-            with self.subTest(text=text):
+        for text in ("", "x", "1", "0", "-3", " 12a", "12 ", "١٢", "9" * 5000):
+            with self.subTest(text=text[:20]):
                 orphan = self.orphan(text)
                 with self.assertRaises(ConfigError) as caught:
                     sweep(self.store)
@@ -349,7 +376,7 @@ class Sweep(Case):
                 orphan.free()
 
     def test_a_group_it_may_not_signal_or_no_pid_at_all_is_a_config_error(self):
-        huge, denied = 2**80, PermissionError(1, "Operation not permitted")
+        huge, denied = 2**40, PermissionError(1, "Operation not permitted")
         for text, signum, error, calls in (
             (f"{PID}\n", 0, denied, [(PID, 0)]),
             (f"{PID}\n", signal.SIGKILL, denied, [(PID, 0), (PID, signal.SIGKILL)]),
@@ -368,6 +395,30 @@ class Sweep(Case):
                 )
                 self.assertEqual(orphan.calls, calls)
                 orphan.free()
+
+    def test_a_group_ending_between_its_probe_and_its_sigkill_gets_its_lock_awaited(self):
+        orphan = self.orphan()
+
+        def ended(pid, signum):
+            if signum == signal.SIGKILL:
+                orphan.alive = False
+                orphan.calls.append((pid, signum))
+                orphan.free()
+                raise ProcessLookupError(3, "No such process")
+            orphan.killpg(pid, signum)
+
+        self.killpg.side_effect = ended
+        sweep(self.store)
+        self.assertEqual(orphan.calls, [(PID, 0), (PID, signal.SIGKILL), (PID, 0)])
+        self.assertFalse(self.held())
+
+    def test_a_run_lock_that_is_no_regular_file_is_a_config_error(self):
+        os.mkdir(os.path.join(self.store.layout.run, "delegate.run.lock"))
+        with self.assertRaises(ConfigError) as caught:
+            sweep(self.store)
+        self.assertEqual(
+            str(caught.exception), f"{self.store.layout.workdir}: invalid delegate run lock"
+        )
 
     def test_a_held_run_lock_is_a_live_run_whose_callback_it_never_signals(self):
         self.orphan()

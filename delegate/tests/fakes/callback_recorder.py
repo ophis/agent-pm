@@ -1,6 +1,6 @@
 """A callback command for tests: `python3 -P -S callback_recorder.py LOG [--exit KIND:CODE]...
-[--block KIND[:ATTEMPT]]`. Reads its event line from stdin, prints noise on stdout, appends one JSON line to
-LOG: the stdin text, its cwd, pid, parent, process group and blocked signals, and whether the
+[--block KIND[:ATTEMPT]]`. Reads its event line from stdin, prints noise on stdout, appends one
+JSON line to LOG: the stdin text, its cwd, pid, parent, process group and blocked signals, and whether the
 callback lock in its cwd is held and what it says. --exit: exit CODE on an event of KIND.
 --block: on an event of KIND (of that ATTEMPT only, when given), start a grandchild in its
 group, log its pid too, then sleep.
