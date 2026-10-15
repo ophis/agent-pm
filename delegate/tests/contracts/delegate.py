@@ -21,6 +21,16 @@ OUTER = {
 }
 
 
+def _files(top: str, *, but: str) -> dict[str, bytes]:
+    found = {}
+    for root, dirs, names in os.walk(top):
+        dirs[:] = [d for d in dirs if not os.path.join(root, d).startswith(but)]
+        for name in names:
+            with open(os.path.join(root, name), "rb") as file:
+                found[os.path.relpath(os.path.join(root, name), top)] = file.read()
+    return found
+
+
 class DelegateContract:
     delegate_cls: type[Delegate]
     ROLE: str
@@ -111,15 +121,30 @@ class DelegateContract:
         checkout = os.path.join(view.status().cwd, "src", "o", "n-TASK-1")
         os.makedirs(checkout)
         self.assertEqual(self.delegate_cls.checkouts(workdir), (os.path.realpath(checkout),))
-        name = view.status().name
+        name, records = view.status().name, _files(workdir, but=view.status().cwd)
         self.delegate_cls.clean(workdir, dry=True)
         self.assertEqual(self.delegate_cls.checkouts(workdir), (os.path.realpath(checkout),))
         self.delegate_cls.clean(workdir)
         self.delegate_cls.clean(workdir)
         self.assertIsNone(self.delegate_cls.checkouts(workdir))
+        self.assertEqual(_files(workdir, but=checkout), records)
         self.assertEqual(self.delegate_cls.attach(workdir).status().name, name)
         with open(foreign, encoding="utf-8") as file:
             self.assertEqual(file.read(), "ledger")
+
+    def test_clean_refuses_agent_files_reached_through_a_symlink(self):
+        workdir = self.workdir()
+        self.make(workdir)
+        cwd = self.delegate_cls.attach(workdir).status().cwd
+        elsewhere = os.path.join(self.home, f"elsewhere-{uuid.uuid4().hex[:8]}")
+        os.makedirs(os.path.join(elsewhere, "src", "o", "n-TASK-1"))
+        os.replace(cwd, elsewhere + "-aside")
+        os.symlink(elsewhere, cwd)
+        self.assertEqual(self.delegate_cls.checkouts(workdir), ())
+        for dry in (True, False):
+            with self.subTest(dry=dry), self.assertRaises(ConfigError):
+                self.delegate_cls.clean(workdir, dry=dry)
+        self.assertTrue(os.path.isdir(os.path.join(elsewhere, "src", "o", "n-TASK-1")))
 
     def test_clean_refuses_a_live_run_deleting_nothing(self):
         _record, workdir = self.detached()

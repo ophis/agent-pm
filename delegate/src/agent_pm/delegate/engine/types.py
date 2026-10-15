@@ -61,7 +61,8 @@ class Layout:
     def in_place(self) -> bool:
         """Whether `agent` is a real directory where it belongs, reached through no symlink."""
         real = os.path.join(
-            os.path.realpath(os.path.dirname(self.workdir)), os.path.basename(self.workdir), "agent"
+            os.path.realpath(os.path.dirname(self.workdir)),
+            os.path.relpath(self.agent, os.path.dirname(self.workdir)),
         )
         return (
             not os.path.islink(self.agent)

@@ -69,7 +69,7 @@ class Pruner:
         self.run_git = run or config.shell
         self.cfg = cfg
         self.writable = config.writable(work) if writable is None else writable
-        self.errors, self.views, self.classes = 0, {}, {}
+        self.errors, self.views, self.classes, self.by_issue = 0, {}, {}, None
         self.say = functools.partial(log, "prune", dry=dry)
 
     def error(self, issue=None, **fields):
@@ -142,7 +142,7 @@ class Pruner:
         """A run whose view cannot load has nothing to close, logged once; inventory unknown: None."""
         found = {}
         try:
-            latest = runs.latest(runs.parse_log(self.cfg.runs_log))
+            latest = {ident: runs.latest(rows)[ident] for ident, rows in self.log().items()}
         except (OSError, ValueError):
             return None
         for ident, entry in sorted(latest.items()):
@@ -261,11 +261,22 @@ class Pruner:
         elif self.now - since >= QUARANTINE and self.close_sessions(ident):
             self.remove_agent(ident)
 
+    def log(self):
+        """runs.jsonl's entries by issue, read once per tick."""
+        if self.by_issue is None:
+            by_issue = {}
+            for entry in runs.parse_log(self.cfg.runs_log):
+                by_issue.setdefault(entry.issue, []).append(entry)
+            self.by_issue = by_issue
+        return self.by_issue
+
     def delegate(self, ident):
         """The issue's Delegate class (LinearRun.provider), once per tick; ConfigError is kept."""
         if ident not in self.classes:
             try:
-                self.classes[ident] = LinearRun.provider(ident, cfg=self.cfg)
+                self.classes[ident] = LinearRun.provider(
+                    ident, cfg=self.cfg, log=self.log().get(ident, [])
+                )
             except (config.ConfigError, OSError, ValueError) as error:
                 self.classes[ident] = error
         return self.classes[ident]

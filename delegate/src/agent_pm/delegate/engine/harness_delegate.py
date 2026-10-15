@@ -405,10 +405,7 @@ class HarnessDelegate(Delegate):
         )
         if workdir is None:
             raise ConfigError("record has no workdir")
-        view = cls.__new__(cls)
-        view.layout = Layout(workdir)
-        view.workdir = view.layout.workdir
-        view.store = RunState(view.layout)
+        view = cls._bare(Layout(workdir))
         view._state = view._read()
         if sid is not None and sid != view._state.plan.sid:
             raise ConfigError(f"sid {sid} is not the run's (its sid: {view._state.plan.sid})")
@@ -454,6 +451,14 @@ class HarnessDelegate(Delegate):
         return Composer().trusted_dirs()
 
     @classmethod
+    def _bare(cls, layout: Layout) -> HarnessDelegate:
+        """A view of layout's run with no state loaded: enough for _live."""
+        view = cls.__new__(cls)
+        view.layout, view.workdir, view.store = layout, layout.workdir, RunState(layout)
+        view.session_cls, view._harness_override = Session, None
+        return view
+
+    @classmethod
     def checkouts(cls, workdir: str) -> tuple[str, ...] | None:
         return Layout(workdir).checkouts()
 
@@ -470,9 +475,7 @@ class HarnessDelegate(Delegate):
             try:
                 view = cls.attach(workdir)
             except ConfigError:
-                view = cls.__new__(cls)
-                view.layout, view.workdir, view.store = layout, layout.workdir, store
-                view.session_cls, view._harness_override = Session, None
+                view = cls._bare(layout)
             if view._live(payload):
                 raise ConfigError(f"{layout.workdir}: delegate is still alive")
             if not dry:

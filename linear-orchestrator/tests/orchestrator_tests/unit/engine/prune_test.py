@@ -55,6 +55,22 @@ class RepositoryCleanup(PruneScenario):
         self.assertNotIn(ops.Q_TEAM, gql.calls)
         self.assertIn("state { id }", prune.Q_ISSUE)
 
+    def test_a_tick_reads_the_runs_log_once(self):
+        idents = [f"TASK-{n}" for n in range(40, 46)]
+        for ident in idents:
+            self.mkc(ident)
+        real, reads = open, []
+
+        def counted(path, *args, **kwargs):
+            reads.append(path)
+            return real(path, *args, **kwargs)
+
+        gql = gql_for(dict.fromkeys(idents, ("Done", [(30, "Done")])))
+        with mock.patch("builtins.open", side_effect=counted):
+            code, out = self.prune(gql)
+        self.assertEqual(len(out.splitlines()), len(idents), out)
+        self.assertEqual((code, reads.count(self.cfg.runs_log)), (0, 1))
+
     def test_clean_refusal_is_a_skip_once_and_cleans_no_clone(self):
         self.fake_clone()
         wt = self.mkg("TASK-49")
