@@ -4,6 +4,7 @@ private tmux server (session/tests/live_tmux.py) running fake_claude; an extensi
 run, its package only on the caller's PYTHONPATH.
 """
 
+import contextlib
 import json
 import os
 import shutil
@@ -11,6 +12,7 @@ import subprocess
 import tempfile
 import unittest
 
+from agent_pm.session import SessionError
 from agent_pm.utils import Record
 
 from delegate.tests.case import PY, PYTHONPATH, REPO, Case
@@ -55,6 +57,7 @@ class HarnessHosts(Case):
         self.dir = os.path.realpath(tmp.name)
         self.server = live_tmux.Server(self, self.home)
         self.server.start("mgr")
+        self.addCleanup(self.end_fake_harness)  # before tmp's cleanup: it writes into tmp
         self.proj, self.work = (os.path.join(self.dir, d) for d in ("proj", "work"))
         for directory in (self.proj, self.work):
             os.mkdir(directory)
@@ -62,6 +65,10 @@ class HarnessHosts(Case):
         self.events, self.scenario = (
             os.path.join(self.dir, f) for f in ("events", "scenario.json")
         )
+
+    def end_fake_harness(self) -> None:
+        with contextlib.suppress(SessionError):
+            FakeHost("fake").attach(HARNESS).kill()
 
     def configure(self, text: str) -> None:
         with open(os.path.join(self.agent_pm, "config.local.toml"), "w", encoding="utf-8") as file:
