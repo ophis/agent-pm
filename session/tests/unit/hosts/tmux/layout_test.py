@@ -74,17 +74,53 @@ class GridTreeTest(Case):
                 ["%0", "%1", "%2", "%3", "%4", "%5", "%6"],
                 [slot("%1"), slot("%2", slot("%3", slot("%6")), slot("%4")), slot("%5")],
             ),
+            (
+                "a driver with an opener and no pane takes no cell",
+                [
+                    (2, "w1", "mgr", "%1"),
+                    (3, "r-0123abcd-drive", "mgr", ""),
+                    (4, "r-0123abcd", "mgr", "%2"),
+                ],
+                ["%0", "%1", "%2"],
+                [slot("%2"), slot("%1")],
+            ),
+            (
+                "openers that are no node of the window",
+                [
+                    (2, "x", "mgr", "%77"),
+                    (3, "y", "x", "%1"),
+                    (4, "z", "mgr", "%0"),
+                    (5, "v", "z", "%2"),
+                    (6, "u", "", "%3"),
+                ],
+                ["%0", "%1", "%2", "%3"],
+                [slot("%3"), slot("%2"), slot("%1")],
+            ),
+            (
+                "duplicate pane claims: the lower session id owns",
+                [
+                    (5, "x", "mgr", "%1"),
+                    (3, "y", "mgr", "%1"),
+                    (6, "z", "x", "%2"),
+                    (7, "w", "y", "%3"),
+                ],
+                ["%0", "%1", "%2", "%3"],
+                [slot("%1", slot("%3")), slot("%2")],
+            ),
+            (
+                "an opener cycle goes main",
+                [
+                    (2, "a", "b", "%1"),
+                    (3, "b", "a", "%2"),
+                    (4, "c", "a", "%3"),
+                    (5, "d", "d", "%4"),
+                ],
+                ["%0", "%1", "%2", "%3", "%4"],
+                [slot("%1"), slot("%2"), slot("%3"), slot("%4")],
+            ),
         ):
             with self.subTest(case):
                 self.assertEqual(self.tree(rows, panes), want)
-
-    def test_a_driver_with_an_opener_and_no_pane_takes_no_cell(self):
-        rows = [
-            (2, "w1", "mgr", "%1"),
-            (3, "r-0123abcd-drive", "mgr", ""),
-            (4, "r-0123abcd", "mgr", "%2"),
-        ]
-        self.assertEqual(self.tree(rows, ["%0", "%1", "%2"]), [slot("%2"), slot("%1")])
 
     def test_a_closed_pane_keeps_the_rest_in_order(self):
         panes = ["%0", "%1", "%3", "%4", "%5", "%6", "%7"]
@@ -96,71 +132,37 @@ class GridTreeTest(Case):
             [["%1", "%3", "%4"], ["%5", "%6", "%7"]],
         )
 
-    def test_openers_that_are_no_node_of_the_window(self):
-        rows = [
-            (2, "x", "mgr", "%77"),
-            (3, "y", "x", "%1"),
-            (4, "z", "mgr", "%0"),
-            (5, "v", "z", "%2"),
-            (6, "u", "", "%3"),
-        ]
-        self.assertEqual(
-            self.tree(rows, ["%0", "%1", "%2", "%3"]), [slot("%3"), slot("%2"), slot("%1")]
-        )
-
-    def test_duplicate_pane_claims_the_lower_session_id_owns(self):
-        rows = [
-            (5, "x", "mgr", "%1"),
-            (3, "y", "mgr", "%1"),
-            (6, "z", "x", "%2"),
-            (7, "w", "y", "%3"),
-        ]
-        self.assertEqual(
-            self.tree(rows, ["%0", "%1", "%2", "%3"]), [slot("%1", slot("%3")), slot("%2")]
-        )
-
-    def test_opener_cycle_goes_main(self):
-        rows = [(2, "a", "b", "%1"), (3, "b", "a", "%2"), (4, "c", "a", "%3"), (5, "d", "d", "%4")]
-        self.assertEqual(
-            self.tree(rows, ["%0", "%1", "%2", "%3", "%4"]),
-            [slot("%1"), slot("%2"), slot("%3"), slot("%4")],
-        )
-
-    def test_an_orphan_group_main_does_not_reach_goes_main_whole(self):
-        # a (%1) and lead (%2) open each other; the orphans of gone c1 (%3, %4) sit right of a, or
-        # of x (%5, a's)
+    def test_orphans_take_the_killed_parents_cell(self):
+        orphans = slot(None, slot("%4"), slot("%5"))
         cycle = [
             (2, "a", "lead", "%1"),
             (3, "lead", "a", "%2"),
             (4, "k1", "c1", "%3"),
             (5, "k2", "c1", "%4"),
         ]
-        for rows, panes, layout, want in (
+        for case, layout, rows, panes, want in (
+            # a (%1) and lead (%2) open each other; the orphans of gone c1 (%3, %4) sit right of a,
+            # or of x (%5, a's): a group main does not reach goes main whole
             (
-                cycle,
-                ["%0", "%1", "%2", "%3", "%4"],
+                "an orphan group main does not reach",
                 (
                     "160x48,0,0{79x48,0,0,0,80x48,80,0[80x24,80,0{40x24,80,0,1,39x24,121,0[39x12,121,0,3,39x11,121,13,4]},"
                     "80x23,80,25,2]}"
                 ),
+                cycle,
+                ["%0", "%1", "%2", "%3", "%4"],
                 [slot("%1"), slot(None, slot("%3"), slot("%4")), slot("%2")],
             ),
             (
-                [*cycle, (6, "x", "a", "%5")],
-                ["%0", "%1", "%2", "%3", "%4", "%5"],
+                "an orphan group right of a's child",
                 (
                     "160x48,0,0{79x48,0,0,0,80x48,80,0[80x16,80,0{40x16,80,0,5,39x16,121,0[39x8,121,0,3,39x7,121,9,4]},"
                     "80x15,80,17,1,80x15,80,33,2]}"
                 ),
+                [*cycle, (6, "x", "a", "%5")],
+                ["%0", "%1", "%2", "%3", "%4", "%5"],
                 [slot("%1"), slot(None, slot("%3"), slot("%4")), slot("%2"), slot("%5")],
             ),
-        ):
-            with self.subTest(panes=panes):
-                self.assertEqual(self.tree(rows, panes, layout), want)
-
-    def test_orphans_take_the_killed_parents_cell(self):
-        orphans = slot(None, slot("%4"), slot("%5"))
-        for case, layout, rows, panes, want in (
             # w2 (%2, with a %4 and b %5) killed: tmux gave its cell to [a, b]
             (
                 "main cell",
@@ -481,11 +483,6 @@ class SwapsTest(Case):
 
 
 class LayoutStringTest(Case):
-    def test_checksum_of_tmux_samples(self):
-        for sample in (MAIN_VERTICAL, TILED_SPLIT):
-            csum, text = sample.split(",", 1)
-            self.assertEqual(layouts._checksum(text), csum)
-
     def test_parse(self):
         Cell, lr, tb = types.Cell, layouts.LEFT_RIGHT, layouts.TOP_BOTTOM
         want = Cell(

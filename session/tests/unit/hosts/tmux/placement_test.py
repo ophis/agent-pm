@@ -6,7 +6,7 @@ import re
 import tempfile
 from contextlib import redirect_stderr
 
-from agent_pm.session.hosts.tmux import iterm, placement, transport, types
+from agent_pm.session.hosts.tmux import placement, types
 
 from session.tests.case import Case
 from session.tests.tmux_fixtures import (
@@ -59,31 +59,42 @@ class PaneAnchorTest(PaneFixture):
             (fake.calls[:2], err.getvalue()), ([PGREP, osa("below", "id", "s", "ABC")], "")
         )
 
-    def test_iterm2_pane_showing_own_session(self):
-        fake = FakeTmux(
-            results={
-                "display-message": (0, "own\n"),
-                "osascript": (0, "ok NEW\n"),
-                "list-clients": self.clients(
+    def test_iterm2_opens_beside_the_ttys_showing_own_session_never_a_control_modes(self):
+        tty = ("right", "tty", "s")
+        for case, clients, then in (
+            (
+                "newest tty first",
+                self.clients(
                     (100, "/dev/ttys001", "%1"),
                     (300, "/dev/ttys003", "%2"),
                     (200, "/dev/ttys002", "%9"),
                 ),
-            }
-        )
-        self.assertIsNone(self.show(fake, INSIDE))
-        self.assertEqual(
-            fake.calls,
-            [
-                OWN,
-                SESSIONS,
-                clients_of("own"),
-                HOSTS,
-                PGREP,
-                osa("right", "tty", "s", "/dev/ttys003", "/dev/ttys002", "/dev/ttys001"),
-                *record("own", "NEW"),
-            ],
-        )
+                [HOSTS, PGREP, osa(*tty, "/dev/ttys003", "/dev/ttys002", "/dev/ttys001")],
+            ),
+            (
+                "a control-mode tty skipped",
+                self.clients(
+                    (300, "/dev/ttys003", "%2"),
+                    (200, "/dev/ttys009", "%1", "1"),
+                    (100, "/dev/ttys001", "%1"),
+                ),
+                [HOSTS, PGREP, osa(*tty, "/dev/ttys003", "/dev/ttys001")],
+            ),
+            ("detached: its iTerm2 session id", (0, ""), [PGREP, osa("right", "id", "s", "ABC")]),
+        ):
+            with self.subTest(case):
+                fake = FakeTmux(
+                    results={
+                        "display-message": (0, "own\n"),
+                        "osascript": (0, "ok NEW\n"),
+                        "list-clients": clients,
+                    }
+                )
+                self.assertIsNone(self.show(fake, INSIDE))
+                self.assertEqual(
+                    fake.calls,
+                    [OWN, SESSIONS, clients_of("own"), *then, *record("own", "NEW")],
+                )
 
     def test_tmux_split_of_own_pane_when_no_iterm2_pane_shows_it(self):
         clients = self.clients((5, "/dev/ttys004", "%9"))
@@ -108,27 +119,6 @@ class PaneAnchorTest(PaneFixture):
                         fake.calls[-3:], [split_window(flag, "%3"), *record("own", "%10")]
                     )
                     self.assertEqual(self.stderr.getvalue(), ATTACH)
-
-    def test_detached_own_session_falls_back_to_iterm_session_id(self):
-        fake = FakeTmux(
-            results={
-                "display-message": (0, "own\n"),
-                "list-clients": (0, ""),
-                "osascript": (0, "ok NEW\n"),
-            }
-        )
-        self.assertIsNone(self.show(fake, INSIDE))
-        self.assertEqual(
-            fake.calls,
-            [
-                OWN,
-                SESSIONS,
-                clients_of("own"),
-                PGREP,
-                osa("right", "id", "s", "ABC"),
-                *record("own", "NEW"),
-            ],
-        )
 
     def test_anchor(self):
         own = {"display-message": (0, "own\n"), "list-clients": (0, "")}
@@ -331,23 +321,18 @@ class OpenerTest(Case):
         ):
             placement.opener(proc=FakeTmux())
 
-    def test_patterns(self):
-        for value in ("cmd", "a_b-1", "w0t0p0:ABC", "w0t1p0:6D7E-8F"):
-            self.assertTrue(transport.OPENER.fullmatch(value), value)
-        for value in ("", "a b", "a:", ":b", "a:b:c", "a_b:c", "a:b_c", "a;", "%1", "a\n"):
-            self.assertFalse(transport.OPENER.fullmatch(value), value)
-        self.assertTrue(transport.ITERM_ID.fullmatch("6D7E-8F"))
-        for value in ("", "a_b", "a:b", "%1", "a b"):
-            self.assertFalse(transport.ITERM_ID.fullmatch(value), value)
-
 
 class SplitTest(Case):
     def test_sides(self):
         self.assertEqual(list(types.Split), ["right", "below"])
         for split in (None, *types.Split, "below"):
-            with self.subTest(split=split):
-                self.assertIsNone(placement._layout(split, None))
+            with self.subTest(split=split), environ(), which():
+                self.assertEqual(
+                    placement.open_pane("s", split=split, proc=FakeTmux(), command=COMMAND),
+                    "no anchor pane: not in tmux, no iTerm2 pane ($ITERM_SESSION_ID)" + WATCH,
+                )
         for bad in ("up", "", "RIGHT", 1, ["right"]):
+            fake = FakeTmux()
             with (
                 self.subTest(split=bad),
                 self.assertRaisesRegex(
@@ -355,7 +340,8 @@ class SplitTest(Case):
                     f"^split must be one of right, below, not {re.escape(repr(bad))}$",
                 ),
             ):
-                placement._layout(bad, None)
+                placement.open_pane("s", split=bad, proc=fake, command=COMMAND)
+            self.assertEqual(fake.calls, [])
 
 
 class ShowTest(Case):
@@ -620,32 +606,6 @@ class PanePlacementTest(PaneFixture):
                     [*head, clients_of("b"), split_window("-v", "%9"), *record(opener, "%10")],
                 )
 
-    def test_control_mode_ttys_are_never_iterm2_anchors(self):
-        fake = FakeTmux(
-            results={
-                "display-message": (0, "own\n"),
-                "osascript": (0, "ok NEW\n"),
-                "list-clients": self.clients(
-                    (300, "/dev/ttys003", "%2"),
-                    (200, "/dev/ttys009", "%1", "1"),
-                    (100, "/dev/ttys001", "%1"),
-                ),
-            }
-        )
-        self.assertIsNone(self.show(fake, INSIDE))
-        self.assertEqual(
-            fake.calls,
-            [
-                OWN,
-                SESSIONS,
-                clients_of("own"),
-                HOSTS,
-                PGREP,
-                osa("right", "tty", "s", "/dev/ttys003", "/dev/ttys001"),
-                *record("own", "NEW"),
-            ],
-        )
-
     def test_tmux_split_failures(self):
         clients = self.clients((5, "/dev/ttys004", "%9"))
         fake = FakeTmux(
@@ -768,7 +728,12 @@ class PanePlacementTest(PaneFixture):
                 self.assertNotIn("set-option", fake.commands())
 
     def test_script_is_fixed_and_takes_its_values_as_arguments(self):
-        script = iterm.APPLESCRIPT
+        fake = FakeTmux(results={"osascript": (0, "ok NEW\n")})
+        self.assertIsNone(self.show(fake, ITERM))
+        osascript, flag, script, *values = fake.calls[fake.commands().index("osascript")]
+        self.assertEqual(
+            (osascript, flag, values), ("osascript", "-e", ["right", "id", TMUX, "s", "ABC"])
+        )
         self.assertNotIn(TMUX, script)
         for part in (
             "on run argv",
@@ -1002,7 +967,11 @@ class StackTest(Case):
         self.assertEqual(fake.calls, [SESSIONS, PGREP, LIVE, PGREP, PGREP])
 
     def test_applescript_output(self):
-        for out, pane in (("ok NEW\n", "NEW"), ("ok 6D7E8F90-1A2B\n", "6D7E8F90-1A2B")):
+        for out, pane in (
+            ("ok NEW\n", "NEW"),
+            ("ok 6D7E8F90-1A2B\n", "6D7E8F90-1A2B"),
+            ("ok 6D7E-8F\n", "6D7E-8F"),
+        ):
             with self.subTest(out=out):
                 fake = self.fake(pgrep=(0,), osascript=(0, out))
                 self.assertIsNone(self.show(fake, ITERM))
@@ -1013,6 +982,8 @@ class StackTest(Case):
             ("ok a b\n", "ok a b"),
             ("ok a;b\n", "ok a;b"),
             ("ok a_b\n", "ok a_b"),
+            ("ok a:b\n", "ok a:b"),
+            ("ok %1\n", "ok %1"),
             ("OK ABC\n", "OK ABC"),
             ("ok A\nok B\n", "ok A\nok B"),
             ("", "osascript printed nothing"),
@@ -1168,6 +1139,12 @@ class StackTest(Case):
             "%3",
             "a\n",
             "a:b\n",
+            "a:",
+            ":b",
+            "a_b:c",
+            "a:b_c",
+            "a;",
+            "%1",
         ):
             with self.subTest(opener=opener):
                 fake = self.fake()

@@ -48,35 +48,19 @@ class Encode(Case):
             with self.subTest(name=name):
                 self.assertEqual(sent(name), data)
 
-    def test_a_printable_character_is_its_utf_8(self):
-        for char in ("q", "3", " ", ";", "-", "é"):
-            with self.subTest(char=char):
-                self.assertEqual(sent(char), char.encode())
-
-    def test_ctrl_is_the_control_byte_of_a_letter_or_of_xterms_punctuation(self):
-        cases = {"C-c": b"\x03", "C-A": b"\x01", "C-z": b"\x1a", "C-@": b"\x00", "C- ": b"\x00"}
+    def test_a_character_or_a_modified_key_is_xterms_bytes(self):
+        cases = {char: char.encode() for char in ("q", "3", " ", ";", "-", "é")}
+        cases |= {"C-c": b"\x03", "C-A": b"\x01", "C-z": b"\x1a", "C-@": b"\x00", "C- ": b"\x00"}
         cases |= {"C-[": b"\x1b", "C-\\": b"\x1c", "C-]": b"\x1d", "C-^": b"\x1e"}
         cases |= {"C-_": b"\x1f", "C-/": b"\x1f", "C-?": b"\x7f"}
-        for text, data in cases.items():
-            with self.subTest(text=text):
-                self.assertEqual(sent(text), data)
-
-    def test_meta_puts_escape_before_a_character_or_a_plain_key(self):
-        cases = {
+        cases |= {
             "M-x": b"\x1bx",
             "M-C-c": b"\x1b\x03",
             "M-Enter": b"\x1b\r",
             "M-BTab": b"\x1b\x1b[Z",
         }
-        for text, data in cases.items():
-            with self.subTest(text=text):
-                self.assertEqual(sent(text), data)
-
-    def test_shift_tab_is_btab(self):
-        self.assertEqual(sent("S-Tab"), b"\x1b[Z")
-
-    def test_a_modified_cursor_page_or_function_key_carries_xterms_modifier_parameter(self):
-        cases = {
+        cases |= {"S-Tab": b"\x1b[Z"}
+        cases |= {
             "S-Up": b"\x1b[1;2A",
             "M-Left": b"\x1b[1;3D",
             "C-Right": b"\x1b[1;5C",

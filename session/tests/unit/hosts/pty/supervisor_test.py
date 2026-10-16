@@ -28,16 +28,16 @@ class Bracketing(Case):
 
 
 class Request(Case):
-    def test_a_paste_is_its_utf_8_bracketed_when_asked(self):
-        line = json.dumps({"paste": "é\nx"}).encode()
-        self.assertEqual(request(line, bracketed=False), "é\nx".encode())
-        self.assertEqual(
-            request(line, bracketed=True), b"\x1b[200~" + "é\nx".encode() + b"\x1b[201~"
-        )
-
-    def test_keys_are_their_hex_never_bracketed(self):
-        line = json.dumps({"keys": b"\x1b[A\x03".hex()}).encode()
-        self.assertEqual(request(line, bracketed=True), b"\x1b[A\x03")
+    def test_a_paste_is_its_utf_8_bracketed_when_asked_keys_their_hex_never_bracketed(self):
+        paste = json.dumps({"paste": "é\nx"}).encode()
+        keys = json.dumps({"keys": b"\x1b[A\x03".hex()}).encode()
+        for line, bracketed, want in (
+            (paste, False, "é\nx".encode()),
+            (paste, True, b"\x1b[200~" + "é\nx".encode() + b"\x1b[201~"),
+            (keys, True, b"\x1b[A\x03"),
+        ):
+            with self.subTest(line=line, bracketed=bracketed):
+                self.assertEqual(request(line, bracketed=bracketed), want)
 
     def test_anything_else_is_a_value_error(self):
         for line in (b"", b"[]", b'{"paste": 1}', b'{"keys": "zz"}', b'{"paste": "a", "keys": ""}'):
