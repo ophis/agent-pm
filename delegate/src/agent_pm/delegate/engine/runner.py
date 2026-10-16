@@ -98,8 +98,8 @@ class Headless:
 class Tui(Headless):
     """FR-23: the first turn end without an outcome block gets NUDGE, STOP_LIMIT more give up; a
     progress mark resets that count; a turn end with work pending is ignored. FR-24: an IdleTimeout
-    gives up. The session is left open. A showable session started at a display is shown, unless
-    hidden, as the run's `show` says (`none`: in a pane, its start display having hidden it).
+    gives up. The session is left open. A showable session started at a display is shown as the
+    run's `show` says, unless hidden.
     """
 
     def __init__(self, note: Callable[..., None], driver: Driver):
