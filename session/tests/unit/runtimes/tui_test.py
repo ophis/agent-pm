@@ -2,6 +2,7 @@
 
 import errno
 import fcntl
+import io
 import itertools
 import json
 import os
@@ -12,6 +13,7 @@ import stat
 import sys
 import tempfile
 import threading
+import time
 from unittest import mock
 
 from agent_pm.session.adapters.claude import ClaudeAdapter
@@ -40,8 +42,11 @@ from agent_pm.session.engine.types import (
     Word,
 )
 from agent_pm.session.hosts.base import HostProcess
+from agent_pm.session.hosts.pty import PtyHost
+from agent_pm.session.hosts.pty import state as pty_state
 from agent_pm.session.hosts.tmux.types import TuiError
 from agent_pm.session.runtimes import tui, tui_hook
+from agent_pm.utils import inode_lock
 
 from session.tests import fake_adapter
 from session.tests.case import PLUGIN_BIN, Case
@@ -804,6 +809,154 @@ class StartTest(Base):
         mode.stop()
         process.calls.close.assert_called_once_with()
         self.assertEqual((mode.poll(0), mode.returncode(0)), (([], True), -signal.SIGHUP))
+
+
+DAY = 24 * 3600
+
+
+class _Live:
+    """A fake socket to a pty session's process controller: it answers live."""
+
+    def __init__(self, *_):
+        pass
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_):
+        return False
+
+    def settimeout(self, _):
+        pass
+
+    def connect(self, _):
+        pass
+
+    def sendall(self, _):
+        pass
+
+    def makefile(self, _):
+        return io.BytesIO(b'{"live": true}\n')
+
+
+class SweepTest(Base):
+    """Other names' leftovers swept by a start of w1."""
+
+    def leftover(self, name, *, days=31, host=None, folder=True):
+        """tui/<name>/ (folder) with session.json naming `host` (else this host) and hooks.jsonl, and
+        tui/<name>.lock, all `days` old.
+        """
+        paths = [os.path.join(self.root, f"{name}.lock")]
+        if folder:
+            os.makedirs(os.path.join(self.root, name))
+            paths += [os.path.join(self.root, name, f) for f in ("session.json", "hooks.jsonl")]
+        os.makedirs(self.root, exist_ok=True)
+        for path in paths:
+            with open(path, "w", encoding="utf-8") as file:
+                file.write(json.dumps({"host": host or self.host.name}))
+        self.age(days, *paths, *([os.path.join(self.root, name)] if folder else []))
+
+    def age(self, days, *paths):
+        moment = time.time() - days * DAY
+        for path in paths:
+            os.utime(path, (moment, moment), follow_symlinks=False)
+
+    def names(self):
+        return sorted(os.listdir(self.root))
+
+    def test_an_idle_name_without_a_session_goes_with_its_lock(self):
+        self.leftover("a")
+        self.leftover("b", folder=False)
+        self.leftover("c")
+        with open(os.path.join(self.root, "c", "session.json"), "w", encoding="utf-8") as file:
+            file.write("{")
+        self.age(31, os.path.join(self.root, "c", "session.json"))
+        self.start()
+        self.assertEqual(self.names(), [NAME, f"{NAME}.lock"])
+
+    def test_a_name_recent_held_listed_or_of_another_host_stays(self):
+        self.leftover("young", days=29)
+        self.leftover("held")
+        self.leftover("listed")
+        self.leftover("other", host="elsewhere")
+        self.host.create("listed")
+        with inode_lock(os.path.join(self.root, "held.lock")):
+            self.start()
+        kept = ["held", "listed", "other", "young"]
+        self.assertEqual(
+            self.names(), sorted([*kept, *(f"{n}.lock" for n in kept), NAME, f"{NAME}.lock"])
+        )
+
+    def test_nothing_idle_lists_no_sessions_for_the_sweep(self):
+        self.leftover("young", days=29)
+        self.start()
+        self.assertEqual(len(self.host.calls.list.mock_calls), 1)
+
+    def test_a_symlinked_name_and_its_target_stay(self):
+        self.leftover("a")
+        target = os.path.join(self.tmp, "target")
+        os.rename(os.path.join(self.root, "a"), target)
+        os.symlink(target, os.path.join(self.root, "a"))
+        self.age(31, os.path.join(self.root, "a"))
+        self.start()
+        self.assertEqual(self.names(), ["a", "a.lock", NAME, f"{NAME}.lock"])
+        self.assertTrue(os.path.exists(os.path.join(target, "hooks.jsonl")))
+
+    def test_a_failure_on_one_name_is_logged_and_the_rest_swept(self):
+        self.leftover("a")
+        self.leftover("b")
+        real_unlink = os.unlink
+
+        def unlink(path, *args, **kwargs):
+            if str(path).endswith("a.lock"):
+                raise PermissionError("denied")
+            return real_unlink(path, *args, **kwargs)
+
+        with mock.patch("os.unlink", side_effect=unlink), self.assertLogs("session") as logs:
+            self.start()
+        self.assertEqual(self.names(), ["a.lock", NAME, f"{NAME}.lock"])
+        self.assertEqual(logs.output, ["WARNING:session:tui sweep a: denied"])
+
+    def test_a_failed_listing_is_logged_and_the_start_stands(self):
+        self.leftover("a")
+        listings = iter(([], SessionError("tmux failed")))
+
+        def listed(_display):
+            found = next(listings)
+            if isinstance(found, Exception):
+                raise found
+            return found
+
+        self.host.calls.list.side_effect = listed
+        with self.assertLogs("session") as logs:
+            mode = self.start()
+        self.assertIsInstance(mode, tui.TuiRuntime)
+        self.assertEqual(self.names(), ["a", "a.lock", NAME, f"{NAME}.lock"])
+        self.assertEqual(logs.output, ["WARNING:session:tui sweep: tmux failed"])
+
+    def test_one_start_on_a_pty_host_clears_all_four(self):
+        self.leftover("a", host="pty")
+        folder = os.path.join(pty_state.root(), "a")
+        os.makedirs(folder)
+        pty_state.put(folder, pty_state.META, json.dumps({"id": "a", "control": "/nonexistent"}))
+        pty_state.put(folder, pty_state.RC, "0")
+        open(f"{folder}.lock", "w").close()
+        self.age(
+            31, folder, f"{folder}.lock", *(os.path.join(folder, f) for f in os.listdir(folder))
+        )
+
+        def popen(argv, **_options):
+            pty_state.put(argv[5], pty_state.PID, "4242")
+            control = json.loads(pty_state.read(argv[5], pty_state.META))["control"]
+            with open(os.path.join(control, "started.json"), "w", encoding="utf-8") as file:
+                file.write("{}")
+            return mock.Mock(pid=4242, poll=mock.Mock(return_value=None))
+
+        self.host = PtyHost("pty")
+        with mock.patch("subprocess.Popen", side_effect=popen), mock.patch("socket.socket", _Live):
+            self.start()
+        self.assertEqual(self.names(), [NAME, f"{NAME}.lock"])
+        self.assertEqual(sorted(os.listdir(pty_state.root())), [NAME, f"{NAME}.lock"])
 
 
 class SnapshotTest(Base):

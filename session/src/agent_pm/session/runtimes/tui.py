@@ -4,6 +4,7 @@ then the hook records appended to its session directory, and from its terminal.
 
 import contextlib
 import json
+import logging
 import os
 import signal
 import stat
@@ -41,6 +42,7 @@ from agent_pm.session.engine.types import (
     Word,
 )
 from agent_pm.session.hosts.base import (
+    IDLE_AFTER,
     TUI_DIR,
     Displayable,
     Host,
@@ -51,7 +53,7 @@ from agent_pm.session.hosts.base import (
 from agent_pm.session.runtimes import tui_hook
 from agent_pm.session.runtimes.base import Runtime, identity_drop
 from agent_pm.utils import CONFIG_NAME as NAME
-from agent_pm.utils import Display, command_path, inode_lock, json_records, read_regular
+from agent_pm.utils import Display, command_path, idle, inode_lock, json_records, read_regular
 
 WORDS = {
     HookKind.TURN_END: Word.DONE,
@@ -62,6 +64,7 @@ WORDS = {
 SLICE = 0.1
 OPEN_AFTER = 1.0  # keys sent before a client's input box shows are lost
 POLL_SCREEN = 0.5
+LOG = logging.getLogger("session")
 
 
 def checked_name(name) -> str:
@@ -193,6 +196,24 @@ class _Store:
         with self._locked():
             self._close()
 
+    def tracked(self) -> tuple[str, str]:
+        return self.dir, os.path.join(self.dir, tui_hook.HOOKS)
+
+    def expire(self, listed: set[str]) -> None:
+        """Its dir and lock go once idle with no session of its name on its host; never waits."""
+        lock = tui_lock(self.name)
+        with inode_lock(lock, wait=False) as held:
+            if not held or not idle(self.tracked(), IDLE_AFTER) or self.name in listed:
+                return
+            try:
+                state = json.loads(read_regular(self.state_file) or b"{}")
+            except ValueError:
+                state = {}
+            if isinstance(state, dict) and state.get("host", self.host.name) != self.host.name:
+                return
+            self._drop()
+            os.unlink(lock)
+
     def stop(self, identity: str) -> None:
         with self._locked():
             holder = self.holder()
@@ -273,6 +294,30 @@ class _Store:
     def _unmake(self, made: os.stat_result) -> None:
         with contextlib.suppress(OSError):
             self._remove(made)
+
+
+def _sweep(store: _Store) -> None:
+    """Other names idle IDLE_AFTER: expired, errors logged."""
+    try:
+        found = {entry.name.removesuffix(".lock") for entry in os.scandir(store.root)}
+        others = [
+            _Store(n, host=store.host) for n in sorted(found - {store.name}) if TAG.fullmatch(n)
+        ]
+        stale = [
+            other
+            for other in others
+            if not os.path.islink(other.dir)
+            and idle((*other.tracked(), tui_lock(other.name)), IDLE_AFTER)
+        ]
+        listed = set(store.host.list()) if stale else set()
+    except (OSError, SessionError) as error:
+        LOG.warning("tui sweep: %s", error)
+        return
+    for other in stale:
+        try:
+            other.expire(listed)
+        except (OSError, SessionError) as error:
+            LOG.warning("tui sweep %s: %s", other.name, error)
 
 
 def _stale(store: _Store) -> HostProcess | None:
@@ -422,6 +467,7 @@ class TuiRuntime(Runtime):
             record(prepared.info)
 
         terminal = store.start(pending.state, commit, launch, check_name=check_name)
+        _sweep(store)
         generation = pending.state["generation"]
         return cls(prepared, run, terminal, store, generation, opening=run.opening)
 
