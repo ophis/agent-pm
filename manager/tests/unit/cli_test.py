@@ -10,7 +10,7 @@ from types import SimpleNamespace
 from typing import Any
 from unittest import mock
 
-from agent_pm.manager import Spec
+from agent_pm.manager import Spec, State
 from agent_pm.manager.cli import main
 from agent_pm.manager.engine.pr import VIEW_FIELDS
 from agent_pm.utils import Record, Status, StatusState
@@ -222,6 +222,27 @@ class Launch(CliCase):
                 result, stdout, _ = self.start(*arguments, code=code, output=output)
                 self.assertEqual((result, stdout), (1, ""))
         self.assertEqual({e.state.value for e in self.roster.entries().values()}, {"lost"})
+
+
+class ResumeInput(CliCase):
+    def test_multiple_names_with_input_fail_before_any_roster_write(self):
+        with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as error:
+            main(["resume", "--manager", "mgr", "a", "b", "--input", "answer"])
+        self.assertEqual(error.exception.code, 2)
+        self.assertFalse(os.path.exists(self.directory))
+
+    def test_refusal_returns_two_and_preserves_waiting(self):
+        record = self.fake_record("r1")
+        self.roster.begin(Spec("r1", ("start",)), sid=record.sid)
+        self.roster.commit("r1", record)
+        self.roster.mark("r1", State.WAITING)
+        with mock.patch(
+            "subprocess.run", return_value=SimpleNamespace(returncode=2, stderr="refused")
+        ):
+            code, stdout, stderr = self.invoke("resume", "--manager", "mgr", "r1", "--input", "")
+        self.assertEqual((code, stdout), (2, ""))
+        self.assertIn("refused", stderr)
+        self.assertIs(self.roster.entries()["r1"].state, State.WAITING)
 
 
 class NextEventContent(CliCase):

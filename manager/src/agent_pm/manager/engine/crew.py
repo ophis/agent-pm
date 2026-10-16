@@ -356,7 +356,8 @@ class Crew:
                     self.roster.mark_if(name, entry, State.GONE)
         for record in here or ():
             try:
-                adopted = self.roster.adopt(record)
+                cutoff = (instant - datetime.timedelta(seconds=RECOVERY_AGE)).isoformat()
+                adopted = self.roster.adopt(record, resuming_before=cutoff)
                 if adopted is None:
                     print(f"crew: adopt {record.name}: no matching launch sid", file=sys.stderr)
             except RosterError as error:
@@ -477,31 +478,42 @@ class Crew:
         url = outcome.get("url") if isinstance(outcome, dict) else None
         return url if isinstance(url, str) else None
 
-    def resume(self, name: str) -> Record | None:
+    def resume(self, name: str, *, input: str | None = None) -> Record | None:
         self._listed = None
         self.roster.check_lease()
         entries = self.roster.entries()
         if name not in entries:
             raise ValueError(f"{name}: not in roster")
         entry = entries[name]
+        if input is not None and entry.state != State.WAITING:
+            raise ValueError(f"{name}: --input requires waiting (state {entry.state})")
+        if input is None and entry.state == State.WAITING:
+            raise RuntimeError(f"{name}: waiting: give --input to answer")
         if entry.state == State.RESUMING:
             return None
         if entry.record is None:
             raise RuntimeError(f"{name}: {entry.state}: no Record to resume")
-        status = self.status((name,))[0]
-        if status.alive:
-            return entry.record
-        if entry.state != State.GONE:
-            raise RuntimeError(f"{name}: only gone entries can resume (state {entry.state})")
-        claimed = self.roster.claim_resume(name)
+        if input is None:
+            status = self.status((name,))[0]
+            if status.alive:
+                return entry.record
+            if entry.state != State.GONE:
+                raise RuntimeError(f"{name}: only gone entries can resume (state {entry.state})")
+        claimed = self.roster.claim_resume(
+            name, state=State.WAITING if input is not None else State.GONE
+        )
         if claimed is None:
             return None
         record = claimed.record
         if record is None or claimed.sid is None:
             raise RuntimeError(f"{name}: no Record or sid to resume")
         try:
-            resumed = self._start(record.resume, name, claimed.sid)
+            argv = record.resume if input is None else (*record.resume, "--input", input)
+            resumed = self._start(argv, name, claimed.sid, refusal=input is not None)
             self.roster.commit(name, resumed)
+        except StartRefused:
+            self.roster.mark_if(name, claimed, State.WAITING)
+            raise
         except (RosterError, RuntimeError, ValueError) as error:
             try:
                 self.roster.mark_if(name, claimed, State.GONE)

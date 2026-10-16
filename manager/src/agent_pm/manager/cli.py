@@ -126,7 +126,7 @@ def _resume(args) -> int:
     failed = 0
     for name in args.names:
         try:
-            record = crew.resume(name)
+            record = crew.resume(name, input=args.input)
             if record is not None:
                 print(record.to_line())
         except (RosterError, RuntimeError, ValueError) as error:
@@ -216,6 +216,7 @@ def _parser() -> argparse.ArgumentParser:
     report.set_defaults(func=_report)
     resume = subs.add_parser("resume", parents=[common])
     resume.add_argument("names", nargs="+")
+    resume.add_argument("--input", help="answer one waiting entry")
     resume.set_defaults(func=_resume)
     for verb, text in (
         ("hide", "close each entry's panes; its work runs on"),
@@ -278,6 +279,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         parser.error(f"{args.verb} takes entry names or --all")
     if args.func is _attach and (args.after is None) != (args.gen is None):
         parser.error("--after and --gen go together")
+    if args.func is _resume and args.input is not None and len(args.names) != 1:
+        parser.error("resume --input requires exactly one name")
     if args.func in {_run, _hold, _resume, _launch} and (refused := nested_start()):
         print(f"crew: {refused}", file=sys.stderr)
         return 2
