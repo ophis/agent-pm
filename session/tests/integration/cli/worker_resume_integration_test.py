@@ -20,7 +20,7 @@ from datetime import datetime
 
 from session.tests import live_tmux
 from session.tests.cli_support import COMMAND, MANAGER, TIMEOUT, CliCase, logged
-from session.tests.integration.adapters.claude import fake_claude
+from session.tests.integration.clients.claude import fake_claude
 
 FLAGS = ("--model", "m-test")
 ENV_DUMP = (

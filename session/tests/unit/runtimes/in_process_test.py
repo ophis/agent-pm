@@ -12,7 +12,7 @@ import time
 import unittest
 from unittest import mock
 
-from agent_pm.session.adapters.base import Adapter, InProcess
+from agent_pm.session.clients.base import Client, InProcess
 from agent_pm.session.engine.types import (
     Access,
     ConfigError,
@@ -46,7 +46,7 @@ RESUME = Spec(
 )
 
 
-class StubAdapter(Adapter):
+class StubClient(Client):
     """Its in_process() is a StubRun of `script`, each Spec its check gets kept in `checked`
     (ConfigError: raised).
     """
@@ -68,24 +68,24 @@ class StubAdapter(Adapter):
         return StubRun(self)
 
 
-class NoInProcess(StubAdapter):
+class NoInProcess(StubClient):
     def in_process(self):
         return None
 
 
 class StubRun(InProcess):
-    """run: its adapter's script(spec)."""
+    """run: its client's script(spec)."""
 
-    def __init__(self, adapter: StubAdapter):
-        self.adapter = adapter
+    def __init__(self, client: StubClient):
+        self.client = client
 
     def check(self, spec: Spec):
-        self.adapter.checked.append(spec)
-        if self.adapter.refusal:
-            raise self.adapter.refusal
+        self.client.checked.append(spec)
+        if self.client.refusal:
+            raise self.client.refusal
 
     def run(self, spec: Spec):
-        return self.adapter.script(spec)
+        return self.client.script(spec)
 
 
 def ended(*_):
@@ -96,13 +96,13 @@ class Base(Case):
     def setUp(self):
         self.mode, self.recorded = None, []
 
-    def start(self, adapter, spec=SPEC, record=None, display=None) -> Prepared:
-        """self.mode: InProcessRuntime started on spec with adapter and display, its session line
+    def start(self, client, spec=SPEC, record=None, display=None) -> Prepared:
+        """self.mode: InProcessRuntime started on spec with client and display, its session line
         given to record, else kept in self.recorded; its Prepared.
         """
         self.mode = InProcessRuntime.start(
             spec,
-            adapter,
+            client,
             registry=self.session_cls._config().registry,
             record=record or self.recorded.append,
             host=MemoryHost(),
@@ -111,7 +111,7 @@ class Base(Case):
         return self.mode.prepared
 
     def begin(self, script, spec=SPEC):
-        self.start(StubAdapter(script), spec)
+        self.start(StubClient(script), spec)
         self.addCleanup(self.mode.stop)
 
     def held(self):
@@ -296,7 +296,7 @@ class Stop(Base):
 class Start(Base):
     def test_its_check_gets_the_spec_before_the_session_line_then_its_run_the_same(self):
         runs = []
-        adapter = StubAdapter(lambda spec: runs.append(spec) or [])
+        client = StubClient(lambda spec: runs.append(spec) or [])
         for given, project in (("/w", False), ("/cwd", True)):
             with self.subTest(cwd=given):
                 spec = Spec(
@@ -306,16 +306,16 @@ class Start(Base):
                     prompt="hi",
                     access=Access(cwd=given, project=project, commands=("git",)),
                 )
-                checked, lines = len(adapter.checked), []
+                checked, lines = len(client.checked), []
                 prepared = self.start(
-                    adapter,
+                    client,
                     spec,
                     record=lambda info, *, lines=lines, checked=checked: lines.append(
-                        (info, len(adapter.checked) - checked, len(runs))
+                        (info, len(client.checked) - checked, len(runs))
                     ),
                 )
                 self.assertEqual(self.drain(), [])
-                noted = adapter.checked[checked]
+                noted = client.checked[checked]
                 info = SessionInfo(
                     sid="s",
                     cwd=given,
@@ -330,17 +330,17 @@ class Start(Base):
                 self.assertEqual(prepared, Prepared(noted, info))
 
     def test_refused_before_its_session_line_or_its_run(self):
-        refused = StubAdapter(ended, ConfigError("tier 4 is unmapped"))
-        for adapter, fields, message in (
+        refused = StubClient(ended, ConfigError("tier 4 is unmapped"))
+        for client, fields, message in (
             (NoInProcess(ended), {}, "client 'stub' does not support in_process mode"),
-            (StubAdapter(ended), {"name": "w1"}, "name: tui mode only"),
-            (StubAdapter(ended), {"events": "/e"}, "events: tui mode only"),
+            (StubClient(ended), {"name": "w1"}, "name: tui mode only"),
+            (StubClient(ended), {"events": "/e"}, "events: tui mode only"),
             (
-                StubAdapter(ended),
+                StubClient(ended),
                 {"flags": ("--resume",)},
                 "--resume: picks the session; use sid= or resume=",
             ),
-            (StubAdapter(ended), {"sid": None}, "sid: missing"),
+            (StubClient(ended), {"sid": None}, "sid: missing"),
             (refused, {}, "tier 4 is unmapped"),
         ):
             with (
@@ -348,11 +348,11 @@ class Start(Base):
                 mock.patch("threading.Thread.start", side_effect=AssertionError("run")) as thread,
                 self.assertRaises(ConfigError) as caught,
             ):
-                self.start(adapter, dataclasses.replace(SPEC, **fields))
+                self.start(client, dataclasses.replace(SPEC, **fields))
             self.assertEqual(str(caught.exception), message)
             thread.assert_not_called()
         with self.assertRaises(ConfigError) as caught:
-            self.start(StubAdapter(ended), display="mgr")
+            self.start(StubClient(ended), display="mgr")
         self.assertEqual(str(caught.exception), "display: tui mode only")
         self.assertEqual((self.recorded, len(refused.checked), self.mode), ([], 1, None))
 
@@ -364,7 +364,7 @@ class Start(Base):
             ),
             self.assertRaises(SessionError) as caught,
         ):
-            self.start(StubAdapter(lambda *args: calls.append(args) or []))
+            self.start(StubClient(lambda *args: calls.append(args) or []))
         self.assertEqual(
             str(caught.exception), "cannot start the in_process run: can't start new thread"
         )
@@ -374,7 +374,7 @@ class Start(Base):
         script, reached, release, _ = self.held()
         mode = InProcessRuntime.start(
             SPEC,
-            StubAdapter(script),
+            StubClient(script),
             registry=self.session_cls._config().registry,
             record=self.recorded.append,
             host=MemoryHost(),
@@ -388,7 +388,7 @@ class Start(Base):
         self.assertEqual((mode.state(), mode.returncode(0)), ("absent", -signal.SIGKILL))
 
     def test_send_and_screen_raise_driver_error(self):
-        self.start(StubAdapter(ended))
+        self.start(StubClient(ended))
         for call, message in (
             (lambda: self.mode.send("x"), "send: tui mode only"),
             (self.mode.screen, "screen: tui mode only"),

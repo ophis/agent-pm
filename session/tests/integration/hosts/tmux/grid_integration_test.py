@@ -10,7 +10,7 @@ import tempfile
 import time
 from unittest import mock
 
-from agent_pm.session import Displayable
+from agent_pm.session import Showable
 from agent_pm.session.engine.types import Launch, SessionError
 from agent_pm.session.hosts.tmux import TmuxHost, layout
 from agent_pm.session.hosts.tmux import grid as tmux_model
@@ -76,7 +76,7 @@ class Live(Case):
         err = io.StringIO()
         display = TmuxHost.fold(None, split, split_from)
         host = self.session_cls.host()
-        if not isinstance(host, Displayable):
+        if not isinstance(host, Showable):
             self.fail(f"host {host.name} cannot display")
         with self.inside(inside), contextlib.redirect_stderr(err):
             self.assertIsNone(host.show(name, display=display))

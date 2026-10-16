@@ -20,7 +20,7 @@ from agent_pm.utils import Record
 
 from manager.tests.case import PY, REPO, SRC, Case
 from session.tests import live_tmux
-from session.tests.integration.adapters.claude import fake_claude
+from session.tests.integration.clients.claude import fake_claude
 
 MANAGER = "mgr"
 OTHER = "mgr2"

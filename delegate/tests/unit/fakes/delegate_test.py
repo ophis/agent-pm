@@ -12,7 +12,7 @@ from delegate.tests.fakes.delegate import FakeDelegate
 class FakeDelegateContract(DelegateContract, Case):
     delegate_cls = FakeDelegate
     ROLE = "dummy"
-    DISPLAYABLE = False
+    SHOWABLE = False
 
     def make(self, workdir, **kw):
         role = kw.pop("role", self.ROLE)

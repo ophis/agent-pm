@@ -1,4 +1,4 @@
-"""Tui mode behavior through nonspawning Host and Terminal boundaries."""
+"""Tui mode behavior through nonspawning Host and InteractiveProcess boundaries."""
 
 import errno
 import fcntl
@@ -16,8 +16,8 @@ import threading
 import time
 from unittest import mock
 
-from agent_pm.session.adapters.claude import ClaudeAdapter
-from agent_pm.session.adapters.claude.tui import ClaudeTui
+from agent_pm.session.clients.claude import ClaudeClient
+from agent_pm.session.clients.claude.tui import ClaudeTui
 from agent_pm.session.engine.records import RunLog
 from agent_pm.session.engine.types import (
     Access,
@@ -40,14 +40,14 @@ from agent_pm.session.engine.types import (
     Spec,
     TurnEnd,
 )
-from agent_pm.session.hosts.base import HostProcess, Terminal
+from agent_pm.session.hosts.base import InteractiveProcess, Process
 from agent_pm.session.hosts.pty import PtyHost
 from agent_pm.session.hosts.pty import state as pty_state
 from agent_pm.session.hosts.tmux.types import TuiError
 from agent_pm.session.runtimes import tui, tui_hook
 from agent_pm.utils import StatusState, inode_lock
 
-from session.tests import fake_adapter
+from session.tests import fake_client
 from session.tests.case import PLUGIN_BIN, Case
 from session.tests.fakes.terminal import MemoryHost, ScreenHost
 from session.tests.tmux_host_support import Base as TmuxBase
@@ -82,7 +82,7 @@ class Clock:
             self.actions.pop(0)[1]()
 
 
-class ScanTui(fake_adapter.FakeTui):
+class ScanTui(fake_client.FakeTui):
     """The fake Tui launching /bin/run with its hook (other Launch fields: `launched`), with two
     dialogs and a usage-limit message `LIMIT <epoch>`; activity is the payload's tool, the blocked
     reason its why; each screen limit() sees is kept.
@@ -90,8 +90,8 @@ class ScanTui(fake_adapter.FakeTui):
 
     dialogs = ("Trust  this\nfolder?", "Sign in")
 
-    def __init__(self, adapter):
-        super().__init__(adapter)
+    def __init__(self, client):
+        super().__init__(client)
         self.screens, self.launched = [], {}
 
     def launch(self, spec, hook):
@@ -109,8 +109,8 @@ class ScanTui(fake_adapter.FakeTui):
         return payload.get("why", "")
 
 
-class TuiAdapter(fake_adapter.FakeAdapter):
-    """The fake Adapter whose tui() is always its one `run`, a ScanTui unless replaced."""
+class TuiClient(fake_client.FakeClient):
+    """The fake Client whose tui() is always its one `run`, a ScanTui unless replaced."""
 
     def __init__(self, config):
         super().__init__(config)
@@ -120,23 +120,23 @@ class TuiAdapter(fake_adapter.FakeAdapter):
         return self.run
 
 
-class IdentityAdapter(fake_adapter.FakeAdapter):
+class IdentityClient(fake_client.FakeClient):
     identity_env = ("INNER_ID",)
 
 
 class Restored(ScanTui):
-    """A ScanTui logging its restore and hook_events calls in its adapter's `calls`."""
+    """A ScanTui logging its restore and hook_events calls in its owner's `calls`."""
 
     def restore(self, spec, state):
-        self.adapter.calls.append(("restore", spec, dict(state)))
+        self.owner.calls.append(("restore", spec, dict(state)))
 
     def hook_events(self, label, payload):
-        self.adapter.calls.append(("hook_events", label))
+        self.owner.calls.append(("hook_events", label))
         return super().hook_events(label, payload)
 
 
-class FreshAdapter(fake_adapter.FakeAdapter):
-    """The fake Adapter whose tui() is a new Restored each call, kept in `made`."""
+class FreshClient(fake_client.FakeClient):
+    """The fake Client whose tui() is a new Restored each call, kept in `made`."""
 
     def __init__(self, config):
         super().__init__(config)
@@ -165,16 +165,16 @@ class Base(Case):
         ):
             patch.start()
             self.addCleanup(patch.stop)
-        self.adapter = TuiAdapter({"tui": True})
-        self.run, self.recorded = self.adapter.run, []
+        self.client = TuiClient({"tui": True})
+        self.run, self.recorded = self.client.run, []
 
     def start(self, run=None, record=None, **fields) -> tui.TuiRuntime:
-        """A TuiRuntime started with self.adapter (its tui `run` if given) on Spec(workdir self.tmp,
+        """A TuiRuntime started with self.client (its tui `run` if given) on Spec(workdir self.tmp,
         name NAME, client fake, sid SID, events self.events, **fields), its Prepared in
         self.prepared; its session line given to record, else kept in self.recorded.
         """
         if run is not None:
-            self.adapter.run = run
+            self.client.run = run
         spec = Spec(
             **{
                 "workdir": self.tmp,
@@ -188,7 +188,7 @@ class Base(Case):
         )
         mode = tui.TuiRuntime.start(
             spec,
-            self.adapter,
+            self.client,
             registry=self.session_cls._config().registry,
             record=record or self.recorded.append,
             host=self.host,
@@ -255,8 +255,8 @@ class Base(Case):
 class Observing(ScanTui):
     """A ScanTui whose observe() hands out its `records` once."""
 
-    def __init__(self, adapter):
-        super().__init__(adapter)
+    def __init__(self, client):
+        super().__init__(client)
         self.records = []
 
     def observe(self):
@@ -269,9 +269,9 @@ class ClaudeScreens(ScanTui):
 
     dialogs = ClaudeTui.dialogs
 
-    def __init__(self, adapter):
-        super().__init__(adapter)
-        self.claude = ClaudeAdapter({}).tui()
+    def __init__(self, client):
+        super().__init__(client)
+        self.claude = ClaudeClient({}).tui()
 
     def limit(self, screen):
         return self.claude.limit(screen)
@@ -292,15 +292,15 @@ class AttachTest(Base):
 
     def test_a_nonterminal_host_process_cannot_be_attached_as_tui(self):
         state = self.state()
-        process = mock.create_autospec(HostProcess, instance=True)
+        process = mock.create_autospec(Process, instance=True)
         process.record.return_value = self.process.record()
         self.host.processes[NAME] = process
         with self.assertRaisesRegex(SessionError, "session w1 has no terminal"):
-            tui.TuiRuntime.attach(NAME, state, self.adapter, host=self.host)
+            tui.TuiRuntime.attach(NAME, state, self.client, host=self.host)
         process.close.assert_not_called()
 
-    def attach(self, *lines, adapter=None) -> tui.TuiRuntime:
-        """TuiRuntime.attach of self.adapter (else `adapter`) on a session dir with session.json and
+    def attach(self, *lines, client=None) -> tui.TuiRuntime:
+        """TuiRuntime.attach of self.client (else `client`) on a session dir with session.json and
         hooks.jsonl's lines, the host's calls cleared first.
         """
         self.write_state(self.state())
@@ -309,7 +309,7 @@ class AttachTest(Base):
         return tui.TuiRuntime.attach(
             NAME,
             tui.TuiRuntime.snapshot(NAME),
-            adapter or self.adapter,
+            client or self.client,
             host=self.host,
         )
 
@@ -343,7 +343,7 @@ class AttachTest(Base):
         self.assertEqual(mode.poll(0), ([Activity("next"), TurnEnd("r3", 0)], False))
 
     def test_client_records_come_before_the_hook_events_attached_and_live(self):
-        run = self.adapter.run = Observing(self.adapter)
+        run = self.client.run = Observing(self.client)
         run.records = [Reply("before")]
         mode = self.attach(record("stop", last_message="r1"))
         self.assertEqual(mode.replayed, (Reply("before"), TurnEnd("r1", 0)))
@@ -373,7 +373,7 @@ class AttachTest(Base):
 
     def test_a_session_json_without_a_valid_identity_is_no_tui_session_before_host_access(self):
         with self.assertRaises(SessionError) as caught:
-            tui.TuiRuntime.attach(NAME, self.state(cwd=""), self.adapter, host=self.host)
+            tui.TuiRuntime.attach(NAME, self.state(cwd=""), self.client, host=self.host)
         path = os.path.join(self.dir, "session.json")
         self.assertEqual(str(caught.exception), f"no tui session w1: {path}: bad cwd")
         self.assertEqual(self.host.calls.mock_calls, [])
@@ -398,7 +398,7 @@ class AttachTest(Base):
                 for call in (
                     lambda: tui.TuiRuntime.snapshot(NAME),
                     lambda *, field=field, value=value: tui.TuiRuntime.attach(
-                        NAME, self.state(**{field: value}), self.adapter, host=self.host
+                        NAME, self.state(**{field: value}), self.client, host=self.host
                     ),
                 ):
                     with self.assertRaises(SessionError) as caught:
@@ -426,24 +426,24 @@ class AttachTest(Base):
         live = self.started()
         self.append(*lines)
         polled, _ = live.poll(0)
-        fresh = FreshAdapter({"tui": True})
+        fresh = FreshClient({"tui": True})
         attached = tui.TuiRuntime.attach(NAME, tui.TuiRuntime.snapshot(NAME), fresh, host=self.host)
         self.assertEqual(attached.replayed, tuple(polled))
         self.assertEqual(len(polled), 6)
 
-    def test_a_fresh_tui_is_restored_once_with_its_adapter_state_before_its_records(self):
-        restored = {"module": "fake_adapter_hook", "state": {"store": "/s"}, "roots": []}
-        for extra, kept in (({"adapter_hook": restored}, {"store": "/s"}), ({}, {})):
+    def test_a_fresh_tui_is_restored_once_with_its_client_state_before_its_records(self):
+        restored = {"module": "fake_client_hook", "state": {"store": "/s"}, "roots": []}
+        for extra, kept in (({"client_hook": restored}, {"store": "/s"}), ({}, {})):
             with self.subTest(extra=extra):
-                adapter = FreshAdapter({"tui": True})
+                client = FreshClient({"tui": True})
                 self.write_state(self.state(**extra))
                 self.append(record("tool"), record("stop"))
                 mode = tui.TuiRuntime.attach(
-                    NAME, tui.TuiRuntime.snapshot(NAME), adapter, host=self.host
+                    NAME, tui.TuiRuntime.snapshot(NAME), client, host=self.host
                 )
-                self.assertEqual(adapter.made, [mode.run])
+                self.assertEqual(client.made, [mode.run])
                 self.assertEqual(
-                    adapter.calls,
+                    client.calls,
                     [
                         ("restore", mode.prepared.spec, kept),
                         ("hook_events", "tool"),
@@ -457,12 +457,12 @@ class AttachTest(Base):
             def restore(self, spec, state):
                 raise ConfigError("no recovery state")
 
-        self.adapter.run = Unrestorable(self.adapter)
+        self.client.run = Unrestorable(self.client)
         with self.assertRaises(SessionError) as caught:
             self.attach(record("tool"))
         self.assertEqual(str(caught.exception), "no tui session w1: no recovery state")
         self.assertEqual(self.host.calls.mock_calls, [mock.call.list(None), mock.call.attach(NAME)])
-        self.adapter.run = None
+        self.client.run = None
         with self.assertRaises(SessionError) as caught:
             self.attach()
         self.assertEqual(str(caught.exception), "no tui session w1: client 'fake' has no tui mode")
@@ -520,13 +520,13 @@ class AttachTest(Base):
 
 
 class StartTest(Base):
-    def test_failed_adapter_commit_removes_its_tui_state_without_launching(self):
+    def test_failed_client_commit_removes_its_tui_state_without_launching(self):
         class Conflict(ScanTui):
             def commit(self):
                 raise ConfigError("commit conflict")
 
         with self.assertRaisesRegex(ConfigError, "commit conflict"):
-            self.start(run=Conflict(self.adapter))
+            self.start(run=Conflict(self.client))
         self.assertNoSessionDir()
         self.assertEqual(self.recorded, [])
         self.host.calls.terminal.assert_not_called()
@@ -550,7 +550,7 @@ class StartTest(Base):
     def test_display_and_private_identity_are_separate_from_the_host_receipt(self):
         mode = tui.TuiRuntime.start(
             Spec(workdir=self.tmp, access=Access(cwd=self.tmp), name=NAME, client="fake", sid=SID),
-            self.adapter,
+            self.client,
             registry=self.session_cls._config().registry,
             record=self.recorded.append,
             host=self.host,
@@ -641,10 +641,10 @@ class StartTest(Base):
         self.start(access=Access(cwd="/declared/root/child"))
         self.host.calls.terminal.assert_called_once()
 
-    def test_its_child_env_drops_adapter_identities_then_takes_the_launch_env(self):
-        self.session_dependencies = {"class_loader": lambda _path, _base: IdentityAdapter}
+    def test_its_child_env_drops_client_identities_then_takes_the_launch_env(self):
+        self.session_dependencies = {"class_loader": lambda _path, _base: IdentityClient}
         self.configure_session(
-            {"inner": {"implementation": "agent_pm.session.adapters.inner:InnerAdapter"}}
+            {"inner": {"implementation": "agent_pm.session.clients.inner:InnerClient"}}
         )
         self.run.launched = {"env": {"LAUNCH_SET": "1"}, "unset": ("LAUNCH_DROP",)}
         with mock.patch.dict(
@@ -711,14 +711,14 @@ class StartTest(Base):
         self.nothing_hosted()
 
     def test_an_unsupported_tui_mode_is_refused_before_anything(self):
-        self.adapter.run = None
+        self.client.run = None
         with self.assertRaisesRegex(ConfigError, "client 'fake' does not support tui mode"):
             self.start()
         self.assertEqual(self.host.calls.mock_calls, [])
         self.nothing_hosted()
 
     def test_session_selection_flags_are_refused_before_launch(self):
-        self.adapter.forbidden_selection = ("--resume",)
+        self.client.forbidden_selection = ("--resume",)
         with self.assertRaises(ConfigError) as caught:
             self.start(flags=("--resume", SID))
         self.assertEqual(str(caught.exception), "--resume: picks the session; use sid= or resume=")
@@ -1105,7 +1105,7 @@ class SnapshotTest(Base):
 
 
 class BoundTest(Base):
-    """A mode keeps its Terminal generation when the Host reuses a name."""
+    """A mode keeps its InteractiveProcess generation when the Host reuses a name."""
 
     def test_another_terminal_under_the_name_ends_it_at_once_unscanned_unmarked_and_unread(self):
         for code in (None, 3):
@@ -1224,7 +1224,7 @@ class BoundTest(Base):
 
 
 class SwapTest(Base):
-    """Operations on a captured Terminal never reach its replacement."""
+    """Operations on a captured InteractiveProcess never reach its replacement."""
 
     def test_send_never_types_into_the_replacement_terminal(self):
         mode = self.started()
@@ -1281,7 +1281,7 @@ class SwapTest(Base):
 
 
 class SendScreenTest(Base):
-    def test_a_nondisplayable_selected_host_runs_without_screen_scanning(self):
+    def test_a_nonshowable_selected_host_runs_without_screen_scanning(self):
         self.host = MemoryHost("selected")
         mode = self.started()
         self.assertIs(mode.host, self.host)
@@ -1297,7 +1297,7 @@ class SendScreenTest(Base):
             mode.screen()
         self.assertNotIn("screen", [call[0] for call in self.host.calls.mock_calls])
 
-    def test_send_preserves_the_adapter_actions_at_the_terminal_boundary(self):
+    def test_send_preserves_the_client_actions_at_the_terminal_boundary(self):
         mode = self.started()
         mode.send("hi\nthere")
         self.assertEqual(
@@ -1305,7 +1305,7 @@ class SendScreenTest(Base):
             [mock.call(Paste("hi\nthere")), mock.call(Key("Enter"))],
         )
         mode._terminal.calls.send.reset_mock()
-        mode.run = Keys(self.run.adapter)
+        mode.run = Keys(self.run.client)
         mode.send("a")
         self.assertEqual(
             mode._terminal.calls.send.call_args_list,
@@ -1341,7 +1341,7 @@ class SendScreenTest(Base):
                     call()
                 method.side_effect = None
 
-    def test_screen_uses_the_selected_displayable_host(self):
+    def test_screen_uses_the_selected_showable_host(self):
         mode = self.started()
         self.host.calls.screen.return_value = "a\nb"
         self.assertEqual((mode.screen(), mode.screen(5)), ("a\nb", "a\nb"))
@@ -1354,7 +1354,7 @@ class SendScreenTest(Base):
 class CloseStopTest(Base):
     def test_close_accepts_a_nonterminal_host_process_and_removes_mode_state(self):
         self.write_state(self.state())
-        process = mock.create_autospec(HostProcess, instance=True)
+        process = mock.create_autospec(Process, instance=True)
         self.host.processes[NAME] = process
         tui.TuiStore.attach(NAME, host=self.host).close()
         process.close.assert_called_once_with()
@@ -1383,7 +1383,7 @@ class CloseStopTest(Base):
         self.assertNoSessionDir()
 
     def test_close_of_a_host_terminal_without_its_dir_closes_it(self):
-        terminal = mock.create_autospec(Terminal, instance=True)
+        terminal = mock.create_autospec(InteractiveProcess, instance=True)
         self.host.processes[NAME] = terminal
         tui.TuiStore.attach(NAME, host=self.host).close()
         terminal.close.assert_called_once_with()
@@ -1575,7 +1575,7 @@ class Opening(ScanTui):
 
 class OpeningTest(Base):
     def opened(self) -> tui.TuiRuntime:
-        self.adapter.run = Opening(self.adapter)
+        self.client.run = Opening(self.client)
         mode = self.started()
         self.sent_at = []
         mode._terminal.calls.send.side_effect = lambda _action: self.sent_at.append(self.clock.now)
@@ -1650,7 +1650,7 @@ class OpeningTest(Base):
     def test_attached_never_sends(self):
         mode = self.opened()
         attached = tui.TuiRuntime.attach(
-            NAME, tui.TuiRuntime.snapshot(NAME), self.adapter, host=self.host
+            NAME, tui.TuiRuntime.snapshot(NAME), self.client, host=self.host
         )
         self.assertIsNone(attached.opening_pending)
         self.append(record("ready"))
@@ -1784,7 +1784,7 @@ class ScanTest(Base):
         ):
             with self.subTest(screens=screens):
                 self.host.processes.clear()
-                mode = self.start(run=ClaudeScreens(self.adapter))
+                mode = self.start(run=ClaudeScreens(self.client))
                 self.host.calls.reset_mock()
                 self.assertEqual(self.scans(mode, *screens), expected)
 
@@ -1906,7 +1906,7 @@ class PrepareTest(Base):
                 "odd": "other",
             }
 
-        self.start(run=Labels(self.adapter), events=None)
+        self.start(run=Labels(self.client), events=None)
         self.assertEqual(
             tui.TuiRuntime.snapshot(NAME),
             self.state(
@@ -1960,8 +1960,8 @@ class PrepareTest(Base):
                 self.subTest(bad),
                 self.assertRaisesRegex(SessionError, f"\\Atui session w1: bad {bad}"),
             ):
-                self.adapter.run = run(self.adapter)
-                self.adapter.run.launched = launched
+                self.client.run = run(self.client)
+                self.client.run.launched = launched
                 self.start(**fields)
         self.assertEqual(
             [c for c in self.host.calls.mock_calls if c[0] not in ("hook_callback", "validate")],
@@ -2105,14 +2105,14 @@ class TmuxErrorTest(TmuxBase):
             def launch(self, spec, hook):
                 return Launch((sys.executable,))
 
-        adapter = TuiAdapter({"tui": True})
-        adapter.run = Launchable(adapter)
+        client = TuiClient({"tui": True})
+        client.run = Launchable(client)
         with self.assertRaises(SessionError) as caught:
             tui.TuiRuntime.start(
                 Spec(
                     workdir=workdir, access=Access(cwd=workdir), name=NAME, client="fake", sid=SID
                 ),
-                adapter,
+                client,
                 registry=self.session_cls._config().registry,
                 record=lambda _info: None,
                 host=self.host,

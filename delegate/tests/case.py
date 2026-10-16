@@ -1,4 +1,4 @@
-"""Case, every delegate test's base; the committed [adapters] (committed); child helpers (PY,
+"""Case, every delegate test's base; the committed [clients] (committed); child helpers (PY,
 child_env); this tree's import roots (REPO, SRC, ROOTS, PYTHONPATH).
 """
 
@@ -24,16 +24,16 @@ PY = (sys.executable, "-P", "-S")
 
 
 def committed(local: str = os.devnull) -> dict:
-    """The session config's [adapters], `local` merged (default none), even under
+    """The session config's [clients], `local` merged (default none), even under
     Case.configure_session.
     """
-    return read_config(local=local)["adapters"]
+    return read_config(local=local)["clients"]
 
 
 def packaged(**dependencies) -> type[Session]:
     """The session config's session class."""
     config = read_config()
-    return configured(config["adapters"], config["hosts"]["tmux"], **dependencies)
+    return configured(config["clients"], config["hosts"]["tmux"], **dependencies)
 
 
 class Case(unittest.TestCase):
@@ -61,8 +61,8 @@ class Case(unittest.TestCase):
             self.configure_session({})
             return super().run(result)
 
-    def configure_session(self, adapters, tmux=None) -> None:
-        self.session_cls = configured(adapters, tmux, **getattr(self, "session_dependencies", {}))
+    def configure_session(self, clients, tmux=None) -> None:
+        self.session_cls = configured(clients, tmux, **getattr(self, "session_dependencies", {}))
         self.driver = FakeDriver(self.session_cls)
 
 

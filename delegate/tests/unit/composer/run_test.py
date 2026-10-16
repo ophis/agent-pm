@@ -620,7 +620,7 @@ class OwnedKeys(Fake):
         self.configure(
             "surprise = 1\n"
             + RUN_CONFIG
-            + '\n[adapters.x]\nimplementation = "agent_pm.session.adapters.x:XAdapter"\nmodel = "m"\n'
+            + '\n[clients.x]\nimplementation = "agent_pm.session.clients.x:XClient"\nmodel = "m"\n'
         )
         self.assertEqual(self.resolved().client, "a")
 

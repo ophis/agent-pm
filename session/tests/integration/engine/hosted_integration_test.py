@@ -7,8 +7,8 @@ import unittest
 import uuid
 from unittest import mock
 
-from agent_pm.session import NotDisplayable
-from agent_pm.session.adapters.base import Adapter
+from agent_pm.session import NotShowable
+from agent_pm.session.clients.base import Client
 from agent_pm.session.engine.hosted_session import HostedSession
 from agent_pm.session.engine.types import (
     Access,
@@ -28,7 +28,7 @@ from session.tests.hosted_support import (
     PYTHONPATH,
     Base,
     EnvBase,
-    ProbeAdapter,
+    ProbeClient,
     TuiBase,
 )
 
@@ -88,7 +88,7 @@ class SessionTest(Base):
             session.session_status(), SessionStatus("yes", 1.5, f"probe s1 {self.workdir}")
         )
         with mock.patch.object(
-            ProbeAdapter, "session_status", side_effect=PermissionError(13, "denied")
+            ProbeClient, "session_status", side_effect=PermissionError(13, "denied")
         ):
             self.assertEqual(session.session_status(), SessionStatus("unknown", None, ""))
 
@@ -117,14 +117,14 @@ class SessionTest(Base):
 
     def test_a_headless_session_cannot_display_and_has_no_record(self):
         session = self.start()
-        self.assertFalse(session.displayable)
+        self.assertFalse(session.showable)
         self.assertIsNone(session.record())
         for name, call in (
             ("show", session.show),
             ("attach_command", session.attach_command),
             ("screen", session.screen),
         ):
-            with self.subTest(name=name), self.assertRaises(NotDisplayable) as caught:
+            with self.subTest(name=name), self.assertRaises(NotShowable) as caught:
                 call()
             self.assertEqual(str(caught.exception), f"{name}: tui mode only")
         session.close()
@@ -132,12 +132,12 @@ class SessionTest(Base):
 
 
 class TuiStartTest(TuiBase):
-    def test_a_start_builds_only_its_clients_adapter_once(self):
+    def test_a_start_builds_only_its_clients_client_once(self):
         built, load = [], self.session_dependencies["class_loader"]
 
         def counted(path, base):
             found = load(path, base)
-            if base is not Adapter:
+            if base is not Client:
                 return found
 
             class Counted(found):
@@ -153,7 +153,7 @@ class TuiStartTest(TuiBase):
             with self.subTest(start=start):
                 built.clear()
                 start()
-                self.assertEqual(built, ["agent_pm.session.adapters.fake:FakeAdapter"])
+                self.assertEqual(built, ["agent_pm.session.clients.fake:FakeClient"])
 
 
 class SessionEnvTest(EnvBase):
@@ -172,7 +172,7 @@ class ChecksTest(Base):
             with self.subTest(resume=resume):
                 self.assertEqual(self.start(spec=self.spec(sid="s1"), resume=resume).sid, "s1")
 
-    def test_headless_flags_and_env_reach_the_adapter_and_child(self):
+    def test_headless_flags_and_env_reach_the_client_and_child(self):
         LAUNCHED.clear()
         spec = self.spec(flags=("--custom", "value"), env={"FAKE_ENV": "spec"})
         session, _ = self.run_once(client="env", spec=spec)

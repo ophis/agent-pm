@@ -1,6 +1,6 @@
 """A run planned and executed in process over
-session/tests/integration/adapters/claude/fake_claude.py (on PATH as `claude`, the session config's
-Adapter table), HOME and CLAUDE_CONFIG_DIR temp: the callback order over a real process (FR-17), the
+session/tests/integration/clients/claude/fake_claude.py (on PATH as `claude`, the session config's
+Client table), HOME and CLAUDE_CONFIG_DIR temp: the callback order over a real process (FR-17), the
 fix resume (FR-21), a usage limit (FR-58).
 """
 
@@ -22,7 +22,7 @@ from delegate.tests.case import Case, packaged
 from delegate.tests.integration.cli import DONE, RESETS, SID, UNSAVED, UNSAVED_ERROR
 from delegate.tests.replies import block, mark, option, prompt, running
 from delegate.tests.runner import executed
-from session.tests.integration.adapters.claude import fake_claude
+from session.tests.integration.clients.claude import fake_claude
 
 
 class Base(Case):

@@ -80,14 +80,14 @@ class Queries(Integration):
             (2, "", f"delegate: name {NAME} given more than once\n"),
         )
 
-    def test_close_twice_succeeds_and_nothing_is_displayable(self):
+    def test_close_twice_succeeds_and_nothing_is_showable(self):
         self.assertEqual(self.query("close", self.work), (0, "", ""))
         self.assertEqual(self.query("close", self.work), (0, "", ""))
         self.assertEqual(
             self.query("show", self.work),
-            (1, "", f"delegate: {self.work}: delegate has no live displayable session\n"),
+            (1, "", f"delegate: {self.work}: delegate has no live showable session\n"),
         )
         self.assertEqual(
             self.query("attach-command", self.work),
-            (1, "", f"delegate: {self.work}: no displayable session\n"),
+            (1, "", f"delegate: {self.work}: no showable session\n"),
         )

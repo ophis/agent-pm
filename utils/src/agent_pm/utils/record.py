@@ -1,7 +1,7 @@
 """Record v1, one JSON line naming a started thing by its outermost starter (ctl queries it, resume
 resumes it; only a LayerCommand, in the exact form that command prints, so a forged line runs
 nothing else), and Status, the line `<ctl> status` prints per Record (state: a StatusState word;
-hidden: its view closed by hide; cwd, optional: where the run works). Display is opaque: only the
+hidden: hide closed what show opened; cwd, optional: where the run works). Display is opaque: only the
 session layer interprets it. answer_keys is the one batch rule of every ctl's queries. json_records yields JSON objects from text or byte lines.
 """
 

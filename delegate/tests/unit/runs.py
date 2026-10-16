@@ -53,7 +53,7 @@ class FakeHandle:
     Delegate Driver's stand-in.
     """
 
-    displayable = True
+    showable = True
     show_fail: Exception | None = None
 
     def __init__(self, events, fail=None, stop_fail=None):

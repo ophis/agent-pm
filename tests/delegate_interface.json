@@ -47,7 +47,7 @@
  "agent_pm.delegate.Instruction": "class(builtins.object)(path:POSITIONAL_OR_KEYWORD)",
  "agent_pm.delegate.InvalidOutcome": "class(builtins.Exception)(?)",
  "agent_pm.delegate.Limit": "class(builtins.object)(resets_at:POSITIONAL_OR_KEYWORD)",
- "agent_pm.delegate.NotDisplayable": "class(agent_pm.session.engine.types.SessionError)(?)",
+ "agent_pm.delegate.NotShowable": "class(agent_pm.session.engine.types.SessionError)(?)",
  "agent_pm.delegate.Outcome": "class(builtins.object)(status:POSITIONAL_OR_KEYWORD, title:POSITIONAL_OR_KEYWORD, summary:POSITIONAL_OR_KEYWORD, questions:POSITIONAL_OR_KEYWORD=_HAS_DEFAULT_FACTORY_CLASS, url:POSITIONAL_OR_KEYWORD='', files:POSITIONAL_OR_KEYWORD=_HAS_DEFAULT_FACTORY_CLASS, deliverable:POSITIONAL_OR_KEYWORD='')",
  "agent_pm.delegate.Outcome.deliverable": "attribute",
  "agent_pm.delegate.Outcome.url": "attribute",

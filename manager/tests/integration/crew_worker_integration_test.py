@@ -17,13 +17,11 @@ from agent_pm.manager import State
 
 from manager.tests.live_crew import MANAGER, LiveCrew, has_pair, logged
 from session.tests import live_tmux
-from session.tests.integration.adapters.claude import fake_claude
-from session.tests.integration.adapters.codex import fake_tui
+from session.tests.integration.clients.claude import fake_claude
+from session.tests.integration.clients.codex import fake_tui
 
 PERMISSION = {"kind": "hook", "event": "PermissionRequest", "tool_name": "Edit"}
-EXTRA = (
-    '[session.adapters.ext]\nimplementation = "agent_pm.session.adapters.claude:ClaudeAdapter"\n'
-)
+EXTRA = '[session.clients.ext]\nimplementation = "agent_pm.session.clients.claude:ClaudeClient"\n'
 # A client ignoring SIGHUP and SIGTERM: logs its start (and any earlier start still running), runs
 # the fake claude with both restored, outlives it by LINGER s, logs its exit.
 LINGERING = """import json, os, signal, subprocess, sys, time

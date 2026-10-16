@@ -17,12 +17,12 @@ import threading
 from pathlib import Path
 from unittest import mock
 
-from agent_pm.session import Host, NoRecordedSession, NotDisplayable
-from agent_pm.session.adapters import common as selection
-from agent_pm.session.adapters.base import Adapter
-from agent_pm.session.adapters.claude import ClaudeAdapter
-from agent_pm.session.adapters.codex import CodexAdapter
-from agent_pm.session.adapters.codex.common import SessionStore
+from agent_pm.session import Host, NoRecordedSession, NotShowable
+from agent_pm.session.clients import common as selection
+from agent_pm.session.clients.base import Client
+from agent_pm.session.clients.claude import ClaudeClient
+from agent_pm.session.clients.codex import CodexClient
+from agent_pm.session.clients.codex.common import SessionStore
 from agent_pm.session.engine import types as engine_types
 from agent_pm.session.engine import worker
 from agent_pm.session.engine.hosted_session import HostedSession
@@ -57,7 +57,7 @@ from agent_pm.session.runtimes import tui
 from agent_pm.session.runtimes.base import Runtime
 from agent_pm.utils import Record, StatusState, load_class
 
-from session.tests import fake_adapter
+from session.tests import fake_client
 from session.tests.case import HOSTS, REPO, SPAWNS, SRC, Case
 from session.tests.fakes.host import FakeHost
 from session.tests.fakes.terminal import MemoryHost, ScreenHost
@@ -69,7 +69,7 @@ from session.tests.hosted_support import (
     Base,
     HostedEnvBase,
     HostedTuiBase,
-    ProbeAdapter,
+    ProbeClient,
     fake_tmux,
 )
 from session.tests.threads import capture_errors
@@ -84,15 +84,15 @@ def parsed(tables, default) -> Hosts:
 
 
 class ConfiguredTest(Case):
-    def test_raw_configuration_parses_hosts_and_copies_adapter_and_host_tables(self):
+    def test_raw_configuration_parses_hosts_and_copies_client_and_host_tables(self):
         own = type("Own", (HostedSession,), {})
         config = {
             "hosts": {"default": "fake", **FAKE_HOSTS},
-            "adapters": {"fake": {"implementation": "session.tests.fake_adapter:FakeAdapter"}},
+            "clients": {"fake": {"implementation": "session.tests.fake_client:FakeClient"}},
         }
         own.configure_from(config)
         config["hosts"]["default"] = "missing"
-        config["adapters"]["fake"]["implementation"] = "missing.module:Missing"
+        config["clients"]["fake"]["implementation"] = "missing.module:Missing"
         self.assertIsInstance(own.host(), FakeHost)
         self.assertIsNone(own.usage("fake"))
 
@@ -102,20 +102,20 @@ class ConfiguredTest(Case):
         own.configure_from({"hosts": None}, hosts=hosts)
         self.assertIsInstance(own.host(), FakeHost)
 
-    def test_raw_configuration_keeps_parser_and_adapter_errors(self):
+    def test_raw_configuration_keeps_parser_and_client_errors(self):
         own = type("Own", (HostedSession,), {})
         with self.assertRaises(ConfigError) as caught:
             own.configure_from({})
         self.assertEqual(str(caught.exception), "[hosts]: missing")
         with self.assertRaises(ConfigError) as caught:
-            own.configure_from({"adapters": []}, hosts=parsed(FAKE_HOSTS, "fake"))
+            own.configure_from({"clients": []}, hosts=parsed(FAKE_HOSTS, "fake"))
         self.assertEqual(
-            str(caught.exception), "adapters: want a mapping of [adapters.<name>] tables"
+            str(caught.exception), "clients: want a mapping of [clients.<name>] tables"
         )
 
     def test_each_configured_class_has_its_own_setup_and_none_changes_hosted_session(self):
-        first = HostedSession.configured(adapters={}, hosts=parsed(HOSTS, "tmux"))
-        second = HostedSession.configured(adapters={}, hosts=parsed(FAKE_HOSTS, "fake"))
+        first = HostedSession.configured(clients={}, hosts=parsed(HOSTS, "tmux"))
+        second = HostedSession.configured(clients={}, hosts=parsed(FAKE_HOSTS, "fake"))
         self.assertTrue(issubclass(first, HostedSession))
         self.assertIsNot(first, second)
         self.assertIsInstance(first.host(), TmuxHost)
@@ -126,7 +126,7 @@ class ConfiguredTest(Case):
         self.assertEqual(str(caught.exception), UNCONFIGURED)
 
     def test_a_subclass_of_a_configured_class_starts_unconfigured(self):
-        configured = HostedSession.configured(adapters={}, hosts=parsed(HOSTS, "tmux"))
+        configured = HostedSession.configured(clients={}, hosts=parsed(HOSTS, "tmux"))
         later = type("Later", (configured,), {})
         with self.assertRaises(ConfigError) as caught:
             later.host()
@@ -156,7 +156,7 @@ class ConfiguredTest(Case):
 
     def test_configure_takes_parsed_hosts_only(self):
         with self.assertRaises(ConfigError) as caught:
-            HostedSession.configured(adapters={}, hosts={**HOSTS, "default": "tmux"})
+            HostedSession.configured(clients={}, hosts={**HOSTS, "default": "tmux"})
         self.assertEqual(str(caught.exception), "hosts: want parsed Hosts (Host.parse_hosts)")
 
 
@@ -188,11 +188,11 @@ class InspectTest(Base):
         self.assertEqual(self.inspect(spec), SessionStatus("yes", 1.5, f"probe {SID} {self.dir}"))
         self.assertFalse(os.path.exists(self.log))
 
-    def test_inspection_passes_folded_transcript_and_resume_metadata_to_the_adapter(self):
+    def test_inspection_passes_folded_transcript_and_resume_metadata_to_the_client(self):
         self.configure(
             tables={
                 "history": {
-                    "implementation": "agent_pm.session.adapters.fake:InspectAdapter",
+                    "implementation": "agent_pm.session.clients.fake:InspectClient",
                     "scenario": self.scenario,
                     "log": self.log,
                 }
@@ -228,31 +228,31 @@ class InspectTest(Base):
         )
         return Spec(workdir=self.workdir, access=Access(cwd=self.workdir), client=client, sid="s1")
 
-    def test_an_adapters_driver_error_propagates_as_raised(self):
+    def test_an_clients_driver_error_propagates_as_raised(self):
         error = SessionError("inspection refused")
         spec = self.recorded()
         with (
-            mock.patch.object(ProbeAdapter, "session_status", side_effect=error),
+            mock.patch.object(ProbeClient, "session_status", side_effect=error),
             self.assertRaises(SessionError) as caught,
         ):
             self.inspect(spec)
         self.assertIs(caught.exception, error)
 
-    def test_an_os_error_from_the_adapter_is_unknown(self):
+    def test_an_os_error_from_the_client_is_unknown(self):
         spec = self.recorded()
         with mock.patch.object(
-            ProbeAdapter, "session_status", side_effect=PermissionError(13, "denied")
+            ProbeClient, "session_status", side_effect=PermissionError(13, "denied")
         ):
             self.assertEqual(self.inspect(spec), SessionStatus("unknown", None, ""))
 
-    def test_inspection_gives_the_adapter_the_specs_launch_env(self):
+    def test_inspection_gives_the_client_the_specs_launch_env(self):
         spec = dataclasses.replace(
             self.recorded(),
             access=Access(cwd=self.workdir, env={"A": "access", "B": "access"}),
             env={"B": "spec"},
         )
         with mock.patch.object(
-            ProbeAdapter,
+            ProbeClient,
             "session_status",
             autospec=True,
             return_value=SessionStatus("no", None, ""),
@@ -264,9 +264,7 @@ class InspectTest(Base):
         spec = self.recorded("nope")
         with self.assertRaises(ConfigError) as caught:
             self.inspect(spec)
-        self.assertEqual(
-            str(caught.exception), "no [adapters.nope] table in the configured adapters"
-        )
+        self.assertEqual(str(caught.exception), "no [clients.nope] table in the configured clients")
 
     def test_inspection_requires_client_and_sid(self):
         for spec, message in (
@@ -318,20 +316,20 @@ class HistoricalRecordTest(Case):
         self.configure_session(
             {
                 "claude": {
-                    "implementation": "agent_pm.session.adapters.claude:ClaudeAdapter",
+                    "implementation": "agent_pm.session.clients.claude:ClaudeClient",
                     **config,
                 }
             }
         )
-        adapter = ClaudeAdapter(config)
-        transcript = Path(adapter.common.transcript(str(self.cwd), SID))
+        client = ClaudeClient(config)
+        transcript = Path(client.common.transcript(str(self.cwd), SID))
         transcript.parent.mkdir(parents=True)
         transcript.write_text("{}\n", encoding="utf-8")
         os.utime(transcript, (100, 100))
         outside = self.root / "outside.jsonl"
         outside.write_text("{}\n", encoding="utf-8")
         os.utime(outside, (9000, 9000))
-        command = adapter.common.resume(str(self.cwd), SID)
+        command = client.common.resume(str(self.cwd), SID)
         self.forged("claude", outside, expected=SessionStatus("yes", 100.0, command))
 
     def test_codex_resume_is_built_fresh_and_a_forged_outside_transcript_is_refused(self):
@@ -339,12 +337,12 @@ class HistoricalRecordTest(Case):
         home.mkdir()
         config = {"env": {"CODEX_HOME": str(home)}}
         self.configure_session(
-            {"codex": {"implementation": "agent_pm.session.adapters.codex:CodexAdapter", **config}}
+            {"codex": {"implementation": "agent_pm.session.clients.codex:CodexClient", **config}}
         )
-        adapter = CodexAdapter(config)
+        client = CodexClient(config)
         spec = Spec(workdir=str(self.work), sid=SID, access=Access(cwd=str(self.cwd), project=True))
-        adapter.common.save(adapter.common.prepare(spec))
-        adapter.common.bind(str(self.work), SID, SID)
+        client.common.save(client.common.prepare(spec))
+        client.common.bind(str(self.work), SID, SID)
         transcript = home / "sessions" / "2026" / "10" / "11" / f"rollout-test-{SID}.jsonl"
         transcript.parent.mkdir(parents=True)
         transcript.write_text(
@@ -374,7 +372,7 @@ class HostTest(Case):
 
         tables = {"tmux": {**HOSTS["tmux"], "workers_per_column": 2}, **FAKE_HOSTS}
         configured = HostedSession.configured(
-            adapters={}, hosts=parsed(tables, "tmux"), host_factory=factory
+            clients={}, hosts=parsed(tables, "tmux"), host_factory=factory
         )
         default = configured.host()
         self.assertIs(configured.host(), default)
@@ -385,18 +383,18 @@ class HostTest(Case):
             [(TmuxHost, "tmux", {"workers_per_column": 2}), (FakeHost, "fake", {})],
         )
         self.assertEqual((default.name, default.settings), ("tmux", {"workers_per_column": 2}))
-        other = HostedSession.configured(adapters={}, hosts=parsed(tables, "tmux"))
+        other = HostedSession.configured(clients={}, hosts=parsed(tables, "tmux"))
         self.assertIsNot(other.host(), default)
 
     def test_each_built_host_gets_its_own_settings_copy(self):
         hosts = parsed({"fake": {**FAKE_HOSTS["fake"], "sizes": [1]}}, "fake")
-        first, second = (HostedSession.configured(adapters={}, hosts=hosts).host() for _ in "ab")
+        first, second = (HostedSession.configured(clients={}, hosts=hosts).host() for _ in "ab")
         first.settings["sizes"].append(2)
         self.assertEqual(second.settings, {"sizes": [1]})
         self.assertEqual(hosts.tables["fake"]["sizes"], (1,))
 
     def test_an_unknown_host_is_refused(self):
-        configured = HostedSession.configured(adapters={}, hosts=parsed(HOSTS, "tmux"))
+        configured = HostedSession.configured(clients={}, hosts=parsed(HOSTS, "tmux"))
         for name in ("nope", 5):
             with self.subTest(name=name), self.assertRaises(ConfigError) as caught:
                 configured.host(name)
@@ -404,7 +402,7 @@ class HostTest(Case):
 
     def test_an_implementation_that_is_no_host_is_refused(self):
         tables = {"x": {"implementation": "agent_pm.session.engine.types:Spec"}}
-        configured = HostedSession.configured(adapters={}, hosts=parsed(tables, "x"))
+        configured = HostedSession.configured(clients={}, hosts=parsed(tables, "x"))
         with self.assertRaises(ConfigError) as caught:
             configured.host()
         self.assertEqual(
@@ -421,26 +419,24 @@ class HostTest(Case):
             return FakeHost
 
         configured = HostedSession.configured(
-            adapters={}, hosts=parsed(HOSTS, "tmux"), class_loader=loader
+            clients={}, hosts=parsed(HOSTS, "tmux"), class_loader=loader
         )
         self.assertIsInstance(configured.host(), FakeHost)
         self.assertEqual(loaded, [("agent_pm.session.hosts.tmux:TmuxHost", Host)])
 
 
 class ClassRootsTest(Case):
-    ADAPTERS = {
-        "claude": {"implementation": "agent_pm.session.adapters.claude:ClaudeAdapter"},
-        "fake": {"implementation": "session.tests.fake_adapter:FakeAdapter"},
+    CLIENTS = {
+        "claude": {"implementation": "agent_pm.session.clients.claude:ClaudeClient"},
+        "fake": {"implementation": "session.tests.fake_client:FakeClient"},
         "broken": {"implementation": "session.tests.absent_module:Nothing"},
     }
 
     def configured(self, tables=None, **setup):
         tables = {**HOSTS, **FAKE_HOSTS} if tables is None else tables
-        return HostedSession.configured(
-            adapters=self.ADAPTERS, hosts=parsed(tables, "tmux"), **setup
-        )
+        return HostedSession.configured(clients=self.CLIENTS, hosts=parsed(tables, "tmux"), **setup)
 
-    def test_the_clients_adapter_root_then_each_configured_hosts_deduplicated(self):
+    def test_the_clients_client_root_then_each_configured_hosts_deduplicated(self):
         configured = self.configured()
         self.assertNotIn(REPO, SRC.values())
         self.assertEqual(configured.class_roots("claude"), (SRC["session"], REPO))
@@ -460,7 +456,7 @@ class ClassRootsTest(Case):
         self.assertEqual(
             loaded,
             [
-                ("session.tests.fake_adapter:FakeAdapter", Adapter),
+                ("session.tests.fake_client:FakeClient", Client),
                 ("agent_pm.session.hosts.tmux:TmuxHost", Host),
                 ("session.tests.fakes.host:FakeHost", Host),
             ],
@@ -471,9 +467,9 @@ class ClassRootsTest(Case):
         absent = "session.tests.absent_module"
         missing = f"{absent}:Nothing: cannot import {absent}: No module named '{absent}'"
         for client, tables, message in (
-            ("absent", None, "no [adapters.absent] table in the configured adapters"),
+            ("absent", None, "no [clients.absent] table in the configured clients"),
             ("Bad", None, "unsafe client name 'Bad': want a lowercase identifier"),
-            ("broken", None, f"[adapters.broken].implementation: {missing}"),
+            ("broken", None, f"[clients.broken].implementation: {missing}"),
             (
                 "fake",
                 {**HOSTS, "x": {"implementation": f"{absent}:Nothing"}},
@@ -529,7 +525,7 @@ class DisplayTest(HostedTuiBase):
         selected = TmuxHost("tmux", tmux=transport)
         given = self.session._config()
         self.session = HostedSession.configured(
-            adapters=given.registry.settings.adapters,
+            clients=given.registry.settings.clients,
             hosts=given.hosts,
             class_loader=given.class_loader,
             probe=given.probe,
@@ -556,8 +552,8 @@ class DisplayTest(HostedTuiBase):
         self.assertEqual(self.session.layout(display="/below"), "mgr/below")
         self.assertEqual(self.host.calls.mock_calls, [mock.call.layout(display="/below")])
 
-    def test_layout_without_a_displayable_default_host_is_none(self):
-        configured = HostedSession.configured(adapters={}, hosts=parsed(FAKE_HOSTS, "fake"))
+    def test_layout_without_a_showable_default_host_is_none(self):
+        configured = HostedSession.configured(clients={}, hosts=parsed(FAKE_HOSTS, "fake"))
         self.assertIsNone(configured.layout(display="/below"))
 
     def test_a_positional_display_is_refused(self):
@@ -575,12 +571,12 @@ class DisplayTest(HostedTuiBase):
 
 
 class SessionTest(Base):
-    def test_on_a_host_that_cannot_display_it_raises_not_displayable(self):
+    def test_on_a_host_that_cannot_display_it_raises_not_showable(self):
         table = {"scenario": self.scenario, "log": self.log}
         configured = HostedSession.configured(
-            adapters={
+            clients={
                 "fake": {
-                    "implementation": "agent_pm.session.adapters.fake:InProcessFakeAdapter",
+                    "implementation": "agent_pm.session.clients.fake:InProcessFakeClient",
                     **table,
                 }
             },
@@ -591,14 +587,14 @@ class SessionTest(Base):
             self.spec(client="fake", mode=Mode.IN_PROCESS, prompt="hi"), host="fake"
         )
         self.addCleanup(session.stop)
-        self.assertFalse(session.displayable)
+        self.assertFalse(session.showable)
         for name, call in (
             ("show", session.show),
             ("hide", session.hide),
             ("attach_command", session.attach_command),
             ("screen", session.screen),
         ):
-            with self.subTest(name=name), self.assertRaises(NotDisplayable) as caught:
+            with self.subTest(name=name), self.assertRaises(NotShowable) as caught:
                 call()
             self.assertEqual(str(caught.exception), "host fake cannot display")
         self.assertFalse(session.status().hidden)
@@ -608,7 +604,7 @@ class SessionTest(Base):
 class InProcessTest(Base):
     def setUp(self):
         super().setUp()
-        self.configure(implementation="agent_pm.session.adapters.fake:InProcessFakeAdapter")
+        self.configure(implementation="agent_pm.session.clients.fake:InProcessFakeClient")
 
     def run_in_process(self, **kwargs) -> tuple[HostedSession, list]:
         """An in_process session started and drained, each of SPAWNS failing meanwhile and never
@@ -660,7 +656,7 @@ class InProcessTest(Base):
         self.assertEqual(self.drain(session), [Reply("hi"), TurnEnd("done", 0), Exited(0)])
         self.assertEqual(self.logged()[0]["prompt"], "hello")
 
-    def test_flags_and_env_reach_the_in_process_adapter(self):
+    def test_flags_and_env_reach_the_in_process_client(self):
         LAUNCHED.clear()
         spec = self.spec(flags=("--custom", "v"), env={"CUSTOM": "value"})
         _, found = self.run_in_process(client="checked", spec=spec)
@@ -748,8 +744,8 @@ class InProcessTest(Base):
     def test_claude_and_codex_do_not_support_it(self):
         self.configure_session(
             {
-                "claude": {"implementation": "agent_pm.session.adapters.claude:ClaudeAdapter"},
-                "codex": {"implementation": "agent_pm.session.adapters.codex:CodexAdapter"},
+                "claude": {"implementation": "agent_pm.session.clients.claude:ClaudeClient"},
+                "codex": {"implementation": "agent_pm.session.clients.codex:CodexClient"},
             }
         )
         for client in ("claude", "codex"):
@@ -762,7 +758,7 @@ class InProcessTest(Base):
 
     def test_mode_is_validated_before_codex_launch_configuration(self):
         self.configure_session(
-            {"codex": {"implementation": "agent_pm.session.adapters.codex:CodexAdapter"}}
+            {"codex": {"implementation": "agent_pm.session.clients.codex:CodexClient"}}
         )
         spec = self.spec(client="codex", mode=Mode.IN_PROCESS, flags=("--sandbox", "invalid"))
         for call in (self.session.preflight, self.session.start):
@@ -846,7 +842,7 @@ class EventsOverARuntimeTest(Case):
         self.dir = tmp.name
         self.clock = Clock()
         self.configured = HostedSession.configured(
-            adapters={}, hosts=parsed(HOSTS, "tmux"), clock=self.clock.monotonic
+            clients={}, hosts=parsed(HOSTS, "tmux"), clock=self.clock.monotonic
         )
 
     def session(self, *script, code=0, idle_timeout=None, **kwargs) -> HostedSession:
@@ -870,7 +866,7 @@ class EventsOverARuntimeTest(Case):
             idle_timeout=idle_timeout,
             running=self.mode,
             host=self.configured.host(),
-            **{"adapter": fake_adapter.FakeAdapter({}), **kwargs},
+            **{"client": fake_client.FakeClient({}), **kwargs},
         )
 
     def events(self, session) -> list:
@@ -887,10 +883,10 @@ class EventsOverARuntimeTest(Case):
                 self.assertIs(session.opening_pending, pending)
 
     def test_binding_and_late_metadata_preserve_completion(self):
-        adapter = fake_adapter.FakeAdapter({})
+        client = fake_client.FakeClient({})
         resolver = mock.Mock(side_effect=lambda info: dataclasses.replace(info, resume="resume n1"))
-        adapter.session_metadata = resolver
-        session = self.session((0, [ClientBound("n1")], True), adapter=adapter)
+        client.session_metadata = resolver
+        session = self.session((0, [ClientBound("n1")], True), client=client)
         RunLog(self.dir).note("session", sid="s1", cwd=self.dir, project=False)
         self.assertEqual(self.events(session), [Exited(0)])
         self.assertEqual(session.info().resume, "resume n1")
@@ -905,9 +901,9 @@ class EventsOverARuntimeTest(Case):
         self.assertEqual(session.info(), previous)
 
     def test_binding_record_failure_remains_fatal(self):
-        adapter = fake_adapter.FakeAdapter({})
-        adapter.session_metadata = mock.Mock(side_effect=lambda info: info)
-        session = self.session((0, [ClientBound("n1")], True), adapter=adapter)
+        client = fake_client.FakeClient({})
+        client.session_metadata = mock.Mock(side_effect=lambda info: info)
+        session = self.session((0, [ClientBound("n1")], True), client=client)
         with (
             mock.patch("os.open", side_effect=OSError("binding failed")),
             self.assertRaisesRegex(OSError, "binding failed"),
@@ -915,7 +911,7 @@ class EventsOverARuntimeTest(Case):
             self.events(session)
         self.assertIn(("stop",), self.mode.calls)
         session.info()
-        adapter.session_metadata.assert_not_called()
+        client.session_metadata.assert_not_called()
 
     def test_a_client_binding_is_one_client_session_line_each_never_an_event(self):
         session = self.session(
@@ -932,11 +928,11 @@ class EventsOverARuntimeTest(Case):
         self.assertEqual([list(e) for e in lines], [["ts", "kind", "sid", "client_id"]] * 2)
 
     def test_metadata_resolver_cannot_replace_session_identity_or_effective_project(self):
-        adapter = fake_adapter.FakeAdapter({})
-        adapter.session_metadata = lambda info: dataclasses.replace(
+        client = fake_client.FakeClient({})
+        client.session_metadata = lambda info: dataclasses.replace(
             info, sid="other", cwd="/other", project=True, transcript="/t"
         )
-        session = self.session((0, [ClientBound("n1")], True), adapter=adapter)
+        session = self.session((0, [ClientBound("n1")], True), client=client)
         self.events(session)
         self.assertEqual(
             session.info(),
@@ -1074,7 +1070,7 @@ class UsageTest(Base):
         probe.assert_not_called()
         self.assertFalse(os.path.exists(self.probe_dir))
 
-    def test_the_probes_stdout_as_the_adapter_parses_it(self):
+    def test_the_probes_stdout_as_the_client_parses_it(self):
         found, probe = self.usage("42.5")
         self.assertEqual(found, Usage(Window(42.5, None), None))
         probe.assert_called_once_with(
@@ -1096,16 +1092,16 @@ class UsageTest(Base):
         self.assertEqual(probe.call_args.kwargs["timeout"], 120)
 
     def test_a_reading_without_windows_is_a_usage(self):
-        with mock.patch.object(ProbeAdapter, "usage", return_value=engine_types.Usage(None, None)):
+        with mock.patch.object(ProbeClient, "usage", return_value=engine_types.Usage(None, None)):
             found, probe = self.usage()
         self.assertEqual(found, Usage(None, None))
         probe.assert_called_once()
 
     def test_no_reading_is_none(self):
-        with mock.patch.object(ProbeAdapter, "usage", return_value=None):
+        with mock.patch.object(ProbeClient, "usage", return_value=None):
             self.assertIsNone(self.usage()[0])
 
-    def test_an_exception_from_the_adapters_parse_is_none(self):
+    def test_an_exception_from_the_clients_parse_is_none(self):
         for out in ("", "garbage"):
             with self.subTest(out=out):
                 self.assertIsNone(self.usage(out)[0])
@@ -1184,12 +1180,12 @@ class WritablePathsTest(HostedTuiBase):
 
 class WritableDirsTest(Base):
     def dirs(self, **kwargs):
-        return mock.patch.object(ProbeAdapter, "writable_dirs", autospec=True, **kwargs)
+        return mock.patch.object(ProbeClient, "writable_dirs", autospec=True, **kwargs)
 
     def test_the_fake_client_claims_none(self):
         self.assertEqual(self.session.writable_dirs(self.spec(client="fake")), ())
 
-    def test_the_adapters_dirs_as_a_tuple_for_the_spec_as_given(self):
+    def test_the_clients_dirs_as_a_tuple_for_the_spec_as_given(self):
         spec = self.spec(access=Access(dirs=(self.dir,), cwd=self.dir), tier=2, client="probe")
         given = (
             spec,
@@ -1206,7 +1202,7 @@ class WritableDirsTest(Base):
     def test_refuses_a_spec_without_client_or_an_unknown_client(self):
         for spec, message in (
             (self.spec(), "spec.client: required"),
-            (self.spec(client="nope"), "no [adapters.nope] table in the configured adapters"),
+            (self.spec(client="nope"), "no [clients.nope] table in the configured clients"),
         ):
             with (
                 self.subTest(message=message),
@@ -1217,7 +1213,7 @@ class WritableDirsTest(Base):
             self.assertEqual(str(caught.exception), message)
             dirs.assert_not_called()
 
-    def test_an_os_error_from_the_adapter_is_a_config_error(self):
+    def test_an_os_error_from_the_client_is_a_config_error(self):
         with (
             self.dirs(side_effect=PermissionError(13, "denied")),
             self.assertRaises(ConfigError) as caught,
@@ -1319,9 +1315,9 @@ class ListTest(HostedTuiBase):
 
 
 class TuiStartTest(HostedTuiBase):
-    def test_binds_the_adapter_session_selector_for_new_and_resumed_sessions(self):
+    def test_binds_the_client_session_selector_for_new_and_resumed_sessions(self):
         self.configure(
-            tables={"claude": {"implementation": "agent_pm.session.adapters.claude:ClaudeAdapter"}}
+            tables={"claude": {"implementation": "agent_pm.session.clients.claude:ClaudeClient"}}
         )
         for resumed, word in ((False, "--session-id"), (True, "--resume")):
             with self.subTest(resumed=resumed):
@@ -1330,7 +1326,7 @@ class TuiStartTest(HostedTuiBase):
                 self.assertEqual(tuple(argv[:3]), ("claude", word, SID))
 
     def test_effective_project_override_reaches_info_record_and_tui_state(self):
-        original = fake_adapter.FakeTui.launch
+        original = fake_client.FakeTui.launch
         for project in (True, False):
 
             def launch(run, *args, project=project, **kwargs):
@@ -1338,7 +1334,7 @@ class TuiStartTest(HostedTuiBase):
 
             with (
                 self.subTest(project=project),
-                mock.patch.object(fake_adapter.FakeTui, "launch", launch),
+                mock.patch.object(fake_client.FakeTui, "launch", launch),
             ):
                 session = self.tui(
                     name=f"project-{project}",
@@ -1397,7 +1393,7 @@ class TuiStartTest(HostedTuiBase):
     def test_alive_send_stop_and_screen_are_the_tui_modes_attach_command_its_hosts(self):
         session = self.tui(name="w1")
         terminal = self.host.processes["w1"]
-        self.assertTrue(session.displayable)
+        self.assertTrue(session.showable)
         self.host.calls.screen.return_value = "pane text"
         self.host.calls.attach_command.return_value = "terminal attach w1"
         self.assertEqual((session.alive(), session.screen(5)), (True, "pane text"))
@@ -1474,12 +1470,12 @@ class TuiStartTest(HostedTuiBase):
     def test_a_tui_store_refuses_a_bad_name_before_tmux_or_a_path(self):
         self.name_refused(lambda name: tui.TuiStore.attach(name, host=self.session.host()).close())
 
-    def test_a_session_keeps_its_adapter_and_tmux_when_its_class_is_configured_again(self):
+    def test_a_session_keeps_its_client_and_tmux_when_its_class_is_configured_again(self):
         self.configure("probe", tui=True)
         session, other = self.tui(client="probe", name="w1"), ScreenHost("other")
         terminal = self.host.processes["w1"]
         self.session.configure(
-            adapters={},
+            clients={},
             hosts=parsed(HOSTS, "tmux"),
             host_factory=lambda _kind, _name, _settings: other,
         )
@@ -1491,16 +1487,16 @@ class TuiStartTest(HostedTuiBase):
         session.close()
         terminal.calls.close.assert_called_once_with()
         self.assertFalse(os.path.lexists(os.path.join(self.root, "w1")))
-        with self.assertRaisesRegex(ConfigError, r"\[adapters\.probe\]"):
+        with self.assertRaisesRegex(ConfigError, r"\[clients\.probe\]"):
             self.tui(client="probe", name="w2")
         self.assertEqual(other.calls.mock_calls, [])
 
-    def test_a_started_sessions_status_gives_the_adapter_its_launch_env(self):
+    def test_a_started_sessions_status_gives_the_client_its_launch_env(self):
         self.configure("probe", tui=True)
         spec = self.spec(access=Access(cwd=self.workdir, env={"A": "access"}), env={"B": "spec"})
         session = self.tui(client="probe", name="w1", spec=spec)
         with mock.patch.object(
-            ProbeAdapter,
+            ProbeClient,
             "session_status",
             autospec=True,
             return_value=SessionStatus("no", None, ""),
@@ -1587,12 +1583,12 @@ class AttachTest(HostedTuiBase):
         self.assertEqual([next(events), next(events)], [TurnEnd("r1", 0), TurnEnd("", 0)])
         self.assertEqual(session.reply, "r1")
 
-    def test_attach_restores_its_one_adapters_fresh_tui_once(self):
+    def test_attach_restores_its_one_clients_fresh_tui_once(self):
         built, restored, load = [], [], self.session_dependencies["class_loader"]
 
         def counted(path, base):
             found = load(path, base)
-            if base is not Adapter:
+            if base is not Client:
                 return found
 
             class Counted(found):
@@ -1601,11 +1597,11 @@ class AttachTest(HostedTuiBase):
                     super().__init__(config)
 
                 def tui(self):
-                    adapter = self
+                    client = self
 
-                    class Restored(fake_adapter.FakeTui):
+                    class Restored(fake_client.FakeTui):
                         def restore(self, spec, state):
-                            restored.append((adapter, self, spec.name))
+                            restored.append((client, self, spec.name))
 
                     return Restored(self)
 
@@ -1625,11 +1621,11 @@ class AttachTest(HostedTuiBase):
         self.started(("tool", {"session_id": "n1"}))
         RunLog(self.workdir).note("result", outcome={"status": "done"})
 
-        def metadata(_adapter, info):
+        def metadata(_client, info):
             self.assertEqual(info.sid, SID)
             return dataclasses.replace(info, transcript="/attached", resume="resume n1")
 
-        with mock.patch.object(fake_adapter.FakeAdapter, "session_metadata", metadata):
+        with mock.patch.object(fake_client.FakeClient, "session_metadata", metadata):
             session = self.session.attach("w1")
         self.assertEqual(session.info().transcript, "/attached")
         self.assertEqual(RunLog(self.workdir).session(SID).resume, "resume n1")
@@ -1723,7 +1719,7 @@ class AttachTest(HostedTuiBase):
         self.configure(tui=False)
         for message in (
             "no tui session w1: client 'fake' has no tui mode",
-            "no tui session w1: no [adapters.fake] table in the configured adapters",
+            "no tui session w1: no [clients.fake] table in the configured clients",
         ):
             with self.subTest(message=message), self.assertRaises(SessionError) as caught:
                 self.session.attach("w1")
@@ -1742,7 +1738,7 @@ class MultipleHostsTest(HostedTuiBase):
             for name in self.hosts
         }
         self.session.configure(
-            adapters=self.session._config().registry.settings.adapters,
+            clients=self.session._config().registry.settings.clients,
             hosts=parsed(tables, "tmux"),
             class_loader=self.session_dependencies["class_loader"],
             host_factory=lambda _kind, name, _settings: self.hosts[name],
@@ -1755,7 +1751,7 @@ class MultipleHostsTest(HostedTuiBase):
         self.assertIs(self.session.host("second"), self.other)
         attached = self.session.attach("w1", host="second")
         self.assertEqual((attached.sid, attached.name), (session.sid, session.name))
-        self.assertFalse(attached.displayable)
+        self.assertFalse(attached.showable)
         with self.assertRaises(SessionError):
             self.session.attach("w1")
 
@@ -1854,7 +1850,7 @@ class MultipleHostsTest(HostedTuiBase):
         self.other.create("w2")
         setup = self.session._config()
         self.session.configure(
-            adapters=setup.registry.settings.adapters,
+            clients=setup.registry.settings.clients,
             hosts=Hosts("second", setup.hosts.tables),
             class_loader=self.session_dependencies["class_loader"],
             host_factory=lambda _kind, name, _settings: self.hosts[name],
@@ -1963,20 +1959,20 @@ class ChecksTest(Base):
                 )
 
     def test_session_selection_flags_are_refused_before_launch(self):
-        from agent_pm.session.adapters.claude import ClaudeAdapter
-        from agent_pm.session.adapters.codex import CodexAdapter
+        from agent_pm.session.clients.claude import ClaudeClient
+        from agent_pm.session.clients.codex import CodexClient
 
-        for client, adapter in (("claude", ClaudeAdapter), ("codex", CodexAdapter)):
+        for client, client_cls in (("claude", ClaudeClient), ("codex", CodexClient)):
             self.configure(
                 tables={
                     client: {
-                        "implementation": f"agent_pm.session.adapters.{client}:{adapter.__name__}"
+                        "implementation": f"agent_pm.session.clients.{client}:{client_cls.__name__}"
                     }
                 }
             )
             flags = (
-                *adapter.forbidden_selection,
-                *(f"{word}=x" for word in adapter.forbidden_selection if word.startswith("--")),
+                *client_cls.forbidden_selection,
+                *(f"{word}=x" for word in client_cls.forbidden_selection if word.startswith("--")),
             )
             for flag in flags:
                 with self.subTest(client=client, flag=flag):
@@ -1995,7 +1991,7 @@ class ChecksTest(Base):
                 selection.check_selection(flags, forbidden)
 
     def test_selection_words_used_as_option_values_are_not_selectors(self):
-        from agent_pm.session.adapters.codex import CodexAdapter
+        from agent_pm.session.clients.codex import CodexClient
 
         for flags in (
             ("--add-dir", "fork"),
@@ -2006,13 +2002,13 @@ class ChecksTest(Base):
         ):
             with self.subTest(flags=flags):
                 selection.check_selection(
-                    flags, CodexAdapter.forbidden_selection, CodexAdapter.valued_flags
+                    flags, CodexClient.forbidden_selection, CodexClient.valued_flags
                 )
         with self.assertRaisesRegex(ConfigError, "fork: picks the session"):
             selection.check_selection(
                 ("--add-dir", "safe", "fork"),
-                CodexAdapter.forbidden_selection,
-                CodexAdapter.valued_flags,
+                CodexClient.forbidden_selection,
+                CodexClient.valued_flags,
             )
 
     def test_selection_uses_declared_syntax_and_uuid_validation(self):
@@ -2035,12 +2031,12 @@ class ChecksTest(Base):
     def test_a_registry_error_passes_through(self):
         self.refused(
             ConfigError,
-            "no [adapters.nope] table in the configured adapters",
+            "no [clients.nope] table in the configured clients",
             lambda: self.start(client="nope"),
         )
         self.configure(model="m")
         self.refused(
-            ConfigError, "unknown key 'model' in FakeAdapter's config", lambda: self.start()
+            ConfigError, "unknown key 'model' in FakeClient's config", lambda: self.start()
         )
 
     def test_a_failed_session_line_propagates_before_the_start(self):

@@ -22,7 +22,7 @@ from agent_pm.delegate import (
 )
 from agent_pm.delegate.composer import RunConfig
 from agent_pm.delegate.engine.types import Layout
-from agent_pm.session import NotDisplayable, SessionStatus
+from agent_pm.session import NotShowable, SessionStatus
 from agent_pm.utils import Record, Status, save
 
 FILE = "delegate.json"
@@ -209,10 +209,10 @@ class FakeDelegate(Delegate):
         return None if found is None else Outcome(**found)
 
     def show(self):
-        raise NotDisplayable("host fake cannot display")
+        raise NotShowable("host fake cannot display")
 
     def hide(self):
-        raise NotDisplayable("host fake cannot display")
+        raise NotShowable("host fake cannot display")
 
     def attach_command(self):
         return None

@@ -14,7 +14,7 @@ TMUX_HOST = "session/src/agent_pm/session/hosts/tmux/host.py"
 TMUX_HOME = f"{SESSION_SRC}hosts/tmux/"
 
 
-ADAPTERS_HOME = f"{SESSION_SRC}adapters/registry.py"
+CLIENTS_HOME = f"{SESSION_SRC}clients/registry.py"
 
 
 STATUS_LOG_HOME = f"{SESSION_SRC}engine/status_log.py"
@@ -33,7 +33,7 @@ SESSION_INTERFACE_MODULES = ("agent_pm.session", "agent_pm.session.extension")
 
 
 SUBPACKAGES = {
-    SESSION: {"adapters", "hosts", "runtimes"},
+    SESSION: {"clients", "hosts", "runtimes"},
 }
 
 
@@ -53,7 +53,7 @@ OBJECT_EXPORTS_ALLOWED = {
 }
 
 
-STANDALONE = frozenset(f"{SESSION_SRC}{path}" for path in ("adapters/codex/common/app_server.py",))
+STANDALONE = frozenset(f"{SESSION_SRC}{path}" for path in ("clients/codex/common/app_server.py",))
 
 
 NOQA_ALLOWED = {
@@ -76,8 +76,8 @@ NOQA_ALLOWED = {
 
 
 OPTION_TUPLES_ALLOWED = {
-    (f"{SESSION_SRC}adapters/claude/tui.py", "MONTHS"): "month names, indexed by month",
-    (f"{SESSION_SRC}adapters/claude/tui.py", "WEEKDAYS"): "weekday names, indexed by weekday",
+    (f"{SESSION_SRC}clients/claude/tui.py", "MONTHS"): "month names, indexed by month",
+    (f"{SESSION_SRC}clients/claude/tui.py", "WEEKDAYS"): "weekday names, indexed by weekday",
     (
         f"{SESSION_SRC}hosts/tmux/grid.py",
         "GRID_HOOKS",

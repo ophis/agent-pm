@@ -18,7 +18,7 @@ import unittest.mock
 from pathlib import Path
 from unittest import mock
 
-from agent_pm.session import ConfigError, Displayable, Host, Launch, SessionError, Terminal
+from agent_pm.session import ConfigError, Host, InteractiveProcess, Launch, SessionError, Showable
 from agent_pm.session.engine.types import Key, KeyPress, Paste, SessionRow
 from agent_pm.session.hosts.base import SIGNALS
 from agent_pm.session.hosts.tmux import TmuxHost, transport, types
@@ -77,10 +77,10 @@ FOREIGN = ("elsewhere:1.2", "mgr/left", "a b", "mgr/right/a b", "a/b/c/d", "x:y:
 
 
 class ClassTest(Case):
-    def test_a_displayable_host_loaded_by_its_config_name(self):
+    def test_a_showable_host_loaded_by_its_config_name(self):
         cls = load_class("agent_pm.session.hosts.tmux:TmuxHost", Host)
         self.assertIs(cls, TmuxHost)
-        self.assertTrue(issubclass(cls, Displayable))
+        self.assertTrue(issubclass(cls, Showable))
         host = TmuxHost("tmux", {"status_line": True})
         self.assertEqual((host.name, host.settings), ("tmux", {"status_line": True}))
         self.assertIsInstance(host.tmux, Tmux)
@@ -425,7 +425,7 @@ class TerminalTest(Base):
         events = os.path.join(self.dir, "events")
         launch = Launch((self.tool, "a b"), cwd=self.dir, env={"PATH": "/bin", "TERM": "exact"})
         terminal = self.host.terminal("t1", launch, events=events, display="mgr/below", record=LINE)
-        self.assertIsInstance(terminal, Terminal)
+        self.assertIsInstance(terminal, InteractiveProcess)
         self.assertEqual(terminal.identity, PROCESS)
         self.tmux.start.assert_called_once_with(
             "t1",
@@ -485,7 +485,7 @@ class AttachTest(Base):
         self.assertEqual(handle.identity, "4242 $3 %9 5555")
 
 
-class DisplayableTest(Base):
+class ShowableTest(Base):
     def options(self, **found):
         recorded = self.tmux.option.side_effect
         self.tmux.option.return_value = None

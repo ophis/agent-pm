@@ -5,7 +5,7 @@ Host to display on.
 import inspect
 import unittest
 
-from agent_pm.session import Displayable, Hosts, Mode, NotDisplayable, Session, SessionError, Usage
+from agent_pm.session import Hosts, Mode, NotShowable, Session, SessionError, Showable, Usage
 from agent_pm.session.engine.types import Access, ConfigError, Exited, Reply, Spec, TurnEnd
 
 from session.tests.case import Case
@@ -104,9 +104,9 @@ class Scripted(Case):
 
     def test_it_cannot_display(self):
         session = self.start(FakeSession.scripted())
-        self.assertFalse(session.displayable)
+        self.assertFalse(session.showable)
         for method in (session.show, session.attach_command, session.screen):
-            with self.subTest(method=method.__name__), self.assertRaises(NotDisplayable):
+            with self.subTest(method=method.__name__), self.assertRaises(NotShowable):
                 method()
 
     def test_class_methods_answer_as_a_session_layer_with_one_fake_host(self):
@@ -117,13 +117,13 @@ class Scripted(Case):
         self.assertEqual(cls.display("d"), "d")
         host = cls.host()
         self.assertIsInstance(host, FakeHost)
-        self.assertNotIsInstance(host, Displayable)
+        self.assertNotIsInstance(host, Showable)
         self.assertEqual((host.name, cls.host("h").name), ("fake", "h"))
 
     def test_classes_from_scripted_share_no_state(self):
         first, second = FakeSession.scripted(Reply("a")), FakeSession.scripted()
         self.start(first, name="w1")
-        first.configure(adapters={}, hosts=Hosts("fake", {}))
+        first.configure(clients={}, hosts=Hosts("fake", {}))
         first.usage_result = Usage(None, None)
         self.assertEqual((second.started, second.live, second.script), ([], {}, ()))
         self.assertIsNone(second.configured)
@@ -136,7 +136,7 @@ class Scripted(Case):
     def test_a_fresh_class_plays_an_empty_script_on_state_no_subclass_shares(self):
         cls = FakeSession.scripted()
         session = self.start(cls, name="w1")
-        cls.configure(adapters={}, hosts=Hosts("fake", {}))
+        cls.configure(clients={}, hosts=Hosts("fake", {}))
         self.assertEqual(list(session.events()), [Exited(0)])
         self.assertIs(cls.attach("w1"), session)
         self.assertEqual([row.name for row in cls.list()], ["w1"])

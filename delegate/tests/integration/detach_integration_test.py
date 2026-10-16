@@ -1,6 +1,6 @@
 """delegate/cli.py run --detach as a subprocess on a private tmux server (session/tests/live_tmux.py),
-a control-mode client on the manager, the session config's ClaudeAdapter running
-session/tests/integration/adapters/claude/fake_claude.py: the one Record line whose sessions are live
+a control-mode client on the manager, the session config's ClaudeClient running
+session/tests/integration/clients/claude/fake_claude.py: the one Record line whose sessions are live
 on return, the harness session, the TUI beside the caller or in no pane, the harness's outcome and
 exited lines, a kill-session of the harness session, an events path tmux would misread, the events
 file and sid a launcher gives in $AGENT_PM_EVENTS and $AGENT_PM_SID, a needs_input run answered by
@@ -33,7 +33,7 @@ from delegate.tests.fakes import callback_recorder
 from delegate.tests.integration.cli import ASKING, DONE, RUN, SID
 from delegate.tests.replies import block, mark, running
 from session.tests import live_tmux
-from session.tests.integration.adapters.claude import fake_claude
+from session.tests.integration.clients.claude import fake_claude
 
 MANAGER = "mgr"
 ROLE = "dummy-tester"

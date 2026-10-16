@@ -14,7 +14,7 @@ import time
 import unittest
 from unittest import mock
 
-from agent_pm.session import SIGNALS, HostProcess
+from agent_pm.session import SIGNALS, Process
 from agent_pm.session.engine.types import Launch, SessionError
 from agent_pm.session.hosts.tmux.transport import Tmux
 from agent_pm.session.hosts.tmux.types import TuiError
@@ -43,7 +43,7 @@ class DetachTest(Case):
     def argv(self, name: str) -> list[str]:
         return [sys.executable, "-I", "-c", CHILD, os.path.join(self.dir, f"{name}.json"), self.go]
 
-    def detach(self, name: str, argv=None, *, display=None) -> HostProcess:
+    def detach(self, name: str, argv=None, *, display=None) -> Process:
         """`argv` (else the child) detached as `name` on the default Host, SIGNALS blocked."""
         launch = Launch(
             tuple(self.argv(name) if argv is None else argv),

@@ -1,4 +1,4 @@
-"""The tui Runtime: an Adapter command on a Host terminal; events from its client's own record,
+"""The tui Runtime: a Client command on a Host terminal; events from its client's own record,
 then the hook records appended to its session directory, and from its terminal.
 """
 
@@ -15,8 +15,8 @@ from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, replace
 from typing import Self
 
-from agent_pm.session.adapters.base import Adapter, Tui
-from agent_pm.session.adapters.registry import Registry
+from agent_pm.session.clients.base import Client, Tui
+from agent_pm.session.clients.registry import Registry
 from agent_pm.session.engine.types import (
     COMMAND,
     SESSION_NAME,
@@ -44,10 +44,10 @@ from agent_pm.session.engine.types import (
 )
 from agent_pm.session.hosts.base import (
     TUI_DIR,
-    Displayable,
     Host,
-    HostProcess,
-    Terminal,
+    InteractiveProcess,
+    Process,
+    Showable,
     tui_lock,
 )
 from agent_pm.session.runtimes import tui_hook
@@ -94,7 +94,7 @@ def _state(prepared: Prepared, run: Tui, host: Host, metadata: Mapping[str, str]
         **{
             key: callback.fields()
             for key, callback in (
-                ("adapter_hook", run.hook_callback()),
+                ("client_hook", run.hook_callback()),
                 ("host_hook", host.hook_callback(spec.name or "", metadata)),
             )
             if callback is not None
@@ -178,7 +178,7 @@ class TuiStore:
                 found.append((label, payload))
         return found, offset + end
 
-    def process(self) -> HostProcess | None:
+    def process(self) -> Process | None:
         if self.name not in self.host.list():
             return None
         return self.host.attach(self.name)
@@ -191,10 +191,10 @@ class TuiStore:
         self,
         state: dict,
         commit: Callable[[], None],
-        launch: Callable[[], Terminal],
+        launch: Callable[[], InteractiveProcess],
         *,
         check_name: Callable[[str], None] | None = None,
-    ) -> Terminal:
+    ) -> InteractiveProcess:
         if field := _bad(state):
             raise SessionError(f"tui session {self.name}: bad {field} {state.get(field)!r:.80}")
         with self._locked():
@@ -338,12 +338,12 @@ def _sweep(store: TuiStore) -> None:
             LOG.warning("tui sweep %s: %s", name, error)
 
 
-def _stale(store: TuiStore) -> HostProcess | None:
+def _stale(store: TuiStore) -> Process | None:
     """Tui session `store.name`'s dead process, else None; SessionError while it runs."""
     process = store.process()
     if process is not None and process.alive():
         host = store.host
-        hint = f"; {host.attach_command(store.name)}" if isinstance(host, Displayable) else ""
+        hint = f"; {host.attach_command(store.name)}" if isinstance(host, Showable) else ""
         raise SessionError(f"tui session {store.name} is running{hint}")
     return process
 
@@ -379,7 +379,7 @@ class TuiRuntime(Runtime):
         self,
         prepared: Prepared,
         run: Tui,
-        terminal: Terminal,
+        terminal: InteractiveProcess,
         store: TuiStore,
         generation: str,
         *,
@@ -401,13 +401,13 @@ class TuiRuntime(Runtime):
     def preflight(
         cls,
         spec: Spec,
-        adapter: Adapter,
+        client: Client,
         *,
         registry: Registry,
         host: Host,
         display: Display = None,
     ) -> Prepared:
-        pending = cls._prepare(spec, adapter, registry=registry, host=host, display=display)
+        pending = cls._prepare(spec, client, registry=registry, host=host, display=display)
         try:
             pending.validate(display)
             _stale(pending.store)
@@ -419,22 +419,22 @@ class TuiRuntime(Runtime):
     def _prepare(
         cls,
         spec: Spec,
-        adapter: Adapter,
+        client: Client,
         *,
         registry: Registry,
         host: Host,
         display: Display,
     ) -> _Start:
-        run = adapter.tui()
+        run = client.tui()
         if run is None:
             raise cls._unsupported(spec)
         name = cls.resolve_name(spec)
         events = host.events_path(spec.events)
-        cls._selected(spec, adapter)
+        cls._selected(spec, client)
         drop = identity_drop(registry)
         store = TuiStore.attach(name, host=host)
         spec = replace(spec, name=name, events=events)
-        spec = cls._noted(spec, adapter)
+        spec = cls._noted(spec, client)
         hook = store.hook_argv()
         prepared = cls._launched(spec, lambda s: run.launch(s, hook), drop)
         metadata = {
@@ -451,7 +451,7 @@ class TuiRuntime(Runtime):
     def start(
         cls,
         spec: Spec,
-        adapter: Adapter,
+        client: Client,
         *,
         registry: Registry,
         record: Callable[[SessionInfo], None],
@@ -459,8 +459,8 @@ class TuiRuntime(Runtime):
         display: Display = None,
         check_name: Callable[[str], None] | None = None,
     ) -> Self:
-        """Start the Adapter's terminal with its hook journal committed before execution."""
-        pending = cls._prepare(spec, adapter, registry=registry, host=host, display=display)
+        """Start the Client's terminal with its hook journal committed before execution."""
+        pending = cls._prepare(spec, client, registry=registry, host=host, display=display)
         prepared, run, store = pending.prepared, pending.run, pending.store
         try:
             pending.validate(display)
@@ -468,7 +468,7 @@ class TuiRuntime(Runtime):
         except SessionError as error:
             raise SessionError(f"cannot start tui session {store.name}: {error}") from error
 
-        def launch() -> Terminal:
+        def launch() -> InteractiveProcess:
             try:
                 return host.terminal(
                     store.name,
@@ -497,7 +497,7 @@ class TuiRuntime(Runtime):
         )
 
     @classmethod
-    def attach(cls, name: str, state: Mapping, adapter: Adapter, *, host: Host) -> Self:
+    def attach(cls, name: str, state: Mapping, client: Client, *, host: Host) -> Self:
         """Tui session `name` from its snapshot() if its terminal is tagged with its sid; a fresh Tui
         restored replays its client's record, then its hook log; events from the next record.
         """
@@ -506,13 +506,13 @@ class TuiRuntime(Runtime):
         if info is None:
             raise SessionError(f"no tui session {name}: {store.state_file}: bad {_bad(state)}")
         try:
-            run = adapter.tui()
+            run = client.tui()
         except ConfigError as e:
             raise SessionError(f"no tui session {name}: {e}") from None
         if run is None:
             raise SessionError(f"no tui session {name}: client {state['client']!r} has no tui mode")
         terminal = store.process()
-        if terminal is not None and not isinstance(terminal, Terminal):
+        if terminal is not None and not isinstance(terminal, InteractiveProcess):
             raise SessionError(f"session {name} has no terminal")
         if terminal is None or terminal.session_identity() != (info.sid, state["generation"]):
             raise SessionError(f"no tui session {name}")
@@ -526,7 +526,7 @@ class TuiRuntime(Runtime):
             events=state["events"],
         )
         try:
-            run.restore(spec, state["adapter_hook"]["state"] if "adapter_hook" in state else {})
+            run.restore(spec, state["client_hook"]["state"] if "client_hook" in state else {})
         except ConfigError as e:
             raise SessionError(f"no tui session {name}: {e}") from None
         records, offset = store.records(0)
@@ -566,7 +566,7 @@ class TuiRuntime(Runtime):
                     final = self._read()
                     self._end()
                     return final, True
-                if isinstance(self.host, Displayable):
+                if isinstance(self.host, Showable):
                     with contextlib.suppress(SessionError):
                         screen = self.host.screen(self._terminal)
                         found = self._read()
@@ -591,7 +591,7 @@ class TuiRuntime(Runtime):
             return
         if self._held or now < self._checked + POLL_SCREEN:
             return
-        if isinstance(self.host, Displayable):
+        if isinstance(self.host, Showable):
             self._checked = now
             try:
                 if self._shown(self.host.screen(self._terminal)):
@@ -698,7 +698,7 @@ class TuiRuntime(Runtime):
 
     def screen(self, lines: int | None = None) -> str:
         self._running()
-        if not isinstance(self.host, Displayable):
+        if not isinstance(self.host, Showable):
             raise SessionError(f"host {self.host.name} cannot display")
         return self.host.screen(self._terminal, lines)
 

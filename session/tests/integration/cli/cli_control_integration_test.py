@@ -56,14 +56,14 @@ def live(
     name: str,
     state: str,
     *,
-    displayable: bool = True,
+    showable: bool = True,
     cwd: str | None = None,
     hidden: bool = False,
 ) -> Status:
     """A live session's Status: its tmux attach command, none when its Host cannot display; a
     worker's cwd.
     """
-    command = attach(name) if displayable else None
+    command = attach(name) if showable else None
     return Status(
         name=name, alive=True, state=state, outcome=None, attach=command, cwd=cwd, hidden=hidden
     )
@@ -261,7 +261,7 @@ class ControlTest(ControlCase):
         self.shows("w2", f"={MANAGER}:")
 
 
-class NotDisplayableTest(ControlCase):
+class NotShowableTest(ControlCase):
     def setUp(self):
         super().setUp()
         host = FakeHost("fake", {"root": self.fake_host(default="fake")})
@@ -286,14 +286,14 @@ class NotDisplayableTest(ControlCase):
             with self.subTest(argv=argv, stdin=stdin):
                 result = self.session(*argv, stdin=stdin, module=True)
                 self.assertEqual((result.returncode, result.stdout, result.stderr), (1, "", stderr))
-        self.assertEqual(self.status("f1", module=True), [live("f1", "working", displayable=False)])
+        self.assertEqual(self.status("f1", module=True), [live("f1", "working", showable=False)])
 
     def test_status_on_a_host_that_cannot_display_gives_no_attach_command(self):
         self.assertEqual(
             self.status("f1", "nope", module=True),
-            [live("f1", "working", displayable=False), gone("nope")],
+            [live("f1", "working", showable=False), gone("nope")],
         )
         self.assertEqual(
             self.status(stdin=lines(absent("nope"), self.f1), module=True),
-            [gone("nope"), live("f1", "working", displayable=False)],
+            [gone("nope"), live("f1", "working", showable=False)],
         )

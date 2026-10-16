@@ -9,7 +9,7 @@ from __future__ import annotations
 import re
 import uuid
 
-from agent_pm.session import NotDisplayable, Session, StatusState
+from agent_pm.session import NotShowable, Session, StatusState
 from agent_pm.session.engine.types import (
     ConfigError,
     Exited,
@@ -108,24 +108,24 @@ class FakeSession(Session):
         return None
 
     @property
-    def displayable(self) -> bool:
+    def showable(self) -> bool:
         return False
 
     def show(self, *, display=None, command=None):
-        raise NotDisplayable("host none cannot display")
+        raise NotShowable("host none cannot display")
 
     def hide(self) -> None:
-        raise NotDisplayable("host none cannot display")
+        raise NotShowable("host none cannot display")
 
     def attach_command(self):
-        raise NotDisplayable("host none cannot display")
+        raise NotShowable("host none cannot display")
 
     def screen(self, lines=None):
-        raise NotDisplayable("host none cannot display")
+        raise NotShowable("host none cannot display")
 
     @classmethod
-    def configure(cls, *, adapters, hosts) -> None:
-        cls.configured = {"adapters": adapters, "hosts": hosts}
+    def configure(cls, *, clients, hosts) -> None:
+        cls.configured = {"clients": clients, "hosts": hosts}
 
     @classmethod
     def start(cls, spec, *, display=None, host=None, idle_timeout=None) -> FakeSession:

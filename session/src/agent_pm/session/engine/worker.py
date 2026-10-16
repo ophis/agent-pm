@@ -31,7 +31,7 @@ from agent_pm.session.engine.types import (
     SessionError,
     Spec,
 )
-from agent_pm.session.hosts.base import Displayable, HostProcess
+from agent_pm.session.hosts.base import Process, Showable
 from agent_pm.session.runtimes.tui import TuiStore
 from agent_pm.utils import (
     CONFIG_NAME,
@@ -78,7 +78,7 @@ def _text(value) -> bool:
 @dataclass(frozen=True)
 class WorkerState:
     """What a worker's resume replays: its client, cwd, flags, env, events, Host and display, and
-    its last launch's Host token (HostProcess.token).
+    its last launch's Host token (Process.token).
     """
 
     name: str
@@ -295,7 +295,7 @@ class Worker:
                 session.close()
             self._put_back(before)
             raise SessionError(f"{name}: {_detail(error)}; start undone") from None
-        if session.displayable:
+        if session.showable:
             self._show(session)
         self._watch(session)
         record = self.state.record()
@@ -330,7 +330,7 @@ class Worker:
                 f"{self.state.name}: old session closed, none started: {error}"
             ) from None
 
-    def replace(self, handle: HostProcess | None) -> None:
+    def replace(self, handle: Process | None) -> None:
         """Close its session by name, close `handle`, wait WAIT s, else kill and wait again."""
         name = self.state.name
         TuiStore.attach(name, host=self.session_cls.host(self.state.host)).close()
@@ -343,7 +343,7 @@ class Worker:
         if not handle.wait_exit(WAIT):
             raise SessionError(f"{name}: its old client did not exit; nothing started")
 
-    def _session(self) -> HostProcess | None:
+    def _session(self) -> Process | None:
         """Its Host's session of its name, refused if another's; None when absent."""
         host = self.session_cls.host(self.state.host)
         name = self.state.name
@@ -355,7 +355,7 @@ class Worker:
             raise SessionError(f"session {name} is not worker {self.state.sid} (its sid: {sid})")
         return handle
 
-    def _group(self) -> HostProcess | None:
+    def _group(self) -> Process | None:
         """Its last launch's process group, while it outlives its session."""
         if self.state.token is None:
             return None
@@ -486,7 +486,7 @@ class Worker:
     def _died(self, code: int) -> str:
         head = f"{self.state.name}: {self.state.client} exited {code} at once"
         host = self.session_cls.host(self.state.host)
-        if not isinstance(host, Displayable):
+        if not isinstance(host, Showable):
             return head
         try:
             screen = host.screen(self.state.name, SCREEN_LINES)

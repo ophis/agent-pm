@@ -30,11 +30,11 @@ from delegate.tests.runner import (
     PR,
     SID,
     Base,
-    UnstreamedAdapter,
+    UnstreamedClient,
     ended,
 )
 from delegate.tests.unit.runs import DONE, START, limit, said
-from session.tests.modules import adapter_loader
+from session.tests.modules import client_loader
 
 AUTOPILOT = {"status": "converged", "head": "a" * 40}
 VIEW = {"state": "OPEN", "isDraft": True, "headRefOid": "a" * 40, "statusCheckRollup": []}
@@ -63,7 +63,7 @@ class Configures(Base):
 
     def test_a_fresh_driver_without_the_client_starts_nothing(self):
         self.configure_session({})
-        with self.assertRaisesRegex(ConfigError, r"\[adapters.fake\]"):
+        with self.assertRaisesRegex(ConfigError, r"\[clients.fake\]"):
             self.go(said(START, block(DONE)))
         self.assertFalse(os.path.exists(self.log))
 
@@ -290,14 +290,14 @@ class Stops(Base):
 
     def test_a_stream_setup_failure_is_the_result(self):
         self.session_dependencies = {
-            "class_loader": adapter_loader(
-                {"agent_pm.session.adapters.fake": SimpleNamespace(FakeAdapter=UnstreamedAdapter)}
+            "class_loader": client_loader(
+                {"agent_pm.session.clients.fake": SimpleNamespace(FakeClient=UnstreamedClient)}
             )
         }
         self.configure_session(
             {
                 "fake": {
-                    "implementation": "agent_pm.session.adapters.fake:FakeAdapter",
+                    "implementation": "agent_pm.session.clients.fake:FakeClient",
                     "scenario": self.scenario,
                     "log": self.log,
                 }

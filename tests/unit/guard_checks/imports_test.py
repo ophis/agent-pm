@@ -150,13 +150,13 @@ class LiteralImports(Sample):
         root = self.tree(
             {
                 "pyproject.toml": "[[tool.importlinter.contracts]]\ntype = 'unknown'\n",
-                "session/src/agent_pm/session/adapters/probe.py": "__import__('agent_pm.utils')",
+                "session/src/agent_pm/session/clients/probe.py": "__import__('agent_pm.utils')",
             }
         )
         with self.assertRaisesRegex(ValueError, "unsupported import contract type: 'unknown'"):
             imports.literal_imports(root)
 
-    def check(self, sample, project="session", module="adapters/probe.py"):
+    def check(self, sample, project="session", module="clients/probe.py"):
         config = Path(REPO, "pyproject.toml").read_text()
         root = self.tree(
             {
@@ -180,7 +180,7 @@ class LiteralImports(Sample):
             (
                 "import importlib\nimportlib.import_module('agent_pm.utils')\nimportlib.import_module(implementation)",
                 "session",
-                "adapters/probe.py",
+                "clients/probe.py",
                 [],
             ),
             ("importlib.import_module('agent_pm.session')", "delegate", "engine/probe.py", []),
@@ -315,8 +315,8 @@ class StandaloneImports(Sample):
                 ),
             ),
             (
-                "if __package__:\n    from agent_pm.session.adapters import flags\nelse:\n    import runpy\n    import requests\nimport agent_pm.utils\n",
-                reported((2, "agent_pm.session.adapters"), (5, "requests"), (6, "agent_pm.utils")),
+                "if __package__:\n    from agent_pm.session.clients import flags\nelse:\n    import runpy\n    import requests\nimport agent_pm.utils\n",
+                reported((2, "agent_pm.session.clients"), (5, "requests"), (6, "agent_pm.utils")),
             ),
             (
                 "def load():\n    if __package__:\n        import agent_pm.utils\nif __package__ is not None:\n    import requests\nif not __package__:\n    import other\n",

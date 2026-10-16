@@ -10,7 +10,7 @@ import sys
 import unittest
 from unittest import mock
 
-from agent_pm.session.adapters.base import Adapter
+from agent_pm.session.clients.base import Client
 from agent_pm.session.engine.types import (
     Access,
     ConfigError,
@@ -22,16 +22,16 @@ from agent_pm.session.engine.types import (
 )
 
 from session.tests.case import PLUGIN_BIN
-from session.tests.headless_support import NOTHING, SID, HeadlessCase, StubAdapter, StubRun
+from session.tests.headless_support import NOTHING, SID, HeadlessCase, StubClient, StubRun
 from utils.tests.process_fixtures import DEVNULL
 
 
-class NoHeadless(StubAdapter):
+class NoHeadless(StubClient):
     def headless(self):
         return None
 
 
-class IdentityAdapter(Adapter):
+class IdentityClient(Client):
     identity_env = ("HM_ID",)
 
     def headless(self):
@@ -53,7 +53,7 @@ class FailingCommitRun(StubRun):
 
 class UnstreamedRun(StubRun):
     def events(self, lines):
-        raise self.adapter.failure
+        raise self.client.failure
 
 
 class Base(HeadlessCase):
@@ -92,7 +92,7 @@ class Start(Base):
             self.faked() as calls,
             self.assertRaisesRegex(LookupError, "^cannot persist$") as caught,
         ):
-            self.start(StubAdapter(run=FailingCommitRun))
+            self.start(StubClient(run=FailingCommitRun))
         self.assertIsNone(caught.exception.__cause__)
         self.assertEqual((self.recorded, self.mode, calls), ([], None, []))
 
@@ -104,9 +104,9 @@ class Start(Base):
             transcript="/t.jsonl",
             resume="stub --resume s1",
         )
-        self.session_dependencies = {"class_loader": lambda _path, _base: IdentityAdapter}
+        self.session_dependencies = {"class_loader": lambda _path, _base: IdentityClient}
         self.configure_session(
-            {"inner": {"implementation": "agent_pm.session.adapters.inner:InnerAdapter"}}
+            {"inner": {"implementation": "agent_pm.session.clients.inner:InnerClient"}}
         )
         with (
             mock.patch.dict(
@@ -121,7 +121,7 @@ class Start(Base):
             self.faked() as calls,
         ):
             prepared = self.start(
-                StubAdapter(launch), access=Access(cwd=self.dir, project=True), prompt="hi"
+                StubClient(launch), access=Access(cwd=self.dir, project=True), prompt="hi"
             )
             env = {k: v for k, v in os.environ.items() if k not in ("HM_UNSET", "HM_ID")}
         info = SessionInfo(
@@ -155,60 +155,60 @@ class Start(Base):
         ):
             with self.subTest(want=want), self.faked() as calls:
                 prepared = self.start(
-                    StubAdapter(Launch(NOTHING, cwd=launched)), access=Access(cwd=cwd)
+                    StubClient(Launch(NOTHING, cwd=launched)), access=Access(cwd=cwd)
                 )
                 self.assertEqual(
                     (prepared.info.cwd, calls[0][1]["cwd"], prepared.env["PWD"]), (want,) * 3
                 )
 
     def test_the_client_note_follows_the_prompt_only_with_commands(self):
-        quiet = StubAdapter()
+        quiet = StubClient()
         quiet.client_note = ""
-        for adapter, commands, prompt in (
-            (StubAdapter(), (), "hi"),
-            (StubAdapter(), ("git",), "hi\n\nSTUB NOTE"),
+        for client, commands, prompt in (
+            (StubClient(), (), "hi"),
+            (StubClient(), ("git",), "hi\n\nSTUB NOTE"),
             (quiet, ("git",), "hi"),
         ):
-            with self.subTest(commands=commands, note=adapter.client_note), self.faked():
+            with self.subTest(commands=commands, note=client.client_note), self.faked():
                 prepared = self.start(
-                    adapter, access=Access(cwd=self.dir, commands=commands), prompt="hi"
+                    client, access=Access(cwd=self.dir, commands=commands), prompt="hi"
                 )
                 self.assertEqual((prepared.spec.prompt, StubRun.specs[-1].prompt), (prompt, prompt))
 
     def test_refused_before_its_session_line_or_a_process(self):
-        for adapter, fields, error, message in (
+        for client, fields, error, message in (
             (NoHeadless(), {}, ConfigError, "client 'stub' does not support headless mode"),
-            (StubAdapter(), {"name": "w1"}, ConfigError, "name: tui mode only"),
-            (StubAdapter(), {"events": "/e"}, ConfigError, "events: tui mode only"),
-            (StubAdapter(), {"display": "mgr"}, ConfigError, "display: tui mode only"),
+            (StubClient(), {"name": "w1"}, ConfigError, "name: tui mode only"),
+            (StubClient(), {"events": "/e"}, ConfigError, "events: tui mode only"),
+            (StubClient(), {"display": "mgr"}, ConfigError, "display: tui mode only"),
             (
-                StubAdapter(),
+                StubClient(),
                 {"flags": ("--verbose", "--resume", SID)},
                 ConfigError,
                 "--resume: picks the session; use sid= or resume=",
             ),
-            (StubAdapter(), {"sid": None}, ConfigError, "sid: missing"),
-            (StubAdapter(Launch(())), {}, ConfigError, "client 'stub' gave no command"),
-            (StubAdapter(run=FailingRun), {}, LookupError, "no binding"),
+            (StubClient(), {"sid": None}, ConfigError, "sid: missing"),
+            (StubClient(Launch(())), {}, ConfigError, "client 'stub' gave no command"),
+            (StubClient(run=FailingRun), {}, LookupError, "no binding"),
         ):
             with self.subTest(message=message):
                 with (
                     mock.patch("subprocess.Popen", side_effect=AssertionError("started")) as popen,
                     self.assertRaises(error) as caught,
                 ):
-                    self.start(adapter, **fields)
+                    self.start(client, **fields)
                 self.assertEqual(str(caught.exception), message)
                 popen.assert_not_called()
         self.assertEqual((self.recorded, self.mode), ([], None))
 
-    def test_its_checks_in_order_tui_keys_selection_then_adapters(self):
+    def test_its_checks_in_order_tui_keys_selection_then_clients(self):
         self.configure_session(
-            {"broken": {"implementation": "agent_pm.session.adapters.broken:BrokenAdapter"}}
+            {"broken": {"implementation": "agent_pm.session.clients.broken:BrokenClient"}}
         )
         for fields, message in (
             ({"name": "w1", "flags": ("--resume",)}, "name: tui mode only"),
             ({"flags": ("--resume",)}, "--resume: picks the session; use sid= or resume="),
-            ({}, "[adapters.broken].implementation: "),
+            ({}, "[clients.broken].implementation: "),
         ):
             with (
                 self.subTest(fields=fields),
@@ -235,14 +235,14 @@ class Start(Base):
     def test_a_stream_setup_failure_is_a_driver_error_after_the_session_line_with_no_session(self):
         for error in (OSError("no stream"), ValueError("bad stream")):
             with self.subTest(error=error):
-                self.recorded, adapter = [], StubAdapter(run=UnstreamedRun)
-                adapter.failure = error
+                self.recorded, client = [], StubClient(run=UnstreamedRun)
+                client.failure = error
                 proc = mock.Mock(stdout=io.StringIO(), stderr=io.StringIO())
                 with (
                     mock.patch("subprocess.Popen", return_value=proc) as popen,
                     self.assertRaises(SessionError) as caught,
                 ):
-                    self.start(adapter)
+                    self.start(client)
                 self.assertEqual(str(caught.exception), f"cannot start {sys.executable}: {error}")
                 self.assertIs(caught.exception.__cause__, error)
                 popen.assert_called_once()

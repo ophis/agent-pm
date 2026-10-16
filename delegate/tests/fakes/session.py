@@ -20,7 +20,7 @@ class SessionClass(FakeSession):
     @classmethod
     def configure_from(cls, config, *, hosts=None):
         cls.configure(
-            adapters=config.get("adapters", {}),
+            clients=config.get("clients", {}),
             hosts=Host.parse_hosts(config.get("hosts")) if hosts is None else hosts,
         )
 

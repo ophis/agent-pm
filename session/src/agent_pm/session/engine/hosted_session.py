@@ -1,4 +1,4 @@
-"""HostedSession, the session layer's one concrete Session: an Adapter's client in a Mode on a
+"""HostedSession, the session layer's one concrete Session: a Client run in a Mode on a
 Host. events() yields its events, Stderr and IdleTimeout (none while Blocked) up to its Exited,
 recording `stderr` and each ClientBound as `client_session`, never yielded.
 """
@@ -16,8 +16,8 @@ from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from typing import Any, ClassVar, cast
 
-from agent_pm.session.adapters.base import Adapter
-from agent_pm.session.adapters.registry import Registry, settings
+from agent_pm.session.clients.base import Client
+from agent_pm.session.clients.registry import Registry, settings
 from agent_pm.session.engine.base import Session
 from agent_pm.session.engine.records import RunLog
 from agent_pm.session.engine.types import (
@@ -31,7 +31,7 @@ from agent_pm.session.engine.types import (
     Liveness,
     Mode,
     NoRecordedSession,
-    NotDisplayable,
+    NotShowable,
     Reply,
     Resumable,
     SessionError,
@@ -45,7 +45,7 @@ from agent_pm.session.engine.types import (
     TurnEnd,
     Usage,
 )
-from agent_pm.session.hosts.base import Displayable, Host
+from agent_pm.session.hosts.base import Host, Showable
 from agent_pm.session.runtimes import headless, in_process, tui
 from agent_pm.session.runtimes.base import Runtime, child_env
 from agent_pm.utils import (
@@ -118,13 +118,13 @@ def _session_line(workdir: str) -> Callable[[SessionInfo], None]:
     return record
 
 
-def _resumable(adapter: Callable[[], Adapter], info: SessionInfo, spec: Spec) -> SessionStatus:
+def _resumable(client: Callable[[], Client], info: SessionInfo, spec: Spec) -> SessionStatus:
     if error := sid_error(info.sid):
         raise ConfigError(error)
     if not printable_abs(info.cwd):
         raise ConfigError(f"cwd must be a printable absolute path, got {info.cwd!r:.80}")
     try:
-        return adapter().session_status(info, env={**spec.access.env, **spec.env})
+        return client().session_status(info, env={**spec.access.env, **spec.env})
     except OSError:
         return SessionStatus(Resumable.UNKNOWN, None, "")
 
@@ -166,7 +166,7 @@ class HostedSession(Session):
 
     def __init__(
         self,
-        client: str,
+        client_name: str,
         mode: Mode,
         spec: Spec,
         *,
@@ -174,11 +174,11 @@ class HostedSession(Session):
         running: Runtime,
         host: Host,
         idle_timeout: float | None = None,
-        adapter: Adapter,
+        client: Client,
     ):
-        self.sid, self.client, self.mode, self.name = info.sid, client, mode, spec.name
+        self.sid, self.client, self.mode, self.name = info.sid, client_name, mode, spec.name
         self._running, self._host, self._info, self._idle = running, host, info, idle_timeout
-        self._adapter = adapter
+        self._client = client
         self._clock = type(self)._config().clock
         self._log = RunLog(spec.workdir)
         self._reply: str | None = None
@@ -192,7 +192,7 @@ class HostedSession(Session):
     def configure(
         cls,
         *,
-        adapters: Mapping,
+        clients: Mapping,
         hosts: Hosts,
         class_loader=load_class,
         probe=probe,
@@ -202,7 +202,7 @@ class HostedSession(Session):
         """host_factory(cls, name, settings) builds a configured Host."""
         if not isinstance(hosts, Hosts):
             raise ConfigError("hosts: want parsed Hosts (Host.parse_hosts)")
-        registry = Registry(adapters=adapters, hosts=hosts, class_loader=class_loader)
+        registry = Registry(clients=clients, hosts=hosts, class_loader=class_loader)
         cls._setup = _Setup(registry, hosts, class_loader, probe, clock, host_factory or _built)
 
     @classmethod
@@ -231,14 +231,14 @@ class HostedSession(Session):
         idle_timeout: float | None = None,
     ) -> None:
         setup = cls._config()
-        client, mode = _request(spec, idle_timeout)
-        adapter = setup.registry.adapter(client)
+        client_name, mode = _request(spec, idle_timeout)
+        client = setup.registry.client(client_name)
         spec = replace(spec, sid=spec.sid or str(uuid.uuid4()))
         on = cls.host(host)
         on.validate_display(display)
         MODES[mode].preflight(
             spec,
-            adapter,
+            client,
             registry=setup.registry,
             host=on,
             display=display,
@@ -255,8 +255,8 @@ class HostedSession(Session):
     ) -> HostedSession:
         """spec.sid: its id, else a new one; display: kept by its Host."""
         setup = cls._config()
-        client, mode = _request(spec, idle_timeout)
-        adapter = setup.registry.adapter(client)
+        client_name, mode = _request(spec, idle_timeout)
+        client = setup.registry.client(client_name)
         spec = replace(spec, sid=spec.sid or str(uuid.uuid4()))
         on = cls.host(host)
         on.validate_display(display)
@@ -274,7 +274,7 @@ class HostedSession(Session):
             check_name(name)
         running = MODES[mode].start(
             spec,
-            adapter,
+            client,
             registry=setup.registry,
             record=_session_line(spec.workdir),
             host=on,
@@ -282,14 +282,14 @@ class HostedSession(Session):
             check_name=check_name,
         )
         return cls(
-            client,
+            client_name,
             mode,
             running.prepared.spec,
             info=running.prepared.info,
             running=running,
             host=on,
             idle_timeout=idle_timeout,
-            adapter=adapter,
+            client=client,
         )
 
     @classmethod
@@ -305,10 +305,10 @@ class HostedSession(Session):
         on = cls.host(host)
         state = tui.TuiRuntime.snapshot(name)
         try:
-            adapter = setup.registry.adapter(state["client"])
+            client = setup.registry.client(state["client"])
         except ConfigError as e:
             raise SessionError(f"no tui session {name}: {e}") from None
-        running = tui.TuiRuntime.attach(name, state, adapter, host=on)
+        running = tui.TuiRuntime.attach(name, state, client, host=on)
         session = cls(
             state["client"],
             Mode.TUI,
@@ -317,7 +317,7 @@ class HostedSession(Session):
             running=running,
             host=on,
             idle_timeout=idle_timeout,
-            adapter=adapter,
+            client=client,
         )
         for event in running.replayed:
             session._fold(event, replayed=True)
@@ -353,13 +353,13 @@ class HostedSession(Session):
     @classmethod
     def client_resume(cls, client: str, argv: Sequence[str]) -> int:
         """Runs `client`'s SessionInfo.resume command."""
-        return cls._config().registry.adapter(client).resume_main(argv)
+        return cls._config().registry.client(client).resume_main(argv)
 
     @classmethod
     def usage(cls, client: str) -> Usage | None:
         setup = cls._config()
-        adapter = setup.registry.adapter(client)
-        launch = adapter.usage_probe()
+        found = setup.registry.client(client)
+        launch = found.usage_probe()
         if launch is None or not launch.argv:
             return None
         cwd = launch.cwd or _probe_dir()
@@ -371,7 +371,7 @@ class HostedSession(Session):
         if output is None:
             return None
         try:
-            return adapter.usage(output)
+            return found.usage(output)
         except ValueError:
             return None
 
@@ -379,7 +379,7 @@ class HostedSession(Session):
     def layout(cls, *, display: Display = None) -> str | None:
         on = cls.host()
         on.validate_display(display)
-        return on.layout(display=display) if isinstance(on, Displayable) else None
+        return on.layout(display=display) if isinstance(on, Showable) else None
 
     @classmethod
     def writable_dirs(cls, spec: Spec) -> tuple[str, ...]:
@@ -387,14 +387,13 @@ class HostedSession(Session):
         setup = cls._config()
         if not isinstance(spec, Spec):
             raise ConfigError(f"spec: want a Spec, got {type(spec).__name__}")
-        client = spec.client
-        if client is None:
+        if spec.client is None:
             raise ConfigError("spec.client: required")
-        adapter = setup.registry.adapter(client)
+        client = setup.registry.client(spec.client)
         try:
-            return tuple(adapter.writable_dirs(spec))
+            return tuple(client.writable_dirs(spec))
         except OSError as e:
-            raise ConfigError(f"{client}'s writable dirs: {e}") from e
+            raise ConfigError(f"{spec.client}'s writable dirs: {e}") from e
 
     @classmethod
     def display(cls, value: Display = None, *, host: str | None = None) -> Display:
@@ -420,7 +419,7 @@ class HostedSession(Session):
         """Loads each class without building it; an unloadable one is a ConfigError."""
         setup = cls._config()
         loaded: list[tuple[str, type]] = [
-            (f"[adapters.{client}]", setup.registry.adapter_class(client))
+            (f"[clients.{client}]", setup.registry.client_class(client))
         ]
         loaded += [(f"[hosts.{name}]", _host_class(setup, name)[0]) for name in setup.hosts.tables]
         return tuple(dict.fromkeys(_class_root(kind, table) for table, kind in loaded))
@@ -440,7 +439,7 @@ class HostedSession(Session):
             raise SessionError(f"inspect session {sid}: {error}") from error
         if info is None:
             raise NoRecordedSession(f"no recorded session {sid} in {spec.workdir}")
-        return _resumable(lambda: setup.registry.adapter(client), info, spec)
+        return _resumable(lambda: setup.registry.client(client), info, spec)
 
     def events(self) -> Iterator[SessionEvent | Stderr | IdleTimeout]:
         last = self._clock()
@@ -546,7 +545,7 @@ class HostedSession(Session):
         if not self._bound:
             return
         try:
-            resolved = self._adapter.session_metadata(self._info)
+            resolved = self._client.session_metadata(self._info)
             info = replace(self._info, transcript=resolved.transcript, resume=resolved.resume)
         except OSError:
             return
@@ -575,15 +574,15 @@ class HostedSession(Session):
         self._running.close()
 
     def session_status(self) -> SessionStatus:
-        return _resumable(lambda: self._adapter, self.info(), self._running.prepared.spec)
+        return _resumable(lambda: self._client, self.info(), self._running.prepared.spec)
 
     def record(self) -> Record | None:
         name = self._tui()
         return None if name is None else self._host.attach(name).record()
 
     @property
-    def displayable(self) -> bool:
-        return self._tui() is not None and isinstance(self._host, Displayable)
+    def showable(self) -> bool:
+        return self._tui() is not None and isinstance(self._host, Showable)
 
     def show(self, *, display: Display = None, command: str | None = None) -> str | None:
         host, name = self._shown("show")
@@ -607,10 +606,10 @@ class HostedSession(Session):
     def _tui(self) -> str | None:
         return self.name if self.mode == Mode.TUI else None
 
-    def _shown(self, call: str) -> tuple[Displayable, str]:
-        if not isinstance(self._host, Displayable):
-            raise NotDisplayable(f"host {self._host.name} cannot display")
+    def _shown(self, call: str) -> tuple[Showable, str]:
+        if not isinstance(self._host, Showable):
+            raise NotShowable(f"host {self._host.name} cannot display")
         name = self._tui()
         if name is None:
-            raise NotDisplayable(f"{call}: tui mode only")
+            raise NotShowable(f"{call}: tui mode only")
         return self._host, name

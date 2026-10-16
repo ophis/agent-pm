@@ -18,10 +18,10 @@ from agent_pm.session.engine.types import Access, ConfigError, Exited, Launch, S
 from agent_pm.session.hosts.tmux.transport import Tmux
 from agent_pm.session.runtimes.in_process import RUN_THREAD
 
-from session.tests import fake_adapter
+from session.tests import fake_client
 from session.tests.case import Case
 from session.tests.fakes.terminal import ScreenHost
-from session.tests.modules import adapter_loader
+from session.tests.modules import client_loader
 from session.tests.threads import capture_errors
 from session.tests.tmux_fixtures import which
 
@@ -54,20 +54,20 @@ NO_PANE = "no anchor pane: not in tmux, no iTerm2 pane ($ITERM_SESSION_ID)"
 LAUNCHED: list[Spec] = []
 
 
-class QuietAdapter(fake_adapter.FakeAdapter):
+class QuietClient(fake_client.FakeClient):
     client_note = ""
 
 
-class CheckedAdapter(fake_adapter.InProcessFakeAdapter):
+class CheckedClient(fake_client.InProcessFakeClient):
     def in_process(self):
         return CheckedRun(self)
 
 
-class CheckedRun(fake_adapter.FakeInProcess):
+class CheckedRun(fake_client.FakeInProcess):
     """check: refuses tier 4, records preflight, and retains the request for execution."""
 
-    def __init__(self, adapter):
-        super().__init__(adapter)
+    def __init__(self, client):
+        super().__init__(client)
         self.failure = ConfigError("tier 4 is unmapped")
 
     def check(self, spec: Spec):
@@ -76,7 +76,7 @@ class CheckedRun(fake_adapter.FakeInProcess):
         LAUNCHED.append(spec)
         if spec.tier == 4:
             raise self.failure
-        with open(self.adapter.config["log"], "a", encoding="utf-8") as f:
+        with open(self.owner.config["log"], "a", encoding="utf-8") as f:
             f.write(
                 json.dumps(
                     {
@@ -94,8 +94,8 @@ class CheckedRun(fake_adapter.FakeInProcess):
         yield from super().run(spec)
 
 
-class ProbeAdapter(fake_adapter.FakeAdapter):
-    keys = fake_adapter.FakeAdapter.keys | {"probe"}
+class ProbeClient(fake_client.FakeClient):
+    keys = fake_client.FakeClient.keys | {"probe"}
 
     def usage_probe(self):
         return Launch(**self.config["probe"])
@@ -107,7 +107,7 @@ class ProbeAdapter(fake_adapter.FakeAdapter):
         return engine_types.SessionStatus("yes", 1.5, f"probe {info.sid} {info.cwd}")
 
 
-class InnerAdapter(fake_adapter.FakeAdapter):
+class InnerClient(fake_client.FakeClient):
     """Records requests and injects INNER_SESSION into tui children."""
 
     session_env = "INNER_SESSION"
@@ -118,7 +118,7 @@ class InnerAdapter(fake_adapter.FakeAdapter):
         return InnerTui(self)
 
 
-class InnerTui(fake_adapter.FakeTui):
+class InnerTui(fake_client.FakeTui):
     def launch(self, spec: Spec, hook):
         LAUNCHED.append(spec)
         launch = super().launch(spec, hook)
@@ -126,7 +126,7 @@ class InnerTui(fake_adapter.FakeTui):
         return dataclasses.replace(launch, env=env, unset=("LAUNCH_DROP",))
 
 
-class EnvAdapter(ProbeAdapter):
+class EnvClient(ProbeClient):
     def headless(self):
         return EnvRun(self)
 
@@ -134,36 +134,36 @@ class EnvAdapter(ProbeAdapter):
         return EnvTui(self)
 
 
-class EnvRun(fake_adapter.FakeHeadless):
+class EnvRun(fake_client.FakeHeadless):
     def launch(self, spec: Spec):
         LAUNCHED.append(spec)
         launch = super().launch(spec)
         return dataclasses.replace(launch, env={**spec.access.env, **spec.env})
 
 
-class EnvTui(fake_adapter.FakeTui):
+class EnvTui(fake_client.FakeTui):
     def launch(self, spec: Spec, hook):
         launch = super().launch(spec, hook)
         return dataclasses.replace(launch, env={**spec.access.env, **spec.env})
 
 
 def package(name, cls) -> types.ModuleType:
-    """An in-memory module agent_pm.session.adapters.<name> holding `cls`."""
-    module = types.ModuleType(f"agent_pm.session.adapters.{name}")
+    """An in-memory module agent_pm.session.clients.<name> holding `cls`."""
+    module = types.ModuleType(f"agent_pm.session.clients.{name}")
     setattr(module, cls.__name__, cls)
     return module
 
 
 PACKAGES = {
-    "fake": fake_adapter,
+    "fake": fake_client,
     **{
         name: package(name, cls)
         for name, cls in (
-            ("quiet", QuietAdapter),
-            ("probe", ProbeAdapter),
-            ("checked", CheckedAdapter),
-            ("inner", InnerAdapter),
-            ("env", EnvAdapter),
+            ("quiet", QuietClient),
+            ("probe", ProbeClient),
+            ("checked", CheckedClient),
+            ("inner", InnerClient),
+            ("env", EnvClient),
         )
     },
 }
@@ -183,14 +183,14 @@ class Base(Case):
         self.log = os.path.join(self.dir, "client.log")
         self.steps()
         self.session_dependencies = {
-            "class_loader": adapter_loader(
-                {f"agent_pm.session.adapters.{name}": module for name, module in PACKAGES.items()}
+            "class_loader": client_loader(
+                {f"agent_pm.session.clients.{name}": module for name, module in PACKAGES.items()}
             )
         }
         self.configure()
 
-    def configure_session(self, adapters, tmux=None) -> None:
-        super().configure_session(adapters, tmux)
+    def configure_session(self, clients, tmux=None) -> None:
+        super().configure_session(clients, tmux)
         self.session = self.session_cls
 
     def join_runs(self) -> None:
@@ -210,7 +210,7 @@ class Base(Case):
         tables = {
             **{
                 name: {
-                    "implementation": f"agent_pm.session.adapters.{name}:{name.capitalize()}Adapter",
+                    "implementation": f"agent_pm.session.clients.{name}:{name.capitalize()}Client",
                     "scenario": self.scenario,
                     "log": self.log,
                 }
@@ -370,9 +370,9 @@ class HostedTuiBase(TuiBase):
         }
         self.configure(tui=True)
 
-    def configure_session(self, adapters, tmux=None):
+    def configure_session(self, clients, tmux=None):
         if not getattr(self, "boundary", False):
-            super().configure_session(adapters, tmux)
+            super().configure_session(clients, tmux)
             return
         hosts = Host.parse_hosts(
             {
@@ -385,7 +385,7 @@ class HostedTuiBase(TuiBase):
         )
         chosen = self.host
         self.session_cls = self.session = HostedSession.configured(
-            adapters=adapters,
+            clients=clients,
             hosts=hosts,
             host_factory=lambda _kind, _name, _settings: chosen,
             **self.session_dependencies,

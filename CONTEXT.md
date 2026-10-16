@@ -47,19 +47,15 @@ The process that runs one detached Delegate run to its end as session `<name>-dr
 The component that assembles principles, role and input into a prompt (no task text: the agent run reads its task file) and resolves the role's run config.
 
 **Session layer**:
-The component that runs a prompt on the client and mode its caller names, through that client's adapter: it starts or resumes the session, sends messages (tui only), times inactivity, and passes events and replies up without interpreting them; the same for every client. In code: `session/src/agent_pm/session/`; its users import `agent_pm.session`, Adapters and Hosts written outside it `agent_pm.session.extension`.
+The component that runs a prompt on the client and mode its caller names, through that Client: it starts or resumes the session, sends messages (tui only), times inactivity, and passes events and replies up without interpreting them; the same for every client. In code: `session/src/agent_pm/session/`; its users import `agent_pm.session`, Clients and Hosts written outside it `agent_pm.session.extension`.
 _Avoid_: facade, runtime (a Mode's class), harness
 
 **Client**:
-The agent program a session runs (Claude Code, Codex, a test fake), named by its `[adapters.<name>]` table. In code: `Spec.client`, the run key `client`, `--client` and records' `client` field.
-_Avoid_: runtime (a Mode's class), agent (a role's run)
-
-**Adapter**:
-The code that wraps one client (Claude Code, Codex) for the session layer: its launch per mode, hooks, reply reading and message sending; everything client-specific lives in it. In code: `session/src/agent_pm/session/adapters/`.
-_Avoid_: client (what it wraps), backend, vehicle
+The agent program a session runs (Claude Code, Codex, a test fake), and the code that wraps it for the session layer: its launch per mode, hooks, reply reading and message sending; everything client-specific lives in it. Named by its `[clients.<name>]` table. In code: the ABC `Client` (`session/src/agent_pm/session/clients/`); its name: `Spec.client`, the run key `client`, `--client` and records' `client` field.
+_Avoid_: adapter, runtime (a Mode's class), agent (a role's run), backend, vehicle
 
 **Mode**:
-How the session layer hosts a client: headless (e.g. `claude -p`, on a pipe, ends when it exits), tui (its interactive command in a terminal on its Host, ends when its caller stops it) or in_process (the Adapter's run inside the caller's process, no process started, ends when the run returns). In code: `Mode` (`mode = headless/tui/in_process`), the Delegate CLI's `--mode`; its Runtime runs it.
+How the session layer hosts a client: headless (e.g. `claude -p`, on a pipe, ends when it exits), tui (its interactive command in a terminal on its Host, ends when its caller stops it) or in_process (the Client's run inside the caller's process, no process started, ends when the run returns). In code: `Mode` (`mode = headless/tui/in_process`), the Delegate CLI's `--mode`; its Runtime runs it.
 _Avoid_: runtime (the class that runs it)
 
 **Runtime**:
@@ -74,7 +70,7 @@ _Avoid_: agent run (a role's run, in a session)
 What a caller asks the session layer to run: workdir, Access, tier, effort, flags, env, the sid to resume. In code: `session/src/agent_pm/session/engine/types.py`.
 
 **Host**:
-Where the session layer runs processes by name (e.g. in tmux sessions, or each on a pty its own supervisor holds). A Displayable Host also shows them and reads their screen. In code: `session/src/agent_pm/session/hosts/`.
+Where the session layer runs processes by name (e.g. in tmux sessions, or each on a pty its own supervisor holds). A Showable Host also shows them and reads their screen. In code: `session/src/agent_pm/session/hosts/`.
 
 **Record**:
 A versioned JSON line naming a started thing, its session identity and display, with commands to control and resume it. In code: `utils/src/agent_pm/utils/record.py`.

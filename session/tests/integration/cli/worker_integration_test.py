@@ -12,7 +12,7 @@ import tempfile
 from session.tests import live_tmux
 from session.tests.case import REPO
 from session.tests.cli_support import MANAGER, WorkerCase, logged
-from session.tests.integration.adapters.codex import fake_tui
+from session.tests.integration.clients.codex import fake_tui
 
 PERMISSION = {"kind": "hook", "event": "PermissionRequest", "tool_name": "Edit"}
 TRUST = "Quick safety check: Is this a project you created or one you trust? 1. Yes, I trust this folder 2. No, exit"

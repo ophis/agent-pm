@@ -10,18 +10,18 @@ from dataclasses import replace
 from agent_pm.delegate.engine.types import Layout
 from agent_pm.session import (
     Access,
-    Displayable,
     Exited,
     Host,
-    HostProcess,
     Launch,
     Liveness,
     Mode,
-    NotDisplayable,
+    NotShowable,
+    Process,
     Resumable,
     Session,
     SessionError,
     SessionStatus,
+    Showable,
 )
 from agent_pm.session import Spec as SessionSpec
 from agent_pm.utils import Record, append_line, load_class, read_regular, save
@@ -29,7 +29,7 @@ from agent_pm.utils import Record, append_line, load_class, read_regular, save
 from delegate.tests.fakes.session import SessionClass
 
 
-class RecordingProcess(HostProcess):
+class RecordingProcess(Process):
     def __init__(self, name, *, display=None, record=None):
         self.name, self.display_value, self.record_value = name, display, record
         self.live = True
@@ -119,7 +119,7 @@ def harness_launches():
     return [launch for launch in RecordingHost.launches if launch["argv"] != ["fake-agent"]]
 
 
-class ShowingHost(RecordingHost, Displayable):
+class ShowingHost(RecordingHost, Showable):
     shown: list[tuple[str, str | None, str | None]] = []
     hidden: list[str] = []
 
@@ -152,14 +152,14 @@ class HarnessSession(SessionClass):
     history = SessionStatus(Resumable.YES, None, "")
 
     @classmethod
-    def reset(cls, *, displayable=False):
+    def reset(cls, *, showable=False):
         cls.started, cls.live, cls.attached, cls.inspected = [], {}, [], []
         cls.preflights, cls.preflight_error = [], None
         cls.host_names = {}
         RecordingHost.processes, RecordingHost.launches = {}, []
         ShowingHost.shown, ShowingHost.hidden = [], []
         RecordingHost.harness_starts_agent = True
-        kind = ShowingHost if displayable else RecordingHost
+        kind = ShowingHost if showable else RecordingHost
         cls.hosts = {name: kind(name) for name in ("agent", "harness", "changed")}
         cls.script = ()
 
@@ -195,22 +195,22 @@ class HarnessSession(SessionClass):
     @classmethod
     def layout(cls, *, display=None):
         host = cls.host()
-        return host.layout(display=display) if isinstance(host, Displayable) else None
+        return host.layout(display=display) if isinstance(host, Showable) else None
 
     @property
-    def displayable(self):
-        return isinstance(self.host(self.host_names[self.name]), Displayable)
+    def showable(self):
+        return isinstance(self.host(self.host_names[self.name]), Showable)
 
     def show(self, *, display=None, command=None):
         host = self.host(self.host_names[self.name])
-        if not isinstance(host, Displayable):
-            raise NotDisplayable(f"host {host.name} cannot display")
+        if not isinstance(host, Showable):
+            raise NotShowable(f"host {host.name} cannot display")
         return host.show(self.name, display=display, command=command)
 
     def hide(self):
         host = self.host(self.host_names[self.name])
-        if not isinstance(host, Displayable):
-            raise NotDisplayable(f"host {host.name} cannot display")
+        if not isinstance(host, Showable):
+            raise NotShowable(f"host {host.name} cannot display")
         host.hide(self.name)
 
     def status(self):
@@ -220,8 +220,8 @@ class HarnessSession(SessionClass):
 
     def attach_command(self):
         host = self.host(self.host_names[self.name])
-        if not isinstance(host, Displayable):
-            raise NotDisplayable(f"host {host.name} cannot display")
+        if not isinstance(host, Showable):
+            raise NotShowable(f"host {host.name} cannot display")
         return host.attach_command(self.name)
 
     def stop(self):
@@ -236,7 +236,7 @@ class HarnessSession(SessionClass):
             yield event
 
 
-class DiskProcess(HostProcess):
+class DiskProcess(Process):
     def __init__(self, name, path):
         self.name, self.path = name, path
 

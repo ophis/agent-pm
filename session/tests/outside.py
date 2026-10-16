@@ -1,16 +1,16 @@
-"""External Adapter and Host implementations using only public extension imports."""
+"""External Client and Host implementations using only public extension imports."""
 
 import subprocess
 import sys
 
 from agent_pm.session.extension import (
-    Adapter,
+    Client,
     Display,
     Headless,
     Host,
-    HostProcess,
     InProcess,
     Launch,
+    Process,
     Record,
     Reply,
     SessionError,
@@ -22,7 +22,7 @@ from agent_pm.session.extension import (
 SCRIPT = "import sys; print(sys.argv[1]); print('done')"
 
 
-class OutsideAdapter(Adapter):
+class OutsideClient(Client):
     def headless(self):
         return OutsideHeadless()
 
@@ -53,7 +53,7 @@ class OutsideInProcess(InProcess):
         yield TurnEnd(spec.prompt)
 
 
-class OutsideProcess(HostProcess):
+class OutsideProcess(Process):
     def __init__(self, name: str, child: subprocess.Popen, display: Display, record: Record | None):
         self.name, self.child, self.shown, self.kept = name, child, display, record
 

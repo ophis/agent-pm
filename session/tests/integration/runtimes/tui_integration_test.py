@@ -13,7 +13,7 @@ from agent_pm.session.hosts.tmux import TmuxHost
 from agent_pm.session.hosts.tmux.transport import Tmux
 from agent_pm.session.runtimes import tui
 
-from session.tests import fake_adapter
+from session.tests import fake_client
 from session.tests.case import Case
 from session.tests.fakes.terminal import ScreenHost
 from session.tests.tui_support import SID, Live
@@ -35,7 +35,7 @@ class CloseTest(Case):
                 sid=SID,
                 events=os.path.join(self.home, "events"),
             ),
-            fake_adapter.FakeAdapter({"tui": True, "scenario": "", "log": ""}),
+            fake_client.FakeClient({"tui": True, "scenario": "", "log": ""}),
             registry=self.session_cls._config().registry,
             record=lambda _info: None,
             host=host,
@@ -86,7 +86,7 @@ class PollCostTest(Live):
             return subprocess.run(argv, **kwargs)
 
         host = TmuxHost("tmux", tmux=Tmux(runner=counted))
-        scenario = self.adapters["fake"]["scenario"]
+        scenario = self.clients["fake"]["scenario"]
         os.makedirs(self.workdir)
         with open(scenario, "w") as f:
             json.dump([{"read": True}], f)
@@ -100,7 +100,7 @@ class PollCostTest(Live):
                 prompt="hello",
                 events=self.events,
             ),
-            self.session_cls._config().registry.adapter("fake"),
+            self.session_cls._config().registry.client("fake"),
             registry=self.session_cls._config().registry,
             record=lambda _info: None,
             host=host,

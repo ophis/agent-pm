@@ -23,7 +23,7 @@ from agent_pm.session.engine.hosted_session import HostedSession
 from agent_pm.session.hosts.tmux.types import PaneStatus
 
 from session.tests.case import HOSTS, PY, REPO, SPAWNS, Case, child_env
-from session.tests.fakes.preflight import PreflightAdapter
+from session.tests.fakes.preflight import PreflightClient
 from session.tests.hosted_support import SID, fake_tmux, listed
 
 
@@ -34,12 +34,12 @@ class Preflight(Case):
         self.tmux = fake_tmux()
         self.configure()
 
-    def configure(self, *, adapter=PreflightAdapter, tmux_settings=None, **settings):
-        PreflightAdapter.prepared, PreflightAdapter.committed, PreflightAdapter.ran = [], [], []
+    def configure(self, *, client=PreflightClient, tmux_settings=None, **settings):
+        PreflightClient.prepared, PreflightClient.committed, PreflightClient.ran = [], [], []
         self.session = HostedSession.configured(
-            adapters={
+            clients={
                 "fake": {
-                    "implementation": f"{adapter.__module__}:{adapter.__qualname__}",
+                    "implementation": f"{client.__module__}:{client.__qualname__}",
                     **settings,
                 }
             },
@@ -85,7 +85,7 @@ class Preflight(Case):
 
     def unchanged(self, before):
         self.assertEqual(self.tree(), before)
-        self.assertEqual((PreflightAdapter.committed, PreflightAdapter.ran), ([], []))
+        self.assertEqual((PreflightClient.committed, PreflightClient.ran), ([], []))
         self.tmux.start.assert_not_called()
 
     def refusal(self, spec, message, **placement):
@@ -103,7 +103,7 @@ class Preflight(Case):
 
     def test_missing_claude_binary_is_config_error_for_preflight_and_driver_error_for_start(self):
         self.session = HostedSession.configured(
-            adapters=read_config(local=os.devnull)["adapters"],
+            clients=read_config(local=os.devnull)["clients"],
             hosts=Host.parse_hosts({"tmux": HOSTS["tmux"], "default": "tmux"}),
             host_factory=self._host_factory,
         )
@@ -161,17 +161,17 @@ class Preflight(Case):
                 with self.no_client():
                     self.assertIsNone(self.session.preflight(spec))
                 self.unchanged(before)
-                self.assertEqual(PreflightAdapter.prepared[-1].sid, SID)
-                self.assertEqual(PreflightAdapter.prepared[-1].resume, resume)
+                self.assertEqual(PreflightClient.prepared[-1].sid, SID)
+                self.assertEqual(PreflightClient.prepared[-1].resume, resume)
 
     def test_abc_forwards_preflight_to_the_configured_session_class(self):
         code = """import contextlib, json, sys
 from unittest import mock
 from agent_pm.session import Access, Host, Mode, Session, Spec
 from session.tests.case import HOSTS, SPAWNS
-from session.tests.fakes.preflight import PreflightAdapter
+from session.tests.fakes.preflight import PreflightClient
 Session.configure(
-    adapters={"fake": {"implementation": "session.tests.fakes.preflight:PreflightAdapter"}},
+    clients={"fake": {"implementation": "session.tests.fakes.preflight:PreflightClient"}},
     hosts=Host.parse_hosts({**HOSTS, "default": "tmux"}),
 )
 spec = Spec(workdir=sys.argv[1], access=Access(cwd=sys.argv[1]), client="fake", mode=Mode.HEADLESS,
@@ -180,7 +180,7 @@ with contextlib.ExitStack() as stack:
     for target in (*SPAWNS, "threading.Thread.start"):
         stack.enter_context(mock.patch(target, side_effect=AssertionError(target)))
     result = Session.preflight(spec)
-print(json.dumps([result, PreflightAdapter.prepared[-1].sid, PreflightAdapter.committed, PreflightAdapter.ran]))
+print(json.dumps([result, PreflightClient.prepared[-1].sid, PreflightClient.committed, PreflightClient.ran]))
 """
         before = self.tree()
         child = subprocess.run(
@@ -200,14 +200,14 @@ print(json.dumps([result, PreflightAdapter.prepared[-1].sid, PreflightAdapter.co
         with self.no_client():
             self.session.preflight(spec)
         self.assertIsNone(spec.sid)
-        self.assertTrue(PreflightAdapter.prepared[-1].sid)
+        self.assertTrue(PreflightClient.prepared[-1].sid)
         self.unchanged(before)
 
     def test_missing_client_mode_unknown_client_and_host_have_startup_parity(self):
         for spec, message, placement in (
             (replace(self.spec(), client=None), "spec.client", {}),
             (replace(self.spec(), mode=None), "spec.mode", {}),
-            (replace(self.spec(), client="absent"), "adapters.absent", {}),
+            (replace(self.spec(), client="absent"), "clients.absent", {}),
             (self.spec(), "unknown host absent", {"host": "absent"}),
         ):
             with self.subTest(spec=spec, placement=placement):
@@ -232,7 +232,7 @@ print(json.dumps([result, PreflightAdapter.prepared[-1].sid, PreflightAdapter.co
                     self.refusal(spec, message, **placement)
         self.refusal(self.spec(Mode.TUI, name="bad name", events=self.events), "name must match")
 
-    def test_idle_display_adapter_launch_and_in_process_checks_have_startup_parity(self):
+    def test_idle_display_client_launch_and_in_process_checks_have_startup_parity(self):
         for timeout in (0, -1, float("nan"), True, "1"):
             with self.subTest(timeout=timeout):
                 self.refusal(self.spec(), "idle_timeout", idle_timeout=timeout)
@@ -285,7 +285,7 @@ print(json.dumps([result, PreflightAdapter.prepared[-1].sid, PreflightAdapter.co
                 before = self.tree()
                 with self.no_client():
                     self.session.preflight(spec)
-                prepared = PreflightAdapter.prepared[-1]
+                prepared = PreflightClient.prepared[-1]
                 self.assertEqual(prepared.access.reads, (protected,))
                 self.assertEqual(
                     dict(prepared.access.env), {"FROM_ACCESS": "kept", "SHARED": "access"}
@@ -334,7 +334,7 @@ print(json.dumps([result, PreflightAdapter.prepared[-1].sid, PreflightAdapter.co
         self.work = os.path.join(self.home, "absent-work")
         settings = read_config(local=os.devnull)
         self.session = HostedSession.configured(
-            adapters=settings["adapters"], hosts=Host.parse_hosts(settings["hosts"])
+            clients=settings["clients"], hosts=Host.parse_hosts(settings["hosts"])
         )
         spec = Spec(
             workdir=self.work,

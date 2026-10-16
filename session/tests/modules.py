@@ -1,4 +1,4 @@
-"""Load adapters from a caller-owned fake module table."""
+"""Load clients from a caller-owned fake module table."""
 
 import importlib
 from unittest import mock
@@ -6,7 +6,7 @@ from unittest import mock
 from agent_pm.utils import load_class
 
 
-def adapter_loader(modules):
+def client_loader(modules):
     def load(path, base):
         original = importlib.import_module
 

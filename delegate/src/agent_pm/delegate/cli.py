@@ -23,7 +23,7 @@ from agent_pm.delegate.engine.harness_delegate import EVENTS_ENV, SID_ENV, Harne
 from agent_pm.delegate.engine.runner import report, say
 from agent_pm.delegate.engine.types import Begun, ConfigError, Layout, Preview, Spec
 from agent_pm.session import ConfigError as SessionConfigError
-from agent_pm.session import Mode, NotDisplayable, SessionError
+from agent_pm.session import Mode, NotShowable, SessionError
 from agent_pm.utils import Once, answer_keys, nested_start
 
 LIST_PARAMS = RunParams(input="", out="/agent-pm-list/work/out.md", workdir="/agent-pm-list/work")
@@ -42,8 +42,8 @@ def main(
         ("status", True, "one Status line per run"),
         ("outcome", False, "the run's outcome as JSON, null without one"),
         ("resume", False, "resume a stopped run; print its Record"),
-        ("show", True, "show each run's displayable sessions"),
-        ("hide", True, "close the views show opened; the runs go on"),
+        ("show", True, "show each run's showable sessions"),
+        ("hide", True, "close what show opened; the runs go on"),
         ("close", True, "close each run's sessions"),
         ("attach-command", False, "the command attaching to the run"),
     ):
@@ -317,7 +317,7 @@ def _outcome(view) -> str:
 def _attach_command(view) -> str:
     command = view.attach_command()
     if command is None:
-        raise NotDisplayable("no displayable session")
+        raise NotShowable("no showable session")
     return command
 
 

@@ -9,9 +9,9 @@ from collections.abc import Callable, Collection, Sequence
 from dataclasses import replace
 from typing import ClassVar, Self
 
-from agent_pm.session.adapters.base import Adapter
-from agent_pm.session.adapters.common import check_selection
-from agent_pm.session.adapters.registry import Registry
+from agent_pm.session.clients.base import Client
+from agent_pm.session.clients.common import check_selection
+from agent_pm.session.clients.registry import Registry
 from agent_pm.session.engine.types import (
     COMMAND,
     ClientBound,
@@ -58,10 +58,10 @@ def child_env(launch: Launch, cwd: str, drop: Collection[str] = ()) -> dict[str,
 
 def identity_drop(registry: Registry) -> frozenset[str]:
     """START_SID and EVENTS (a caller's start token and events file, never a nested start's),
-    LEASE_ENV (a manager's roster lease), each configured Adapter class's identity_env, and its
-    child_defaults at their value inside it; builds no Adapter.
+    LEASE_ENV (a manager's roster lease), each configured Client class's identity_env, and its
+    child_defaults at their value inside it; builds no Client.
     """
-    kinds = [registry.adapter_class(name) for name in registry.configured()]
+    kinds = [registry.client_class(name) for name in registry.configured()]
     drop = {START_SID, EVENTS, *LEASE_ENV, *(key for kind in kinds for key in kind.identity_env)}
     for kind in kinds:
         if kind.session_env and kind.session_env in os.environ:
@@ -84,7 +84,7 @@ class Runtime(ABC):
     def preflight(
         cls,
         spec: Spec,
-        adapter: Adapter,
+        client: Client,
         *,
         registry: Registry,
         host: Host,
@@ -97,7 +97,7 @@ class Runtime(ABC):
     def start(
         cls,
         spec: Spec,
-        adapter: Adapter,
+        client: Client,
         *,
         registry: Registry,
         record: Callable[[SessionInfo], None],
@@ -152,13 +152,13 @@ class Runtime(ABC):
                 raise ConfigError(f"{key}: tui mode only")
 
     @staticmethod
-    def _selected(spec: Spec, adapter: Adapter) -> None:
-        check_selection(spec.flags, adapter.forbidden_selection, adapter.valued_flags)
+    def _selected(spec: Spec, client: Client) -> None:
+        check_selection(spec.flags, client.forbidden_selection, client.valued_flags)
 
     @staticmethod
-    def _noted(spec: Spec, adapter: Adapter) -> Spec:
-        if spec.access.commands and adapter.client_note:
-            return replace(spec, prompt=spec.prompt + "\n\n" + adapter.client_note)
+    def _noted(spec: Spec, client: Client) -> Spec:
+        if spec.access.commands and client.client_note:
+            return replace(spec, prompt=spec.prompt + "\n\n" + client.client_note)
         return spec
 
     @staticmethod

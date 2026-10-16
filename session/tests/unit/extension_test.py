@@ -1,4 +1,4 @@
-"""agent_pm.session.extension: the ABCs an outside Adapter or Host subclasses and every type their
+"""agent_pm.session.extension: the ABCs an outside Client or Host subclasses and every type their
 signatures name, apart from the Session users' agent_pm.session.
 """
 
@@ -7,7 +7,7 @@ import typing
 
 from agent_pm import utils
 from agent_pm.session import extension
-from agent_pm.session.adapters import base as adapters_base
+from agent_pm.session.clients import base as clients_base
 from agent_pm.session.engine import types as engine_types
 from agent_pm.session.hosts import base as hosts_base
 from agent_pm.session.runtimes.base import Runtime
@@ -15,15 +15,16 @@ from agent_pm.session.runtimes.base import Runtime
 from session.tests.case import Case
 
 ABCS = {
-    "Adapter": adapters_base,
-    "Headless": adapters_base,
-    "JsonHeadless": adapters_base,
-    "Tui": adapters_base,
-    "InProcess": adapters_base,
+    "Client": clients_base,
+    "Headless": clients_base,
+    "JsonHeadless": clients_base,
+    "Tui": clients_base,
+    "InProcess": clients_base,
     "Host": hosts_base,
-    "HostProcess": hosts_base,
-    "Terminal": hosts_base,
-    "Displayable": hosts_base,
+    "Process": hosts_base,
+    "Interactive": hosts_base,
+    "InteractiveProcess": hosts_base,
+    "Showable": hosts_base,
 }
 TYPES = {
     **dict.fromkeys(
@@ -62,7 +63,7 @@ TYPES = {
             "Hosts",
             "ConfigError",
             "SessionError",
-            "NotDisplayable",
+            "NotShowable",
         ),
         engine_types,
     ),
@@ -119,5 +120,5 @@ class ExtensionTest(Case):
             if inspect.isclass(value) and issubclass(value, abcs):
                 with self.subTest(name=name):
                     self.assertIn(name, ABCS)
-                    self.assertTrue(inspect.isabstract(value) or value is extension.Adapter)
+                    self.assertTrue(inspect.isabstract(value) or value is extension.Client)
         self.assertNotIn(Runtime, {getattr(extension, n) for n in extension.__all__})

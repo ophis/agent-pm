@@ -20,9 +20,9 @@ from delegate.tests.case import PY, PYTHONPATH, REPO, Case
 from delegate.tests.integration.cli import DONE, RUN, SID
 from delegate.tests.replies import block, mark
 from delegate.tests.unit.runs import said
-from session.tests import fake_adapter, live_tmux
+from session.tests import fake_client, live_tmux
 from session.tests.fakes.host import FakeHost
-from session.tests.integration.adapters.claude import fake_claude
+from session.tests.integration.clients.claude import fake_claude
 
 ROLE = "dummy-tester"
 TUI = f"{ROLE}-{SID[:8]}"
@@ -165,15 +165,15 @@ class HarnessHosts(Case):
     def test_a_detached_extension_client_reaches_its_outcome(self):
         extensions = os.path.join(self.dir, "extensions")
         shutil.copytree(
-            os.path.dirname(fake_adapter.__file__),
+            os.path.dirname(fake_client.__file__),
             os.path.join(extensions, "extension_client"),
             ignore=shutil.ignore_patterns("__pycache__"),
         )
         with open(self.scenario, "w", encoding="utf-8") as file:
             json.dump([said(START, block(DONE))], file)
         self.configure(
-            "[session.adapters.extension]\n"
-            'implementation = "extension_client:FakeAdapter"\n'
+            "[session.clients.extension]\n"
+            'implementation = "extension_client:FakeClient"\n'
             f"scenario = {json.dumps(self.scenario)}\n"
             f"log = {json.dumps(os.path.join(self.dir, 'fake.log'))}\n"
         )

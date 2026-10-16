@@ -19,7 +19,7 @@ from agent_pm.session.engine.types import Access, Launch, Reply, SessionError, S
 from agent_pm.session.runtimes.headless import HeadlessRuntime
 
 from session.tests.fakes.terminal import MemoryHost
-from session.tests.headless_support import NOTHING, SID, HeadlessCase, StubAdapter, StubRun
+from session.tests.headless_support import NOTHING, SID, HeadlessCase, StubClient, StubRun
 
 WAIT = 10  # upper bound on any wait, in seconds
 SLEEPER = "import time; time.sleep(60)"
@@ -52,7 +52,7 @@ class Base(HeadlessCase):
         stopped at cleanup.
         """
         argv = (sys.executable, "-I", "-c", textwrap.dedent(code))
-        self.start(StubAdapter(Launch(argv, env=env or {}, cwd=self.dir), run))
+        self.start(StubClient(Launch(argv, env=env or {}, cwd=self.dir), run))
         self.addCleanup(self.mode.stop)
 
     @contextlib.contextmanager
@@ -294,14 +294,14 @@ class Stop(Base):
 class Start(Base):
     def test_a_missing_cwd_is_a_driver_error(self):
         with self.assertRaisesRegex(SessionError, rf"\Acannot start {sys.executable}: "):
-            self.start(StubAdapter(Launch(NOTHING, cwd=os.path.join(self.dir, "missing"))))
+            self.start(StubClient(Launch(NOTHING, cwd=os.path.join(self.dir, "missing"))))
         self.assertEqual((len(self.recorded), self.mode), (1, None))
 
     def test_start_returns_its_session_running_at_once_with_its_prepared(self):
         with self.spied() as calls:
             mode = HeadlessRuntime.start(
                 Spec(workdir=self.dir, access=Access(cwd=self.dir), sid=SID, client="stub"),
-                StubAdapter(Launch(python(SLEEPER))),
+                StubClient(Launch(python(SLEEPER))),
                 registry=self.session_cls._config().registry,
                 record=self.recorded.append,
                 host=MemoryHost(),

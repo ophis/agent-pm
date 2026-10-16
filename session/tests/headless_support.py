@@ -1,7 +1,7 @@
 import sys
 import tempfile
 
-from agent_pm.session.adapters.base import Adapter, JsonHeadless
+from agent_pm.session.clients.base import Client, JsonHeadless
 from agent_pm.session.engine.types import Access, Launch, Prepared, Reply, Spec, Stderr
 from agent_pm.session.runtimes.headless import HeadlessRuntime
 
@@ -12,7 +12,7 @@ SID = "s1"
 NOTHING = (sys.executable, "-I", "-c", "")
 
 
-class StubAdapter(Adapter):
+class StubClient(Client):
     forbidden_selection = ("--resume",)
     client_note = "STUB NOTE"
 
@@ -30,12 +30,12 @@ class StubAdapter(Adapter):
 class StubRun(JsonHeadless):
     specs: list[Spec] = []
 
-    def __init__(self, adapter: StubAdapter):
-        self.adapter = adapter
+    def __init__(self, client: StubClient):
+        self.client = client
 
     def launch(self, spec: Spec):
         self.specs.append(spec)
-        return self.adapter.launched
+        return self.client.launched
 
     def parse(self, record):
         if "raise" in record:
@@ -54,7 +54,7 @@ class HeadlessCase(Case):
         self.mode, self.recorded = None, []
         StubRun.specs = []
 
-    def start(self, adapter=None, display=None, **fields) -> Prepared:
+    def start(self, client=None, display=None, **fields) -> Prepared:
         spec = Spec(
             **{
                 "workdir": self.dir,
@@ -66,7 +66,7 @@ class HeadlessCase(Case):
         )
         self.mode = HeadlessRuntime.start(
             spec,
-            adapter or StubAdapter(),
+            client or StubClient(),
             registry=self.session_cls._config().registry,
             record=self.recorded.append,
             host=MemoryHost(),

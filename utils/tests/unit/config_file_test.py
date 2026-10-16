@@ -335,11 +335,11 @@ class Resources(Case):
 
     def test_empty_table_schema_supports_new_named_instances(self):
         Path(self.root, self.package, "session", "config.toml").write_text(
-            SESSION + "[adapters.stub.env]\n"
+            SESSION + "[clients.stub.env]\n"
         )
-        self.local('[session.adapters.other.env]\nCUSTOM = "value"\n')
+        self.local('[session.clients.other.env]\nCUSTOM = "value"\n')
         self.assertEqual(
-            read_resources(self.resources[:1])["adapters"]["other"]["env"], {"CUSTOM": "value"}
+            read_resources(self.resources[:1])["clients"]["other"]["env"], {"CUSTOM": "value"}
         )
 
     def test_the_local_file(self):
@@ -363,8 +363,8 @@ class Resources(Case):
         )
 
     def test_a_new_table_under_a_known_one_is_taken_as_its_owners(self):
-        self.local('[session.hosts.other]\nimplementation = "a.b:C"\n[session.adapters]\n')
-        with self.assertRaisesRegex(ConfigFileError, r"unknown key 'adapters' in \[session\]"):
+        self.local('[session.hosts.other]\nimplementation = "a.b:C"\n[session.clients]\n')
+        with self.assertRaisesRegex(ConfigFileError, r"unknown key 'clients' in \[session\]"):
             read_resources(self.resources[:1])
         self.local('[session.hosts.other]\nimplementation = "a.b:C"\n')
         self.assertEqual(

@@ -56,7 +56,7 @@ class Control(Case):
 
     def test_status_and_show_execute_outside_roster_lock(self):
         for record in self.records:
-            ctl.set_session(self.ctl_dir, record.name, displayable=True)
+            ctl.set_session(self.ctl_dir, record.name, showable=True)
         seen = []
         with self.listed():
             actual_run = subprocess.run

@@ -1,7 +1,7 @@
 """The fake ctl, a fake Record's ctl and resume command, installed as agent-pm-linear (a ctl
 Record accepts) and run as `python3 -P ctl.py <dir> <sub> …`:
 status, show (exit 1: one cannot display) and close answer for the Records on stdin (a bad line:
-exit 2) from <dir>/sessions.json (name → alive, state, outcome, displayable, display; an unknown
+exit 2) from <dir>/sessions.json (name → alive, state, outcome, showable, display; an unknown
 name is gone); start NAME [--display D] and resume NAME print the Record, resume of a live one
 starting nothing. Start honors AGENT_PM_SID or creates a UUID; resume preserves the saved sid and
 rejects an environment mismatch. Each call goes to <dir>/calls.jsonl.
@@ -26,7 +26,7 @@ GONE = {
     "alive": False,
     "state": "gone",
     "outcome": None,
-    "displayable": False,
+    "showable": False,
     "display": None,
     "sid": None,
 }
@@ -129,7 +129,7 @@ def _answer(state_dir: str, sub: str, call: dict) -> int:
     for record in records:
         session = _session(sessions, record.name)
         if sub == "status":
-            shown = session["alive"] and session["displayable"]
+            shown = session["alive"] and session["showable"]
             attach = f"{COMMAND} attach {record.name}" if shown else None
             status = Status(
                 name=record.name,
@@ -140,7 +140,7 @@ def _answer(state_dir: str, sub: str, call: dict) -> int:
                 hidden=False,
             )
             print(status.to_line())
-        elif sub == "show" and not session["displayable"]:
+        elif sub == "show" and not session["showable"]:
             print(f"session {record.name}: host fake cannot display", file=sys.stderr)
             failed = 1
         elif sub == "close":

@@ -14,14 +14,14 @@ import time
 import uuid
 from unittest import mock
 
-from agent_pm.session import Access, Displayable, Host, Mode, NotDisplayable, SessionError, Spec
+from agent_pm.session import Access, Host, Mode, NotShowable, SessionError, Showable, Spec
 from agent_pm.session.engine.hosted_session import HostedSession
 from agent_pm.session.engine.types import Key, KeyPress, Launch, Paste
 from agent_pm.utils import Record
 
-from session.tests import fake_adapter
+from session.tests import fake_client
 from session.tests.case import PY, REPO, child_env
-from session.tests.modules import adapter_loader
+from session.tests.modules import client_loader
 
 OTHER_DISPLAY = "elsewhere:1.2"
 TERMINAL_IDENTITY = ("TMUX", "TMUX_PANE", "TERM")
@@ -385,21 +385,21 @@ class HostContract:
         self.poll(lambda: (read(out) or "").rstrip("\r\n") == "from afar", f"line in {out}")
 
     def test_a_host_that_cannot_display_returns_each_display_as_given(self):
-        if isinstance(self.host, Displayable):
+        if isinstance(self.host, Showable):
             self.skipTest("applies only to a Host that cannot display")
         for value in (None, "", OTHER_DISPLAY):
             with self.subTest(value=value):
                 self.assertEqual(self.host.display(value), value)
 
     def test_a_session_on_a_host_that_cannot_display_refuses_show_attach_command_and_screen(self):
-        if isinstance(self.host, Displayable):
+        if isinstance(self.host, Showable):
             self.skipTest("applies only to a Host that cannot display")
         scenario, kind = self.file("scenario"), type(self.host)
         with open(scenario, "w", encoding="utf-8") as f:
             json.dump([{"out": {"type": "message", "text": "hi"}}], f)
-        fake = "agent_pm.session.adapters.fake:InProcessFakeAdapter"
+        fake = "agent_pm.session.clients.fake:InProcessFakeClient"
         configured = HostedSession.configured(
-            adapters={
+            clients={
                 "fake": {"implementation": fake, "scenario": scenario, "log": self.file("log")}
             },
             hosts=Host.parse_hosts(
@@ -408,7 +408,7 @@ class HostContract:
                     "default": self.host.name,
                 }
             ),
-            class_loader=adapter_loader({"agent_pm.session.adapters.fake": fake_adapter}),
+            class_loader=client_loader({"agent_pm.session.clients.fake": fake_client}),
             host_factory=lambda *_: self.host,
         )
         work = self.file("work")
@@ -423,8 +423,8 @@ class HostContract:
         )
         self.addCleanup(session.stop)
         self.assertIs(configured.host(), self.host)
-        self.assertFalse(session.displayable)
+        self.assertFalse(session.showable)
         for call in ("show", "attach_command", "screen"):
-            with self.subTest(call=call), self.assertRaises(NotDisplayable) as caught:
+            with self.subTest(call=call), self.assertRaises(NotShowable) as caught:
                 getattr(session, call)()
             self.assertEqual(str(caught.exception), f"host {self.host.name} cannot display")

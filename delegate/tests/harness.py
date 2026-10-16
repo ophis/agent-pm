@@ -44,8 +44,8 @@ class HarnessCase(Case):
                 f"trusted_dirs = {json.dumps(list(trusted_dirs))}\n"
                 f'[delegate.roles.dummy-tester]\nclient = "{client}"\n'
                 f'[session.hosts]\ndefault = "{default}"\n'
-                "[session.adapters.fake]\n"
-                'implementation = "session.tests.fake_adapter:FakeAdapter"\n'
+                "[session.clients.fake]\n"
+                'implementation = "session.tests.fake_client:FakeClient"\n'
             )
             if harness_host is not None:
                 file.write(f'[delegate.delegates]\nharness_host = "{harness_host}"\n')

@@ -91,27 +91,27 @@ class Names(Case):
             self.assertIn("`AGENT_PM_AGENT_SESSION=1`", f.read())
         [config] = {p for p in paths("tmux") if p.endswith("config.toml")}
         with open(config, "rb") as f:
-            adapters = tomllib.load(f)["adapters"]
+            clients = tomllib.load(f)["clients"]
         for client in ("claude", "codex"):
             self.assertTrue(
-                any("agent-pm@agent-pm" in flag for flag in adapters[client]["flags"]), client
+                any("agent-pm@agent-pm" in flag for flag in clients[client]["flags"]), client
             )
 
     def test_the_upgrading_row_carries_the_one_home_of_each_plugin_off_entry(self):
         with open(os.path.join(REPO, "README.md"), encoding="utf-8") as f:
             [row] = [line for line in f if line.startswith("| a local `flags` list")]
         with open(os.path.join(REPO, "session/src/agent_pm/session/config.toml"), "rb") as f:
-            adapters = tomllib.load(f)["adapters"]
+            clients = tomllib.load(f)["clients"]
         with open(os.path.join(REPO, "delegate/src/agent_pm/delegate/config.toml"), "rb") as f:
             policy = tomllib.load(f)["policy"]
         for client in ("claude", "codex"):
-            flags = adapters[client]["flags"]
+            flags = clients[client]["flags"]
             [at] = [i for i, flag in enumerate(flags) if "agent-pm@agent-pm" in flag]
             entry = f'"{flags[at - 1]}", ' + (
                 f"'{flags[at]}'" if '"' in flags[at] else f'"{flags[at]}"'
             )
             with self.subTest(client=client):
-                self.assertIn(f"`[session.adapters.{client}]`", row)
+                self.assertIn(f"`[session.clients.{client}]`", row)
                 self.assertIn(entry, row)
                 self.assertFalse([f for f in policy[client]["flags"] if "agent-pm@agent-pm" in f])
         self.assertNotIn("delegate.policy", row)

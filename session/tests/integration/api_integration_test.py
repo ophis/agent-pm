@@ -1,5 +1,5 @@
 """HostedSession over fake clients: events, idle timeouts, exits, stop, process groups, inherited
-pipes, launch environment, limits and resume. Custom adapters: in-process module tables.
+pipes, launch environment, limits and resume. Custom clients: in-process module tables.
 """
 
 import contextlib
@@ -35,9 +35,9 @@ from agent_pm.session.engine.types import (
     TurnEnd,
 )
 
-from session.tests import fake_adapter
+from session.tests import fake_client
 from session.tests.case import Case
-from session.tests.modules import adapter_loader
+from session.tests.modules import client_loader
 from session.tests.threads import capture_errors
 
 WAIT = 20  # upper bound on any wait, in seconds
@@ -47,18 +47,18 @@ GAP = 0.2  # between stderr lines; that test's idle_timeout is 3 × GAP
 STAMP = re.compile(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}[+-]\d\d:\d\d\Z")
 
 
-class LaunchingAdapter(fake_adapter.FakeAdapter):
-    """The fake adapter whose launch also takes its env, unset and cwd from its config."""
+class LaunchingClient(fake_client.FakeClient):
+    """The fake client whose launch also takes its env, unset and cwd from its config."""
 
-    keys = fake_adapter.FakeAdapter.keys | {"env", "unset", "cwd"}
+    keys = fake_client.FakeClient.keys | {"env", "unset", "cwd"}
 
     def headless(self):
         return LaunchingRun(self)
 
 
-class LaunchingRun(fake_adapter.FakeHeadless):
+class LaunchingRun(fake_client.FakeHeadless):
     def launch(self, spec: Spec):
-        config = self.adapter.config
+        config = self.owner.config
         return dataclasses.replace(
             super().launch(spec),
             env=config.get("env", {}),
@@ -67,26 +67,26 @@ class LaunchingRun(fake_adapter.FakeHeadless):
         )
 
 
-LAUNCHING = types.ModuleType("agent_pm.session.adapters.launching")
-LAUNCHING.LaunchingAdapter = LaunchingAdapter
+LAUNCHING = types.ModuleType("agent_pm.session.clients.launching")
+LAUNCHING.LaunchingClient = LaunchingClient
 
 
-class ScriptAdapter(fake_adapter.FakeAdapter):
-    """The fake adapter whose client is this Python running its config's `script`."""
+class ScriptClient(fake_client.FakeClient):
+    """The fake client whose client is this Python running its config's `script`."""
 
-    keys = fake_adapter.FakeAdapter.keys | {"script"}
+    keys = fake_client.FakeClient.keys | {"script"}
 
     def headless(self):
         return ScriptRun(self)
 
 
-class ScriptRun(fake_adapter.FakeHeadless):
+class ScriptRun(fake_client.FakeHeadless):
     def launch(self, spec: Spec):
-        return Launch((sys.executable, "-I", "-c", self.adapter.config["script"]))
+        return Launch((sys.executable, "-I", "-c", self.owner.config["script"]))
 
 
-SCRIPT = types.ModuleType("agent_pm.session.adapters.script")
-SCRIPT.ScriptAdapter = ScriptAdapter
+SCRIPT = types.ModuleType("agent_pm.session.clients.script")
+SCRIPT.ScriptClient = ScriptClient
 
 
 def out(kind, **fields) -> dict:
@@ -118,11 +118,11 @@ class Base(Case):
         self.log = os.path.join(self.dir, "client.log")
         self.steps()
         self.session_dependencies = {
-            "class_loader": adapter_loader(
+            "class_loader": client_loader(
                 {
-                    "agent_pm.session.adapters.fake": fake_adapter,
-                    "agent_pm.session.adapters.launching": LAUNCHING,
-                    "agent_pm.session.adapters.script": SCRIPT,
+                    "agent_pm.session.clients.fake": fake_client,
+                    "agent_pm.session.clients.launching": LAUNCHING,
+                    "agent_pm.session.clients.script": SCRIPT,
                 }
             )
         }
@@ -138,7 +138,7 @@ class Base(Case):
         """
         tables = {
             name: {
-                "implementation": f"agent_pm.session.adapters.{name}:{name.capitalize()}Adapter",
+                "implementation": f"agent_pm.session.clients.{name}:{name.capitalize()}Client",
                 "scenario": self.scenario,
                 "log": self.log,
             }
@@ -331,9 +331,9 @@ class IdleTest(Base):
 
 
 class ExitTest(Base):
-    def test_exited_is_the_process_exit_an_adapters_own_dropped(self):
+    def test_exited_is_the_process_exit_an_clients_own_dropped(self):
         for case, steps, want in (
-            ("adapter's exited dropped", (out("exit"), {"exit": 0}), [Exited(0)]),
+            ("client's exited dropped", (out("exit"), {"exit": 0}), [Exited(0)]),
             (
                 "non-zero exit",
                 (out("activity", name="Read"), {"exit": 3}),
@@ -365,7 +365,7 @@ class ProcessGroupTest(Base):
         self.configure_session(
             {
                 "script": {
-                    "implementation": "agent_pm.session.adapters.script:ScriptAdapter",
+                    "implementation": "agent_pm.session.clients.script:ScriptClient",
                     "script": textwrap.dedent(code),
                 }
             }

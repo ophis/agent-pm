@@ -72,10 +72,10 @@ class UnitTestModules(Sample):
                 [],
             ),
             (
-                {"session/tests/unit/adapters/codex/removed_test.py": ""},
+                {"session/tests/unit/clients/codex/removed_test.py": ""},
                 missing(
-                    "session/tests/unit/adapters/codex/removed_test.py",
-                    "session/src/agent_pm/session/adapters/codex/removed.py",
+                    "session/tests/unit/clients/codex/removed_test.py",
+                    "session/src/agent_pm/session/clients/codex/removed.py",
                 ),
             ),
             (
@@ -241,7 +241,7 @@ class TestBoundaries(Sample):
             ),
             *(
                 (f"import os\nos.getenv({variable!r})", "session", True)
-                for variable in ("ADAPTER_TEST", "FORCE_FAILED")
+                for variable in ("CLIENT_TEST", "FORCE_FAILED")
             ),
         ):
             with self.subTest(sample=sample, shipped=shipped):
@@ -277,7 +277,7 @@ class TestBoundaries(Sample):
                 )
             ),
             (
-                "from unittest.mock import patch\nimport os\nfrom session.tests import fake_adapter\npatch.object(os, 'getcwd')\npatch.object(fake_adapter, 'start')\nfake_adapter.start = object()\npatch.dict(os.environ, {})\n",
+                "from unittest.mock import patch\nimport os\nfrom session.tests import fake_client\npatch.object(os, 'getcwd')\npatch.object(fake_client, 'start')\nfake_client.start = object()\npatch.dict(os.environ, {})\n",
                 "delegate",
                 False,
                 [],

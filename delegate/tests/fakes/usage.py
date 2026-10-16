@@ -1,13 +1,13 @@
-"""A usage-only Adapter returns a caller-owned sentinel without selecting a client mode."""
+"""A usage-only Client returns a caller-owned sentinel without selecting a client mode."""
 
 import sys
 
 from agent_pm.session import Usage
 
-from session.tests.fake_adapter import FakeAdapter, Launch
+from session.tests.fake_client import FakeClient, Launch
 
 
-class UsageAdapter(FakeAdapter):
+class UsageClient(FakeClient):
     keys = frozenset({"label", "cwd"})
     usage_result: Usage | None = None
     queried: list[str] = []

@@ -1387,7 +1387,7 @@ class ClientUsage(Base):
         return quota.Gate(self.runs, NOW, dry=False, cfg=self.cfg())
 
     def test_a_usage_probe_defect_is_not_unknown_usage(self):
-        error = AttributeError("adapter defect")
+        error = AttributeError("client defect")
         self.api.usages["a"] = error
         with self.assertRaises(AttributeError) as caught:
             quota.read_usage("researcher", self.cfg())
@@ -2237,7 +2237,7 @@ class RunLaunching(OuterBase):
         self.assertEqual(self.api.asked, [(changed.delegates["harness"], self.rd)] * 2)
 
     def test_a_status_defect_does_not_become_a_transient_resume(self):
-        error = AttributeError("adapter defect")
+        error = AttributeError("client defect")
         self.api.statuses[SID] = error
         with self.assertRaises(AttributeError) as caught:
             self.outer(mode="resume")

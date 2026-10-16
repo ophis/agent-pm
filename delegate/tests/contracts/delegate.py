@@ -1,5 +1,5 @@
 """DelegateContract, FR-47's Delegate contract (FR-13 to FR-16): a subclass also inherits Case and
-defines delegate_cls, ROLE (a role it runs), DISPLAYABLE (its sessions can display), make(workdir,
+defines delegate_cls, ROLE (a role it runs), SHOWABLE (its sessions can display), make(workdir,
 **kw) (a Delegate of kw's role, else ROLE, and a Spec for workdir with kw's other fields),
 end(record) (its sessions gone, no outcome) and finish(record) (its sessions gone, a valid outcome).
 Each case uses only the Delegate ABC and these hooks.
@@ -10,7 +10,7 @@ import shutil
 import uuid
 
 from agent_pm.delegate import Begun, ConfigError, Delegate, Finished
-from agent_pm.session import NotDisplayable, Usage
+from agent_pm.session import NotShowable, Usage
 from agent_pm.utils import Record, Status
 
 NO_ROLE = "no-such-role"
@@ -35,7 +35,7 @@ def _files(top: str, *, but: str) -> dict[str, bytes]:
 class DelegateContract:
     delegate_cls: type[Delegate]
     ROLE: str
-    DISPLAYABLE: bool
+    SHOWABLE: bool
 
     def make(self, workdir: str, **kw) -> Delegate:
         raise NotImplementedError
@@ -193,15 +193,15 @@ class DelegateContract:
         self.assertEqual(view.resume(), record)
         self.assertFalse(view.alive())
 
-    def test_show_and_attach_command_reach_only_displayable_sessions(self):
+    def test_show_and_attach_command_reach_only_showable_sessions(self):
         record, _ = self.detached()
         view = self.delegate_cls.attach(record)
-        if self.DISPLAYABLE:
+        if self.SHOWABLE:
             self.assertIsInstance(view.attach_command(), str)
             return
         self.assertIsNone(view.attach_command())
         self.assertIsNone(view.status().attach)
-        with self.assertRaises(NotDisplayable):
+        with self.assertRaises(NotShowable):
             view.show()
 
     def test_run_reports_begun_first_and_finished_last_and_returns_its_outcome(self):

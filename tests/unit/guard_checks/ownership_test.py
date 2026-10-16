@@ -2,7 +2,7 @@ from tests.case import REPO
 from tests.guard_checks import commands, exports, ownership
 from tests.guard_data.delegate import CONFIG_FILE, DELEGATE_SRC
 from tests.guard_data.linear_orchestrator import ORCH_FILES
-from tests.guard_data.session import ADAPTERS_HOME, SESSION_SRC
+from tests.guard_data.session import CLIENTS_HOME, SESSION_SRC
 from tests.guard_samples import PKG, Sample
 
 OPKG = "src/agent_pm/linear_orchestrator"
@@ -68,16 +68,16 @@ class OrchestratorText(Sample):
                 {
                     f"{OPKG}/router.py": 'X = "codex"\n',
                     f"{OPKG}/a.py": (
-                        'import subprocess\nsubprocess.run(["tmux", "ls"])\nK = "adapters"\n# Claude\n'
+                        'import subprocess\nsubprocess.run(["tmux", "ls"])\nK = "clients"\n# Claude\n'
                     ),
-                    "config.toml": '# claude\nx = "tmux"\ny = \'adapters\'\nz = "tmux ls"  # "tmux"\n',
+                    "config.toml": '# claude\nx = "tmux"\ny = \'clients\'\nz = "tmux ls"  # "tmux"\n',
                 },
                 [
                     "config.toml:1: client name claude",
                     'config.toml:2: str constant "tmux"',
-                    'config.toml:3: str constant "adapters"',
+                    'config.toml:3: str constant "clients"',
                     f'{OPKG}/a.py:2: str constant "tmux"',
-                    f'{OPKG}/a.py:3: str constant "adapters"',
+                    f'{OPKG}/a.py:3: str constant "clients"',
                     f"{OPKG}/a.py:4: client name Claude",
                     f"{OPKG}/router.py:1: client name codex",
                 ],
@@ -148,7 +148,7 @@ class Standalone(Sample):
 
 
 class ClientNames(Sample):
-    def test_a_client_name_outside_adapters_policy_tables_and_client_lines(self):
+    def test_a_client_name_outside_clients_policy_tables_and_client_lines(self):
         config = "delegate/src/agent_pm/delegate/config.toml"
         api = f"session/{PKG}/session/engine/api.py"
         for files, expected in (
@@ -157,10 +157,10 @@ class ClientNames(Sample):
                 [f"{api}:1: client name Claude", f"{api}:2: client name codex"],
             ),
             ({config: "[policy.claude]\nflags = []\n[policy.codex]\nflags = []\n"}, []),
-            ({f"session/{PKG}/session/adapters/claude/x.py": 'NAME = "claude"\n'}, []),
+            ({f"session/{PKG}/session/clients/claude/x.py": 'NAME = "claude"\n'}, []),
             (
                 {
-                    config: '# codex in a comment\n[adapters.codex]\nimplementation = "agent_pm.session.adapters.codex:CodexAdapter"  # codex\nkey = "x # codex"\n'
+                    config: '# codex in a comment\n[clients.codex]\nimplementation = "agent_pm.session.clients.codex:CodexClient"  # codex\nkey = "x # codex"\n'
                 },
                 [f"{config}:4: client name codex"],
             ),
@@ -177,7 +177,7 @@ class ClientNames(Sample):
             (
                 {
                     config: (
-                        '[adapters.codex]\nimplementation = "agent_pm.session.adapters.codex:CodexAdapter"\n[roles.pm]\nmodel = "codex"\nclient = ["codex"]\nclient = "codex\nclient = "codex" x\n'
+                        '[clients.codex]\nimplementation = "agent_pm.session.clients.codex:CodexClient"\n[roles.pm]\nmodel = "codex"\nclient = ["codex"]\nclient = "codex\nclient = "codex" x\n'
                     )
                 },
                 [f"{config}:{n}: client name codex" for n in (4, 5, 6, 7)],
@@ -187,23 +187,23 @@ class ClientNames(Sample):
                 self.assertEqual(ownership.client_names(self.tree(files)), expected)
 
 
-class AdaptersKey(Sample):
+class ClientsKey(Sample):
     def test_the_literal_key_only_in_the_session_config_parser(self):
-        sample = 'cfg = {}\nvalue = cfg["adapters"]\n'
+        sample = 'cfg = {}\nvalue = cfg["clients"]\n'
         root = self.tree(
             {
                 f"delegate/{PKG}/delegate/composer/x.py": sample,
-                f"session/{PKG}/session/adapters/x.py": sample,
+                f"session/{PKG}/session/clients/x.py": sample,
                 CONFIG_FILE: sample,
-                ADAPTERS_HOME: sample,
+                CLIENTS_HOME: sample,
             }
         )
         self.assertEqual(
-            ownership.adapters_key(root),
+            ownership.clients_key(root),
             [
-                f'delegate/{PKG}/delegate/composer/x.py:2: literal key "adapters"',
-                f'{CONFIG_FILE}:2: literal key "adapters"',
-                f'session/{PKG}/session/adapters/x.py:2: literal key "adapters"',
+                f'delegate/{PKG}/delegate/composer/x.py:2: literal key "clients"',
+                f'{CONFIG_FILE}:2: literal key "clients"',
+                f'session/{PKG}/session/clients/x.py:2: literal key "clients"',
             ],
         )
 

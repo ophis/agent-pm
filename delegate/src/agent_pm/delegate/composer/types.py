@@ -32,7 +32,7 @@ class RunConfig:
     task: str = ""
     tier: int
     effort: Effort
-    client: str = ""  # opaque: never compared with an Adapter's name
+    client: str = ""  # opaque: never compared with a Client's name
     output: dict
     read: list[str] = field(default_factory=list)
     write: list[str] = field(default_factory=list)

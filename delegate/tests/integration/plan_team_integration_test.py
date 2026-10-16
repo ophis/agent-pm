@@ -65,7 +65,7 @@ class CustomTeam(Base):
 
     def test_one_overlapping_a_dir_codex_can_write_is_refused(self):
         inside, top = os.path.join(self.team, "codex"), os.path.dirname(self.team)
-        tmpdir = f"[adapters.codex.env]\nTMPDIR = {json.dumps(top)}\n"
+        tmpdir = f"[clients.codex.env]\nTMPDIR = {json.dumps(top)}\n"
         for home, local, what in (
             (inside, "", inside),
             (self.tasks, "", self.tasks),

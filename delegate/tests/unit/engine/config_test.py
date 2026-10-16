@@ -69,11 +69,11 @@ class PathsTest(Case):
         self.assertEqual(found["language"], own["language"])
         self.assertEqual(found["hosts"], read_session_config(local=os.devnull)["hosts"])
 
-    def test_the_delegate_reads_no_hosts_or_adapters(self):
+    def test_the_delegate_reads_no_hosts_or_clients(self):
         found = read_config()
         self.assertEqual(found["delegates"], {"harness_host": ""})
         with open(CONFIG, "rb") as f:
-            self.assertEqual({"hosts", "adapters"} & set(tomllib.load(f)), set())
+            self.assertEqual({"hosts", "clients"} & set(tomllib.load(f)), set())
 
 
 class HarnessHostTest(Case):

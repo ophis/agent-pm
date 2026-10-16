@@ -20,7 +20,7 @@ from agent_pm.delegate.engine import harness_delegate
 from agent_pm.delegate.engine.harness_delegate import HarnessDelegate
 from agent_pm.delegate.engine.state import RunState
 from agent_pm.delegate.engine.types import Layout
-from agent_pm.session import Access, Exited, Liveness, Mode, NotDisplayable, Reply, SessionError
+from agent_pm.session import Access, Exited, Liveness, Mode, NotShowable, Reply, SessionError
 from agent_pm.session import ConfigError as SessionConfigError
 from agent_pm.session import Spec as SessionSpec
 
@@ -358,7 +358,7 @@ class InstructTest(HarnessCase):
 class CheckTuiTest(HarnessCase):
     def setUp(self):
         super().setUp()
-        HarnessSession.reset(displayable=True)
+        HarnessSession.reset(showable=True)
         self.settings(harness_host="harness")
         self.events = os.path.join(self.home, "events")
 
@@ -552,7 +552,7 @@ class StatusTest(HarnessCase):
 class ViewTest(HarnessCase):
     def setUp(self):
         super().setUp()
-        HarnessSession.reset(displayable=True)
+        HarnessSession.reset(showable=True)
         self.settings(harness_host="harness")
 
     def test_hide_closes_the_agents_and_the_harness_views_show_opened(self):
@@ -567,12 +567,12 @@ class ViewTest(HarnessCase):
         self.assertEqual(ShowingHost.hidden, names)
         self.assertTrue(view.status().hidden)
 
-    def test_hide_after_close_is_not_displayable(self):
+    def test_hide_after_close_is_not_showable(self):
         spec = Spec("input", self.work, mode="tui", client="fake", sid=SID)
         self.make(spec=spec).detach()
         view = HarnessDelegate.attach(self.work, session_cls=HarnessSession)
         view.close()
-        with self.assertRaisesRegex(NotDisplayable, "delegate has no live displayable session"):
+        with self.assertRaisesRegex(NotShowable, "delegate has no live showable session"):
             view.hide()
         self.assertEqual(ShowingHost.hidden, [])
 

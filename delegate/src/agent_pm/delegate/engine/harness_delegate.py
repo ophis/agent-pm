@@ -38,19 +38,19 @@ from agent_pm.delegate.event.types import Outcome
 from agent_pm.session import (
     SIGNALS,
     Access,
-    Displayable,
     Host,
-    HostProcess,
     Launch,
     Mode,
     NoRecordedSession,
-    NotDisplayable,
+    NotShowable,
+    Process,
     Resumable,
     RunLog,
     Session,
     SessionError,
     SessionStatus,
     SessionStatusLog,
+    Showable,
     Usage,
 )
 from agent_pm.session import ConfigError as SessionConfigError
@@ -74,7 +74,7 @@ from agent_pm.utils import (
 class _HarnessView:
     """The harness session's view, shaped as its agent Session's."""
 
-    host: Displayable
+    host: Showable
     name: str
 
     def show(self, *, display: Display = None) -> str | None:
@@ -560,10 +560,10 @@ class HarnessDelegate(Delegate):
         except SessionConfigError as error:
             raise ConfigError(str(error)) from None
 
-    def _harness(self, state: _State) -> HostProcess | None:
+    def _harness(self, state: _State) -> Process | None:
         return self._process(state.harness_host, state.harness_name) if state.detached else None
 
-    def _process(self, host_name: str, name: str) -> HostProcess | None:
+    def _process(self, host_name: str, name: str) -> Process | None:
         try:
             host = (
                 self._harness_override
@@ -632,20 +632,20 @@ class HarnessDelegate(Delegate):
         return views[0].attach_command() if views else None
 
     def _views(self, state: _State) -> list[Session | _HarnessView]:
-        """Its live displayable views, agent first."""
+        """Its live showable views, agent first."""
         views: list[Session | _HarnessView] = []
         agent = self._agent(state)
-        if agent is not None and agent.alive() and agent.displayable:
+        if agent is not None and agent.alive() and agent.showable:
             views.append(agent)
         process = self._harness(state)
-        if process is not None and process.alive() and isinstance(self._harness_host, Displayable):
+        if process is not None and process.alive() and isinstance(self._harness_host, Showable):
             views.append(_HarnessView(self._harness_host, state.harness_name))
         return views
 
     def _shown_views(self, state: _State) -> list[Session | _HarnessView]:
         if views := self._views(state):
             return views
-        raise NotDisplayable("delegate has no live displayable session")
+        raise NotShowable("delegate has no live showable session")
 
     def show(self) -> str | None:
         state = self._read()

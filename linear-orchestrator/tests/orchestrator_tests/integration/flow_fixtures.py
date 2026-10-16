@@ -27,7 +27,7 @@ from orchestrator_tests.unit.run_fixtures import ID, SID
 
 from delegate.tests.workdir import run_log
 from session.tests import live_tmux
-from session.tests.integration.adapters.claude import fake_claude
+from session.tests.integration.clients.claude import fake_claude
 from utils.tests.case import local_section
 
 ENTRY = os.path.join(os.path.dirname(__file__), "entry.py")
