@@ -9,8 +9,9 @@ Runs coding agents (Claude Code, Codex, more to come) unattended from a Linear b
 | Session | Starts, watches and resumes a coding agent (Claude Code, Codex) in tmux or a pty, the same way for every client. | [Sessions](docs/sessions.md) |
 | Delegate (core) | Runs a role on one task through a session and returns a checked outcome. A Claude Code and Codex plugin you can use alone. | [Install](#install) |
 | Linear orchestrator | Runs the roles from a Linear board: my own workflow. | [Linear board](docs/board.md) |
+| Manager | A driver for the layers below: an agent you talk to that launches workers, role runs and board runs, watches them and reports back. | [Demo](#demo-one-manager-many-workers) |
 
-The bottom two layers are general building blocks: take them and build your own flow on top. The Linear orchestrator is my philosophy of how agents should work (research, then a PRD, then a build, with a human review between each stage). Use it as is, skip it, or change it; the roles and tasks themselves are yours to edit too ([Customizing roles and tasks](docs/customizing-roles-and-tasks.md)).
+The bottom two layers, Session and Delegate, are general building blocks: take them and build your own flow on top. The Linear orchestrator is my philosophy of how agents should work (research, then a PRD, then a build, with a human review between each stage). Use it as is, skip it, or change it; the roles and tasks themselves are yours to edit too ([Customizing roles and tasks](docs/customizing-roles-and-tasks.md)).
 
 Developers: `AGENTS.md`.
 
