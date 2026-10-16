@@ -15,6 +15,7 @@ from agent_pm.manager.engine.types import Lease, StatusError
 from agent_pm.utils import STATE, nested_start
 
 SESSION_COMMAND = ("agent-pm-session",)
+DELEGATE_COMMAND = ("agent-pm-delegate",)
 
 
 def _number(value: str) -> int:
@@ -75,8 +76,8 @@ def _attach(args) -> int:
             command = ("agent-pm-crew", "resume", *named, name)
             print(f"resume: {shlex.join(command)}")
     if os.path.isdir(crew.roster.directory):
-        print(f"monitor: tail -n +{int(cursor) + 1} -F {shlex.quote(crew.roster.events)}")
         for label, verb, after, *extra in (
+            ("monitor", "next-event", cursor, "--content", "--follow"),
             ("monitor expired", "attach", "LINE"),
             ("next-event", "next-event", cursor, "--content"),
         ):
@@ -105,6 +106,11 @@ def _report_error(error: Exception) -> None:
     if hasattr(error, "__notes__"):
         for note in error.__notes__:
             print(f"crew: {note}", file=sys.stderr)
+
+
+def _report(args) -> int:
+    print(_crew(args).report(SESSION_COMMAND, DELEGATE_COMMAND), end="")
+    return 0
 
 
 def _resume(args) -> int:
@@ -149,11 +155,16 @@ def _release(args) -> int:
 
 def _next_event(args) -> int:
     crew = _crew(args)
-    line, event = crew.next_event(after=args.after, gen=args.gen)
-    print(f"{line} {event}", flush=True)
-    if args.content:
-        print(crew.event_content(event, SESSION_COMMAND), end="")
-    return 0
+    after = args.after
+    while True:
+        after, event = crew.next_event(after=after, gen=args.gen)
+        block = f"{after} {event}\n"
+        if args.content:
+            block += crew.event_content(event, SESSION_COMMAND)
+        # One write per event: Monitor groups lines written within 200 ms into one notification.
+        print(block, end="", flush=True)
+        if not args.follow:
+            return 0
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -176,6 +187,10 @@ def _parser() -> argparse.ArgumentParser:
     status = subs.add_parser("status", parents=[common])
     status.add_argument("names", nargs="*")
     status.set_defaults(func=_status)
+    report = subs.add_parser(
+        "report", parents=[common], help="one row per entry: state, note, latest reply, PR"
+    )
+    report.set_defaults(func=_report)
     resume = subs.add_parser("resume", parents=[common])
     resume.add_argument("names", nargs="+")
     resume.set_defaults(func=_resume)
@@ -205,6 +220,9 @@ def _parser() -> argparse.ArgumentParser:
         action="store_true",
         help="then print its content: a done session's reply, a harness's entry status, "
         "else the screen",
+    )
+    next_event.add_argument(
+        "--follow", action="store_true", help="keep printing events until stopped or failing"
     )
     next_event.set_defaults(func=_next_event)
     return parser

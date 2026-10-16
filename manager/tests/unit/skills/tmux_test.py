@@ -146,7 +146,7 @@ class Flows(Case):
             "`name kind sid state note cwd attach`",
             "backlog",
             "`resume: agent-pm-crew resume … <name>`",
-            "`tail -n +<N+1> -F <events>`",
+            "`agent-pm-crew next-event … --content --follow`",
             "`next-event:`",
             "`--content`",
             "event line, then its content",
@@ -166,6 +166,8 @@ class Flows(Case):
             "`agent-pm-crew note <name> '<text>'`",
             "`''` clears",
             "`agent-pm-crew status [<name>…]`",
+            "`agent-pm-crew report`",
+            "PR's URL",
             "`agent-pm-crew stop <name>`",
             "`agent-pm-crew stop-all [--dry-run]`",
             "`agent-pm-crew forget <name>`",
@@ -187,6 +189,19 @@ class Flows(Case):
         events = section("tmux", "Events")
         for word in ("done", "blocked", "dead", "exited", "outcome", "Monitor expired"):
             self.assertRegex(events, rf"\*\*{word}\b[^*]*\*\*", word)
+
+    def test_an_events_content_is_its_read_and_only_numbered_lines_are_events(self):
+        events = section("tmux", "Events")
+        self.assertNotIn("confirm each by reading", events)
+        for phrase in (
+            "content",
+            "`content unavailable",
+            "untrusted",
+            "greater than the previous event's",
+        ):
+            self.assertIn(phrase, events)
+        self.assertIn("agent-pm-crew report", rules("tmux"))
+        self.assertIn("agent-pm-crew report *", rules("tmux"))
 
     def test_a_dialog_is_read_then_answered_with_keys_never_with_text(self):
         events = section("tmux", "Events")
