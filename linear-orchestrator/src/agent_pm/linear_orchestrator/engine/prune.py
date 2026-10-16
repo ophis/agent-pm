@@ -3,7 +3,7 @@ skipped) whose workdir <work_dir>/work/<ID> its Delegate (its latest recorded ru
 configured one) reports agent files in (Delegate.checkouts not None):
 - closes its recorded run through LinearRun; a failed close leaves the rest for a later tick;
 - deletes its agent files, uncommitted work included, through its Delegate (Delegate.clean; its
-  refusal skips the rest); the run records and the rest of the workdir stay;
+  refusal skips the rest); the run records and the rest of the workdir stay until then;
 - in the local clone of each worktree among its checkouts, unless that clone lies in
   <work_dir>/work or a temp dir: `worktree prune`, then deletes each <ID>-* branch but the default
   that origin/<branch> or origin/<default> holds, else keeps and reports it (git reads refs only,
