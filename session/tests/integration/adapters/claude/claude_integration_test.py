@@ -466,13 +466,17 @@ class UsageTest(Base):
         self.assertEqual(stat.S_IMODE(os.lstat(probe).st_mode), 0o700)
         self.assertEqual(self.written(), [])
 
-    def test_a_reading_without_windows_has_none(self):
-        self.scenario(rate_limit={"status": "allowed", "unifiedWindows": {"five_hour": "high"}})
-        self.assertEqual(self.session_cls.usage("claude"), Usage(None, None))
-
-    def test_a_successful_probe_without_an_event_has_no_telemetry(self):
-        self.scenario()
-        self.assertEqual(self.session_cls.usage("claude"), Usage(None, None))
+    def test_a_reading_without_windows_or_a_probe_without_an_event_has_none(self):
+        for name, fields in (
+            (
+                "no windows",
+                {"rate_limit": {"status": "allowed", "unifiedWindows": {"five_hour": "high"}}},
+            ),
+            ("no event", {}),
+        ):
+            with self.subTest(name):
+                self.scenario(**fields)
+                self.assertEqual(self.session_cls.usage("claude"), Usage(None, None))
 
     def test_unknown_is_none(self):
         for name, fields in (

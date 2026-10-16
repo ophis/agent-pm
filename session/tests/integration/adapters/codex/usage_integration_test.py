@@ -19,9 +19,6 @@ FIVE, WEEK = Window(62, 2000), Window(41, 4000)
 
 
 class UsageIntegrationTest(Case):
-    def test_fixture_preserves_filesystem_checks_outside_its_scratch(self):
-        self.assertTrue(os.path.lexists(__file__))
-
     def setUp(self):
         tmp = tempfile.TemporaryDirectory(dir=os.environ.get("AGENT_PM_TEST_TMP", REPO))
         self.addCleanup(tmp.cleanup)
@@ -84,8 +81,12 @@ class UsageIntegrationTest(Case):
         )
         self.assertEqual(rows[1]["id"], 1)
         self.assertEqual(rows[3]["id"], 2)
+        self.assertNotEqual(rows[0]["ppid"], os.getpid())
+        self.assertEqual(rows[0]["cwd"], str(self.home / ".agent-pm" / "probe"))
+        self.assertEqual(rows[0]["env"]["PWD"], rows[0]["cwd"])
+        self.assertFalse((self.work / "run.jsonl").exists())
 
-    def test_fallback_null_and_weekly_windows(self):
+    def test_each_reply_maps_to_its_windows_and_failures_are_unknown_and_cleaned_up(self):
         for case, expected in (
             ("fallback", Usage(FIVE, WEEK)),
             ("five-first", Usage(FIVE, WEEK)),
@@ -95,40 +96,22 @@ class UsageIntegrationTest(Case):
             ("invalid-window", Usage(None, None)),
             ("huge-number", Usage(None, None)),
             ("empty", None),
+            ("error", None),
+            ("init-error", None),
+            ("malformed", None),
+            ("oversize", None),
+            ("exit", None),
+            ("null-result", None),
+            ("stderr", None),
+            ("ignore-term", Usage(FIVE, WEEK)),
+            ("silent", None),
         ):
             with self.subTest(case=case):
                 self.log.unlink(missing_ok=True)
-                self.assertEqual(self.probe(case), expected)
-
-    def test_errors_malformed_absent_and_timeout_are_unknown_and_cleaned_up(self):
-        for case in (
-            "error",
-            "init-error",
-            "malformed",
-            "oversize",
-            "exit",
-            "null-result",
-            "stderr",
-            "ignore-term",
-        ):
-            with self.subTest(case=case):
-                self.log.unlink(missing_ok=True)
-                expected = Usage(FIVE, WEEK) if case == "ignore-term" else None
                 self.assertEqual(self.probe(case), expected)
         self.log.unlink(missing_ok=True)
         self.assertIsNone(self.probe(PATH=str(self.work)))
         self.assertFalse(self.log.exists())
-
-    def test_hosted_helper_timeout_is_unknown_and_reaped(self):
-        self.assertIsNone(self.probe("silent"))
-
-    def test_account_query_uses_factory_and_does_not_start_model(self):
-        self.assertEqual(self.probe(), Usage(FIVE, WEEK))
-        row = json.loads(self.log.read_text().splitlines()[0])
-        self.assertNotEqual(row["ppid"], os.getpid())
-        self.assertEqual(row["cwd"], str(self.home / ".agent-pm" / "probe"))
-        self.assertEqual(row["env"]["PWD"], row["cwd"])
-        self.assertFalse((self.work / "run.jsonl").exists())
 
     def test_native_environment_filters_markers_and_keeps_configured_overrides(self):
         common = self.common

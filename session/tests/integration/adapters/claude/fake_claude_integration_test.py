@@ -321,17 +321,17 @@ class Steps(Case):
             [("user", "hello"), ("assistant", "Hi."), ("user", "more"), ("assistant", "Again.")],
         )
 
-    def test_an_exit_step_exits_at_once_with_exit(self):
-        self.scene(steps=["Hi.", {"kind": "exit"}, "Never."], exit=4)
-        res = self.run_fake(*SESSION, "--settings", self.settings("Stop"), "--", "hello")
-        self.assertEqual((res.returncode, res.stdout, self.fired()), (4, "Hi.\n", []), res.stderr)
-
-    def test_eof_at_a_dialog_exits_with_exit(self):
-        self.scene(steps=[{"kind": "dialog", "text": TRUST}, "Hi."], exit=4)
-        res = self.run_fake(*SESSION, "--settings", self.settings("Stop"), "--", "hello")
-        self.assertEqual(
-            (res.returncode, res.stdout, self.fired()), (4, TRUST + "\n", []), res.stderr
-        )
+    def test_an_exit_step_or_eof_at_a_dialog_exits_at_once_with_exit(self):
+        for name, steps, stdout in (
+            ("exit step", ["Hi.", {"kind": "exit"}, "Never."], "Hi.\n"),
+            ("eof at a dialog", [{"kind": "dialog", "text": TRUST}, "Hi."], TRUST + "\n"),
+        ):
+            with self.subTest(name):
+                self.scene(steps=steps, exit=4)
+                res = self.run_fake(*SESSION, "--settings", self.settings("Stop"), "--", "hello")
+                self.assertEqual(
+                    (res.returncode, res.stdout, self.fired()), (4, stdout, []), res.stderr
+                )
 
     def test_a_limit_ends_the_turn_with_stop_failure_and_an_api_error(self):
         self.scene(
@@ -555,16 +555,7 @@ class BadScenario(Case):
             {"log": 5},
             {"gate": 5},
         ]
-        for scenario in rows:
-            with self.subTest(scenario=scenario):
-                self.scene(**scenario)
-                res = self.run_fake(*ARGS)
-                self.assertEqual((res.returncode, res.stdout), (1, ""), res.stderr)
-                self.assertIn("fake_claude.py: bad scenario", res.stderr)
-                self.assertFalse(os.path.exists(self.config))
-
-    def test_a_bad_interactive_step_exits_1_before_the_session(self):
-        for scenario in (
+        interactive = (
             {"turns": [[1]]},
             {"turns": [["ok"], [{"kind": "nope"}]]},
             {"turns": [[{"kind": "hook"}]]},
@@ -581,10 +572,14 @@ class BadScenario(Case):
             {"steps": [{"kind": "sleep"}]},
             {"steps": [{"kind": "write", "path": "a", "text": "x"}]},
             {"steps": [{"kind": "run", "argv": ["true"], "path": "a"}]},
+        )
+        for args, scenario in (
+            *((ARGS, scenario) for scenario in rows),
+            *(((*SESSION, "--", "hi"), scenario) for scenario in interactive),
         ):
-            with self.subTest(scenario=scenario):
+            with self.subTest(args=args, scenario=scenario):
                 self.scene(**scenario)
-                res = self.run_fake(*SESSION, "--", "hi")
+                res = self.run_fake(*args)
                 self.assertEqual((res.returncode, res.stdout), (1, ""), res.stderr)
                 self.assertIn("fake_claude.py: bad scenario", res.stderr)
                 self.assertFalse(os.path.exists(self.config))
