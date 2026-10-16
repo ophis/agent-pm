@@ -59,18 +59,21 @@ def _cells(line):
     cells.append("".join(cell).strip())
     if line.startswith("|"):
         cells.pop(0)
-    if line.endswith("|") and not line.endswith("\\|"):
+    if line.endswith("|") and not cell:
         cells.pop()
     return cells
 
 
 def _unquote(line):
-    return re.sub(r"^\s*(?:>\s?)+", "", line).strip()
+    prefix = re.match(r"^\s*(?:>\s?)+", line)
+    return (line[prefix.end() :] if prefix else line).strip(), (
+        prefix[0].count(">") if prefix else 0
+    )
 
 
 def _separator(line):
     cells = _cells(line)
-    return bool(cells) and all(re.fullmatch(r":?-{3,}:?", cell) for cell in cells)
+    return bool(cells) and all(re.fullmatch(r":?-+:?", cell) for cell in cells)
 
 
 def check(text):
@@ -93,9 +96,15 @@ def check(text):
     fence = ""
     table = False
     columns = 0
+    table_quote = 0
+    separator_line = 0
     after_title = False
     for number, raw in enumerate(lines, 1):
-        line = _unquote(raw)
+        if number == separator_line:
+            continue
+        line, quote = _unquote(raw)
+        if quote != table_quote:
+            table = False
         marker = re.match(r"^(`{3,}|~{3,})(.*)$", line)
         if fence:
             if (
@@ -134,20 +143,30 @@ def check(text):
             flush()
             table = False
             continue
-        next_line = _unquote(lines[number]) if number < len(lines) else ""
-        if "|" in line and (table or _separator(next_line)):
+        item = _LIST.match(line)
+        if item:
+            table = False
+        next_line, next_quote = _unquote(lines[number]) if number < len(lines) else ("", 0)
+        cells = _cells(line)
+        begins_table = (
+            not item
+            and "|" in line
+            and quote == next_quote
+            and _separator(next_line)
+            and len(cells) == len(_cells(next_line))
+        )
+        if table or begins_table:
             flush()
-            cells = _cells(line)
             if not table:
                 columns = len(cells)
+                table_quote = quote
+                separator_line = number + 1
             table = True
-            if not _separator(line):
-                for column, cell in enumerate(cells[:columns]):
-                    limit = LINE_LIMIT if column == columns - 1 else CELL_LIMIT
-                    measure(number, "cell", cell, limit)
+            for column, cell in enumerate(cells[:columns]):
+                limit = LINE_LIMIT if column == columns - 1 else CELL_LIMIT
+                measure(number, "cell", cell, limit)
             continue
         table = False
-        item = _LIST.match(line)
         if item:
             flush()
             start, kind = number, "list"

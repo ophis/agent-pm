@@ -100,12 +100,26 @@ class ReportCheck(Case):
         self.assertIn("line 3: cell 31>30:", out)
         for row in (
             "| " + "x" * 31 + " |",
+            "x" * 31,
             "| " + "x" * 15 + "\\|" + "y" * 15 + " | short |",
             "| `" + "x" * 15 + "|" + "y" * 15 + "` | short |",
         ):
             with self.subTest(row=row):
                 self.assertIn("line 3: cell 31>30:", self.check("| a | b |\n|---|---|\n" + row)[1])
         self.assertIn("paragraph 83>80:", self.check("x|" + "a" * 81)[1])
+
+    def test_table_boundaries_and_missing_or_extra_cells(self):
+        header = "| A | B |\n|---|---|\n"
+        for following in ("- " + "x" * 80, "> " + "x" * 80, "\n" + "x" * 80):
+            with self.subTest(following=following):
+                self.assertEqual(self.check(header + following), (0, "ok\n"))
+        self.assertEqual(self.check(header + "| ok | ok | " + "x" * 100 + " |"), (0, "ok\n"))
+        self.assertEqual(self.check("| " + "x" * 31 + " | B |\n|---|"), (0, "ok\n"))
+        self.assertIn("cell 31>30:", self.check("| A | B |\n|-|-|\n" + "x" * 31)[1])
+        self.assertIn("cell 31>30:", self.check("> | A | B |\n> |---|---|\n> " + "x" * 31)[1])
+        self.assertEqual(
+            self.check("| A | B\\\\|\n|---|---|\n| ok | " + "x" * 80 + " |"), (0, "ok\n")
+        )
 
     def test_fences_headings_types_and_html(self):
         long = "x" * 200
