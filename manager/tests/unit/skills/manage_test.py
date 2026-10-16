@@ -9,9 +9,9 @@ from manager.tests.case import REPO, Case
 from manager.tests.skills.commands import (
     BIN,
     body,
+    doc_sections,
     examples,
     paths,
-    readme_sections,
     references,
     section,
     sections,
@@ -93,19 +93,22 @@ class Manage(Case):
         ):
             self.assertIn(literal, proposals, literal)
 
-    def test_the_files_and_readme_sections_it_names_exist(self):
+    def test_the_files_and_doc_sections_it_names_exist(self):
         self.assertTrue(paths("manage"))
         for path in paths("manage"):
             self.assertTrue(os.path.isfile(path), path)
-        with open(os.path.join(REPO, "README.md"), encoding="utf-8") as f:
-            readme = f.read()
-        cited = readme_sections("manage")
-        self.assertIn(["Using the board", "Finish"], cited)
-        for top, *inner in cited:
-            part = re.search(rf"^## {re.escape(top)}\n(.*?)(?=^## |\Z)", readme, re.M | re.S)
-            self.assertIsNotNone(part, top)
+        cited = doc_sections("manage")
+        self.assertIn(("docs/board.md", ["Using the board", "Finish"]), cited)
+        for path, (top, *inner) in cited:
+            with open(os.path.join(REPO, path), encoding="utf-8") as f:
+                doc = f.read()
+            head = re.search(rf"^(#+) {re.escape(top)}$", doc, re.M)
+            self.assertIsNotNone(head, f"{path} › {top}")
+            rest = doc[head.end() :]
+            end = re.search(rf"^#{{1,{len(head[1])}}} ", rest, re.M)
+            part = rest[: end.start()] if end else rest
             for name in inner:
-                self.assertRegex(part[1], rf"(?m)^#+ {re.escape(name)}$|\*\*{re.escape(name)}:\*\*")
+                self.assertRegex(part, rf"(?m)^#+ {re.escape(name)}$|\*\*{re.escape(name)}:\*\*")
 
     def test_a_plugin_update_names_each_clients_command(self):
         update = rule("bumps the agent-pm plugin version")

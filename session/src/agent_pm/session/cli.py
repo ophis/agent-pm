@@ -162,7 +162,7 @@ def _parser(hosts: Hosts | None) -> argparse.ArgumentParser:
     p = sub.add_parser(
         "ls",
         help="list sessions",
-        description="List sessions (see README.md › agent-pm-session) or, with --records, the "
+        description="List sessions (see docs/sessions.md › agent-pm-session) or, with --records, the "
         "Record of each that has one.",
     )
     p.add_argument("--match", metavar="RE", help="names fullmatching RE")

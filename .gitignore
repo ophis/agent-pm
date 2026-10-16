@@ -3,5 +3,8 @@ work/
 logs/
 __pycache__/
 .DS_Store
-docs/
+/docs/adr/
+/docs/agents/
+/docs/handoffs/
+/docs/grill-engineering-comparison.md
 /tmp*/
