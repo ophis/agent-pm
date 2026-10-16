@@ -1,5 +1,6 @@
 """Shared writeback output expectations."""
 
+import contextlib
 import hashlib
 import json
 import os
@@ -298,6 +299,52 @@ class Base(Case):
 
     def no_ledger(self, ctx):
         self.assertFalse(os.path.exists(os.path.join(ctx.workdir, "writeback.json")))
+
+
+class PinnedClientReporting(Base):
+    def test_notice_is_once_per_sid_with_a_stable_remote_identity(self):
+        gql = Gql()
+        ctx = self.ctx(gql=gql)
+        self.assertTrue(writeback.client_pinned(ctx, "b", "invalid"))
+        self.assertTrue(writeback.client_pinned(ctx, "b", "a"))
+        self.assertEqual(self.steps(ctx), {SID: ["client-pinned"]})
+        self.assertEqual([name for name, _ in gql.calls], ["find", "comment"])
+        body = gql.comments[cid("client-pinned")]["body"]
+        for fragment in ("b", "invalid", "personally", "Todo", "new run"):
+            self.assertIn(fragment, body)
+        self.assertTrue(writeback.client_pinned(replace(ctx, sid=OTHER_SID), "b", "a"))
+        self.assertEqual(len(gql.comments), 2)
+
+    def test_a_remote_post_survives_a_lost_ledger_write_without_reposting(self):
+        gql = Gql()
+        ctx = self.ctx(gql=gql)
+        with mock.patch.object(os, "replace", side_effect=OSError("disk full")):
+            self.assertFalse(writeback.client_pinned(ctx, "b", "a"))
+        self.no_ledger(ctx)
+        self.assertTrue(writeback.client_pinned(ctx, "b", "a"))
+        self.assertEqual([name for name, _ in gql.calls], ["find", "comment", "find"])
+        self.assertEqual(self.steps(ctx), {SID: ["client-pinned"]})
+
+    def test_comment_and_lock_failures_are_retryable(self):
+        for failure in ("comment", "lock"):
+            with self.subTest(failure=failure):
+                gql = Gql(
+                    fail=lambda name, _, failed=failure: (
+                        LinearError("offline") if name == failed else None
+                    )
+                )
+                ctx = self.ctx(gql=gql)
+                with (
+                    mock.patch.object(os, "open", side_effect=PermissionError("locked"))
+                    if failure == "lock"
+                    else contextlib.nullcontext()
+                ):
+                    self.assertFalse(writeback.client_pinned(ctx, "b", "a"))
+                self.no_ledger(ctx)
+                gql.fail = lambda _name, _v: None
+                self.assertTrue(writeback.client_pinned(ctx, "b", "a"))
+                self.assertEqual(self.steps(ctx), {SID: ["client-pinned"]})
+                self.assertEqual(len(gql.comments), 1)
 
 
 class ProgressReporting(Base):

@@ -238,13 +238,27 @@ Copy `agent_label_group` and `[agent_labels]` from the `# local:` examples in [l
 
 | Agent-group labels at claim recheck | New run |
 |---|---|
+| Existing pin | Recorded client takes priority; invalid Agent labels do not block it |
 | None | Resolved role default client |
 | One mapped label | Its client, for any role; renaming the label preserves the mapping |
 | Several, or an unmapped child | One comment listing label errors, including task-label errors; In Review, no attempt consumed |
 
-Selection: [router.py:513](linear-orchestrator/src/agent_pm/linear_orchestrator/engine/router.py#L513). The `claim` log records `client` and `client_source=label|default`. A label-selected client's construction `ConfigError` produces a comment with the client and error's first line, then In Review instead of an interruption retry ([router.py:722](linear-orchestrator/src/agent_pm/linear_orchestrator/engine/router.py#L722)); fix it → move back to Todo.
+Selection: [router.py](linear-orchestrator/src/agent_pm/linear_orchestrator/engine/router.py). The `claim` log records `client` and `client_source=pinned|label|default`. A label-selected client's construction `ConfigError` produces a comment with the client and error's first line, then In Review instead of an interruption retry; fix it → move back to Todo.
 
-To switch a subsequent new run, with no agent run live: change the Agent label → move the issue to Todo. A new session id selects again; resuming the same session keeps its recorded client ([router.py:820](linear-orchestrator/src/agent_pm/linear_orchestrator/engine/router.py#L820)). Automatic-retry pinning and label-change reminders follow in 294-b. Scheduled new-run quota checks and `--brake` still use the role default; `--dry-run` does not inspect Agent labels. Actual-client quota checks, brake and previews follow in 294-c ([router.py:457](linear-orchestrator/src/agent_pm/linear_orchestrator/engine/router.py#L457), [gate.py:44](linear-orchestrator/src/agent_pm/linear_orchestrator/engine/gate.py#L44)).
+**Pin:** the issue's latest `runs.jsonl` `start` client, retained across automatic retries until an account outside the harness viewer and all role accounts later moves the issue to Todo. This does not depend on `human_members`; `failed` rows never establish or replace a pin. Same-session resumes keep their recorded client. If the retained client differs from the current label selection (or labels are invalid), `client-pinned` logs the issue, sid and both values; one idempotent comment per sid explains the switch rule.
+
+```mermaid
+flowchart LR
+    A[Change Agent label] --> B{Already Todo?}
+    B -- Yes --> C[Personally move out]
+    B -- No --> D[Personally move to Todo]
+    C --> D
+    D --> E[New sid selects again]
+```
+
+Switch only with no agent run live.
+
+Scheduled new-run quota checks and `--brake` still use the role default; `--dry-run` does not inspect Agent labels. Actual-client quota checks, brake and previews follow in 294-c ([gate.py:44](linear-orchestrator/src/agent_pm/linear_orchestrator/engine/gate.py#L44)).
 
 Rollout:
 

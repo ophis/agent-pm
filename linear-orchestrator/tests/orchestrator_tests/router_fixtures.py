@@ -232,6 +232,7 @@ class FakeLinear:
         self.issues = {i["identifier"]: i for i in issues}
         self.history = {} if history is None else history
         self.mutations, self.queries, self.services = [], [], []
+        self.comments = {}
         self.todo_error = False
         self.unreadable = set()
         self.refuse = set()
@@ -259,6 +260,8 @@ class FakeLinear:
     def _identity(self, query, v):
         if query == "query { viewer { id } }":
             return {"viewer": {"id": "harness-viewer"}}
+        if query == ops.Q_COMMENT:
+            return {"comment": self.comments.get(v["c"])}
         if query in (related.Q_SEARCH, related.Q_SEARCH_IDS, related.Q_IDS):
             return {"searchIssues": {"nodes": []}, "issues": {"nodes": []}}
         if query == ops.Q_TEAM:
@@ -307,6 +310,12 @@ class FakeLinear:
             issue.setdefault("subscribers", []).append(v["e"])
         elif "commentCreate" in query:
             issue.setdefault("comments", []).append(v["b"])
+            if "c" in v:
+                self.comments[v["c"]] = {
+                    "body": v["b"],
+                    "issue": {"id": v["i"]},
+                    "user": {"isMe": True},
+                }
         elif v["i"] in self.refuse:
             return {"issueUpdate": {"success": False}}
         else:

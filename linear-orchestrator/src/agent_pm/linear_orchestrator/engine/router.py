@@ -319,6 +319,34 @@ class Board:
         )
         return start.client if moved is None or moved <= start.ts else None
 
+    def client_pinned(self, spec):
+        if self.dry or not self.cfg.agent_label_group:
+            return
+        if spec.mode != "resume" and spec.client_source != "pinned":
+            return
+        role = config.role_for(self.cfg.roles, spec.assignee)
+        if role is None:
+            return
+        try:
+            current = self.gql(Q_RECHECK, i=spec.uuid)["issue"]
+            selected, _, error = client_for(
+                current["labels"]["nodes"],
+                self.cfg.agent_label_group,
+                self.label_clients,
+                self.cfg.roles[role].run.client,
+            )
+            if error:
+                selected = "invalid"
+            if selected != spec.client:
+                self.say(
+                    "client-pinned", spec.issue, sid=spec.sid, client=spec.client, label=selected
+                )
+                writeback.client_pinned(
+                    writeback.for_run(self.cfg, role, self.gql, spec), spec.client, selected
+                )
+        except (LinearError, Unavailable, OSError, subprocess.SubprocessError) as error:
+            self.say("client-pinned-error", spec.issue, sid=spec.sid, error=one_line(error))
+
     def attempts(self, issue):
         tried = [*self.entries, *self.failures]
         n = attempt_count(tried, issue["identifier"])
@@ -913,6 +941,7 @@ def tick(opts, cfg, gql, *, start, keychain, clock=datetime.now, hour=None, laun
             if spec is None or dry:
                 return 0
             walk.write()  # the outer logs past the walk
+            board.client_pinned(spec)
             return start_run(start, begin(cfg, spec), walk)
 
 
@@ -964,6 +993,7 @@ def run_issue(opts, cfg, gql, start, *, keychain, clock=datetime.now, launch_sid
             )
         if dry:
             return 0
+        board.client_pinned(spec)
         return start(begin(cfg, spec))
 
 
