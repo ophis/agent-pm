@@ -1,0 +1,74 @@
+{
+  "aggregation": "per-test median across complete successful attempts",
+  "sources": [
+    {
+      "architecture": "x86_64",
+      "attempt": 1,
+      "event": "pull_request",
+      "head_sha": "b63632d159d4a5dde847501ca27457f175a36415",
+      "python": "3.11.17",
+      "run_id": "38967398621",
+      "runner": "ubuntu-24.04",
+      "sha": "c484361f74599afb11c7eea8bc2333a2c88c9bb8",
+      "shard_count": 8,
+      "shards": [
+        "1",
+        "2",
+        "3",
+        "4",
+        "5",
+        "6",
+        "7",
+        "8"
+      ],
+      "tmux": "tmux 3.4",
+      "url": "https://github.com/ophis/agent-pm/actions/runs/38967398621/attempts/1"
+    },
+    {
+      "architecture": "x86_64",
+      "attempt": 2,
+      "event": "pull_request",
+      "head_sha": "b63632d159d4a5dde847501ca27457f175a36415",
+      "python": "3.11.17",
+      "run_id": "38967398621",
+      "runner": "ubuntu-24.04",
+      "sha": "c484361f74599afb11c7eea8bc2333a2c88c9bb8",
+      "shard_count": 8,
+      "shards": [
+        "1",
+        "2",
+        "3",
+        "4",
+        "5",
+        "6",
+        "7",
+        "8"
+      ],
+      "tmux": "tmux 3.4",
+      "url": "https://github.com/ophis/agent-pm/actions/runs/38967398621/attempts/2"
+    },
+    {
+      "architecture": "x86_64",
+      "attempt": 3,
+      "event": "pull_request",
+      "head_sha": "b63632d159d4a5dde847501ca27457f175a36415",
+      "python": "3.11.17",
+      "run_id": "38967398621",
+      "runner": "ubuntu-24.04",
+      "sha": "c484361f74599afb11c7eea8bc2333a2c88c9bb8",
+      "shard_count": 8,
+      "shards": [
+        "1",
+        "2",
+        "3",
+        "4",
+        "5",
+        "6",
+        "7",
+        "8"
+      ],
+      "tmux": "tmux 3.4",
+      "url": "https://github.com/ophis/agent-pm/actions/runs/38967398621/attempts/3"
+    }
+  ]
+}
