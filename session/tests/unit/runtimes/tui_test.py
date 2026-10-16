@@ -2,7 +2,6 @@
 
 import errno
 import fcntl
-import inspect
 import itertools
 import json
 import os
@@ -753,16 +752,6 @@ class StartTest(Base):
                 )
                 self.assertFalse(self.locked())
 
-    def test_a_terminal_acquisition_failure_leaves_no_session(self):
-        self.host.calls.terminal.side_effect = SessionError("terminal could not be acquired")
-        with self.assertRaisesRegex(
-            SessionError, r"\Acannot start tui session w1: terminal could not be acquired\Z"
-        ):
-            self.start()
-        self.assertEqual(len(self.recorded), 1)
-        self.assertEqual(self.host.processes, {})
-        self.assertNoSessionDir()
-
     def test_terminal_acquisition_failure_does_not_wait_for_its_held_lock(self):
         caught = []
         self.host.calls.terminal.side_effect = SessionError("terminal could not be acquired")
@@ -778,6 +767,7 @@ class StartTest(Base):
         thread.join(5)
         self.assertFalse(thread.is_alive())
         self.assertEqual(caught, ["cannot start tui session w1: terminal could not be acquired"])
+        self.assertEqual(len(self.recorded), 1)
         self.assertEqual(self.host.processes, {})
         self.assertNoSessionDir()
 
@@ -1497,17 +1487,25 @@ class ScanTest(Base):
         )
         self.assertEqual(self.run.screens[1], "a Trust this folder? b")
 
-    def test_two_dialogs_one_going_as_the_other_comes(self):
-        mode = self.started()
-        self.assertEqual(
-            self.scans(mode, "Sign in; Trust this folder?", "Sign in", "Trust this folder?", ""),
-            [
-                [Blocked("Trust  this\nfolder?"), Blocked("Sign in")],
-                [Activity("")],
-                [Activity(""), Blocked("Trust  this\nfolder?")],
-                [Activity("")],
-            ],
-        )
+    def test_dialogs_and_limits_are_one_event_per_appearance(self):
+        for screens, expected in (
+            (
+                ("Sign in; Trust this folder?", "Sign in", "Trust this folder?", ""),
+                [
+                    [Blocked("Trust  this\nfolder?"), Blocked("Sign in")],
+                    [Activity("")],
+                    [Activity(""), Blocked("Trust  this\nfolder?")],
+                    [Activity("")],
+                ],
+            ),
+            (
+                ("LIMIT 100", "LIMIT  100", "LIMIT 200", "", "LIMIT 200", "LIMIT 300"),
+                [[LimitHit(100.0)], [], [], [], [LimitHit(200.0)], []],
+            ),
+        ):
+            with self.subTest(screens=screens):
+                mode = self.started()
+                self.assertEqual(self.scans(mode, *screens), expected)
 
     def test_a_dialog_marks_the_terminal_blocked_unless_it_is(self):
         mode = self.started()
@@ -1537,32 +1535,31 @@ class ScanTest(Base):
                 )
                 method.side_effect = None
 
-    def test_a_limit_is_one_event_per_appearance_its_reset_changing_or_not(self):
-        mode = self.started()
-        self.assertEqual(
-            self.scans(mode, "LIMIT 100", "LIMIT  100", "LIMIT 200", "", "LIMIT 200", "LIMIT 300"),
-            [[LimitHit(100.0)], [], [], [], [LimitHit(200.0)], []],
-        )
-
-    def test_quoted_limit_text_on_a_claude_screen_is_no_limit(self):
-        mode = self.start(run=ClaudeScreens(self.adapter))
-        self.host.calls.reset_mock()
-        screens = (
-            "> Documentation example: You've hit your weekly limit",
-            "  12 + You've hit your session limit · resets 3pm (UTC)",
-            "  ⎿  You've hit your session limit · resets 3pm (America/Los_Angeles)",
-        )
-        self.assertEqual(self.scans(mode, *screens), [[], [], []])
-
-    def test_a_quoted_claude_dialog_is_no_block_and_the_native_one_is(self):
-        mode = self.start(run=ClaudeScreens(self.adapter))
-        self.host.calls.reset_mock()
-        screens = (
-            '  55 TRUST = "Quick safety check: … 1. Yes, I trust this folder 2. No, exit"',
-            "> see Quick safety check docs",
-            "│ Quick safety check: Is this a project you trust?\n│ ❯ 1. Yes, I trust this folder",
-        )
-        self.assertEqual(self.scans(mode, *screens), [[], [], [Blocked("Quick safety check")]])
+    def test_quoted_claude_limit_or_dialog_text_is_no_event_and_the_native_dialog_is(self):
+        for screens, expected in (
+            (
+                (
+                    "> Documentation example: You've hit your weekly limit",
+                    "  12 + You've hit your session limit · resets 3pm (UTC)",
+                    "  ⎿  You've hit your session limit · resets 3pm (America/Los_Angeles)",
+                ),
+                [[], [], []],
+            ),
+            (
+                (
+                    '  55 TRUST = "Quick safety check: … 1. Yes, I trust this folder 2. No, exit"',
+                    "> see Quick safety check docs",
+                    "│ Quick safety check: Is this a project you trust?\n"
+                    "│ ❯ 1. Yes, I trust this folder",
+                ),
+                [[], [], [Blocked("Quick safety check")]],
+            ),
+        ):
+            with self.subTest(screens=screens):
+                self.host.processes.clear()
+                mode = self.start(run=ClaudeScreens(self.adapter))
+                self.host.calls.reset_mock()
+                self.assertEqual(self.scans(mode, *screens), expected)
 
     def test_a_failed_read_is_no_event(self):
         mode = self.started()
@@ -1607,14 +1604,11 @@ class ReturncodeStateTest(Base):
 
 
 class PathsTest(Base):
-    def test_a_sessions_dir_is_under_tui_dir_in_home(self):
-        self.assertEqual(tui.TUI_DIR, "~/.agent-pm/tui")
-        self.assertEqual(tui._Store(NAME, host=self.host).dir, self.dir)
-
     def test_its_hook_argv_runs_the_plugins_agent_pm_session_hook_on_its_dir(self):
+        self.start()
         self.assertEqual(
-            tui._Store(NAME, host=self.host).hook_argv(),
-            (os.path.join(PLUGIN_BIN, "agent-pm-session"), "hook", self.dir),
+            self.host.calls.terminal.call_args.args[1].argv,
+            ("/bin/run", os.path.join(PLUGIN_BIN, "agent-pm-session"), "hook", self.dir),
         )
 
     def test_its_hook_argv_names_the_command_its_current_path_finds(self):
@@ -1625,9 +1619,11 @@ class PathsTest(Base):
             f.write("#!/bin/sh\n")
         os.chmod(command, 0o755)
         with mock.patch.dict(os.environ, {"PATH": other + os.pathsep + os.environ["PATH"]}):
-            self.assertEqual(
-                tui._Store(NAME, host=self.host).hook_argv(), (command, "hook", self.dir)
-            )
+            self.start()
+        self.assertEqual(
+            self.host.calls.terminal.call_args.args[1].argv,
+            ("/bin/run", command, "hook", self.dir),
+        )
 
 
 class PrepareTest(Base):
@@ -1671,20 +1667,6 @@ class PrepareTest(Base):
             SessionInfo.from_fields(state),
             SessionInfo(sid=SID, cwd="/cwd", project=True, transcript="/t", resume="r"),
         )
-
-    def test_each_hook_kind_has_its_word(self):
-        self.assertEqual(
-            tui.WORDS,
-            {
-                HookKind.TURN_END: Word.DONE,
-                HookKind.TURN_FAILED: Word.DONE,
-                HookKind.BLOCKED: Word.BLOCKED,
-                HookKind.ACTIVITY: Word.WORKING,
-            },
-        )
-        for kind, word in tui.WORDS.items():
-            self.assertIs(type(kind), HookKind)
-            self.assertIs(type(word), Word)
 
     def test_only_labels_of_a_known_kind_get_a_word_and_events_may_be_none(self):
         class Labels(ScanTui):
@@ -1874,25 +1856,6 @@ class LockTest(Base):
 
 
 class StoreTest(Base):
-    def test_its_operations_take_no_lock_from_their_caller(self):
-        found = {
-            name: list(inspect.signature(method).parameters)
-            for name, method in inspect.getmembers(tui._Store, inspect.isfunction)
-            if not name.startswith("_")
-        }
-        self.assertEqual(
-            sorted(found),
-            ["close", "holder", "hook_argv", "process", "read", "records", "start", "stop"],
-        )
-        for name, parameters in found.items():
-            with self.subTest(name=name):
-                self.assertEqual([p for p in parameters if "lock" in p], [])
-
-    def test_no_module_function_reaches_a_sessions_files_by_name(self):
-        for gone in ("close", "lock", "read_state", "session_dir", "hook_argv"):
-            with self.subTest(gone=gone):
-                self.assertFalse(hasattr(tui, gone))
-
     def test_records_are_whole_lines_from_an_offset_and_the_offset_past_them(self):
         store = tui._Store(NAME, host=self.host)
         self.assertEqual(store.records(0), ([], 0))

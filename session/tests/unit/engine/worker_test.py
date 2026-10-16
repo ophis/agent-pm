@@ -273,20 +273,18 @@ class ColorWatchTest(Base):
         )
         return next(ticks)
 
-    def test_sent_by_the_early_deadline_returns_at_it(self):
-        self.assertEqual(self.watch(0), worker.EARLY + 1)
-        self.assertEqual(self.said, [])
-        self.handle.publish.assert_called_once()
-
-    def test_pending_keeps_watching_until_sent(self):
-        self.assertEqual(self.watch(8), 9)
-        self.assertEqual(self.said, [])
-        self.handle.publish.assert_called_once()
-
-    def test_pending_at_the_cap_says_color_not_set(self):
-        self.assertEqual(self.watch(float("inf")), worker.COLOR_CAP + 1)
-        self.assertEqual(self.said, [self.UNSET.format("not ready within 15 s")])
-        self.handle.publish.assert_called_once()
+    def test_the_watch_returns_once_sent_by_the_early_deadline_else_at_the_cap(self):
+        for sent, ticks, said in (
+            (0, worker.EARLY + 1, []),
+            (8, 9, []),
+            (float("inf"), worker.COLOR_CAP + 1, [self.UNSET.format("not ready within 15 s")]),
+        ):
+            with self.subTest(sent=sent):
+                self.said.clear()
+                self.handle.publish.reset_mock()
+                self.assertEqual(self.watch(sent), ticks)
+                self.assertEqual(self.said, said)
+                self.handle.publish.assert_called_once()
 
     def test_a_dialog_while_pending_says_both(self):
         self.watch(float("inf"), events=iter([Blocked("Trust")]))

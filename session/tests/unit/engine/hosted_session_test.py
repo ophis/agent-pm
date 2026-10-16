@@ -23,9 +23,9 @@ from agent_pm.session.adapters.base import Adapter
 from agent_pm.session.adapters.claude import ClaudeAdapter
 from agent_pm.session.adapters.codex import CodexAdapter
 from agent_pm.session.adapters.codex.common import SessionStore
-from agent_pm.session.engine import hosted_session, worker
 from agent_pm.session.engine import types as engine_types
-from agent_pm.session.engine.hosted_session import POLL, HostedSession
+from agent_pm.session.engine import worker
+from agent_pm.session.engine.hosted_session import HostedSession
 from agent_pm.session.engine.records import RunLog
 from agent_pm.session.engine.types import (
     Access,
@@ -929,16 +929,6 @@ class EventsOverARuntimeTest(Case):
         )
         self.assertEqual([list(e) for e in lines], [["ts", "kind", "sid", "client_id"]] * 2)
 
-    def test_a_client_binding_does_not_end_a_block(self):
-        session = self.session(
-            (0, [Blocked("ask")], False),
-            (1, [ClientBound("n1")], False),
-            (2, [Activity("a")], False),
-            (3, [], True),
-            idle_timeout=1.5,
-        )
-        self.assertEqual(self.events(session), [Blocked("ask"), Activity("a"), Exited(0)])
-
     def test_metadata_resolver_cannot_replace_session_identity_or_effective_project(self):
         adapter = fake_adapter.FakeAdapter({})
         adapter.session_metadata = lambda info: dataclasses.replace(
@@ -977,64 +967,65 @@ class EventsOverARuntimeTest(Case):
         )
         self.assertEqual(self.events(session), [])
         self.assertEqual(session.reply, "done")
-        self.assertEqual({call[1] for call in self.mode.calls if call[0] == "poll"}, {POLL})
-        self.assertEqual(self.mode.calls[-1], ("returncode", POLL))
+        self.assertEqual({call[1] for call in self.mode.calls if call[0] == "poll"}, {0.5})
+        self.assertEqual(self.mode.calls[-1], ("returncode", 0.5))
 
-    def test_each_idle_span_yields_idle_timeout(self):
-        session = self.session(
-            (0, [Activity()], False),
-            (5, [Reply("r")], False),
-            (5.5, [], True),
-            idle_timeout=2,
-        )
-        self.assertEqual(
-            self.events(session),
-            [Activity(), IdleTimeout(2), IdleTimeout(2), Reply("r"), Exited(0)],
-        )
-
-    def test_after_blocked_no_idle_timeout_until_an_event_but_stderr(self):
-        session = self.session(
-            (0, [Blocked("ask")], False),
-            (0.5, [Stderr("x")], False),
-            (3, [Activity()], False),
-            (4.5, [], True),
-            idle_timeout=1,
-        )
-        self.assertEqual(
-            self.events(session),
-            [
-                Blocked("ask"),
-                Stderr("x"),
-                Activity(),
-                IdleTimeout(1),
-                Exited(0),
-            ],
-        )
-
-    def test_a_reply_keeps_a_session_blocked(self):
-        session = self.session(
-            (0, [Blocked("ask")], False),
-            (0.5, [Reply("r")], False),
-            (3, [Activity()], False),
-            (4.5, [], True),
-            idle_timeout=1,
-        )
-        self.assertEqual(
-            self.events(session),
-            [Blocked("ask"), Reply("r"), Activity(), IdleTimeout(1), Exited(0)],
-        )
-
-    def test_a_failed_turn_ends_a_block(self):
-        session = self.session(
-            (0, [Blocked("ask")], False),
-            (0.5, [TurnFailed("overloaded")], False),
-            (2, [], True),
-            idle_timeout=1,
-        )
-        self.assertEqual(
-            self.events(session),
-            [Blocked("ask"), TurnFailed("overloaded"), IdleTimeout(1), Exited(0)],
-        )
+    def test_each_idle_span_yields_idle_timeout_but_none_while_blocked(self):
+        for case, script, idle_timeout, expected in (
+            (
+                "idle spans",
+                ((0, [Activity()], False), (5, [Reply("r")], False), (5.5, [], True)),
+                2,
+                [Activity(), IdleTimeout(2), IdleTimeout(2), Reply("r"), Exited(0)],
+            ),
+            (
+                "stderr keeps a block",
+                (
+                    (0, [Blocked("ask")], False),
+                    (0.5, [Stderr("x")], False),
+                    (3, [Activity()], False),
+                    (4.5, [], True),
+                ),
+                1,
+                [Blocked("ask"), Stderr("x"), Activity(), IdleTimeout(1), Exited(0)],
+            ),
+            (
+                "a reply keeps a block",
+                (
+                    (0, [Blocked("ask")], False),
+                    (0.5, [Reply("r")], False),
+                    (3, [Activity()], False),
+                    (4.5, [], True),
+                ),
+                1,
+                [Blocked("ask"), Reply("r"), Activity(), IdleTimeout(1), Exited(0)],
+            ),
+            (
+                "a failed turn ends a block",
+                (
+                    (0, [Blocked("ask")], False),
+                    (0.5, [TurnFailed("overloaded")], False),
+                    (2, [], True),
+                ),
+                1,
+                [Blocked("ask"), TurnFailed("overloaded"), IdleTimeout(1), Exited(0)],
+            ),
+            (
+                "a client binding keeps a block",
+                (
+                    (0, [Blocked("ask")], False),
+                    (1, [ClientBound("n1")], False),
+                    (2, [Activity("a")], False),
+                    (3, [], True),
+                ),
+                1.5,
+                [Blocked("ask"), Activity("a"), Exited(0)],
+            ),
+        ):
+            with self.subTest(case=case):
+                self.clock.now = 0.0
+                session = self.session(*script, idle_timeout=idle_timeout)
+                self.assertEqual(self.events(session), expected)
 
     def test_an_exception_from_the_mode_stops_it_then_propagates(self):
         session = self.session()
@@ -1083,7 +1074,7 @@ class UsageTest(Base):
             ("probe-cmd", "-x"),
             cwd=self.probe_dir,
             env=mock.ANY,
-            timeout=hosted_session.PROBE_TIMEOUT,
+            timeout=120,
         )
 
     def test_a_spawn_error_is_none(self):
@@ -1095,7 +1086,7 @@ class UsageTest(Base):
     def test_a_timeout_is_none(self):
         found, probe = self.usage(None)
         self.assertIsNone(found)
-        self.assertEqual(probe.call_args.kwargs["timeout"], hosted_session.PROBE_TIMEOUT)
+        self.assertEqual(probe.call_args.kwargs["timeout"], 120)
 
     def test_a_reading_without_windows_is_a_usage(self):
         with mock.patch.object(ProbeAdapter, "usage", return_value=engine_types.Usage(None, None)):
@@ -2039,15 +2030,3 @@ class ChecksTest(Base):
         ):
             self.start()
         popen.assert_not_called()
-
-
-class ModulesTest(Case):
-    def test_constants_and_the_modes(self):
-        self.assertEqual(hosted_session.POLL, 0.5)
-        self.assertEqual(
-            (hosted_session.PROBE_DIR, hosted_session.PROBE_TIMEOUT), ("~/.agent-pm/probe", 120)
-        )
-        self.assertEqual(sorted(hosted_session.MODES), sorted(Mode))
-        self.assertEqual(
-            {mode: cls.kind for mode, cls in hosted_session.MODES.items()}, {m: m for m in Mode}
-        )

@@ -215,14 +215,6 @@ class Raises(Base):
                 self.assertEqual(lines[-1], Stderr("RuntimeError: boom"))
                 self.assertEqual(self.mode.returncode(WAIT), 1)
 
-    def test_a_keyboard_interrupt_is_code_1(self):
-        def script(*_):
-            raise KeyboardInterrupt
-
-        self.begin(script)
-        self.assertEqual(self.drain()[-1], Stderr("KeyboardInterrupt"))
-        self.assertEqual(self.mode.returncode(WAIT), 1)
-
     def test_failure_stream_is_single_and_silent_when_logging_is_disabled(self):
         def script(*_):
             raise KeyboardInterrupt
@@ -233,6 +225,7 @@ class Raises(Base):
                 logging.disable(level)
                 self.begin(script)
                 found = self.drain()
+                self.assertEqual(found[-1], Stderr("KeyboardInterrupt"))
                 self.assertEqual(found.count(Stderr("KeyboardInterrupt")), 1)
                 self.assertEqual(self.mode.returncode(WAIT), 1)
                 self.assertEqual(console.getvalue(), "")

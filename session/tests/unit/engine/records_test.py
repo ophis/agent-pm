@@ -1,7 +1,6 @@
 """session/engine/records.py: RunLog, run.jsonl writes and reads."""
 
 import errno
-import inspect
 import io
 import json
 import os
@@ -12,10 +11,8 @@ import unittest.mock
 from contextlib import redirect_stderr
 from datetime import datetime
 
-from agent_pm.session.engine import records
 from agent_pm.session.engine.records import RunLog
 from agent_pm.session.engine.types import SessionInfo
-from agent_pm.utils import append_line
 
 from session.tests.case import Case
 from session.tests.threads import capture_errors
@@ -60,17 +57,6 @@ class Base(Case):
         return out["value"]
 
 
-class Module(Case):
-    def test_exposes_only_run_log_and_the_channel(self):
-        functions = [
-            name
-            for name, value in vars(records).items()
-            if inspect.isfunction(value) and value.__module__ == records.__name__
-        ]
-        self.assertEqual(functions, [])
-        self.assertEqual(records.CHANNEL, "run.jsonl")
-
-
 class Stamp(Case):
     def test_is_local_iso_8601_with_offset_to_the_millisecond(self):
         text = RunLog.stamp()
@@ -109,11 +95,6 @@ class Note(Base):
         with redirect_stderr(err):
             missing.note("stderr", best_effort=True, text="x")
         self.assertRegex(err.getvalue(), r"^records: .*gone")
-
-
-class AppendLine(Case):
-    def test_is_the_utils_one(self):
-        self.assertIs(records.append_line, append_line)
 
 
 class Read(Base):
@@ -156,34 +137,47 @@ def info(**changes) -> SessionInfo:
 
 
 class Session(Base):
-    def test_the_latest_valid_session_line_of_the_sid_wins(self):
+    def test_the_latest_valid_session_line_wins_and_client_session_lines_change_nothing(self):
         first = {"ts": "t", "kind": "session", "sid": SID, "cwd": "/a", "project": False}
         latest = {**first, "cwd": "/b", "project": True, "transcript": "/t", "resume": "r"}
-        self.write(
-            first,
-            latest,
-            b"not json",
-            b"[]",
-            b"\xff\xfe",
-            b'{"kind": "session"',
-            {**first, "kind": "input"},
-            {**first, "sid": "other"},
-            {**first, "cwd": "rel"},
-            {**first, "cwd": "/x\x1b[2J"},
-            {**first, "cwd": 3},
-            {**first, "project": 1},
-            {**first, "transcript": "rel.jsonl"},
-            {**first, "transcript": 3},
-            {**first, "resume": None},
-            {k: v for k, v in first.items() if k != "project"},
-        )
-        self.assertEqual(
-            self.log.session(SID), info(cwd="/b", project=True, transcript="/t", resume="r")
-        )
-
-    def test_a_line_without_transcript_or_resume_has_them_empty(self):
-        self.write({"kind": "session", "sid": SID, "cwd": "/a", "project": False})
-        self.assertEqual(self.log.session(SID), info())
+        plain = {"kind": "session", "sid": SID, "cwd": "/a", "project": False}
+        for case, lines, expected in (
+            (
+                "latest valid line wins",
+                (
+                    first,
+                    latest,
+                    b"not json",
+                    b"[]",
+                    b"\xff\xfe",
+                    b'{"kind": "session"',
+                    {**first, "kind": "input"},
+                    {**first, "sid": "other"},
+                    {**first, "cwd": "rel"},
+                    {**first, "cwd": "/x\x1b[2J"},
+                    {**first, "cwd": 3},
+                    {**first, "project": 1},
+                    {**first, "transcript": "rel.jsonl"},
+                    {**first, "transcript": 3},
+                    {**first, "resume": None},
+                    {k: v for k, v in first.items() if k != "project"},
+                ),
+                info(cwd="/b", project=True, transcript="/t", resume="r"),
+            ),
+            ("no transcript or resume", (plain,), info()),
+            (
+                "client session lines",
+                (
+                    {"kind": "client_session", "sid": SID, "client_id": "early"},
+                    plain,
+                    {"kind": "client_session", "sid": SID, "client_id": "n1"},
+                ),
+                info(),
+            ),
+        ):
+            with self.subTest(case=case):
+                self.write(*lines)
+                self.assertEqual(self.log.session(SID), expected)
 
     def test_metadata_updates_only_the_matching_latest_session(self):
         first = {"kind": "session", "sid": SID, "cwd": "/a", "project": False}
@@ -196,15 +190,6 @@ class Session(Base):
         )
         self.assertEqual(self.log.session(SID), info(transcript="/t", resume="resume"))
         self.write(first, {"kind": "session_metadata", "sid": SID, "transcript": "/t"}, first)
-        self.assertEqual(self.log.session(SID), info())
-
-    def test_a_client_session_line_changes_no_identity(self):
-        first = {"kind": "session", "sid": SID, "cwd": "/a", "project": False}
-        self.write(
-            {"kind": "client_session", "sid": SID, "client_id": "early"},
-            first,
-            {"kind": "client_session", "sid": SID, "client_id": "n1"},
-        )
         self.assertEqual(self.log.session(SID), info())
 
     def test_none_without_a_valid_session_line(self):

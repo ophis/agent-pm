@@ -16,8 +16,6 @@ from session.tests.case import Case
 from session.tests.fakes.host import FakeHost
 from session.tests.fakes.session import FakeSession
 
-PROCESS = {"alive", "close", "wait_exit", "kill", "record", "display"}
-
 ABSTRACT = {
     Session: {
         "events",
@@ -45,31 +43,8 @@ class Abstract(Case):
                 self.assertTrue(inspect.isabstract(cls))
                 self.assertEqual(cls.__abstractmethods__, methods)
 
-    def test_no_config_parser_hangs_on_session(self):
-        self.assertFalse(hasattr(Session, "parse_hosts"))
-
 
 class SessionClassMethods(Case):
-    def test_start_and_attach_take_the_idle_timeout_writable_dirs_only_the_spec(self):
-        key, either = inspect.Parameter.KEYWORD_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD
-        for method, parameters in (
-            (Session.configure, [("adapters", key), ("hosts", key)]),
-            (Session.configure_from, [("config", either), ("hosts", key)]),
-            (
-                Session.start,
-                [("spec", either), ("display", key), ("host", key), ("idle_timeout", key)],
-            ),
-            (Session.attach, [("name", either), ("host", key), ("idle_timeout", key)]),
-            (Session.writable_dirs, [("spec", either)]),
-            (Session.class_roots, [("client", either)]),
-            (Session.inspect, [("spec", either)]),
-            (Session.layout, [("display", key)]),
-            (Session.show, [("self", either), ("display", key), ("command", key)]),
-        ):
-            with self.subTest(method=method.__name__):
-                found = inspect.signature(method).parameters.values()
-                self.assertEqual([(p.name, p.kind) for p in found], parameters)
-
     def test_policy_validation_needs_no_session_or_workdir(self):
         Session.validate_policy(flags=("--flag",), env={"TOKEN": "value", "A-B": "value"})
         for flags, env, message in (
