@@ -1,4 +1,4 @@
-# agent-pm
+# <img src="docs/images/icon.jpg" alt="" width="40" align="absmiddle"> agent-pm
 
 [![CI](https://github.com/ophis/agent-pm/actions/workflows/test.yml/badge.svg?branch=main)](https://github.com/ophis/agent-pm/actions/workflows/test.yml?query=branch%3Amain) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
@@ -21,6 +21,12 @@ flowchart LR
     P -->|"PRD → Approve → promote"| E["engineer<br>build, light-build"] -->|pull request| Y[you]
     T[agent-pm-linear router] -.->|claims Todo issues| R & P & E
 ```
+
+## Why agent-pm
+
+![Working with coding agents: one agent, many agents by hand, agent-pm](docs/images/compare.svg)
+
+One agent keeps you waiting; many agents by hand route every prompt, check and approval through you. With agent-pm you talk to a manager, which launches, watches and reports on the workers.
 
 ## Demo: one manager, many workers
 
