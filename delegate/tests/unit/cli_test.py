@@ -820,7 +820,7 @@ class Usage(Base):
         self.assertEqual((self.launches(), os.path.exists(self.work)), ([], False))
 
     def test_an_abbreviated_option_is_a_usage_error(self):
-        for extra in (("--mod", "headless"), ("--detach", "--nam", "x")):
+        for extra in (("--mod", "headless"), ("--detach", "--rol", "x")):
             with self.subTest(extra=extra):
                 code, out, err = self.runs(*extra)
                 self.assertEqual((code, out), (2, ""))
