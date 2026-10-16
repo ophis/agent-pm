@@ -40,6 +40,54 @@ class Acceptance(Case):
         self.assertIn(
             "python3 -P {{team}}/tools/html_check.py *", composed("researcher")[1].commands
         )
+        self.assertIn(
+            "python3 -P {{team}}/tools/report_check.py *", composed("researcher")[1].commands
+        )
+
+    def test_report_delivery_check_and_visual_mapping(self):
+        prompt = composed("researcher")[0]
+        concise = item(section(prompt, "Standards"), "Concise")
+        for text in (
+            "before [Output › Destination](#destination)",
+            "python3 -P <team>/tools/report_check.py <file>",
+            "at most 3 runs total",
+            "Length check: <N> over",
+            "Length check: failed: <error>",
+        ):
+            self.assertIn(text, concise)
+        visual = section(prompt, "Visual")
+        self.assertIn("IMPORTANT alert", visual)
+        self.assertIn("Gaps table → an HTML table", visual)
+        self.assertIn("`<details>` section → a collapsible region", visual)
+        self.assertIn("before any Concise length-check suffix", visual)
+
+    def test_template_owns_report_structure_and_task_depth(self):
+        template = team_texts()["templates/research-report.md"]
+        for text in (
+            "> [!IMPORTANT]",
+            "at most 3 reasons",
+            "<type>: <task> · <web|local|mixed>",
+            "12-character",
+            "| Light Research |",
+            "| Research |",
+            "| Deep Research |",
+            "Body: lists, tables and Mermaid only",
+            "Both have:",
+            "| Impact | Gap |",
+            "<summary>Findings (<count>)</summary>",
+            "<summary>Sources (<count>)</summary>",
+            "at most once per section",
+            "bold answer",
+        ):
+            self.assertIn(text, template)
+        for task in ("research", "light-research"):
+            step = task_text(task).split("6. **Report**", 1)[1].split("\n7.", 1)[0]
+            self.assertIn("Template", step)
+            self.assertNotIn("<commit>", step)
+            self.assertNotIn("type line, translated", step)
+        writing = section(composed("researcher")[0], "Writing")
+        for label in ("high", "medium", "low", "single-source", "unverified"):
+            self.assertIn(f"`{label}`", writing)
 
     def test_local_and_orchestrator_destinations_name_deliverable_file(self):
         for dest in ("local", "orchestrator"):
@@ -273,7 +321,7 @@ class Shipped(Case):
     def test_light_research_is_one_pass(self):
         light = task_text("light-research")
         self.assertIn("in one pass: no subagents, no workflow", light)
-        self.assertIn("one pass by one agent, no subagents, no verification stage", light)
+        self.assertIn("Type line and verification depth: the Template.", light)
         self.assertNotIn("angles", light)
 
 
@@ -386,7 +434,7 @@ class Real(RealConfig):
         self.assertIn("fills the Module cell of its first row only", requirements)
         for row in ("`| FR-<n> | <module> | <the requirement> | ", "`| NFR-<n> | <module> | "):
             self.assertIn(row, pm)
-        self.assertIn("Opens with one sentence", section(light, "Conclusion and recommendation"))
+        self.assertIn("> **<one-sentence answer>** (<overall confidence>)", light)
         self.assertIn(point, section(light, "Comparison table"))
         findings = section(light, "Findings")
         self.assertIn(point, findings)
@@ -395,14 +443,11 @@ class Real(RealConfig):
             findings,
         )
         self.assertIn(
-            "`1. <URL or code permalink> (primary|secondary|code)`", section(light, "Sources")
+            "`1. [<Short title>](<URL or code permalink>) (primary|secondary|code)`",
+            section(light, "Sources"),
         )
-        self.assertEqual(light.count("type line"), 1)  # the Template's, deep research only
-        self.assertIn(
-            "Deep research's type line (research and light research give their own)", light
-        )
-        for task, line in (("research", "Research"), ("light-research", "Light Research")):
-            self.assertEqual(task_text(task).count(f"`<{line} type line, translated>`"), 1, task)
+        for task in ("research", "light-research"):
+            self.assertIn("Type line and verification depth: the Template.", task_text(task))
 
     def test_the_guide_names_a_given_task_else_the_run_picks_it(self):
         named = guide(composed("researcher", "research")[0])
@@ -488,7 +533,7 @@ class Real(RealConfig):
                     f"- **Concise**: after writing {doc}, cut repetition and preamble "
                     "([Principles › Writing](#writing)); length follows content.",
                 )
-                for role, doc in (("pm", "the PRD"), ("researcher", "the report"))
+                for role, doc in (("pm", "the PRD"),)
             ),
             (
                 "echo's summary overrides Output's length",
@@ -550,7 +595,7 @@ class Real(RealConfig):
                     ),
                     (
                         "summary",
-                        "`summary`'s last line, after any other: `HTML: <html>`; on a skip, `HTML 跳过：<reason>`",
+                        "Append `HTML: <html>` to `summary`, before any Concise length-check suffix; on a skip, `HTML 跳过：<reason>`",
                     ),
                     ("outcome", "`status` and `url` stay as they are."),
                 )
@@ -572,7 +617,7 @@ class Real(RealConfig):
             (
                 "research hand-off phrases",
                 task_text("research"),
-                "`<Research type line, translated>`",
+                "Type line and verification depth: the Template.",
             ),
             (
                 "research hand-off phrases",
@@ -582,7 +627,7 @@ class Real(RealConfig):
             (
                 "research hand-off phrases",
                 task_text("light-research"),
-                "`<Light Research type line, translated>`",
+                "Type line and verification depth: the Template.",
             ),
             (
                 "research hand-off phrases",
