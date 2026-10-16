@@ -565,7 +565,7 @@ class Crew:
 
     def next_event(self, *, after: int | None, gen: int) -> tuple[int, str]:
         self._listed = None
-        cursor, identity = self.roster.watch_events(after, gen)
+        cursor, identity = self.roster.watch_events(after, gen, acknowledge=False)
         while True:
             if identity is None:
                 identity = self.roster.event_identity()

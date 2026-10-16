@@ -179,6 +179,23 @@ def _next_event(args) -> int:
             return 0
 
 
+def _pending(args) -> int:
+    crew = _crew(args)
+    crew.roster.check_lease()
+    cursor, generation, events = crew.roster.backlog()
+    for line, event in enumerate(events, cursor + 1):
+        print(f"{line} {event}")
+        if args.content:
+            print(crew.event_content(event), end="")
+    print(f"N={cursor} GEN={generation}")
+    return 0
+
+
+def _ack(args) -> int:
+    _crew(args).roster.advance(args.through, args.gen)
+    return 0
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="agent-pm-crew")
     common = argparse.ArgumentParser(add_help=False)
@@ -241,8 +258,23 @@ def _parser() -> argparse.ArgumentParser:
     note.add_argument("text", help="empty text clears the note")
     note.set_defaults(func=_note)
     subs.add_parser("release", parents=[common]).set_defaults(func=_release)
-    next_event = subs.add_parser("next-event", parents=[common])
-    next_event.add_argument("--after", type=_after, required=True)
+    pending = subs.add_parser(
+        "pending", parents=[common], help="read unhandled events without waiting or acknowledging"
+    )
+    pending.add_argument("--content", action="store_true")
+    pending.set_defaults(func=_pending)
+    ack = subs.add_parser(
+        "ack", parents=[common], help="confirm handling through a line; repeat safely"
+    )
+    ack.add_argument("--through", type=_number, required=True)
+    ack.add_argument("--gen", type=_number, required=True)
+    ack.set_defaults(func=_ack)
+    next_event = subs.add_parser(
+        "next-event", parents=[common], help="read events; stdout does not confirm handling"
+    )
+    next_event.add_argument(
+        "--after", type=_after, required=True, help="read position only; confirm handling with ack"
+    )
     next_event.add_argument("--gen", type=_number, required=True)
     next_event.add_argument(
         "--content",

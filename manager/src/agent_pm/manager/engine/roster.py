@@ -644,11 +644,14 @@ class Roster:
     def advance(self, after: int | None, gen: int) -> int:
         return self.watch_events(after, gen)[0]
 
-    def watch_events(self, after: int | None, gen: int) -> tuple[int, tuple[int, int] | None]:
+    def watch_events(
+        self, after: int | None, gen: int, *, acknowledge: bool = True
+    ) -> tuple[int, tuple[int, int] | None]:
         with self._locked() as data:
             self._lease(data)
             value = self._cursor(data, after, gen)
-            data["cursor"] = max(data["cursor"], value)
+            if acknowledge:
+                data["cursor"] = max(data["cursor"], value)
             return value, self._events.identity()
 
     def event_identity(self) -> tuple[int, int] | None:
@@ -659,6 +662,7 @@ class Roster:
         self, after: int | None, gen: int, *, identity: tuple[int, int] | None = None
     ) -> tuple[int, str | None]:
         with self._locked() as data:
+            self._lease(data)
             if identity is not None and identity != self._events.identity():
                 raise Stale("events file replaced: run crew attach")
             value = self._cursor(data, after, gen)

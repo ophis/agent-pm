@@ -353,6 +353,8 @@ class RosterTest(RosterCase):
                     lambda: self.roster.note("x", "note"),
                     lambda: self.roster.adopt(self.record),
                     lambda: self.roster.advance(0, 0),
+                    lambda: self.roster.next_event(0, 0),
+                    lambda: self.roster.watch_events(0, 0, acknowledge=False),
                     self.roster.rotate_events,
                     self.roster.release,
                     self.roster.check_lease,
@@ -728,6 +730,20 @@ class RosterTest(RosterCase):
         self.assertEqual(self.roster.backlog(), (2, 0, []))
         append_line(path, " complete\n")
         self.assertEqual(self.roster.backlog(), (2, 0, ["partial complete"]))
+
+    def test_read_positions_do_not_acknowledge_and_rotation_retains_pending(self):
+        handled = "h" * (1 << 20)
+        Path(self.roster.events).write_text(handled + "\npending\n")
+        self.roster.watch_events(2, 0, acknowledge=False)
+        self.assertEqual(self.roster.backlog(), (0, 0, [handled, "pending"]))
+        self.assertEqual(self.roster.next_event(0, 0), (1, handled))
+        self.roster.advance(1, 0)
+        self.roster.advance(1, 0)
+        self.assertTrue(self.roster.rotate_events())
+        self.assertEqual(self.roster.backlog(), (0, 1, ["pending"]))
+        with self.assertRaises(Stale):
+            self.roster.advance(1, 0)
+        self.assertEqual(self.roster.backlog(), (0, 1, ["pending"]))
 
     def test_bad_cursor_and_generation_are_stale(self):
         self.assertTrue(os.path.isfile(self.roster.events))

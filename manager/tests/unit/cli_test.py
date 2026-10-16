@@ -394,7 +394,31 @@ class NextEventContent(CliCase):
                 "no such session\n",
             ],
         )
-        self.assertEqual(self.roster.backlog()[0], 3)
+        self.assertEqual(self.roster.backlog()[0], 0)
+        self.assertEqual(len(self.roster.backlog()[2]), 3)
+
+    def test_read_and_pending_retain_events_until_explicit_ack(self):
+        self.launched("w1")
+        Path(self.roster.events).write_text("12:00:00 w1 done\n12:00:01 w1 blocked\n")
+        result, stdout, stderr = self.invoke(
+            "next-event", "--manager", "mgr", "--after", "1", "--gen", "0"
+        )
+        self.assertEqual((result, stdout, stderr), (0, "2 12:00:01 w1 blocked\n", ""))
+        self.assertEqual(self.roster.backlog()[0], 0)
+        result, stdout, stderr = self.invoke("pending", "--manager", "mgr")
+        self.assertEqual(result, 0, stderr)
+        self.assertIn("1 12:00:00 w1 done", stdout)
+        self.assertIn("2 12:00:01 w1 blocked", stdout)
+        self.assertIn("N=0 GEN=0", stdout)
+        for _ in range(2):
+            result, _, stderr = self.invoke(
+                "ack", "--manager", "mgr", "--through", "1", "--gen", "0"
+            )
+            self.assertEqual(result, 0, stderr)
+            self.assertEqual(self.roster.backlog(), (1, 0, ["12:00:01 w1 blocked"]))
+        result, _, _ = self.invoke("ack", "--manager", "mgr", "--through", "2", "--gen", "9")
+        self.assertEqual(result, 1)
+        self.assertEqual(self.roster.backlog()[0], 1)
 
     def test_follow_exits_1_on_stale(self):
         self.launched("w1")
