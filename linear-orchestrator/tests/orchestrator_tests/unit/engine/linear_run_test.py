@@ -1,6 +1,7 @@
 """LinearRun owns exact plans and forwards views to the saved Delegate."""
 
 from dataclasses import replace
+from unittest import mock
 
 from agent_pm.delegate import ConfigError as DelegateConfigError
 from agent_pm.linear_orchestrator.engine import runs
@@ -48,6 +49,25 @@ class CheckedDelegate(FakeDelegate):
 
 
 class Runs(RunCase):
+    def test_detach_sets_outer_once_and_preserves_the_provider_receipt(self):
+        owner, record = self.start()
+        with mock.patch.object(owner.delegate, "detach", return_value=record) as detach:
+            self.assertIs(owner.detach(), record)
+        detach.assert_called_once_with(
+            outer={
+                "kind": "pipeline",
+                "name": "TASK-1",
+                "ctl": ("agent-pm-linear",),
+                "resume": ("agent-pm-linear", "resume", "TASK-1"),
+            }
+        )
+
+    def test_resume_preserves_the_saved_provider_receipt(self):
+        owner, record = self.start()
+        with mock.patch.object(owner.delegate, "resume", return_value=record) as resume:
+            self.assertIs(owner.resume(input="answer"), record)
+        resume.assert_called_once_with(input="answer")
+
     def test_a_provider_with_a_private_constructor_is_created_through_its_factory(self):
         owner, record = self.start(delegate_cls=CreatedDelegate)
         self.assertIsInstance(owner.delegate, CreatedDelegate)
