@@ -339,7 +339,9 @@ class Real(RealConfig):
                 "finished, awaiting review, in progress, not started or canceled",
                 *(f"| `{v}` |" for v in ("covered", "supersedes", "intersects", "partial", "none")),
                 "not started: never `covered`; the same scope is `supersedes`",
-                "No **evidence** → not `covered`; judge it by the other rows.",
+                "`covered` without **evidence** → at most `partial`.",
+                "Across candidates, skip any part a partial candidate already answers, whatever "
+                "another candidate's verdict.",
                 "`covered` beats every other verdict",
                 "return `needs_input`, its `questions` naming the candidate's id and **evidence**",
                 "canceled: its last comment, as the cancel reason",
@@ -358,6 +360,11 @@ class Real(RealConfig):
                 "`none` → no mention.",
             ):
                 self.assertIn(literal, overlap, (role, task, literal))
+            rows = [
+                overlap.index(f"| `{v}` |")
+                for v in ("covered", "supersedes", "intersects", "partial", "none")
+            ]
+            self.assertEqual(rows, sorted(rows), (role, task))
             self.assertIn(
                 "or `covered` related work ([Principles › Overlap](#overlap))", prompt, (role, task)
             )

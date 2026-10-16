@@ -30,14 +30,15 @@ The Input has a `## Related work` section → before your task's steps, judge ea
 | Verdict | When |
 |---|---|
 | `covered` | it does all of the request, by **evidence** |
-| `partial` | a finished or awaiting-review candidate's output already answers part of the request |
 | `supersedes` | the request holds all of it, or updates it for a scope or codebase change |
 | `intersects` | the two share scope not yet done, and the candidate has scope the request lacks |
+| `partial` | a finished or awaiting-review candidate's output already answers part of the request |
 | `none` | else |
 
-- **Evidence**, by **state**: finished or awaiting review: its output URL answering all of the request's requirements; in progress or canceled: its description covering all of them; not started: never `covered`; the same scope is `supersedes`. No **evidence** → not `covered`; judge it by the other rows.
+- **Evidence**, by **state**: finished or awaiting review: its output URL answering all of the request's requirements; in progress or canceled: its description covering all of them; not started: never `covered`; the same scope is `supersedes`. `covered` without **evidence** → at most `partial`.
 - `covered` beats every other verdict: do none of the work; return `needs_input`, its `questions` naming the candidate's id and **evidence** (canceled: its last comment, as the cancel reason; in progress: that it is running), and suggest closing `<id>` as a duplicate of it.
 - `partial` → do only the part not yet answered; the deliverable cites the candidate and its output as sources.
+- Across candidates, skip any part a partial candidate already answers, whatever another candidate's verdict.
 - `supersedes`, `intersects` → by **state**:
 
 | Verdict | State | Do | **Board proposal** |
