@@ -101,8 +101,8 @@ class Names(Case):
 
     def test_only_the_commander_has_it_as_the_session_config_turns_it_off(self):
         self.assertIn("so a worker or role run starts no sessions of its own", body("tmux"))
-        self.assertIn("refuse inside them (root README › Install)", body("tmux"))
-        with open(os.path.join(REPO, "README.md"), encoding="utf-8") as f:
+        self.assertIn("refuse inside them (`docs/sessions.md` › Session settings)", body("tmux"))
+        with open(os.path.join(REPO, "docs", "sessions.md"), encoding="utf-8") as f:
             self.assertIn("`AGENT_PM_AGENT_SESSION=1`", f.read())
         [config] = {p for p in paths("tmux") if p.endswith("config.toml")}
         with open(config, "rb") as f:
@@ -113,7 +113,7 @@ class Names(Case):
             )
 
     def test_the_upgrading_row_carries_the_one_home_of_each_plugin_off_entry(self):
-        with open(os.path.join(REPO, "README.md"), encoding="utf-8") as f:
+        with open(os.path.join(REPO, "docs", "upgrading.md"), encoding="utf-8") as f:
             [row] = [line for line in f if line.startswith("| a local `flags` list")]
         with open(os.path.join(REPO, "session/src/agent_pm/session/config.toml"), "rb") as f:
             clients = tomllib.load(f)["clients"]

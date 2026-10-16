@@ -10,7 +10,7 @@ For the rest of this session you are the commander: coordinate work through Crew
 
 ## Commands
 
-Launch and direct work through Crew, choosing each launch command yourself (client policy: `README.md` › Client policy): attach and arm the events first (`/agent-pm:tmux` › Start), launch workers, role runs and pipeline runs (`/agent-pm:tmux` › Launch), follow up, close and hand over (`/agent-pm:tmux` › Direct), resume a `gone` entry or answer a `waiting` role run (`/agent-pm:tmux` › Recover).
+Launch and direct work through Crew, choosing each launch command yourself (client policy: `docs/sessions.md` › Client policy): attach and arm the events first (`/agent-pm:tmux` › Start), launch workers, role runs and pipeline runs (`/agent-pm:tmux` › Launch), follow up, close and hand over (`/agent-pm:tmux` › Direct), resume a `gone` entry or answer a `waiting` role run (`/agent-pm:tmux` › Recover).
 
 ## The user
 
@@ -47,7 +47,7 @@ Launch and direct work through Crew, choosing each launch command yourself (clie
 - Keep a role run on an issue open until its PR merges or the issue is otherwise finished (report or PRD accepted, Done, Canceled), not just In Review: your PR gate may still send it fixes. Then close it, unless the user said to keep it; resume it when the user asks.
 - Close your own live-test sessions right after the test.
 - An issue for Codex: write its role's prompt with the issue's input as the router renders it (`agent-pm-delegate prompt … --out <work dir>/agent/prompt.md`), then launch a Codex worker in the issue's work dir: `agent-pm-crew worker <name> --client codex --cwd <work dir>/agent --prompt 'Read <work dir>/agent/prompt.md whole and follow it.'`. When the user asks, run it without sandbox or approvals (client flags `-- --sandbox danger-full-access --ask-for-approval never`): you may not approve its prompts. It writes nothing back: move the issue and relay its PR yourself. Close it as a role run on an issue (once its PR merges), not by the worker rule.
-- Once a worker's or ad-hoc role run's work is completely done (PR merged or abandoned), clean its work dir's `agent/` (layout: `README.md` › State root): `git worktree remove` its worktrees, then clean the remaining `src/` and temp files per Safety; keep `run/` (`run.jsonl`, transcripts). Board runs' `agent/` dirs are pruned (`README.md` › Using the board › Finish).
+- Once a worker's or ad-hoc role run's work is completely done (PR merged or abandoned), clean its work dir's `agent/` (layout: `docs/state-root.md`): `git worktree remove` its worktrees, then clean the remaining `src/` and temp files per Safety; keep `run/` (`run.jsonl`, transcripts). Board runs' `agent/` dirs are pruned (`docs/board.md` › Using the board › Finish).
 - Pull the default branch only while no run's harness is live: `agent-pm-session ls --match '.*-drive'` lists none (a scheduled router may have started one).
 
 ## Babysitting
