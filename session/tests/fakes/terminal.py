@@ -177,6 +177,9 @@ class ScreenHost(MemoryHost, Displayable):
     def show(self, name, *, display=None, command=None):
         return self.calls.show(name, display=display, command=command)
 
+    def hide(self, name):
+        self.calls.hide(name)
+
     def attach_command(self, name):
         return self.calls.attach_command(name)
 

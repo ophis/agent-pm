@@ -1,8 +1,9 @@
 """agent-pm-session, the session layer's command (FR-31, FR-42; bin/agent-pm-session runs it).
 
 start, restart and resume a worker (engine/worker.py) and print its Record; reply, send (text, or
-keys in KeyPress notation) and read a session; status, show, close and attach-command for session
-names, or Records one per stdin line; ls; tile; hook, a tui client's hook call (tui_hook.run).
+keys in KeyPress notation) and read a session; status, show, hide, close and attach-command for
+session names, or Records one per stdin line (show and hide record the session hidden or not:
+engine/hidden.py); ls; tile; hook, a tui client's hook call (tui_hook.run).
 Every subcommand but hook reads the session config once: read_config, Host.parse_hosts,
 Session.configure. AGENT_PM_SID, read once here, is a start's or resume's session id. Inside an
 agent session agent-pm started (AGENT_PM_AGENT_SESSION), start, restart, resume and client-resume
@@ -24,6 +25,7 @@ from collections.abc import Iterator
 
 import agent_pm.session.engine.types
 import agent_pm.utils
+from agent_pm.session.engine import hidden
 from agent_pm.session.engine.base import Session
 from agent_pm.session.engine.config import read_config
 from agent_pm.session.engine.types import (
@@ -93,7 +95,7 @@ def _parser(hosts: Hosts | None) -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(
         prog=PROG,
         description="Start and reach agent sessions: workers (plain tui sessions by name),\n"
-        "and any session for status, show, close, attach-command, ls, send, read and tile.",
+        "and any session for status, show, hide, close, attach-command, ls, send, read and tile.",
         epilog=_display_help(hosts),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -130,6 +132,7 @@ def _parser(hosts: Hosts | None) -> argparse.ArgumentParser:
     for cmd, text in (
         ("status", "one Status JSON line per session"),
         ("show", "show each session where its display says"),
+        ("hide", "close each session's view; it runs on"),
         ("close", "close each session; absent is fine"),
         ("attach-command", "print each session's attach command"),
     ):
@@ -295,8 +298,15 @@ def _show(name: str, record: Record | None, hosts: Hosts) -> None:
         else:
             display = record.display
         command = shown.show(session, display=display)
+        hidden.record(Session.host(_host_of(session, hosts)).attach(session), hidden=False)
         if command is not None:
             _say(f"session {session}: not shown; attach with {command}")
+
+
+def _hide(name: str, record: Record | None, hosts: Hosts) -> None:
+    for session in _carried(name, record, hosts):
+        _shown(session, hosts).hide(session)
+        hidden.record(Session.host(_host_of(session, hosts)).attach(session), hidden=True)
 
 
 def _attach_command(name: str, record: Record | None, hosts: Hosts) -> str:
@@ -309,7 +319,13 @@ def _close(name: str, record: Record | None, hosts: Hosts) -> None:
         Session.retire(session, host=_host_of(session, hosts))
 
 
-BATCH = {"status": _status, "show": _show, "close": _close, "attach-command": _attach_command}
+BATCH = {
+    "status": _status,
+    "show": _show,
+    "hide": _hide,
+    "close": _close,
+    "attach-command": _attach_command,
+}
 
 
 def _batch(args, hosts: Hosts) -> int:

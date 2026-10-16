@@ -37,6 +37,7 @@ from agent_pm.session.hosts.tmux.transport import (
     attach_command,
     checked,
     error,
+    option,
     run,
     session_name,
 )
@@ -343,6 +344,14 @@ def _record(session: str, opener: str | None, pane: str, proc) -> None:
         except TuiError as e:
             print(f"tui: show: {key}: {e}", file=sys.stderr)
             return
+
+
+def close_pane(session: str, *, proc=subprocess.run) -> None:
+    """Kills session's live @pane; an iTerm2 one stays."""
+    pane = option(session, "@pane", proc=proc)
+    listed = ["list-panes", "-a", "-F", "#{pane_id}"]
+    if pane is not None and PANE.fullmatch(pane) and pane in checked(listed, proc).stdout.split():
+        checked(["kill-pane", "-t", pane], proc)
 
 
 def _layout(split: str | None, split_from: str | None, opener: str | None = None) -> None:

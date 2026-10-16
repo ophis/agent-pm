@@ -232,14 +232,16 @@ class Host(ABC):
 
 class Displayable(ABC):
     """show: None once shown, else an attach command; command: a shell command the Host runs to
-    show it instead, `{{session}}` the session name; layout: display completed once its display
-    destination is found.
+    show it instead, `{{session}}` the session name; hide: undoes show; layout: display completed once its display destination is found.
     """
 
     @abstractmethod
     def show(
         self, name: str, *, display: Display = None, command: str | None = None
     ) -> str | None: ...
+
+    @abstractmethod
+    def hide(self, name: str) -> None: ...
 
     @abstractmethod
     def attach_command(self, name: str) -> str: ...

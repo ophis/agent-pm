@@ -563,6 +563,9 @@ class Tmux:
     def run_command(self, session: str, template: str) -> str | None:
         return placement.run_command(session, template, proc=self.proc)
 
+    def close_pane(self, session: str) -> None:
+        placement.close_pane(session, proc=self.proc)
+
     def tile(self, window: str, *, wait: bool = True, if_panes_changed: bool = False) -> None:
         grid.tile(window, wait=wait, if_panes_changed=if_panes_changed, proc=self.proc)
 
@@ -1232,6 +1235,14 @@ class TmuxHost(Host, Displayable):
             return None
         LOG.warning("show %s: %s", name, why)
         return self.tmux.attach_command(name)
+
+    def hide(self, name: str) -> None:
+        if self.tmux.status(_session(name)) is None:
+            raise SessionError(f"no tmux session {name}")
+        try:
+            self.tmux.close_pane(name)
+        except TuiError as e:
+            raise SessionError(f"tmux session {name}: {e}") from None
 
     def attach_command(self, name: str) -> str:
         return self.tmux.attach_command(_session(name))

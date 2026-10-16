@@ -101,6 +101,12 @@ class FakeSession(Session):
     def show(self, *, display=None, command=None):
         raise NotDisplayable("host none cannot display")
 
+    def hide(self) -> None:
+        raise NotDisplayable("host none cannot display")
+
+    def hidden(self) -> bool:
+        return False
+
     def attach_command(self):
         raise NotDisplayable("host none cannot display")
 

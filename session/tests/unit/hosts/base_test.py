@@ -40,7 +40,7 @@ ABSTRACT = {
     Host: {"detach", "terminal", "attach", "list"},
     HostProcess: PROCESS,
     Terminal: PROCESS | {"send", "press"},
-    Displayable: {"show", "attach_command", "screen", "layout", "tile"},
+    Displayable: {"show", "hide", "attach_command", "screen", "layout", "tile"},
 }
 
 

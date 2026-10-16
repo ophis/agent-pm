@@ -29,6 +29,8 @@ ABSTRACT = {
         "record",
         "displayable",
         "show",
+        "hide",
+        "hidden",
         "attach_command",
         "screen",
         "press",

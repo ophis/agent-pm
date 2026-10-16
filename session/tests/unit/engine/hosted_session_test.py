@@ -594,12 +594,14 @@ class SessionTest(Base):
         self.assertFalse(session.displayable)
         for name, call in (
             ("show", session.show),
+            ("hide", session.hide),
             ("attach_command", session.attach_command),
             ("screen", session.screen),
         ):
             with self.subTest(name=name), self.assertRaises(NotDisplayable) as caught:
                 call()
             self.assertEqual(str(caught.exception), "host fake cannot display")
+        self.assertFalse(session.hidden())
         self.assertEqual(self.drain(session)[-1], Exited(0))
 
 
@@ -1433,6 +1435,18 @@ class TuiStartTest(HostedTuiBase):
                 mock.call("w1", display="mgr/below", command="open {{session}}"),
             ],
         )
+
+    def test_hide_closes_its_view_and_records_it_hidden_until_a_show(self):
+        session = self.tui(name="w1")
+        self.host.calls.show.return_value = None
+        self.assertFalse(session.hidden())
+        session.hide()
+        self.host.calls.hide.assert_called_once_with("w1")
+        self.assertTrue(session.hidden())
+        session.hide()
+        self.assertTrue(session.hidden())
+        session.show()
+        self.assertFalse(session.hidden())
 
     def test_its_record_is_its_hosts(self):
         session = self.tui(name="w1")

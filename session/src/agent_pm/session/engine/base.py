@@ -30,7 +30,9 @@ HOSTED = "agent_pm.session.engine.hosted_session:HostedSession"
 
 
 class Session(ABC):
-    """show, attach_command, screen: NotDisplayable unless displayable (its Host is Displayable)."""
+    """show, hide, attach_command, screen: NotDisplayable unless displayable (its Host is
+    Displayable). hidden: hide closed its view and no show reopened it since (engine/hidden.py).
+    """
 
     sid: str
     client: str
@@ -75,6 +77,12 @@ class Session(ABC):
 
     @abstractmethod
     def show(self, *, display: Display = None, command: str | None = None) -> str | None: ...
+
+    @abstractmethod
+    def hide(self) -> None: ...
+
+    @abstractmethod
+    def hidden(self) -> bool: ...
 
     @abstractmethod
     def attach_command(self) -> str: ...

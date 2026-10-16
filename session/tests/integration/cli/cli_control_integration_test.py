@@ -1,13 +1,14 @@
 """agent-pm-session's batch commands through bin/agent-pm-session on a private tmux server: status
 answers each name or stdin Record in order (Q11); a duplicate or bad input refuses the whole batch
-before any action; show, close and attach-command by name and by stdin Record, show placing a
+before any action; show, hide, close and attach-command by name and by stdin Record, show placing a
 session by its own display or by a Record's, close repeatable and only for the named (Q12), show
 and close refusing a Record whose sid the session's @record does not carry; on a
-Host that cannot display (session.tests.fakes.host:FakeHost, the module entry) show, attach-command,
+Host that cannot display (session.tests.fakes.host:FakeHost, the module entry) show, hide, attach-command,
 read and tile exit 1 saying so, status giving no attach command.
 """
 
 import dataclasses
+import json
 import os
 import subprocess
 import uuid
@@ -217,6 +218,27 @@ class ControlTest(ControlCase):
         self.shows("w1", f"={MANAGER}:")
         self.assertEqual(len(self.calls("w1")), 1)
 
+    def hidden(self, name: str) -> dict:
+        with open(os.path.join(self.home, ".agent-pm", "hidden", f"{name}.json")) as f:
+            return json.load(f)
+
+    def test_hide_closes_the_view_keeps_the_session_and_show_reopens_it(self):
+        w1 = self.done("w1")
+        self.shows("w1", f"={MANAGER}:")
+        pane = self.server.pane_of("w1")
+        for _ in range(2):
+            self.assert_printed(self.session("hide", "w1"), "")
+            self.assertNotIn(pane, self.server.panes(f"={MANAGER}:"))
+            self.assertEqual(self.sessions(), [MANAGER, "w1"])
+            self.assertEqual(self.hidden("w1"), {"sid": w1.sid, "hidden": True})
+        res = self.session("hide", "nope")
+        self.assertEqual((res.returncode, res.stdout), (1, ""), res.stderr)
+        self.assertEqual(res.stderr, f"{PROG}: nope: no tmux session nope\n")
+        self.assert_printed(self.session("show", stdin=lines(w1)), "")
+        self.shows("w1", f"={MANAGER}:")
+        self.assertEqual(self.hidden("w1"), {"sid": w1.sid, "hidden": False})
+        self.assertEqual(len(self.calls("w1")), 1)
+
     def test_a_key_its_host_refuses_fails_alone_and_the_batch_goes_on(self):
         w1, w2 = self.done("w1"), self.done("w2")
         self.tmux("kill-pane", "-t", self.server.pane_of("w2"))
@@ -244,6 +266,7 @@ class NotDisplayableTest(ControlCase):
         for argv, stdin, stderr in (
             (("show", "f1"), None, refused),
             (("show",), lines(self.f1), refused),
+            (("hide", "f1"), None, refused),
             (("attach-command", "f1"), None, refused),
             (("attach-command",), lines(self.f1), refused),
             (("read", "f1"), None, refused),

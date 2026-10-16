@@ -18,6 +18,7 @@ from typing import Any, ClassVar, cast
 
 from agent_pm.session.adapters.base import Adapter
 from agent_pm.session.adapters.registry import Registry, settings
+from agent_pm.session.engine import hidden as hidden_store
 from agent_pm.session.engine.base import Session
 from agent_pm.session.engine.records import RunLog
 from agent_pm.session.engine.types import (
@@ -575,7 +576,20 @@ class HostedSession(Session):
         host, name = self._shown("show")
         if display is None:
             display = self._host.attach(name).display()
-        return host.show(name, display=display, command=command)
+        command = host.show(name, display=display, command=command)
+        hidden_store.record(self._host.attach(name), hidden=False)
+        return command
+
+    def hide(self) -> None:
+        host, name = self._shown("hide")
+        host.hide(name)
+        hidden_store.record(self._host.attach(name), hidden=True)
+
+    def hidden(self) -> bool:
+        name = self._tui()
+        return (
+            self.displayable and name is not None and hidden_store.hidden(self._host.attach(name))
+        )
 
     def attach_command(self) -> str:
         host, name = self._shown("attach_command")
