@@ -378,7 +378,7 @@ class AutopilotField(Read):
             ({**good, "head": HEAD + "0"}, "head must match"),
             ({**good, "head": HEAD.upper()}, "head must match"),
             ({**good, "head": 7}, "head must be text"),
-            ({**good, "head": HEAD + "\n"}, "40-character lowercase hex SHA"),
+            ({**good, "head": HEAD + "\n"}, "head must match"),
         ):
             with self.subTest(bad=bad):
                 self.refused({**DONE, "autopilot": bad}, msg)

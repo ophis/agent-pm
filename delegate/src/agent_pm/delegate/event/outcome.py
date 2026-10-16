@@ -29,7 +29,6 @@ SAVES_DELIVERABLE = (
 DEFAULT_HOST = "github.com"
 PULL = re.compile(r"/[^/]+/[^/]+/pull/\d+")
 PR_PATH = re.compile(rf"{PULL.pattern}|/[^/]+/[^/]+/(compare|tree)/\S+")
-SHA = re.compile(r"[0-9a-f]{40}")
 
 
 def read(body: str, output: Mapping, workdir: str) -> tuple[Outcome, Autopilot | None]:
@@ -88,8 +87,6 @@ def validate(data: dict, output: Mapping, workdir: str) -> Outcome:
         deliverable,
     )
     _conform(data, _schema(), "outcome")
-    if "autopilot" in data and not SHA.fullmatch(data["autopilot"]["head"]):
-        raise InvalidOutcome("autopilot head must be a 40-character lowercase hex SHA")
     return outcome
 
 
@@ -125,7 +122,7 @@ def _conform(value, schema: Mapping, where: str) -> None:
             raise InvalidOutcome(f"{where} is shorter than {schema['minLength']} characters")
         if len(value) > schema.get("maxLength", len(value)):
             raise InvalidOutcome(f"{where} is longer than {schema['maxLength']} characters")
-        if "pattern" in schema and not re.search(schema["pattern"], value):
+        if "pattern" in schema and not re.fullmatch(schema["pattern"], value):
             raise InvalidOutcome(f"{where} must match {schema['pattern']}")
     elif kind == "array":
         if not isinstance(value, list):
