@@ -1,0 +1,69 @@
+"""The hidden store: one {sid, hidden} file per session name under the test's HOME."""
+
+import json
+import os
+
+from agent_pm.session.hosts.tmux import hidden
+
+from session.tests.case import Case
+
+SID = "0f8fad5b-d9cb-469f-a165-70867728950e"
+OTHER = "1f8fad5b-d9cb-469f-a165-70867728950e"
+
+
+class HiddenTest(Case):
+    def path(self, name: str = "w1") -> str:
+        return os.path.join(self.agent_pm, "hidden", f"{name}.json")
+
+    def put(self, text: str) -> None:
+        os.makedirs(os.path.dirname(self.path()), exist_ok=True)
+        with open(self.path(), "w", encoding="utf-8") as f:
+            f.write(text)
+
+    def test_write_then_read_answers_for_its_sid(self):
+        hidden.write("w1", SID, hidden=True)
+        with open(self.path(), encoding="utf-8") as f:
+            self.assertEqual(json.load(f), {"sid": SID, "hidden": True})
+        self.assertTrue(hidden.read("w1", SID))
+        hidden.write("w1", SID, hidden=False)
+        self.assertFalse(hidden.read("w1", SID))
+
+    def test_read_is_false_for_a_missing_bad_or_other_sid_entry(self):
+        self.assertFalse(hidden.read("w1", SID))
+        for text in (
+            "not json",
+            "[]",
+            json.dumps({"sid": SID}),
+            json.dumps({"sid": SID, "hidden": "yes"}),
+            json.dumps({"sid": OTHER, "hidden": True}),
+            json.dumps({"sid": SID, "hidden": True}) + " " * 5000,
+        ):
+            with self.subTest(text=text[:40]):
+                self.put(text)
+                self.assertFalse(hidden.read("w1", SID))
+        os.unlink(self.path())
+        os.mkdir(self.path())
+        self.assertFalse(hidden.read("w1", SID))
+
+    def test_start_writes_only_on_a_new_sid(self):
+        hidden.start("w1", SID)
+        self.assertTrue(hidden.read("w1", SID))
+        hidden.write("w1", SID, hidden=False)
+        hidden.start("w1", SID)
+        self.assertFalse(hidden.read("w1", SID))
+        hidden.start("w1", OTHER)
+        self.assertTrue(hidden.read("w1", OTHER))
+        self.put("not json")
+        hidden.start("w1", SID)
+        self.assertTrue(hidden.read("w1", SID))
+
+    def test_names_have_their_own_entries(self):
+        hidden.write("w1", SID, hidden=True)
+        self.assertFalse(hidden.read("w2", SID))
+
+    def test_a_failed_write_raises_its_oserror(self):
+        os.makedirs(os.path.join(self.agent_pm, "hidden"))
+        os.chmod(os.path.join(self.agent_pm, "hidden"), 0o500)
+        self.addCleanup(os.chmod, os.path.join(self.agent_pm, "hidden"), 0o700)
+        with self.assertRaises(OSError):
+            hidden.write("w1", SID, hidden=True)

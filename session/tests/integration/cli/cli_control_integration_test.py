@@ -234,13 +234,11 @@ class ControlTest(ControlCase):
             self.assert_printed(self.session("hide", *names, stdin=stdin), "")
             self.assertNotIn(pane, self.server.panes(f"={MANAGER}:"))
             self.assertEqual(self.sessions(), [MANAGER, "w1"])
-            self.assertEqual(self.server.option("w1", "@hidden"), "1")
             self.assertEqual(
                 self.status(stdin=lines(w1)), [live("w1", "done", cwd=self.cwd, hidden=True)]
             )
         self.assert_printed(self.session("show", stdin=lines(w1)), "")
         self.shows("w1", f"={MANAGER}:")
-        self.assertEqual(self.server.option("w1", "@hidden"), "0")
         self.assertEqual(self.status("w1"), [live("w1", "done", cwd=self.cwd)])
         self.assertEqual(len(self.calls("w1")), 1)
 

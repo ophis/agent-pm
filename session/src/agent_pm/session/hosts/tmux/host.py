@@ -1,7 +1,7 @@
 """TmuxHost, the Host on tmux, runs every tmux call through the Tmux it holds, directly or through
 its Grid and Placement, which share that Tmux. TmuxHost's display format, FORMAT, has one
 encoder (fold) and one decoder (unfold). TmuxProcess, a session it hosts, keeps its Record and
-display in the tmux options @record and @display.
+display in the tmux options @record and @display, and whether it is hidden in the hidden store (hidden.py).
 """
 
 from __future__ import annotations
@@ -31,6 +31,7 @@ from agent_pm.session.engine.types import (
 )
 from agent_pm.session.hosts.base import Host, InteractiveProcess, Process, Showable
 from agent_pm.session.hosts.reclaimed import ReclaimedGroup
+from agent_pm.session.hosts.tmux import hidden as hidden_store
 from agent_pm.session.hosts.tmux import hook, transport
 from agent_pm.session.hosts.tmux.grid import Grid
 from agent_pm.session.hosts.tmux.iterm import Iterm
@@ -146,7 +147,8 @@ class TmuxProcess(Process):
         return StatusState(value) if value in MARKS else None
 
     def hidden(self) -> bool:
-        return self._option("@hidden") == "1"
+        sid = self.session_identity()[0]
+        return sid is not None and hidden_store.read(self.name, sid)
 
     def status(self) -> Status:
         found = super().status()
@@ -154,11 +156,14 @@ class TmuxProcess(Process):
 
     def mark_hidden(self, *, hidden: bool) -> None:
         """Only a session with a sid (no harness) keeps it."""
-        if self.session_identity()[0] is not None:
+        sid = self.session_identity()[0]
+        if sid is not None:
             try:
-                self.tmux.set_option(self._pane, "@hidden", "1" if hidden else "0")
-            except TuiError as error:
-                raise SessionError(f"tmux session {self.name}: {error}") from error
+                hidden_store.write(self.name, sid, hidden=hidden)
+            except OSError as error:
+                raise SessionError(
+                    f"tmux session {self.name}: hidden state: {error.strerror or error}"
+                ) from error
 
     def mark(self, word: StatusState, events: str | None) -> None:
         if self._own():
