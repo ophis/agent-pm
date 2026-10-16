@@ -1,6 +1,6 @@
 """PtyHost: each session a program on a pty that its own supervisor (supervisor.py) holds in a new
 session, so it outlives its caller; its files in ~/.agent-pm/pty/<name>/ (state.py), its process
-group in a ProcessControl. It cannot display. settings: outer_terminal, the variables of an
+group in a ProcessControl. It cannot show. settings: outer_terminal, the variables of an
 enclosing terminal that a terminal's program never gets; its TERM is TERM.
 """
 
@@ -35,9 +35,10 @@ from agent_pm.session.engine.types import (
     SessionRow,
     StatusState,
 )
-from agent_pm.session.hosts.base import Host, HostProcess, Terminal, tui_lock
+from agent_pm.session.hosts.base import Host, InteractiveProcess, Process, tui_lock
 from agent_pm.session.hosts.pty import hook, state
 from agent_pm.session.hosts.pty.keys import encode
+from agent_pm.session.hosts.reclaimed import ReclaimedGroup
 from agent_pm.utils import (
     CONFIG_NAME,
     STALE_AGE,
@@ -62,7 +63,7 @@ TIMEOUT = 10
 LOG = logging.getLogger("session")
 
 
-class PtyProcess(HostProcess):
+class PtyProcess(Process):
     """One launch: its generation (meta.json's id) and ProcessControl, kept after its name holds a
     later launch, which it never acts on.
     """
@@ -219,7 +220,7 @@ class PtyProcess(HostProcess):
             raise SessionError(f"process group {self.name}: {error}") from error
 
 
-class PtyTerminal(PtyProcess, Terminal):
+class PtyTerminal(PtyProcess, InteractiveProcess):
     _pasted = False
 
     def send(self, action: Paste | Key) -> None:
@@ -339,14 +340,8 @@ class PtyHost(Host):
                 found.append(self.attach(name).row())
         return found
 
-    def reclaim(self, token: str) -> HostProcess | None:
-        """A handle on token's process group while it lives (wait_exit, kill); else None."""
-        try:
-            control = ProcessControl.attach(token)
-        except (OSError, TypeError, ValueError):
-            return None
-        group = PtyProcess(os.path.basename(control.path), "", meta={"control": control.path})
-        return None if group.wait_exit(0) else group
+    def reclaim(self, token: str) -> ReclaimedGroup | None:
+        return ReclaimedGroup.reclaim(token)
 
     def hook_callback(self, name: str, metadata: Mapping[str, str]) -> HookCallback:
         folder = os.path.join(state.root(), name)

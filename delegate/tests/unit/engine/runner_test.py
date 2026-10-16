@@ -1,4 +1,4 @@
-"""Pure logic over fake objects and in-process adapters."""
+"""Pure logic over fake objects and in-process clients."""
 
 import io
 import json
@@ -62,7 +62,7 @@ class InProcess(Base):
         self.configure_session(
             {
                 "fake": {
-                    "implementation": "agent_pm.session.adapters.fake:InProcessFakeAdapter",
+                    "implementation": "agent_pm.session.clients.fake:InProcessFakeClient",
                     "scenario": self.scenario,
                     "log": self.log,
                 }
@@ -270,7 +270,7 @@ class TuiPolicy(Base):
                 )
                 self.assertIn(f"delegate: tui session {name}: tmux attach -t '={name}'\n", self.err)
 
-    def test_a_displayable_session_is_shown_as_the_configured_show_says(self):
+    def test_a_showable_session_is_shown_as_the_configured_show_says(self):
         command = "open -a Terminal {{session}}"
         for local, shown in (
             ("", [None]),

@@ -79,7 +79,7 @@ def main(argv=None):
     def attach_command(view):
         command = view.delegate.attach_command()
         if command is None:
-            raise RuntimeError("run has no live displayable session")
+            raise RuntimeError("run has no live showable session")
         return command
 
     reply = {

@@ -1,9 +1,9 @@
-"""The session layer's extension surface: the ABCs a client Adapter or a Host written outside this
+"""The session layer's extension surface: the ABCs a Client or a Host written outside this
 package subclasses, and every type their signatures name. Configure one as module.path:Class in
-[adapters.<name>] or [hosts.<name>]. Session users import agent_pm.session instead.
+[clients.<name>] or [hosts.<name>]. Session users import agent_pm.session instead.
 """
 
-from agent_pm.session.adapters.base import Adapter, Headless, InProcess, JsonHeadless, Tui
+from agent_pm.session.clients.base import Client, Headless, InProcess, JsonHeadless, Tui
 from agent_pm.session.engine.types import (
     Access,
     Activity,
@@ -23,7 +23,7 @@ from agent_pm.session.engine.types import (
     Liveness,
     Mode,
     NamedKey,
-    NotDisplayable,
+    NotShowable,
     Paste,
     Reply,
     Resumable,
@@ -41,19 +41,20 @@ from agent_pm.session.engine.types import (
     Usage,
     Window,
 )
-from agent_pm.session.hosts.base import Displayable, Host, HostProcess, Terminal
+from agent_pm.session.hosts.base import Host, Interactive, InteractiveProcess, Process, Showable
 from agent_pm.utils import Display, Record, Status
 
 __all__ = [
-    "Adapter",
+    "Client",
     "Headless",
     "JsonHeadless",
     "Tui",
     "InProcess",
     "Host",
-    "HostProcess",
-    "Terminal",
-    "Displayable",
+    "Showable",
+    "Process",
+    "Interactive",
+    "InteractiveProcess",
     "Spec",
     "Access",
     "Mode",
@@ -91,5 +92,5 @@ __all__ = [
     "Display",
     "ConfigError",
     "SessionError",
-    "NotDisplayable",
+    "NotShowable",
 ]

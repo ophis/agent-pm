@@ -11,7 +11,7 @@ from tests.import_contracts import UnitsContract
 
 class Units(Case):
     def test_contract_reports_real_graph_edges_and_line_numbers(self):
-        source, target = "agent_pm.session.adapters.codex", "agent_pm.session.hosts.tmux.transport"
+        source, target = "agent_pm.session.clients.codex", "agent_pm.session.hosts.tmux.transport"
         graph = grimp.ImportGraph()
         for module in (source, target):
             graph.add_module(module)

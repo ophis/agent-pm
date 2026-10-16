@@ -56,11 +56,11 @@ class MarkingTest(MarkingCases, HookBase):
         self.assertEqual(len(result.stderr.splitlines()), 1)
         self.assertTrue(result.stderr.startswith(b"tui_hook: usage: agent-pm-session hook "))
 
-    def test_adapter_error_is_one_stderr_line_without_a_record_or_mark(self):
-        callback = os.path.join(self.root, "adapter.py")
+    def test_client_error_is_one_stderr_line_without_a_record_or_mark(self):
+        callback = os.path.join(self.root, "client.py")
         with open(callback, "w") as file:
             file.write('def on_hook(call):\n    raise RuntimeError("first\\nsecond")\n')
-        self.state["adapter_hook"] = self.callback("adapter")
+        self.state["client_hook"] = self.callback("client")
         write_state(self.dir, self.state)
         self.assertEqual(
             self.hook("stop", {"text": "payload"}), "tui_hook: RuntimeError: first second\n"
@@ -78,7 +78,7 @@ class ErrorLoggingTest(HookBase):
         with open(os.path.join(package, "callback.py"), "w") as file:
             file.write("def on_hook(*args): pass\n")
         write_state(
-            self.dir, {**self.state, "adapter_hook": self.callback("broken_package.callback")}
+            self.dir, {**self.state, "client_hook": self.callback("broken_package.callback")}
         )
         self.assertEqual(self.hook("stop"), "tui_hook: RuntimeError: first second\n")
         with open(os.path.join(self.dir, "hook.log")) as file:
@@ -88,11 +88,11 @@ class ErrorLoggingTest(HookBase):
         self.assertIn("RuntimeError: first\nsecond\n", trace)
         self.assertNothingWritten()
 
-    def test_adapter_failures_append_full_tracebacks_without_a_record_or_mark(self):
-        callback = os.path.join(self.root, "adapter.py")
+    def test_client_failures_append_full_tracebacks_without_a_record_or_mark(self):
+        callback = os.path.join(self.root, "client.py")
         with open(callback, "w") as file:
             file.write('def on_hook(call):\n    raise RuntimeError("first\\nsecond")\n')
-        self.state["adapter_hook"] = self.callback("adapter")
+        self.state["client_hook"] = self.callback("client")
         write_state(self.dir, self.state)
         error_log = os.path.join(self.dir, "hook.log")
         for count in (1, 2):
@@ -158,12 +158,12 @@ class PayloadTest(PayloadCases, HookBase):
     def test_a_payload_of_64_mib_is_read(self):
         data = b'{"a": "' + b"x" * ((64 << 20) - 9) + b'"}'
         self.assertEqual(len(data), 64 << 20)
-        callback = os.path.join(self.root, "adapter.py")
+        callback = os.path.join(self.root, "client.py")
         with open(callback, "w") as file:
             file.write(
                 'def on_hook(call):\n    return {**call.payload, "length": len(call.payload["a"])}\n'
             )
-        self.state["adapter_hook"] = self.callback("adapter")
+        self.state["client_hook"] = self.callback("client")
         write_state(self.dir, self.state)
         self.assertEqual(self.hook("tool", data), "")
         self.assertEqual(
@@ -185,8 +185,8 @@ class PayloadTest(PayloadCases, HookBase):
         self.assertNotEqual(self.calls(), [])
         self.assertRegex(self.lines(), LINE % "done")
 
-    def test_adapter_callback_receives_full_payload_before_truncation_and_can_skip(self):
-        callback = os.path.join(self.root, "adapter.py")
+    def test_client_callback_receives_full_payload_before_truncation_and_can_skip(self):
+        callback = os.path.join(self.root, "client.py")
         with open(callback, "w") as file:
             file.write(
                 """def on_hook(call):
@@ -195,7 +195,7 @@ class PayloadTest(PayloadCases, HookBase):
     return {**call.payload, "original_length": len(call.payload.get("text", ""))}
 """
             )
-        self.state["adapter_hook"] = self.callback("adapter")
+        self.state["client_hook"] = self.callback("client")
         write_state(self.dir, self.state)
         self.assertEqual(self.hook("tool", {"text": "x" * 5000}), "")
         record = self.records()[0]
@@ -206,18 +206,18 @@ class PayloadTest(PayloadCases, HookBase):
         self.assertEqual(self.calls(), marked)
 
     def test_callback_module_requires_regular_file_with_on_hook(self):
-        callback = os.path.join(self.root, "adapter.py")
+        callback = os.path.join(self.root, "client.py")
         with open(callback, "w") as file:
             file.write("value = 1\n")
         os.mkdir(os.path.join(self.root, "namespace"))
-        for kind in ("adapter_hook", "host_hook"):
+        for kind in ("client_hook", "host_hook"):
             for name in (
                 "relative.py/",
                 callback,
                 "absent",
                 "namespace",
                 "sys",
-                "adapter",
+                "client",
             ):
                 with self.subTest(kind=kind, module=name):
                     write_state(self.dir, {**self.state, kind: self.callback(name)})
@@ -373,7 +373,7 @@ with unittest.mock.patch("os.stat", non_regular):
     run_hook(folder, "stop")
 """
         )
-        for kind in ("adapter_hook", "host_hook"):
+        for kind in ("client_hook", "host_hook"):
             with self.subTest(kind=kind):
                 write_state(self.dir, {**self.state, kind: self.callback("agent_pm.callback")})
                 result = python(
@@ -399,7 +399,7 @@ with unittest.mock.patch("os.stat", non_regular):
                 file.write(
                     "def on_hook(call):\n    return {**call.payload, 'callback_imported': True}\n"
                 )
-        self.state.update(adapter_hook=self.callback("callback_package.nested.callback"), words={})
+        self.state.update(client_hook=self.callback("callback_package.nested.callback"), words={})
         write_state(self.dir, self.state)
         return files, imported
 
@@ -446,7 +446,7 @@ assert "callback_package" not in sys.modules
                 "def on_hook(call):\n    return {**call.payload, 'callback_imported': True}\n"
             )
         self.state.update(
-            adapter_hook=descriptor("namespace.nested.callback", roots=tuple(sources)), words={}
+            client_hook=descriptor("namespace.nested.callback", roots=tuple(sources)), words={}
         )
         write_state(self.dir, self.state)
         self.assertEqual(self.hook("stop"), "")
@@ -461,7 +461,7 @@ assert "callback_package" not in sys.modules
         with open(os.path.join(package, "hooks.py"), "w") as file:
             file.write("def on_hook(call):\n    return {**call.payload, 'extension': True}\n")
         self.state.update(
-            adapter_hook=descriptor("agent_pm.ext_tui.hooks", roots=(source,)), words={}
+            client_hook=descriptor("agent_pm.ext_tui.hooks", roots=(source,)), words={}
         )
         write_state(self.dir, self.state)
         self.assertEqual(self.hook("stop"), "")
@@ -486,13 +486,13 @@ assert "callback_package" not in sys.modules
     def test_a_declared_root_callback_runs_with_sys_path_unchanged(self):
         source = os.path.join(self.root, "distribution")
         os.mkdir(source)
-        with open(os.path.join(source, "adapter.py"), "w") as file:
+        with open(os.path.join(source, "client.py"), "w") as file:
             file.write(
                 "import sys\n"
                 "def on_hook(call):\n"
                 f"    return {{**call.payload, 'on_path': {source!r} in sys.path}}\n"
             )
-        self.state.update(adapter_hook=descriptor("adapter", roots=(source,)), words={})
+        self.state.update(client_hook=descriptor("client", roots=(source,)), words={})
         write_state(self.dir, self.state)
         self.assertEqual(self.hook("stop"), "")
         self.assertEqual(self.records()[0]["payload"], {"on_path": False})
@@ -545,9 +545,9 @@ assert "callback_package" not in sys.modules
                     self.assertError(self.hook("stop"), "session.json")
                     self.assertNothingWritten()
 
-    def test_identity_keys_neither_it_nor_its_adapter_hook_reads_go_unchecked(self):
+    def test_identity_keys_neither_it_nor_its_client_hook_reads_go_unchecked(self):
         """SessionInfo.from_fields is their one decoder; the hook reads words and events,
-        and a codex adapter_hook workdir and sid.
+        and a codex client_hook workdir and sid.
         """
         unread = {
             "client": ("Fake", None),

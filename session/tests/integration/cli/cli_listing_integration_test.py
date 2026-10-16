@@ -10,7 +10,7 @@ import uuid
 from unittest import mock
 
 from agent_pm.session import Host
-from agent_pm.session.adapters.registry import settings
+from agent_pm.session.clients.registry import settings
 from agent_pm.session.engine.config import read_config
 from agent_pm.session.engine.hosted_session import HostedSession
 from agent_pm.session.engine.types import Launch

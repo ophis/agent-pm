@@ -1,4 +1,4 @@
-"""A TUI adapter installed outside the session's package roots (its own directory, importing only
+"""A TUI client installed outside the session's package roots (its own directory, importing only
 agent_pm.session.extension) declares its hook callback with its own root: `agent-pm-session hook`, on
 only the session's source roots, finds and runs it; undeclared, the callback is not found.
 """
@@ -12,7 +12,7 @@ import tempfile
 from session.tests.case import SRC, Case
 from session.tests.tui_hook_support import COMMAND, state, write_state
 
-ADAPTER = """import os
+CLIENT = """import os
 
 from agent_pm.session.extension import HookCallback, HookKind, Tui
 
@@ -51,7 +51,7 @@ class ExternalTuiHookTest(Case):
         self.installed = os.path.join(self.root, "installed")
         package = os.path.join(self.installed, "external_tui")
         os.makedirs(package)
-        for name, text in (("__init__.py", ADAPTER), ("hooks.py", CALLBACK)):
+        for name, text in (("__init__.py", CLIENT), ("hooks.py", CALLBACK)):
             with open(os.path.join(package, name), "w") as f:
                 f.write(text)
         self.dir = os.path.join(self.root, "s1")
@@ -105,7 +105,7 @@ class ExternalTuiHookTest(Case):
             },
         )
         self.assertNotIn(self.installed, (SRC["session"], SRC["utils"]))
-        write_state(self.dir, {**self.state, "adapter_hook": declared})
+        write_state(self.dir, {**self.state, "client_hook": declared})
         self.assertEqual(self.hook(), "")
         self.assertEqual(
             [record["payload"] for record in self.records()],
@@ -119,9 +119,9 @@ class ExternalTuiHookTest(Case):
 
     def test_without_its_root_the_callback_is_refused_and_nothing_journaled(self):
         undeclared = {**self.declared(), "roots": []}
-        write_state(self.dir, {**self.state, "adapter_hook": undeclared})
+        write_state(self.dir, {**self.state, "client_hook": undeclared})
         self.assertRegex(
             self.hook(),
-            r"\Atui_hook: adapter hook external_tui.hooks: cannot find Python module\n\Z",
+            r"\Atui_hook: client hook external_tui.hooks: cannot find Python module\n\Z",
         )
         self.assertEqual(self.records(), [])

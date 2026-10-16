@@ -1,9 +1,9 @@
-"""Adapters record pure preparation and reject before any commit or runtime execution."""
+"""Clients record pure preparation and reject before any commit or runtime execution."""
 
 import sys
 
 from agent_pm.session.extension import (
-    Adapter,
+    Client,
     ConfigError,
     InProcess,
     JsonHeadless,
@@ -13,7 +13,7 @@ from agent_pm.session.extension import (
 )
 
 
-class PreflightAdapter(Adapter):
+class PreflightClient(Client):
     keys = frozenset({"unsupported", "empty_argv", "bad_env", "writable"})
     forbidden_selection = ("--resume",)
     prepared: list[Spec] = []
@@ -42,42 +42,42 @@ class PreflightAdapter(Adapter):
 
 
 class PreflightHeadless(JsonHeadless):
-    def __init__(self, adapter):
-        self.adapter = adapter
+    def __init__(self, client):
+        self.owner = client
 
     def launch(self, spec):
-        return self.adapter.launch(spec)
+        return self.owner.launch(spec)
 
     def commit(self):
-        self.adapter.committed.append("headless")
+        self.owner.committed.append("headless")
 
     def parse(self, record):
         return ()
 
 
 class PreflightTui(Tui):
-    def __init__(self, adapter):
-        self.adapter = adapter
+    def __init__(self, client):
+        self.owner = client
 
     def launch(self, spec, hook):
-        return self.adapter.launch(spec)
+        return self.owner.launch(spec)
 
     def commit(self):
-        self.adapter.committed.append("tui")
+        self.owner.committed.append("tui")
 
     def reply(self, payload):
         return ""
 
 
 class PreflightInProcess(InProcess):
-    def __init__(self, adapter):
-        self.adapter = adapter
+    def __init__(self, client):
+        self.owner = client
 
     def check(self, spec):
-        self.adapter.prepared.append(spec)
+        self.owner.prepared.append(spec)
         if spec.tier == 4:
             raise ConfigError("tier 4 is unmapped")
 
     def run(self, spec):
-        self.adapter.ran.append(spec)
+        self.owner.ran.append(spec)
         raise AssertionError("preflight executed an in_process client")

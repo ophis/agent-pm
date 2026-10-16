@@ -1,6 +1,6 @@
-"""An Adapter and a Host written outside the session package (session/tests/outside.py, importing only
+"""A Client and a Host written outside the session package (session/tests/outside.py, importing only
 agent_pm.session.extension and agent_pm.session), configured as module.path:Class in
-[adapters.outside] and [hosts.outside]: a session starts in each mode the adapter offers and yields
+[clients.outside] and [hosts.outside]: a session starts in each mode the client offers and yields
 its events; the Host keeps, lists and ends the processes it detaches.
 """
 
@@ -17,7 +17,7 @@ from agent_pm.session.extension import ConfigError, Host, Record, SessionError
 from session.tests import outside
 from session.tests.case import Case
 
-ADAPTERS = {"outside": {"implementation": "session.tests.outside:OutsideAdapter"}}
+CLIENTS = {"outside": {"implementation": "session.tests.outside:OutsideClient"}}
 HOSTS = {"default": "outside", "outside": {"implementation": "session.tests.outside:OutsideHost"}}
 PUBLIC = {"agent_pm.session", "agent_pm.session.extension"}
 WAIT = 20  # seconds
@@ -25,7 +25,7 @@ WAIT = 20  # seconds
 
 class OutsideTest(Case):
     def setUp(self):
-        self.session = HostedSession.configured(adapters=ADAPTERS, hosts=Host.parse_hosts(HOSTS))
+        self.session = HostedSession.configured(clients=CLIENTS, hosts=Host.parse_hosts(HOSTS))
         self.workdir = os.path.join(self.home, "work")
 
     def started(self, mode: Mode):
@@ -47,17 +47,17 @@ class OutsideTest(Case):
         self.assertEqual(others, {"agent_pm.session.extension"})
         self.assertLessEqual(others, PUBLIC)
 
-    def test_a_headless_session_yields_the_events_the_adapter_reads_from_its_stream(self):
+    def test_a_headless_session_yields_the_events_the_client_reads_from_its_stream(self):
         session = self.started(Mode.HEADLESS)
         self.assertEqual(list(session.events()), [Reply("hello"), TurnEnd("hello"), Exited(0)])
         self.assertEqual(session.reply, "hello")
-        self.assertFalse(session.displayable)
+        self.assertFalse(session.showable)
 
     def test_an_in_process_session_yields_its_runs_events(self):
         session = self.started(Mode.IN_PROCESS)
         self.assertEqual(list(session.events()), [Reply("hello"), TurnEnd("hello"), Exited(0)])
 
-    def test_a_mode_the_adapter_does_not_offer_is_refused(self):
+    def test_a_mode_the_client_does_not_offer_is_refused(self):
         with self.assertRaises(ConfigError) as caught:
             self.started(Mode.TUI)
         self.assertEqual(str(caught.exception), "client 'outside' does not support tui mode")

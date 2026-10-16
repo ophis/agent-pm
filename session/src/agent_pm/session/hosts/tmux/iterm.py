@@ -48,13 +48,13 @@ end run"""
 
 
 class Iterm:
-    def __init__(self, proc) -> None:
-        self.proc = proc
+    def __init__(self, runner) -> None:
+        self.runner = runner
 
     def split_pane(self, session: str, split: str, tmux: str, iterm: tuple[str, list[str]]) -> str:
         try:
             running = (
-                self.proc(
+                self.runner(
                     PGREP, capture_output=True, text=True, stdin=subprocess.DEVNULL
                 ).returncode
                 == 0
@@ -65,7 +65,7 @@ class Iterm:
             raise TuiError("iTerm2 is not running")
         kind, anchors = iterm
         try:
-            res = self.proc(
+            res = self.runner(
                 ["osascript", "-e", APPLESCRIPT, split, kind, tmux, session, *anchors],
                 capture_output=True,
                 text=True,

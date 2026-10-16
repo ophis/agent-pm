@@ -14,8 +14,8 @@ from agent_pm.delegate.engine.plan import plan
 
 from delegate.tests.case import Case, committed
 from delegate.tests.unit.composer.teams import POET, VERSE
-from session.tests import fake_adapter
-from session.tests.modules import adapter_loader
+from session.tests import fake_client
+from session.tests.modules import client_loader
 from utils.tests.case import local_section
 
 SID = "11111111-2222-3333-4444-555555555555"
@@ -42,7 +42,7 @@ def write_team(top, files=TEAM_FILES):
 
 class Base(Case):
     """A real temp dir for the workdir `work` (not made), a HOME of the test's own (self.agent_pm)
-    and fresh session settings: the core config's adapters and the fake client.
+    and fresh session settings: the core config's clients and the fake client.
     """
 
     def setUp(self):
@@ -52,22 +52,22 @@ class Base(Case):
         self.work = os.path.join(self.tmp, "work")
         self.out = os.path.join(self.work, "out.md")
         self.session_dependencies = {
-            "class_loader": adapter_loader({"agent_pm.session.adapters.fake": fake_adapter})
+            "class_loader": client_loader({"agent_pm.session.clients.fake": fake_client})
         }
         self.local("")
 
     def local(self, text):
         """
-        The local config `text`, the session configured with its adapters and the fake client.
+        The local config `text`, the session configured with its clients and the fake client.
         """
         local = os.path.join(self.agent_pm, "config.local.toml")
         with open(local, "w") as f:
             f.write(
                 local_section(text, "delegate")
                 .replace("[delegate.hosts", "[session.hosts")
-                .replace("[delegate.adapters", "[session.adapters")
+                .replace("[delegate.clients", "[session.clients")
             )
-        fake = {"implementation": "agent_pm.session.adapters.fake:FakeAdapter"}
+        fake = {"implementation": "agent_pm.session.clients.fake:FakeClient"}
         self.configure_session(committed(local) | {"fake": fake})
 
     def planned(self, role="researcher", task="research", *, keys=None, team=None, run=None, **kw):

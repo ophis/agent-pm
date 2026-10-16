@@ -11,6 +11,7 @@ from pathlib import Path
 from unittest import mock
 
 from agent_pm.session import SessionError
+from agent_pm.session.hosts.reclaimed import ReclaimedGroup
 from agent_pm.session.hosts.tmux import TmuxHost
 from agent_pm.utils import StatusState
 
@@ -217,7 +218,7 @@ while True: time.sleep(1)
         with self.assertRaises(SessionError):
             self.host.attach(name)
         handle = TmuxHost("tmux").reclaim(token)
-        self.assertIsNotNone(handle)
+        self.assertIsInstance(handle, ReclaimedGroup)
         self.assertTrue(handle.alive())
         self.assertFalse(handle.wait_exit(0.3))
         self.assertFalse(gone(own) or gone(child))
@@ -225,11 +226,6 @@ while True: time.sleep(1)
         self.assertTrue(handle.wait_exit(DEADLINE))
         self.poll(lambda: gone(own) and gone(child), "program and child exit")
         self.assertIsNone(TmuxHost("tmux").reclaim(token))
-
-    def test_reclaim_refuses_a_token_that_names_no_controller_of_ours(self):
-        for token in ("", "junk", self.home, "/tmp", "/tmp/apm-group-none", None, 5):
-            with self.subTest(token=token):
-                self.assertIsNone(self.host.reclaim(token))
 
     def test_close_twice_of_a_detached_session_is_fine_and_forgets_it(self):
         name = self.fresh()

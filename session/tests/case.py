@@ -31,8 +31,8 @@ SPAWNS = ("subprocess.Popen", "os.fork", "os.posix_spawn", "os.posix_spawnp")
 HOSTS = {"tmux": {"implementation": "agent_pm.session.hosts.tmux:TmuxHost"}}
 
 
-def configured(adapters, tmux=None, *, host=None, **dependencies) -> type[HostedSession]:
-    """A HostedSession class of `adapters`, HOSTS with `tmux` in [hosts.tmux]; each TmuxHost holds
+def configured(clients, tmux=None, *, host=None, **dependencies) -> type[HostedSession]:
+    """A HostedSession class of `clients`, HOSTS with `tmux` in [hosts.tmux]; each TmuxHost holds
     Tmux `host` (None: its own); dependencies: class_loader, probe, clock.
     """
     hosts = Host.parse_hosts({"tmux": {**HOSTS["tmux"], **(tmux or {})}, "default": "tmux"})
@@ -41,7 +41,7 @@ def configured(adapters, tmux=None, *, host=None, **dependencies) -> type[Hosted
         return kind(name, table, tmux=host) if issubclass(kind, TmuxHost) else kind(name, table)
 
     return HostedSession.configured(
-        adapters=adapters, hosts=hosts, host_factory=build, **dependencies
+        clients=clients, hosts=hosts, host_factory=build, **dependencies
     )
 
 
@@ -79,8 +79,8 @@ class Case(unittest.TestCase):
             self.configure_session({})
             return super().run(result)
 
-    def configure_session(self, adapters, tmux=None) -> None:
-        self.session_cls = configured(adapters, tmux, **getattr(self, "session_dependencies", {}))
+    def configure_session(self, clients, tmux=None) -> None:
+        self.session_cls = configured(clients, tmux, **getattr(self, "session_dependencies", {}))
 
 
 def _foreign(modules=None) -> str | None:

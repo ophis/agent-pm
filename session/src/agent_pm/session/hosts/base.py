@@ -1,4 +1,4 @@
-"""Host, where processes live, keeping each one's Record and Display; Displayable, a Host that shows
+"""Host, where processes live, keeping each one's Record and Display; Showable, a Host that shows
 them.
 """
 
@@ -43,7 +43,7 @@ def tui_lock(name: str) -> str:
     return os.path.join(os.path.expanduser(TUI_DIR), f"{name}.lock")
 
 
-class HostProcess(ABC):
+class Process(ABC):
     """close: ends it and forgets it, absent is fine; kill: its process group; wait_exit: until that
     group ends too.
     """
@@ -136,8 +136,8 @@ class HostProcess(ABC):
     def display(self) -> Display: ...
 
 
-class Terminal(HostProcess):
-    """send: into its input (Key names: the Adapter's)."""
+class Interactive(ABC):
+    """send: into its input (Key names: the Client's)."""
 
     @abstractmethod
     def send(self, action: Paste | Key) -> None: ...
@@ -146,10 +146,13 @@ class Terminal(HostProcess):
     def press(self, keys: Sequence[KeyPress]) -> None: ...
 
 
+class InteractiveProcess(Process, Interactive): ...
+
+
 class Host(ABC):
     """settings: [hosts.<name>] minus implementation. Launch.env is passed verbatim;
     on exit, events gets `exited <rc>` / `dead`.
-    attach: a Terminal, unknown → SessionError. list: sorted display
+    attach: a Process, unknown → SessionError. list: sorted display
     matches ("" none). display: completed in the caller's process.
     """
 
@@ -193,7 +196,7 @@ class Host(ABC):
         display: Display = None,
         events: str | None = None,
         record: Record | None = None,
-    ) -> HostProcess: ...
+    ) -> Process: ...
 
     @abstractmethod
     def terminal(
@@ -205,12 +208,12 @@ class Host(ABC):
         events: str | None = None,
         record: Record | None = None,
         metadata: Mapping[str, str] | None = None,
-    ) -> Terminal:
+    ) -> InteractiveProcess:
         """metadata carries private sid/client/generation separately from the published Record."""
         ...
 
     @abstractmethod
-    def attach(self, name: str) -> HostProcess: ...
+    def attach(self, name: str) -> Process: ...
 
     @abstractmethod
     def list(self, display: Display = None) -> list[str]: ...
@@ -218,7 +221,7 @@ class Host(ABC):
     def rows(self, display: Display = None) -> list[SessionRow]:
         return [self.attach(name).row() for name in self.list(display)]
 
-    def reclaim(self, token: str) -> HostProcess | None:
+    def reclaim(self, token: str) -> Process | None:
         """An untrusted token's live process group, else None."""
         return None
 
@@ -262,7 +265,7 @@ class Host(ABC):
         return ""
 
 
-class Displayable(ABC):
+class Showable(ABC):
     """show: None once shown, else an attach command; command: a shell command the Host runs to
     show it instead, `{{session}}` the session name; hide: undoes show, marking it hidden until a
     show; layout: display completed once its display destination is found.
@@ -280,7 +283,7 @@ class Displayable(ABC):
     def attach_command(self, name: str) -> str: ...
 
     @abstractmethod
-    def screen(self, name: str | HostProcess, lines: int | None = None) -> str: ...
+    def screen(self, name: str | Process, lines: int | None = None) -> str: ...
 
     @abstractmethod
     def layout(self, *, display: Display = None) -> str | None: ...

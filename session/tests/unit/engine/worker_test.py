@@ -11,7 +11,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from unittest import mock
 
-from agent_pm.session import ConfigError, Host, HostProcess, Mode, Session, SessionError
+from agent_pm.session import ConfigError, Host, Mode, Process, Session, SessionError
 from agent_pm.session.engine import worker
 from agent_pm.session.engine.types import Blocked, Exited, IdleTimeout, Reply
 from agent_pm.session.engine.worker import Worker, WorkerState
@@ -61,7 +61,7 @@ class Base(Case):
     def setUp(self):
         super().setUp()
         self.order = mock.Mock()
-        self.handle = mock.create_autospec(HostProcess, instance=True)
+        self.handle = mock.create_autospec(Process, instance=True)
         self.handle.token = "/tmp/apm-group-1"
         self.handle.session_identity.return_value = (SID, "g1")
         self.handle.alive.return_value = False
@@ -73,7 +73,7 @@ class Base(Case):
         self.session_cls = mock.Mock()
         self.session_cls.host.return_value = self.host
         self.session = self.session_cls.start.return_value
-        self.session.displayable = False
+        self.session.showable = False
         self.session.opening_pending = None
         self.session.events.return_value = iter([IdleTimeout(worker.EARLY)])
         self.order.attach_mock(self.session_cls.start, "start")
@@ -434,7 +434,7 @@ class ColorWatchTest(Base):
 
     def test_a_session_without_an_opening_returns_at_the_early_deadline(self):
         plain = mock.create_autospec(Session, instance=True)
-        plain.displayable = False
+        plain.showable = False
         plain.events.return_value = itertools.repeat(IdleTimeout(worker.TICK))
         self.session_cls.start.return_value = plain
         ticks = itertools.count()

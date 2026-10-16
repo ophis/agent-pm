@@ -1,7 +1,7 @@
 """A tui client's hook, run as `agent-pm-session hook DIR LABEL`: drains stdin, checks callback
 sources, binds client identity, and appends one hooks.jsonl record before notifying its optional
 Host callback. Never stdout, always exits 0; failures retain a traceback and one stderr line.
-session.json's adapter_hook and host_hook are HookCallback.fields(): a callback module is found over
+session.json's client_hook and host_hook are HookCallback.fields(): a callback module is found over
 the hook's own source roots, then every callback's declared roots, then sys.path, each its on_hook
 given a HookCall; one outside sys.path loads from its roots, sys.path unchanged.
 """
@@ -58,7 +58,7 @@ def say(text: str) -> None:
         print("tui_hook: " + " ".join(text.split()), file=sys.stderr)
 
 
-SESSION_STATE = {  # what this hook or an adapter_hook reads
+SESSION_STATE = {  # what this hook or a client_hook reads
     "words": lambda v: (
         isinstance(v, dict) and all(LABEL.fullmatch(k) and w in MARKS for k, w in v.items())
     ),
@@ -77,7 +77,7 @@ def _prepare(argv: Sequence[str], roots: Sequence[str]):
     state = _read_state(path, HookError)
     _check_callbacks(state, path, HookError)
     hooks = [
-        (kind, state[kind + "_hook"]) for kind in ("adapter", "host") if kind + "_hook" in state
+        (kind, state[kind + "_hook"]) for kind in ("client", "host") if kind + "_hook" in state
     ]
     for kind, hook in hooks:
         if missing := [root for root in hook["roots"] if not os.path.isdir(root)]:
@@ -106,14 +106,14 @@ def _dispatch(folder, label, payload, state, specs):
             label, given, state["sid"], state["workdir"], state["events"], state[kind]["state"]
         )
 
-    if adapter_hook := state.get("adapter_hook"):
-        adapter = _load_callback(adapter_hook["module"], "adapter hook", specs)
-        payload = adapter.on_hook(call("adapter_hook", payload))
+    if client_hook := state.get("client_hook"):
+        client = _load_callback(client_hook["module"], "client hook", specs)
+        payload = client.on_hook(call("client_hook", payload))
         if payload is None:
             return
         if not isinstance(payload, dict):
             raise HookError(
-                f"adapter hook {adapter_hook['module']}: on_hook returned "
+                f"client hook {client_hook['module']}: on_hook returned "
                 f"{type(payload).__name__}, not a payload dict or None"
             )
     word = state["words"].get(label)
@@ -195,7 +195,7 @@ def _validate_state(state, path, error):
 
 
 def _check_callbacks(state, path, error):
-    for hook in ("adapter_hook", "host_hook"):
+    for hook in ("client_hook", "host_hook"):
         value = state.get(hook, {})
         if hook in state and (
             not isinstance(value, dict)

@@ -1,5 +1,5 @@
 """An installed session and utils outside any checkout: copies of agent_pm/session and agent_pm/utils
-in a temp site directory that has no .git in it or above it, the fake adapter's package copied in as
+in a temp site directory that has no .git in it or above it, the fake client's package copied in as
 top-level module installed_client and its table appended to the copy's config.toml. A child
 `python -I` with only that site on sys.path reads the copy's config through read_config() and runs
 the fake client headless through Driver.start.
@@ -15,7 +15,7 @@ import tomllib
 import unittest
 from pathlib import Path
 
-from session.tests import fake_adapter
+from session.tests import fake_client
 from session.tests.case import REPO, Case
 from utils.tests.sandbox import clean_env
 
@@ -49,7 +49,7 @@ class InstalledIntegration(Case):
                 self.site / "agent_pm" / project,
                 ignore=SKIP,
             )
-        shutil.copytree(Path(fake_adapter.__file__).parent, self.site / MODULE, ignore=SKIP)
+        shutil.copytree(Path(fake_client.__file__).parent, self.site / MODULE, ignore=SKIP)
         scenario = self.root / "scenario.json"
         scenario.write_text(
             json.dumps(
@@ -64,7 +64,7 @@ class InstalledIntegration(Case):
         self.config.chmod(0o600)
         with self.config.open("a", encoding="utf-8") as f:
             f.write(
-                f'\n[adapters.fake]\nimplementation = "{MODULE}:FakeAdapter"\n'
+                f'\n[clients.fake]\nimplementation = "{MODULE}:FakeClient"\n'
                 f"scenario = {json.dumps(str(scenario))}\n"
                 f"log = {json.dumps(str(self.root / 'log.jsonl'))}\n"
             )

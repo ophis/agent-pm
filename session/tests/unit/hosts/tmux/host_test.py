@@ -11,7 +11,7 @@ import time
 from pathlib import Path
 from unittest import mock
 
-from agent_pm.session import ConfigError, Displayable, Host, Launch, SessionError, Terminal
+from agent_pm.session import ConfigError, Host, InteractiveProcess, Launch, SessionError, Showable
 from agent_pm.session.engine.types import Key, KeyPress, Paste, SessionRow
 from agent_pm.session.hosts.base import SIGNALS
 from agent_pm.session.hosts.tmux import TmuxHost, transport, types
@@ -49,15 +49,15 @@ FOREIGN = ("elsewhere:1.2", "mgr/left", "a b", "mgr/right/a b", "a/b/c/d", "x:y:
 
 
 class ClassTest(Case):
-    def test_a_displayable_host_loaded_by_its_config_name(self):
+    def test_a_showable_host_loaded_by_its_config_name(self):
         cls = load_class("agent_pm.session.hosts.tmux:TmuxHost", Host)
         self.assertIs(cls, TmuxHost)
-        self.assertTrue(issubclass(cls, Displayable))
+        self.assertTrue(issubclass(cls, Showable))
         host = TmuxHost("tmux", {"status_line": True})
         self.assertEqual((host.name, host.settings), ("tmux", {"status_line": True}))
         self.assertIsInstance(host.tmux, Tmux)
         self.assertEqual(
-            (f"{host.tmux.proc.__module__}.{host.tmux.proc.__name__}", host.tmux.sleep),
+            (f"{host.tmux.runner.__module__}.{host.tmux.runner.__name__}", host.tmux.sleep),
             ("subprocess.run", time.sleep),
         )
 
@@ -397,7 +397,7 @@ class TerminalTest(Base):
         events = os.path.join(self.dir, "events")
         launch = Launch((self.tool, "a b"), cwd=self.dir, env={"PATH": "/bin", "TERM": "exact"})
         terminal = self.host.terminal("t1", launch, events=events, display="mgr/below", record=LINE)
-        self.assertIsInstance(terminal, Terminal)
+        self.assertIsInstance(terminal, InteractiveProcess)
         self.assertEqual(terminal.identity, PROCESS)
         self.tmux.start.assert_called_once_with(
             "t1",
@@ -457,7 +457,7 @@ class AttachTest(Base):
         self.assertEqual(handle.identity, "4242 $3 %9 5555")
 
 
-class DisplayableTest(Base):
+class ShowableTest(Base):
     def test_show_opens_a_pane_beside_split_from_on_the_displays_side(self):
         self.enterContext(environ())
         self.runner.results.update(
@@ -562,18 +562,23 @@ class HideTest(Base):
         self.tmux.option.return_value = None
         self.tmux.option.side_effect = lambda pane, key: found.get(key[1:], recorded(pane, key))
 
-    def test_hide_kills_the_shown_pane_and_marks_it_hidden_until_a_show(self):
+    def test_hide_kills_the_shown_pane_and_marks_it_hidden(self):
         self.options(pane="%9", sid=SID)
         self.assertIsNone(self.host.hide("w1"))
         self.tmux.kill.assert_called_once_with("%9")
         self.tmux.set_option.assert_called_once_with("%7", "@hidden", "1")
-        self.options(hidden="1")
-        self.assertTrue(self.host.attach("w1").status().hidden)
+
+    def test_hidden_and_status_report_the_hidden_mark(self):
+        for mark, hidden in (("1", True), ("0", False), (None, False)):
+            with self.subTest(mark=mark):
+                self.options(hidden=mark)
+                process = self.host.attach("w1")
+                self.assertEqual((process.hidden(), process.status().hidden), (hidden, hidden))
+
+    def test_show_clears_hidden(self):
         self.options(sid=SID)
-        self.host.show("w1", command="true")
-        self.tmux.set_option.assert_called_with("%7", "@hidden", "0")
-        self.options(hidden="0")
-        self.assertFalse(self.host.attach("w1").hidden())
+        self.assertIsNone(self.host.show("w1", command="true"))
+        self.tmux.set_option.assert_called_once_with("%7", "@hidden", "0")
 
     def test_hide_leaves_an_iterm2_or_closed_pane_and_still_marks_it_hidden(self):
         for pane, process in (("w0t0p0:ABC", PROCESS), ("%9", None), (None, PROCESS)):
@@ -621,9 +626,11 @@ class HideTest(Base):
         self.options(pane="%9", sid=SID)
         self.assertIsNotNone(self.host.show("w1"))
         self.tmux.set_option.assert_called_once_with("%7", "@hidden", "0")
-        self.tmux.set_option.reset_mock()
+
+    def test_a_failed_show_with_no_pane_of_its_keeps_hidden(self):
+        self.enterContext(environ())
         self.options(pane=None, sid=SID)
-        self.host.show("w1")
+        self.assertIsNotNone(self.host.show("w1"))
         self.tmux.set_option.assert_not_called()
 
 

@@ -15,8 +15,8 @@ from agent_pm.session import ConfigError
 from delegate.tests.case import Case
 from delegate.tests.replies import block
 from delegate.tests.unit.runs import DONE, START, said
-from session.tests import fake_adapter
-from session.tests.modules import adapter_loader
+from session.tests import fake_client
+from session.tests.modules import client_loader
 from utils.tests.case import local_section
 
 SID = "11111111-2222-3333-4444-555555555555"
@@ -48,14 +48,14 @@ HEADS = [
 ]
 
 
-class RefusingAdapter(fake_adapter.InProcessFakeAdapter):
+class RefusingClient(fake_client.InProcessFakeClient):
     def in_process(self):
         return RefusingRun(self)
 
 
-class RefusingRun(fake_adapter.FakeInProcess):
-    def __init__(self, adapter):
-        super().__init__(adapter)
+class RefusingRun(fake_client.FakeInProcess):
+    def __init__(self, client):
+        super().__init__(client)
         self.refusal = ConfigError("refused by check")
 
     def check(self, spec):
@@ -78,7 +78,7 @@ class Base(Case):
         self.addCleanup(os.chdir, os.getcwd())
         os.chdir(self.tmp)
         self.session_dependencies = {
-            "class_loader": adapter_loader({"agent_pm.session.adapters.fake": fake_adapter})
+            "class_loader": client_loader({"agent_pm.session.clients.fake": fake_client})
         }
         self.configure_fake()
         self.steps(said(START, block(DONE)))
@@ -90,7 +90,7 @@ class Base(Case):
         self.configure_session(
             {
                 "fake": {
-                    "implementation": "agent_pm.session.adapters.fake:FakeAdapter",
+                    "implementation": "agent_pm.session.clients.fake:FakeClient",
                     "scenario": self.scenario,
                     "log": self.log,
                     "tui": tui,

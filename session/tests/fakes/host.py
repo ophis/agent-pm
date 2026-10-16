@@ -15,7 +15,7 @@ import threading
 import time
 import uuid
 
-from agent_pm.session import ConfigError, Host, HostProcess, SessionError, Terminal
+from agent_pm.session import ConfigError, Host, InteractiveProcess, Process, SessionError
 from agent_pm.session.engine.status_log import SessionStatusLog
 from agent_pm.session.engine.types import (
     MARKS,
@@ -81,7 +81,7 @@ def _meta(folder: str) -> dict:
         return {}
 
 
-class FakeProcess(HostProcess):
+class FakeProcess(Process):
     def __init__(self, name: str, folder: str, *, meta: dict | None = None) -> None:
         self.name = name
         self.folder = folder
@@ -172,7 +172,7 @@ class FakeProcess(HostProcess):
             raise SessionError(f"process group {self.name}: {error}") from error
 
 
-class FakeTerminal(FakeProcess, Terminal):
+class FakeTerminal(FakeProcess, InteractiveProcess):
     def send(self, action: Paste | Key) -> None:
         if isinstance(action, Paste):
             data = action.text.encode()

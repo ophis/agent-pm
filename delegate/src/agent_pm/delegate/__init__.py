@@ -23,7 +23,7 @@ from agent_pm.delegate.engine.types import (
 )
 from agent_pm.delegate.event import DelegateEvent
 from agent_pm.delegate.event.types import InvalidOutcome, Outcome, OutcomeStatus
-from agent_pm.session import NotDisplayable, SessionError
+from agent_pm.session import NotShowable, SessionError
 
 __all__ = [
     "ConfigError",
@@ -33,7 +33,7 @@ __all__ = [
     "Result",
     "Driver",
     "SessionError",
-    "NotDisplayable",
+    "NotShowable",
     "DriverSpec",
     "Instruction",
     "Limit",

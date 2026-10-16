@@ -12,8 +12,8 @@ import traceback
 from collections.abc import Callable
 from typing import Self
 
-from agent_pm.session.adapters.base import Adapter, InProcess
-from agent_pm.session.adapters.registry import Registry
+from agent_pm.session.clients.base import Client, InProcess
+from agent_pm.session.clients.registry import Registry
 from agent_pm.session.engine.types import (
     ClientBound,
     ConfigError,
@@ -46,28 +46,28 @@ class InProcessRuntime(Runtime):
     def preflight(
         cls,
         spec: Spec,
-        adapter: Adapter,
+        client: Client,
         *,
         registry: Registry,
         host: Host,
         display: Display = None,
     ) -> Prepared:
-        return cls._prepare(spec, adapter, display=display)[0]
+        return cls._prepare(spec, client, display=display)[0]
 
     @classmethod
     def _prepare(
         cls,
         spec: Spec,
-        adapter: Adapter,
+        client: Client,
         *,
         display: Display,
     ) -> tuple[Prepared, InProcess]:
-        run = adapter.in_process()
+        run = client.in_process()
         if run is None:
             raise cls._unsupported(spec)
         cls._no_tui_keys(spec, display)
-        cls._selected(spec, adapter)
-        spec = cls._noted(spec, adapter)
+        cls._selected(spec, client)
+        spec = cls._noted(spec, client)
         if spec.sid is None:
             raise ConfigError("sid: missing")
         run.check(spec)
@@ -80,7 +80,7 @@ class InProcessRuntime(Runtime):
     def start(
         cls,
         spec: Spec,
-        adapter: Adapter,
+        client: Client,
         *,
         registry: Registry,
         record: Callable[[SessionInfo], None],
@@ -88,7 +88,7 @@ class InProcessRuntime(Runtime):
         display: Display = None,
         check_name: Callable[[str], None] | None = None,
     ) -> Self:
-        prepared, run = cls._prepare(spec, adapter, display=display)
+        prepared, run = cls._prepare(spec, client, display=display)
         record(prepared.info)
         mode = cls(prepared)
         try:

@@ -1,6 +1,6 @@
 """delegate/cli.py as a subprocess, --client codex, over
-session/tests/integration/adapters/codex/fake_codex.py (on PATH as `codex`); HOME, its recovery
-store, outside the temp dirs (as the Codex Adapter's tests), the workdir in one, away from any
+session/tests/integration/clients/codex/fake_codex.py (on PATH as `codex`); HOME, its recovery
+store, outside the temp dirs (as the Codex Client's tests), the workdir in one, away from any
 ancestor's .codex. Main's tests/integration/core/fake_codex_integration_test.py, the Delegate's
 part.
 """
@@ -22,7 +22,7 @@ from delegate.tests.integration.cli import (
 )
 from delegate.tests.integration.cli import codex_said as said
 from delegate.tests.replies import block, mark
-from session.tests.integration.adapters.codex import fake_codex
+from session.tests.integration.clients.codex import fake_codex
 
 
 class Codex(CodexIntegration):

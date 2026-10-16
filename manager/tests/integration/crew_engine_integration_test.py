@@ -181,7 +181,7 @@ class CrewTest(Case):
             mock.patch("subprocess.run", side_effect=run),
         ):
             record = self.start("worker")
-            ctl.set_session(self.ctl_dir, "worker", displayable=True)
+            ctl.set_session(self.ctl_dir, "worker", showable=True)
             self.crew.attach()
             ctl.set_session(self.ctl_dir, "worker", alive=False)
             self.crew.attach()
@@ -263,12 +263,12 @@ class CrewTest(Case):
             (entry.state, entry.record, entry.sid), (State.GONE, original, original.sid)
         )
 
-    def test_attach_batches_twenty_records_and_shows_only_displayable_live_entries(self):
+    def test_attach_batches_twenty_records_and_shows_only_showable_live_entries(self):
         records = []
         for number in range(20):
             name = f"role{number}"
             records.append(self.start(name))
-            ctl.set_session(self.ctl_dir, name, displayable=number < 2)
+            ctl.set_session(self.ctl_dir, name, showable=number < 2)
         with self.listed(records), mock.patch("subprocess.run", wraps=subprocess.run) as run:
             table = self.crew.attach()
         self.assertEqual(len(self.calls("status")), 1)
@@ -318,7 +318,7 @@ class CrewTest(Case):
             },
         )
         for name in ("done", "failed", "waiting"):
-            ctl.set_session(self.ctl_dir, name, alive=True, outcome=None, displayable=True)
+            ctl.set_session(self.ctl_dir, name, alive=True, outcome=None, showable=True)
         with self.listed():
             self.crew.attach()
         self.assertEqual(self.calls("show"), [])
@@ -542,7 +542,7 @@ class CrewTest(Case):
     def test_status_returns_aliases_batches_and_never_shows_or_writes_state(self):
         self.start("one")
         self.start("two")
-        ctl.set_session(self.ctl_dir, "one", displayable=True)
+        ctl.set_session(self.ctl_dir, "one", showable=True)
         ctl.set_session(self.ctl_dir, "two", alive=False, outcome="done")
         statuses = self.crew.status(("two", "one"))
         self.assertEqual([status.name for status in statuses], ["two", "one"])
@@ -672,7 +672,7 @@ class CrewTest(Case):
 
     def test_attach_keeps_failed_ctl_unknown_and_processes_healthy_group(self):
         healthy = self.start("healthy", display="view")
-        ctl.set_session(self.ctl_dir, "healthy", displayable=True)
+        ctl.set_session(self.ctl_dir, "healthy", showable=True)
         bad = with_ctl(self.fake_record("broken"), MISSING)
         self.own(bad)
         stderr = io.StringIO()
@@ -685,7 +685,7 @@ class CrewTest(Case):
 
     def test_attach_reports_nonzero_status_and_show_without_aborting_other_groups(self):
         self.start("healthy", display="view")
-        ctl.set_session(self.ctl_dir, "healthy", displayable=True)
+        ctl.set_session(self.ctl_dir, "healthy", showable=True)
         bad = with_ctl(self.fake_record("broken"), "agent-pm-session")
         command = os.path.join(self.bin_dir, bad.ctl[0])
         with open(command, "w", encoding="utf-8") as stream:

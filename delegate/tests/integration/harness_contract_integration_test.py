@@ -7,7 +7,7 @@ import sys
 from agent_pm.delegate import Begun, Spec
 from agent_pm.delegate.composer.prompt import RESUME
 from agent_pm.delegate.engine.harness_delegate import HarnessDelegate
-from agent_pm.session import Exited, NotDisplayable, Reply
+from agent_pm.session import Exited, NotShowable, Reply
 
 from delegate.tests.case import REPO, child_env
 from delegate.tests.contracts.delegate import DelegateContract
@@ -30,20 +30,20 @@ from delegate.tests.harness import HarnessCase
 class ClassQueries(DelegateContract, HarnessCase):
     delegate_cls = HarnessDelegate
     ROLE = "dummy-tester"
-    DISPLAYABLE = sys.argv[1] == "True"
+    SHOWABLE = sys.argv[1] == "True"
 
     def setUp(self):
         super().setUp()
-        if self.DISPLAYABLE:
+        if self.SHOWABLE:
             script = HarnessSession.script
-            HarnessSession.reset(displayable=True)
+            HarnessSession.reset(showable=True)
             HarnessSession.script = script
 
     def runTest(self):
         DelegateContract.test_class_methods_answer_for_its_roles_and_refuse_an_unknown_one(self)
 
 result = unittest.TextTestRunner(verbosity=2).run(ClassQueries())
-print(json.dumps({"tests": result.testsRun, "displayable": ClassQueries.DISPLAYABLE}))
+print(json.dumps({"tests": result.testsRun, "showable": ClassQueries.SHOWABLE}))
 sys.exit(not result.wasSuccessful())
 """
 
@@ -51,11 +51,11 @@ sys.exit(not result.wasSuccessful())
 class HarnessContract(DelegateContract, HarnessCase):
     delegate_cls = HarnessDelegate
     ROLE = "dummy-tester"
-    DISPLAYABLE = False
+    SHOWABLE = False
 
     def test_class_methods_answer_for_its_roles_and_refuse_an_unknown_one(self):
         result = subprocess.run(
-            [sys.executable, "-P", "-S", "-c", CLASS_QUERIES, str(self.DISPLAYABLE)],
+            [sys.executable, "-P", "-S", "-c", CLASS_QUERIES, str(self.SHOWABLE)],
             cwd=self.home,
             env=child_env(None, REPO),
             stdin=subprocess.DEVNULL,
@@ -64,7 +64,7 @@ class HarnessContract(DelegateContract, HarnessCase):
             timeout=60,
         )
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertEqual(json.loads(result.stdout), {"tests": 1, "displayable": self.DISPLAYABLE})
+        self.assertEqual(json.loads(result.stdout), {"tests": 1, "showable": self.SHOWABLE})
 
     def make(self, workdir, **kw):
         role = kw.pop("role", self.ROLE)
@@ -121,19 +121,19 @@ class HarnessContract(DelegateContract, HarnessCase):
 
 
 class ShowingHarnessContract(HarnessContract):
-    DISPLAYABLE = True
+    SHOWABLE = True
 
     def setUp(self):
         super().setUp()
         script = HarnessSession.script
-        HarnessSession.reset(displayable=True)
+        HarnessSession.reset(showable=True)
         HarnessSession.script = script
 
 
 class Ownership(HarnessCase):
-    def pair(self, *, agent_displayable=True, harness_displayable=True):
+    def pair(self, *, agent_showable=True, harness_showable=True):
         HarnessSession.reset()
-        for name, capable in (("agent", agent_displayable), ("harness", harness_displayable)):
+        for name, capable in (("agent", agent_showable), ("harness", harness_showable)):
             kind = ShowingHost if capable else RecordingHost
             HarnessSession.hosts[name] = kind(name)
         delegate = self.make(
@@ -190,14 +190,14 @@ class Ownership(HarnessCase):
         )
 
     def test_hidden_agent_uses_harness_target_and_hidden_pair_has_no_attach(self):
-        _, view = self.pair(agent_displayable=False)
+        _, view = self.pair(agent_showable=False)
         self.assertEqual(view.attach_command(), f"harness attach {self.metadata()['harness_name']}")
         view.close()
         self.work += "-hidden"
-        _, view = self.pair(agent_displayable=False, harness_displayable=False)
+        _, view = self.pair(agent_showable=False, harness_showable=False)
         self.assertIsNone(view.status().attach)
         self.assertIsNone(view.attach_command())
-        with self.assertRaises(NotDisplayable):
+        with self.assertRaises(NotShowable):
             view.show()
 
     def test_resume_closes_leftover_agent_before_restarting_lifecycle_owner(self):

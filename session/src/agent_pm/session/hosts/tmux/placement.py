@@ -330,7 +330,7 @@ class Placement:
         if unknown:
             return f"unknown placeholder {unknown[0]}"
         try:
-            res = self.tmux.proc(
+            res = self.tmux.runner(
                 ["/bin/sh", "-c", SLOT.sub(lambda _match: shlex.quote(session), template)],
                 stdin=subprocess.DEVNULL,
                 timeout=SHOW_TIMEOUT,

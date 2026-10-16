@@ -9,8 +9,8 @@ import threading
 from collections.abc import Callable, Iterable
 from typing import Self
 
-from agent_pm.session.adapters.base import Adapter, Headless
-from agent_pm.session.adapters.registry import Registry
+from agent_pm.session.clients.base import Client, Headless
+from agent_pm.session.clients.registry import Registry
 from agent_pm.session.engine.types import (
     ClientBound,
     Liveness,
@@ -40,37 +40,37 @@ class HeadlessRuntime(Runtime):
     def preflight(
         cls,
         spec: Spec,
-        adapter: Adapter,
+        client: Client,
         *,
         registry: Registry,
         host: Host,
         display: Display = None,
     ) -> Prepared:
-        return cls._prepare(spec, adapter, registry=registry, display=display)[0]
+        return cls._prepare(spec, client, registry=registry, display=display)[0]
 
     @classmethod
     def _prepare(
         cls,
         spec: Spec,
-        adapter: Adapter,
+        client: Client,
         *,
         registry: Registry,
         display: Display,
     ) -> tuple[Prepared, Headless]:
-        run = adapter.headless()
+        run = client.headless()
         if run is None:
             raise cls._unsupported(spec)
         cls._no_tui_keys(spec, display)
-        cls._selected(spec, adapter)
+        cls._selected(spec, client)
         drop = identity_drop(registry)
-        spec = cls._noted(spec, adapter)
+        spec = cls._noted(spec, client)
         return cls._launched(spec, run.launch, drop), run
 
     @classmethod
     def start(
         cls,
         spec: Spec,
-        adapter: Adapter,
+        client: Client,
         *,
         registry: Registry,
         record: Callable[[SessionInfo], None],
@@ -78,7 +78,7 @@ class HeadlessRuntime(Runtime):
         display: Display = None,
         check_name: Callable[[str], None] | None = None,
     ) -> Self:
-        prepared, run = cls._prepare(spec, adapter, registry=registry, display=display)
+        prepared, run = cls._prepare(spec, client, registry=registry, display=display)
         run.commit()
         record(prepared.info)
         try:

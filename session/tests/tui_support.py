@@ -18,9 +18,9 @@ from agent_pm.session.engine.types import (
     Spec,
 )
 
-from session.tests import fake_adapter, live_tmux
+from session.tests import fake_client, live_tmux
 from session.tests.case import Case, configured
-from session.tests.modules import adapter_loader
+from session.tests.modules import client_loader
 from session.tests.threads import capture_errors
 
 MANAGER = "mgr"
@@ -98,9 +98,9 @@ class Live(Case):
         self.dir = os.path.realpath(tmp.name)
         self.workdir = os.path.join(self.dir, "work")
         self.events = os.path.join(self.dir, "events")
-        self.adapters = {
+        self.clients = {
             "fake": {
-                "implementation": "agent_pm.session.adapters.fake:FakeAdapter",
+                "implementation": "agent_pm.session.clients.fake:FakeClient",
                 "tui": True,
                 "scenario": os.path.join(self.dir, "scenario.json"),
                 "log": os.path.join(self.dir, "client.log"),
@@ -109,10 +109,10 @@ class Live(Case):
         self.session_cls = self.fake_session()
 
     def fake_session(self, **dependencies) -> type[HostedSession]:
-        """A session class of self.adapters loading the fake client, with `dependencies`."""
+        """A session class of self.clients loading the fake client, with `dependencies`."""
         return configured(
-            self.adapters,
-            class_loader=adapter_loader({"agent_pm.session.adapters.fake": fake_adapter}),
+            self.clients,
+            class_loader=client_loader({"agent_pm.session.clients.fake": fake_client}),
             **dependencies,
         )
 
@@ -120,7 +120,7 @@ class Live(Case):
         """Tui session `name` of the fake client running `steps`, its events file self.events
         unless given.
         """
-        with open(self.adapters["fake"]["scenario"], "w") as f:
+        with open(self.clients["fake"]["scenario"], "w") as f:
             json.dump(list(steps), f)
         handle = self.session_cls.start(
             Spec(

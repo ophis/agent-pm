@@ -1,4 +1,4 @@
-"""A new client is a config value to the Composer: a local `client` and its [adapters.<name>]
+"""A new client is a config value to the Composer: a local `client` and its [clients.<name>]
 table, with no package for it, resolve, compose and list the catalog in a child process
 (child.Case); no client text in the prompt.
 """
@@ -13,7 +13,7 @@ from delegate.tests.integration.composer import child
 
 BANNER = "Extension handover."
 LOCAL = (
-    '[delegate]\nclient = "extension"\n\n[session.adapters.extension]\nimplementation = "extension_client:ExtensionAdapter"\n'
+    '[delegate]\nclient = "extension"\n\n[session.clients.extension]\nimplementation = "extension_client:ExtensionClient"\n'
     f'tier = 4\nbanner = "{BANNER}"\n'
 )
 

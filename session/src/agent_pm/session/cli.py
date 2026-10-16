@@ -34,13 +34,13 @@ from agent_pm.session.engine.types import (
     ConfigError,
     Hosts,
     KeyPress,
-    NotDisplayable,
+    NotShowable,
     SessionError,
     SessionInfo,
     SessionRow,
 )
 from agent_pm.session.engine.worker import Worker
-from agent_pm.session.hosts.base import Displayable, Host
+from agent_pm.session.hosts.base import Host, Showable
 from agent_pm.session.runtimes import tui_hook
 from agent_pm.session.runtimes.base import EVENTS, START_SID
 from agent_pm.session.runtimes.tui import TuiRuntime, TuiStore
@@ -107,7 +107,7 @@ def _parser(hosts: Hosts | None) -> argparse.ArgumentParser:
         "pending).",
     )
     p.add_argument("name", type=_name)
-    p.add_argument("--client", required=True, help="its client, an [adapters.<name>]")
+    p.add_argument("--client", required=True, help="its client, a [clients.<name>]")
     p.add_argument("--cwd", help="its directory (default: this one)")
     p.add_argument("--resume", metavar="SID", help="resume conversation SID")
     p.add_argument("--prompt", default="", help="its first prompt")
@@ -129,7 +129,7 @@ def _parser(hosts: Hosts | None) -> argparse.ArgumentParser:
     for cmd, text in (
         ("status", "one Status JSON line per session"),
         ("show", "show each session where its display says"),
-        ("hide", "close each session's view; it runs on"),
+        ("hide", "close what show opened for each session; it runs on"),
         ("close", "close each session; absent is fine"),
         ("attach-command", "print each session's attach command"),
     ):
@@ -200,10 +200,10 @@ def _host_of(name: str, hosts: Hosts) -> str:
     return next((h for h in hosts.tables if name in Session.host(h).list()), hosts.default)
 
 
-def _shown(name: str, hosts: Hosts) -> Displayable:
+def _shown(name: str, hosts: Hosts) -> Showable:
     host = Session.host(_host_of(name, hosts))
-    if not isinstance(host, Displayable):
-        raise NotDisplayable(f"session {name}: host {host.name} cannot display")
+    if not isinstance(host, Showable):
+        raise NotShowable(f"session {name}: host {host.name} cannot show")
     return host
 
 
@@ -329,7 +329,7 @@ def _batch(args, hosts: Hosts) -> int:
             line = BATCH[args.cmd](name, record, hosts)
             if line is not None:
                 print(line, flush=True)
-        except NotDisplayable as error:
+        except NotShowable as error:
             _say(str(error))
             failed = 1
         except (ConfigError, SessionError, OSError) as error:
@@ -449,8 +449,8 @@ def _run(args, flags: list[str], hosts: Hosts, start_sid: str | None) -> int:
         return Session.client_resume(args.client, args.arguments)
     else:
         host = Session.host()
-        if not isinstance(host, Displayable):
-            raise NotDisplayable(f"session {args.window}: host {host.name} cannot display")
+        if not isinstance(host, Showable):
+            raise NotShowable(f"session {args.window}: host {host.name} cannot show")
         host.tile(args.window, wait=not args.no_wait, if_panes_changed=args.if_panes_changed)
     return 0
 
@@ -479,7 +479,7 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     try:
         return _run(args, flags, hosts, start_sid)
-    except NotDisplayable as error:
+    except NotShowable as error:
         _say(str(error))
         return 1
     except ConfigError as error:

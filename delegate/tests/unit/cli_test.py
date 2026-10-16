@@ -1,4 +1,4 @@
-"""Pure logic over fake objects and in-process adapters."""
+"""Pure logic over fake objects and in-process clients."""
 
 import io
 import json
@@ -19,7 +19,7 @@ from agent_pm.delegate.engine.harness_delegate import HarnessDelegate
 from agent_pm.delegate.engine.runner import STOP_LIMIT
 from agent_pm.delegate.engine.state import RunState
 from agent_pm.delegate.engine.types import Layout
-from agent_pm.session import NotDisplayable, SessionError
+from agent_pm.session import NotShowable, SessionError
 from agent_pm.utils import Record, Status
 
 from delegate.tests.case import Case, committed
@@ -31,15 +31,15 @@ from delegate.tests.cli_case import (
     SID,
     TUI,
     Base,
-    RefusingAdapter,
+    RefusingClient,
 )
 from delegate.tests.fakes.harness_session import HarnessSession, RecordingHost
 from delegate.tests.harness import SID as HARNESS_SID
 from delegate.tests.harness import HarnessCase
 from delegate.tests.replies import block
 from delegate.tests.unit.runs import DONE, START, STOP, FakeHandle, no_child, turn
-from session.tests import fake_adapter
-from session.tests.modules import adapter_loader
+from session.tests import fake_client
+from session.tests.modules import client_loader
 from utils.tests.case import local_section
 
 
@@ -483,23 +483,23 @@ class DryRun(Base):
 
 class InProcess(Base):
     """
-    The in_process-only fake, and RefusingAdapter (client `refusing`); no child process starts.
+    The in_process-only fake, and RefusingClient (client `refusing`); no child process starts.
     """
 
     def setUp(self):
         super().setUp()
-        refusing = types.ModuleType("agent_pm.session.adapters.refusing")
-        refusing.RefusingAdapter = RefusingAdapter
+        refusing = types.ModuleType("agent_pm.session.clients.refusing")
+        refusing.RefusingClient = RefusingClient
         self.session_dependencies = {
-            "class_loader": adapter_loader(
-                {"agent_pm.session.adapters.fake": fake_adapter, refusing.__name__: refusing}
+            "class_loader": client_loader(
+                {"agent_pm.session.clients.fake": fake_client, refusing.__name__: refusing}
             )
         }
-        classes = {"fake": "InProcessFakeAdapter", "refusing": "RefusingAdapter"}
+        classes = {"fake": "InProcessFakeClient", "refusing": "RefusingClient"}
         self.configure_session(
             {
                 name: {
-                    "implementation": f"agent_pm.session.adapters.{name}:{cls}",
+                    "implementation": f"agent_pm.session.clients.{name}:{cls}",
                     "scenario": self.scenario,
                     "log": self.log,
                 }
@@ -721,7 +721,7 @@ class Configures(Base):
         self.configure_session({})
         code, out, err = self.runs()
         self.assertEqual((code, out), (2, ""))
-        self.assertIn("[adapters.fake]", err)
+        self.assertIn("[clients.fake]", err)
         self.assertEqual((self.launches(), os.path.exists(self.work)), ([], False))
 
     def test_an_unknown_harness_host_or_delegates_key_exits_2_and_starts_nothing(self):
@@ -814,7 +814,7 @@ class Usage(Base):
                 "[roles.dummy-tester]\ntier = 9\n",
                 "tier must be an integer 1–4, got 9",
             ),
-            ("an unknown client", {"client": "nope"}, "", "no [adapters.nope] table"),
+            ("an unknown client", {"client": "nope"}, "", "no [clients.nope] table"),
         ]
         for name, kw, local, want in cases:
             self.local(local)
@@ -1099,20 +1099,20 @@ class Queries(Case):
         self.assertEqual((code, out, err), (2, "", "delegate: name same given more than once\n"))
         self.assertEqual((Views.views["x"].closed, Views.views["y"].closed), (0, 0))
 
-    def test_show_prints_each_command_and_exits_1_without_a_displayable_session(self):
+    def test_show_prints_each_command_and_exits_1_without_a_showable_session(self):
         shown = View("a", command="tmux attach -t =a")
-        none = View("b", show_error=NotDisplayable("delegate has no live displayable session"))
+        none = View("b", show_error=NotShowable("delegate has no live showable session"))
         self.assertEqual(
             self.query("show", "a", "b", a=shown, b=none),
-            (1, "tmux attach -t =a\n", "delegate: b: delegate has no live displayable session\n"),
+            (1, "tmux attach -t =a\n", "delegate: b: delegate has no live showable session\n"),
         )
 
-    def test_hide_hides_each_key_prints_nothing_and_exits_1_without_a_displayable_session(self):
+    def test_hide_hides_each_key_prints_nothing_and_exits_1_without_a_showable_session(self):
         a = View("a")
-        b = View("b", show_error=NotDisplayable("delegate has no live displayable session"))
+        b = View("b", show_error=NotShowable("delegate has no live showable session"))
         self.assertEqual(
             self.query("hide", "a", "b", a=a, b=b),
-            (1, "", "delegate: b: delegate has no live displayable session\n"),
+            (1, "", "delegate: b: delegate has no live showable session\n"),
         )
         self.assertEqual(a.hidden, 1)
 
@@ -1159,7 +1159,7 @@ class Queries(Case):
         )
         self.assertEqual(
             self.query("attach-command", "a", a=View("a")),
-            (1, "", "delegate: a: no displayable session\n"),
+            (1, "", "delegate: a: no showable session\n"),
         )
 
     def test_resume_inside_an_agent_session_exits_2_and_status_still_answers(self):

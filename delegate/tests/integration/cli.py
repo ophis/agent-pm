@@ -1,6 +1,6 @@
 """delegate/cli.py as a subprocess: Integration over
-session/tests/integration/adapters/claude/fake_claude.py, CodexIntegration over
-session/tests/integration/adapters/codex/fake_codex.py, their outcomes.
+session/tests/integration/clients/claude/fake_claude.py, CodexIntegration over
+session/tests/integration/clients/codex/fake_codex.py, their outcomes.
 """
 
 import contextlib
@@ -17,8 +17,8 @@ import time
 from agent_pm.delegate.engine.types import Layout
 
 from delegate.tests.case import PY, REPO, Case, child_env
-from session.tests.integration.adapters.claude import fake_claude
-from session.tests.integration.adapters.codex import fake_codex
+from session.tests.integration.clients.claude import fake_claude
+from session.tests.integration.clients.codex import fake_codex
 from utils.tests.sandbox import reap
 
 RUN = (*PY, "-m", "agent_pm.delegate.cli", "run")

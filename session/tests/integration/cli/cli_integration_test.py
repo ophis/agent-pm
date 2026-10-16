@@ -205,7 +205,7 @@ class ConfigTest(SessionCliCase):
         self.record(self.start("w1"))
         self.assertEqual(self.server.option("w1", "status"), "on")
 
-    def test_a_bad_config_or_host_or_adapter_override_exits_2_with_its_reason_first(self):
+    def test_a_bad_config_or_host_or_client_override_exits_2_with_its_reason_first(self):
         local = "config: ~/.agent-pm/config.local.toml"
         for text, reason in (
             (
@@ -228,12 +228,12 @@ class ConfigTest(SessionCliCase):
                 "unknown key 'no_such_key' in [hosts.tmux]",
             ),
             (
-                '[session.adapters.claude]\nmodel = "opus"\n',
-                "unknown key 'model' in ClaudeAdapter's config",
+                '[session.clients.claude]\nmodel = "opus"\n',
+                "unknown key 'model' in ClaudeClient's config",
             ),
             (
-                '[session.adapters.claude]\nflags = "--x"\n',
-                "[adapters.claude].flags must be a list of strings",
+                '[session.clients.claude]\nflags = "--x"\n',
+                "[clients.claude].flags must be a list of strings",
             ),
         ):
             with self.subTest(config=text):
@@ -249,9 +249,7 @@ class ConfigTest(SessionCliCase):
 
     def test_an_unknown_client_exits_2_before_anything_starts(self):
         result = self.session("start", "w1", "--client", "nope", "--cwd", self.cwd)
-        self.assert_refused(
-            result, f"{PROG}: no [adapters.nope] table in the configured adapters\n"
-        )
+        self.assert_refused(result, f"{PROG}: no [clients.nope] table in the configured clients\n")
 
     def test_an_unimportable_host_implementation_exits_2_before_anything_starts(self):
         self.local_config('[session.hosts.tmux]\nimplementation = "nope.mod:Nope"\n')

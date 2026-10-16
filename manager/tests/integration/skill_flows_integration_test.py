@@ -13,7 +13,7 @@ from delegate.tests.integration.cli import ASKING, DONE
 from delegate.tests.replies import block
 from manager.tests.live_crew import ROLE, LiveCrew, has_pair, logged
 from manager.tests.skills.tmux import example, fill
-from session.tests.integration.adapters.codex import fake_tui
+from session.tests.integration.clients.codex import fake_tui
 
 
 class SkillFlows(LiveCrew):

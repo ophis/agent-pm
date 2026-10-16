@@ -15,7 +15,7 @@ from unittest import mock
 
 from session.tests.case import PLUGIN_BIN, child_env
 from session.tests.grid import GridCheck
-from session.tests.integration.adapters.claude import fake_claude
+from session.tests.integration.clients.claude import fake_claude
 
 # two words: tmux execs them, not the user's login shell (and its rc files)
 IDLE = ("cat", "-")

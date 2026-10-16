@@ -1,5 +1,5 @@
 """The session layer: Session (engine/base.py), whose one concrete class is HostedSession
-(engine/hosted_session.py, runtimes/), runs agent sessions through each client's Adapter (adapters/)
+(engine/hosted_session.py, runtimes/), runs agent sessions through each Client (clients/)
 on a Host (hosts/); `__all__` is its API for Session users.
 """
 
@@ -22,7 +22,7 @@ from agent_pm.session.engine.types import (
     Liveness,
     Mode,
     NoRecordedSession,
-    NotDisplayable,
+    NotShowable,
     Reply,
     Resumable,
     SessionError,
@@ -40,10 +40,11 @@ from agent_pm.session.engine.types import (
 )
 from agent_pm.session.hosts.base import (
     SIGNALS,
-    Displayable,
     Host,
-    HostProcess,
-    Terminal,
+    Interactive,
+    InteractiveProcess,
+    Process,
+    Showable,
 )
 
 __all__ = [
@@ -64,10 +65,11 @@ __all__ = [
     "SessionEvent",
     "Hosts",
     "Host",
-    "HostProcess",
-    "Terminal",
-    "Displayable",
-    "NotDisplayable",
+    "Process",
+    "Interactive",
+    "InteractiveProcess",
+    "Showable",
+    "NotShowable",
     "NoRecordedSession",
     "SessionStatusLog",
     "Usage",

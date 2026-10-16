@@ -178,7 +178,7 @@ class Recover(Parity):
         self.seed(ID, "ENG: Session registry")
 
     def transcript(self, sid):
-        """The Claude adapter's transcript of sid in ID's agent dir and the files beside it."""
+        """The Claude client's transcript of sid in ID's agent dir and the files beside it."""
         cwd = session_cwd(os.path.join(self.workdirs, ID))
         project = re.sub(r"[^A-Za-z0-9]", "-", os.path.realpath(cwd))
         path = os.path.join(self.root, "claude-config", "projects", project, f"{sid}.jsonl")

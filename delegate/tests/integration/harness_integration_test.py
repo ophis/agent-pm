@@ -64,22 +64,22 @@ from unittest import mock
 from agent_pm.delegate.engine.harness_delegate import HarnessDelegate
 from agent_pm.session import Usage, Window
 from delegate.tests.fakes.harness_session import HarnessSession, RecordingHost
-from delegate.tests.fakes.usage import UsageAdapter
+from delegate.tests.fakes.usage import UsageClient
 case = unittest.TestCase()
 sentinel = Usage(Window(12.5, 1767225600.0), Window(37.0, None))
 probes = []
 for expected in (sentinel, None):
-    UsageAdapter.usage_result = expected
+    UsageClient.usage_result = expected
     process = mock.Mock(stdout=io.StringIO("quota"))
     process.communicate.return_value = ("quota", "")
     with mock.patch("subprocess.Popen", return_value=process) as probe:
         case.assertIs(HarnessDelegate.usage("dummy-tester"), expected)
     case.assertEqual(probe.call_count, 1)
     probes.append(probe.call_count)
-case.assertEqual(UsageAdapter.queried, ["role_usage", "role_usage"])
-case.assertEqual((UsageAdapter.starts, HarnessSession.started, RecordingHost.launches), ([], [], []))
-print(json.dumps({"queried": UsageAdapter.queried, "probes": probes,
-                  "starts": UsageAdapter.starts, "session_starts": HarnessSession.started,
+case.assertEqual(UsageClient.queried, ["role_usage", "role_usage"])
+case.assertEqual((UsageClient.starts, HarnessSession.started, RecordingHost.launches), ([], [], []))
+print(json.dumps({"queried": UsageClient.queried, "probes": probes,
+                  "starts": UsageClient.starts, "session_starts": HarnessSession.started,
                   "launches": RecordingHost.launches}))
 """
 
@@ -462,8 +462,8 @@ class UsageQueries(HarnessCase):
         self.settings(client="role_usage")
         with open(self.local, "a", encoding="utf-8") as file:
             file.write(
-                "[session.adapters.role_usage]\n"
-                'implementation = "delegate.tests.fakes.usage:UsageAdapter"\n'
+                "[session.clients.role_usage]\n"
+                'implementation = "delegate.tests.fakes.usage:UsageClient"\n'
                 'label = "role_usage"\n'
                 f"cwd = {json.dumps(self.home)}\n"
             )
@@ -508,11 +508,11 @@ class UsageQueries(HarnessCase):
         class Refusing(SessionClass):
             @classmethod
             def usage(cls, client):
-                raise SessionConfigError(f"[adapters.{client}]: no usage probe")
+                raise SessionConfigError(f"[clients.{client}]: no usage probe")
 
         with self.assertRaises(ConfigError) as caught:
             HarnessDelegate.usage("dummy-tester", session_cls=Refusing)
-        self.assertEqual(str(caught.exception), "[adapters.fake]: no usage probe")
+        self.assertEqual(str(caught.exception), "[clients.fake]: no usage probe")
         self.settings(default="nope")
         with self.assertRaises(ConfigError) as caught:
             HarnessDelegate.usage("dummy-tester", session_cls=SessionClass)
@@ -676,10 +676,10 @@ class HarnessLaunch(HarnessCase):
         self.assertEqual(RootedSession.asked[-1], "fake")
 
     def test_an_unloadable_class_is_refused_writing_nothing(self):
-        RootedSession.asked, RootedSession.failure = [], SessionConfigError("[adapters.fake]: no x")
+        RootedSession.asked, RootedSession.failure = [], SessionConfigError("[clients.fake]: no x")
         with self.assertRaises(ConfigError) as caught:
             self.make(session_cls=RootedSession)
-        self.assertEqual(str(caught.exception), "[adapters.fake]: no x")
+        self.assertEqual(str(caught.exception), "[clients.fake]: no x")
         self.assertFalse(os.path.lexists(self.work))
 
     def test_the_harness_runs_in_the_run_dir_with_its_signals_blocked(self):

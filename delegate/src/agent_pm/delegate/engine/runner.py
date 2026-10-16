@@ -98,7 +98,7 @@ class Headless:
 class Tui(Headless):
     """FR-23: the first turn end without an outcome block gets NUDGE, STOP_LIMIT more give up; a
     progress mark resets that count; a turn end with work pending is ignored. FR-24: an IdleTimeout
-    gives up. The session is left open. A displayable session started at a display is shown as the
+    gives up. The session is left open. A showable session started at a display is shown as the
     run's `show` says.
     """
 
@@ -111,7 +111,7 @@ class Tui(Headless):
         name = handle.name
         if name is None:
             raise SessionError("tui session has no name")
-        if handle.displayable:
+        if handle.showable:
             say(f"delegate: tui session {name}: {handle.attach_command()}")
             if self.driver.display is not None and p.run.show != "none":
                 try:
@@ -362,7 +362,7 @@ class _Attempts:
                 name = handle.name
                 if name is None:
                     raise SessionError("tui session has no name")
-                command = f": {handle.attach_command()}" if handle.displayable else ""
+                command = f": {handle.attach_command()}" if handle.showable else ""
                 say(f"delegate: {answer.reason}; session {name} left open{command}")
                 return 0, None, None, None
             if answer == END:

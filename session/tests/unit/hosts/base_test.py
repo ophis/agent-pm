@@ -12,14 +12,15 @@ from unittest import mock
 from agent_pm.session import (
     SIGNALS,
     ConfigError,
-    Displayable,
     Host,
-    HostProcess,
     Hosts,
+    Interactive,
+    InteractiveProcess,
     Liveness,
+    Process,
     SessionError,
+    Showable,
     StatusState,
-    Terminal,
 )
 from agent_pm.utils import Status
 
@@ -41,9 +42,10 @@ PROCESS = {"alive", "close", "wait_exit", "kill", "record", "display"}
 
 ABSTRACT = {
     Host: {"detach", "terminal", "attach", "list"},
-    HostProcess: PROCESS,
-    Terminal: PROCESS | {"send", "press"},
-    Displayable: {"show", "hide", "attach_command", "screen", "layout", "tile"},
+    Process: PROCESS,
+    Interactive: {"send", "press"},
+    InteractiveProcess: PROCESS | {"send", "press"},
+    Showable: {"show", "hide", "attach_command", "screen", "layout", "tile"},
 }
 
 
@@ -61,17 +63,18 @@ class Abstract(Case):
                 self.assertTrue(inspect.isabstract(cls))
                 self.assertEqual(cls.__abstractmethods__, methods)
 
-    def test_a_terminal_is_a_host_process(self):
-        self.assertTrue(issubclass(Terminal, HostProcess))
+    def test_an_interactive_process_is_a_process_and_interactive(self):
+        self.assertTrue(issubclass(InteractiveProcess, Process))
+        self.assertTrue(issubclass(InteractiveProcess, Interactive))
 
-    def test_displayable_placement_is_keyword_only(self):
+    def test_showable_placement_is_keyword_only(self):
         key, either = inspect.Parameter.KEYWORD_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD
         for method, parameters in (
             (
-                Displayable.show,
+                Showable.show,
                 [("self", either), ("name", either), ("display", key), ("command", key)],
             ),
-            (Displayable.layout, [("self", either), ("display", key)]),
+            (Showable.layout, [("self", either), ("display", key)]),
         ):
             with self.subTest(method=method.__name__):
                 found = inspect.signature(method).parameters.values()
@@ -81,14 +84,14 @@ class Abstract(Case):
 class HostDefaults(Case):
     def test_a_host_reclaims_nothing_and_a_process_neither_publishes_nor_has_a_token(self):
         self.assertIsNone(MinimalHost("m").reclaim("/tmp/apm-group-x"))
-        process = mock.create_autospec(HostProcess, instance=True)
+        process = mock.create_autospec(Process, instance=True)
         process.name = "p"
-        self.assertIsNone(HostProcess.token.fget(process))
+        self.assertIsNone(Process.token.fget(process))
         with self.assertRaisesRegex(SessionError, "^session p: its host cannot store a Record"):
-            HostProcess.publish(process, mock.sentinel.record)
+            Process.publish(process, mock.sentinel.record)
 
     def test_a_process_status_is_its_liveness_activity_and_hidden(self):
-        process = mock.create_autospec(HostProcess, instance=True)
+        process = mock.create_autospec(Process, instance=True)
         process.name, process.hidden.return_value = "p", True
         for liveness, alive, activity, state, hidden in (
             (Liveness.LIVE, True, None, StatusState.WORKING, True),
@@ -101,7 +104,7 @@ class HostDefaults(Case):
                 process.state.return_value, process.alive.return_value = liveness, alive
                 process.activity.return_value = activity
                 self.assertEqual(
-                    HostProcess.status(process),
+                    Process.status(process),
                     Status(
                         name="p",
                         alive=alive,
@@ -113,14 +116,14 @@ class HostDefaults(Case):
                 )
 
     def test_a_host_failing_after_telling_liveness_is_unknown(self):
-        process = mock.create_autospec(HostProcess, instance=True)
+        process = mock.create_autospec(Process, instance=True)
         process.name, process.state.return_value = "p", Liveness.LIVE
         for failing in (process.alive, process.activity, process.hidden):
             with self.subTest(failing=failing):
                 process.reset_mock()
                 process.state.return_value, process.alive.return_value = Liveness.LIVE, True
                 failing.side_effect = SessionError("tmux failed")
-                found = HostProcess.status(process)
+                found = Process.status(process)
                 self.assertEqual(
                     (found.alive, found.state, found.hidden), (False, "unknown", False)
                 )
@@ -147,7 +150,7 @@ class HostDefaults(Case):
 
     def test_display_returns_its_value_and_display_help_is_empty(self):
         host = MinimalHost("m")
-        self.assertFalse(isinstance(host, Displayable))
+        self.assertFalse(isinstance(host, Showable))
         self.assertEqual(host.display("elsewhere:1.2"), "elsewhere:1.2")
         self.assertIsNone(host.display(None))
         self.assertEqual(host.display_help(), "")

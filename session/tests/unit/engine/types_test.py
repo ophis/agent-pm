@@ -13,7 +13,7 @@ from agent_pm.session import (
     Hosts,
     Liveness,
     Mode,
-    NotDisplayable,
+    NotShowable,
     Resumable,
     SessionError,
     SessionInfo,
@@ -160,7 +160,7 @@ class WhatToStart(Case):
         with self.assertRaises(TypeError):
             Spec("/w")
 
-    def test_the_start_fields_default_so_an_adapters_partial_spec_stays_valid(self):
+    def test_the_start_fields_default_so_a_clients_partial_spec_stays_valid(self):
         spec = Spec(workdir="/w", access=Access(cwd="/w"))
         self.assertEqual(
             (spec.client, spec.mode, spec.prompt, spec.resume, spec.events),
@@ -228,11 +228,9 @@ class ReservedName(Case):
 
 
 class DisplayError(Case):
-    def test_not_displayable_is_a_driver_error(self):
-        self.assertTrue(issubclass(NotDisplayable, SessionError))
-        self.assertEqual(
-            str(NotDisplayable("host fake cannot display")), "host fake cannot display"
-        )
+    def test_not_showable_is_a_driver_error(self):
+        self.assertTrue(issubclass(NotShowable, SessionError))
+        self.assertEqual(str(NotShowable("host fake cannot show")), "host fake cannot show")
 
 
 class OptionSets(Case):
@@ -312,7 +310,7 @@ class CarriedEnums(Case):
 
 class SharedTypes(Case):
     def test_the_hook_and_display_types_live_in_engine_types(self):
-        for kind in (HookError, NotDisplayable, Tier):
+        for kind in (HookError, NotShowable, Tier):
             with self.subTest(kind=kind.__name__):
                 self.assertEqual(kind.__module__, engine_types.__name__)
                 self.assertIn(kind.__name__, engine_types.__all__)
@@ -396,7 +394,7 @@ class Identity(Case):
 
 
 class Binding(Case):
-    def test_a_client_binding_is_an_adapter_notice_never_a_session_event(self):
+    def test_a_client_binding_is_a_client_notice_never_a_session_event(self):
         self.assertEqual(ClientBound("n1").client_id, "n1")
         with self.assertRaises(dataclasses.FrozenInstanceError):
             ClientBound("n1").client_id = "n2"

@@ -16,7 +16,7 @@ class Configuration(Case):
         )
         found = read_config(local=str(local))
         self.assertTrue(found["hosts"]["tmux"]["status_line"])
-        self.assertIn("adapters", found)
+        self.assertIn("clients", found)
         self.assertNotIn("roles", found)
 
     def test_flat_local_keys_have_a_session_migration_hint(self):

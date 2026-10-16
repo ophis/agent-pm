@@ -6,11 +6,11 @@ import os
 import sys
 from unittest import mock
 
-from agent_pm.session.adapters.codex.common.types import Snapshot
-from agent_pm.session.adapters.codex.tui import HookPlan, LaunchPlan
+from agent_pm.session.clients.codex.common.types import Snapshot
+from agent_pm.session.clients.codex.tui import HookPlan, LaunchPlan
 
 from session.tests.case import SRC, Case
-from session.tests.unit.adapters.codex.support import Base, committed_tui
+from session.tests.unit.clients.codex.support import Base, committed_tui
 
 ROOTS_JSON = json.dumps([SRC["session"], SRC["utils"]])
 HOOK = (sys.executable, "-I", "/protected/driver_hook.py", "/protected/session", ROOTS_JSON)
@@ -20,7 +20,7 @@ class LaunchCase(Base):
     def launch(self, spec, *, resume=False):
         with mock.patch("shutil.which", return_value="/protected/codex"):
             return committed_tui(
-                self.adapter, dataclasses.replace(spec, prompt="prompt", resume=resume), HOOK
+                self.client, dataclasses.replace(spec, prompt="prompt", resume=resume), HOOK
             ).argv[-1]
 
 

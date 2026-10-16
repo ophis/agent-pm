@@ -173,7 +173,7 @@ class DeclaredRootCallback(Case):
         state_ = {**state(self.root, None), "words": {}}
         del state_["host_hook"]
         write_state(
-            self.dir, {**state_, "adapter_hook": {"module": module, "state": {}, "roots": roots}}
+            self.dir, {**state_, "client_hook": {"module": module, "state": {}, "roots": roots}}
         )
         with redirect_stderr(io.StringIO()) as stderr:
             tui_hook.run(
@@ -197,14 +197,14 @@ class DeclaredRootCallback(Case):
         self.assertEqual(self.run_hook(module, roots), ("", [{"loaded": module}]))
 
     def test_a_callback_is_found_over_another_callbacks_roots(self):
-        module, host = f"adapter_{uuid.uuid4().hex}", f"host_{uuid.uuid4().hex}"
+        module, host = f"client_{uuid.uuid4().hex}", f"host_{uuid.uuid4().hex}"
         self.write("other", f"{module}.py")
         self.write("other", f"{host}.py", text="def on_hook(call):\n    pass\n")
         other = os.path.join(self.root, "other")
         state_ = {
             **state(self.root, None),
             "words": {},
-            "adapter_hook": {"module": module, "state": {}, "roots": []},
+            "client_hook": {"module": module, "state": {}, "roots": []},
             "host_hook": {"module": host, "state": {}, "roots": [other]},
         }
         write_state(self.dir, state_)

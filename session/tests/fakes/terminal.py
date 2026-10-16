@@ -1,14 +1,14 @@
-"""Nonspawning Host and Terminal doubles with configurable boundary calls."""
+"""Nonspawning Host and InteractiveProcess doubles with configurable boundary calls."""
 
 import os
 import signal
 from unittest import mock
 
-from agent_pm.session import Displayable, Host, SessionError, Terminal
+from agent_pm.session import Host, InteractiveProcess, SessionError, Showable
 from agent_pm.session.engine.types import Launch, Liveness, SessionRow, StatusState
 
 
-class MemoryTerminal(Terminal):
+class MemoryTerminal(InteractiveProcess):
     def __init__(self, host, name, identity, receipt=None, *, metadata=None, display=None):
         self.host, self.name, self._identity = host, name, identity
         self.calls = mock.Mock()
@@ -168,7 +168,7 @@ class MemoryHost(Host):
         )
 
 
-class ScreenHost(MemoryHost, Displayable):
+class ScreenHost(MemoryHost, Showable):
     def __init__(self, name="memory", **options):
         super().__init__(name, **options)
         self.calls.screen.return_value = ""

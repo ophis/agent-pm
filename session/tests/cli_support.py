@@ -2,7 +2,7 @@
 running interpreter's directory supplies python3), a fresh cwd and HOME, a private tmux server
 (live_tmux.Server, a control-mode client on MANAGER) and the fake claude on PATH. `module=True` runs
 `python3 -P -m agent_pm.session.cli` with this tree's roots instead, for a config naming a test
-Host (session.tests.fakes.host:FakeHost, not Displayable).
+Host (session.tests.fakes.host:FakeHost, not Showable).
 """
 
 import json
@@ -18,7 +18,7 @@ from agent_pm.utils import Record, Status
 
 from session.tests import live_tmux
 from session.tests.case import REPO, ROOTS, Case
-from session.tests.integration.adapters.claude import fake_claude
+from session.tests.integration.clients.claude import fake_claude
 
 COMMAND = os.path.join(REPO, "bin", "agent-pm-session")
 MANAGER = "mgr"
@@ -186,7 +186,7 @@ class CliCase(Case):
             f.write(text)
 
     def fake_host(self, default: str = "tmux") -> str:
-        """Adds Host `fake` (not Displayable); its root."""
+        """Adds Host `fake` (not Showable); its root."""
         root = os.path.join(self.root, "fake-host")
         self.local_config(
             f'[session.hosts]\ndefault = "{default}"\n[session.hosts.fake]\n'

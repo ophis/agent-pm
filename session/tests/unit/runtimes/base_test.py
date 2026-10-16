@@ -9,9 +9,9 @@ import os
 import tempfile
 from unittest import mock
 
-from agent_pm.session.adapters.base import Adapter, Headless
-from agent_pm.session.adapters.codex import CodexAdapter
-from agent_pm.session.adapters.registry import Registry
+from agent_pm.session.clients.base import Client, Headless
+from agent_pm.session.clients.codex import CodexClient
+from agent_pm.session.clients.registry import Registry
 from agent_pm.session.engine.types import Access, ConfigError, Launch, Mode, Spec
 from agent_pm.session.hosts.base import Host
 from agent_pm.session.runtimes import headless, in_process, tui
@@ -52,7 +52,7 @@ class Launches(Headless):
         return iter(())
 
 
-class HeadlessAdapter(Adapter):
+class HeadlessClient(Client):
     def __init__(self, config):
         super().__init__(config)
         self.mode = Launches()
@@ -61,7 +61,7 @@ class HeadlessAdapter(Adapter):
         return self.mode
 
 
-class NoModeAdapter(Adapter):
+class NoModeClient(Client):
     def headless(self):
         return None
 
@@ -69,7 +69,7 @@ class NoModeAdapter(Adapter):
         return None
 
 
-class InnerAdapter(NoModeAdapter):
+class InnerClient(NoModeClient):
     """A client whose sessions set INNER_SESSION in their children."""
 
     session_env = "INNER_SESSION"
@@ -77,14 +77,14 @@ class InnerAdapter(NoModeAdapter):
     child_defaults = {"PAGER": "cat", "NO_COLOR": "1"}
 
 
-class OtherAdapter(NoModeAdapter):
+class OtherClient(NoModeClient):
     session_env = "OTHER_SESSION"
     identity_env = ("OTHER_SESSION", "OTHER_ID")
     child_defaults = {"OTHER_MODE": "on"}
 
 
-def registry(**adapters) -> Registry:
-    """A Registry of `adapters` (client → Adapter class, None: one failing to load)."""
+def registry(**clients) -> Registry:
+    """A Registry of `clients` (client → Client class, None: one failing to load)."""
 
     def load(path, _base):
         found = classes[path]
@@ -92,11 +92,10 @@ def registry(**adapters) -> Registry:
             raise ValueError(f"{path}: cannot import")
         return found
 
-    classes = {f"tests.{name}:{name.capitalize()}Adapter": cls for name, cls in adapters.items()}
+    classes = {f"tests.{name}:{name.capitalize()}Client": cls for name, cls in clients.items()}
     return Registry(
-        adapters={
-            name: {"implementation": f"tests.{name}:{name.capitalize()}Adapter"}
-            for name in adapters
+        clients={
+            name: {"implementation": f"tests.{name}:{name.capitalize()}Client"} for name in clients
         },
         hosts=Host.parse_hosts({**HOSTS, "default": "tmux"}),
         class_loader=load,
@@ -143,7 +142,7 @@ class RuntimeTest(Case):
             with self.subTest(mode=kind.value), self.assertRaises(ConfigError) as caught:
                 mode.start(
                     spec,
-                    NoModeAdapter({}),
+                    NoModeClient({}),
                     registry=registry(),
                     record=recorded.append,
                     host=MemoryHost(),
@@ -154,17 +153,17 @@ class RuntimeTest(Case):
             self.assertEqual(recorded, [])
 
     def test_a_start_inside_an_agent_session_is_refused_before_its_launch(self):
-        adapter, recorded = HeadlessAdapter({}), []
+        client, recorded = HeadlessClient({}), []
         spec = Spec(workdir="/w", access=Access(cwd="/w"), client="headless", sid="s1")
         with (
             mock.patch.dict(os.environ, {"AGENT_PM_AGENT_SESSION": "1"}),
             self.assertRaises(ConfigError) as caught,
         ):
             headless.HeadlessRuntime.start(
-                spec, adapter, registry=registry(), record=recorded.append, host=MemoryHost()
+                spec, client, registry=registry(), record=recorded.append, host=MemoryHost()
             )
         self.assertTrue(str(caught.exception).startswith("refused inside an agent session"))
-        self.assertEqual((adapter.mode.asked, recorded), ([], []))
+        self.assertEqual((client.mode.asked, recorded), ([], []))
 
 
 class ChildEnvTest(Case):
@@ -247,11 +246,9 @@ class PluginPathTest(ChildEnvTest):
 
 
 class IdentityDropTest(ChildEnvTest):
-    def test_every_configured_adapters_identity_env(self):
+    def test_every_configured_clients_identity_env(self):
         self.environ(INNER_ID="i", OTHER_SESSION="", OTHER_ID="o", KEEP="k")
-        self.assertEqual(
-            identity_drop(registry(inner=InnerAdapter, other=OtherAdapter)), IDENTITIES
-        )
+        self.assertEqual(identity_drop(registry(inner=InnerClient, other=OtherClient)), IDENTITIES)
         self.assertEqual(
             identity_drop(registry()), frozenset({"AGENT_PM_SID", "AGENT_PM_EVENTS", *LEASE})
         )
@@ -271,7 +268,7 @@ class IdentityDropTest(ChildEnvTest):
         self.assertEqual(env["AGENT_PM_EVENTS"], "/given/events")
 
     def test_a_child_default_only_inside_its_client_and_at_its_value(self):
-        both = registry(inner=InnerAdapter, other=OtherAdapter)
+        both = registry(inner=InnerClient, other=OtherClient)
         for environ, defaults in (
             ({"PAGER": "cat", "NO_COLOR": "1", "OTHER_MODE": "on"}, set()),
             (
@@ -299,26 +296,24 @@ class IdentityDropTest(ChildEnvTest):
         ):
             with self.subTest(environ=environ):
                 self.environ(**environ)
-                self.assertEqual(
-                    identity_drop(registry(codex=CodexAdapter)) & set(environ), dropped
-                )
+                self.assertEqual(identity_drop(registry(codex=CodexClient)) & set(environ), dropped)
 
-    def test_it_reads_class_data_and_builds_no_adapter(self):
-        class Unbuilt(InnerAdapter):
+    def test_it_reads_class_data_and_builds_no_client(self):
+        class Unbuilt(InnerClient):
             def __init__(self, config):
                 raise AssertionError("built")
 
         self.environ(INNER_SESSION="1", PAGER="cat", OTHER_ID="o")
         self.assertEqual(
-            identity_drop(registry(inner=Unbuilt, other=OtherAdapter)), {*IDENTITIES, "PAGER"}
+            identity_drop(registry(inner=Unbuilt, other=OtherClient)), {*IDENTITIES, "PAGER"}
         )
 
-    def test_an_adapter_failing_to_load_is_a_config_error(self):
+    def test_a_client_failing_to_load_is_a_config_error(self):
         with self.assertRaises(ConfigError) as caught:
-            identity_drop(registry(inner=InnerAdapter, broken=None))
+            identity_drop(registry(inner=InnerClient, broken=None))
         self.assertEqual(
             str(caught.exception),
-            "[adapters.broken].implementation: tests.broken:BrokenAdapter: cannot import",
+            "[clients.broken].implementation: tests.broken:BrokenClient: cannot import",
         )
 
 

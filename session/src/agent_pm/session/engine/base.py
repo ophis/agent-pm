@@ -29,8 +29,8 @@ HOSTED = "agent_pm.session.engine.hosted_session:HostedSession"
 
 
 class Session(ABC):
-    """show, hide, attach_command, screen: NotDisplayable unless displayable (its Host is
-    Displayable). alive: False while its host cannot tell (status: unknown).
+    """show, hide, attach_command, screen: NotShowable unless showable (its Host is
+    Showable). alive: False while its host cannot tell (status: unknown).
     """
 
     sid: str
@@ -75,7 +75,7 @@ class Session(ABC):
 
     @property
     @abstractmethod
-    def displayable(self) -> bool: ...
+    def showable(self) -> bool: ...
 
     @abstractmethod
     def show(self, *, display: Display = None, command: str | None = None) -> str | None: ...
@@ -100,8 +100,8 @@ class Session(ABC):
         ProcessOptions(flags=flags, env=env)
 
     @classmethod
-    def configure(cls, *, adapters: Mapping, hosts: Hosts) -> None:
-        cls._hosted("configure")(adapters=adapters, hosts=hosts)
+    def configure(cls, *, clients: Mapping, hosts: Hosts) -> None:
+        cls._hosted("configure")(clients=clients, hosts=hosts)
 
     @classmethod
     def configure_from(cls, config: Mapping, *, hosts: Hosts | None = None) -> None:
@@ -173,7 +173,7 @@ class Session(ABC):
 
     @classmethod
     def class_roots(cls, client: str) -> tuple[str, ...]:
-        """The import roots of the classes a `client` session loads by name: its Adapter's, then
+        """The import roots of the classes a `client` session loads by name: its Client's, then
         each configured Host's, without repeats.
         """
         return cls._hosted("class_roots")(client)

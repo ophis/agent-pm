@@ -17,8 +17,8 @@ from agent_pm.delegate.engine.types import Layout
 
 from delegate.tests.case import Case
 from delegate.tests.unit.runs import DONE, NAME, turn
-from session.tests import fake_adapter
-from session.tests.modules import adapter_loader
+from session.tests import fake_client
+from session.tests.modules import client_loader
 
 SID = "11111111-2222-3333-4444-555555555555"
 
@@ -75,7 +75,7 @@ class Base(Case):
             os.path.join(self.tmp, name) for name in ("scenario.json", "client.log")
         )
         self.session_dependencies = {
-            "class_loader": adapter_loader({"agent_pm.session.adapters.fake": fake_adapter})
+            "class_loader": client_loader({"agent_pm.session.clients.fake": fake_client})
         }
         self.configure_fake()
 
@@ -83,7 +83,7 @@ class Base(Case):
         self.configure_session(
             {
                 "fake": {
-                    "implementation": "agent_pm.session.adapters.fake:FakeAdapter",
+                    "implementation": "agent_pm.session.clients.fake:FakeClient",
                     "scenario": self.scenario,
                     "log": self.log,
                     "tui": tui,
@@ -172,11 +172,11 @@ class Base(Case):
 LEFT_OPEN = f"session {NAME} left open: tmux attach -t '={NAME}'\n"
 
 
-class UnstreamedHeadless(fake_adapter.FakeHeadless):
+class UnstreamedHeadless(fake_client.FakeHeadless):
     def events(self, lines):
         raise ValueError("no stream")
 
 
-class UnstreamedAdapter(fake_adapter.FakeAdapter):
+class UnstreamedClient(fake_client.FakeClient):
     def headless(self):
         return UnstreamedHeadless(self)

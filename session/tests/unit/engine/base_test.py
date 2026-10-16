@@ -28,7 +28,7 @@ ABSTRACT = {
         "close",
         "session_status",
         "record",
-        "displayable",
+        "showable",
         "show",
         "hide",
         "attach_command",
@@ -82,7 +82,7 @@ class SessionClassMethods(Case):
             prompt="hi",
         )
         calls = {
-            "configure": ((), {"adapters": {}, "hosts": Hosts("tmux", {})}),
+            "configure": ((), {"clients": {}, "hosts": Hosts("tmux", {})}),
             "configure_from": (({},), {}),
             "start": ((spec,), {}),
             "attach": (("w1",), {}),

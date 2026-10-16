@@ -18,7 +18,7 @@ from delegate.tests.case import PY, PYTHONPATH, Case
 from delegate.tests.integration.cli import DONE, RUN, SID
 from delegate.tests.replies import block, mark
 from session.tests import live_tmux
-from session.tests.integration.adapters.claude import fake_claude
+from session.tests.integration.clients.claude import fake_claude
 
 ROLE = "dummy-tester"
 TUI = f"{ROLE}-{SID[:8]}"

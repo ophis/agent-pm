@@ -131,26 +131,26 @@ class FakeCtl(Installed):
             ],
         )
 
-    def test_attach_is_a_command_only_while_alive_and_displayable(self):
+    def test_attach_is_a_command_only_while_alive_and_showable(self):
         self.start("w1")
         self.assertIsNone(self.status(record("w1"))[0].attach)
-        ctl.set_session(self.state, "w1", displayable=True)
+        ctl.set_session(self.state, "w1", showable=True)
         self.assertEqual(self.status(record("w1"))[0].attach, "agent-pm-linear attach w1")
         ctl.set_session(self.state, "w1", alive=False)
         self.assertIsNone(self.status(record("w1"))[0].attach)
         with self.assertRaises(TypeError):
             ctl.set_session(self.state, "w1", alvie=True)
 
-    def test_show_exits_1_for_a_session_that_cannot_display(self):
+    def test_show_exits_1_for_a_session_that_cannot_show(self):
         for name in ("w1", "w2"):
             self.start(name)
-        ctl.set_session(self.state, "w2", displayable=True)
+        ctl.set_session(self.state, "w2", showable=True)
         shown = self.call(self.ctl, "show", stdin=lines(record("w2")))
         self.assertEqual((shown.returncode, shown.stdout, shown.stderr), (0, "", ""))
         refused = self.call(self.ctl, "show", stdin=lines(record("w1"), record("w2")))
         self.assertEqual(
             (refused.returncode, refused.stdout, refused.stderr),
-            (1, "", "session w1: host fake cannot display\n"),
+            (1, "", "session w1: host fake cannot show\n"),
         )
 
     def test_close_ends_each_session(self):

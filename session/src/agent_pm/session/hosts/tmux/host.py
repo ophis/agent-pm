@@ -29,7 +29,8 @@ from agent_pm.session.engine.types import (
     StatusState,
     TuiSettings,
 )
-from agent_pm.session.hosts.base import Displayable, Host, HostProcess, Terminal
+from agent_pm.session.hosts.base import Host, InteractiveProcess, Process, Showable
+from agent_pm.session.hosts.reclaimed import ReclaimedGroup
 from agent_pm.session.hosts.tmux import hook, transport
 from agent_pm.session.hosts.tmux.grid import Grid
 from agent_pm.session.hosts.tmux.iterm import Iterm
@@ -76,7 +77,7 @@ def _checked(display) -> None:
         raise ConfigError(why)
 
 
-class TmuxProcess(HostProcess):
+class TmuxProcess(Process):
     """The captured pane and its generation's controller. A pane can set its Record and display
     options: consumers must re-validate a Record's ctl or resume before running it.
     """
@@ -279,55 +280,7 @@ class TmuxProcess(HostProcess):
             raise SessionError(f"tmux session {self.name}: {e}") from None
 
 
-class TmuxGroup(HostProcess):
-    """A reclaimed process group whose tmux session may be gone: wait for it, kill it, close it."""
-
-    def __init__(self, control: ProcessControl) -> None:
-        self.name = os.path.basename(control.path)
-        self._control = control
-
-    @property
-    def token(self) -> str | None:
-        return self._control.path
-
-    def alive(self) -> bool:
-        try:
-            return self._control.live()
-        except OSError as error:
-            raise SessionError(f"process group {self.name}: {error}") from error
-
-    def wait_exit(self, timeout: float) -> bool:
-        deadline = time.monotonic() + timeout
-        while self.alive():
-            if time.monotonic() >= deadline:
-                return False
-            time.sleep(POLL)
-        return True
-
-    def kill(self) -> None:
-        try:
-            self._control.kill()
-        except OSError as error:
-            raise SessionError(f"process group {self.name}: {error}") from error
-        if not self.wait_exit(KILL_WAIT):
-            raise SessionError(f"process group {self.name}: did not exit")
-
-    def close(self) -> None:
-        try:
-            self._control.terminate()
-        except OSError as error:
-            raise SessionError(f"process group {self.name}: {error}") from error
-        if not self.wait_exit(KILL_WAIT):
-            self.kill()
-
-    def record(self) -> Record | None:
-        return None
-
-    def display(self) -> Display:
-        return None
-
-
-class TmuxTerminal(TmuxProcess, Terminal):
+class TmuxTerminal(TmuxProcess, InteractiveProcess):
     _pasted = False
 
     def send(self, action: Paste | Key) -> None:
@@ -370,7 +323,7 @@ def _tmux_key(key) -> str:
     return "".join(prefixes) + TMUX_KEYS.get(key.key, key.key)
 
 
-class TmuxHost(Host, Displayable):
+class TmuxHost(Host, Showable):
     """settings: [hosts.<name>]'s workers_per_column and grid_retile shape show's grid. A display
     not in FORMAT is kept as given.
     """
@@ -385,7 +338,7 @@ class TmuxHost(Host, Displayable):
             raise ConfigError(f"unknown key {extra[0]!r} in [hosts.{name}]")
         self.tmux = Tmux() if tmux is None else tmux
         self.grid = Grid(self.tmux)
-        self.placement = Placement(tmux=self.tmux, grid=self.grid, iterm=Iterm(self.tmux.proc))
+        self.placement = Placement(tmux=self.tmux, grid=self.grid, iterm=Iterm(self.tmux.runner))
 
     @classmethod
     def fold(cls, opener, split, split_from) -> Display:
@@ -643,18 +596,8 @@ class TmuxHost(Host, Displayable):
             found |= grown
         return sorted(found)
 
-    def reclaim(self, token: str) -> TmuxGroup | None:
-        """A group-only handle on token's controller (an apm-group-* directory and its socket)
-        while its group lives; else None; SessionError if it cannot tell.
-        """
-        if not isinstance(token, str):
-            return None
-        try:
-            control = ProcessControl.attach(token)
-        except (OSError, ValueError):
-            return None
-        group = TmuxGroup(control)
-        return group if group.alive() else None
+    def reclaim(self, token: str) -> ReclaimedGroup | None:
+        return ReclaimedGroup.reclaim(token)
 
     def rows(self, display: Display = None) -> list[SessionRow]:
         names = set(self.list(display))
@@ -728,7 +671,7 @@ class TmuxHost(Host, Displayable):
         placed = why is None
         if not placed and command is None:
             with contextlib.suppress(TuiError):
-                placed = self._view(name) is not None
+                placed = self._shown_pane(name) is not None
         if placed:
             self.attach(name).mark_hidden(hidden=False)
         if why is None:
@@ -740,14 +683,14 @@ class TmuxHost(Host, Displayable):
         if self.tmux.status(_session(name)) is None:
             raise SessionError(f"no tmux session {name}")
         try:
-            pane = self._view(name)
+            pane = self._shown_pane(name)
             if pane is not None:
                 self.tmux.kill(pane)
         except TuiError as e:
             raise SessionError(f"tmux session {name}: {e}") from None
         self.attach(name).mark_hidden(hidden=True)
 
-    def _view(self, name: str) -> str | None:
+    def _shown_pane(self, name: str) -> str | None:
         """The live tmux pane that show opened for it, if any."""
         pane = self.tmux.option(name, "@pane")
         live = pane is not None and PANE.fullmatch(pane) and self.tmux.process(pane) is not None
@@ -756,8 +699,8 @@ class TmuxHost(Host, Displayable):
     def attach_command(self, name: str) -> str:
         return attach_command(_session(name))
 
-    def screen(self, name: str | HostProcess, lines: int | None = None) -> str:
-        if isinstance(name, HostProcess):
+    def screen(self, name: str | Process, lines: int | None = None) -> str:
+        if isinstance(name, Process):
             if not isinstance(name, TmuxProcess) or name.tmux is not self.tmux or not name.alive():
                 raise SessionError(f"session {name.name} is not running on host {self.name}")
             target = name._pane

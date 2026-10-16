@@ -11,6 +11,7 @@ from agent_pm.session.engine.types import HookCall, Key, Launch, Paste
 from agent_pm.session.hosts.pty import PtyHost
 from agent_pm.session.hosts.pty.hook import on_hook
 from agent_pm.session.hosts.pty.host import TERM
+from agent_pm.session.hosts.reclaimed import ReclaimedGroup
 from agent_pm.utils import StatusState
 
 from session.tests.case import Case
@@ -125,14 +126,11 @@ class PtyHostTest(HostContract, Case):
         child = int(self.poll(lambda: read(pids), f"pid in {pids}"))
         self.poll(lambda: name not in self.host.list(), f"{name} gone from the list")
         group = self.host.reclaim(token or "")
-        self.assertIsNotNone(group)
+        self.assertIsInstance(group, ReclaimedGroup)
         if group is not None:
             group.kill()
         self.poll(lambda: gone(child), f"end of {child}")
         self.assertIsNone(self.host.reclaim(token or ""))
-        for bad in ("", "/etc", "/tmp/apm-group-nope"):
-            with self.subTest(bad=bad):
-                self.assertIsNone(self.host.reclaim(bad))
 
 
 if __name__ == "__main__":

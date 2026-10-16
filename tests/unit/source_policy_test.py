@@ -117,8 +117,8 @@ class DelegatePolicy(Case):
 
 
 class SessionPolicy(Case):
-    def test_adapters_contain_no_role_policy_names(self):
-        root = Path(REPO) / "session" / "src" / "agent_pm" / "session" / "adapters"
+    def test_clients_contain_no_role_policy_names(self):
+        root = Path(REPO) / "session" / "src" / "agent_pm" / "session" / "clients"
         forbidden = ("role_policy", "permission-mode", "approval_policy", "approvals_reviewer")
         for path in root.rglob("*.py"):
             for name in forbidden:
@@ -126,7 +126,7 @@ class SessionPolicy(Case):
                     self.assertNotIn(name, path.read_text())
 
     def test_recovery_helpers_use_driver_selection_without_literal_builders(self):
-        root = Path(REPO) / "session" / "src" / "agent_pm" / "session" / "adapters"
+        root = Path(REPO) / "session" / "src" / "agent_pm" / "session" / "clients"
         for client in ("claude", "codex"):
             common = root / client / "common.py"
             paths = [common] if common.is_file() else (root / client / "common").rglob("*.py")

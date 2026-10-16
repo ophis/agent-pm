@@ -42,7 +42,7 @@ __all__ = [
     "Liveness",
     "Mode",
     "NamedKey",
-    "NotDisplayable",
+    "NotShowable",
     "NoRecordedSession",
     "Paste",
     "Prepared",
@@ -106,7 +106,7 @@ class HookKind(StrEnum):
 
 
 class Tier(StrEnum):
-    """Spec.tier's values (an int there), as the keys of an adapter's tiers table."""
+    """Spec.tier's values (an int there), as the keys of a client's tiers table."""
 
     ONE = "1"
     TWO = "2"
@@ -152,7 +152,7 @@ class HookCallback:
 
 @dataclass(frozen=True)
 class HookCall:
-    """A tui hook callback's input; state: its HookCallback.state. An adapter's on_hook(call)
+    """A tui hook callback's input; state: its HookCallback.state. A client's on_hook(call)
     returns the payload to journal (changed or not), or None to journal nothing and stop; a host's
     on_hook(word, call) runs after the journal line and returns None.
     """
@@ -173,9 +173,9 @@ def _member(enum, field: str, value):
 
 
 TAG = re.compile(r"[A-Za-z0-9_-]+")
-NO_VIEW = "none"  # `--display none`: no view, so never a session name
-SESSION_NAME = re.compile(rf"(?!{NO_VIEW}\Z){TAG.pattern}")
-SESSION_NAME_RULE = f"{TAG.pattern} but not {NO_VIEW}"
+NO_DISPLAY = "none"  # `--display none`: shown nowhere, so never a session name
+SESSION_NAME = re.compile(rf"(?!{NO_DISPLAY}\Z){TAG.pattern}")
+SESSION_NAME_RULE = f"{TAG.pattern} but not {NO_DISPLAY}"
 
 
 COMMAND = "agent-pm-session"
@@ -388,7 +388,7 @@ class Prepared:
 
 @dataclass(frozen=True)
 class ClientBound:
-    """An adapter's notice that its client bound client_id: a run.jsonl client_session line,
+    """A client's notice that its client bound client_id: a run.jsonl client_session line,
     never a SessionEvent.
     """
 
@@ -561,8 +561,8 @@ class NoRecordedSession(SessionError):
     """The requested sid has no durable session record in its workdir."""
 
 
-class NotDisplayable(SessionError):
-    """From a Host that is not Displayable: `host <name> cannot display`."""
+class NotShowable(SessionError):
+    """From a Host that is not Showable: `host <name> cannot show`."""
 
 
 @dataclass(frozen=True)

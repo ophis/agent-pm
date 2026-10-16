@@ -1,5 +1,5 @@
 """HostedSession's tui mode end to end on a private tmux server (session/tests/live_tmux.py),
-os.environ that server's env: the fake adapter's Tui (session/tests/fake_adapter/) started with no
+os.environ that server's env: the fake client's Tui (session/tests/fake_client/) started with no
 pane, its hook steps as events and events-file lines, send, the idle timer and its Blocked pause,
 attach from another process, stop, a client's own exit, close by name, list while tmux's state is
 unknown, an old session once its name is another session's, two starts of one name at once, and a
@@ -34,31 +34,31 @@ from agent_pm.session.engine.types import (
 from agent_pm.session.hosts.tmux.transport import Tmux
 from agent_pm.session.runtimes import tui
 
-from session.tests import fake_adapter, live_tmux
+from session.tests import fake_client, live_tmux
 from session.tests.case import PY, SPAWNS
 from session.tests.tui_support import DIALOG, IDLE, MANAGER, SID, WAIT, Live, Stream
 
 # Another process: attaches by name, sends text, prints [sid, state, reply, its first event but
 # IdleTimeout, reply].
 ATTACH = """import importlib.util, json, sys
-fake, adapters, name, text = sys.argv[1:]
-spec = importlib.util.spec_from_file_location("agent_pm.session.adapters.fake", fake)
+fake, clients, name, text = sys.argv[1:]
+spec = importlib.util.spec_from_file_location("agent_pm.session.clients.fake", fake)
 module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(module)
 from agent_pm.session import Host, IdleTimeout
 from agent_pm.session.engine.hosted_session import HostedSession
 from agent_pm.utils import load_class
-def adapter_class(path, base):
-    return module.FakeAdapter if path == "agent_pm.session.adapters.fake:FakeAdapter" else load_class(path, base)
+def client_class(path, base):
+    return module.FakeClient if path == "agent_pm.session.clients.fake:FakeClient" else load_class(path, base)
 hosts = Host.parse_hosts({"default": "tmux", "tmux": {"implementation": "agent_pm.session.hosts.tmux:TmuxHost"}})
-session_cls = HostedSession.configured(adapters=json.loads(adapters), hosts=hosts, class_loader=adapter_class)
+session_cls = HostedSession.configured(clients=json.loads(clients), hosts=hosts, class_loader=client_class)
 handle = session_cls.attach(name)
 before = [handle.sid, handle.alive(), handle.reply]
 handle.send(text)
 event = next(e for e in handle.events() if not isinstance(e, IdleTimeout))
 print(json.dumps([*before, repr(event), handle.reply]))
 """
-CLOSE = "import sys; from agent_pm.session import Host, Session; from agent_pm.session.runtimes.tui import TuiStore; Session.configure(adapters={}, hosts=Host.parse_hosts({'default': 'tmux', 'tmux': {'implementation': 'agent_pm.session.hosts.tmux:TmuxHost'}})); TuiStore.attach(sys.argv[1], host=Session.host()).close()"
+CLOSE = "import sys; from agent_pm.session import Host, Session; from agent_pm.session.runtimes.tui import TuiStore; Session.configure(clients={}, hosts=Host.parse_hosts({'default': 'tmux', 'tmux': {'implementation': 'agent_pm.session.hosts.tmux:TmuxHost'}})); TuiStore.attach(sys.argv[1], host=Session.host()).close()"
 SLOW_CLOSE = """import sys, time, shutil
 from unittest import mock
 from agent_pm.session import Host, Session
@@ -70,7 +70,7 @@ def slow(*args, **kwargs):
     remove(*args, **kwargs)
 with mock.patch("shutil.rmtree", slow):
     Session.configure(
-        adapters={},
+        clients={},
         hosts=Host.parse_hosts(
             {"default": "tmux", "tmux": {"implementation": "agent_pm.session.hosts.tmux:TmuxHost"}}
         ),
@@ -117,7 +117,7 @@ class TuiTest(Live):
         stream.quiet(3 * IDLE)
 
         res = subprocess.run(
-            [*PY, "-c", ATTACH, fake_adapter.__file__, json.dumps(self.adapters), "w1", "more"],
+            [*PY, "-c", ATTACH, fake_client.__file__, json.dumps(self.clients), "w1", "more"],
             env=self.server.child_env(),
             capture_output=True,
             text=True,
@@ -138,7 +138,7 @@ class TuiTest(Live):
         )
 
     def test_inspect_an_ended_tui_session_after_its_pane_and_store_are_removed(self):
-        self.adapters["fake"]["implementation"] = "agent_pm.session.adapters.fake:InspectAdapter"
+        self.clients["fake"]["implementation"] = "agent_pm.session.clients.fake:InspectClient"
         self.session_cls = self.fake_session()
         session = self.start("historical", {"exit": 3}, sid=SID)
         stream = Stream(self, session)
@@ -239,7 +239,7 @@ class SplitTest(Live):
 class SameNameTest(Live):
     def setUp(self):
         super().setUp()
-        patch = mock.patch.object(fake_adapter.FakeTui, "dialogs", (DIALOG,))
+        patch = mock.patch.object(fake_client.FakeTui, "dialogs", (DIALOG,))
         patch.start()
         self.addCleanup(patch.stop)
 
@@ -278,7 +278,7 @@ class SameNameTest(Live):
         self.renewed("w4", old, events)
 
     def test_two_starts_of_one_name_at_once_make_one_session_its_dir_kept(self):
-        with open(self.adapters["fake"]["scenario"], "w") as f:
+        with open(self.clients["fake"]["scenario"], "w") as f:
             json.dump([{"read": True}], f)
         tmux = Tmux()
         real, order, second, first_done = (

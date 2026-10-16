@@ -10,7 +10,7 @@ from tests.guard_checks.common import _files, _strings
 from tests.guard_data.delegate import CONFIG_FILE, DELEGATE_SRC
 from tests.guard_data.linear_orchestrator import HANDOFF_HOME, ORCH, ORCH_FILES, ORCH_PROJECT
 from tests.guard_data.session import (
-    ADAPTERS_HOME,
+    CLIENTS_HOME,
     SESSION_SRC,
     STATUS_LOG_CLOCK,
     STATUS_LOG_HOME,
@@ -24,7 +24,7 @@ CLIENT = re.compile(r"claude|codex", re.I)
 TOML_CODE = re.compile(r"""(?:[^#"']|"(?:\\.|[^"\\])*"|'[^']*')*""")
 
 
-TOML_HEADER = re.compile(r"\s*\[\s*(?:adapters|policy)\.[a-z][a-z0-9_]*(\.[^\]]*)?\]\s*\Z")
+TOML_HEADER = re.compile(r"\s*\[\s*(?:clients|policy)\.[a-z][a-z0-9_]*(\.[^\]]*)?\]\s*\Z")
 
 
 TOML_IMPLEMENTATION = re.compile(
@@ -46,7 +46,7 @@ DISPLAY_NAMES = re.compile(
 LINEAR = re.compile(f"{ORCH_PROJECT}|{ORCH}")
 
 
-TOOL_STRINGS = ("tmux", "adapters")
+TOOL_STRINGS = ("tmux", "clients")
 
 
 TOML_STRING = re.compile(r""""((?:\\.|[^"\\])*)"|'([^']*)'""")
@@ -197,7 +197,7 @@ def standalone(repo: str) -> list[str]:
 
 def client_names(repo: str) -> list[str]:
     found = set()
-    for rel, text in _lower_files(repo, (".py", ".toml"), skip=f"{SESSION_SRC}adapters/"):
+    for rel, text in _lower_files(repo, (".py", ".toml"), skip=f"{SESSION_SRC}clients/"):
         for number, line in enumerate(text.splitlines(), 1):
             if rel.endswith(".toml"):
                 code = TOML_CODE.match(line)[0]
@@ -212,13 +212,13 @@ def client_names(repo: str) -> list[str]:
     return sorted(found)
 
 
-def adapters_key(repo: str) -> list[str]:
+def clients_key(repo: str) -> list[str]:
     found = set()
-    for rel, text in _lower_files(repo, ".py", skip=ADAPTERS_HOME):
+    for rel, text in _lower_files(repo, ".py", skip=CLIENTS_HOME):
         found.update(
-            f'{rel}:{line}: literal key "adapters"'
+            f'{rel}:{line}: literal key "clients"'
             for line, s in _strings(ast.parse(text, rel))
-            if s == "adapters"
+            if s == "clients"
         )
     return sorted(found)
 

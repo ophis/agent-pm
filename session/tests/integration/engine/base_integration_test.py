@@ -35,7 +35,7 @@ def outcome(call):
         return [type(e).__name__, str(e)]
 unconfigured = {n: outcome(c)[1] for n, c in calls.items() if n != "list"}
 tmux = {"implementation": "agent_pm.session.hosts.tmux:TmuxHost"}
-Session.configure(adapters={}, hosts=Hosts("tmux", {"tmux": tmux}))
+Session.configure(clients={}, hosts=Hosts("tmux", {"tmux": tmux}))
 configured = {"configure": HostedSession._setup is not None}
 configured.update({n: outcome(c) for n, c in calls.items()})
 read_state = outcome(lambda: tui.TuiRuntime.snapshot("w1"))
@@ -60,7 +60,7 @@ class SessionClassMethods(Case):
         found = json.loads(res.stdout)
         self.assertEqual(found["unconfigured"], {name: UNCONFIGURED for name in CALLED})
         self.assertEqual(found["read_state"][0], "SessionError")
-        no_fake = ["ConfigError", "no [adapters.fake] table in the configured adapters"]
+        no_fake = ["ConfigError", "no [clients.fake] table in the configured clients"]
         bad_display = ["ConfigError", "display 'x;': want printable text not ending in ;"]
         self.assertEqual(
             found["configured"],

@@ -1,4 +1,4 @@
-"""FakeSession, a Session in the caller's process with no Host (it cannot display). Its sessions
+"""FakeSession, a Session in the caller's process with no Host (it cannot show). Its sessions
 yield the class's script (FakeSession's is empty; scripted(*events) makes a subclass with those),
 then Exited(0) unless it ends with Exited. FakeSession and each subclass have their own started
 (start's Spec and keywords), live (name → session; stop and close remove it) and configured.
@@ -9,7 +9,7 @@ from __future__ import annotations
 import re
 import uuid
 
-from agent_pm.session import NotDisplayable, Session, StatusState
+from agent_pm.session import NotShowable, Session, StatusState
 from agent_pm.session.engine.types import (
     ConfigError,
     Exited,
@@ -108,24 +108,24 @@ class FakeSession(Session):
         return None
 
     @property
-    def displayable(self) -> bool:
+    def showable(self) -> bool:
         return False
 
     def show(self, *, display=None, command=None):
-        raise NotDisplayable("host none cannot display")
+        raise NotShowable("host none cannot show")
 
     def hide(self) -> None:
-        raise NotDisplayable("host none cannot display")
+        raise NotShowable("host none cannot show")
 
     def attach_command(self):
-        raise NotDisplayable("host none cannot display")
+        raise NotShowable("host none cannot show")
 
     def screen(self, lines=None):
-        raise NotDisplayable("host none cannot display")
+        raise NotShowable("host none cannot show")
 
     @classmethod
-    def configure(cls, *, adapters, hosts) -> None:
-        cls.configured = {"adapters": adapters, "hosts": hosts}
+    def configure(cls, *, clients, hosts) -> None:
+        cls.configured = {"clients": clients, "hosts": hosts}
 
     @classmethod
     def start(cls, spec, *, display=None, host=None, idle_timeout=None) -> FakeSession:
