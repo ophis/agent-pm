@@ -166,11 +166,10 @@ class Flows(Case):
             "`agent-pm-session read <name> [--lines <n>]`",
             "`agent-pm-session reply <name>`",
             "`agent-pm-session restart <name>`",
-            "`agent-pm-session hide <name>…`",
-            "`agent-pm-session show <name>…`",
+            "`agent-pm-crew hide <name>…`",
+            "`agent-pm-crew show <name>…`",
+            "`--all`",
             "`agent-pm-session show <name>-drive`",
-            "`agent-pm-delegate hide <workdir>…`",
-            "`agent-pm-linear hide <ID>…`",
             "`agent-pm-crew note <name> '<text>'`",
             "`''` clears",
             "`agent-pm-crew status [<name>…]`",
@@ -183,6 +182,8 @@ class Flows(Case):
             "`agent-pm-crew release`",
         ):
             self.assertIn(phrase, direct)
+        for phrase in ("agent-pm-delegate hide", "agent-pm-linear hide", "agent-pm-session hide"):
+            self.assertNotIn(phrase, direct)
 
     def test_color_is_left_to_the_session_but_a_start_dialog(self):
         (worker,) = [

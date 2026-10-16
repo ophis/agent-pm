@@ -63,6 +63,8 @@ class Commands(Case):
             "run",
             "attach",
             "status",
+            "hide",
+            "show",
             "resume",
             "close",
             "close-all",
