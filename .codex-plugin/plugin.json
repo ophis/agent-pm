@@ -1,6 +1,6 @@
 {
   "name": "agent-pm",
-  "version": "0.6.3",
+  "version": "0.6.4",
   "description": "Guidelines for your commander session (the manage skill), and agent-pm's core roles and tasks, researcher, pm and engineer, run in this conversation (the act-as skill).",
   "author": {
     "name": "Yinze Wang"
