@@ -917,6 +917,32 @@ class SweepTest(Base):
         self.assertEqual(self.names(), ["a.lock", NAME, f"{NAME}.lock"])
         self.assertEqual(logs.output, ["WARNING:session:tui sweep a: denied"])
 
+    def test_a_name_that_cannot_be_aged_is_logged_and_the_rest_swept(self):
+        self.leftover("a")
+        self.leftover("b")
+        real_lstat = os.lstat
+
+        def lstat(path, *args, **kwargs):
+            if str(path) == os.path.join(self.root, "a", "hooks.jsonl"):
+                raise PermissionError("denied")
+            return real_lstat(path, *args, **kwargs)
+
+        with mock.patch("os.lstat", side_effect=lstat), self.assertLogs("session") as logs:
+            self.start()
+        self.assertEqual(self.names(), ["a", "a.lock", NAME, f"{NAME}.lock"])
+        self.assertEqual(logs.output, ["WARNING:session:tui sweep a: denied"])
+
+    def test_the_starting_name_is_never_swept(self):
+        def launched(*_args, **_kwargs):
+            self.age(31, self.dir, *(os.path.join(self.dir, f) for f in os.listdir(self.dir)))
+            self.age(31, os.path.join(self.root, f"{NAME}.lock"))
+
+        self.host.calls.terminal.side_effect = launched
+        self.host.calls.list.return_value = []
+        self.start()
+        self.assertEqual(self.names(), [NAME, f"{NAME}.lock"])
+        self.assertEqual(os.listdir(self.dir), ["session.json"])
+
     def test_a_failed_listing_is_logged_and_the_start_stands(self):
         self.leftover("a")
         listings = iter(([], SessionError("tmux failed")))

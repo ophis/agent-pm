@@ -62,12 +62,17 @@ class _Connection:
         return io.BytesIO(b'{"live": true}\n')
 
 
+DAY = 24 * 3600
+
+
 class Starting(Case):
     """detach's start against a fake supervisor process (subprocess.Popen) that writes its pid and
     a runner that reports through started.json.
     """
 
-    def start(self, *, pid=True, poll=None, started="{}", events=None):
+    def start(self, *, pid=True, poll=None, started="{}", events=None, ended=False):
+        """ended: the session's group is gone and its files aged as soon as it started."""
+
         def popen(argv, **options):
             folder = argv[5]
             if pid:
@@ -78,6 +83,13 @@ class Starting(Case):
                 control = json.loads(state.read(folder, state.META))["control"]
                 with open(os.path.join(control, "started.json"), "w", encoding="utf-8") as file:
                     file.write(started)
+            if ended:
+                state.put(folder, state.RC, "0")
+                with open(os.path.join(control, "done.json"), "w", encoding="utf-8") as file:
+                    file.write("{}")
+                moment = time.time() - 31 * DAY
+                for path in (folder, f"{folder}.lock", os.path.join(folder, state.OUTPUT)):
+                    os.utime(path, (moment, moment))
             return mock.Mock(pid=4242, poll=mock.Mock(return_value=poll))
 
         with (
@@ -167,9 +179,6 @@ class Start(Starting):
         self.assertNotEqual(process.identity, "old")
 
 
-DAY = 24 * 3600
-
-
 class Sweep(Starting):
     """Other names' leftovers swept by a start of x."""
 
@@ -229,6 +238,12 @@ class Sweep(Starting):
         signalled.assert_called_once_with(os.getpid(), 0)
         kept = ["group", "held", "supervised", "tuiheld", "young"]
         self.assertEqual(self.names(), sorted([*kept, *(f"{n}.lock" for n in kept), "x", "x.lock"]))
+
+    def test_the_starting_name_is_never_swept(self):
+        with mock.patch("os.kill", side_effect=ProcessLookupError):
+            process, _, _ = self.start(ended=True)
+        self.assertEqual(self.names(), ["x", "x.lock"])
+        self.assertTrue(os.path.exists(os.path.join(process.folder, state.META)))
 
     def test_a_symlinked_name_and_its_target_stay(self):
         self.leftover("a")

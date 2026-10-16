@@ -297,27 +297,31 @@ class _Store:
 
 
 def _sweep(store: _Store) -> None:
-    """Other names idle IDLE_AFTER: expired, errors logged."""
+    """Other names idle IDLE_AFTER: expired, errors logged; one host listing, once one is idle."""
     try:
         found = {entry.name.removesuffix(".lock") for entry in os.scandir(store.root)}
-        others = [
-            _Store(n, host=store.host) for n in sorted(found - {store.name}) if TAG.fullmatch(n)
-        ]
-        stale = [
-            other
-            for other in others
-            if not os.path.islink(other.dir)
-            and idle((*other.tracked(), tui_lock(other.name)), IDLE_AFTER)
-        ]
-        listed = set(store.host.list()) if stale else set()
-    except (OSError, SessionError) as error:
+    except OSError as error:
         LOG.warning("tui sweep: %s", error)
         return
-    for other in stale:
+    listed = None
+    for name in sorted(found - {store.name}):
+        if not TAG.fullmatch(name):
+            continue
+        other = _Store(name, host=store.host)
         try:
+            if os.path.islink(other.dir) or not idle(
+                (*other.tracked(), tui_lock(name)), IDLE_AFTER
+            ):
+                continue
+            if listed is None:
+                try:
+                    listed = set(store.host.list())
+                except SessionError as error:
+                    LOG.warning("tui sweep: %s", error)
+                    return
             other.expire(listed)
         except (OSError, SessionError) as error:
-            LOG.warning("tui sweep %s: %s", other.name, error)
+            LOG.warning("tui sweep %s: %s", name, error)
 
 
 def _stale(store: _Store) -> HostProcess | None:
