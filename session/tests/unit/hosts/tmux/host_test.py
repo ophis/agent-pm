@@ -542,6 +542,16 @@ class DisplayableTest(Base):
         self.options(hidden="0")
         self.assertFalse(self.host.attach("w1").hidden())
 
+    def test_a_show_whose_tiling_failed_after_placing_its_pane_clears_hidden(self):
+        self.options(pane="%9", sid=SID)
+        self.tmux.open_pane.return_value = "tile failed"
+        self.assertIsNotNone(self.host.show("w1"))
+        self.tmux.set_option.assert_called_once_with("%7", "@hidden", "0")
+        self.tmux.set_option.reset_mock()
+        self.options(pane=None, sid=SID)
+        self.host.show("w1")
+        self.tmux.set_option.assert_not_called()
+
     def test_hide_leaves_an_iterm2_or_closed_pane_and_marks_no_sidless_session(self):
         for pane, process in (("w0t0p0:ABC", PROCESS), ("%9", None), (None, PROCESS)):
             with self.subTest(pane=pane, process=process):

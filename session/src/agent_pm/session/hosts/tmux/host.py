@@ -1162,8 +1162,13 @@ class TmuxHost(Host, Displayable):
                 why = self.tmux.run_command(name, command)
         except TuiError as e:
             raise ConfigError(str(e)) from None
-        if why is None:
+        placed = why is None
+        if not placed and command is None:
+            with contextlib.suppress(TuiError):
+                placed = self._view(name) is not None
+        if placed:
             self.attach(name).mark_hidden(hidden=False)
+        if why is None:
             return None
         LOG.warning("show %s: %s", name, why)
         return attach_command(name)
@@ -1172,12 +1177,18 @@ class TmuxHost(Host, Displayable):
         if self.tmux.status(_session(name)) is None:
             raise SessionError(f"no tmux session {name}")
         try:
-            pane = self.tmux.option(name, "@pane")
-            if pane is not None and PANE.fullmatch(pane) and self.tmux.process(pane) is not None:
+            pane = self._view(name)
+            if pane is not None:
                 self.tmux.kill(pane)
         except TuiError as e:
             raise SessionError(f"tmux session {name}: {e}") from None
         self.attach(name).mark_hidden(hidden=True)
+
+    def _view(self, name: str) -> str | None:
+        """The live tmux pane that show opened for it, if any."""
+        pane = self.tmux.option(name, "@pane")
+        live = pane is not None and PANE.fullmatch(pane) and self.tmux.process(pane) is not None
+        return pane if live else None
 
     def attach_command(self, name: str) -> str:
         return attach_command(_session(name))
