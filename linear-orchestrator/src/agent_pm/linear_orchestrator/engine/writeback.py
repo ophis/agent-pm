@@ -277,6 +277,17 @@ def _post(ctx, step, body):
     return _step(ctx, step, lambda: comment(ctx.gql, ctx.issue_id, body, cid), cid)
 
 
+def client_pinned(ctx, client, selected) -> bool:
+    body = (
+        f'This run keeps client "{client}"; the current Agent label selection is "{selected}". '
+        "The label change has not taken effect. To switch clients, change the label, then personally "
+        "move this issue to Todo to start a new run. If already Todo, move it out and back first."
+    )
+    ctx = replace(ctx, redelivered=True)
+    with _exclusive(ctx) as held:
+        return held and _post(ctx, "client-pinned", body) is None
+
+
 def progress(ctx, event: Progress) -> bool:
     # raises only Stopped
     try:

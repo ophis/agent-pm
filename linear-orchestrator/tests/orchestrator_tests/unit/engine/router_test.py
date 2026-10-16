@@ -878,7 +878,8 @@ class RouterEntry(OuterBase):
                 self.assertTrue(
                     [line for line in said if line.startswith("recover TASK-7 to=todo")]
                 )
-                self.assertIn("claim TASK-7 role=engineer client=a client_source=default", said)
+                source = "pinned" if attr == "detach_error" else "default"
+                self.assertIn(f"claim TASK-7 role=engineer client=a client_source={source}", said)
                 self.assertEqual(said[-1], "launch TASK-7 exit=0")
 
     def test_label_client_config_error_goes_to_review_without_recover_retry(self):
@@ -931,7 +932,29 @@ class RouterEntry(OuterBase):
                 setattr(self.api, attr, error)
                 self.assertEqual(self.entry("--issue", ID), 1)
                 self.assertEqual(self.todo["state"], "In Progress")
-                self.assertNotIn("comments", self.todo)
+                comments = self.todo.get("comments", [])
+                self.assertEqual(len(comments), int(resume))
+                if resume:
+                    self.assertIn("label change has not taken effect", comments[0])
+
+    def test_automatic_retry_keeps_client_then_personal_todo_move_switches_it(self):
+        self.write_config(AGENT_TOP + OUTER + AGENT_LABELS)
+        self.fake.history = self.hist
+        self.todo["state"] = "In Progress"
+        self.todo["labels"] = [label("changed", AGENT_A, AGENT_GROUP)]
+        self.add(kind="start", ident=ID, sid="old", role="engineer", minutes_ago=60, client="b")
+        self.assertEqual(self.entry("--now"), 0)
+        first = runs.parse_log(self.runs)[-1]
+        self.assertEqual((first.kind, first.client), ("start", "b"))
+        self.assertNotEqual(first.sid, self.sid("old"))
+        self.assertIn(router.INTERRUPTED, self.todo["comments"])
+        self.lines = self.raw_runs().splitlines()
+        self.todo["state"] = "Todo"
+        self.moved(ID, -1, state=STATES["Todo"], actor=USER)
+        self.assertEqual(self.entry("--issue", ID, now=NOW + timedelta(minutes=2)), 0)
+        second = runs.parse_log(self.runs)[-1]
+        self.assertEqual((second.kind, second.client), ("start", "a"))
+        self.assertNotEqual(second.sid, first.sid)
 
     def test_label_client_bounce_write_failure_is_transient(self):
         class RejectReview(ClaimLinear):
@@ -1371,6 +1394,256 @@ class AgentLabels(Base):
         )
         self.assertTrue(self.claim(fake))
         self.assertEqual(self.taken[3:], ("b", "label"))
+
+
+class PinnedClients(Base):
+    def setUp(self):
+        super().setUp()
+        self.write_config(AGENT_TOP + CONFIG + TASK_LABELS + AGENT_LABELS)
+
+    def test_latest_start_wins_over_resume_and_failed_rows(self):
+        self.add(kind="start", ident="TASK-1", sid="latest", minutes_ago=60, client="b")
+        self.add(kind="start", ident="TASK-1", sid="old", minutes_ago=120, client="a")
+        self.add(kind="resume", ident="TASK-1", sid="old", minutes_ago=30, client="a")
+        self.add(kind="failed", ident="TASK-1", sid="failed", minutes_ago=10, client="a")
+        fake = self.fake(
+            issue("TASK-1", "Todo", "researcher", labels=[label("new", AGENT_A, AGENT_GROUP)])
+        )
+        self.taken = self.board(fake, lambda board: board.claim(board.queue()[0], ()))
+        taken, task, role, chosen, source = self.taken
+        self.assertEqual((chosen, source), ("b", "pinned"))
+        spec = Spec.from_issue(taken, mode="new", sid=self.sid("retry"), task=task, client=chosen)
+        router.record(self.cfg(), spec, role=role, now=lambda: NOW)
+        newest = runs.parse_log(self.runs)[-1]
+        self.assertEqual((newest.kind, newest.sid, newest.client), ("start", spec.sid, "b"))
+        self.assertNotEqual(newest.sid, self.sid("latest"))
+
+    def test_only_a_later_identified_external_todo_move_releases_pin(self):
+        for actor, minutes, state, expected in (
+            ("harness-viewer", 30, STATES["Todo"], ("b", "pinned")),
+            *((f"u-{r}", 30, STATES["Todo"], ("b", "pinned")) for r in ROLE),
+            (None, 30, STATES["Todo"], ("b", "pinned")),
+            ("outsider", 61, STATES["Todo"], ("b", "pinned")),
+            ("outsider", 60, STATES["Todo"], ("b", "pinned")),
+            ("outsider", 59, STATES["Todo"], ("a", "label")),
+            ("outsider", 30, STATES["In Review"], ("b", "pinned")),
+        ):
+            with self.subTest(actor=actor, minutes=minutes, state=state):
+                self.lines, self.hist = [], {}
+                self.add(kind="start", ident="TASK-1", sid="old", minutes_ago=60, client="b")
+                self.moved("TASK-1", minutes, state=state, actor=actor)
+                self.moved("TASK-1", 10, state=STATES["Todo"], actor="harness-viewer")
+                fake = self.fake(
+                    issue(
+                        "TASK-1", "Todo", "researcher", labels=[label("new", AGENT_A, AGENT_GROUP)]
+                    )
+                )
+                self.assertTrue(self.claim(fake))
+                self.assertEqual(self.taken[3:], expected)
+
+    def test_no_start_including_failed_only_does_not_pin(self):
+        for kind in (None, "failed", "resume"):
+            with self.subTest(kind=kind):
+                self.lines = []
+                if kind:
+                    self.add(kind=kind, ident="TASK-1", sid="old", minutes_ago=30, client="b")
+                fake = self.fake(
+                    issue(
+                        "TASK-1", "Todo", "researcher", labels=[label("new", AGENT_A, AGENT_GROUP)]
+                    )
+                )
+                self.assertTrue(self.claim(fake))
+                self.assertEqual(self.taken[3:], ("a", "label"))
+                self.assertFalse(any("viewer" in q or "history" in q for q, _ in fake.queries))
+
+    def test_pin_bypasses_agent_errors_but_not_task_errors(self):
+        self.add(kind="start", ident="TASK-1", sid="old", minutes_ago=60, client="b")
+        for agent_labels, bad_task in (
+            ([], False),
+            ([label("unmapped", STRAY, AGENT_GROUP)], False),
+            ([label("one", AGENT_A, AGENT_GROUP), label("two", AGENT_B, AGENT_GROUP)], False),
+            ([label("unmapped", STRAY, AGENT_GROUP)], True),
+        ):
+            with self.subTest(agent_labels=agent_labels, bad_task=bad_task):
+                labels = agent_labels + ([label("bad task", STRAY)] if bad_task else [])
+                fake = self.fake(issue("TASK-1", "Todo", "researcher", labels=labels))
+                self.assertEqual(bool(self.claim(fake)), not bad_task)
+                if bad_task:
+                    found = fake.issues["TASK-1"]
+                    self.assertEqual(found["state"], "In Review")
+                    self.assertEqual(len(found["comments"]), 1)
+                    self.assertIn("bad task", found["comments"][0])
+                    self.assertNotIn("unmapped", found["comments"][0])
+                else:
+                    self.assertEqual(self.taken[3:], ("b", "pinned"))
+
+    def test_pin_and_attempt_cap_share_history_and_viewer_is_cached(self):
+        for i in (1, 2):
+            self.add(kind="start", ident=f"TASK-{i}", sid=f"s{i}", minutes_ago=60, client="b")
+        fake = self.fake(issue("TASK-1", "Todo", "researcher"), issue("TASK-2", "Todo", "pm"))
+
+        def use(board):
+            for found in fake.issues.values():
+                board.last_move(found, "todo", by_user=True)
+                self.assertEqual(board.pinned_client(found), "b")
+                self.assertEqual(board.pinned_client(found), "b")
+
+        self.board(fake, use)
+        self.assertEqual(sum("viewer" in q for q, _ in fake.queries), 1)
+        self.assertEqual(sum("history" in q for q, _ in fake.queries), 2)
+
+    def test_pin_reads_past_the_first_history_page_only_until_the_start_boundary(self):
+        for moved, expected in ((59, None), (60, "b"), (61, "b")):
+            with self.subTest(moved=moved):
+                self.lines, self.hist = [], {}
+                self.add(kind="start", ident="TASK-1", sid="old", minutes_ago=60, client="b")
+                for seconds in range(250):
+                    self.hist.setdefault("TASK-1", []).append(
+                        {
+                            "createdAt": ago(seconds=seconds),
+                            "actorId": "outsider",
+                            "toStateId": None,
+                        }
+                    )
+                self.moved("TASK-1", moved, state=STATES["Todo"], actor="outsider")
+                for minutes in range(62, 362):
+                    self.moved("TASK-1", minutes, state=STATES["Todo"], actor="harness-viewer")
+                fake = self.fake(issue("TASK-1", "Todo", "researcher"))
+
+                def use(board, fake=fake, expected=expected):
+                    found = fake.issues["TASK-1"]
+                    board.last_move(found, "todo", by_user=True)
+                    self.assertEqual(board.pinned_client(found), expected)
+                    self.assertEqual(board.pinned_client(found), expected)
+
+                self.board(fake, use)
+                self.assertEqual(
+                    [v for q, v in fake.queries if "history" in q],
+                    [
+                        {"i": "TASK-1"},
+                        {"i": "TASK-1", "after": "250"},
+                    ],
+                )
+
+
+class PinnedClientNotices(TickBase):
+    def test_notice_read_and_write_failures_preserve_launch_and_retry_later(self):
+        class NoticeFailure(FakeLinear):
+            def __call__(self, query, **v):
+                if self.failure == "read" and query == RECHECK:
+                    self.failure = None
+                    raise LinearError("notice read unavailable")
+                if self.failure == "write" and query == ops.M_COMMENT_ID:
+                    self.failure = None
+                    raise LinearError("notice write unavailable")
+                return super().__call__(query, **v)
+
+        self.write_config(AGENT_TOP + CONFIG + AGENT_LABELS)
+        for failure in ("read", "write"):
+            with self.subTest(failure=failure):
+                self.lines, self.hist = [], {}
+                self.add(kind="start", ident="TASK-1", sid=failure, minutes_ago=60, client="b")
+                self.touch(failure, 40)
+                fake = NoticeFailure(
+                    [
+                        issue(
+                            "TASK-1",
+                            "In Progress",
+                            "researcher",
+                            labels=[label("changed", AGENT_A, AGENT_GROUP)],
+                        )
+                    ]
+                )
+                fake.failure = failure
+                self.assertEqual(self.tick(fake, "--now"), 0)
+                (first,) = self.start.launches
+                self.assertEqual(
+                    (first.client, first.sid, first.mode), ("b", self.sid(failure), "resume")
+                )
+                self.assertEqual(fake.issues["TASK-1"].get("comments", []), [])
+                errors = [
+                    e
+                    for e in logged(self.logs)
+                    if e["kind"] in {"client-pinned-error", "step-error"}
+                ]
+                self.assertEqual(len(errors), 1)
+                self.assertIn(f"notice {failure} unavailable", errors[0]["error"])
+                self.assertEqual(self.tick(fake, "--now", again=True), 0)
+                (second,) = self.start.launches
+                self.assertEqual(second, first)
+                self.assertEqual(len(fake.issues["TASK-1"]["comments"]), 1)
+                self.assertIn(ops.client_id(first.sid, "client-pinned"), fake.comments)
+
+    def test_retained_selections_report_label_drift_on_both_entry_paths(self):
+        for argv in (("--now",), ("--issue", "TASK-1")):
+            for state in ("Todo", "In Progress"):
+                for enabled, labels, selected in (
+                    (True, [label("changed", AGENT_A, AGENT_GROUP)], "a"),
+                    (True, [label("same", AGENT_B, AGENT_GROUP)], None),
+                    (True, [label("unmapped", STRAY, AGENT_GROUP)], "invalid"),
+                    (
+                        True,
+                        [label("one", AGENT_A, AGENT_GROUP), label("two", AGENT_B, AGENT_GROUP)],
+                        "invalid",
+                    ),
+                    (True, [], "a"),
+                    (False, [label("ignored", AGENT_A, AGENT_GROUP)], None),
+                ):
+                    with self.subTest(argv=argv, state=state, enabled=enabled, labels=labels):
+                        self.write_config(AGENT_TOP + CONFIG + AGENT_LABELS if enabled else CONFIG)
+                        self.lines, self.hist = [], {}
+                        old_sid = str(uuid.uuid4())
+                        self.add(
+                            kind="start", ident="TASK-1", sid=old_sid, minutes_ago=60, client="b"
+                        )
+                        self.touch(old_sid, 40)
+                        fake = self.fake(issue("TASK-1", state, "researcher", labels=labels))
+                        self.assertEqual(self.tick(fake, *argv), 0)
+                        (spec,) = self.start.launches
+                        self.assertEqual(
+                            (spec.client, spec.mode), ("b", "new" if state == "Todo" else "resume")
+                        )
+                        notices = [e for e in logged(self.logs) if e["kind"] == "client-pinned"]
+                        comments = fake.issues["TASK-1"].get("comments", [])
+                        if selected is None:
+                            self.assertEqual((notices, comments), ([], []))
+                            continue
+                        self.assertEqual(len(notices), 1)
+                        self.assertEqual(
+                            tuple(notices[0][k] for k in ("issue", "sid", "client", "label")),
+                            ("TASK-1", spec.sid, "b", selected),
+                        )
+                        self.assertEqual(len(comments), 1)
+                        for fragment in ("b", selected, "label", "personally", "Todo", "new run"):
+                            self.assertIn(fragment, comments[0])
+                        self.assertIn(ops.client_id(spec.sid, "client-pinned"), fake.comments)
+                        if state == "In Progress":
+                            self.assertEqual(self.tick(fake, *argv, again=True), 0)
+                            self.assertEqual(len(fake.issues["TASK-1"]["comments"]), 1)
+
+    def test_dry_runs_and_rejected_launcher_sids_do_not_post_a_notice(self):
+        self.write_config(AGENT_TOP + CONFIG + AGENT_LABELS)
+        for argv in (("--now",), ("--issue", "TASK-1")):
+            for dry in (False, True):
+                with self.subTest(argv=argv, dry=dry):
+                    self.lines, self.hist = [], {}
+                    self.add(kind="start", ident="TASK-1", sid="old", minutes_ago=60, client="b")
+                    self.touch("old", 40)
+                    fake = self.fake(
+                        issue(
+                            "TASK-1",
+                            "In Progress",
+                            "researcher",
+                            labels=[label("changed", AGENT_A, AGENT_GROUP)],
+                        )
+                    )
+                    self.tick(
+                        fake,
+                        *argv,
+                        *(["--dry-run"] if dry else []),
+                        env={SID_ENV: str(uuid.uuid4())},
+                    )
+                    self.assertEqual((self.start.launches, fake.mutations), ([], []))
 
 
 class RouterArguments(Base):
@@ -2336,7 +2609,7 @@ class ScheduledTaskSelection(TickBase):
         self.tick(fake)
         self.assertEqual(fake.issues["TASK-1"]["comments"], [router.INTERRUPTED])
         self.assertIn(
-            "claim TASK-1 role=researcher task=light-research client=a client_source=default",
+            "claim TASK-1 role=researcher task=light-research client=a client_source=pinned",
             self.said(),
         )
         (launch,) = self.start.launches
