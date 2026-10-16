@@ -1,6 +1,7 @@
 """The Composer in a child process: PY with PYTHONPATH this tree's import root, the test's own HOME
 (its ~/.agent-pm/config.local.toml the only local config) and a temp cwd, printing one JSON value.
-COMPOSE composes one agent run as its caller (the Delegate) would.
+PROGRAM runs argv[1]: compose (one agent run as its caller, the Delegate, would), catalog (every
+role's catalog row, rendered, with a workdir), or index.
 """
 
 import json
@@ -12,42 +13,73 @@ from delegate.tests import case
 from delegate.tests.case import PY, child_env
 
 TIMEOUT = 60
-PRELUDE = "import json, os, sys\nfrom agent_pm.delegate.composer import Composer, ConfigError, RunParams\n"
-COMPOSE = """import dataclasses
+PROGRAM = """import dataclasses
+import json
+import os
+import sys
 
-req = json.loads(sys.argv[1])
-try:
-    composition = Composer()
-    run = composition.resolve(req["role"], req.get("task"), overlays=req.get("overlays", ()))
-    intent = composition.access(run, req["workdir"], cwd=req["cwd"], project=False)
-    writes = [("the workdir", req["workdir"]), ("the cwd", req["cwd"])]
-    writes += [("a dir the run adds", d) for d in intent.dirs]
-    composition.check_team_dirs(writes=writes)
-    params = RunParams(
-        input=req["input"], out=req["out"], workdir=req["workdir"], resume=req.get("resume", False)
-    )
-    print(
-        json.dumps(
-            {
-                "run": dataclasses.asdict(run),
-                "intent": dataclasses.asdict(intent),
-                "prompt": composition.render(run, params),
-                "trusted": sorted(composition.trusted_dirs()),
-                "files": [
-                    sys.modules["agent_pm.delegate.composer"].__file__,
-                    sys.modules["agent_pm.utils.config_file"].__file__,
-                    sys.modules["agent_pm.utils.paths"].__file__,
-                ],
-                "repo_imported": any(
-                    os.path.dirname(getattr(m, "__file__", None) or "")
-                    == os.path.join(composition.team.root, "tools")
-                    for m in list(sys.modules.values())
-                ),
-            }
+from agent_pm.delegate.composer import Composer, ConfigError, RunParams
+
+
+def compose(arg):
+    req = json.loads(arg)
+    try:
+        composition = Composer()
+        run = composition.resolve(req["role"], req.get("task"), overlays=req.get("overlays", ()))
+        intent = composition.access(run, req["workdir"], cwd=req["cwd"], project=False)
+        writes = [("the workdir", req["workdir"]), ("the cwd", req["cwd"])]
+        writes += [("a dir the run adds", d) for d in intent.dirs]
+        composition.check_team_dirs(writes=writes)
+        params = RunParams(
+            input=req["input"], out=req["out"], workdir=req["workdir"], resume=req.get("resume", False)
         )
-    )
-except ConfigError as e:
-    print(json.dumps({"error": str(e)}))
+        print(
+            json.dumps(
+                {
+                    "run": dataclasses.asdict(run),
+                    "intent": dataclasses.asdict(intent),
+                    "prompt": composition.render(run, params),
+                    "trusted": sorted(composition.trusted_dirs()),
+                    "files": [
+                        sys.modules["agent_pm.delegate.composer"].__file__,
+                        sys.modules["agent_pm.utils.config_file"].__file__,
+                        sys.modules["agent_pm.utils.paths"].__file__,
+                    ],
+                    "repo_imported": any(
+                        os.path.dirname(getattr(m, "__file__", None) or "")
+                        == os.path.join(composition.team.root, "tools")
+                        for m in list(sys.modules.values())
+                    ),
+                }
+            )
+        )
+    except ConfigError as e:
+        print(json.dumps({"error": str(e)}))
+
+
+def catalog(workdir):
+    composition = Composer()
+    team = composition.team
+    composition.check_team_dirs(writes=[])
+    composition.check_all()
+    params = RunParams(input="", out=os.path.join(workdir, "out.md"), workdir=workdir)
+    rows = {}
+    for role, tasks in composition.index().items():
+        run = composition.resolve(role)
+        composition.render(run, params)
+        rows[role] = [
+            run.output["type"],
+            team.source(composition.path_for("roles", role)),
+            {t: [what, team.source(composition.path_for("tasks", t))] for t, what in tasks.items()},
+        ]
+    print(json.dumps(rows))
+
+
+def index():
+    print(json.dumps(Composer().index()))
+
+
+{"compose": compose, "catalog": catalog, "index": index}[sys.argv[1]](*sys.argv[2:])
 """
 
 
@@ -65,9 +97,9 @@ class Case(case.Case):
         with open(os.path.join(self.agent_pm, "config.local.toml"), mode, encoding="utf-8") as f:
             f.write(text)
 
-    def child(self, code: str, *args: str):
+    def child(self, *args: str):
         res = subprocess.run(
-            [*PY, "-c", PRELUDE + code, *args],
+            [*PY, "-c", PROGRAM, *args],
             cwd=self.root,
             env=child_env({**os.environ, "HOME": self.home}),
             stdin=subprocess.DEVNULL,
@@ -88,4 +120,4 @@ class Case(case.Case):
             "cwd": self.work,
             **req,
         }
-        return self.child(COMPOSE, json.dumps(req))
+        return self.child("compose", json.dumps(req))

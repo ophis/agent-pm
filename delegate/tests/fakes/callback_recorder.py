@@ -19,6 +19,7 @@ import time
 NOISE = "callback stdout noise"
 LOCK = "delegate.callback.lock"
 BLOCK = 600  # seconds: longer than any test waits
+SLEEP = "import sys, time; time.sleep(int(sys.argv[1]))"
 
 
 def main(argv: list[str]) -> int:
@@ -43,7 +44,7 @@ def main(argv: list[str]) -> int:
         **lock(),
     }
     if blocking:
-        sleeper = (sys.executable, "-P", "-S", "-c", f"import time; time.sleep({BLOCK})")
+        sleeper = (sys.executable, "-P", "-S", "-c", SLEEP, str(BLOCK))
         entry["grandchild"] = subprocess.Popen(sleeper).pid
     with open(a.log, "a", encoding="utf-8") as log:
         log.write(json.dumps(entry) + "\n")

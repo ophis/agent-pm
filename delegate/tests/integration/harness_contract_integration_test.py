@@ -22,7 +22,7 @@ from delegate.tests.replies import block
 from delegate.tests.unit.runs import DONE
 
 CLASS_QUERIES = """import json, sys, unittest
-from agent_pm.delegate.engine.harness_delegate import HarnessDelegate
+from agent_pm.delegate import HarnessDelegate
 from delegate.tests.contracts.delegate import DelegateContract
 from delegate.tests.fakes.harness_session import HarnessSession
 from delegate.tests.harness import HarnessCase
