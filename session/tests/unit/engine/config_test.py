@@ -11,7 +11,7 @@ from session.tests.case import Case
 
 
 class Configuration(Case):
-    def test_configuration_resources_are_public_and_match_the_reader(self):
+    def test_public_configuration_resources_match_the_reader(self):
         self.assertEqual(session.CONFIG_RESOURCES, (("agent_pm.session", "config.toml"),))
         self.assertEqual(
             read_resources(session.CONFIG_RESOURCES, local=os.devnull),

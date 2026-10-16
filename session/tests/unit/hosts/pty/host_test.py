@@ -110,16 +110,16 @@ class Starting(Case):
 class Start(Starting):
     def test_detach_stores_the_record_sid_as_private_identity(self):
         record = Record(
-            1,
-            "worker",
-            "x",
-            ("x",),
-            "sid",
-            None,
-            ("agent-pm-session",),
-            ("agent-pm-session", "resume", "x"),
-            None,
-            None,
+            v=1,
+            kind="worker",
+            name="x",
+            sessions=("x",),
+            sid="sid",
+            workdir=None,
+            ctl=("agent-pm-session",),
+            resume=("agent-pm-session", "resume", "x"),
+            display=None,
+            detail=None,
         )
         process, _, _ = self.start(record=record)
         self.assertEqual(process.session_identity(), (record.sid, None))
