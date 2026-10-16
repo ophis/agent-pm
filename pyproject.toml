@@ -51,12 +51,13 @@ allow_indirect_imports = true
 name = "Manager units own commands, bookkeeping and events"
 type = "units"
 container = "agent_pm.manager"
-units = ["agent_pm.manager.engine.crew", "agent_pm.manager.engine.holder", "agent_pm.manager.engine.roster", "agent_pm.manager.engine.events", "agent_pm.manager.engine.types"]
+units = ["agent_pm.manager.engine.crew", "agent_pm.manager.engine.holder", "agent_pm.manager.engine.roster", "agent_pm.manager.engine.events", "agent_pm.manager.engine.pr", "agent_pm.manager.engine.types"]
 dependencies = [
-    "agent_pm.manager.engine.crew -> agent_pm.manager.engine.roster agent_pm.manager.engine.types agent_pm.utils",
+    "agent_pm.manager.engine.crew -> agent_pm.manager.engine.pr agent_pm.manager.engine.roster agent_pm.manager.engine.types agent_pm.utils",
     "agent_pm.manager.engine.holder -> agent_pm.manager.engine.roster agent_pm.manager.engine.types agent_pm.utils",
     "agent_pm.manager.engine.roster -> agent_pm.manager.engine.events agent_pm.manager.engine.types agent_pm.utils",
     "agent_pm.manager.engine.events -> agent_pm.manager.engine.types agent_pm.utils",
+    "agent_pm.manager.engine.pr -> agent_pm.utils",
     "agent_pm.manager.engine.types -> agent_pm.utils",
     "outside -> agent_pm.manager.engine.crew agent_pm.manager.engine.holder agent_pm.manager.engine.types agent_pm.utils",
 ]

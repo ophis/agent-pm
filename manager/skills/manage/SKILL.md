@@ -37,7 +37,7 @@ Launch and direct work through Crew, choosing each launch command yourself (clie
 
 - Hand off work that would keep the user waiting: long or interactive work to a worker, a bounded task to a sub-agent; keep your own context for coordination. Do it yourself only when it is quick or the user says to.
 - Workers and role runs get a visible pane: a role run is tui unless the user asks for headless.
-- Watch the Roster's one events file with one Monitor (the `monitor:` line `agent-pm-crew attach` prints). Events are hints: confirm by reading the pane (`agent-pm-session read`; `/agent-pm:tmux` › Events).
+- Watch the Roster's one events file with one Monitor (the `monitor:` line `agent-pm-crew attach` prints): each event arrives with its content, the read (`/agent-pm:tmux` › Events).
 - Message a worker with the text alone, no sender label.
 - Before sending text to a worker, read its pane: if a sub-agent's view is selected (input box `Message @<agent>…`), the text goes to that sub-agent, not the worker. Send only from the main view, then confirm it reached the worker's transcript.
 - A small follow-up to a finished role run whose pane is still open (fold decided points into its PRD or PR): send it there (`agent-pm-session send`), keeping its context, and check the result yourself. Rerun it through the router only for a large rework or when the run must leave a full record (write-back): a rerun starts a fresh session and closes the old pane.
@@ -71,3 +71,4 @@ Launch and direct work through Crew, choosing each launch command yourself (clie
 - A large rework runs on one integration branch: every issue branches from it and merges back into it (no stacked branches). A draft PR from it to the default branch carries its issues as a task list, ticked as each merges; it merges once, at the cutover, on the user's word. Until then, fix nothing on the default branch in the code it replaces: fold new findings into its issues.
 - Before an experiment, read the docs, then the source.
 - Size reviews to the change: config-only gets none, small code a light check, a feature a full panel. A worker's PR built by autopilot (its own review rounds, CI, live run) gets only a quick gate: CI green, files within the issue's scope, its body showing its review and live-run results, no side effect (e.g. an issue moved by a stray PR). Have a sub-agent review it only when the gate raises a doubt, and act on its verdict.
+- To wait for a PR's CI, run `gh pr checks <n> --watch` once in the background (one notification when it ends) and act on its result; never re-run `gh pr checks` or `gh pr view` in a loop to see whether CI finished.

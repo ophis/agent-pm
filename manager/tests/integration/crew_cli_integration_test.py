@@ -68,6 +68,7 @@ class Commands(Case):
             "close-all",
             "forget",
             "note",
+            "report",
             "next-event",
             "release",
         }
@@ -310,7 +311,10 @@ class Commands(Case):
         self.assertNotIn("agent-pm-linear resume", output)
         self.assertIn("2 12:00:00 actual dead\n", output)
         self.assertNotIn("noise", output)
-        self.assertIn(f"monitor: tail -n +1 -F {shlex.quote(crew.roster.events)}\n", output)
+        self.assertIn(
+            "monitor: agent-pm-crew next-event --manager mgr --after 0 --gen 0 --content --follow\n",
+            output,
+        )
         self.assertIn(
             "monitor expired: agent-pm-crew attach --manager mgr --after LINE --gen 0\n", output
         )

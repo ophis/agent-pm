@@ -46,6 +46,11 @@ class Manage(Case):
             self.assertNotIn(word, body("manage"))
         self.assertNotIn("## Crew commands", body("manage"))
 
+    def test_events_arrive_with_their_content_and_need_no_pane_read(self):
+        monitor = rule("`monitor:`")
+        self.assertNotIn("confirm by reading the pane", monitor)
+        self.assertIn("`/agent-pm:tmux` › Events", monitor)
+
     def test_a_roster_entry_closes_through_crew(self):
         close = rule("AppleScript")
         self.assertIn("`agent-pm-crew close <name>`", close)
