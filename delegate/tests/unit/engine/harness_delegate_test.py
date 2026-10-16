@@ -8,13 +8,14 @@ dir, refusing a live run or a dir out of place.
 """
 
 import fcntl
+import io
 import json
 import os
 import shutil
 import signal
 from unittest import mock
 
-from agent_pm.delegate import ConfigError, Finished, Result, Spec
+from agent_pm.delegate import ConfigError, Finished, Outcome, Result, Spec
 from agent_pm.delegate.composer import Composer, RunParams
 from agent_pm.delegate.engine import harness_delegate
 from agent_pm.delegate.engine.harness_delegate import HarnessDelegate
@@ -31,6 +32,7 @@ from delegate.tests.fakes.harness_session import (
     harness_launches,
 )
 from delegate.tests.harness import SID, HarnessCase
+from delegate.tests.replies import block
 from delegate.tests.unit.engine.orphans import Clock, Orphan
 
 ORPHAN = 4242
@@ -492,6 +494,127 @@ class OverlayTest(HarnessCase):
         self.stop(record)
         HarnessDelegate.attach(self.work, session_cls=HarnessSession).resume()
         self.assertEqual(self.metadata()["plan"]["run"]["effort"], "high")
+
+
+class ResumeInputTest(HarnessCase):
+    def waiting(self, *, mode="headless", outer=None, close=True):
+        events = os.path.join(self.home, "events")
+        spec = Spec(
+            "initial", self.work, task="echo", mode=mode, client="fake", sid=SID, events=events
+        )
+        record = self.make(spec=spec, display="none").detach(outer=outer)
+        view = HarnessDelegate.attach(self.work, session_cls=HarnessSession)
+        view._complete(
+            Result(0, Outcome("needs_input", "Question", "Answer needed", questions=["Which?"]))
+        )
+        if close:
+            view.close()
+        return view, record
+
+    def test_answers_use_the_same_identity_placement_and_new_prompt(self):
+        for mode in ("headless", "tui"):
+            with self.subTest(mode=mode):
+                view, record = self.waiting(mode=mode)
+                before = self.metadata()
+                resumed = view.resume(input="The answer.")
+                state = self.metadata()
+                self.assertEqual(
+                    (resumed.sid, resumed.name, resumed.display),
+                    (record.sid, record.name, record.display),
+                )
+                self.assertEqual(state["attempt"], before["attempt"] + 1)
+                self.assertIsNone(state["result"])
+                self.assertEqual(state["spec"]["input"], "The answer.")
+                for key in (
+                    "role",
+                    "display",
+                    "callback",
+                    "events",
+                    "agent_name",
+                    "harness_name",
+                    "outer",
+                    "overlays",
+                ):
+                    self.assertEqual(state[key], before[key], key)
+                for key in ("sid", "task", "mode"):
+                    self.assertEqual(state["spec"][key], before["spec"][key], key)
+                self.assertTrue(
+                    HarnessSession.preflights[-1]["spec"].prompt.endswith(
+                        "\n# Input\n\nThe answer.\n"
+                    )
+                )
+                launches = len(harness_launches())
+                with self.assertRaises(ConfigError):
+                    view.resume(input="The answer.")
+                self.assertEqual(len(harness_launches()), launches)
+                view.close()
+
+    def test_input_refuses_every_outcome_other_than_needs_input_without_changes(self):
+        for status in (None, "done", "failed"):
+            with self.subTest(status=status):
+                view = self.make()
+                if status is not None:
+                    HarnessSession.script = (
+                        Reply(
+                            block(
+                                {
+                                    "status": status,
+                                    "title": "T",
+                                    "summary": "S",
+                                    "deliverable": "body",
+                                }
+                            )
+                        ),
+                        Exited(0),
+                    )
+                    view.run()
+                before, launches = self.metadata(), len(harness_launches())
+                with self.assertRaisesRegex(ConfigError, "needs_input"):
+                    view.resume(input="answer")
+                self.assertEqual(self.metadata(), before)
+                self.assertEqual(len(harness_launches()), launches)
+
+    def test_input_refuses_a_still_live_harness(self):
+        view, _ = self.waiting(close=False)
+        before, launches = self.metadata(), len(harness_launches())
+        with self.assertRaisesRegex(ConfigError, "alive"):
+            view.resume(input="answer")
+        self.assertEqual(self.metadata(), before)
+        self.assertEqual(len(harness_launches()), launches)
+
+    def test_pipeline_input_is_refused_only_at_the_delegate_cli(self):
+        from agent_pm.delegate import cli
+
+        outer = {
+            "kind": "pipeline",
+            "name": "TASK-1",
+            "ctl": ("agent-pm-linear",),
+            "resume": ("agent-pm-linear", "resume", "TASK-1"),
+        }
+        view, record = self.waiting(outer=outer)
+        before, launches = self.metadata(), len(harness_launches())
+
+        class Bound(HarnessDelegate):
+            @classmethod
+            def attach(cls, key, *, sid=None):
+                return HarnessDelegate.attach(key, sid=sid, session_cls=HarnessSession)
+
+        for arguments, stdin in (
+            (["resume", self.work, "--input", "answer"], ""),
+            (["resume", "--input", "answer"], record.to_line()),
+        ):
+            out, err = io.StringIO(), io.StringIO()
+            with (
+                mock.patch("sys.stdout", out),
+                mock.patch("sys.stderr", err),
+                mock.patch("sys.stdin", io.StringIO(stdin)),
+            ):
+                code = cli.main(arguments, delegate_cls=Bound)
+            self.assertEqual((code, out.getvalue()), (2, ""))
+            self.assertIn("pipeline", err.getvalue())
+            self.assertEqual(self.metadata(), before)
+            self.assertEqual(len(harness_launches()), launches)
+        self.assertEqual(view.resume(input="answer").ctl, ("agent-pm-linear",))
 
 
 class ResumeModeTest(HarnessCase):

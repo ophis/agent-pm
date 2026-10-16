@@ -218,9 +218,9 @@ class CodexTeamDirs(CodexIntegration):
             f.write(f"[delegate.roles.writer]\n{key} = {json.dumps([self.team])}\n")
 
     def test_a_codex_run_and_its_resume_read_its_tasks_dir_unadded(self):
-        for extra, resume_id in (((), None), (("--resume",), NATIVE)):
-            with self.subTest(extra=extra):
-                res = self.drive(codex_said(mark("start", "noting"), block(DONE)), *extra)
+        for resume, resume_id in ((False, None), (True, NATIVE)):
+            with self.subTest(resume=resume):
+                res = self.drive(codex_said(mark("start", "noting"), block(DONE)), resume=resume)
                 self.assertEqual(res.returncode, 0, res.stderr)
                 call = self.calls()[-1]
                 self.assertEqual(call["resume_id"], resume_id)

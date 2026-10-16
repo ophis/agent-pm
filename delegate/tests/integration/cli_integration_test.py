@@ -1,4 +1,4 @@
-"""delegate/cli.py as a subprocess over session/tests/integration/clients/claude/fake_claude.py (on
+"""CLI runs and API resumes over session/tests/integration/clients/claude/fake_claude.py (on
 PATH as `claude`), HOME and CLAUDE_CONFIG_DIR temp: a run's exit code, stderr, out and run.jsonl;
 its fix resume, a resume, a draft kept through a kill and resume, an interrupt, a usage limit,
 config errors. Main's tests/integration/core/drive_integration_test.py and
@@ -146,7 +146,7 @@ class Outcomes(Integration):
         self.assertEqual(len(self.calls()), 1)
 
     def test_invalid_outcome_then_fixed_by_the_automatic_resume(self):
-        res = self.drive([mark("start", "echoing"), block(UNSAVED)], resume=[block(DONE)])
+        res = self.drive([mark("start", "echoing"), block(UNSAVED)], fixes=[block(DONE)])
         self.assertEqual(res.returncode, 0, res.stderr)
         self.assertIn(f"delegate: invalid outcome: {UNSAVED_ERROR}; resuming once", res.stderr)
         self.assertEqual(self.read(self.out), "Hello.\n")
@@ -225,7 +225,7 @@ class Stderr(Integration):
         res = self.drive([mark("start", "first")])
         self.assertEqual(res.returncode, 1, res.stderr)
         os.unlink(self.transcript)
-        res = self.drive([block(DONE)], "--resume")
+        res = self.drive([block(DONE)], resume=True)
         self.assertEqual(res.returncode, 1, res.stderr)
         said = f"No conversation found with session ID: {SID}"
         self.assertIn(said, res.stderr)
@@ -241,7 +241,11 @@ class Resume(Integration):
         res = self.drive([mark("start", "first")])
         self.assertEqual(res.returncode, 1, res.stderr)
         res = self.drive(
-            [mark("round", "second"), block(DONE)], "--resume", "--input", "Use B.", cwd=self.root
+            [mark("round", "second"), block(DONE)],
+            "--input",
+            "Use B.",
+            cwd=self.root,
+            resume=True,
         )
         self.assertEqual(res.returncode, 0, res.stderr)
         first, second = self.calls()
@@ -267,7 +271,7 @@ class NeedsInput(Integration):
         self.assertEqual(res.returncode, 0, res.stderr)
         self.assertIn("delegate: status needs_input", res.stderr)
         self.assertFalse(os.path.exists(self.out), "a deliverable before the answer")
-        res = self.drive([block(DONE)], "--resume", "--input", ANSWER)
+        res = self.drive([block(DONE)], "--input", ANSWER, resume=True)
         self.assertEqual(res.returncode, 0, res.stderr)
         with open(os.path.join(Layout(self.work).run, "delegate.json")) as f:
             self.assertEqual(json.load(f)["attempt"], 2)
@@ -350,7 +354,7 @@ class RolePicks(Integration):
             "**Your task**: pick it from your charter's Tasks section", prompt(self.calls()[0])
         )
         self.assertEqual([bare(e) for e in self.records() if e["kind"] == "progress"], [picked])
-        res = self.drive([block(self.REPORT)], "--resume")
+        res = self.drive([block(self.REPORT)], resume=True)
         self.assertEqual(res.returncode, 0, res.stderr)
         self.assertNotIn("missing progress mark", res.stderr)
         self.assertNotIn("missing", self.kinds())
@@ -418,8 +422,8 @@ class ConfigErrors(Integration):
             ),
             "task off the index": (self.argv("--task", "nope"), "task 'nope' is not one of"),
             "missing options": (
-                [*cli, "--role", self.ROLE, "--input", "x", "--out", self.out],
-                "--input and --workdir are required",
+                [*cli, "--role", self.ROLE, "--out", self.out],
+                "--input is required",
             ),
             "a client without in_process": (
                 self.argv("--client", "codex", "--mode", "in_process"),
@@ -476,7 +480,7 @@ class Draft(Integration):
         self.assertTrue(self.holds(DRAFT), "the draft after the kill")
         gate = os.path.join(self.root, "gate")
         self.scene([block(DONE)], gate=gate)
-        proc = self.popen("--resume")
+        proc = self.popen(resume=True)
         self.until(proc, lambda: self.inputs() == 2, "recorded the resume's input")
         self.assertTrue(self.holds(DRAFT), "the draft as the resumed client starts")
         open(gate, "w").close()

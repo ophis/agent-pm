@@ -230,8 +230,18 @@ class FakeDelegate(Delegate):
     def session_status(self):
         return SessionStatus("yes", None, "")
 
-    def resume(self, *, mode=None):
+    def resume(self, *, mode=None, input=None):
         state = _load(self.workdir)
-        if not (state["alive"] or state["outcome"]):
+        if input is not None:
+            if (
+                state["alive"]
+                or not state["outcome"]
+                or state["outcome"]["status"] != "needs_input"
+            ):
+                raise ConfigError("--input requires a stopped needs_input run")
+            state = _update(
+                self.workdir, alive=True, outcome=None, input=input, starts=state["starts"] + 1
+            )
+        elif not (state["alive"] or state["outcome"]):
             state = _update(self.workdir, alive=True, starts=state["starts"] + 1)
         return self._record(state)

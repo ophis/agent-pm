@@ -164,7 +164,7 @@ def provider(api, cfg):
         def run(self, on_event=None):
             raise AssertionError("scenario must not launch")
 
-        def resume(self, *, mode=None):
+        def resume(self, *, mode=None, input=None):
             raise AssertionError("legacy launcher owns this scenario")
 
     return ScenarioDelegate

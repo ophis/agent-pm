@@ -1,6 +1,6 @@
 """The commands /agent-pm:tmux and /agent-pm:manage write, filled in as a commander would, run on
 the real commands (manager/tests/live_crew.py): a worker's launch, reply, note, status,
-gone-then-resume and close; a role run's dry-run check; a role run that ends waiting, answered in
+gone-then-resume and close; a role run that ends waiting, answered in
 its own session; manage's Codex issue worker launch.
 """
 
@@ -61,26 +61,11 @@ class SkillFlows(LiveCrew):
         self.assertNotIn("w1", self.roster())
         self.assertTrue(self.gone("w1"))
 
-    def test_a_role_runs_dry_run_check_prints_its_plan_and_starts_nothing(self):
-        work = self.workdir("r")
-        os.makedirs(work)
-        out = self.ok(
-            self.written(
-                "tmux",
-                "agent-pm-delegate run --role",
-                "--dry-run",
-                role=ROLE,
-                workdir=work,
-                input="Hello, it's me.",
-            )
-        )
-        self.assertEqual(json.loads(out.stdout)["mode"], "tui")
-        self.assertEqual(logged(self.log("r")), [])
-
     def test_a_waiting_role_run_is_answered_in_its_session_as_written(self):
         work = self.workdir("r")
         launch = fill(
             example("tmux", "agent-pm-crew run <name> -- agent-pm-delegate run"),
+            "--workdir",
             name="r",
             role=ROLE,
             workdir=work,
@@ -98,14 +83,9 @@ class SkillFlows(LiveCrew):
         answered = self.record(
             self.written(
                 "tmux",
-                "agent-pm-delegate run --role",
-                "--sid",
+                "agent-pm-delegate resume",
                 env=self.scene("r", [block(DONE)]),
-                role=ROLE,
                 workdir=work,
-                mode="headless",
-                events=self.events,
-                sid=record.sid,
                 answers="Say hello.",
             )
         )

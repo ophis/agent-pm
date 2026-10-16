@@ -1,6 +1,7 @@
 """The Linear orchestrator's command entry point."""
 
 import argparse
+import os
 import sys
 from datetime import UTC, datetime
 from functools import partial
@@ -13,7 +14,7 @@ from agent_pm.linear_orchestrator.engine.config import load
 from agent_pm.linear_orchestrator.engine.gate import Gate
 from agent_pm.linear_orchestrator.engine.linear_run import LinearRun
 from agent_pm.linear_orchestrator.engine.types import ConfigError
-from agent_pm.utils import Record, answer_keys, nested_start
+from agent_pm.utils import SID_ENV, Record, answer_keys, nested_start
 
 
 def main(argv=None):
@@ -26,17 +27,23 @@ def main(argv=None):
     }
     if arguments and arguments[0] in entries:
         return entries[arguments[0]][0](arguments[1:])
+    launcher_sid = os.environ.pop(SID_ENV, "") or None
     parser = argparse.ArgumentParser(prog="agent-pm-linear")
     commands = parser.add_subparsers(dest="command", required=True)
     for command, (_, text) in entries.items():
         commands.add_parser(command, help=text)
     for command in ("status", "show", "hide", "close", "attach-command", "resume", "content"):
         query = commands.add_parser(command)
+        if command == "resume":
+            query.add_argument("--input", metavar="TEXT")
         query.add_argument("keys", nargs="*", metavar="ISSUE", help="omit: Records on stdin")
     back = commands.add_parser("writeback", help="write back one DelegateEvent line from stdin")
     back.add_argument("--issue", required=True)
     back.add_argument("--workdir", required=True)
     args = parser.parse_args(arguments)
+    if args.command == "resume" and args.input is not None:
+        print("agent-pm-linear: pipeline answers belong on the issue board", file=sys.stderr)
+        return 2
     if args.command == "resume" and (refused := nested_start()):
         print(f"agent-pm-linear: {refused}", file=sys.stderr)
         return 2
@@ -54,7 +61,10 @@ def main(argv=None):
     def viewed(key):
         issue = key.name if isinstance(key, Record) else key
         sid = key.sid if isinstance(key, Record) else None
-        return issue, LinearRun.attach(issue, cfg=cfg, sid=sid)
+        view = LinearRun.attach(issue, cfg=cfg, sid=sid)
+        if args.command == "resume" and launcher_sid is not None and launcher_sid != view.sid:
+            raise ConfigError(f"${SID_ENV} {launcher_sid} differs from run sid {view.sid}")
+        return issue, view
 
     def resume(view):
         nonlocal gate

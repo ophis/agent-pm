@@ -51,6 +51,8 @@ def main(
         ("attach-command", False, "the command attaching to the run"),
     ):
         query = commands.add_parser(name, help=what)
+        if name == "resume":
+            query.add_argument("--input", metavar="TEXT", help="answer a needs_input run")
         query.add_argument(
             "keys",
             nargs="*" if many else "?",
@@ -94,7 +96,6 @@ def _run_options(ap: argparse.ArgumentParser) -> None:
     )
     ap.add_argument("--client", action=Once, help="default: the role's client in the core config")
     ap.add_argument("--sid", help=f"default ${SID_ENV}; the two must agree")
-    ap.add_argument("--resume", action="store_true")
     ap.add_argument("--mode", choices=[m.value for m in Mode], default=Mode.HEADLESS.value)
     ap.add_argument("--detach", action="store_true", help="run in a harness session of its own")
     ap.add_argument(
@@ -186,7 +187,6 @@ def spec_of(a, text: str) -> Spec:
         mode=a.mode,
         client=a.client,
         sid=a.sid,
-        resume=a.resume,
         events=a.events,
         out=a.out,
         repo=a.repo,
@@ -198,8 +198,6 @@ def _check(a: argparse.Namespace) -> None:
     if a.input is None:
         raise ConfigError("--input is required")
     _check_out(a)
-    if a.resume and a.sid is None:
-        raise ConfigError("--resume needs --sid")
     if a.events is not None and not a.detach:
         raise ConfigError("--events needs --detach")
     if a.on_event is not None and not a.detach:
@@ -302,7 +300,7 @@ def _query(a: argparse.Namespace, delegate_cls: type[HarnessDelegate], sid: str 
         "close": lambda pair: pair[0].close(),
         "outcome": _outcome,
         "content": lambda view: view.content(),
-        "resume": lambda view: view.resume().to_line(),
+        "resume": lambda view: _resume(view, a.input),
         "attach-command": _attach_command,
     }[a.command]
     return answer_keys(
@@ -317,6 +315,15 @@ def _query(a: argparse.Namespace, delegate_cls: type[HarnessDelegate], sid: str 
         out=sys.stdout,
         err=sys.stderr,
     )
+
+
+def _resume(view, input: str | None) -> str:
+    if input is not None and view._record(view._read()).ctl != ("agent-pm-delegate",):
+        raise ConfigError("pipeline answers belong on the issue board")
+    record = view.resume(input=input)
+    if input is not None:
+        say(f"delegate: session {record.sid}")
+    return record.to_line()
 
 
 def _outcome(view) -> str:

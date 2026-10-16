@@ -12,7 +12,7 @@ from unittest import mock
 
 from agent_pm.linear_orchestrator import cli
 from agent_pm.linear_orchestrator.engine import runs
-from agent_pm.utils import Record, Status
+from agent_pm.utils import SID_ENV, Record, Status
 from orchestrator_tests.case import REPO, Case
 from orchestrator_tests.linear_run_case import SID, ReadyDelegate, RunCase
 from orchestrator_tests.unit.streams import Stderr
@@ -21,6 +21,13 @@ from delegate.tests.fakes.delegate import FakeDelegate
 
 
 class Commands(Case):
+    def test_resume_input_is_refused_before_loading_config(self):
+        with mock.patch.object(cli, "load") as load:
+            result, output, errors = _call(["resume", "TASK-1", "--input", "answer"])
+        self.assertEqual((result, output), (2, ""))
+        self.assertIn("issue board", errors)
+        load.assert_not_called()
+
     def test_help_lists_only_existing_commands(self):
         output = io.StringIO()
         with redirect_stdout(output), self.assertRaises(SystemExit) as raised:
@@ -149,6 +156,23 @@ def _call(arguments, *, stdin="", tty=False):
 
 
 class Queries(RunCase):
+    def test_resume_checks_and_removes_the_environment_sid_before_starting(self):
+        _, record = self.start()
+        for supplied in (None, record.sid, "00000000-0000-4000-8000-000000000000"):
+            with self.subTest(supplied=supplied), mock.patch.dict(os.environ):
+                os.environ.pop(SID_ENV, None)
+                if supplied is not None:
+                    os.environ[SID_ENV] = supplied
+                before = FakeDelegate.starts(record.workdir)
+                result, output, errors = _call(["resume", "TASK-1"])
+                self.assertNotIn(SID_ENV, os.environ)
+                if supplied not in (None, record.sid):
+                    self.assertEqual((result, output), (2, ""))
+                    self.assertIn(SID_ENV, errors)
+                else:
+                    self.assertEqual((result, Record.parse(output)), (0, record), errors)
+                self.assertEqual(FakeDelegate.starts(record.workdir), before)
+
     def test_content_from_key_or_record_prints_the_owned_runs_content(self):
         _, record = self.start()
         for arguments, stdin in ((["content", "TASK-1"], ""), (["content"], record.to_line())):

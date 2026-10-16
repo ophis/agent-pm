@@ -1,4 +1,4 @@
-"""delegate/cli.py as a subprocess: Integration over
+"""CLI runs and synchronous API resumes as subprocesses: Integration over
 session/tests/integration/clients/claude/fake_claude.py, CodexIntegration over
 session/tests/integration/clients/codex/fake_codex.py, their outcomes.
 """
@@ -22,6 +22,30 @@ from session.tests.integration.clients.codex import fake_codex
 from utils.tests.sandbox import reap
 
 RUN = (*PY, "-m", "agent_pm.delegate.cli", "run")
+API_RESUME = (
+    *PY,
+    "-c",
+    """import argparse
+import sys
+from dataclasses import replace
+from agent_pm.delegate import cli
+from agent_pm.delegate.engine.harness_delegate import HarnessDelegate
+from agent_pm.delegate.engine.runner import report, say
+from agent_pm.delegate.engine.types import ConfigError, Layout
+
+parser = argparse.ArgumentParser(allow_abbrev=False)
+cli._run_options(parser)
+args = parser.parse_args()
+try:
+    cli._check(args)
+    spec = replace(cli.spec_of(args, args.input), resume=True)
+    result = HarnessDelegate(args.role, spec, display=args.display).run(cli._begun)
+except ConfigError as error:
+    say(f"delegate: {error}")
+    sys.exit(2)
+sys.exit(report(result, args.out or Layout(args.workdir).out)[0])
+""",
+)
 SID = "0f8fad5b-d9cb-469f-a165-70867728950e"
 WAIT = 30  # seconds
 RESETS = 1760000000
@@ -96,9 +120,9 @@ class Integration(Runs):
             self.config, "projects", re.sub(r"[^A-Za-z0-9]", "-", self.agent), f"{SID}.jsonl"
         )
 
-    def argv(self, *extra) -> list[str]:
+    def argv(self, *extra, resume=False) -> list[str]:
         return [
-            *RUN,
+            *(API_RESUME if resume else RUN),
             "--role",
             self.ROLE,
             "--input",
@@ -116,10 +140,14 @@ class Integration(Runs):
         with open(self.scenario, "w") as f:
             json.dump({"steps": steps, **scenario, "log": self.log}, f)
 
-    def drive(self, steps, *extra, cwd=None, argv=None, **scenario) -> subprocess.CompletedProcess:
+    def drive(
+        self, steps, *extra, cwd=None, argv=None, resume=False, fixes=None, **scenario
+    ) -> subprocess.CompletedProcess:
+        if fixes is not None:
+            scenario["resume"] = fixes
         self.scene(steps, **scenario)
         return subprocess.run(
-            argv or self.argv(*extra),
+            argv or self.argv(*extra, resume=resume),
             cwd=cwd or self.proj,
             env=self.env,
             stdin=subprocess.DEVNULL,
@@ -134,11 +162,11 @@ class Integration(Runs):
                 line["message"]["content"] for line in map(json.loads, f) if line["type"] == "user"
             ]
 
-    def popen(self, *extra) -> subprocess.Popen:
+    def popen(self, *extra, resume=False) -> subprocess.Popen:
         # A suite started in the background inherits SIGINT ignored; the CLI installs no handler of
         # its own.
         proc = subprocess.Popen(
-            self.argv(*extra),
+            self.argv(*extra, resume=resume),
             cwd=self.proj,
             env=self.env,
             stdin=subprocess.DEVNULL,
@@ -211,11 +239,15 @@ class CodexIntegration(Runs):
             "FAKE_SCENARIO": self.scenario,
         }
 
-    def drive(self, steps, *extra, **scenario) -> subprocess.CompletedProcess:
+    def drive(
+        self, steps, *extra, resume=False, fixes=None, **scenario
+    ) -> subprocess.CompletedProcess:
+        if fixes is not None:
+            scenario["resume"] = fixes
         with open(self.scenario, "w") as f:
             json.dump({"steps": steps, **scenario}, f)
         argv = [
-            *RUN,
+            *(API_RESUME if resume else RUN),
             "--client",
             "codex",
             "--role",

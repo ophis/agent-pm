@@ -1,13 +1,15 @@
 """Real process behavior in isolated integration fixtures."""
 
+import io
 import json
 import os
 import shutil
 import subprocess
+from contextlib import redirect_stderr
 from datetime import datetime
 from unittest import mock
 
-from agent_pm.delegate import Outcome, Result
+from agent_pm.delegate import Outcome, Result, Spec
 from agent_pm.delegate.composer import Composer
 from agent_pm.delegate.composer.prompt import RESUME
 
@@ -30,9 +32,13 @@ class Exits(Base):
             self.assertEqual(f.read(), DONE["deliverable"])
         self.assertEqual([r["kind"] for r in self.records()][-2:], ["result", "end"])
 
-    def test_a_resume_continues_its_session(self):
-        code, _, err = self.runs("--sid", SID, "--resume")
-        self.assertEqual(code, 0, err)
+    def test_a_resume_spec_continues_its_session(self):
+        spec = Spec(
+            "Hello.", self.work, task="echo", client="fake", sid=SID, resume=True, out=self.out
+        )
+        with redirect_stderr(io.StringIO()):
+            result = self.delegate_cls()("dummy-tester", spec).run()
+        self.assertEqual(result.returncode, 0, result.error)
         (launch,) = self.launches()
         argv = launch["argv"]
         self.assertEqual((argv[argv.index("--sid") + 1], "--resume" in argv), (SID, True))

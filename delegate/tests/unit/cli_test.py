@@ -14,7 +14,6 @@ from unittest import mock
 from agent_pm.delegate import ConfigError, Outcome, Spec, cli
 from agent_pm.delegate.composer import Composer, RunParams
 from agent_pm.delegate.composer.base import TEAM
-from agent_pm.delegate.composer.prompt import RESUME
 from agent_pm.delegate.engine.harness_delegate import HarnessDelegate
 from agent_pm.delegate.engine.runner import STOP_LIMIT
 from agent_pm.delegate.engine.state import RunState
@@ -191,7 +190,7 @@ class Detach(Base):
 
     def test_the_launchers_sid_is_the_runs_and_a_different_sid_exits_2(self):
         other = "99999999-8888-7777-6666-555555555555"
-        for extra in ((), ("--sid", SID), ("--resume",), ("--sid", other)):
+        for extra in ((), ("--sid", SID), ("--sid", other)):
             with self.subTest(extra=extra):
                 Detaching.made, Detaching.environments = [], []
                 os.environ["AGENT_PM_SID"] = SID
@@ -203,7 +202,7 @@ class Detach(Base):
                     continue
                 self.assertEqual(code, 0, err)
                 ((_, spec, _),) = Detaching.made
-                self.assertEqual((spec.sid, spec.resume), (SID, extra == ("--resume",)))
+                self.assertEqual((spec.sid, spec.resume), (SID, False))
                 self.assertNotIn("AGENT_PM_SID", Detaching.environments[0])
 
     def test_an_unusable_events_file_given_or_inherited_exits_2_writing_nothing(self):
@@ -467,18 +466,11 @@ class DryRun(Base):
             (self.launches(), os.path.exists(self.work), os.listdir(self.agent_pm)), ([], False, [])
         )
 
-    def test_a_new_run_gets_a_sid_and_a_resume_continues_its_task(self):
+    def test_a_new_run_gets_a_sid(self):
         code, out, _ = self.runs("--dry-run", task=None)
         shown = json.loads(out)
         self.assertEqual((code, uuid.UUID(shown["sid"]).version, shown["resume"]), (0, 4, False))
         self.assertIn("**Your task**: pick it from", shown["prompt"])
-        code, out, _ = self.runs("--sid", SID, "--resume", "--dry-run")
-        shown = json.loads(out)
-        self.assertEqual(
-            (code, shown["sid"], shown["resume"], shown["cwd"]),
-            (0, SID, True, Layout(self.work).agent),
-        )
-        self.assertTrue(shown["prompt"].startswith(RESUME))
         self.assertFalse(os.path.exists(self.work))
 
 
@@ -580,14 +572,25 @@ class InProcess(Base):
             ),
         )
 
-    def test_an_answer_while_the_run_is_alive_exits_2_and_starts_nothing(self):
+    def test_reconstructing_a_live_run_for_resume_starts_nothing(self):
         spec = Spec("Hello.", self.work, task="echo", mode="in_process", client="fake", sid=SID)
         self.delegate_cls()("dummy-tester", spec)
-        with RunState(Layout(self.work)).run_lock():
-            code, out, err = self.runs("--mode", "in_process", "--sid", SID, "--resume")
-        self.assertEqual(
-            (code, out, err), (2, "", f"delegate: {self.work}: delegate is still alive\n")
-        )
+        with (
+            RunState(Layout(self.work)).run_lock(),
+            self.assertRaisesRegex(ConfigError, "delegate is still alive"),
+        ):
+            self.delegate_cls()(
+                "dummy-tester",
+                Spec(
+                    "answer",
+                    self.work,
+                    task="echo",
+                    mode="in_process",
+                    client="fake",
+                    sid=SID,
+                    resume=True,
+                ),
+            )
         self.assertEqual(self.launches(), [])
 
     def test_headless_and_tui_exit_2_and_nothing_runs(self):
@@ -749,6 +752,11 @@ class Configures(Base):
 
 
 class Usage(Base):
+    def test_run_resume_has_no_compatibility_option(self):
+        code, out, err = self.cli("run", "--resume")
+        self.assertEqual((code, out), (2, ""))
+        self.assertIn("unrecognized arguments: --resume", err)
+
     def test_a_run_needs_input(self):
         for argv in (
             ("--out", "o.md"),
@@ -759,10 +767,6 @@ class Usage(Base):
                     self.cli("run", "--role", "dummy-tester", "--client", "fake", *argv),
                     (2, "", "delegate: --input is required\n"),
                 )
-        self.assertEqual(self.launches(), [])
-
-    def test_resume_needs_sid(self):
-        self.assertEqual(self.runs("--resume"), (2, "", "delegate: --resume needs --sid\n"))
         self.assertEqual(self.launches(), [])
 
     @mock.patch.dict(os.environ, {"NO_COLOR": "1"})
@@ -1002,7 +1006,7 @@ class View:
     def attach_command(self):
         return self.command
 
-    def resume(self, *, mode=None):
+    def resume(self, *, mode=None, input=None):
         return record(self.name)
 
 
@@ -1057,6 +1061,29 @@ class Queries(Case):
                 self.assertEqual(
                     self.query(*arguments, stdin=stdin, a=View("a")), (0, "content of a\n", "")
                 )
+
+    def test_resume_input_is_forwarded_from_key_or_record(self):
+        class InputView(View):
+            def _read(self):
+                return self
+
+            def _record(self, state):
+                return record(self.name)
+
+            def resume(self, *, input=None, mode=None):
+                self.input = input
+                return record(self.name)
+
+        for arguments, stdin in (
+            (("resume", "a", "--input", "answer"), ""),
+            (("resume", "--input", "answer"), record("a").to_line()),
+        ):
+            view = InputView("a")
+            self.assertEqual(
+                self.query(*arguments, stdin=stdin, a=view),
+                (0, record("a").to_line() + "\n", f"delegate: session {record('a').sid}\n"),
+            )
+            self.assertEqual(view.input, "answer")
 
     def test_content_bad_input_answers_nothing_before_attach(self):
         for arguments, stdin in (

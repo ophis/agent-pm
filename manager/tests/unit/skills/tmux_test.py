@@ -53,14 +53,24 @@ class Commands(Case):
         own = os.path.join(SKILLS, "tmux", "../../../bin")
         self.assertEqual(os.path.realpath(own), os.path.realpath(BIN))
 
-    def test_crew_launches_take_no_session_id_and_direct_detaches_name_their_events(self):
+    def test_crew_launches_take_no_session_id(self):
         for commands in spans(body("tmux")):
             outer = commands[0][:2] == ["agent-pm-crew", "run"]
             for command in commands[1:] if outer else commands:
                 if outer:
                     self.assertFalse({"--sid", "--resume"} & set(flags(command)), command)
-                elif command[:2] == ["agent-pm-delegate", "run"] and "--detach" in flags(command):
-                    self.assertIn("--events", flags(command))
+
+    def test_each_layers_content_query_is_preapproved(self):
+        for command in ("agent-pm-session", "agent-pm-delegate", "agent-pm-linear"):
+            self.assertIn(f"{command} content *", rules("tmux"))
+
+    def test_role_launch_has_no_separate_dry_run(self):
+        [role] = [
+            line
+            for line in section("tmux", "Launch").splitlines()
+            if line.startswith("- **Role run**:")
+        ]
+        self.assertNotIn("--dry-run", role)
 
     def test_no_retired_path_flag_or_manual_repair(self):
         for word in (*RETIRED, *REPAIRS):
@@ -220,10 +230,11 @@ class Flows(Case):
         self.assertRegex(blocked, r"not by the last event")
         self.assertIn("ask the user", blocked)
 
-    def test_recovery_is_per_entry_and_a_waiting_role_is_answered_by_its_sid(self):
+    def test_recovery_is_per_entry_and_a_waiting_role_uses_recorded_run_settings(self):
         recover = section("tmux", "Recover")
         self.assertIn("agent-pm-crew resume <name>", recover)
-        self.assertRegex(recover, r"agent-pm-delegate run .*--resume --sid <sid> --input")
+        self.assertIn("agent-pm-delegate resume <workdir> --input '<answers>'", recover)
+        self.assertNotIn("--resume --sid", recover)
         self.assertRegex(recover, r"no resume-all")
 
     def test_grid_names_its_keys_and_the_public_retile(self):

@@ -1,4 +1,4 @@
-"""delegate/cli.py as a subprocess, --client codex, over
+"""CLI runs and API resumes as subprocesses, --client codex, over
 session/tests/integration/clients/codex/fake_codex.py (on PATH as `codex`); HOME, its recovery
 store, outside the temp dirs (as the Codex Client's tests), the workdir in one, away from any
 ancestor's .codex. Main's tests/integration/core/fake_codex_integration_test.py, the Delegate's
@@ -93,7 +93,7 @@ class Codex(CodexIntegration):
     def test_two_runs_resume_the_same_native_session_and_keep_previous_progress(self):
         first = self.drive(said(mark("start", "first turn"), block(DONE)))
         self.assertEqual(first.returncode, 0, first.stderr)
-        second = self.drive(said(mark("review", "second turn"), block(DONE)), "--resume")
+        second = self.drive(said(mark("review", "second turn"), block(DONE)), resume=True)
         self.assertEqual(second.returncode, 0, second.stderr)
         self.assertEqual([call["resume_id"] for call in self.calls()], [None, NATIVE])
         self.assertEqual(self.texts("progress"), ["first turn", "second turn"])
@@ -104,7 +104,7 @@ class Codex(CodexIntegration):
         self.assertEqual(first.returncode, 1, first.stderr)
         self.assertIn("delegate: the agent run returned no outcome", first.stderr)
         self.assertFalse(os.path.exists(self.out))
-        second = self.drive(said(mark("review", "recovered"), block(DONE)), "--resume")
+        second = self.drive(said(mark("review", "recovered"), block(DONE)), resume=True)
         self.assertEqual(second.returncode, 0, second.stderr)
         self.assertEqual(self.calls()[-1]["resume_id"], NATIVE)
         self.assertEqual(self.texts("client_session", "client_id"), [NATIVE, NATIVE])
@@ -113,7 +113,7 @@ class Codex(CodexIntegration):
         self.assertEqual(self.read(self.out), DONE["deliverable"])
 
     def test_missing_mapping_fails_before_spawn(self):
-        res = self.drive([], "--resume")
+        res = self.drive([], resume=True)
         self.assertEqual((res.returncode, res.stdout), (2, ""), res.stderr)
         self.assertIn("delegate: missing Codex recovery state", res.stderr)
         self.assertEqual(self.calls(), [])
@@ -124,7 +124,7 @@ class Codex(CodexIntegration):
         self.assertEqual(first.returncode, 0, first.stderr)
         with mock.patch.dict(os.environ, {"CODEX_HOME": self.env["CODEX_HOME"]}):
             os.unlink(fake_codex.session_path(NATIVE))
-        res = self.drive([], "--resume")
+        res = self.drive([], resume=True)
         self.assertEqual(res.returncode, 2, res.stderr)
         self.assertIn("delegate: missing Codex session file", res.stderr)
         self.assertEqual(len(self.calls()), 1)
@@ -139,7 +139,7 @@ class Codex(CodexIntegration):
         self.assertFalse(os.path.exists(self.out))
 
     def test_an_invalid_outcome_is_fixed_by_one_resume(self):
-        res = self.drive(said(mark("start", "working"), block(UNSAVED)), resume=said(block(DONE)))
+        res = self.drive(said(mark("start", "working"), block(UNSAVED)), fixes=said(block(DONE)))
         self.assertEqual(res.returncode, 0, res.stderr)
         self.assertIn(f"delegate: invalid outcome: {UNSAVED_ERROR}; resuming once", res.stderr)
         first, second = self.calls()

@@ -4,7 +4,7 @@ session/tests/integration/clients/claude/fake_claude.py: the one Record line who
 on return, the harness session, the TUI beside the caller or in no pane, the harness's outcome and
 exited lines, a kill-session of the harness session, an events path tmux would misread, the events
 file and sid a launcher gives in $AGENT_PM_EVENTS and $AGENT_PM_SID, a needs_input run answered by
-`run --resume --sid --input --detach` (refused while the run lives) whose outcome a
+`resume WORKDIR --input TEXT` (refused while the run lives) whose outcome a
 `resume WORKDIR` then leaves alone. Ports main's
 tests/integration/core/drive_tui_integration_test.py
 test_detach_from_the_manager. Its test_detach_events_default and main's
@@ -408,18 +408,17 @@ class Headless(Detach):
 
 
 class Answer(Detach):
-    def setUp(self):
-        super().setUp()
-        self.second = os.path.join(self.dir, "answer-events")
-
-    def answer(self, *extra: str, steps, turns=()) -> subprocess.CompletedProcess:
-        return self.detach(
-            *extra, "--resume", steps=steps, turns=turns, events=self.second, text=ANSWER
-        )
+    def answer(self, *, steps, turns=()) -> subprocess.CompletedProcess:
+        with open(self.scenario, "w", encoding="utf-8") as stream:
+            json.dump({"steps": steps, "turns": list(turns)}, stream)
+        self.answer_offset = len(live_tmux.events(self.events_used))
+        return self.cli([*RESUME, self.work, "--input", ANSWER])
 
     def answered(self, record: Record, *, turn_ends: int) -> None:
         """record's run resumed SID with ANSWER to done; a resume then starts nothing."""
-        shaped = self.ended(turn_ends=turn_ends)
+        self.ended()
+        shaped = shape(live_tmux.events(self.events_used)[self.answer_offset :])
+        self.assertEqual(shaped.count("turn end"), turn_ends)
         self.assertEqual(self.harness_lines(shaped), ["outcome done", "exited 0"])
         self.assertEqual(self.read(self.out), DONE["deliverable"])
         self.assertEqual(self.attempt(), 2)
@@ -433,7 +432,7 @@ class Answer(Detach):
         self.assertEqual(again.returncode, 0, again.stderr)
         self.assertEqual(Record.parse(again.stdout), record)
         self.assertFalse(self.live(HARNESS))
-        self.assertEqual(shape(live_tmux.events(self.second)), shaped)
+        self.assertEqual(shape(live_tmux.events(self.events_used)[self.answer_offset :]), shaped)
 
     def attempt(self) -> int:
         with open(os.path.join(Layout(self.work).run, "delegate.json")) as f:
@@ -453,7 +452,7 @@ class Answer(Detach):
         shaped = self.ended(turn_ends=2)
         self.assertEqual(self.harness_lines(shaped), ["outcome needs_input", "exited 0"])
         self.assertTrue(self.live(TUI))
-        res = self.answer("--mode", "tui", steps=[START], turns=[[block(DONE)]])
+        res = self.answer(steps=[START], turns=[[block(DONE)]])
         self.answered(self.said(res, tui=True), turn_ends=2)
 
     def test_an_answer_while_the_run_lives_exits_2_starting_nothing(self):
@@ -461,7 +460,7 @@ class Answer(Detach):
         self.until(lambda: "progress" in self.kinds(), "the client's start mark")
         res = self.answer(steps=[START, block(DONE)])
         self.assertEqual((res.returncode, res.stdout), (2, ""), res.stderr)
-        self.assertIn(f"delegate: {self.work}: delegate is still alive\n", res.stderr)
+        self.assertIn("delegate is still alive", res.stderr)
         self.assertTrue(self.live(HARNESS))
         self.assertEqual(self.attempt(), 1)
         shown = self.server.tmux("display-message", "-p", "-t", f"={HARNESS}:", "#{pane_pid}")
