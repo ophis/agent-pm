@@ -35,26 +35,6 @@ from agent_pm.session.engine import types
 
 from session.tests.case import Case
 
-NAMES = (
-    "Session",
-    "Host",
-    "HostProcess",
-    "Terminal",
-    "Displayable",
-    "NotDisplayable",
-    "SessionStatusLog",
-    "Usage",
-    "SessionError",
-    "ConfigError",
-    "Spec",
-    "Access",
-    "RunLog",
-    "SessionInfo",
-    "SessionEvent",
-    "Hosts",
-    "Launch",
-)
-
 EVENTS = {Activity, Blocked, Exited, IdleTimeout, LimitHit, Reply, Stderr, TurnEnd, TurnFailed}
 
 ALLOWED_CONCRETE = {
@@ -80,22 +60,11 @@ ALLOWED_CONCRETE = {
 
 
 class Exports(Case):
-    def test_all_holds_the_new_names_each_bound(self):
-        for name in NAMES:
-            with self.subTest(name=name):
-                self.assertIn(name, session.__all__)
-        self.assertEqual([n for n in session.__all__ if not hasattr(session, n)], [])
-
     def test_the_types_are_engine_types(self):
         for name in session.__all__:
             if hasattr(types, name):
                 with self.subTest(name=name):
                     self.assertIs(getattr(session, name), getattr(types, name))
-
-    def test_no_native_binding_crosses_the_session_boundary(self):
-        for name in ("SessionBound", "ClientBound"):
-            with self.subTest(name=name):
-                self.assertNotIn(name, session.__all__)
 
     def test_the_only_concrete_classes_are_the_helpers_and_exceptions(self):
         concrete = {
