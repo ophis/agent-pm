@@ -29,7 +29,7 @@ class SkillFlows(LiveCrew):
         record = self.record(
             self.written(
                 "tmux",
-                "agent-pm-crew run <name> -- agent-pm-session start",
+                "agent-pm-crew worker",
                 keep=("--prompt",),
                 env=self.scene("w1"),
                 name="w1",
@@ -52,7 +52,7 @@ class SkillFlows(LiveCrew):
         attach = self.ok(self.written("tmux", "agent-pm-crew attach"))
         self.assertRegex(attach.stdout, r"(?m)^resume: agent-pm-crew resume .*\bw1$")
         resumed = self.record(
-            self.written("tmux", "agent-pm-crew resume <name>", env=self.scene("w1"), name="w1")
+            self.written("tmux", "agent-pm-crew resume <name>…", env=self.scene("w1"), name="w1")
         )
         self.assertEqual(resumed.sid, record.sid)
         self.assertTrue(self.live("w1"))
@@ -64,14 +64,16 @@ class SkillFlows(LiveCrew):
     def test_a_waiting_role_run_is_answered_in_its_session_as_written(self):
         work = self.workdir("r")
         launch = fill(
-            example("tmux", "agent-pm-crew run <name> -- agent-pm-delegate run"),
+            example("tmux", "agent-pm-crew role"),
             "--workdir",
+            "--name",
+            "--mode",
             name="r",
             role=ROLE,
             workdir=work,
             input="Hello.",
         )
-        argv = ["headless" if word == "tui" else word for word in launch]
+        argv = launch
         record = self.record(
             self.call(*argv, **self.crew_env(), **self.scene("r", [block(ASKING)]))
         )
@@ -83,13 +85,14 @@ class SkillFlows(LiveCrew):
         answered = self.record(
             self.written(
                 "tmux",
-                "agent-pm-delegate resume",
+                "agent-pm-crew resume <name> --input",
                 env=self.scene("r", [block(DONE)]),
-                workdir=work,
+                name="r",
                 answers="Say hello.",
             )
         )
         self.assertEqual(answered.sid, record.sid)
+        self.assertIs(self.roster()["r"].state, State.LIVE)
         self.wait_event(harness, "exited", count=2)
         self.assertTrue(has_pair(logged(self.log("r"))[-1]["argv"], "--resume", record.sid))
         status = json.loads(self.ok(self.crew("status", "r")).stdout)
@@ -106,7 +109,7 @@ class SkillFlows(LiveCrew):
         record = self.record(
             self.written(
                 "manage",
-                "agent-pm-crew run <name> -- agent-pm-session start",
+                "agent-pm-crew worker",
                 env={"FAKE_SCENARIO": scenario, "FAKE_LOG": log},
                 name="c1",
                 work_dir=self.cwd,
