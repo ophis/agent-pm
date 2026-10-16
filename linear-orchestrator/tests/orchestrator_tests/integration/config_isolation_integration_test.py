@@ -85,25 +85,24 @@ class ClonePaths(Clones):
 
 
 class CloneValidation(Clones):
-    def test_matching_origin(self):
-        for name, origin, slug in (
-            ("https", HTTPS, SLUG),
-            ("scp", "git@github.com:ophis/agent-pm.git", SLUG),
-            ("bare", "https://github.com/ophis/agent-pm", SLUG),
-            ("case", HTTPS, "OPHIS/Agent-PM"),
-            ("origin case", "https://GitHub.com/Ophis/AGENT-PM.git", SLUG),
-        ):
-            with self.subTest(name):
-                self.assertIsNone(config.clone_error(self.clone(name, origin), slug))
-
-    def test_reasons(self):
-        bad = self.bad() + [
-            (repr(path), path, f"{path!r} has a non-printable character")
+    def test_a_matching_origin_is_no_error_and_any_other_clone_the_reason(self):
+        matching = [
+            (name, self.clone(name, origin), slug, None)
+            for name, origin, slug in (
+                ("https", HTTPS, SLUG),
+                ("scp", "git@github.com:ophis/agent-pm.git", SLUG),
+                ("bare", "https://github.com/ophis/agent-pm", SLUG),
+                ("case", HTTPS, "OPHIS/Agent-PM"),
+                ("origin case", "https://GitHub.com/Ophis/AGENT-PM.git", SLUG),
+            )
+        ]
+        bad = [(name, path, SLUG, reason) for name, path, reason in self.bad()] + [
+            (repr(path), path, SLUG, f"{path!r} has a non-printable character")
             for path in ("/x\ny", "/x\x85y", "/x\u2028y")
         ]
-        for name, path, reason in bad:
+        for name, path, slug, reason in matching + bad:
             with self.subTest(name):
-                self.assertEqual(config.clone_error(path, SLUG), reason)
+                self.assertEqual(config.clone_error(path, slug), reason)
 
     def test_run_failures_are_reasons(self):
         clone = self.clone()
