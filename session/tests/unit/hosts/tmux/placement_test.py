@@ -1151,36 +1151,3 @@ class StackTest(Case):
                 with self.assertRaisesRegex(types.TuiError, "opener"):
                     self.show(fake, opener=opener)
                 self.assertEqual(fake.calls, [])
-
-
-class ClosePaneTest(Case):
-    OPTION = ["tmux", "show-options", "-v", "-t", "=s:", "@pane"]
-    LISTED = ["tmux", "list-panes", "-a", "-F", "#{pane_id}"]
-
-    def test_kills_the_recorded_pane_tmux_still_lists(self):
-        fake = FakeTmux(results={"show-options": (0, "%5\n"), "list-panes": (0, "%1\n%5\n")})
-        placement.close_pane("s", proc=fake)
-        self.assertEqual(fake.calls, [self.OPTION, self.LISTED, ["tmux", "kill-pane", "-t", "%5"]])
-
-    def test_leaves_an_unlisted_unset_or_iterm2_pane(self):
-        for pane, listed, calls in (
-            ("%5\n", "%1\n", [self.OPTION, self.LISTED]),
-            ("", "%1\n", [self.OPTION]),
-            ("w0t0p0:ABC\n", "%1\n", [self.OPTION]),
-        ):
-            with self.subTest(pane=pane):
-                fake = FakeTmux(
-                    results={
-                        "show-options": (0, pane) if pane else (1, "", "invalid option: @pane\n"),
-                        "list-panes": (0, listed),
-                    }
-                )
-                placement.close_pane("s", proc=fake)
-                self.assertEqual(fake.calls, calls)
-
-    def test_a_failed_kill_is_a_tui_error(self):
-        fake = FakeTmux(
-            results={"show-options": (0, "%5\n"), "list-panes": (0, "%5\n")}, fail=("kill-pane",)
-        )
-        with self.assertRaises(types.TuiError):
-            placement.close_pane("s", proc=fake)

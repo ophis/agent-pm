@@ -168,7 +168,7 @@ class Pruner:
             self.say("prune-plan", ident, session=view.sid, what="close the run")
             return True
         try:
-            view.close()
+            view.delegate.close()
         except (
             config.ConfigError,
             DelegateConfigError,
@@ -301,7 +301,7 @@ class Pruner:
         commons = {c for wt in found.checkouts(workdir) or () if (c := common_dir(wt))}
         view = self.views.get(ident)
         try:
-            if not (self.dry and view is not None and view.alive()):
+            if not (self.dry and view is not None and view.delegate.alive()):
                 found.clean(workdir, dry=self.dry)
         except (config.ConfigError, DelegateConfigError) as error:
             self.say("prune-skip", ident, once=True, reason=one_line(error))

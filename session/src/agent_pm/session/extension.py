@@ -7,7 +7,6 @@ from agent_pm.session.adapters.base import Adapter, Headless, InProcess, JsonHea
 from agent_pm.session.engine.types import (
     Access,
     Activity,
-    ActivityState,
     Blocked,
     ClientBound,
     ConfigError,
@@ -34,16 +33,16 @@ from agent_pm.session.engine.types import (
     SessionRow,
     SessionStatus,
     Spec,
+    StatusState,
     Stderr,
     TuiSettings,
     TurnEnd,
     TurnFailed,
     Usage,
     Window,
-    Word,
 )
 from agent_pm.session.hosts.base import Displayable, Host, HostProcess, Terminal
-from agent_pm.utils import Display, Record
+from agent_pm.utils import Display, Record, Status
 
 __all__ = [
     "Adapter",
@@ -70,7 +69,7 @@ __all__ = [
     "ClientBound",
     "SessionEvent",
     "Activity",
-    "ActivityState",
+    "StatusState",
     "Blocked",
     "Exited",
     "LimitHit",
@@ -79,7 +78,6 @@ __all__ = [
     "TurnEnd",
     "TurnFailed",
     "TuiSettings",
-    "Word",
     "Stderr",
     "SessionInfo",
     "SessionRow",
@@ -89,6 +87,7 @@ __all__ = [
     "Window",
     "Hosts",
     "Record",
+    "Status",
     "Display",
     "ConfigError",
     "SessionError",

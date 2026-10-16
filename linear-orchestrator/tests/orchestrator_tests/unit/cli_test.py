@@ -230,8 +230,8 @@ class Queries(RunCase):
         two, _ = self.start("TASK-2")
         result, output, errors = _call(["close", "TASK-1"])
         self.assertEqual((result, output, errors), (0, "", ""))
-        self.assertFalse(one.alive())
-        self.assertTrue(two.alive())
+        self.assertFalse(one.delegate.alive())
+        self.assertTrue(two.delegate.alive())
         for command in ("show", "hide", "attach-command"):
             result, output, errors = _call([command, "TASK-2"])
             self.assertEqual((result, output), (1, ""))
@@ -249,9 +249,9 @@ class Queries(RunCase):
                 result, output, errors = _call(arguments, stdin=stdin)
                 self.assertEqual((result, output), (2, ""))
                 self.assertEqual(len(errors.splitlines()), 1)
-                self.assertTrue(owner.alive())
+                self.assertTrue(owner.delegate.alive())
         self.assertEqual(_call(["close"], stdin=""), (0, "", ""))
-        self.assertTrue(owner.alive())
+        self.assertTrue(owner.delegate.alive())
 
     def test_batch_configuration_error_preserves_valid_key_output(self):
         self.start()

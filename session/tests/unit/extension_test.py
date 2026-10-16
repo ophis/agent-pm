@@ -43,7 +43,7 @@ TYPES = {
             "ClientBound",
             "SessionEvent",
             "Activity",
-            "ActivityState",
+            "StatusState",
             "Blocked",
             "Exited",
             "LimitHit",
@@ -52,7 +52,6 @@ TYPES = {
             "TurnEnd",
             "TurnFailed",
             "TuiSettings",
-            "Word",
             "Stderr",
             "SessionInfo",
             "SessionRow",
@@ -68,6 +67,7 @@ TYPES = {
         engine_types,
     ),
     "Record": utils,
+    "Status": utils,
     "Display": utils,
 }
 

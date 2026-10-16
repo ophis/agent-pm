@@ -91,11 +91,11 @@ def provider(api, cfg):
         def status(self):
             live = self.alive()
             return Status(
-                self.issue,
-                live,
-                "working" if live else "gone",
-                None,
-                self.attach_command(),
+                name=self.issue,
+                alive=live,
+                state="working" if live else "gone",
+                outcome=None,
+                attach=self.attach_command(),
                 hidden=False,
             )
 

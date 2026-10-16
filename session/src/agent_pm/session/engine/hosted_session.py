@@ -18,7 +18,6 @@ from typing import Any, ClassVar, cast
 
 from agent_pm.session.adapters.base import Adapter
 from agent_pm.session.adapters.registry import Registry, settings
-from agent_pm.session.engine import hidden as hidden_store
 from agent_pm.session.engine.base import Session
 from agent_pm.session.engine.records import RunLog
 from agent_pm.session.engine.types import (
@@ -41,6 +40,7 @@ from agent_pm.session.engine.types import (
     SessionRow,
     SessionStatus,
     Spec,
+    StatusState,
     Stderr,
     TurnEnd,
     Usage,
@@ -52,6 +52,7 @@ from agent_pm.utils import (
     STATE,
     Display,
     Record,
+    Status,
     load_class,
     module_roots,
     printable_abs,
@@ -518,8 +519,29 @@ class HostedSession(Session):
     def press(self, keys: Sequence[KeyPress]) -> None:
         self._running.press(tuple(keys))
 
-    def state(self) -> Liveness:
-        return self._running.state()
+    def alive(self) -> bool:
+        return self._running.state() == Liveness.LIVE
+
+    def status(self) -> Status:
+        """Its run's; a live tui one's activity, attach and hidden from its terminal."""
+        liveness, name = self._running.state(), self._tui()
+        if liveness == Liveness.LIVE and name is not None:
+            try:
+                return replace(self._host.attach(name).status(), cwd=self._info.cwd)
+            except SessionError:
+                liveness = Liveness.ABSENT
+        return Status(
+            name=self.name or self.sid,
+            alive=liveness == Liveness.LIVE,
+            state={
+                Liveness.LIVE: StatusState.WORKING,
+                Liveness.UNKNOWN: StatusState.UNKNOWN,
+            }.get(liveness, StatusState.GONE if name else StatusState.DEAD),
+            outcome=None,
+            attach=None,
+            hidden=False,
+            cwd=self._info.cwd if liveness == Liveness.LIVE else None,
+        )
 
     def stop(self) -> None:
         self._running.stop()
@@ -576,20 +598,11 @@ class HostedSession(Session):
         host, name = self._shown("show")
         if display is None:
             display = self._host.attach(name).display()
-        command = host.show(name, display=display, command=command)
-        hidden_store.record(self._host.attach(name), hidden=False)
-        return command
+        return host.show(name, display=display, command=command)
 
     def hide(self) -> None:
         host, name = self._shown("hide")
         host.hide(name)
-        hidden_store.record(self._host.attach(name), hidden=True)
-
-    def hidden(self) -> bool:
-        name = self._tui()
-        return (
-            self.displayable and name is not None and hidden_store.hidden(self._host.attach(name))
-        )
 
     def attach_command(self) -> str:
         host, name = self._shown("attach_command")

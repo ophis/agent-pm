@@ -22,7 +22,7 @@ from collections.abc import Sequence
 from contextlib import suppress
 from datetime import datetime
 
-from agent_pm.session.engine.types import HookCall, HookError, Word
+from agent_pm.session.engine.types import MARKS, HookCall, HookError, StatusState
 
 PAYLOAD_MAX = 64 << 20  # bytes of stdin parsed
 
@@ -60,7 +60,7 @@ def say(text: str) -> None:
 
 SESSION_STATE = {  # what this hook or an adapter_hook reads
     "words": lambda v: (
-        isinstance(v, dict) and all(LABEL.fullmatch(k) and w in tuple(Word) for k, w in v.items())
+        isinstance(v, dict) and all(LABEL.fullmatch(k) and w in MARKS for k, w in v.items())
     ),
     "events": lambda v: v is None or _abs(v),
     "sid": lambda v: isinstance(v, str) and v != "" and v.isprintable() and "/" not in v,
@@ -119,7 +119,7 @@ def _dispatch(folder, label, payload, state, specs):
     word = state["words"].get(label)
     host_hook = state.get("host_hook") if word else None
     host = None if host_hook is None else _load_callback(host_hook["module"], "host hook", specs)
-    if word != Word.DONE:
+    if word != StatusState.DONE:
         payload = cut(payload)
     stamp = datetime.now().astimezone().isoformat(timespec="milliseconds")
     append(os.path.join(folder, HOOKS), {"ts": stamp, "label": label, "payload": payload})

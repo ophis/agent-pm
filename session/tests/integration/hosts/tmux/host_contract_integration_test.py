@@ -11,8 +11,8 @@ from pathlib import Path
 from unittest import mock
 
 from agent_pm.session import SessionError
-from agent_pm.session.engine.types import ActivityState
 from agent_pm.session.hosts.tmux import TmuxHost
+from agent_pm.utils import StatusState
 
 from session.tests import live_tmux
 from session.tests.case import Case
@@ -97,12 +97,12 @@ class TmuxHostContractTest(HostContract, Case):
             "the launched pane printing",
         )
         self.split(name)
-        self.assertEqual(self.row(name).state, ActivityState.WORKING)
+        self.assertEqual(self.row(name).state, StatusState.WORKING)
         for screen in (self.host.screen(name), self.host.screen(name, 50)):
             self.assertIn("agent pane", screen)
             self.assertNotIn("user pane", screen)
         Path(gate).touch()
-        self.poll(lambda: self.row(name).state == ActivityState.DEAD, "the launched pane dead")
+        self.poll(lambda: self.row(name).state == StatusState.DEAD, "the launched pane dead")
         last = self.row(name).last_lines
         self.assertIn("agent pane", last)
         self.assertNotIn("user pane", last)
@@ -128,7 +128,7 @@ class TmuxHostContractTest(HostContract, Case):
 
         self.poll(lambda: panes() == [other], "only the user's pane left")
         self.assertIn(name, self.host.list())
-        self.assertEqual(self.row(name).state, ActivityState.DEAD)
+        self.assertEqual(self.row(name).state, StatusState.DEAD)
 
     def test_list_without_a_display_names_every_detached_session_sorted(self):
         first, second = self.fresh(), self.fresh()

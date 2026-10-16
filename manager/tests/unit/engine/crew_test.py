@@ -68,7 +68,11 @@ class RecordlessStatus(RosterCase):
         self.assertEqual(
             Crew(self.roster).status(),
             [
-                Status("l", alive=False, state="gone", outcome=None, attach=None, hidden=False),
-                Status("s", alive=False, state="starting", outcome=None, attach=None, hidden=False),
+                Status(
+                    name="l", alive=False, state="gone", outcome=None, attach=None, hidden=False
+                ),
+                Status(
+                    name="s", alive=False, state="starting", outcome=None, attach=None, hidden=False
+                ),
             ],
         )

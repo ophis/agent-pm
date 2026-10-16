@@ -17,7 +17,16 @@ import uuid
 
 from agent_pm.session import ConfigError, Host, HostProcess, SessionError, Terminal
 from agent_pm.session.engine.status_log import SessionStatusLog
-from agent_pm.session.engine.types import Key, KeyPress, Launch, Liveness, NamedKey, Paste, Word
+from agent_pm.session.engine.types import (
+    MARKS,
+    Key,
+    KeyPress,
+    Launch,
+    Liveness,
+    NamedKey,
+    Paste,
+    StatusState,
+)
 from agent_pm.utils import Display, ProcessControl, Record
 
 from session.tests.case import ROOTS
@@ -101,11 +110,11 @@ class FakeProcess(HostProcess):
         value = _read(self.folder, "rc")
         return None if value is None else int(value)
 
-    def activity(self) -> Word | None:
+    def activity(self) -> StatusState | None:
         value = _read(self.folder, "activity") if self._own() else None
-        return Word(value) if value in tuple(Word) else None
+        return StatusState(value) if value in MARKS else None
 
-    def mark(self, word: Word, events: str | None) -> None:
+    def mark(self, word: StatusState, events: str | None) -> None:
         if self._own():
             with open(os.path.join(self.folder, "activity"), "w", encoding="utf-8") as stream:
                 stream.write(word)

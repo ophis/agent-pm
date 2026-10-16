@@ -196,11 +196,11 @@ class FakeDelegate(Delegate):
         outcome = state["outcome"] and state["outcome"]["status"]
         word = "working" if state["alive"] else "gone"
         return Status(
-            state["name"],
-            state["alive"],
-            word,
-            outcome,
-            None,
+            name=state["name"],
+            alive=state["alive"],
+            state=word,
+            outcome=outcome,
+            attach=None,
             hidden=False,
             cwd=Layout(self.workdir).agent,
         )

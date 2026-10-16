@@ -87,8 +87,8 @@ class Scripted(Case):
         with self.assertRaises(SessionError):
             self.start(cls, name="w1")
         first.close()
-        self.assertEqual(first.state(), "absent")
-        self.assertEqual(self.start(cls, name="w1").state(), "live")
+        self.assertFalse(first.alive())
+        self.assertTrue(self.start(cls, name="w1").alive())
 
     def test_attach_and_list_reach_only_live_sessions(self):
         cls = FakeSession.scripted()

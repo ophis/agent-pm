@@ -173,7 +173,7 @@ class NextEventContent(CliCase):
             with self.subTest(sessions=sessions):
                 record = self.launched("r1", *sessions, record_name=record_name)
                 status = Status(
-                    record.name,
+                    name=record.name,
                     alive=False,
                     state="dead",
                     outcome="done",

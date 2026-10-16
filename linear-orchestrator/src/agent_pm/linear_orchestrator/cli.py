@@ -58,7 +58,7 @@ def main(argv=None):
 
     def resume(view):
         nonlocal gate
-        if not view.alive() and view.outcome() is None:
+        if not view.delegate.alive() and view.delegate.outcome() is None:
             entries = runs.parse_log(cfg.runs_log)
             entry = runs.latest(entries)[view.issue]
             gate = gate or Gate(
@@ -77,7 +77,7 @@ def main(argv=None):
         return view.resume().to_line()
 
     def attach_command(view):
-        command = view.attach_command()
+        command = view.delegate.attach_command()
         if command is None:
             raise RuntimeError("run has no live displayable session")
         return command
@@ -85,9 +85,9 @@ def main(argv=None):
     reply = {
         "status": lambda view: view.status().to_line(),
         "resume": resume,
-        "close": lambda view: view.close(),
-        "show": lambda view: view.show(),
-        "hide": lambda view: view.hide(),
+        "close": lambda view: view.delegate.close(),
+        "show": lambda view: view.delegate.show(),
+        "hide": lambda view: view.delegate.hide(),
         "attach-command": attach_command,
     }[args.command]
     return answer_keys(

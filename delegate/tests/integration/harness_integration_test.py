@@ -33,7 +33,6 @@ from agent_pm.session import (
     Exited,
     Launch,
     LimitHit,
-    Liveness,
     Mode,
     NoRecordedSession,
     Reply,
@@ -361,7 +360,7 @@ class Views(HarnessCase):
         delegate = self.make(spec=spec)
         self.assertEqual(delegate.run().outcome.status, "done")
         agent = HarnessSession.attach(f"dummy-tester-{SID[:8]}")
-        self.assertEqual(agent.state(), Liveness.LIVE)
+        self.assertEqual(agent.alive(), True)
         self.assertEqual(
             (delegate.alive(), HarnessDelegate.attach(self.work).alive()), (False, False)
         )
@@ -713,7 +712,7 @@ class TuiStart(HarnessCase):
     def test_detach_returns_once_the_agent_session_is_live(self):
         record = self.tui(harness_host="harness").detach()
         agent = HarnessSession.live[record.sessions[1]]
-        self.assertEqual(agent.state(), Liveness.LIVE)
+        self.assertEqual(agent.alive(), True)
         self.assertTrue(HarnessDelegate.attach(record).alive())
 
     def test_a_harness_ending_first_fails_the_detach_and_stays_resumable(self):
@@ -727,7 +726,7 @@ class TuiStart(HarnessCase):
         self.assertTrue(self.metadata()["detached"])
         RecordingHost.harness_starts_agent = True
         resumed = HarnessDelegate.attach(self.work).resume()
-        self.assertEqual(HarnessSession.live[resumed.sessions[1]].state(), Liveness.LIVE)
+        self.assertEqual(HarnessSession.live[resumed.sessions[1]].alive(), True)
 
     def test_a_timeout_closes_the_harness_and_fails_the_detach(self):
         RecordingHost.harness_starts_agent = False
@@ -769,7 +768,7 @@ class TuiStart(HarnessCase):
         self.assertEqual(str(caught.exception), "tui session X did not start")
         self.assertEqual([launch["name"] for launch in harness_launches()], ["X-drive"])
         self.assertEqual(HarnessSession.live["X"].sid, other)
-        self.assertEqual(HarnessSession.live["X"].state(), Liveness.LIVE)
+        self.assertEqual(HarnessSession.live["X"].alive(), True)
 
     def test_a_headless_detach_waits_for_nothing(self):
         RecordingHost.harness_starts_agent = False

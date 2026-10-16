@@ -179,7 +179,7 @@ class AdoptionTest(RecordCase):
         self.wait_event("w1", "done")
         status = [
             Status(
-                "w1",
+                name="w1",
                 alive=True,
                 state="done",
                 outcome=None,

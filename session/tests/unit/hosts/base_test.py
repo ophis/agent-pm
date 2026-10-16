@@ -16,9 +16,12 @@ from agent_pm.session import (
     Host,
     HostProcess,
     Hosts,
+    Liveness,
     SessionError,
+    StatusState,
     Terminal,
 )
+from agent_pm.utils import Status
 
 from session.tests.case import Case
 
@@ -83,6 +86,29 @@ class HostDefaults(Case):
         self.assertIsNone(HostProcess.token.fget(process))
         with self.assertRaisesRegex(SessionError, "^session p: its host cannot store a Record"):
             HostProcess.publish(process, mock.sentinel.record)
+
+    def test_a_process_status_is_its_liveness_activity_and_hidden(self):
+        process = mock.create_autospec(HostProcess, instance=True)
+        process.name, process.hidden.return_value = "p", True
+        for liveness, activity, state in (
+            (Liveness.LIVE, None, StatusState.WORKING),
+            (Liveness.LIVE, StatusState.BLOCKED, StatusState.BLOCKED),
+            (Liveness.ABSENT, None, StatusState.DEAD),
+            (Liveness.UNKNOWN, None, StatusState.UNKNOWN),
+        ):
+            with self.subTest(liveness=liveness, activity=activity):
+                process.state.return_value, process.activity.return_value = liveness, activity
+                self.assertEqual(
+                    HostProcess.status(process),
+                    Status(
+                        name="p",
+                        alive=liveness == Liveness.LIVE,
+                        state=state,
+                        outcome=None,
+                        attach=None,
+                        hidden=True,
+                    ),
+                )
 
     def test_descendants_are_its_listed_sessions_unless_it_knows_who_opened_whom(self):
         host = MinimalHost("m")

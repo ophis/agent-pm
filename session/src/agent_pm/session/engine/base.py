@@ -12,7 +12,6 @@ from agent_pm.session.engine.types import (
     Hosts,
     IdleTimeout,
     KeyPress,
-    Liveness,
     Mode,
     ProcessOptions,
     SessionEvent,
@@ -24,14 +23,14 @@ from agent_pm.session.engine.types import (
     Usage,
 )
 from agent_pm.session.hosts.base import Host
-from agent_pm.utils import Display, Record, load_class
+from agent_pm.utils import Display, Record, Status, load_class
 
 HOSTED = "agent_pm.session.engine.hosted_session:HostedSession"
 
 
 class Session(ABC):
     """show, hide, attach_command, screen: NotDisplayable unless displayable (its Host is
-    Displayable). hidden: hide closed its view and no show reopened it since (engine/hidden.py).
+    Displayable). alive: False while its host cannot tell (status: unknown).
     """
 
     sid: str
@@ -50,7 +49,10 @@ class Session(ABC):
         """SessionError without a terminal; ConfigError, nothing sent, if one is untranslatable."""
 
     @abstractmethod
-    def state(self) -> Liveness: ...
+    def alive(self) -> bool: ...
+
+    @abstractmethod
+    def status(self) -> Status: ...
 
     @abstractmethod
     def stop(self) -> None: ...
@@ -80,9 +82,6 @@ class Session(ABC):
 
     @abstractmethod
     def hide(self) -> None: ...
-
-    @abstractmethod
-    def hidden(self) -> bool: ...
 
     @abstractmethod
     def attach_command(self) -> str: ...

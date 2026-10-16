@@ -8,7 +8,6 @@ read and tile exit 1 saying so, status giving no attach command.
 """
 
 import dataclasses
-import json
 import os
 import subprocess
 import uuid
@@ -179,13 +178,13 @@ class ControlTest(ControlCase):
             [gone("w1"), gone("w2"), live("w3", "done", cwd=self.cwd)],
         )
 
-    def test_close_and_show_refuse_a_record_whose_sid_its_session_does_not_carry(self):
+    def test_close_show_and_hide_refuse_a_record_whose_sid_its_session_does_not_carry(self):
         w1 = self.done("w1")
         pid = self.calls("w1")[0]["pid"]
         pane = self.server.pane_of("w1")
         self.tmux("kill-pane", "-t", pane)
         reused = dataclasses.replace(w1, sid=str(uuid.uuid4()))
-        for verb in ("show", "close"):
+        for verb in ("show", "hide", "close"):
             with self.subTest(verb=verb):
                 res = self.session(verb, stdin=lines(reused))
                 self.assertEqual((res.returncode, res.stdout), (1, ""), res.stderr)
@@ -227,19 +226,15 @@ class ControlTest(ControlCase):
         self.shows("w1", f"={MANAGER}:")
         self.assertEqual(len(self.calls("w1")), 1)
 
-    def hidden(self, name: str) -> dict:
-        with open(os.path.join(self.home, ".agent-pm", "hidden", f"{name}.json")) as f:
-            return json.load(f)
-
     def test_hide_closes_the_view_keeps_the_session_and_show_reopens_it(self):
         w1 = self.done("w1")
         self.shows("w1", f"={MANAGER}:")
         pane = self.server.pane_of("w1")
-        for _ in range(2):
-            self.assert_printed(self.session("hide", "w1"), "")
+        for names, stdin in ((("w1",), None), ((), lines(w1))):
+            self.assert_printed(self.session("hide", *names, stdin=stdin), "")
             self.assertNotIn(pane, self.server.panes(f"={MANAGER}:"))
             self.assertEqual(self.sessions(), [MANAGER, "w1"])
-            self.assertEqual(self.hidden("w1"), {"sid": w1.sid, "hidden": True})
+            self.assertEqual(self.server.option("w1", "@hidden"), "1")
             self.assertEqual(
                 self.status(stdin=lines(w1)), [live("w1", "done", cwd=self.cwd, hidden=True)]
             )
@@ -248,7 +243,7 @@ class ControlTest(ControlCase):
         self.assertEqual(res.stderr, f"{PROG}: nope: no tmux session nope\n")
         self.assert_printed(self.session("show", stdin=lines(w1)), "")
         self.shows("w1", f"={MANAGER}:")
-        self.assertEqual(self.hidden("w1"), {"sid": w1.sid, "hidden": False})
+        self.assertEqual(self.server.option("w1", "@hidden"), "0")
         self.assertEqual(self.status("w1"), [live("w1", "done", cwd=self.cwd)])
         self.assertEqual(len(self.calls("w1")), 1)
 

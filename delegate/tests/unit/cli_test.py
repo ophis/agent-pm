@@ -971,7 +971,12 @@ class View:
         if self.error is not None:
             raise self.error
         return Status(
-            self.name, alive=False, state="gone", outcome=None, attach=self.command, hidden=False
+            name=self.name,
+            alive=False,
+            state="gone",
+            outcome=None,
+            attach=self.command,
+            hidden=False,
         )
 
     def show(self):
@@ -1046,10 +1051,10 @@ class Queries(Case):
         a, b = View("a"), View("b", command="tmux attach -t =b")
         lines = [
             Status(
-                "a", alive=False, state="gone", outcome=None, attach=None, hidden=False
+                name="a", alive=False, state="gone", outcome=None, attach=None, hidden=False
             ).to_line(),
             Status(
-                "b",
+                name="b",
                 alive=False,
                 state="gone",
                 outcome=None,
@@ -1077,7 +1082,12 @@ class Queries(Case):
                     (
                         code,
                         Status(
-                            "a", alive=False, state="gone", outcome=None, attach=None, hidden=False
+                            name="a",
+                            alive=False,
+                            state="gone",
+                            outcome=None,
+                            attach=None,
+                            hidden=False,
                         ).to_line()
                         + "\n",
                         f"delegate: gone: {error}\n",

@@ -10,7 +10,6 @@ from abc import ABC, abstractmethod
 from collections.abc import Mapping, Sequence
 
 from agent_pm.session.engine.types import (
-    ActivityState,
     ConfigError,
     HookCallback,
     Hosts,
@@ -21,14 +20,15 @@ from agent_pm.session.engine.types import (
     Paste,
     SessionError,
     SessionRow,
+    StatusState,
     TuiSettings,
-    Word,
 )
 from agent_pm.utils import (
     CLASS_PATH,
     CONFIG_NAME,
     Display,
     Record,
+    Status,
     append_line,
     printable_abs,
     thaw,
@@ -77,10 +77,30 @@ class HostProcess(ABC):
     def returncode(self) -> int | None:
         return None if self.alive() else -signal.SIGHUP
 
-    def activity(self) -> Word | None:
+    def activity(self) -> StatusState | None:
         return None
 
-    def mark(self, word: Word, events: str | None) -> None:
+    def hidden(self) -> bool:
+        return False
+
+    def status(self) -> Status:
+        liveness = self.state()
+        if liveness == Liveness.UNKNOWN:
+            state = StatusState.UNKNOWN
+        elif liveness == Liveness.LIVE:
+            state = self.activity() or StatusState.WORKING
+        else:
+            state = StatusState.DEAD
+        return Status(
+            name=self.name,
+            alive=liveness == Liveness.LIVE,
+            state=state,
+            outcome=None,
+            attach=None,
+            hidden=self.hidden(),
+        )
+
+    def mark(self, word: StatusState, events: str | None) -> None:
         """Optional activity metadata for a terminal's status display."""
         return None
 
@@ -90,7 +110,7 @@ class HostProcess(ABC):
             self.name,
             None if receipt is None else receipt.sid,
             None if receipt is None else receipt.kind,
-            ActivityState.WORKING if self.alive() else ActivityState.DEAD,
+            StatusState.WORKING if self.alive() else StatusState.DEAD,
             self.display(),
             None,
             None,
@@ -232,7 +252,8 @@ class Host(ABC):
 
 class Displayable(ABC):
     """show: None once shown, else an attach command; command: a shell command the Host runs to
-    show it instead, `{{session}}` the session name; hide: undoes show; layout: display completed once its display destination is found.
+    show it instead, `{{session}}` the session name; hide: undoes show, marking it hidden until a
+    show; layout: display completed once its display destination is found.
     """
 
     @abstractmethod

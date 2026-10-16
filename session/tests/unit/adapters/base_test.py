@@ -565,7 +565,7 @@ class SpecTest(Refusals):
             with self.subTest(bad=bad):
                 self.refused(
                     lambda *, bad=bad: Spec(workdir="/w", access=Access(cwd="/w"), reply_tags=bad),
-                    "reply_tags must be None or (progress tag, outcome tag), each [A-Za-z0-9_-]+ but not none",
+                    "reply_tags must be None or (progress tag, outcome tag), each [A-Za-z0-9_-]+",
                 )
 
     def test_keyword_only_and_frozen(self):

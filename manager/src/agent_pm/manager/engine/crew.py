@@ -144,7 +144,7 @@ class Crew:
             if record is None:
                 word = StatusState.STARTING if entry.state == State.STARTING else StatusState.GONE
                 answers[name] = Status(
-                    name, alive=False, state=word, outcome=None, attach=None, hidden=False
+                    name=name, alive=False, state=word, outcome=None, attach=None, hidden=False
                 )
                 continue
             owners.setdefault((record.name, record.ctl), []).append(name)

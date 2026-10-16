@@ -1,8 +1,8 @@
 """Record v1, one JSON line naming a started thing by its outermost starter (ctl queries it, resume
 resumes it; only a LayerCommand, in the exact form that command prints, so a forged line runs
-nothing else), and Status, the line `<ctl> status` prints per Record (state: a StatusState word,
-every layer's one vocabulary; hidden: its view closed by hide; cwd, optional: where the run works). Display is opaque: only the session layer interprets it. answer_keys is the one batch
-rule of every ctl's queries. json_records yields JSON objects from text or byte lines.
+nothing else), and Status, the line `<ctl> status` prints per Record (state: a StatusState word;
+hidden: its view closed by hide; cwd, optional: where the run works). Display is opaque: only the
+session layer interprets it. answer_keys is the one batch rule of every ctl's queries. json_records yields JSON objects from text or byte lines.
 """
 
 import json
@@ -121,11 +121,11 @@ class Record(_Line):
         )
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, kw_only=True)
 class Status(_Line):
     name: str
     alive: bool
-    state: str
+    state: StatusState
     outcome: str | None
     attach: str | None
     hidden: bool
@@ -138,6 +138,7 @@ class Status(_Line):
             ok=self.state in tuple(StatusState),
             message=f"state: want one of {', '.join(StatusState)}",
         )
+        object.__setattr__(self, "state", StatusState(self.state))
         _check(ok=isinstance(self.hidden, bool), message="hidden: want true or false")
         for field in ("outcome", "attach"):
             value = getattr(self, field)

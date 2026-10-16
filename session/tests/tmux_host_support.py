@@ -6,11 +6,12 @@ import tempfile
 from pathlib import Path
 from unittest import mock
 
-from agent_pm.session.hosts.tmux import TmuxHost, transport, types
-from agent_pm.session.hosts.tmux.host import Tmux, events_file, validate_events, validate_start
+from agent_pm.session.hosts.tmux import TmuxHost, types
+from agent_pm.session.hosts.tmux.host import Tmux
 from agent_pm.utils import ProcessControl, Record
 
 from session.tests.case import Case
+from session.tests.tmux_fixtures import which
 
 LINE = Record(
     1,
@@ -31,10 +32,6 @@ def fake_tmux() -> mock.Mock:
     """Recorded transport with real validation and command formatting."""
     tmux = mock.create_autospec(Tmux, instance=True)
     tmux.PAUSE = Tmux.PAUSE
-    tmux.attach_command.side_effect = transport.attach_command
-    tmux.events_file.side_effect = events_file
-    tmux.validate_events.side_effect = validate_events
-    tmux.validate_start.side_effect = validate_start
     tmux.status.return_value = types.PaneStatus.RUNNING
     tmux.process_status.side_effect = lambda target: (tmux.process(target), tmux.status(target))
     tmux.listing.return_value = []
@@ -51,6 +48,7 @@ class Base(Case):
         self.dir = os.path.realpath(tmp.name)
         self.tool = os.path.join(self.dir, "tool")
         Path(self.tool).touch(mode=0o700)
+        self.enterContext(which(self.tool))
         self.tmux = fake_tmux()
         self.host = TmuxHost("tmux", {"workers_per_column": 2}, tmux=self.tmux)
         self.killpg = self.enterContext(

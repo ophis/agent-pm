@@ -5,6 +5,7 @@ harness_starts_agent is False.
 
 import json
 import os
+from dataclasses import replace
 
 from agent_pm.delegate.engine.types import Layout
 from agent_pm.session import (
@@ -211,6 +212,11 @@ class HarnessSession(SessionClass):
         if not isinstance(host, Displayable):
             raise NotDisplayable(f"host {host.name} cannot display")
         host.hide(self.name)
+
+    def status(self):
+        host = self.host(self.host_names[self.name])
+        hidden = isinstance(host, ShowingHost) and self.name in host.hidden
+        return replace(super().status(), hidden=hidden)
 
     def attach_command(self):
         host = self.host(self.host_names[self.name])

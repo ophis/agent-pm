@@ -22,7 +22,7 @@ from agent_pm.utils import (
 __all__ = [
     "Access",
     "Activity",
-    "ActivityState",
+    "MARKS",
     "Blocked",
     "ClientBound",
     "ConfigError",
@@ -60,7 +60,7 @@ __all__ = [
     "TurnFailed",
     "Usage",
     "Window",
-    "Word",
+    "StatusState",
 ]
 
 
@@ -114,21 +114,7 @@ class Tier(StrEnum):
     FOUR = "4"
 
 
-class Word(StrEnum):
-    """A tui hook's mark for its terminal's activity."""
-
-    DONE = "done"
-    BLOCKED = "blocked"
-    WORKING = "working"
-
-
-class ActivityState(StrEnum):
-    """A listed session's activity: its terminal's Word, dead once it exited."""
-
-    WORKING = StatusState.WORKING.value
-    DONE = StatusState.DONE.value
-    BLOCKED = StatusState.BLOCKED.value
-    DEAD = StatusState.DEAD.value
+MARKS = (StatusState.DONE, StatusState.BLOCKED, StatusState.WORKING)  # a tui hook's activity marks
 
 
 class HookError(Exception):
@@ -186,8 +172,10 @@ def _member(enum, field: str, value):
         raise ConfigError(f"{field} must be one of {', '.join(enum)}, got {value!r}") from None
 
 
-TAG = re.compile(r"(?!none\Z)[A-Za-z0-9_-]+")
-TAG_RULE = "[A-Za-z0-9_-]+ but not none"
+TAG = re.compile(r"[A-Za-z0-9_-]+")
+NO_VIEW = "none"  # `--display none`: no view, so never a session name
+SESSION_NAME = re.compile(rf"(?!{NO_VIEW}\Z){TAG.pattern}")
+SESSION_NAME_RULE = f"{TAG.pattern} but not {NO_VIEW}"
 
 
 COMMAND = "agent-pm-session"
@@ -280,7 +268,7 @@ class Spec(ProcessOptions):
             and all(isinstance(t, str) and TAG.fullmatch(t) for t in self.reply_tags)
         ):
             raise ConfigError(
-                f"reply_tags must be None or (progress tag, outcome tag), each {TAG_RULE}"
+                f"reply_tags must be None or (progress tag, outcome tag), each {TAG.pattern}"
             )
         if self.client is not None and not isinstance(self.client, str):
             raise ConfigError("client must be None or a string")
@@ -591,14 +579,14 @@ class SessionRow:
     name: str
     sid: str | None
     client: str | None
-    state: ActivityState
+    state: StatusState
     display: str | None
     shown: str | None
     last_lines: str | None
     own: bool
 
     def __post_init__(self):
-        object.__setattr__(self, "state", _member(ActivityState, "state", self.state))
+        object.__setattr__(self, "state", _member(StatusState, "state", self.state))
 
 
 @dataclass(frozen=True)

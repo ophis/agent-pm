@@ -486,7 +486,7 @@ class ResumeModeTest(HarnessCase):
         self.assertEqual((record.sid, record.sessions), (SID, (state["harness_name"],)))
         self.assertEqual(self.modes(state), ("headless", "headless", 2))
         self.assertEqual((state["spec"]["name"], state["spec"]["events"]), (None, None))
-        self.assertEqual(agent.state(), Liveness.ABSENT)
+        self.assertEqual(agent.alive(), False)
         self.assertEqual(HarnessSession.preflights[-1]["spec"].mode, "headless")
 
     def test_without_a_mode_a_tui_run_resumes_in_tui(self):
@@ -520,7 +520,7 @@ class ResumeModeTest(HarnessCase):
                 view.resume(mode=mode)
         self.assertEqual(self.metadata(), before)
         self.assertEqual(len(harness_launches()), launches)
-        self.assertEqual(HarnessSession.live[before["agent_name"]].state(), Liveness.LIVE)
+        self.assertEqual(HarnessSession.live[before["agent_name"]].alive(), True)
 
 
 class StatusTest(HarnessCase):
@@ -545,8 +545,10 @@ class ViewTest(HarnessCase):
         names = [self.metadata()[key] for key in ("agent_name", "harness_name")]
         view.show()
         self.assertEqual([name for name, _, _ in ShowingHost.shown], names)
+        self.assertFalse(view.status().hidden)
         self.assertIsNone(view.hide())
         self.assertEqual(ShowingHost.hidden, names)
+        self.assertTrue(view.status().hidden)
         view.close()
         with self.assertRaisesRegex(NotDisplayable, "delegate has no live displayable session"):
             view.hide()
@@ -574,16 +576,14 @@ class CrashTest(HarnessCase):
 
     def test_a_tui_run_whose_process_died_is_not_alive(self):
         view, name = self.crashed()
-        self.assertEqual(HarnessSession.live[name].state(), Liveness.LIVE)
+        self.assertEqual(HarnessSession.live[name].alive(), True)
         self.assertFalse(view.alive())
         self.assertFalse(view.status().alive)
 
-    def test_its_status_takes_unknown_and_hidden_from_its_agent_session(self):
+    def test_its_status_is_unknown_while_its_agent_sessions_host_cannot_tell(self):
         view, name = self.crashed()
         agent = HarnessSession.live[name]
         self.assertEqual((view.status().state, view.status().hidden), ("gone", False))
-        agent.hidden = lambda: True
-        self.assertTrue(view.status().hidden)
         agent._state = Liveness.UNKNOWN
         self.assertEqual(view.status().state, "unknown")
 
@@ -593,7 +593,7 @@ class CrashTest(HarnessCase):
         launches = len(harness_launches())
         record = view.resume()
         self.assertEqual(len(harness_launches()), launches + 1)
-        self.assertEqual(left.state(), Liveness.ABSENT)
+        self.assertEqual(left.alive(), False)
         self.assertEqual(record.sid, SID)
         self.assertEqual(self.metadata()["attempt"], 2)
 
@@ -614,7 +614,7 @@ class CrashTest(HarnessCase):
         view = HarnessDelegate.attach(self.work, session_cls=HarnessSession)
         with self.assertRaisesRegex(ConfigError, "no longer in trusted_dirs"):
             view.resume()
-        self.assertEqual(left.state(), Liveness.LIVE)
+        self.assertEqual(left.alive(), True)
         self.assertEqual(len(harness_launches()), launches)
 
     def test_a_resume_its_preflight_refuses_leaves_the_agent_session_live(self):
@@ -624,7 +624,7 @@ class CrashTest(HarnessCase):
         view = HarnessDelegate.attach(self.work, session_cls=HarnessSession)
         with self.assertRaisesRegex(ConfigError, "no client binary"):
             view.resume()
-        self.assertEqual((left.state(), len(harness_launches())), (Liveness.LIVE, launches))
+        self.assertEqual((left.alive(), len(harness_launches())), (True, launches))
 
     def test_resume_preflights_the_live_agents_name_under_a_probe_name(self):
         view, name = self.crashed()
@@ -713,7 +713,7 @@ class SweepTest(HarnessCase):
                 start()
             self.assertEqual((self.record(), len(harness_launches())), (before, launches))
             if start == view.resume:
-                self.assertEqual(left.state(), Liveness.LIVE)
+                self.assertEqual(left.alive(), True)
 
     def test_a_held_run_lock_refuses_a_new_run_though_its_record_says_completed(self):
         self.make().run()

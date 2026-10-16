@@ -560,7 +560,7 @@ class CrewTest(Case):
             if tuple(argv) == (self.command, "status"):
                 lines = (
                     Status(
-                        name,
+                        name=name,
                         alive=True,
                         state="working",
                         outcome=None,
@@ -584,7 +584,9 @@ class CrewTest(Case):
         self.start("one")
         self.start("two")
         ctl.set_session(self.ctl_dir, "one", alive=True)
-        one = Status("one", alive=True, state="working", outcome=None, attach=None, hidden=False)
+        one = Status(
+            name="one", alive=True, state="working", outcome=None, attach=None, hidden=False
+        )
         real_run = subprocess.run
 
         def run(argv, **options):
@@ -613,13 +615,18 @@ class CrewTest(Case):
             "",
             (
                 Status(
-                    "worker", alive=True, state="working", outcome=None, attach=None, hidden=False
+                    name="worker",
+                    alive=True,
+                    state="working",
+                    outcome=None,
+                    attach=None,
+                    hidden=False,
                 ).to_line()
                 + "\n"
             )
             * 2,
             Status(
-                "extra", alive=True, state="working", outcome=None, attach=None, hidden=False
+                name="extra", alive=True, state="working", outcome=None, attach=None, hidden=False
             ).to_line()
             + "\n",
         )

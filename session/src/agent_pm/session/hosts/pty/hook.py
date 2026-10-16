@@ -2,12 +2,12 @@
 installed for (its sid and generation).
 """
 
-from agent_pm.session.engine.types import HookCall, HookError, Word
+from agent_pm.session.engine.types import HookCall, HookError, StatusState
 from agent_pm.session.hosts.pty import state
 from agent_pm.utils import printable_abs
 
 
-def on_hook(word: Word, call: HookCall) -> None:
+def on_hook(word: StatusState, call: HookCall) -> None:
     folder, generation = call.state.get("folder"), call.state.get("generation")
     if not isinstance(folder, str) or not printable_abs(folder):
         raise HookError("host state: bad folder")

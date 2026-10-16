@@ -20,8 +20,7 @@ from agent_pm.session import (
     read_config,
 )
 from agent_pm.session.engine.hosted_session import HostedSession
-from agent_pm.session.hosts.tmux.host import validate_events, validate_start
-from agent_pm.session.hosts.tmux.types import PaneStatus, TuiError
+from agent_pm.session.hosts.tmux.types import PaneStatus
 
 from session.tests.case import HOSTS, PY, REPO, SPAWNS, Case, child_env
 from session.tests.fakes.preflight import PreflightAdapter
@@ -33,8 +32,6 @@ class Preflight(Case):
         self.work = os.path.join(self.home, "absent-work")
         self.events = os.path.join(self.home, "absent-events")
         self.tmux = fake_tmux()
-        self.tmux.validate_events.side_effect = validate_events
-        self.tmux.validate_start.side_effect = validate_start
         self.configure()
 
     def configure(self, *, adapter=PreflightAdapter, tmux_settings=None, **settings):
@@ -134,14 +131,20 @@ class Preflight(Case):
                     f"cannot start tui session {session_name}: command not found: claude",
                 )
             self.unchanged(before)
-            self.tmux.events_file.assert_not_called()
+            self.assertFalse(os.path.exists(self.events))
 
     def test_events_file_creation_failure_is_a_driver_error_before_any_session_state(self):
         message = f"events file {self.events}: Permission denied"
-        self.tmux.events_file.side_effect = TuiError(message)
         spec = self.spec(Mode.TUI, name="event-worker", events=self.events)
         before = self.tree()
-        with self.no_client():
+        real_open = os.open
+
+        def refused(path, *args, **kw):
+            if path == self.events:
+                raise PermissionError(13, "Permission denied")
+            return real_open(path, *args, **kw)
+
+        with self.no_client(), mock.patch("os.open", side_effect=refused):
             self.assertIsNone(self.session.preflight(spec))
             with self.assertRaises(SessionError) as failure:
                 self.session.start(spec)
@@ -149,7 +152,6 @@ class Preflight(Case):
             str(failure.exception), f"cannot start tui session event-worker: {message}"
         )
         self.unchanged(before)
-        self.tmux.events_file.assert_called_once_with(self.events)
 
     def test_all_modes_accept_fresh_and_resume_without_writing_or_committing(self):
         for mode, resume in itertools.product(Mode, (False, True)):

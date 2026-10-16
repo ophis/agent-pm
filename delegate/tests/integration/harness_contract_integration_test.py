@@ -7,7 +7,7 @@ import sys
 from agent_pm.delegate import Begun, Spec
 from agent_pm.delegate.composer.prompt import RESUME
 from agent_pm.delegate.engine.harness_delegate import HarnessDelegate
-from agent_pm.session import Exited, Liveness, NotDisplayable, Reply
+from agent_pm.session import Exited, NotDisplayable, Reply
 
 from delegate.tests.case import REPO, child_env
 from delegate.tests.contracts.delegate import DelegateContract
@@ -152,17 +152,17 @@ class Ownership(HarnessCase):
         record = delegate.detach()
         return record, HarnessDelegate.attach(record)
 
-    def test_harness_owns_liveness_while_agent_owns_state_and_display_target(self):
+    def test_harness_owns_liveness_and_state_while_agent_owns_display_target(self):
         record, view = self.pair()
         agent = HarnessSession.live[self.metadata()["agent_name"]]
         self.assertTrue(view.alive())
-        self.assertEqual(view.status().state, agent.state())
+        self.assertEqual((view.status().state, agent.alive()), ("working", True))
         self.assertEqual(view.attach_command(), agent.attach_command())
         self.assertEqual(view.status().attach, agent.attach_command())
         harness = RecordingHost.processes["harness", self.metadata()["harness_name"]]
         harness.close()
         self.assertFalse(view.alive())
-        self.assertEqual(view.status().state, Liveness.LIVE)
+        self.assertEqual(view.status().state, "gone")
         self.assertEqual(view.attach_command(), agent.attach_command())
         self.assertEqual(record.sid, SID)
 
@@ -208,7 +208,7 @@ class Ownership(HarnessCase):
         old_agent = HarnessSession.live[agent_name]
         resumed = view.resume()
         self.assertEqual((resumed.sid, resumed.sessions), (record.sid, record.sessions))
-        self.assertEqual(old_agent.state(), Liveness.ABSENT)
+        self.assertEqual(old_agent.alive(), False)
         self.assertEqual(len(harness_launches()), before + 1)
         self.assertEqual(view.resume(), resumed)
         self.assertEqual(len(harness_launches()), before + 1)

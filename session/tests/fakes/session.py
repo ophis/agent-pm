@@ -9,7 +9,7 @@ from __future__ import annotations
 import re
 import uuid
 
-from agent_pm.session import NotDisplayable, Session
+from agent_pm.session import NotDisplayable, Session, StatusState
 from agent_pm.session.engine.types import (
     ConfigError,
     Exited,
@@ -22,6 +22,7 @@ from agent_pm.session.engine.types import (
     SessionStatus,
     TurnEnd,
 )
+from agent_pm.utils import Status
 
 from session.tests.fakes.host import FakeHost
 
@@ -64,8 +65,20 @@ class FakeSession(Session):
     def press(self, keys) -> None:
         self.sent.append(tuple(keys))
 
-    def state(self) -> Liveness:
-        return self._state
+    def alive(self) -> bool:
+        return self._state == Liveness.LIVE
+
+    def status(self) -> Status:
+        return Status(
+            name=self.name,
+            alive=self.alive(),
+            state={Liveness.LIVE: StatusState.WORKING, Liveness.UNKNOWN: StatusState.UNKNOWN}.get(
+                self._state, StatusState.GONE
+            ),
+            outcome=None,
+            attach=None,
+            hidden=False,
+        )
 
     def stop(self) -> None:
         self._state = Liveness.ABSENT
@@ -103,9 +116,6 @@ class FakeSession(Session):
 
     def hide(self) -> None:
         raise NotDisplayable("host none cannot display")
-
-    def hidden(self) -> bool:
-        return False
 
     def attach_command(self):
         raise NotDisplayable("host none cannot display")
