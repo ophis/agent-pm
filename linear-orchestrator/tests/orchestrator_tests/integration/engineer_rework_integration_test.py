@@ -16,6 +16,7 @@ from orchestrator_tests.case import REPO as WORKTREE
 from orchestrator_tests.integration import fake_gh
 from orchestrator_tests.integration.flow_fixtures import (
     ACCOUNTS,
+    AUTOPILOT,
     HUMAN,
     PROJECT,
     REPO,
@@ -52,7 +53,15 @@ PULL = {
 
 
 def outcome(summary):
-    return block({"status": "done", "title": "Session registry", "summary": summary, "url": PR})
+    return block(
+        {
+            "status": "done",
+            "title": "Session registry",
+            "summary": summary,
+            "url": PR,
+            "autopilot": AUTOPILOT,
+        }
+    )
 
 
 class Rework(BinFlow):

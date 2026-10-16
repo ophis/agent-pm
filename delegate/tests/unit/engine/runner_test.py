@@ -1,8 +1,10 @@
 """Pure logic over fake objects and in-process adapters."""
 
 import io
+import json
 import os
 import signal
+import subprocess
 from contextlib import redirect_stderr
 from datetime import datetime
 from unittest import mock
@@ -34,6 +36,7 @@ from delegate.tests.runner import (
     INVALID_ERROR,
     LEFT_OPEN,
     PENDING,
+    PR,
     SID,
     Base,
     executed,
@@ -82,6 +85,45 @@ class InProcess(Base):
         self.assertEqual((r.returncode, r.outcome.status, r.error), (0, "done", ""))
         self.assertEqual(self.kinds(), ["session", "input", "progress", "result", "end"])
         self.assertEqual((self.read(self.out), self.launches()[0]["pid"]), ("# Doc\n", os.getpid()))
+
+    def test_a_pull_request_run_passes_the_ready_gate_before_it_finishes(self):
+        url, head = "https://github.com/o/n/pull/7", "a" * 40
+        view = {"state": "OPEN", "isDraft": True, "headRefOid": head, "statusCheckRollup": []}
+        done = {**DONE, "url": url, "autopilot": {"status": "converged", "head": head}}
+        for data, status, gate, last in (
+            (done, "done", "passed", "S"),
+            ({**done, "autopilot": {"status": "stopped", "head": head}}, "failed", "failed",
+             "ready gate: G1: autopilot stopped"),
+        ):  # fmt: skip
+            with self.subTest(status=status):
+                self.fresh()
+                calls = []
+
+                def gh(argv, calls=calls, **kw):
+                    calls.append((argv, kw["timeout"]))
+                    out = json.dumps(view) if argv[2] == "view" else ""
+                    return subprocess.CompletedProcess(argv, 0, out, "")
+
+                with mock.patch("subprocess.run", side_effect=gh):
+                    r = self.go(said(START, block(data)), output=PR)
+                self.assertEqual(
+                    (r.outcome.status, r.outcome.summary.splitlines()[-1]), (status, last)
+                )
+                self.assertEqual(self.events[-1], Finished(r))
+                self.assertEqual(self.last("result")["outcome"]["status"], status)
+                self.assertEqual(bare(self.last("ready_gate"))["status"], gate)
+                self.assertEqual(calls[0][0][:4], ["gh", "pr", "view", url])
+                self.assertEqual(
+                    [argv[2:] for argv, _ in calls[1:]],
+                    [["ready", url]] if gate == "passed" else [],
+                )
+                self.assertEqual("delegate: ready gate: G1" in self.err, gate == "failed")
+
+    def test_a_pull_request_run_without_a_pull_request_link_skips_the_gate(self):
+        url = "https://github.com/o/n/compare/main...b?expand=1"
+        r = self.go(said(START, block({**DONE, "url": url})), output=PR)
+        self.assertEqual((r.outcome.status, r.outcome.url), ("done", url))
+        self.assertNotIn("ready_gate", self.kinds())
 
     def test_a_relative_outcome_file_resolves_in_the_agent_dir(self):
         self.write(os.path.join(Layout(self.work).agent, "notes", "doc.md"), "# From a file\n")

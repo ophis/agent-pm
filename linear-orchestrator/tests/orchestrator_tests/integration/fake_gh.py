@@ -16,7 +16,7 @@ API = re.compile(r"repos/([^/]+)/([^/]+)(?:/contents/([^?]+)\?ref=([^?]+))?")
 THREAD = re.compile(r"repos/([^/]+)/([^/]+)/(issues/\d+/comments|pulls/\d+/(?:reviews|comments))")
 HOST = "github.com"
 PR_LIST = ("--repo", "--head", "--state", "--json", "--limit")
-KEYS = {"repos", "contents", "login", "pulls", "threads"}
+KEYS = {"repos", "contents", "login", "pulls", "threads", "views"}
 CLONE = re.compile(r"(?:github\.com/)?([^/]+)/([^/]+)")
 # git's ssh, variant simple: HOST "git-upload-pack '/O/N.git'"; it serves the one bare repo
 SSH = '#!/bin/sh\nset -- $2\nexec git "${1#git-}" %s\n'
@@ -107,7 +107,7 @@ def scenario() -> dict:
     if not isinstance(data, dict) or not {"repos"} <= set(data) <= KEYS:
         sys.exit(
             'fake_gh.py: the scenario is no JSON object with the key "repos" and optionally '
-            '"contents", "login", "pulls" and "threads"'
+            '"contents", "login", "pulls", "threads" and "views"'
         )
     if not isinstance(data["repos"], dict) or not all(
         isinstance(v, dict) for v in data["repos"].values()
@@ -124,6 +124,9 @@ def scenario() -> dict:
         sys.exit('fake_gh.py: "pulls" is no object of lists of objects with a headRefName')
     if not objects(data.setdefault("threads", {}), 2):
         sys.exit('fake_gh.py: "threads" is no object of objects of lists of objects')
+    views = data.setdefault("views", {})
+    if not isinstance(views, dict) or not all(isinstance(v, dict) for v in views.values()):
+        sys.exit('fake_gh.py: "views" is no object of objects')
     return data
 
 
@@ -177,6 +180,29 @@ def pr_list(rest: list[str]) -> None:
     )
 
 
+def pr_view(rest: list[str]) -> None:
+    """`gh pr view URL --json FIELDS`: the asked fields of `views`' URL."""
+    if len(rest) != 3 or rest[1] != "--json":
+        sys.exit("fake_gh.py: usage: gh pr view URL --json FIELDS")
+    if (view := scenario()["views"].get(rest[0])) is None:
+        sys.exit(f"no pull requests found for {rest[0]}")
+    print(json.dumps({f: view[f] for f in rest[2].split(",") if f in view}))
+
+
+def pr_ready(rest: list[str]) -> None:
+    """`gh pr ready URL [--undo]`: sets the view's isDraft in the scenario file."""
+    if len(rest) not in (1, 2) or rest[1:] not in ([], ["--undo"]):
+        sys.exit("fake_gh.py: usage: gh pr ready URL [--undo]")
+    data = scenario()
+    if rest[0] not in data["views"]:
+        sys.exit(f"no pull requests found for {rest[0]}")
+    data["views"][rest[0]]["isDraft"] = rest[1:] == ["--undo"]
+    path = os.environ[ENV]
+    with open(f"{path}.tmp", "w") as f:
+        json.dump(data, f)
+    os.replace(f"{path}.tmp", path)
+
+
 def git(*argv: str) -> str:
     done = subprocess.run(["git", *argv], capture_output=True, text=True, timeout=60)
     if done.returncode != 0:
@@ -211,6 +237,10 @@ def repo_clone(rest: list[str]) -> None:
 def main(argv: list[str]) -> None:
     if argv[:2] == ["pr", "list"]:
         return pr_list(argv[2:])
+    if argv[:2] == ["pr", "view"]:
+        return pr_view(argv[2:])
+    if argv[:2] == ["pr", "ready"]:
+        return pr_ready(argv[2:])
     if argv[:2] == ["repo", "clone"]:
         return repo_clone(argv[2:])
     if argv[:3] == ["api", "--hostname", HOST]:

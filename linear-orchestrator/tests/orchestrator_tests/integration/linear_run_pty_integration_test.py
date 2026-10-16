@@ -11,6 +11,7 @@ import unittest
 from agent_pm.utils import Record
 from orchestrator_tests.integration.flow_fixtures import (
     ACCOUNTS,
+    AUTOPILOT,
     ENTRY,
     PROJECT,
     REPO,
@@ -30,6 +31,7 @@ DONE = block(
         "title": "Session registry",
         "summary": "Added the session registry.",
         "url": f"https://github.com/{REPO}/pull/1",
+        "autopilot": AUTOPILOT,
     }
 )
 

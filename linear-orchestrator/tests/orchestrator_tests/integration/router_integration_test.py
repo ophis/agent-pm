@@ -17,6 +17,7 @@ from agent_pm.linear_orchestrator.engine import config
 from orchestrator_tests.case import PYTHONPATH
 from orchestrator_tests.integration.flow_fixtures import (
     ACCOUNTS,
+    AUTOPILOT,
     HARNESS_EMAIL,
     HUMAN,
     KEYS,
@@ -37,7 +38,15 @@ ID, TITLE, BRANCH = "TASK-7", "ENG: Session registry", "TASK-7-session-registry"
 PR = f"https://github.com/{REPO}/pull/1"
 STARTED, READY = "Building the session registry.", "Added the session registry."
 START = mark("start", STARTED)
-DONE = block({"status": "done", "title": "Session registry", "summary": READY, "url": PR})
+DONE = block(
+    {
+        "status": "done",
+        "title": "Session registry",
+        "summary": READY,
+        "url": PR,
+        "autopilot": AUTOPILOT,
+    }
+)
 LEDGER = ["start", "comment", f"attach:{PR}", "move:in_review", "outcome"]
 ATTACHMENT = {"url": PR, "title": "Session registry"}
 LONG = "\n".join(f"Requirement {n}: the registry keeps session {n} → its run." for n in range(400))
