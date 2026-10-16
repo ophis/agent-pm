@@ -68,7 +68,7 @@ class Assignment(unittest.TestCase):
 
 class Workflow(unittest.TestCase):
     def test_matrix_must_have_unique_string_labels(self):
-        for matrix in ('["1", "2", "1"]', '["1", 2]', "[1, 2]", "[]"):
+        for matrix in ('["1", "2", "1"]', '["1", 2]', "[1, 2]", "[]", '["1", "3"]', '["2"]'):
             text = f"jobs:\n  integration:\n    strategy:\n      matrix:\n        job: {matrix}\n"
             with self.subTest(matrix=matrix), self.assertRaises(ValueError):
                 gate.workflow_jobs(text)

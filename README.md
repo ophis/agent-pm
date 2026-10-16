@@ -455,6 +455,8 @@ selected test's dependencies (tmux for live tmux tests). Copy the complete ID fr
 failure annotation or summary; no shard number is needed. Files must be repository test
 files named `*_test.py`; invalid, missing, empty or ambiguous selections fail without
 running a broader suite. All modes retain supervised isolation, diagnostics and cleanup.
+Subtest annotations use the method ID and keep parameters in the error text; selecting
+that method runs all its subtests.
 
 Integration jobs always upload `integration-<run-id>-<attempt>-<shard>` artifacts containing
 the discovered IDs, assigned IDs, expected load, Python/tmux/runner versions, supervised
@@ -467,15 +469,18 @@ For each attempt, download into a separate empty directory, replacing the angle-
 
 ```bash
 gh run download <run-id> --repo ophis/agent-pm --pattern 'integration-<run-id>-<attempt>-*' --dir /tmp/integration-samples/<attempt>
+gh api repos/ophis/agent-pm/actions/runs/<run-id>/attempts/<attempt> > /tmp/integration-samples/<attempt>/run.json
 python3 .github/integration_timings.py /tmp/integration-samples
 python3 .github/integration_timings.py /tmp/integration-samples --output .github/integration_durations.json
 python3 .github/integration_jobs.py --check
 ```
 
-Validation compares every attempt against this checkout's discovery, rejects missing or
-duplicate shards/tests, failures and invalid seconds. Regeneration uses the per-test
-median and writes `.github/integration_durations.sources.json` with source runs, commits,
-versions and shard labels. Normal tests never rewrite either file. Keep failed attempts
+Validation compares every attempt against this checkout's discovery and rejects mixed
+commits/environments/events, missing or duplicate shards/tests, failures and invalid seconds.
+The downloaded `run.json` must identify the same completed, successful workflow attempt,
+including its other required checks. Regeneration uses the per-test median and writes
+`.github/integration_durations.sources.json` with source runs, commits, versions and shard
+labels. Normal tests never rewrite either file. Keep failed attempts
 outside the regeneration input, alongside their original logs and workflow/job metadata.
 
 A PR's added and changed `*/src` lines need unit coverage (lines and branches) of at least `THRESHOLD` in `.github/coverage_gate.py` (CI job `Coverage`). With coverage.py installed (version: `COVERAGE_VERSION` in `.github/workflows/test.yml`):

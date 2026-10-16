@@ -9,15 +9,35 @@ from pathlib import Path
 import integration_jobs
 
 
+def validate_workflow(manifest):
+    run = manifest["workflow"]
+    if (
+        run["status"] != "completed"
+        or run["conclusion"] != "success"
+        or str(run["id"]) != manifest["run_id"]
+        or run["run_attempt"] != manifest["attempt"]
+        or run["head_sha"] != manifest["head_sha"]
+    ):
+        raise ValueError("workflow metadata must identify this complete successful attempt")
+
+
 def aggregate(samples, expected):
     groups = defaultdict(list)
     for manifest, rows in samples:
         groups[manifest["run_id"], manifest["attempt"]].append((manifest, rows))
     if not groups:
         raise ValueError("no timing samples")
+    reference = samples[0][0]
     values, sources = defaultdict(list), []
     for key, group in sorted(groups.items()):
         first = group[0][0]
+        if any(
+            first.get(field) != reference.get(field)
+            for field in ("sha", "head_sha", "runner", "architecture", "python", "tmux")
+        ):
+            raise ValueError(f"{key}: attempts must use the same commit and environment")
+        if first["workflow"]["event"] != reference["workflow"]["event"]:
+            raise ValueError(f"{key}: attempts must use the same workflow event")
         labels = first["shards"]
         if not labels or len(labels) != len(set(labels)):
             raise ValueError(f"{key}: invalid shard labels")
@@ -25,7 +45,18 @@ def aggregate(samples, expected):
             raise ValueError(f"{key}: missing or duplicate shard samples")
         seen = []
         for manifest, rows in group:
-            fields = ("sha", "head_sha", "runner", "python", "tmux", "shards", "discovered")
+            validate_workflow(manifest)
+            fields = (
+                "sha",
+                "head_sha",
+                "runner",
+                "architecture",
+                "python",
+                "tmux",
+                "shards",
+                "discovered",
+                "workflow",
+            )
             if any(manifest[field] != first[field] for field in fields):
                 raise ValueError(f"{key}: inconsistent shard metadata")
             if manifest["runner"] != "ubuntu-24.04" or manifest["exit_code"] != 0:
@@ -54,10 +85,18 @@ def aggregate(samples, expected):
                     "expected_seconds",
                     "exit_code",
                     "elapsed_seconds",
+                    "workflow",
                 }
             }
         )
-    return {test: round(statistics.median(values[test]), 6) for test in sorted(values)}, sources
+        sources[-1].update(
+            url=f"{first['workflow']['html_url']}/attempts/{first['attempt']}",
+            event=first["workflow"]["event"],
+            shard_count=len(labels),
+        )
+    durations = {test: statistics.median(values[test]) for test in sorted(values)}
+    integration_jobs.weights([], durations)
+    return durations, sources
 
 
 def main():
@@ -69,12 +108,25 @@ def main():
     args = parser.parse_args()
     samples = []
     for directory in args.samples:
+        directory = directory.resolve()
         for path in sorted(directory.rglob("manifest.json")):
+            metadata = next(
+                (
+                    parent / "run.json"
+                    for parent in path.parents
+                    if parent.is_relative_to(directory) and (parent / "run.json").is_file()
+                ),
+                None,
+            )
+            if metadata is None:
+                raise ValueError(f"{path}: missing workflow metadata run.json")
             rows = [
                 json.loads(line)
                 for line in path.with_name("durations.jsonl").read_text().splitlines()
             ]
-            samples.append((json.loads(path.read_text()), rows))
+            manifest = json.loads(path.read_text())
+            manifest["workflow"] = json.loads(metadata.read_text())
+            samples.append((manifest, rows))
     found = integration_jobs.run_tests.discover(
         integration_jobs.ROOT, integration_jobs.directories(integration_jobs.ROOT)
     )

@@ -48,8 +48,9 @@ def workflow_jobs(text):
         or not labels
         or not all(isinstance(label, str) for label in labels)
         or len(set(labels)) != len(labels)
+        or labels != [str(number) for number in range(1, len(labels) + 1)]
     ):
-        raise ValueError("workflow: matrix.job must be one inline JSON array of unique strings")
+        raise ValueError("workflow: matrix.job must be one inline JSON array numbered 1 through N")
     return labels
 
 
