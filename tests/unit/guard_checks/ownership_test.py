@@ -481,6 +481,40 @@ class ManagerBoundaries(Sample):
             commands.manager_commands(root), [f"{base}:2: hardcoded layer command agent-pm-session"]
         )
 
+    def test_cli_and_other_manager_modules_are_scanned(self):
+        base = "manager/src/agent_pm/manager/"
+        root = self.tree(
+            {
+                base + "cli.py": 'a = "agent-pm-session"\nb = "agent-pm-crew"\n',
+                base + "engine/other.py": 'a = ("agent-pm-delegate", "status")\n',
+            }
+        )
+        self.assertEqual(len(commands.manager_commands(root)), 2)
+
+    def test_listing_accepts_only_the_two_record_forms(self):
+        base = "manager/src/agent_pm/manager/engine/crew.py"
+        for suffix, count in (("", 0), (', "--descendants"', 0), (', "--all"', 1)):
+            root = self.tree(
+                {base: f'a = ("agent-pm-session", "ls", "--here", "--records"{suffix})\n'}
+            )
+            self.assertEqual(len(commands.manager_commands(root)), count)
+
+    def test_status_vocabulary_uses_enum_members(self):
+        base = "manager/src/agent_pm/manager/cli.py"
+        for source, count in (
+            ('suffix = "-drive"', 1),
+            ('word = "needs_input"', 1),
+            ('if status.outcome == "done": pass', 1),
+            ('if "working" == status.state: pass', 1),
+            ('if status.outcome in ("done", "failed"): pass', 1),
+            ("if status.state != StatusState.GONE: pass", 0),
+            ("if entry.state == State.GONE: pass", 0),
+            ('class State:\n    DONE = "done"', 0),
+        ):
+            with self.subTest(source=source):
+                root = self.tree({base: source})
+                self.assertEqual(len(commands.manager_status_words(root)), count)
+
     def test_display_is_opaque(self):
         base = "manager/src/agent_pm/manager/engine/crew.py"
         root = self.tree({base: 'def f(pane): return "@opener"\n'})

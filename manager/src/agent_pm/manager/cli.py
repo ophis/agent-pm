@@ -14,9 +14,6 @@ from agent_pm.manager.engine.holder import Holder
 from agent_pm.manager.engine.types import Lease, StatusError
 from agent_pm.utils import STATE, nested_start
 
-SESSION_COMMAND = ("agent-pm-session",)
-DELEGATE_COMMAND = ("agent-pm-delegate",)
-
 
 def _number(value: str) -> int:
     try:
@@ -117,7 +114,7 @@ def _report_error(error: Exception) -> None:
 
 
 def _report(args) -> int:
-    print(_crew(args).report(SESSION_COMMAND, DELEGATE_COMMAND), end="")
+    print(_crew(args).report(), end="")
     return 0
 
 
@@ -175,7 +172,7 @@ def _next_event(args) -> int:
         after, event = crew.next_event(after=after, gen=args.gen)
         block = f"{after} {event}\n"
         if args.content:
-            block += crew.event_content(event, SESSION_COMMAND)
+            block += crew.event_content(event)
         # One write per event: Monitor groups lines written within 200 ms into one notification.
         print(block, end="", flush=True)
         if not args.follow:
@@ -250,8 +247,7 @@ def _parser() -> argparse.ArgumentParser:
     next_event.add_argument(
         "--content",
         action="store_true",
-        help="then print its content: a done session's reply, a harness's entry status, "
-        "else the screen",
+        help="then print the owning entry's ctl content at the time of reading",
     )
     next_event.add_argument(
         "--follow", action="store_true", help="keep printing events until stopped or failing"

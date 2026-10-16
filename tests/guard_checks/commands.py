@@ -33,35 +33,67 @@ BIN_MODULE = re.compile(r"\bpython3 -P -m ([\w.]+)")
 ALLOWED_BASH = re.compile(r"^[ \t]+- Bash\((.+)\)$", re.M)
 
 
+def _manager_trees(repo):
+    base = "manager/src/agent_pm/manager/"
+    for rel, text in _files(os.path.join(repo, base), ".py"):
+        yield base + rel, ast.parse(text)
+
+
 def manager_commands(repo: str) -> list[str]:
     found = []
-    rel = "manager/src/agent_pm/manager/engine/crew.py"
-    path = os.path.join(repo, rel)
-    if not os.path.isfile(path):
-        return []
-    with open(path, encoding="utf-8") as source:
-        tree = ast.parse(source.read(), rel)
-    allowed = set()
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Tuple | ast.List):
+    for rel, tree in _manager_trees(repo):
+        allowed = set()
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Tuple | ast.List) or not node.elts:
+                continue
             values = [v.value if isinstance(v, ast.Constant) else None for v in node.elts]
-            if values == [SESSION_COMMAND, "ls", "--here", "--records"]:
+            listing = values in (
+                [SESSION_COMMAND, "ls", "--here", "--records"],
+                [SESSION_COMMAND, "ls", "--here", "--records", "--descendants"],
+            )
+            starter = (
+                len(values) >= 3
+                and values[:2] == [SESSION_COMMAND, "start"]
+                or len(values) >= 5
+                and values[:3] == ["agent-pm-linear", "router", "--issue"]
+                and values[4] == "--tui"
+                or len(values) >= 7
+                and values[:3] == ["agent-pm-delegate", "run", "--role"]
+                and values[4:6] == ["--detach", "--name"]
+            )
+            if listing or starter:
                 allowed.add(id(node.elts[0]))
+        docstrings = {
+            id(node.body[0].value)
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Module | ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef)
+            and ast.get_docstring(node) is not None
+        }
+        for node in ast.walk(tree):
             if (
-                values[:3] == [SESSION_COMMAND, "start", None]
-                or values[:5] == ["agent-pm-linear", "router", "--issue", None, "--tui"]
-                or values[:7]
-                == ["agent-pm-delegate", "run", "--role", None, "--detach", "--name", None]
+                isinstance(node, ast.Constant)
+                and isinstance(node.value, str)
+                and node.value.startswith(COMMAND)
+                and node.value != "agent-pm-crew"
+                and id(node) not in allowed | docstrings
             ):
-                allowed.add(id(node.elts[0]))
-    for node in ast.walk(tree):
-        if (
-            isinstance(node, ast.Constant)
-            and isinstance(node.value, str)
-            and node.value.startswith(COMMAND)
-            and id(node) not in allowed
-        ):
-            found.append(f"{rel}:{node.lineno}: hardcoded layer command {node.value}")
+                found.append(f"{rel}:{node.lineno}: hardcoded layer command {node.value}")
+    return sorted(found)
+
+
+def manager_status_words(repo: str) -> list[str]:
+    found = []
+    for rel, tree in _manager_trees(repo):
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Constant) and isinstance(node.value, str):
+                if any(word in node.value for word in ("-drive", "needs_input")):
+                    found.append(f"{rel}:{node.lineno}: private status vocabulary {node.value!r}")
+            elif isinstance(node, ast.Compare):
+                parts = list(ast.walk(node))
+                if any(
+                    isinstance(p, ast.Attribute) and p.attr in {"outcome", "state"} for p in parts
+                ) and any(isinstance(p, ast.Constant) and isinstance(p.value, str) for p in parts):
+                    found.append(f"{rel}:{node.lineno}: status comparison needs enum members")
     return sorted(found)
 
 
