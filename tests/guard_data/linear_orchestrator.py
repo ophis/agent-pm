@@ -89,6 +89,10 @@ LOAD_HELPERS = ("_load_config", "_runnable", "_docs")
 
 HANDOFF_HOME = f"{ORCH_SRC}engine/issues.py"
 
+AGENT_LABEL_CONFIG = f"{ORCH_SRC}config.toml"
+AGENT_LABEL_TABLE = "[linear_orchestrator.agent_labels]"
+AGENT_LABEL_ENTRY = r'# local: [a-z][a-z0-9_-]* = "[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}"'
+
 
 COMMAND_SRC = (f"{ORCH_PROJECT}/{ORCH_SRC}",)
 

@@ -16,12 +16,14 @@ team = ""
 human_members = []
 harness_key = ""
 task_label_group = ""
+agent_label_group = ""
 work_dir = "~/.agent-pm"
 # local: [linear_orchestrator]
 # local: team = "00000000-0000-0000-0000-000000000000"
 # local: human_members = ["you@example.com"]
 # local: harness_key = "linear-harness"
 # local: task_label_group = "00000000-0000-0000-0000-000000000000"
+# local: agent_label_group = "00000000-0000-4000-8000-000000000101"
 # local: work_dir = "~/.agent-pm"
 
 # Delegate implementations; default selects new runs. Recorded kinds select existing runs.
@@ -58,6 +60,14 @@ canceled = ""
 # local: light-research = "00000000-0000-0000-0000-000000000000"
 # local: build = "00000000-0000-0000-0000-000000000000"
 # local: light-build = "00000000-0000-0000-0000-000000000000"
+
+# Agent labels; optional: set agent_label_group to the Agent group's id and map each client to its child label id.
+# Both empty disables selection; otherwise set both. Client names come from Delegate configuration.
+[agent_labels]
+
+# local: [linear_orchestrator.agent_labels]
+# local: claude = "00000000-0000-4000-8000-000000000102"
+# local: codex = "00000000-0000-4000-8000-000000000103"
 
 # Option labels; optional: Linear labels outside the Tasks group that switch on a run option, by id.
 #   visual  local: the Visual label's id; a research issue carrying it gets `Visual: yes` in its input (the researcher

@@ -10,6 +10,8 @@ from typing import Literal
 from agent_pm import delegate
 from agent_pm.utils import Stopped as Stopped
 
+ClientSource = Literal["label", "default"]
+
 
 @dataclass(frozen=True)
 class Role:
@@ -37,6 +39,8 @@ class Config:
     harness_key: str
     task_label_group: str
     task_labels: Mapping[str, str]
+    agent_label_group: str
+    agent_labels: Mapping[str, str]
     option_labels: Mapping[str, str]
     roles: Mapping[str, Role]
     project_repos: Mapping[str, str]
@@ -252,9 +256,10 @@ class Spec:
     task: str | None = None
     mode: str
     client: str
+    client_source: ClientSource = "default"
 
     @classmethod
-    def from_issue(cls, issue, *, mode, sid, task, client):
+    def from_issue(cls, issue, *, mode, sid, task, client, client_source: ClientSource = "default"):
         return cls(
             uuid=issue["id"],
             issue=issue["identifier"],
@@ -264,6 +269,7 @@ class Spec:
             task=task,
             mode=mode,
             client=client,
+            client_source=client_source,
         )
 
     def identity_error(self) -> str | None:
