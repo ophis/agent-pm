@@ -102,7 +102,27 @@ class ResumeInput(RosterCase):
 
     def test_cached_adoption_cannot_promote_the_current_input_attempt(self):
         def adopt():
-            self.roster.adopt(self.record, resuming_before="2000-01-01T00:00:00+00:00")
+            def query(argv, **options):
+                if tuple(argv) == ("agent-pm-session", "ls", "--here", "--records"):
+                    stdout = self.record.to_line() + "\n"
+                else:
+                    self.assertEqual(tuple(argv), (*self.record.ctl, "status"))
+                    self.assertEqual(options["input"], self.record.to_line() + "\n")
+                    stdout = (
+                        Status(
+                            name=self.record.name,
+                            alive=False,
+                            state="gone",
+                            outcome="needs_input",
+                            attach=None,
+                            hidden=False,
+                        ).to_line()
+                        + "\n"
+                    )
+                return mock.Mock(returncode=0, stdout=stdout, stderr="")
+
+            with mock.patch("subprocess.run", side_effect=query):
+                Crew(self.roster).attach()
             self.assertIs(self.roster.entries()["x"].state, State.RESUMING)
 
         with self.assertRaises(ValueError):

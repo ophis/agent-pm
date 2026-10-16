@@ -61,6 +61,9 @@ class Commands(Case):
         expected = {
             "hold",
             "run",
+            "worker",
+            "issue",
+            "role",
             "attach",
             "status",
             "hide",

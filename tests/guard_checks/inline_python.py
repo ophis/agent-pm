@@ -89,21 +89,20 @@ def _scope_values(tree):
             local.setdefault(node.name, []).append(RUNTIME)
         elif isinstance(node, ast.MatchMapping) and node.rest:
             local.setdefault(node.rest, []).append(RUNTIME)
-    declarations = {
-        name for node in nodes if isinstance(node, ast.Global | ast.Nonlocal) for name in node.names
-    }
-    return nodes, {name: values for name, values in local.items() if name not in declarations}
+    return nodes, local
 
 
 def _invalidated(tree):
     invalid = {}
 
     def visit(scope, parents):
-        nodes, local = _scope_values(scope)
+        nodes, bindings = _scope_values(scope)
         globals_ = {name for node in nodes if isinstance(node, ast.Global) for name in node.names}
         nonlocals = {
             name for node in nodes if isinstance(node, ast.Nonlocal) for name in node.names
         }
+        declared = globals_ | nonlocals
+        local = bindings.keys() - declared
 
         def owner(name):
             if name in globals_:
@@ -115,11 +114,10 @@ def _invalidated(tree):
                     return outer
             return tree
 
+        for name in bindings.keys() & declared:
+            invalid.setdefault(id(owner(name)), set()).add(name)
         for node in nodes:
-            if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store | ast.Del):
-                if node.id in globals_ | nonlocals:
-                    invalid.setdefault(id(owner(node.id)), set()).add(node.id)
-            elif isinstance(node, ast.Attribute | ast.Subscript) and isinstance(
+            if isinstance(node, ast.Attribute | ast.Subscript) and isinstance(
                 node.ctx, ast.Store | ast.Del
             ):
                 root = node.value
@@ -130,8 +128,6 @@ def _invalidated(tree):
             elif isinstance(
                 node, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef | ast.Lambda
             ):
-                if not isinstance(node, ast.Lambda) and node.name in globals_ | nonlocals:
-                    invalid.setdefault(id(owner(node.name)), set()).add(node.name)
                 visit(node, [*parents, (scope, local)])
 
     visit(tree, [])
@@ -142,6 +138,10 @@ def _programs(tree, inherited=None, invalid=None):
     """(line, text, error) per -c program; runtime bindings cannot have code exceptions."""
     invalid = _invalidated(tree) if invalid is None else invalid
     nodes, local = _scope_values(tree)
+    declarations = {
+        name for node in nodes if isinstance(node, ast.Global | ast.Nonlocal) for name in node.names
+    }
+    local = {name: values for name, values in local.items() if name not in declarations}
     for name in invalid.get(id(tree), ()):
         local.setdefault(name, []).append(RUNTIME)
     bindings = {**(inherited or {}), **local}

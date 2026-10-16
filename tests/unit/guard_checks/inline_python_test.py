@@ -56,6 +56,31 @@ class InlinePython(Sample):
             )
             self.assertEqual(self.checked(source), [])
 
+    def test_every_declared_rebinding_invalidates_its_lexical_owner(self):
+        for change in (
+            "import helper as CODE",
+            "from helper import code as CODE",
+            "try:\n    pass\nexcept Exception as CODE:\n    pass",
+            "match value:\n    case CODE:\n        pass",
+            "match value:\n    case [*CODE]:\n        pass",
+            "match value:\n    case {'key': _, **CODE}:\n        pass",
+            "def CODE(): pass",
+            "async def CODE(): pass",
+            "class CODE: pass",
+        ):
+            for declaration in ("global", "nonlocal"):
+                with self.subTest(change=change, declaration=declaration):
+                    nested = "\n".join("        " + line for line in change.splitlines())
+                    body = f"    def mutate():\n        {declaration} CODE\n{nested}\n    mutate()\n    return ['python3', '-c', f'{{CODE}}']\n"
+                    source = (
+                        "CODE = 'pass'\ndef outer():\n" + body
+                        if declaration == "global"
+                        else "def outer():\n    CODE = 'pass'\n" + body
+                    )
+                    found = self.checked(source, {key("f\"{'pass'}\""): "Previously literal."})
+                    self.assertTrue(any("run-time value" in line for line in found), found)
+                    self.assertTrue(any("stale" in line for line in found), found)
+
     def test_mutations_and_definitions_invalidate_literal_programs(self):
         for change in (
             "CODE.value = value",
