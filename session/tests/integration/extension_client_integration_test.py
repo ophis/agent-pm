@@ -23,7 +23,8 @@ MODULE = "extension_client"
 # The child: configures the session from the copy's session config, starts client argv[2] headless
 # in workdir argv[1] and prints its events; a ConfigError exits 1, its text on stderr.
 CHILD = """import dataclasses, json, sys
-from agent_pm.session import Access, ConfigError, Mode, Session, Spec, read_config
+from agent_pm.session import Access, ConfigError, Mode, Session, Spec
+from agent_pm.session.engine.config import read_config
 try:
     Session.configure_from(read_config())
     handle = Session.start(
@@ -39,7 +40,8 @@ print(json.dumps({"sid": handle.sid, "events": events,
 """
 INSTALLED_CHILD = """import json, sys
 from unittest import mock
-from agent_pm.session import Access, Spec, read_config
+from agent_pm.session import Access, Spec
+from agent_pm.session.engine.config import read_config
 from agent_pm.session.engine.hosted_session import HostedSession
 HostedSession.configure_from(read_config())
 client = HostedSession._config().registry.client("codex")

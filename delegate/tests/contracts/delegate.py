@@ -9,7 +9,8 @@ import os
 import shutil
 import uuid
 
-from agent_pm.delegate import Begun, ConfigError, Delegate, Finished
+from agent_pm.delegate import ConfigError, Delegate
+from agent_pm.delegate.engine.types import Begun, Finished
 from agent_pm.session import NotShowable, Usage
 from agent_pm.utils import Record, Status
 

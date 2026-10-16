@@ -7,7 +7,7 @@ import unittest
 from importlib.resources import files
 
 from agent_pm import delegate
-from agent_pm.delegate.engine.types import Layout
+from agent_pm.delegate.engine.types import Layout, Result
 
 from delegate.tests.case import Case
 from delegate.tests.plans import Base
@@ -57,7 +57,7 @@ class LayoutTest(Case):
 
 class ResultTest(Case):
     def test_instruction_is_a_path_and_defaults_to_none(self):
-        result = delegate.Result(0, None, instruction="/work/prompt.md")
+        result = Result(0, None, instruction="/work/prompt.md")
         self.assertEqual(
             dataclasses.asdict(result),
             {
@@ -68,7 +68,7 @@ class ResultTest(Case):
                 "instruction": "/work/prompt.md",
             },
         )
-        self.assertIsNone(delegate.Result(0, None).instruction)
+        self.assertIsNone(Result(0, None).instruction)
 
 
 class PlanTest(Base):

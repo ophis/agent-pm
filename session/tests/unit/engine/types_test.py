@@ -10,14 +10,10 @@ from agent_pm.session import (
     Access,
     ConfigError,
     Effort,
-    Hosts,
-    Liveness,
     Mode,
     NotShowable,
     Resumable,
     SessionError,
-    SessionInfo,
-    SessionRow,
     SessionStatus,
     Spec,
 )
@@ -26,11 +22,15 @@ from agent_pm.session.engine.types import (
     ClientBound,
     HookError,
     HookKind,
+    Hosts,
     KeyPress,
     Launch,
+    Liveness,
     NamedKey,
     Prepared,
     ProcessOptions,
+    SessionInfo,
+    SessionRow,
     Tier,
 )
 from agent_pm.utils import StatusState
@@ -246,7 +246,7 @@ class OptionSets(Case):
             with self.subTest(enum=enum.__name__):
                 self.assertEqual([m.value for m in enum], values)
                 self.assertEqual(list(enum), values)
-                self.assertIn(enum.__name__, session.__all__)
+                self.assertEqual(enum.__name__ in session.__all__, enum is not Liveness)
         self.assertNotIn("MODES", session.__all__)
 
     def test_hook_kinds_tiers_and_hook_words_are_session_internal_str_enums(self):
@@ -443,7 +443,7 @@ class KeyNotation(Case):
         for named in NamedKey:
             with self.subTest(named=named):
                 self.assertEqual(KeyPress.parse(named.value), KeyPress(named.value))
-        self.assertIn("KeyPress", session.__all__)
+        self.assertNotIn("KeyPress", session.__all__)
 
 
 class HookCallbackTest(Case):

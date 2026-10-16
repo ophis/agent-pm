@@ -2,15 +2,8 @@
 
 import inspect
 
-from agent_pm.session import (
-    Access,
-    ConfigError,
-    Hosts,
-    Mode,
-    Session,
-    Spec,
-)
-from agent_pm.session.engine.types import ProcessOptions
+from agent_pm.session import Access, ConfigError, Mode, Session, Spec
+from agent_pm.session.engine.types import Hosts, ProcessOptions
 
 from session.tests.case import Case
 from session.tests.fakes.host import FakeHost

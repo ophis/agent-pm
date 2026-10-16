@@ -15,7 +15,8 @@ CALLED = ("start", "attach", "usage", "layout", "writable_dirs", "display", "hos
 # A child: each class method on Session unconfigured, then after Session.configure; it prints
 # {"unconfigured": {name: message}, "configured": {name: result or [error type, message]}}.
 DISPATCH = """import json, os
-from agent_pm.session import Access, ConfigError, SessionError, Hosts, Mode, Session, Spec
+from agent_pm.session import Access, ConfigError, SessionError, Mode, Session, Spec
+from agent_pm.session.engine.types import Hosts
 home = os.environ["HOME"]
 spec = Spec(workdir=home, access=Access(cwd=home), client="fake", mode=Mode.HEADLESS, prompt="hi")
 calls = {

@@ -12,7 +12,7 @@ Test boundaries and commands: `docs/tests.md`.
 - A layer's packaged `config.toml` (`<project>/src/agent_pm/<package>/config.toml`) holds only its keys, each a real line (a local-only one its empty default, its comment saying what empty means); a `# local:` line only shows a value for `~/.agent-pm/config.local.toml` (`tests/guard_checks/configuration.py` `explicit_keys`). Layer sections and merge rules: `utils/src/agent_pm/utils/config_file.py`'s docstring.
 - Identify Linear entities by id, never name; a role's `account` (an email) is the exception.
 - Linear's lists can lag a just-made state change: re-read an issue's state before acting on it (`linear-orchestrator/src/agent_pm/linear_orchestrator/engine/ops.py:move` does).
-- Tmux implementation: `session/src/agent_pm/session/hosts/tmux/` (`TmuxHost`: `host.py`; the `Tmux`, `Grid`, `Iterm` and `Placement` it holds: `transport.py`, `grid.py`, `iterm.py`, `placement.py`). `/agent-pm:tmux` (`manager/skills/tmux/SKILL.md`) reaches it only through `agent-pm-session`.
+- Tmux implementation: `session/src/agent_pm/session/hosts/tmux/` (`TmuxHost`: `host.py`; the `Tmux`, `Grid`, `Iterm` and `Placement` it holds: `transport.py`, `grid.py`, `iterm.py`, `placement.py`). `/agent-pm:manage` (`manager/skills/manage/SKILL.md`) reaches it only through `agent-pm-session`.
 - Pty implementation: `session/src/agent_pm/session/hosts/pty/` (`PtyHost`: `host.py`; the supervisor holding each session's pty: `supervisor.py`).
 - The session's and delegate's public interfaces are frozen: `tests/guard_checks/exports.py` `session_interface_snapshot` and `delegate_interface_snapshot` (who may change `tests/session_interface.json` and `tests/delegate_interface.json`: their docstrings).
 - Keep `<work_dir>/logs/runs.jsonl` (`docs/board.md` › Operating).
@@ -20,7 +20,7 @@ Test boundaries and commands: `docs/tests.md`.
 
 ## Import rules
 
-Layer contracts live in `pyproject.toml` and run with `lint-imports`: manager > linear_orchestrator > delegate > session > utils. Manager imports only itself and utils; it reaches other layers through commands. Cross-layer imports use the lower layer's public package. Orchestration reaches session only through Delegate: its contract ignores no import. Project tests may import their project and lower layers, never the root `tests` package or a higher project.
+Layer contracts live in `pyproject.toml` and run with `lint-imports`: manager > linear_orchestrator > delegate > session > utils. Manager imports only itself and utils; it reaches other layers through commands. Cross-layer imports use the lower layer's public package; exact test exceptions for removed exports are listed in `pyproject.toml`. Orchestration reaches session only through Delegate: its contract ignores no import. Project tests may import their project and lower layers, never the root `tests` package or a higher project.
 
 Session and Delegate internal units use the longest matching package; their dependency rules and shared-module purity are declared in `pyproject.toml`'s unit contracts. Session owns no config reader, reply-protocol tag or team text; `tests/guard_checks/` enforces those names and literal dynamic imports.
 

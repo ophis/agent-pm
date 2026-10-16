@@ -5,26 +5,18 @@ import inspect
 from agent_pm import session
 from agent_pm.session import (
     Access,
-    Activity,
-    Blocked,
     Effort,
     Exited,
-    Hosts,
     IdleTimeout,
-    KeyPress,
     Launch,
     LimitHit,
-    Liveness,
     Mode,
     Reply,
     Resumable,
     RunLog,
-    SessionInfo,
-    SessionRow,
     SessionStatus,
     SessionStatusLog,
     Spec,
-    StatusState,
     Stderr,
     TurnEnd,
     TurnFailed,
@@ -35,7 +27,7 @@ from agent_pm.session.engine import types
 
 from session.tests.case import Case
 
-EVENTS = {Activity, Blocked, Exited, IdleTimeout, LimitHit, Reply, Stderr, TurnEnd, TurnFailed}
+EVENTS = {Exited, IdleTimeout, LimitHit, Reply, Stderr, TurnEnd, TurnFailed}
 
 ALLOWED_CONCRETE = {
     SessionStatusLog,
@@ -43,18 +35,12 @@ ALLOWED_CONCRETE = {
     Window,
     Spec,
     Access,
-    SessionRow,
     SessionStatus,
     Mode,
-    Liveness,
     Launch,
-    KeyPress,
     Effort,
     Resumable,
-    StatusState,
     RunLog,
-    SessionInfo,
-    Hosts,
     *EVENTS,
 }
 

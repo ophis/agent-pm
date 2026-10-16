@@ -49,7 +49,6 @@ OBJECT_EXPORT_MODULES = (
 
 
 OBJECT_EXPORTS_ALLOWED = {
-    (f"{PKG}.{SESSION}", "read_config"): "TASK-389 layer-owned configuration entry point",
     (f"{PKG}.{SESSION}", "SESSION_NAME"): "TASK-526 shared session-name validation pattern",
     (f"{PKG}.{SESSION}", "SESSION_NAME_RULE"): "TASK-526 shared session-name validation message",
 }
@@ -104,6 +103,18 @@ NO_COVER_ALLOWED = {
 
 PYTHON_CODE_ALLOWED = {
     (
+        "session/tests/integration/engine/base_integration_test.py",
+        "496cc309241d2277a901f9c83282e8e69274d487a82905a947bcd0e871f75c3e",
+    ): "Session class-method dispatch before and after configuration requires a fresh interpreter; Hosts is imported from its defining module after its public export was removed.",
+    (
+        "session/tests/integration/extension_client_integration_test.py",
+        "1813480e07c687e6f048d7f9359d0ed876f19c706a3ef5146952d8bbff26777b",
+    ): "Loads the unexported session config reader in a fresh installed-layout interpreter to configure and launch the extension Client.",
+    (
+        "session/tests/integration/installed_integration_test.py",
+        "353dd97a00934849a329050c79575964e96388802b6a50b9fa31787a61218a1e",
+    ): "Loads the unexported session config reader from the copied installation; only a fresh interpreter proves it uses the installed package.",
+    (
         "session/tests/integration/clients/codex/tui/start_integration_test.py",
         "12c484c0edb7f7ebf292aa261aeca1fe260c4c668b2f4cb17d779403ad752df8",
     ): "Fresh-interpreter import of codex tui submodules: sys.path untouched, canonical clients.common/codex.common identity, no _agent_pm_codex_* copies; needs internal submodules and clean sys.modules.",
@@ -117,7 +128,7 @@ PYTHON_CODE_ALLOWED = {
     ): "Runs codex tui start as __main__ under -P -s from PYTHONPATH roots (and from a cwd decoy), then checks in that interpreter that internal codex modules are canonical; needs internal submodules and a fresh interpreter.",
     (
         "session/tests/integration/extension_client_integration_test.py",
-        "4ccf3464fd781df5281df75dd49379e9f8bfbe90397bc49471d20236f53f160f",
+        "f38195f9a98134400a7105a83b2adbdfc69ff63513bb7024f47ea0c3cb5089f3",
     ): "Codex tui launch (argv, PYTHONPATH) from an installed-layout site through HostedSession's client registry; no public API returns a configured Client's launch, and only a fresh interpreter on the copied site sees that layout.",
     (
         "session/tests/integration/hosted_integration_test.py",

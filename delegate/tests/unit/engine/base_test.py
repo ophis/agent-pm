@@ -49,7 +49,7 @@ CLASS_METHODS = {
 
 class Exports(Case):
     def test_all_holds_the_new_names_each_bound(self):
-        for name in ("Delegate", "Spec", "RunConfig", "DelegateEvent", "Driver", "DriverSpec"):
+        for name in ("Delegate", "Spec", "RunConfig", "DelegateEvent"):
             with self.subTest(name=name):
                 self.assertIn(name, delegate.__all__)
         self.assertEqual([n for n in delegate.__all__ if not hasattr(delegate, n)], [])
@@ -57,7 +57,7 @@ class Exports(Case):
         self.assertIs(delegate.DelegateEvent, event.DelegateEvent)
 
     def test_session_types_are_public_at_the_delegate_boundary(self):
-        for name in ("Resumable", "SessionStatus", "Usage", "Window"):
+        for name in ("Resumable", "Window"):
             with self.subTest(name=name):
                 self.assertIn(name, delegate.__all__)
                 self.assertIs(getattr(delegate, name), getattr(session, name))

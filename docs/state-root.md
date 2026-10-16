@@ -28,7 +28,7 @@ agent-pm keeps its state in its state root, `~/.agent-pm/`. `work/` and `logs/` 
 ├── workers/<sid>/                a worker's state; by-name/<name>: its latest sid
 ├── hidden/<name>.json            whether that name's tmux session is hidden, for its sid
 ├── managers/<name>/              a manager's Roster and events file
-├── adhoc/<date>-<role>-<name>/   workdirs of /agent-pm:act-as and /agent-pm:tmux role runs
+├── adhoc/<date>-<role>-<name>/   workdirs of /agent-pm:act-as and /agent-pm:manage role runs
 ├── probe/                        the empty cwd of the client usage check
 └── bin/                          ctmux --install's launchers
 ```

@@ -11,7 +11,8 @@ from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from unittest import mock
 
-from agent_pm.delegate import Begun, DelegateEvent, Finished, Outcome, Progress, Result
+from agent_pm.delegate import DelegateEvent, Outcome, Progress
+from agent_pm.delegate.engine.types import Begun, Finished, Result
 from agent_pm.linear_orchestrator.engine import (
     config,
     issues,

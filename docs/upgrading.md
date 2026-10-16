@@ -21,7 +21,7 @@ Nothing migrates automatically. Do each step that applies, once, by hand or thro
 | `runs.jsonl` start, resume or limit rows without `delegate_kind` | Before deploying, add `"delegate_kind": "harness"` to each, changing nothing else. |
 | an issue In Progress across the trigger-only router or `runs.jsonl` deploys | Deploy with nothing In Progress. |
 | Claude runs started before `agent-pm-session client-resume claude` | Resume them by hand: their `Run <sid>` command has no saved launch to replay. |
-| a `~/.agent-pm/bin/ctmux` that is a copy of ctmux, not a launcher (its sessions exit at once outside Claude Code) | Run the plugin's ctmux once: `<plugin>/manager/skills/tmux/scripts/ctmux --install`, `<plugin>` being `~/.claude/plugins/cache/agent-pm/agent-pm/<version>` or `~/.codex/plugins/cache/agent-pm/agent-pm/<version>`. |
+| a `~/.agent-pm/bin/ctmux` that is a copy of ctmux, not a launcher (its sessions exit at once outside Claude Code), or launchers installed before ctmux moved to `manage` (`ctmux` fails with `no installed agent-pm plugin has manager/skills/tmux/scripts/ctmux`) | Run the plugin's ctmux once: `<plugin>/manager/skills/manage/scripts/ctmux --install`, `<plugin>` being `~/.claude/plugins/cache/agent-pm/agent-pm/<version>` or `~/.codex/plugins/cache/agent-pm/agent-pm/<version>`. |
 | old logs in `<work_dir>/logs/` | `rm -rf ~/.agent-pm/logs/runs.log ~/.agent-pm/logs/router.log ~/.agent-pm/logs/promote.log ~/.agent-pm/logs/projects ~/.agent-pm/logs/tui` |
 | `src/` or `run.jsonl` directly in a `<work_dir>/work/<ID>/` or `~/.agent-pm/adhoc/*/`, or `~/.agent-pm/delegates/` | [Workdir split](#workdir-split). |
 
@@ -90,8 +90,8 @@ Run it right after switching to `main`, in order, from the checkout root inside 
 |---|---|---|---|
 | 1 | Commands | each `bin/` command's `--help`, then `agent-pm-session ls`, `agent-pm-delegate run --list`, `agent-pm-crew status --manager <name>` | all exit 0; `run --list` shows researcher, pm, engineer and dummy-tester |
 | 2 | Config validation | the block below | each command fails with `unknown key 'smoke_bad_key' in [<section>]` before any Linear call |
-| 3 | Claude Code plugin | `/agent-pm:act-as dummy-tester:echo smoke` in a throwaway session | it echoes `smoke`; `/agent-pm:tmux` and `/agent-pm:manage` load |
-| 4 | Codex plugin | `codex --version`; in a Codex session, pick agent-pm's `tmux` and ask it to run `agent-pm-session ls` | 0.156.0+; Codex runs `bin/agent-pm-session` by absolute path, with no literal `${CLAUDE_SKILL_DIR}` |
+| 3 | Claude Code plugin | `/agent-pm:act-as dummy-tester:echo smoke` in a throwaway session | it echoes `smoke`; `/agent-pm:manage` loads |
+| 4 | Codex plugin | `codex --version`; in a Codex session, pick `/agent-pm:manage` and ask it to run `agent-pm-session ls` | 0.156.0+; Codex runs `bin/agent-pm-session` by absolute path, with no literal `${CLAUDE_SKILL_DIR}` |
 | 5 | Dry runs | `bin/agent-pm-linear` `router --dry-run`, `router --issue <H> --tui --events "$(mktemp)" --dry-run`, `promote --dry-run`, `prune --dry-run` | each prints the plan you expect and exits 0; no issue moves, no tmux session starts |
 | 6 | Brake | `bin/agent-pm-linear router --brake researcher` | exit 0 or 1, not 2 |
 | 7 | Headless run | `bin/agent-pm-linear router --issue <H>` | `<H>` goes In Progress with its start and `Run <sid>` comments and an `engineer-<H>-<sid8>-drive` session; it ends with a PR on the scratch repo linked in a comment, `<H>` In Review, the session gone |

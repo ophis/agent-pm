@@ -16,6 +16,8 @@ class DelegatePackageNames(Sample):
             "import agent_pm.utils as u\nu.import_roots()\n",
             "DELEGATE = '/repo/delegate'\n",
             "from .config import IMPORT_ROOTS\n",
+            "import legacy\ncommand = legacy.DELEGATE\n",
+            "from agent_pm.utils import LayerCommand\nLayerCommand.DELEGATE = 'x'\n",
         ):
             with self.subTest(sample=sample):
                 root = self.tree({base + "engine/config.py": sample})
@@ -27,6 +29,16 @@ class DelegatePackageNames(Sample):
             }
         )
         self.assertEqual(ownership.delegate_package_names(root), [])
+
+    def test_shared_layer_command_member_is_not_a_legacy_package_path(self):
+        for sample in (
+            "from agent_pm.utils import LayerCommand\ncommand = LayerCommand.DELEGATE\n",
+            "from agent_pm.utils import LayerCommand as C\ncommand = C.DELEGATE\n",
+            "import agent_pm.utils as u\ncommand = u.LayerCommand.DELEGATE\n",
+        ):
+            with self.subTest(sample=sample):
+                root = self.tree({"delegate/src/agent_pm/delegate/cli.py": sample})
+                self.assertEqual(ownership.delegate_package_names(root), [])
 
 
 class SessionNames(Sample):

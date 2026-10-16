@@ -8,23 +8,15 @@ from contextlib import redirect_stderr
 from datetime import datetime
 from unittest import mock
 
-from agent_pm.delegate import Begun, ConfigError, Finished, Limit, Progress, Result, Spec
+from agent_pm.delegate import ConfigError, Progress, Spec
 from agent_pm.delegate.composer import Composer
 from agent_pm.delegate.engine.plan import plan
 from agent_pm.delegate.engine.runner import FIX, NUDGE, STOP_LIMIT, execute, stopped
-from agent_pm.delegate.engine.types import Layout
+from agent_pm.delegate.engine.types import Begun, Finished, Layout, Limit, Result
 from agent_pm.delegate.event.reply import marks
-from agent_pm.session import (
-    Activity,
-    Blocked,
-    Exited,
-    IdleTimeout,
-    LimitHit,
-    Reply,
-    SessionError,
-    TurnFailed,
-)
 from agent_pm.session import ConfigError as SessionConfigError
+from agent_pm.session import Exited, IdleTimeout, LimitHit, Reply, SessionError, TurnFailed
+from agent_pm.session.engine.types import Activity, Blocked
 from agent_pm.utils import Stopped
 
 from delegate.tests.case import Case

@@ -10,11 +10,11 @@ import sys
 from contextlib import redirect_stderr, redirect_stdout
 from unittest import mock
 
-from agent_pm.delegate import Begun, ConfigError, Finished, Result, Spec, cli
+from agent_pm.delegate import ConfigError, Spec, cli
 from agent_pm.delegate.composer import Composer
 from agent_pm.delegate.engine.drivers import AgentDriver
 from agent_pm.delegate.engine.harness_delegate import HarnessDelegate
-from agent_pm.delegate.engine.types import Layout
+from agent_pm.delegate.engine.types import Begun, Finished, Layout, Result
 from agent_pm.session import ConfigError as SessionConfigError
 from agent_pm.session import SessionError
 

@@ -27,7 +27,8 @@ MODULE = "installed_client"
 CHILD = """import importlib.util, json, sys
 sys.path.insert(0, sys.argv[1])
 import agent_pm.session, agent_pm.utils
-from agent_pm.session import Access, Session, Spec, read_config
+from agent_pm.session import Access, Session, Spec
+from agent_pm.session.engine.config import read_config
 config = read_config()
 Session.configure_from(config)
 handle = Session.start(Spec(workdir=sys.argv[2], access=Access(cwd=sys.argv[2]), client="fake",

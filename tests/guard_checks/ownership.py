@@ -6,7 +6,7 @@ import os
 import re
 import tokenize
 
-from tests.guard_checks.common import _files, _strings
+from tests.guard_checks.common import _bindings, _dotted, _files, _strings
 from tests.guard_data.delegate import CONFIG_FILE, DELEGATE_SRC
 from tests.guard_data.linear_orchestrator import HANDOFF_HOME, ORCH, ORCH_FILES, ORCH_PROJECT
 from tests.guard_data.session import (
@@ -100,7 +100,9 @@ def delegate_package_names(repo: str) -> list[str]:
     forbidden = {"read_project", "import_roots", "DELEGATE", "IMPORT_ROOTS"}
     found = set()
     for rel, text in _files(os.path.join(repo, base), ".py"):
-        for node in ast.walk(ast.parse(text, rel)):
+        tree = ast.parse(text, rel)
+        bound = _bindings(tree)
+        for node in ast.walk(tree):
             name = (
                 node.id
                 if isinstance(node, ast.Name)
@@ -110,7 +112,12 @@ def delegate_package_names(repo: str) -> list[str]:
                 if isinstance(node, ast.alias | ast.FunctionDef | ast.AsyncFunctionDef)
                 else ""
             )
-            if name in forbidden:
+            shared_command = (
+                isinstance(node, ast.Attribute)
+                and isinstance(node.ctx, ast.Load)
+                and _dotted(node, bound) == "agent_pm.utils.LayerCommand.DELEGATE"
+            )
+            if name in forbidden and not shared_command:
                 found.add(f"{base}{rel}:{node.lineno}: legacy package name {name} (TASK-389)")
     return sorted(found)
 

@@ -11,16 +11,7 @@ import os
 import signal
 from unittest import mock
 
-from agent_pm.delegate import (
-    Begun,
-    ConfigError,
-    DelegateEvent,
-    Finished,
-    Limit,
-    Outcome,
-    Progress,
-    Result,
-)
+from agent_pm.delegate import ConfigError, DelegateEvent, Outcome, Progress
 from agent_pm.delegate.engine.callback import (
     CALLBACK_STOP_WAIT,
     CALLBACK_TIMEOUT,
@@ -28,7 +19,7 @@ from agent_pm.delegate.engine.callback import (
     sweep,
 )
 from agent_pm.delegate.engine.state import RunState
-from agent_pm.delegate.engine.types import Layout
+from agent_pm.delegate.engine.types import Begun, Finished, Layout, Limit, Result
 from agent_pm.utils import OutcomeStatus, Stopped
 
 from delegate.tests.case import Case

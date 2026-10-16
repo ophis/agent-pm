@@ -6,7 +6,7 @@ import contextlib
 import os
 from unittest import mock
 
-from agent_pm.delegate import Result
+from agent_pm.delegate.engine.types import Result
 from agent_pm.session import Exited, TurnEnd
 from agent_pm.utils import Status, StatusState
 

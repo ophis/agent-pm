@@ -7,9 +7,10 @@ import subprocess
 from datetime import datetime
 from unittest import mock
 
-from agent_pm.delegate import Outcome, Result
+from agent_pm.delegate import Outcome
 from agent_pm.delegate.composer import Composer
 from agent_pm.delegate.composer.prompt import RESUME
+from agent_pm.delegate.engine.types import Result
 
 from delegate.tests.case import PY, child_env
 from delegate.tests.cli_case import Base

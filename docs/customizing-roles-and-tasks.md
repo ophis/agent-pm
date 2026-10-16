@@ -3,7 +3,7 @@
 - The built-in roles, tasks and templates live in `delegate/src/agent_pm/delegate/team/`; don't edit them.
 - A role's run settings (model, client, destination, commands) go in `~/.agent-pm/config.local.toml`.
 - Your own roles, tasks and templates go in a team dir. A team dir only adds: it cannot change or replace a built-in role, task or template, so a new task needs a new role.
-- Only researcher, pm and engineer run on the board ([On the board](#on-the-board)); your own roles run through `/agent-pm:act-as`, `/agent-pm:tmux` and `agent-pm-delegate run`.
+- Only researcher, pm and engineer run on the board ([On the board](#on-the-board)); your own roles run through `/agent-pm:act-as`, `/agent-pm:manage` and `agent-pm-delegate run`.
 
 ## See what exists
 

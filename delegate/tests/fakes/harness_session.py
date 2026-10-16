@@ -13,7 +13,6 @@ from agent_pm.session import (
     Exited,
     Host,
     Launch,
-    Liveness,
     Mode,
     NotShowable,
     Process,
@@ -24,6 +23,7 @@ from agent_pm.session import (
     Showable,
 )
 from agent_pm.session import Spec as SessionSpec
+from agent_pm.session.engine.types import Liveness
 from agent_pm.utils import Record, append_line, load_class, read_regular, save
 
 from delegate.tests.fakes.session import SessionClass

@@ -1,4 +1,4 @@
-"""manager/skills/{tmux,manage}/SKILL.md as a commander reads them."""
+"""manager/skills/manage/SKILL.md as a commander reads them."""
 
 import os
 import re
@@ -10,7 +10,7 @@ SKILLS = os.path.join(REPO, "manager", "skills")
 BIN = os.path.join(REPO, "bin")
 COMMAND = re.compile(r"`(agent-pm-[a-z]+\b[^`]*)`")
 FLAG = re.compile(r"(?<![\w-])--[a-z][a-z-]*")
-REFERENCE = re.compile(r"`/agent-pm:tmux` › ([A-Z][a-z]+)")
+REFERENCE = re.compile(r"\[([A-Z][a-z]+)\]\(#[a-z-]+\)")
 RULES = re.compile(r"^  - Bash\((.+)\)$", re.M)
 SKILL_DIR = "${CLAUDE_SKILL_DIR}"
 PATH = re.compile(

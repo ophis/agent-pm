@@ -1,14 +1,12 @@
-"""manager/skills/manage/SKILL.md (/agent-pm:manage): it leaves commands to /agent-pm:tmux, every
-section it cites there exists, it writes no retired command, and its rules for closing sessions,
-Codex issues, decision markers, board proposals and the one commit exception agree.
+"""manager/skills/manage/SKILL.md: command references, closing permissions, Codex issues,
+decision markers, board proposals and the one commit exception agree.
 """
 
 import os
 import re
 
 from manager.tests.case import REPO, Case
-from manager.tests.skills.manage import rule
-from manager.tests.skills.tmux import (
+from manager.tests.skills.commands import (
     BIN,
     body,
     doc_sections,
@@ -18,6 +16,7 @@ from manager.tests.skills.tmux import (
     section,
     sections,
 )
+from manager.tests.skills.manage import rule
 
 RETIRED = (
     "crew.py",
@@ -34,11 +33,11 @@ RETIRED = (
 
 
 class Manage(Case):
-    def test_each_cited_tmux_section_exists(self):
+    def test_each_cited_command_section_exists(self):
         cited = references("manage")
         self.assertGreaterEqual(set(cited), {"Start", "Events", "Launch", "Direct", "Recover"})
         for name in cited:
-            self.assertIn(name, sections("tmux"))
+            self.assertIn(name, sections("manage"))
 
     def test_commands_are_bin_commands_and_no_retired_name(self):
         for command in examples(body("manage")):
@@ -48,13 +47,13 @@ class Manage(Case):
         self.assertNotIn("## Crew commands", body("manage"))
 
     def test_events_arrive_with_their_content_and_need_no_pane_read(self):
-        monitor = rule("`monitor:`")
+        monitor = section("manage", "Start")
         self.assertNotIn("confirm by reading the pane", monitor)
-        self.assertIn("`/agent-pm:tmux` › Events", monitor)
+        self.assertIn("event line, then its content", monitor)
 
     def test_a_roster_entry_closes_through_crew(self):
         close = rule("AppleScript")
-        self.assertIn("`agent-pm-crew close <name>`", close)
+        self.assertIn("Close through Crew (Direct)", close)
         self.assertRegex(close, r"tmux only for sessions outside the Roster")
 
     def test_a_codex_issue_worker_starts_by_name_with_its_prompt_and_closes_on_merge(self):
@@ -115,4 +114,4 @@ class Manage(Case):
         update = rule("bumps the agent-pm plugin version")
         self.assertIn("`claude plugin update agent-pm@agent-pm`", update)
         self.assertIn("`codex plugin marketplace upgrade agent-pm`", update)
-        self.assertIn("how a client without this plugin's `bin/` on its PATH", body("manage"))
+        self.assertIn("A client without this plugin's `bin/` on its PATH", body("manage"))

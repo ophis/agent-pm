@@ -12,11 +12,11 @@ import unittest
 from contextlib import redirect_stderr
 from unittest import mock
 
-from agent_pm.delegate import Begun, Finished, Limit, Progress, Spec
+from agent_pm.delegate import Progress, Spec
 from agent_pm.delegate.composer import Composer
 from agent_pm.delegate.engine.drivers import AgentDriver
 from agent_pm.delegate.engine.runner import FIX
-from agent_pm.delegate.engine.types import Layout
+from agent_pm.delegate.engine.types import Begun, Finished, Layout, Limit
 
 from delegate.tests.case import Case, packaged
 from delegate.tests.integration.cli import DONE, RESETS, SID, UNSAVED, UNSAVED_ERROR
