@@ -38,14 +38,14 @@ def read(name: str, sid: str) -> bool:
     return entry is not None and entry["sid"] == sid and entry["hidden"]
 
 
-def write(name: str, sid: str, *, hidden: bool, live: Collection[str] | None = None) -> None:
+def write(name: str, sid: str, *, hidden: bool, live: Collection[str] | None) -> None:
     save(_path(name), json.dumps({"sid": sid, "hidden": hidden}) + "\n")
     if live is not None:
         for error in drop_stale(os.path.expanduser(DIR), keep={f"{n}.json" for n in live}):
             print(f"hidden: {error}", file=sys.stderr)
 
 
-def start(name: str, sid: str, live: Collection[str] | None = None) -> None:
+def start(name: str, sid: str, *, live: Collection[str] | None) -> None:
     """Marks sid hidden unless an entry of sid's exists: a restart or resume keeps its view."""
     entry = _entry(name)
     if entry is None or entry["sid"] != sid:

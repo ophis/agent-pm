@@ -25,11 +25,11 @@ class HiddenTest(Case):
             f.write(text)
 
     def test_write_then_read_answers_for_its_sid(self):
-        hidden.write("w1", SID, hidden=True)
+        hidden.write("w1", SID, hidden=True, live=None)
         with open(self.path(), encoding="utf-8") as f:
             self.assertEqual(json.load(f), {"sid": SID, "hidden": True})
         self.assertTrue(hidden.read("w1", SID))
-        hidden.write("w1", SID, hidden=False)
+        hidden.write("w1", SID, hidden=False, live=None)
         self.assertFalse(hidden.read("w1", SID))
 
     def test_read_is_false_for_a_missing_bad_or_other_sid_entry(self):
@@ -50,19 +50,19 @@ class HiddenTest(Case):
         self.assertFalse(hidden.read("w1", SID))
 
     def test_start_writes_only_on_a_new_sid(self):
-        hidden.start("w1", SID)
+        hidden.start("w1", SID, live=None)
         self.assertTrue(hidden.read("w1", SID))
-        hidden.write("w1", SID, hidden=False)
-        hidden.start("w1", SID)
+        hidden.write("w1", SID, hidden=False, live=None)
+        hidden.start("w1", SID, live=None)
         self.assertFalse(hidden.read("w1", SID))
-        hidden.start("w1", OTHER)
+        hidden.start("w1", OTHER, live=None)
         self.assertTrue(hidden.read("w1", OTHER))
         self.put("not json")
-        hidden.start("w1", SID)
+        hidden.start("w1", SID, live=None)
         self.assertTrue(hidden.read("w1", SID))
 
     def test_names_have_their_own_entries(self):
-        hidden.write("w1", SID, hidden=True)
+        hidden.write("w1", SID, hidden=True, live=None)
         self.assertFalse(hidden.read("w2", SID))
 
     def test_a_failed_write_raises_its_oserror(self):
@@ -70,7 +70,7 @@ class HiddenTest(Case):
         os.chmod(os.path.join(self.agent_pm, "hidden"), 0o500)
         self.addCleanup(os.chmod, os.path.join(self.agent_pm, "hidden"), 0o700)
         with self.assertRaises(OSError):
-            hidden.write("w1", SID, hidden=True)
+            hidden.write("w1", SID, hidden=True, live=None)
 
     def test_a_write_drops_entries_unwritten_for_stale_age_but_live_sessions(self):
         for live, want in (
@@ -82,7 +82,7 @@ class HiddenTest(Case):
                     os.unlink(self.path())
                 then = time.time() - STALE_AGE
                 for name, when in (("old", then - 60), ("live", then - 60), ("recent", then + 60)):
-                    hidden.write(name, SID, hidden=True)
+                    hidden.write(name, SID, hidden=True, live=None)
                     os.utime(self.path(name), (when, when))
                 err = io.StringIO()
                 with redirect_stderr(err):

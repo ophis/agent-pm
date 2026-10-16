@@ -74,14 +74,6 @@ def _session(name) -> str:
     return name
 
 
-def _live(tmux: Tmux) -> list[str] | None:
-    """The tmux sessions' names; None when tmux fails."""
-    try:
-        return tmux.checked(["list-sessions", "-F", "#{session_name}"]).stdout.split()
-    except TuiError:
-        return None
-
-
 def _checked(display) -> None:
     if why := display_error(display):
         raise ConfigError(why)
@@ -168,7 +160,7 @@ class TmuxProcess(Process):
         sid = self.session_identity()[0]
         if sid is not None:
             try:
-                hidden_store.write(self.name, sid, hidden=hidden, live=_live(self.tmux))
+                hidden_store.write(self.name, sid, hidden=hidden, live=self.tmux.sessions())
             except OSError as error:
                 raise SessionError(
                     f"tmux session {self.name}: hidden state: {error.strerror or error}"
@@ -488,7 +480,7 @@ class TmuxHost(Host, Showable):
         sid = record.sid if record is not None and record.sid else (metadata or {}).get("sid")
         if terminal and parts is not None and parts[3] and sid:
             try:
-                hidden_store.start(name, sid, live=_live(self.tmux))
+                hidden_store.start(name, sid, live=self.tmux.sessions())
             except OSError as error:
                 cleanup = self._cancel_launch(control, process)
                 detail = f"; {cleanup}" if cleanup else ""
