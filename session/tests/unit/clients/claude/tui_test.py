@@ -7,13 +7,14 @@ import shlex
 from unittest import mock
 
 from agent_pm.session.clients.claude import ClaudeClient
-from agent_pm.session.clients.claude.tui import ClaudeTui
+from agent_pm.session.clients.claude.tui import ClaudeTui, on_hook
 from agent_pm.session.engine.types import (
     Access,
     Activity,
     Blocked,
     ClientBound,
     ConfigError,
+    HookCall,
     HookCallback,
     HookKind,
     Launch,
@@ -970,6 +971,69 @@ class ContinuationTest(TranscriptCase):
         with open(path, "w", encoding="utf-8") as out:
             out.write("".join(json.dumps(r) + "\n" for r in records))
         return path
+
+    def test_callback_rejects_foreign_payload_before_dispatch(self):
+        for payload in ({}, {"session_id": NEXT}, {"session_id": []}):
+            with self.subTest(payload=payload):
+                call = HookCall(
+                    label="Stop",
+                    payload=payload,
+                    sid=SID,
+                    workdir=self.work,
+                    events=None,
+                    state=self.run.hook_callback().state,
+                )
+                self.assertIsNone(on_hook(call))
+
+    def test_callback_accepts_a_missing_continuation_target(self):
+        self.append(self.marker())
+        for sid in (SID, NEXT):
+            with self.subTest(sid=sid):
+                payload = {"session_id": sid, "last_assistant_message": "done"}
+                call = HookCall(
+                    label="Stop",
+                    payload=payload,
+                    sid=SID,
+                    workdir=self.work,
+                    events=None,
+                    state=self.run.hook_callback().state,
+                )
+                self.assertEqual(on_hook(call), payload)
+
+    def test_callback_without_a_transcript_cannot_dispatch(self):
+        for state in ({}, {"transcript": "relative"}):
+            with self.subTest(state=state):
+                self.assertIsNone(
+                    on_hook(
+                        HookCall(
+                            label="Stop",
+                            payload={"session_id": SID},
+                            sid=SID,
+                            workdir=self.work,
+                            events=None,
+                            state=state,
+                        )
+                    )
+                )
+
+    def test_resumed_callback_keeps_the_chain(self):
+        self.append(self.marker())
+        self.target(NEXT, said("old", text("past")))
+        resumed = self.launched(resume=True)
+        payload = {"session_id": NEXT}
+        self.assertEqual(
+            on_hook(
+                HookCall(
+                    label="SessionStart",
+                    payload=payload,
+                    sid=SID,
+                    workdir=self.work,
+                    events=None,
+                    state=resumed.hook_callback().state,
+                )
+            ),
+            payload,
+        )
 
     def test_delayed_target_keeps_old_file_readable(self):
         self.append(self.marker(), said("m1", text("old tail")))

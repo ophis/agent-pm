@@ -189,6 +189,47 @@ class Live(tui_live.Live):
 
 
 class TurnsTest(Live):
+    def test_foreign_stop_cannot_mark_the_active_session_done(self):
+        handle = self.start(
+            "w1",
+            sid=SID,
+            scenario={
+                "steps": ["old reply"],
+                "turns": [[{"kind": "dialog", "text": "Waiting after prompt"}]],
+            },
+        )
+        stream = self.stream(handle)
+        self.assertEqual(stream.next(idle=False), Activity(""))
+        self.assertEqual(stream.next(idle=False), TurnEnd("old reply", 0))
+        self.colored()
+        handle.send("continue")
+        live_tmux.wait(
+            lambda: "Waiting after prompt" in handle.screen(), what="second turn waiting"
+        )
+        self.assertEqual(self.server.option("w1", "@state"), "working")
+        before = live_tmux.events(self.events)
+        store = tui.TuiStore.attach("w1", host=self.session_cls.host())
+        hooks = live_tmux.events(os.path.join(store.dir, "hooks.jsonl"))
+        result = subprocess.run(
+            (*store.hook_argv(), "Stop"),
+            input=json.dumps(
+                {
+                    "session_id": "00000000-0000-4000-8000-000000000002",
+                    "last_assistant_message": "foreign",
+                }
+            ),
+            text=True,
+            capture_output=True,
+            env=self.server.child_env(),
+            cwd=self.workdir,
+            timeout=WAIT,
+        )
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (0, "", ""))
+        self.assertEqual(self.server.option("w1", "@state"), "working")
+        self.assertEqual(live_tmux.events(self.events), before)
+        self.assertEqual(live_tmux.events(os.path.join(store.dir, "hooks.jsonl")), hooks)
+        self.assertIn("Waiting after prompt", handle.content())
+
     def test_turns_their_lines_state_and_reply_send_and_the_border_no_pane_opened(self):
         handle = self.start(
             "w1",

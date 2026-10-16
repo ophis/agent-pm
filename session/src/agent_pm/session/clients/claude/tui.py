@@ -133,15 +133,7 @@ class ClaudeTui(Tui):
         self._native = os.path.splitext(os.path.basename(path))[0]
         if not UUID.fullmatch(self._native):
             self._native = self.sid
-        original = os.path.join(os.path.dirname(path), f"{self.sid}.jsonl")
-        if not os.path.isfile(original):
-            found = self.common.continuation(
-                {"type": "continued-in", "sessionId": self.sid, "continuedInSessionId": self.sid},
-                self.sid,
-                self._config_dir,
-            )
-            original = found[1] if found and found[1] else original
-        chain = self.common.walk(original, self.sid, self._config_dir)
+        chain = _chain(path, self.sid, self._config_dir)
         self._ids = {hop[0] for hop in chain}
         at = next((i for i, hop in enumerate(chain) if hop[0] == self._native), 0)
         self._visited = {hop[0] for hop in chain[: at + 1]}
@@ -300,9 +292,26 @@ class ClaudeTui(Tui):
         return [LimitHit(resets)]
 
 
-def on_hook(call: HookCall) -> dict:
-    """Journals the payload as is: the callback carries the transcript cursor's start."""
-    return call.payload
+def on_hook(call: HookCall) -> dict | None:
+    path = call.state.get("transcript")
+    if not isinstance(path, str) or not os.path.isabs(path):
+        return None
+    config_dir = os.path.dirname(os.path.dirname(os.path.dirname(path)))
+    ids = {hop[0] for hop in _chain(path, call.sid, config_dir)}
+    native = call.payload.get("session_id")
+    return call.payload if isinstance(native, str) and native in ids else None
+
+
+def _chain(path: str, sid: str, config_dir: str) -> list[tuple[str, str | None, str | None]]:
+    original = os.path.join(os.path.dirname(path), f"{sid}.jsonl")
+    if not os.path.isfile(original):
+        found = ClaudeCommon.continuation(
+            {"type": "continued-in", "sessionId": sid, "continuedInSessionId": sid},
+            sid,
+            config_dir,
+        )
+        original = found[1] if found and found[1] else original
+    return ClaudeCommon.walk(original, sid, config_dir)
 
 
 def _first(payload: dict, *keys: str) -> str:

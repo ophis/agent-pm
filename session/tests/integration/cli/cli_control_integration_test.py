@@ -1,8 +1,8 @@
 """agent-pm-session's batch commands through bin/agent-pm-session on a private tmux server: status
-answers each name or stdin Record in order (Q11); a duplicate or bad input refuses the whole batch
-before any action; show, hide, close and attach-command by name and by stdin Record, show placing a
+answers each name or stdin Record in order (Q11), using answer_keys batch rules;
+show, hide, close and attach-command by name and by stdin Record, show placing a
 session by its own display or by a Record's, close repeatable and only for the named (Q12), show
-and close refusing a Record whose sid the session's @record does not carry; on a
+and close checking private session identity; on a
 Host that cannot show (session.tests.fakes.host:FakeHost, the module entry) show, hide, attach-command,
 read and tile exit 1 saying so, status giving no attach command.
 """
@@ -98,12 +98,11 @@ class ControlCase(CliCase):
 
 
 class ContentTest(ControlCase):
-    def test_key_and_stdin_record_print_the_screen(self):
+    def test_done_content_prints_the_last_reply(self):
         record = self.done("w1")
-        screen = self.ok(self.session("read", "w1")).stdout
         for keys, stdin in ((("w1",), None), ((), lines(record))):
             with self.subTest(keys=keys):
-                self.assert_printed(self.session("content", *keys, stdin=stdin), screen)
+                self.assert_printed(self.session("content", *keys, stdin=stdin), "Hi from w1.\n")
 
     def test_invalid_or_missing_or_multiple_keys_answer_nothing(self):
         record = self.done("w1")
@@ -144,14 +143,12 @@ class StatusTest(ControlCase):
         w1 = self.done("w1")
         pane = self.server.pane_of("w1")
         line = w1.to_line() + "\n"
-        nowhere = dataclasses.replace(w1, name="w9", sessions=()).to_line() + "\n"
         for cmd in ("status", "show", "close", "attach-command"):
             for argv, stdin, stderr in (
-                (("w1", "w1"), None, f"{PROG}: {cmd}: w1 given twice\n"),
-                ((), line + line, f"{PROG}: {cmd}: w1 given twice\n"),
-                ((), line + "not json\n", f"{PROG}: {cmd}: stdin: Record line: not JSON"),
-                ((), line + '{"v": 1}\n', f"{PROG}: {cmd}: stdin: kind: missing\n"),
-                ((), line + nowhere, f"{PROG}: w9: names no session\n"),
+                (("w1", "w1"), None, f"{PROG}: name w1 given more than once\n"),
+                ((), line + line, f"{PROG}: name w1 given more than once\n"),
+                ((), line + "not json\n", f"{PROG}: stdin line 2: Record line: not JSON"),
+                ((), line + '{"v": 1}\n', f"{PROG}: stdin line 2: kind: missing\n"),
             ):
                 with self.subTest(cmd=cmd, argv=argv, stdin=stdin):
                     result = self.session(cmd, *argv, stdin=stdin)
@@ -163,6 +160,14 @@ class StatusTest(ControlCase):
         self.assertEqual(self.status("w1"), [live("w1", "done", cwd=self.cwd)])
         self.assertEqual(len(self.calls("w1")), 1)
 
+    def test_a_record_resolution_error_keeps_valid_keys(self):
+        record = self.done("w1")
+        nowhere = dataclasses.replace(record, name="w9", sessions=())
+        result = self.session("close", stdin=lines(record, nowhere))
+        self.assertEqual((result.returncode, result.stdout), (2, ""))
+        self.assertEqual(result.stderr, f"{PROG}: w9: names no session\n")
+        self.assertEqual(self.sessions(), [MANAGER])
+
     def test_stdin_that_is_not_utf_8_is_a_usage_error(self):
         result = subprocess.run(
             [COMMAND, "status"],
@@ -173,7 +178,7 @@ class StatusTest(ControlCase):
             timeout=60,
         )
         self.assertEqual((result.returncode, result.stdout), (2, b""), result.stderr)
-        self.assertTrue(result.stderr.startswith(f"{PROG}: status: stdin: ".encode()))
+        self.assertTrue(result.stderr.startswith(f"{PROG}: stdin line 1: ".encode()), result.stderr)
         self.assertEqual(len(result.stderr.splitlines()), 1, result.stderr)
 
 
@@ -202,7 +207,7 @@ class ControlTest(ControlCase):
             [gone("w1"), gone("w2"), live("w3", "done", cwd=self.cwd)],
         )
 
-    def test_close_show_and_hide_refuse_a_record_whose_sid_its_session_does_not_carry(self):
+    def test_record_operations_check_private_sid(self):
         w1 = self.done("w1")
         pid = self.calls("w1")[0]["pid"]
         self.tmux("kill-pane", "-t", self.server.pane_of("w1"))
@@ -210,17 +215,19 @@ class ControlTest(ControlCase):
         live_tmux.wait(lambda: self.status("w1")[0].hidden, what="w1 hidden")
         pane = self.server.pane_of("w1")
         reused = dataclasses.replace(w1, sid=str(uuid.uuid4()))
-        for verb in ("show", "hide", "close"):
+        for verb in ("show", "hide", "attach-command", "content"):
             with self.subTest(verb=verb):
                 res = self.session(verb, stdin=lines(reused))
                 self.assertEqual((res.returncode, res.stdout), (1, ""), res.stderr)
                 self.assertEqual(
                     res.stderr,
-                    f"{PROG}: w1: session w1 carries sid {w1.sid}, not the Record's {reused.sid}\n",
+                    f"{PROG}: w1: session w1: expected sid {reused.sid!r}, found {w1.sid!r}\n",
                 )
+        self.assert_printed(self.session("close", stdin=lines(reused)), "")
         self.assertEqual(self.sessions(), [MANAGER, "w1"])
         self.assertTrue(pid_alive(pid))
         self.assertEqual(self.server.pane_of("w1"), pane)
+        self.tmux("set-option", "-u", "-t", "=w1", "@record")
         self.assert_printed(self.session("close", stdin=lines(w1)), "")
         self.assertEqual(self.sessions(), [MANAGER])
 
@@ -301,12 +308,13 @@ class NotShowableTest(ControlCase):
 
     def test_show_attach_command_read_and_tile_exit_1_saying_the_host_cannot_show(self):
         refused = "session f1: host fake cannot show\n"
+        batch_refused = f"{PROG}: f1: {refused}"
         for argv, stdin, stderr in (
-            (("show", "f1"), None, refused),
-            (("show",), lines(self.f1), refused),
-            (("hide", "f1"), None, refused),
-            (("attach-command", "f1"), None, refused),
-            (("attach-command",), lines(self.f1), refused),
+            (("show", "f1"), None, batch_refused),
+            (("show",), lines(self.f1), batch_refused),
+            (("hide", "f1"), None, batch_refused),
+            (("attach-command", "f1"), None, batch_refused),
+            (("attach-command",), lines(self.f1), batch_refused),
             (("read", "f1"), None, refused),
             (("read", "f1", "--lines", "5"), None, refused),
             (("tile", MANAGER), None, f"session {MANAGER}: host fake cannot show\n"),

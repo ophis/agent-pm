@@ -237,7 +237,7 @@ def _resolve(key: str | Record) -> tuple[str, tuple[str, Record | None]]:
     name, record = (key, None) if isinstance(key, str) else (key.name, key)
     sessions = _sessions(name, record)
     if not sessions:
-        raise UsageError(f"{name}: names no session")
+        raise UsageError("names no session")
     for session in sessions:
         if not SESSION_NAME.fullmatch(session):
             raise UsageError(f"{name}: session {session!r:.80}: want {SESSION_NAME_RULE}")
@@ -279,6 +279,8 @@ def _status(name: str, record: Record | None, hosts: Hosts) -> str:
         for session in _sessions(name, record)
     ]
     shown = next((each for each in found if each.alive), found[0])
+    if record is not None and record.sid is not None:
+        shown = next((each for each in found if each.state == StatusState.GONE), shown)
     return replace(shown, name=name, hidden=any(each.hidden for each in found)).to_line()
 
 

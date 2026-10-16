@@ -46,7 +46,7 @@ class RecordControl(HostedTuiBase):
         Path(self.agent_pm, "config.local.toml").write_text(
             '[session.hosts.tmux]\nimplementation = "session.tests.unit.cli_test:CliHost"\n'
             '[session.clients.fake]\nimplementation = "session.tests.fake_client:FakeClient"\n'
-            'tui = true\n'
+            "tui = true\n"
             f"scenario = {json.dumps(self.scenario)}\nlog = {json.dumps(self.log)}\n"
         )
         self.record = Record(
@@ -92,6 +92,24 @@ class RecordControl(HostedTuiBase):
         self.host.calls.show.assert_not_called()
         self.host.calls.hide.assert_not_called()
         self.host.calls.attach_command.assert_not_called()
+
+    def test_status_refuses_a_record_with_one_replaced_session(self):
+        self.host.create("w1", sid=SID)
+        self.host.create("w2", sid="replacement")
+        record = replace(self.record, sessions=("w1", "w2"))
+        code, out, _ = self.invoke("status", record=record)
+        self.assertEqual(code, 0)
+        self.assertFalse(json.loads(out)["alive"])
+
+    def test_usage_error_keeps_valid_keys(self):
+        self.host.create("w1", sid=SID)
+        invalid = replace(self.record, name="w9", sessions=())
+        code, out, err = self.invoke(
+            "close", stdin=self.record.to_line() + "\n" + invalid.to_line() + "\n"
+        )
+        self.assertEqual((code, out), (2, ""))
+        self.assertNotIn("w1", self.host.processes)
+        self.assertEqual(err, "agent-pm-session: w9: names no session\n")
 
     def test_matching_private_sid_allows_close_without_record_metadata(self):
         process = self.host.create("w1", sid=SID)
