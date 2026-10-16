@@ -13,18 +13,17 @@ Arguments and options:
   --dry-run     Print the plan without claiming issues or launching work;
                 a tick still performs usage checks. Not an offline preview:
                 read configuration, run inventory, credentials and Linear data.
-  --tui         Start/resume attended in a TUI (text user interface). Default:
-                headless; launchd never supplies this flag.
-  --display D   Requires --tui. Passed unchanged to the configured Delegate.
-                Default: caller's place; none: start hidden. Host syntax:
-                agent-pm-session --help
-  --events FILE Requires --tui; destination for run events. Default:
-                AGENT_PM_EVENTS; one of the two is required for --tui.
-                Relative paths become absolute from the caller's directory.
-  --brake ROLE  Exclusive mode: print configured ROLE's client usage and check
-                whether a deep-research round may start. Role discovery:
-                agent-pm-delegate run --list
-  -h, --help    Print this help alone; exit 0. Bad arguments exit 2.
+--tui         With either: each run it starts or resumes is attended (TUI (text user interface) mode), shown at D (opaque,
+              its format: agent-pm-session --help; no D: the caller's place; none: started hidden,
+              passed on as given), its events written to FILE, else $AGENT_PM_EVENTS. Exits 2 before
+              any Linear call without either, or when the Delegate refuses D or FILE (no place to
+              show the TUI, a D its Host cannot use, FILE not writable). A run it starts or resumes
+              prints its Record line on stdout, its attach commands on stderr. launchd never passes
+              it: a tick resumes a run headless.
+--brake ROLE  Print ROLE's client usage; exit 0 if a deep-research round may start, 1 if not or
+              unknown, 2 no such role.
+--help        Print this; exit 0. Bad arguments exit 2.
+  -h           Equivalent to --help. --brake must stand alone.
   Valued options occur at most once; boolean flags may repeat with no change.
 
 Prerequisites and effects:
@@ -34,8 +33,7 @@ Prerequisites and effects:
   Execution can claim/move issues, post comments or write back ended outcomes.
   A launch prepares input, records a runs.jsonl row and detaches a LinearRun;
   the router exits while the Delegate harness writes events back to the board.
-  Attended launches print a Record line on stdout and attachment commands on
-  stderr. Other events go to orchestrator.jsonl (src router); an idle tick
+  Other events go to orchestrator.jsonl (src router); an idle tick
   writes none, a usage-blocked tick only its usage-skip lines. Preview plans
   print JSON lines to stderr. Output files follow Delegate configuration.
 
@@ -45,7 +43,6 @@ Exit conditions:
   already live or unclaimable; 0 if an ended outcome was written back. Otherwise
   launch result: 0 detached/bounced, 1 launch failure, 2 issue config error,
   3 transient error. --dry-run: 0 for the plan; setup failures still apply.
-  --brake: 0 may start, 1 blocked/unknown usage, 2 unknown role.
   AGENT_PM_SID is read once and removed: new run identity, or must match a
   resumed run (mismatch: 2; dry-run: 0). AGENT_PM_AGENT_SESSION blocks tick and
   --issue execution with 2; --dry-run and --brake remain available.
@@ -67,6 +64,7 @@ Recovery and next help:
   Termination: agent-pm-linear close --help
   Fix reported configuration/Keychain errors before retrying.
   Command discovery: agent-pm-linear --help
+  Role discovery: agent-pm-delegate run --list
 """
 
 import contextlib
@@ -76,6 +74,7 @@ import os
 import re
 import subprocess
 import sys
+import textwrap
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, replace
@@ -1023,6 +1022,20 @@ def attended_runs(opts, cfg):
     return attended
 
 
+def _help_text():
+    return re.sub(
+        r"(?m)^--(?:tui|brake)\b[^\n]*(?:\n {14}[^\n]+)*",
+        lambda match: textwrap.fill(
+            " ".join(line.strip() for line in match[0].splitlines()),
+            width=80,
+            subsequent_indent=" " * 14,
+            break_long_words=False,
+            break_on_hyphens=False,
+        ),
+        __doc__ or "",
+    )
+
+
 def main(
     argv,
     *,
@@ -1039,7 +1052,7 @@ def main(
     run = run or config.shell
     keychain = keychain or has_key
     if argv in (["--help"], ["-h"]):
-        print(__doc__)
+        print(_help_text())
         return 0
     opts = options(argv)
     if opts is None:

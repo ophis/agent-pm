@@ -148,7 +148,7 @@ class Commands(Case):
                         self.assertEqual(error.code, 0)
                 text = output.getvalue()
                 for phrase in phrases:
-                    self.assertIn(phrase, text)
+                    self.assertIn(phrase, " ".join(text.split()))
 
     def test_router_examples_and_repetition_match_real_options(self):
         fixtures = (
