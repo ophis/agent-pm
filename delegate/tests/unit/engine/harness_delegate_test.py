@@ -19,6 +19,7 @@ from unittest import mock
 from agent_pm.delegate import ConfigError, Finished, Outcome, Result, Spec
 from agent_pm.delegate.composer import Composer, RunParams
 from agent_pm.delegate.engine import harness_delegate
+from agent_pm.delegate.engine.drivers import AgentDriver
 from agent_pm.delegate.engine.harness_delegate import HarnessDelegate
 from agent_pm.delegate.engine.state import RunState
 from agent_pm.delegate.engine.types import Layout
@@ -107,6 +108,17 @@ class IdentityTest(HarnessCase):
         view.close()
         self.assertTrue(replacement.alive())
 
+    def test_a_cached_agent_cannot_close_its_replacement(self):
+        spec = Spec("input", self.work, mode="tui", client="fake", sid=SID)
+        view = self.make(spec=spec)
+        view.run()
+        name = self.metadata()["agent_name"]
+        original = HarnessSession.live[name]
+        original.stop()
+        HarnessSession.start(replace(original.spec, sid=SID.replace("0", "1")), host="agent")
+        view.close()
+        self.assertTrue(RecordingHost.processes["agent", name].alive())
+
     def test_a_foreign_harness_survives_old_run_close(self):
         for sid in (SID.replace("0", "1"), None):
             with self.subTest(sid=sid):
@@ -151,14 +163,12 @@ class RunDirTest(HarnessCase):
             return json.load(file)
 
     def test_the_default_session_class_is_null(self):
-        with mock.patch.object(Session, "preflight"):
-            self.make(session_cls=Session)
+        self.make(session_cls=Session, driver=AgentDriver(HarnessSession))
         self.assertIsNone(self.stored()["session_cls"])
         self.assertIs(HarnessDelegate.attach(self.work).session_cls, Session)
 
     def test_a_historical_default_class_path_still_loads(self):
-        with mock.patch.object(Session, "preflight"):
-            self.make(session_cls=Session)
+        self.make(session_cls=Session, driver=AgentDriver(HarnessSession))
         data = self.stored()
         data["session_cls"] = f"{Session.__module__}:{Session.__qualname__}"
         with open(self.record(), "w", encoding="utf-8") as file:

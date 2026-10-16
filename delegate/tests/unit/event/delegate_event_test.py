@@ -38,6 +38,7 @@ STAMPS = [
     ),
 ]
 LIMIT = 'limit: want null or {"resets_at": a number or null}'
+OUTCOME = "outcome: want the fields deliverable, files, questions, status, summary, title, url"
 
 
 def line(**data) -> str:
@@ -185,15 +186,15 @@ class EventLine(Case):
             ({"kind": "finished", "returncode": 0, "error": None}, "error: want a str"),
             (
                 {"kind": "finished", "returncode": 0, "outcome": {"title": "T"}},
-                "outcome lacks 'status'",
+                OUTCOME,
             ),
             (
                 {"kind": "finished", "returncode": 0, "outcome": {"status": 1}},
-                "outcome lacks 'title'",
+                OUTCOME,
             ),
             (
                 {"kind": "finished", "returncode": 0, "outcome": ["done"]},
-                "outcome must be an object",
+                OUTCOME,
             ),
             ({"kind": "finished", "returncode": 0, "limit": {"resets_at": 1, "at": 2}}, LIMIT),
             ({"kind": "finished", "returncode": 0, "limit": {}}, LIMIT),

@@ -17,7 +17,7 @@ from agent_pm.delegate import config
 from agent_pm.delegate.composer import Composer, DelegateConfig, RunConfig, Team, teams
 from agent_pm.delegate.engine.base import Delegate
 from agent_pm.delegate.engine.callback import EventCallback, sweep
-from agent_pm.delegate.engine.config import module_roots
+from agent_pm.delegate.engine.config import module_roots, read_config
 from agent_pm.delegate.engine.drivers import AgentDriver, Driver, InstructionDriver
 from agent_pm.delegate.engine.plan import plan
 from agent_pm.delegate.engine.runner import execute, say, stopped
@@ -172,7 +172,7 @@ class HarnessDelegate(Delegate):
     def instruct(cls, role: str, spec: Spec) -> Result:
         """Delivers the role's prompt to spec.out: no Session, no delegate.json."""
         try:
-            composer = Composer(config=DelegateConfig(config.read_config()), team=spec.team)
+            composer = Composer(config=DelegateConfig(read_config()), team=spec.team)
         except (OSError, ValueError) as error:
             raise ConfigError(str(error)) from None
         driver = InstructionDriver()
@@ -200,7 +200,7 @@ class HarnessDelegate(Delegate):
     ):
         try:
             self.composer = composer or Composer(
-                config=DelegateConfig(config.read_config()), team=spec.team
+                config=DelegateConfig(read_config()), team=spec.team
             )
             run = self.composer.resolve(role, spec.task, overlays=overlays)
             self._settings = thaw(self.composer.config.values)
@@ -452,7 +452,7 @@ class HarnessDelegate(Delegate):
             raise ConfigError(f"sid {sid} is not the run's (its sid: {view._state.plan.sid})")
         try:
             view.composer = composer or Composer(
-                config=DelegateConfig(config.read_config()),
+                config=DelegateConfig(read_config()),
                 team=None
                 if view._state.plan.spec.team is None
                 else _team(view._state.plan.spec.team),
@@ -568,7 +568,7 @@ class HarnessDelegate(Delegate):
         return None
 
     def _agent(self, state: _State) -> Session | None:
-        if (agent := self._own(state)) is not None:
+        if (agent := self._own(state)) is not None and agent.mode != Mode.TUI:
             return agent
         try:
             return self.session_cls.attach(state.agent_name, sid=state.plan.sid, host=state.host)

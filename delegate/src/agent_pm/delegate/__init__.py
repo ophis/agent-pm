@@ -4,9 +4,8 @@ session from the Driver, read from its replies' progress marks and outcome block
 
 from agent_pm.delegate.composer import ConfigError as ComposerConfigError
 from agent_pm.delegate.composer import RunConfig
-from agent_pm.delegate.config import read_config
 from agent_pm.delegate.engine.base import Delegate
-from agent_pm.delegate.engine.config import module_roots
+from agent_pm.delegate.engine.config import module_roots, read_config
 from agent_pm.delegate.engine.drivers import Driver
 from agent_pm.delegate.engine.harness_delegate import HarnessDelegate
 from agent_pm.delegate.engine.types import (
