@@ -52,6 +52,14 @@ HOOK = (
     json.dumps([SRC["session"], SRC["utils"]]),
 )
 
+# A hook log of two turns, as (label, Stop text) pairs.
+TURNS = (
+    ("SessionStart", ""),
+    ("UserPromptSubmit", ""),
+    ("Stop", "a"),
+    ("UserPromptSubmit", ""),
+    ("Stop", "final"),
+)
 TOOL = {"type": "response_item", "payload": {"type": "function_call", "name": "exec_command"}}
 
 
@@ -438,13 +446,13 @@ class TuiTest(Base):
         self.assertEqual((fresh.state, fresh.native), (None, ""))
         not_a_directory = self.extra / "store"
         not_a_directory.write_text("")
-        for state in (
-            {"store": "relative/store"},
-            {"store": str(not_a_directory)},
-            {"start": -1},
-            {"start": "0"},
-            {"start": True},
-        ):
+        for state in ({"store": "relative/store"}, {"store": str(not_a_directory)}):
+            with self.subTest(state=state), self.assertRaises(ConfigError):
+                self.client.tui().restore(self.spec, state)
+
+    def test_restore_rejects_a_bad_transcript_cursor(self):
+        self.launch()
+        for state in ({"start": -1}, {"start": "0"}, {"start": True}):
             with self.subTest(state=state), self.assertRaises(ConfigError):
                 self.client.tui().restore(self.spec, state)
 
@@ -481,7 +489,7 @@ class TuiTest(Base):
         _append(path, _said("assistant", "done"))
         self.assertEqual(run.observe(), [Reply("done")])
 
-    def test_observe_skips_other_records_and_waits_for_a_whole_line(self):
+    def test_observe_skips_records_that_are_not_assistant_text(self):
         run, path = self.bound()
         with path.open("a", encoding="utf-8") as stream:
             stream.write("not json\n[]\n")
@@ -492,14 +500,24 @@ class TuiTest(Base):
             {"type": "response_item", "payload": {"type": "message", "role": "assistant"}},
             {"type": "event_msg", "payload": {"type": "agent_message", "message": "dup"}},
             {"type": "response_item", "payload": None},
+            _said("assistant", "a"),
         )
-        line = json.dumps(_said("assistant", "a", "b"))
+        self.assertEqual(run.observe(), [Reply("a")])
+
+    def test_observe_joins_a_messages_text_blocks(self):
+        run, path = self.bound()
+        _append(path, _said("assistant", "a", "b"))
+        self.assertEqual(run.observe(), [Reply("a\nb")])
+
+    def test_observe_waits_for_a_whole_line(self):
+        run, path = self.bound()
+        line = json.dumps(_said("assistant", "a"))
         with path.open("a", encoding="utf-8") as stream:
             stream.write(line[:10])
         self.assertEqual(run.observe(), [])
         with path.open("a", encoding="utf-8") as stream:
             stream.write(line[10:] + "\n")
-        self.assertEqual(run.observe(), [Reply("a\nb")])
+        self.assertEqual(run.observe(), [Reply("a")])
 
     def test_observe_looks_the_file_up_at_most_every_few_seconds(self):
         run, _, _ = self.launch()
@@ -554,22 +572,26 @@ class TuiTest(Base):
         _append(path, _said("assistant", "new"))
         self.assertEqual(run.observe(), [Reply("new")])
 
-    def test_attach_replays_from_the_launch_cursor_and_reads_on_from_its_end(self):
+    def attached(self, *labels):
+        """A tui attached after the launching one read prompt "go" and reply "a", its session file
+        and its replay of a hook log of (label, Stop text) `labels`.
+        """
         run, path = self.bound()
         self.common.bind(str(self.work), self.spec.sid, NATIVE)
         _append(path, _said("user", "go"), _said("assistant", "a"))
         self.assertEqual(run.observe(), [Reply("a")])
-        records = [
-            ("SessionStart", self.payload()),
-            ("UserPromptSubmit", self.payload()),
-            ("Stop", self.payload(last_assistant_message="a")),
-            ("UserPromptSubmit", self.payload()),
-            ("Stop", self.payload(last_assistant_message="final")),
-        ]
         attached = self.client.tui()
         attached.restore(self.spec, run.hook_callback().state)
+        records = [
+            (label, self.payload(last_assistant_message=text)) if text else (label, self.payload())
+            for label, text in labels
+        ]
+        return attached, path, attached.replay(records)
+
+    def test_attach_replays_the_session_file_then_the_hook_log(self):
+        _, _, replayed = self.attached(*TURNS)
         self.assertEqual(
-            attached.replay(records),
+            replayed,
             [
                 Reply("a"),
                 ClientBound(NATIVE),
@@ -580,21 +602,23 @@ class TuiTest(Base):
                 TurnEnd("final"),
             ],
         )
+
+    def test_attach_reads_on_from_the_session_files_end(self):
+        attached, path, _ = self.attached(*TURNS)
         self.assertEqual(attached.observe(), [])
-        _append(path, _said("user", "next"), _said("assistant", "final"), _said("assistant", "b"))
-        self.assertEqual(attached.observe(), [Reply("final"), Reply("b")])
+        _append(path, _said("user", "next"), _said("assistant", "b"))
+        self.assertEqual(attached.observe(), [Reply("b")])
+
+    def test_attach_a_new_prompt_clears_the_pending_stop_text(self):
+        attached, path, _ = self.attached(*TURNS)
+        _append(path, _said("user", "next"), _said("assistant", "final"))
+        self.assertEqual(attached.observe(), [Reply("final")])
 
     def test_attach_mid_turn_skips_the_pending_stop_text_once(self):
-        run, path = self.bound()
-        self.common.bind(str(self.work), self.spec.sid, NATIVE)
-        _append(path, _said("user", "go"), _said("assistant", "a"))
-        records = [
-            ("UserPromptSubmit", self.payload()),
-            ("Stop", self.payload(last_assistant_message="final")),
-        ]
-        attached = self.client.tui()
-        attached.restore(self.spec, run.hook_callback().state)
-        self.assertEqual(attached.replay(records)[0], Reply("a"))
+        attached, path, replayed = self.attached(("UserPromptSubmit", ""), ("Stop", "final"))
+        self.assertEqual(
+            replayed, [Reply("a"), ClientBound(NATIVE), Activity(""), TurnEnd("final")]
+        )
         _append(path, _said("assistant", "final"), _said("assistant", "final"))
         self.assertEqual(attached.observe(), [Reply("final")])
 
