@@ -2095,7 +2095,7 @@ class StoreTest(Base):
         self.assertEqual(store.records(end), ([], end))
 
 
-class TransportErrorTest(TmuxBase):
+class TmuxErrorTest(TmuxBase):
     def test_real_host_launch_keeps_the_modes_exact_error_prefix(self):
         self.tmux.start.side_effect = TuiError("tmux: boom")
         workdir = os.path.join(self.dir, "work")
