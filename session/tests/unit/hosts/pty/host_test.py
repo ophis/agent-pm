@@ -13,6 +13,7 @@ from unittest import mock
 from agent_pm.session import ConfigError, Displayable, Launch, SessionError
 from agent_pm.session.hosts.pty import PtyHost, state
 from agent_pm.session.hosts.pty.host import SUPERVISOR
+from agent_pm.utils import inode_lock
 
 from session.tests.case import Case
 
@@ -121,6 +122,29 @@ class Start(Case):
                     killed.call_args_list, [mock.call(pid, signal.SIGKILL) for pid in kills]
                 )
                 self.assertFalse(os.path.exists(os.path.join(state.root(), "x")))
+
+    def lock_held(self) -> bool:
+        with inode_lock(os.path.join(state.root(), "x.lock"), wait=False) as got:
+            return not got
+
+    def test_start_holds_the_names_lock_until_it_returns(self):
+        held = []
+        real_replace = os.replace
+
+        def replace(*args, **kwargs):
+            held.append(self.lock_held())
+            return real_replace(*args, **kwargs)
+
+        with mock.patch("os.replace", side_effect=replace):
+            process, _, _ = self.start()
+        self.assertIsNotNone(process.identity)
+        self.assertEqual((set(held), self.lock_held()), ({True}, False))
+
+    def test_a_lock_it_cannot_take_is_a_session_error(self):
+        os.makedirs(os.path.join(state.root(), "x.lock"))
+        error, spawned, _ = self.start()
+        self.assertRegex(str(error), r"^detach x: .*Is a directory")
+        spawned.assert_not_called()
 
     def test_a_live_session_of_that_name_is_refused_and_a_dead_one_replaced(self):
         folder = os.path.join(state.root(), "x")

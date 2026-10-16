@@ -42,6 +42,7 @@ from agent_pm.utils import (
     Display,
     ProcessControl,
     Record,
+    inode_lock,
     module_roots,
     sid_error,
     source_path,
@@ -352,11 +353,22 @@ class PtyHost(Host):
         if not isinstance(name, str) or not NAME.fullmatch(name):
             raise ConfigError(f"name must match [A-Za-z0-9_-]+, got {name!r:.80}")
 
-    def _start(
+    def _start(self, kind, name, launch: Launch, **options) -> tuple[str, dict]:
+        """options: display, events, record, metadata, env."""
+        self.validate(name, launch, display=options["display"])
+        options["events"] = self.prepare_events(self.events_path(options["events"]))
+        os.makedirs(state.root(), mode=0o700, exist_ok=True)
+        with contextlib.ExitStack() as stack:
+            try:
+                stack.enter_context(inode_lock(os.path.join(state.root(), f"{name}.lock")))
+            except OSError as error:
+                raise SessionError(f"{kind} {name}: {error}") from error
+            return self._create(kind, name, launch, **options)
+
+    def _create(
         self, kind, name, launch: Launch, *, display, events, record, metadata, env
     ) -> tuple[str, dict]:
-        self.validate(name, launch, display=display)
-        events = self.prepare_events(self.events_path(events))
+        """_start's work under the name's lock."""
         folder = os.path.join(state.root(), name)
         if os.path.isdir(folder):
             previous = PtyProcess(name, folder)
@@ -364,7 +376,6 @@ class PtyHost(Host):
                 raise SessionError(f"{self.name} session {name} is live")
             previous.close()
             shutil.rmtree(folder, ignore_errors=True)
-        os.makedirs(state.root(), mode=0o700, exist_ok=True)
         os.mkdir(folder, mode=0o700)
         control = ProcessControl.prepare(
             launch.argv, launch.cwd, env=env, blocked_signals=launch.blocked_signals
