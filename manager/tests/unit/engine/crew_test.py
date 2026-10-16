@@ -5,7 +5,6 @@ Crew.attach shows each live entry but a hidden one, whose view column says so.
 import contextlib
 import io
 import os
-import subprocess
 import uuid
 from dataclasses import replace
 from unittest import mock
@@ -107,7 +106,7 @@ class Attach(RosterCase):
                 for record in records
             )
             stdout = "".join(s.to_line() + "\n" for s in statuses) if argv[1] == "status" else ""
-            return subprocess.CompletedProcess(argv, 0, stdout, "")
+            return mock.Mock(returncode=0, stdout=stdout, stderr="")
 
         with mock.patch("subprocess.run", side_effect=run):
             table = Crew(self.roster).attach().splitlines()
