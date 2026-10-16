@@ -44,6 +44,7 @@ STATE_KEYS = frozenset({"version", "cwd", "sid", "dirs", "env"})
 STATE_MAX = 64 * 1024
 SETTINGS_MAX = 2 * 1024 * 1024
 TAIL = 4 << 20
+TUI_ENV = MappingProxyType({"CLAUDE_CODE_DISABLE_AGENT_VIEW": "1"})
 
 
 def added_dirs(flags: tuple[str, ...]) -> Iterator[str]:
@@ -375,7 +376,7 @@ class ClaudeCommon:
                 *_settings(*configured),
                 *added,
             ]
-            os.execvpe(command[0], command, {**os.environ, **state["env"]})
+            os.execvpe(command[0], command, {**os.environ, **TUI_ENV, **state["env"]})
         except (ConfigError, OSError) as exc:
             print(f"claude resume: {exc}", file=sys.stderr)
             return 1

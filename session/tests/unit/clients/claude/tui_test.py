@@ -34,6 +34,7 @@ from session.tests.unit.clients.claude.support import (
     NOT_WAITING,
     NOW,
     SID,
+    TUI_DEFAULTS,
     TUI_HOOKS,
     TUI_SETTINGS,
     UNSET,
@@ -175,7 +176,9 @@ class TuiArgvTest(Base):
                 os.path.join(cwd, ".mcp.json"),
             ),
         )
-        self.assertEqual((dict(tui.env), dict(headless.env)), ({"K": "v"}, {**CEILING, "K": "v"}))
+        self.assertEqual(
+            (dict(tui.env), dict(headless.env)), ({**TUI_DEFAULTS, "K": "v"}, {**CEILING, "K": "v"})
+        )
         self.assertEqual(
             (tui.unset, tui.cwd, tui.transcript, tui.resume),
             (headless.unset, headless.cwd, headless.transcript, headless.resume),
@@ -288,7 +291,7 @@ class SessionTuiTest(Base):
                 self.assertEqual(
                     (dict(launch.env), launch.unset, launch.cwd, launch.transcript, launch.resume),
                     (
-                        {"K": "spec", "S": "s"},
+                        {**TUI_DEFAULTS, "K": "spec", "S": "s"},
                         UNSET,
                         "",
                         ClaudeCommon({}).transcript(cwd, SID),
@@ -314,7 +317,7 @@ class SessionTuiTest(Base):
         )
         self.assertEqual(
             (dict(launch.env), launch.resume),
-            ({}, reference(self.work)),
+            (TUI_DEFAULTS, reference(self.work)),
         )
         self.assertEqual(self.session("-p --help").argv[-2:], ("--", "-p --help"))
 

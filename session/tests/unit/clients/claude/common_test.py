@@ -35,6 +35,7 @@ from session.tests.unit.clients.claude.support import (
     PROBE_RESULT,
     SID,
     SUBSCRIPTION_PROBE,
+    TUI_DEFAULTS,
     UNSET,
     Base,
     ClaudeCommon,
@@ -233,7 +234,24 @@ class EnvTest(Base):
         config = {"env": {"K": "v", "CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS": "1"}}
         self.assertEqual(dict(self.launch(config=config).env), config["env"])
         self.assertEqual(dict(self.launch(config={}).env), CEILING)
-        self.assertEqual(dict(tui_launch(self.work, config={}).env), {})
+        self.assertEqual(dict(tui_launch(self.work, config={}).env), TUI_DEFAULTS)
+
+    def test_agent_view_default_is_tui_only(self):
+        key = "CLAUDE_CODE_DISABLE_AGENT_VIEW"
+        for resume in (False, True):
+            with self.subTest(resume=resume):
+                self.assertEqual(tui_launch(self.work, config={}, resume=resume).env.get(key), "1")
+                self.assertNotIn(key, self.launch(config={}, resume=resume).env)
+
+    def test_agent_view_default_yields_to_explicit_environment(self):
+        key = "CLAUDE_CODE_DISABLE_AGENT_VIEW"
+        for kwargs in (
+            {"config": {"env": {key: "0"}}},
+            {"access": Access(cwd=self.work, env={key: "0"})},
+            {"env": {key: "0"}},
+        ):
+            with self.subTest(kwargs=kwargs):
+                self.assertEqual(tui_launch(self.work, **kwargs).env[key], "0")
 
     def test_the_launch_env_unset_and_cwd(self):
         launch = self.launch()
@@ -258,7 +276,7 @@ class EnvTest(Base):
                 ClaudeClient(config)
                 .tui()
                 .launch(Spec(workdir=self.work, sid=SID, access=access, prompt="hi"), HOOK),
-                {},
+                TUI_DEFAULTS,
             ),
         ):
             self.assertEqual(
@@ -627,6 +645,19 @@ class ResumeTest(Base):
     def test_the_command_names_only_the_state(self):
         self.assertEqual(ClaudeCommon({}).resume("/w d", SID), reference("/w d"))
 
+    def test_client_resume_defaults_agent_view_off(self):
+        self.client.common.save(self.spec)
+        code, _, _, execute = self.resumed([store(), self.cwd, SID])
+        self.assertEqual(code, 0)
+        self.assertEqual(execute[0].args[2]["CLAUDE_CODE_DISABLE_AGENT_VIEW"], "1")
+
+    def test_client_resume_keeps_saved_agent_view_override(self):
+        spec = dataclasses.replace(self.spec, env={"CLAUDE_CODE_DISABLE_AGENT_VIEW": "0"})
+        self.client.common.save(spec)
+        code, _, _, execute = self.resumed([store(), self.cwd, SID])
+        self.assertEqual(code, 0)
+        self.assertEqual(execute[0].args[2]["CLAUDE_CODE_DISABLE_AGENT_VIEW"], "0")
+
     def test_no_env_value_reaches_a_resume_command_or_status(self):
         texts = []
         for mode in ("headless", "tui"):
@@ -659,7 +690,7 @@ class ResumeTest(Base):
                         mock.call(
                             "claude",
                             ["claude", "--resume", SID, "--add-dir", "/o x", "--add-dir", "/p"],
-                            {**os.environ, **SECRETS, "K": "spec"},
+                            {**os.environ, **TUI_DEFAULTS, **SECRETS, "K": "spec"},
                         )
                     ],
                 )
