@@ -131,7 +131,7 @@ class Parse(Case):
         self.assertEqual([e.delegate_kind for e in runs.parse_log(self.log)], [None, "external"])
         self.assertEqual(self.read(), json.dumps(kindless) + "\n" + json.dumps(saved) + "\n")
 
-    def test_a_bad_delegate_kind_no_client_or_a_limit_row_is_no_entry(self):
+    def test_rows_that_are_not_run_entries_parse_to_none(self):
         good = json.loads(row("start", "TASK-1", "s"))
         legacy = json.loads(row("start", "TASK-1", "a", minutes=5))
         del legacy["client"]
@@ -176,7 +176,7 @@ class Limits(Case):
             with self.subTest(name):
                 self.assertEqual(self.limits(*lines), want)
 
-    def test_what_is_not_a_live_row_with_a_usable_client_and_kind_is_left_out(self):
+    def test_only_live_limit_rows_count(self):
         at = stamp(NOW + timedelta(hours=1))
         good = json.loads(limit(at))
         kindless = {k: v for k, v in good.items() if k != "delegate_kind"}

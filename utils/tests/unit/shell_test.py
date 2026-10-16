@@ -148,7 +148,7 @@ class ErrText(Case):
 
 
 class ResumeCommand(Case):
-    def test_quotes_each_part_and_non_shell_names_become_env_operands(self):
+    def test_builds_a_shell_safe_resume_command(self):
         for workdir, env, argv, want in (
             ("/work", {}, ("codex", "resume", "id"), "cd /work && codex resume id"),
             (

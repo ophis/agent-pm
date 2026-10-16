@@ -381,21 +381,21 @@ class Pulls(Case):
                 self.assertIn("no pull requests found", res.stderr)
 
     def test_no_login_and_bad_login_pulls_or_threads_are_errors(self):
-        repo, user = ("repos/acme/widgets",), ("--hostname", "github.com", "user")
+        repo_api, user_api = ("repos/acme/widgets",), ("--hostname", "github.com", "user")
         for name, scenario, argv in (
-            ("no login", {}, user),
-            ("a login not a string", {"login": 1}, repo),
-            ("pulls a list", {"pulls": []}, repo),
-            ("a pull not an object", {"pulls": {"acme/widgets": [1]}}, repo),
-            ("a pull without headRefName", {"pulls": {"acme/widgets": [{"number": 1}]}}, repo),
-            ("threads of a list", {"threads": {"acme/widgets": []}}, repo),
+            ("no login", {}, user_api),
+            ("a login not a string", {"login": 1}, repo_api),
+            ("pulls a list", {"pulls": []}, repo_api),
+            ("a pull not an object", {"pulls": {"acme/widgets": [1]}}, repo_api),
+            ("a pull without headRefName", {"pulls": {"acme/widgets": [{"number": 1}]}}, repo_api),
+            ("threads of a list", {"threads": {"acme/widgets": []}}, repo_api),
             (
                 "a comment not an object",
                 {"threads": {"acme/widgets": {"issues/1/comments": [1]}}},
-                repo,
+                repo_api,
             ),
-            ("views a list", {"views": []}, repo),
-            ("a view not an object", {"views": {"u": 1}}, repo),
+            ("views a list", {"views": []}, repo_api),
+            ("a view not an object", {"views": {"u": 1}}, repo_api),
         ):
             with self.subTest(name):
                 self.write({"repos": {"acme/widgets": REPO}, **scenario})

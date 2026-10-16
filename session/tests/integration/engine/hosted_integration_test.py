@@ -217,7 +217,7 @@ class ClientNoteTest(Base):
             ("an empty note", {"client": "quiet", "spec": self.spec(access=git)}, "hello"),
         ):
             with self.subTest(case=case):
-                if os.path.exists(self.log):
+                with contextlib.suppress(FileNotFoundError):
                     os.remove(self.log)
                 _, argv = self.run_once(**kwargs)
                 self.assertEqual(argv[-1], prompt)

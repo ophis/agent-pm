@@ -16,7 +16,7 @@ class Printable(Case):
 
 
 class SidError(Case):
-    def test_valid_identifiers_are_none_and_invalid_ones_the_error_naming_them(self):
+    def test_only_an_invalid_identifier_gets_an_error_naming_it(self):
         error = 'sid must be a non-empty printable string without "/", got '
         for sid, want in (
             *((sid, None) for sid in ("session-1", "thread_2", "space allowed", "é", "a" * 200)),
@@ -31,7 +31,7 @@ class SidError(Case):
 
 
 class OneLine(Case):
-    def test_strings_collapse_whitespace_and_other_values_keep_their_text(self):
+    def test_any_value_becomes_one_line(self):
         error = RuntimeError("two\nlines")
         error.credential = "private attribute"
         for value, expected in (
@@ -46,7 +46,7 @@ class OneLine(Case):
 
 
 class ParseTime(Case):
-    def test_offsets_preserve_the_instant_and_fractions_and_naive_values_are_kept(self):
+    def test_iso_times_parse_without_loss(self):
         utc = datetime(2026, 10, 14, 12, 34, 56, tzinfo=UTC)
         for value, expected in (
             ("2026-10-14T12:34:56Z", utc),

@@ -62,7 +62,7 @@ class PathsTest(Case):
         ):
             real_dirs(["~unknown-task318-user/project"], "roots")
 
-    def test_under_returns_first_real_root_holding_the_path_and_respects_path_boundaries(self):
+    def test_under_returns_the_first_real_root_holding_the_path(self):
         project = str(self.home / "project")
         for path, roots, want in (
             (project, [self.alias, self.root], str(self.home)),
@@ -128,7 +128,7 @@ class PrintableAbs(Case):
 
 
 class ModuleRootsTest(Case):
-    def test_package_roots_follow_module_files_in_order_and_a_shared_one_is_supplied_once(self):
+    def test_package_roots_follow_module_files_once_each(self):
         for files, want in (
             (
                 ("/installation-one", "/installation-two"),

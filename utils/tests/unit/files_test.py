@@ -61,7 +61,7 @@ class ReadRegular(Base):
         self.write(b"")
         self.assertEqual(files.read_regular(self.path), b"")
 
-    def test_limit_from_the_start_or_the_end_and_from_an_offset(self):
+    def test_reads_a_bounded_window(self):
         self.write()
         for options, want in (
             ({"limit": 4, "tail": False}, b"0123"),
@@ -146,7 +146,7 @@ class AppendLine(Base):
         files.append_line(self.path, "two\n")
         self.assertEqual(self.content(), b"one\ntwo\n")
 
-    def test_bytes_are_preserved_and_a_lone_surrogate_becomes_a_replacement_character(self):
+    def test_a_line_is_written_without_failing_to_encode(self):
         for name, text, want in (
             ("bytes", b"raw\xff\n", b"raw\xff\n"),
             (

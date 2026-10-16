@@ -34,7 +34,7 @@ class ConfigFileTest(Case):
         self.root = Path(tmp.name).resolve()
         self.path = self.root / "config.toml"
 
-    def test_merge_adds_keys_merges_tables_at_any_depth_and_replaces_other_values(self):
+    def test_merge_overlays_one_config_on_another(self):
         for base, overlay, want in (
             (
                 {"table": {"keep": 1, "change": {"x": 1}, "list": [1]}, "value": 1},
@@ -278,7 +278,7 @@ class Resources(Case):
             )
             self.assertNotIn("[utils]", str(caught.exception))
 
-    def test_flat_keys_unknown_keys_and_non_table_sections_are_errors(self):
+    def test_misplaced_or_unknown_keys_are_errors(self):
         for text, error in (
             ('client = "x"\n', r"move it under \[delegate\]"),
             ("[hosts.tmux]\nstatus_line = true\n", r"move it under \[session\]"),
@@ -293,7 +293,7 @@ class Resources(Case):
             with self.subTest(text=text), self.assertRaisesRegex(ConfigFileError, error):
                 read_resources(self.resources)
 
-    def test_an_unowned_flat_key_a_section_before_flat_keys_and_a_renamed_key(self):
+    def test_flat_key_errors_with_supplied_layers(self):
         for text, layers, message in (
             (
                 'harness_key = "linear-harness"\n',

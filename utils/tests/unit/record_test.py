@@ -334,7 +334,7 @@ class AnswerKeys(Case):
                 self.assertEqual(self.answer((), stdin), (2, "", f"prog: {error}\n"))
                 self.assertEqual(self.resolved, [])
 
-    def test_a_failing_key_is_named_later_keys_are_still_answered_and_none_writes_no_line(self):
+    def test_each_key_is_answered_on_its_own(self):
         for args, code, err in (
             (("a", "q", "b"), 0, ""),
             (("a", "u", "b"), 2, "prog: u: not a key\n"),
