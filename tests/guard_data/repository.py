@@ -25,4 +25,12 @@ PYTHON_CODE_ALLOWED = {
         "tests/integration/isolation_integration_test.py",
         "6f3e4f1618b409983a7f99cbb9045fdc3b8e67b4b6dc4400f033658942018b84",
     ): "The atexit fallback cleanup of clean_env's TMUX_TMPDIR stops the tmux servers it owns and skips symlinked ones; needs a fresh unsandboxed interpreter that exits, which run_tests.py never gives (it always sets the sandbox).",
+    (
+        "tests/integration/imports_integration_test.py",
+        "b0328cd127a47ff8244ca6bf0c49ce9a53a3d77fd3d6daa81c3979f617e6bc5d",
+    ): "Imports each agent_pm module named in argv in a fresh interpreter to check its import-time side effects; the module names are the test's parameters.",
+    (
+        "tests/integration/module_loading_integration_test.py",
+        "8b068c0827660a51d6c9fa6475221d857fa42279c4861a0b7e88609bd5349de8",
+    ): "Imports every agent_pm module named in argv in a fresh interpreter to check where each loads from; the module names are the test's parameters.",
 }

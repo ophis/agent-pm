@@ -123,4 +123,20 @@ PYTHON_CODE_ALLOWED = {
         "session/tests/integration/hosted_integration_test.py",
         "07c8a73e333aa13d8539abe7be6ff1eeaf46e1f133322ef4cb368f765b4a9208",
     ): "HostedSession.list, Session.list and TuiStore.attach refused while HostedSession is unconfigured; tests may not patch HostedSession._setup (test_boundaries), and another test may have configured it in-process, so only a fresh interpreter has it unconfigured.",
+    (
+        "session/src/agent_pm/session/hosts/tmux/transport.py",
+        "2353827626a3c6e192d6841bde2f5dfdcdbbc4a8bff857d91303607d99299413",
+    ): "Shipped tmux pane wrapper: stdlib-only f-string interpolating TERMINAL_KEYS (one home), run with -I; production code, no agent_pm import.",
+    (
+        "session/tests/integration/clients/codex/tui/start_integration_test.py",
+        "7e4699b393a08c5b495eef12293120ce9612e2b3e1ddb34344a1329cd6505d0f",
+    ): "Runs internal codex tui start (a hook entry named in argv, not a layer command) as __main__ under -P -s and counts json.loads calls in that interpreter.",
+    (
+        "session/tests/integration/clients/codex/tui/start_integration_test.py",
+        "0842107b14800fd722eaff5e4ccafe1155e2741a5ec4a5fce845607c25f369af",
+    ): "Runs internal codex tui start (named in argv) as __main__ under -P -s with a lone-surrogate argument to check its one-line stderr and exit status.",
+    (
+        "session/tests/integration/clients/codex/tui/start_integration_test.py",
+        "57fc6aac3dc49a226570cf6f0855e21aea62e766ca50d9db62743186f3e0e6f6",
+    ): "Runs the standalone account probe file by path under -I and audits that it imports only the standard library; run_path of that file is the subject.",
 }
