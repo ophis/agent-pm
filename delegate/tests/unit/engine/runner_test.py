@@ -220,9 +220,11 @@ class TuiPolicy(Base):
         self.enterContext(mock.patch.dict(os.environ))
         os.environ.pop("TUI_ATTACH_PREFIX", None)
 
-    def faked(self, *events, fail=None, stop_fail=None, show_fail=None, mode="tui", **kw) -> Result:
+    def faked(
+        self, *events, fail=None, stop_fail=None, show_fail=None, hidden=False, mode="tui", **kw
+    ) -> Result:
         self.handle = FakeHandle(events, fail, stop_fail)
-        self.handle.show_fail = show_fail
+        self.handle.show_fail, self.handle.hidden = show_fail, hidden
         with mock.patch.object(self.driver, "start", side_effect=self.handle.start) as self.started:
             return self.go(mode=mode, **kw)
 
@@ -274,10 +276,10 @@ class TuiPolicy(Base):
         command = "open -a Terminal {{session}}"
         for local, shown in (
             ("", [None]),
-            ('[delegate]\nshow = "none"\n', []),
+            ('[delegate]\nshow = "none"\n', [None]),
             (f'[delegate]\nshow = "{command}"\n', [command]),
             ('[delegate]\nshow = "none"\n[delegate.roles.dummy-tester]\nshow = ""\n', [None]),
-            ('[delegate.roles.dummy-tester]\nshow = "none"\n', []),
+            ('[delegate.roles.dummy-tester]\nshow = "none"\n', [None]),
         ):
             with self.subTest(local=local):
                 self.fresh()
@@ -285,6 +287,16 @@ class TuiPolicy(Base):
                 self.driver.display = "mgr"
                 r = self.faked(turn(START, block(DONE)))
                 self.assertEqual((r.outcome.status, self.handle.shown), ("done", shown))
+                self.assertIn(f"delegate: tui session {NAME}: tmux attach -t '={NAME}'\n", self.err)
+
+    def test_a_hidden_session_is_not_shown_at_start(self):
+        for local in ("", '[delegate]\nshow = "none"\n', '[delegate]\nshow = "open {{session}}"\n'):
+            with self.subTest(local=local):
+                self.fresh()
+                self.write(os.path.join(self.agent_pm, "config.local.toml"), local)
+                self.driver.display = "mgr"
+                r = self.faked(turn(START, block(DONE)), hidden=True)
+                self.assertEqual((r.outcome.status, self.handle.shown), ("done", []))
                 self.assertIn(f"delegate: tui session {NAME}: tmux attach -t '={NAME}'\n", self.err)
 
     def test_a_session_started_without_a_display_is_not_shown(self):

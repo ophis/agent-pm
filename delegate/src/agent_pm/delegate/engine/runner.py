@@ -99,7 +99,7 @@ class Tui(Headless):
     """FR-23: the first turn end without an outcome block gets NUDGE, STOP_LIMIT more give up; a
     progress mark resets that count; a turn end with work pending is ignored. FR-24: an IdleTimeout
     gives up. The session is left open. A showable session started at a display is shown as the
-    run's `show` says.
+    run's `show` says, unless hidden.
     """
 
     def __init__(self, note: Callable[..., None], driver: Driver):
@@ -113,9 +113,9 @@ class Tui(Headless):
             raise SessionError("tui session has no name")
         if handle.showable:
             say(f"delegate: tui session {name}: {handle.attach_command()}")
-            if self.driver.display is not None and p.run.show != "none":
+            if self.driver.display is not None and not handle.status().hidden:
                 try:
-                    handle.show(command=p.run.show or None)
+                    handle.show(command=p.run.show if p.run.show not in ("", "none") else None)
                 except (SessionConfigError, SessionError) as e:
                     say(f"delegate: show {name}: {e}")
         return handle
