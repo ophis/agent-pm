@@ -56,8 +56,6 @@ def main(argv=None):
     if args.command == "writeback":
         return _writeback(cfg, args.issue, args.workdir)
 
-    gate = None
-
     def viewed(key):
         issue = key.name if isinstance(key, Record) else key
         sid = key.sid if isinstance(key, Record) else None
@@ -67,11 +65,10 @@ def main(argv=None):
         return issue, view
 
     def resume(view):
-        nonlocal gate
         if not view.delegate.alive() and view.delegate.outcome() is None:
             entries = runs.parse_log(cfg.runs_log)
             entry = runs.latest(entries)[view.issue]
-            gate = gate or Gate(
+            gate = Gate(
                 cfg.runs_log,
                 datetime.now(UTC),
                 cfg=cfg,
