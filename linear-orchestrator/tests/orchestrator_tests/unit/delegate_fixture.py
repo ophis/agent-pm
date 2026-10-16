@@ -66,7 +66,15 @@ def provider(api, cfg):
 
         @classmethod
         def resolve(cls, role, task=None, *, overlays=()):
-            return replace(cfg.roles[role].run, task=task or "")
+            run = replace(cfg.roles[role].run, task=task or "")
+            for overlay in overlays:
+                selected = (
+                    overlay.get("roles", {})
+                    .get(role, {})
+                    .get("client", overlay.get("client", run.client))
+                )
+                run = replace(run, client=selected)
+            return run
 
         @classmethod
         def trusted_dirs(cls):

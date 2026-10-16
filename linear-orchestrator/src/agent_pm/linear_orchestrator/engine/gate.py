@@ -28,9 +28,15 @@ def exhausted(usage, max_5h=MAX_5H):
     )
 
 
-def read_usage(role, cfg):
+def read_usage(role, cfg, *, client=None, kind=None):
+    provider = cfg.delegate_cls if kind is None else cfg.delegates.get(kind)
+    if provider is None:
+        return None
+    overlays = (cfg.core,)
+    if client is not None:
+        overlays += ({"roles": {role: {"client": client}}},)
     try:
-        return cfg.delegate_cls.usage(role, overlays=(cfg.core,))
+        return provider.usage(role, overlays=overlays)
     except (delegate.ConfigError, delegate.SessionError):
         return None
 
@@ -50,26 +56,16 @@ class Gate:
             reason, fields = "limit", {"until": self.limits[key].isoformat()}
             if self.dry:
                 self.say("usage", client=client, **fields, allowed=False)
-        elif key != current:
-            self.say(
-                "usage-drift",
-                ident,
-                client=client,
-                delegate_kind=kind,
-                current_client=current[1],
-                current_delegate_kind=current[0],
-            )
-            return False
         else:
-            if key not in self.seen:
-                self.seen[key] = self._check(role, client)
-            reason, fields = self.seen[key]
+            if client not in self.seen:
+                self.seen[client] = self._check(role, client, kind)
+            reason, fields = self.seen[client]
         if reason:
             self.say("usage-skip", ident, once=True, client=client, reason=reason, **fields)
         return reason is not None
 
-    def _check(self, role, client):
-        usage = read_usage(role, self.cfg)
+    def _check(self, role, client, kind):
+        usage = read_usage(role, self.cfg, client=client, kind=kind)
         shown = {"usage": summary(usage)}
         reason = "usage unknown" if usage is None else "usage" if exhausted(usage) else None
         fields = shown if reason == "usage" else {}

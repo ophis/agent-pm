@@ -451,8 +451,10 @@ class Board:
         else:
             self.say("plan", mode="new", queue=run[1], live=live)
 
-    def gated(self, role, ident):
-        return self.gate is not None and self.gate.blocked(role, ident)
+    def gated(self, role, ident, client):
+        return self.gate is not None and self.gate.blocked(
+            role, ident, key=(self.cfg.delegate_kind, client)
+        )
 
     def take(self, only=None, full=()):
         queue = self.queue(full)
@@ -468,7 +470,7 @@ class Board:
             if self.dry:
                 role = self.role(issue)
                 client = self.cfg.roles[role].run.client
-                if not self.gated(role, ident):
+                if not self.gated(role, ident, client):
                     return issue, None, role, client, "default"
             elif taken := self.claim(issue, full):
                 return taken
@@ -526,7 +528,7 @@ class Board:
             )
             self.comment_and_move(issue, "\n\n".join(comments), "in_review", "todo", "claim")
             return None
-        if self.gated(role, ident):
+        if self.gated(role, ident, client):
             return None
         self.say("claim", ident, role=role, task=task, client=client, client_source=source)
         ops.call(self.gql, ops.M_STATE, "issueUpdate", i=issue["id"], s=self.states["in_progress"])

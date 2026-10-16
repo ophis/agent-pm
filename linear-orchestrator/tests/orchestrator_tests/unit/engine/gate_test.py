@@ -1,4 +1,4 @@
-"""Quota keys, configuration drift and tick-local probes at the Delegate boundary."""
+"""Actual-client quota keys and tick-local probes at the Delegate boundary."""
 
 import os
 from datetime import UTC, datetime, timedelta
@@ -25,7 +25,10 @@ class DelegateQuotaKeys(Case):
         self.assertFalse(
             self.gate(provider, client="overlay-client", core=core).blocked("engineer", "TASK-1")
         )
-        self.assertEqual((provider.queried, provider.overlays), (["engineer"], [(core,)]))
+        self.assertEqual(
+            (provider.queried, provider.overlays),
+            (["engineer"], [(core, {"roles": {"engineer": {"client": "overlay-client"}}})]),
+        )
         log = os.path.join(self.home, "runs.jsonl")
         runs.note_limit(
             log,
@@ -56,7 +59,7 @@ class DelegateQuotaKeys(Case):
             self.assertFalse(gate.blocked("pm", "TASK-2"))
         self.assertEqual(provider.queried, ["engineer", "engineer"])
 
-    def test_distinct_kinds_sharing_a_client_keep_separate_probe_results(self):
+    def test_distinct_kinds_sharing_a_client_probe_once(self):
         exhausted = quota_provider("shared-client", 95)
         available = quota_provider("shared-client", 10)
         gate = self.gate(exhausted)
@@ -64,31 +67,33 @@ class DelegateQuotaKeys(Case):
         gate.cfg.delegate_kind = "second"
         gate.cfg.delegate_cls = available
         gate.cfg.delegates["second"] = available
-        self.assertFalse(gate.blocked("engineer", "TASK-2"))
-        self.assertEqual((exhausted.queried, available.queried), (["engineer"], ["engineer"]))
+        self.assertTrue(gate.blocked("engineer", "TASK-2"))
+        self.assertEqual((exhausted.queried, available.queried), (["engineer"], []))
 
-    def test_drifted_resume_skips_probe_and_does_not_cache_a_reading(self):
+    def test_recorded_client_is_probed_through_its_recorded_provider(self):
         provider = quota_provider("current-client", 95)
+        saved = quota_provider("saved-client", 95)
         events = []
         gate = self.gate(
             provider, say=lambda event, *args, **fields: events.append((event, args, fields))
         )
-        self.assertFalse(gate.blocked("engineer", "TASK-1", key=("saved-kind", "saved-client")))
-        self.assertEqual((provider.queried, gate.seen), ([], {}))
+        gate.cfg.delegates["saved-kind"] = saved
+        self.assertTrue(gate.blocked("engineer", "TASK-1", key=("saved-kind", "saved-client")))
+        self.assertEqual((provider.queried, saved.queried), ([], ["engineer"]))
         self.assertEqual(
-            events,
-            [
-                (
-                    "usage-drift",
-                    ("TASK-1",),
-                    {
-                        "client": "saved-client",
-                        "delegate_kind": "saved-kind",
-                        "current_client": "current-client",
-                        "current_delegate_kind": "first",
-                    },
-                )
-            ],
+            saved.overlays, [({}, {"roles": {"engineer": {"client": "saved-client"}}})]
         )
+        self.assertEqual(events[0][0], "usage-skip")
+        self.assertEqual(events[0][2]["client"], "saved-client")
         self.assertTrue(gate.blocked("engineer", "TASK-2"))
         self.assertEqual(provider.queried, ["engineer"])
+
+    def test_missing_recorded_provider_blocks_without_probing_default(self):
+        provider = quota_provider("current-client", 10)
+        events = []
+        gate = self.gate(
+            provider, say=lambda event, *_args, **fields: events.append((event, fields))
+        )
+        self.assertTrue(gate.blocked("engineer", "TASK-1", key=("missing", "saved-client")))
+        self.assertEqual(provider.queried, [])
+        self.assertEqual(events[0][1]["reason"], "usage unknown")

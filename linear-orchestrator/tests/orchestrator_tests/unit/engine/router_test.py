@@ -814,7 +814,7 @@ class RouterEntry(OuterBase):
         self.assertEqual(self.entry(), 0)
         self.assertEqual(self.last_run(), ("resume", ID, sid, "engineer", "a"))
         self.assertEqual(self.detached(), self.expected(sid=sid, resume=True))
-        self.assertEqual((self.api.info, self.api.usage_calls), ([("a", sid, self.rd)] * 2, []))
+        self.assertEqual((self.api.info, self.api.usage_calls), ([("a", sid, self.rd)] * 2, ["a"]))
 
     def test_agent_label_client_reaches_the_delegate_and_start_row(self):
         self.write_config(AGENT_TOP + OUTER + AGENT_LABELS)
@@ -1635,6 +1635,29 @@ class ClientUsage(Base):
 class ClaimUsageGates(Base):
     """FR-48: each candidate gates on its own client's usage."""
 
+    def test_a_label_selected_client_gates_independently_of_the_role_default(self):
+        self.write_config(AGENT_TOP + CONFIG + AGENT_LABELS)
+        self.api.usages = {"a": reading(95), "b": reading(50)}
+        fake = FakeLinear(
+            [
+                issue(
+                    "TASK-1",
+                    "Todo",
+                    "researcher",
+                    priority=1,
+                    labels=[label("Selected", AGENT_B, AGENT_GROUP)],
+                ),
+                issue("TASK-2", "Todo", "researcher", priority=2),
+            ]
+        )
+        self.assertTrue(self.claim(fake, gate=True).startswith("TASK-1 "))
+        self.assertEqual(self.taken[3:], ("b", "label"))
+        self.assertEqual(self.api.usage_calls, ["b"])
+        fake.issues["TASK-1"]["state"] = "In Progress"
+        self.assertEqual(self.claim(fake, gate=True), "")
+        self.assertEqual(self.api.usage_calls, ["b", "a"])
+        self.assertIn("usage-skip TASK-2 client=a", "\n".join(self.said()))
+
     def test_a_blocked_head_client_lets_the_next_client_claim(self):
         rows = (
             (reading(95, 10), "reason=usage usage=five_hour=95% weekly=10%"),
@@ -1840,7 +1863,7 @@ class ScheduledUsageGates(TickBase):
         self.assertEqual(self.launched_run(), ("resume", "TASK-1", claimed.sid, "researcher", "a"))
         self.assertEqual(
             (self.api.info, self.api.usage_calls),
-            ([("a", claimed.sid, os.path.join(self.work, "work", "TASK-1"))], []),
+            ([("a", claimed.sid, os.path.join(self.work, "work", "TASK-1"))], ["a"]),
         )
 
     def test_a_blocked_resume_candidate_lets_a_claim_start(self):
