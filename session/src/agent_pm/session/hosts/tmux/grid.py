@@ -161,12 +161,10 @@ class Grid:
         *,
         per_column: int,
         retile: Retile,
-        command: str | None = None,
-        tile_window=None,
     ) -> str | None:
-        """Sets the grid options and retile's hooks running `command tile` (None: COMMAND where PATH
-        finds it; no hooks without one, or when tmux would misread its path), then tiles unless off.
-        None or the failure.
+        """Sets the grid options and retile's hooks running `<COMMAND where PATH finds it> tile` (no
+        hooks without one, or when tmux would misread its path), then tiles unless off. None or the
+        failure.
         """
         args = [
             "set-option",
@@ -191,7 +189,7 @@ class Grid:
             GRID_BUSY,
         ]
         mode = RETILE_HOOKS[retile]
-        command = command_path(COMMAND) if command is None else command
+        command = command_path(COMMAND)
         problem = (
             None
             if not mode
@@ -216,7 +214,7 @@ class Grid:
         try:
             self.tmux.checked(args)
             if mode:
-                (self.tile if tile_window is None else tile_window)(window, per_column=per_column)
+                self.tile(window, per_column=per_column)
         except TuiError as e:
             return str(e)
         return None

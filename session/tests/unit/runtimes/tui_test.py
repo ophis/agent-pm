@@ -692,6 +692,17 @@ class StartTest(Base):
         self.assertEqual(self.host.calls.mock_calls, [])
         self.nothing_hosted()
 
+    def test_a_tui_store_refuses_a_bad_name_before_the_host_or_a_path(self):
+        for name in (*BAD_NAMES, None):
+            with self.subTest(name=name), self.assertRaises(ConfigError) as caught:
+                tui.TuiStore.attach(name, host=self.host).close()
+            self.assertEqual(
+                str(caught.exception),
+                f"name must match [A-Za-z0-9_-]+ but not none, got {name!r:.80}",
+            )
+        self.assertEqual(self.host.calls.mock_calls, [])
+        self.nothing_hosted()
+
     def test_a_bad_events_file_is_refused(self):
         self.host.calls.validate.side_effect = ConfigError("events destination refused")
         with self.assertRaisesRegex(ConfigError, "events destination refused"):

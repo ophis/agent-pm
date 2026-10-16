@@ -269,12 +269,16 @@ def deadline(seconds=5):
         signal.signal(signal.SIGALRM, old)
 
 
-def which(tmux=TMUX):
+def which(tmux=TMUX, session=COMMAND):
+    """session None: the real lookup."""
     real = shutil.which
-    return unittest.mock.patch(
-        "shutil.which",
-        side_effect=lambda cmd, *a, **kw: tmux if cmd == "tmux" else real(cmd, *a, **kw),
-    )
+
+    def found(cmd, *args, **kw):
+        if cmd == "tmux":
+            return tmux
+        return session if cmd == "agent-pm-session" and session else real(cmd, *args, **kw)
+
+    return unittest.mock.patch("shutil.which", side_effect=found)
 
 
 def osa(split, kind, session, *anchors):
@@ -481,11 +485,19 @@ def grid(cells, per_column=3, width=160, height=48, manager_width=79):
     )
 
 
+def tiled(window):
+    return [
+        ["tmux", "display-message", "-p", "-t", window, "#{socket_path}"],
+        ["tmux", "display-message", "-p", "-t", window, grids.GRID_WINDOW],
+        unmute(window),
+    ]
+
+
 def opening_commands(*, window="@1", manager="%3", opener="mgr", n=3, retile="all", hooks=True):
     return [
         *record(opener, "%20"),
         grid_set(window, manager, n, hooks=hooks, retile=retile),
-        *([] if retile == "off" else [["tile", window, n]]),
+        *([] if retile == "off" else tiled(window)),
     ]
 
 
@@ -532,7 +544,7 @@ class PaneFixture(Case):
     def open(self, fake, env, **kw):
         self.stderr = io.StringIO()
         with environ(**env), which(kw.pop("tmux", TMUX)), redirect_stderr(self.stderr):
-            return placed(fake).open_pane("s", **kw, command=COMMAND)
+            return placed(fake).open_pane("s", **kw)
 
     def clients(self, *rows):
         """A list-clients result: rows of (activity, tty, pane[, control mode, default "0"])."""
