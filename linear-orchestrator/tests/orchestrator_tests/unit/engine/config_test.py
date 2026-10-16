@@ -33,6 +33,7 @@ from delegate.tests.fakes.delegate import FakeDelegate
 from utils.tests.case import local_section
 
 LABEL1, LABEL2 = "00000000-0000-4000-8000-000000000021", "00000000-0000-4000-8000-000000000022"
+AGENT_GROUP = "00000000-0000-4000-8000-000000000023"
 
 P1, P2 = "a0000000-0000-4000-8000-000000000031", "b0000000-0000-4000-8000-000000000032"
 
@@ -140,6 +141,8 @@ DEPLOYMENT = {
     "harness_key",
     "task_label_group",
     "task_labels",
+    "agent_label_group",
+    "agent_labels",
     "option_labels",
     "project_repos",
     "local_clones",
@@ -460,6 +463,79 @@ class ConfigurationLoading(ConfigFile, Case):
             with self.subTest(text[len(PIPELINE) :]):
                 self.assertEqual(self.load(text).option_labels, want)
 
+    def test_agent_labels(self):
+        for top, table, group, labels in (
+            ("", "", "", {}),
+            ('agent_label_group = ""\n', "[agent_labels]\n", "", {}),
+            (
+                f'agent_label_group = "{AGENT_GROUP}"\n',
+                f'[agent_labels]\nfuture-client = "{LABEL1}"\nother = "{LABEL2}"\n',
+                AGENT_GROUP,
+                {"future-client": LABEL1, "other": LABEL2},
+            ),
+        ):
+            with self.subTest(group=group, labels=labels):
+                cfg = self.load(top + PIPELINE + table)
+                self.assertEqual((cfg.agent_label_group, cfg.agent_labels), (group, labels))
+                with self.assertRaises(TypeError):
+                    cfg.agent_labels["new"] = LABEL1
+
+    def test_agent_labels_rejected(self):
+        top = f'agent_label_group = "{AGENT_GROUP}"\n'
+        table = f'[agent_labels]\nfirst = "{LABEL1}"\n'
+        paired = "agent_label_group and [agent_labels] must both be set or both be empty"
+        cases = [
+            (top + PIPELINE, paired),
+            (PIPELINE + table, paired),
+            (top + PIPELINE + "[agent_labels]\n", paired),
+            ('agent_label_group = ""\n' + PIPELINE + table, paired),
+            *[
+                (
+                    f"agent_label_group = {value}\n" + PIPELINE + table,
+                    f"agent_label_group must be a Linear label group id (UUID) or empty: {shown}",
+                )
+                for value, shown in (("5", "5"), ("false", "False"), ('"Agent"', "'Agent'"))
+            ],
+            *[
+                (
+                    top + f"agent_labels = {value}\n" + PIPELINE,
+                    'agent_labels must be a table of <client> = "<Linear label id>"',
+                )
+                for value in ('"bad"', "[]", "false")
+            ],
+            *[
+                (
+                    top + PIPELINE + f"[agent_labels]\nfirst = {value}\n",
+                    f"agent_labels.first must be a Linear label id (UUID): {shown}",
+                )
+                for value, shown in (
+                    ('""', "''"),
+                    ('"not-a-uuid"', "'not-a-uuid'"),
+                    (
+                        '"ABCDEF00-0000-4000-8000-000000000021"',
+                        "'ABCDEF00-0000-4000-8000-000000000021'",
+                    ),
+                    ("5", "5"),
+                    ("false", "False"),
+                )
+            ],
+            (
+                top + PIPELINE + table + f'second = "{LABEL1}"\n',
+                f"agent_labels.first and agent_labels.second have the same label id {LABEL1}",
+            ),
+            (
+                f'agent_label_group = "{TASK_GROUP}"\n' + PIPELINE + table,
+                "agent_label_group and task_label_group must be different",
+            ),
+            (
+                top + PIPELINE + table + f'[task_labels]\nbuild = "{LABEL1}"\n',
+                f"agent_labels.first and task_labels.build have the same label id {LABEL1}",
+            ),
+        ]
+        for text, message in cases:
+            with self.subTest(message=message):
+                self.fails("linear-orchestrator/config.toml: " + message, text)
+
     def test_frozen(self):
         cfg = self.load(
             'human_members = ["a@x.com"]\n'
@@ -554,10 +630,14 @@ class CommittedConfiguration(Case):
         self.assertEqual(
             {k: committed[k] for k in DEPLOYMENT},
             {
-                **dict.fromkeys(("team", "harness_key", "task_label_group"), ""),
+                **dict.fromkeys(
+                    ("team", "harness_key", "task_label_group", "agent_label_group"), ""
+                ),
                 "states": dict.fromkeys(State, ""),
                 "human_members": [],
-                **dict.fromkeys(("task_labels", "project_repos", "local_clones"), {}),
+                **dict.fromkeys(
+                    ("task_labels", "agent_labels", "project_repos", "local_clones"), {}
+                ),
                 "option_labels": {"visual": ""},
                 "work_dir": "~/.agent-pm",
             },
@@ -623,6 +703,29 @@ class CommittedConfiguration(Case):
             str(cm.exception),
             f"linear-orchestrator/config.toml: project_repos.{zero} must map a Linear project id "
             "(UUID) to <owner>/<name>: '<owner>/<name>'",
+        )
+
+    def test_agent_local_lines_load(self):
+        with files("agent_pm.linear_orchestrator").joinpath("config.toml").open() as source:
+            local = tomllib.loads(
+                "".join(
+                    line.removeprefix("# local: ")
+                    for line in source
+                    if line.startswith("# local: ")
+                )
+            )["linear_orchestrator"]
+        cfg = self.load(
+            f'agent_label_group = "{local["agent_label_group"]}"\n'
+            + HEADER
+            + role("researcher")
+            + role("pm")
+            + role("engineer")
+            + "[agent_labels]\n"
+            + "".join(f'{key} = "{value}"\n' for key, value in local["agent_labels"].items())
+        )
+        self.assertEqual(
+            (cfg.agent_label_group, dict(cfg.agent_labels)),
+            (local["agent_label_group"], local["agent_labels"]),
         )
 
 
