@@ -84,25 +84,33 @@ class CrewTest(Case):
 
     def test_start_process_observes_starting_entry_unlocked_events_and_caller_path(self):
         record = self.fake_record("worker")
-        code = "\n".join(
-            (
-                "import fcntl,json,os,stat",
-                f"path={self.directory!r}",
-                "with open(path+'/roster.json') as f: entry=json.load(f)['entries']['worker']",
-                "assert entry['state']=='starting' and entry['record'] is None",
-                "assert stat.S_ISREG(os.fstat(1).st_mode)",
-                "fd=os.open(path+'/roster.lock',os.O_RDWR)",
-                "fcntl.flock(fd,fcntl.LOCK_EX|fcntl.LOCK_NB)",
-                "assert os.environ['AGENT_PM_EVENTS']==path+'/events'",
-                f"assert os.environ['PATH']=={os.environ['PATH']!r}",
-                "print('starter diagnostics')",
-                "assert os.environ['AGENT_PM_SID']==entry['sid']",
-                f"record=json.loads({record.to_line()!r})",
-                "record['sid']=os.environ['AGENT_PM_SID']",
-                "print(json.dumps(record))",
-            )
+        code = (
+            "import fcntl,json,os,stat,sys\n"
+            "path,caller_path,line=sys.argv[1:]\n"
+            "with open(path+'/roster.json') as f: entry=json.load(f)['entries']['worker']\n"
+            "assert entry['state']=='starting' and entry['record'] is None\n"
+            "assert stat.S_ISREG(os.fstat(1).st_mode)\n"
+            "fd=os.open(path+'/roster.lock',os.O_RDWR)\n"
+            "fcntl.flock(fd,fcntl.LOCK_EX|fcntl.LOCK_NB)\n"
+            "assert os.environ['AGENT_PM_EVENTS']==path+'/events'\n"
+            "assert os.environ['PATH']==caller_path\n"
+            "print('starter diagnostics')\n"
+            "assert os.environ['AGENT_PM_SID']==entry['sid']\n"
+            "record=json.loads(line)\n"
+            "record['sid']=os.environ['AGENT_PM_SID']\n"
+            "print(json.dumps(record))"
         )
-        started = self.crew.run(Spec("worker", (sys.executable, "-I", "-S", "-c", code)))
+        argv = (
+            sys.executable,
+            "-I",
+            "-S",
+            "-c",
+            code,
+            self.directory,
+            os.environ["PATH"],
+            record.to_line(),
+        )
+        started = self.crew.run(Spec("worker", argv))
         self.assertEqual(started, replace(record, sid=self.roster.entries()["worker"].sid))
 
     def test_bad_empty_nonzero_and_missing_command_runs_become_lost(self):
@@ -205,7 +213,14 @@ class CrewTest(Case):
             "mismatch": self.fake_record("mismatch").to_line() + "\n",
         }
         for name, text in cases.items():
-            command = (sys.executable, "-I", "-S", "-c", f"import sys;sys.stdout.write({text!r})")
+            command = (
+                sys.executable,
+                "-I",
+                "-S",
+                "-c",
+                "import sys;sys.stdout.write(sys.argv[1])",
+                text,
+            )
             with self.subTest(name=name), self.assertRaises(RosterError):
                 self.crew.run(Spec(name, command))
             entry = self.roster.entries()[name]
@@ -215,22 +230,22 @@ class CrewTest(Case):
             self.assertTrue(os.path.exists(os.path.join(self.directory, entry.receipt)))
 
     def test_final_json_without_newline_commits_but_truncated_json_stays_lost(self):
-        for name, suffix in (("valid", ""), ("truncated", "[:-1]")):
+        code = (
+            "import json,os,sys\n"
+            "record=json.loads(sys.argv[1])\n"
+            "record['sid']=os.environ['AGENT_PM_SID']\n"
+            "text=json.dumps(record)\n"
+            "sys.stdout.write(text[:len(text)-int(sys.argv[2])])"
+        )
+        for name, cut in (("valid", 0), ("truncated", 1)):
             record = self.fake_record(name)
-            code = "\n".join(
-                (
-                    "import json,os,sys",
-                    f"record=json.loads({record.to_line()!r})",
-                    "record['sid']=os.environ['AGENT_PM_SID']",
-                    f"sys.stdout.write(json.dumps(record){suffix})",
-                )
-            )
-            if suffix:
+            argv = (sys.executable, "-I", "-S", "-c", code, record.to_line(), str(cut))
+            if cut:
                 with self.assertRaises(RosterError):
-                    self.crew.run(Spec(name, (sys.executable, "-I", "-S", "-c", code)))
+                    self.crew.run(Spec(name, argv))
                 self.assertEqual(self.roster.entries()[name].state, State.LOST)
             else:
-                started = self.crew.run(Spec(name, (sys.executable, "-I", "-S", "-c", code)))
+                started = self.crew.run(Spec(name, argv))
                 self.assertEqual(started, replace(record, sid=self.roster.entries()[name].sid))
                 self.assertEqual(self.roster.entries()[name].state, State.LIVE)
 
