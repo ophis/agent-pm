@@ -3,10 +3,11 @@
 
     html_check.py HTML
 
-`ok`, exit 0; else exit 1, one line per failure: `external load: <url>` (an http(s) or `//` URL
-outside <a href>, xmlns, namespace names and text) or `unsafe markup: <attr>=<value>`
-(`javascript:`, or a quote in an `on*` value). Unreadable: `check failed: <error>`, exit 2.
-shortcut: CSS escapes and JS-built URLs are not decoded; the prompt forbids external loads.
+`ok`, exit 0; else exit 1, one line per failure: `external load: no CSP prefix` (the page must
+start with PREFIX, so the browser enforces CSP), `external load: <url>` (an http(s) or `//` URL
+outside <a href>, xmlns and text), or `unsafe markup: <attr>=<value>` (`javascript:`, a quote in
+an `on*` value, refresh, dns-prefetch). Unreadable: `check failed: <error>`, exit 2.
+shortcut: the URL scan models browser parsing roughly; PREFIX is what holds.
 """
 
 import html
@@ -22,6 +23,21 @@ ATTR_URL = re.compile(rf"(?i)(?P<url>(?:{_SCHEME}|(?:^|(?<=[\s,(]))[/\\]{{2}}){_
 BODY_URL = re.compile(rf"(?i)(?P<url>(?:{_SCHEME}|(?<=[\"'`(])\s*[/\\]{{2}}){_HOST})")
 LINKS = {"href", "xlink:href"}
 NAMESPACES = {f"http://www.w3.org/{n}" for n in ("2000/svg", "1999/xlink", "1999/xhtml")}
+XMLNS = re.compile(r"(?i)xmlns(?::[\w.-]+)?\s*=\s*[\"']?$")
+CSP = (
+    "default-src 'none'; style-src 'unsafe-inline' https://fonts.googleapis.com; "
+    "font-src https://fonts.gstatic.com; img-src data:; script-src 'unsafe-inline'"
+)
+_WS = "[ \t\n\f\r]"
+# A comment without <, > or - cannot end early (`<!-->`) and hide a tag from the regex.
+_GAP = rf"(?:{_WS}|<!--[^<>-]*-->)*"
+_ATTR = rf"""{_WS}+[a-z][\w:-]*(?:{_WS}*={_WS}*(?:"[^"<>]*"|'[^'<>]*'|[^ \t\n\f\r"'<>=`]+))?"""
+PREFIX = re.compile(
+    rf"""(?i)\ufeff?{_GAP}<!doctype{_WS}+html{_WS}*>{_GAP}<html(?:{_ATTR})*{_WS}*>{_GAP}<head>"""
+    rf"""{_GAP}<meta{_WS}+charset="utf-8"{_WS}*/?>{_GAP}<meta{_WS}+"""
+    rf"""http-equiv="Content-Security-Policy"{_WS}+content="{re.escape(CSP)}"{_WS}*/?>"""
+)
+REFRESH = re.compile(r"(?i)http-equiv\s*=\s*[\"']?\s*refresh")
 
 
 class _Check(HTMLParser):
@@ -33,9 +49,9 @@ class _Check(HTMLParser):
 
     def _urls(self, pattern, text):
         for m in pattern.finditer(text):
-            if m["url"] in NAMESPACES:
+            if m["url"] in NAMESPACES and XMLNS.search(text, 0, m.start()):
                 continue
-            if urlsplit("//" + m["host"]).hostname not in FONTS:
+            if urlsplit("//" + m["host"].rstrip(";,")).hostname not in FONTS:
                 self.failures.append(f"external load: {m['url'].strip()}")
 
     def handle_starttag(self, tag, attrs):
@@ -77,11 +93,18 @@ def main(argv: list[str], *, out=sys.stdout) -> int:
     except OSError as e:
         print(f"check failed: {e}", file=out)
         return 2
+    failures = [] if PREFIX.match(text) else ["external load: no CSP prefix"]
+    decoded = html.unescape(text)
+    if REFRESH.search(decoded):
+        failures.append("unsafe markup: http-equiv=refresh")
+    if "dns-prefetch" in decoded.lower():
+        failures.append("unsafe markup: rel=dns-prefetch")
     check = _Check()
     check.feed(text)
     check.close()
-    print("\n".join(check.failures) or "ok", file=out)
-    return 1 if check.failures else 0
+    failures += check.failures
+    print("\n".join(failures) or "ok", file=out)
+    return 1 if failures else 0
 
 
 if __name__ == "__main__":

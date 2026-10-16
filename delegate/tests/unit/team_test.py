@@ -519,6 +519,10 @@ class Real(RealConfig):
                         "- Light Research: only the conclusion, at most one table or one diagram, and the sources.",
                     ),
                     (
+                        "CSP prefix",
+                        '- Start the page with exactly `<!doctype html><html><head><meta charset="utf-8">',
+                    ),
+                    (
                         "NFR-1",
                         "- Load nothing external but Google Fonts: no CDN script, stylesheet or image.",
                     ),

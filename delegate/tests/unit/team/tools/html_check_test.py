@@ -17,9 +17,21 @@ html_check = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(html_check)
 
 FONTS = "https://fonts.googleapis.com/css2?family=Inter&display=swap"
+CSP = (
+    "default-src 'none'; style-src 'unsafe-inline' https://fonts.googleapis.com; "
+    "font-src https://fonts.gstatic.com; img-src data:; script-src 'unsafe-inline'"
+)
+PREFIX = (
+    '<!doctype html><html><head><meta charset="utf-8">'
+    f'<meta http-equiv="Content-Security-Policy" content="{CSP}">'
+)
 
 PAGE = f"""<!DOCTYPE html>
-<html><head>
+<html lang="en">
+<!-- generated -->
+<head>
+<meta charset="UTF-8">
+<meta http-equiv="Content-Security-Policy" content="{CSP}"/>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3C/svg%3E">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="{FONTS}" rel="stylesheet">
@@ -33,8 +45,7 @@ PAGE = f"""<!DOCTYPE html>
 <a xlink:href="https://example.com/x"><text>x</text></a></svg>
 <button onclick="toggle(this)">Theme</button>
 <script>// draw arrows
-const s = 'https:'; document.body.dataset.x = s;
-document.createElementNS("http://www.w3.org/2000/svg", "circle");</script>
+const s = 'https:'; document.body.dataset.x = s;</script>
 </body></html>
 """
 
@@ -85,6 +96,12 @@ class HtmlCheck(Case):
                 '<img src="http://www.w3.org/2000/svg.png">',
                 "external load: http://www.w3.org/2000/svg.png",
             ),
+            ('<img src="http://www.w3.org/2000/svg">', "external load: http://www.w3.org/2000/svg"),
+            (
+                '<meta http-equiv="&#114;efresh" content="0;url=/x">',
+                "unsafe markup: http-equiv=refresh",
+            ),
+            ('<link rel="DNS-prefetch" href="/x">', "unsafe markup: rel=dns-prefetch"),
             ('<img src="HTTPS://x.com/p">', "external load: HTTPS://x.com/p"),
             ('<img src="https:x.com/p">', "external load: https:x.com/p"),
             ('<img src="https:\\\\x.com/p">', "external load: https:\\\\x.com/p"),
@@ -97,10 +114,33 @@ class HtmlCheck(Case):
                     self.check(PAGE.replace("</body>", markup + "</body>")), (1, line + "\n")
                 )
 
+    def test_the_csp_prefix_is_required(self):
+        missing = (
+            ("no prefix", "<html><body>x</body></html>"),
+            ("a load before the policy", PAGE.replace("<head>", f'<head><link href="{FONTS}">')),
+            ("a comment hiding a tag", PREFIX.replace("<head>", "<!--><script src=x.js>--><head>")),
+            ("a non-HTML space", PREFIX.replace("<head>", "\u00a0<head>")),
+            ("a quote-swallowing attribute", PREFIX.replace("<html>", '<html x=">')),
+            ("a widened policy", PREFIX.replace("default-src 'none'", "default-src https:")),
+        )
+        for name, page in missing:
+            with self.subTest(name):
+                code, out = self.check(page)
+                self.assertEqual((code, out.splitlines()[0]), (1, "external load: no CSP prefix"))
+
+    def test_prefix_variants_pass(self):
+        for page in (
+            PREFIX,
+            "\ufeff \n" + PREFIX.replace("<head>", "\n<!-- a b -->\t<head>\r\n"),
+            PREFIX.replace("<html>", "<html lang=en data-x='1'>").replace("utf-8", "UTF-8"),
+        ):
+            with self.subTest(page):
+                self.assertEqual(self.check(page), (0, "ok\n"))
+
     def test_every_failure_is_listed(self):
         markup = '<img src="https://x.com/a"><img src="https://y.com/b" onerror="f(\'z\')">'
         self.assertEqual(
-            self.check(markup),
+            self.check(PREFIX + markup),
             (
                 1,
                 "external load: https://x.com/a\nexternal load: https://y.com/b\n"
@@ -128,7 +168,11 @@ class HtmlCheck(Case):
         )
         for markup, lines in cases:
             with self.subTest(markup):
-                self.assertEqual(self.check(markup), (1, lines))
+                self.assertEqual(self.check(PREFIX + markup), (1, lines))
+
+    def test_the_researcher_is_told_the_checked_prefix(self):
+        with open(os.path.join(TEAM, "roles", "researcher.md"), encoding="utf-8") as f:
+            self.assertIn(PREFIX.replace(CSP, html_check.CSP) + "`", f.read())
 
     def test_an_unreadable_file_exits_two(self):
         out = io.StringIO()
