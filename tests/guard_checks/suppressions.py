@@ -1,12 +1,15 @@
 """Lint suppression inventory check."""
 
 import ast
+import bisect
 import io
 import re
 import tokenize
 
 from tests.guard_checks.common import _tree_files
-from tests.guard_data import NOQA_ALLOWED
+from tests.guard_data import NO_COVER_ALLOWED, NOQA_ALLOWED
+
+NO_COVER_PRAGMA = r"#\s*(pragma|PRAGMA)[:\s]?\s*(no|NO)\s*(cover|COVER)"
 
 
 def source_suppressions(repo: str) -> list[str]:
@@ -26,7 +29,7 @@ def source_suppressions(repo: str) -> list[str]:
             scope = next(
                 (
                     name
-                    for first, last, name in reversed(functions)
+                    for first, last, name, _ in reversed(functions)
                     if first <= token.start[0] <= last
                 ),
                 "<module>",
@@ -83,13 +86,59 @@ def source_suppressions(repo: str) -> list[str]:
     return found
 
 
+def coverage_pragmas(repo: str) -> list[str]:
+    """Each coverage exclusion sits on a NO_COVER_ALLOWED function's header (`def` through its
+    colon), once, with a reason; each entry has its comment.
+    """
+    found, seen = [], set()
+    for path, text in _tree_files(repo, ".py"):
+        lines = [
+            i for i, line in enumerate(text.splitlines(), 1) if re.search(NO_COVER_PRAGMA, line)
+        ]
+        if not lines:
+            continue
+        headers = _function_headers(text)
+        for line in lines:
+            scope = next((name for first, last, name in headers if first <= line <= last), None)
+            at = f"{path}:{line}"
+            if scope is None:
+                found.append(f"{at}: pragma no cover must be on a def line")
+            elif (path, scope) not in NO_COVER_ALLOWED:
+                found.append(f"{at}: pragma no cover in {scope} is not allowed")
+            elif (path, scope) in seen:
+                found.append(f"{at}: duplicate pragma no cover in {scope}")
+            else:
+                seen.add((path, scope))
+                if not NO_COVER_ALLOWED[path, scope].strip():
+                    found.append(f"{at}: pragma no cover in {scope} needs a reason")
+    found.extend(
+        f"{path}: pragma no cover in {scope} has no matching comment"
+        for path, scope in sorted(NO_COVER_ALLOWED.keys() - seen)
+    )
+    return found
+
+
+def _function_headers(text):
+    colons = [
+        token.start
+        for token in tokenize.generate_tokens(io.StringIO(text).readline)
+        if token.type == tokenize.OP and token.string == ":"
+    ]
+    headers = []
+    for first, _, name, node in _suppression_functions(ast.parse(text)):
+        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+            body = (node.body[0].lineno, node.body[0].col_offset)
+            headers.append((first, colons[bisect.bisect_left(colons, body) - 1][0], name))
+    return headers
+
+
 def _suppression_functions(tree, parents=()):
     for node in ast.iter_child_nodes(tree):
         scope = parents
         if isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
             scope = (*parents, node.name)
             if not isinstance(node, ast.ClassDef):
-                yield node.lineno, node.end_lineno, ".".join(scope)
+                yield node.lineno, node.end_lineno, ".".join(scope), node
         if (
             isinstance(node, ast.If)
             and isinstance(node.test, ast.Compare)
@@ -102,5 +151,5 @@ def _suppression_functions(tree, parents=()):
             and node.test.comparators[0].value == "__main__"
         ):
             scope = (*parents, "__main__")
-            yield node.lineno, node.end_lineno, ".".join(scope)
+            yield node.lineno, node.end_lineno, ".".join(scope), node
         yield from _suppression_functions(node, scope)

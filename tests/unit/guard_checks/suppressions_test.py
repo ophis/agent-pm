@@ -2,8 +2,10 @@ from unittest import mock
 
 from tests.case import REPO
 from tests.guard_checks import suppressions
-from tests.guard_data import NOQA_ALLOWED
+from tests.guard_data import NO_COVER_ALLOWED, NOQA_ALLOWED
 from tests.guard_samples import PKG, Sample
+
+PRAGMA = "# pragma: " + "no cover"
 
 
 class SourceSuppressions(Sample):
@@ -277,3 +279,73 @@ class SourceSuppressions(Sample):
                 f"{path}: suppression {code} in {scope} has no matching comment",
             ],
         )
+
+
+class CoveragePragmas(Sample):
+    def found(self, files, allowed=None):
+        with mock.patch.dict(NO_COVER_ALLOWED, allowed or {}, clear=True):
+            return suppressions.coverage_pragmas(self.tree(files))
+
+    def test_the_real_inventory_has_matching_comments(self):
+        self.assertEqual(suppressions.coverage_pragmas(REPO), [])
+
+    def test_a_registered_function_header_may_carry_the_pragma(self):
+        path = "utils/src/agent_pm/utils/a.py"
+        for scope, source in (
+            ("run", f"def run():  {PRAGMA}\n    pass\n"),
+            ("run", f"def run(\n    a,  {PRAGMA}\n):\n    pass\n"),
+            ("run", f"def run(\n    a: int,\n) -> dict[str, int]:  {PRAGMA}\n    pass\n"),
+            ("Host.start", f"class Host:\n    async def start(self):  {PRAGMA}\n        pass\n"),
+            ("run.inner", f"def run():\n    def inner():  {PRAGMA}\n        pass\n"),
+        ):
+            with self.subTest(source=source):
+                self.assertEqual(self.found({path: source}, {(path, scope): "Spawns."}), [])
+
+    def test_an_unregistered_function_is_rejected(self):
+        path = "utils/src/agent_pm/utils/a.py"
+        source = f"def run():  {PRAGMA}\n    pass\n\n\ndef other():  {PRAGMA}\n    pass\n"
+        self.assertEqual(
+            self.found({path: source}, {(path, "run"): "Spawns."}),
+            [f"{path}:5: pragma no cover in other is not allowed"],
+        )
+
+    def test_a_pragma_outside_a_def_header_is_rejected_whatever_its_spelling(self):
+        path = "utils/src/agent_pm/utils/a.py"
+        for line, source in (
+            (1, f"value = 1  {PRAGMA}\n"),
+            (2, f"def run():\n    pass  {PRAGMA}\n"),
+            (2, "def run():\n    pass  #pragma:" + "no cover\n"),
+            (2, "def run():\n    pass  # PRAGMA " + "NO COVER\n"),
+            (1, f"text = '{PRAGMA}'\n"),
+            (1, f"class Host:  {PRAGMA}\n    pass\n"),
+        ):
+            with self.subTest(source=source):
+                self.assertEqual(
+                    self.found({path: source}, {(path, "run"): "Spawns."}),
+                    [f"{path}:{line}: pragma no cover must be on a def line"]
+                    + [f"{path}: pragma no cover in run has no matching comment"],
+                )
+
+    def test_a_second_pragma_in_one_function_is_a_duplicate(self):
+        path = "utils/src/agent_pm/utils/a.py"
+        source = f"def run(  {PRAGMA}\n    a,  {PRAGMA}\n):\n    pass\n"
+        self.assertEqual(
+            self.found({path: source}, {(path, "run"): "Spawns."}),
+            [f"{path}:2: duplicate pragma no cover in run"],
+        )
+
+    def test_an_entry_needs_a_reason(self):
+        path = "utils/src/agent_pm/utils/a.py"
+        self.assertEqual(
+            self.found({path: f"def run():  {PRAGMA}\n    pass\n"}, {(path, "run"): " "}),
+            [f"{path}:1: pragma no cover in run needs a reason"],
+        )
+
+    def test_each_entry_needs_a_pragma(self):
+        path = "utils/src/agent_pm/utils/a.py"
+        for files in ({path: "def run():\n    pass\n"}, {}):
+            with self.subTest(files=files):
+                self.assertEqual(
+                    self.found(files, {(path, "run"): "Spawns."}),
+                    [f"{path}: pragma no cover in run has no matching comment"],
+                )
