@@ -1304,7 +1304,7 @@ class SendScreenTest(Base):
             mode._terminal.calls.send.call_args_list,
             [mock.call(Paste("hello")), mock.call(Key("Enter"))],
         )
-        with self.assertRaisesRegex(SessionError, r"\Ahost selected cannot display\Z"):
+        with self.assertRaisesRegex(SessionError, r"\Ahost selected cannot show\Z"):
             mode.screen()
         self.assertNotIn("screen", [call[0] for call in self.host.calls.mock_calls])
 

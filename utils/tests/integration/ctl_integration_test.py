@@ -150,7 +150,7 @@ class FakeCtl(Installed):
         refused = self.call(self.ctl, "show", stdin=lines(record("w1"), record("w2")))
         self.assertEqual(
             (refused.returncode, refused.stdout, refused.stderr),
-            (1, "", "session w1: host fake cannot display\n"),
+            (1, "", "session w1: host fake cannot show\n"),
         )
 
     def test_close_ends_each_session(self):

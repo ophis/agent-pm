@@ -3,7 +3,7 @@ answers each name or stdin Record in order (Q11); a duplicate or bad input refus
 before any action; show, hide, close and attach-command by name and by stdin Record, show placing a
 session by its own display or by a Record's, close repeatable and only for the named (Q12), show
 and close refusing a Record whose sid the session's @record does not carry; on a
-Host that cannot display (session.tests.fakes.host:FakeHost, the module entry) show, hide, attach-command,
+Host that cannot show (session.tests.fakes.host:FakeHost, the module entry) show, hide, attach-command,
 read and tile exit 1 saying so, status giving no attach command.
 """
 
@@ -60,7 +60,7 @@ def live(
     cwd: str | None = None,
     hidden: bool = False,
 ) -> Status:
-    """A live session's Status: its tmux attach command, none when its Host cannot display; a
+    """A live session's Status: its tmux attach command, none when its Host cannot show; a
     worker's cwd.
     """
     command = attach(name) if showable else None
@@ -272,7 +272,7 @@ class NotShowableTest(ControlCase):
         self.addCleanup(process.close)
 
     def test_show_attach_command_read_and_tile_exit_1_saying_the_host_cannot_display(self):
-        refused = "session f1: host fake cannot display\n"
+        refused = "session f1: host fake cannot show\n"
         for argv, stdin, stderr in (
             (("show", "f1"), None, refused),
             (("show",), lines(self.f1), refused),
@@ -281,7 +281,7 @@ class NotShowableTest(ControlCase):
             (("attach-command",), lines(self.f1), refused),
             (("read", "f1"), None, refused),
             (("read", "f1", "--lines", "5"), None, refused),
-            (("tile", MANAGER), None, f"session {MANAGER}: host fake cannot display\n"),
+            (("tile", MANAGER), None, f"session {MANAGER}: host fake cannot show\n"),
         ):
             with self.subTest(argv=argv, stdin=stdin):
                 result = self.session(*argv, stdin=stdin, module=True)

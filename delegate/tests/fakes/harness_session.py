@@ -204,13 +204,13 @@ class HarnessSession(SessionClass):
     def show(self, *, display=None, command=None):
         host = self.host(self.host_names[self.name])
         if not isinstance(host, Showable):
-            raise NotShowable(f"host {host.name} cannot display")
+            raise NotShowable(f"host {host.name} cannot show")
         return host.show(self.name, display=display, command=command)
 
     def hide(self):
         host = self.host(self.host_names[self.name])
         if not isinstance(host, Showable):
-            raise NotShowable(f"host {host.name} cannot display")
+            raise NotShowable(f"host {host.name} cannot show")
         host.hide(self.name)
 
     def status(self):
@@ -221,7 +221,7 @@ class HarnessSession(SessionClass):
     def attach_command(self):
         host = self.host(self.host_names[self.name])
         if not isinstance(host, Showable):
-            raise NotShowable(f"host {host.name} cannot display")
+            raise NotShowable(f"host {host.name} cannot show")
         return host.attach_command(self.name)
 
     def stop(self):

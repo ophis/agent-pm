@@ -608,7 +608,7 @@ class HostedSession(Session):
 
     def _shown(self, call: str) -> tuple[Showable, str]:
         if not isinstance(self._host, Showable):
-            raise NotShowable(f"host {self._host.name} cannot display")
+            raise NotShowable(f"host {self._host.name} cannot show")
         name = self._tui()
         if name is None:
             raise NotShowable(f"{call}: tui mode only")

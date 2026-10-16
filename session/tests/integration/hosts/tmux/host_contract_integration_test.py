@@ -11,6 +11,7 @@ from pathlib import Path
 from unittest import mock
 
 from agent_pm.session import SessionError
+from agent_pm.session.hosts.reclaimed import ReclaimedGroup
 from agent_pm.session.hosts.tmux import TmuxHost
 from agent_pm.utils import StatusState
 
@@ -217,7 +218,7 @@ while True: time.sleep(1)
         with self.assertRaises(SessionError):
             self.host.attach(name)
         handle = TmuxHost("tmux").reclaim(token)
-        self.assertIsNotNone(handle)
+        self.assertIsInstance(handle, ReclaimedGroup)
         self.assertTrue(handle.alive())
         self.assertFalse(handle.wait_exit(0.3))
         self.assertFalse(gone(own) or gone(child))

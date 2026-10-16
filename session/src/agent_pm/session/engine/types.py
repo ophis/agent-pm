@@ -562,7 +562,7 @@ class NoRecordedSession(SessionError):
 
 
 class NotShowable(SessionError):
-    """From a Host that is not Showable: `host <name> cannot display`."""
+    """From a Host that is not Showable: `host <name> cannot show`."""
 
 
 @dataclass(frozen=True)

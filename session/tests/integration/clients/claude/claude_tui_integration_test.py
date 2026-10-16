@@ -140,7 +140,7 @@ class Live(tui_live.Live):
         """The default Host's show(name)."""
         host = self.session_cls.host()
         if not isinstance(host, Showable):
-            self.fail(f"host {host.name} cannot display")
+            self.fail(f"host {host.name} cannot show")
         return host.show(name)
 
     def stream(self, handle: Session, *, replies: bool = False) -> Stream:

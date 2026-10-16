@@ -77,7 +77,7 @@ class Live(Case):
         display = TmuxHost.fold(None, split, split_from)
         host = self.session_cls.host()
         if not isinstance(host, Showable):
-            self.fail(f"host {host.name} cannot display")
+            self.fail(f"host {host.name} cannot show")
         with self.inside(inside), contextlib.redirect_stderr(err):
             self.assertIsNone(host.show(name, display=display))
         return err.getvalue()

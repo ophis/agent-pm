@@ -230,7 +230,7 @@ class ReservedName(Case):
 class DisplayError(Case):
     def test_not_showable_is_a_driver_error(self):
         self.assertTrue(issubclass(NotShowable, SessionError))
-        self.assertEqual(str(NotShowable("host fake cannot display")), "host fake cannot display")
+        self.assertEqual(str(NotShowable("host fake cannot show")), "host fake cannot show")
 
 
 class OptionSets(Case):

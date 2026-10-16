@@ -209,10 +209,10 @@ class FakeDelegate(Delegate):
         return None if found is None else Outcome(**found)
 
     def show(self):
-        raise NotShowable("host fake cannot display")
+        raise NotShowable("host fake cannot show")
 
     def hide(self):
-        raise NotShowable("host fake cannot display")
+        raise NotShowable("host fake cannot show")
 
     def attach_command(self):
         return None

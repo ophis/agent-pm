@@ -203,7 +203,7 @@ def _host_of(name: str, hosts: Hosts) -> str:
 def _shown(name: str, hosts: Hosts) -> Showable:
     host = Session.host(_host_of(name, hosts))
     if not isinstance(host, Showable):
-        raise NotShowable(f"session {name}: host {host.name} cannot display")
+        raise NotShowable(f"session {name}: host {host.name} cannot show")
     return host
 
 
@@ -450,7 +450,7 @@ def _run(args, flags: list[str], hosts: Hosts, start_sid: str | None) -> int:
     else:
         host = Session.host()
         if not isinstance(host, Showable):
-            raise NotShowable(f"session {args.window}: host {host.name} cannot display")
+            raise NotShowable(f"session {args.window}: host {host.name} cannot show")
         host.tile(args.window, wait=not args.no_wait, if_panes_changed=args.if_panes_changed)
     return 0
 

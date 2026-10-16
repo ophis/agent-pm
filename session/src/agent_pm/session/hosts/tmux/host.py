@@ -30,6 +30,7 @@ from agent_pm.session.engine.types import (
     TuiSettings,
 )
 from agent_pm.session.hosts.base import Host, InteractiveProcess, Process, Showable
+from agent_pm.session.hosts.reclaimed import ReclaimedGroup
 from agent_pm.session.hosts.tmux import hook, transport
 from agent_pm.session.hosts.tmux.grid import Grid
 from agent_pm.session.hosts.tmux.iterm import Iterm
@@ -277,54 +278,6 @@ class TmuxProcess(Process):
             return self.tmux.option(self._pane, key)
         except TuiError as e:
             raise SessionError(f"tmux session {self.name}: {e}") from None
-
-
-class ReclaimedGroup(Process):
-    """A reclaimed process group whose tmux session may be gone: wait for it, kill it, close it."""
-
-    def __init__(self, control: ProcessControl) -> None:
-        self.name = os.path.basename(control.path)
-        self._control = control
-
-    @property
-    def token(self) -> str | None:
-        return self._control.path
-
-    def alive(self) -> bool:
-        try:
-            return self._control.live()
-        except OSError as error:
-            raise SessionError(f"process group {self.name}: {error}") from error
-
-    def wait_exit(self, timeout: float) -> bool:
-        deadline = time.monotonic() + timeout
-        while self.alive():
-            if time.monotonic() >= deadline:
-                return False
-            time.sleep(POLL)
-        return True
-
-    def kill(self) -> None:
-        try:
-            self._control.kill()
-        except OSError as error:
-            raise SessionError(f"process group {self.name}: {error}") from error
-        if not self.wait_exit(KILL_WAIT):
-            raise SessionError(f"process group {self.name}: did not exit")
-
-    def close(self) -> None:
-        try:
-            self._control.terminate()
-        except OSError as error:
-            raise SessionError(f"process group {self.name}: {error}") from error
-        if not self.wait_exit(KILL_WAIT):
-            self.kill()
-
-    def record(self) -> Record | None:
-        return None
-
-    def display(self) -> Display:
-        return None
 
 
 class TmuxTerminal(TmuxProcess, InteractiveProcess):
@@ -644,17 +597,7 @@ class TmuxHost(Host, Showable):
         return sorted(found)
 
     def reclaim(self, token: str) -> ReclaimedGroup | None:
-        """A group-only handle on token's controller (an apm-group-* directory and its socket)
-        while its group lives; else None; SessionError if it cannot tell.
-        """
-        if not isinstance(token, str):
-            return None
-        try:
-            control = ProcessControl.attach(token)
-        except (OSError, ValueError):
-            return None
-        group = ReclaimedGroup(control)
-        return group if group.alive() else None
+        return ReclaimedGroup.reclaim(token)
 
     def rows(self, display: Display = None) -> list[SessionRow]:
         names = set(self.list(display))

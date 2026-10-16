@@ -699,7 +699,7 @@ class TuiRuntime(Runtime):
     def screen(self, lines: int | None = None) -> str:
         self._running()
         if not isinstance(self.host, Showable):
-            raise SessionError(f"host {self.host.name} cannot display")
+            raise SessionError(f"host {self.host.name} cannot show")
         return self.host.screen(self._terminal, lines)
 
     def _running(self) -> None:

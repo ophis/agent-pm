@@ -386,14 +386,14 @@ class HostContract:
 
     def test_a_host_that_cannot_display_returns_each_display_as_given(self):
         if isinstance(self.host, Showable):
-            self.skipTest("applies only to a Host that cannot display")
+            self.skipTest("applies only to a Host that cannot show")
         for value in (None, "", OTHER_DISPLAY):
             with self.subTest(value=value):
                 self.assertEqual(self.host.display(value), value)
 
     def test_a_session_on_a_host_that_cannot_display_refuses_show_attach_command_and_screen(self):
         if isinstance(self.host, Showable):
-            self.skipTest("applies only to a Host that cannot display")
+            self.skipTest("applies only to a Host that cannot show")
         scenario, kind = self.file("scenario"), type(self.host)
         with open(scenario, "w", encoding="utf-8") as f:
             json.dump([{"out": {"type": "message", "text": "hi"}}], f)
@@ -427,4 +427,4 @@ class HostContract:
         for call in ("show", "attach_command", "screen"):
             with self.subTest(call=call), self.assertRaises(NotShowable) as caught:
                 getattr(session, call)()
-            self.assertEqual(str(caught.exception), f"host {self.host.name} cannot display")
+            self.assertEqual(str(caught.exception), f"host {self.host.name} cannot show")

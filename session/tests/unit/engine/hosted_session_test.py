@@ -595,7 +595,7 @@ class SessionTest(Base):
         ):
             with self.subTest(name=name), self.assertRaises(NotShowable) as caught:
                 call()
-            self.assertEqual(str(caught.exception), "host fake cannot display")
+            self.assertEqual(str(caught.exception), "host fake cannot show")
         self.assertFalse(session.status().hidden)
         self.assertEqual(self.drain(session)[-1], Exited(0))
 
