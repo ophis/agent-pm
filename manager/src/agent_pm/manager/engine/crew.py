@@ -25,7 +25,7 @@ RECOVERY_AGE = TIMEOUT + 4 * LOCK_TIMEOUT + RECOVERY_MARGIN
 EVENT = re.compile(r"[0-9]{2}:[0-9]{2}:[0-9]{2} \S+ \S.*")
 HERE = ("agent-pm-session", "ls", "--here", "--records")
 DESCENDANTS = (*HERE, "--descendants")
-HEADER = "name\tkind\tsid\tstate\tnote\tcwd\tattach"
+HEADER = "name\tkind\tsid\tstate\tview\tnote\tcwd\tattach"
 REPORT_HEADER = "name\tkind\tstate\tnote\treply\tpr\tchecks\tmergeable\treview"
 REPLY_WIDTH = 80
 HARNESS_SUFFIX = "-drive"
@@ -283,7 +283,12 @@ class Crew:
                 answers.pop(name)
                 continue
             entries[name] = replace(entry, state=state)
-            if state == State.LIVE and status.attach is not None and entry.record is not None:
+            if (
+                state == State.LIVE
+                and status.attach is not None
+                and not status.hidden
+                and entry.record is not None
+            ):
                 shown.append(entry.record)
         for failure in self._control("show", shown).values():
             print(f"crew: {failure}", file=sys.stderr)
@@ -302,6 +307,7 @@ class Crew:
                 else status.state
                 if entry.state == State.LIVE
                 else entry.state,
+                "hidden" if status is not None and status.hidden else "-",
                 entry.note or "-",
                 "-" if status is None else status.cwd or "-",
                 "-" if status is None else status.attach or "-",
