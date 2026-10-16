@@ -356,11 +356,34 @@ class Pulls(Case):
             ("pr", "list", "--head", "TASK-7-x", "--repo", "acme/widgets", *LIST),
             ("pr", "list", "--repo", "acme/widgets", "--head", "TASK-7-x", *LIST[:-1], "10"),
             ("pr", "view", "1"),
+            ("pr", "view", "https://github.com/acme/widgets/pull/1"),
+            ("pr", "ready", "https://github.com/acme/widgets/pull/1", "--draft"),
         ):
             with self.subTest(argv):
                 res = self.gh(*argv)
                 self.assertEqual((res.returncode, res.stdout), (1, ""))
                 self.assertIn("fake_gh.py:", res.stderr)
+
+    def test_pr_view_prints_a_views_fields_and_pr_ready_sets_its_draft(self):
+        url = "https://github.com/acme/widgets/pull/1"
+        view = {"state": "OPEN", "isDraft": True, "headRefOid": "a" * 40, "statusCheckRollup": []}
+        self.write({"repos": {"acme/widgets": REPO}, "views": {url: view}})
+        self.assertEqual(
+            self.ok("pr", "view", url, "--json", "state,isDraft,nope"),
+            {"state": "OPEN", "isDraft": True},
+        )
+        for argv, draft in (((url,), False), ((url, "--undo"), True)):
+            with self.subTest(argv):
+                res = self.gh("pr", "ready", *argv)
+                self.assertEqual((res.returncode, res.stderr), (0, ""))
+                self.assertEqual(
+                    self.ok("pr", "view", url, "--json", "isDraft"), {"isDraft": draft}
+                )
+        for argv in (("view", url + "0", "--json", "state"), ("ready", url + "0")):
+            with self.subTest(argv):
+                res = self.gh("pr", *argv)
+                self.assertEqual((res.returncode, res.stdout), (1, ""))
+                self.assertIn("no pull requests found", res.stderr)
 
     def test_bad_login_pulls_or_threads_are_errors(self):
         for name, scenario in {
@@ -370,6 +393,8 @@ class Pulls(Case):
             "a pull without headRefName": {"pulls": {"acme/widgets": [{"number": 1}]}},
             "threads of a list": {"threads": {"acme/widgets": []}},
             "a comment not an object": {"threads": {"acme/widgets": {"issues/1/comments": [1]}}},
+            "views a list": {"views": []},
+            "a view not an object": {"views": {"u": 1}},
         }.items():
             with self.subTest(name):
                 self.write({"repos": {"acme/widgets": REPO}, **scenario})

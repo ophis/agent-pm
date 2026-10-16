@@ -12,11 +12,13 @@ from datetime import datetime
 from pathlib import Path
 
 from agent_pm.delegate.engine.drivers import Driver
+from agent_pm.delegate.engine.ready_gate import gate, hosts
 from agent_pm.delegate.engine.types import (
     Begun,
     ConfigError,
     Event,
     Finished,
+    GateStatus,
     Instruction,
     Limit,
     Plan,
@@ -27,7 +29,7 @@ from agent_pm.delegate.engine.types import (
 from agent_pm.delegate.event.outcome import SAVES_DELIVERABLE
 from agent_pm.delegate.event.outcome import read as read_outcome
 from agent_pm.delegate.event.reply import OUTCOME, marks, outcome_block
-from agent_pm.delegate.event.types import InvalidOutcome, Outcome
+from agent_pm.delegate.event.types import Autopilot, InvalidOutcome, Outcome
 from agent_pm.session import ConfigError as SessionConfigError
 from agent_pm.session import (
     Exited,
@@ -280,7 +282,9 @@ class _Attempts:
             if (block := outcome_block(last or "")) is None:
                 return Result(rc, None, diagnostic or "the agent run returned no outcome")
             try:
-                outcome = read_outcome(block, p.run.output, p.params.workdir)
+                outcome, autopilot = read_outcome(
+                    block, p.run.output, p.params.workdir, hosts(p.run.output)
+                )
             except InvalidOutcome as e:
                 if rc or fixed:
                     return Result(rc, None, diagnostic or f"invalid outcome: {e}")
@@ -293,7 +297,7 @@ class _Attempts:
                     return Result(1, None, f"invalid outcome: {e}; resume failed: {failed}")
                 fixed = True
                 continue
-            return self.finish(outcome, rc)
+            return self.finish(outcome, rc, autopilot)
 
     def stop(self, handle: Session) -> bool:
         """A SessionError is printed, not raised; False then, the session maybe running."""
@@ -377,8 +381,9 @@ class _Attempts:
             self.policy.progress()
         return text
 
-    def finish(self, outcome: Outcome, rc: int) -> Result:
-        s, kind = self.plan.spec, self.plan.run.output["type"]
+    def finish(self, outcome: Outcome, rc: int, autopilot: Autopilot | None) -> Result:
+        s, output = self.plan.spec, self.plan.run.output
+        kind = output["type"]
         if outcome.deliverable and s.out:
             if not holds(s.out, outcome.deliverable):  # else the agent run wrote it there
                 try:
@@ -390,6 +395,13 @@ class _Attempts:
                     self.note("save_error", error=str(e))
             if kind == "local":
                 outcome = replace(outcome, url=s.out)
+        if kind == "pull-request":
+            gated = gate(outcome, autopilot)
+            outcome = gated.outcome
+            if gated.status != GateStatus.SKIPPED:
+                self.note("ready_gate", status=gated.status, reason=gated.reason)
+            if gated.reason:
+                say(f"delegate: ready gate: {gated.reason}")
         if not s.resume and outcome.status != "needs_input" and "start" not in self.seen:
             print("delegate: missing progress mark: start", file=sys.stderr, flush=True)
             self.note("missing", name="start")

@@ -91,13 +91,14 @@ def pr_list(rows):
     return (["gh", "pr", "list"], ok(json.dumps(rows)))
 
 
-def pr(base="main"):
+def pr(base="main", *, draft=True):
     """The branch's own PR 7."""
     return {
         "number": 7,
         "url": "u7",
         "state": "OPEN",
         "baseRefName": base,
+        "isDraft": draft,
         "isCrossRepository": False,
         "author": {"login": "me"},
     }

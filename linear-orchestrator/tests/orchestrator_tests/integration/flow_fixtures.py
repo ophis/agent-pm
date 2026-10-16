@@ -68,9 +68,22 @@ _OUTPUTS = {
 
 RESEARCH_DIR, PRD_DIR = _OUTPUTS["researcher"]["dir"], _OUTPUTS["pm"]["dir"]
 
+HEAD = "a" * 40
+# an engineer's done outcome: its autopilot head is the head of each of GH's views (the ready gate)
+AUTOPILOT = {"status": "converged", "head": HEAD}
+
 GH = {
     "repos": {REPO: {"full_name": REPO, "default_branch": "main", "permissions": {"push": True}}},
     "contents": {},
+    "views": {
+        f"https://github.com/{REPO}/pull/{n}": {
+            "state": "OPEN",
+            "isDraft": True,
+            "headRefOid": HEAD,
+            "statusCheckRollup": [],
+        }
+        for n in (1, 7)
+    },
 }
 
 MANAGER = "manager"

@@ -8,6 +8,7 @@ test_b8_a_managed_attended_run_is_recovered_from_the_roster.
 """
 
 from agent_pm.manager import State
+from orchestrator_tests.integration.flow_fixtures import AUTOPILOT
 
 from delegate.tests.replies import block, mark
 from manager.tests.live_crew import MANAGER, has_pair, logged
@@ -15,7 +16,15 @@ from manager.tests.live_pipeline import CTL, ID, PR, RESUME, ROUTER, LivePipelin
 from session.tests import live_tmux
 
 START = mark("start", "Building the session registry.")
-DONE = block({"status": "done", "title": "Session registry", "summary": "Added it.", "url": PR})
+DONE = block(
+    {
+        "status": "done",
+        "title": "Session registry",
+        "summary": "Added it.",
+        "url": PR,
+        "autopilot": AUTOPILOT,
+    }
+)
 
 
 class PipelineTest(LivePipeline):

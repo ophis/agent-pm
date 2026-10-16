@@ -11,7 +11,14 @@ from collections.abc import Mapping
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
-from agent_pm.delegate.event.types import STATUSES, InvalidOutcome, Outcome, OutcomeStatus
+from agent_pm.delegate.event.types import (
+    STATUSES,
+    Autopilot,
+    AutopilotStatus,
+    InvalidOutcome,
+    Outcome,
+    OutcomeStatus,
+)
 from agent_pm.utils import ConfinedFileError, ConfinedReason, read_confined
 
 SCHEMA = os.path.join(os.path.dirname(os.path.abspath(__file__)), "outcome.schema.json")
@@ -19,11 +26,17 @@ SAVES_DELIVERABLE = (
     "local",
     "orchestrator",
 )  # destinations whose deliverable comes back in the outcome
-PR_PATH = re.compile(r"/[^/]+/[^/]+/(pull/\d+|compare/\S+|tree/\S+)")
+DEFAULT_HOST = "github.com"
+PULL = re.compile(r"/[^/]+/[^/]+/pull/\d+")
+PR_PATH = re.compile(rf"{PULL.pattern}|/[^/]+/[^/]+/(compare|tree)/\S+")
 
 
-def read(body: str, output: Mapping, workdir: str) -> Outcome:
-    """`output`: the run's [output] table. Raises InvalidOutcome."""
+def read(
+    body: str, output: Mapping, workdir: str, hosts: frozenset[str]
+) -> tuple[Outcome, Autopilot | None]:
+    """`output`: the run's [output] table; `hosts`: those a pull-request url may name; the Autopilot
+    is the outcome's `autopilot`, None when it has none. Raises InvalidOutcome.
+    """
     try:
         data = json.loads(body)
     except (ValueError, RecursionError) as e:
@@ -36,10 +49,15 @@ def read(body: str, output: Mapping, workdir: str) -> Outcome:
         data = {k: v for k, v in data.items() if k != "deliverable_file"} | {
             "deliverable": _read_file(_file(data["deliverable_file"], workdir), workdir)
         }
-    return validate(data, output, workdir)
+    return validate(data, output, workdir, hosts), _autopilot(data.get("autopilot"))
 
 
-def validate(data: dict, output: Mapping, workdir: str) -> Outcome:
+def _autopilot(found) -> Autopilot | None:
+    """`found`: a validated outcome's `autopilot`."""
+    return None if found is None else Autopilot(AutopilotStatus(found["status"]), found["head"])
+
+
+def validate(data: dict, output: Mapping, workdir: str, hosts: frozenset[str]) -> Outcome:
     """Raises InvalidOutcome."""
     if not isinstance(data, dict):
         raise InvalidOutcome("not an object")
@@ -66,12 +84,16 @@ def validate(data: dict, output: Mapping, workdir: str) -> Outcome:
         title.strip(),
         summary,
         [str(q) for q in questions] if status == "needs_input" else [],
-        _url(data.get("url") or "", output),
+        _url(data.get("url") or "", output, hosts),
         [_file(p, workdir) for p in files],
         deliverable,
     )
     _conform(data, _schema(), "outcome")
     return outcome
+
+
+def summary_max() -> int:
+    return _schema()["properties"]["summary"]["maxLength"]
 
 
 def _schema() -> dict:
@@ -102,7 +124,7 @@ def _conform(value, schema: Mapping, where: str) -> None:
             raise InvalidOutcome(f"{where} is shorter than {schema['minLength']} characters")
         if len(value) > schema.get("maxLength", len(value)):
             raise InvalidOutcome(f"{where} is longer than {schema['maxLength']} characters")
-        if "pattern" in schema and not re.search(schema["pattern"], value):
+        if "pattern" in schema and not re.fullmatch(schema["pattern"], value):
             raise InvalidOutcome(f"{where} must match {schema['pattern']}")
     elif kind == "array":
         if not isinstance(value, list):
@@ -117,7 +139,7 @@ def _conform(value, schema: Mapping, where: str) -> None:
         )
 
 
-def _url(url: str, out: Mapping) -> str:
+def _url(url: str, out: Mapping, hosts: frozenset[str]) -> str:
     if not url or out["type"] in SAVES_DELIVERABLE:
         return ""
     parts = urlsplit(url) if isinstance(url, str) else None
@@ -131,11 +153,15 @@ def _url(url: str, out: Mapping) -> str:
     ):
         raise InvalidOutcome("url must be a plain https link")
     if out["type"] == "github":
-        host, prefix = out.get("host", "github.com"), f"/{out['repo']}/blob/{out['branch']}/"
+        host, prefix = out.get("host", DEFAULT_HOST), f"/{out['repo']}/blob/{out['branch']}/"
         if parts.netloc != host or not parts.path.startswith(prefix):
             raise InvalidOutcome(f"url must start with https://{host}{prefix}")
-    elif out["type"] == "pull-request" and not PR_PATH.fullmatch(parts.path):
-        raise InvalidOutcome("url must be a pull request, compare or tree link")
+    elif out["type"] == "pull-request":
+        if not PR_PATH.fullmatch(parts.path):
+            raise InvalidOutcome("url must be a pull request, compare or tree link")
+        if parts.netloc != parts.hostname or parts.hostname not in hosts:
+            allowed = ", ".join(sorted(hosts)) or "(none)"
+            raise InvalidOutcome(f"url host {parts.netloc} is not one of {allowed}")
     return url
 
 

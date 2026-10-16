@@ -14,6 +14,7 @@ from datetime import UTC, datetime, timedelta
 from agent_pm.linear_orchestrator.engine.router import BUSY, LIVE
 from orchestrator_tests.integration.flow_fixtures import (
     ACCOUNTS,
+    AUTOPILOT,
     HARNESS_EMAIL,
     HUMAN,
     LIGHT_RESEARCH,
@@ -36,7 +37,15 @@ ID, OTHER, SOURCE = "TASK-7", "TASK-8", "TASK-12"
 STARTED, READY = "Building the session registry.", "Added the session registry."
 PR = f"https://github.com/{REPO}/pull/1"
 START = mark("start", STARTED)
-DONE = block({"status": "done", "title": "Session registry", "summary": READY, "url": PR})
+DONE = block(
+    {
+        "status": "done",
+        "title": "Session registry",
+        "summary": READY,
+        "url": PR,
+        "autopilot": AUTOPILOT,
+    }
+)
 # a hang answer's delay: the first router holds the lock that long
 HOLD = 10
 MYSTERY = "00000000-0000-4000-8000-000000000031"

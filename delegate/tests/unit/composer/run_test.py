@@ -651,6 +651,8 @@ class OwnedKeys(Fake):
                 "unknown key 'typo' in roles.editor.output",
             ),
             ('output = "local"\n', {}, "output must be a table"),
+            ("[output]\nhost = 1\n", {}, "output.host must be text"),
+            ("[roles.editor.output]\nhost = true\n", {}, "roles.editor.output.host must be text"),
             ('[roles.writer]\noutput = "local"\n', {}, "roles.writer.output must be a table"),
             ("", {"model": "m"}, "run overlay: unknown key 'model' in [overlay]"),
             (

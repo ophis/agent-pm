@@ -34,6 +34,7 @@ from agent_pm.delegate.composer.base import (
 )
 from agent_pm.delegate.composer.types import ConfigError, RunConfig, RunParams, Team
 from agent_pm.delegate.event import OUTCOME, PROGRESS
+from agent_pm.delegate.event.outcome import DEFAULT_HOST
 from agent_pm.utils import unfenced
 
 RESUME = (
@@ -258,7 +259,7 @@ def _parameters(run: RunConfig, params: RunParams, texts: Mapping[str, str], tea
         "gate": _code(run.gate or "none"),
     }
     values |= {
-        f"output.{k}": _code(str(v)) for k, v in ({"host": "github.com"} | run.output).items()
+        f"output.{k}": _code(str(v)) for k, v in ({"host": DEFAULT_HOST} | run.output).items()
     }
     lines = []
     for name, source in PARAMETERS.items():

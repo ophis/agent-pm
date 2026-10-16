@@ -172,10 +172,11 @@ class Status(Base):
         )
         self.assertEqual(code, 0, r)
         self.assertEqual(
-            r["pr"], {"number": 7, "url": "u7", "state": "OPEN", "baseRefName": "TASK-0-a"}
+            r["pr"],
+            {"number": 7, "url": "u7", "state": "OPEN", "baseRefName": "TASK-0-a", "isDraft": True},
         )
         self.assertIn(
-            "number,url,state,baseRefName,isCrossRepository,author,mergeCommit",
+            "number,url,state,baseRefName,isDraft,isCrossRepository,author,mergeCommit",
             next(c for c in run.calls if c[1] == "pr"),
         )
         self.assertEqual(r["plan_docs"], [{"path": path, "phase": "S5"}])
@@ -236,6 +237,17 @@ class Status(Base):
         self.assertEqual(code, 0, r)
         self.assertIsNone(r["since"])
         self.assertEqual([e["body"] for e in r["user"]], ["old"])
+
+    def test_pr_says_whether_it_is_a_draft(self):
+        comments = [[]]
+        for draft in (True, False):
+            with self.subTest(draft=draft):
+                code, r, _ = self.status(
+                    pr_list([pr(draft=draft)]),
+                    (lambda a: a[-1].endswith("/issues/7/comments"), ok(json.dumps(comments))),
+                    NO_FEEDBACK,
+                )
+                self.assertEqual((code, r["pr"]["isDraft"]), (0, draft), r)
 
     def test_configured_users_replace_the_gh_login(self):
         """From the config and local passed only, never the HOME one (malformed here)."""
