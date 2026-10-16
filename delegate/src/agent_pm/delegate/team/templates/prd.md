@@ -1,6 +1,6 @@
 # PRD: [Reference] [Product name]
 
-Title: no gloss; `[Product name]` never repeats `[Reference]`. One fact per list item or FR line; its reason goes under Assumptions or Approach and trade-offs, not on that line.
+Title: no gloss; `[Product name]` never repeats `[Reference]`. One fact per list item or FR line; its reason goes under Assumptions or Approach and trade-offs, not on that line. Markers, leading the item or table cell: ✅ the chosen approach, ❌ a rejected one, ❓ an Open question, ⚠️ a Risk; no other emoji.
 
 ## Problem and goals
 Opens with one sentence: the problem, for whom, and the goal. Then list items: its evidence (a report finding, a source or the user's words), the goals, and what it explicitly won't do.
