@@ -63,14 +63,13 @@ class Exports(Case):
                 self.assertIn(name, delegate.__all__)
                 self.assertIs(getattr(delegate, name), getattr(session, name))
 
-    def test_extension_exports_the_harness_implementation(self):
-        from agent_pm.delegate import extension
+    def test_the_public_package_exports_the_harness_implementation(self):
         from agent_pm.delegate.engine.harness_delegate import HarnessDelegate
 
-        self.assertEqual(extension.__all__, ["HarnessDelegate"])
-        self.assertIs(extension.HarnessDelegate, HarnessDelegate)
+        self.assertIn("HarnessDelegate", delegate.__all__)
+        self.assertIs(delegate.HarnessDelegate, HarnessDelegate)
 
-    def test_no_concrete_implementation_is_exported(self):
+    def test_only_the_harness_concrete_implementation_is_exported(self):
         exported = [getattr(module, n) for module in (session, delegate) for n in module.__all__]
         concrete = [
             value
@@ -79,7 +78,7 @@ class Exports(Case):
             and issubclass(value, (Session, Host, Delegate))
             and not inspect.isabstract(value)
         ]
-        self.assertEqual(concrete, [])
+        self.assertEqual(concrete, [delegate.HarnessDelegate])
 
 
 class Abstract(Case):

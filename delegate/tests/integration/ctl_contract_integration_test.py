@@ -7,11 +7,19 @@ from pathlib import Path
 
 from agent_pm.utils import Record
 
-from delegate.tests.integration import await_file
 from delegate.tests.integration.cli import ASKING, Integration
 from delegate.tests.replies import block, mark
 from session.tests import live_tmux
 from utils.tests.contracts.ctl import AnswerCtlContract
+
+WAIT_FOR_PATH = """import sys, time
+from pathlib import Path
+deadline = time.monotonic() + 60
+while not Path(sys.argv[1]).exists():
+    if time.monotonic() >= deadline:
+        sys.exit(1)
+    time.sleep(0.02)
+"""
 
 
 class DelegateCtlContract(AnswerCtlContract, Integration):
@@ -32,7 +40,7 @@ class DelegateCtlContract(AnswerCtlContract, Integration):
                 mark("start", "waiting"),
                 {
                     "kind": "run",
-                    "argv": [sys.executable, await_file.__file__, gate],
+                    "argv": [sys.executable, "-c", WAIT_FOR_PATH, gate],
                     "path": os.path.join(self.work, "gate-result.json"),
                 },
                 block(ASKING),

@@ -8,6 +8,7 @@ from agent_pm.delegate.config import read_config
 from agent_pm.delegate.engine.base import Delegate
 from agent_pm.delegate.engine.config import module_roots
 from agent_pm.delegate.engine.drivers import Driver
+from agent_pm.delegate.engine.harness_delegate import HarnessDelegate
 from agent_pm.delegate.engine.types import (
     Begun,
     ConfigError,
@@ -48,6 +49,7 @@ __all__ = [
     "Finished",
     "Event",
     "Delegate",
+    "HarnessDelegate",
     "RunConfig",
     "DelegateEvent",
     "module_roots",

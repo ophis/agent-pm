@@ -10,7 +10,7 @@ CONFIG_FILE = f"delegate/src/{PKG}/delegate/engine/config.py"
 DELEGATE_INTERFACE = "tests/delegate_interface.json"
 
 
-DELEGATE_INTERFACE_MODULES = ("agent_pm.delegate", "agent_pm.delegate.extension")
+DELEGATE_INTERFACE_MODULES = ("agent_pm.delegate",)
 
 
 SUBPACKAGES = {
@@ -19,13 +19,12 @@ SUBPACKAGES = {
 
 
 ENTRY_MODULES = {
-    "delegate": {"config.py", "extension.py"},
+    "delegate": {"config.py"},
 }
 
 
 OBJECT_EXPORT_MODULES = (
     "delegate/src/agent_pm/delegate/__init__.py",
-    "delegate/src/agent_pm/delegate/extension.py",
     "delegate/src/agent_pm/delegate/composer/__init__.py",
     "delegate/src/agent_pm/delegate/event/__init__.py",
 )

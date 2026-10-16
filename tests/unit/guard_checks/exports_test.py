@@ -270,17 +270,6 @@ class DelegateObjectExports(Sample):
             1,
         )
 
-    def test_concrete_delegate_cannot_be_exported_under_an_alias(self):
-        for name in ("HarnessDelegate", "Renamed"):
-            with self.subTest(name=name):
-                found = self.exports(
-                    "agent_pm.delegate",
-                    "class HarnessDelegate: pass\nRenamed = HarnessDelegate\n",
-                    [name],
-                )
-                self.assertEqual(len(found), 1)
-                self.assertIn(f"concrete Delegate {name} (FR-47)", found[0])
-
     def test_missing_all_is_rejected_for_both_packages(self):
         root = self.tree({})
         for package in self.PINNED:
@@ -638,9 +627,8 @@ class DelegateInterfaceSnapshot(Sample):
 
     def test_the_snapshot_covers_the_delegate_package_and_its_signatures(self):
         snapshot = self.snapshot()
-        self.assertEqual(
-            DELEGATE_INTERFACE_MODULES, ("agent_pm.delegate", "agent_pm.delegate.extension")
-        )
+        self.assertEqual(DELEGATE_INTERFACE_MODULES, ("agent_pm.delegate",))
+        self.assertIn("agent_pm.delegate.HarnessDelegate", snapshot)
         self.assertEqual(
             snapshot["agent_pm.delegate.Delegate.resume"],
             "def(self:POSITIONAL_OR_KEYWORD, mode:KEYWORD_ONLY=None, input:KEYWORD_ONLY=None)",

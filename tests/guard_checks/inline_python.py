@@ -62,6 +62,8 @@ def _imported(module, name, modules, seen=frozenset()):
             for target in node.targets:
                 if isinstance(target, ast.Name):
                     values.setdefault(target.id, []).append(node.value)
+        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+            values.setdefault(node.target.id, []).append(node.value)
         elif isinstance(node, ast.ImportFrom) and not node.level:
             for alias in node.names:
                 bound = alias.asname or alias.name
@@ -189,8 +191,8 @@ def _violations(code):
         added = {
             target.id
             for node in nodes
-            if isinstance(node, ast.Assign) and _agent(node.value, names)
-            for target in node.targets
+            if isinstance(node, ast.Assign | ast.AnnAssign) and _agent(node.value, names)
+            for target in (node.targets if isinstance(node, ast.Assign) else [node.target])
             if isinstance(target, ast.Name)
         } - names
         if not added:

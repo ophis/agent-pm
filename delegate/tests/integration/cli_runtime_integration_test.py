@@ -1,20 +1,19 @@
 """Real process behavior in isolated integration fixtures."""
 
-import io
 import json
 import os
 import shutil
 import subprocess
-from contextlib import redirect_stderr
 from datetime import datetime
 from unittest import mock
 
-from agent_pm.delegate import Outcome, Result, Spec
+from agent_pm.delegate import Outcome, Result
 from agent_pm.delegate.composer import Composer
 from agent_pm.delegate.composer.prompt import RESUME
 
 from delegate.tests.case import PY, child_env
-from delegate.tests.cli_case import SID, Base
+from delegate.tests.cli_case import Base
+from delegate.tests.integration.cli import ASKING, SID, Integration
 from delegate.tests.replies import block
 from delegate.tests.unit.runs import DONE, START, limit, said
 
@@ -31,18 +30,6 @@ class Exits(Base):
         with open(self.out) as f:
             self.assertEqual(f.read(), DONE["deliverable"])
         self.assertEqual([r["kind"] for r in self.records()][-2:], ["result", "end"])
-
-    def test_a_resume_spec_continues_its_session(self):
-        spec = Spec(
-            "Hello.", self.work, task="echo", client="fake", sid=SID, resume=True, out=self.out
-        )
-        with redirect_stderr(io.StringIO()):
-            result = self.delegate_cls()("dummy-tester", spec).run()
-        self.assertEqual(result.returncode, 0, result.error)
-        (launch,) = self.launches()
-        argv = launch["argv"]
-        self.assertEqual((argv[argv.index("--sid") + 1], "--resume" in argv), (SID, True))
-        self.assertTrue(argv[-1].startswith(RESUME))
 
     def test_exit_codes(self):
         at = 1767225600.0
@@ -119,6 +106,19 @@ class Exits(Base):
                 self.ran = result
                 code, out, err = self.runs()
                 self.assertEqual((code, out, err.splitlines()[-1]), (want, "", line))
+
+
+class PublicResume(Integration):
+    def test_resume_input_continues_the_waiting_session(self):
+        started = self.drive([block(ASKING)])
+        self.assertEqual(started.returncode, 0, started.stderr)
+        result = self.answer([block(DONE)], input="Continue.")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        argv = self.calls()[-1]["argv"]
+        self.assertEqual(argv[argv.index("--resume") + 1], SID)
+        self.assertNotIn("--session-id", argv)
+        self.assertTrue(argv[-1].startswith(RESUME))
+        self.assertTrue(argv[-1].endswith("\n# Input\n\nContinue.\n"))
 
 
 class Deliverable(Base):

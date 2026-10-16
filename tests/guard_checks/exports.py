@@ -63,10 +63,7 @@ def object_exports(repo: str) -> list[str]:
         if names is None or not all(isinstance(name, str) for name in names):
             found.add(f"{rel}: no literal __all__")
             continue
-        for name, (target, kind) in _export_kinds(repo, package, names).items():
-            if package == "agent_pm.delegate" and target.endswith(".HarnessDelegate"):
-                found.add(f"{rel}: __all__ exports concrete Delegate {name} (FR-47)")
-                continue
+        for name, (_, kind) in _export_kinds(repo, package, names).items():
             if kind in ("class", "constant", "alias"):
                 continue
             if (package, name) in OBJECT_EXPORTS_ALLOWED:

@@ -44,13 +44,15 @@ class InlinePython(Sample):
         )
 
     def test_imported_literal_programs_are_checked(self):
-        root = self.tree(
-            {
-                "delegate/tests/program.py": "CODE = 'from agent_pm.session.runtimes import tui'",
-                "delegate/tests/entry.py": "import sys\nfrom delegate.tests.program import CODE\nargv = [sys.executable, '-c', CODE]",
-            }
-        )
-        self.assertEqual(len(inline_python(root, allowed={})), 1)
+        for declaration in ("CODE =", "CODE: str ="):
+            with self.subTest(declaration=declaration):
+                root = self.tree(
+                    {
+                        "delegate/tests/program.py": f"{declaration} 'from agent_pm.session.runtimes import tui'",
+                        "delegate/tests/entry.py": "import sys\nfrom delegate.tests.program import CODE\nargv = [sys.executable, '-c', CODE]",
+                    }
+                )
+                self.assertEqual(len(inline_python(root, allowed={})), 1)
 
     def test_syntax_nonpublic_imports_and_private_object_access_are_rejected(self):
         for code in (
@@ -60,6 +62,7 @@ class InlinePython(Sample):
             "from agent_pm.delegate import _private",
             "import agent_pm.delegate as d\nd._private()",
             "from agent_pm.delegate import Delegate as D\nview = D.attach('w')\nview._read()",
+            "from agent_pm.delegate import Delegate\nv: Delegate = Delegate.attach('w')\nv._read()",
             "from agent_pm.delegate import Delegate\nv = Delegate.attach('w')\ngetattr(v, '_read')()",
             "import importlib\nimportlib.import_module('agent_pm.session.runtimes')",
         ):
