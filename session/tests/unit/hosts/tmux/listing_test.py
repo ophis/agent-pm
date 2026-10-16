@@ -32,7 +32,7 @@ class ListingTest(Case):
                 "capture-pane": capture,
             }
         )
-        return listing.listing(match, proc=fake), fake
+        return listing.Listing(fake).listing(match), fake
 
     def test_every_field_sorted_by_name_one_call_each(self):
         got, fake = self.listing(

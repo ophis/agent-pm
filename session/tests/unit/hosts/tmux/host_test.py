@@ -484,7 +484,7 @@ class DisplayableTest(Base):
         self.host.settings["grid_retile"] = "all"
         self.assertIsNone(self.host.show("w1", display="mgr/below/m1"))
         self.tmux.open_pane.assert_called_once_with(
-            "w1", ("mgr", "below", "m1"), per_column=2, retile="all"
+            "w1", opener="mgr", split="below", split_from="m1", per_column=2, retile="all"
         )
 
     def test_show_without_a_pane_logs_why_and_returns_the_attach_command(self):
@@ -493,7 +493,7 @@ class DisplayableTest(Base):
             self.assertEqual(self.host.show("w1"), "tmux attach -t '=w1'")
         self.assertEqual(logs.output, [f"WARNING:session:show w1: {NO_PANE}"])
         self.tmux.open_pane.assert_called_once_with(
-            "w1", (None, None, None), per_column=2, retile=None
+            "w1", opener=None, split=None, split_from=None, per_column=2, retile=None
         )
 
     def test_show_with_a_command_runs_it_instead_of_opening_a_pane(self):
@@ -1830,15 +1830,15 @@ class StartTest(StartFixture):
                 fake = FakeTmux()
                 for call in (
                     lambda *, fake=fake, name=name: self.start(fake, session=name),
-                    lambda *, fake=fake, name=name: transport.status(name, proc=fake),
+                    lambda *, fake=fake, name=name: transport.Transport(fake).status(name),
                     lambda *, fake=fake, name=name: Tmux(fake, self.sleep).detach(
                         name, Launch(("tool",), {"PATH": self.bin}, cwd=self.cwd)
                     ),
-                    lambda *, fake=fake, name=name: transport.kill(name, proc=fake),
-                    lambda *, fake=fake, name=name: transport.paste(name, "x", proc=fake),
-                    lambda *, fake=fake, name=name: transport.keys(name, "Enter", proc=fake),
-                    lambda *, fake=fake, name=name: transport.read(name, proc=fake),
-                    lambda *, fake=fake, name=name: transport.option(name, "@sid", proc=fake),
+                    lambda *, fake=fake, name=name: transport.Transport(fake).kill(name),
+                    lambda *, fake=fake, name=name: transport.Transport(fake).paste(name, "x"),
+                    lambda *, fake=fake, name=name: transport.Transport(fake).keys(name, "Enter"),
+                    lambda *, fake=fake, name=name: transport.Transport(fake).read(name),
+                    lambda *, fake=fake, name=name: transport.Transport(fake).option(name, "@sid"),
                 ):
                     with self.assertRaises(types.TuiError):
                         call()

@@ -54,7 +54,9 @@ class PaneAnchorTest(PaneFixture):
                 self.assertEqual(self.stderr.getvalue(), ATTACH)
         fake, err = FakeTmux(results={"osascript": (0, "ok NEW")}), io.StringIO()
         with environ(**ITERM), which(), redirect_stderr(err):
-            self.assertIsNone(placement.open_pane("s", split="below", proc=fake, command=COMMAND))
+            self.assertIsNone(
+                placement.Placement(fake).open_pane("s", split="below", command=COMMAND)
+            )
         self.assertEqual(
             (fake.calls[:2], err.getvalue()), ([PGREP, osa("below", "id", "s", "ABC")], "")
         )
@@ -186,7 +188,9 @@ class PaneAnchorTest(PaneFixture):
         ]
         for env, results, split_from, want in cases:
             with self.subTest(env=env, results=results, split_from=split_from), environ(**env):
-                self.assertEqual(placement.anchor(split_from, proc=FakeTmux(results=results)), want)
+                self.assertEqual(
+                    placement.Placement(FakeTmux(results=results)).anchor(split_from), want
+                )
         no_iterm = {k: v for k, v in INSIDE.items() if k != "ITERM_SESSION_ID"}
         cases = [
             ({}, {}, None, "no anchor pane: not in tmux"),
@@ -207,7 +211,7 @@ class PaneAnchorTest(PaneFixture):
                 environ(**env),
                 self.assertRaisesRegex(types.TuiError, msg),
             ):
-                placement.anchor(split_from, proc=FakeTmux(results=results))
+                placement.Placement(FakeTmux(results=results)).anchor(split_from)
 
     def test_a_dead_pane_sharing_the_clients_tty_is_skipped(self):
         # a dead worker pane keeps its tty, which a later terminal may get
@@ -224,22 +228,22 @@ class PaneAnchorTest(PaneFixture):
                 fake = FakeTmux(
                     results={"list-clients": shown, "list-panes": expected_panes(*rows)}
                 )
-                self.assertEqual(placement.anchor("b", proc=fake), want)
+                self.assertEqual(placement.Placement(fake).anchor("b"), want)
 
     def test_own_session(self):
         fake = FakeTmux(results={"display-message": (0, "own\n")})
         with environ(**INSIDE):
-            self.assertEqual(placement.own_session(proc=fake), "own")
+            self.assertEqual(placement.Placement(fake).own_session(), "own")
         self.assertEqual(fake.calls, [OWN])
         fake = FakeTmux()
         with environ():
-            self.assertIsNone(placement.own_session(proc=fake))
+            self.assertIsNone(placement.Placement(fake).own_session())
         self.assertEqual(fake.calls, [])
         with (
             environ(**{**INSIDE, "TMUX_PANE": "%3;"}),
             self.assertRaisesRegex(types.TuiError, "TMUX_PANE"),
         ):
-            placement.own_session(proc=fake)
+            placement.Placement(fake).own_session()
 
     def test_bad_tmux_pane(self):
         for env in (
@@ -263,7 +267,7 @@ class OpenerTest(Case):
     def test_in_tmux_its_session(self):
         fake = FakeTmux(results={"display-message": (0, "cmd\n")})
         with environ(**INSIDE, TERM_PROGRAM="iTerm.app"):
-            self.assertEqual(placement.opener(proc=fake), "cmd")
+            self.assertEqual(placement.Placement(fake).opener(), "cmd")
         self.assertEqual(fake.calls, [OWN])
 
     def test_in_iterm2_the_full_iterm_session_id(self):
@@ -273,7 +277,7 @@ class OpenerTest(Case):
                 self.subTest(value=value),
                 environ(ITERM_SESSION_ID=value, TERM_PROGRAM="iTerm.app"),
             ):
-                self.assertEqual(placement.opener(proc=fake), value)
+                self.assertEqual(placement.Placement(fake).opener(), value)
             self.assertEqual(fake.calls, [])
 
     def test_neither(self):
@@ -293,7 +297,7 @@ class OpenerTest(Case):
                     r"^no anchor pane: not in tmux, no iTerm2 pane \(\$ITERM_SESSION_ID\)$",
                 ),
             ):
-                placement.opener(proc=fake)
+                placement.Placement(fake).opener()
             self.assertEqual(fake.calls, [])
 
     def test_a_bad_iterm_session_id(self):
@@ -312,14 +316,14 @@ class OpenerTest(Case):
                 environ(ITERM_SESSION_ID=value, TERM_PROGRAM="iTerm.app"),
                 self.assertRaisesRegex(types.TuiError, r"^bad \$ITERM_SESSION_ID"),
             ):
-                placement.opener(proc=FakeTmux())
+                placement.Placement(FakeTmux()).opener()
 
     def test_bad_tmux_pane(self):
         with (
             environ(**{**INSIDE, "TMUX_PANE": "%3;"}),
             self.assertRaisesRegex(types.TuiError, "TMUX_PANE"),
         ):
-            placement.opener(proc=FakeTmux())
+            placement.Placement(FakeTmux()).opener()
 
 
 class SplitTest(Case):
@@ -328,7 +332,7 @@ class SplitTest(Case):
         for split in (None, *types.Split, "below"):
             with self.subTest(split=split), environ(), which():
                 self.assertEqual(
-                    placement.open_pane("s", split=split, proc=FakeTmux(), command=COMMAND),
+                    placement.Placement(FakeTmux()).open_pane("s", split=split, command=COMMAND),
                     "no anchor pane: not in tmux, no iTerm2 pane ($ITERM_SESSION_ID)" + WATCH,
                 )
         for bad in ("up", "", "RIGHT", 1, ["right"]):
@@ -340,7 +344,7 @@ class SplitTest(Case):
                     f"^split must be one of right, below, not {re.escape(repr(bad))}$",
                 ),
             ):
-                placement.open_pane("s", split=bad, proc=fake, command=COMMAND)
+                placement.Placement(fake).open_pane("s", split=bad, command=COMMAND)
             self.assertEqual(fake.calls, [])
 
 
@@ -348,7 +352,7 @@ class ShowTest(Case):
     def show(self, fake, template=None, env=None, session="s", **kw):
         self.stderr = io.StringIO()
         with environ(**(env or {})), which(), redirect_stderr(self.stderr):
-            return placement.show(session, template, proc=fake, command=COMMAND, **kw)
+            return placement.Placement(fake).show(session, template, command=COMMAND, **kw)
 
     def test_attach_line_then_the_template(self):
         fake = FakeTmux()
@@ -426,7 +430,7 @@ class ContainerTest(Case):
     def show(self, fake, env=ENV):
         self.stderr = io.StringIO()
         with environ(**env), which(), redirect_stderr(self.stderr):
-            return placement.show("s", proc=fake, command=COMMAND)
+            return placement.Placement(fake).show("s", command=COMMAND)
 
     def test_first_pane_a_tmux_split_right_of_the_callers(self):
         fake = self.fake(self.PGREPS[0])
@@ -796,7 +800,9 @@ class StackTest(Case):
     def show(self, fake, env=INSIDE, **kw):
         self.stderr = io.StringIO()
         with environ(**env), which(), redirect_stderr(self.stderr):
-            return placement.show("s", kw.pop("template", None), **kw, proc=fake, command=COMMAND)
+            return placement.Placement(fake).show(
+                "s", kw.pop("template", None), **kw, command=COMMAND
+            )
 
     def expected_row(self, number, name, pane, opener="cmd"):
         return f"${number}", name, opener, pane, SOCK
