@@ -141,6 +141,18 @@ class HarnessDelegate(Delegate):
         self._persist_new()
 
     @classmethod
+    def create(
+        cls,
+        role: str,
+        spec: Spec,
+        *,
+        display: Display = None,
+        callback: Sequence[str] | None = None,
+        overlays: Sequence[Mapping] = (),
+    ) -> HarnessDelegate:
+        return cls(role, spec, display=display, callback=callback, overlays=overlays)
+
+    @classmethod
     def preview(cls, role: str, spec: Spec, **placement) -> Preview:
         """What the constructor would accept, without the session preflight; writes nothing."""
         view = cls.__new__(cls)

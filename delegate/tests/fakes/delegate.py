@@ -54,6 +54,10 @@ class FakeDelegate(Delegate):
     outcome_result = Outcome("done", "Echoed", "echoed its input", deliverable="hello")
     usage_result = None
 
+    @classmethod
+    def create(cls, role, spec, *, display=None, callback=None, overlays=()):
+        return cls(role, spec, display=display, callback=callback, overlays=overlays)
+
     def __init__(
         self,
         role,

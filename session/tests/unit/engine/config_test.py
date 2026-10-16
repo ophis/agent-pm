@@ -3,12 +3,21 @@
 import os
 from pathlib import Path
 
+from agent_pm import session
 from agent_pm.session import read_config
+from agent_pm.utils import read_resources
 
 from session.tests.case import Case
 
 
 class Configuration(Case):
+    def test_configuration_resources_are_public_and_match_the_reader(self):
+        self.assertEqual(session.CONFIG_RESOURCES, (("agent_pm.session", "config.toml"),))
+        self.assertEqual(
+            read_resources(session.CONFIG_RESOURCES, local=os.devnull),
+            read_config(local=os.devnull),
+        )
+
     def test_only_the_session_section_overlays_session_defaults(self):
         local = Path(self.home, "config.local.toml")
         local.write_text(

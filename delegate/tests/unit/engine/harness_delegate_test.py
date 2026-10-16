@@ -36,6 +36,27 @@ from delegate.tests.unit.engine.orphans import Clock, Orphan
 ORPHAN = 4242
 
 
+class CreateTest(HarnessCase):
+    def test_create_returns_a_persisted_run_with_its_placement_and_overlays(self):
+        class Bound(HarnessDelegate):
+            def __init__(self, role, spec, **placement):
+                super().__init__(role, spec, session_cls=HarnessSession, **placement)
+
+        overlay = {"effort": "high"}
+        view = Bound.create(
+            "dummy-tester",
+            Spec("input", self.work, client="fake", sid=SID),
+            display="none",
+            callback=("callback",),
+            overlays=(overlay,),
+        )
+        self.assertIsInstance(view, Bound)
+        self.assertEqual(self.metadata()["overlays"], [overlay])
+        self.assertEqual((view._state.display, view._state.callback), ("none", ("callback",)))
+        attached = Bound.attach(self.work, sid=SID, session_cls=HarnessSession)
+        self.assertEqual(attached.workdir, self.work)
+
+
 class CloseTest(HarnessCase):
     def test_a_failed_harness_close_names_the_harness_session(self):
         spec = Spec("input", self.work, mode="tui", client="fake", sid=SID)

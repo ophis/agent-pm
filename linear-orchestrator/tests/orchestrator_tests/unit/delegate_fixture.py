@@ -31,6 +31,10 @@ def provider(api, cfg):
             self.role, self.spec, self.issue = role, spec, os.path.basename(spec.workdir)
 
         @classmethod
+        def create(cls, role, spec, *, display=None, callback=None, overlays=()):
+            return cls(role, spec, display=display, callback=callback, overlays=overlays)
+
+        @classmethod
         def attach(cls, record_or_workdir, *, sid=None):
             workdir = (
                 record_or_workdir.workdir
