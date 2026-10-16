@@ -178,16 +178,10 @@ class Ownership(HarnessCase):
         self.assertFalse(RecordingHost.processes["agent", agent_name].alive())
         self.assertFalse(RecordingHost.processes["harness", harness_name].alive())
 
-    def test_show_reaches_all_live_capable_sessions(self):
+    def test_show_reaches_only_the_live_agent(self):
         _, view = self.pair()
         view.show()
-        self.assertEqual(
-            set(ShowingHost.shown),
-            {
-                (self.metadata()["agent_name"], "target", None),
-                (self.metadata()["harness_name"], "target", None),
-            },
-        )
+        self.assertEqual(ShowingHost.shown, [(self.metadata()["agent_name"], "target", None)])
 
     def test_hidden_agent_uses_harness_target_and_hidden_pair_has_no_attach(self):
         _, view = self.pair(agent_showable=False)

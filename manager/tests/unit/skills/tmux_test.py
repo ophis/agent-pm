@@ -166,7 +166,7 @@ class Flows(Case):
             "`agent-pm-session restart <name>`",
             "`agent-pm-session hide <name>…`",
             "`agent-pm-session show <name>…`",
-            "`agent-pm-session hide <role>-<sid8> <role>-<sid8>-drive`",
+            "`agent-pm-session show <role>-<sid8>-drive`",
             "`agent-pm-delegate hide <workdir>…`",
             "`agent-pm-linear hide <ID>…`",
             "`agent-pm-crew note <name> '<text>'`",
