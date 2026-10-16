@@ -310,7 +310,7 @@ def _attach_command(name: str, record: Record | None, hosts: Hosts) -> str:
 
 def _close(name: str, record: Record | None, hosts: Hosts) -> None:
     for session in _carried(name, record, hosts):
-        TuiStore(session, host=Session.host(_host_of(session, hosts))).close()
+        TuiStore.attach(session, host=Session.host(_host_of(session, hosts))).close()
 
 
 BATCH = {

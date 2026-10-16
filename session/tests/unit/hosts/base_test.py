@@ -115,9 +115,15 @@ class HostDefaults(Case):
     def test_a_host_failing_after_telling_liveness_is_unknown(self):
         process = mock.create_autospec(HostProcess, instance=True)
         process.name, process.state.return_value = "p", Liveness.LIVE
-        process.alive.side_effect = SessionError("tmux failed")
-        found = HostProcess.status(process)
-        self.assertEqual((found.alive, found.state, found.hidden), (False, "unknown", False))
+        for failing in (process.alive, process.activity, process.hidden):
+            with self.subTest(failing=failing):
+                process.reset_mock()
+                process.state.return_value, process.alive.return_value = Liveness.LIVE, True
+                failing.side_effect = SessionError("tmux failed")
+                found = HostProcess.status(process)
+                self.assertEqual(
+                    (found.alive, found.state, found.hidden), (False, "unknown", False)
+                )
 
     def test_descendants_are_its_listed_sessions_unless_it_knows_who_opened_whom(self):
         host = MinimalHost("m")

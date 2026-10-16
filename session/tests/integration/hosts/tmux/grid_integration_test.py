@@ -164,7 +164,7 @@ class GridTest(Live):
         self.grid([["w1", "w2"]], width)
         self.started("w3")
         self.grid([["w1", "w2"], ["w3"]], width)
-        tui.TuiStore("w2", host=self.session_cls.host()).close()
+        tui.TuiStore.attach("w2", host=self.session_cls.host()).close()
         self.grid([["w1", "w3"]], width)
 
     def test_name_order(self):
@@ -189,12 +189,12 @@ class GridTest(Live):
         self.grid([["m1", ("m2", ["z1"]), "m3"]])
         self.started("z2", inside="m2")
         self.grid([["m1", ("m2", ["z1", "z2"]), "m3"]])
-        tui.TuiStore("z1", host=self.session_cls.host()).close()
-        tui.TuiStore("z2", host=self.session_cls.host()).close()
+        tui.TuiStore.attach("z1", host=self.session_cls.host()).close()
+        tui.TuiStore.attach("z2", host=self.session_cls.host()).close()
         self.grid([["m1", "m2", "m3"]])
         self.started("z3", inside="m2")
         self.grid([["m1", ("m2", ["z3"]), "m3"]])
-        tui.TuiStore("m2", host=self.session_cls.host()).close()
+        tui.TuiStore.attach("m2", host=self.session_cls.host()).close()
         self.grid([["m1", ["z3"], "m3"]])
 
     def test_an_unshown_session_reopens_in_the_grid(self):
@@ -334,10 +334,10 @@ class RetileTest(Live):
         # the most recently active client shows w1's session, not mgr's: tmux 3.4 then skips the
         # window's pane-exited hook, so window-layout-changed (a new pane set) re-tiles
         self.server.attach("w1")
-        tui.TuiStore("w2", host=self.session_cls.host()).close()
+        tui.TuiStore.attach("w2", host=self.session_cls.host()).close()
         self.grid([["w1", "w3"]], width)
         self.open_close_hooks(MANAGER)
-        tui.TuiStore("w3", host=self.session_cls.host()).close()
+        tui.TuiStore.attach("w3", host=self.session_cls.host()).close()
         self.grid([["w1"]], width)
         live_tmux.wait(
             lambda: (
@@ -516,12 +516,11 @@ class SettleTest(Live):
     def grid_up(self) -> None:
         with self.inside(MANAGER):
             self.assertIsNone(
-                tmux_model.configure(
+                Tmux().configure(
                     self.window,
                     self.manager,
                     per_column=1,
-                    retile="all",
-                    proc=subprocess.run,
+                    retile=tmux_model.Retile("all"),
                     command=COMMAND,
                 )
             )

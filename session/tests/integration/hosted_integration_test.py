@@ -1,5 +1,5 @@
 """HostedSession on a private tmux server (session/tests/live_tmux.py), os.environ that server's env,
-the fake adapter's Tui: Session.attach(name).close() and TuiStore(name, host=...).close() leave the
+the fake adapter's Tui: Session.attach(name).close() and TuiStore.attach(name, host=...).close() leave the
 same state (FR-4); list and a by-name close refused until a class is configured (FR-2: the session reads no config
 itself); a display given to start stored, read back and listed (FR-48).
 """
@@ -27,7 +27,7 @@ found = []
 for call in (
     lambda: HostedSession.list("w.*"),
     lambda: Session.list("w.*"),
-    lambda: TuiStore("w3", host=Session.host()).close(),
+    lambda: TuiStore.attach("w3", host=Session.host()).close(),
 ):
     try:
         call()
@@ -52,14 +52,14 @@ class CloseTest(Live):
         found = {}
         for name, close_it in (
             ("w1", lambda: self.session_cls.attach("w1").close()),
-            ("w2", lambda: tui.TuiStore("w2", host=Session.host()).close()),
+            ("w2", lambda: tui.TuiStore.attach("w2", host=Session.host()).close()),
         ):
             handle = self.start(name, {"read": True})
             close_it()
             found[name] = (
                 handle.alive(),
                 self.session_cls.list(name),
-                os.path.lexists(tui.TuiStore(name, host=self.session_cls.host()).dir),
+                os.path.lexists(tui.TuiStore.attach(name, host=self.session_cls.host()).dir),
             )
         self.assertEqual(found, {"w1": (False, [], False), "w2": (False, [], False)})
         self.assertEqual([row.name for row in self.session_cls.list()], [MANAGER])
@@ -81,9 +81,11 @@ class CloseTest(Live):
         self.configure_hosted()
         self.assertEqual([row.name for row in HostedSession.list("w.*")], ["w3"])
         self.assertEqual(Session.list("w.*"), HostedSession.list("w.*"))
-        tui.TuiStore("w3", host=Session.host()).close()
+        tui.TuiStore.attach("w3", host=Session.host()).close()
         self.assertEqual(HostedSession.list("w.*"), [])
-        self.assertFalse(os.path.lexists(tui.TuiStore("w3", host=self.session_cls.host()).dir))
+        self.assertFalse(
+            os.path.lexists(tui.TuiStore.attach("w3", host=self.session_cls.host()).dir)
+        )
 
 
 class DisplayTest(Live):

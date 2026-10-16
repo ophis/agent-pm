@@ -54,6 +54,7 @@ from agent_pm.session.engine.types import (
 )
 from agent_pm.session.hosts.tmux import TmuxHost
 from agent_pm.session.runtimes import tui
+from agent_pm.session.runtimes.base import Runtime
 from agent_pm.utils import Record, StatusState, load_class
 
 from session.tests import fake_adapter
@@ -1046,6 +1047,9 @@ class EventsOverARuntimeTest(Case):
         session.stop()
         self.assertEqual(self.mode.calls, [("state",), ("state",), ("send", "hi"), ("stop",)])
         self.assertEqual(self.session(name="w1").name, "w1")
+        self.session()
+        Runtime.close(self.mode)
+        self.assertEqual(self.mode.calls, [("stop",)])
 
 
 class UsageTest(Base):
@@ -1358,7 +1362,7 @@ class TuiStartTest(HostedTuiBase):
         )
         (call,) = self.host.calls.terminal.call_args_list
         self.assertEqual(call.args[0], "w1")
-        hook = tui.TuiStore("w1", host=self.host).hook_argv()
+        hook = tui.TuiStore.attach("w1", host=self.host).hook_argv()
         launch = call.args[1]
         self.assertEqual(launch.argv[-(1 + len(hook)) :], ("hello", *hook))
         self.assertEqual(launch.cwd, self.workdir)
@@ -1466,7 +1470,7 @@ class TuiStartTest(HostedTuiBase):
         self.assertFalse(os.path.lexists(os.path.join(self.root, "w1")))
 
     def test_a_tui_store_refuses_a_bad_name_before_tmux_or_a_path(self):
-        self.name_refused(lambda name: tui.TuiStore(name, host=self.session.host()).close())
+        self.name_refused(lambda name: tui.TuiStore.attach(name, host=self.session.host()).close())
 
     def test_a_session_keeps_its_adapter_and_tmux_when_its_class_is_configured_again(self):
         self.configure("probe", tui=True)

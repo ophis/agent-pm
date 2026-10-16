@@ -138,16 +138,20 @@ def _read_state(name: str, path: str) -> dict:
 
 class TuiStore:
     """Tui session `name`'s dir and lock under TUI_DIR; what changes them takes the lock.
-    TuiStore(name, host=...) attaches by name whatever is there: a tui session, a half-gone one (its
-    dir or its host session alone), a non-tui host session or nothing. close: under its lock, closes
-    the host's session of that name and removes the dir; absent is fine.
+    attach(name, host=...) takes by name whatever is there: a tui session, a half-gone one (its dir
+    or its host session alone), a non-tui host session or nothing. close: under its lock, closes the
+    host's session of that name and removes the dir; absent is fine.
     """
 
     def __init__(self, name: str, *, host: Host) -> None:
-        self.name, self.host = checked_name(name), host
+        self.name, self.host = name, host
         self.root = os.path.expanduser(TUI_DIR)
         self.dir = os.path.join(self.root, name)
         self.state_file = os.path.join(self.dir, tui_hook.STATE)
+
+    @classmethod
+    def attach(cls, name: str, *, host: Host) -> Self:
+        return cls(checked_name(name), host=host)
 
     def hook_argv(self) -> tuple[str, ...]:
         """The client's hook command: the running plugin's agent-pm-session (where PATH finds it)
@@ -319,7 +323,7 @@ def _sweep(store: TuiStore) -> None:
     for name in sorted(found - {store.name}):
         if not SESSION_NAME.fullmatch(name):
             continue
-        other = TuiStore(name, host=store.host)
+        other = TuiStore.attach(name, host=store.host)
         try:
             if os.path.islink(other.dir) or not idle((*other.tracked(), tui_lock(name)), STALE_AGE):
                 continue
@@ -428,7 +432,7 @@ class TuiRuntime(Runtime):
         events = host.events_path(spec.events)
         cls._selected(spec, adapter)
         drop = identity_drop(registry)
-        store = TuiStore(name, host=host)
+        store = TuiStore.attach(name, host=host)
         spec = replace(spec, name=name, events=events)
         spec = cls._noted(spec, adapter)
         hook = store.hook_argv()
@@ -497,7 +501,7 @@ class TuiRuntime(Runtime):
         """Tui session `name` from its snapshot() if its terminal is tagged with its sid; a fresh Tui
         restored replays its client's record, then its hook log; events from the next record.
         """
-        store = TuiStore(name, host=host)
+        store = TuiStore.attach(name, host=host)
         info = SessionInfo.from_fields(state)
         if info is None:
             raise SessionError(f"no tui session {name}: {store.state_file}: bad {_bad(state)}")

@@ -173,7 +173,7 @@ class Live(tui_live.Live):
     def closed(self, handle: Session) -> None:
         self.assertEqual((handle.alive(), self.session_cls.list(handle.name)), (False, []))
         self.assertFalse(
-            os.path.lexists(tui.TuiStore(handle.name, host=self.session_cls.host()).dir)
+            os.path.lexists(tui.TuiStore.attach(handle.name, host=self.session_cls.host()).dir)
         )
 
 
@@ -195,7 +195,7 @@ class TurnsTest(Live):
         argv = self.calls()[0]["argv"]
         self.assertEqual((argv[argv.index("--session-id") + 1], argv[-2:]), (SID, ["--", "hello"]))
         hooks = json.loads(argv[argv.index("--settings") + 1])["hooks"]
-        hook = tui.TuiStore("w1", host=self.session_cls.host()).hook_argv()
+        hook = tui.TuiStore.attach("w1", host=self.session_cls.host()).hook_argv()
         self.assertEqual(
             {label: entries[0]["hooks"][0]["command"] for label, entries in hooks.items()},
             {label: shlex.join((*hook, label)) for label in (*ClaudeTui.hooks, "SessionStart")},
@@ -248,7 +248,7 @@ class RepliesTest(Live):
         first = self.start("w1", scenario={"steps": ["One."]}, sid=SID)
         stream = self.stream(first, replies=True)
         self.assertEqual(delivered(self.until_turn_end(stream)), ["One."])
-        tui.TuiStore("w1", host=self.session_cls.host()).close()
+        tui.TuiStore.attach("w1", host=self.session_cls.host()).close()
         again = self.start("w1", "again", scenario={"steps": ["Two."]}, sid=SID, resume=True)
         events = self.until_turn_end(self.stream(again, replies=True))
         self.assertEqual(delivered(events), ["Two."])
@@ -355,7 +355,7 @@ class DeadTest(Live):
         for call in (lambda: handle.send("more"), handle.screen):
             with self.assertRaises(SessionError):
                 call()
-        tui.TuiStore("w1", host=self.session_cls.host()).close()
+        tui.TuiStore.attach("w1", host=self.session_cls.host()).close()
         self.closed(handle)
 
     def test_an_early_death_ends_with_its_exit_code_and_a_dead_line_its_pane_kept(self):
@@ -369,7 +369,7 @@ class DeadTest(Live):
         self.assertEqual([r.state for r in self.session_cls.list("w2")], ["dead"])
         with self.assertRaises(SessionError):
             handle.screen()
-        tui.TuiStore("w2", host=self.session_cls.host()).close()
+        tui.TuiStore.attach("w2", host=self.session_cls.host()).close()
         self.closed(handle)
 
 
@@ -378,7 +378,7 @@ class ResumeTest(Live):
         first = self.start("w1", scenario={"steps": ["One."]}, sid=SID)
         stream = self.stream(first)
         self.assertEqual([stream.next() for _ in range(2)], [Activity(""), TurnEnd("One.", 0)])
-        tui.TuiStore("w1", host=self.session_cls.host()).close()
+        tui.TuiStore.attach("w1", host=self.session_cls.host()).close()
         self.assertEqual(stream.until_exited(), [Exited(-signal.SIGHUP)])
         again = self.start("w1", "again", scenario={"steps": ["Two."]}, sid=SID, resume=True)
         stream = self.stream(again)
@@ -447,7 +447,7 @@ class ShowTest(Live):
         self.assertEqual(
             [self.server.option(n, "@opener") for n in ("w1", "w1-drive")], [MANAGER, MANAGER]
         )
-        tui.TuiStore("w1", host=self.session_cls.host()).close()
+        tui.TuiStore.attach("w1", host=self.session_cls.host()).close()
 
         def alone() -> bool:
             self.poke()
@@ -479,7 +479,7 @@ class ShowTest(Live):
                 self.assertEqual(self.show("w1"), attach_command("w1"))
             self.assertIn(why, logs.output[0])
         self.assertEqual((self.panes(), self.server.pane_of("w1")), (1, ""))
-        tui.TuiStore("w1", host=self.session_cls.host()).close()
+        tui.TuiStore.attach("w1", host=self.session_cls.host()).close()
         self.assertEqual(stream.until_exited(), [Exited(-signal.SIGHUP)])
         self.closed(handle)
         with self.assertRaises(SessionError):

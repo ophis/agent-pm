@@ -88,7 +88,7 @@ class HookLifecycleTest(Live):
         self.poke()
         self.poke()
         self.assert_events(self.events, name, "dead")
-        tui.TuiStore(name, host=self.session_cls.host()).close()
+        tui.TuiStore.attach(name, host=self.session_cls.host()).close()
         self.assertEqual(self.session_cls.list(name), [])
         self.assert_events(self.events, name, "dead")
 

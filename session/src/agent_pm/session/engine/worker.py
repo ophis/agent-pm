@@ -333,7 +333,7 @@ class Worker:
     def replace(self, handle: HostProcess | None) -> None:
         """Close its session by name, close `handle`, wait WAIT s, else kill and wait again."""
         name = self.state.name
-        TuiStore(name, host=self.session_cls.host(self.state.host)).close()
+        TuiStore.attach(name, host=self.session_cls.host(self.state.host)).close()
         if handle is None:
             return
         handle.close()
