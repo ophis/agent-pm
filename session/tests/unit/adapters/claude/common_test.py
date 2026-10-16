@@ -2,11 +2,13 @@
 
 import contextlib
 import dataclasses
+import errno
 import io
 import json
 import os
 import shlex
 import stat
+import time
 import unittest
 from functools import partial
 from unittest import mock
@@ -727,6 +729,66 @@ class ResumeTest(Base):
                     self.resumed([store(), self.cwd, SID])[:2],
                     (1, f"claude resume: {path}: bad resume state\n"),
                 )
+
+    def aged(self, path: str, days: float) -> float:
+        when = time.time() - days * 86400
+        os.utime(path, (when, when))
+        return when
+
+    def test_a_save_drops_state_unused_for_30_days(self):
+        os.makedirs(store())
+        for name, days in (("old.json", 31), ("young.json", 29)):
+            with open(os.path.join(store(), name), "w", encoding="utf-8"):
+                pass
+            self.aged(os.path.join(store(), name), days)
+        self.committed()
+        left = sorted(os.listdir(store()))
+        self.assertNotIn("old.json", left)
+        self.assertEqual(len(left), 2)
+        self.assertIn("young.json", left)
+
+    def test_a_cleanup_error_is_one_line_and_the_state_is_saved(self):
+        os.makedirs(store())
+        old = os.path.join(store(), "old.json")
+        with open(old, "w", encoding="utf-8"):
+            pass
+        self.aged(old, 31)
+        refused = OSError(errno.EPERM, "refused", old)
+        with (
+            mock.patch("os.unlink", side_effect=refused),
+            contextlib.redirect_stderr(io.StringIO()) as err,
+        ):
+            self.committed()
+        self.assertEqual(err.getvalue(), f"claude resume: {refused}\n")
+        self.assertEqual(len(os.listdir(store())), 2)
+
+    def test_a_resume_renews_its_state_so_the_next_save_keeps_it(self):
+        self.committed()
+        (path,) = (os.path.join(store(), name) for name in os.listdir(store()))
+        old = self.aged(path, 29)
+        self.assertEqual(self.resumed([store(), self.cwd, SID])[:2], (0, ""))
+        self.assertGreater(os.stat(path).st_mtime, old + 28 * 86400)
+        os.utime(path, (old + 3 * 86400,) * 2)
+        self.committed(sid="1f8fad5b-d9cb-469f-a165-70867728950e")
+        self.assertIn(os.path.basename(path), os.listdir(store()))
+
+    def test_a_bad_state_is_not_renewed(self):
+        self.committed()
+        (path,) = (os.path.join(store(), name) for name in os.listdir(store()))
+        with open(path, "w", encoding="utf-8") as f:
+            f.write("{}")
+        old = self.aged(path, 29)
+        self.assertEqual(self.resumed([store(), self.cwd, SID])[0], 1)
+        self.assertEqual(os.stat(path).st_mtime, old)
+
+    def test_a_renew_error_still_resumes(self):
+        self.committed()
+        (path,) = (os.path.join(store(), name) for name in os.listdir(store()))
+        refused = OSError(errno.EPERM, "refused")
+        with mock.patch("os.utime", side_effect=refused):
+            code, err, _, execute = self.resumed([store(), self.cwd, SID])
+        self.assertEqual((code, err), (0, f"claude resume: cannot renew {path}: {refused}\n"))
+        self.assertEqual(len(execute), 1)
 
 
 class SessionStatusTest(Base):
