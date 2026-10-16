@@ -23,7 +23,7 @@ from agent_pm.session.hosts.tmux.grid import (
 )
 from agent_pm.session.hosts.tmux.iterm import (
     SHOW_TIMEOUT,
-    split_pane,
+    Iterm,
 )
 from agent_pm.session.hosts.tmux.transport import (
     CLIENTS,
@@ -74,7 +74,7 @@ def _iterm_pane(why: str) -> Anchor:
     return ItermAnchor(("id", [unique]))
 
 
-class Placement(Grid):
+class Placement(Grid, Iterm):
     def show(
         self,
         session: str,
@@ -305,7 +305,7 @@ class Placement(Grid):
         """
         if isinstance(a, ItermAnchor):
             try:
-                return split_pane(session, side, tmux, a.iterm, self.proc), None
+                return self.split_pane(session, side, tmux, a.iterm), None
             except TuiError:
                 if a.tmux is None:
                     raise

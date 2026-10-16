@@ -6,6 +6,7 @@ import subprocess
 
 from agent_pm.session.hosts.tmux.transport import (
     ITERM_ID,
+    Transport,
     error,
 )
 from agent_pm.session.hosts.tmux.types import (
@@ -47,31 +48,35 @@ APPLESCRIPT = """on run argv
 end run"""
 
 
-def split_pane(session: str, split: str, tmux: str, iterm: tuple[str, list[str]], proc) -> str:
-    try:
-        running = (
-            proc(PGREP, capture_output=True, text=True, stdin=subprocess.DEVNULL).returncode == 0
-        )
-    except OSError:
-        running = False
-    if not running:
-        raise TuiError("iTerm2 is not running")
-    kind, anchors = iterm
-    try:
-        res = proc(
-            ["osascript", "-e", APPLESCRIPT, split, kind, tmux, session, *anchors],
-            capture_output=True,
-            text=True,
-            stdin=subprocess.DEVNULL,
-            timeout=SHOW_TIMEOUT,
-        )
-    except subprocess.TimeoutExpired:
-        raise TuiError(f"osascript timed out after {SHOW_TIMEOUT} s") from None
-    except OSError as e:
-        raise TuiError(f"osascript: {e}") from e
-    if res.returncode:
-        raise TuiError(f"osascript: {error(res)}")
-    out = res.stdout.strip()
-    if out.startswith("ok ") and ITERM_ID.fullmatch(out[3:]):
-        return out[3:]
-    raise TuiError(out or "osascript printed nothing")
+class Iterm(Transport):
+    def split_pane(self, session: str, split: str, tmux: str, iterm: tuple[str, list[str]]) -> str:
+        try:
+            running = (
+                self.proc(
+                    PGREP, capture_output=True, text=True, stdin=subprocess.DEVNULL
+                ).returncode
+                == 0
+            )
+        except OSError:
+            running = False
+        if not running:
+            raise TuiError("iTerm2 is not running")
+        kind, anchors = iterm
+        try:
+            res = self.proc(
+                ["osascript", "-e", APPLESCRIPT, split, kind, tmux, session, *anchors],
+                capture_output=True,
+                text=True,
+                stdin=subprocess.DEVNULL,
+                timeout=SHOW_TIMEOUT,
+            )
+        except subprocess.TimeoutExpired:
+            raise TuiError(f"osascript timed out after {SHOW_TIMEOUT} s") from None
+        except OSError as e:
+            raise TuiError(f"osascript: {e}") from e
+        if res.returncode:
+            raise TuiError(f"osascript: {error(res)}")
+        out = res.stdout.strip()
+        if out.startswith("ok ") and ITERM_ID.fullmatch(out[3:]):
+            return out[3:]
+        raise TuiError(out or "osascript printed nothing")
