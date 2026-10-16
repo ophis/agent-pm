@@ -12,7 +12,7 @@ from pathlib import Path
 from agent_pm.manager import Crew, Roster, RosterError, Spec, State
 from agent_pm.manager.engine.holder import Holder
 from agent_pm.manager.engine.types import Lease, StatusError
-from agent_pm.utils import STATE, nested_start
+from agent_pm.utils import STATE, LayerCommand, nested_start
 
 
 def _number(value: str) -> int:
@@ -281,7 +281,7 @@ Recovery and next help:
             "worker",
             "NAME",
             "Start a named worker and track its Record",
-            "agent-pm-session start",
+            f"{LayerCommand.SESSION} start",
             """NAME is both the worker's session name and roster entry name.
 Session options go after NAME; --client CLIENT is required there.
 Session passes CLIENT_FLAGS after its -- verbatim to the client.
@@ -299,7 +299,7 @@ Examples:
             "issue",
             "ISSUE",
             "Start an attended issue run and track its Record",
-            "agent-pm-linear router",
+            f"{LayerCommand.LINEAR} router",
             """ISSUE is a configured board issue identifier and the roster entry name.
 Crew supplies router --issue ISSUE --tui, a session identity and events file.
 Requires board credentials, a configured role/client and an eligible issue;
@@ -318,7 +318,7 @@ Examples:
             "role",
             "ROLE",
             "Start a detached role run and track its Record",
-            "agent-pm-delegate run",
+            f"{LayerCommand.DELEGATE} run",
             """ROLE selects a persona; downstream --task optionally selects its work type.
 Crew supplies --role ROLE --detach --name NAME, identity and events file.
 Requires configured role/client and downstream --input. Prints a Record.

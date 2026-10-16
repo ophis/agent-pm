@@ -213,7 +213,18 @@ def standalone(repo: str) -> list[str]:
 def client_names(repo: str) -> list[str]:
     found = set()
     for rel, text in _lower_files(repo, (".py", ".toml"), skip=f"{SESSION_SRC}clients/"):
+        examples = set()
+        if rel.endswith("/cli.py"):
+            for node in ast.walk(ast.parse(text, rel)):
+                if (
+                    isinstance(node, ast.Constant)
+                    and isinstance(node.value, str)
+                    and "Examples:\n" in node.value
+                ):
+                    examples.update(range(node.lineno, node.end_lineno + 1))
         for number, line in enumerate(text.splitlines(), 1):
+            if number in examples:
+                continue
             if rel.endswith(".toml"):
                 code = TOML_CODE.match(line)[0]
                 line = code if line[len(code) : len(code) + 1] in ("", "#") else line

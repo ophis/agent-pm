@@ -185,6 +185,15 @@ class Standalone(Sample):
 
 
 class ClientNames(Sample):
+    def test_cli_help_examples_can_name_a_client_without_allowing_runtime_names(self):
+        path = "manager/src/agent_pm/manager/cli.py"
+        text = 'HELP = """Examples:\n  With Codex configured:\n  agent-pm-session start helper --client codex\n"""\nCLIENT = "codex"\n'
+        self.assertEqual(
+            ownership.client_names(self.tree({path: text})), [f"{path}:5: client name codex"]
+        )
+        other = "manager/src/agent_pm/manager/engine/crew.py"
+        self.assertTrue(ownership.client_names(self.tree({other: text})))
+
     def test_a_client_name_outside_clients_policy_tables_and_client_lines(self):
         config = "delegate/src/agent_pm/delegate/config.toml"
         api = f"session/{PKG}/session/engine/api.py"
