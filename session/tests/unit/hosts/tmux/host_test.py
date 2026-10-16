@@ -19,7 +19,7 @@ from agent_pm.session.hosts.tmux.host import TmuxProcess, TmuxTerminal
 from agent_pm.session.hosts.tmux.transport import (
     Tmux,
 )
-from agent_pm.utils import ProcessControl, StatusState, load_class
+from agent_pm.utils import STALE_AGE, ProcessControl, StatusState, load_class
 
 from session.tests.case import Case
 from session.tests.hosted_support import SID, listed
@@ -762,6 +762,35 @@ class HideTest(Base):
         self.assertEqual((found["pane"], found["window"]), ("%10", "@2"))
         self.assertFalse(hidden.read("w1", SID))
         self.tmux.kill.assert_not_called()
+
+    def test_hide_if_closed_unmarks_a_pane_show_recorded_before_the_mark(self):
+        found = self.viewer(pane="%8", window="@2", sid=SID)
+        forget, recorded = self.runner.results["if-shell"], self.tmux.option.side_effect
+        reads = iter([None, "%10"])  # forget's check of @pane, then hide's
+
+        def show_meanwhile(argv):
+            hidden.write("w1", SID, hidden=False)
+            self.tmux.option.side_effect = lambda target, key: (
+                next(reads) if key == "@pane" else recorded(target, key)
+            )
+            return forget(argv)
+
+        self.runner.results["if-shell"] = show_meanwhile
+        self.host.hide("w1", if_closed=True)
+        self.assertEqual(found["window"], None)
+        self.assertFalse(hidden.read("w1", SID))
+
+    def test_a_hidden_mark_keeps_live_sessions_entries(self):
+        then = time.time() - STALE_AGE - 60
+        for name in ("w2", "w3"):
+            hidden.write(name, SID, hidden=True)
+            os.utime(os.path.join(self.agent_pm, "hidden", f"{name}.json"), (then, then))
+        self.options(pane="%9", sid=SID)
+        self.runner.results["list-sessions"] = (0, "w1\nw2\n")
+        self.host.hide("w1")
+        self.assertEqual(
+            sorted(os.listdir(os.path.join(self.agent_pm, "hidden"))), ["w1.json", "w2.json"]
+        )
 
     def test_hide_forgets_the_tmux_pane_and_window_it_recorded(self):
         for pane, forgotten in (("%9", True), ("w0t0p0:ABC", False)):

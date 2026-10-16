@@ -40,7 +40,6 @@ from agent_pm.session.hosts.tmux.placement import Placement
 from agent_pm.session.hosts.tmux.transport import (
     NAME,
     OPENER,
-    PANE,
     POLL,
     PROCESS_ID,
     Tmux,
@@ -73,6 +72,14 @@ def _session(name) -> str:
     if not isinstance(name, str) or not NAME.fullmatch(name):
         raise SessionError(f"no tmux session {name!r:.80}")
     return name
+
+
+def _live(tmux: Tmux) -> list[str] | None:
+    """The tmux sessions' names; None when tmux fails."""
+    try:
+        return tmux.checked(["list-sessions", "-F", "#{session_name}"]).stdout.split()
+    except TuiError:
+        return None
 
 
 def _checked(display) -> None:
@@ -161,7 +168,7 @@ class TmuxProcess(Process):
         sid = self.session_identity()[0]
         if sid is not None:
             try:
-                hidden_store.write(self.name, sid, hidden=hidden)
+                hidden_store.write(self.name, sid, hidden=hidden, live=_live(self.tmux))
             except OSError as error:
                 raise SessionError(
                     f"tmux session {self.name}: hidden state: {error.strerror or error}"
@@ -481,7 +488,7 @@ class TmuxHost(Host, Showable):
         sid = record.sid if record is not None and record.sid else (metadata or {}).get("sid")
         if terminal and parts is not None and parts[3] and sid:
             try:
-                hidden_store.start(name, sid)
+                hidden_store.start(name, sid, live=_live(self.tmux))
             except OSError as error:
                 cleanup = self._cancel_launch(control, process)
                 detail = f"; {cleanup}" if cleanup else ""
@@ -705,7 +712,7 @@ class TmuxHost(Host, Showable):
         placed = why is None
         if not placed and command is None:
             with contextlib.suppress(TuiError):
-                placed = self._shown_pane(name) is not None
+                placed = self.placement.shown(name) is not None
         if placed:
             if command is None:
                 self.placement.watch(name)
@@ -725,19 +732,21 @@ class TmuxHost(Host, Showable):
                 if closed is None or not self.placement.forget(name, closed):
                     return
             else:
-                pane = self._shown_pane(name)
+                pane = self.placement.shown(name)
                 if pane is not None:
                     self.tmux.kill(pane)
                 self.placement.forget(name)
         except TuiError as e:
             raise SessionError(f"tmux session {name}: {e}") from None
-        self.attach(name).mark_hidden(hidden=True)
-
-    def _shown_pane(self, name: str) -> str | None:
-        """The live tmux pane that show opened for it, if any."""
-        pane = self.tmux.option(name, "@pane")
-        live = pane is not None and PANE.fullmatch(pane) and self.tmux.process(pane) is not None
-        return pane if live else None
+        process = self.attach(name)
+        process.mark_hidden(hidden=True)
+        try:
+            # a show meanwhile may have written hidden=False before this mark
+            shown = if_closed and self.placement.shown(name) is not None
+        except TuiError as e:
+            raise SessionError(f"tmux session {name}: {e}") from None
+        if shown:
+            process.mark_hidden(hidden=False)
 
     def attach_command(self, name: str) -> str:
         return attach_command(_session(name))

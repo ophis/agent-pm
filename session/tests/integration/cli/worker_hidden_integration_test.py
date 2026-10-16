@@ -180,6 +180,23 @@ class HookTest(HiddenCase):
         self.control()
         self.assertFalse(self.hidden())
 
+    def test_a_client_switched_in_after_the_viewer_detached_forgets_the_viewer(self):
+        self.tmux("new-session", "-d", "-s", OTHER, "-x", "200", "-y", "50", *live_tmux.IDLE)
+        self.server.attach(OTHER)
+        (other,) = self.clients(OTHER)
+        self.record(self.start("w1"))
+        tty = self.server.tmux("display-message", "-p", "-t", self.shows(), "#{pane_tty}")
+        tty = tty.stdout.strip()
+        self.ok(self.server.tmux("detach-client", "-t", tty))
+        live_tmux.wait(lambda: tty not in self.clients(), what="w1's viewer detached")
+        self.tmux("switch-client", "-c", other, "-t", "=w1")
+        live_tmux.wait(lambda: self.viewer() == "", what="w1's gone viewer forgotten")
+        self.tmux("detach-client", "-s", "=w1")
+        live_tmux.wait(lambda: not self.clients(), what="w1's switched client detached")
+        self.record(self.start("c1"))
+        self.control()
+        self.assertFalse(self.hidden())
+
     def tmux(self, *args: str) -> None:
         self.ok(self.server.tmux(*args))
 

@@ -1,6 +1,6 @@
 """Whether a tmux session is hidden, kept per session name as {sid, hidden} in DIR so it outlives
 the tmux session a restart or resume rebuilds; an entry of another sid is another run's. Each write
-drops the entries unwritten for STALE_AGE.
+drops the entries unwritten for STALE_AGE but those of `live` tmux sessions (None: drops none).
 """
 
 from __future__ import annotations
@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+from collections.abc import Collection
 
 from agent_pm.utils import STATE, drop_stale, read_regular, save
 
@@ -37,14 +38,15 @@ def read(name: str, sid: str) -> bool:
     return entry is not None and entry["sid"] == sid and entry["hidden"]
 
 
-def write(name: str, sid: str, *, hidden: bool) -> None:
+def write(name: str, sid: str, *, hidden: bool, live: Collection[str] | None = None) -> None:
     save(_path(name), json.dumps({"sid": sid, "hidden": hidden}) + "\n")
-    for error in drop_stale(os.path.expanduser(DIR)):
-        print(f"hidden: {error}", file=sys.stderr)
+    if live is not None:
+        for error in drop_stale(os.path.expanduser(DIR), keep={f"{n}.json" for n in live}):
+            print(f"hidden: {error}", file=sys.stderr)
 
 
-def start(name: str, sid: str) -> None:
+def start(name: str, sid: str, live: Collection[str] | None = None) -> None:
     """Marks sid hidden unless an entry of sid's exists: a restart or resume keeps its view."""
     entry = _entry(name)
     if entry is None or entry["sid"] != sid:
-        write(name, sid, hidden=True)
+        write(name, sid, hidden=True, live=live)

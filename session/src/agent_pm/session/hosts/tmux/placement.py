@@ -360,6 +360,12 @@ class Placement:
         if problem:
             print(f"tui: show: client-detached: {problem}", file=sys.stderr)
 
+    def shown(self, session: str) -> str | None:
+        """The live tmux pane that show opened (@pane), if any."""
+        pane = self.tmux.option(session, "@pane")
+        live = pane is not None and PANE.fullmatch(pane) and self.tmux.process(pane) is not None
+        return pane if live else None
+
     def closed(self, session: str) -> str | None:
         """The tmux pane show opened (@pane), once it is gone and the window it was in (@window)
         remains; else None.

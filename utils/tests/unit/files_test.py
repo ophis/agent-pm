@@ -247,6 +247,12 @@ class DropStale(Base):
         self.assertEqual(files.drop_stale(self.dir), [])
         self.assertEqual(os.listdir(self.dir), ["young.json"])
 
+    def test_kept_names_stay(self):
+        self.entry("kept.json", 31)
+        self.entry("old.json", 31)
+        self.assertEqual(files.drop_stale(self.dir, keep={"kept.json"}), [])
+        self.assertEqual(os.listdir(self.dir), ["kept.json"])
+
     def test_directories_and_symlinks_stay(self):
         os.mkdir(os.path.join(self.dir, "x.json"))
         self.entry("x.json", 31)

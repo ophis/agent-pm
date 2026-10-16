@@ -72,16 +72,20 @@ class HiddenTest(Case):
         with self.assertRaises(OSError):
             hidden.write("w1", SID, hidden=True)
 
-    def test_a_write_drops_entries_unwritten_for_stale_age(self):
-        hidden.write("old", SID, hidden=True)
-        hidden.write("recent", SID, hidden=True)
-        then = time.time() - STALE_AGE
-        os.utime(self.path("old"), (then - 60, then - 60))
-        os.utime(self.path("recent"), (then + 60, then + 60))
-        err = io.StringIO()
-        with redirect_stderr(err):
-            hidden.start("w1", SID)
-        self.assertEqual(
-            sorted(os.listdir(os.path.dirname(self.path()))), ["recent.json", "w1.json"]
-        )
-        self.assertEqual(err.getvalue(), "")
+    def test_a_write_drops_entries_unwritten_for_stale_age_but_live_sessions(self):
+        for live, want in (
+            (None, ["live.json", "old.json", "recent.json", "w1.json"]),
+            (["live", "w1"], ["live.json", "recent.json", "w1.json"]),
+        ):
+            with self.subTest(live=live):
+                if os.path.exists(self.path()):
+                    os.unlink(self.path())
+                then = time.time() - STALE_AGE
+                for name, when in (("old", then - 60), ("live", then - 60), ("recent", then + 60)):
+                    hidden.write(name, SID, hidden=True)
+                    os.utime(self.path(name), (when, when))
+                err = io.StringIO()
+                with redirect_stderr(err):
+                    hidden.start("w1", OTHER, live=live)
+                self.assertEqual(sorted(os.listdir(os.path.dirname(self.path()))), want)
+                self.assertEqual(err.getvalue(), "")

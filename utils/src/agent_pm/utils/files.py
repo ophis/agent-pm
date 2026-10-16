@@ -6,7 +6,7 @@ import stat
 import sys
 import tempfile
 import time
-from collections.abc import Iterable, Iterator
+from collections.abc import Container, Iterable, Iterator
 from enum import StrEnum
 from pathlib import Path
 
@@ -107,9 +107,10 @@ def idle(paths: Iterable[str | Path], seconds: float) -> bool:
     return True
 
 
-def drop_stale(directory: str) -> list[OSError]:
-    """Unlinks the regular files directly in `directory` last modified over STALE_AGE ago, never
-    following symlinks; returns the errors, each skipping only its entry (a listing error: all).
+def drop_stale(directory: str, keep: Container[str] = ()) -> list[OSError]:
+    """Unlinks the regular files directly in `directory`, but those named in `keep`, last modified
+    over STALE_AGE ago, never following symlinks; returns the errors, each skipping only its entry
+    (a listing error: all).
     """
     errors: list[OSError] = []
     cutoff = time.time() - STALE_AGE
@@ -118,7 +119,8 @@ def drop_stale(directory: str) -> list[OSError]:
             for entry in entries:
                 try:
                     if (
-                        entry.is_file(follow_symlinks=False)
+                        entry.name not in keep
+                        and entry.is_file(follow_symlinks=False)
                         and entry.stat(follow_symlinks=False).st_mtime < cutoff
                     ):
                         os.unlink(entry.path)
