@@ -430,6 +430,15 @@ typos --config pyproject.toml
 
 Run tests only through these entries; they sandbox each run.
 
+A PR's added and changed `*/src` lines need unit coverage (lines and branches) of at least `THRESHOLD` in `.github/coverage_gate.py` (CI job `Coverage`). With `coverage==7.10.7` installed:
+
+```bash
+RUN_TESTS_COVERAGE=/tmp/coverage-data python3 .github/run_tests.py Unit --unit
+python3 .github/coverage_gate.py /tmp/coverage-data origin/main
+```
+
+`# pragma: no cover` is allowed only on the `def` line of a function that only integration tests run, registered in `NO_COVER_ALLOWED` (`tests/guard_checks/suppressions.py` `coverage_pragmas`).
+
 | | Unit | Integration |
 |---|---|---|
 | Tests | pure logic, with fakes and recorded output | real tools in `utils/tests/sandbox.py` |
