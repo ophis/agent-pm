@@ -29,11 +29,11 @@ CSP = (
     "font-src https://fonts.gstatic.com; img-src data:; script-src 'unsafe-inline'"
 )
 _WS = "[ \t\n\f\r]"
-# A comment without <, > or - cannot end early (`<!-->`) and hide a tag from the regex.
+# A comment without <, > or - cannot end early (`<!-->`) to hide a tag.
 _GAP = rf"(?:{_WS}|<!--[^<>-]*-->)*"
 _ATTR = rf"""{_WS}+[a-z][\w:-]*(?:{_WS}*={_WS}*(?:"[^"<>]*"|'[^'<>]*'|[^ \t\n\f\r"'<>=`]+))?"""
 PREFIX = re.compile(
-    rf"""(?i)\ufeff?{_GAP}<!doctype{_WS}+html{_WS}*>{_GAP}<html(?:{_ATTR})*{_WS}*>{_GAP}<head>"""
+    rf"""(?ai)\ufeff?{_GAP}<!doctype{_WS}+html{_WS}*>{_GAP}<html(?:{_ATTR})*{_WS}*>{_GAP}<head>"""
     rf"""{_GAP}<meta{_WS}+charset="utf-8"{_WS}*/?>{_GAP}<meta{_WS}+"""
     rf"""http-equiv="Content-Security-Policy"{_WS}+content="{re.escape(CSP)}"{_WS}*/?>"""
 )
@@ -93,7 +93,9 @@ def main(argv: list[str], *, out=sys.stdout) -> int:
     except OSError as e:
         print(f"check failed: {e}", file=out)
         return 2
-    failures = [] if PREFIX.match(text) else ["external load: no CSP prefix"]
+    m = PREFIX.match(text)
+    # Browsers seek <meta charset> in the first 1024 bytes only.
+    failures = [] if m and len(m[0].encode()) <= 1024 else ["external load: no CSP prefix"]
     decoded = html.unescape(text)
     if REFRESH.search(decoded):
         failures.append("unsafe markup: http-equiv=refresh")

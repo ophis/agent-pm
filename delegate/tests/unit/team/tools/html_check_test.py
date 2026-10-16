@@ -122,6 +122,12 @@ class HtmlCheck(Case):
             ("a non-HTML space", PREFIX.replace("<head>", "\u00a0<head>")),
             ("a quote-swallowing attribute", PREFIX.replace("<html>", '<html x=">')),
             ("a widened policy", PREFIX.replace("default-src 'none'", "default-src https:")),
+            ("a non-ASCII s", PREFIX.replace("Content-Security", "Content-\u017fecurity")),
+            ("a non-ASCII k", PREFIX.replace("<html>", "<html \u212a>")),
+            (
+                "past the charset prescan",
+                PREFIX.replace("<head>", "<head><!--" + "x" * 1024 + "-->"),
+            ),
         )
         for name, page in missing:
             with self.subTest(name):
