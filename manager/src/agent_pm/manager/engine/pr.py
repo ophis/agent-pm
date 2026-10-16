@@ -10,6 +10,7 @@ VIEW_FIELDS = "number,mergeable,reviewDecision,statusCheckRollup"
 DEFAULT_HOST = "github.com"
 FAILED = {"FAILURE", "CANCELLED", "TIMED_OUT", "ACTION_REQUIRED", "STARTUP_FAILURE", "ERROR"}
 PENDING = {"PENDING", "EXPECTED"}
+NO_PR = ("-", "-", "-", "-")
 
 
 def pr_url(*texts: str | None, env: Mapping[str, str] = os.environ) -> str | None:
@@ -19,10 +20,19 @@ def pr_url(*texts: str | None, env: Mapping[str, str] = os.environ) -> str | Non
     hosts = {DEFAULT_HOST, env.get("GH_HOST", "").lower()} - {""}
     for text in texts:
         for match in PR_URL.finditer(text or ""):
-            parts = urlsplit(match[0])
-            if parts.netloc.lower() == parts.hostname and parts.hostname in hosts:
+            try:
+                parts = urlsplit(match[0])
+                host = parts.hostname
+            except ValueError:
+                continue
+            if parts.netloc.lower() == host and host in hosts:
                 return match[0]
     return None
+
+
+def unknown(url: str) -> tuple[str, str, str, str]:
+    """The cells of a PR whose `gh pr view` failed: its number from url, the rest `?`."""
+    return f"#{url.rpartition('/')[2]}", "?", "?", "?"
 
 
 def _bucket(check) -> str:

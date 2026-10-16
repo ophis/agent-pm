@@ -13,7 +13,7 @@ import uuid
 from collections.abc import Iterable
 from dataclasses import replace
 
-from agent_pm.manager.engine.pr import VIEW_FIELDS, cells, pr_url
+from agent_pm.manager.engine.pr import NO_PR, VIEW_FIELDS, cells, pr_url, unknown
 from agent_pm.manager.engine.roster import LOCK_TIMEOUT, Roster
 from agent_pm.manager.engine.types import Entry, Lease, RosterError, Spec, State, StatusError
 from agent_pm.utils import LEASE_ENV, Record, Status, one_line, printable
@@ -336,7 +336,7 @@ class Crew:
                     reply = _first_line(
                         self._execute((*session_command, "reply", record.sessions[-1]))
                     )
-            pr = ("-",) * 4
+            pr = NO_PR
             if url := pr_url(entry.note) or pr_url(
                 self._outcome_url(name, record, status, delegate_command)
             ):
@@ -346,7 +346,7 @@ class Crew:
                     )
                 except (RuntimeError, ValueError) as error:
                     print(f"crew: {name}: {error}", file=sys.stderr)
-                    pr = ("#" + url.rpartition("/")[2], "?", "?", "?")
+                    pr = unknown(url)
             kind = "-" if record is None else record.kind
             output.append(_row((name, kind, state, entry.note or "-", reply, *pr)))
         return "\n".join(output) + "\n"

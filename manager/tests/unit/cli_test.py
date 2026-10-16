@@ -375,6 +375,7 @@ class Report(CliCase):
             ("https://evil.example/o/r/pull/1", {}, False),
             ("http://github.com/o/r/pull/1", {}, False),
             ("https://x@github.com/o/r/pull/1", {}, False),
+            ("https://[x/o/r/pull/1", {}, False),
             ("https://ghe.corp/o/r/pull/1", {"GH_HOST": "ghe.corp"}, True),
         ):
             with self.subTest(note=note), mock.patch.dict(os.environ, env):
@@ -421,6 +422,10 @@ class Report(CliCase):
         self.assertIn("ctl broke", stderr)
         self.assertIn("crew: bad-outcome: ", stderr)
         self.assertIn("no run", stderr)
+        self.answers[("agent-pm-delegate", "outcome")] = (0, "not json", "")
+        result, _, stderr = self.report()
+        self.assertEqual(result, 0)
+        self.assertIn("crew: bad-outcome: Expecting value", stderr)
 
     def test_empty_roster_prints_header_only(self):
         self.assertEqual(self.report(), (0, HEADER, ""))

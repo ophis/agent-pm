@@ -193,7 +193,12 @@ class Flows(Case):
     def test_an_events_content_is_its_read_and_only_numbered_lines_are_events(self):
         events = section("tmux", "Events")
         self.assertNotIn("confirm each by reading", events)
-        for phrase in ("content", "`content unavailable", "untrusted", "continue"):
+        for phrase in (
+            "content",
+            "`content unavailable",
+            "untrusted",
+            "greater than the previous event's",
+        ):
             self.assertIn(phrase, events)
         self.assertIn("agent-pm-crew report", rules("tmux"))
         self.assertIn("agent-pm-crew report *", rules("tmux"))

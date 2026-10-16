@@ -1,6 +1,6 @@
 """PR URL host rule, check summary and report cells from `gh pr view` JSON."""
 
-from agent_pm.manager.engine.pr import cells, checks, pr_url
+from agent_pm.manager.engine.pr import cells, checks, pr_url, unknown
 
 from manager.tests.case import Case
 
@@ -28,6 +28,8 @@ class PrUrl(Case):
             ("https://github.com:8443/o/r/pull/1", {}, None),
             ("https://github.com/o/r/issues/1", {}, None),
             ("PR #283", {}, None),
+            ("see https://[x/o/r/pull/1", {}, None),
+            (f"https://[x/o/r/pull/1 {URL}", {}, URL),
         ):
             with self.subTest(text=text, env=env):
                 self.assertEqual(pr_url(text, env=env), expected)
@@ -76,6 +78,9 @@ class Cells(Case):
         self.assertEqual(cells(view), ("#7", "pass", "conflicting", "changes_requested"))
         empty = {**view, "reviewDecision": "", "statusCheckRollup": None}
         self.assertEqual(cells(empty), ("#7", "none", "conflicting", "-"))
+
+    def test_unknown_keeps_the_number_from_the_url(self):
+        self.assertEqual(unknown(URL), ("#7", "?", "?", "?"))
 
     def test_malformed_view_raises_value_error(self):
         for view in (None, [], {"number": "7"}, {"number": 7, "mergeable": None}):

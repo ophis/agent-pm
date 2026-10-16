@@ -68,6 +68,7 @@ class Commands(Case):
             "stop-all",
             "forget",
             "note",
+            "report",
             "next-event",
             "release",
         }
