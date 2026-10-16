@@ -153,11 +153,15 @@ def start_coverage(sandbox, repo):
     return cov
 
 
+def supervised_child():
+    return STATE in os.environ and os.environ.get("RUN_TESTS_PARENT") == str(os.getppid())
+
+
 def supervise(title):
     """None in the child; in the parent, the child's exit code (128 + signal for a signal), or 1 when
     it passed but left processes or tmux servers behind.
     """
-    if STATE in os.environ:
+    if supervised_child():
         return None
     tail = collections.deque(maxlen=5 * TAIL)
     repo = Path(__file__).resolve().parents[1]
@@ -197,7 +201,7 @@ def supervise(title):
         try:
             with subprocess.Popen(
                 [sys.executable, "-P", "-S", "-X", "faulthandler", *sys.orig_argv[1:]],
-                env={**env, STATE: state},
+                env={**env, STATE: state, "RUN_TESTS_PARENT": str(os.getpid())},
                 stderr=subprocess.PIPE,
                 text=True,
                 errors="replace",

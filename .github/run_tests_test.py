@@ -86,6 +86,16 @@ class Run(unittest.TestCase):
 
 
 class Discovery(unittest.TestCase):
+    def test_inherited_state_is_not_a_supervised_child(self):
+        with mock.patch.dict(os.environ, {runner.STATE: "inherited"}, clear=True):
+            self.assertFalse(runner.supervised_child())
+        with mock.patch.dict(
+            os.environ,
+            {runner.STATE: "state", "RUN_TESTS_PARENT": str(os.getppid())},
+            clear=True,
+        ):
+            self.assertTrue(runner.supervised_child())
+
     def test_top_level_preserves_project_packages_and_normalized_tests(self):
         root = Path(self.enterContext(tempfile.TemporaryDirectory()))
         regular = root / "session/tests/unit"

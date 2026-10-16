@@ -2,9 +2,12 @@
 
 import json
 import math
+import os
+import platform
 import re
 import statistics
 import sys
+import time
 import unittest
 from collections import Counter
 from pathlib import Path
@@ -14,7 +17,6 @@ import run_tests
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = ROOT / ".github/workflows/test.yml"
 DURATIONS = ROOT / ".github/integration_durations.json"
-JOBS = tuple(str(number) for number in range(1, 9))
 
 
 def directories(root):
@@ -43,6 +45,7 @@ def workflow_jobs(text):
         labels = None
     if (
         not isinstance(labels, list)
+        or not labels
         or not all(isinstance(label, str) for label in labels)
         or len(set(labels)) != len(labels)
     ):
@@ -97,22 +100,53 @@ def check(root, labels, durations, workflow):
 
 
 def main(argv):
-    if argv != ["--check"] and (len(argv) != 1 or argv[0] not in JOBS):
-        raise ValueError("give --check or a shard number: " + ", ".join(JOBS))
+    workflow = WORKFLOW.read_text()
+    labels = workflow_jobs(workflow)
+    if argv != ["--check"] and (len(argv) != 1 or argv[0] not in labels):
+        raise ValueError("give --check or a shard number: " + ", ".join(labels))
     title = f"Integration {argv[0]}"
+    started = time.monotonic()
     code = None if argv == ["--check"] else run_tests.supervise(title)
     if code is not None:
+        directory = os.environ.get("INTEGRATION_TIMING_DIR")
+        if directory and (path := Path(directory) / "manifest.json").is_file():
+            manifest = json.loads(path.read_text())
+            manifest.update(exit_code=code, elapsed_seconds=time.monotonic() - started)
+            path.write_text(json.dumps(manifest, indent=2) + "\n")
         return code
     if argv != ["--check"]:
         run_tests.GATE = run_tests.isolation.install(ROOT)
         run_tests.GATE.unit = False
-    split = check(ROOT, JOBS, json.loads(DURATIONS.read_text()), WORKFLOW.read_text())
+    durations = json.loads(DURATIONS.read_text())
+    split = check(ROOT, labels, durations, workflow)
     if argv == ["--check"]:
         print(
             "duration shards match discovery and workflow: "
             + ", ".join(f"{job}: {len(suite)} tests" for job, suite in split.items())
         )
         return 0
+    if directory := os.environ.get("INTEGRATION_TIMING_DIR"):
+        found = [test for suite in split.values() for test in suite]
+        estimates = weights(found, durations)
+        manifest = {
+            "run_id": os.environ["GITHUB_RUN_ID"],
+            "attempt": int(os.environ["GITHUB_RUN_ATTEMPT"]),
+            "sha": os.environ["GITHUB_SHA"],
+            "head_sha": os.environ["INTEGRATION_HEAD_SHA"],
+            "runner": os.environ["INTEGRATION_RUNNER"],
+            "architecture": platform.machine(),
+            "python": platform.python_version(),
+            "tmux": os.environ["INTEGRATION_TMUX_VERSION"],
+            "shards": labels,
+            "shard": argv[0],
+            "discovered": sorted(test.id() for test in found),
+            "tests": [test.id() for test in split[argv[0]]],
+            "expected_seconds": sum(estimates[test.id()] for test in split[argv[0]]),
+            "exit_code": None,
+        }
+        path = Path(directory) / "manifest.json"
+        with run_tests.GATE.reporting(path):
+            path.write_text(json.dumps(manifest, indent=2) + "\n")
     return run_tests.run(unittest.TestSuite(split[argv[0]]), title)
 
 

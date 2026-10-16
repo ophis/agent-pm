@@ -170,7 +170,23 @@ jobs:
       - name: Protect shipped source
         run: chmod -R a-w manager/src linear-orchestrator/src delegate/src session/src utils/src
       - name: Integration tests
-        run: python3 -X faulthandler .github/integration_jobs.py '${{ matrix.job }}'
+        env:
+          INTEGRATION_TIMING_DIR: ${{ runner.temp }}/integration-timing
+          RUN_TESTS_DURATIONS: ${{ runner.temp }}/integration-timing/durations.jsonl
+          INTEGRATION_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          INTEGRATION_RUNNER: ubuntu-24.04
+        run: |
+          mkdir -p "$INTEGRATION_TIMING_DIR"
+          export INTEGRATION_TMUX_VERSION="$(tmux -V)"
+          python3 -X faulthandler .github/integration_jobs.py '${{ matrix.job }}'
+      - name: Preserve integration timings
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: integration-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.job }}
+          path: ${{ runner.temp }}/integration-timing/
+          if-no-files-found: error
+          retention-days: 30
       - name: Require unchanged checkout
         if: ${{ always() }}
         run: |

@@ -444,9 +444,31 @@ typos --config pyproject.toml
 |---|---|
 | one project's unit tests | `python3 .github/run_tests.py "Session unit" session/tests/unit` |
 | all unit tests | `python3 .github/run_tests.py Unit --unit` |
-| integration shard 1–8 | `python3 .github/integration_jobs.py <N>` |
+| integration shard (labels in `.github/workflows/test.yml`) | `python3 .github/integration_jobs.py <N>` |
 
 Run tests only through these entries; they sandbox each run.
+
+Integration jobs always upload `integration-<run-id>-<attempt>-<shard>` artifacts containing
+the discovered IDs, assigned IDs, expected load, Python/tmux/runner versions, supervised
+exit status and per-test seconds. A failed attempt remains available for diagnosis;
+only complete successful Ubuntu attempts can regenerate the timing table.
+
+To recollect, open a PR and let the entire `CI` workflow finish. Run
+`gh run rerun <run-id> --repo ophis/agent-pm` after each completed attempt for more samples.
+For each attempt, download into a separate empty directory, replacing the angle-bracket values:
+
+```bash
+gh run download <run-id> --repo ophis/agent-pm --pattern 'integration-<run-id>-<attempt>-*' --dir /tmp/integration-samples/<attempt>
+python3 .github/integration_timings.py /tmp/integration-samples
+python3 .github/integration_timings.py /tmp/integration-samples --output .github/integration_durations.json
+python3 .github/integration_jobs.py --check
+```
+
+Validation compares every attempt against this checkout's discovery, rejects missing or
+duplicate shards/tests, failures and invalid seconds. Regeneration uses the per-test
+median and writes `.github/integration_durations.sources.json` with source runs, commits,
+versions and shard labels. Normal tests never rewrite either file. Keep failed attempts
+outside the regeneration input, alongside their original logs and workflow/job metadata.
 
 A PR's added and changed `*/src` lines need unit coverage (lines and branches) of at least `THRESHOLD` in `.github/coverage_gate.py` (CI job `Coverage`). With coverage.py installed (version: `COVERAGE_VERSION` in `.github/workflows/test.yml`):
 
