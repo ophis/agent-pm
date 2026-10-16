@@ -825,7 +825,7 @@ def tick(opts, cfg, gql, *, start, keychain, clock=datetime.now, hour=None, laun
 def run_issue(opts, cfg, gql, start, *, keychain, clock=datetime.now, launch_sid=None):
     now = clock().astimezone(UTC)
     ident, dry, runs = opts["issue"], opts["dry"], cfg.runs_log
-    stop = 0 if dry else 1
+    stop = 0 if dry else 2
     with lock(runs, dry) as free:
         if not free:
             log("router", "skip", ident, reason=BUSY)
@@ -835,7 +835,7 @@ def run_issue(opts, cfg, gql, start, *, keychain, clock=datetime.now, launch_sid
         live = live_sessions(cfg, entries, say=functools.partial(log, "router", dry=dry))
         if live is None:
             print("router.py: agent runs unknown; try again", file=sys.stderr)
-            return stop
+            return 0 if dry else 1
         if any(ident in ids for ids in live.values()):
             sid = latest(entries)[ident].sid
             attach = LinearRun.attach(ident, cfg=cfg, sid=sid).delegate.attach_command()

@@ -97,6 +97,30 @@ class ControlCase(CliCase):
         self.assertEqual(result.stdout, stdout)
 
 
+class ContentTest(ControlCase):
+    def test_key_and_stdin_record_print_the_screen(self):
+        record = self.done("w1")
+        screen = self.ok(self.session("read", "w1")).stdout
+        for keys, stdin in ((("w1",), None), ((), lines(record))):
+            with self.subTest(keys=keys):
+                self.assert_printed(self.session("content", *keys, stdin=stdin), screen)
+
+    def test_invalid_or_missing_or_multiple_keys_answer_nothing(self):
+        record = self.done("w1")
+        for keys, stdin in (
+            ((), ""),
+            (("w1", "w2"), ""),
+            ((), lines(record, absent("w2"))),
+            ((), "bad Record"),
+            ((), lines(record) + "bad Record"),
+        ):
+            with self.subTest(keys=keys, stdin=stdin):
+                result = self.session("content", *keys, stdin=stdin)
+                self.assertEqual((result.returncode, result.stdout), (2, ""))
+                self.assertTrue(result.stderr)
+        self.assertTrue(self.status("w1")[0].alive)
+
+
 class StatusTest(ControlCase):
     def test_status_answers_each_name_or_record_in_input_order(self):
         w1 = self.done("w1")

@@ -22,11 +22,9 @@ from delegate.tests.fakes.delegate import FakeDelegate
 
 class Commands(Case):
     def test_resume_input_is_refused_before_loading_config(self):
-        with mock.patch.object(cli, "load") as load:
-            result, output, errors = _call(["resume", "TASK-1", "--input", "answer"])
+        result, output, errors = _call(["resume", "TASK-1", "--input", "answer"])
         self.assertEqual((result, output), (2, ""))
-        self.assertIn("issue board", errors)
-        load.assert_not_called()
+        self.assertEqual(errors, "agent-pm-linear: pipeline answers belong on the issue board\n")
 
     def test_help_lists_only_existing_commands(self):
         output = io.StringIO()
@@ -174,17 +172,14 @@ class Queries(RunCase):
                 self.assertEqual(FakeDelegate.starts(record.workdir), before)
 
     def test_content_from_key_or_record_prints_the_owned_runs_content(self):
-        _, record = self.start()
+        owner, record = self.start()
         for arguments, stdin in ((["content", "TASK-1"], ""), (["content"], record.to_line())):
-            with (
-                self.subTest(arguments=arguments),
-                mock.patch.object(cli.LinearRun, "content", return_value="run content") as content,
-            ):
-                self.assertEqual(_call(arguments, stdin=stdin), (0, "run content\n", ""))
-                content.assert_called_once_with()
+            with self.subTest(arguments=arguments):
+                self.assertEqual(_call(arguments, stdin=stdin), (0, owner.content() + "\n", ""))
 
     def test_content_requires_one_valid_key_before_attaching(self):
         _, record = self.start()
+        before = FakeDelegate.starts(record.workdir)
         for arguments, stdin in (
             (["content"], ""),
             (["content", "TASK-1", "TASK-2"], ""),
@@ -192,14 +187,12 @@ class Queries(RunCase):
             (["content"], "bad Record"),
             (["content"], record.to_line() + "\nbad Record"),
         ):
-            with (
-                self.subTest(arguments=arguments, stdin=stdin),
-                mock.patch.object(cli.LinearRun, "attach") as attach,
-            ):
+            with self.subTest(arguments=arguments, stdin=stdin):
                 result, output, errors = _call(arguments, stdin=stdin)
                 self.assertEqual((result, output), (2, ""))
                 self.assertTrue(errors)
-                attach.assert_not_called()
+                self.assertEqual(FakeDelegate.starts(record.workdir), before)
+                self.assertTrue(FakeDelegate.attach(record.workdir).alive())
 
     def test_status_for_two_issue_keys_or_stdin_records_has_two_ordered_lines(self):
         _, first = self.start("TASK-1")
@@ -327,6 +320,15 @@ class Queries(RunCase):
                 self.assertTrue(owner.delegate.alive())
         self.assertEqual(_call(["close"], stdin=""), (0, "", ""))
         self.assertTrue(owner.delegate.alive())
+
+    def test_resume_partial_success_is_not_a_no_start_refusal(self):
+        _, record = self.start()
+        FakeDelegate.end(record.workdir)
+        result, output, errors = _call(["resume", "TASK-8", "TASK-1"])
+        self.assertEqual(result, 1)
+        self.assertEqual(Record.parse(output), record)
+        self.assertIn("no recorded run", errors)
+        self.assertTrue(FakeDelegate.attach(record.workdir).alive())
 
     def test_batch_configuration_error_preserves_valid_key_output(self):
         self.start()

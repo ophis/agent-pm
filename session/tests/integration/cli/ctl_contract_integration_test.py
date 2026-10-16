@@ -8,17 +8,25 @@ from agent_pm.utils import Record
 
 from session.tests import live_tmux
 from session.tests.cli_support import CliCase
-from utils.tests.contracts.ctl import CtlContract
+from utils.tests.contracts.ctl import NamedCtlContract
 
 
-class SessionCtlContract(CtlContract, CliCase):
+class SessionCtlContract(NamedCtlContract, CliCase):
     command = "agent-pm-session"
 
     def call(self, *argv, stdin="", sid=None):
         return self.session(*argv, stdin=stdin, AGENT_PM_SID=sid, **self.scene("any"))
 
     def start(self, name, sid=None) -> Record:
-        return self.record(CliCase.start(self, name, AGENT_PM_SID=sid))
+        record = self.record(CliCase.start(self, name, AGENT_PM_SID=sid))
+        self.wait_event(name, "done")
+        return record
+
+    def inventory(self):
+        return self.server.tmux("list-sessions", "-F", "#{session_name}").stdout
+
+    def refuse(self):
+        return self.session("start", "refused", "--client", "no-such-client", "--prompt", "hi")
 
     def end(self, name):
         self.server.tmux("kill-session", "-t", f"={name}")

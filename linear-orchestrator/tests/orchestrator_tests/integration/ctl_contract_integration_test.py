@@ -1,0 +1,83 @@
+"""The linear ctl contract on the real router and query entry, with private tmux and fake APIs."""
+
+import os
+import subprocess
+from pathlib import Path
+
+from agent_pm.utils import SID_ENV, Record
+from orchestrator_tests.case import PY
+from orchestrator_tests.integration.flow_fixtures import ACCOUNTS, ENTRY, PROJECT, TmuxFlow
+
+from session.tests import live_tmux
+from utils.tests.contracts.ctl import CtlContract
+
+
+class LinearCtlContract(CtlContract, TmuxFlow):
+    command = "agent-pm-linear"
+
+    def setUp(self):
+        super().setUp()
+        self.started_records = {}
+        self.scene([], hang=True)
+
+    def call(self, *argv, stdin="", sid=None):
+        env = {**self.env(), **self.in_manager()}
+        env.pop(SID_ENV, None)
+        if sid is not None:
+            env[SID_ENV] = sid
+        return subprocess.run(
+            (*PY, ENTRY, *argv),
+            cwd=self.root,
+            env=env,
+            input=stdin,
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+
+    def start(self, name, sid=None):
+        issue = "TASK-" + name.removeprefix("w")
+        self.fake.issue(
+            "ENG: Contract",
+            identifier=issue,
+            assignee=self.ids[ACCOUNTS["engineer"]],
+            project=PROJECT,
+            description="Exercise the ctl contract.",
+        )
+        done = self.call(
+            "router",
+            "--issue",
+            issue,
+            "--tui",
+            "--events",
+            os.path.join(self.root, "events"),
+            sid=sid,
+        )
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertEqual(len(done.stdout.splitlines()), 1, done.stdout)
+        record = Record.parse(done.stdout)
+        self.started_records[name] = record
+        live_tmux.wait(
+            lambda: any(
+                path.stat().st_size
+                for path in Path(self.root, "claude-config", "projects").glob(
+                    f"*/{record.sid}.jsonl"
+                )
+            ),
+            what="the contract's client transcript",
+        )
+        return record
+
+    def inventory(self):
+        return self.server.tmux("list-sessions", "-F", "#{session_name}").stdout
+
+    def refuse(self):
+        return self.call("router", "--issue", "TASK-9999")
+
+    def end(self, name):
+        for session in self.started_records[name].sessions:
+            self.server.tmux("kill-session", "-t", f"={session}")
+        live_tmux.wait(
+            lambda: not any(self.live(session) for session in self.started_records[name].sessions),
+            what="the contract's run to stop",
+        )

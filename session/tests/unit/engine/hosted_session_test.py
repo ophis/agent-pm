@@ -5,6 +5,7 @@ test on a configured class (self.session) with caller-owned dependencies.
 
 import contextlib
 import dataclasses
+import fcntl
 import io
 import itertools
 import json
@@ -2113,13 +2114,14 @@ class SessionIdentityTest(HostedTuiBase):
         session = self.session.attach("w1", sid=SID)
         replacements = []
 
-        @contextlib.contextmanager
-        def replaced():
+        flock = fcntl.flock
+
+        def replaced(fd, operation):
+            flock(fd, operation)
             replacements.append(self.host.create("w1", sid="replacement"))
-            yield
 
         with (
-            mock.patch.object(tui.TuiStore, "_locked", side_effect=replaced),
+            mock.patch("fcntl.flock", side_effect=replaced),
             self.assertRaises(SessionError),
         ):
             session.close()

@@ -10,7 +10,7 @@ import uuid
 from agent_pm.utils.record import Record, Status
 
 from utils.tests.case import Case
-from utils.tests.contracts.ctl import CtlContract
+from utils.tests.contracts.ctl import NamedCtlContract
 from utils.tests.fakes import ctl
 from utils.tests.sandbox import clean_env
 
@@ -34,7 +34,7 @@ class Installed(Case):
         self.env["PATH"] = os.pathsep.join((self.bin, os.environ.get("PATH", os.defpath)))
 
 
-class FakeCtlContract(CtlContract, Installed):
+class FakeCtlContract(NamedCtlContract, Installed):
     command = ctl.COMMAND
 
     def call(self, *argv, stdin="", sid=None):
@@ -47,6 +47,12 @@ class FakeCtlContract(CtlContract, Installed):
         done = self.call("start", name, sid=sid)
         self.assertEqual((done.returncode, done.stderr), (0, ""))
         return Record.parse(done.stdout)
+
+    def inventory(self):
+        return ctl._sessions(self.state)
+
+    def refuse(self):
+        return self.call("start", "")
 
     def end(self, name):
         ctl.set_session(self.state, name, alive=False, state="gone")

@@ -854,7 +854,7 @@ class RouterEntry(OuterBase):
 
     def test_a_missing_role_key_skips_the_claim_and_leaves_the_issue_todo(self):
         self.missing.add(KEY)
-        for argv, rc in ((("--issue", ID), 1), (("--now",), 0)):
+        for argv, rc in ((("--issue", ID), 2), (("--now",), 0)):
             with self.subTest(argv=argv):
                 self.assertEqual(self.entry(*argv), rc)
                 self.assertIn(
@@ -878,7 +878,7 @@ class RouterEntry(OuterBase):
             [{"kind": "failed", "issue": ID, "sid": row["sid"]} for row in rows],
         )
         self.todo["state"] = "Todo"
-        self.assertEqual(self.entry("--issue", ID), 1)
+        self.assertEqual(self.entry("--issue", ID), 2)
         self.assertIn(
             f"claim-skip TASK-7 to=in_review reason=reached {router.CAP} attempts", self.said()
         )
@@ -889,7 +889,7 @@ class RouterEntry(OuterBase):
         for role in ("engineer", "pm"):
             with self.subTest(role=role):
                 self.lines = []
-                self.assertEqual(self.entry("--issue", ID, live=[f"agent-pm-{role}-{ID}"]), 1)
+                self.assertEqual(self.entry("--issue", ID, live=[f"agent-pm-{role}-{ID}"]), 2)
                 self.assertEqual(
                     self.err,
                     f"router.py: {ID} has a live agent run: attach agent-pm-{role}-{ID}\n",
@@ -897,7 +897,7 @@ class RouterEntry(OuterBase):
                 self.assertEqual((self.api.order, self.state), (SESSIONS, self.before()))
         self.assertEqual((self.fake.queries, self.api.detached), ([], []))
 
-    def test_nothing_started_exits_1_without_a_start_line(self):
+    def test_nothing_started_exits_2_without_a_start_line(self):
         for change, said, state in (
             (
                 {"state": "In Review"},
@@ -923,7 +923,7 @@ class RouterEntry(OuterBase):
             with self.subTest(said=said):
                 self.todo.update(state="Todo", inverseRelations={"nodes": []}, labels=[])
                 self.todo.update(change)
-                self.assertEqual(self.entry("--issue", ID), 1)
+                self.assertEqual(self.entry("--issue", ID), 2)
                 self.assertIn(said, self.said())
                 self.assertEqual(
                     (self.todo["state"], self.state, self.api.order), (state, "", SESSIONS)
@@ -1202,7 +1202,7 @@ class AttendedEntry(OuterBase):
         self.assertEqual((self.fake.queries, self.api.tui_checks, self.out), ([], [], ""))
 
     def test_a_live_run_is_refused_with_its_attach_command(self):
-        for argv, rc in ((("--issue", ID), 1), (("--dry-run", "--issue", ID), 0)):
+        for argv, rc in ((("--issue", ID), 2), (("--dry-run", "--issue", ID), 0)):
             with self.subTest(argv=argv):
                 self.lines = []
                 live = [f"agent-pm-engineer-{ID}"]
@@ -1302,7 +1302,7 @@ class RouterLocking(TickBase):
     def test_another_router_leaves_the_issue_alone(self):
         fake = FakeLinear([issue("TASK-1", "Todo", "researcher")])
         with other_router(self.runs):
-            self.assertEqual(self.tick(fake, "--issue", "TASK-1"), 1)
+            self.assertEqual(self.tick(fake, "--issue", "TASK-1"), 2)
         self.assertEqual(self.err, "router.py: another router is running; try again\n")
         self.assertEqual(self.said(), ["skip TASK-1 reason=another router is running"])
         self.assertEqual((fake.queries, self.api.order, self.state), ([], [], ""))
@@ -2061,7 +2061,7 @@ class ScheduledTaskSelection(TickBase):
     def test_blocked_invalid_label_waits_for_its_blocker(self):
         for argv, plan, end, rc in (
             ((), ["plan mode=new queue=1"], ["skip reason=nothing claimed"], 0),
-            (("--issue", "TASK-1"), [], [], 1),
+            (("--issue", "TASK-1"), [], [], 2),
         ):
             with self.subTest(argv=argv):
                 fake = FakeLinear(
@@ -2629,7 +2629,7 @@ class ExplicitIssueRuns(TickBase):
         fake = self.fake(issue("TASK-1", "In Progress", "researcher"))
         self.moved("TASK-1", 41)
         self.add(kind="start", ident="TASK-1", sid="unrecorded", minutes_ago=40)
-        self.assertEqual(self.tick(fake, "--issue", "TASK-1"), 1)
+        self.assertEqual(self.tick(fake, "--issue", "TASK-1"), 2)
         self.assertEqual(fake.issues["TASK-1"]["state"], "Todo")
         self.assertEqual(self.start.launches, [])
         self.assertEqual(
@@ -2751,7 +2751,7 @@ class ExplicitIssueRuns(TickBase):
                     argv = ("--issue", "TASK-1", *["--dry-run"] * dry)
                     self.assertEqual(
                         self.tick(fake, *argv, live=["agent-pm-engineer-TASK-1"]),
-                        0 if dry else 1,
+                        0 if dry else 2,
                     )
                     self.assertEqual(
                         self.err,
@@ -2771,7 +2771,7 @@ class ExplicitIssueRuns(TickBase):
         failed = {"ts": at, "kind": "failed", "issue": "TASK-1", "sid": self.sid("failed")}
         self.lines.append(json.dumps(failed))
         fake = FakeLinear([issue("TASK-1", "Todo", "engineer")])
-        self.assertEqual(self.tick(fake, "--issue", "TASK-1", live=live), 1)
+        self.assertEqual(self.tick(fake, "--issue", "TASK-1", live=live), 2)
         self.assertEqual(
             self.err, "router.py: TASK-1 has a live agent run: attach agent-pm-engineer-TASK-1\n"
         )
@@ -2780,7 +2780,7 @@ class ExplicitIssueRuns(TickBase):
         fake = FakeLinear([issue("TASK-1", "Todo", "engineer")])
         with mock.patch.object(self.api, "attach_command", return_value=None):
             self.assertEqual(
-                self.tick(fake, "--issue", "TASK-1", live=["agent-pm-engineer-TASK-1"]), 1
+                self.tick(fake, "--issue", "TASK-1", live=["agent-pm-engineer-TASK-1"]), 2
             )
         self.assertEqual(self.err, "router.py: TASK-1 has a live agent run\n")
 
@@ -2818,7 +2818,7 @@ class ExplicitIssueRuns(TickBase):
                 before = self.before()
                 if name in ("not resumable", "no sid"):
                     self.assertEqual((self.plan(fake), fake.mutations), ("", []))
-                self.assertEqual(self.tick(fake, "--issue", "TASK-1"), 1)
+                self.assertEqual(self.tick(fake, "--issue", "TASK-1"), 2)
                 self.assertEqual(self.said(), [said])
                 self.assertEqual(
                     (fake.issues["TASK-1"]["state"], fake.issues["TASK-1"]["comments"]),
@@ -2869,7 +2869,7 @@ class ExplicitIssueRuns(TickBase):
                     self.add(kind="start", ident="TASK-1", sid=sid, minutes_ago=300)
                 before = self.before()
                 fake = FakeLinear([issue("TASK-1", "Todo", "researcher")])
-                self.assertEqual(self.tick(fake, *argv), 0 if "--dry-run" in argv else 1)
+                self.assertEqual(self.tick(fake, *argv), 0 if "--dry-run" in argv else 2)
                 self.assertEqual(
                     self.said(),
                     [
@@ -2902,7 +2902,7 @@ class ExplicitIssueRuns(TickBase):
                     fake = FakeLinear(listed, self.hist)
                     before = self.before()
                     self.assertEqual(
-                        self.tick(fake, "--issue", "TASK-1", *["--dry-run"] * dry), 0 if dry else 1
+                        self.tick(fake, "--issue", "TASK-1", *["--dry-run"] * dry), 0 if dry else 2
                     )
                     self.assertEqual(self.said(), ['blocked TASK-1 by=["TASK-7"]'])
                     self.assertEqual(
@@ -2923,7 +2923,7 @@ class ExplicitIssueRuns(TickBase):
         )
         for ident in ("TASK-1", "TASK-2", "TASK-3", "TASK-4", "TASK-5", "TASK-9"):
             with self.subTest(ident=ident):
-                self.assertEqual(self.tick(fake, "--issue", ident), 1)
+                self.assertEqual(self.tick(fake, "--issue", ident), 2)
                 self.assertEqual(
                     self.said(),
                     [f"pick-none {ident} reason=not a Todo issue assigned to a role account"],
