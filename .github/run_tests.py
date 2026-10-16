@@ -169,9 +169,10 @@ def parallel(title, commands, directory=None):
             target = directory / f"shard-{label}"
             env = {
                 **os.environ,
-                "INTEGRATION_TIMING_DIR": str(target),
                 "RUN_TESTS_DURATIONS": str(target / "durations.jsonl"),
             }
+            if os.environ.get("INTEGRATION_TIMING_DIR"):
+                env["INTEGRATION_TIMING_DIR"] = str(target)
             if os.environ.get(COVERAGE):
                 env[COVERAGE] = str(target / f"coverage-data.{label}")
             try:

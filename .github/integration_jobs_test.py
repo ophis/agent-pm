@@ -90,27 +90,37 @@ class Workflow(unittest.TestCase):
 
 class Workers(unittest.TestCase):
     def test_every_worker_is_awaited_and_keeps_private_logs_and_timings(self):
-        root = Path(self.enterContext(tempfile.TemporaryDirectory()))
-        calls = []
+        for timing in (False, True):
+            with self.subTest(timing=timing), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                calls = []
 
-        def run(argv, *, env, stdout, **_kwargs):
-            calls.append((argv[-1], env))
-            stdout.write(f"failure context {argv[-1]}\n")
-            return types.SimpleNamespace(returncode=int(argv[-1] == "1"))
+                def run(argv, *, env, stdout, calls=calls, **_kwargs):
+                    calls.append((argv[-1], env))
+                    stdout.write(f"failure context {argv[-1]}\n")
+                    return types.SimpleNamespace(returncode=int(argv[-1] == "1"))
 
-        out = io.StringIO()
-        with (
-            mock.patch.dict(os.environ, {"INTEGRATION_TIMING_DIR": str(root)}),
-            mock.patch.object(gate.run_tests.subprocess, "run", side_effect=run),
-            contextlib.redirect_stdout(out),
-        ):
-            self.assertEqual(gate.parallel("1", ["1", "2"]), 1)
-        self.assertEqual(sorted(label for label, _ in calls), ["1", "2"])
-        paths = [env["RUN_TESTS_DURATIONS"] for _, env in calls]
-        self.assertEqual(len(set(paths)), 2)
-        for label in ("1", "2"):
-            self.assertIn(f"failure context {label}", out.getvalue())
-            self.assertTrue((root / f"shard-{label}/worker.log").is_file())
+                out = io.StringIO()
+                with (
+                    mock.patch.dict(os.environ),
+                    mock.patch.object(gate.run_tests.subprocess, "run", side_effect=run),
+                    contextlib.redirect_stdout(out),
+                ):
+                    os.environ.pop("INTEGRATION_TIMING_DIR", None)
+                    if timing:
+                        os.environ["INTEGRATION_TIMING_DIR"] = str(root)
+                    self.assertEqual(gate.parallel("1", ["1", "2"]), 1)
+                self.assertEqual(sorted(label for label, _ in calls), ["1", "2"])
+                paths = [env["RUN_TESTS_DURATIONS"] for _, env in calls]
+                self.assertEqual(len(set(paths)), 2)
+                for label, env in calls:
+                    self.assertIn(f"failure context {label}", out.getvalue())
+                    if timing:
+                        target = root / f"shard-{label}"
+                        self.assertEqual(env["INTEGRATION_TIMING_DIR"], str(target))
+                        self.assertTrue((target / "worker.log").is_file())
+                    else:
+                        self.assertFalse("INTEGRATION_TIMING_DIR" in env)
 
     def test_a_launch_error_fails_without_abandoning_other_workers(self):
         root = Path(self.enterContext(tempfile.TemporaryDirectory()))
