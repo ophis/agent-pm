@@ -44,6 +44,7 @@ from agent_pm.session.engine.types import (
 from agent_pm.utils import (
     LOCAL_ENV_VARS,
     STATE,
+    drop_stale,
     environment_ok,
     number,
     resume_command,
@@ -428,7 +429,14 @@ class _StoreOperation:
     def load(self, workdir: str, sid: str) -> SessionState | None:
         path = self._path(workdir, sid)
         data = self._read(path)
-        return None if data is None else self._validated_state(path, data, workdir, sid)
+        if data is None:
+            return None
+        state = self._validated_state(path, data, workdir, sid)
+        try:
+            os.utime(path, follow_symlinks=False)
+        except OSError as error:
+            print(f"codex recovery: cannot renew {path}: {error}", file=sys.stderr)
+        return state
 
     def read(self, path: str) -> SessionState | None:
         data = self._read(path)
@@ -553,6 +561,8 @@ class SessionStore:
         operation.validate_for_save(state)
         operation.directory(create=True)
         operation.write(state, exclusive=True)
+        for error in drop_stale(operation.root):
+            print(f"codex recovery: {error}", file=sys.stderr)
         return state
 
     def load(self, workdir: str, sid: object) -> SessionState | None:

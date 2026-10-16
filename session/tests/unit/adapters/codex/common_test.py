@@ -2,6 +2,7 @@
 
 import contextlib
 import dataclasses
+import errno
 import io
 import json
 import os
@@ -1026,7 +1027,85 @@ class SnapshotEnvTest(Base):
                 self.assertEqual(str(caught.exception), "invalid Codex recovery snapshot env")
 
 
+def aged(path, days: float) -> float:
+    when = time.time() - days * 86400
+    os.utime(path, (when, when))
+    return when
+
+
 class StoreRootTest(Base):
+    def test_a_save_drops_state_unused_for_30_days(self):
+        state = self.prepare()
+        store = Path(SessionStore().root)
+        kept = {path.name for path in store.iterdir()}
+        for name, days in (("old.json", 31), ("young.json", 29)):
+            (store / name).touch()
+            aged(store / name, days)
+        SessionStore().save(replace(state, sid="saved"))
+        left = {path.name for path in store.iterdir()}
+        self.assertEqual(len(left - kept - {"young.json"}), 1)
+        self.assertNotIn("old.json", left)
+        self.assertLessEqual(kept | {"young.json"}, left)
+
+    def test_a_cleanup_error_is_one_line_and_the_state_is_saved(self):
+        state = self.prepare()
+        old = Path(SessionStore().root) / "old.json"
+        old.touch()
+        aged(old, 31)
+        refused = OSError(errno.EPERM, "refused", str(old))
+        real = os.unlink
+
+        def unlink(path, *args, **kwargs):
+            if str(path) == str(old):
+                raise refused
+            real(path, *args, **kwargs)
+
+        with (
+            mock.patch("os.unlink", side_effect=unlink),
+            contextlib.redirect_stderr(io.StringIO()) as err,
+        ):
+            saved = SessionStore().save(replace(state, sid="saved"))
+        self.assertEqual(err.getvalue(), f"codex recovery: {refused}\n")
+        self.assertEqual(SessionStore().load(saved.workdir, saved.sid), saved)
+
+    def test_a_load_renews_its_state_so_the_next_save_keeps_it(self):
+        state = self.prepare()
+        (path,) = Path(SessionStore().root).iterdir()
+        loads = {
+            "store": lambda: SessionStore().load(state.workdir, state.sid),
+            "resume": lambda: self.common.load(state.workdir, state.sid),
+        }
+        for name, load in loads.items():
+            with self.subTest(load=name):
+                old = aged(path, 29)
+                self.assertEqual(load(), state)
+                self.assertGreater(path.stat().st_mtime, old + 28 * 86400)
+        aged(path, 26)
+        SessionStore().save(replace(state, sid="saved"))
+        self.assertTrue(path.exists())
+
+    def test_a_bad_or_missing_state_is_not_renewed(self):
+        state = self.prepare()
+        (path,) = Path(SessionStore().root).iterdir()
+        path.write_text("{}")
+        old = aged(path, 29)
+        with self.assertRaises(RecoveryError):
+            SessionStore().load(state.workdir, state.sid)
+        self.assertEqual(path.stat().st_mtime, old)
+        self.assertIsNone(SessionStore().load(state.workdir, "other"))
+        self.assertEqual([*Path(SessionStore().root).iterdir()], [path])
+
+    def test_a_renew_error_still_loads_the_state(self):
+        state = self.prepare()
+        (path,) = Path(SessionStore().root).iterdir()
+        refused = OSError(errno.EPERM, "refused")
+        with (
+            mock.patch("os.utime", side_effect=refused),
+            contextlib.redirect_stderr(io.StringIO()) as err,
+        ):
+            self.assertEqual(SessionStore().load(state.workdir, state.sid), state)
+        self.assertEqual(err.getvalue(), f"codex recovery: cannot renew {path}: {refused}\n")
+
     def test_records_live_in_sessions_codex_under_the_state_directory(self):
         state = self.prepare()
         store = self.home / ".agent-pm" / "sessions" / "codex"
@@ -1235,6 +1314,13 @@ class ResumeMainTest(Base):
                 [store or self.store, str(self.work), self.spec.sid, native]
             )
         return code, execvpe, chdir, stderr.getvalue()
+
+    def test_main_renews_the_state_it_resumes(self):
+        self.bound()
+        (path,) = Path(self.store).iterdir()
+        old = aged(path, 29)
+        self.assertEqual(self.run_main()[0], 0)
+        self.assertGreater(path.stat().st_mtime, old + 28 * 86400)
 
     def test_main_execs_the_stored_resume_with_the_saved_env(self):
         self.bound()

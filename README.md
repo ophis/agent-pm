@@ -267,9 +267,9 @@ agent-pm keeps its state in its state root, `~/.agent-pm/`. `work/` and `logs/` 
 | `logs/runs.jsonl` | the router: rows over 7 days old, except each issue's latest run | never ([Operating](#operating)) |
 | `logs/orchestrator.jsonl` | nobody | any time; keep `logs/` ([Setup](#setup) step 6) |
 | `logs/router.lock` | nobody | while no router runs |
-| `sessions/` | nobody | an entry once its session ended and you won't resume it |
+| `sessions/` | saving a client session's state: an entry not saved or resumed for 30 days | an entry once its session ended and you won't resume it |
 | `tui/<name>/` | closing or stopping the session | no: closing the session removes it; a `<name>.lock` while no session of that name starts or closes |
-| `workers/<sid>/` | nobody | once you won't restart or resume the worker |
+| `workers/<sid>/` | each `agent-pm-session` start, restart or resume that launches a worker's client: a sid whose `worker.json` is over 30 days old, that no `by-name/` entry names and no worker lock holds | once you won't restart or resume the worker |
 | `managers/<name>/` | `agent-pm-crew forget` drops an entry; `events` rotates to `events.1` past 1 MiB | while no manager holds it; its Roster is lost |
 | `adhoc/` | nobody | a finished run's folder |
 | `probe/`, `bin/` | nobody | any time; `ctmux --install` restores `bin/` |
