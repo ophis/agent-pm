@@ -5,7 +5,8 @@ import os
 import sys
 from pathlib import Path
 
-from agent_pm.session import Activity, Blocked, Exited, Launch, SessionStatusLog, TurnEnd
+from agent_pm.session import Exited, Launch, SessionStatusLog, TurnEnd
+from agent_pm.session.engine.types import Activity, Blocked
 from agent_pm.session.runtimes import tui
 
 from session.tests import live_tmux

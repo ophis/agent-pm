@@ -4,8 +4,9 @@ import os
 import signal
 from unittest import mock
 
-from agent_pm.session import Host, InteractiveProcess, SessionError, Showable
+from agent_pm.session import Host, SessionError, Showable
 from agent_pm.session.engine.types import Launch, Liveness, SessionRow, StatusState
+from agent_pm.session.hosts.base import InteractiveProcess
 
 
 class MemoryTerminal(InteractiveProcess):

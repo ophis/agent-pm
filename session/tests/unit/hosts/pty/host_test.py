@@ -12,11 +12,11 @@ import time
 import unittest
 from unittest import mock
 
-from agent_pm.session import ConfigError, Launch, SessionError, Showable, StatusState
+from agent_pm.session import ConfigError, Launch, SessionError, Showable
 from agent_pm.session.hosts.base import tui_lock
 from agent_pm.session.hosts.pty import PtyHost, state
 from agent_pm.session.hosts.pty.host import SUPERVISOR
-from agent_pm.utils import Record, inode_lock
+from agent_pm.utils import Record, StatusState, inode_lock
 
 from session.tests.case import Case
 

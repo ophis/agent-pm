@@ -9,20 +9,10 @@ import tomllib
 from types import MappingProxyType
 from unittest import mock
 
-from agent_pm.session import (
-    SIGNALS,
-    ConfigError,
-    Host,
-    Hosts,
-    Interactive,
-    InteractiveProcess,
-    Liveness,
-    Process,
-    SessionError,
-    Showable,
-    StatusState,
-)
-from agent_pm.utils import Status
+from agent_pm.session import SIGNALS, ConfigError, Host, Process, SessionError, Showable
+from agent_pm.session.engine.types import Hosts, Liveness
+from agent_pm.session.hosts.base import Interactive, InteractiveProcess
+from agent_pm.utils import Status, StatusState
 
 from session.tests.case import Case
 

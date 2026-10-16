@@ -12,9 +12,9 @@ from dataclasses import replace
 from pathlib import Path
 from unittest import mock
 
-from agent_pm.session import ConfigError, Host, InteractiveProcess, Launch, SessionError, Showable
+from agent_pm.session import ConfigError, Host, Launch, SessionError, Showable
 from agent_pm.session.engine.types import Key, KeyPress, Paste, SessionRow
-from agent_pm.session.hosts.base import SIGNALS
+from agent_pm.session.hosts.base import SIGNALS, InteractiveProcess
 from agent_pm.session.hosts.tmux import TmuxHost, hidden, transport, types
 from agent_pm.session.hosts.tmux.host import TmuxProcess, TmuxTerminal
 from agent_pm.session.hosts.tmux.transport import (

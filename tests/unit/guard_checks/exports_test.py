@@ -215,7 +215,7 @@ class EventObjectExports(Sample):
 
 class DelegateObjectExports(Sample):
     PINNED = {
-        "agent_pm.delegate": ["read_config", "module_roots"],
+        "agent_pm.delegate": [],
         "agent_pm.delegate.composer": [],
     }
     UNRECOGNISED = {
@@ -260,7 +260,7 @@ class DelegateObjectExports(Sample):
                     1,
                 )
 
-    def test_runtime_resource_helpers_are_authorized_only_on_delegate(self):
+    def test_runtime_resource_helpers_are_not_exported(self):
         self.assertEqual(
             len(
                 self.exports(
@@ -276,8 +276,7 @@ class DelegateObjectExports(Sample):
             rel = "delegate/src/" + package.replace(".", "/") + "/__init__.py"
             self.assertIn(f"{rel}: no literal __all__", exports.object_exports(root))
 
-    def test_an_allowlisted_function_that_became_a_constant_is_stale(self):
-        stale = "allowlisted but not an exported function or value (FR-44)"
+    def test_delegate_runtime_helpers_are_rejected(self):
         rel = "delegate/src/agent_pm/delegate/__init__.py"
         sample = "read_config = 'literal'\ndef module_roots(): pass\n"
         sample += "__all__ = ['read_config', 'module_roots']\n"
@@ -286,7 +285,7 @@ class DelegateObjectExports(Sample):
             for item in exports.object_exports(self.tree({rel: sample}))
             if item.startswith((rel + ":", "agent_pm.delegate:"))
         ]
-        self.assertEqual(found, [f"agent_pm.delegate: read_config: {stale}"])
+        self.assertEqual(found, [f"{rel}: __all__ exports function module_roots (FR-44)"])
 
     def test_literals_and_constant_names_pass_but_callables_and_constructor_calls_fail(self):
         literals = (
@@ -366,7 +365,7 @@ class ObjectExports(Sample):
     SESSION = f"session/{PKG}/session/"
     INIT = SESSION + "__init__.py"
     EXTENSION = SESSION + "extension.py"
-    ENTRY_EXPORTS = ("read_config", "SESSION_NAME", "SESSION_NAME_RULE")
+    ENTRY_EXPORTS = ("SESSION_NAME", "SESSION_NAME_RULE")
     BAD = ("OS", "Shut", "runtimes", "f", "g", "LAMBDA", "Ghost")
     BAD_SOURCE = (
         "import os as OS\n"

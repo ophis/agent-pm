@@ -11,17 +11,9 @@ import shutil
 import uuid
 from dataclasses import asdict
 
-from agent_pm.delegate import (
-    Begun,
-    ConfigError,
-    Delegate,
-    Finished,
-    Outcome,
-    Progress,
-    Result,
-)
+from agent_pm.delegate import ConfigError, Delegate, Outcome, Progress
 from agent_pm.delegate.composer import RunConfig
-from agent_pm.delegate.engine.types import Layout
+from agent_pm.delegate.engine.types import Begun, Finished, Layout, Result
 from agent_pm.session import NotShowable, SessionStatus
 from agent_pm.utils import Record, Status, save
 

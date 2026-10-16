@@ -4,11 +4,11 @@ import os
 import unittest
 from dataclasses import fields
 
-from agent_pm.delegate import ConfigError, Finished, Spec
+from agent_pm.delegate import ConfigError, Spec
 from agent_pm.delegate.composer import Composer
 from agent_pm.delegate.engine.drivers import AgentDriver, Driver, InstructionDriver
 from agent_pm.delegate.engine.plan import plan
-from agent_pm.delegate.engine.types import DriverSpec, Instruction
+from agent_pm.delegate.engine.types import DriverSpec, Finished, Instruction
 from agent_pm.session import Access, IdleTimeout, Session
 from agent_pm.session import ConfigError as SessionConfigError
 from agent_pm.session import Spec as StartSpec

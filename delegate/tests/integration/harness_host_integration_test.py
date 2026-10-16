@@ -32,7 +32,8 @@ WAIT = 60  # seconds: a run
 KEPT = f'implementation = "{__name__}:KeptLaunch"\n'
 # HarnessDelegate configures the shared session classes: in a child, so no test does in-process.
 INJECTED = """import sys
-from agent_pm.delegate import HarnessDelegate, Spec, read_config
+from agent_pm.delegate import HarnessDelegate, Spec
+from agent_pm.delegate.engine.config import read_config
 from agent_pm.session import Session
 role, work, sid, events, cwd = sys.argv[1:]
 Session.configure_from(read_config())

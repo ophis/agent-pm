@@ -5,8 +5,8 @@ Host to display on.
 import inspect
 import unittest
 
-from agent_pm.session import Hosts, Mode, NotShowable, Session, SessionError, Showable, Usage
-from agent_pm.session.engine.types import Access, ConfigError, Exited, Reply, Spec, TurnEnd
+from agent_pm.session import Mode, NotShowable, Session, SessionError, Showable, Usage
+from agent_pm.session.engine.types import Access, ConfigError, Exited, Hosts, Reply, Spec, TurnEnd
 
 from session.tests.case import Case
 from session.tests.fakes.host import FakeHost

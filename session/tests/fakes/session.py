@@ -9,7 +9,7 @@ from __future__ import annotations
 import re
 import uuid
 
-from agent_pm.session import NotShowable, Session, StatusState
+from agent_pm.session import NotShowable, Session
 from agent_pm.session.engine.types import (
     ConfigError,
     Exited,
@@ -22,7 +22,7 @@ from agent_pm.session.engine.types import (
     SessionStatus,
     TurnEnd,
 )
-from agent_pm.utils import Status
+from agent_pm.utils import Status, StatusState
 
 from session.tests.fakes.host import FakeHost
 

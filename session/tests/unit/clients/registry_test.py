@@ -21,12 +21,13 @@ from typing import Any
 from unittest import mock
 
 import agent_pm.session.hosts.tmux
-from agent_pm.session import Access, Host, Hosts, Spec, read_config
+from agent_pm.session import Access, Host, Spec
 from agent_pm.session.clients import registry
 from agent_pm.session.clients.base import Client
 from agent_pm.session.clients.claude import ClaudeClient
+from agent_pm.session.engine.config import read_config
 from agent_pm.session.engine.hosted_session import HostedSession
-from agent_pm.session.engine.types import ConfigError, TuiSettings
+from agent_pm.session.engine.types import ConfigError, Hosts, TuiSettings
 from agent_pm.utils import load_class
 
 from session.tests import fake_client

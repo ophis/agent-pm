@@ -9,8 +9,8 @@ import time
 from pathlib import Path
 from unittest import mock
 
-from agent_pm.session import KeyPress, Launch, SessionError
-from agent_pm.session.engine.types import Key, Paste
+from agent_pm.session import Launch, SessionError
+from agent_pm.session.engine.types import Key, KeyPress, Paste
 from agent_pm.session.hosts.tmux import TmuxHost
 
 from session.tests import live_tmux

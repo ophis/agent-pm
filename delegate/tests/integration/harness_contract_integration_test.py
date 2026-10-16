@@ -4,9 +4,10 @@ import json
 import subprocess
 import sys
 
-from agent_pm.delegate import Begun, Spec
+from agent_pm.delegate import Spec
 from agent_pm.delegate.composer.prompt import RESUME
 from agent_pm.delegate.engine.harness_delegate import HarnessDelegate
+from agent_pm.delegate.engine.types import Begun
 from agent_pm.session import Exited, NotShowable, Reply
 
 from delegate.tests.case import REPO, child_env

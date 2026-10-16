@@ -81,6 +81,7 @@ type = "forbidden"
 source_modules = ["agent_pm.linear_orchestrator", "orchestrator_tests"]
 forbidden_modules = ["agent_pm.delegate.*", "agent_pm.session.*", "agent_pm.utils.*"]
 allow_indirect_imports = true
+ignore_imports = ["orchestrator_tests.unit.engine.writeback_test -> agent_pm.delegate.engine.types"]
 
 [[tool.importlinter.contracts]]
 name = "linear_orchestrator reaches session only through delegate"
@@ -118,6 +119,13 @@ type = "forbidden"
 source_modules = ["agent_pm.delegate", "delegate.tests"]
 forbidden_modules = ["agent_pm.session.*", "agent_pm.utils.*"]
 allow_indirect_imports = true
+ignore_imports = [
+    "delegate.tests.case -> agent_pm.session.engine.config",
+    "delegate.tests.unit.engine.config_test -> agent_pm.session.engine.config",
+    "delegate.tests.fakes.harness_session -> agent_pm.session.engine.types",
+    "delegate.tests.unit.engine.harness_delegate_test -> agent_pm.session.engine.types",
+    "delegate.tests.unit.engine.runner_test -> agent_pm.session.engine.types",
+]
 
 [[tool.importlinter.contracts]]
 name = "delegate tests respect layer ownership"

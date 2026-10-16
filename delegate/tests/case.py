@@ -10,7 +10,8 @@ from unittest import mock
 
 import agent_pm
 from agent_pm.delegate.engine.drivers import AgentDriver
-from agent_pm.session import Session, read_config
+from agent_pm.session import Session
+from agent_pm.session.engine.config import read_config
 
 from session.tests.case import configured
 from utils.tests.sandbox import clean_env, project_roots
