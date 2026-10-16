@@ -231,7 +231,7 @@ class PtyTerminal(PtyProcess, Terminal):
         self._input({"keys": data.hex()})
         self._pasted = False
 
-    def _input(self, request: dict) -> None:
+    def _input(self, request: dict) -> None:  # pragma: no cover
         if self._control is None or not self.alive():
             raise SessionError(f"tui session {self.name} is not running")
         try:
@@ -352,7 +352,7 @@ class PtyHost(Host):
         if not isinstance(name, str) or not NAME.fullmatch(name):
             raise ConfigError(f"name must match [A-Za-z0-9_-]+, got {name!r:.80}")
 
-    def _start(
+    def _start(  # pragma: no cover
         self, kind, name, launch: Launch, *, display, events, record, metadata, env
     ) -> tuple[str, dict]:
         self.validate(name, launch, display=display)
@@ -411,7 +411,7 @@ class PtyHost(Host):
             raise
         return folder, meta
 
-    def _supervise(self, folder: str, events: str | None) -> subprocess.Popen:
+    def _supervise(self, folder: str, events: str | None) -> subprocess.Popen:  # pragma: no cover
         roots = module_roots(sys.modules[__name__], agent_pm.utils)
         with open(os.path.join(folder, state.OUTPUT), "ab") as output:
             supervisor = subprocess.Popen(

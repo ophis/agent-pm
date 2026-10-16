@@ -86,3 +86,23 @@ OPTION_TUPLES_ALLOWED = {
 
 
 COMMAND_SRC = (SESSION_SRC,)
+
+
+NO_COVER_ALLOWED = {
+    (
+        f"{SESSION_SRC}hosts/pty/supervisor.py",
+        "main",
+    ): "The pty supervisor process: opens the pty, binds the input socket, spawns the runner.",
+    (
+        f"{SESSION_SRC}hosts/pty/host.py",
+        "PtyTerminal._input",
+    ): "Connects to the live supervisor's input socket.",
+    (
+        f"{SESSION_SRC}hosts/pty/host.py",
+        "PtyHost._start",
+    ): "Waits for the spawned supervisor to write its pid and the runner to start.",
+    (
+        f"{SESSION_SRC}hosts/pty/host.py",
+        "PtyHost._supervise",
+    ): "Spawns the pty supervisor process.",
+}

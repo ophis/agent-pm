@@ -100,7 +100,7 @@ class Supervisor:
                 connection.sendall(json.dumps(reply).encode() + b"\n")
 
 
-def main(folder: str, events: str) -> None:
+def main(folder: str, events: str) -> None:  # pragma: no cover
     meta = state.meta(folder)
     directory = os.open(folder, os.O_RDONLY | os.O_DIRECTORY)
     master, slave = os.openpty()
