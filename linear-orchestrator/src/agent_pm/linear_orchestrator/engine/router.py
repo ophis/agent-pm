@@ -109,7 +109,12 @@ Q_RECHECK = (
     "query($i: String!) { issue(id: $i) { state { id } assignee { id email } project { id name } "
     "labels { nodes { id name parent { id } } } } }"
 )
-Q_HISTORY = "query($i: String!) { issue(id: $i) { " + ops.HISTORY + " } }"
+Q_HISTORY = (
+    "query($i: String!, $after: String) { issue(id: $i) { "
+    "history(first: 250, after: $after, orderBy: createdAt) { "
+    "nodes { createdAt actorId fromStateId toStateId } pageInfo { hasNextPage endCursor } } } }"
+)
+Q_VIEWER = "query { viewer { id } }"
 
 
 @dataclass(frozen=True)
@@ -244,6 +249,8 @@ class Board:
         self.say: Callable[..., None] = say or functools.partial(log, "router", dry=dry)
         self.hist, self.ready, self.blocked, self.live, self.statuses = {}, None, {}, set(), {}
         self.status_errors, self.replays = {}, {}
+        self.starts = latest(e for e in entries if e.kind == "start")
+        self.harness_id = None
         self.failures = failures(cfg.runs_log)
         self.label_tasks = {i: task for task, i in cfg.task_labels.items()}
         self.label_clients = {i: client for client, i in cfg.agent_labels.items()}
@@ -293,12 +300,71 @@ class Board:
     def later(self, issue):
         return -self.cfg.stages.get(self.role(issue), 0)
 
-    def last_move(self, issue, state, *, by_user=False):
+    def history(self, issue, *, since=None):
         if issue["id"] not in self.hist:
-            self.hist[issue["id"]] = self.gql(Q_HISTORY, i=issue["id"])["issue"]["history"]["nodes"]
+            self.hist[issue["id"]] = self.gql(Q_HISTORY, i=issue["id"])["issue"]["history"]
+        history = self.hist[issue["id"]]
+        while (
+            since is not None
+            and history["pageInfo"]["hasNextPage"]
+            and (not history["nodes"] or parse_time(history["nodes"][-1]["createdAt"]) > since)
+        ):
+            page = self.gql(Q_HISTORY, i=issue["id"], after=history["pageInfo"]["endCursor"])[
+                "issue"
+            ]["history"]
+            history["nodes"].extend(page["nodes"])
+            history["pageInfo"] = page["pageInfo"]
+        return history["nodes"]
+
+    def last_move(self, issue, state, *, by_user=False):
         return ops.last_move(
-            self.hist[issue["id"]], {self.states[state]}, self.humans if by_user else None
+            self.history(issue), {self.states[state]}, self.humans if by_user else None
         )
+
+    def pinned_client(self, issue):
+        start = self.starts.get(issue["identifier"])
+        if start is None:
+            return None
+        if self.harness_id is None:
+            self.harness_id = self.gql(Q_VIEWER)["viewer"]["id"]
+        automated = {self.harness_id, *self.roles}
+        moved = ops.last_move(
+            [
+                n
+                for n in self.history(issue, since=start.ts)
+                if n["actorId"] and n["actorId"] not in automated
+            ],
+            {self.states["todo"]},
+        )
+        return start.client if moved is None or moved <= start.ts else None
+
+    def client_pinned(self, spec):
+        if self.dry or not self.cfg.agent_label_group:
+            return
+        if spec.mode != "resume" and spec.client_source != "pinned":
+            return
+        role = config.role_for(self.cfg.roles, spec.assignee)
+        if role is None:
+            return
+        try:
+            current = self.gql(Q_RECHECK, i=spec.uuid)["issue"]
+            selected, _, error = client_for(
+                current["labels"]["nodes"],
+                self.cfg.agent_label_group,
+                self.label_clients,
+                self.cfg.roles[role].run.client,
+            )
+            if error:
+                selected = "invalid"
+            if selected != spec.client:
+                self.say(
+                    "client-pinned", spec.issue, sid=spec.sid, client=spec.client, label=selected
+                )
+                writeback.client_pinned(
+                    writeback.for_run(self.cfg, role, self.gql, spec), spec.client, selected
+                )
+        except (LinearError, Unavailable, OSError, subprocess.SubprocessError) as error:
+            self.say("client-pinned-error", spec.issue, sid=spec.sid, error=one_line(error))
 
     def attempts(self, issue):
         tried = [*self.entries, *self.failures]
@@ -524,9 +590,15 @@ class Board:
             self.cfg.roles[role].tasks,
             self.label_tasks,
         )
-        client, source, client_error = client_for(
-            labels, self.cfg.agent_label_group, self.label_clients, self.cfg.roles[role].run.client
-        )
+        if pinned := self.pinned_client(issue):
+            client, source, client_error = pinned, "pinned", None
+        else:
+            client, source, client_error = client_for(
+                labels,
+                self.cfg.agent_label_group,
+                self.label_clients,
+                self.cfg.roles[role].run.client,
+            )
         if self.dry:
             self.say("preview", ident, client=client or "invalid", client_source=source)
         if comments := [error for error in (task_error, client_error) if error]:
@@ -926,6 +998,7 @@ def tick(opts, cfg, gql, *, start, keychain, clock=datetime.now, hour=None, laun
             if spec is None or dry:
                 return 0
             walk.write()  # the outer logs past the walk
+            board.client_pinned(spec)
             return start_run(start, begin(cfg, spec), walk)
 
 
@@ -978,6 +1051,7 @@ def run_issue(opts, cfg, gql, start, *, keychain, clock=datetime.now, launch_sid
             )
         if dry:
             return 0
+        board.client_pinned(spec)
         return start(begin(cfg, spec))
 
 

@@ -232,6 +232,7 @@ class FakeLinear:
         self.issues = {i["identifier"]: i for i in issues}
         self.history = {} if history is None else history
         self.mutations, self.queries, self.services = [], [], []
+        self.comments = {}
         self.todo_error = False
         self.unreadable = set()
         self.refuse = set()
@@ -257,6 +258,10 @@ class FakeLinear:
         raise AssertionError(query)
 
     def _identity(self, query, v):
+        if query == "query { viewer { id } }":
+            return {"viewer": {"id": "harness-viewer"}}
+        if query == ops.Q_COMMENT:
+            return {"comment": self.comments.get(v["c"])}
         if query in (related.Q_SEARCH, related.Q_SEARCH_IDS, related.Q_IDS):
             return {"searchIssues": {"nodes": []}, "issues": {"nodes": []}}
         if query == ops.Q_TEAM:
@@ -278,7 +283,19 @@ class FakeLinear:
         if "attachments" in query:
             return {"issue": {"attachments": {"nodes": []}}}
         if "history" in query:
-            return {"issue": {"history": {"nodes": self.history.get(v["i"], [])}}}
+            found = sorted(self.history.get(v["i"], []), key=lambda n: n["createdAt"], reverse=True)
+            start = int(v.get("after") or 0)
+            return {
+                "issue": {
+                    "history": {
+                        "nodes": found[start : start + 250],
+                        "pageInfo": {
+                            "hasNextPage": start + 250 < len(found),
+                            "endCursor": str(start + 250),
+                        },
+                    }
+                }
+            }
         if query == ops.Q_ISSUE_STATE:
             issue = self.issues[self.ids.get(v["i"], v["i"])]
             return {"issue": {"state": {"id": STATES[issue["state"]]}}}
@@ -305,6 +322,12 @@ class FakeLinear:
             issue.setdefault("subscribers", []).append(v["e"])
         elif "commentCreate" in query:
             issue.setdefault("comments", []).append(v["b"])
+            if "c" in v:
+                self.comments[v["c"]] = {
+                    "body": v["b"],
+                    "issue": {"id": v["i"]},
+                    "user": {"isMe": True},
+                }
         elif v["i"] in self.refuse:
             return {"issueUpdate": {"success": False}}
         else:
