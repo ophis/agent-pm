@@ -178,6 +178,32 @@ class Detach(Base):
                     (mode, SID, self.events, self.work, self.out),
                 )
 
+    def test_detach_without_mode_is_tui_and_a_name_is_the_specs(self):
+        for extra, want in (((), ("tui", None)), (("--name", "r1"), ("tui", "r1"))):
+            with self.subTest(extra=extra):
+                Detaching.made = []
+                self.assertEqual(self.detaches(*extra)[0], 0)
+                ((_, spec, _),) = Detaching.made
+                self.assertEqual((spec.mode, spec.name), want)
+
+    def test_a_name_names_the_tui_and_its_harness(self):
+        self.detaching = False
+        for mode, agent in (("headless", None), ("tui", "r1")):
+            with self.subTest(mode=mode):
+                code, out, err = self.detaches("--mode", mode, "--name", "r1", "--dry-run")
+                self.assertEqual(code, 0, err)
+                self.assertEqual(
+                    json.loads(out)["sessions"], {"agent": agent, "harness": "r1-drive"}
+                )
+
+    def test_a_name_breaking_the_session_name_rule_exits_2_and_constructs_nothing(self):
+        for name in ("none", "a b", "a.b", ""):
+            with self.subTest(name=name):
+                code, out, err = self.detaches("--name", name)
+                self.assertEqual((code, out), (2, ""))
+                self.assertIn("want [A-Za-z0-9_-]+ but not none", err)
+        self.assertEqual(Detaching.made, [])
+
     def test_detach_events_are_the_given_file_else_the_launchers(self):
         for extra, want in (((), "launcher/events"), (("--events", self.events), self.events)):
             with self.subTest(extra=extra):
@@ -329,6 +355,7 @@ class Harnessed(HarnessCase):
 
         argv = ["run", "--role", "dummy-tester", "--task", "echo", "--input", input]
         argv += ["--out", os.path.join(self.work, "out.md"), "--workdir", self.work]
+        argv += ["--mode", "headless"]
         out, err = io.StringIO(), io.StringIO()
         with (
             redirect_stdout(out),
@@ -674,11 +701,12 @@ class List(Base):
         self.assertNotIn("<tasks>", out)
         self.assertEqual(os.listdir(self.agent_pm), [])
 
-    def test_list_abbreviated_is_list_and_takes_no_other_option(self):
-        self.assertEqual(self.cli("run", "--li"), self.cli("run", "--list"))
+    def test_list_takes_no_abbreviation_and_no_other_option(self):
+        code, out, err = self.cli("run", "--li")
+        self.assertEqual((code, out), (2, ""))
+        self.assertIn("unrecognized arguments: --li", err)
         for argv, extra in (
             (["--list", "--role", "pm"], "--role"),
-            (["--li", "--rol", "pm"], "--rol"),
             (["--list", "--dry-run"], "--dry-run"),
             (["--list", "--client=fake"], "--client=fake"),
         ):
@@ -781,12 +809,27 @@ class Usage(Base):
             (("--client=fake",), "--client given twice"),
             (("--out", "b.md"), "--out given twice"),
             (("--workdir", "b"), "--workdir given twice"),
+            (("--role", "dummy-tester"), "--role given twice"),
+            (("--mode", "tui", "--mode", "headless"), "--mode given twice"),
+            (("--name", "a", "--name", "b"), "--name given twice"),
         ):
             with self.subTest(extra=extra):
                 code, out, err = self.runs(*extra)
                 self.assertEqual((code, out), (2, ""))
                 self.assertIn(error, err)
         self.assertEqual((self.launches(), os.path.exists(self.work)), ([], False))
+
+    def test_an_abbreviated_option_is_a_usage_error(self):
+        for extra in (("--mod", "headless"), ("--detach", "--rol", "x")):
+            with self.subTest(extra=extra):
+                code, out, err = self.runs(*extra)
+                self.assertEqual((code, out), (2, ""))
+                self.assertIn(f"unrecognized arguments: {extra[-2]}", err)
+        self.assertEqual((self.launches(), os.path.exists(self.work)), ([], False))
+
+    def test_a_run_without_mode_or_detach_is_headless(self):
+        code, out, err = self.runs("--dry-run")
+        self.assertEqual((code, json.loads(out)["mode"]), (0, "headless"), err)
 
     def test_a_config_error_exits_2_before_anything_starts(self):
         cases = [
