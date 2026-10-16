@@ -2,9 +2,9 @@
 alive while api.live holds its harness name `agent-pm-<role>-<ID>`; a constructed run records
 (role, spec, options) in api.constructed (construct_error raises), its detach in api.detached
 (detach_error raises) with runs.jsonl's text then in api.runs_at_detach, and puts its name in
-api.live; its outcome is api.outcomes' for its issue; check_tui records its (display, events) in
-api.tui_checks (tui_error raises); checkouts(W) is api.checkouts' for W, asked logged in
-api.asked; clean(W) appends W to api.cleaned.
+api.live; its Record shows its display option; its outcome is api.outcomes' for its issue;
+check_tui records its (display, events) in api.tui_checks (tui_error raises); checkouts(W) is
+api.checkouts' for W, asked logged in api.asked; clean(W) appends W to api.cleaned.
 """
 
 import os
@@ -150,7 +150,7 @@ def provider(api, cfg):
                 self.spec.workdir,
                 tuple((outer or {}).get("ctl", ("agent-pm-delegate",))),
                 tuple((outer or {}).get("resume", ("agent-pm-delegate", "resume", issue))),
-                None,
+                api.constructed[-1][2].get("display"),
                 None,
             )
 

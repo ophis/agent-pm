@@ -5,6 +5,7 @@ import json
 import os
 import plistlib
 from contextlib import redirect_stderr, redirect_stdout
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest import mock
@@ -162,6 +163,28 @@ class Queries(RunCase):
                 self.assertEqual([status.name for status in statuses], ["TASK-2", "TASK-1"])
                 self.assertTrue(all(status.alive for status in statuses))
                 self.assertEqual([status.attach for status in statuses], [None, None])
+
+    def test_status_carries_the_delegates_hidden_and_show_hide_reach_the_delegate(self):
+        self.start()
+        for hidden in (True, False):
+            with self.subTest(hidden=hidden):
+
+                def status(view, hidden=hidden):
+                    return replace(FakeDelegate.status(view), hidden=hidden)
+
+                with mock.patch.object(ReadyDelegate, "status", status):
+                    result, output, errors = _call(["status", "TASK-1"])
+                self.assertEqual((result, errors), (0, ""))
+                self.assertEqual(Status.parse(output).hidden, hidden)
+        calls = []
+        with (
+            mock.patch.object(ReadyDelegate, "show", lambda view: calls.append(("show", view))),
+            mock.patch.object(ReadyDelegate, "hide", lambda view: calls.append(("hide", view))),
+        ):
+            self.assertEqual([_call([c, "TASK-1"]) for c in ("show", "hide")], [(0, "", "")] * 2)
+        self.assertEqual([command for command, _ in calls], ["show", "hide"])
+        workdir = self.cfg.issue_workdir("TASK-1")
+        self.assertEqual([view.workdir for _, view in calls], [workdir, workdir])
 
     def test_live_completed_and_interrupted_resume_keep_record_and_start_once(self):
         _, record = self.start()
