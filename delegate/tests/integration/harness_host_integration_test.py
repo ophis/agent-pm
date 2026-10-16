@@ -31,13 +31,13 @@ START = mark("start", "echoing")
 WAIT = 60  # seconds: a run
 KEPT = f'implementation = "{__name__}:KeptLaunch"\n'
 # HarnessDelegate configures the shared session classes: in a child, so no test does in-process.
-INJECTED = f"""import sys
-from agent_pm.delegate import Spec
-from agent_pm.delegate.engine.harness_delegate import HarnessDelegate
-from {__name__} import KeptLaunch
+INJECTED = """import sys
+from agent_pm.delegate import HarnessDelegate, Spec, read_config
+from agent_pm.session import Session
 role, work, sid, events, cwd = sys.argv[1:]
+Session.configure_from(read_config())
 spec = Spec("Hello.", work, mode="tui", sid=sid, events=events, cwd=cwd)
-print(HarnessDelegate(role, spec, harness_host=KeptLaunch("fake")).detach().to_line())
+print(HarnessDelegate(role, spec, harness_host=Session.host("fake")).detach().to_line())
 """
 
 

@@ -19,6 +19,22 @@ from agent_pm.manager.engine.types import Held
 from manager.tests.case import PY, Case, child_env
 from utils.tests.sandbox import reap
 
+WAIT = (
+    "import os,pathlib,sys,time\n"
+    "ready,done=map(pathlib.Path,sys.argv[1:])\n"
+    "ready.write_text(str(os.getpid()))\n"
+    "while not done.exists(): time.sleep(.01)"
+)
+SIGNALED = (
+    "import pathlib,signal,sys,time\n"
+    "ready,observed,done=map(pathlib.Path,sys.argv[1:])\n"
+    "def handle(signum,frame): observed.write_text(str(signum))\n"
+    "signal.signal(signal.SIGINT,handle)\n"
+    "signal.signal(signal.SIGTERM,handle)\n"
+    "ready.touch()\n"
+    "while not done.exists(): time.sleep(.01)"
+)
+
 
 def _hold_contender(directory, barrier, release, outcomes):
     barrier.wait(timeout=10)
@@ -35,7 +51,7 @@ class HolderTest(Case):
         self.directory = os.path.join(self.agent_pm, "managers", "mgr")
         self.roster = Roster(self.directory)
 
-    def start(self, script, *options):
+    def start(self, command, *options):
         process = subprocess.Popen(
             (
                 *PY,
@@ -46,11 +62,7 @@ class HolderTest(Case):
                 "mgr",
                 *options,
                 "--",
-                sys.executable,
-                "-I",
-                "-S",
-                "-c",
-                script,
+                *command,
             ),
             env=child_env(),
             stdout=subprocess.PIPE,
@@ -101,12 +113,13 @@ class HolderTest(Case):
                 self.fail(f"{path}: child did not become ready")
             time.sleep(0.01)
 
-    def terminal(self, script):
+    def terminal(self, argv):
+        """argv's program gets the terminal's slave fd as its last argument."""
         master, slave = os.openpty()
         self.addCleanup(os.close, master)
         self.addCleanup(os.close, slave)
         process = subprocess.Popen(
-            (*PY, "-c", f"import os\nos.login_tty({slave})\n{script}"),
+            (*argv, str(slave)),
             env=child_env(),
             start_new_session=True,
             pass_fds=(slave,),
@@ -165,10 +178,7 @@ class HolderTest(Case):
     def test_wrapper_holds_lock_until_child_exits(self):
         ready = Path(self.home, "ready")
         done = Path(self.home, "done")
-        process = self.start(
-            f"import pathlib,time; pathlib.Path({str(ready)!r}).touch(); "
-            f"done=pathlib.Path({str(done)!r})\nwhile not done.exists(): time.sleep(.01)"
-        )
+        process = self.start((sys.executable, "-I", "-S", "-c", WAIT, str(ready), str(done)))
         self.addCleanup(done.touch)
         self.wait_for(ready)
         with self.assertRaises(Held), self.roster.hold("challenger"):
@@ -225,10 +235,7 @@ class HolderTest(Case):
     def test_child_cannot_keep_dead_wrappers_lock(self):
         ready = Path(self.home, "ready")
         done = Path(self.home, "done")
-        process = self.start(
-            f"import os,pathlib,time; pathlib.Path({str(ready)!r}).write_text(str(os.getpid())); "
-            f"done=pathlib.Path({str(done)!r})\nwhile not done.exists(): time.sleep(.01)"
-        )
+        process = self.start((sys.executable, "-I", "-S", "-c", WAIT, str(ready), str(done)))
         self.addCleanup(done.touch)
         self.wait_for(ready, content=True)
         child_pid = int(ready.read_text())
@@ -243,13 +250,10 @@ class HolderTest(Case):
     def test_forced_wrapper_takes_over_without_killing_old_command(self):
         ready = Path(self.home, "ready")
         done = Path(self.home, "done")
-        old = self.start(
-            f"import pathlib,time; pathlib.Path({str(ready)!r}).touch(); "
-            f"done=pathlib.Path({str(done)!r})\nwhile not done.exists(): time.sleep(.01)"
-        )
+        old = self.start((sys.executable, "-I", "-S", "-c", WAIT, str(ready), str(done)))
         self.addCleanup(done.touch)
         self.wait_for(ready)
-        new = self.start("pass", "--force")
+        new = self.start((sys.executable, "-I", "-S", "-c", "pass"), "--force")
         stdout, stderr = new.communicate(timeout=10)
         self.assertEqual((new.returncode, stdout, stderr), (0, "", ""))
         self.assertIsNone(old.poll())
@@ -266,14 +270,16 @@ class HolderTest(Case):
                 observed = Path(self.home, f"signal-{signum}")
                 done = Path(self.home, f"done-{signum}")
                 process = self.start(
-                    "import pathlib,signal,time\n"
-                    f"observed=pathlib.Path({str(observed)!r})\n"
-                    "def handle(signum,frame): observed.write_text(str(signum))\n"
-                    "signal.signal(signal.SIGINT,handle)\n"
-                    "signal.signal(signal.SIGTERM,handle)\n"
-                    f"pathlib.Path({str(ready)!r}).touch()\n"
-                    f"done=pathlib.Path({str(done)!r})\n"
-                    "while not done.exists(): time.sleep(.01)"
+                    (
+                        sys.executable,
+                        "-I",
+                        "-S",
+                        "-c",
+                        SIGNALED,
+                        str(ready),
+                        str(observed),
+                        str(done),
+                    )
                 )
                 self.addCleanup(done.touch)
                 self.wait_for(ready)
@@ -302,23 +308,40 @@ class HolderTest(Case):
         descendant_signal = Path(self.home, "descendant-signal")
         done = Path(self.home, "descendant-done")
         descendant = (
-            "import pathlib,signal,time\n"
-            "def handle(signum,frame):\n"
-            f" pathlib.Path({str(descendant_signal)!r}).write_text(str(signum))\n"
+            "import pathlib,signal,sys,time\n"
+            "ready,observed,done=map(pathlib.Path,sys.argv[1:])\n"
+            "def handle(signum,frame): observed.write_text(str(signum))\n"
             "signal.signal(signal.SIGTERM,handle)\n"
-            f"pathlib.Path({str(ready)!r}).touch()\n"
-            f"done=pathlib.Path({str(done)!r})\n"
+            "ready.touch()\n"
             "while not done.exists(): time.sleep(.01)"
         )
-        process = self.start(
-            "import pathlib,signal,subprocess,time\n"
-            "def handle(signum,frame):\n"
-            f" pathlib.Path({str(manager_signal)!r}).write_text(str(signum))\n"
+        manager = (
+            "import pathlib,signal,subprocess,sys,time\n"
+            "observed,done=map(pathlib.Path,sys.argv[1:3])\n"
+            "def handle(signum,frame): observed.write_text(str(signum))\n"
             "signal.signal(signal.SIGTERM,handle)\n"
-            f"child=subprocess.Popen(({sys.executable!r},'-I','-S','-c',{descendant!r}))\n"
-            f"done=pathlib.Path({str(done)!r})\n"
+            "child=subprocess.Popen(sys.argv[3:])\n"
             "while not done.exists(): time.sleep(.01)\n"
             "child.wait()"
+        )
+        process = self.start(
+            (
+                sys.executable,
+                "-I",
+                "-S",
+                "-c",
+                manager,
+                str(manager_signal),
+                str(done),
+                sys.executable,
+                "-I",
+                "-S",
+                "-c",
+                descendant,
+                str(ready),
+                str(descendant_signal),
+                str(done),
+            )
         )
         self.addCleanup(done.touch)
         self.wait_for(ready)
@@ -339,27 +362,49 @@ class HolderTest(Case):
         group_file = Path(self.home, "terminal-child-group")
         child = (
             "import json,os,pathlib,signal,sys,time\n"
+            "observed,group_file,ready,done=map(pathlib.Path,sys.argv[1:])\n"
             "count=0\n"
             "def handle(signum,frame):\n"
             " global count\n"
             " count+=1\n"
-            f" pathlib.Path({str(observed)!r}).write_text(str(count))\n"
+            " observed.write_text(str(count))\n"
             "signal.signal(signal.SIGINT,handle)\n"
-            f"pathlib.Path({str(group_file)!r}).write_text(str(os.getpgrp()))\n"
+            "group_file.write_text(str(os.getpgrp()))\n"
             "sys.stdin.readline()\n"
-            f"pathlib.Path({str(ready)!r}).write_text(json.dumps([os.getpgrp(),os.tcgetpgrp(0)]))\n"
-            f"done=pathlib.Path({str(done)!r})\n"
+            "ready.write_text(json.dumps([os.getpgrp(),os.tcgetpgrp(0)]))\n"
             "while not done.exists(): time.sleep(.01)"
         )
         driver = (
-            "import json,os,pathlib\n"
-            "from agent_pm.manager.engine.holder import Holder\n"
-            "from agent_pm.manager.engine.roster import Roster\n"
+            "import json,os,pathlib,subprocess,sys\n"
+            "os.login_tty(int(sys.argv[-1]))\n"
             "before=os.tcgetpgrp(0)\n"
-            f"rc=Holder(Roster({self.directory!r})).run(({sys.executable!r},'-I','-S','-c',{child!r}))\n"
-            f"pathlib.Path({str(result)!r}).write_text(json.dumps([rc,before,os.tcgetpgrp(0)]))"
+            "rc=subprocess.run(sys.argv[2:-1],check=False).returncode\n"
+            "pathlib.Path(sys.argv[1]).write_text(json.dumps([rc,before,os.tcgetpgrp(0)]))"
         )
-        process, master = self.terminal(driver)
+        process, master = self.terminal(
+            (
+                *PY,
+                "-c",
+                driver,
+                str(result),
+                *PY,
+                "-m",
+                "agent_pm.manager.cli",
+                "hold",
+                "--manager",
+                "mgr",
+                "--",
+                sys.executable,
+                "-I",
+                "-S",
+                "-c",
+                child,
+                str(observed),
+                str(group_file),
+                str(ready),
+                str(done),
+            )
+        )
         self.addCleanup(done.touch)
         os.write(master, b"ready\n")
         self.wait_for(ready, content=True)
@@ -380,23 +425,39 @@ class HolderTest(Case):
         result = Path(self.home, "handoff-result")
         group_file = Path(self.home, "handoff-child-group")
         child = (
-            "import os,pathlib,time\n"
-            f"pathlib.Path({str(group_file)!r}).write_text(str(os.getpgrp()))\n"
+            "import os,pathlib,sys,time\n"
+            "pathlib.Path(sys.argv[1]).write_text(str(os.getpgrp()))\n"
             "time.sleep(60)"
         )
         driver = (
-            "import errno,json,pathlib,traceback\n"
+            "import errno,json,os,pathlib,sys,traceback\n"
             "from unittest import mock\n"
             "from agent_pm.manager.engine.holder import Holder\n"
             "from agent_pm.manager.engine.roster import Roster\n"
+            "os.login_tty(int(sys.argv[-1]))\n"
+            "directory,result=sys.argv[1:3]\n"
             "try:\n"
             " with mock.patch('os.tcsetpgrp',side_effect=OSError(errno.EIO,'handoff unavailable')):\n"
-            f"  Holder(Roster({self.directory!r})).run(({sys.executable!r},'-I','-S','-c',{child!r}))\n"
+            "  Holder(Roster(directory)).run(tuple(sys.argv[3:-1]))\n"
             "except OSError as error:\n"
             " detail={'errno':error.errno,'trace':traceback.format_exc()}\n"
-            f" pathlib.Path({str(result)!r}).write_text(json.dumps(detail))"
+            " pathlib.Path(result).write_text(json.dumps(detail))"
         )
-        process, master = self.terminal(driver)
+        process, master = self.terminal(
+            (
+                *PY,
+                "-c",
+                driver,
+                self.directory,
+                str(result),
+                sys.executable,
+                "-I",
+                "-S",
+                "-c",
+                child,
+                str(group_file),
+            )
+        )
         self.assertEqual(self.wait_terminal(process, master), 0)
         detail = json.loads(result.read_text())
         self.assertEqual(detail["errno"], errno.EIO, detail["trace"])

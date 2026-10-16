@@ -57,25 +57,25 @@ PYTHON_CODE_ALLOWED = {
     (
         "delegate/tests/integration/child_env_integration_test.py",
         "51acfc7eaec58d79c12d5100cbe097b9584e30bba475b21e0033d969dd628df4",
-    ): "Loads the harness test fixtures to inspect child import-root propagation.",
+    ): "Harness PYTHONPATH and composer access env under a source vs installed layout need a fresh interpreter with HarnessCase's RecordingHost, injectable only in-process.",
+    (
+        "delegate/tests/integration/composer/child.py",
+        "1721efcb4ec2389d5c2a1c62958402376e88ba56fe4415bd678555bff34109f4",
+    ): "Composer access/render/check_team_dirs (agent_pm.delegate.composer, not re-exported) in a fresh -P -S interpreter on the src roots, asserting its modules load from this tree and no team tools/ module is imported.",
     (
         "delegate/tests/integration/harness_contract_integration_test.py",
-        "6975983da86c467a23ac4b286ee499e765b5233015eff2d1b5c77a8700c8a98d",
-    ): "Runs the concrete Delegate contract with its fake session in a clean interpreter.",
+        "f0d067b985e08af56357fe84b0b297618beeb741597f4c616f6a7ad9dc194b1a",
+    ): "The contract's class-method test calls HarnessDelegate.usage without session_cls, which configures the process-global Session from config; tests may not patch HostedSession._setup, so only a fresh interpreter keeps that out of the test process.",
     (
         "delegate/tests/integration/harness_integration_test.py",
-        "4cccba13219c3e4414da648a47fda595c685969252709f03e19c8a667cf0821c",
-    ): "Exercises concrete harness usage and lifecycle operations across independent processes.",
+        "96dc3a20fb0bec1d0b6dc040878360d93011b9ca57335bef35fb982a55505cc1",
+    ): "HarnessDelegate.usage with its default session_cls configures the process-global Session and loads UsageClient through it; no public fresh session class exists and tests may not configure or patch the shared Session in-process.",
     (
         "delegate/tests/integration/harness_integration_test.py",
-        "96d1eb7ab811848f42bf2b53b4d69e39a33493bcbe873a0fcea8dd8963f9047a",
-    ): "Exercises concrete harness usage and lifecycle operations across independent processes.",
-    (
-        "delegate/tests/integration/harness_integration_test.py",
-        "a1f110b30d41bd8de324eea575cfb67dc998c3843aee85fbeee59c95a396a822",
-    ): "Exercises concrete harness usage and lifecycle operations across independent processes.",
+        "83e2486cff9dd4dc40383f5fddf383521e8e35a63679cb503ad28a49a8947aed",
+    ): "Two-process detach race needs PersistentSession's disk-backed fake, injectable only as a session_cls class object.",
     (
         "delegate/tests/integration/harness_owner_integration_test.py",
-        "24d2c0b5b0cb3e6311afe9a5f3a28b461749f43957990ff3f4f567acb3c7fc4b",
-    ): "Injects the fake session to exercise concrete harness owner lifetime across processes.",
+        "6a18b2ce1783563b900b1bd7c36498b5c3fa5e109f2efcc7ff728f5f3d0329ef",
+    ): "Foreground owner process needs the scripted process-free HarnessSession (delegate.tests), injectable only as a session_cls class object.",
 }

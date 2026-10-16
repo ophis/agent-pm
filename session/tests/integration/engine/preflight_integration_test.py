@@ -168,30 +168,42 @@ class Preflight(Case):
         code = """import contextlib, json, sys
 from unittest import mock
 from agent_pm.session import Access, Host, Mode, Session, Spec
-from session.tests.case import HOSTS, SPAWNS
-from session.tests.fakes.preflight import PreflightClient
+work, sid, log, hosts, spawns = sys.argv[1:]
 Session.configure(
-    clients={"fake": {"implementation": "session.tests.fakes.preflight:PreflightClient"}},
-    hosts=Host.parse_hosts({**HOSTS, "default": "tmux"}),
+    clients={"fake": {"implementation": "session.tests.fakes.preflight:PreflightClient", "log": log}},
+    hosts=Host.parse_hosts({**json.loads(hosts), "default": "tmux"}),
 )
-spec = Spec(workdir=sys.argv[1], access=Access(cwd=sys.argv[1]), client="fake", mode=Mode.HEADLESS,
-            prompt="input", sid=sys.argv[2])
+spec = Spec(workdir=work, access=Access(cwd=work), client="fake", mode=Mode.HEADLESS,
+            prompt="input", sid=sid)
 with contextlib.ExitStack() as stack:
-    for target in (*SPAWNS, "threading.Thread.start"):
+    for target in (*json.loads(spawns), "threading.Thread.start"):
         stack.enter_context(mock.patch(target, side_effect=AssertionError(target)))
     result = Session.preflight(spec)
-print(json.dumps([result, PreflightClient.prepared[-1].sid, PreflightClient.committed, PreflightClient.ran]))
+print(json.dumps(result))
 """
+        logs = tempfile.TemporaryDirectory()
+        self.addCleanup(logs.cleanup)
+        log = os.path.join(logs.name, "preflight.jsonl")
         before = self.tree()
         child = subprocess.run(
-            [*PY, "-c", code, self.work, SID],
+            [*PY, "-c", code, self.work, SID, log, json.dumps(HOSTS), json.dumps(SPAWNS)],
             env=child_env(None, REPO),
             capture_output=True,
             text=True,
             timeout=30,
         )
         self.assertEqual(child.returncode, 0, child.stderr)
-        self.assertEqual(json.loads(child.stdout), [None, SID, [], []])
+        with open(log) as f:
+            noted = [json.loads(line) for line in f]
+        self.assertEqual(
+            [
+                json.loads(child.stdout),
+                [value for kind, value in noted if kind == "prepared"][-1],
+                [value for kind, value in noted if kind == "committed"],
+                [value for kind, value in noted if kind == "ran"],
+            ],
+            [None, SID, [], []],
+        )
         self.unchanged(before)
 
     def test_missing_sid_can_be_prepared_without_mutating_the_callers_spec(self):

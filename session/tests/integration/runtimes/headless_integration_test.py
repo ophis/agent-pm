@@ -9,7 +9,6 @@ import os
 import signal
 import subprocess
 import sys
-import textwrap
 import threading
 import time
 import unittest
@@ -23,21 +22,35 @@ from session.tests.headless_support import NOTHING, SID, HeadlessCase, StubClien
 
 WAIT = 10  # upper bound on any wait, in seconds
 SLEEPER = "import time; time.sleep(60)"
-
-
-def python(code: str) -> tuple[str, ...]:
-    return (sys.executable, "-I", "-c", textwrap.dedent(code))
-
-
-def spawning(then: str = "") -> str:
-    """Child code: starts a grandchild running SLEEPER on the child's pipes, prints its pid as
-    {"text"}, then runs `then`.
-    """
-    return (
-        "import json, subprocess, sys, time\n"
-        f"grandchild = subprocess.Popen([sys.executable, '-I', '-c', {SLEEPER!r}])\n"
-        "print(json.dumps({'text': str(grandchild.pid)}), flush=True)\n" + then
-    )
+# Child code: starts a grandchild running SLEEPER on the child's pipes, prints its pid as {"text"};
+# SPAWN_SLEEP then sleeps.
+SPAWN = (
+    "import json, subprocess, sys, time\n"
+    "grandchild = subprocess.Popen([sys.executable, '-I', '-c', 'import time; time.sleep(60)'])\n"
+    "print(json.dumps({'text': str(grandchild.pid)}), flush=True)\n"
+)
+SPAWN_SLEEP = SPAWN + "time.sleep(60)\n"
+STREAMS = """import json, os, sys, time
+print(json.dumps({"text": os.getcwd()}))
+print("not json")
+print(json.dumps({"diag": os.environ["HM_PROBE"]}))
+sys.stdout.flush()
+os.close(1)
+time.sleep(0.3)
+sys.stderr.buffer.write(b"bad \\xff\\n")
+sys.exit(3)
+"""
+STDERR_FIRST = """import json, os, sys, time
+sys.stderr.write("first\\n")
+sys.stderr.flush()
+os.close(2)
+time.sleep(0.3)
+print(json.dumps({"text": "late"}))
+"""
+RAISING = """import time
+print('{"raise": "boom"}', flush=True)
+time.sleep(60)
+"""
 
 
 def kill(pid: int) -> None:
@@ -47,11 +60,8 @@ def kill(pid: int) -> None:
 
 
 class Base(HeadlessCase):
-    def begin(self, code: str, env: dict | None = None, run=None):
-        """self.mode started on this Python running code in self.dir, env added to its child env;
-        stopped at cleanup.
-        """
-        argv = (sys.executable, "-I", "-c", textwrap.dedent(code))
+    def begin(self, argv: tuple[str, ...], env: dict | None = None, run=None):
+        """self.mode started on argv in self.dir, env added to its child env; stopped at cleanup."""
         self.start(StubClient(Launch(argv, env=env or {}, cwd=self.dir), run))
         self.addCleanup(self.mode.stop)
 
@@ -86,9 +96,9 @@ class Base(HeadlessCase):
                 return events[0]
         self.fail(f"no event within {WAIT}s")
 
-    def grandchild(self, then: str = "") -> None:
-        """begin(spawning(then)) up to the grandchild's pid; the grandchild is killed at cleanup."""
-        self.begin(spawning(then))
+    def grandchild(self, argv: tuple[str, ...]) -> None:
+        """begin(argv) up to the grandchild's pid; the grandchild is killed at cleanup."""
+        self.begin(argv)
         self.addCleanup(kill, int(self.first().text))
 
     def promptly(self, call):
@@ -161,20 +171,7 @@ class Streams(Base):
     def test_stdout_and_stderr_lines_become_events_before_both_pipes_end(
         self,
     ):
-        self.begin(
-            """
-            import json, os, sys, time
-            print(json.dumps({"text": os.getcwd()}))
-            print("not json")
-            print(json.dumps({"diag": os.environ["HM_PROBE"]}))
-            sys.stdout.flush()
-            os.close(1)
-            time.sleep(0.3)
-            sys.stderr.buffer.write(b"bad \\xff\\n")
-            sys.exit(3)
-        """,
-            env={"HM_PROBE": "probe"},
-        )
+        self.begin((sys.executable, "-I", "-c", STREAMS), env={"HM_PROBE": "probe"})
         found = self.drain()
         late = Stderr("bad �")
         self.assertEqual(
@@ -187,24 +184,13 @@ class Streams(Base):
         self.assertEqual(self.mode.returncode(0), 3)
 
     def test_ended_only_after_stderr_then_stdout(self):
-        self.begin("""
-            import json, os, sys, time
-            sys.stderr.write("first\\n")
-            sys.stderr.flush()
-            os.close(2)
-            time.sleep(0.3)
-            print(json.dumps({"text": "late"}))
-        """)
+        self.begin((sys.executable, "-I", "-c", STDERR_FIRST))
         found = self.drain()
         self.assertCountEqual(found, [Stderr("first"), Reply("late")])
         self.assertEqual(self.promptly(lambda: self.mode.returncode(WAIT)), 0)
 
     def test_an_exception_from_parse_is_raised_from_poll(self):
-        self.begin("""
-            import time
-            print('{"raise": "boom"}', flush=True)
-            time.sleep(60)
-        """)
+        self.begin((sys.executable, "-I", "-c", RAISING))
         deadline = time.monotonic() + WAIT
         with self.assertRaisesRegex(RuntimeError, "boom"):
             while time.monotonic() < deadline:
@@ -221,7 +207,7 @@ class Streams(Base):
         for level in (logging.NOTSET, logging.CRITICAL):
             with self.subTest(level=level), mock.patch("sys.stderr", new=io.StringIO()) as console:
                 logging.disable(level)
-                self.begin("print('{}')", run=ErrorRun)
+                self.begin((sys.executable, "-I", "-c", "print('{}')"), run=ErrorRun)
                 with self.assertRaises(KeyboardInterrupt) as caught:
                     self.drain()
                 self.assertIs(caught.exception, error)
@@ -232,7 +218,7 @@ class Streams(Base):
 
 class Stop(Base):
     def test_kills_a_sleeping_child_whose_pipes_then_end(self):
-        self.begin("import time; time.sleep(60)")
+        self.begin((sys.executable, "-I", "-c", SLEEPER))
         self.assertEqual(self.mode.state(), "live")
         self.promptly(self.mode.stop)
         self.assertEqual(self.mode.state(), "absent")
@@ -241,13 +227,13 @@ class Stop(Base):
         self.promptly(self.mode.stop)
 
     def test_kills_the_group_so_a_grandchild_on_the_pipes_ends_them(self):
-        self.grandchild("time.sleep(60)\n")
+        self.grandchild((sys.executable, "-I", "-c", SPAWN_SLEEP))
         self.promptly(self.mode.stop)
         self.assertEqual(self.mode.returncode(0), -signal.SIGKILL)
         self.assertEqual(self.drain(), [])
 
     def test_kills_the_group_after_the_child_exited_while_a_grandchild_holds_the_pipes(self):
-        self.grandchild()
+        self.grandchild((sys.executable, "-I", "-c", SPAWN))
         self.assertEqual(self.promptly(lambda: self.mode.returncode(WAIT)), 0)
         self.assertEqual(self.mode.poll(0.2), ([], False))
         self.promptly(self.mode.stop)
@@ -256,14 +242,14 @@ class Stop(Base):
     def test_falls_back_to_killing_the_process_when_killpg_fails(self):
         for error in (ProcessLookupError, PermissionError):
             with self.subTest(error=error.__name__):
-                self.begin(SLEEPER)
+                self.begin((sys.executable, "-I", "-c", SLEEPER))
                 with mock.patch("os.killpg", side_effect=error) as killpg:
                     self.promptly(self.mode.stop)
                 killpg.assert_called_once_with(self.mode.proc.pid, signal.SIGKILL)
                 self.assertEqual(self.mode.returncode(0), -signal.SIGKILL)
 
     def test_waits_at_most_stop_wait_and_ignores_a_vanished_process(self):
-        self.begin(SLEEPER)
+        self.begin((sys.executable, "-I", "-c", SLEEPER))
         self.mode.stop_wait = 0.3
         with (
             mock.patch("os.killpg", side_effect=ProcessLookupError),
@@ -276,7 +262,7 @@ class Stop(Base):
         self.assertEqual(self.mode.state(), "live")
 
     def test_skips_killpg_once_the_child_is_reaped_and_both_pipes_ended(self):
-        self.begin("pass")
+        self.begin((sys.executable, "-I", "-c", "pass"))
         self.assertEqual(self.drain(), [])
         self.assertEqual(self.promptly(lambda: self.mode.returncode(WAIT)), 0)
         with mock.patch("os.killpg") as killpg:
@@ -285,7 +271,7 @@ class Stop(Base):
         self.assertEqual(self.mode.returncode(0), 0)
 
     def test_is_idempotent_once_started(self):
-        self.begin(SLEEPER)
+        self.begin((sys.executable, "-I", "-c", SLEEPER))
         self.promptly(self.mode.stop)
         self.promptly(self.mode.stop)
         self.assertEqual(self.mode.returncode(0), -signal.SIGKILL)
@@ -298,10 +284,11 @@ class Start(Base):
         self.assertEqual((len(self.recorded), self.mode), (1, None))
 
     def test_start_returns_its_session_running_at_once_with_its_prepared(self):
+        argv = (sys.executable, "-I", "-c", SLEEPER)
         with self.spied() as calls:
             mode = HeadlessRuntime.start(
                 Spec(workdir=self.dir, access=Access(cwd=self.dir), sid=SID, client="stub"),
-                StubClient(Launch(python(SLEEPER))),
+                StubClient(Launch(argv)),
                 registry=self.session_cls._config().registry,
                 record=self.recorded.append,
                 host=MemoryHost(),
@@ -310,7 +297,7 @@ class Start(Base):
         self.assertIsInstance(mode, HeadlessRuntime)
         self.assertEqual(
             (mode.prepared.info, mode.prepared.argv, calls),
-            (self.recorded[0], python(SLEEPER), [python(SLEEPER)]),
+            (self.recorded[0], argv, [argv]),
         )
         self.assertEqual(
             (mode.state(), mode.poll(0), mode.returncode(0)), ("live", ([], False), None)
@@ -321,7 +308,7 @@ class Start(Base):
 
 class Returncode(Base):
     def test_none_while_the_child_runs_after_waiting_at_most_timeout(self):
-        self.begin(SLEEPER)
+        self.begin((sys.executable, "-I", "-c", SLEEPER))
         began = time.monotonic()
         self.assertIsNone(self.promptly(lambda: self.mode.returncode(0.3)))
         self.assertGreaterEqual(time.monotonic() - began, 0.3)

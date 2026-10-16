@@ -22,7 +22,6 @@ ABSTRACT = {
     "clean",
     "check_tui",
     "detach",
-    "ctl",
     "run",
     "alive",
     "status",

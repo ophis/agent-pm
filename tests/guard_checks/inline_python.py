@@ -1,27 +1,30 @@
-"""Literal Python -c programs keep the same public import boundary as command callers."""
+"""Python -c programs are literal text keeping the public import boundary of command callers."""
 
 import ast
+import copy
 import hashlib
 import os
 import re
 import sys
 
-from tests.guard_checks.common import _tree_files
+from tests.guard_checks.common import _bindings, _dotted, _private, _tree_files
 from tests.guard_data import PYTHON_CODE_ALLOWED
 from tests.guards import PROJECTS
+
+IMPORTERS = {"__import__", "builtins.__import__", "importlib.import_module", "runpy.run_module"}
+ATTRIBUTE_CALLS = {"getattr", "setattr", "delattr", "hasattr"}
+RUNTIME = object()
 
 
 def inline_python(repo: str, *, allowed=None) -> list[str]:
     allowed = PYTHON_CODE_ALLOWED if allowed is None else allowed
     found, used = [], set()
-    files = {path: ast.parse(text) for path, text in _tree_files(repo, ".py")}
-    modules = {_module(path): tree for path, tree in files.items()}
-    for path, tree in files.items():
-        for line, code in _programs(tree, modules=modules):
-            errors = _violations(code)
+    for path, text in _tree_files(repo, ".py"):
+        for line, code, error in _programs(ast.parse(text)):
+            errors = [error] if error else _violations(code)
             if not errors:
                 continue
-            key = path, hashlib.sha256(code.encode()).hexdigest()
+            key = None if code is None else (path, hashlib.sha256(code.encode()).hexdigest())
             if key in allowed:
                 used.add(key)
             else:
@@ -44,75 +47,65 @@ def _scope(nodes):
             yield from _scope(ast.iter_child_nodes(node))
 
 
-def _module(path):
-    for project in PROJECTS:
-        path = path.removeprefix(f"{project}/src/")
-    path = path.removeprefix("linear-orchestrator/tests/").removeprefix(".github/")
-    return path.removesuffix(".py").replace("/", ".").removesuffix(".__init__")
-
-
-def _imported(module, name, modules, seen=frozenset()):
-    key = module, name
-    if module not in modules or key in seen:
-        return set()
-    nodes = list(_scope(modules[module].body))
-    values = {}
+def _programs(tree, inherited=None):
+    """(line, text, error) per -c program: each literal value, else the expression with its
+    same-file values substituted, so editing one makes its exception stale; a program reading a
+    name without exactly one same-file assignment (parameter, import, loop target, global) gets
+    text None: no exception can cover all its values.
+    """
+    body = tree.body if isinstance(tree.body, list) else [tree.body]
+    nodes = list(_scope(body))
+    assigned = {}
     for node in nodes:
-        if isinstance(node, ast.Assign):
-            for target in node.targets:
-                if isinstance(target, ast.Name):
-                    values.setdefault(target.id, []).append(node.value)
-        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
-            values.setdefault(node.target.id, []).append(node.value)
-        elif isinstance(node, ast.ImportFrom) and not node.level:
-            for alias in node.names:
-                bound = alias.asname or alias.name
-                if bound == name:
-                    return _imported(node.module, alias.name, modules, seen | {key})
-    return _strings(ast.Name(id=name), values)
-
-
-def _programs(tree, inherited=None, *, modules=None):
-    nodes = list(_scope(tree.body))
+        if isinstance(node, ast.Assign | ast.AnnAssign):
+            for target in node.targets if isinstance(node, ast.Assign) else [node.target]:
+                assigned[target] = node.value
+    function = isinstance(tree, ast.FunctionDef | ast.AsyncFunctionDef | ast.Lambda)
     local = {}
-    for node in nodes:
-        if isinstance(node, ast.Assign):
-            for target in node.targets:
-                if isinstance(target, ast.Name):
-                    local.setdefault(target.id, []).append(node.value)
-        elif (
-            isinstance(node, ast.AnnAssign)
-            and isinstance(node.target, ast.Name)
-            and node.value is not None
-        ):
-            local.setdefault(node.target.id, []).append(node.value)
-        elif isinstance(node, ast.ImportFrom) and not node.level:
+    if inherited is None:
+        for node in ast.walk(tree):
+            for name in node.names if isinstance(node, ast.Global | ast.Nonlocal) else ():
+                local.setdefault(name, []).append(RUNTIME)
+    for node in [*(ast.walk(tree.args) if function else ()), *nodes]:
+        if isinstance(node, ast.arg):
+            local.setdefault(node.arg, []).append(RUNTIME)
+        elif isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store):
+            if (value := assigned.get(node, RUNTIME)) is not None:
+                local.setdefault(node.id, []).append(value)
+        elif isinstance(node, ast.Import | ast.ImportFrom):
             for alias in node.names:
-                values = _imported(node.module, alias.name, modules or {})
-                if values:
-                    local[alias.asname or alias.name] = [
-                        ast.Constant(value=value) for value in values
-                    ]
+                local.setdefault(alias.asname or alias.name.split(".")[0], []).append(RUNTIME)
     bindings = {**(inherited or {}), **local}
     for node in nodes:
         if isinstance(node, ast.List | ast.Tuple) and node.elts and _python(node.elts[0], bindings):
             for before, after in zip(node.elts, node.elts[1:], strict=False):
-                if _strings(before, bindings) == {"-c"}:
-                    for code in _strings(after, bindings):
-                        yield after.lineno, code
-        elif isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef):
-            yield from _programs(node, bindings, modules=modules)
+                if _strings(before, bindings) != {"-c"}:
+                    continue
+                if codes := _strings(after, bindings):
+                    yield from ((after.lineno, code, None) for code in sorted(codes))
+                    continue
+                text, runtime = _substitute(after, bindings)
+                hint = " (run-time value; build the argv from literals at the call site)"
+                yield (
+                    after.lineno,
+                    None if runtime else text,
+                    f"not a literal: {ast.unparse(after)}{hint if runtime else ''}",
+                )
+        elif isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef | ast.Lambda):
+            # Class bindings are not visible inside its methods.
+            yield from _programs(node, inherited if isinstance(tree, ast.ClassDef) else bindings)
 
 
 def _strings(node, bindings, seen=frozenset()):
+    """Every text node can take, or the empty set when any of them is not literal."""
     if isinstance(node, ast.Constant) and isinstance(node.value, str):
         return {node.value}
-    if isinstance(node, ast.Name) and node.id not in seen:
-        return {
-            text
-            for value in bindings.get(node.id, ())
-            for text in _strings(value, bindings, seen | {node.id})
-        }
+    if isinstance(node, ast.Name) and node.id not in seen and bindings.get(node.id):
+        values = [
+            _strings(value, bindings, seen | {node.id}) if isinstance(value, ast.AST) else set()
+            for value in bindings[node.id]
+        ]
+        return set().union(*values) if all(values) else set()
     if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
         return {
             left + right
@@ -122,6 +115,26 @@ def _strings(node, bindings, seen=frozenset()):
     return set()
 
 
+def _substitute(node, bindings):
+    runtime = False
+
+    class Substitute(ast.NodeTransformer):
+        seen = set()
+
+        def visit_Name(self, name):
+            nonlocal runtime
+            values = bindings.get(name.id, ())
+            if len(values) != 1 or values[0] is RUNTIME or name.id in self.seen:
+                runtime = True
+                return name
+            self.seen.add(name.id)
+            value = self.visit(copy.deepcopy(values[0]))
+            self.seen.discard(name.id)
+            return value
+
+    return ast.unparse(Substitute().visit(copy.deepcopy(node))), runtime
+
+
 def _python(node, bindings, seen=frozenset()):
     if isinstance(node, ast.Starred):
         return _python(node.value, bindings, seen)
@@ -129,13 +142,13 @@ def _python(node, bindings, seen=frozenset()):
         if node.id in {"PY", "PYTHON", "PYTHON3", "python"}:
             return True
         return any(
-            _python(value, bindings, seen | {node.id}) for value in bindings.get(node.id, ())
+            _python(value, bindings, seen | {node.id})
+            for value in bindings.get(node.id, ())
+            if isinstance(value, ast.AST)
         )
     if isinstance(node, ast.List | ast.Tuple) and node.elts:
         return _python(node.elts[0], bindings, seen)
-    if any(
-        isinstance(part, ast.Attribute) and part.attr == "executable" for part in ast.walk(node)
-    ):
+    if any(_dotted(part, {}) == "sys.executable" for part in ast.walk(node)):
         return True
     return any(
         re.fullmatch(r"python(?:3(?:\.\d+)?)?", os.path.basename(word))
@@ -153,14 +166,40 @@ def _public(module):
     )
 
 
-def _agent(node, names):
-    if isinstance(node, ast.Name):
-        return node.id in names
-    if isinstance(node, ast.Attribute):
-        return _agent(node.value, names)
-    if isinstance(node, ast.Call):
-        return _agent(node.func, names)
-    return False
+def _command(module):
+    parts = module.split(".")
+    return (
+        len(parts) == 3
+        and parts[0] == "agent_pm"
+        and parts[1] in PROJECTS.values()
+        and parts[2] == "cli"
+    )
+
+
+def _stdlib_names(tree):
+    """Names bound only by imports of standard library modules."""
+    bound = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                top = alias.name.split(".")[0]
+                bound.setdefault(alias.asname or top, []).append(top in sys.stdlib_module_names)
+        elif isinstance(node, ast.ImportFrom):
+            stdlib = not node.level and (node.module or "").split(".")[0] in sys.stdlib_module_names
+            for alias in node.names:
+                bound.setdefault(alias.asname or alias.name, []).append(stdlib)
+        elif isinstance(node, ast.Name) and not isinstance(node.ctx, ast.Load):
+            bound.setdefault(node.id, []).append(False)
+        elif isinstance(node, ast.arg):
+            bound.setdefault(node.arg, []).append(False)
+        elif (
+            isinstance(
+                node, ast.ExceptHandler | ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef
+            )
+            and node.name
+        ):
+            bound.setdefault(node.name, []).append(False)
+    return {name for name, stdlib in bound.items() if all(stdlib)}
 
 
 def _violations(code):
@@ -168,55 +207,46 @@ def _violations(code):
         tree = ast.parse(code)
     except (SyntaxError, ValueError) as error:
         return [f"invalid code: {error}"]
-    found, names = set(), set()
-    nodes = list(ast.walk(tree))
-    for node in nodes:
+    bound = _bindings(tree)
+    found, agent = set(), False
+    for node in ast.walk(tree):
+        modules = []
         if isinstance(node, ast.Import):
-            for alias in node.names:
-                if not _public(alias.name):
-                    found.add(f"import {alias.name}")
-                if alias.name.startswith("agent_pm."):
-                    names.add(alias.asname or alias.name.split(".")[0])
+            modules = [alias.name for alias in node.names]
         elif isinstance(node, ast.ImportFrom):
-            if node.level or not _public(node.module or ""):
-                found.add(f"import {'.' * node.level}{node.module or ''}")
+            modules = ["." * node.level + (node.module or "")]
             if (node.module or "").startswith("agent_pm."):
-                names.update(alias.asname or alias.name for alias in node.names)
                 found.update(
-                    f"private import {alias.name}"
-                    for alias in node.names
-                    if alias.name.startswith("_")
+                    f"private import {alias.name}" for alias in node.names if _private(alias.name)
                 )
-    for _ in range(len(nodes)):
-        added = {
-            target.id
-            for node in nodes
-            if isinstance(node, ast.Assign | ast.AnnAssign) and _agent(node.value, names)
-            for target in (node.targets if isinstance(node, ast.Assign) else [node.target])
-            if isinstance(target, ast.Name)
-        } - names
-        if not added:
-            break
-        names.update(added)
-    for node in nodes:
-        if (
-            isinstance(node, ast.Attribute)
-            and node.attr.startswith("_")
-            and _agent(node.value, names)
-        ):
-            found.add(f"private attribute {node.attr}")
-        elif isinstance(node, ast.Call):
-            call = ast.unparse(node.func)
-            if (
-                call in {"getattr", "setattr", "delattr"}
+        elif isinstance(node, ast.Call) and (call := _dotted(node.func, bound)) in {
+            *IMPORTERS,
+            "runpy.run_path",
+        }:
+            names = _strings(node.args[0], {}) if node.args and call in IMPORTERS else set()
+            if not names:
+                found.add(f"dynamic import: {ast.unparse(node)}")
+            modules = [
+                name for name in names if not (call == "runpy.run_module" and _command(name))
+            ]
+            agent = agent or any(name.split(".")[0] == "agent_pm" for name in names)
+        for module in modules:
+            agent = agent or module.split(".")[0] == "agent_pm"
+            if module.startswith(".") or not _public(module):
+                found.add(f"import {module}")
+    if agent:
+        stdlib = _stdlib_names(tree)
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Attribute) and _private(node.attr):
+                base, names = node.value, {node.attr}
+            elif (
+                isinstance(node, ast.Call)
+                and _dotted(node.func, bound) in ATTRIBUTE_CALLS
                 and len(node.args) > 1
-                and _agent(node.args[0], names)
             ):
-                for name in _strings(node.args[1], {}):
-                    if name.startswith("_"):
-                        found.add(f"private attribute {name}")
-            if call in {"__import__", "importlib.import_module"} and node.args:
-                for module in _strings(node.args[0], {}):
-                    if not _public(module):
-                        found.add(f"import {module}")
+                base, names = node.args[0], {n for n in _strings(node.args[1], {}) if _private(n)}
+            else:
+                continue
+            if not (isinstance(base, ast.Name) and base.id in stdlib):
+                found.update(f"private attribute {name}" for name in names)
     return sorted(found)

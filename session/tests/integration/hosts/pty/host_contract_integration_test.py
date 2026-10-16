@@ -4,6 +4,7 @@ a bracketed paste once the program asks for one, its tui hook's marks and reclai
 
 import os
 import stat
+import sys
 import unittest
 
 from agent_pm.session import ConfigError
@@ -15,29 +16,25 @@ from agent_pm.session.hosts.reclaimed import ReclaimedGroup
 from agent_pm.utils import StatusState
 
 from session.tests.case import Case
-from session.tests.contracts.host import PUT, SLEEP, HostContract, gone, program, read
+from session.tests.contracts.host import (
+    BRACKETED,
+    LEAVES,
+    READ_LINE,
+    SLEEP,
+    HostContract,
+    gone,
+    read,
+)
 
 SETTINGS = {"outer_terminal": ["TMUX", "TMUX_PANE"]}
-BRACKETED = (
-    PUT + "import tty\n"
-    "tty.setraw(0)\n"
-    "os.write(1, b'\\x1b[?2004h')\n"
-    "put('ready')\n"
-    "seen = b''\n"
-    "while not seen.endswith(b'\\x1b[201~'):\n"
-    "    seen += os.read(0, 64)\n"
-    "put(seen.hex())\n"
-)
 GATED = (
+    sys.executable,
+    "-I",
+    "-c",
     "import os, sys, time\n"
     "print('hello pty', flush=True)\n"
     "while not os.path.exists(sys.argv[1]):\n"
-    "    time.sleep(0.01)\n"
-)
-LEAVES = (
-    PUT + "child = subprocess.Popen([sys.executable, '-c', "
-    "'import signal, time; signal.signal(signal.SIGHUP, signal.SIG_IGN); time.sleep(30)'])\n"
-    "put(str(child.pid))\n"
+    "    time.sleep(0.01)\n",
 )
 
 
@@ -83,7 +80,7 @@ class PtyHostTest(HostContract, Case):
 
     def test_a_key_outside_the_notation_is_refused_and_the_terminal_takes_the_next(self):
         name, out = self.fresh(), self.file("line")
-        terminal = self.start("terminal", name, PUT + "put(sys.stdin.readline())", out)
+        terminal = self.start("terminal", name, READ_LINE, out)
         with self.assertRaises(ConfigError):
             terminal.send(Key("Nope"))
         terminal.send(Paste("still"))
@@ -93,9 +90,7 @@ class PtyHostTest(HostContract, Case):
     def test_the_tui_hook_marks_only_the_launch_it_was_installed_for(self):
         name, events = self.fresh(), self.file("events")
         metadata = {"sid": "s-1", "client": "fake", "generation": "g-1"}
-        self.host.terminal(
-            name, Launch(tuple(program(SLEEP)), cwd=self.home, env=self.env()), metadata=metadata
-        )
+        self.host.terminal(name, Launch(SLEEP, cwd=self.home, env=self.env()), metadata=metadata)
         callback = self.host.hook_callback(name, metadata)
         self.assertEqual(callback.module, "agent_pm.session.hosts.pty.hook")
 

@@ -61,7 +61,7 @@ from delegate.tests.unit.runs import DONE
 
 USAGE_QUERY = """import io, json, unittest
 from unittest import mock
-from agent_pm.delegate.engine.harness_delegate import HarnessDelegate
+from agent_pm.delegate import HarnessDelegate
 from agent_pm.session import Usage, Window
 from delegate.tests.fakes.harness_session import HarnessSession, RecordingHost
 from delegate.tests.fakes.usage import UsageClient
@@ -955,8 +955,7 @@ class ConcurrentDetach(HarnessCase):
     def test_two_processes_launch_one_harness(self):
         code = (
             "import os, sys, time\n"
-            "from agent_pm.delegate import ConfigError, Spec\n"
-            "from agent_pm.delegate.engine.harness_delegate import HarnessDelegate\n"
+            "from agent_pm.delegate import ConfigError, HarnessDelegate, Spec\n"
             "from delegate.tests.fakes.harness_session import PersistentSession\n"
             "spec = Spec('input', sys.argv[1], client='fake', sid=sys.argv[4])\n"
             "delegate = HarnessDelegate('dummy-tester', spec, session_cls=PersistentSession,\n"
@@ -1235,7 +1234,7 @@ class ConcurrentResume(HarnessCase):
         )
         code = (
             "import os, sys, time\n"
-            "from agent_pm.delegate.engine.harness_delegate import HarnessDelegate\n"
+            "from agent_pm.delegate import HarnessDelegate\n"
             "open(sys.argv[2] + str(os.getpid()), 'w').close()\n"
             "while not os.path.exists(sys.argv[3]): time.sleep(0.01)\n"
             "print(HarnessDelegate.attach(sys.argv[1]).resume().to_line())\n"

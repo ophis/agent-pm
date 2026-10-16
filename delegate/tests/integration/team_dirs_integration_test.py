@@ -43,22 +43,6 @@ WRITER = (
 )
 TEAM = {"roles/writer.md": WRITER, "tasks/note.md": NOTE}
 TASKS_PARAM = re.compile(r"\n- `<tasks>`: `([^`]+)`\n")
-CATALOG = """composition = Composer()
-team = composition.team
-composition.check_team_dirs(writes=[])
-composition.check_all()
-params = RunParams(input="", out=os.path.join(sys.argv[1], "out.md"), workdir=sys.argv[1])
-rows = {}
-for role, tasks in composition.index().items():
-    run = composition.resolve(role)
-    composition.render(run, params)
-    rows[role] = [
-        run.output["type"],
-        team.source(composition.path_for("roles", role)),
-        {t: [what, team.source(composition.path_for("tasks", t))] for t, what in tasks.items()},
-    ]
-print(json.dumps(rows))
-"""
 
 
 def make_team(case: unittest.TestCase) -> str:
@@ -98,7 +82,7 @@ class ComposerTeamDirs(child.Case):
         self.assertEqual(os.listdir(self.work), [])
 
     def test_the_catalog_lists_its_role_after_cores_with_its_sources(self):
-        rows = self.child(CATALOG, self.work)
+        rows = self.child("catalog", self.work)
         self.assertEqual(list(rows), ["researcher", "pm", "engineer", "dummy-tester", "writer"])
         note = ["a short note; always; light.", os.path.join(self.tasks, "note.md")]
         self.assertEqual(

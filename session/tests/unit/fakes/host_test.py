@@ -15,14 +15,14 @@ from agent_pm.session import ConfigError, Launch, SessionError
 from agent_pm.utils import ProcessControl
 
 from session.tests.case import Case
-from session.tests.contracts.host import SLEEP, program
+from session.tests.contracts.host import SLEEP
 from session.tests.fakes.host import FakeHost, FakeProcess
 
 
 class FakeHostOnly(Case):
     def test_refuses_a_bad_name_argv_or_cwd(self):
         host = FakeHost("fake", {"root": "~/hosts"})
-        good = (program(SLEEP), self.home, {})
+        good = (list(SLEEP), self.home, {})
         for name, argv, cwd in (
             ("a b", *good[:2]),
             ("../w", *good[:2]),
@@ -70,7 +70,7 @@ class FailedStart(Case):
             mock.patch("time.sleep"),
             self.assertRaises((SessionError, OSError)) as raised,
         ):
-            host.detach("w1", Launch(tuple(program(SLEEP)), cwd=self.home))
+            host.detach("w1", Launch(SLEEP, cwd=self.home))
         meta = json.loads(Path(self.home, "hosts", "w1", "meta.json").read_text())
         self.assertFalse(os.path.exists(meta["control"]))
         return raised.exception, killpg

@@ -8,11 +8,39 @@ from agent_pm.utils import append_line
 from manager.tests.case import PY, child_env
 from manager.tests.events_case import EventsCase
 
+CRASH = (
+    "import os,sys\n"
+    "from unittest import mock\n"
+    "from agent_pm.manager.engine.events import Events\n"
+    "from agent_pm.utils import file_lock\n"
+    "directory,source,destination,when,verb=sys.argv[1:]\n"
+    "events=Events(directory)\n"
+    "original=os.replace\n"
+    "def replace(src,dst):\n"
+    " match=str(src)==source and str(dst)==destination\n"
+    " if match and when=='before': os._exit(91)\n"
+    " original(src,dst)\n"
+    " if match and when=='after': os._exit(91)\n"
+    "with file_lock(events.path),mock.patch('os.replace',side_effect=replace):\n"
+    " events.recover(0) if verb=='recover' else events.rotate(1,0)"
+)
+COMMIT = (
+    "import os,sys\n"
+    "from agent_pm.manager.engine.events import Events\n"
+    "from agent_pm.utils import file_lock,save\n"
+    "directory,ledger=sys.argv[1:]\n"
+    "events=Events(directory)\n"
+    "with file_lock(events.path):\n"
+    " events.rotate(1,0)\n"
+    ' save(ledger,\'{"gen":1,"cursor":0}\\n\',durable=True)\n'
+    " os._exit(91)"
+)
+
 
 class EventsTest(EventsCase):
-    def crashed(self, script):
+    def crashed(self, argv):
         result = subprocess.run(
-            (*PY, "-c", script),
+            argv,
             env=child_env(),
             capture_output=True,
             text=True,
@@ -22,22 +50,18 @@ class EventsTest(EventsCase):
         self.assertEqual(result.returncode, 91, result.stderr)
 
     def crash_replace(self, source, destination, *, after=False, recovering=False):
-        script = (
-            "import os\n"
-            "from unittest import mock\n"
-            "from agent_pm.manager.engine.events import Events\n"
-            "from agent_pm.utils import file_lock\n"
-            f"events=Events({self.directory!r})\n"
-            "original=os.replace\n"
-            "def replace(source,destination):\n"
-            f" match=str(source)=={str(source)!r} and str(destination)=={str(destination)!r}\n"
-            f" if match and not {after!r}: os._exit(91)\n"
-            " original(source,destination)\n"
-            f" if match and {after!r}: os._exit(91)\n"
-            "with file_lock(events.path),mock.patch('os.replace',side_effect=replace):\n"
-            f" events.{'recover(0)' if recovering else 'rotate(1,0)'}"
+        self.crashed(
+            (
+                *PY,
+                "-c",
+                CRASH,
+                self.directory,
+                str(source),
+                str(destination),
+                "after" if after else "before",
+                "recover" if recovering else "rotate",
+            )
         )
-        self.crashed(script)
 
     def test_crash_before_archive_rename_preserves_original_and_later_appends(self):
         self.crash_replace(self.events.path, self.events.archive)
@@ -93,16 +117,7 @@ class EventsTest(EventsCase):
         self.assertFalse(Path(self.events.journal).exists())
 
     def test_crash_after_durable_ledger_commit_finishes_without_rollback(self):
-        self.crashed(
-            "import os\n"
-            "from agent_pm.manager.engine.events import Events\n"
-            "from agent_pm.utils import file_lock,save\n"
-            f"events=Events({self.directory!r})\n"
-            "with file_lock(events.path):\n"
-            " events.rotate(1,0)\n"
-            f' save({str(self.ledger)!r},\'{{"gen":1,"cursor":0}}\\n\',durable=True)\n'
-            " os._exit(91)"
-        )
+        self.crashed((*PY, "-c", COMMIT, self.directory, str(self.ledger)))
         append_line(self.events.path, b"new\n", locked=True)
         self.recover()
         self.assertEqual(self.generation(), 1)

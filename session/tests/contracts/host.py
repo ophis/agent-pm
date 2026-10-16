@@ -35,26 +35,35 @@ PUT = (
     "        f.write(text)\n"
     "    os.replace(sys.argv[1] + '.tmp', sys.argv[1])\n"
 )
-EXIT_7 = "import sys; sys.exit(7)"
-KILLED = "import os, signal; os.kill(os.getpid(), signal.SIGKILL)"
-SLEEP = "import time; time.sleep(30)"
-READ_LINE = PUT + "put(sys.stdin.readline())"
+EXIT_7 = (sys.executable, "-I", "-c", "import sys; sys.exit(7)")
+KILLED = (sys.executable, "-I", "-c", "import os, signal; os.kill(os.getpid(), signal.SIGKILL)")
+SLEEP = (sys.executable, "-I", "-c", "import time; time.sleep(30)")
+READ_LINE = (sys.executable, "-I", "-c", PUT + "put(sys.stdin.readline())")
 DUMP_ENV = PUT + "put(json.dumps(dict(os.environ)))"
 SPAWN = (
+    sys.executable,
+    "-I",
+    "-c",
     PUT + "child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)'])\n"
     "put(f'{os.getpid()} {child.pid}')\n"
-    "time.sleep(30)"
+    "time.sleep(30)",
 )
 LEAVE = (
+    sys.executable,
+    "-I",
+    "-c",
     PUT + "ready = sys.argv[1] + '.ready'\n"
     "child = subprocess.Popen([sys.executable, '-c', 'import signal, sys, time; "
     'signal.signal(signal.SIGHUP, signal.SIG_IGN); open(sys.argv[1], "w").close(); '
     "time.sleep(30)', ready])\n"
     "while not os.path.exists(ready):\n"
     "    time.sleep(0.01)\n"
-    "put(f'{os.getpid()} {child.pid}')\n"
+    "put(f'{os.getpid()} {child.pid}')\n",
 )
 RAW = (
+    sys.executable,
+    "-I",
+    "-c",
     PUT + "import tty\n"
     "if os.isatty(0):\n"
     "    tty.setraw(0)\n"
@@ -62,7 +71,28 @@ RAW = (
     "put(seen.hex())\n"
     "while not seen.endswith(b'q'):\n"
     "    seen += os.read(0, 64)\n"
-    "    put(seen.hex())\n"
+    "    put(seen.hex())\n",
+)
+BRACKETED = (
+    sys.executable,
+    "-I",
+    "-c",
+    PUT + "import tty\n"
+    "tty.setraw(0)\n"
+    "os.write(1, b'\\x1b[?2004h')\n"
+    "put('ready')\n"
+    "seen = b''\n"
+    "while not seen.endswith(b'\\x1b[201~'):\n"
+    "    seen += os.read(0, 64)\n"
+    "put(seen.hex())\n",
+)
+LEAVES = (
+    sys.executable,
+    "-I",
+    "-c",
+    PUT + "child = subprocess.Popen([sys.executable, '-c', "
+    "'import signal, time; signal.signal(signal.SIGHUP, signal.SIG_IGN); time.sleep(30)'])\n"
+    "put(str(child.pid))\n",
 )
 PRESSED = ("Escape", "3", "Up", "BTab", "C-c", "q")
 RECEIVED = b"\x1b3\x1b[A\x1b[Z\x03q"
@@ -74,10 +104,6 @@ load_class(path, Host)(host, json.loads(settings)).terminal(
     name, Launch(tuple(json.loads(argv)), cwd=cwd, env=json.loads(env))
 )
 """
-
-
-def program(code: str, *args: str) -> list[str]:
-    return [sys.executable, "-I", "-c", code, *args]
 
 
 def read(path: str) -> str | None:
@@ -119,9 +145,9 @@ class HostContract:
     def creator_env(self) -> dict[str, str]:
         return child_env(None, REPO)
 
-    def start(self, kind: str, name: str, code: str, *args: str, **kw):
+    def start(self, kind: str, name: str, argv: tuple[str, ...], *args: str, **kw):
         return getattr(self.host, kind)(
-            name, Launch(tuple(program(code, *args)), cwd=self.home, env=self.env()), **kw
+            name, Launch((*argv, *args), cwd=self.home, env=self.env()), **kw
         )
 
     def file(self, label: str) -> str:
@@ -171,7 +197,7 @@ class HostContract:
 
     def test_a_terminal_writes_dead_when_its_program_exits(self):
         name, events = self.fresh(), self.file("events")
-        self.start("terminal", name, "pass", events=events)
+        self.start("terminal", name, (sys.executable, "-I", "-c", "pass"), events=events)
         self.event(events, name, "dead")
 
     def test_a_paste_and_the_enter_key_reach_the_terminal_programs_stdin_as_one_line(self):
@@ -376,7 +402,7 @@ class HostContract:
                 self.host.name,
                 json.dumps(self.host.settings),
                 name,
-                json.dumps(program(READ_LINE, out)),
+                json.dumps([*READ_LINE, out]),
                 self.home,
                 json.dumps(self.env()),
             ],

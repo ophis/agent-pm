@@ -11,7 +11,6 @@ import re
 import signal
 import sys
 import tempfile
-import textwrap
 import threading
 import time
 import types
@@ -71,8 +70,25 @@ LAUNCHING = types.ModuleType("agent_pm.session.clients.launching")
 LAUNCHING.LaunchingClient = LaunchingClient
 
 
+GRANDCHILD = """import json, subprocess, sys, time
+grandchild = subprocess.Popen(
+    [sys.executable, "-I", "-c", "import time; time.sleep(60)"]
+)
+print(json.dumps({"type": "message", "text": str(grandchild.pid)}), flush=True)
+time.sleep(60)
+"""
+CLOSED_PIPES = """import json, os, time
+print(json.dumps({"type": "activity", "name": "Read"}), flush=True)
+os.close(1)
+os.close(2)
+time.sleep(60)
+"""
+
+
 class ScriptClient(fake_client.FakeClient):
-    """The fake client whose client is this Python running its config's `script`."""
+    """The fake client whose client is this Python running GRANDCHILD if its config's `script` is
+    "grandchild", else CLOSED_PIPES.
+    """
 
     keys = fake_client.FakeClient.keys | {"script"}
 
@@ -82,7 +98,9 @@ class ScriptClient(fake_client.FakeClient):
 
 class ScriptRun(fake_client.FakeHeadless):
     def launch(self, spec: Spec):
-        return Launch((sys.executable, "-I", "-c", self.owner.config["script"]))
+        if self.owner.config["script"] == "grandchild":
+            return Launch((sys.executable, "-I", "-c", GRANDCHILD))
+        return Launch((sys.executable, "-I", "-c", CLOSED_PIPES))
 
 
 SCRIPT = types.ModuleType("agent_pm.session.clients.script")
@@ -360,27 +378,20 @@ class ExitTest(Base):
 
 
 class ProcessGroupTest(Base):
-    def script(self, code: str, **kwargs) -> Session:
-        """A started session of client `script` running `code`."""
+    def script(self, script: str, **kwargs) -> Session:
+        """A started session of client `script` with config key `script`."""
         self.configure_session(
             {
                 "script": {
                     "implementation": "agent_pm.session.clients.script:ScriptClient",
-                    "script": textwrap.dedent(code),
+                    "script": script,
                 }
             }
         )
         return self.start("script", **kwargs)
 
     def test_stop_kills_a_grandchild_holding_the_pipes_so_events_end_with_exited(self):
-        handle = self.script("""
-            import json, subprocess, sys, time
-            grandchild = subprocess.Popen(
-                [sys.executable, "-I", "-c", "import time; time.sleep(60)"]
-            )
-            print(json.dumps({"type": "message", "text": str(grandchild.pid)}), flush=True)
-            time.sleep(60)
-        """)
+        handle = self.script("grandchild")
 
         def on(event):
             if isinstance(event, Reply):
@@ -395,16 +406,7 @@ class ProcessGroupTest(Base):
     def test_a_process_that_closed_its_pipes_and_lives_yields_idle_timeouts_until_stop_ends_it(
         self,
     ):
-        handle = self.script(
-            """
-            import json, os, time
-            print(json.dumps({"type": "activity", "name": "Read"}), flush=True)
-            os.close(1)
-            os.close(2)
-            time.sleep(60)
-        """,
-            idle_timeout=IDLE,
-        )
+        handle = self.script("closed pipes", idle_timeout=IDLE)
         found = self.drain(
             handle, lambda event: handle.stop() if isinstance(event, IdleTimeout) else None
         )

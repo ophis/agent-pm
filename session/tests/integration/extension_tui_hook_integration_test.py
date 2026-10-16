@@ -3,6 +3,7 @@ agent_pm.session.extension) declares its hook callback with its own root: `agent
 only the session's source roots, finds and runs it; undeclared, the callback is not found.
 """
 
+import importlib.util
 import json
 import os
 import subprocess
@@ -37,10 +38,6 @@ CALLBACK = """def on_hook(call):
         "seen": [call.label, call.sid, call.workdir, call.events, dict(call.state)],
     }
 """
-DECLARE = """import json
-from external_tui import ExternalTui
-print(json.dumps(ExternalTui().hook_callback().fields()))
-"""
 
 
 class ExternalTuiHookTest(Case):
@@ -60,18 +57,13 @@ class ExternalTuiHookTest(Case):
         del self.state["host_hook"]
 
     def declared(self) -> dict:
-        res = subprocess.run(
-            [sys.executable, "-P", "-c", DECLARE],
-            capture_output=True,
-            text=True,
-            env={
-                "PYTHONPATH": os.pathsep.join((SRC["session"], SRC["utils"], self.installed)),
-                "HOME": self.root,
-            },
-            timeout=60,
-        )
-        self.assertEqual(res.returncode, 0, res.stderr)
-        return json.loads(res.stdout)
+        path = os.path.join(self.installed, "external_tui", "__init__.py")
+        spec = importlib.util.spec_from_file_location("external_tui", path)
+        if spec is None or spec.loader is None:
+            raise ImportError(f"{path}: cannot load Python module")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module.ExternalTui().hook_callback().fields()
 
     def hook(self) -> str:
         res = subprocess.run(

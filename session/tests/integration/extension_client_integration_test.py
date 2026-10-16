@@ -24,7 +24,6 @@ MODULE = "extension_client"
 # in workdir argv[1] and prints its events; a ConfigError exits 1, its text on stderr.
 CHILD = """import dataclasses, json, sys
 from agent_pm.session import Access, ConfigError, Mode, Session, Spec, read_config
-from agent_pm.session.engine import hosted_session
 try:
     Session.configure_from(read_config())
     handle = Session.start(
@@ -35,7 +34,8 @@ except ConfigError as e:
     sys.exit(f"ConfigError: {e}")
 events = [[type(e).__name__, dataclasses.asdict(e)] for e in handle.events()]
 print(json.dumps({"sid": handle.sid, "events": events,
-                  "files": [hosted_session.__file__, sys.modules["extension_client"].__file__]}))
+                  "files": [sys.modules[type(handle).__module__].__file__,
+                            sys.modules["extension_client"].__file__]}))
 """
 INSTALLED_CHILD = """import json, sys
 from unittest import mock
@@ -103,7 +103,10 @@ class ExtensionClientIntegration(Case):
         with open(self.config, "a", encoding="utf-8") as f:
             f.write("\n" + text)
 
-    def child(self, client: str, script: str = CHILD) -> subprocess.CompletedProcess:
+    def child(self, client: str, *, installed: bool = False) -> subprocess.CompletedProcess:
+        script = CHILD
+        if installed:
+            script = INSTALLED_CHILD
         return subprocess.run(
             [*PY, "-c", script, self.work, client, self.site],
             cwd=self.root,
@@ -143,7 +146,7 @@ class ExtensionClientIntegration(Case):
         )
 
     def test_installed_codex_starts_its_module_with_its_site_as_the_only_import_root(self):
-        child = self.child("codex", INSTALLED_CHILD)
+        child = self.child("codex", installed=True)
         self.assertEqual(child.returncode, 0, child.stderr)
         launched = json.loads(child.stdout)
         self.assertEqual(

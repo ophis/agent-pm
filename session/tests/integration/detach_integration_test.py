@@ -21,11 +21,21 @@ from agent_pm.session.hosts.tmux.types import TuiError
 
 from session.tests import live_tmux
 from session.tests.case import Case
-from session.tests.detach_support import CHILD
 
 MANAGER = "mgr"
 # The child: writes its blocked signals to argv[1], unblocks them, then runs until argv[2] exists,
 # at most 30 s.
+CHILD = """import json, os, signal, sys, time
+report, go = sys.argv[1:]
+with open(report + ".tmp", "w") as f:
+    blocked = signal.pthread_sigmask(signal.SIG_BLOCK, [])
+    json.dump(sorted(int(s) for s in blocked), f)
+os.replace(report + ".tmp", report)
+signal.pthread_sigmask(signal.SIG_UNBLOCK, [signal.SIGHUP, signal.SIGTERM, signal.SIGINT])
+for _ in range(600):
+    if os.path.exists(go): break
+    time.sleep(0.05)
+"""
 
 
 class DetachTest(Case):

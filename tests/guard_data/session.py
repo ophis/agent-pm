@@ -106,29 +106,37 @@ PYTHON_CODE_ALLOWED = {
     (
         "session/tests/integration/clients/codex/tui/start_integration_test.py",
         "12c484c0edb7f7ebf292aa261aeca1fe260c4c668b2f4cb17d779403ad752df8",
-    ): "Checks concrete Codex module identity and hook constants in a fresh interpreter.",
+    ): "Fresh-interpreter import of codex tui submodules: sys.path untouched, canonical clients.common/codex.common identity, no _agent_pm_codex_* copies; needs internal submodules and clean sys.modules.",
     (
         "session/tests/integration/clients/codex/tui/start_integration_test.py",
         "a54540807f5981fab22a3c225f83241ed92520cc5a1ea92493cd6e779e2e431f",
-    ): "Checks concrete Codex module identity and hook constants in a fresh interpreter.",
+    ): "Imports codex.tui.HOOKS under -I with only session+utils roots, as isolated hook scripts do; HOOKS is not re-exported.",
     (
-        "session/tests/integration/engine/base_integration_test.py",
-        "5ee08ae1404e898c2f6edce1ceca5d068dcfbaa01d3993c8835b5c5c2435f2b1",
-    ): "Checks concrete dispatcher setup and runtime snapshot errors in a clean interpreter.",
+        "session/tests/integration/clients/codex/tui/start_integration_test.py",
+        "fc75cc3d188bbbbe8564133ed21537010ea309a09e4e7bc4a3d7f29135815e2c",
+    ): "Runs codex tui start as __main__ under -P -s from PYTHONPATH roots (and from a cwd decoy), then checks in that interpreter that internal codex modules are canonical; needs internal submodules and a fresh interpreter.",
     (
-        "session/tests/integration/engine/preflight_integration_test.py",
-        "8fe0392fdf778e8c979f1fc66e491ab9a76efcb939eeb42ba9c8229f1a8f6674",
-    ): "Loads the fake preflight client and spawn-denial targets for the side-effect check.",
-    (
-        "session/tests/integration/extension_tui_hook_integration_test.py",
-        "8f882febd3a05f1813e9faeeb408c5560774a1f3270d22ea30ffd627975e66b5",
-    ): "Loads the installed external Tui fixture to inspect its hook descriptor.",
+        "session/tests/integration/extension_client_integration_test.py",
+        "4ccf3464fd781df5281df75dd49379e9f8bfbe90397bc49471d20236f53f160f",
+    ): "Codex tui launch (argv, PYTHONPATH) from an installed-layout site through HostedSession's client registry; no public API returns a configured Client's launch, and only a fresh interpreter on the copied site sees that layout.",
     (
         "session/tests/integration/hosted_integration_test.py",
         "07c8a73e333aa13d8539abe7be6ff1eeaf46e1f133322ef4cb368f765b4a9208",
-    ): "Checks unconfigured concrete session and TuiStore failures in a clean interpreter.",
+    ): "HostedSession.list, Session.list and TuiStore.attach refused while HostedSession is unconfigured; tests may not patch HostedSession._setup (test_boundaries), and another test may have configured it in-process, so only a fresh interpreter has it unconfigured.",
     (
-        "session/tests/integration/runtimes/tui_hook_integration_test.py",
-        "e78526c2757b76e5b9d86d6c7f872aec6d7747b97733966c1e5689b076d2d3d2",
-    ): "Exercises concurrent writes through the concrete hook runtime in independent processes.",
+        "session/src/agent_pm/session/hosts/tmux/transport.py",
+        "2353827626a3c6e192d6841bde2f5dfdcdbbc4a8bff857d91303607d99299413",
+    ): "Shipped tmux pane wrapper: stdlib-only f-string interpolating TERMINAL_KEYS (one home), run with -I; production code, no agent_pm import.",
+    (
+        "session/tests/integration/clients/codex/tui/start_integration_test.py",
+        "7e4699b393a08c5b495eef12293120ce9612e2b3e1ddb34344a1329cd6505d0f",
+    ): "Runs internal codex tui start (a hook entry named in argv, not a layer command) as __main__ under -P -s and counts json.loads calls in that interpreter.",
+    (
+        "session/tests/integration/clients/codex/tui/start_integration_test.py",
+        "0842107b14800fd722eaff5e4ccafe1155e2741a5ec4a5fce845607c25f369af",
+    ): "Runs internal codex tui start (named in argv) as __main__ under -P -s with a lone-surrogate argument to check its one-line stderr and exit status.",
+    (
+        "session/tests/integration/clients/codex/tui/start_integration_test.py",
+        "57fc6aac3dc49a226570cf6f0855e21aea62e766ca50d9db62743186f3e0e6f6",
+    ): "Runs the standalone account probe file by path under -I and audits that it imports only the standard library; run_path of that file is the subject.",
 }

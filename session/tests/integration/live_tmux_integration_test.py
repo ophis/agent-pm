@@ -13,6 +13,17 @@ from unittest import mock
 from session.tests import live_tmux
 from session.tests.case import PLUGIN_BIN, Case
 
+INHERITED = "import subprocess, sys; raise SystemExit(subprocess.call([sys.argv[1], 'ls', '-F', '#{session_name}']))"
+EXPLICIT = "import subprocess, sys; raise SystemExit(subprocess.call([sys.argv[1], '-S', sys.argv[2], 'ls', '-F', '#{session_name}'], env={}))"
+DROPPED = (
+    "import os, subprocess, sys; env = dict(os.environ); env.pop('TMUX_TMPDIR'); "
+    "raise SystemExit(subprocess.call([sys.argv[1], 'ls'], env=env))"
+)
+REPLACED = (
+    "import os, subprocess, sys; env = dict(os.environ, TMUX_TMPDIR=sys.argv[2]); "
+    "raise SystemExit(subprocess.call([sys.argv[1], 'ls'], env=env))"
+)
+
 
 class Live(Case):
     def setUp(self):
@@ -150,10 +161,10 @@ class FixtureGuard(Live):
         self.assertEqual(self.ok("ls", "-F", "#{session_name}"), "first")
         self.assertEqual(other.tmux("ls", "-F", "#{session_name}").stdout, "second\n")
 
-    def child(self, code, *args):
+    def child(self, argv):
         self.assertEqual(self.server.program, os.path.join(self.server.bin, "tmux"))
         return subprocess.run(
-            [sys.executable, "-I", "-c", code, self.server.program, *args],
+            argv,
             env=self.server.env(),
             capture_output=True,
             text=True,
@@ -162,39 +173,30 @@ class FixtureGuard(Live):
 
     def test_nested_python_inherits_the_fixture_server_or_uses_an_explicit_socket(self):
         self.server.start("mgr")
-        for case, code, args in (
+        for case, argv in (
             (
                 "inherited",
-                "import subprocess, sys; raise SystemExit(subprocess.call([sys.argv[1], 'ls', '-F', '#{session_name}']))",
-                (),
+                [sys.executable, "-I", "-c", INHERITED, self.server.program],
             ),
             (
                 "explicit socket, no inherited environment",
-                "import subprocess, sys; raise SystemExit(subprocess.call([sys.argv[1], '-S', sys.argv[2], 'ls', '-F', '#{session_name}'], env={}))",
-                (self.server.socket,),
+                [sys.executable, "-I", "-c", EXPLICIT, self.server.program, self.server.socket],
             ),
         ):
             with self.subTest(case=case):
-                result = self.child(code, *args)
+                result = self.child(argv)
                 self.assertEqual((result.returncode, result.stdout), (0, "mgr\n"), result.stderr)
 
     def test_nested_python_cannot_drop_or_replace_the_private_selector(self):
-        for case, code, args in (
-            (
-                "dropped",
-                "import os, subprocess, sys; env = dict(os.environ); env.pop('TMUX_TMPDIR'); "
-                "raise SystemExit(subprocess.call([sys.argv[1], 'ls'], env=env))",
-                (),
-            ),
+        for case, argv in (
+            ("dropped", [sys.executable, "-I", "-c", DROPPED, self.server.program]),
             (
                 "replaced",
-                "import os, subprocess, sys; env = dict(os.environ, TMUX_TMPDIR=sys.argv[2]); "
-                "raise SystemExit(subprocess.call([sys.argv[1], 'ls'], env=env))",
-                (self.home,),
+                [sys.executable, "-I", "-c", REPLACED, self.server.program, self.home],
             ),
         ):
             with self.subTest(case=case):
-                result = self.child(code, *args)
+                result = self.child(argv)
                 self.assertEqual(result.returncode, 2, result.stderr)
                 self.assertIn("live_tmux", result.stderr)
 

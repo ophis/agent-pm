@@ -1,5 +1,6 @@
 """Clients record pure preparation and reject before any commit or runtime execution."""
 
+import json
 import sys
 
 from agent_pm.session.extension import (
@@ -14,7 +15,7 @@ from agent_pm.session.extension import (
 
 
 class PreflightClient(Client):
-    keys = frozenset({"unsupported", "empty_argv", "bad_env", "writable"})
+    keys = frozenset({"unsupported", "empty_argv", "bad_env", "writable", "log"})
     forbidden_selection = ("--resume",)
     prepared: list[Spec] = []
     committed: list[str] = []
@@ -29,11 +30,20 @@ class PreflightClient(Client):
     def in_process(self):
         return None if self.config.get("unsupported") == "in_process" else PreflightInProcess(self)
 
+    def note(self, kind: str, value) -> None:
+        """Appends value to the class list `kind`; with config "log", also a JSON line to that
+        file: [kind, value's sid or value].
+        """
+        getattr(self, kind).append(value)
+        if log := self.config.get("log"):
+            with open(log, "a") as f:
+                f.write(json.dumps([kind, getattr(value, "sid", value)]) + "\n")
+
     def writable_dirs(self, spec):
         return tuple(self.config.get("writable", ()))
 
     def launch(self, spec):
-        self.prepared.append(spec)
+        self.note("prepared", spec)
         env = {**spec.access.env, **spec.env}
         if self.config.get("bad_env"):
             env["BAD"] = "nul\0value"
@@ -49,7 +59,7 @@ class PreflightHeadless(JsonHeadless):
         return self.owner.launch(spec)
 
     def commit(self):
-        self.owner.committed.append("headless")
+        self.owner.note("committed", "headless")
 
     def parse(self, record):
         return ()
@@ -63,7 +73,7 @@ class PreflightTui(Tui):
         return self.owner.launch(spec)
 
     def commit(self):
-        self.owner.committed.append("tui")
+        self.owner.note("committed", "tui")
 
     def reply(self, payload):
         return ""
@@ -74,10 +84,10 @@ class PreflightInProcess(InProcess):
         self.owner = client
 
     def check(self, spec):
-        self.owner.prepared.append(spec)
+        self.owner.note("prepared", spec)
         if spec.tier == 4:
             raise ConfigError("tier 4 is unmapped")
 
     def run(self, spec):
-        self.owner.ran.append(spec)
+        self.owner.note("ran", spec)
         raise AssertionError("preflight executed an in_process client")

@@ -6,6 +6,7 @@ a listed one; a second, non-default Host's sessions and Records are listed too (
 """
 
 import os
+import sys
 import uuid
 from unittest import mock
 
@@ -17,7 +18,6 @@ from agent_pm.session.engine.types import Launch
 from agent_pm.utils import Record
 
 from session.tests.cli_support import MANAGER, CliCase
-from session.tests.contracts.host import program
 from session.tests.fakes.host import FakeHost
 
 HEADER = "name\tstate\tclient\tsid\tdisplay"
@@ -135,10 +135,15 @@ class SecondHostTest(ListingCase):
             detail="claude",
         )
         process = host.terminal(
-            "f1", Launch(tuple(program(SLEEP)), cwd=self.cwd), display=MANAGER, record=f1
+            "f1",
+            Launch((sys.executable, "-I", "-c", SLEEP), cwd=self.cwd),
+            display=MANAGER,
+            record=f1,
         )
         self.addCleanup(process.close)
-        bare = host.terminal("f2", Launch(tuple(program(SLEEP)), cwd=self.cwd), display=MANAGER)
+        bare = host.terminal(
+            "f2", Launch((sys.executable, "-I", "-c", SLEEP), cwd=self.cwd), display=MANAGER
+        )
         self.addCleanup(bare.close)
         listed = self.ls(module=True)
         self.assertEqual(listed, self.session_list())

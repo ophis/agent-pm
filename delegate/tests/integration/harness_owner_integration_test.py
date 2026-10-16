@@ -13,8 +13,7 @@ from delegate.tests.fakes.harness_session import HarnessSession, RecordingHost
 from delegate.tests.harness import SID, HarnessCase
 
 RUN = """import os, sys
-from agent_pm.delegate import Begun, Spec
-from agent_pm.delegate.engine.harness_delegate import HarnessDelegate
+from agent_pm.delegate import Begun, HarnessDelegate, Spec
 from delegate.tests.fakes.harness_session import HarnessSession
 from delegate.tests.replies import block
 from delegate.tests.unit.runs import DONE

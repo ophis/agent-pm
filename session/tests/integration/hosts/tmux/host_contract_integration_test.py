@@ -6,6 +6,7 @@ session the user split and refocused, read through its launched pane.
 
 import os
 import signal
+import sys
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -23,17 +24,19 @@ from session.tests.contracts.host import (
     SLEEP,
     HostContract,
     gone,
-    program,
     read,
 )
 
 MANAGER = "mgr"
 USER = "print('user pane', flush=True); import time; time.sleep(60)"
 GATED = (
+    sys.executable,
+    "-I",
+    "-c",
     "import os, sys, time\n"
     "print('agent pane', flush=True)\n"
     "while not os.path.exists(sys.argv[1]): time.sleep(0.01)\n"
-    "sys.exit(7)\n"
+    "sys.exit(7)\n",
 )
 
 
@@ -73,7 +76,16 @@ class TmuxHostContractTest(HostContract, Case):
     def split(self, name: str) -> str:
         """A pane of the user's split into name's window, focused once it prints: its id."""
         added = self.server.tmux(
-            "split-window", "-P", "-F", "#{pane_id}", "-t", f"={name}:", *program(USER)
+            "split-window",
+            "-P",
+            "-F",
+            "#{pane_id}",
+            "-t",
+            f"={name}:",
+            sys.executable,
+            "-I",
+            "-c",
+            USER,
         )
         self.assertEqual(added.returncode, 0, added.stderr)
         other = added.stdout.strip()
@@ -170,7 +182,9 @@ while not os.path.exists(ready + '.child'): time.sleep(0.01)
 with open(ready, 'w') as stream: stream.write(f'{os.getpid()} {child}')
 while True: time.sleep(1)
 """
-        process = self.start("detach", name, script, ready, stopping, finish, finished)
+        process = self.start(
+            "detach", name, (sys.executable, "-I", "-c", script), ready, stopping, finish, finished
+        )
         self.addCleanup(process.close)
         own, child = map(int, self.poll(lambda: read(ready), "program and child ready").split())
         control = self.server.option(name, "@control")
@@ -209,7 +223,7 @@ if child == 0:
 with open(sys.argv[1], 'w') as stream: stream.write(f'{os.getpid()} {child}')
 while True: time.sleep(1)
 """
-        terminal = self.start("terminal", name, script, ready)
+        terminal = self.start("terminal", name, (sys.executable, "-I", "-c", script), ready)
         token = terminal.token
         own, child = map(int, self.poll(lambda: read(ready), "program and child ready").split())
         killed = self.server.tmux("kill-session", "-t", f"={name}")

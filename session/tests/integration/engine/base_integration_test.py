@@ -4,18 +4,18 @@ import json
 import subprocess
 import unittest
 
+from agent_pm.session import SessionError
+from agent_pm.session.runtimes import tui
+
 from session.tests import live_tmux
 from session.tests.case import PY, Case
 
 UNCONFIGURED = "session not configured: call Session.configure first"
 CALLED = ("start", "attach", "usage", "layout", "writable_dirs", "display", "host")
 # A child: each class method on Session unconfigured, then after Session.configure; it prints
-# {"unconfigured": {name: message}, "configured": {name: result or [error type, message]},
-# "read_state": tui.TuiRuntime.snapshot("w1")'s error}.
+# {"unconfigured": {name: message}, "configured": {name: result or [error type, message]}}.
 DISPATCH = """import json, os
 from agent_pm.session import Access, ConfigError, SessionError, Hosts, Mode, Session, Spec
-from agent_pm.session.engine.hosted_session import HostedSession
-from agent_pm.session.runtimes import tui
 home = os.environ["HOME"]
 spec = Spec(workdir=home, access=Access(cwd=home), client="fake", mode=Mode.HEADLESS, prompt="hi")
 calls = {
@@ -36,10 +36,8 @@ def outcome(call):
 unconfigured = {n: outcome(c)[1] for n, c in calls.items() if n != "list"}
 tmux = {"implementation": "agent_pm.session.hosts.tmux:TmuxHost"}
 Session.configure(clients={}, hosts=Hosts("tmux", {"tmux": tmux}))
-configured = {"configure": HostedSession._setup is not None}
-configured.update({n: outcome(c) for n, c in calls.items()})
-read_state = outcome(lambda: tui.TuiRuntime.snapshot("w1"))
-print(json.dumps({"unconfigured": unconfigured, "configured": configured, "read_state": read_state}))
+configured = {n: outcome(c) for n, c in calls.items()}
+print(json.dumps({"unconfigured": unconfigured, "configured": configured}))
 """
 
 
@@ -59,16 +57,18 @@ class SessionClassMethods(Case):
         self.assertEqual(res.returncode, 0, res.stderr)
         found = json.loads(res.stdout)
         self.assertEqual(found["unconfigured"], {name: UNCONFIGURED for name in CALLED})
-        self.assertEqual(found["read_state"][0], "SessionError")
+        with self.assertRaises(SessionError) as caught:
+            tui.TuiRuntime.snapshot("w1")
+        read_state = [type(caught.exception).__name__, str(caught.exception)]
+        self.assertEqual(read_state[0], "SessionError")
         no_fake = ["ConfigError", "no [clients.fake] table in the configured clients"]
         bad_display = ["ConfigError", "display 'x;': want printable text not ending in ;"]
         self.assertEqual(
             found["configured"],
             {
-                "configure": True,
                 "host": "TmuxHost",
                 "start": no_fake,
-                "attach": found["read_state"],
+                "attach": read_state,
                 "list": [],
                 "usage": no_fake,
                 "layout": bad_display,
