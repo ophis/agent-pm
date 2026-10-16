@@ -95,9 +95,6 @@ def provider(api, cfg):
         def content(self):
             return self.status().to_line()
 
-        def ctl(self):
-            return ("agent-pm-delegate",)
-
         def status(self):
             live = self.alive()
             return Status(
