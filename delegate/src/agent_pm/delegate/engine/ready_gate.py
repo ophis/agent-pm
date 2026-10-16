@@ -1,8 +1,6 @@
-"""The ready gate: a done pull-request run's PR turns ready only when its autopilot result converged
-(G1, the agent's word), its head is the PR head (G2) and the head's checks pass (G3), G2 and G3 from
-one `gh pr view`; else the run fails, its summary ending `ready gate: <reason>`. A PR not made ready
-goes back to draft; an error never readies. `gh` runs only on a /pull/<n> url on the output's host;
-owner and name are unbound, so an agent can name another PR the Delegate's gh login may draft.
+"""Readies a done pull-request run's PR only when G1 its autopilot converged, G2 at the PR head, G3
+the head's checks pass; else the run fails and the PR stays draft. Gotcha: owner/name are the
+agent's, so it may name another PR on an allowed host.
 """
 
 import json
@@ -22,8 +20,7 @@ REASON_MAX = 300
 class _Check(StrEnum):
     PASS = "pass"
     SKIPPED = "skipped"
-    PENDING = "pending"
-    FAILURE = "failure"
+    FAIL = "fail"
 
 
 class _GhError(Exception):
@@ -35,7 +32,7 @@ class _View:
     state: str
     draft: bool
     head: str
-    checks: list
+    checks: list[object]
 
 
 def gate(outcome: Outcome, autopilot: Autopilot | None, host: str, *, run: Runner = sh) -> Gated:
@@ -45,20 +42,18 @@ def gate(outcome: Outcome, autopilot: Autopilot | None, host: str, *, run: Runne
     if not PULL.fullmatch(parts.path):
         return Gated(outcome, GateStatus.SKIPPED, "")
     if parts.netloc != host:
-        return _refuse(outcome, f"url host {parts.netloc} is not {host}")
+        return _refuse(outcome, f"url host {parts.netloc} is not {host}", done=done)
     try:
         view = _view(url, run)
     except _GhError as e:
-        return _refuse(outcome, str(e))
+        return _refuse(outcome, str(e), done=done)
     if not done:
-        undone = _undo(url, view, run)
-        if undone is None:
-            return Gated(outcome, GateStatus.KEPT, "")
-        return Gated(outcome, GateStatus.KEPT if undone else GateStatus.DRAFTED, _line(undone))
+        status, error = _undo(url, view, run)
+        return Gated(outcome, status, _line(error))
     reason = _judge(autopilot, view)
     if reason is not None:
-        undone = _undo(url, view, run)
-        return _failed(outcome, f"{reason}; {undone}" if undone else reason)
+        _, error = _undo(url, view, run)
+        return _failed(outcome, f"{reason}; {error}" if error else reason)
     if view.draft:
         try:
             _gh(run, "gh pr ready", ["pr", "ready", url])
@@ -67,8 +62,8 @@ def gate(outcome: Outcome, autopilot: Autopilot | None, host: str, *, run: Runne
     return Gated(outcome, GateStatus.PASSED, "")
 
 
-def _refuse(outcome: Outcome, reason: str) -> Gated:
-    if outcome.status == OutcomeStatus.DONE:
+def _refuse(outcome: Outcome, reason: str, *, done: bool) -> Gated:
+    if done:
         return _failed(outcome, reason)
     return Gated(outcome, GateStatus.KEPT, _line(reason))
 
@@ -105,7 +100,7 @@ def _view(url: str, run: Runner) -> _View:
     )
     try:
         data = json.loads(out)
-    except (ValueError, RecursionError) as e:
+    except ValueError as e:
         raise _GhError(f"gh pr view: {e}") from None
     if not isinstance(data, dict):
         raise _GhError("gh pr view: not an object")
@@ -121,15 +116,15 @@ def _view(url: str, run: Runner) -> _View:
     return _View(state, draft, head, checks or [])
 
 
-def _undo(url: str, view: _View, run: Runner) -> str | None:
-    """Drafts an open ready PR: None if none, "" if drafted, else the error."""
+def _undo(url: str, view: _View, run: Runner) -> tuple[GateStatus, str]:
+    """Drafts an open ready PR: (KEPT, "") nothing to do, (DRAFTED, "") drafted, (KEPT, error)."""
     if view.state != "OPEN" or view.draft:
-        return None
+        return GateStatus.KEPT, ""
     try:
         _gh(run, "gh pr ready --undo", ["pr", "ready", url, "--undo"])
     except _GhError as e:
-        return str(e)
-    return ""
+        return GateStatus.KEPT, str(e)
+    return GateStatus.DRAFTED, ""
 
 
 def _judge(autopilot: Autopilot | None, view: _View) -> str | None:
@@ -144,27 +139,26 @@ def _judge(autopilot: Autopilot | None, view: _View) -> str | None:
         return f"G2: autopilot head {autopilot.head[:12]} is not PR head {view.head[:12]}"
     checks = [_check(item) for item in view.checks]
     for name, kind, said in checks:
-        if kind in (_Check.PENDING, _Check.FAILURE):
+        if kind == _Check.FAIL:
             return f"G3: check {name} {said}"
     if checks and all(kind == _Check.SKIPPED for _, kind, _ in checks):
         return f"G3: CI did not run (CI 未运行): all {len(checks)} checks skipped"
     return None
 
 
-def _check(item) -> tuple[str, _Check, str]:
+def _check(item: object) -> tuple[str, _Check, str]:
     """(name, kind, GitHub's word) of a statusCheckRollup entry; unknown fails."""
     if not isinstance(item, dict):
-        return "?", _Check.FAILURE, "unreadable"
+        return "?", _Check.FAIL, "unreadable"
     name = str(item.get("name") or item.get("context") or "?")
     kind = item.get("__typename")
     if kind == "CheckRun":
         status, conclusion = str(item.get("status")), str(item.get("conclusion"))
         if status != "COMPLETED":
-            return name, _Check.PENDING, status
+            return name, _Check.FAIL, status
         found = {"SUCCESS": _Check.PASS, "NEUTRAL": _Check.PASS, "SKIPPED": _Check.SKIPPED}
-        return name, found.get(conclusion, _Check.FAILURE), conclusion
+        return name, found.get(conclusion, _Check.FAIL), conclusion
     if kind == "StatusContext":
         state = str(item.get("state"))
-        found = {"SUCCESS": _Check.PASS, "PENDING": _Check.PENDING, "EXPECTED": _Check.PENDING}
-        return name, found.get(state, _Check.FAILURE), state
-    return name, _Check.FAILURE, f"of unknown type {kind}"
+        return name, _Check.PASS if state == "SUCCESS" else _Check.FAIL, state
+    return name, _Check.FAIL, f"of unknown type {kind}"
