@@ -10,5 +10,15 @@
   "skills": [
     "./delegate/skills/",
     "./manager/skills/"
-  ]
+  ],
+  "hooks": "./manager/hooks/hooks.json",
+  "types": "./manager/hooks/types/index.d.ts",
+  "userConfig": {
+    "quiet_background": {
+      "type": "boolean",
+      "title": "Hide background notices",
+      "description": "Hide background-task notices and folded tool lines (Read 1 file) in the manager session; the model still reads them. /quiet toggles it for one session.",
+      "default": true
+    }
+  }
 }
