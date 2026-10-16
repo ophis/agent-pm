@@ -280,6 +280,26 @@ class CrewTest(Case):
         self.assertIn(f"role0\tfake\t{records[0].sid}\tworking", table)
         self.assertIn(f"role19\tfake\t{records[19].sid}\tworking", table)
 
+    def test_attach_leaves_hidden_entries_closed_and_marks_their_view(self):
+        hidden, shown = self.start("hidden"), self.start("shown")
+        ctl.set_session(self.ctl_dir, "hidden", showable=True, hidden=True)
+        ctl.set_session(self.ctl_dir, "shown", showable=True)
+        with self.listed([hidden, shown]):
+            table = self.crew.attach()
+        self.assertEqual(self.calls("show"), [{"argv": ["show"], "names": ["shown"]}])
+        self.assertIn(f"hidden\tfake\t{hidden.sid}\tworking\thidden\t", table)
+        self.assertIn(f"shown\tfake\t{shown.sid}\tworking\t-\t", table)
+        self.assertEqual([s.hidden for s in self.crew.status(("hidden", "shown"))], [True, False])
+
+    def test_a_hidden_entry_stays_closed_after_crew_resume(self):
+        self.gone("worker")
+        ctl.set_session(self.ctl_dir, "worker", showable=True, hidden=True)
+        resumed = self.crew.resume("worker")
+        with self.listed([resumed]):
+            table = self.crew.attach()
+        self.assertEqual(self.calls("show"), [])
+        self.assertIn(f"worker\tfake\t{resumed.sid}\tworking\thidden\t", table)
+
     def test_attach_renders_its_status_snapshot_during_a_concurrent_launch(self):
         self.start("old")
         with self.listed():

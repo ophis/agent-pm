@@ -143,7 +143,7 @@ class Flows(Case):
             "TaskStop",
             "`agent-pm-crew attach`",
             "lease",
-            "`name kind sid state note cwd attach`",
+            "`name kind sid state view note cwd attach`",
             "backlog",
             "`resume: agent-pm-crew resume … <name>`",
             "`agent-pm-crew next-event … --content --follow`",
