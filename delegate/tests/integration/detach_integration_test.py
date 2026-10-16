@@ -406,13 +406,6 @@ class Headless(Detach):
         self.said(res, tui=False)
         self.assertEqual(self.ended(), ["outcome done", "exited 0"])
 
-    def test_needs_input_one_outcome_line_the_harness_session_gone(self):
-        res = self.detach(steps=[block(ASKING)])
-        self.said(res, tui=False)
-        self.assertEqual(self.ended(), ["outcome needs_input", "exited 0"])
-        self.assertFalse(os.path.exists(self.out))
-        self.assertEqual(self.last("result")["outcome"]["questions"], ASKING["questions"])
-
 
 class Answer(Detach):
     def setUp(self):
@@ -449,6 +442,8 @@ class Answer(Detach):
     def test_headless_needs_input_answered_by_a_detached_resume(self):
         self.said(self.detach(steps=[block(ASKING)]), tui=False)
         self.assertEqual(self.ended(), ["outcome needs_input", "exited 0"])
+        self.assertFalse(os.path.exists(self.out))
+        self.assertEqual(self.last("result")["outcome"]["questions"], ASKING["questions"])
         res = self.answer(steps=[START, block(DONE)])
         self.answered(self.said(res, tui=False), turn_ends=0)
 
