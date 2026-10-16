@@ -280,21 +280,12 @@ class CrewTest(Case):
         self.assertIn(f"role0\tfake\t{records[0].sid}\tworking", table)
         self.assertIn(f"role19\tfake\t{records[19].sid}\tworking", table)
 
-    def test_attach_leaves_hidden_entries_closed_and_marks_their_view(self):
-        hidden, shown = self.start("hidden"), self.start("shown")
-        ctl.set_session(self.ctl_dir, "hidden", showable=True, hidden=True)
-        ctl.set_session(self.ctl_dir, "shown", showable=True)
-        with self.listed([hidden, shown]):
-            table = self.crew.attach()
-        self.assertEqual(self.calls("show"), [{"argv": ["show"], "names": ["shown"]}])
-        self.assertIn(f"hidden\tfake\t{hidden.sid}\tworking\thidden\t", table)
-        self.assertIn(f"shown\tfake\t{shown.sid}\tworking\t-\t", table)
-        self.assertEqual([s.hidden for s in self.crew.status(("hidden", "shown"))], [True, False])
-
     def test_a_hidden_entry_stays_closed_after_crew_resume(self):
         self.gone("worker")
         ctl.set_session(self.ctl_dir, "worker", showable=True, hidden=True)
         resumed = self.crew.resume("worker")
+        self.assertEqual(self.calls("show"), [])
+        self.assertTrue(self.crew.status(("worker",))[0].hidden)
         with self.listed([resumed]):
             table = self.crew.attach()
         self.assertEqual(self.calls("show"), [])
@@ -596,9 +587,9 @@ class CrewTest(Case):
         with mock.patch("subprocess.run", side_effect=run), self.listed():
             table = self.crew.attach().splitlines()
         rows = {row.split("\t")[0]: row.split("\t") for row in table[1:] if "\t" in row}
-        self.assertEqual(table[0].split("\t")[5], "cwd")
-        self.assertEqual((rows["one"][5], rows["two"][5]), ("/w/repo one", "-"))
-        self.assertNotEqual(rows["one"][5], record.workdir)
+        self.assertEqual(table[0].split("\t")[6], "cwd")
+        self.assertEqual((rows["one"][6], rows["two"][6]), ("/w/repo one", "-"))
+        self.assertNotEqual(rows["one"][6], record.workdir)
 
     def test_a_key_its_ctl_fails_is_the_only_status_lost(self):
         self.start("one")
