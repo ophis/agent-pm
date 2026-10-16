@@ -48,6 +48,7 @@ from agent_pm.session.hosts.base import (
     InteractiveProcess,
     Process,
     Showable,
+    check_sid,
     tui_lock,
 )
 from agent_pm.session.runtimes import tui_hook
@@ -143,15 +144,16 @@ class TuiStore:
     host's session of that name and removes the dir; absent is fine.
     """
 
-    def __init__(self, name: str, *, host: Host) -> None:
+    def __init__(self, name: str, *, host: Host, sid: str | None = None) -> None:
         self.name, self.host = name, host
+        self._sid = sid
         self.root = os.path.expanduser(TUI_DIR)
         self.dir = os.path.join(self.root, name)
         self.state_file = os.path.join(self.dir, tui_hook.STATE)
 
     @classmethod
-    def attach(cls, name: str, *, host: Host) -> Self:
-        return cls(checked_name(name), host=host)
+    def attach(cls, name: str, *, host: Host, sid: str | None = None) -> Self:
+        return cls(checked_name(name), host=host, sid=sid)
 
     def hook_argv(self) -> tuple[str, ...]:
         """The client's hook command: the running plugin's agent-pm-session (where PATH finds it)
@@ -178,10 +180,14 @@ class TuiStore:
                 found.append((label, payload))
         return found, offset + end
 
-    def process(self) -> Process | None:
+    def process(self, *, missing_ok: bool = False) -> Process | None:
         if self.name not in self.host.list():
+            if not missing_ok:
+                check_sid(self.name, None, self._sid)
             return None
-        return self.host.attach(self.name)
+        process = self.host.attach(self.name)
+        check_sid(self.name, process, self._sid)
+        return process
 
     def holder(self) -> str | None:
         process = self.process()
@@ -497,11 +503,13 @@ class TuiRuntime(Runtime):
         )
 
     @classmethod
-    def attach(cls, name: str, state: Mapping, client: Client, *, host: Host) -> Self:
+    def attach(
+        cls, name: str, state: Mapping, client: Client, *, host: Host, sid: str | None = None
+    ) -> Self:
         """Tui session `name` from its snapshot() if its terminal is tagged with its sid; a fresh Tui
         restored replays its client's record, then its hook log; events from the next record.
         """
-        store = TuiStore.attach(name, host=host)
+        store = TuiStore.attach(name, host=host, sid=sid)
         info = SessionInfo.from_fields(state)
         if info is None:
             raise SessionError(f"no tui session {name}: {store.state_file}: bad {_bad(state)}")
@@ -631,7 +639,7 @@ class TuiRuntime(Runtime):
     def _replaced(self, state: Liveness) -> bool:
         """Ended once another terminal holds its name or session.json is another generation's."""
         if state == Liveness.ABSENT:
-            replacement = self._store.process()
+            replacement = self._store.process(missing_ok=True)
             if replacement is not None and replacement.identity != self._terminal.identity:
                 self._end()
                 return True

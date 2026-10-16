@@ -54,6 +54,10 @@ class FakeDelegate(Delegate):
     outcome_result = Outcome("done", "Echoed", "echoed its input", deliverable="hello")
     usage_result = None
 
+    @classmethod
+    def create(cls, role, spec, *, display=None, callback=None, overlays=()):
+        return cls(role, spec, display=display, callback=callback, overlays=overlays)
+
     def __init__(
         self,
         role,
@@ -190,6 +194,12 @@ class FakeDelegate(Delegate):
     def alive(self):
         return _load(self.workdir)["alive"]
 
+    def content(self):
+        return self.status().to_line()
+
+    def ctl(self):
+        return self._record(_load(self.workdir)).ctl
+
     def status(self):
         state = _load(self.workdir)
         outcome = state["outcome"] and state["outcome"]["status"]
@@ -223,8 +233,18 @@ class FakeDelegate(Delegate):
     def session_status(self):
         return SessionStatus("yes", None, "")
 
-    def resume(self, *, mode=None):
+    def resume(self, *, mode=None, input=None):
         state = _load(self.workdir)
-        if not (state["alive"] or state["outcome"]):
+        if input is not None:
+            if (
+                state["alive"]
+                or not state["outcome"]
+                or state["outcome"]["status"] != "needs_input"
+            ):
+                raise ConfigError("--input requires a stopped needs_input run")
+            state = _update(
+                self.workdir, alive=True, outcome=None, input=input, starts=state["starts"] + 1
+            )
+        elif not (state["alive"] or state["outcome"]):
             state = _update(self.workdir, alive=True, starts=state["starts"] + 1)
         return self._record(state)

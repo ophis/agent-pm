@@ -174,7 +174,6 @@ class LiveRun(HarnessCase):
             before = self.metadata()
             launches = len(harness_launches())
             seen.append(self.cli())
-            seen.append(self.cli("--resume"))
             view = HarnessDelegate.attach(self.work, session_cls=HarnessSession)
             self.assertEqual(view.resume().sid, SID)
             with self.assertRaises(ConfigError) as caught:
@@ -183,8 +182,6 @@ class LiveRun(HarnessCase):
             self.assertEqual((self.metadata(), len(harness_launches())), (before, launches))
 
         self.assertEqual(delegate.run(meanwhile).outcome.status, "done")
-        self.assertEqual(
-            seen, [(2, "", refusal), (2, "", refusal), f"{self.work}: delegate is still alive"]
-        )
+        self.assertEqual(seen, [(2, "", refusal), f"{self.work}: delegate is still alive"])
         self.assertEqual(self.make().run().returncode, 0)
         self.assertEqual(self.metadata()["attempt"], 2)

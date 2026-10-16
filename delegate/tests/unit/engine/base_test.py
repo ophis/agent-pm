@@ -12,6 +12,7 @@ from agent_pm.session import Host, Session
 from delegate.tests.case import Case
 
 ABSTRACT = {
+    "create",
     "attach",
     "usage",
     "roles",
@@ -21,9 +22,11 @@ ABSTRACT = {
     "clean",
     "check_tui",
     "detach",
+    "ctl",
     "run",
     "alive",
     "status",
+    "content",
     "outcome",
     "show",
     "hide",
@@ -33,6 +36,7 @@ ABSTRACT = {
     "resume",
 }
 CLASS_METHODS = {
+    "create",
     "attach",
     "usage",
     "roles",
@@ -53,7 +57,19 @@ class Exports(Case):
         self.assertIs(delegate.RunConfig, composer.RunConfig)
         self.assertIs(delegate.DelegateEvent, event.DelegateEvent)
 
-    def test_no_concrete_implementation_is_exported(self):
+    def test_session_types_are_public_at_the_delegate_boundary(self):
+        for name in ("Resumable", "SessionStatus", "Usage", "Window"):
+            with self.subTest(name=name):
+                self.assertIn(name, delegate.__all__)
+                self.assertIs(getattr(delegate, name), getattr(session, name))
+
+    def test_the_public_package_exports_the_harness_implementation(self):
+        from agent_pm.delegate.engine.harness_delegate import HarnessDelegate
+
+        self.assertIn("HarnessDelegate", delegate.__all__)
+        self.assertIs(delegate.HarnessDelegate, HarnessDelegate)
+
+    def test_only_the_harness_concrete_implementation_is_exported(self):
         exported = [getattr(module, n) for module in (session, delegate) for n in module.__all__]
         concrete = [
             value
@@ -62,7 +78,7 @@ class Exports(Case):
             and issubclass(value, (Session, Host, Delegate))
             and not inspect.isabstract(value)
         ]
-        self.assertEqual(concrete, [])
+        self.assertEqual(concrete, [delegate.HarnessDelegate])
 
 
 class Abstract(Case):

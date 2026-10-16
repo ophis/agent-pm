@@ -21,6 +21,7 @@ SUBCOMMANDS = [
     "resume",
     "reply",
     "status",
+    "content",
     "show",
     "hide",
     "close",

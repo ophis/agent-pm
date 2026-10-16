@@ -6,17 +6,30 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable, Mapping, Sequence
 
 from agent_pm.delegate.composer import RunConfig
-from agent_pm.delegate.engine.types import Event, Outer, Result
+from agent_pm.delegate.engine.types import Event, Outer, Result, Spec
 from agent_pm.delegate.event.outcome import Outcome
 from agent_pm.session import SessionStatus, Usage
 from agent_pm.utils import Display, Record, Status
 
 
 class Delegate(ABC):
-    """One role run and its durable view; implementations own construction and placement. Callers
+    """One role run and its durable view; implementations own placement. Callers
     know only the run's workdir W; checkouts and clean are its layout's only outside view. An
     implementation touches only the W entries it creates, leaving every other one alone.
     """
+
+    @classmethod
+    @abstractmethod
+    def create(
+        cls,
+        role: str,
+        spec: Spec,
+        *,
+        display: Display = None,
+        callback: Sequence[str] | None = None,
+        overlays: Sequence[Mapping] = (),
+    ) -> Delegate:
+        """Build and save a run without starting its sessions."""
 
     @classmethod
     @abstractmethod
@@ -69,6 +82,9 @@ class Delegate(ABC):
     def detach(self, *, outer: Outer | None = None) -> Record: ...
 
     @abstractmethod
+    def ctl(self) -> tuple[str, ...]: ...
+
+    @abstractmethod
     def run(self, on_event: Callable[[Event], None] | None = None) -> Result: ...
 
     @abstractmethod
@@ -76,6 +92,9 @@ class Delegate(ABC):
 
     @abstractmethod
     def status(self) -> Status: ...
+
+    @abstractmethod
+    def content(self) -> str: ...
 
     @abstractmethod
     def outcome(self) -> Outcome | None: ...
@@ -96,4 +115,4 @@ class Delegate(ABC):
     def session_status(self) -> SessionStatus: ...
 
     @abstractmethod
-    def resume(self, *, mode: str | None = None) -> Record: ...
+    def resume(self, *, mode: str | None = None, input: str | None = None) -> Record: ...

@@ -227,7 +227,15 @@ class FakeHost(Host):
         return os.path.expanduser(self.settings.get("root", "~/.agent-pm/fake-host"))
 
     def detach(self, name, launch: Launch, *, display=None, events=None, record=None):
-        return self._start("detach", name, launch, display=display, events=events, record=record)
+        return self._start(
+            "detach",
+            name,
+            launch,
+            display=display,
+            events=events,
+            record=record,
+            metadata={} if record is None or record.sid is None else {"sid": record.sid},
+        )
 
     def terminal(
         self, name, launch: Launch, *, display=None, events=None, record=None, metadata=None

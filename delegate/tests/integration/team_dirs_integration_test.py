@@ -16,7 +16,14 @@ from agent_pm.delegate.composer.prompt import RESUME, RETURN
 from agent_pm.delegate.engine.types import Layout
 
 from delegate.tests.case import REPO
-from delegate.tests.integration.cli import NATIVE, RUN, CodexIntegration, Integration, codex_said
+from delegate.tests.integration.cli import (
+    ASKING,
+    NATIVE,
+    RUN,
+    CodexIntegration,
+    Integration,
+    codex_said,
+)
 from delegate.tests.integration.composer import child
 from delegate.tests.replies import block, mark
 from utils.tests.sandbox import owned_directory
@@ -218,9 +225,13 @@ class CodexTeamDirs(CodexIntegration):
             f.write(f"[delegate.roles.writer]\n{key} = {json.dumps([self.team])}\n")
 
     def test_a_codex_run_and_its_resume_read_its_tasks_dir_unadded(self):
-        for extra, resume_id in (((), None), (("--resume",), NATIVE)):
-            with self.subTest(extra=extra):
-                res = self.drive(codex_said(mark("start", "noting"), block(DONE)), *extra)
+        for resume, resume_id in ((False, None), (True, NATIVE)):
+            with self.subTest(resume=resume):
+                res = (
+                    self.answer(codex_said(block(DONE)))
+                    if resume
+                    else self.drive(codex_said(mark("start", "noting"), block(ASKING)))
+                )
                 self.assertEqual(res.returncode, 0, res.stderr)
                 call = self.calls()[-1]
                 self.assertEqual(call["resume_id"], resume_id)
@@ -229,7 +240,8 @@ class CodexTeamDirs(CodexIntegration):
                 self.assertNotIn(CORE_TASKS, dirs)
                 self.assertIn(f"`{self.tasks}`", call["prompt"])
                 self.assertFalse(os.path.exists(os.path.join(self.work, "tasks")))
-                self.assertEqual(self.read(self.out), DONE["deliverable"])
+                if resume:
+                    self.assertEqual(self.read(self.out), DONE["deliverable"])
 
     def test_a_read_dir_holding_the_team_dir_runs_unadded(self):
         self.role("read")

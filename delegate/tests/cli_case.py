@@ -27,6 +27,7 @@ KEYS = {
     "client",
     "mode",
     "sid",
+    "workdir",
     "resume",
     "cwd",
     "project",

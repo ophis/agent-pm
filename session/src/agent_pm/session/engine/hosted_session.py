@@ -45,7 +45,7 @@ from agent_pm.session.engine.types import (
     TurnEnd,
     Usage,
 )
-from agent_pm.session.hosts.base import Host, Showable
+from agent_pm.session.hosts.base import Host, Showable, check_sid
 from agent_pm.session.runtimes import headless, in_process, tui
 from agent_pm.session.runtimes.base import Runtime, child_env
 from agent_pm.utils import (
@@ -187,6 +187,7 @@ class HostedSession(Session):
         self._ended = False
         self._blocked = False
         self._bound = False
+        self._expected_sid: str | None = None
 
     @classmethod
     def configure(
@@ -294,7 +295,12 @@ class HostedSession(Session):
 
     @classmethod
     def attach(
-        cls, name: str, *, host: str | None = None, idle_timeout: float | None = None
+        cls,
+        name: str,
+        *,
+        sid: str | None = None,
+        host: str | None = None,
+        idle_timeout: float | None = None,
     ) -> HostedSession:
         """Tui session `name`, from any process; its client record and hook log replayed into its
         reply and blocked, blocked too while its terminal is marked so.
@@ -303,12 +309,14 @@ class HostedSession(Session):
         tui.checked_name(name)
         _idle(idle_timeout)
         on = cls.host(host)
+        if sid is not None:
+            check_sid(name, on.attach(name), sid)
         state = tui.TuiRuntime.snapshot(name)
         try:
             client = setup.registry.client(state["client"])
         except ConfigError as e:
             raise SessionError(f"no tui session {name}: {e}") from None
-        running = tui.TuiRuntime.attach(name, state, client, host=on)
+        running = tui.TuiRuntime.attach(name, state, client, host=on, sid=sid)
         session = cls(
             state["client"],
             Mode.TUI,
@@ -319,12 +327,17 @@ class HostedSession(Session):
             idle_timeout=idle_timeout,
             client=client,
         )
+        session._expected_sid = sid
         for event in running.replayed:
             session._fold(event, replayed=True)
         if not session._blocked:
             session._blocked = running.marked_blocked()
         session.info()
         return session
+
+    @classmethod
+    def retire(cls, name: str, *, sid: str | None = None, host: str | None = None) -> None:
+        tui.TuiStore.attach(name, host=cls.host(host), sid=sid).close()
 
     @classmethod
     def list(
@@ -442,6 +455,7 @@ class HostedSession(Session):
         return _resumable(lambda: setup.registry.client(client), info, spec)
 
     def events(self) -> Iterator[SessionEvent | Stderr | IdleTimeout]:
+        self._check_sid()
         last = self._clock()
         try:
             while not self._ended:
@@ -506,19 +520,29 @@ class HostedSession(Session):
 
     @property
     def opening_pending(self) -> str | None:
+        self._check_sid()
         return self._running.opening_pending
 
+    def _check_sid(self) -> None:
+        if self._expected_sid is not None:
+            name = self.name or self.sid
+            check_sid(name, self._host.attach(name), self._expected_sid)
+
     def send(self, text: str) -> None:
+        self._check_sid()
         self._running.send(text)
 
     def press(self, keys: Sequence[KeyPress]) -> None:
+        self._check_sid()
         self._running.press(tuple(keys))
 
     def alive(self) -> bool:
+        self._check_sid()
         return self._running.state() == Liveness.LIVE
 
     def status(self) -> Status:
         """Its run's; a live tui one's activity, attach and hidden from its terminal."""
+        self._check_sid()
         liveness, name = self._running.state(), self._tui()
         if liveness == Liveness.LIVE and name is not None:
             try:
@@ -539,6 +563,7 @@ class HostedSession(Session):
         )
 
     def stop(self) -> None:
+        self._check_sid()
         self._running.stop()
 
     def _refresh_metadata(self) -> None:
@@ -560,6 +585,7 @@ class HostedSession(Session):
             )
 
     def info(self) -> SessionInfo:
+        self._check_sid()
         self._refresh_metadata()
         return self._info
 
@@ -568,20 +594,24 @@ class HostedSession(Session):
         """The latest Reply or non-empty TurnEnd text, None before; attached, its hook log's last
         TurnEnd reply, even "", comes first, else its client record's newest text.
         """
+        self._check_sid()
         return self._reply
 
     def close(self) -> None:
+        self._check_sid()
         self._running.close()
 
     def session_status(self) -> SessionStatus:
         return _resumable(lambda: self._client, self.info(), self._running.prepared.spec)
 
     def record(self) -> Record | None:
+        self._check_sid()
         name = self._tui()
         return None if name is None else self._host.attach(name).record()
 
     @property
     def showable(self) -> bool:
+        self._check_sid()
         return self._tui() is not None and isinstance(self._host, Showable)
 
     def show(self, *, display: Display = None, command: str | None = None) -> str | None:
@@ -598,6 +628,9 @@ class HostedSession(Session):
         host, name = self._shown("attach_command")
         return host.attach_command(name)
 
+    def content(self) -> str:
+        return self.screen()
+
     def screen(self, lines: int | None = None) -> str:
         """Its mode's read, which refuses a terminal no longer running."""
         self._shown("screen")
@@ -607,6 +640,7 @@ class HostedSession(Session):
         return self.name if self.mode == Mode.TUI else None
 
     def _shown(self, call: str) -> tuple[Showable, str]:
+        self._check_sid()
         if not isinstance(self._host, Showable):
             raise NotShowable(f"host {self._host.name} cannot show")
         name = self._tui()

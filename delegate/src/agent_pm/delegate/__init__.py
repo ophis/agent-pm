@@ -8,6 +8,7 @@ from agent_pm.delegate.config import read_config
 from agent_pm.delegate.engine.base import Delegate
 from agent_pm.delegate.engine.config import module_roots
 from agent_pm.delegate.engine.drivers import Driver
+from agent_pm.delegate.engine.harness_delegate import HarnessDelegate
 from agent_pm.delegate.engine.types import (
     Begun,
     ConfigError,
@@ -22,8 +23,8 @@ from agent_pm.delegate.engine.types import (
     Spec,
 )
 from agent_pm.delegate.event import DelegateEvent
-from agent_pm.delegate.event.types import InvalidOutcome, Outcome, OutcomeStatus
-from agent_pm.session import NotShowable, SessionError
+from agent_pm.delegate.event.types import InvalidOutcome, Outcome
+from agent_pm.session import NotShowable, Resumable, SessionError, SessionStatus, Usage, Window
 
 __all__ = [
     "ConfigError",
@@ -34,6 +35,10 @@ __all__ = [
     "Driver",
     "SessionError",
     "NotShowable",
+    "Resumable",
+    "SessionStatus",
+    "Usage",
+    "Window",
     "DriverSpec",
     "Instruction",
     "Limit",
@@ -43,8 +48,8 @@ __all__ = [
     "Progress",
     "Finished",
     "Event",
-    "OutcomeStatus",
     "Delegate",
+    "HarnessDelegate",
     "RunConfig",
     "DelegateEvent",
     "module_roots",

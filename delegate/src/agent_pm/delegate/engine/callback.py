@@ -46,7 +46,7 @@ class EventCallback:
             "finished",
             **run,
             returncode=result.returncode,
-            outcome=None if result.outcome is None else asdict(result.outcome),
+            outcome=result.outcome,
             error=result.error,
             limit=None if result.limit is None else asdict(result.limit),
         )

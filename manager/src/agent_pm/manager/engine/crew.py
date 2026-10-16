@@ -16,7 +16,16 @@ from dataclasses import replace
 from agent_pm.manager.engine.pr import NO_PR, VIEW_FIELDS, cells, pr_url, unknown
 from agent_pm.manager.engine.roster import LOCK_TIMEOUT, Roster
 from agent_pm.manager.engine.types import Entry, Lease, RosterError, Spec, State, StatusError
-from agent_pm.utils import LEASE_ENV, Record, Status, StatusState, one_line, printable
+from agent_pm.utils import (
+    EVENTS_ENV,
+    LEASE_ENV,
+    SID_ENV,
+    Record,
+    Status,
+    StatusState,
+    one_line,
+    printable,
+)
 
 TIMEOUT = 30
 RECOVERY_MARGIN = 5
@@ -72,10 +81,10 @@ class Crew:
         env = {
             key: value
             for key, value in os.environ.items()
-            if key not in {"AGENT_PM_SID", "AGENT_PM_EVENTS", *LEASE_ENV}
+            if key not in {SID_ENV, EVENTS_ENV, *LEASE_ENV}
         }
         if events:
-            env["AGENT_PM_EVENTS"] = self.roster.events
+            env[EVENTS_ENV] = self.roster.events
         return env
 
     def _call(self, argv: tuple[str, ...], text: str) -> subprocess.CompletedProcess:
@@ -117,7 +126,7 @@ class Crew:
         return self._listed
 
     def _start(self, argv: tuple[str, ...], name: str, sid: str) -> Record:
-        env = {**self._env(events=True), "AGENT_PM_SID": sid}
+        env = {**self._env(events=True), SID_ENV: sid}
         try:
             with self.roster.open_receipt(name) as receipt:
                 result = subprocess.run(

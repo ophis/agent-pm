@@ -26,7 +26,7 @@ from agent_pm.linear_orchestrator.engine import (
 )
 from agent_pm.linear_orchestrator.engine.types import LinearError, Spec
 from agent_pm.session import SessionStatus
-from agent_pm.utils import SHORT
+from agent_pm.utils import EVENTS_ENV, SHORT, SID_ENV
 from orchestrator_tests.unit import run_fixtures
 from orchestrator_tests.unit.board_ids import ACCOUNTS, HEADER, TEAM, team_node
 from orchestrator_tests.unit.board_ids import STATES as IDS_BY_KEY
@@ -574,7 +574,7 @@ class TickBase(Base):
             mock.patch.dict(os.environ, {"PATH": "/usr/bin:/bin"}),
             self.log_dir(again=again),
         ):
-            for key in (router.EVENTS_ENV, router.SID_ENV):
+            for key in (EVENTS_ENV, SID_ENV):
                 os.environ.pop(key, None)
             os.environ.update(env or {})
             rc = router.main(

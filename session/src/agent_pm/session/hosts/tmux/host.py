@@ -464,6 +464,7 @@ class TmuxHost(Host, Showable):
                     display=display,
                     events=events,
                     record=None if record is None else record.to_line(),
+                    sid=None if record is None else record.sid,
                     control=control.path,
                 )
             control.wait_started()

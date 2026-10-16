@@ -30,6 +30,10 @@ def _own(f):
     return wrapped
 
 
+def run_sid(sid: str | None) -> str:
+    return str(uuid.uuid4()) if sid is None else sid
+
+
 @_own
 def place(
     run: RunConfig,
@@ -97,7 +101,7 @@ def plan(run: RunConfig, spec: Spec, *, driver: Driver, composition: Composer) -
         workdir=layout.workdir,
         out=out,
         client=client,
-        sid=spec.sid if spec.sid is not None else str(uuid.uuid4()),
+        sid=run_sid(spec.sid),
         team=composition.team,
     )
     resume = spec.sid if spec.resume else None

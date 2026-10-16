@@ -120,7 +120,7 @@ class Lock(Parity):
         res = self.router("--issue", ID)
         self.assertEqual(
             (res.returncode, res.stdout, res.stderr),
-            (1, "", f"router.py: {BUSY}; try again\n"),
+            (2, "", f"router.py: {BUSY}; try again\n"),
         )
         self.assert_skipped(first, f"router skip {ID} reason={BUSY}")
 

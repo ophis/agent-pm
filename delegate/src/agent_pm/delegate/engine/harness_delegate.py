@@ -58,8 +58,11 @@ from agent_pm.session import (
     Spec as SessionSpec,
 )
 from agent_pm.utils import (
+    EVENTS_ENV,
     LEASE_ENV,
+    SID_ENV,
     Display,
+    OutcomeStatus,
     Record,
     Status,
     StatusState,
@@ -131,14 +134,24 @@ class _State:
 
 TUI_START_TIMEOUT = 30  # seconds: a detached tui run's agent session to go live
 TUI_POLL = 0.1  # seconds
-# A launcher's start token (the run's sid) and events file: no harness inherits them.
-SID_ENV, EVENTS_ENV = "AGENT_PM_SID", "AGENT_PM_EVENTS"
 
 
 class HarnessDelegate(Delegate):
     def __init__(self, role: str, spec: Spec, **placement) -> None:
         self._accept(role, spec, **placement)
         self._persist_new()
+
+    @classmethod
+    def create(
+        cls,
+        role: str,
+        spec: Spec,
+        *,
+        display: Display = None,
+        callback: Sequence[str] | None = None,
+        overlays: Sequence[Mapping] = (),
+    ) -> HarnessDelegate:
+        return cls(role, spec, display=display, callback=callback, overlays=overlays)
 
     @classmethod
     def preview(cls, role: str, spec: Spec, **placement) -> Preview:
@@ -608,6 +621,9 @@ class HarnessDelegate(Delegate):
             state.role,
         )
 
+    def content(self) -> str:
+        return self.status().to_line()
+
     def status(self) -> Status:
         state = self._read()
         agent = self._agent(state)
@@ -746,6 +762,9 @@ class HarnessDelegate(Delegate):
                         callback(Finished(ended))
                 raise
 
+    def ctl(self) -> tuple[str, ...]:
+        return self._record(self._read()).ctl
+
     def _complete(self, result: Result) -> None:
         with self.store.mutex():
             state = self._current()
@@ -871,7 +890,7 @@ class HarnessDelegate(Delegate):
                     session.close()
         raise SessionError(f"tui session {state.agent_name} did not start")
 
-    def resume(self, *, mode: str | None = None) -> Record:
+    def resume(self, *, mode: str | None = None, input: str | None = None) -> Record:
         """Continues in `mode` (headless or tui), else the recorded one; the new mode is recorded."""
         if mode not in (None, Mode.HEADLESS, Mode.TUI):
             raise ConfigError(f"resume: mode must be headless or tui, got {mode!r}")
@@ -882,7 +901,14 @@ class HarnessDelegate(Delegate):
                     f"{self.workdir}: run {self._state.plan.sid} was replaced by {state.plan.sid}"
                 )
             previous = self._state = state
-            if self._alive(state) or state.result is not None and state.result.outcome is not None:
+            alive = self._alive(state)
+            if input is not None:
+                if alive:
+                    raise ConfigError(f"{self.workdir}: delegate is still alive")
+                outcome = state.result.outcome if state.result is not None else None
+                if outcome is None or outcome.status != OutcomeStatus.NEEDS_INPUT:
+                    raise ConfigError(f"{self.workdir}: --input requires a needs_input outcome")
+            elif alive or state.result is not None and state.result.outcome is not None:
                 return self._record(state)
             self._sweep()
             original = state.plan.session.access
@@ -896,6 +922,7 @@ class HarnessDelegate(Delegate):
             spec = replace(
                 state.plan.spec,
                 resume=True,
+                input=state.plan.spec.input if input is None else input,
                 cwd=original.cwd,
                 team=self.composer.team,
                 mode=mode,

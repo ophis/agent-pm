@@ -6,6 +6,7 @@ import signal
 import subprocess
 
 from agent_pm.manager.engine.roster import Roster
+from agent_pm.utils import SID_ENV
 
 
 def _foreground(group: int) -> None:
@@ -27,7 +28,7 @@ class Holder:
             raise ValueError("hold requires a nonempty manager command")
         with self.roster.hold(session, force=force) as lease:
             env = dict(os.environ)
-            env.pop("AGENT_PM_SID", None)
+            env.pop(SID_ENV, None)
             env.update(
                 AGENT_PM_MANAGER=os.path.basename(self.roster.directory),
                 AGENT_PM_HOLDER_ID=lease.id,

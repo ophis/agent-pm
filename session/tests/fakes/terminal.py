@@ -149,7 +149,9 @@ class MemoryHost(Host):
 
     def detach(self, name, launch: Launch, *, display=None, events=None, record=None):
         self.calls.detach(name, launch, display=display, events=events, record=record)
-        return self.create(name, receipt=record, display=display)
+        return self.create(
+            name, sid=None if record is None else record.sid, receipt=record, display=display
+        )
 
     def attach(self, name):
         self.calls.attach(name)

@@ -28,9 +28,7 @@ pathlib.Path(sys.argv[3]).write_text('finished')
 """
 RUNNER = """
 import sys
-from agent_pm.manager.engine.crew import Crew
-from agent_pm.manager.engine.roster import Roster
-from agent_pm.manager.engine.types import Spec
+from agent_pm.manager import Crew, Roster, Spec
 Crew(Roster(sys.argv[1])).run(Spec('alias', tuple(sys.argv[2:]), 'keep'))
 """
 

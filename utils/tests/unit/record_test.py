@@ -5,6 +5,7 @@ import unittest
 from dataclasses import asdict, replace
 from io import StringIO
 
+from agent_pm import utils
 from agent_pm.utils import answer_keys, number
 from agent_pm.utils.record import Record, RecordError, Status, StatusState
 
@@ -214,6 +215,22 @@ class StatusLine(Case):
             '"cwd":null}',
         )
 
+    def test_outcome_refuses_unknown_empty_and_non_string_values(self):
+        for value in ("x", "", 1, True, [], {}):
+            with self.subTest(value=value):
+                with self.assertRaises(ValueError):
+                    replace(STATUS, outcome=value)
+                with self.assertRaises(ValueError):
+                    Status.parse(line(STATUS, outcome=value))
+
+    def test_outcome_words_are_shared_and_normalized(self):
+        self.assertEqual(list(utils.OutcomeStatus), ["done", "needs_input", "failed"])
+        for word in utils.OutcomeStatus:
+            with self.subTest(word=word):
+                self.assertIs(replace(STATUS, outcome=word.value).outcome, word)
+                self.assertIs(Status.parse(line(STATUS, outcome=word.value)).outcome, word)
+        self.assertIsNone(replace(STATUS, outcome=None).outcome)
+
     def test_a_line_without_cwd_has_none(self):
         data = asdict(STATUS)
         del data["cwd"]
@@ -237,7 +254,7 @@ class StatusLine(Case):
             ("state", "live", STATES),
             ("hidden", "no", "hidden: want true or false"),
             ("hidden", None, "hidden: want true or false"),
-            ("outcome", 1, "outcome: want null or a str"),
+            ("outcome", 1, "outcome: want null or one of done, needs_input, failed"),
             ("attach", ["fake-ctl"], "attach: want null or a str"),
             ("cwd", "", f"cwd: {NULL_TEXT}"),
             ("cwd", "/w\n", f"cwd: {NULL_TEXT}"),

@@ -77,7 +77,7 @@ class Callbacks(CallbackCase):
             (result.returncode, result.error, None),
         )
         self.assertEqual(
-            events[-1].outcome,
+            asdict(events[-1].outcome),
             {**OUTCOME, "questions": [], "url": Layout(self.work).out, "files": []},
         )
         self.assertEqual(self.errors(), [])
@@ -174,7 +174,7 @@ class OneFinished(CallbackCase):
                     self.finished(events[-1]),
                     (
                         result.returncode,
-                        None if result.outcome is None else asdict(result.outcome),
+                        result.outcome,
                         result.error,
                         None if result.limit is None else {"resets_at": result.limit.resets_at},
                     ),
@@ -235,7 +235,7 @@ class OneFinished(CallbackCase):
         self.assertIs(raised.exception, failure)
         events = self.events()
         self.assertEqual([event.kind for event in events], ["begun", "progress", "finished"])
-        self.assertEqual(events[-1].outcome["status"], "done")
+        self.assertEqual(events[-1].outcome.status, "done")
         self.assertEqual(self.metadata()["result"]["outcome"]["status"], "done")
 
     def test_a_refused_start_sends_one_stopped_finished(self):

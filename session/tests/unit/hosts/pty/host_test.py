@@ -16,7 +16,7 @@ from agent_pm.session import ConfigError, Launch, SessionError, Showable, Status
 from agent_pm.session.hosts.base import tui_lock
 from agent_pm.session.hosts.pty import PtyHost, state
 from agent_pm.session.hosts.pty.host import SUPERVISOR
-from agent_pm.utils import inode_lock
+from agent_pm.utils import Record, inode_lock
 
 from session.tests.case import Case
 
@@ -70,7 +70,7 @@ class Starting(Case):
     a runner that reports through started.json.
     """
 
-    def start(self, *, pid=True, poll=None, started="{}", events=None, ended=False):
+    def start(self, *, pid=True, poll=None, started="{}", events=None, ended=False, record=None):
         """ended: the session's group is gone and its files aged as soon as it started."""
 
         def popen(argv, **options):
@@ -99,13 +99,31 @@ class Starting(Case):
             mock.patch("os.killpg") as killed,
         ):
             try:
-                result = PtyHost("pty").detach("x", Launch(("prog",), cwd=self.home), events=events)
+                result = PtyHost("pty").detach(
+                    "x", Launch(("prog",), cwd=self.home), events=events, record=record
+                )
             except SessionError as error:
                 result = error
         return result, spawned, killed
 
 
 class Start(Starting):
+    def test_detach_stores_the_record_sid_as_private_identity(self):
+        record = Record(
+            1,
+            "worker",
+            "x",
+            ("x",),
+            "sid",
+            None,
+            ("agent-pm-session",),
+            ("agent-pm-session", "resume", "x"),
+            None,
+            None,
+        )
+        process, _, _ = self.start(record=record)
+        self.assertEqual(process.session_identity(), (record.sid, None))
+
     def lock_held(self) -> bool:
         with inode_lock(os.path.join(state.root(), "x.lock"), wait=False) as got:
             return not got

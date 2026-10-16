@@ -771,6 +771,7 @@ class Tmux:
         display: str | None = None,
         events: str | None = None,
         record: str | None = None,
+        sid: str | None = None,
         control: str | None = None,
     ) -> str:
         """Runs argv as start does; env's full iTerm2
@@ -791,6 +792,7 @@ class Tmux:
             "@opener": opener,
             "@display": display,
             "@record": record,
+            "@sid": sid,
             "@control": control,
         }
         tag_options = _tags(session, {k: v for k, v in named.items() if v is not None})

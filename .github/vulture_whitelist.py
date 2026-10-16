@@ -65,6 +65,8 @@ _ = Split.RIGHT, Split.BELOW
 _ = ClaudeClient, CodexClient
 # TASK-403's harness sets its PYTHONPATH from Session.class_roots (D16).
 _ = Session.class_roots
+# TASK-506 routes sid-checked CLI closes through Session.retire; delete this entry then.
+_ = Session.retire
 # Only tests read it, but the session interface is frozen (tests/guard_checks/exports.py
 # session_interface_snapshot; TASK-396).
 _ = SessionRow.last_lines

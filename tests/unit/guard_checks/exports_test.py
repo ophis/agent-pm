@@ -1,6 +1,7 @@
 import json
 import os
 import sys
+from dataclasses import dataclass
 
 from tests.case import REPO
 from tests.guard_checks import exports
@@ -269,17 +270,6 @@ class DelegateObjectExports(Sample):
             1,
         )
 
-    def test_concrete_delegate_cannot_be_exported_under_an_alias(self):
-        for name in ("HarnessDelegate", "Renamed"):
-            with self.subTest(name=name):
-                found = self.exports(
-                    "agent_pm.delegate",
-                    "class HarnessDelegate: pass\nRenamed = HarnessDelegate\n",
-                    [name],
-                )
-                self.assertEqual(len(found), 1)
-                self.assertIn(f"concrete Delegate {name} (FR-47)", found[0])
-
     def test_missing_all_is_rejected_for_both_packages(self):
         root = self.tree({})
         for package in self.PINNED:
@@ -492,6 +482,70 @@ class ObjectExports(Sample):
                 self.assertEqual(self.found(files), expected)
 
 
+class AnnotatedInterface:
+    __module__ = "agent_pm.test_interface"
+    sid: str
+    property_name: str
+    _private: str
+
+    def __init__(self):
+        self.name = "name"
+        self.sid = "sid"
+        self._hidden = "hidden"
+
+        def nested(self):
+            self.unrelated = 1
+
+        self.callback = nested
+
+    @property
+    def property_name(self):
+        return "name"
+
+
+@dataclass(slots=True)
+class DataclassInterface(AnnotatedInterface):
+    __module__ = "agent_pm.test_interface"
+    field: str
+    default: int = 1
+
+
+class InterfaceAttributes(Sample):
+    def test_annotations_and_initialized_public_attributes_are_included_once(self):
+        found = exports._interface_members(AnnotatedInterface)
+        self.assertEqual(
+            found,
+            {
+                "sid": "attribute",
+                "name": "attribute",
+                "callback": "attribute",
+                "property_name": "property",
+            },
+        )
+
+    def test_dataclass_fields_and_inherited_attributes_are_included(self):
+        found = exports._interface_members(DataclassInterface)
+        self.assertEqual(
+            found,
+            {
+                "sid": "attribute",
+                "name": "attribute",
+                "callback": "attribute",
+                "property_name": "property",
+                "field": "attribute",
+                "default": "attribute",
+            },
+        )
+
+    def test_real_public_annotations_and_host_constructor_fields_are_visible(self):
+        from agent_pm.session import Host, Session
+
+        for cls, names in ((Session, ("sid", "name")), (Host, ("name", "settings"))):
+            found = exports._interface_members(cls)
+            for name in names:
+                self.assertEqual(found[name], "attribute")
+
+
 class SessionInterfaceSnapshot(Sample):
     def snapshot(self) -> dict:
         with open(os.path.join(REPO, SESSION_INTERFACE), encoding="utf-8") as f:
@@ -517,6 +571,21 @@ class SessionInterfaceSnapshot(Sample):
             "record:KEYWORD_ONLY=None, metadata:KEYWORD_ONLY=None)",
         )
         self.assertIn("agent_pm.session.Session.show", snapshot)
+
+    def test_public_annotation_and_constructor_attributes_are_frozen(self):
+        snapshot = self.snapshot()
+        for key in (
+            "agent_pm.session.Session.sid",
+            "agent_pm.session.Session.name",
+            "agent_pm.session.Host.name",
+            "agent_pm.session.Host.settings",
+        ):
+            with self.subTest(key=key):
+                self.assertEqual(snapshot[key], "attribute")
+                self.assertEqual(
+                    self.checked({k: v for k, v in snapshot.items() if k != key}),
+                    [f"{SESSION_INTERFACE}: {key}: absent -> attribute"],
+                )
 
     def test_a_changed_removed_or_added_export_or_signature_fails(self):
         key = "agent_pm.session.Session.show"
@@ -562,9 +631,10 @@ class DelegateInterfaceSnapshot(Sample):
     def test_the_snapshot_covers_the_delegate_package_and_its_signatures(self):
         snapshot = self.snapshot()
         self.assertEqual(DELEGATE_INTERFACE_MODULES, ("agent_pm.delegate",))
+        self.assertIn("agent_pm.delegate.HarnessDelegate", snapshot)
         self.assertEqual(
             snapshot["agent_pm.delegate.Delegate.resume"],
-            "def(self:POSITIONAL_OR_KEYWORD, mode:KEYWORD_ONLY=None)",
+            "def(self:POSITIONAL_OR_KEYWORD, mode:KEYWORD_ONLY=None, input:KEYWORD_ONLY=None)",
         )
         self.assertEqual(
             snapshot["agent_pm.delegate.Delegate.attach"],

@@ -28,10 +28,10 @@ class Merged(Case):
 
 
 class LayerModules(Case):
-    def test_one_module_per_layer_package_in_layer_order(self):
+    def test_layer_modules_then_repository_owned_test_data(self):
         self.assertEqual(
             [module.__name__ for module in guard_data.MODULES],
-            [f"tests.guard_data.{package}" for package in PROJECTS.values()],
+            [f"tests.guard_data.{package}" for package in (*PROJECTS.values(), "repository")],
         )
 
     def test_every_layer_name_is_merged_or_read(self):

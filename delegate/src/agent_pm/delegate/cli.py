@@ -15,16 +15,18 @@ import json
 import os
 import shlex
 import sys
+import time
 from collections.abc import Sequence
 from dataclasses import asdict
 
 from agent_pm.delegate.composer import Composer, RunParams
-from agent_pm.delegate.engine.harness_delegate import EVENTS_ENV, SID_ENV, HarnessDelegate
+from agent_pm.delegate.engine.harness_delegate import HarnessDelegate
+from agent_pm.delegate.engine.plan import run_sid
 from agent_pm.delegate.engine.runner import report, say
 from agent_pm.delegate.engine.types import Begun, ConfigError, Layout, Preview, Spec
 from agent_pm.session import SESSION_NAME, SESSION_NAME_RULE, Mode, NotShowable, SessionError
 from agent_pm.session import ConfigError as SessionConfigError
-from agent_pm.utils import Once, answer_keys, nested_start
+from agent_pm.utils import EVENTS_ENV, SID_ENV, STATE, Once, answer_keys, nested_start
 
 LIST_PARAMS = RunParams(input="", out="/agent-pm-list/work/out.md", workdir="/agent-pm-list/work")
 
@@ -40,6 +42,7 @@ def main(
     _run_options(run)
     for name, many, what in (
         ("status", True, "one Status line per run"),
+        ("content", False, "the run's content"),
         ("outcome", False, "the run's outcome as JSON, null without one"),
         ("resume", False, "resume a stopped run; print its Record"),
         ("show", True, "show each run's agent session"),
@@ -48,6 +51,8 @@ def main(
         ("attach-command", False, "the command attaching to the run"),
     ):
         query = commands.add_parser(name, help=what, allow_abbrev=False)
+        if name == "resume":
+            query.add_argument("--input", metavar="TEXT", help="answer a needs_input run")
         query.add_argument(
             "keys",
             nargs="*" if many else "?",
@@ -92,8 +97,7 @@ def _run_options(ap: argparse.ArgumentParser) -> None:
         help="list each role, its destination type and tasks, with their sources",
     )
     ap.add_argument("--client", action=Once, help="default: the role's client in the core config")
-    ap.add_argument("--sid", help="default $AGENT_PM_SID; the two must agree")
-    ap.add_argument("--resume", action="store_true")
+    ap.add_argument("--sid", help=f"default ${SID_ENV}; the two must agree")
     ap.add_argument(
         "--mode",
         action=Once,
@@ -109,7 +113,7 @@ def _run_options(ap: argparse.ArgumentParser) -> None:
     )
     ap.add_argument("--detach", action="store_true", help="run in a harness session of its own")
     ap.add_argument(
-        "--events", metavar="FILE", help="--detach: the run's events file; default $AGENT_PM_EVENTS"
+        "--events", metavar="FILE", help=f"--detach: the run's events file; default ${EVENTS_ENV}"
     )
     ap.add_argument(
         "--on-event",
@@ -173,7 +177,7 @@ def _run(
     except ConfigError as e:
         say(f"delegate: {e}")
         return 2
-    return report(result, a.out or Layout(a.workdir).out)[0]
+    return report(result, spec.out or Layout(spec.workdir).out)[0]
 
 
 def _detach(delegate_cls: type[HarnessDelegate], role: str, spec: Spec, placement: dict) -> int:
@@ -190,14 +194,19 @@ def _detach(delegate_cls: type[HarnessDelegate], role: str, spec: Spec, placemen
 
 def spec_of(a, text: str) -> Spec:
     """The Spec `run`'s options name, its input `text`."""
+    sid, workdir = a.sid, a.workdir
+    if workdir is None:
+        sid = run_sid(sid)
+        task = f"-{a.task}" if a.task else ""
+        name = f"{time.strftime('%Y-%m-%d')}-{a.role}{task}-{sid[:8]}"
+        workdir = os.path.join(os.path.expanduser(STATE), "adhoc", name)
     return Spec(
         text,
-        a.workdir,
+        workdir,
         task=a.task,
         mode=a.mode,
         client=a.client,
-        sid=a.sid,
-        resume=a.resume,
+        sid=sid,
         name=a.name,
         events=a.events,
         out=a.out,
@@ -207,11 +216,9 @@ def spec_of(a, text: str) -> Spec:
 
 
 def _check(a: argparse.Namespace) -> None:
-    if None in (a.input, a.workdir):
-        raise ConfigError("--input and --workdir are required")
+    if a.input is None:
+        raise ConfigError("--input is required")
     _check_out(a)
-    if a.resume and a.sid is None:
-        raise ConfigError("--resume needs --sid")
     if a.events is not None and not a.detach:
         raise ConfigError("--events needs --detach")
     if a.on_event is not None and not a.detach:
@@ -249,6 +256,7 @@ def _shown(preview: Preview, a: argparse.Namespace) -> dict:
         "client": s.client,
         "mode": s.mode,
         "sid": s.sid,
+        "workdir": s.workdir,
         "resume": s.resume,
         "cwd": access.cwd,
         "project": access.project,
@@ -297,7 +305,7 @@ def _prompt(
 
 
 def _query(a: argparse.Namespace, delegate_cls: type[HarnessDelegate], sid: str | None) -> int:
-    single = a.command in ("outcome", "resume", "attach-command")
+    single = a.command in ("outcome", "resume", "attach-command", "content")
     keys = ([] if a.keys is None else [a.keys]) if single else a.keys
 
     def viewed(key):
@@ -313,7 +321,8 @@ def _query(a: argparse.Namespace, delegate_cls: type[HarnessDelegate], sid: str 
         "hide": lambda pair: pair[0].hide(),
         "close": lambda pair: pair[0].close(),
         "outcome": _outcome,
-        "resume": lambda view: view.resume().to_line(),
+        "content": lambda view: view.content(),
+        "resume": lambda view: _resume(view, a.input),
         "attach-command": _attach_command,
     }[a.command]
     return answer_keys(
@@ -328,6 +337,15 @@ def _query(a: argparse.Namespace, delegate_cls: type[HarnessDelegate], sid: str 
         out=sys.stdout,
         err=sys.stderr,
     )
+
+
+def _resume(view, input: str | None) -> str:
+    if input is not None and view.ctl() != ("agent-pm-delegate",):
+        raise ConfigError("pipeline answers belong on the issue board")
+    record = view.resume(input=input)
+    if input is not None:
+        say(f"delegate: session {record.sid}")
+    return record.to_line()
 
 
 def _outcome(view) -> str:

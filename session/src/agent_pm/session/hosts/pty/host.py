@@ -283,7 +283,7 @@ class PtyHost(Host):
             name,
             launch,
             env=launch.env,
-            metadata={},
+            metadata={} if record is None or record.sid is None else {"sid": record.sid},
             events=events,
             record=record,
             display=display,

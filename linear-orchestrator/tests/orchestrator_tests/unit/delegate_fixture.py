@@ -31,6 +31,10 @@ def provider(api, cfg):
             self.role, self.spec, self.issue = role, spec, os.path.basename(spec.workdir)
 
         @classmethod
+        def create(cls, role, spec, *, display=None, callback=None, overlays=()):
+            return cls(role, spec, display=display, callback=callback, overlays=overlays)
+
+        @classmethod
         def attach(cls, record_or_workdir, *, sid=None):
             workdir = (
                 record_or_workdir.workdir
@@ -87,6 +91,12 @@ def provider(api, cfg):
             if api.live is None:
                 raise SessionError("agent runs unknown")
             return harness_name(self.role, self.issue) in api.live
+
+        def content(self):
+            return self.status().to_line()
+
+        def ctl(self):
+            return ("agent-pm-delegate",)
 
         def status(self):
             live = self.alive()
@@ -157,7 +167,7 @@ def provider(api, cfg):
         def run(self, on_event=None):
             raise AssertionError("scenario must not launch")
 
-        def resume(self, *, mode=None):
+        def resume(self, *, mode=None, input=None):
             raise AssertionError("legacy launcher owns this scenario")
 
     return ScenarioDelegate

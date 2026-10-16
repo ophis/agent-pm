@@ -84,7 +84,7 @@ from agent_pm.linear_orchestrator.engine.types import (
     Transient,
     Unavailable,
 )
-from agent_pm.utils import nested_start, one_line, parse_time
+from agent_pm.utils import EVENTS_ENV, SID_ENV, nested_start, one_line, parse_time
 
 STALE = timedelta(hours=2)
 LIVE = timedelta(minutes=30)
@@ -99,7 +99,6 @@ USAGE = (
 )
 FLAGS = {"--dry-run": "dry", "--now": "now", "--tui": "tui"}
 VALUED = {"--issue": "issue", "--display": "display", "--events": "events"}
-EVENTS_ENV, SID_ENV = "AGENT_PM_EVENTS", "AGENT_PM_SID"
 DONE = {"completed", "canceled", "duplicate"}
 UNREADABLE = "(unreadable)"
 RELATIONS = "inverseRelations(first: 50) { nodes { type issue { identifier state { type } } } }"
@@ -826,7 +825,7 @@ def tick(opts, cfg, gql, *, start, keychain, clock=datetime.now, hour=None, laun
 def run_issue(opts, cfg, gql, start, *, keychain, clock=datetime.now, launch_sid=None):
     now = clock().astimezone(UTC)
     ident, dry, runs = opts["issue"], opts["dry"], cfg.runs_log
-    stop = 0 if dry else 1
+    stop = 0 if dry else 2
     with lock(runs, dry) as free:
         if not free:
             log("router", "skip", ident, reason=BUSY)
@@ -836,7 +835,7 @@ def run_issue(opts, cfg, gql, start, *, keychain, clock=datetime.now, launch_sid
         live = live_sessions(cfg, entries, say=functools.partial(log, "router", dry=dry))
         if live is None:
             print("router.py: agent runs unknown; try again", file=sys.stderr)
-            return stop
+            return 0 if dry else 1
         if any(ident in ids for ids in live.values()):
             sid = latest(entries)[ident].sid
             attach = LinearRun.attach(ident, cfg=cfg, sid=sid).delegate.attach_command()

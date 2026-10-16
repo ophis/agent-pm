@@ -10,8 +10,8 @@ import unittest.mock
 
 from agent_pm.delegate.engine.ready_gate import gate, hosts
 from agent_pm.delegate.engine.types import GateStatus
-from agent_pm.delegate.event.types import Autopilot, AutopilotStatus, Outcome, OutcomeStatus
-from agent_pm.utils import SHORT, one_line
+from agent_pm.delegate.event.types import Autopilot, AutopilotStatus, Outcome
+from agent_pm.utils import SHORT, OutcomeStatus, one_line
 
 from delegate.tests.case import Case
 from delegate.tests.repo import PROCESS_ERRORS, fail, ok

@@ -3,7 +3,7 @@ Record accepts) and run as `python3 -P ctl.py <dir> <sub> …`:
 status, show (exit 1: one cannot show) and close answer for the Records on stdin (a bad line:
 exit 2) from <dir>/sessions.json (name → alive, state, outcome, showable, hidden, display; an
 unknown name is gone); start NAME [--display D] and resume NAME print the Record, resume of a live
-one starting nothing. Start honors AGENT_PM_SID or creates a UUID; resume preserves the saved sid
+one starting nothing. content NAME or one stdin Record prints its content. Start honors AGENT_PM_SID or creates a UUID; resume preserves the saved sid
 and rejects an environment mismatch. Each call goes to <dir>/calls.jsonl.
 """
 
@@ -79,6 +79,7 @@ def _parser() -> argparse.ArgumentParser:
     subs = parser.add_subparsers(dest="sub", required=True)
     for sub in ("status", "show", "close"):
         subs.add_parser(sub)
+    subs.add_parser("content").add_argument("name", nargs="?")
     start = subs.add_parser("start")
     start.add_argument("name")
     start.add_argument("--display")
@@ -118,9 +119,28 @@ def _start(state_dir: str, args, call: dict) -> int:
     return 0
 
 
-def _answer(state_dir: str, sub: str, call: dict) -> int:
+def _answer(state_dir: str, args, call: dict) -> int:
+    sub = args.sub
     try:
-        records = [Record.parse(line) for line in sys.stdin]
+        if sub == "content" and args.name is not None:
+            records = [
+                Record(
+                    1,
+                    "fake",
+                    args.name,
+                    (args.name,),
+                    None,
+                    None,
+                    (COMMAND,),
+                    (COMMAND, "resume", args.name),
+                    None,
+                    None,
+                )
+            ]
+        else:
+            records = [Record.parse(line) for line in sys.stdin]
+        if sub == "content" and len(records) != 1:
+            raise RecordError("content wants one key or Record")
     except RecordError as e:
         print(f"{COMMAND}: stdin: {e}", file=sys.stderr)
         return 2
@@ -129,7 +149,9 @@ def _answer(state_dir: str, sub: str, call: dict) -> int:
     failed = 0
     for record in records:
         session = _session(sessions, record.name)
-        if sub == "status":
+        if sub == "content":
+            print(f"content {record.name}")
+        elif sub == "status":
             shown = session["alive"] and session["showable"]
             attach = f"{COMMAND} attach {record.name}" if shown else None
             status = Status(
@@ -157,7 +179,7 @@ def main(state_dir: str, *argv: str) -> int:
         args = _parser().parse_args(argv)
         if args.sub in ("start", "resume"):
             return _start(state_dir, args, call)
-        return _answer(state_dir, args.sub, call)
+        return _answer(state_dir, args, call)
     finally:
         files.append_line(os.path.join(state_dir, CALLS), json.dumps(call) + "\n")
 

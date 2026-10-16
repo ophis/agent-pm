@@ -119,8 +119,11 @@ class LinearRun:
             )
         )
 
+    def content(self) -> str:
+        return self.status().to_line()
+
     def status(self) -> Status:
         return replace(self.delegate.status(), name=self.issue)
 
-    def resume(self) -> Record:
-        return self._record(self.delegate.resume())
+    def resume(self, *, input: str | None = None) -> Record:
+        return self._record(self.delegate.resume(input=input))

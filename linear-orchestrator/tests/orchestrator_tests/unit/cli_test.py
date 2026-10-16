@@ -12,7 +12,7 @@ from unittest import mock
 
 from agent_pm.linear_orchestrator import cli
 from agent_pm.linear_orchestrator.engine import runs
-from agent_pm.utils import Record, Status
+from agent_pm.utils import SID_ENV, Record, Status
 from orchestrator_tests.case import REPO, Case
 from orchestrator_tests.linear_run_case import SID, ReadyDelegate, RunCase
 from orchestrator_tests.unit.streams import Stderr
@@ -21,13 +21,18 @@ from delegate.tests.fakes.delegate import FakeDelegate
 
 
 class Commands(Case):
+    def test_resume_input_is_refused_before_loading_config(self):
+        result, output, errors = _call(["resume", "TASK-1", "--input", "answer"])
+        self.assertEqual((result, output), (2, ""))
+        self.assertEqual(errors, "agent-pm-linear: pipeline answers belong on the issue board\n")
+
     def test_help_lists_only_existing_commands(self):
         output = io.StringIO()
         with redirect_stdout(output), self.assertRaises(SystemExit) as raised:
             cli.main(["--help"])
         self.assertEqual(raised.exception.code, 0)
         self.assertIn(
-            "{router,promote,prune,status,show,hide,close,attach-command,resume,writeback}",
+            "{router,promote,prune,status,show,hide,close,attach-command,resume,content,writeback}",
             output.getvalue(),
         )
 
@@ -149,6 +154,46 @@ def _call(arguments, *, stdin="", tty=False):
 
 
 class Queries(RunCase):
+    def test_resume_checks_and_removes_the_environment_sid_before_starting(self):
+        _, record = self.start()
+        for supplied in (None, record.sid, "00000000-0000-4000-8000-000000000000"):
+            with self.subTest(supplied=supplied), mock.patch.dict(os.environ):
+                os.environ.pop(SID_ENV, None)
+                if supplied is not None:
+                    os.environ[SID_ENV] = supplied
+                before = FakeDelegate.starts(record.workdir)
+                result, output, errors = _call(["resume", "TASK-1"])
+                self.assertNotIn(SID_ENV, os.environ)
+                if supplied not in (None, record.sid):
+                    self.assertEqual((result, output), (2, ""))
+                    self.assertIn(SID_ENV, errors)
+                else:
+                    self.assertEqual((result, Record.parse(output)), (0, record), errors)
+                self.assertEqual(FakeDelegate.starts(record.workdir), before)
+
+    def test_content_from_key_or_record_prints_the_owned_runs_content(self):
+        owner, record = self.start()
+        for arguments, stdin in ((["content", "TASK-1"], ""), (["content"], record.to_line())):
+            with self.subTest(arguments=arguments):
+                self.assertEqual(_call(arguments, stdin=stdin), (0, owner.content() + "\n", ""))
+
+    def test_content_requires_one_valid_key_before_attaching(self):
+        _, record = self.start()
+        before = FakeDelegate.starts(record.workdir)
+        for arguments, stdin in (
+            (["content"], ""),
+            (["content", "TASK-1", "TASK-2"], ""),
+            (["content"], record.to_line() + "\n" + record.to_line()),
+            (["content"], "bad Record"),
+            (["content"], record.to_line() + "\nbad Record"),
+        ):
+            with self.subTest(arguments=arguments, stdin=stdin):
+                result, output, errors = _call(arguments, stdin=stdin)
+                self.assertEqual((result, output), (2, ""))
+                self.assertTrue(errors)
+                self.assertEqual(FakeDelegate.starts(record.workdir), before)
+                self.assertTrue(FakeDelegate.attach(record.workdir).alive())
+
     def test_status_for_two_issue_keys_or_stdin_records_has_two_ordered_lines(self):
         _, first = self.start("TASK-1")
         _, second = self.start("TASK-2")
@@ -276,6 +321,15 @@ class Queries(RunCase):
         self.assertEqual(_call(["close"], stdin=""), (0, "", ""))
         self.assertTrue(owner.delegate.alive())
 
+    def test_resume_partial_success_is_not_a_no_start_refusal(self):
+        _, record = self.start()
+        FakeDelegate.end(record.workdir)
+        result, output, errors = _call(["resume", "TASK-8", "TASK-1"])
+        self.assertEqual(result, 1)
+        self.assertEqual(Record.parse(output), record)
+        self.assertIn("no recorded run", errors)
+        self.assertTrue(FakeDelegate.attach(record.workdir).alive())
+
     def test_batch_configuration_error_preserves_valid_key_output(self):
         self.start()
         result, output, errors = _call(["status", "TASK-8", "TASK-1"])
@@ -293,6 +347,21 @@ class WritebackUsage(RunCase):
             ("no event", "", workdir, "want one DelegateEvent line"),
             ("two events", begun + "\n" + begun + "\n", workdir, "want one DelegateEvent line"),
             ("not JSON", "{\n", workdir, "not JSON"),
+            (
+                "incomplete outcome",
+                json.dumps(
+                    {
+                        "v": 1,
+                        "kind": "finished",
+                        "sid": SID,
+                        "attempt": 1,
+                        "returncode": 0,
+                        "outcome": {"status": "done"},
+                    }
+                ),
+                workdir,
+                "outcome: want the fields",
+            ),
             (
                 "another version",
                 begun.replace('"v":1', '"v":2').replace('"v": 1', '"v": 2'),

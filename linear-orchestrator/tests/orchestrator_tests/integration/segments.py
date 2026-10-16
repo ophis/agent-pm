@@ -457,11 +457,11 @@ class Segment(TmuxFlow):
         return ident
 
     def refused(self, ident, note=""):
-        """router.py --issue ident must exit 1; returns the events it logged."""
+        """router.py --issue ident must exit 2; returns the events it logged."""
         events = len(self.logged())
         res = self.router("--issue", ident)
         added = self.logged()[events:]
-        if res.returncode != 1:
+        if res.returncode != 2:
             self.fail(
                 "; ".join(
                     [

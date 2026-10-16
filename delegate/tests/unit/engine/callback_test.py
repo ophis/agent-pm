@@ -9,7 +9,6 @@ import fcntl
 import json
 import os
 import signal
-from dataclasses import asdict
 from unittest import mock
 
 from agent_pm.delegate import (
@@ -19,7 +18,6 @@ from agent_pm.delegate import (
     Finished,
     Limit,
     Outcome,
-    OutcomeStatus,
     Progress,
     Result,
 )
@@ -31,7 +29,7 @@ from agent_pm.delegate.engine.callback import (
 )
 from agent_pm.delegate.engine.state import RunState
 from agent_pm.delegate.engine.types import Layout
-from agent_pm.utils import Stopped
+from agent_pm.utils import OutcomeStatus, Stopped
 
 from delegate.tests.case import Case
 from delegate.tests.harness import SID
@@ -58,7 +56,7 @@ class Codec(Case):
                     "finished",
                     **RUN,
                     returncode=7,
-                    outcome=asdict(outcome),
+                    outcome=outcome,
                     error="exit diagnostic",
                 ),
             ),

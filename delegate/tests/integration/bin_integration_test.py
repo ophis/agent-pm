@@ -14,6 +14,7 @@ MINIMAL = "/usr/bin:/bin"
 COMMANDS = [
     "run",
     "status",
+    "content",
     "outcome",
     "resume",
     "show",

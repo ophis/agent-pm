@@ -3,6 +3,9 @@
 import os
 from collections.abc import Mapping
 
+SID_ENV = "AGENT_PM_SID"
+EVENTS_ENV = "AGENT_PM_EVENTS"
+
 # a manager's roster lease: its holder's command alone carries it, no launch below it
 LEASE_ENV = ("AGENT_PM_MANAGER", "AGENT_PM_HOLDER_ID", "AGENT_PM_HOLDER_GENERATION")
 

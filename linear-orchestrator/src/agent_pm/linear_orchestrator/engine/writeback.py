@@ -13,11 +13,11 @@ import os
 import re
 import subprocess
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass, fields, replace
+from dataclasses import dataclass, replace
 from datetime import datetime
 from traceback import format_exception
 
-from agent_pm.delegate import DelegateEvent, Outcome, OutcomeStatus, Progress
+from agent_pm.delegate import DelegateEvent, Outcome, Progress
 from agent_pm.linear_orchestrator.engine import run_comments, runs
 from agent_pm.linear_orchestrator.engine.config import LOCAL, TASKS
 from agent_pm.linear_orchestrator.engine.linear_run import LinearRun
@@ -44,6 +44,7 @@ from agent_pm.linear_orchestrator.engine.types import (
 from agent_pm.utils import (
     ConfinedFileError,
     ConfinedReason,
+    OutcomeStatus,
     one_line,
     read_confined,
     save,
@@ -335,18 +336,20 @@ def finish(ctx, outcome: Outcome) -> bool:
 
 def _completion_body(ctx, o):
     task, url = TASKS[ctx.role], _url(ctx, o.url)
-    if o.status == "done":
+    if o.status == OutcomeStatus.DONE:
         lead, text, state = task.done, o.summary, "in_review"
-    elif o.status == "needs_input":
+    elif o.status == OutcomeStatus.NEEDS_INPUT:
         questions = "\n".join(f"{n}. {q}" for n, q in enumerate(o.questions, 1))
         text = f"{questions}\n\n{FOOTER}" + (f" {task.hint}" if task.hint else "")
         lead, state = task.question, "in_review"
     else:
         lead, text, state = task.failed, o.summary, "in_review" if ctx.resume else task.failed_new
     body = say(lead, text)
-    if url and (o.status == "failed" or o.status == "done" and task.kind != "build"):
+    if url and (
+        o.status == OutcomeStatus.FAILED or o.status == OutcomeStatus.DONE and task.kind != "build"
+    ):
         body += f"\n\n{url}"
-    if task.approve and o.status == "done":
+    if task.approve and o.status == OutcomeStatus.DONE:
         body += f"\n\n{approve_line(ctx.repos.get(ctx.project))}"
 
     return body, state, url
@@ -401,7 +404,7 @@ def _finish(ctx, o):
 
     if (
         task.retitle
-        and o.status == "done"
+        and o.status == OutcomeStatus.DONE
         and _step(
             ctx,
             "retitle",
@@ -415,7 +418,7 @@ def _finish(ctx, o):
         return False
 
     if (
-        o.status == "done"
+        o.status == OutcomeStatus.DONE
         and url
         and _step(ctx, f"attach:{url}", lambda: _attach(ctx, url, o.title, attached))
     ):
@@ -507,29 +510,6 @@ def _limited(ctx, runs_log, claim, attempt, resets_at) -> bool:
     return moved and noted is None
 
 
-def _outcome(data) -> Outcome:
-    """A Finished event's outcome fields as an Outcome; raises ValueError."""
-    names = {f.name for f in fields(Outcome)}
-    if not isinstance(data, dict) or data.keys() != names:
-        raise ValueError(f"outcome: want the fields {', '.join(sorted(names))}")
-    for name, value in data.items():
-        if name in ("questions", "files"):
-            valid = isinstance(value, list) and all(isinstance(v, str) for v in value)
-        else:
-            valid = isinstance(value, str) and (name != "status" or value in tuple(OutcomeStatus))
-        if not valid:
-            raise ValueError(f"outcome {name}: {value!r}")
-    return Outcome(
-        OutcomeStatus(data["status"]),
-        data["title"],
-        data["summary"],
-        data["questions"],
-        data["url"],
-        data["files"],
-        data["deliverable"],
-    )
-
-
 def _claim(cfg, issue, sid) -> Claim:
     claim = runs.claim(cfg.runs_log, issue, sid)
     if claim.role not in TASKS:
@@ -588,7 +568,7 @@ def deliver(cfg, issue: str, workdir: str, event: DelegateEvent, *, gql, now=tim
     if attempt is None:  # DelegateEvent requires one
         raise ValueError("attempt: missing")
     claim = _claim(cfg, issue, event.sid)
-    outcome = None if event.outcome is None else _outcome(event.outcome)
+    outcome = event.outcome
     ctx = for_claim(cfg, claim, gql, attempt=attempt)
     with _exclusive(ctx) as held:
         return held and _deliver(ctx, cfg, claim, event, outcome, gql=gql, now=now)

@@ -44,9 +44,16 @@ from agent_pm.session.engine.types import (
 from agent_pm.session.engine.worker import Worker
 from agent_pm.session.hosts.base import Host, Showable
 from agent_pm.session.runtimes import tui_hook
-from agent_pm.session.runtimes.base import EVENTS, START_SID
 from agent_pm.session.runtimes.tui import TuiRuntime, TuiStore
-from agent_pm.utils import Record, Status, StatusState, module_roots, nested_start
+from agent_pm.utils import (
+    EVENTS_ENV,
+    SID_ENV,
+    Record,
+    Status,
+    StatusState,
+    module_roots,
+    nested_start,
+)
 
 PROG = COMMAND
 HEADER = "name\tstate\tclient\tsid\tdisplay"
@@ -104,7 +111,7 @@ def _parser(hosts: Hosts | None) -> argparse.ArgumentParser:
         help="start worker NAME; print its Record",
         description="Start worker NAME, a plain tui session of CLIENT; everything after -- is "
         "its client's flags, verbatim. Its session id: --resume SID (resumes that "
-        "conversation), else $AGENT_PM_SID, else a new one; the two must agree. Prints its "
+        f"conversation), else ${SID_ENV}, else a new one; the two must agree. Prints its "
         "Record once it has run 5 s without exiting (up to 15 s while its launch input is "
         "pending).",
     )
@@ -134,6 +141,7 @@ def _parser(hosts: Hosts | None) -> argparse.ArgumentParser:
         sub.add_parser(cmd, help=text, description=text).add_argument("name", type=_name)
     for cmd, text in (
         ("status", "one Status JSON line per session"),
+        ("content", "print one session's content"),
         ("show", "show each session where its display says"),
         ("hide", "close what show opened for each session; it runs on"),
         ("close", "close each session; absent is fine"),
@@ -325,8 +333,15 @@ def _close(name: str, record: Record | None, hosts: Hosts) -> None:
         TuiStore.attach(session, host=Session.host(_host_of(session, hosts))).close()
 
 
+def _content(name: str, record: Record | None, hosts: Hosts) -> str:
+    return Session.attach(
+        name, sid=None if record is None else record.sid, host=_host_of(name, hosts)
+    ).content()
+
+
 BATCH = {
     "status": _status,
+    "content": _content,
     "show": _show,
     "hide": _hide,
     "close": _close,
@@ -339,7 +354,10 @@ def _batch(args, hosts: Hosts) -> int:
     act = BATCH[args.cmd]
     if args.cmd == "hide":
         act = functools.partial(_hide, if_closed=args.if_closed)
-    for name, record in _keys(args):
+    keys = _keys(args)
+    if args.cmd == "content" and len(keys) != 1:
+        raise UsageError(f"content: takes exactly one key, got {len(keys)}")
+    for name, record in keys:
         try:
             line = act(name, record, hosts)
             if line is not None:
@@ -399,11 +417,11 @@ def _ls(args, hosts: Hosts) -> int:
 
 def _start(args, flags: list[str], hosts: Hosts, start_sid: str | None) -> int:
     if args.resume is not None and start_sid is not None and start_sid != args.resume:
-        raise UsageError(f"{START_SID} {start_sid} differs from --resume {args.resume}")
+        raise UsageError(f"{SID_ENV} {start_sid} differs from --resume {args.resume}")
     cwd = os.path.abspath(args.cwd or os.getcwd())
     if not os.path.isdir(cwd):
         raise UsageError(f"--cwd {cwd}: not a directory")
-    events = os.environ.get(EVENTS) or None
+    events = os.environ.get(EVENTS_ENV) or None
     worker = Worker.new(
         name=args.name,
         sid=args.resume or start_sid or str(uuid.uuid4()),
@@ -479,7 +497,7 @@ def main(argv: list[str] | None = None) -> int:
     if argv[:1] == ["hook"]:
         tui_hook.run(argv[1:], sys.stdin, roots=module_roots(agent_pm.session, agent_pm.utils))
         return 0
-    start_sid = os.environ.get(START_SID) or None
+    start_sid = os.environ.get(SID_ENV) or None
     flags: list[str] = []
     if argv[:1] == ["start"] and "--" in argv:  # argparse < 3.13 drops a later -- from nargs
         at = argv.index("--")

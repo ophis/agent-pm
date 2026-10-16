@@ -14,8 +14,8 @@ from urllib.parse import urlsplit
 
 from agent_pm.delegate.engine.types import Gated, GateStatus
 from agent_pm.delegate.event.outcome import DEFAULT_HOST, PULL, summary_max
-from agent_pm.delegate.event.types import Autopilot, AutopilotStatus, Outcome, OutcomeStatus
-from agent_pm.utils import SHORT, Runner, err_text, one_line, printable, sh
+from agent_pm.delegate.event.types import Autopilot, AutopilotStatus, Outcome
+from agent_pm.utils import SHORT, OutcomeStatus, Runner, err_text, one_line, printable, sh
 
 REASON_MAX = 300
 HOST_KEY = re.compile(r"""["']?([A-Za-z0-9.-]+)["']?:\s*""")

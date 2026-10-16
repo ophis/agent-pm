@@ -1,12 +1,15 @@
 """DelegateEvent v1, the callback line: one JSON line per harness event on a callback's stdin,
-holding its run's sid and attempt and its kind's fields. A wire object: outcome and limit stay plain
-dicts (an Outcome's and a Limit's fields).
+holding its run's sid and attempt and its kind's fields. Outcome is parsed at this boundary;
+limit remains a dict of a Limit's fields.
 """
 
 import json
-from dataclasses import dataclass, fields
+from dataclasses import asdict, dataclass, fields
 from enum import StrEnum
 from typing import Self
+
+from agent_pm.delegate.event.types import Outcome
+from agent_pm.utils import OutcomeStatus
 
 
 class DelegateEventKind(StrEnum):
@@ -36,6 +39,21 @@ def _number(value) -> bool:
     return isinstance(value, int | float) and (not isinstance(value, bool))
 
 
+def _outcome(data) -> Outcome:
+    names = {f.name for f in fields(Outcome)}
+    _check(
+        ok=isinstance(data, dict) and data.keys() == names,
+        message=f"outcome: want the fields {', '.join(sorted(names))}",
+    )
+    for name, value in data.items():
+        if name in ("questions", "files"):
+            valid = isinstance(value, list) and all(isinstance(v, str) for v in value)
+        else:
+            valid = isinstance(value, str) and (name != "status" or value in tuple(OutcomeStatus))
+        _check(ok=valid, message=f"outcome {name}: {value!r}")
+    return Outcome(**{**data, "status": OutcomeStatus(data["status"])})
+
+
 @dataclass(frozen=True)
 class DelegateEvent:
     kind: str
@@ -44,7 +62,7 @@ class DelegateEvent:
     name: str | None = None
     text: str | None = None
     returncode: int | None = None
-    outcome: dict | None = None
+    outcome: Outcome | None = None
     error: str = ""
     limit: dict | None = None
 
@@ -68,10 +86,11 @@ class DelegateEvent:
             _check(ok=type(self.returncode) is int, message="returncode: want an int")
             outcome, limit = (self.outcome, self.limit)
             _check(
-                ok=outcome is None
-                or (isinstance(outcome, dict) and isinstance(outcome.get("status"), str)),
-                message="outcome: want null or an object with a str status",
+                ok=outcome is None or isinstance(outcome, Outcome),
+                message="outcome: want null or an Outcome",
             )
+            if outcome is not None:
+                _outcome(asdict(outcome))
             _check(ok=isinstance(self.error, str), message="error: want a str")
             _check(
                 ok=limit is None
@@ -84,7 +103,8 @@ class DelegateEvent:
             )
 
     def to_line(self) -> str:
-        data = {"v": 1, "kind": self.kind} | {f: getattr(self, f) for f in _FIELDS[self.kind]}
+        values = asdict(self)
+        data = {"v": 1, "kind": self.kind} | {f: values[f] for f in _FIELDS[self.kind]}
         return json.dumps(data, separators=(",", ":"))
 
     @classmethod
@@ -100,4 +120,6 @@ class DelegateEvent:
         _check(ok=kind in tuple(DelegateEventKind), message=_KIND)
         for key in data:
             _check(ok=key in ("v", "kind", *_FIELDS[kind]), message=f"{key}: not a {kind} field")
+        if data.get("outcome") is not None:
+            data["outcome"] = _outcome(data["outcome"])
         return cls(**{k: v for k, v in data.items() if k != "v"})

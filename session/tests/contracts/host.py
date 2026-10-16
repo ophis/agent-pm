@@ -12,6 +12,7 @@ import subprocess
 import sys
 import time
 import uuid
+from dataclasses import replace
 from unittest import mock
 
 from agent_pm.session import Access, Host, Mode, NotShowable, SessionError, Showable, Spec
@@ -269,6 +270,13 @@ class HostContract:
         name = self.fresh()
         self.start("detach", name, SLEEP)
         self.assertIsNone(self.host.attach(name).record())
+
+    def test_detach_keeps_the_record_sid_as_private_identity(self):
+        name = self.fresh()
+        record = replace(self.a_record(name), sid=str(uuid.uuid4()))
+        process = self.start("detach", name, SLEEP, record=record)
+        self.assertEqual(process.session_identity()[0], record.sid)
+        self.assertEqual(self.host.attach(name).session_identity()[0], record.sid)
 
     def test_kill_ends_the_program_and_its_child_process(self):
         for kind in ("detach", "terminal"):

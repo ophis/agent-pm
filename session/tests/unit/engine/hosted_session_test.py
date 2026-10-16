@@ -5,12 +5,14 @@ test on a configured class (self.session) with caller-owned dependencies.
 
 import contextlib
 import dataclasses
+import fcntl
 import io
 import itertools
 import json
 import logging
 import os
 import shlex
+import signal
 import stat
 import tempfile
 import threading
@@ -1386,6 +1388,12 @@ class TuiStartTest(HostedTuiBase):
             },
         )
 
+    def test_content_prints_the_current_screen(self):
+        session = self.tui(name="w1")
+        self.host.calls.screen.return_value = "current pane\ntext"
+        self.assertEqual(session.content(), "current pane\ntext")
+        self.host.calls.screen.assert_called_once_with(self.host.processes["w1"], None)
+
     def test_alive_send_stop_and_screen_are_the_tui_modes_attach_command_its_hosts(self):
         session = self.tui(name="w1")
         terminal = self.host.processes["w1"]
@@ -2041,3 +2049,93 @@ class ChecksTest(Base):
         ):
             self.start()
         popen.assert_not_called()
+
+
+class SessionIdentityTest(HostedTuiBase):
+    def test_sid_attached_events_yield_a_normal_exit_after_the_terminal_disappears(self):
+        self.tui(name="w1", sid=SID)
+        session = self.session.attach("w1", sid=SID)
+
+        def disappeared(_):
+            self.host.processes.pop("w1", None)
+
+        with mock.patch("time.sleep", side_effect=disappeared):
+            events = list(session.events())
+        self.assertEqual(events[-1], Exited(-signal.SIGHUP))
+
+    def test_attach_rejects_mismatched_or_unknown_private_sid(self):
+        self.tui(name="w1", sid=SID)
+        terminal = self.host.processes["w1"]
+        for actual in (None, "replacement"):
+            with self.subTest(actual=actual):
+                terminal.calls.session_identity.return_value = (actual, None)
+                with self.assertRaises(SessionError) as caught:
+                    self.session.attach("w1", sid=SID)
+                self.assertIn(SID, str(caught.exception))
+                self.assertIn(str(actual), str(caught.exception))
+                terminal.calls.close.assert_not_called()
+
+    def test_retire_checks_private_identity_before_closing(self):
+        current = self.host.create("plain", sid="replacement")
+        with self.assertRaises(SessionError) as caught:
+            self.session.retire("plain", sid=SID)
+        self.assertIn(SID, str(caught.exception))
+        self.assertIn("replacement", str(caught.exception))
+        self.assertTrue(current.alive())
+        self.session.retire("plain", sid="replacement")
+        self.assertNotIn("plain", self.host.processes)
+
+    def test_attached_operations_recheck_sid_after_same_name_replacement(self):
+        self.tui(name="w1", sid=SID)
+        session = self.session.attach("w1", sid=SID)
+        current = self.host.create("w1", sid="replacement")
+        self.host.calls.reset_mock()
+        actions = (
+            lambda: session.send("hello"),
+            lambda: session.press((KeyPress("Enter"),)),
+            session.alive,
+            session.status,
+            session.stop,
+            session.info,
+            lambda: session.reply,
+            session.close,
+            session.session_status,
+            session.record,
+            lambda: session.showable,
+            session.show,
+            session.hide,
+            session.attach_command,
+            session.screen,
+            lambda: next(session.events()),
+        )
+        for action in actions:
+            with self.subTest(action=action), self.assertRaises(SessionError) as caught:
+                action()
+            self.assertIn(SID, str(caught.exception))
+            self.assertIn("replacement", str(caught.exception))
+        current.calls.send.assert_not_called()
+        current.calls.press.assert_not_called()
+        current.calls.close.assert_not_called()
+        self.host.calls.show.assert_not_called()
+        self.host.calls.hide.assert_not_called()
+        self.assertTrue(current.alive())
+        self.assertTrue(os.path.isdir(os.path.join(self.root, "w1")))
+
+    def test_close_rechecks_inside_the_store_lock(self):
+        self.tui(name="w1", sid=SID)
+        session = self.session.attach("w1", sid=SID)
+        replacements = []
+
+        flock = fcntl.flock
+
+        def replaced(fd, operation):
+            flock(fd, operation)
+            replacements.append(self.host.create("w1", sid="replacement"))
+
+        with (
+            mock.patch("fcntl.flock", side_effect=replaced),
+            self.assertRaises(SessionError),
+        ):
+            session.close()
+        replacements[0].calls.close.assert_not_called()
+        self.assertTrue(os.path.isdir(os.path.join(self.root, "w1")))
