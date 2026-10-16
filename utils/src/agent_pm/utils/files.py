@@ -84,6 +84,8 @@ def drop_stale(directory: str) -> list[OSError]:
                         and entry.stat(follow_symlinks=False).st_mtime < cutoff
                     ):
                         os.unlink(entry.path)
+                except FileNotFoundError:
+                    continue
                 except OSError as error:
                     errors.append(error)
     except OSError as error:

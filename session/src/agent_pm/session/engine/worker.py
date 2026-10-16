@@ -397,7 +397,11 @@ class Worker:
         for path in old:
             try:
                 found = os.stat(os.path.join(path, STATE_FILE), follow_symlinks=False)
-                if not stat.S_ISREG(found.st_mode) or found.st_mtime >= cutoff:
+                if (
+                    not stat.S_ISREG(found.st_mode)
+                    or found.st_mtime >= cutoff
+                    or os.path.islink(os.path.join(path, "worker.lock"))
+                ):
                     continue
                 with file_lock(os.path.join(path, "worker"), wait=False):
                     shutil.rmtree(path)

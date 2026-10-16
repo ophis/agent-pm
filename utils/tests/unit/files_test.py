@@ -271,6 +271,12 @@ class DropStale(Base):
             self.assertEqual(files.drop_stale(self.dir), [refused])
         self.assertEqual(os.listdir(self.dir), ["a.json"])
 
+    def test_an_entry_gone_before_its_unlink_is_no_error(self):
+        self.entry("a.json", 31)
+        gone = FileNotFoundError(errno.ENOENT, "gone", os.path.join(self.dir, "a.json"))
+        with mock.patch("os.unlink", side_effect=gone):
+            self.assertEqual(files.drop_stale(self.dir), [])
+
     def test_a_directory_it_cannot_list_is_one_error(self):
         (error,) = files.drop_stale(os.path.join(self.dir, "missing"))
         self.assertIsInstance(error, FileNotFoundError)

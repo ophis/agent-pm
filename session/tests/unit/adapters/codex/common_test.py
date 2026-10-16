@@ -1084,6 +1084,17 @@ class StoreRootTest(Base):
         SessionStore().save(replace(state, sid="saved"))
         self.assertTrue(path.exists())
 
+    def test_a_bad_or_missing_state_is_not_renewed(self):
+        state = self.prepare()
+        (path,) = Path(SessionStore().root).iterdir()
+        path.write_text("{}")
+        old = aged(path, 29)
+        with self.assertRaises(RecoveryError):
+            SessionStore().load(state.workdir, state.sid)
+        self.assertEqual(path.stat().st_mtime, old)
+        self.assertIsNone(SessionStore().load(state.workdir, "other"))
+        self.assertEqual([*Path(SessionStore().root).iterdir()], [path])
+
     def test_a_renew_error_still_loads_the_state(self):
         state = self.prepare()
         (path,) = Path(SessionStore().root).iterdir()

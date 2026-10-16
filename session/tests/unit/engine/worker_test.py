@@ -304,6 +304,14 @@ class StaleTest(Base):
         self.assertEqual(os.listdir(os.path.expanduser("~/elsewhere")), [worker.STATE_FILE])
         self.assertEqual(self.said, [])
 
+    def test_a_symlinked_lock_is_never_followed(self):
+        path = self.planted(sid(1), 31)
+        target = os.path.expanduser("~/outside.lock")
+        os.symlink(target, os.path.join(path, "worker.lock"))
+        self.worker().start(prompt="", resume=False)
+        self.assertIn(sid(1), os.listdir(self.root))
+        self.assertFalse(os.path.lexists(target))
+
     def test_a_pointer_it_cannot_read_drops_nothing(self):
         self.planted(sid(1), 31)
         os.makedirs(os.path.join(self.root, worker.BY_NAME, "w3"))
