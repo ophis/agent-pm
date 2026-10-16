@@ -9,7 +9,7 @@ agent session agent-pm started (AGENT_PM_AGENT_SESSION), start, restart, resume 
 refuse.
 
 stdout holds only machine output: Records, Status lines, ls rows, read and reply text, attach
-commands. Exit 0 done, 2 a usage or config error (nothing done), 1 anything else. A batch answers
+commands. Exit 0 done, 2 a usage or config error, 1 a failed key or other failure. A batch answers
 its keys in order; a failed key gets one stderr line and no stdout line, and the exit is 1.
 """
 
@@ -42,15 +42,16 @@ from agent_pm.session.engine.types import (
     SessionRow,
 )
 from agent_pm.session.engine.worker import Worker
-from agent_pm.session.hosts.base import Host, Showable
+from agent_pm.session.hosts.base import Host, Showable, check_sid
 from agent_pm.session.runtimes import tui_hook
-from agent_pm.session.runtimes.tui import TuiRuntime, TuiStore
+from agent_pm.session.runtimes.tui import TuiRuntime
 from agent_pm.utils import (
     EVENTS_ENV,
     SID_ENV,
     Record,
     Status,
     StatusState,
+    answer_keys,
     module_roots,
     nested_start,
 )
@@ -138,7 +139,10 @@ def _parser(hosts: Hosts | None) -> argparse.ArgumentParser:
         ("resume", "print a live worker's Record, else resume it; print its Record"),
         ("reply", "print a tui session's latest reply"),
     ):
-        sub.add_parser(cmd, help=text, description=text).add_argument("name", type=_name)
+        p = sub.add_parser(cmd, help=text, description=text)
+        p.add_argument("name", type=_name)
+        if cmd == "reply":
+            p.add_argument("--sid", help="require this session id")
     for cmd, text in (
         ("status", "one Status JSON line per session"),
         ("content", "print one session's content"),
@@ -180,9 +184,11 @@ def _parser(hosts: Hosts | None) -> argparse.ArgumentParser:
     )
     p.add_argument("name", type=_name)
     p.add_argument("text", nargs="?")
+    p.add_argument("--sid", help="require this session id")
     p.add_argument("--key", nargs="+", metavar="K", help="keys, all checked before any is sent")
     p = sub.add_parser("read", help="print a session's screen")
     p.add_argument("name", type=_name)
+    p.add_argument("--sid", help="require this session id")
     p.add_argument("--lines", type=_lines, metavar="N", help="the last N lines, with history")
     p = sub.add_parser("tile", help="lay out a window's sessions (the default Host's)")
     p.add_argument("window", help="the window, as its Host names it")
@@ -227,47 +233,34 @@ def _shown(name: str, hosts: Hosts) -> Showable:
     return host
 
 
-def _keys(args) -> list[tuple[str, Record | None]]:
-    found: list[tuple[str, Record | None]]
-    if args.names:
-        found = [(name, None) for name in args.names]
-    elif sys.stdin is None or sys.stdin.isatty():
-        raise UsageError(f"{args.cmd}: give session names or Records on stdin")
-    else:
-        found = []
-        try:
-            for line in sys.stdin:
-                if line.strip():
-                    record = Record.parse(line)
-                    found.append((record.name, record))
-        except UnicodeDecodeError:
-            raise UsageError(f"{args.cmd}: stdin: not UTF-8") from None
-        except ValueError as error:
-            raise UsageError(f"{args.cmd}: stdin: {error}") from None
-    names = [name for name, _ in found]
-    if twice := sorted({name for name in names if names.count(name) > 1}):
-        raise UsageError(f"{args.cmd}: {', '.join(twice)} given twice")
-    for name, record in found:
-        if not _sessions(name, record):
-            raise UsageError(f"{name}: names no session")
-        for session in _sessions(name, record):
-            if not SESSION_NAME.fullmatch(session):
-                raise UsageError(f"{name}: session {session!r:.80}: want {SESSION_NAME_RULE}")
-    return found
+def _resolve(key: str | Record) -> tuple[str, tuple[str, Record | None]]:
+    name, record = (key, None) if isinstance(key, str) else (key.name, key)
+    sessions = _sessions(name, record)
+    if not sessions:
+        raise UsageError(f"{name}: names no session")
+    for session in sessions:
+        if not SESSION_NAME.fullmatch(session):
+            raise UsageError(f"{name}: session {session!r:.80}: want {SESSION_NAME_RULE}")
+    return name, (name, record)
 
 
 def _sessions(name: str, record: Record | None) -> tuple[str, ...]:
     return (name,) if record is None else record.sessions
 
 
-def _state(name: str, hosts: Hosts) -> Status:
+def _state(name: str, hosts: Hosts, sid: str | None = None) -> Status:
     """Session `name`'s own Status: gone once its host no longer lists it."""
     host = Session.host(_host_of(name, hosts))
-    if name not in host.list():
+    process = host.attach(name) if name in host.list() else None
+    try:
+        check_sid(name, process, sid)
+    except SessionError:
+        process = None
+    if process is None:
         return Status(
             name=name, alive=False, state=StatusState.GONE, outcome=None, attach=None, hidden=False
         )
-    found = host.attach(name).status()
+    found = process.status()
     return replace(found, cwd=_cwd(name)) if found.alive else found
 
 
@@ -281,28 +274,29 @@ def _cwd(name: str) -> str | None:
 
 
 def _status(name: str, record: Record | None, hosts: Hosts) -> str:
-    found = [_state(session, hosts) for session in _sessions(name, record)]
+    found = [
+        _state(session, hosts, None if record is None else record.sid)
+        for session in _sessions(name, record)
+    ]
     shown = next((each for each in found if each.alive), found[0])
     return replace(shown, name=name, hidden=any(each.hidden for each in found)).to_line()
 
 
-def _carried(name: str, record: Record | None, hosts: Hosts) -> tuple[str, ...]:
-    """The key's sessions, once each live one publishes a Record key's sid: a reused name is
-    another run's session.
-    """
+def _carried(
+    name: str, record: Record | None, hosts: Hosts, *, stale_ok: bool = False
+) -> tuple[str, ...]:
     sessions = _sessions(name, record)
     if record is None:
         return sessions
     for session in sessions:
         host = Session.host(_host_of(session, hosts))
-        if session not in host.list():
-            continue
-        found = host.attach(session).record()
-        have = None if found is None else found.sid
-        if found is None or have != record.sid:
-            raise SessionError(
-                f"session {session} carries sid {have or 'none'}, not the Record's {record.sid}"
-            )
+        process = host.attach(session) if session in host.list() else None
+        try:
+            check_sid(session, process, record.sid)
+        except SessionError:
+            if stale_ok:
+                return ()
+            raise
     return sessions
 
 
@@ -324,18 +318,26 @@ def _hide(name: str, record: Record | None, hosts: Hosts, *, if_closed: bool = F
 
 
 def _attach_command(name: str, record: Record | None, hosts: Hosts) -> str:
-    session = _sessions(name, record)[0]
+    session = _carried(name, record, hosts)[0]
     return _shown(session, hosts).attach_command(session)
 
 
 def _close(name: str, record: Record | None, hosts: Hosts) -> None:
-    for session in _carried(name, record, hosts):
-        TuiStore.attach(session, host=Session.host(_host_of(session, hosts))).close()
+    for session in _carried(name, record, hosts, stale_ok=True):
+        try:
+            Session.retire(
+                session, sid=None if record is None else record.sid, host=_host_of(session, hosts)
+            )
+        except SessionError:
+            if record is None or _carried(name, record, hosts, stale_ok=True):
+                raise
+            return
 
 
 def _content(name: str, record: Record | None, hosts: Hosts) -> str:
+    session = _carried(name, record, hosts)[0]
     return Session.attach(
-        name, sid=None if record is None else record.sid, host=_host_of(name, hosts)
+        session, sid=None if record is None else record.sid, host=_host_of(session, hosts)
     ).content()
 
 
@@ -349,26 +351,27 @@ BATCH = {
 }
 
 
-def _batch(args, hosts: Hosts) -> int:
-    failed = 0
+def _answers(args, hosts: Hosts) -> int:
     act = BATCH[args.cmd]
     if args.cmd == "hide":
         act = functools.partial(_hide, if_closed=args.if_closed)
-    keys = _keys(args)
-    if args.cmd == "content" and len(keys) != 1:
-        raise UsageError(f"content: takes exactly one key, got {len(keys)}")
-    for name, record in keys:
-        try:
-            line = act(name, record, hosts)
-            if line is not None:
-                print(line, flush=True)
-        except NotShowable as error:
-            _say(str(error))
-            failed = 1
-        except (ConfigError, SessionError, OSError) as error:
-            _say(f"{PROG}: {name}: {error}")
-            failed = 1
-    return failed
+    if not args.names and (sys.stdin is None or sys.stdin.isatty()):
+        raise UsageError(f"{args.cmd}: give session names or Records on stdin")
+    try:
+        return answer_keys(
+            args.names,
+            sys.stdin,
+            _resolve,
+            lambda key: act(*key, hosts),
+            single=args.cmd == "content",
+            usage=(UsageError,),
+            failures=(ConfigError, SessionError, OSError),
+            prog=PROG,
+            out=sys.stdout,
+            err=sys.stderr,
+        )
+    except UnicodeDecodeError:
+        raise UsageError(f"{args.cmd}: stdin: not UTF-8") from None
 
 
 def _listed(args, hosts: Hosts) -> Iterator[tuple[Host, str]]:
@@ -456,7 +459,7 @@ def _send(args, hosts: Hosts) -> int:
     if (args.text is None) == (args.key is None):
         raise UsageError("send: give TEXT or --key K…, not both")
     keys = None if args.key is None else tuple(map(KeyPress.parse, args.key))
-    session = Session.attach(args.name, host=_host_of(args.name, hosts))
+    session = Session.attach(args.name, sid=args.sid, host=_host_of(args.name, hosts))
     if keys is None:
         session.send(args.text)
     else:
@@ -471,16 +474,18 @@ def _run(args, flags: list[str], hosts: Hosts, start_sid: str | None) -> int:
     if cmd in ("restart", "resume"):
         return _worker(args, start_sid)
     if cmd in BATCH:
-        return _batch(args, hosts)
+        return _answers(args, hosts)
     if cmd == "ls":
         return _ls(args, hosts)
     if cmd == "send":
         return _send(args, hosts)
     if cmd == "reply":
-        text = Session.attach(args.name, host=_host_of(args.name, hosts)).reply
+        text = Session.attach(args.name, sid=args.sid, host=_host_of(args.name, hosts)).reply
         if text:
             print(text)
     elif cmd == "read":
+        host = Session.host(_host_of(args.name, hosts))
+        check_sid(args.name, host.attach(args.name), args.sid)
         print(_shown(args.name, hosts).screen(args.name, args.lines))
     elif cmd == "client-resume":
         return Session.client_resume(args.client, args.arguments)
