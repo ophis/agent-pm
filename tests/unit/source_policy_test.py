@@ -103,14 +103,14 @@ class DelegatePolicy(Case):
     ):
         for text, want in (
             (
-                "run autopilot:build\nthen `agent-pm:tmux`\nor x/agent-pm:act-as",
-                ["run autopilot:build", "then `agent-pm:tmux`"],
+                "run autopilot:build\nthen `agent-pm:manage`\nor x/agent-pm:act-as",
+                ["run autopilot:build", "then `agent-pm:manage`"],
             ),
             (
-                "the act-as skill\nthe tmux skill's workers\nthe skill",
-                ["the act-as skill", "the tmux skill's workers"],
+                "the act-as skill\nthe manage skill's workers\nthe skill",
+                ["the act-as skill", "the manage skill's workers"],
             ),
-            ("/autopilot:build, `/agent-pm:tmux`'s workers, /deep-research", []),
+            ("/autopilot:build, `/agent-pm:manage`'s workers, /deep-research", []),
         ):
             with self.subTest(text=text):
                 self.assertEqual(generic_names(text), want)
