@@ -145,6 +145,36 @@ class Issue:
 
 
 @dataclass(frozen=True)
+class Found:
+    """A first-claim search's issue candidate: group is its state's rank (0 Done … 5 Canceled);
+    last_comment only for a Canceled one.
+    """
+
+    identifier: str
+    title: str
+    state: str
+    group: int
+    urls: tuple[str, ...]
+    description: str
+    last_comment: str
+
+
+@dataclass(frozen=True)
+class Ref:
+    """A first-claim search's doc or merged PR; owner: the Found it belongs to, if any."""
+
+    label: str
+    url: str
+    owner: str | None
+
+
+@dataclass(frozen=True)
+class Related:
+    issues: tuple[Found, ...] = ()
+    refs: tuple[Ref, ...] = ()
+
+
+@dataclass(frozen=True)
 class Invalid:
     reason: str
     mapped: bool = False
