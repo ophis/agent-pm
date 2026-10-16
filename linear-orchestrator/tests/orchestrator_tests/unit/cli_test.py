@@ -22,6 +22,11 @@ from utils.tests.cli_help import examples, parse_only
 
 
 class Commands(Case):
+    def test_prune_prose_fits_eighty_columns(self):
+        for line in prune.HELP.splitlines():
+            if not line.strip().startswith("agent-pm-"):
+                self.assertLessEqual(len(line), 80, line)
+
     def test_published_examples_parse_before_operational_dispatch(self):
         for name in (
             "",

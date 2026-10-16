@@ -20,6 +20,7 @@ import functools
 import os
 import re
 import sys
+import textwrap
 import uuid
 from collections.abc import Iterator
 from dataclasses import replace
@@ -139,11 +140,14 @@ def _parser(hosts: Hosts | None) -> argparse.ArgumentParser:
     p = sub.add_parser(
         "start",
         help="start worker NAME; print its Record",
-        description="Start worker NAME, a plain text user interface session of CLIENT; everything after -- is "
-        "its client's flags, verbatim. Its session id: --resume SID (resumes that "
-        f"conversation), else ${SID_ENV}, else a new one; the two must agree. Prints its "
-        "Record once it has run 5 s without exiting (up to 15 s while its launch input is "
-        "pending).",
+        description=textwrap.fill(
+            "Start worker NAME, a plain text user interface session of CLIENT; everything after -- is "
+            "its client's flags, verbatim. Its session id: --resume SID (resumes that "
+            f"conversation), else ${SID_ENV}, else a new one; the two must agree. Prints its "
+            "Record once it has run 5 s without exiting (up to 15 s while its launch input is "
+            "pending).",
+            width=77,
+        ),
         epilog="Prerequisites and effects\n"
         "  Requires configured CLIENT and default Host tools, an existing cwd, and a\n"
         "  free NAME. Names match [A-Za-z0-9_-]+ except none. Creates a worker and\n"
@@ -246,7 +250,7 @@ def _parser(hosts: Hosts | None) -> argparse.ArgumentParser:
         p = sub.add_parser(
             cmd,
             help=text,
-            description=f"{text}: names, else Records on stdin.",
+            description=textwrap.fill(f"{text}: names, else Records on stdin.", width=77),
             epilog="Prerequisites and effects\n"
             "  Requires configured target Hosts; show/hide/attach-command need a\n"
             "  showable Host. Names override stdin; otherwise read one Record per line.\n"
@@ -319,9 +323,12 @@ def _parser(hosts: Hosts | None) -> argparse.ArgumentParser:
     p = sub.add_parser(
         "send",
         help="send TEXT (then Enter), or keys",
-        description="Send TEXT as a paste then Enter, or --key K…: keys in a Host-independent "
-        "notation: one character, or Enter Escape Tab BTab BSpace Up Down Left Right Home End "
-        "PageUp PageDown F1-F12, after any of C- M- S- (C-c, S-Up).",
+        description=textwrap.fill(
+            "Send TEXT as a paste then Enter, or --key K…: keys in a Host-independent "
+            "notation: one character, or Enter Escape Tab BTab BSpace Up Down Left Right Home End "
+            "PageUp PageDown F1-F12, after any of C- M- S- (C-c, S-Up).",
+            width=77,
+        ),
         epilog="Prerequisites and effects\n"
         "  Requires a live session and configured Host. Supply exactly one of TEXT\n"
         "  or --key; no stdin input. All keys are validated before sending any.\n"

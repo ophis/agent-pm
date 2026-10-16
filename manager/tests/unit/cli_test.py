@@ -709,6 +709,12 @@ HELP_COMMANDS = [
 
 
 class HelpContracts(Case):
+    def test_visibility_help_does_not_require_roster_ownership(self):
+        for command in ("show", "hide"):
+            text = self.help(command)
+            self.assertNotIn("lease access", text)
+            self.assertIn("no holder lease", text)
+
     def test_published_operation_examples_use_real_parser_before_dispatch(self):
         for name in [None, *HELP_COMMANDS]:
             published = list(examples(self.help(name)))

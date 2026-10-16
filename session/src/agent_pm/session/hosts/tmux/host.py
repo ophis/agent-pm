@@ -695,8 +695,9 @@ class TmuxHost(Host, Showable):
             "    new --display option. If show cannot open a view:\n"
             "      agent-pm-session attach-command helper\n"
             "    Run the printed command to attach. close terminates the session.\n"
-            f"    Stored metadata format: {FORMAT}; {HIDDEN} is set only by {NO_DISPLAY},\n"
-            "    never supplied as a display part. Other printable values not ending\n"
+            f"    Stored metadata format: {FORMAT}\n"
+            f"    {HIDDEN} is set only by {NO_DISPLAY}, never supplied as a display part.\n"
+            "    Other printable values not ending\n"
             "    in ; remain opaque and are kept as given; showing needs this grammar."
         )
 

@@ -210,25 +210,53 @@ def standalone(repo: str) -> list[str]:
     return sorted(found)
 
 
+def _without_help_text(rel, text):
+    if not (rel.endswith("/cli.py") or rel.startswith(TMUX_HOME)):
+        return text
+    tree = ast.parse(text, rel)
+    prose = []
+    if rel.endswith("/cli.py"):
+        prose = [
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Constant)
+            and isinstance(node.value, str)
+            and re.search(r"Examples[: (]", node.value)
+        ]
+    else:
+        for function in ast.walk(tree):
+            if isinstance(function, ast.FunctionDef) and function.name == "display_help":
+                prose.extend(
+                    node.value
+                    for node in ast.walk(function)
+                    if isinstance(node, ast.Return)
+                    and isinstance(node.value, ast.Constant | ast.JoinedStr)
+                )
+    original = [line.encode() for line in text.splitlines(keepends=True)]
+    masked = original.copy()
+
+    def paint(node, *, restore=False):
+        last = node.end_lineno or node.lineno
+        for index in range(node.lineno - 1, last):
+            start = node.col_offset if index == node.lineno - 1 else 0
+            end = node.end_col_offset if index == last - 1 else None
+            end = len(original[index].rstrip(b"\r\n")) if end is None else end
+            value = original[index][start:end] if restore else b" " * (end - start)
+            masked[index] = masked[index][:start] + value + masked[index][end:]
+
+    for node in prose:
+        paint(node)
+    for node in ast.walk(tree):
+        if isinstance(node, ast.FormattedValue):
+            paint(node.value, restore=True)
+    return b"".join(masked).decode()
+
+
 def client_names(repo: str) -> list[str]:
     found = set()
     for rel, text in _lower_files(repo, (".py", ".toml"), skip=f"{SESSION_SRC}clients/"):
-        examples = set()
-        if rel.endswith("/cli.py"):
-            for node in ast.walk(ast.parse(text, rel)):
-                if (
-                    isinstance(node, ast.Constant)
-                    and isinstance(node.value, str)
-                    and re.search(r"Examples[: (]", node.value)
-                ):
-                    examples.update(range(node.lineno, (node.end_lineno or node.lineno) + 1))
-        elif rel.startswith(TMUX_HOME):
-            for node in ast.walk(ast.parse(text, rel)):
-                if isinstance(node, ast.FunctionDef) and node.name == "display_help":
-                    examples.update(range(node.lineno, (node.end_lineno or node.lineno) + 1))
+        text = _without_help_text(rel, text)
         for number, line in enumerate(text.splitlines(), 1):
-            if number in examples:
-                continue
             if rel.endswith(".toml"):
                 code = TOML_CODE.match(line)[0]
                 line = code if line[len(code) : len(code) + 1] in ("", "#") else line

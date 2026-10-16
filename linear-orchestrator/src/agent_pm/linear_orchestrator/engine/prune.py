@@ -64,7 +64,7 @@ Usage: agent-pm-linear prune [--dry-run]
 
 Arguments and options:
   --dry-run   Print the cleanup plan without closing, deleting or archiving.
-              Still read Linear, configuration, local runs/checkouts and Delegate
+              Read Linear, configuration, local runs/checkouts and Delegate
               status; this is not an offline or credentials-free preview.
   -h, --help  Print this help alone; exit 0.
   --dry-run may repeat with no further effect; other arguments exit 2.

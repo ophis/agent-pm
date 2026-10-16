@@ -193,7 +193,7 @@ Prerequisites and effects:
   Install agent-pm commands on PATH; configure the owning client/run layer.
   hold gives its child AGENT_PM_MANAGER and the paired AGENT_PM_HOLDER_ID /
   AGENT_PM_HOLDER_GENERATION. Keep that pair together. An active holder fences
-  other identities; run mutating commands from its commander environment.
+  ownership-sensitive roster updates; run those from its commander environment.
   AGENT_PM_AGENT_SESSION blocks hold/run/worker/issue/role/resume; use a
   user-started commander. Help still works. State: ~/.agent-pm/managers/NAME/.
   run/worker/issue/role give starters empty stdin; supply literal input.
@@ -450,7 +450,8 @@ reconcile interrupted bookkeeping with agent-pm-crew attach --help.
             text,
             f"""Give entry names or --all, never both; neither is a usage error.
 Uses saved placement; no new --display is accepted. Work survives hide.
-Requires the owning controllers and lease access; partial failures exit 1.
+Requires the owning controllers; no holder lease is needed.
+Partial failures exit 1.
 
 Examples:
   With a live helper entry:

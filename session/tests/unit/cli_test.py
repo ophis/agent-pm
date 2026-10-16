@@ -221,6 +221,15 @@ COMMANDS = (
 
 
 class HelpTest(Case):
+    def test_descriptions_and_display_prose_fit_eighty_columns(self):
+        for command in ("start", "send", "hide"):
+            description = self.help([command, "--help"]).split("\n\n")[1]
+            with self.subTest(command=command):
+                self.assertLessEqual(max(map(len, description.splitlines())), 80)
+        for line in TmuxHost("tmux").display_help().splitlines():
+            if not line.strip().startswith("agent-pm-"):
+                self.assertLessEqual(len(line), 80, line)
+
     def test_published_operation_examples_use_real_parser_before_dispatch(self):
         for name in [None, *COMMANDS]:
             published = list(examples(self.help(([name] if name else []) + ["--help"])))
