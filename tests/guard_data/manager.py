@@ -20,4 +20,8 @@ PYTHON_CODE_ALLOWED = {
         "manager/tests/integration/holder_integration_test.py",
         "3b219ffc99de0f3cc406f47363e7b8943d06ed62b2a19e344998a52066e85d89",
     ): "Holder.run's tty-handoff failure path needs os.tcsetpgrp patched inside the holder's own process; Holder is not re-exported.",
+    (
+        "manager/tests/integration/events_integration_test.py",
+        "3174f044aeaf1f1adb4902ac247410e01107e76cea410e5e3fd8cfcd572bf825",
+    ): "Dies (os._exit) inside the rotation lock right after Events.rotate and a durable ledger save, so recovery must finish without rollback; Events (agent_pm.manager.engine.events) is not re-exported.",
 }

@@ -13,19 +13,19 @@ from tests.guards import PROJECTS
 
 IMPORTERS = {"__import__", "builtins.__import__", "importlib.import_module", "runpy.run_module"}
 ATTRIBUTE_CALLS = {"getattr", "setattr", "delattr", "hasattr"}
-PARAMETER = object()
+RUNTIME = object()
 
 
 def inline_python(repo: str, *, allowed=None) -> list[str]:
     allowed = PYTHON_CODE_ALLOWED if allowed is None else allowed
     found, used = [], set()
     for path, text in _tree_files(repo, ".py"):
-        for line, code, error, exceptable in _programs(ast.parse(text)):
+        for line, code, error in _programs(ast.parse(text)):
             errors = [error] if error else _violations(code)
             if not errors:
                 continue
-            key = path, hashlib.sha256(code.encode()).hexdigest()
-            if key in allowed and exceptable:
+            key = code is not None and (path, hashlib.sha256(code.encode()).hexdigest())
+            if key in allowed:
                 used.add(key)
             else:
                 found.append(f"{path}:{line}: Python -c: {', '.join(errors)}")
@@ -48,28 +48,28 @@ def _scope(nodes):
 
 
 def _programs(tree, inherited=None):
-    """(line, key text, error, exceptable) per -c program: each literal value, else the expression
-    with its same-file values substituted, so editing one makes its exception stale.
+    """(line, text, error) per -c program: each literal value, else the expression with its
+    same-file values substituted, so editing one makes its exception stale; a program reading a
+    parameter, import or loop target gets text None: no exception can cover all its values.
     """
     body = tree.body if isinstance(tree.body, list) else [tree.body]
     nodes = list(_scope(body))
-    local = {}
-    if isinstance(tree, ast.FunctionDef | ast.AsyncFunctionDef | ast.Lambda):
-        local = {arg.arg: [PARAMETER] for arg in ast.walk(tree.args) if isinstance(arg, ast.arg)}
-    assigned = set()
+    assigned = {}
     for node in nodes:
         if isinstance(node, ast.Assign | ast.AnnAssign):
             for target in node.targets if isinstance(node, ast.Assign) else [node.target]:
-                if isinstance(target, ast.Name):
-                    assigned.add(target)
-                    if node.value is not None:
-                        local.setdefault(target.id, []).append(node.value)
-    for node in nodes:
-        if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store) and node not in assigned:
-            local.setdefault(node.id, []).append(None)
+                assigned[target] = node.value
+    function = isinstance(tree, ast.FunctionDef | ast.AsyncFunctionDef | ast.Lambda)
+    local = {}
+    for node in [*(ast.walk(tree.args) if function else ()), *nodes]:
+        if isinstance(node, ast.arg):
+            local.setdefault(node.arg, []).append(RUNTIME)
+        elif isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store):
+            if (value := assigned.get(node, RUNTIME)) is not None:
+                local.setdefault(node.id, []).append(value)
         elif isinstance(node, ast.Import | ast.ImportFrom):
             for alias in node.names:
-                local.setdefault(alias.asname or alias.name.split(".")[0], []).append(None)
+                local.setdefault(alias.asname or alias.name.split(".")[0], []).append(RUNTIME)
     bindings = {**(inherited or {}), **local}
     for node in nodes:
         if isinstance(node, ast.List | ast.Tuple) and node.elts and _python(node.elts[0], bindings):
@@ -77,18 +77,18 @@ def _programs(tree, inherited=None):
                 if _strings(before, bindings) != {"-c"}:
                     continue
                 if codes := _strings(after, bindings):
-                    yield from ((after.lineno, code, None, True) for code in sorted(codes))
+                    yield from ((after.lineno, code, None) for code in sorted(codes))
                     continue
-                substituted, parameter = _substitute(after, bindings)
-                hint = " (parameter; build the argv at the call site)" if parameter else ""
+                text, runtime = _substitute(after, bindings)
+                hint = " (run-time value; build the argv from literals at the call site)"
                 yield (
                     after.lineno,
-                    substituted,
-                    f"not a literal: {ast.unparse(after)}{hint}",
-                    not parameter,
+                    None if runtime else text,
+                    f"not a literal: {ast.unparse(after)}{hint if runtime else ''}",
                 )
         elif isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef | ast.Lambda):
-            yield from _programs(node, bindings)
+            # Class bindings are not visible inside its methods.
+            yield from _programs(node, inherited if isinstance(tree, ast.ClassDef) else bindings)
 
 
 def _strings(node, bindings, seen=frozenset()):
@@ -111,23 +111,23 @@ def _strings(node, bindings, seen=frozenset()):
 
 
 def _substitute(node, bindings):
-    parameter = False
+    runtime = False
 
     class Substitute(ast.NodeTransformer):
         seen = set()
 
         def visit_Name(self, name):
-            nonlocal parameter
+            nonlocal runtime
             values = bindings.get(name.id, ())
-            parameter = parameter or PARAMETER in values
-            if len(values) != 1 or not isinstance(values[0], ast.AST) or name.id in self.seen:
+            runtime = runtime or RUNTIME in values
+            if name.id in self.seen:
                 return name
             self.seen.add(name.id)
-            value = self.visit(copy.deepcopy(values[0]))
+            found = [self.visit(copy.deepcopy(value)) for value in values if value is not RUNTIME]
             self.seen.discard(name.id)
-            return value
+            return found[0] if len(values) == 1 and found else name
 
-    return ast.unparse(Substitute().visit(copy.deepcopy(node))), parameter
+    return ast.unparse(Substitute().visit(copy.deepcopy(node))), runtime
 
 
 def _python(node, bindings, seen=frozenset()):

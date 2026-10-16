@@ -77,8 +77,8 @@ class InlinePython(Sample):
             with self.subTest(source=source):
                 (found,) = self.checked(source)
                 self.assertIn(": Python -c: not a literal: ", found)
-        source = "import sys, textwrap\nCODE = 'print(1)'\nargv = [sys.executable, '-c', textwrap.dedent(CODE)]"
-        allowed = {key("textwrap.dedent('print(1)')"): "Dedented literal."}
+        source = "import sys\nVALUE = 'print(1)'\nargv = [sys.executable, '-c', f'{VALUE}']"
+        allowed = {key("f\"{'print(1)'}\""): "Interpolated literal."}
         self.assertEqual(self.checked(source, allowed), [])
         edited = self.checked(source.replace("print(1)", "print(2)"), allowed)
         self.assertEqual(len(edited), 2)
@@ -92,10 +92,26 @@ class InlinePython(Sample):
                 "'import json\\n' + code",
             ),
             ("import sys\nrun = lambda code: [sys.executable, '-c', code]", "code"),
+            (
+                "import sys\ndef run(*codes):\n    for code in codes:\n        argv = [sys.executable, '-c', code]",
+                "code",
+            ),
+            (
+                "import sys\ndef run(code):\n    prog = 'pass'\n    prog = code\n    return [sys.executable, '-c', prog]",
+                "prog",
+            ),
+            (
+                "import sys\nfrom delegate.tests.program import CODE\nargv = [sys.executable, '-c', CODE]",
+                "CODE",
+            ),
+            (
+                "import sys, textwrap\nCODE = 'pass'\nargv = [sys.executable, '-c', textwrap.dedent(CODE)]",
+                "textwrap.dedent('pass')",
+            ),
         ):
             with self.subTest(source=source):
                 found = self.checked(source, {key(text): "A helper."})
-                self.assertTrue(any("(parameter" in line for line in found), found)
+                self.assertTrue(any("(run-time value" in line for line in found), found)
                 self.assertTrue(any("stale" in line for line in found), found)
 
     def test_same_file_literal_bindings_resolve_and_parameters_do_not(self):
@@ -105,7 +121,16 @@ class InlinePython(Sample):
             "    return ['python3', '-c', code]\n"
         )
         (found,) = self.checked(source)
-        self.assertIn("(parameter", found)
+        self.assertIn("(run-time value", found)
+        source = (
+            "import sys\n"
+            "CODE = 'from agent_pm.session.engine import base'\n"
+            "class Test:\n"
+            "    CODE = 'pass'\n"
+            "    def test(self):\n"
+            "        return [sys.executable, '-c', CODE]\n"
+        )
+        self.assertEqual(len(self.checked(source)), 1)
 
     def test_private_attributes_after_an_agent_pm_import_have_no_bypass(self):
         for code in (
@@ -118,11 +143,20 @@ class InlinePython(Sample):
             "import json\nfrom agent_pm.session import Session\njson = Session\njson._setup",
             "import sys\nfrom agent_pm.session import Session\nsys.S = Session\nsys.S._setup",
             "import sys\nfrom agent_pm.session import Session\nhasattr(sys.modules['x'], '_setup')",
+            "from agent_pm.session import Session\ntry:\n    pass\nexcept Exception as v:\n    v._setup",
+            "__import__('agent_pm.session').Session._setup",
+            "import runpy\nrunpy.run_module('agent_pm.session.cli')._setup",
         ):
             with self.subTest(code=code):
                 self.assertIn("private attribute _setup", _violations(code))
         self.assertEqual(
             _violations("class Example: pass\nvalue = Example()\nvalue._private = 1"), []
+        )
+        self.assertEqual(
+            _violations(
+                "import os, sys\nfrom agent_pm.session import Session\ngetattr(os, '_exit')\nhasattr(sys, '_x')"
+            ),
+            [],
         )
 
     def test_non_literal_dynamic_imports_and_run_path_are_violations(self):

@@ -24,11 +24,33 @@ CRASH = (
     "with file_lock(events.path),mock.patch('os.replace',side_effect=replace):\n"
     " events.recover(0) if verb=='recover' else events.rotate(1,0)"
 )
+COMMIT = (
+    "import os,sys\n"
+    "from agent_pm.manager.engine.events import Events\n"
+    "from agent_pm.utils import file_lock,save\n"
+    "directory,ledger=sys.argv[1:]\n"
+    "events=Events(directory)\n"
+    "with file_lock(events.path):\n"
+    " events.rotate(1,0)\n"
+    ' save(ledger,\'{"gen":1,"cursor":0}\\n\',durable=True)\n'
+    " os._exit(91)"
+)
 
 
 class EventsTest(EventsCase):
-    def crash_replace(self, source, destination, *, after=False, recovering=False):
+    def crashed(self, argv):
         result = subprocess.run(
+            argv,
+            env=child_env(),
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 91, result.stderr)
+
+    def crash_replace(self, source, destination, *, after=False, recovering=False):
+        self.crashed(
             (
                 *PY,
                 "-c",
@@ -38,14 +60,8 @@ class EventsTest(EventsCase):
                 str(destination),
                 "after" if after else "before",
                 "recover" if recovering else "rotate",
-            ),
-            env=child_env(),
-            capture_output=True,
-            text=True,
-            timeout=10,
-            check=False,
+            )
         )
-        self.assertEqual(result.returncode, 91, result.stderr)
 
     def test_crash_before_archive_rename_preserves_original_and_later_appends(self):
         self.crash_replace(self.events.path, self.events.archive)
@@ -101,16 +117,7 @@ class EventsTest(EventsCase):
         self.assertFalse(Path(self.events.journal).exists())
 
     def test_crash_after_durable_ledger_commit_finishes_without_rollback(self):
-        self.crashed(
-            "import os\n"
-            "from agent_pm.manager.engine.events import Events\n"
-            "from agent_pm.utils import file_lock,save\n"
-            f"events=Events({self.directory!r})\n"
-            "with file_lock(events.path):\n"
-            " events.rotate(1,0)\n"
-            f' save({str(self.ledger)!r},\'{{"gen":1,"cursor":0}}\\n\',durable=True)\n'
-            " os._exit(91)"
-        )
+        self.crashed((*PY, "-c", COMMIT, self.directory, str(self.ledger)))
         append_line(self.events.path, b"new\n", locked=True)
         self.recover()
         self.assertEqual(self.generation(), 1)

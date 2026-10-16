@@ -106,11 +106,11 @@ PYTHON_CODE_ALLOWED = {
     (
         "session/tests/integration/clients/codex/tui/start_integration_test.py",
         "12c484c0edb7f7ebf292aa261aeca1fe260c4c668b2f4cb17d779403ad752df8",
-    ): "Checks concrete Codex module identity and hook constants in a fresh interpreter.",
+    ): "Fresh-interpreter import of codex tui submodules: sys.path untouched, canonical clients.common/codex.common identity, no _agent_pm_codex_* copies; needs internal submodules and clean sys.modules.",
     (
         "session/tests/integration/clients/codex/tui/start_integration_test.py",
         "a54540807f5981fab22a3c225f83241ed92520cc5a1ea92493cd6e779e2e431f",
-    ): "Checks concrete Codex module identity and hook constants in a fresh interpreter.",
+    ): "Imports codex.tui.HOOKS under -I with only session+utils roots, as isolated hook scripts do; HOOKS is not re-exported.",
     (
         "session/tests/integration/clients/codex/tui/start_integration_test.py",
         "fc75cc3d188bbbbe8564133ed21537010ea309a09e4e7bc4a3d7f29135815e2c",
