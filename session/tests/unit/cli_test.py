@@ -3,6 +3,7 @@ import io
 import json
 import sys
 from dataclasses import replace
+from pathlib import Path
 from unittest import mock
 
 from agent_pm.session import cli
@@ -10,7 +11,15 @@ from agent_pm.session.engine.hosted_session import HostedSession
 from agent_pm.utils import Record
 
 from session.tests.case import Case
+from session.tests.fakes.terminal import ScreenHost
 from session.tests.hosted_support import SID, HostedTuiBase
+
+
+class CliHost(ScreenHost):
+    current: ScreenHost
+
+    def __init__(self, name, settings):
+        self.__dict__ = self.current.__dict__
 
 
 class ReservedName(Case):
@@ -31,9 +40,14 @@ class ReservedName(Case):
 class RecordControl(HostedTuiBase):
     def setUp(self):
         super().setUp()
-        self.enterContext(mock.patch.object(cli, "Session", self.session))
-        self.enterContext(
-            mock.patch.object(cli, "_configure", return_value=self.session._config().hosts)
+        CliHost.current = self.host
+        self.addCleanup(setattr, HostedSession, "_setup", None)
+        Path(self.agent_pm).mkdir(exist_ok=True)
+        Path(self.agent_pm, "config.local.toml").write_text(
+            '[session.hosts.tmux]\nimplementation = "session.tests.unit.cli_test:CliHost"\n'
+            '[session.clients.fake]\nimplementation = "session.tests.fake_client:FakeClient"\n'
+            'tui = true\n'
+            f"scenario = {json.dumps(self.scenario)}\nlog = {json.dumps(self.log)}\n"
         )
         self.record = Record(
             v=1,
