@@ -22,9 +22,7 @@ class ReclaimedGroup(Process):
 
     @classmethod
     def reclaim(cls, token: str) -> ReclaimedGroup | None:
-        """token's controller (an apm-group-* directory and its socket) while its group lives; else
-        None; SessionError if it cannot tell.
-        """
+        """Host.reclaim's group; SessionError if it cannot tell."""
         if not isinstance(token, str):
             return None
         try:
