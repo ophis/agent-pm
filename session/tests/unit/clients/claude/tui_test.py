@@ -545,14 +545,18 @@ class TuiPayloadTest(Base):
         rows = (
             (
                 "Stop",
-                {"session_id": "n1", "last_assistant_message": "hi", "background_tasks": [1, 2]},
+                {"session_id": SID, "last_assistant_message": "hi", "background_tasks": [1, 2]},
                 [ClientBound(SID), TurnEnd("hi", 2)],
             ),
-            ("PermissionRequest", {"session_id": "n0", "tool_name": "Bash"}, [Blocked("Bash")]),
-            ("Notification", {"message": "Claude is waiting"}, [Blocked("Claude is waiting")]),
-            ("PostToolUse", {"tool_name": "Edit"}, [Activity("Edit")]),
-            ("UserPromptSubmit", {"prompt": "x"}, [Activity("")]),
-            ("SessionStart", {"session_id": "n0"}, []),
+            ("PermissionRequest", {"session_id": SID, "tool_name": "Bash"}, [Blocked("Bash")]),
+            (
+                "Notification",
+                {"session_id": SID, "message": "Claude is waiting"},
+                [Blocked("Claude is waiting")],
+            ),
+            ("PostToolUse", {"session_id": SID, "tool_name": "Edit"}, [Activity("Edit")]),
+            ("UserPromptSubmit", {"session_id": SID, "prompt": "x"}, [Activity("")]),
+            ("SessionStart", {"session_id": SID}, []),
         )
         for label, payload, events in rows:
             with self.subTest(label=label):
@@ -597,6 +601,7 @@ class StopFailureTest(Base):
     def launched(self):
         run = ClaudeClient({}).tui()
         run.launch(Spec(workdir=self.work, access=Access(cwd=self.work), sid=SID), HOOK)
+        run.hook_events("SessionStart", {"session_id": SID})
         return run
 
     def test_typed_errors(self):
@@ -633,15 +638,20 @@ class StopFailureTest(Base):
         )
         for payload, events in rows:
             with self.subTest(payload=payload), mock.patch("time.time", return_value=NOW):
-                self.assertEqual(self.launched().hook_events("StopFailure", payload), events)
+                self.assertEqual(
+                    self.launched().hook_events("StopFailure", {"session_id": SID, **payload}),
+                    events,
+                )
 
     def test_a_failure_is_not_sticky(self):
         run = self.launched()
         self.assertEqual(
-            run.hook_events("StopFailure", {"error": "overloaded"}), [TurnFailed("overloaded")]
+            run.hook_events("StopFailure", {"session_id": SID, "error": "overloaded"}),
+            [TurnFailed("overloaded")],
         )
         self.assertEqual(
-            run.hook_events("Stop", {"last_assistant_message": "done"}), [TurnEnd("done", 0)]
+            run.hook_events("Stop", {"session_id": SID, "last_assistant_message": "done"}),
+            [TurnEnd("done", 0)],
         )
 
 
@@ -656,7 +666,7 @@ def limited(notice: str, quota=None) -> dict:
     return record if quota is None else {**record, "quotaLimits": quota}
 
 
-class TranscriptTest(Base):
+class TranscriptCase(Base):
     def setUp(self):
         super().setUp()
         patch = mock.patch.dict(os.environ, {"CLAUDE_CONFIG_DIR": os.path.join(self.tmp, "c")})
@@ -665,6 +675,7 @@ class TranscriptTest(Base):
         self.run = ClaudeClient({}).tui()
         spec = Spec(workdir=self.work, access=Access(cwd=self.work), sid=SID)
         self.path = self.run.launch(spec, HOOK).transcript
+        self.run.hook_events("SessionStart", {"session_id": SID})
 
     def launched(self, **spec):
         run = ClaudeClient({}).tui()
@@ -679,11 +690,23 @@ class TranscriptTest(Base):
         with open(self.path, "a", encoding="utf-8") as f:
             f.write(end.join(r if isinstance(r, str) else json.dumps(r) for r in records) + end)
 
+    def restored(self):
+        run = ClaudeClient({}).tui()
+        run.restore(
+            Spec(workdir=self.work, access=Access(cwd=self.work), sid=SID),
+            {"transcript": self.path, "start": 0},
+        )
+        run.hook_events("SessionStart", {"session_id": SID})
+        return run
+
+
+class TranscriptTest(TranscriptCase):
     def test_pre_tool_text_is_a_reply_once(self):
         self.append(PROMPT, said("m1", text("start: go")), said("m1", tool("Bash")))
         self.assertEqual(self.run.observe(), [Reply("start: go")])
         self.assertEqual(
-            self.run.hook_events("PostToolUse", {"tool_name": "Bash"}), [Activity("Bash")]
+            self.run.hook_events("PostToolUse", {"session_id": SID, "tool_name": "Bash"}),
+            [Activity("Bash")],
         )
         self.append(RESULT)
         self.assertEqual(self.run.observe(), [])
@@ -702,7 +725,8 @@ class TranscriptTest(Base):
         self.append(said("m3", text("C")))
         self.assertEqual(self.run.observe(), [Reply("C")])
         self.assertEqual(
-            self.run.hook_events("Stop", {"last_assistant_message": "C"}), [TurnEnd("C", 0)]
+            self.run.hook_events("Stop", {"session_id": SID, "last_assistant_message": "C"}),
+            [TurnEnd("C", 0)],
         )
         self.assertEqual(self.run.observe(), [])
 
@@ -710,7 +734,8 @@ class TranscriptTest(Base):
         self.append(PROMPT, said("m1", text("A")), said("m1", tool("Bash")), RESULT)
         self.assertEqual(self.run.observe(), [Reply("A")])
         self.assertEqual(
-            self.run.hook_events("Stop", {"last_assistant_message": "C"}), [TurnEnd("C", 0)]
+            self.run.hook_events("Stop", {"session_id": SID, "last_assistant_message": "C"}),
+            [TurnEnd("C", 0)],
         )
         self.append(said("m2", text("B")), said("m2", tool("Read")), RESULT)
         self.assertEqual(self.run.observe(), [Reply("B")])
@@ -723,7 +748,8 @@ class TranscriptTest(Base):
         self.append(PROMPT, said("m1", text("C")))
         self.assertEqual(self.run.observe(), [Reply("C")])
         self.assertEqual(
-            self.run.hook_events("Stop", {"last_assistant_message": "C"}), [TurnEnd("C", 0)]
+            self.run.hook_events("Stop", {"session_id": SID, "last_assistant_message": "C"}),
+            [TurnEnd("C", 0)],
         )
         self.append(said("m2", text("C")))
         self.assertEqual(self.run.observe(), [Reply("C")])
@@ -837,7 +863,7 @@ class TranscriptTest(Base):
 
     def test_one_limit_per_turn_from_the_hook_or_the_record(self):
         notice = "You've hit your weekly limit · resets Oct 15, 2027, 9am (UTC)"
-        rate_limit = {"error": "rate_limit", "last_assistant_message": notice}
+        rate_limit = {"session_id": SID, "error": "rate_limit", "last_assistant_message": notice}
         resets = epoch("2027-10-15 09:00", "UTC")
         self.append(PROMPT, limited(notice))
         self.assertEqual(self.run.observe(), [LimitHit(resets)])
@@ -850,18 +876,15 @@ class TranscriptTest(Base):
         self.append(PROMPT, {**limited(notice), "isSidechain": True}, limited(notice))
         self.assertEqual(self.run.observe(), [LimitHit(resets)])
 
-    def restored(self):
-        run = ClaudeClient({}).tui()
-        run.restore(
-            Spec(workdir=self.work, access=Access(cwd=self.work), sid=SID),
-            {"transcript": self.path, "start": 0},
-        )
-        return run
-
     def test_a_replay_keeps_a_late_final_text_unrepeated(self):
         self.append(PROMPT, said("m1", text("A")))
         run = self.restored()
-        replayed = run.replay([("UserPromptSubmit", {}), ("Stop", {"last_assistant_message": "C"})])
+        replayed = run.replay(
+            [
+                ("UserPromptSubmit", {"session_id": SID}),
+                ("Stop", {"session_id": SID, "last_assistant_message": "C"}),
+            ]
+        )
         self.assertEqual(replayed, [Reply("A"), Activity(""), TurnEnd("C", 0)])
         self.append(said("m2", text("C")))
         self.assertEqual(run.observe(), [])
@@ -869,32 +892,157 @@ class TranscriptTest(Base):
     def test_a_replay_leaves_no_earlier_turns_text_unseen(self):
         self.append(PROMPT, said("m1", text("C")), PROMPT)
         run = self.restored()
-        stop = ("Stop", {"last_assistant_message": "C"})
-        run.replay([("UserPromptSubmit", {}), stop, ("UserPromptSubmit", {})])
+        stop = ("Stop", {"session_id": SID, "last_assistant_message": "C"})
+        run.replay(
+            [
+                ("UserPromptSubmit", {"session_id": SID}),
+                stop,
+                ("UserPromptSubmit", {"session_id": SID}),
+            ]
+        )
         self.append(said("m2", text("C")))
         self.assertEqual(run.observe(), [Reply("C")])
 
     def test_a_replay_of_an_open_turn_leaves_its_newest_text_seen(self):
         self.append(PROMPT, said("m1", text("C")))
         run = self.restored()
-        run.replay([("UserPromptSubmit", {})])
+        run.replay([("UserPromptSubmit", {"session_id": SID})])
         self.assertEqual(
-            run.hook_events("Stop", {"last_assistant_message": "C"}), [TurnEnd("C", 0)]
+            run.hook_events("Stop", {"session_id": SID, "last_assistant_message": "C"}),
+            [TurnEnd("C", 0)],
         )
         self.append(said("m2", text("C")))
         self.assertEqual(run.observe(), [Reply("C")])
 
     def test_after_a_replay_the_latest_turns_limit_is_given_live_once(self):
         notice = "You've hit your weekly limit · resets Oct 15, 2027, 9am (UTC)"
-        rate_limit = ("StopFailure", {"error": "rate_limit", "last_assistant_message": notice})
+        rate_limit = (
+            "StopFailure",
+            {"session_id": SID, "error": "rate_limit", "last_assistant_message": notice},
+        )
         resets = epoch("2027-10-15 09:00", "UTC")
         self.append(PROMPT, limited(notice), PROMPT)
         run = self.restored()
-        run.replay([("UserPromptSubmit", {}), rate_limit, ("UserPromptSubmit", {})])
+        run.replay(
+            [
+                ("UserPromptSubmit", {"session_id": SID}),
+                rate_limit,
+                ("UserPromptSubmit", {"session_id": SID}),
+            ]
+        )
         self.append(limited(notice))
         self.assertEqual(run.observe(), [LimitHit(resets)])
         self.assertEqual(run.hook_events(*rate_limit), [])
         run = self.restored()
-        run.replay([("UserPromptSubmit", {}), rate_limit, ("UserPromptSubmit", {})])
+        run.replay(
+            [
+                ("UserPromptSubmit", {"session_id": SID}),
+                rate_limit,
+                ("UserPromptSubmit", {"session_id": SID}),
+            ]
+        )
         self.assertEqual(run.hook_events(*rate_limit), [LimitHit(resets)])
         self.assertEqual(run.observe(), [])
+
+
+NEXT = "1f8fad5b-d9cb-469f-a165-70867728950e"
+LAST = "2f8fad5b-d9cb-469f-a165-70867728950e"
+CUT = "2026-10-15T12:00:00Z"
+
+
+class ContinuationTest(TranscriptCase):
+    def marker(self, source=SID, target=NEXT):
+        return {
+            "type": "continued-in",
+            "sessionId": source,
+            "continuedInSessionId": target,
+            "timestamp": CUT,
+        }
+
+    def target(self, sid=NEXT, *records):
+        path = os.path.join(
+            os.environ["CLAUDE_CONFIG_DIR"], "projects", "elsewhere", f"{sid}.jsonl"
+        )
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as out:
+            out.write("".join(json.dumps(r) + "\n" for r in records))
+        return path
+
+    def test_delayed_target_keeps_old_file_readable(self):
+        self.append(self.marker(), said("m1", text("old tail")))
+        self.assertEqual(self.run.observe(), [Reply("old tail")])
+        self.assertEqual(
+            self.run.hook_events("Stop", {"session_id": NEXT, "last_assistant_message": "done"}),
+            [TurnEnd("done", 0)],
+        )
+        self.append(said("m2", text("still old")))
+        self.assertEqual(self.run.observe(), [Reply("still old")])
+        self.target(
+            NEXT,
+            {**said("m1", text("copied")), "timestamp": CUT},
+            {**PROMPT, "timestamp": CUT},
+            said("m3", text("no timestamp")),
+            {**said("m4", text("new")), "timestamp": "2026-10-15T12:00:01Z"},
+        )
+        self.assertEqual(self.run.observe(), [Reply("no timestamp"), Reply("new")])
+        self.assertEqual(self.run.observe(), [])
+
+    def test_resumed_cursor_retries_an_earlier_missing_target(self):
+        self.append(self.marker())
+        resumed = self.launched(resume=True)
+        self.assertEqual(resumed.observe(), [])
+        self.target(
+            NEXT, {**said("old", text("copied")), "timestamp": CUT}, said("new", text("arrived"))
+        )
+        self.assertEqual(resumed.observe(), [Reply("arrived")])
+        self.assertEqual(resumed.observe(), [])
+
+    def test_two_hops_replay_once_from_original_cursor(self):
+        self.append(self.marker())
+        self.target(NEXT, said("m1", text("first")), self.marker(NEXT, LAST))
+        self.target(
+            LAST, {**said("m1", text("first")), "timestamp": CUT}, said("m2", text("second"))
+        )
+        state = self.run.hook_callback().state
+        self.assertEqual(self.run.observe(), [Reply("first"), Reply("second")])
+        self.assertEqual(self.run.hook_callback().state, state)
+        restored = self.restored()
+        self.assertEqual(restored.observe(), [Reply("first"), Reply("second")])
+        self.assertEqual(restored.observe(), [])
+        self.assertEqual(
+            restored.hook_events("Stop", {"session_id": LAST, "last_assistant_message": "second"}),
+            [TurnEnd("second", 0)],
+        )
+
+    def test_resumed_latest_cursor_restores_original_chain_ids(self):
+        self.append(self.marker())
+        path = self.target(NEXT, said("old", text("past")))
+        resumed = self.launched(resume=True)
+        self.assertEqual(resumed.transcript, path)
+        state = resumed.hook_callback().state
+        restored = ClaudeClient({}).tui()
+        restored.restore(Spec(workdir=self.work, access=Access(cwd=self.work), sid=SID), state)
+        self.assertEqual(restored.observe(), [])
+        for sid in (SID, NEXT):
+            self.assertEqual(
+                restored.hook_events("UserPromptSubmit", {"session_id": sid}),
+                ([ClientBound(SID), Activity("")] if sid == SID else [Activity("")]),
+            )
+
+    def test_foreign_hooks_have_no_replay_effect(self):
+        self.append(said("m1", text("seen")))
+        restored = self.restored()
+        self.assertEqual(
+            restored.replay(
+                [
+                    ("Stop", {"session_id": SID, "last_assistant_message": "late"}),
+                    ("UserPromptSubmit", {"session_id": NEXT}),
+                    ("StopFailure", {"session_id": NEXT, "error": "rate_limit"}),
+                ]
+            ),
+            [Reply("seen"), TurnEnd("late", 0)],
+        )
+        self.append(said("m2", text("late")))
+        self.assertEqual(restored.observe(), [])
+        for payload in ({}, {"session_id": NEXT}, {"session_id": None}, {"session_id": []}):
+            self.assertEqual(restored.hook_events("Stop", payload), [])

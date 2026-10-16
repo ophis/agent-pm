@@ -664,6 +664,21 @@ class ResumeTest(Base):
                     ],
                 )
 
+    def test_client_resume_uses_the_last_existing_continuation(self):
+        self.committed()
+        common = ClaudeCommon({})
+        path = common.transcript(self.cwd, SID)
+        target = os.path.join(self.config_dir, "projects", "other", f"{NEXT}.jsonl")
+        for each in (path, target):
+            os.makedirs(os.path.dirname(each), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as out:
+            json.dump({"type": "continued-in", "sessionId": SID, "continuedInSessionId": NEXT}, out)
+        with open(target, "w", encoding="utf-8"):
+            pass
+        code, err, _, execute = self.resumed([store(), self.cwd, SID])
+        self.assertEqual((code, err), (0, ""))
+        self.assertEqual(execute[0].args[1][:3], ["claude", "--resume", NEXT])
+
     def test_the_resume_replays_the_configs_flags_with_one_settings(self):
         with open(os.path.join(self.cwd, "s.json"), "w", encoding="utf-8") as f:
             json.dump({"model": "x"}, f)
@@ -905,3 +920,81 @@ class SessionStatusTest(Base):
         for sid in ("abc", SID.upper(), "../" + SID):
             with self.subTest(sid=sid):
                 self.assertEqual(self.status(sid), SessionStatus("no", None, ""))
+
+
+NEXT = "1f8fad5b-d9cb-469f-a165-70867728950e"
+LAST = "2f8fad5b-d9cb-469f-a165-70867728950e"
+
+
+class ContinuationTest(Base):
+    def setUp(self):
+        super().setUp()
+        self.common = ClaudeCommon({})
+        self.path = self.common.transcript(self.work, SID)
+        self.target = os.path.join(self.config_dir, "projects", "elsewhere", f"{NEXT}.jsonl")
+
+    def write(self, path, *records):
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as out:
+            out.write("".join(json.dumps(r) + "\n" for r in records))
+
+    def marker(self, source=SID, target=NEXT, timestamp="2026-10-15T12:00:00Z"):
+        return {
+            "type": "continued-in",
+            "sessionId": source,
+            "continuedInSessionId": target,
+            "timestamp": timestamp,
+        }
+
+    def test_walk_keeps_a_missing_target(self):
+        self.write(self.path, self.marker())
+        self.assertEqual(
+            self.common.walk(self.path, SID, self.config_dir),
+            [(SID, self.path, None), (NEXT, None, "2026-10-15T12:00:00Z")],
+        )
+
+    def test_walk_crosses_projects_then_stops_at_a_cycle(self):
+        last = os.path.join(self.config_dir, "projects", "third", f"{LAST}.jsonl")
+        self.write(self.path, self.marker())
+        self.write(self.target, self.marker(NEXT, LAST))
+        self.write(last, self.marker(LAST, SID))
+        self.assertEqual(
+            [hop[:2] for hop in self.common.walk(self.path, SID, self.config_dir)],
+            [(SID, self.path), (NEXT, self.target), (LAST, last)],
+        )
+
+    def test_walk_uses_the_last_valid_matching_marker(self):
+        self.write(
+            self.path,
+            self.marker(target=LAST),
+            self.marker(),
+            self.marker(source=LAST, target=LAST),
+            self.marker(target="../bad"),
+            {"type": "assistant"},
+            [1],
+        )
+        self.write(self.target)
+        self.assertEqual(
+            self.common.walk(self.path, SID, self.config_dir)[-1][:2], (NEXT, self.target)
+        )
+
+    def test_resume_launch_uses_the_latest_file_in_both_modes(self):
+        self.write(self.path, self.marker())
+        self.write(self.target)
+        spec = Spec(workdir=self.work, access=Access(cwd=self.work), sid=SID, resume=True)
+        client = ClaudeClient({})
+        for launch in (client.headless().launch(spec), client.tui().launch(spec, HOOK)):
+            self.assertEqual(launch.argv[launch.argv.index("--resume") + 1], NEXT)
+            self.assertEqual(launch.transcript, self.target)
+            self.assertEqual(launch.resume, reference(self.work))
+
+    def test_session_status_uses_the_latest_file_only(self):
+        self.write(self.path, self.marker())
+        self.write(self.target)
+        os.utime(self.path, (9000, 9000))
+        os.utime(self.target, (1000, 1000))
+        for recorded in ("", self.target):
+            self.assertEqual(
+                self.common.session_status(SID, self.work, transcript=recorded),
+                SessionStatus("yes", 1000.0, reference(self.work)),
+            )

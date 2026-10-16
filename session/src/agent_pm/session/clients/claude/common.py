@@ -32,6 +32,7 @@ from agent_pm.utils import (
     json_records,
     number,
     printable_abs,
+    read_regular,
     resume_command,
     save,
 )
@@ -42,6 +43,7 @@ STORE = f"{STATE}/sessions/claude"  # under HOME, resolved per call
 STATE_KEYS = frozenset({"version", "cwd", "sid", "dirs", "env"})
 STATE_MAX = 64 * 1024
 SETTINGS_MAX = 2 * 1024 * 1024
+TAIL = 4 << 20
 
 
 def added_dirs(flags: tuple[str, ...]) -> Iterator[str]:
@@ -274,6 +276,51 @@ class ClaudeCommon:
         project = re.sub(r"[^A-Za-z0-9]", "-", os.path.realpath(cwd))
         return os.path.join(self.config_dir(env), "projects", project, f"{sid}.jsonl")
 
+    @staticmethod
+    def continuation(
+        record: dict, sid: str, config_dir: str
+    ) -> tuple[str, str | None, str | None] | None:
+        """A matching continuation's native id, existing target and copy cutoff."""
+        target = record.get("continuedInSessionId")
+        if not (
+            record.get("type") == "continued-in"
+            and record.get("sessionId") == sid
+            and isinstance(target, str)
+            and UUID.fullmatch(target)
+        ):
+            return None
+        path = None
+        projects = os.path.join(config_dir, "projects")
+        with contextlib.suppress(OSError), os.scandir(projects) as entries:
+            for entry in entries:
+                candidate = os.path.join(entry.path, f"{target}.jsonl")
+                if os.path.isfile(candidate) and os.path.commonpath(
+                    (os.path.realpath(candidate), os.path.realpath(projects))
+                ) == os.path.realpath(projects):
+                    path = candidate
+                    break
+        timestamp = record.get("timestamp")
+        return target, path, timestamp if isinstance(timestamp, str) else None
+
+    @classmethod
+    def walk(
+        cls, path: str | None, sid: str, config_dir: str
+    ) -> list[tuple[str, str | None, str | None]]:
+        """Follow the last matching marker in each tail, retaining a missing final target."""
+        hops: list[tuple[str, str | None, str | None]] = [(sid, path, None)]
+        seen = {sid}
+        while path:
+            data = read_regular(path, limit=TAIL, tail=True) or b""
+            found = None
+            for record in json_records(data.splitlines()):
+                found = cls.continuation(record, sid, config_dir) or found
+            if found is None or found[0] in seen:
+                break
+            hops.append(found)
+            sid, path, _ = found
+            seen.add(sid)
+        return hops
+
     @property
     def store(self) -> str:
         return os.path.join(os.path.realpath(os.path.expanduser("~")), STORE.removeprefix("~/"))
@@ -315,9 +362,15 @@ class ClaudeCommon:
             added = (arg for d in state["dirs"] for arg in ("--add-dir", d))
             os.chdir(state["cwd"])
             configured, own = _split(self.flags, state["cwd"])
+            path = self.transcript(state["cwd"], sid, state["env"])
+            native, _, _ = next(
+                hop
+                for hop in reversed(self.walk(path, sid, self.config_dir(state["env"])))
+                if hop[1]
+            )
             command = [
                 "claude",
-                *self.selector(sid, resume=True),
+                *self.selector(native, resume=True),
                 *own,
                 *_settings(*configured),
                 *added,
@@ -366,9 +419,22 @@ class ClaudeCommon:
             *self.allow,
         )
         strict = any(flag.arg == "--strict-mcp-config" for flag in scan(spec.flags))
-        selection = self.selector(sid, resume=spec.resume)
         if not isinstance(sid, str):
             raise ConfigError(f"session ids are UUIDs, got {sid!r:.80}")
+        merged = {
+            k: v
+            for k, v in {**env, **self.env(), **access.env, **spec.env}.items()
+            if k not in LOCAL_ENV_VARS
+        }
+        transcript = self.transcript(cwd, sid, merged)
+        native = sid
+        if spec.resume:
+            native, transcript, _ = next(
+                hop
+                for hop in reversed(self.walk(transcript, sid, self.config_dir(merged)))
+                if hop[1]
+            )
+        selection = self.selector(native, resume=spec.resume)
         argv = (
             "claude",
             *head,
@@ -387,16 +453,11 @@ class ClaudeCommon:
             *flags,
             *tail,
         )
-        merged = {
-            k: v
-            for k, v in {**env, **self.env(), **access.env, **spec.env}.items()
-            if k not in LOCAL_ENV_VARS
-        }
         return Launch(
             argv,
             env=merged,
             unset=self.UNSET,
-            transcript=self.transcript(cwd, sid, merged),
+            transcript=transcript or "",
             resume=self.resume(cwd, sid),
         )
 
@@ -448,6 +509,7 @@ class ClaudeCommon:
             return SessionStatus(Resumable.NO, None, "")
         path = self.transcript(cwd, sid, env)
         root = os.path.realpath(os.path.dirname(path))
+        chain = self.walk(path, sid, self.config_dir(env))
         if printable_abs(transcript):
             with contextlib.suppress(OSError):
                 recorded = os.path.realpath(transcript)
@@ -455,6 +517,15 @@ class ClaudeCommon:
                     os.stat(transcript).st_mode
                 ):
                     path = recorded
+        _, path, _ = next(
+            hop
+            for hop in reversed(
+                chain if len(chain) > 1 else self.walk(path, sid, self.config_dir(env))
+            )
+            if hop[1]
+        )
+        assert path is not None
+        root = os.path.realpath(os.path.dirname(path))
         try:
             mode = os.stat(path).st_mode
         except (FileNotFoundError, NotADirectoryError):
