@@ -399,7 +399,7 @@ def _finish(ctx, o):
         _error(ctx, "read", e)
         return False
 
-    if task.files and o.status != "needs_input":
+    if task.files and o.status != OutcomeStatus.NEEDS_INPUT:
         body = _post_files(ctx, o, body)
 
     if (
@@ -568,13 +568,12 @@ def deliver(cfg, issue: str, workdir: str, event: DelegateEvent, *, gql, now=tim
     if attempt is None:  # DelegateEvent requires one
         raise ValueError("attempt: missing")
     claim = _claim(cfg, issue, event.sid)
-    outcome = event.outcome
     ctx = for_claim(cfg, claim, gql, attempt=attempt)
     with _exclusive(ctx) as held:
-        return held and _deliver(ctx, cfg, claim, event, outcome, gql=gql, now=now)
+        return held and _deliver(ctx, cfg, claim, event, gql=gql, now=now)
 
 
-def _deliver(ctx, cfg, claim, event, outcome, *, gql, now) -> bool:
+def _deliver(ctx, cfg, claim, event, *, gql, now) -> bool:
     attempt = event.attempt
     session = functools.partial(_session, ctx, cfg, claim.client, attempt, gql=gql, now=now)
     if event.kind == "begun":
@@ -582,6 +581,7 @@ def _deliver(ctx, cfg, claim, event, outcome, *, gql, now) -> bool:
     if event.kind == "progress":
         return progress(ctx, Progress(event.name or "", event.text or ""))
     # Finished: the outcome (once ledgered, never again), the limit, then the session's end
+    outcome = event.outcome
     ok = outcome is None or "outcome" in _done(ctx) or finish(ctx, outcome)
     if event.limit is not None:
         ok = _limited(ctx, cfg.runs_log, claim, attempt, event.limit["resets_at"]) and ok

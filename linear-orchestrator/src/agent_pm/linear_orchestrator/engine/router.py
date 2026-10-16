@@ -10,8 +10,9 @@ agent-pm-linear router [--now] [--dry-run] [--issue ID] [--tui [--display D] [--
               error or Linear unavailable (config-error, linear-error: once a day), else 0.
   --now       Skip the 01:00-06:59 hours check.
 --issue ID    Start or resume only this issue, without the hours, max_runs and usage gates. Exits 1
-              a config error, Linear unavailable, agent runs unknown, a live agent run of the issue
-              or nothing started, 0 its ended run's outcome written back instead, else the outer's
+              a config error, Linear unavailable or agent runs unknown; 2 the router is busy,
+              the issue has a live agent run or cannot be claimed; 0 its ended run's outcome
+              written back instead, else the outer's
               code: 0 detached or bounced, 1 the launch failed, 2 a config error of the issue,
               3 transient.
 --dry-run     With either: print the plan (a tick's with its usage checks); change nothing, start
@@ -307,7 +308,7 @@ class Board:
         if sid not in self.statuses:
             try:
                 st = LinearRun.attach(ident, cfg=self.cfg, sid=sid).delegate.session_status()
-                self.statuses[sid] = None if st.resumable == "unknown" else st
+                self.statuses[sid] = None if st.resumable == delegate.Resumable.UNKNOWN else st
             except ConfigError as error:
                 self.status_errors[sid] = one_line(error)
                 self.statuses[sid] = None
@@ -386,7 +387,7 @@ class Board:
             st = self.status(ident, sid)
             if st is None:
                 return self.unknown(ident, sid)
-            if st.resumable == "yes":
+            if st.resumable == delegate.Resumable.YES:
                 role, logged = (
                     self.role(issue),
                     next(e.role for e in reversed(self.entries) if e.sid == sid),
@@ -575,7 +576,7 @@ def _outer(a, cfg, *, gql, run, keychain, now, attended):
     if a.mode == "resume":
         try:
             st = LinearRun.attach(a.issue, cfg=cfg, sid=a.sid).delegate.session_status()
-            why = None if st.resumable == "yes" else st.resumable
+            why = None if st.resumable == delegate.Resumable.YES else st.resumable
         except (ConfigError, delegate.ConfigError, delegate.SessionError) as e:
             why = one_line(e)
         if why:

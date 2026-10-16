@@ -6,7 +6,7 @@ when a late write left an older one. Resume commands come from the owned run vie
 import re
 import threading
 
-from agent_pm.delegate import ConfigError, SessionError
+from agent_pm.delegate import ConfigError, Resumable, SessionError
 from agent_pm.linear_orchestrator.engine import ops
 from agent_pm.linear_orchestrator.engine.types import (
     UUID_RE,
@@ -53,7 +53,7 @@ def command(rec):
         st = rec["info"]()
     except (ConfigError, RunConfigError, SessionError):
         return None
-    return st.resume_command if st.resumable != "unknown" and st.resume_command else None
+    return st.resume_command if st.resumable != Resumable.UNKNOWN and st.resume_command else None
 
 
 def _status(rc, outcome, limit):

@@ -29,7 +29,7 @@ work_dir = "~/.agent-pm"
 default = "harness"
 
 [delegates.harness]
-implementation = "agent_pm.delegate.engine.harness_delegate:HarnessDelegate"
+implementation = "agent_pm.delegate:HarnessDelegate"
 
 # The team's workflow states the code uses.
 #   <state>  local, required for each of todo, in_progress, in_review, handoff, done, canceled: its Linear state id

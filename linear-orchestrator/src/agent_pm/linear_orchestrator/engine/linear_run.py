@@ -36,7 +36,7 @@ class LinearRun:
         self.issue, self.sid = issue, sid
         self.delegate_kind = delegate_kind or cfg.delegate_kind
         provider = delegate_cls or self.kind_cls(cfg, self.delegate_kind)
-        self.delegate: Delegate = provider(
+        self.delegate: Delegate = provider.create(
             role,
             Spec(
                 input,
@@ -98,32 +98,21 @@ class LinearRun:
         view.delegate = provider.attach(cfg.issue_workdir(issue), sid=latest.sid)
         return view
 
-    def _record(self, record: Record) -> Record:
-        return replace(
-            record,
-            kind="pipeline",
-            name=self.issue,
-            ctl=("agent-pm-linear",),
-            resume=("agent-pm-linear", "resume", self.issue),
-        )
-
     def detach(self) -> Record:
-        return self._record(
-            self.delegate.detach(
-                outer={
-                    "kind": "pipeline",
-                    "name": self.issue,
-                    "ctl": ("agent-pm-linear",),
-                    "resume": ("agent-pm-linear", "resume", self.issue),
-                }
-            )
+        return self.delegate.detach(
+            outer={
+                "kind": "pipeline",
+                "name": self.issue,
+                "ctl": ("agent-pm-linear",),
+                "resume": ("agent-pm-linear", "resume", self.issue),
+            }
         )
 
     def content(self) -> str:
-        return self.status().to_line()
+        return self.delegate.content()
 
     def status(self) -> Status:
         return replace(self.delegate.status(), name=self.issue)
 
     def resume(self, *, input: str | None = None) -> Record:
-        return self._record(self.delegate.resume(input=input))
+        return self.delegate.resume(input=input)
