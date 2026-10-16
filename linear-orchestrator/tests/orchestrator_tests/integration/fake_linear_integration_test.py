@@ -81,6 +81,24 @@ class GraphQLProjection(ServerCase):
             with self.subTest(uid=uid):
                 self.assertEqual(gql(routing.Q_VIEWER), {"viewer": {"id": uid}})
 
+    def test_history_cursor_returns_the_next_page(self):
+        at = datetime(2026, 9, 1, tzinfo=UTC)
+        for n in range(251):
+            self.fake.move(
+                "TASK-7",
+                "todo" if n % 2 == 0 else "in_progress",
+                actor=self.human,
+                at=at + timedelta(seconds=n),
+            )
+        first = self.gql(routing.Q_HISTORY, i="TASK-7")["issue"]["history"]
+        self.assertEqual(len(first["nodes"]), 250)
+        self.assertTrue(first["pageInfo"]["hasNextPage"])
+        second = self.gql(routing.Q_HISTORY, i="TASK-7", after=first["pageInfo"]["endCursor"])[
+            "issue"
+        ]["history"]
+        self.assertFalse(second["pageInfo"]["hasNextPage"])
+        self.assertEqual([n["createdAt"] for n in second["nodes"]], [fake_linear.stamp(at)])
+
     def test_projection_keeps_only_the_selection(self):
         want = {"issue": {"state": {"id": STATES["in_progress"]}}}
         self.assertEqual(self.gql(ops.Q_ISSUE_STATE, i="TASK-7"), want)

@@ -1492,8 +1492,88 @@ class PinnedClients(Base):
         self.assertEqual(sum("viewer" in q for q, _ in fake.queries), 1)
         self.assertEqual(sum("history" in q for q, _ in fake.queries), 2)
 
+    def test_pin_reads_past_the_first_history_page_only_until_the_start_boundary(self):
+        for moved, expected in ((59, None), (60, "b"), (61, "b")):
+            with self.subTest(moved=moved):
+                self.lines, self.hist = [], {}
+                self.add(kind="start", ident="TASK-1", sid="old", minutes_ago=60, client="b")
+                for seconds in range(250):
+                    self.hist.setdefault("TASK-1", []).append(
+                        {
+                            "createdAt": ago(seconds=seconds),
+                            "actorId": "outsider",
+                            "toStateId": None,
+                        }
+                    )
+                self.moved("TASK-1", moved, state=STATES["Todo"], actor="outsider")
+                for minutes in range(62, 362):
+                    self.moved("TASK-1", minutes, state=STATES["Todo"], actor="harness-viewer")
+                fake = self.fake(issue("TASK-1", "Todo", "researcher"))
+
+                def use(board, fake=fake, expected=expected):
+                    found = fake.issues["TASK-1"]
+                    board.last_move(found, "todo", by_user=True)
+                    self.assertEqual(board.pinned_client(found), expected)
+                    self.assertEqual(board.pinned_client(found), expected)
+
+                self.board(fake, use)
+                self.assertEqual(
+                    [v for q, v in fake.queries if "history" in q],
+                    [
+                        {"i": "TASK-1"},
+                        {"i": "TASK-1", "after": "250"},
+                    ],
+                )
+
 
 class PinnedClientNotices(TickBase):
+    def test_notice_read_and_write_failures_preserve_launch_and_retry_later(self):
+        class NoticeFailure(FakeLinear):
+            def __call__(self, query, **v):
+                if self.failure == "read" and query == RECHECK:
+                    self.failure = None
+                    raise LinearError("notice read unavailable")
+                if self.failure == "write" and query == ops.M_COMMENT_ID:
+                    self.failure = None
+                    raise LinearError("notice write unavailable")
+                return super().__call__(query, **v)
+
+        self.write_config(AGENT_TOP + CONFIG + AGENT_LABELS)
+        for failure in ("read", "write"):
+            with self.subTest(failure=failure):
+                self.lines, self.hist = [], {}
+                self.add(kind="start", ident="TASK-1", sid=failure, minutes_ago=60, client="b")
+                self.touch(failure, 40)
+                fake = NoticeFailure(
+                    [
+                        issue(
+                            "TASK-1",
+                            "In Progress",
+                            "researcher",
+                            labels=[label("changed", AGENT_A, AGENT_GROUP)],
+                        )
+                    ]
+                )
+                fake.failure = failure
+                self.assertEqual(self.tick(fake, "--now"), 0)
+                (first,) = self.start.launches
+                self.assertEqual(
+                    (first.client, first.sid, first.mode), ("b", self.sid(failure), "resume")
+                )
+                self.assertEqual(fake.issues["TASK-1"].get("comments", []), [])
+                errors = [
+                    e
+                    for e in logged(self.logs)
+                    if e["kind"] in {"client-pinned-error", "step-error"}
+                ]
+                self.assertEqual(len(errors), 1)
+                self.assertIn(f"notice {failure} unavailable", errors[0]["error"])
+                self.assertEqual(self.tick(fake, "--now", again=True), 0)
+                (second,) = self.start.launches
+                self.assertEqual(second, first)
+                self.assertEqual(len(fake.issues["TASK-1"]["comments"]), 1)
+                self.assertIn(ops.client_id(first.sid, "client-pinned"), fake.comments)
+
     def test_retained_selections_report_label_drift_on_both_entry_paths(self):
         for argv in (("--now",), ("--issue", "TASK-1")):
             for state in ("Todo", "In Progress"):

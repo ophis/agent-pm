@@ -283,7 +283,19 @@ class FakeLinear:
         if "attachments" in query:
             return {"issue": {"attachments": {"nodes": []}}}
         if "history" in query:
-            return {"issue": {"history": {"nodes": self.history.get(v["i"], [])}}}
+            found = sorted(self.history.get(v["i"], []), key=lambda n: n["createdAt"], reverse=True)
+            start = int(v.get("after") or 0)
+            return {
+                "issue": {
+                    "history": {
+                        "nodes": found[start : start + 250],
+                        "pageInfo": {
+                            "hasNextPage": start + 250 < len(found),
+                            "endCursor": str(start + 250),
+                        },
+                    }
+                }
+            }
         if query == ops.Q_ISSUE_STATE:
             issue = self.issues[self.ids.get(v["i"], v["i"])]
             return {"issue": {"state": {"id": STATES[issue["state"]]}}}

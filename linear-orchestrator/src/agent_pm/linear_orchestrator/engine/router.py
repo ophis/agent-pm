@@ -109,7 +109,11 @@ Q_RECHECK = (
     "query($i: String!) { issue(id: $i) { state { id } assignee { id email } project { id name } "
     "labels { nodes { id name parent { id } } } } }"
 )
-Q_HISTORY = "query($i: String!) { issue(id: $i) { " + ops.HISTORY + " } }"
+Q_HISTORY = (
+    "query($i: String!, $after: String) { issue(id: $i) { "
+    "history(first: 250, after: $after, orderBy: createdAt) { "
+    "nodes { createdAt actorId fromStateId toStateId } pageInfo { hasNextPage endCursor } } } }"
+)
 Q_VIEWER = "query { viewer { id } }"
 
 
@@ -296,10 +300,21 @@ class Board:
     def later(self, issue):
         return -self.cfg.stages.get(self.role(issue), 0)
 
-    def history(self, issue):
+    def history(self, issue, *, since=None):
         if issue["id"] not in self.hist:
-            self.hist[issue["id"]] = self.gql(Q_HISTORY, i=issue["id"])["issue"]["history"]["nodes"]
-        return self.hist[issue["id"]]
+            self.hist[issue["id"]] = self.gql(Q_HISTORY, i=issue["id"])["issue"]["history"]
+        history = self.hist[issue["id"]]
+        while (
+            since is not None
+            and history["pageInfo"]["hasNextPage"]
+            and (not history["nodes"] or parse_time(history["nodes"][-1]["createdAt"]) > since)
+        ):
+            page = self.gql(Q_HISTORY, i=issue["id"], after=history["pageInfo"]["endCursor"])[
+                "issue"
+            ]["history"]
+            history["nodes"].extend(page["nodes"])
+            history["pageInfo"] = page["pageInfo"]
+        return history["nodes"]
 
     def last_move(self, issue, state, *, by_user=False):
         return ops.last_move(
@@ -314,7 +329,11 @@ class Board:
             self.harness_id = self.gql(Q_VIEWER)["viewer"]["id"]
         automated = {self.harness_id, *self.roles}
         moved = ops.last_move(
-            [n for n in self.history(issue) if n["actorId"] and n["actorId"] not in automated],
+            [
+                n
+                for n in self.history(issue, since=start.ts)
+                if n["actorId"] and n["actorId"] not in automated
+            ],
             {self.states["todo"]},
         )
         return start.client if moved is None or moved <= start.ts else None

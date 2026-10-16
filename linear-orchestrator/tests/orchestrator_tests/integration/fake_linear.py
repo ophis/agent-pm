@@ -585,6 +585,22 @@ class FakeLinear:
     def _viewer(self, caller, _v):
         return {"viewer": self._person(caller["id"], caller)}
 
+    def _history(self, _caller, v):
+        found = _newest(self._get(v["i"])["history"])
+        start = int(v.get("after") or 0)
+        page = found[start : start + 250]
+        return {
+            "issue": {
+                "history": {
+                    "nodes": page,
+                    "pageInfo": {
+                        "hasNextPage": start + 250 < len(found),
+                        "endCursor": str(start + len(page)) if page else None,
+                    },
+                }
+            }
+        }
+
     def _teams(self, caller, v):
         return {"teams": {"nodes": [self._team()] if v.get("t") == TEAM else []}}
 
@@ -738,7 +754,7 @@ OPS = {
     "linear.Q_TASK_GROUP": FakeLinear._label_group,
     "router.Q_RELATIONS": FakeLinear._issue,
     "router.Q_RECHECK": FakeLinear._issue,
-    "router.Q_HISTORY": FakeLinear._issue,
+    "router.Q_HISTORY": FakeLinear._history,
     "router.Q_VIEWER": FakeLinear._viewer,
     "router.issues": FakeLinear._board,
     "router.issues+relations": FakeLinear._board,
