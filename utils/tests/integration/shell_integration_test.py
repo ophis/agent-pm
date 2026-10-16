@@ -7,7 +7,6 @@ import signal
 import subprocess
 import sys
 import tempfile
-import textwrap
 import time
 from unittest import mock
 
@@ -44,11 +43,6 @@ class ResumeEnvironment(Case):
 
 WAIT = 10
 PROBE_TIMEOUT = 2
-SLEEPER = "import time; time.sleep(60)"
-
-
-def python(code: str) -> tuple[str, ...]:
-    return (sys.executable, "-I", "-c", textwrap.dedent(code))
 
 
 def kill(pid: int) -> None:
@@ -98,13 +92,16 @@ class Probe(Case):
 
     def test_its_stdout_alone_run_in_cwd_with_env_leading_its_own_group(self):
         out, spy, _ = self.probe(
-            python("""
-            import os, sys
-            print(os.getcwd())
-            print(os.environ["HM_PROBE"])
-            print(os.getpgrp() == os.getpid())
-            sys.stderr.write("noise\\n")
-        """),
+            (
+                sys.executable,
+                "-I",
+                "-c",
+                "import os, sys\n"
+                "print(os.getcwd())\n"
+                'print(os.environ["HM_PROBE"])\n'
+                "print(os.getpgrp() == os.getpid())\n"
+                'sys.stderr.write("noise\\n")\n',
+            ),
             env={"HM_PROBE": "probe"},
         )
         self.assertEqual(out, f"{os.path.realpath(self.dir)}\nprobe\nTrue\n")
@@ -119,15 +116,20 @@ class Probe(Case):
     def test_after_timeout_its_group_is_killed_it_is_reaped_and_the_result_none(self):
         pids = os.path.join(self.dir, "grandchild.json")
         out, _, made = self.probe(
-            python(f"""
-            import json, os, subprocess, sys, time
-            grandchild = subprocess.Popen([sys.executable, "-I", "-c", {SLEEPER!r}])
-            with open({pids!r} + ".tmp", "w") as f:
-                json.dump(grandchild.pid, f)
-            os.replace({pids!r} + ".tmp", {pids!r})
-            print("partial", flush=True)
-            time.sleep(60)
-        """),
+            (
+                sys.executable,
+                "-I",
+                "-c",
+                "import json, os, subprocess, sys, time\n"
+                "pids = sys.argv[1]\n"
+                'grandchild = subprocess.Popen([sys.executable, "-I", "-c", "import time; time.sleep(60)"])\n'
+                'with open(pids + ".tmp", "w") as f:\n'
+                "    json.dump(grandchild.pid, f)\n"
+                'os.replace(pids + ".tmp", pids)\n'
+                'print("partial", flush=True)\n'
+                "time.sleep(60)\n",
+                pids,
+            ),
             timeout=PROBE_TIMEOUT,
         )
         with open(pids, encoding="utf-8") as f:

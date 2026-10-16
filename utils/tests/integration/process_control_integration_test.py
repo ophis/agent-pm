@@ -111,7 +111,7 @@ class ProcessControlTest(Case):
             self.assertFalse(os.path.exists(control.path))
 
     def test_cancel_a_started_controller_ends_its_group_and_removes_its_directory(self):
-        control, process = self.start("import time; time.sleep(60)")
+        control, process = self.start([sys.executable, "-I", "-c", "import time; time.sleep(60)"])
         control.cancel()
         process.communicate(timeout=10)
         self.assertFalse(control.live())
@@ -158,8 +158,8 @@ class ProcessControlTest(Case):
             control.wait_started()
         self.assertLess(time.monotonic() - started, 2)
 
-    def start(self, script, *args):
-        control = ProcessControl.prepare([sys.executable, "-I", "-c", script, *args], os.getcwd())
+    def start(self, argv):
+        control = ProcessControl.prepare(argv, os.getcwd())
         process = subprocess.Popen(
             control.command(),
             stdout=subprocess.PIPE,
@@ -179,7 +179,9 @@ class ProcessControlTest(Case):
         return control, process
 
     def test_natural_exit_retires_the_generation_without_an_earlier_poll(self):
-        control, process = self.start("print('exact output'); raise SystemExit(3)")
+        control, process = self.start(
+            [sys.executable, "-I", "-c", "print('exact output'); raise SystemExit(3)"]
+        )
         self.assertEqual(process.communicate(timeout=10), (b"exact output\n", b""))
         self.assertEqual(process.returncode, 3)
         control.kill()
@@ -189,15 +191,20 @@ class ProcessControlTest(Case):
         with tempfile.TemporaryDirectory() as folder:
             ready = Path(folder, "ready")
             control, process = self.start(
-                "import pathlib, signal, sys, time\n"
-                "def stop(signum, frame):\n"
-                "    time.sleep(6)\n"
-                "    print('cleanup complete', flush=True)\n"
-                "    raise SystemExit(0)\n"
-                "signal.signal(signal.SIGTERM, stop)\n"
-                "pathlib.Path(sys.argv[1]).touch()\n"
-                "time.sleep(60)\n",
-                str(ready),
+                [
+                    sys.executable,
+                    "-I",
+                    "-c",
+                    "import pathlib, signal, sys, time\n"
+                    "def stop(signum, frame):\n"
+                    "    time.sleep(6)\n"
+                    "    print('cleanup complete', flush=True)\n"
+                    "    raise SystemExit(0)\n"
+                    "signal.signal(signal.SIGTERM, stop)\n"
+                    "pathlib.Path(sys.argv[1]).touch()\n"
+                    "time.sleep(60)\n",
+                    str(ready),
+                ]
             )
             deadline = time.monotonic() + 10
             while not ready.exists():
@@ -216,9 +223,14 @@ class ProcessControlTest(Case):
         with tempfile.TemporaryDirectory() as folder:
             pids = Path(folder, "child")
             control, process = self.start(
-                "import os, sys, time; child = os.fork(); "
-                "open(sys.argv[1], 'w').write(str(child)) if child else time.sleep(60)",
-                str(pids),
+                [
+                    sys.executable,
+                    "-I",
+                    "-c",
+                    "import os, sys, time; child = os.fork(); "
+                    "open(sys.argv[1], 'w').write(str(child)) if child else time.sleep(60)",
+                    str(pids),
+                ]
             )
             deadline = time.monotonic() + 10
             while not pids.exists() or not pids.read_text():
@@ -241,10 +253,8 @@ class ProcessControlTest(Case):
 class ControllerRetirementTest(Case):
     """A controller whose client never confirms retires once its group ends."""
 
-    def launch(self, script, *args):
-        control = ProcessControl.prepare(
-            [sys.executable, "-I", "-c", script, *args], os.getcwd(), root=self.home
-        )
+    def launch(self, argv):
+        control = ProcessControl.prepare(argv, os.getcwd(), root=self.home)
         process = subprocess.Popen(
             control.command(),
             stdout=subprocess.PIPE,
@@ -280,7 +290,7 @@ class ControllerRetirementTest(Case):
             time.sleep(0.1)
 
     def test_a_client_lost_between_start_and_started_leaves_no_controller(self):
-        control, process = self.launch("raise SystemExit(3)")
+        control, process = self.launch([sys.executable, "-I", "-c", "raise SystemExit(3)"])
         self.assertEqual(process.wait(timeout=10), 3)
         time.sleep(1)
         self.assertTrue(os.path.isdir(control.path))
@@ -289,11 +299,16 @@ class ControllerRetirementTest(Case):
     def test_a_deleted_directory_retires_the_controller_once_its_group_ends(self):
         release = Path(self.home, "release")
         control, process = self.launch(
-            "import pathlib, sys, time\n"
-            "while not pathlib.Path(sys.argv[1]).exists():\n"
-            "    time.sleep(0.02)\n"
-            "raise SystemExit(5)\n",
-            str(release),
+            [
+                sys.executable,
+                "-I",
+                "-c",
+                "import pathlib, sys, time\n"
+                "while not pathlib.Path(sys.argv[1]).exists():\n"
+                "    time.sleep(0.02)\n"
+                "raise SystemExit(5)\n",
+                str(release),
+            ]
         )
         self.addCleanup(release.touch)
         deadline = time.monotonic() + 10
