@@ -9,6 +9,7 @@ import re
 import shlex
 import shutil
 import sys
+import time
 from collections.abc import Mapping
 from dataclasses import asdict, dataclass, replace
 from types import MappingProxyType
@@ -42,6 +43,8 @@ from agent_pm.session.engine.types import (
 from agent_pm.utils import json_records, module_roots, read_regular, source_path
 
 PASSED = ("-c", "--enable", "--disable")
+
+LOOKUP_EVERY = 2.0  # seconds between session file lookups while none is found
 
 START = f"{__name__}.start"  # run as python -P -s -m on this layer's source roots
 
@@ -131,6 +134,7 @@ class CodexTui(Tui):
         self.store = ""
         self.transcript, self.start, self.offset = "", 0, 0  # the native session file's cursor
         self.last = self.unseen = ""  # the turn's newest text; its Stop text not yet read
+        self.retry = 0.0  # time.monotonic() before which no session file lookup runs
 
     def launch(self, spec: Spec, hook):
         common = self.common
@@ -197,6 +201,10 @@ class CodexTui(Tui):
 
     def observe(self):
         if not self.transcript and self.native and self.state is not None:
+            now = time.monotonic()
+            if now < self.retry:
+                return []
+            self.retry = now + LOOKUP_EVERY
             try:
                 self.transcript = self.common.transcript(replace(self.state, native_id=self.native))
             except (ConfigError, OSError):
@@ -266,7 +274,11 @@ class CodexTui(Tui):
         payload = {**payload, "hook_event_name": label}
         if not self.session_id(payload):
             return []
-        return super().hook_events(label, payload)
+        early = []
+        if self.hooks[label] == HookKind.TURN_END and not self.transcript:
+            self.retry = 0.0  # the turn's texts, read before its end, are not repeated after it
+            early = self.observe()
+        return [*early, *super().hook_events(label, payload)]
 
     def reply(self, payload):
         if payload.get("hook_event_name") != "Interrupt":

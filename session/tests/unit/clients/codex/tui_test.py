@@ -501,15 +501,46 @@ class TuiTest(Base):
             stream.write(line[10:] + "\n")
         self.assertEqual(run.observe(), [Reply("a\nb")])
 
-    def test_observe_finds_no_file_unbound_missing_or_ambiguous(self):
+    def test_observe_looks_the_file_up_at_most_every_few_seconds(self):
         run, _, _ = self.launch()
         run.hook_events("SessionStart", self.payload())
-        self.assertEqual(run.observe(), [])
-        path = self.rollout()
-        with mock.patch.object(run.common, "transcript", side_effect=ConfigError("duplicate")):
+        with (
+            mock.patch("time.monotonic", return_value=1000.0) as clock,
+            mock.patch.object(run.common, "transcript", wraps=run.common.transcript) as lookup,
+        ):
+            for _ in range(5):
+                self.assertEqual(run.observe(), [])
+            self.assertEqual(lookup.call_count, 1)
+            path = self.rollout()
+            _append(path, _said("assistant", "late"))
+            clock.return_value += tui.LOOKUP_EVERY - 0.1
             self.assertEqual(run.observe(), [])
-        _append(path, _said("assistant", "found"))
-        self.assertEqual(run.observe(), [Reply("found")])
+            lookup.side_effect = ConfigError("duplicate")
+            clock.return_value += 0.1
+            self.assertEqual((run.observe(), run.observe()), ([], []))
+            self.assertEqual(lookup.call_count, 2)
+            lookup.side_effect = None
+            clock.return_value += tui.LOOKUP_EVERY
+            self.assertEqual(run.observe(), [Reply("late")])
+            clock.return_value += tui.LOOKUP_EVERY
+            _append(path, _said("assistant", "next"))
+            self.assertEqual(run.observe(), [Reply("next")])
+            self.assertEqual(lookup.call_count, 3)
+
+    def test_a_turn_end_looks_a_backed_off_file_up_before_its_turn_end(self):
+        run, _, _ = self.launch()
+        run.hook_events("SessionStart", self.payload())
+        with mock.patch("time.monotonic", return_value=1000.0) as clock:
+            self.assertEqual(run.observe(), [])
+            _append(self.rollout(), _said("user", "go"), _said("assistant", "A"))
+            clock.return_value += 0.5
+            self.assertEqual(run.observe(), [])
+            self.assertEqual(
+                run.hook_events("Stop", self.payload(last_assistant_message="A")),
+                [Reply("A"), TurnEnd("A")],
+            )
+            clock.return_value += tui.LOOKUP_EVERY
+            self.assertEqual(run.observe(), [])
 
     def test_resume_starts_the_cursor_at_the_session_files_end(self):
         self.prepare()
