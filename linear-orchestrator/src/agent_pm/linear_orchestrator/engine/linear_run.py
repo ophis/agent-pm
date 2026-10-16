@@ -36,7 +36,7 @@ class LinearRun:
         self.issue, self.sid = issue, sid
         self.delegate_kind = delegate_kind or cfg.delegate_kind
         provider = delegate_cls or self.kind_cls(cfg, self.delegate_kind)
-        self.delegate: Delegate = provider(
+        self.delegate: Delegate = provider.create(
             role,
             Spec(
                 input,

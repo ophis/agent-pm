@@ -24,6 +24,19 @@ class OtherDelegate(FakeDelegate):
         raise AssertionError("current default must not attach this run")
 
 
+class CreatedDelegate(CapturedDelegate):
+    def __init__(self, role, spec, **options):
+        raise AssertionError("use the public create method")
+
+    @classmethod
+    def create(cls, role, spec, *, display=None, callback=None, overlays=()):
+        view = cls.__new__(cls)
+        CapturedDelegate.__init__(
+            view, role, spec, display=display, callback=callback, overlays=overlays
+        )
+        return view
+
+
 class CheckedDelegate(FakeDelegate):
     checks: list = []
 
@@ -35,6 +48,12 @@ class CheckedDelegate(FakeDelegate):
 
 
 class Runs(RunCase):
+    def test_a_provider_with_a_private_constructor_is_created_through_its_factory(self):
+        owner, record = self.start(delegate_cls=CreatedDelegate)
+        self.assertIsInstance(owner.delegate, CreatedDelegate)
+        self.assertEqual(owner.delegate.accepted[0], "researcher")
+        self.assertEqual((record.sid, record.kind), (SID, "pipeline"))
+
     def test_content_is_the_pipeline_status_line(self):
         owner, _ = self.start()
         self.assertEqual(owner.content(), owner.status().to_line())
