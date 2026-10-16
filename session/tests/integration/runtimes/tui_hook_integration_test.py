@@ -40,18 +40,16 @@ def run_hook(*arguments):
 """
 
 
-def python(case, script, *args, **kwargs):
-    """`script` with `args` in a Python on this tree's session packages, case.env its env."""
+def python(case, argv, **kwargs):
+    """`argv` on this tree's session packages, case.env its env."""
     env = {**case.env, "PYTHONPATH": os.pathsep.join(ROOTS), **kwargs.pop("env", {})}
-    return subprocess.run(
-        [sys.executable, "-P", "-s", "-c", script, *args], capture_output=True, env=env, **kwargs
-    )
+    return subprocess.run(argv, capture_output=True, env=env, **kwargs)
 
 
 class MarkingTest(MarkingCases, HookBase):
     def test_disabled_logging_reports_exactly_one_error_line_and_exits_zero(self):
         script = RUN_HOOK + "import logging\nlogging.disable(logging.CRITICAL)\nrun_hook()\n"
-        result = python(self, script, input=b"{}", check=True)
+        result = python(self, [sys.executable, "-P", "-s", "-c", script], input=b"{}", check=True)
         self.assertEqual(result.stdout, b"")
         self.assertEqual(len(result.stderr.splitlines()), 1)
         self.assertTrue(result.stderr.startswith(b"tui_hook: usage: agent-pm-session hook "))
@@ -141,7 +139,9 @@ with mock.patch("builtins.open", side_effect=open_file):
 """
         )
         os.unlink(os.path.join(self.dir, "session.json"))
-        result = python(self, script, self.dir, input=b"{}", check=True)
+        result = python(
+            self, [sys.executable, "-P", "-s", "-c", script, self.dir], input=b"{}", check=True
+        )
         self.assertEqual(result.stdout, b"")
         self.assertError(result.stderr.decode(), "session.json")
         self.assertNothingWritten()
@@ -377,7 +377,11 @@ with unittest.mock.patch("os.stat", non_regular):
             with self.subTest(kind=kind):
                 write_state(self.dir, {**self.state, kind: self.callback("agent_pm.callback")})
                 result = python(
-                    self, script, callback, self.dir, input=b"{}", timeout=10, check=True
+                    self,
+                    [sys.executable, "-P", "-s", "-c", script, callback, self.dir],
+                    input=b"{}",
+                    timeout=10,
+                    check=True,
                 )
                 self.assertEqual(result.stdout, b"")
                 self.assertError(result.stderr.decode(), "not a regular file")
@@ -422,7 +426,11 @@ assert "callback_package" not in sys.modules
         for rejected in files:
             with self.subTest(path=rejected):
                 result = python(
-                    self, script, rejected, self.dir, input=b"{}", timeout=60, check=True
+                    self,
+                    [sys.executable, "-P", "-s", "-c", script, rejected, self.dir],
+                    input=b"{}",
+                    timeout=60,
+                    check=True,
                 )
                 self.assertEqual(result.stdout, b"")
                 self.assertError(result.stderr.decode(), "not a regular file")

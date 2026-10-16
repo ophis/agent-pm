@@ -39,7 +39,6 @@ from agent_pm.session.hosts.tmux import transport as tmux_model
 from agent_pm.session.hosts.tmux.transport import Tmux, attach_command
 from agent_pm.session.runtimes import tui
 
-from session.tests import detach_support as detach_live
 from session.tests import live_tmux
 from session.tests import tui_support as tui_live
 from session.tests.case import PY
@@ -70,6 +69,19 @@ before = [handle.sid, handle.alive(), handle.reply]
 handle.send(text)
 event = next(e for e in handle.events() if isinstance(e, TurnEnd))
 print(json.dumps([*before, repr(event), handle.reply]))
+"""
+# A detached child: writes its blocked signals to argv[1], unblocks them, then runs until argv[2]
+# exists, at most 30 s.
+CHILD = """import json, os, signal, sys, time
+report, go = sys.argv[1:]
+with open(report + ".tmp", "w") as f:
+    blocked = signal.pthread_sigmask(signal.SIG_BLOCK, [])
+    json.dump(sorted(int(s) for s in blocked), f)
+os.replace(report + ".tmp", report)
+signal.pthread_sigmask(signal.SIG_UNBLOCK, [signal.SIGHUP, signal.SIGTERM, signal.SIGINT])
+for _ in range(600):
+    if os.path.exists(go): break
+    time.sleep(0.05)
 """
 
 
@@ -425,7 +437,7 @@ class ShowTest(Live):
                     sys.executable,
                     "-I",
                     "-c",
-                    detach_live.CHILD,
+                    CHILD,
                     os.path.join(self.dir, "d.json"),
                     go,
                 ),

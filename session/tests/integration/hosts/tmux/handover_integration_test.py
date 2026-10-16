@@ -13,7 +13,7 @@ import time
 import unittest
 from contextlib import suppress
 
-from agent_pm.session.hosts.tmux.transport import EXEC
+from agent_pm.session.hosts.tmux import transport
 
 from session.tests.case import Case
 
@@ -33,14 +33,12 @@ class ExecTest(Case):
         self.reader = os.open(self.fifo, os.O_RDONLY | os.O_NONBLOCK)
         self.addCleanup(os.close, self.reader)
 
-    def run_exec(self, argv, env, cwd, pane, prelude=""):
-        """The wrapper as tmux runs it, given a handover file naming argv and the errpipe; `prelude`
-        runs before it.
-        """
+    def run_exec(self, argv, env, cwd, pane):
+        """The wrapper as tmux runs it, given a handover file naming argv and the errpipe."""
         with open(self.path, "w") as f:
             json.dump({"argv": argv, "env": env, "cwd": cwd}, f)
         return subprocess.run(
-            self.wrapper(prelude),
+            self.wrapper(),
             env=pane,
             capture_output=True,
             text=True,
@@ -48,8 +46,9 @@ class ExecTest(Case):
             timeout=30,
         )
 
-    def wrapper(self, prelude=""):
-        return [sys.executable, "-I", "-c", prelude + EXEC, self.path, self.fifo]
+    def wrapper(self):
+        """The shipped wrapper argv, its errpipe self.fifo."""
+        return [*transport._wrapper(self.root)[1][:-2], self.path, self.fifo]
 
     def piped(self):
         """What the wrapper wrote to the errpipe, read to EOF; BlockingIOError while a writer holds

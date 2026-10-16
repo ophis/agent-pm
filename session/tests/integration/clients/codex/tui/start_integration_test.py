@@ -65,17 +65,14 @@ class ModuleRunTest(Case):
             "store": "/uncreated-agent-pm-state/recovery/codex",
         }
 
-    def run_module(self, *args, code=None, cwd=None, roots=ROOTS):
-        command = (
-            [sys.executable, "-P", "-s", "-c", code, MODULE, *args]
-            if code is not None
-            else [sys.executable, "-P", "-s", "-m", MODULE, *args]
-        )
-        env = {**os.environ, "PYTHONPATH": os.pathsep.join(roots)}
+    def run_module(self, command, cwd=None):
+        env = {**os.environ, "PYTHONPATH": os.pathsep.join(ROOTS)}
         return subprocess.run(command, capture_output=True, text=True, cwd=cwd, env=env)
 
     def test_the_module_uses_canonical_modules_dataclasses_and_flag_type(self):
-        result = self.run_module(json.dumps(self.data()), code=INSPECT)
+        result = self.run_module(
+            [sys.executable, "-P", "-s", "-c", INSPECT, MODULE, json.dumps(self.data())]
+        )
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stderr, "codex tui: Codex tui launch: missing recovery state\n")
         values = json.loads(result.stdout)
@@ -94,7 +91,7 @@ class ModuleRunTest(Case):
             ("bad launch data", "not-json", "malformed launch data"),
         ):
             with self.subTest(name):
-                result = self.run_module(data)
+                result = self.run_module([sys.executable, "-P", "-s", "-m", MODULE, data])
                 self.assertEqual(
                     (result.returncode, result.stdout, result.stderr),
                     (1, "", f"codex tui: Codex tui launch: {error}\n"),
@@ -112,7 +109,9 @@ with mock.patch("json.loads", wraps=json.loads) as decode:
         status = error.code
 print(json.dumps([status, decode.call_count]))
 """
-        result = self.run_module(json.dumps(self.data()), code=code)
+        result = self.run_module(
+            [sys.executable, "-P", "-s", "-c", code, MODULE, json.dumps(self.data())]
+        )
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stderr, "codex tui: Codex tui launch: missing recovery state\n")
         self.assertEqual(json.loads(result.stdout), [1, 1])
@@ -122,7 +121,10 @@ print(json.dumps([status, decode.call_count]))
         decoy.mkdir()
         (decoy / "agent_pm.py").write_text('raise RuntimeError("untrusted agent_pm")\n')
         (decoy / "common.py").write_text('raise RuntimeError("untrusted sessions")\n')
-        result = self.run_module(json.dumps(self.data()), code=INSPECT, cwd=decoy)
+        result = self.run_module(
+            [sys.executable, "-P", "-s", "-c", INSPECT, MODULE, json.dumps(self.data())],
+            cwd=decoy,
+        )
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(json.loads(result.stdout)[:13], [1, *([True] * 11), []])
 
@@ -149,7 +151,7 @@ print(json.dumps([
         self.assertEqual(json.loads(result.stdout), [True, True, True, True, []])
 
     def test_the_launch_argument_is_required_and_bounded_before_decoding(self):
-        result = self.run_module()
+        result = self.run_module([sys.executable, "-P", "-s", "-m", MODULE])
         self.assertEqual(
             (result.returncode, result.stdout, result.stderr),
             (1, "", "codex tui: Codex tui launch: expected bounded launch data\n"),
@@ -166,7 +168,7 @@ print(json.dumps([
 sys.argv = [sys.argv[1], chr(0xD800)]
 runpy.run_module(sys.argv[0], run_name="__main__", alter_sys=True)
 """
-        result = self.run_module(code=code)
+        result = self.run_module([sys.executable, "-P", "-s", "-c", code, MODULE])
         self.assertEqual(result.returncode, 1)
         self.assertEqual(result.stdout, "")
         self.assertEqual(

@@ -112,6 +112,14 @@ PYTHON_CODE_ALLOWED = {
         "a54540807f5981fab22a3c225f83241ed92520cc5a1ea92493cd6e779e2e431f",
     ): "Checks concrete Codex module identity and hook constants in a fresh interpreter.",
     (
+        "session/tests/integration/clients/codex/tui/start_integration_test.py",
+        "fc75cc3d188bbbbe8564133ed21537010ea309a09e4e7bc4a3d7f29135815e2c",
+    ): "Runs codex tui start as __main__ under -P -s from PYTHONPATH roots (and from a cwd decoy), then checks in that interpreter that internal codex modules are canonical; needs internal submodules and a fresh interpreter.",
+    (
+        "session/tests/integration/extension_client_integration_test.py",
+        "4ccf3464fd781df5281df75dd49379e9f8bfbe90397bc49471d20236f53f160f",
+    ): "Codex tui launch (argv, PYTHONPATH) from an installed-layout site through HostedSession's client registry; no public API returns a configured Client's launch, and only a fresh interpreter on the copied site sees that layout.",
+    (
         "session/tests/integration/engine/base_integration_test.py",
         "5ee08ae1404e898c2f6edce1ceca5d068dcfbaa01d3993c8835b5c5c2435f2b1",
     ): "Checks concrete dispatcher setup and runtime snapshot errors in a clean interpreter.",
