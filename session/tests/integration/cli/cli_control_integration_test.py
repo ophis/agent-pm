@@ -227,7 +227,7 @@ class ControlTest(ControlCase):
         self.assertEqual(self.sessions(), [MANAGER, "w1"])
         self.assertTrue(pid_alive(pid))
         self.assertEqual(self.server.pane_of("w1"), pane)
-        self.tmux("set-option", "-u", "-t", "=w1", "@record")
+        self.tmux("set-option", "-u", "-t", "=w1:", "@record")
         self.assert_printed(self.session("close", stdin=lines(w1)), "")
         self.assertEqual(self.sessions(), [MANAGER])
 

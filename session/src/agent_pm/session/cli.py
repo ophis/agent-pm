@@ -61,7 +61,7 @@ HEADER = "name\tstate\tclient\tsid\tdisplay"
 
 
 class UsageError(ConfigError):
-    """A malformed request: exit 2, nothing done."""
+    """A malformed request."""
 
 
 def _say(text: str) -> None:
