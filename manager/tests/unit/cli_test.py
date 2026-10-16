@@ -211,6 +211,45 @@ class NextEventContent(CliCase):
                 self.assertTrue(content.startswith("content unavailable: "), content)
                 self.assertTrue(content.endswith("\n") and content.count("\n") == 1, content)
 
+    def test_follow_prints_each_event_block_and_keeps_going(self):
+        self.launched("w1")
+        self.answers = {("agent-pm-session", "reply", "w1"): (0, "the answer\nline 2\n", "")}
+        Path(self.roster.events).write_text("12:00:00 w1 done\nnoise\n12:00:01 w1 blocked\n")
+        stdout = io.StringIO()
+        writes = []
+        stdout.write = lambda text: writes.append(text) or len(text)
+
+        def run(argv, **_):
+            code, out, err = self.answers.get(tuple(argv), (1, "", "no such session"))
+            return SimpleNamespace(returncode=code, stdout=out, stderr=err)
+
+        argv = ("next-event", "--manager", "mgr", "--after", "0", "--gen", "0")
+        with (
+            mock.patch("subprocess.run", side_effect=run),
+            mock.patch("time.sleep", side_effect=KeyboardInterrupt),
+            contextlib.redirect_stdout(stdout),
+            self.assertRaises(KeyboardInterrupt),
+        ):
+            main([*argv, "--content", "--follow"])
+        self.assertEqual(
+            [text for text in writes if text],
+            [
+                "1 12:00:00 w1 done\nthe answer\nline 2\n",
+                "3 12:00:01 w1 blocked\ncontent unavailable: agent-pm-session read w1: "
+                "no such session\n",
+            ],
+        )
+        self.assertEqual(self.roster.backlog()[0], 3)
+
+    def test_follow_exits_1_on_stale(self):
+        self.launched("w1")
+        Path(self.roster.events).write_text("12:00:00 w1 done\n")
+        result, stdout, stderr = self.invoke(
+            "next-event", "--manager", "mgr", "--after", "0", "--gen", "5", "--follow"
+        )
+        self.assertEqual((result, stdout), (1, ""))
+        self.assertIn("crew: stale line numbers", stderr)
+
 
 URL = "https://github.com/o/r/pull/7"
 HEADER = "name\tkind\tstate\tnote\treply\tpr\tchecks\tmergeable\treview\n"

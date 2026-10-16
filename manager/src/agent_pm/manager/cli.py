@@ -76,8 +76,8 @@ def _attach(args) -> int:
             command = ("agent-pm-crew", "resume", *named, name)
             print(f"resume: {shlex.join(command)}")
     if os.path.isdir(crew.roster.directory):
-        print(f"monitor: tail -n +{int(cursor) + 1} -F {shlex.quote(crew.roster.events)}")
         for label, verb, after, *extra in (
+            ("monitor", "next-event", cursor, "--content", "--follow"),
             ("monitor expired", "attach", "LINE"),
             ("next-event", "next-event", cursor, "--content"),
         ):
@@ -155,11 +155,16 @@ def _release(args) -> int:
 
 def _next_event(args) -> int:
     crew = _crew(args)
-    line, event = crew.next_event(after=args.after, gen=args.gen)
-    print(f"{line} {event}", flush=True)
-    if args.content:
-        print(crew.event_content(event, SESSION_COMMAND), end="")
-    return 0
+    after = args.after
+    while True:
+        after, event = crew.next_event(after=after, gen=args.gen)
+        block = f"{after} {event}\n"
+        if args.content:
+            block += crew.event_content(event, SESSION_COMMAND)
+        # One write per event: Monitor groups lines written within 200 ms into one notification.
+        print(block, end="", flush=True)
+        if not args.follow:
+            return 0
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -215,6 +220,9 @@ def _parser() -> argparse.ArgumentParser:
         action="store_true",
         help="then print its content: a done session's reply, a harness's entry status, "
         "else the screen",
+    )
+    next_event.add_argument(
+        "--follow", action="store_true", help="keep printing events until stopped or failing"
     )
     next_event.set_defaults(func=_next_event)
     return parser
