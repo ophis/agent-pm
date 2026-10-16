@@ -133,7 +133,9 @@ jobs:
       - name: Unit tests under coverage
         run: RUN_TESTS_COVERAGE="$RUNNER_TEMP/coverage-data" python3 -X faulthandler .github/run_tests.py Unit --unit
       - name: Diff coverage of changed src lines
-        run: python3 .github/coverage_gate.py "$RUNNER_TEMP/coverage-data" "origin/${{ github.base_ref }}"
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: python3 .github/coverage_gate.py "$RUNNER_TEMP/coverage-data" "origin/$BASE_REF"
       - name: Require unchanged checkout
         if: ${{ always() }}
         run: |
