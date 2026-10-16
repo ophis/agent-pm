@@ -1,7 +1,6 @@
 """Client ownership checks: which layer may name a client, tool or display."""
 
 import ast
-import importlib
 import io
 import os
 import re
@@ -93,32 +92,6 @@ def session_names(repo: str) -> list[str]:
         for word in forbidden
         if word in text
     )
-
-
-def delegate_session_name(repo: str) -> list[str]:
-    """TASK-526: delegate/cli.py's SESSION_NAME and SESSION_NAME_RULE, its copy of the session's
-    unexported ones for `run --name`, equal session/engine/types.py's.
-    """
-    session = importlib.import_module("agent_pm.session.engine.types")
-    want = {
-        "SESSION_NAME": session.SESSION_NAME.pattern,
-        "SESSION_NAME_RULE": session.SESSION_NAME_RULE,
-    }
-    rel = DELEGATE_SRC + "cli.py"
-    with open(os.path.join(repo, rel), encoding="utf-8") as f:
-        tree = ast.parse(f.read(), rel)
-    have = {}
-    for node in tree.body:
-        if isinstance(node, ast.Assign) and [getattr(t, "id", None) for t in node.targets] in (
-            [name] for name in want
-        ):
-            value = node.value.args[0] if isinstance(node.value, ast.Call) else node.value
-            have[node.targets[0].id] = getattr(value, "value", None)
-    return [
-        f"{rel}: {name} {have.get(name)!r}, want the session's {value!r}"
-        for name, value in want.items()
-        if have.get(name) != value
-    ]
 
 
 def delegate_package_names(repo: str) -> list[str]:

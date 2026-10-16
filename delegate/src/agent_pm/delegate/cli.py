@@ -13,7 +13,6 @@ Exits 0 on success, 2 on usage or config errors, 1 on other failures.
 import argparse
 import json
 import os
-import re
 import shlex
 import sys
 from collections.abc import Sequence
@@ -23,15 +22,11 @@ from agent_pm.delegate.composer import Composer, RunParams
 from agent_pm.delegate.engine.harness_delegate import EVENTS_ENV, SID_ENV, HarnessDelegate
 from agent_pm.delegate.engine.runner import report, say
 from agent_pm.delegate.engine.types import Begun, ConfigError, Layout, Preview, Spec
+from agent_pm.session import SESSION_NAME, SESSION_NAME_RULE, Mode, NotShowable, SessionError
 from agent_pm.session import ConfigError as SessionConfigError
-from agent_pm.session import Mode, NotShowable, SessionError
 from agent_pm.utils import Once, answer_keys, nested_start
 
 LIST_PARAMS = RunParams(input="", out="/agent-pm-list/work/out.md", workdir="/agent-pm-list/work")
-# shortcut: a copy of the session's unexported SESSION_NAME and its rule (tests.checks pins them);
-# import them once agent_pm.session exports them
-SESSION_NAME = re.compile(r"(?!none\Z)[A-Za-z0-9_-]+")
-SESSION_NAME_RULE = "[A-Za-z0-9_-]+ but not none"
 
 
 def main(
