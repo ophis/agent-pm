@@ -34,7 +34,7 @@ from agent_pm.session.hosts.base import Host, InteractiveProcess, Process, Showa
 from agent_pm.session.hosts.reclaimed import ReclaimedGroup
 from agent_pm.session.hosts.tmux import hidden as hidden_store
 from agent_pm.session.hosts.tmux import hook, transport
-from agent_pm.session.hosts.tmux.grid import Grid
+from agent_pm.session.hosts.tmux.grid import WINDOW, Grid
 from agent_pm.session.hosts.tmux.iterm import Iterm
 from agent_pm.session.hosts.tmux.placement import Placement
 from agent_pm.session.hosts.tmux.transport import (
@@ -707,22 +707,42 @@ class TmuxHost(Host, Showable):
             with contextlib.suppress(TuiError):
                 placed = self._shown_pane(name) is not None
         if placed:
+            if command is None:
+                self.placement.watch(name)
             self.attach(name).mark_hidden(hidden=False)
         if why is None:
             return None
         LOG.warning("show %s: %s", name, why)
         return attach_command(name)
 
-    def hide(self, name: str) -> None:
+    def hide(self, name: str, *, if_closed: bool = False) -> None:
         if self.tmux.status(_session(name)) is None:
             raise SessionError(f"no tmux session {name}")
         try:
+            if if_closed and not self._closed(name):
+                return
             pane = self._shown_pane(name)
             if pane is not None:
                 self.tmux.kill(pane)
+            if PANE.fullmatch(self.tmux.option(name, "@pane") or ""):
+                # a late client-detached hook then finds no pane to judge closed
+                target = f"={_session(name)}:"
+                self.tmux.checked(
+                    ["set-option", "-u", "-t", target, "@pane", ";"]
+                    + ["set-option", "-u", "-t", target, "@window"]
+                )
         except TuiError as e:
             raise SessionError(f"tmux session {name}: {e}") from None
         self.attach(name).mark_hidden(hidden=True)
+
+    def _closed(self, name: str) -> bool:
+        """The tmux pane show opened is gone and the window it was in remains."""
+        pane, window = self.tmux.option(name, "@pane"), self.tmux.option(name, "@window")
+        if not (PANE.fullmatch(pane or "") and WINDOW.fullmatch(window or "")):
+            return False
+        panes = self.tmux.checked(["list-panes", "-a", "-F", "#{pane_id}"]).stdout.split()
+        windows = self.tmux.checked(["list-windows", "-a", "-F", "#{window_id}"]).stdout.split()
+        return pane not in panes and window in windows
 
     def _shown_pane(self, name: str) -> str | None:
         """The live tmux pane that show opened for it, if any."""

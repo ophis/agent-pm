@@ -183,7 +183,7 @@ class ScreenHost(MemoryHost, Showable):
         self.processes[name].calls.hidden.return_value = False
         return shown
 
-    def hide(self, name):
+    def hide(self, name, *, if_closed=False):
         self.calls.hide(name)
         self.processes[name].calls.hidden.return_value = True
 

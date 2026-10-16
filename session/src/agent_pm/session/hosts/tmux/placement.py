@@ -17,7 +17,9 @@ from agent_pm.session.hosts.tmux.grid import (
     GRID_ROW,
     PER_COLUMN,
     RETILE,
+    WINDOW,
     Grid,
+    hook_command,
     validate_per_column,
     validate_retile,
 )
@@ -321,6 +323,34 @@ class Placement:
             except TuiError as e:
                 print(f"tui: show: {key}: {e}", file=sys.stderr)
                 return
+
+    def watch(self, session: str) -> None:
+        """@window, the window of the tmux pane show opened (@pane), and session's client-detached
+        hook running `hide --if-closed`, so closing that pane by hand marks it hidden; a failure is
+        only printed.
+        """
+        command, problem = hook_command()
+        target = f"={session}:"
+        try:
+            pane = self.tmux.option(session, "@pane") or ""
+            if not PANE.fullmatch(pane):
+                return
+            window = self.tmux.checked(["display-message", "-p", "-t", pane, "#{window_id}"])
+            window = window.stdout.strip()
+            if not WINDOW.fullmatch(window):
+                raise TuiError(f"not a window id: {window!r:.80}")
+            args = ["set-option", "-t", target, "@window", window]
+            if not problem:
+                hook = (
+                    f"run-shell -b '{command} hide --if-closed {session} >/dev/null 2>&1 || true'"
+                )
+                args += [";", "set-hook", "-t", target, "client-detached", hook]
+            self.tmux.checked(args)
+        except TuiError as e:
+            print(f"tui: show: @window: {e}", file=sys.stderr)
+            return
+        if problem:
+            print(f"tui: show: client-detached: {problem}", file=sys.stderr)
 
     def run_command(self, session: str, template: str) -> str | None:
         """Runs template with /bin/sh, each {{session}} the quoted session name; why it failed, else

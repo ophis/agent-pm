@@ -10,6 +10,7 @@ from agent_pm.session.hosts.tmux import types
 
 from session.tests.case import Case
 from session.tests.tmux_fixtures import (
+    COMMAND,
     HOSTS,
     INSIDE,
     ITERM,
@@ -367,6 +368,48 @@ class RunCommandTest(Case):
                 fake = FakeTmux(results={"/bin/sh": result} if result else {})
                 self.assertEqual(placed(fake).run_command("s", template), why)
                 self.assertEqual(len(fake.calls), 1 if result else 0)
+
+
+class WatchTest(Case):
+    HOOK = f"run-shell -b '{COMMAND} hide --if-closed s >/dev/null 2>&1 || true'"
+
+    def watch(self, pane="%10\n", window="@3\n", **which_kw):
+        fake = FakeTmux(results={"show-options": (0, pane), "display-message": (0, window)})
+        self.stderr = io.StringIO()
+        with environ(), which(**which_kw), redirect_stderr(self.stderr):
+            placed(fake).watch("s")
+        return fake.calls[1:]
+
+    def test_records_the_panes_window_and_the_client_detached_hook(self):
+        self.assertEqual(
+            self.watch(),
+            [
+                ["tmux", "display-message", "-p", "-t", "%10", "#{window_id}"],
+                ["tmux", "set-option", "-t", "=s:", "@window", "@3", ";"]
+                + ["set-hook", "-t", "=s:", "client-detached", self.HOOK],
+            ],
+        )
+        self.assertEqual(self.stderr.getvalue(), "")
+
+    def test_no_hook_without_a_command_tmux_takes_verbatim(self):
+        for session, why in (
+            (None, "agent-pm-session is not on PATH"),
+            ("/a b", "/a b: tmux would misread it"),
+        ):
+            with self.subTest(why=why):
+                calls = self.watch(session=session)
+                self.assertEqual(calls[-1], ["tmux", "set-option", "-t", "=s:", "@window", "@3"])
+                self.assertEqual(self.stderr.getvalue(), f"tui: show: client-detached: {why}\n")
+
+    def test_nothing_for_an_iterm2_or_unset_pane(self):
+        for pane in ("w0t0p0:ABC\n", ""):
+            with self.subTest(pane=pane):
+                self.assertEqual(self.watch(pane=pane), [])
+                self.assertEqual(self.stderr.getvalue(), "")
+
+    def test_a_bad_window_id_is_printed_and_sets_nothing(self):
+        self.assertEqual(len(self.watch(window="own\n")), 1)
+        self.assertEqual(self.stderr.getvalue(), "tui: show: @window: not a window id: 'own'\n")
 
 
 class ContainerTest(Case):

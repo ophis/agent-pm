@@ -709,6 +709,42 @@ class HideTest(Base):
         self.tmux.kill.assert_called_once_with("%9")
         self.assertFalse(os.path.exists(os.path.join(self.agent_pm, "hidden")))
 
+    def test_hide_if_closed_marks_only_a_gone_pane_in_a_present_window(self):
+        self.runner.results.update({"list-panes": (0, "%1\n%9\n"), "list-windows": (0, "@1\n@2\n")})
+        self.tmux.process.side_effect = lambda target: None if target == "%8" else PROCESS
+        for pane, window, want in (
+            ("%8", "@2", True),
+            ("%9", "@2", False),
+            ("%8", "@3", False),
+            (None, "@2", False),
+            ("%8", None, False),
+            ("w0t0p0:ABC", "@2", False),
+            ("%8", "2", False),
+        ):
+            with self.subTest(pane=pane, window=window):
+                hidden.write("w1", SID, hidden=False)
+                self.options(pane=pane, window=window, sid=SID)
+                self.assertIsNone(self.host.hide("w1", if_closed=True))
+                self.assertEqual(hidden.read("w1", SID), want)
+        self.tmux.kill.assert_not_called()
+
+    def test_hide_unsets_the_tmux_pane_and_window_it_recorded(self):
+        for pane, unset in (("%9", True), ("w0t0p0:ABC", False)):
+            with self.subTest(pane=pane):
+                self.runner.calls.clear()
+                self.options(pane=pane, sid=SID)
+                self.host.hide("w1")
+                done = ["set-option", "-u", "-t", "=w1:", "@pane", ";"]
+                done += ["set-option", "-u", "-t", "=w1:", "@window"]
+                self.assertEqual(
+                    [c[1:] for c in self.runner.calls if "-u" in c], [done] if unset else []
+                )
+
+    def test_hide_if_closed_refuses_an_absent_session(self):
+        self.tmux.status.return_value = None
+        with self.assertRaisesRegex(SessionError, "^no tmux session w1$"):
+            self.host.hide("w1", if_closed=True)
+
     def test_hide_refuses_an_absent_session(self):
         self.tmux.status.return_value = None
         with self.assertRaisesRegex(SessionError, "^no tmux session w1$"):

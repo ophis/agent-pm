@@ -127,7 +127,7 @@ class ShowingHost(RecordingHost, Showable):
         self.shown.append((name, display, command))
         return self.attach_command(name)
 
-    def hide(self, name):
+    def hide(self, name, *, if_closed=False):
         self.hidden.append(name)
 
     def attach_command(self, name):
