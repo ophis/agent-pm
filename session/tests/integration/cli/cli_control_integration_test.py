@@ -238,14 +238,16 @@ class ControlTest(ControlCase):
             self.assertEqual(
                 self.status(stdin=lines(w1)), [live("w1", "done", cwd=self.cwd, hidden=True)]
             )
-        res = self.session("hide", "nope")
-        self.assertEqual((res.returncode, res.stdout), (1, ""), res.stderr)
-        self.assertEqual(res.stderr, f"{PROG}: nope: no tmux session nope\n")
         self.assert_printed(self.session("show", stdin=lines(w1)), "")
         self.shows("w1", f"={MANAGER}:")
         self.assertEqual(self.server.option("w1", "@hidden"), "0")
         self.assertEqual(self.status("w1"), [live("w1", "done", cwd=self.cwd)])
         self.assertEqual(len(self.calls("w1")), 1)
+
+    def test_hide_of_an_absent_session_fails_with_its_reason(self):
+        res = self.session("hide", "nope")
+        self.assertEqual((res.returncode, res.stdout), (1, ""), res.stderr)
+        self.assertEqual(res.stderr, f"{PROG}: nope: no tmux session nope\n")
 
     def test_a_key_its_host_refuses_fails_alone_and_the_batch_goes_on(self):
         w1, w2 = self.done("w1"), self.done("w2")

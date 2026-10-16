@@ -225,7 +225,7 @@ class HarnessSession(SessionClass):
         return host.attach_command(self.name)
 
     def stop(self):
-        self._state = Liveness.ABSENT
+        self.liveness = Liveness.ABSENT
         self.host(self.host_names[self.name]).attach(self.name).close()
         super().stop()
 

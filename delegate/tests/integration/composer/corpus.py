@@ -45,7 +45,7 @@ def corpus():
             entries[(parent, Path(path).stem)] = (path,)
     found = Team(ROOT, (CUSTOM,), entries)
     cases = {}
-    for role, tasks in catalog(config=CONFIG, local=os.devnull).items():
+    for role, tasks in catalog().items():
         for task in (None, *tasks):
             for resume in (False, True):
                 for language in ("English", ""):

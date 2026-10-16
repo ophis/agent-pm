@@ -47,7 +47,7 @@ class FakeSession(Session):
         self.client, self.mode = spec.client, spec.mode
         self.display_value = display
         self.sent: list[str] = []
-        self._state, self._reply = Liveness.LIVE, None
+        self.liveness, self._reply = Liveness.LIVE, None
         ended = self.script and isinstance(self.script[-1], Exited)
         self._pending = iter(self.script if ended else (*self.script, Exited(0)))
 
@@ -66,14 +66,14 @@ class FakeSession(Session):
         self.sent.append(tuple(keys))
 
     def alive(self) -> bool:
-        return self._state == Liveness.LIVE
+        return self.liveness == Liveness.LIVE
 
     def status(self) -> Status:
         return Status(
             name=self.name,
             alive=self.alive(),
             state={Liveness.LIVE: StatusState.WORKING, Liveness.UNKNOWN: StatusState.UNKNOWN}.get(
-                self._state, StatusState.GONE
+                self.liveness, StatusState.GONE
             ),
             outcome=None,
             attach=None,
@@ -81,7 +81,7 @@ class FakeSession(Session):
         )
 
     def stop(self) -> None:
-        self._state = Liveness.ABSENT
+        self.liveness = Liveness.ABSENT
         if self.live.get(self.name) is self:
             del self.live[self.name]
 

@@ -542,23 +542,32 @@ class DisplayableTest(Base):
         self.options(hidden="0")
         self.assertFalse(self.host.attach("w1").hidden())
 
-    def test_hide_leaves_an_iterm2_or_closed_pane_and_marks_no_sidless_session(self):
+    def test_hide_leaves_an_iterm2_or_closed_pane_and_still_marks_it_hidden(self):
         for pane, process in (("w0t0p0:ABC", PROCESS), ("%9", None), (None, PROCESS)):
             with self.subTest(pane=pane, process=process):
                 self.tmux.reset_mock()
-                self.options(pane=pane)
+                self.options(pane=pane, sid=SID)
                 self.tmux.process.side_effect = lambda target, found=process: (
                     found if target == "%9" else PROCESS
                 )
                 self.host.hide("w1")
                 self.tmux.kill.assert_not_called()
-                self.tmux.set_option.assert_not_called()
+                self.tmux.set_option.assert_called_once_with("%7", "@hidden", "1")
 
-    def test_hide_refuses_an_absent_session_and_names_a_tmux_failure(self):
+    def test_hide_kills_the_pane_of_a_sidless_session_and_marks_nothing(self):
+        self.options(pane="%9")
+        self.tmux.process.return_value = PROCESS
+        self.tmux.process.side_effect = None
+        self.host.hide("w1")
+        self.tmux.kill.assert_called_once_with("%9")
+        self.tmux.set_option.assert_not_called()
+
+    def test_hide_refuses_an_absent_session(self):
         self.tmux.status.return_value = None
         with self.assertRaisesRegex(SessionError, "^no tmux session w1$"):
             self.host.hide("w1")
-        self.tmux.status.return_value = types.PaneStatus.RUNNING
+
+    def test_hide_names_a_tmux_failure(self):
         self.options(pane="%9", sid=SID)
         self.tmux.kill.side_effect = TuiError("tmux: boom")
         with self.assertRaisesRegex(SessionError, "^tmux session w1: tmux: boom$"):

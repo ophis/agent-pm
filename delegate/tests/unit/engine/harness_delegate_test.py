@@ -566,10 +566,15 @@ class ViewTest(HarnessCase):
         self.assertIsNone(view.hide())
         self.assertEqual(ShowingHost.hidden, names)
         self.assertTrue(view.status().hidden)
+
+    def test_hide_after_close_is_not_displayable(self):
+        spec = Spec("input", self.work, mode="tui", client="fake", sid=SID)
+        self.make(spec=spec).detach()
+        view = HarnessDelegate.attach(self.work, session_cls=HarnessSession)
         view.close()
         with self.assertRaisesRegex(NotDisplayable, "delegate has no live displayable session"):
             view.hide()
-        self.assertEqual(ShowingHost.hidden, names)
+        self.assertEqual(ShowingHost.hidden, [])
 
 
 class CrashTest(HarnessCase):
@@ -601,7 +606,7 @@ class CrashTest(HarnessCase):
         view, name = self.crashed()
         agent = HarnessSession.live[name]
         self.assertEqual((view.status().state, view.status().hidden), ("gone", False))
-        agent._state = Liveness.UNKNOWN
+        agent.liveness = Liveness.UNKNOWN
         self.assertEqual(view.status().state, "unknown")
 
     def test_resume_closes_the_left_agent_session_and_launches_the_next_attempt(self):

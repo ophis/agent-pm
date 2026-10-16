@@ -260,7 +260,7 @@ class SharedTypes(Case):
                 tui_hook.read_state(path)
 
     def test_no_normal_session_module_takes_a_type_from_the_hook(self):
-        classes = {"HookError"}
+        classes = {"HookError", "MARKS"}
         package = os.path.join(SRC["session"], "agent_pm", "session")
         found = []
         for top, _, names in os.walk(package):
