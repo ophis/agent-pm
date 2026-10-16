@@ -3,7 +3,6 @@
 import json
 import os
 import queue
-import shutil
 import tempfile
 import threading
 import time
@@ -18,8 +17,6 @@ from agent_pm.session.engine.types import (
     Mode,
     Spec,
 )
-from agent_pm.session.hosts.tmux import transport
-from agent_pm.session.hosts.tmux.host import Tmux, events_file, validate_events, validate_start
 
 from session.tests import fake_adapter, live_tmux
 from session.tests.case import Case, configured
@@ -37,31 +34,6 @@ WAIT = 20  # upper bound on any wait, in seconds
 DIALOG = "Pick one: 1. this 2. that"
 
 TMUX = "/opt/tmux/bin/tmux"
-
-
-def _validate_start(name, argv, env, tags):
-    which = shutil.which
-
-    def resolved(command, *, path=None):
-        return command if command == "/bin/run" else which(command, path=path)
-
-    with mock.patch("shutil.which", side_effect=resolved):
-        validate_start(name, argv, env, tags)
-
-
-def fake_host() -> mock.Mock:
-    host = mock.create_autospec(Tmux, instance=True)
-    host.PAUSE = Tmux.PAUSE
-    host.attach_command.side_effect = transport.attach_command
-    host.events_file.side_effect = events_file
-    host.validate_events.side_effect = validate_events
-    host.validate_start.side_effect = _validate_start
-    host.tmux_path.return_value = TMUX
-    host.status.return_value = None
-    host.process_status.side_effect = lambda target: (host.process(target), host.status(target))
-    host.read.return_value = ""
-    host.option.return_value = None
-    return host
 
 
 class Stream:

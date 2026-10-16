@@ -23,7 +23,7 @@ from collections.abc import Mapping, Sequence
 
 import agent_pm.utils
 from agent_pm.session.engine.types import (
-    ActivityState,
+    MARKS,
     ConfigError,
     HookCallback,
     Key,
@@ -33,7 +33,7 @@ from agent_pm.session.engine.types import (
     Paste,
     SessionError,
     SessionRow,
-    Word,
+    StatusState,
 )
 from agent_pm.session.hosts.base import Host, HostProcess, Terminal, tui_lock
 from agent_pm.session.hosts.pty import hook, state
@@ -106,11 +106,11 @@ class PtyProcess(HostProcess):
         except ValueError:
             return -signal.SIGHUP
 
-    def activity(self) -> Word | None:
+    def activity(self) -> StatusState | None:
         value = state.read(self.folder, state.ACTIVITY) if self._own() else None
-        return Word(value) if value in tuple(Word) else None
+        return StatusState(value) if value in MARKS else None
 
-    def mark(self, word: Word, events: str | None) -> None:
+    def mark(self, word: StatusState, events: str | None) -> None:
         if self._own():
             state.mark(self.folder, word, events)
 
@@ -165,11 +165,11 @@ class PtyProcess(HostProcess):
         sid = metadata.get("sid") or (None if receipt is None else receipt.sid)
         client = metadata.get("client") or (receipt.kind if receipt and receipt.sid else None)
         if not self.alive():
-            now = ActivityState.DEAD
-        elif activity in (Word.DONE, Word.BLOCKED):
-            now = ActivityState(activity)
+            now = StatusState.DEAD
+        elif activity in (StatusState.DONE, StatusState.BLOCKED):
+            now = StatusState(activity)
         else:
-            now = ActivityState.WORKING
+            now = StatusState.WORKING
         return SessionRow(
             self.name,
             sid if isinstance(sid, str) and sid_error(sid) is None else None,

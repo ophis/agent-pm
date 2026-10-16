@@ -5,7 +5,7 @@ import signal
 from unittest import mock
 
 from agent_pm.session import Displayable, Host, SessionError, Terminal
-from agent_pm.session.engine.types import ActivityState, Launch, Liveness, SessionRow
+from agent_pm.session.engine.types import Launch, Liveness, SessionRow, StatusState
 
 
 class MemoryTerminal(Terminal):
@@ -16,6 +16,7 @@ class MemoryTerminal(Terminal):
         self.calls.state.return_value = Liveness.LIVE
         self.calls.returncode.return_value = None
         self.calls.activity.return_value = None
+        self.calls.hidden.return_value = False
         self.calls.record.return_value = receipt
         self.calls.row.return_value = None
         self.calls.session_identity.return_value = (
@@ -43,6 +44,9 @@ class MemoryTerminal(Terminal):
 
     def activity(self):
         return self.calls.activity() if self._own() else None
+
+    def hidden(self):
+        return self._own() and self.calls.hidden()
 
     def mark(self, word, events):
         if self._own():
@@ -91,7 +95,7 @@ class MemoryTerminal(Terminal):
             self.name,
             self.metadata.get("sid") if receipt is None else receipt.sid,
             self.metadata.get("client") if receipt is None else receipt.kind,
-            ActivityState.WORKING if self.alive() else ActivityState.DEAD,
+            StatusState.WORKING if self.alive() else StatusState.DEAD,
             self.display(),
             None,
             None,
@@ -175,7 +179,13 @@ class ScreenHost(MemoryHost, Displayable):
         return self.calls.screen(name, lines)
 
     def show(self, name, *, display=None, command=None):
-        return self.calls.show(name, display=display, command=command)
+        shown = self.calls.show(name, display=display, command=command)
+        self.processes[name].calls.hidden.return_value = False
+        return shown
+
+    def hide(self, name):
+        self.calls.hide(name)
+        self.processes[name].calls.hidden.return_value = True
 
     def attach_command(self, name):
         return self.calls.attach_command(name)

@@ -8,7 +8,6 @@ from types import MappingProxyType
 from agent_pm import session
 from agent_pm.session import (
     Access,
-    ActivityState,
     ConfigError,
     Effort,
     Hosts,
@@ -33,8 +32,8 @@ from agent_pm.session.engine.types import (
     Prepared,
     ProcessOptions,
     Tier,
-    Word,
 )
+from agent_pm.utils import StatusState
 
 from session.tests.case import Case
 
@@ -216,6 +215,18 @@ class WhatToStart(Case):
             self.assertEqual(str(caught.exception), message)
 
 
+class ReservedName(Case):
+    def test_none_alone_is_no_session_name_but_a_tag(self):
+        self.assertIsNone(engine_types.SESSION_NAME.fullmatch("none"))
+        for name in ("none-1", "None", "nonex", "a_none"):
+            with self.subTest(name=name):
+                self.assertIsNotNone(engine_types.SESSION_NAME.fullmatch(name))
+        self.assertEqual(engine_types.SESSION_NAME_RULE, "[A-Za-z0-9_-]+ but not none")
+        self.assertIsNotNone(engine_types.TAG.fullmatch("none"))
+        spec = Spec(workdir="/w", access=Access(cwd="/w"), reply_tags=("none", "x"))
+        self.assertEqual(spec.reply_tags, ("none", "x"))
+
+
 class DisplayError(Case):
     def test_not_displayable_is_a_driver_error(self):
         self.assertTrue(issubclass(NotDisplayable, SessionError))
@@ -231,7 +242,6 @@ class OptionSets(Case):
             (Liveness, ["live", "absent", "unknown"]),
             (Effort, ["low", "medium", "high", "xhigh", "max"]),
             (Resumable, ["yes", "no", "unknown"]),
-            (ActivityState, ["working", "done", "blocked", "dead"]),
         ):
             with self.subTest(enum=enum.__name__):
                 self.assertEqual([m.value for m in enum], values)
@@ -243,23 +253,11 @@ class OptionSets(Case):
         for enum, values in (
             (HookKind, ["turn_end", "turn_failed", "blocked", "activity"]),
             (Tier, ["1", "2", "3", "4"]),
-            (Word, ["done", "blocked", "working"]),
         ):
             with self.subTest(enum=enum.__name__):
                 self.assertEqual([m.value for m in enum], values)
                 self.assertEqual(list(enum), values)
                 self.assertNotIn(enum.__name__, session.__all__)
-
-    def test_a_hook_word_is_an_activity_state(self):
-        self.assertLessEqual(set(Word), set(ActivityState))
-        self.assertIsNot(Word, ActivityState)
-        for word in Word:
-            with self.subTest(word=word):
-                state = ActivityState(word)
-                self.assertEqual(state.value, word.value)
-                self.assertIsNot(state, word)
-                self.assertIsInstance(state, ActivityState)
-        self.assertNotIn(ActivityState.DEAD, Word)
 
 
 class CarriedEnums(Case):
@@ -281,10 +279,10 @@ class CarriedEnums(Case):
                 self.assertIs(status.resumable, Resumable.YES)
 
     def test_a_row_carries_an_activity_state_given_it_or_its_plain_value(self):
-        for state in (ActivityState.DEAD, "dead"):
+        for state in (StatusState.DEAD, "dead"):
             with self.subTest(state=state):
                 row = SessionRow("w1", None, None, state, None, None, None, own=False)
-                self.assertIs(row.state, ActivityState.DEAD)
+                self.assertIs(row.state, StatusState.DEAD)
 
     def test_an_unknown_value_names_the_allowed_ones(self):
         for build, message in (
@@ -298,7 +296,7 @@ class CarriedEnums(Case):
             ),
             (
                 lambda: SessionRow("w1", None, None, "idle", None, None, None, own=False),
-                "state must be one of working, done, blocked, dead, got 'idle'",
+                "state must be one of starting, working, done, blocked, dead, gone, unknown, got 'idle'",
             ),
         ):
             with self.subTest(message=message), self.assertRaises(ConfigError) as caught:
@@ -314,7 +312,7 @@ class CarriedEnums(Case):
 
 class SharedTypes(Case):
     def test_the_hook_and_display_types_live_in_engine_types(self):
-        for kind in (HookError, Word, NotDisplayable, Tier, ActivityState):
+        for kind in (HookError, NotDisplayable, Tier):
             with self.subTest(kind=kind.__name__):
                 self.assertEqual(kind.__module__, engine_types.__name__)
                 self.assertIn(kind.__name__, engine_types.__all__)

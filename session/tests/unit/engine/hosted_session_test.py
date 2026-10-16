@@ -30,7 +30,6 @@ from agent_pm.session.engine.records import RunLog
 from agent_pm.session.engine.types import (
     Access,
     Activity,
-    ActivityState,
     Blocked,
     ClientBound,
     ConfigError,
@@ -55,7 +54,7 @@ from agent_pm.session.engine.types import (
 )
 from agent_pm.session.hosts.tmux import TmuxHost
 from agent_pm.session.runtimes import tui
-from agent_pm.utils import Record, load_class
+from agent_pm.utils import Record, StatusState, load_class
 
 from session.tests import fake_adapter
 from session.tests.case import HOSTS, REPO, SPAWNS, SRC, Case
@@ -594,12 +593,14 @@ class SessionTest(Base):
         self.assertFalse(session.displayable)
         for name, call in (
             ("show", session.show),
+            ("hide", session.hide),
             ("attach_command", session.attach_command),
             ("screen", session.screen),
         ):
             with self.subTest(name=name), self.assertRaises(NotDisplayable) as caught:
                 call()
             self.assertEqual(str(caught.exception), "host fake cannot display")
+        self.assertFalse(session.status().hidden)
         self.assertEqual(self.drain(session)[-1], Exited(0))
 
 
@@ -1037,13 +1038,15 @@ class EventsOverARuntimeTest(Case):
         self.assertEqual(self.mode.calls, [("stop",)])
         self.assertEqual(self.events(session), [])
 
-    def test_state_send_and_stop_are_the_modes_and_name_defaults_to_none(self):
+    def test_alive_send_and_stop_are_the_modes_and_name_defaults_to_none(self):
         session = self.session()
         self.assertIsNone(session.name)
-        self.assertEqual(session.state(), "unknown")
+        self.assertEqual((session.alive(), session.status().state), (False, "unknown"))
         session.send("hi")
         session.stop()
-        self.assertEqual(self.mode.calls, [("state",), ("send", "hi"), ("stop",)])
+        self.assertEqual(
+            [call for call in self.mode.calls if call != ("state",)], [("send", "hi"), ("stop",)]
+        )
         self.assertEqual(self.session(name="w1").name, "w1")
 
 
@@ -1225,13 +1228,13 @@ class ListTest(HostedTuiBase):
         first = self.host.create("w2", SID)
         second = self.host.create("w1", "other")
         first.calls.row.return_value = SessionRow(
-            "w2", SID, "fake", ActivityState.DONE, None, "shown", "bye", own=False
+            "w2", SID, "fake", StatusState.DONE, None, "shown", "bye", own=False
         )
         second.calls.row.return_value = SessionRow(
             "w1",
             "other",
             "unknown-client",
-            ActivityState.WORKING,
+            StatusState.WORKING,
             None,
             None,
             None,
@@ -1387,13 +1390,13 @@ class TuiStartTest(HostedTuiBase):
             },
         )
 
-    def test_state_send_stop_and_screen_are_the_tui_modes_attach_command_its_hosts(self):
+    def test_alive_send_stop_and_screen_are_the_tui_modes_attach_command_its_hosts(self):
         session = self.tui(name="w1")
         terminal = self.host.processes["w1"]
         self.assertTrue(session.displayable)
         self.host.calls.screen.return_value = "pane text"
         self.host.calls.attach_command.return_value = "terminal attach w1"
-        self.assertEqual((session.state(), session.screen(5)), ("live", "pane text"))
+        self.assertEqual((session.alive(), session.screen(5)), (True, "pane text"))
         self.host.calls.screen.assert_called_once_with(terminal, 5)
         self.assertEqual(session.attach_command(), "terminal attach w1")
         session.send("hi")
@@ -1403,6 +1406,13 @@ class TuiStartTest(HostedTuiBase):
         session.stop()
         terminal.calls.close.assert_called_once_with()
         self.assertFalse(os.path.lexists(os.path.join(self.root, "w1")))
+
+    def test_a_tui_status_carries_its_cwd_then_is_gone_once_stopped(self):
+        session = self.tui(name="w1")
+        found = session.status()
+        self.assertEqual((found.alive, found.cwd), (True, session.info().cwd))
+        session.stop()
+        self.assertEqual(session.status().state, "gone")
 
     def test_send_and_screen_refuse_a_dead_pane(self):
         session = self.tui(name="w1")
@@ -1433,6 +1443,14 @@ class TuiStartTest(HostedTuiBase):
                 mock.call("w1", display="mgr/below", command="open {{session}}"),
             ],
         )
+
+    def test_hide_asks_its_host_and_status_reports_the_hosts_hidden_flag(self):
+        session = self.tui(name="w1")
+        session.hide()
+        self.host.calls.hide.assert_called_once_with("w1")
+        for flag in (True, False):
+            self.host.processes["w1"].calls.hidden.return_value = flag
+            self.assertEqual(session.status().hidden, flag)
 
     def test_its_record_is_its_hosts(self):
         session = self.tui(name="w1")

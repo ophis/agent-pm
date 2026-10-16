@@ -195,7 +195,13 @@ class FakeDelegate(Delegate):
         outcome = state["outcome"] and state["outcome"]["status"]
         word = "working" if state["alive"] else "gone"
         return Status(
-            state["name"], state["alive"], word, outcome, None, Layout(self.workdir).agent
+            name=state["name"],
+            alive=state["alive"],
+            state=word,
+            outcome=outcome,
+            attach=None,
+            hidden=False,
+            cwd=Layout(self.workdir).agent,
         )
 
     def outcome(self):
@@ -203,6 +209,9 @@ class FakeDelegate(Delegate):
         return None if found is None else Outcome(**found)
 
     def show(self):
+        raise NotDisplayable("host fake cannot display")
+
+    def hide(self):
         raise NotDisplayable("host fake cannot display")
 
     def attach_command(self):

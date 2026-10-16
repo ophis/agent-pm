@@ -104,7 +104,9 @@ class SendReadTest(Base):
             with self.subTest(lines=value):
                 res = self.session("read", "w1", f"--lines={value}")
                 self.usage(res, positive.format(value))
-        name = "agent-pm-session {}: error: argument name: want [A-Za-z0-9_-]+, not 'a b'"
+        name = (
+            "agent-pm-session {}: error: argument name: want [A-Za-z0-9_-]+ but not none, not 'a b'"
+        )
         self.usage(self.session("read", "a b"), name.format("read"))
         self.usage(self.session("send", "a b", "hi"), name.format("send"))
         for absent in ("w9", "w"):

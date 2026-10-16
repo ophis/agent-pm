@@ -91,7 +91,12 @@ def provider(api, cfg):
         def status(self):
             live = self.alive()
             return Status(
-                self.issue, live, "working" if live else "gone", None, self.attach_command()
+                name=self.issue,
+                alive=live,
+                state="working" if live else "gone",
+                outcome=None,
+                attach=self.attach_command(),
+                hidden=False,
             )
 
         def outcome(self):
@@ -99,6 +104,9 @@ def provider(api, cfg):
 
         def show(self):
             return api.show(harness_name(self.role, self.issue))
+
+        def hide(self):
+            api.hide(harness_name(self.role, self.issue))
 
         def close(self):
             return api.close(harness_name(self.role, self.issue))

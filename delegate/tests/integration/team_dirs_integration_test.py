@@ -42,7 +42,7 @@ composition.check_team_dirs(writes=[])
 composition.check_all()
 params = RunParams(input="", out=os.path.join(sys.argv[1], "out.md"), workdir=sys.argv[1])
 rows = {}
-for role, tasks in composition.catalog().items():
+for role, tasks in composition.index().items():
     run = composition.resolve(role)
     composition.render(run, params)
     rows[role] = [

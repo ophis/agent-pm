@@ -19,7 +19,7 @@ from pathlib import Path
 from unittest import mock
 
 from agent_pm.session import ConfigError, Displayable, Host, Launch, SessionError, Terminal
-from agent_pm.session.engine.types import ActivityState, Key, KeyPress, Paste, SessionRow
+from agent_pm.session.engine.types import Key, KeyPress, Paste, SessionRow
 from agent_pm.session.hosts.base import SIGNALS
 from agent_pm.session.hosts.tmux import TmuxHost, transport, types
 from agent_pm.session.hosts.tmux.host import (
@@ -34,7 +34,7 @@ from agent_pm.session.hosts.tmux.host import (
     events_file,
     validate_events,
 )
-from agent_pm.utils import ProcessControl, load_class
+from agent_pm.utils import ProcessControl, StatusState, load_class
 
 from session.tests.case import Case
 from session.tests.hosted_support import SID, listed
@@ -309,9 +309,18 @@ class DetachTest(Base):
         self.tmux.detach.assert_not_called()
 
     def test_events_creation_failure_is_a_driver_error_before_launch(self):
-        self.tmux.events_file.side_effect = TuiError("cannot create events")
-        with self.assertRaisesRegex(SessionError, "cannot create events"):
-            self.detach(events=os.path.join(self.dir, "events"))
+        events, real_open = os.path.join(self.dir, "events"), os.open
+
+        def refused(path, *args, **kw):
+            if path == events:
+                raise PermissionError(13, "Permission denied")
+            return real_open(path, *args, **kw)
+
+        with (
+            mock.patch("os.open", side_effect=refused),
+            self.assertRaisesRegex(SessionError, f"events file {events}: Permission denied"),
+        ):
+            self.detach(events=events)
         self.tmux.detach.assert_not_called()
         self.socket.assert_not_called()
 
@@ -514,6 +523,60 @@ class DisplayableTest(Base):
         with self.assertRaisesRegex(ConfigError, "^per_column must be"):
             self.host.show("w1")
 
+    def options(self, **found):
+        recorded = self.tmux.option.side_effect
+        self.tmux.option.return_value = None
+        self.tmux.option.side_effect = lambda pane, key: found.get(key[1:], recorded(pane, key))
+
+    def test_hide_kills_the_shown_pane_and_marks_it_hidden_until_a_show(self):
+        self.options(pane="%9", sid=SID)
+        self.assertIsNone(self.host.hide("w1"))
+        self.tmux.kill.assert_called_once_with("%9")
+        self.tmux.set_option.assert_called_once_with("%7", "@hidden", "1")
+        self.options(hidden="1")
+        self.assertTrue(self.host.attach("w1").status().hidden)
+        self.tmux.open_pane.return_value = None
+        self.options(sid=SID)
+        self.host.show("w1")
+        self.tmux.set_option.assert_called_with("%7", "@hidden", "0")
+        self.options(hidden="0")
+        self.assertFalse(self.host.attach("w1").hidden())
+
+    def test_hide_leaves_an_iterm2_or_closed_pane_and_still_marks_it_hidden(self):
+        for pane, process in (("w0t0p0:ABC", PROCESS), ("%9", None), (None, PROCESS)):
+            with self.subTest(pane=pane, process=process):
+                self.tmux.reset_mock()
+                self.options(pane=pane, sid=SID)
+                self.tmux.process.side_effect = lambda target, found=process: (
+                    found if target == "%9" else PROCESS
+                )
+                self.host.hide("w1")
+                self.tmux.kill.assert_not_called()
+                self.tmux.set_option.assert_called_once_with("%7", "@hidden", "1")
+
+    def test_hide_kills_the_pane_of_a_sidless_session_and_marks_nothing(self):
+        self.options(pane="%9")
+        self.tmux.process.return_value = PROCESS
+        self.tmux.process.side_effect = None
+        self.host.hide("w1")
+        self.tmux.kill.assert_called_once_with("%9")
+        self.tmux.set_option.assert_not_called()
+
+    def test_hide_refuses_an_absent_session(self):
+        self.tmux.status.return_value = None
+        with self.assertRaisesRegex(SessionError, "^no tmux session w1$"):
+            self.host.hide("w1")
+
+    def test_hide_names_a_tmux_failure(self):
+        self.options(pane="%9", sid=SID)
+        self.tmux.kill.side_effect = TuiError("tmux: boom")
+        with self.assertRaisesRegex(SessionError, "^tmux session w1: tmux: boom$"):
+            self.host.hide("w1")
+        self.tmux.kill.side_effect = None
+        self.tmux.set_option.side_effect = TuiError("tmux: lost server")
+        with self.assertRaisesRegex(SessionError, "^tmux session w1: tmux: lost server$"):
+            self.host.hide("w1")
+
     def test_layout_completes_the_display_once_the_pane_is_found(self):
         for display, calls, want in (
             (None, [mock.call.anchor(None), mock.call.opener()], "mgr"),
@@ -641,7 +704,7 @@ class RowsTest(Base):
         ]
         self.tmux.own_session.return_value = "mgr"
         rows = self.host.rows()
-        self.assertEqual([type(r.state) for r in rows], [ActivityState] * 6)
+        self.assertEqual([type(r.state) for r in rows], [StatusState] * 6)
         row = SessionRow
         self.assertEqual(
             rows,

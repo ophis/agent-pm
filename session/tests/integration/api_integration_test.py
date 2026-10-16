@@ -355,7 +355,7 @@ class ExitTest(Base):
         self.assertIsInstance(found[1], Exited)
         self.assertLess(found[1].returncode, 0)
         handle.stop()
-        self.assertEqual(handle.state(), "absent")
+        self.assertFalse(handle.alive())
         self.assertEqual(list(handle.events()), [])
 
 
@@ -418,7 +418,7 @@ class FailureTest(Base):
         with self.assertRaises(KeyError):
             self.drain(handle)
         self.assertFalse(running(self.logged()[0]["pid"]))
-        self.assertEqual(handle.state(), "absent")
+        self.assertFalse(handle.alive())
         self.assertEqual(list(handle.events()), [])
 
     def test_a_failed_client_session_line_stops_the_process_and_propagates(self):

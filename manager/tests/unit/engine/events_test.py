@@ -41,7 +41,7 @@ class EventsTest(EventsCase):
             self.assertTrue(Path(self.events.journal).is_file())
             self.assertEqual(Path(self.events.path).read_bytes(), b"old\n")
             save(self.ledger, '{"gen":1,"cursor":0}\n', durable=True)
-            self.events.finish(1)
+            self.events.recover(1)
         self.assertEqual(Path(self.events.archive).read_bytes(), self.original)
         self.assertFalse(Path(self.events.journal).exists())
         self.assertFalse(Path(self.events.candidate).exists())
@@ -90,7 +90,7 @@ class EventsTest(EventsCase):
         with file_lock(self.events.path), mock.patch("time.sleep", create_fresh):
             self.assertTrue(self.events.rotate(1, 0))
             save(self.ledger, '{"gen":1,"cursor":0}\n', durable=True)
-            self.events.finish(1)
+            self.events.recover(1)
         self.assertEqual(Path(self.events.path).read_bytes(), b"old\nfresh\n")
         self.assertEqual(stat.S_IMODE(os.stat(self.events.path).st_mode), 0o600)
         self.assertEqual(Path(self.events.archive).read_bytes(), self.original)
@@ -135,7 +135,7 @@ class EventsTest(EventsCase):
         thread.start()
         with file_lock(self.events.path):
             self.assertTrue(self.events.rotate(1, 0))
-            self.events.finish(1)
+            self.events.recover(1)
         thread.join(5)
         self.assertTrue(completed.is_set())
         self.assertEqual(Path(self.events.path).read_bytes(), b"old\ninflight\nfresh\n")
@@ -150,7 +150,7 @@ class EventsTest(EventsCase):
 
         with file_lock(self.events.path), mock.patch("os.replace", side_effect=replace):
             self.assertTrue(self.events.rotate(1, 0))
-            self.events.finish(1)
+            self.events.recover(1)
         self.assertEqual(Path(self.events.path).read_bytes(), b"old\nlate\n")
 
     def publishing(self, after):
@@ -181,7 +181,7 @@ class EventsTest(EventsCase):
 
         with file_lock(self.events.path), patched, mock.patch("time.sleep", settle):
             self.assertTrue(self.events.rotate(1, 0))
-            self.events.finish(1)
+            self.events.recover(1)
         if len(sleeps) < 2:
             os.write(writers[0], b"settled\n")
         self.assertEqual(Path(self.events.path).read_bytes(), b"old\nsettled\n")

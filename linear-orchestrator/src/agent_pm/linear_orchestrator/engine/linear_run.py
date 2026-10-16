@@ -119,26 +119,8 @@ class LinearRun:
             )
         )
 
-    def alive(self) -> bool:
-        return self.delegate.alive()
-
     def status(self) -> Status:
         return replace(self.delegate.status(), name=self.issue)
-
-    def outcome(self):
-        return self.delegate.outcome()
-
-    def show(self) -> str | None:
-        return self.delegate.show()
-
-    def close(self) -> None:
-        self.delegate.close()
-
-    def attach_command(self) -> str | None:
-        return self.delegate.attach_command()
-
-    def session_info(self):
-        return self.delegate.session_info()
 
     def resume(self) -> Record:
         return self._record(self.delegate.resume())

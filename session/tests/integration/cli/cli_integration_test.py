@@ -22,6 +22,7 @@ SUBCOMMANDS = [
     "reply",
     "status",
     "show",
+    "hide",
     "close",
     "attach-command",
     "ls",

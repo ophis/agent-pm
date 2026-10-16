@@ -13,7 +13,7 @@ from unittest import mock
 from agent_pm.manager import Spec
 from agent_pm.manager.cli import main
 from agent_pm.manager.engine.pr import VIEW_FIELDS
-from agent_pm.utils import Record, Status
+from agent_pm.utils import Record, Status, StatusState
 
 from manager.tests.cli_case import CliCase
 from utils.tests.fakes import ctl
@@ -176,7 +176,12 @@ class NextEventContent(CliCase):
             with self.subTest(sessions=sessions):
                 record = self.launched("r1", *sessions, record_name=record_name)
                 status = Status(
-                    record.name, alive=False, state="exited", outcome="done", attach=None
+                    name=record.name,
+                    alive=False,
+                    state="dead",
+                    outcome="done",
+                    attach=None,
+                    hidden=False,
                 )
                 self.answers = {(*record.ctl, "status"): (0, status.to_line() + "\n", "")}
                 self.assertEqual(
@@ -272,11 +277,12 @@ class Report(CliCase):
         self.roster.begin(Spec(name, ("start",), note), sid=sid)
         self.roster.commit(name, record)
         self.statuses[record.name] = Status(
-            record.name,
+            name=record.name,
             alive=alive,
-            state="working" if alive else "exited",
+            state=StatusState.WORKING if alive else StatusState.GONE,
             outcome=outcome,
             attach=None,
+            hidden=False,
         )
         self.answers[(*record.ctl, "status")] = self.status_answer
         return record

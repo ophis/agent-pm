@@ -8,7 +8,7 @@ import json
 import os
 
 from agent_pm.session.engine.status_log import SessionStatusLog
-from agent_pm.session.engine.types import Word
+from agent_pm.session.engine.types import StatusState
 from agent_pm.utils import STATE
 
 META = "meta.json"
@@ -54,9 +54,9 @@ def put(folder: str, file: str, text: str, *, dir_fd: int | None = None) -> None
         os.replace(os.path.join(folder, temporary), os.path.join(folder, file))
 
 
-def mark(folder: str, word: Word, events: str | None) -> None:
+def mark(folder: str, word: StatusState, events: str | None) -> None:
     """activity := word; done and blocked also go to events."""
     with contextlib.suppress(FileNotFoundError):
         put(folder, ACTIVITY, word)
-    if events and word in (Word.DONE, Word.BLOCKED):
+    if events and word in (StatusState.DONE, StatusState.BLOCKED):
         SessionStatusLog(events).write(os.path.basename(folder), word)

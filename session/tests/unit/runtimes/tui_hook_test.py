@@ -16,6 +16,7 @@ from contextlib import redirect_stderr
 
 from agent_pm.session.engine import types as engine_types
 from agent_pm.session.runtimes import tui_hook
+from agent_pm.utils import StatusState
 
 from session.tests.case import SRC, Case
 from session.tests.tui_hook_support import (
@@ -224,20 +225,20 @@ class Source(Case):
 
 class WordTest(Case):
     def test_the_words_a_label_may_mark(self):
-        self.assertEqual(list(tui_hook.Word), ["done", "blocked", "working"])
+        self.assertEqual(tui_hook.MARKS, ("done", "blocked", "working"))
         check = tui_hook.SESSION_STATE["words"]
-        self.assertTrue(check({"stop": tui_hook.Word.DONE, "tool": "working"}))
+        self.assertTrue(check({"stop": StatusState.DONE, "tool": "working"}))
         for bad in ({"stop": "dead"}, {"stop": ["done"]}, {"stop": None}):
             with self.subTest(words=bad):
                 self.assertFalse(check(bad))
 
 
 class SharedTypes(Case):
-    """The hook uses engine/types' HookError and Word."""
+    """The hook uses engine/types' HookError and MARKS."""
 
     def test_each_shared_hook_type_has_one_definition(self):
         package = os.path.join(SRC["session"], "agent_pm", "session")
-        definitions = {"Word": [], "HookError": []}
+        definitions = {"HookError": []}
         for top, _, names in os.walk(package):
             for name in sorted(n for n in names if n.endswith(".py")):
                 path = os.path.join(top, name)
@@ -259,7 +260,7 @@ class SharedTypes(Case):
                 tui_hook.read_state(path)
 
     def test_no_normal_session_module_takes_a_type_from_the_hook(self):
-        classes = {"HookError", "Word"}
+        classes = {"HookError", "MARKS"}
         package = os.path.join(SRC["session"], "agent_pm", "session")
         found = []
         for top, _, names in os.walk(package):

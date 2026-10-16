@@ -84,6 +84,9 @@ class Delegate(ABC):
     def show(self) -> str | None: ...
 
     @abstractmethod
+    def hide(self) -> None: ...
+
+    @abstractmethod
     def attach_command(self) -> str | None: ...
 
     @abstractmethod

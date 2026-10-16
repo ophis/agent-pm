@@ -21,7 +21,8 @@ from typing import Protocol, runtime_checkable
 
 from agent_pm.session.engine.base import Session
 from agent_pm.session.engine.types import (
-    TAG,
+    SESSION_NAME,
+    SESSION_NAME_RULE,
     Access,
     Blocked,
     ConfigError,
@@ -92,7 +93,7 @@ class WorkerState:
 
     def __post_init__(self):
         checks = {
-            "name": isinstance(self.name, str) and TAG.fullmatch(self.name) is not None,
+            "name": isinstance(self.name, str) and SESSION_NAME.fullmatch(self.name) is not None,
             "sid": isinstance(self.sid, str) and SID.fullmatch(self.sid) is not None,
             "client": isinstance(self.client, str) and CONFIG_NAME.fullmatch(self.client),
             "cwd": printable_abs(self.cwd),
@@ -209,8 +210,8 @@ class Worker:
     @classmethod
     def load(cls, name: str, *, sid: str | None = None, **kw) -> Worker:
         """Worker `name`'s state: sid's (given, e.g. by AGENT_PM_SID), else its latest start's."""
-        if not isinstance(name, str) or not TAG.fullmatch(name):
-            raise ConfigError(f"name must match [A-Za-z0-9_-]+, got {name!r:.80}")
+        if not isinstance(name, str) or not SESSION_NAME.fullmatch(name):
+            raise ConfigError(f"name must match {SESSION_NAME_RULE}, got {name!r:.80}")
         root = os.path.abspath(os.path.expanduser(WORKERS))
         given = sid is not None
         if given and (not isinstance(sid, str) or not SID.fullmatch(sid)):

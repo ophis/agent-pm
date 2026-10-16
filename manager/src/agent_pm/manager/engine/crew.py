@@ -16,7 +16,7 @@ from dataclasses import replace
 from agent_pm.manager.engine.pr import NO_PR, VIEW_FIELDS, cells, pr_url, unknown
 from agent_pm.manager.engine.roster import LOCK_TIMEOUT, Roster
 from agent_pm.manager.engine.types import Entry, Lease, RosterError, Spec, State, StatusError
-from agent_pm.utils import LEASE_ENV, Record, Status, one_line, printable
+from agent_pm.utils import LEASE_ENV, Record, Status, StatusState, one_line, printable
 
 TIMEOUT = 30
 RECOVERY_MARGIN = 5
@@ -167,8 +167,9 @@ class Crew:
         for name, entry in entries.items():
             record = entry.record
             if record is None:
+                word = StatusState.STARTING if entry.state == State.STARTING else StatusState.GONE
                 answers[name] = Status(
-                    name, alive=False, state=entry.state, outcome=None, attach=None
+                    name=name, alive=False, state=word, outcome=None, attach=None, hidden=False
                 )
                 continue
             owners.setdefault((record.name, record.ctl), []).append(name)

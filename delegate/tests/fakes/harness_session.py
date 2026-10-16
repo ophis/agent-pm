@@ -5,6 +5,7 @@ harness_starts_agent is False.
 
 import json
 import os
+from dataclasses import replace
 
 from agent_pm.delegate.engine.types import Layout
 from agent_pm.session import (
@@ -120,10 +121,14 @@ def harness_launches():
 
 class ShowingHost(RecordingHost, Displayable):
     shown: list[tuple[str, str | None, str | None]] = []
+    hidden: list[str] = []
 
     def show(self, name, *, display=None, command=None):
         self.shown.append((name, display, command))
         return self.attach_command(name)
+
+    def hide(self, name):
+        self.hidden.append(name)
 
     def attach_command(self, name):
         return f"{self.name} attach {name}"
@@ -151,7 +156,8 @@ class HarnessSession(SessionClass):
         cls.started, cls.live, cls.attached, cls.inspected = [], {}, [], []
         cls.preflights, cls.preflight_error = [], None
         cls.host_names = {}
-        RecordingHost.processes, RecordingHost.launches, ShowingHost.shown = {}, [], []
+        RecordingHost.processes, RecordingHost.launches = {}, []
+        ShowingHost.shown, ShowingHost.hidden = [], []
         RecordingHost.harness_starts_agent = True
         kind = ShowingHost if displayable else RecordingHost
         cls.hosts = {name: kind(name) for name in ("agent", "harness", "changed")}
@@ -201,6 +207,17 @@ class HarnessSession(SessionClass):
             raise NotDisplayable(f"host {host.name} cannot display")
         return host.show(self.name, display=display, command=command)
 
+    def hide(self):
+        host = self.host(self.host_names[self.name])
+        if not isinstance(host, Displayable):
+            raise NotDisplayable(f"host {host.name} cannot display")
+        host.hide(self.name)
+
+    def status(self):
+        host = self.host(self.host_names[self.name])
+        hidden = isinstance(host, ShowingHost) and self.name in host.hidden
+        return replace(super().status(), hidden=hidden)
+
     def attach_command(self):
         host = self.host(self.host_names[self.name])
         if not isinstance(host, Displayable):
@@ -208,7 +225,7 @@ class HarnessSession(SessionClass):
         return host.attach_command(self.name)
 
     def stop(self):
-        self._state = Liveness.ABSENT
+        self.liveness = Liveness.ABSENT
         self.host(self.host_names[self.name]).attach(self.name).close()
         super().stop()
 

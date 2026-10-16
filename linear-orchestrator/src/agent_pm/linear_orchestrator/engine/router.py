@@ -140,7 +140,7 @@ def live_sessions(cfg, entries, *, say):
         if entry.role not in live:
             continue
         try:
-            if LinearRun.attach(ident, cfg=cfg, sid=entry.sid).alive():
+            if LinearRun.attach(ident, cfg=cfg, sid=entry.sid).delegate.alive():
                 live[entry.role].append(ident)
         except (ConfigError, delegate.ConfigError) as error:
             say("recover-skip", ident, once=True, sid=entry.sid, reason=one_line(error))
@@ -302,7 +302,7 @@ class Board:
     def status(self, ident, sid):
         if sid not in self.statuses:
             try:
-                st = LinearRun.attach(ident, cfg=self.cfg, sid=sid).session_info()
+                st = LinearRun.attach(ident, cfg=self.cfg, sid=sid).delegate.session_info()
                 self.statuses[sid] = None if st.resumable == "unknown" else st
             except ConfigError as error:
                 self.status_errors[sid] = one_line(error)
@@ -354,7 +354,7 @@ class Board:
         """
         ident = issue["identifier"]
         try:
-            outcome = LinearRun.attach(ident, cfg=self.cfg, sid=sid).outcome()
+            outcome = LinearRun.attach(ident, cfg=self.cfg, sid=sid).delegate.outcome()
         except (ConfigError, delegate.ConfigError, delegate.SessionError):
             return None  # status says why
         if outcome is None:
@@ -496,7 +496,7 @@ def begin(cfg, spec: Spec) -> Spec:
     recorded = latest(parse_log(cfg.runs_log)).get(spec.issue)
     if spec.mode == "new" and recorded is not None:
         try:
-            LinearRun.attach(spec.issue, cfg=cfg, sid=recorded.sid).close()
+            LinearRun.attach(spec.issue, cfg=cfg, sid=recorded.sid).delegate.close()
         except (ConfigError, delegate.ConfigError, delegate.SessionError) as error:
             log("router", "tui-error", spec.issue, msg=one_line(error))
         else:
@@ -570,7 +570,7 @@ def _outer(a, cfg, *, gql, run, keychain, now, attended):
         return fail(a.issue, "config-error", f"no Keychain item for role key {key}", 2)
     if a.mode == "resume":
         try:
-            st = LinearRun.attach(a.issue, cfg=cfg, sid=a.sid).session_info()
+            st = LinearRun.attach(a.issue, cfg=cfg, sid=a.sid).delegate.session_info()
             why = None if st.resumable == "yes" else st.resumable
         except (ConfigError, delegate.ConfigError, delegate.SessionError) as e:
             why = one_line(e)
@@ -667,7 +667,7 @@ def announce(ident, linear_run, detached):
     """
     print(detached.to_line(), flush=True)
     try:
-        command = linear_run.attach_command()
+        command = linear_run.delegate.attach_command()
     except (delegate.ConfigError, delegate.SessionError) as e:
         command = f"unknown ({one_line(e)})"
     if command:
@@ -826,7 +826,7 @@ def run_issue(opts, cfg, gql, start, *, keychain, clock=datetime.now, launch_sid
             return stop
         if any(ident in ids for ids in live.values()):
             sid = latest(entries)[ident].sid
-            attach = LinearRun.attach(ident, cfg=cfg, sid=sid).attach_command()
+            attach = LinearRun.attach(ident, cfg=cfg, sid=sid).delegate.attach_command()
             shown = f": {attach}" if attach else ""
             print(f"router.py: {ident} has a live agent run{shown}", file=sys.stderr)
             return stop

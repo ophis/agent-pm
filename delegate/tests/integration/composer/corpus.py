@@ -8,8 +8,9 @@ from unittest import mock
 
 from agent_pm.delegate.composer import RunParams, Team
 from agent_pm.delegate.composer.base import TEAM
-from agent_pm.delegate.composer.teams import catalog
 from agent_pm.delegate.config import CONFIG, read_config
+
+from delegate.tests.unit.composer.shipped import catalog
 
 ROOT = "/corpus/team"
 CUSTOM = "/corpus/custom"
@@ -44,7 +45,7 @@ def corpus():
             entries[(parent, Path(path).stem)] = (path,)
     found = Team(ROOT, (CUSTOM,), entries)
     cases = {}
-    for role, tasks in catalog(config=CONFIG, local=os.devnull).items():
+    for role, tasks in catalog().items():
         for task in (None, *tasks):
             for resume in (False, True):
                 for language in ("English", ""):

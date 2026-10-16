@@ -39,14 +39,13 @@ from agent_pm.session.engine.types import (
     SessionInfo,
     Spec,
     TurnEnd,
-    Word,
 )
 from agent_pm.session.hosts.base import HostProcess
 from agent_pm.session.hosts.pty import PtyHost
 from agent_pm.session.hosts.pty import state as pty_state
 from agent_pm.session.hosts.tmux.types import TuiError
 from agent_pm.session.runtimes import tui, tui_hook
-from agent_pm.utils import inode_lock
+from agent_pm.utils import StatusState, inode_lock
 
 from session.tests import fake_adapter
 from session.tests.case import PLUGIN_BIN, Case
@@ -61,7 +60,7 @@ TS = "2026-10-11T12:00:00.000+00:00"
 
 WORDS = {"stop": "done", "ask": "blocked", "tool": "working"}
 
-BAD_NAMES = ("../x", "a b", "", "a/b", "w1\n")
+BAD_NAMES = ("../x", "a b", "", "a/b", "w1\n", "none")
 
 
 def record(label: str, **payload) -> dict:
@@ -471,7 +470,11 @@ class AttachTest(Base):
 
     def test_marked_blocked_is_its_terminals_activity(self):
         mode = self.attach()
-        for state, blocked in ((Word.BLOCKED, True), (Word.WORKING, False), (None, False)):
+        for state, blocked in (
+            (StatusState.BLOCKED, True),
+            (StatusState.WORKING, False),
+            (None, False),
+        ):
             with self.subTest(state=state):
                 self.process.calls.activity.return_value = state
                 self.assertIs(mode.marked_blocked(), blocked)
@@ -504,7 +507,7 @@ class AttachTest(Base):
         mode = self.attach()
         self.host.calls.screen.return_value = "Sign in"
         self.assertEqual(mode.poll(0), ([Blocked("Sign in")], False))
-        self.process.calls.mark.assert_called_once_with(Word.BLOCKED, self.events)
+        self.process.calls.mark.assert_called_once_with(StatusState.BLOCKED, self.events)
         mode.stop()
         self.process.calls.close.assert_called_once_with()
 
@@ -673,10 +676,14 @@ class StartTest(Base):
             with self.subTest(name=name), self.assertRaises(ConfigError) as caught:
                 self.start(name=name)
             self.assertEqual(
-                str(caught.exception), f"name must match [A-Za-z0-9_-]+, got {name!r:.80}"
+                str(caught.exception),
+                f"name must match [A-Za-z0-9_-]+ but not none, got {name!r:.80}",
             )
         for fields, message in (
-            ({"name": None, "sid": "a b"}, "name must match [A-Za-z0-9_-]+, got 'fake-a b'"),
+            (
+                {"name": None, "sid": "a b"},
+                "name must match [A-Za-z0-9_-]+ but not none, got 'fake-a b'",
+            ),
             ({"name": 5}, "name must be None or a string"),
         ):
             with self.subTest(fields=fields), self.assertRaises(ConfigError) as caught:
@@ -1716,11 +1723,11 @@ class ScanTest(Base):
 
     def test_a_dialog_marks_the_terminal_blocked_unless_it_is(self):
         mode = self.started()
-        mode._terminal.calls.activity.return_value = Word.DONE
+        mode._terminal.calls.activity.return_value = StatusState.DONE
         self.scans(mode, "Sign in Trust this folder?")
-        mode._terminal.calls.mark.assert_called_once_with(Word.BLOCKED, self.events)
+        mode._terminal.calls.mark.assert_called_once_with(StatusState.BLOCKED, self.events)
         mode._terminal.calls.mark.reset_mock()
-        mode._terminal.calls.activity.return_value = Word.BLOCKED
+        mode._terminal.calls.activity.return_value = StatusState.BLOCKED
         self.scans(mode, "", "Sign in")
         mode._terminal.calls.mark.assert_not_called()
 
@@ -2077,7 +2084,6 @@ class StoreTest(Base):
 
 class TransportErrorTest(TmuxBase):
     def test_real_host_launch_keeps_the_modes_exact_error_prefix(self):
-        self.tmux.tmux_path.return_value = self.tool
         self.tmux.start.side_effect = TuiError("tmux: boom")
         workdir = os.path.join(self.dir, "work")
         os.mkdir(workdir)

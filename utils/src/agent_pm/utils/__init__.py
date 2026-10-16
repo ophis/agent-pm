@@ -56,7 +56,15 @@ from agent_pm.utils.paths import (
     under,
 )
 from agent_pm.utils.process_control import ProcessControl
-from agent_pm.utils.record import Display, Record, Status, answer_keys, json_records, number
+from agent_pm.utils.record import (
+    Display,
+    Record,
+    Status,
+    StatusState,
+    answer_keys,
+    json_records,
+    number,
+)
 from agent_pm.utils.registry import CONFIG_NAME
 from agent_pm.utils.registry import PATH as CLASS_PATH
 from agent_pm.utils.registry import load as load_class
@@ -103,6 +111,7 @@ __all__ = [
     "STATE",
     "STOP_WAIT",
     "Status",
+    "StatusState",
     "Stopped",
     "answer_keys",
     "append_line",

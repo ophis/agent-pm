@@ -132,7 +132,12 @@ def _answer(state_dir: str, sub: str, call: dict) -> int:
             shown = session["alive"] and session["displayable"]
             attach = f"{COMMAND} attach {record.name}" if shown else None
             status = Status(
-                record.name, session["alive"], session["state"], session["outcome"], attach
+                name=record.name,
+                alive=session["alive"],
+                state=session["state"],
+                outcome=session["outcome"],
+                attach=attach,
+                hidden=False,
             )
             print(status.to_line())
         elif sub == "show" and not session["displayable"]:

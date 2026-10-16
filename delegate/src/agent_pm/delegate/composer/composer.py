@@ -73,9 +73,6 @@ class Composer:
     def trusted_dirs(self) -> frozenset[str]:
         return run.trusted_dirs(cfg=thaw(self.config.values))
 
-    def catalog(self) -> dict[str, dict[str, str]]:
-        return self.index()
-
     def render(self, config: RunConfig, params: RunParams) -> str:
         return prompt.render(config, params, team=self.team)
 

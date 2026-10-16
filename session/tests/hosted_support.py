@@ -15,8 +15,7 @@ from agent_pm.session.engine import types as engine_types
 from agent_pm.session.engine.hosted_session import HostedSession
 from agent_pm.session.engine.records import RunLog
 from agent_pm.session.engine.types import Access, ConfigError, Exited, Launch, Spec
-from agent_pm.session.hosts.tmux import transport
-from agent_pm.session.hosts.tmux.host import Tmux, events_file, validate_events, validate_start
+from agent_pm.session.hosts.tmux.host import Tmux
 from agent_pm.session.runtimes.in_process import RUN_THREAD
 
 from session.tests import fake_adapter
@@ -24,6 +23,7 @@ from session.tests.case import Case
 from session.tests.fakes.terminal import ScreenHost
 from session.tests.modules import adapter_loader
 from session.tests.threads import capture_errors
+from session.tests.tmux_fixtures import which
 
 WAIT = 10
 
@@ -95,8 +95,6 @@ class CheckedRun(fake_adapter.FakeInProcess):
 
 
 class ProbeAdapter(fake_adapter.FakeAdapter):
-    """Fake client with recorded usage output."""
-
     keys = fake_adapter.FakeAdapter.keys | {"probe"}
 
     def usage_probe(self):
@@ -129,8 +127,6 @@ class InnerTui(fake_adapter.FakeTui):
 
 
 class EnvAdapter(ProbeAdapter):
-    """Launches merge spec.access.env and spec.env."""
-
     def headless(self):
         return EnvRun(self)
 
@@ -211,7 +207,6 @@ class Base(Case):
             json.dump(list(steps), f)
 
     def configure(self, client="fake", settings=None, tables=None, **extra):
-        """Configure fake adapters from this fixture's files."""
         tables = {
             **{
                 name: {
@@ -295,10 +290,6 @@ def fake_tmux(case=None) -> mock.Mock:
     """Recorded tmux responses; defaults: status None, listing [], PAUSE 0."""
     host = mock.create_autospec(Tmux, instance=True)
     host.PAUSE = 0
-    host.attach_command.side_effect = transport.attach_command
-    host.events_file.side_effect = events_file
-    host.validate_events.side_effect = validate_events
-    host.validate_start.side_effect = validate_start
     host.status.return_value = None
     host.process_status.side_effect = lambda target: (host.process(target), host.status(target))
     host.listing.return_value = []
@@ -306,7 +297,6 @@ def fake_tmux(case=None) -> mock.Mock:
     tags = {}
     host.option.side_effect = lambda _target, key: tags.get(key)
     host.detach.return_value = host.process.return_value = "1 $1 %1 4242"
-    host.tmux_path.return_value = TMUX
 
     def started(_name, _launch, **kw):
         tags.update(kw["tags"], **{"@process": host.process.return_value})
@@ -335,6 +325,7 @@ class TuiBase(Base):
         self.root = os.path.join(os.path.dirname(self.probe_dir), "tui")
         self.events = os.path.join(self.dir, "events")
         self.host = fake_tmux(self)
+        self.enterContext(which(TMUX))
         self.session_dependencies = {**self.session_dependencies, "host": self.host}
         self.configure(tui=True)
 
@@ -351,7 +342,8 @@ class TuiBase(Base):
             with self.subTest(name=name), self.assertRaises(ConfigError) as caught:
                 call(name)
             self.assertEqual(
-                str(caught.exception), f"name must match [A-Za-z0-9_-]+, got {name!r:.80}"
+                str(caught.exception),
+                f"name must match [A-Za-z0-9_-]+ but not none, got {name!r:.80}",
             )
         self.nothing_hosted()
 

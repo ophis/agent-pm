@@ -6,7 +6,7 @@ from dataclasses import asdict, replace
 from io import StringIO
 
 from agent_pm.utils import answer_keys, number
-from agent_pm.utils.record import Record, RecordError, Status
+from agent_pm.utils.record import Record, RecordError, Status, StatusState
 
 from utils.tests.case import Case
 
@@ -47,8 +47,15 @@ NULL_TEXT = "want null or a non-empty printable str"
 ARGV = "want a non-empty list of str"
 SESSIONS = "sessions: want a list of non-empty printable str"
 STATUS = Status(
-    name="n", alive=True, state="working", outcome="done", attach="tmux attach -t n", cwd="/w/repo"
+    name="n",
+    alive=True,
+    state="working",
+    outcome="done",
+    attach="tmux attach -t n",
+    hidden=True,
+    cwd="/w/repo",
 )
+STATES = "state: want one of starting, working, done, blocked, dead, gone, unknown"
 
 
 def line(base, **changes) -> str:
@@ -193,15 +200,18 @@ class StatusLine(Case):
     def test_round_trip(self):
         for status in (
             STATUS,
-            Status(name="n", alive=False, state="gone", outcome=None, attach=None),
+            Status(name="n", alive=False, state="gone", outcome=None, attach=None, hidden=False),
         ):
             with self.subTest(status=status):
                 text = status.to_line()
                 self.assertNotIn("\n", text)
                 self.assertEqual(Status.parse(text + "\n"), status)
         self.assertEqual(
-            Status(name="n", alive=False, state="gone", outcome=None, attach=None).to_line(),
-            '{"name":"n","alive":false,"state":"gone","outcome":null,"attach":null,"cwd":null}',
+            Status(
+                name="n", alive=False, state="gone", outcome=None, attach=None, hidden=False
+            ).to_line(),
+            '{"name":"n","alive":false,"state":"gone","outcome":null,"attach":null,"hidden":false,'
+            '"cwd":null}',
         )
 
     def test_a_line_without_cwd_has_none(self):
@@ -222,8 +232,11 @@ class StatusLine(Case):
             ("alive", "yes", "alive: want true or false"),
             ("alive", 1, "alive: want true or false"),
             ("name", "", f"name: {TEXT}"),
-            ("state", "a\nb", f"state: {TEXT}"),
-            ("state", None, f"state: {TEXT}"),
+            ("state", "a\nb", STATES),
+            ("state", None, STATES),
+            ("state", "live", STATES),
+            ("hidden", "no", "hidden: want true or false"),
+            ("hidden", None, "hidden: want true or false"),
             ("outcome", 1, "outcome: want null or a str"),
             ("attach", ["fake-ctl"], "attach: want null or a str"),
             ("cwd", "", f"cwd: {NULL_TEXT}"),
@@ -235,6 +248,14 @@ class StatusLine(Case):
 
     def test_not_a_json_object(self):
         self.refused("[]", "Status line: want a JSON object")
+
+    def test_every_state_word_is_the_vocabularys(self):
+        self.assertEqual(
+            list(StatusState), ["starting", "working", "done", "blocked", "dead", "gone", "unknown"]
+        )
+        for word in StatusState:
+            with self.subTest(word=word):
+                self.assertEqual(Status.parse(line(STATUS, state=word)).state, word)
 
 
 class DeepLine(Case):

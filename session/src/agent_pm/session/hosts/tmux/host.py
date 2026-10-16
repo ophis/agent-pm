@@ -19,10 +19,11 @@ import sys
 import tempfile
 import time
 from collections.abc import Mapping, Sequence
+from dataclasses import replace
 
 from agent_pm.session.engine.status_log import SessionStatusLog
 from agent_pm.session.engine.types import (
-    ActivityState,
+    MARKS,
     ConfigError,
     HookCallback,
     Key,
@@ -33,8 +34,8 @@ from agent_pm.session.engine.types import (
     Paste,
     SessionError,
     SessionRow,
+    StatusState,
     TuiSettings,
-    Word,
 )
 from agent_pm.session.hosts.base import Displayable, Host, HostProcess, Terminal
 from agent_pm.session.hosts.tmux import grid, hook, placement, transport
@@ -43,6 +44,7 @@ from agent_pm.session.hosts.tmux.transport import (
     ITERM_OPENER,
     NAME,
     OPENER,
+    PANE,
     PROCESS,
     PROCESS_ID,
     USER_OPTION,
@@ -55,7 +57,7 @@ from agent_pm.session.hosts.tmux.transport import (
     status,
 )
 from agent_pm.session.hosts.tmux.types import Anchor, PaneStatus, Retile, Split, TuiError
-from agent_pm.utils import CONFIG_NAME, Display, ProcessControl, Record, sid_error
+from agent_pm.utils import CONFIG_NAME, Display, ProcessControl, Record, Status, sid_error
 
 FORMAT = "<opener>[/<split>[/<split_from>]]"
 NO_PANE_HINT = ": run from tmux or iTerm2, or pass split_from"
@@ -569,23 +571,6 @@ class Tmux:
     def mark(self, word: str, events: str | None, *, pane: str) -> None:
         hook.mark(word, events, pane=pane, proc=self.proc)
 
-    def tmux_path(self) -> str | None:
-        return transport.tmux_path()
-
-    def attach_command(self, session: str) -> str:
-        return transport.attach_command(session)
-
-    def events_file(self, path: str) -> str:
-        return events_file(path)
-
-    def validate_events(self, path: str) -> str:
-        return validate_events(path)
-
-    def validate_start(
-        self, session: str, argv: Sequence[str], env: Mapping[str, str], tags: Mapping[str, str]
-    ) -> None:
-        validate_start(session, argv, env, tags)
-
 
 def _session(name) -> str:
     if not isinstance(name, str) or not NAME.fullmatch(name):
@@ -662,11 +647,26 @@ class TmuxProcess(HostProcess):
     def session_identity(self) -> tuple[str | None, str | None]:
         return self._option("@sid"), self._option("@generation")
 
-    def activity(self) -> Word | None:
+    def activity(self) -> StatusState | None:
         value = self._option("@state")
-        return Word(value) if value in tuple(Word) else None
+        return StatusState(value) if value in MARKS else None
 
-    def mark(self, word: Word, events: str | None) -> None:
+    def hidden(self) -> bool:
+        return self._option("@hidden") == "1"
+
+    def status(self) -> Status:
+        found = super().status()
+        return replace(found, attach=attach_command(self.name)) if found.alive else found
+
+    def mark_hidden(self, *, hidden: bool) -> None:
+        """Only a session with a sid (no harness) keeps it."""
+        if self.session_identity()[0] is not None:
+            try:
+                self.tmux.set_option(self._pane, "@hidden", "1" if hidden else "0")
+            except TuiError as error:
+                raise SessionError(f"tmux session {self.name}: {error}") from error
+
+    def mark(self, word: StatusState, events: str | None) -> None:
         if self._own():
             try:
                 self.tmux.mark(word, events, pane=self._pane)
@@ -1025,20 +1025,20 @@ class TmuxHost(Host, Displayable):
     def validate(self, name: str, launch: Launch, *, display: Display = None) -> None:
         super().validate(name, launch, display=display)
         try:
-            self.tmux.validate_start(name, launch.argv, launch.env, {})
+            validate_start(name, launch.argv, launch.env, {})
         except TuiError as error:
             raise SessionError(str(error)) from error
         self.tui_settings()
 
     def prepare_events(self, events: str | None) -> str | None:
         try:
-            return None if events is None else self.tmux.events_file(events)
+            return None if events is None else events_file(events)
         except TuiError as error:
             raise SessionError(str(error)) from error
 
     def events_path(self, events: str | None) -> str | None:
         try:
-            return None if events is None else self.tmux.validate_events(events)
+            return None if events is None else validate_events(events)
         except TuiError as error:
             raise ConfigError(str(error)) from error
 
@@ -1058,7 +1058,7 @@ class TmuxHost(Host, Displayable):
         )
 
     def _executable(self) -> str:
-        path = self.tmux.tmux_path()
+        path = transport.tmux_path()
         if path is None:
             raise SessionError("tmux not found")
         return path
@@ -1177,11 +1177,11 @@ class TmuxHost(Host, Displayable):
                 client=row["client"]
                 if isinstance(row["client"], str) and CONFIG_NAME.fullmatch(row["client"])
                 else None,
-                state=ActivityState.DEAD
+                state=StatusState.DEAD
                 if row["dead"]
-                else ActivityState(row["state"])
-                if row["state"] in (Word.DONE, Word.BLOCKED)
-                else ActivityState.WORKING,
+                else StatusState(row["state"])
+                if row["state"] in (StatusState.DONE, StatusState.BLOCKED)
+                else StatusState.WORKING,
                 display=row["display"],
                 shown=row["shown"],
                 last_lines=row["last_lines"],
@@ -1229,12 +1229,24 @@ class TmuxHost(Host, Displayable):
         except TuiError as e:
             raise ConfigError(str(e)) from None
         if why is None:
+            self.attach(name).mark_hidden(hidden=False)
             return None
         LOG.warning("show %s: %s", name, why)
-        return self.tmux.attach_command(name)
+        return attach_command(name)
+
+    def hide(self, name: str) -> None:
+        if self.tmux.status(_session(name)) is None:
+            raise SessionError(f"no tmux session {name}")
+        try:
+            pane = self.tmux.option(name, "@pane")
+            if pane is not None and PANE.fullmatch(pane) and self.tmux.process(pane) is not None:
+                self.tmux.kill(pane)
+        except TuiError as e:
+            raise SessionError(f"tmux session {name}: {e}") from None
+        self.attach(name).mark_hidden(hidden=True)
 
     def attach_command(self, name: str) -> str:
-        return self.tmux.attach_command(_session(name))
+        return attach_command(_session(name))
 
     def screen(self, name: str | HostProcess, lines: int | None = None) -> str:
         if isinstance(name, HostProcess):

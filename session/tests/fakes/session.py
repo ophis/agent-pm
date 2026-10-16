@@ -9,7 +9,7 @@ from __future__ import annotations
 import re
 import uuid
 
-from agent_pm.session import NotDisplayable, Session
+from agent_pm.session import NotDisplayable, Session, StatusState
 from agent_pm.session.engine.types import (
     ConfigError,
     Exited,
@@ -22,6 +22,7 @@ from agent_pm.session.engine.types import (
     SessionStatus,
     TurnEnd,
 )
+from agent_pm.utils import Status
 
 from session.tests.fakes.host import FakeHost
 
@@ -46,7 +47,7 @@ class FakeSession(Session):
         self.client, self.mode = spec.client, spec.mode
         self.display_value = display
         self.sent: list[str] = []
-        self._state, self._reply = Liveness.LIVE, None
+        self.liveness, self._reply = Liveness.LIVE, None
         ended = self.script and isinstance(self.script[-1], Exited)
         self._pending = iter(self.script if ended else (*self.script, Exited(0)))
 
@@ -64,11 +65,23 @@ class FakeSession(Session):
     def press(self, keys) -> None:
         self.sent.append(tuple(keys))
 
-    def state(self) -> Liveness:
-        return self._state
+    def alive(self) -> bool:
+        return self.liveness == Liveness.LIVE
+
+    def status(self) -> Status:
+        return Status(
+            name=self.name,
+            alive=self.alive(),
+            state={Liveness.LIVE: StatusState.WORKING, Liveness.UNKNOWN: StatusState.UNKNOWN}.get(
+                self.liveness, StatusState.GONE
+            ),
+            outcome=None,
+            attach=None,
+            hidden=False,
+        )
 
     def stop(self) -> None:
-        self._state = Liveness.ABSENT
+        self.liveness = Liveness.ABSENT
         if self.live.get(self.name) is self:
             del self.live[self.name]
 
@@ -99,6 +112,9 @@ class FakeSession(Session):
         return False
 
     def show(self, *, display=None, command=None):
+        raise NotDisplayable("host none cannot display")
+
+    def hide(self) -> None:
         raise NotDisplayable("host none cannot display")
 
     def attach_command(self):

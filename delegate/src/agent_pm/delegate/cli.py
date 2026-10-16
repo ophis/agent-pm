@@ -43,6 +43,7 @@ def main(
         ("outcome", False, "the run's outcome as JSON, null without one"),
         ("resume", False, "resume a stopped run; print its Record"),
         ("show", True, "show each run's displayable sessions"),
+        ("hide", True, "close the views show opened; the runs go on"),
         ("close", True, "close each run's sessions"),
         ("attach-command", False, "the command attaching to the run"),
     ):
@@ -288,6 +289,7 @@ def _query(a: argparse.Namespace, delegate_cls: type[HarnessDelegate], sid: str 
     reply = {
         "status": lambda pair: pair[1].to_line(),
         "show": lambda pair: pair[0].show(),
+        "hide": lambda pair: pair[0].hide(),
         "close": lambda pair: pair[0].close(),
         "outcome": _outcome,
         "resume": lambda view: view.resume().to_line(),
@@ -324,7 +326,7 @@ def listing(composer: Composer) -> str:
     composer.check_team_dirs(writes=[])
     composer.check_all()
     lines = []
-    for role, tasks in composer.catalog().items():
+    for role, tasks in composer.index().items():
         config = composer.resolve(role)
         composer.render(config, LIST_PARAMS)
         source = composer.team.source(composer.path_for("roles", role))

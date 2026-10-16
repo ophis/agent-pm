@@ -3,7 +3,6 @@
 from dataclasses import replace
 
 from agent_pm.delegate import ConfigError as DelegateConfigError
-from agent_pm.delegate import NotDisplayable
 from agent_pm.linear_orchestrator.engine import runs
 from agent_pm.linear_orchestrator.engine.linear_run import LinearRun
 from agent_pm.linear_orchestrator.engine.types import ConfigError
@@ -106,29 +105,25 @@ class Runs(RunCase):
             delegates={**self.cfg.delegates, "other": OtherDelegate},
         )
         view = LinearRun.attach("TASK-1", cfg=changed)
-        self.assertTrue(view.alive())
+        self.assertTrue(view.delegate.alive())
         self.assertEqual(view.delegate_kind, "fake")
         self.assertEqual(view.status(), replace(owner.delegate.status(), name="TASK-1"))
-        self.assertEqual(view.session_info(), owner.delegate.session_info())
+        self.assertEqual(view.delegate.session_info(), owner.delegate.session_info())
         self.assertEqual(Record.parse(view.resume().to_line()), record)
-        self.assertEqual(view.outcome(), None)
-        self.assertEqual(view.attach_command(), None)
-        with self.assertRaises(NotDisplayable):
-            view.show()
-        view.close()
-        self.assertFalse(owner.alive())
+        view.delegate.close()
+        self.assertFalse(owner.delegate.alive())
 
     def test_completed_resume_keeps_record_and_interrupted_resume_starts_once(self):
         owner, record = self.start()
         FakeDelegate.finish(self.cfg.issue_workdir("TASK-1"))
         view = LinearRun.attach("TASK-1", cfg=self.cfg)
-        self.assertEqual(view.outcome(), FakeDelegate.outcome_result)
+        self.assertEqual(view.delegate.outcome(), FakeDelegate.outcome_result)
         self.assertEqual(view.resume(), record)
-        self.assertFalse(view.alive())
+        self.assertFalse(view.delegate.alive())
         FakeDelegate.end(self.cfg.issue_workdir("TASK-1"))
         self.assertEqual(view.resume(), record)
         self.assertEqual(view.resume(), record)
-        self.assertTrue(owner.alive())
+        self.assertTrue(owner.delegate.alive())
 
     def test_missing_record_provider_or_invalid_identity_refuses_attach(self):
         with self.assertRaisesRegex(ConfigError, "no recorded run"):

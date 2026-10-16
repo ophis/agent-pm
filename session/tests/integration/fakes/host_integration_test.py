@@ -7,7 +7,8 @@ import unittest
 from unittest import mock
 
 from agent_pm.session import SessionError
-from agent_pm.session.engine.types import Key, Launch, Liveness, Paste, Word
+from agent_pm.session.engine.types import Key, Launch, Liveness, Paste
+from agent_pm.utils import StatusState
 
 from session.tests.case import Case
 from session.tests.contracts.host import SLEEP, HostContract, program
@@ -64,8 +65,8 @@ class FakeHostOnly(Case):
         terminal = self.host.terminal("w1", Launch(tuple(program(SLEEP)), cwd=self.home))
         events = os.path.join(self.home, "events")
         self.assertIsNone(terminal.activity())
-        terminal.mark(Word.BLOCKED, events)
-        self.assertEqual(self.host.attach("w1").activity(), Word.BLOCKED)
+        terminal.mark(StatusState.BLOCKED, events)
+        self.assertEqual(self.host.attach("w1").activity(), StatusState.BLOCKED)
         with open(events, encoding="utf-8") as stream:
             self.assertRegex(stream.read(), r"^\d\d:\d\d:\d\d w1 blocked\n$")
 

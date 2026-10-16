@@ -42,7 +42,6 @@ from agent_pm.session import (
     Host,
     HostProcess,
     Launch,
-    Liveness,
     Mode,
     NoRecordedSession,
     NotDisplayable,
@@ -63,11 +62,29 @@ from agent_pm.utils import (
     Display,
     Record,
     Status,
+    StatusState,
     load_class,
     source_path,
     thaw,
     under,
 )
+
+
+@dataclass(frozen=True)
+class _HarnessView:
+    """The harness session's view, shaped as its agent Session's."""
+
+    host: Displayable
+    name: str
+
+    def show(self, *, display: Display = None) -> str | None:
+        return self.host.show(self.name, display=display)
+
+    def hide(self) -> None:
+        self.host.hide(self.name)
+
+    def attach_command(self) -> str:
+        return self.host.attach_command(self.name)
 
 
 def _team(team: Team) -> Team:
@@ -592,49 +609,52 @@ class HarnessDelegate(Delegate):
     def status(self) -> Status:
         state = self._read()
         agent = self._agent(state)
-        word = (
-            str(agent.state())
-            if agent is not None
-            else ("live" if self._alive(state) else "absent")
-        )
+        found = None if agent is None else agent.status()
+        alive = self._alive(state)
+        if found is not None and found.state == StatusState.UNKNOWN:
+            word = StatusState.UNKNOWN
+        else:
+            word = StatusState.WORKING if alive else StatusState.GONE
+        views = self._views(state)
+        outcome = None if state.result is None else state.result.outcome
         return Status(
-            state.agent_name,
-            self._alive(state),
-            word,
-            None
-            if state.result is None or state.result.outcome is None
-            else state.result.outcome.status,
-            self.attach_command(),
-            state.plan.session.access.cwd,
+            name=state.agent_name,
+            alive=alive,
+            state=word,
+            outcome=None if outcome is None else outcome.status,
+            attach=views[0].attach_command() if views else None,
+            hidden=found is not None and found.hidden,
+            cwd=state.plan.session.access.cwd,
         )
 
     def attach_command(self) -> str | None:
-        state = self._read()
+        views = self._views(self._read())
+        return views[0].attach_command() if views else None
+
+    def _views(self, state: _State) -> list[Session | _HarnessView]:
+        """Its live displayable views, agent first."""
+        views: list[Session | _HarnessView] = []
         agent = self._agent(state)
-        if agent is not None and agent.state() == Liveness.LIVE and agent.displayable:
-            return agent.attach_command()
+        if agent is not None and agent.alive() and agent.displayable:
+            views.append(agent)
         process = self._harness(state)
         if process is not None and process.alive() and isinstance(self._harness_host, Displayable):
-            return self._harness_host.attach_command(state.harness_name)
-        return None
+            views.append(_HarnessView(self._harness_host, state.harness_name))
+        return views
+
+    def _shown_views(self, state: _State) -> list[Session | _HarnessView]:
+        if views := self._views(state):
+            return views
+        raise NotDisplayable("delegate has no live displayable session")
 
     def show(self) -> str | None:
         state = self._read()
-        commands = []
-        capable = False
-        agent = self._agent(state)
-        if agent is not None and agent.state() == Liveness.LIVE and agent.displayable:
-            capable = True
-            if command := agent.show(display=state.display):
-                commands.append(command)
-        process = self._harness(state)
-        if process is not None and process.alive() and isinstance(self._harness_host, Displayable):
-            capable = True
-            if command := self._harness_host.show(state.harness_name, display=state.display):
-                commands.append(command)
-        if not capable:
-            raise NotDisplayable("delegate has no live displayable session")
-        return "\n".join(commands) or None
+        commands = [view.show(display=state.display) for view in self._shown_views(state)]
+        return "\n".join(command for command in commands if command) or None
+
+    def hide(self) -> None:
+        for view in self._shown_views(self._read()):
+            view.hide()
 
     def close(self) -> None:
         state = self._read()
@@ -835,7 +855,7 @@ class HarnessDelegate(Delegate):
             while True:
                 agent = self._agent(state)
                 agent = agent if agent is not None and agent.sid == state.plan.sid else None
-                if agent is not None and agent.state() == Liveness.LIVE:
+                if agent is not None and agent.alive():
                     return
                 harness = self._harness(state)
                 if harness is None or not harness.alive() or time.monotonic() >= deadline:

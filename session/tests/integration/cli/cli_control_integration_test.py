@@ -1,9 +1,9 @@
 """agent-pm-session's batch commands through bin/agent-pm-session on a private tmux server: status
 answers each name or stdin Record in order (Q11); a duplicate or bad input refuses the whole batch
-before any action; show, close and attach-command by name and by stdin Record, show placing a
+before any action; show, hide, close and attach-command by name and by stdin Record, show placing a
 session by its own display or by a Record's, close repeatable and only for the named (Q12), show
 and close refusing a Record whose sid the session's @record does not carry; on a
-Host that cannot display (session.tests.fakes.host:FakeHost, the module entry) show, attach-command,
+Host that cannot display (session.tests.fakes.host:FakeHost, the module entry) show, hide, attach-command,
 read and tile exit 1 saying so, status giving no attach command.
 """
 
@@ -49,15 +49,24 @@ def lines(*records: Record) -> str:
 
 
 def gone(name: str) -> Status:
-    return Status(name=name, alive=False, state="gone", outcome=None, attach=None)
+    return Status(name=name, alive=False, state="gone", outcome=None, attach=None, hidden=False)
 
 
-def live(name: str, state: str, *, displayable: bool = True, cwd: str | None = None) -> Status:
+def live(
+    name: str,
+    state: str,
+    *,
+    displayable: bool = True,
+    cwd: str | None = None,
+    hidden: bool = False,
+) -> Status:
     """A live session's Status: its tmux attach command, none when its Host cannot display; a
     worker's cwd.
     """
     command = attach(name) if displayable else None
-    return Status(name=name, alive=True, state=state, outcome=None, attach=command, cwd=cwd)
+    return Status(
+        name=name, alive=True, state=state, outcome=None, attach=command, cwd=cwd, hidden=hidden
+    )
 
 
 def pid_alive(pid: int) -> bool:
@@ -169,13 +178,13 @@ class ControlTest(ControlCase):
             [gone("w1"), gone("w2"), live("w3", "done", cwd=self.cwd)],
         )
 
-    def test_close_and_show_refuse_a_record_whose_sid_its_session_does_not_carry(self):
+    def test_close_show_and_hide_refuse_a_record_whose_sid_its_session_does_not_carry(self):
         w1 = self.done("w1")
         pid = self.calls("w1")[0]["pid"]
         pane = self.server.pane_of("w1")
         self.tmux("kill-pane", "-t", pane)
         reused = dataclasses.replace(w1, sid=str(uuid.uuid4()))
-        for verb in ("show", "close"):
+        for verb in ("show", "hide", "close"):
             with self.subTest(verb=verb):
                 res = self.session(verb, stdin=lines(reused))
                 self.assertEqual((res.returncode, res.stdout), (1, ""), res.stderr)
@@ -217,6 +226,29 @@ class ControlTest(ControlCase):
         self.shows("w1", f"={MANAGER}:")
         self.assertEqual(len(self.calls("w1")), 1)
 
+    def test_hide_closes_the_view_keeps_the_session_and_show_reopens_it(self):
+        w1 = self.done("w1")
+        self.shows("w1", f"={MANAGER}:")
+        pane = self.server.pane_of("w1")
+        for names, stdin in ((("w1",), None), ((), lines(w1))):
+            self.assert_printed(self.session("hide", *names, stdin=stdin), "")
+            self.assertNotIn(pane, self.server.panes(f"={MANAGER}:"))
+            self.assertEqual(self.sessions(), [MANAGER, "w1"])
+            self.assertEqual(self.server.option("w1", "@hidden"), "1")
+            self.assertEqual(
+                self.status(stdin=lines(w1)), [live("w1", "done", cwd=self.cwd, hidden=True)]
+            )
+        self.assert_printed(self.session("show", stdin=lines(w1)), "")
+        self.shows("w1", f"={MANAGER}:")
+        self.assertEqual(self.server.option("w1", "@hidden"), "0")
+        self.assertEqual(self.status("w1"), [live("w1", "done", cwd=self.cwd)])
+        self.assertEqual(len(self.calls("w1")), 1)
+
+    def test_hide_of_an_absent_session_fails_with_its_reason(self):
+        res = self.session("hide", "nope")
+        self.assertEqual((res.returncode, res.stdout), (1, ""), res.stderr)
+        self.assertEqual(res.stderr, f"{PROG}: nope: no tmux session nope\n")
+
     def test_a_key_its_host_refuses_fails_alone_and_the_batch_goes_on(self):
         w1, w2 = self.done("w1"), self.done("w2")
         self.tmux("kill-pane", "-t", self.server.pane_of("w2"))
@@ -244,6 +276,7 @@ class NotDisplayableTest(ControlCase):
         for argv, stdin, stderr in (
             (("show", "f1"), None, refused),
             (("show",), lines(self.f1), refused),
+            (("hide", "f1"), None, refused),
             (("attach-command", "f1"), None, refused),
             (("attach-command",), lines(self.f1), refused),
             (("read", "f1"), None, refused),

@@ -19,7 +19,8 @@ from agent_pm.session.adapters.base import Adapter, Tui
 from agent_pm.session.adapters.registry import Registry
 from agent_pm.session.engine.types import (
     COMMAND,
-    TAG,
+    SESSION_NAME,
+    SESSION_NAME_RULE,
     Access,
     Activity,
     Blocked,
@@ -36,10 +37,10 @@ from agent_pm.session.engine.types import (
     SessionEvent,
     SessionInfo,
     Spec,
+    StatusState,
     Stderr,
     TurnEnd,
     TurnFailed,
-    Word,
 )
 from agent_pm.session.hosts.base import (
     TUI_DIR,
@@ -63,10 +64,10 @@ from agent_pm.utils import (
 )
 
 WORDS = {
-    HookKind.TURN_END: Word.DONE,
-    HookKind.TURN_FAILED: Word.DONE,
-    HookKind.BLOCKED: Word.BLOCKED,
-    HookKind.ACTIVITY: Word.WORKING,
+    HookKind.TURN_END: StatusState.DONE,
+    HookKind.TURN_FAILED: StatusState.DONE,
+    HookKind.BLOCKED: StatusState.BLOCKED,
+    HookKind.ACTIVITY: StatusState.WORKING,
 }
 SLICE = 0.1
 OPEN_AFTER = 1.0  # keys sent before a client's input box shows are lost
@@ -75,8 +76,8 @@ LOG = logging.getLogger("session")
 
 
 def checked_name(name) -> str:
-    if not isinstance(name, str) or not TAG.fullmatch(name):
-        raise ConfigError(f"name must match [A-Za-z0-9_-]+, got {name!r:.80}")
+    if not isinstance(name, str) or not SESSION_NAME.fullmatch(name):
+        raise ConfigError(f"name must match {SESSION_NAME_RULE}, got {name!r:.80}")
     return name
 
 
@@ -312,7 +313,7 @@ def _sweep(store: _Store) -> None:
         return
     listed = None
     for name in sorted(found - {store.name}):
-        if not TAG.fullmatch(name):
+        if not SESSION_NAME.fullmatch(name):
             continue
         other = _Store(name, host=store.host)
         try:
@@ -547,7 +548,7 @@ class TuiRuntime(Runtime):
         return None if self._opening is None or self._gone else self._opening[1]
 
     def marked_blocked(self) -> bool:
-        return self._terminal.activity() == Word.BLOCKED
+        return self._terminal.activity() == StatusState.BLOCKED
 
     def poll(self, timeout: float) -> tuple[list[SessionEvent | Stderr | ClientBound], bool]:
         found = self._read()
@@ -665,8 +666,8 @@ class TuiRuntime(Runtime):
 
     def _mark_blocked(self) -> None:
         with contextlib.suppress(SessionError):
-            if self._terminal.activity() != Word.BLOCKED:
-                self._terminal.mark(Word.BLOCKED, self.prepared.spec.events)
+            if self._terminal.activity() != StatusState.BLOCKED:
+                self._terminal.mark(StatusState.BLOCKED, self.prepared.spec.events)
 
     def returncode(self, timeout: float) -> int | None:
         deadline = time.monotonic() + timeout

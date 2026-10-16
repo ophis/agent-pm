@@ -1,8 +1,8 @@
 """agent-pm-session, the session layer's command (FR-31, FR-42; bin/agent-pm-session runs it).
 
 start, restart and resume a worker (engine/worker.py) and print its Record; reply, send (text, or
-keys in KeyPress notation) and read a session; status, show, close and attach-command for session
-names, or Records one per stdin line; ls; tile; hook, a tui client's hook call (tui_hook.run).
+keys in KeyPress notation) and read a session; status, show, hide, close and attach-command for
+session names, or Records one per stdin line; ls; tile; hook, a tui client's hook call (tui_hook.run).
 Every subcommand but hook reads the session config once: read_config, Host.parse_hosts,
 Session.configure. AGENT_PM_SID, read once here, is a start's or resume's session id. Inside an
 agent session agent-pm started (AGENT_PM_AGENT_SESSION), start, restart, resume and client-resume
@@ -21,6 +21,7 @@ import re
 import sys
 import uuid
 from collections.abc import Iterator
+from dataclasses import replace
 
 import agent_pm.session.engine.types
 import agent_pm.utils
@@ -28,8 +29,8 @@ from agent_pm.session.engine.base import Session
 from agent_pm.session.engine.config import read_config
 from agent_pm.session.engine.types import (
     COMMAND,
-    TAG,
-    ActivityState,
+    SESSION_NAME,
+    SESSION_NAME_RULE,
     ConfigError,
     Hosts,
     KeyPress,
@@ -43,10 +44,9 @@ from agent_pm.session.hosts.base import Displayable, Host
 from agent_pm.session.runtimes import tui_hook
 from agent_pm.session.runtimes.base import EVENTS, START_SID
 from agent_pm.session.runtimes.tui import TuiRuntime
-from agent_pm.utils import Record, Status, module_roots, nested_start
+from agent_pm.utils import Record, Status, StatusState, module_roots, nested_start
 
 PROG = COMMAND
-GONE = "gone"
 HEADER = "name\tstate\tclient\tsid\tdisplay"
 
 
@@ -59,8 +59,8 @@ def _say(text: str) -> None:
 
 
 def _name(value: str) -> str:
-    if not TAG.fullmatch(value):
-        raise argparse.ArgumentTypeError(f"want [A-Za-z0-9_-]+, not {value!r:.80}")
+    if not SESSION_NAME.fullmatch(value):
+        raise argparse.ArgumentTypeError(f"want {SESSION_NAME_RULE}, not {value!r:.80}")
     return value
 
 
@@ -92,7 +92,7 @@ def _parser(hosts: Hosts | None) -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(
         prog=PROG,
         description="Start and reach agent sessions: workers (plain tui sessions by name),\n"
-        "and any session for status, show, close, attach-command, ls, send, read and tile.",
+        "and any session for status, show, hide, close, attach-command, ls, send, read and tile.",
         epilog=_display_help(hosts),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -129,6 +129,7 @@ def _parser(hosts: Hosts | None) -> argparse.ArgumentParser:
     for cmd, text in (
         ("status", "one Status JSON line per session"),
         ("show", "show each session where its display says"),
+        ("hide", "close each session's view; it runs on"),
         ("close", "close each session; absent is fine"),
         ("attach-command", "print each session's attach command"),
     ):
@@ -230,8 +231,8 @@ def _keys(args) -> list[tuple[str, Record | None]]:
         if not _sessions(name, record):
             raise UsageError(f"{name}: names no session")
         for session in _sessions(name, record):
-            if not TAG.fullmatch(session):
-                raise UsageError(f"{name}: session {session!r:.80}: want [A-Za-z0-9_-]+")
+            if not SESSION_NAME.fullmatch(session):
+                raise UsageError(f"{name}: session {session!r:.80}: want {SESSION_NAME_RULE}")
     return found
 
 
@@ -239,15 +240,15 @@ def _sessions(name: str, record: Record | None) -> tuple[str, ...]:
     return (name,) if record is None else record.sessions
 
 
-def _state(name: str, hosts: Hosts) -> tuple[bool, str, str | None]:
+def _state(name: str, hosts: Hosts) -> Status:
+    """Session `name`'s own Status: gone once its host no longer lists it."""
     host = Session.host(_host_of(name, hosts))
     if name not in host.list():
-        return False, GONE, None
-    handle = host.attach(name)
-    if not handle.alive():
-        return False, ActivityState.DEAD, None
-    attach = host.attach_command(name) if isinstance(host, Displayable) else None
-    return True, handle.activity() or ActivityState.WORKING, attach
+        return Status(
+            name=name, alive=False, state=StatusState.GONE, outcome=None, attach=None, hidden=False
+        )
+    found = host.attach(name).status()
+    return replace(found, cwd=_cwd(name)) if found.alive else found
 
 
 def _cwd(name: str) -> str | None:
@@ -260,10 +261,9 @@ def _cwd(name: str) -> str | None:
 
 
 def _status(name: str, record: Record | None, hosts: Hosts) -> str:
-    sessions = _sessions(name, record)
-    found = [(session, *_state(session, hosts)) for session in sessions]
-    session, alive, state, attach = next((each for each in found if each[1]), found[0])
-    return Status(name, alive, str(state), None, attach, _cwd(session) if alive else None).to_line()
+    found = [_state(session, hosts) for session in _sessions(name, record)]
+    shown = next((each for each in found if each.alive), found[0])
+    return replace(shown, name=name, hidden=any(each.hidden for each in found)).to_line()
 
 
 def _carried(name: str, record: Record | None, hosts: Hosts) -> tuple[str, ...]:
@@ -298,6 +298,11 @@ def _show(name: str, record: Record | None, hosts: Hosts) -> None:
             _say(f"session {session}: not shown; attach with {command}")
 
 
+def _hide(name: str, record: Record | None, hosts: Hosts) -> None:
+    for session in _carried(name, record, hosts):
+        _shown(session, hosts).hide(session)
+
+
 def _attach_command(name: str, record: Record | None, hosts: Hosts) -> str:
     session = _sessions(name, record)[0]
     return _shown(session, hosts).attach_command(session)
@@ -308,7 +313,13 @@ def _close(name: str, record: Record | None, hosts: Hosts) -> None:
         Session.retire(session, host=_host_of(session, hosts))
 
 
-BATCH = {"status": _status, "show": _show, "close": _close, "attach-command": _attach_command}
+BATCH = {
+    "status": _status,
+    "show": _show,
+    "hide": _hide,
+    "close": _close,
+    "attach-command": _attach_command,
+}
 
 
 def _batch(args, hosts: Hosts) -> int:

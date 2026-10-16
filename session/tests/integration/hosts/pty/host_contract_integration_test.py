@@ -7,10 +7,11 @@ import stat
 import unittest
 
 from agent_pm.session import ConfigError
-from agent_pm.session.engine.types import HookCall, Key, Launch, Paste, Word
+from agent_pm.session.engine.types import HookCall, Key, Launch, Paste
 from agent_pm.session.hosts.pty import PtyHost
 from agent_pm.session.hosts.pty.hook import on_hook
 from agent_pm.session.hosts.pty.host import TERM
+from agent_pm.utils import StatusState
 
 from session.tests.case import Case
 from session.tests.contracts.host import PUT, SLEEP, HostContract, gone, program, read
@@ -101,14 +102,14 @@ class PtyHostTest(HostContract, Case):
             state = {**callback.state, "generation": generation}
             on_hook(word, HookCall("Stop", {}, sid, self.home, events, state))
 
-        hooked(Word.DONE, "s-1", "g-2")
-        hooked(Word.DONE, "s-2", "g-1")
+        hooked(StatusState.DONE, "s-1", "g-2")
+        hooked(StatusState.DONE, "s-2", "g-1")
         self.assertIsNone(self.host.attach(name).activity())
-        hooked(Word.BLOCKED, "s-1", "g-1")
-        self.assertEqual(self.host.attach(name).activity(), Word.BLOCKED)
+        hooked(StatusState.BLOCKED, "s-1", "g-1")
+        self.assertEqual(self.host.attach(name).activity(), StatusState.BLOCKED)
         self.event(events, name, "blocked")
-        hooked(Word.WORKING, "s-1", "g-1")
-        self.assertEqual(self.host.attach(name).activity(), Word.WORKING)
+        hooked(StatusState.WORKING, "s-1", "g-1")
+        self.assertEqual(self.host.attach(name).activity(), StatusState.WORKING)
         self.assertEqual(len((read(events) or "").splitlines()), 1)
         (row,) = self.host.rows()
         self.assertEqual(

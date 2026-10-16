@@ -16,9 +16,12 @@ from agent_pm.session import (
     Host,
     HostProcess,
     Hosts,
+    Liveness,
     SessionError,
+    StatusState,
     Terminal,
 )
+from agent_pm.utils import Status
 
 from session.tests.case import Case
 
@@ -40,7 +43,7 @@ ABSTRACT = {
     Host: {"detach", "terminal", "attach", "list"},
     HostProcess: PROCESS,
     Terminal: PROCESS | {"send", "press"},
-    Displayable: {"show", "attach_command", "screen", "layout", "tile"},
+    Displayable: {"show", "hide", "attach_command", "screen", "layout", "tile"},
 }
 
 
@@ -83,6 +86,31 @@ class HostDefaults(Case):
         self.assertIsNone(HostProcess.token.fget(process))
         with self.assertRaisesRegex(SessionError, "^session p: its host cannot store a Record"):
             HostProcess.publish(process, mock.sentinel.record)
+
+    def test_a_process_status_is_its_liveness_activity_and_hidden(self):
+        process = mock.create_autospec(HostProcess, instance=True)
+        process.name, process.hidden.return_value = "p", True
+        for liveness, alive, activity, state, hidden in (
+            (Liveness.LIVE, True, None, StatusState.WORKING, True),
+            (Liveness.LIVE, True, StatusState.BLOCKED, StatusState.BLOCKED, True),
+            (Liveness.LIVE, False, None, StatusState.DEAD, True),
+            (Liveness.ABSENT, False, None, StatusState.DEAD, True),
+            (Liveness.UNKNOWN, False, None, StatusState.UNKNOWN, False),
+        ):
+            with self.subTest(liveness=liveness, alive=alive, activity=activity):
+                process.state.return_value, process.alive.return_value = liveness, alive
+                process.activity.return_value = activity
+                self.assertEqual(
+                    HostProcess.status(process),
+                    Status(
+                        name="p",
+                        alive=alive,
+                        state=state,
+                        outcome=None,
+                        attach=None,
+                        hidden=hidden,
+                    ),
+                )
 
     def test_descendants_are_its_listed_sessions_unless_it_knows_who_opened_whom(self):
         host = MinimalHost("m")

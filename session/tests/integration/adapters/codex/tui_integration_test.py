@@ -49,7 +49,7 @@ ATTACH = """import json, sys
 from agent_pm.session import Host, Session, TurnEnd
 Session.configure(adapters=json.loads(sys.argv[1]), hosts=Host.parse_hosts({"default": "tmux", "tmux": {"implementation": "agent_pm.session.hosts.tmux:TmuxHost"}}))
 h = Session.attach(sys.argv[2])
-before = [h.sid, h.state(), h.reply]
+before = [h.sid, h.alive(), h.reply]
 if sys.argv[3]:
     h.send(sys.argv[3])
     turn = next(e for e in h.events() if isinstance(e, TurnEnd))
@@ -525,7 +525,7 @@ class TuiLaunchIntegrationTest(Live):
         self.assertEqual(stat.S_IMODE(hook_store.stat().st_mode), 0o600)
         handle.send("more")
         self.assertEqual(stream.until(TurnEnd), [Activity(), TurnEnd("second")])
-        self.assertEqual(self.attach("last"), [[self.sid, "live", "second"], ["third", 0], "third"])
+        self.assertEqual(self.attach("last"), [[self.sid, True, "second"], ["third", 0], "third"])
         self.assertEqual(stream.until(TurnEnd), [Activity(), TurnEnd("third")])
         self.assertEqual(self.lines(4), ["w1 blocked", "w1 done", "w1 done", "w1 done"])
         live_tmux.wait(lambda: len(self.hooks()) == 8, WAIT, what="all hook results logged")
@@ -913,10 +913,10 @@ class TuiRecoveryIntegrationTest(Live):
         self.assertEqual(self.lines(2), ["w1 done", "w1 done"])
         self.assertEqual(
             self.attach("interrupt again"),
-            [[self.sid, "live", "kept"], ["kept", 0], "kept"],
+            [[self.sid, True, "kept"], ["kept", 0], "kept"],
         )
         self.assertEqual(stream.until(TurnEnd), [Activity(), TurnEnd("kept")])
-        self.assertEqual(self.attach(), [self.sid, "live", "kept"])
+        self.assertEqual(self.attach(), [self.sid, True, "kept"])
         handle.send("recover")
         self.assertEqual(stream.until(TurnEnd), [Activity(), TurnEnd("after")])
         live_tmux.wait(lambda: len(self.hooks()) == 9, WAIT, what="all hook results logged")
@@ -929,7 +929,7 @@ class TuiRecoveryIntegrationTest(Live):
         handle = self.start()
         stream = Stream(self, handle)
         self.assertEqual(stream.until(TurnEnd)[-1], TurnEnd())
-        self.assertEqual(self.attach(), [self.sid, "live", ""])
+        self.assertEqual(self.attach(), [self.sid, True, ""])
         handle.send("silent")
         self.assertEqual(stream.until(TurnEnd), [Activity(), TurnEnd()])
         live_tmux.wait(

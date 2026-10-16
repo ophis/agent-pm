@@ -20,7 +20,8 @@ ABSTRACT = {
     Session: {
         "events",
         "send",
-        "state",
+        "alive",
+        "status",
         "stop",
         "info",
         "reply",
@@ -29,6 +30,7 @@ ABSTRACT = {
         "record",
         "displayable",
         "show",
+        "hide",
         "attach_command",
         "screen",
         "press",

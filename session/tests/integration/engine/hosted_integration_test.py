@@ -13,7 +13,6 @@ from agent_pm.session.engine.hosted_session import HostedSession
 from agent_pm.session.engine.types import (
     Access,
     Exited,
-    Liveness,
     Mode,
     SessionError,
     SessionInfo,
@@ -46,12 +45,12 @@ class SessionTest(Base):
             self.assertEqual(str(caught.exception), message)
         self.assertEqual(self.drain(session), [Exited(0)])
 
-    def test_state_is_live_while_the_process_runs_then_absent(self):
+    def test_alive_while_the_process_runs_then_dead(self):
         self.steps({"sleep": 1})
         session = self.start()
-        self.assertIs(session.state(), Liveness.LIVE)
+        self.assertTrue(session.alive())
         self.assertEqual(self.drain(session), [Exited(0)])
-        self.assertIs(session.state(), Liveness.ABSENT)
+        self.assertEqual((session.alive(), session.status().state), (False, "dead"))
 
     def test_attributes_info_reply_and_the_run_log(self):
         cwd = os.path.join(self.dir, "cwd")
@@ -129,7 +128,7 @@ class SessionTest(Base):
                 call()
             self.assertEqual(str(caught.exception), f"{name}: tui mode only")
         session.close()
-        self.assertEqual(session.state(), "absent")
+        self.assertFalse(session.alive())
 
 
 class TuiStartTest(TuiBase):

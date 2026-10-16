@@ -26,6 +26,7 @@ ABSTRACT = {
     "status",
     "outcome",
     "show",
+    "hide",
     "attach_command",
     "close",
     "session_info",

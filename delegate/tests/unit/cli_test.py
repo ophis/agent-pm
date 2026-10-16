@@ -930,12 +930,22 @@ class Prompt(Case):
 
 
 class Commands(Base):
-    def test_help_lists_exactly_the_eight_subcommands(self):
+    def test_help_lists_exactly_the_nine_subcommands(self):
         code, out, err = self.cli("--help")
         self.assertEqual((code, err), (0, ""))
         self.assertEqual(
             re.search(r"\{([a-z,-]+)\}", out)[1].split(","),
-            ["run", "status", "outcome", "resume", "show", "close", "attach-command", "prompt"],
+            [
+                "run",
+                "status",
+                "outcome",
+                "resume",
+                "show",
+                "hide",
+                "close",
+                "attach-command",
+                "prompt",
+            ],
         )
 
     def test_an_unknown_missing_or_flat_command_exits_2(self):
@@ -955,17 +965,29 @@ class View:
 
     def __init__(self, name, *, outcome=None, command=None, error=None, show_error=None):
         self.name, self.outcome_value, self.command = name, outcome, command
-        self.error, self.show_error, self.closed = error, show_error, 0
+        self.error, self.show_error, self.closed, self.hidden = error, show_error, 0, 0
 
     def status(self):
         if self.error is not None:
             raise self.error
-        return Status(self.name, alive=False, state="absent", outcome=None, attach=self.command)
+        return Status(
+            name=self.name,
+            alive=False,
+            state="gone",
+            outcome=None,
+            attach=self.command,
+            hidden=False,
+        )
 
     def show(self):
         if self.show_error is not None:
             raise self.show_error
         return self.command
+
+    def hide(self):
+        if self.show_error is not None:
+            raise self.show_error
+        self.hidden += 1
 
     def close(self):
         self.closed += 1
@@ -1028,9 +1050,16 @@ class Queries(Case):
     def test_status_prints_one_line_per_key_in_order_from_arguments_or_stdin(self):
         a, b = View("a"), View("b", command="tmux attach -t =b")
         lines = [
-            Status("a", alive=False, state="absent", outcome=None, attach=None).to_line(),
             Status(
-                "b", alive=False, state="absent", outcome=None, attach="tmux attach -t =b"
+                name="a", alive=False, state="gone", outcome=None, attach=None, hidden=False
+            ).to_line(),
+            Status(
+                name="b",
+                alive=False,
+                state="gone",
+                outcome=None,
+                attach="tmux attach -t =b",
+                hidden=False,
             ).to_line(),
         ]
         self.assertEqual(
@@ -1053,7 +1082,12 @@ class Queries(Case):
                     (
                         code,
                         Status(
-                            "a", alive=False, state="absent", outcome=None, attach=None
+                            name="a",
+                            alive=False,
+                            state="gone",
+                            outcome=None,
+                            attach=None,
+                            hidden=False,
                         ).to_line()
                         + "\n",
                         f"delegate: gone: {error}\n",
@@ -1072,6 +1106,15 @@ class Queries(Case):
             self.query("show", "a", "b", a=shown, b=none),
             (1, "tmux attach -t =a\n", "delegate: b: delegate has no live displayable session\n"),
         )
+
+    def test_hide_hides_each_key_prints_nothing_and_exits_1_without_a_displayable_session(self):
+        a = View("a")
+        b = View("b", show_error=NotDisplayable("delegate has no live displayable session"))
+        self.assertEqual(
+            self.query("hide", "a", "b", a=a, b=b),
+            (1, "", "delegate: b: delegate has no live displayable session\n"),
+        )
+        self.assertEqual(a.hidden, 1)
 
     def test_close_closes_each_key_and_prints_nothing(self):
         a, b = View("a"), View("b")
