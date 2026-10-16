@@ -37,6 +37,20 @@ class NewDefault(ExtensionDelegate):
 """
 
 
+START = """import sys
+from agent_pm.linear_orchestrator import LinearRun
+from agent_pm.linear_orchestrator.engine import config, runs
+issue, sid = sys.argv[1:]
+cfg = config.load()
+owner = LinearRun(issue, "Echo.", cfg.issue_workdir(issue), cfg=cfg, role="engineer", sid=sid, display="opaque display")
+runs.note(cfg.runs_log, "start", issue=issue, sid=sid, role="engineer", client="fake", delegate_kind=cfg.delegate_kind)
+print(owner.detach().to_line())
+"""
+
+
+CLI = (*PY, "-m", "agent_pm.linear_orchestrator.cli")
+
+
 class Extension(ConfigFile, Case):
     def setUp(self):
         super().setUp()
@@ -59,9 +73,9 @@ class Extension(ConfigFile, Case):
             + '[delegates.new]\nimplementation = "external_delegate:NewDefault"\n'
         )
 
-    def child(self, code, *, stdin=""):
+    def child(self, argv, *, stdin=""):
         result = subprocess.run(
-            [*PY, "-c", code],
+            argv,
             input=stdin,
             capture_output=True,
             text=True,
@@ -75,16 +89,7 @@ class Extension(ConfigFile, Case):
         return result.stdout
 
     def start(self, issue):
-        return Record.parse(
-            self.child(
-                "from agent_pm.linear_orchestrator.engine import config, runs\n"
-                "from agent_pm.linear_orchestrator import LinearRun\n"
-                "cfg = config.load()\n"
-                f"owner = LinearRun({issue!r}, 'Echo.', cfg.issue_workdir({issue!r}), cfg=cfg, role='engineer', sid={SID!r}, display='opaque display')\n"
-                f"runs.note(cfg.runs_log, 'start', issue={issue!r}, sid={SID!r}, role='engineer', client='fake', delegate_kind=cfg.delegate_kind)\n"
-                "print(owner.detach().to_line())\n"
-            )
-        )
+        return Record.parse(self.child([*PY, "-c", START, issue, SID]))
 
     def test_separate_provider_creates_and_resumes_saved_kind_after_default_changes(self):
         record = self.start("TASK-1")
@@ -92,21 +97,12 @@ class Extension(ConfigFile, Case):
             (record.kind, record.name, record.display), ("pipeline", "TASK-1", "opaque display")
         )
         self.configure(default="new")
-        output = self.child(
-            "from agent_pm.linear_orchestrator import LinearRun\n"
-            "from agent_pm.linear_orchestrator.engine import config\n"
-            "view = LinearRun.attach('TASK-1', cfg=config.load())\n"
-            "print(view.resume().to_line())\n"
-        )
+        output = self.child([*CLI, "resume", "TASK-1"])
         self.assertEqual(Record.parse(output), record)
         self.assertEqual(fake_delegate.FakeDelegate.starts(record.workdir), 1)
         for transition, starts in (("finish", 1), ("end", 2)):
-            output = self.child(
-                "from external_delegate import ExtensionDelegate\n"
-                "from agent_pm.linear_orchestrator import cli\n"
-                f"ExtensionDelegate.{transition}({record.workdir!r})\n"
-                "raise SystemExit(cli.main(['resume', 'TASK-1']))\n"
-            )
+            getattr(fake_delegate.FakeDelegate, transition)(record.workdir)
+            output = self.child([*CLI, "resume", "TASK-1"])
             self.assertEqual(Record.parse(output), record)
             self.assertEqual(fake_delegate.FakeDelegate.starts(record.workdir), starts)
 
@@ -116,14 +112,9 @@ class Extension(ConfigFile, Case):
             (["status", "TASK-2", "TASK-1"], ""),
             (["status"], second.to_line() + "\n" + first.to_line() + "\n"),
         ):
-            output = self.child(
-                f"from agent_pm.linear_orchestrator import cli\nraise SystemExit(cli.main({args!r}))\n",
-                stdin=stdin,
-            )
+            output = self.child([*CLI, *args], stdin=stdin)
             statuses = [Status.parse(line) for line in output.splitlines()]
             self.assertEqual([item.name for item in statuses], ["TASK-2", "TASK-1"])
             self.assertTrue(all(item.alive for item in statuses))
-        output = self.child(
-            "from agent_pm.linear_orchestrator import cli\nraise SystemExit(cli.main(['resume', 'TASK-1']))\n"
-        )
+        output = self.child([*CLI, "resume", "TASK-1"])
         self.assertEqual(Record.parse(output), first)

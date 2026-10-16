@@ -66,21 +66,6 @@ STEPS = (
 )
 
 
-IMPORT_ALONE = """import json, os, sys
-opened = []
-sys.addaudithook(lambda event, args: event == "open" and opened.append(str(args[0])))
-from agent_pm.linear_orchestrator.engine import config
-import agent_pm.session
-home, front = os.environ["HOME"], os.environ["AGENT_PM_PATH"]
-os.environ.update(HOME="/later", AGENT_PM_PATH="/later/bin")
-print(json.dumps({
-    "read": [p for p in opened if p.endswith(".toml") or p.startswith(home)],
-    "kept": sorted(k for k, v in vars(config).items() if isinstance(v, str) and (home in v or front in v)),
-    "path": config.path(),
-}))
-"""
-
-
 class ConfigFile:
     def setUp(self):
         write(os.path.join(self.agent_pm, "config.local.toml"), CORE_LOCAL)

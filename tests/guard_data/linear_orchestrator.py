@@ -100,9 +100,13 @@ PYTHON_CODE_ALLOWED = {
     (
         "linear-orchestrator/tests/orchestrator_tests/integration/config_isolation_integration_test.py",
         "b8828a858303adbef399ec5acdae273d90445023cd4e3b6dbf0a2731d54e87db",
-    ): "Checks configuration loader isolation through the imported literal test program.",
+    ): "Import-time globals and file opens of agent_pm.linear_orchestrator.engine.config (no public re-export) observed in a fresh interpreter.",
     (
         "linear-orchestrator/tests/orchestrator_tests/integration/config_isolation_integration_test.py",
-        "e99c994bf4dee81441883d39c8423f0b93873110dda62a742cc1cc4670152ded",
-    ): "Checks the internal configuration loader error payload in a clean interpreter.",
+        "7284022972a2aecaca4b7d03b3d8d4cf183c21363a74a7b5e4403d5bb7e7336a",
+    ): "engine.config.load() in a copied-package deployment interpreter; no public loader, and CLI commands that load config go on to call Linear.",
+    (
+        "linear-orchestrator/tests/orchestrator_tests/integration/linear_run_extension_integration_test.py",
+        "c839185c5ed8960ffac563941c624cae8e86f1a8bc4fef19597e9a9f2653ca5c",
+    ): "Creating a pipeline run with a config-loaded external Delegate needs engine.config.load() and runs.note; no public loader.",
 }

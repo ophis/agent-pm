@@ -19,7 +19,6 @@ from orchestrator_tests.config_fixtures import (
     CORE_TOP,
     HARNESS_DELEGATE,
     HTTPS,
-    IMPORT_ALONE,
     PIPELINE,
     SID,
     SLUG,
@@ -29,6 +28,30 @@ from orchestrator_tests.config_fixtures import (
 )
 
 from utils.tests.sandbox import clean_env, git
+
+IMPORT_ALONE = """import json, os, sys
+opened = []
+sys.addaudithook(lambda event, args: event == "open" and opened.append(str(args[0])))
+from agent_pm.linear_orchestrator.engine import config
+import agent_pm.session
+home, front = os.environ["HOME"], os.environ["AGENT_PM_PATH"]
+os.environ.update(HOME="/later", AGENT_PM_PATH="/later/bin")
+print(json.dumps({
+    "read": [p for p in opened if p.endswith(".toml") or p.startswith(home)],
+    "kept": sorted(k for k, v in vars(config).items() if isinstance(v, str) and (home in v or front in v)),
+    "path": config.path(),
+}))
+"""
+
+
+DEPLOYED_LOAD = """import json, sys
+from agent_pm.linear_orchestrator.engine import config
+cfg = config.load()
+if sys.argv[1:] == ["gate"]:
+    print(json.dumps(cfg.roles["researcher"].run.gate))
+else:
+    print(json.dumps({"work": cfg.work_dir, "clones": dict(cfg.local_clones)}))
+"""
 
 
 class Clones(ConfigFile, Case):
@@ -153,22 +176,18 @@ class RunnableClones(Clones):
 class ConfigurationLoading(ConfigFile, Case):
     def test_importing_reads_no_config_file(self):
         write(os.path.join(self.agent_pm, "config.local.toml"), "[[[ not toml")
-        code = (
-            "import json\nfrom agent_pm.linear_orchestrator.engine import config\n"
-            "try:\n    config.load()\nexcept config.ConfigError as e:\n    print(json.dumps([e.msg, e.logs_dir]))"
-        )
         res = subprocess.run(
-            [*PY, "-c", code],
+            [*PY, "-m", "agent_pm.linear_orchestrator.cli", "prune", "--dry-run"],
             capture_output=True,
             text=True,
             stdin=subprocess.DEVNULL,
             timeout=60,
             env=child_env(None, ORCH_ROOT),
         )
-        self.assertEqual((res.returncode, res.stderr), (0, ""))
-        msg, logs = json.loads(res.stdout)
+        self.assertEqual(res.returncode, 1, res.stderr)
+        # with logs_dir set, report_error logs instead and a non-tty stderr stays empty
+        [msg] = res.stderr.splitlines()
         self.assertTrue(msg.startswith("linear-orchestrator/config.toml: "), msg)
-        self.assertIsNone(logs)
 
 
 class TeamDirectoryIsolation(ConfigFile, Case):
@@ -303,9 +322,9 @@ class PackagedDeployments(ConfigFile, Case):
         ]
         return clean_env(os.environ, *roots)
 
-    def child(self, code, *arguments):
+    def child(self, *arguments):
         result = subprocess.run(
-            [*PY, "-c", code, *map(str, arguments)],
+            [*PY, "-c", DEPLOYED_LOAD, *arguments],
             cwd=self.dir,
             env=self.environment(),
             capture_output=True,
@@ -323,23 +342,15 @@ class PackagedDeployments(ConfigFile, Case):
         git("init", "-q", str(self.deployment))
         git("-C", str(self.deployment), "remote", "add", "origin", HTTPS)
         (self.deployment / "linear-orchestrator" / ".git").write_text("invalid metadata\n")
-        load = (
-            "import json\nfrom agent_pm.linear_orchestrator.engine import config\n"
-            "cfg = config.load()\n"
-            "print(json.dumps({'work': cfg.work_dir, 'clones': dict(cfg.local_clones)}))\n"
-        )
         work = self.package() / "state"
         self.local(f"work_dir = {json.dumps(str(work))}\n" + PIPELINE)
-        self.assertEqual(self.child(load), {"work": str(work), "clones": {}})
+        self.assertEqual(self.child(), {"work": str(work), "clones": {}})
         self.local(PIPELINE + f'[local_clones]\n"{SLUG}" = {json.dumps(str(self.deployment))}\n')
-        self.assertEqual(self.child(load)["clones"], {SLUG: str(self.deployment)})
+        self.assertEqual(self.child()["clones"], {SLUG: str(self.deployment)})
 
     def test_default_gate_runs_outside_checkout_cwd(self):
         self.local(PIPELINE)
-        gate = self.child(
-            "import json\nfrom agent_pm.linear_orchestrator.engine import config\n"
-            "print(json.dumps(config.load().roles['researcher'].run.gate))\n"
-        )
+        gate = self.child("gate")
         fake_bin = Path(self.dir) / "bin"
         fake_bin.mkdir()
         marker = Path(self.dir) / "usage-probe-ran"
