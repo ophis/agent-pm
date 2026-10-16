@@ -16,26 +16,17 @@ import signal
 from dataclasses import replace
 from unittest import mock
 
-from agent_pm.delegate import ConfigError, Finished, Outcome, Result, Spec
+from agent_pm.delegate import ConfigError, Outcome, Spec
 from agent_pm.delegate.composer import Composer, RunParams
 from agent_pm.delegate.engine import harness_delegate
 from agent_pm.delegate.engine.drivers import AgentDriver
 from agent_pm.delegate.engine.harness_delegate import HarnessDelegate
 from agent_pm.delegate.engine.state import RunState
-from agent_pm.delegate.engine.types import Layout
-from agent_pm.session import (
-    Access,
-    Exited,
-    Launch,
-    Liveness,
-    Mode,
-    NotShowable,
-    Reply,
-    Session,
-    SessionError,
-)
+from agent_pm.delegate.engine.types import Finished, Layout, Result
+from agent_pm.session import Access, Exited, Launch, Mode, NotShowable, Reply, Session, SessionError
 from agent_pm.session import ConfigError as SessionConfigError
 from agent_pm.session import Spec as SessionSpec
+from agent_pm.session.engine.types import Liveness
 
 from delegate.tests.fakes.harness_session import (
     HarnessSession,

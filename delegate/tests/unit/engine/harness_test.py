@@ -12,8 +12,9 @@ from pathlib import Path
 from unittest import mock
 
 import agent_pm.delegate
-from agent_pm.delegate import Begun, ConfigError, Outcome, Result
+from agent_pm.delegate import ConfigError, Outcome
 from agent_pm.delegate.engine import harness
+from agent_pm.delegate.engine.types import Begun, Result
 from agent_pm.session import SIGNALS, SessionError
 from agent_pm.utils import Stopped
 

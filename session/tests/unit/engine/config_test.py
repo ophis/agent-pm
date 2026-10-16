@@ -4,7 +4,7 @@ import os
 from pathlib import Path
 
 from agent_pm import session
-from agent_pm.session import read_config
+from agent_pm.session.engine.config import read_config
 from agent_pm.utils import read_resources
 
 from session.tests.case import Case

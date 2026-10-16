@@ -15,7 +15,7 @@ import threading
 import time
 import uuid
 
-from agent_pm.session import ConfigError, Host, InteractiveProcess, Process, SessionError
+from agent_pm.session import ConfigError, Host, Process, SessionError
 from agent_pm.session.engine.status_log import SessionStatusLog
 from agent_pm.session.engine.types import (
     MARKS,
@@ -27,6 +27,7 @@ from agent_pm.session.engine.types import (
     Paste,
     StatusState,
 )
+from agent_pm.session.hosts.base import InteractiveProcess
 from agent_pm.utils import Display, ProcessControl, Record
 
 from session.tests.case import ROOTS

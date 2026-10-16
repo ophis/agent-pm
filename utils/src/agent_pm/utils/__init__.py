@@ -65,6 +65,7 @@ from agent_pm.utils.paths import (
 from agent_pm.utils.process_control import ProcessControl
 from agent_pm.utils.record import (
     Display,
+    LayerCommand,
     OutcomeStatus,
     Record,
     Status,
@@ -108,6 +109,7 @@ __all__ = [
     "LOCAL",
     "LOCAL_ENV_VARS",
     "LONG",
+    "LayerCommand",
     "NAME",
     "OWNER",
     "Once",

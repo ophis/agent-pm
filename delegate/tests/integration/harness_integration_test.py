@@ -12,21 +12,11 @@ from contextlib import redirect_stderr
 from dataclasses import replace
 from unittest import mock
 
-from agent_pm.delegate import (
-    Begun,
-    ConfigError,
-    DelegateEvent,
-    Finished,
-    Limit,
-    Outcome,
-    Progress,
-    Result,
-    Spec,
-)
+from agent_pm.delegate import ConfigError, DelegateEvent, Outcome, Progress, Spec
 from agent_pm.delegate.engine.drivers import InstructionDriver
 from agent_pm.delegate.engine.harness_delegate import HarnessDelegate
 from agent_pm.delegate.engine.state import RunState
-from agent_pm.delegate.engine.types import Layout
+from agent_pm.delegate.engine.types import Begun, Finished, Layout, Limit, Result
 from agent_pm.session import (
     SIGNALS,
     Access,

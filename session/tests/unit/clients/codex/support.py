@@ -6,10 +6,10 @@ import tempfile
 from pathlib import Path
 from unittest import mock
 
-from agent_pm.session import read_config
 from agent_pm.session.clients import registry
 from agent_pm.session.clients.codex import CodexClient
 from agent_pm.session.clients.codex.common import SessionStore
+from agent_pm.session.engine.config import read_config
 from agent_pm.session.engine.types import Access, Launch, Spec
 
 from session.tests.case import REPO, Case

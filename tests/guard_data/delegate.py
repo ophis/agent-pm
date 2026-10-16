@@ -30,10 +30,7 @@ OBJECT_EXPORT_MODULES = (
 )
 
 
-OBJECT_EXPORTS_ALLOWED = {
-    ("agent_pm.delegate", "read_config"): "TASK-389 layer-owned configuration entry point",
-    ("agent_pm.delegate", "module_roots"): "TASK-372 layer-owned import-root entry point",
-}
+OBJECT_EXPORTS_ALLOWED = {}
 
 
 OPTION_TUPLES_ALLOWED = {
@@ -54,6 +51,10 @@ COMMAND_DOCS = ("delegate/skills/", f"delegate/src/{PKG}/delegate/team/")
 
 
 PYTHON_CODE_ALLOWED = {
+    (
+        "delegate/tests/integration/harness_host_integration_test.py",
+        "2da94b78c066e8e0f5ae058c730ee3a6f208b3c4bde29b6666cf913d88749860",
+    ): "Loads the unexported delegate config reader in a fresh interpreter to configure Session for the real harness Host test.",
     (
         "delegate/tests/integration/child_env_integration_test.py",
         "51acfc7eaec58d79c12d5100cbe097b9584e30bba475b21e0033d969dd628df4",
@@ -76,6 +77,6 @@ PYTHON_CODE_ALLOWED = {
     ): "Two-process detach race needs PersistentSession's disk-backed fake, injectable only as a session_cls class object.",
     (
         "delegate/tests/integration/harness_owner_integration_test.py",
-        "6a18b2ce1783563b900b1bd7c36498b5c3fa5e109f2efcc7ff728f5f3d0329ef",
+        "844f553ea872f665a624970b7315cc589051acd75796dd8f2a437a0c47327385",
     ): "Foreground owner process needs the scripted process-free HarnessSession (delegate.tests), injectable only as a session_cls class object.",
 }

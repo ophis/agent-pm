@@ -5,14 +5,14 @@ its caller names the ticket that calls it; that ticket deletes the entry.
 from html.parser import HTMLParser
 
 from agent_pm.delegate.composer.teams import TeamKind
-from agent_pm.delegate.event.types import AutopilotStatus, OutcomeStatus
+from agent_pm.delegate.event.types import AutopilotStatus
 from agent_pm.linear_orchestrator.engine.types import State
 from agent_pm.session.clients.claude import ClaudeClient
 from agent_pm.session.clients.codex import CodexClient
 from agent_pm.session.engine.base import Session
 from agent_pm.session.engine.types import Effort, NamedKey, SessionRow, Tier
 from agent_pm.session.hosts.tmux.types import Split
-from agent_pm.utils.record import LayerCommand
+from agent_pm.utils import LayerCommand, OutcomeStatus
 
 # team/tools/html_check.py's checker overrides these HTMLParser callbacks.
 _ = HTMLParser.handle_starttag, HTMLParser.handle_startendtag
@@ -28,7 +28,7 @@ _ = AutopilotStatus.CAPPED, AutopilotStatus.STOPPED
 # engine/config.py and ops.py iterate State for the [states] keys.
 _ = State.TODO, State.IN_PROGRESS, State.IN_REVIEW, State.CANCELED
 # Record checks ctl[0] against LayerCommand's values.
-_ = LayerCommand.DELEGATE, LayerCommand.LINEAR, LayerCommand.SESSION
+_ = LayerCommand.LINEAR, LayerCommand.SESSION
 # Effort(value) parses a run's effort; clients/common.py lists the values.
 _ = Effort.LOW, Effort.MEDIUM, Effort.HIGH, Effort.XHIGH, Effort.MAX
 # Spec checks its tier, and clients/common.py a tiers table's keys, against Tier's values.

@@ -26,7 +26,7 @@ from agent_pm.delegate.engine.runner import report, say
 from agent_pm.delegate.engine.types import Begun, ConfigError, Layout, Preview, Spec
 from agent_pm.session import SESSION_NAME, SESSION_NAME_RULE, Mode, NotShowable, SessionError
 from agent_pm.session import ConfigError as SessionConfigError
-from agent_pm.utils import EVENTS_ENV, SID_ENV, STATE, Once, answer_keys, nested_start
+from agent_pm.utils import EVENTS_ENV, SID_ENV, STATE, LayerCommand, Once, answer_keys, nested_start
 
 LIST_PARAMS = RunParams(input="", out="/agent-pm-list/work/out.md", workdir="/agent-pm-list/work")
 
@@ -339,7 +339,7 @@ def _query(a: argparse.Namespace, delegate_cls: type[HarnessDelegate], sid: str 
 
 
 def _resume(view, input: str | None) -> str:
-    if input is not None and view.ctl() != ("agent-pm-delegate",):
+    if input is not None and view.ctl() != (LayerCommand.DELEGATE,):
         raise ConfigError("pipeline answers belong on the issue board")
     record = view.resume(input=input)
     if input is not None:
