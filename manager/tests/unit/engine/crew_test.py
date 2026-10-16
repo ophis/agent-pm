@@ -3,7 +3,6 @@
 import contextlib
 import io
 import os
-import subprocess
 from dataclasses import replace
 from unittest import mock
 
@@ -11,6 +10,7 @@ from agent_pm.manager.engine.crew import Crew
 from agent_pm.manager.engine.types import Spec, State
 
 from manager.tests.roster_case import RosterCase
+from utils.tests.process_fixtures import DEVNULL, TimeoutExpired
 
 ARGV = ("fake-ctl", "start", "x")
 
@@ -28,10 +28,10 @@ class Run(RosterCase):
                 return error, called, stderr.getvalue()
 
     def test_the_final_record_on_stdout_becomes_the_live_entry(self):
-        def run(argv, **options):
+        def run(_argv, **options):
             record = replace(self.record, sid=options["env"]["AGENT_PM_SID"])
             os.write(options["stdout"].fileno(), f"progress\n{record.to_line()}\n".encode())
-            return subprocess.CompletedProcess(argv, 0, stderr="warning\n")
+            return mock.Mock(returncode=0, stderr="warning\n")
 
         record, called, stderr = self.start(run)
         entry = self.roster.entries()["x"]
@@ -41,15 +41,15 @@ class Run(RosterCase):
         env = called.call_args.kwargs["env"]
         self.assertEqual(env["AGENT_PM_EVENTS"], self.roster.events)
         self.assertEqual(env["AGENT_PM_SID"], entry.sid)
-        self.assertIs(called.call_args.kwargs["stdin"], subprocess.DEVNULL)
+        self.assertIs(called.call_args.kwargs["stdin"], DEVNULL)
         self.assertEqual(stderr, "warning\n")
 
     def test_a_failed_start_raises_and_marks_the_entry_lost(self):
         for name, effect, message in (
-            ("stderr", subprocess.CompletedProcess(ARGV, 2, stderr=" boom \n"), "boom"),
-            ("exit", subprocess.CompletedProcess(ARGV, 2, stderr=""), "exit 2"),
+            ("stderr", mock.Mock(returncode=2, stderr=" boom \n"), "boom"),
+            ("exit", mock.Mock(returncode=2, stderr=""), "exit 2"),
             ("missing", FileNotFoundError(2, "No such file"), "[Errno 2] No such file"),
-            ("timeout", subprocess.TimeoutExpired(ARGV, 30), "no response within 30 seconds"),
+            ("timeout", TimeoutExpired(ARGV, 30), "no response within 30 seconds"),
         ):
             with self.subTest(name=name):
                 error, _, _ = self.start(mock.Mock(side_effect=[effect]), name)
