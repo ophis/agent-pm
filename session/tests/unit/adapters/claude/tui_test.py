@@ -571,11 +571,9 @@ class TuiPayloadTest(Base):
             ClaudeAdapter({}).tui().hook_events("SessionStart", {"session_id": SID}), []
         )
 
-    def test_the_trust_dialog(self):
-        self.assertEqual(ClaudeTui.dialogs, ("Quick safety check",))
-
     def test_the_trust_dialog_needs_its_native_rendering(self):
         run, dialog = ClaudeAdapter({}).tui(), "Quick safety check"
+        self.assertEqual(ClaudeTui.dialogs, (dialog,))
         option = "│ ❯ 1. Yes, I trust this folder\n│   2. No, exit\n"
         for screen, shown in (
             (NATIVE_TRUST, True),

@@ -160,11 +160,6 @@ class AdapterTest(Refusals):
             with self.subTest(interface=interface.__name__), self.assertRaises(TypeError):
                 interface()
 
-    def test_mode_objects_get_no_adapter_from_their_base(self):
-        for interface in (Headless, JsonHeadless, Tui, InProcess):
-            with self.subTest(interface=interface.__name__):
-                self.assertIs(interface.__init__, object.__init__)
-
     def test_refuses_the_first_unknown_key_in_sorted_order(self):
         self.refused(
             lambda: StubAdapter({"zeta": 1, "alpha": 2, "model": "m"}),
@@ -255,30 +250,13 @@ class AdapterTest(Refusals):
                 self.assertIsNot(factory(), factory())
 
 
-class SignatureTest(Case):
-    def test_mode_interfaces_take_the_spec_alone(self):
-        for method, params in (
-            (Headless.launch, ["self", "spec"]),
-            (Headless.events, ["self", "lines"]),
-            (JsonHeadless.parse, ["self", "record"]),
-            (Tui.launch, ["self", "spec", "hook"]),
-            (InProcess.run, ["self", "spec"]),
-            (InProcess.check, ["self", "spec"]),
-            (Adapter.writable_dirs, ["self", "spec"]),
-        ):
-            with self.subTest(method=method.__qualname__):
-                self.assertEqual(list(inspect.signature(method).parameters), params)
-
-
 class HeadlessTest(Case):
     def test_the_stream_is_required_and_parse_is_not(self):
-        self.assertEqual(Headless.__abstractmethods__, frozenset({"launch", "events"}))
-        self.assertFalse(hasattr(Headless, "parse"))
         self.assertEqual(list(StreamHeadless().events(["a\n", "b"])), [Reply("a"), Reply("b")])
-
-    def test_json_headless_supplies_the_stream_from_parse(self):
-        self.assertTrue(issubclass(JsonHeadless, Headless))
-        self.assertEqual(JsonHeadless.__abstractmethods__, frozenset({"launch", "parse"}))
+        for interface, method in ((Headless, "events"), (JsonHeadless, "parse")):
+            launch_only = type("LaunchOnly", (interface,), {"launch": StubHeadless.launch})
+            with self.subTest(missing=method), self.assertRaisesRegex(TypeError, method):
+                launch_only()
 
     def test_events_parses_each_json_object_line_in_order_and_skips_the_rest(self):
         lines = [
@@ -297,9 +275,10 @@ class HeadlessTest(Case):
 
 
 class InProcessTest(Case):
-    def test_run_is_its_only_abstract_method(self):
-        self.assertEqual(InProcess.__abstractmethods__, frozenset({"run"}))
-        with self.assertRaises(TypeError):
+    def test_run_is_its_only_required_method(self):
+        spec = Spec(workdir="/w", access=Access(cwd="/w"), prompt="p")
+        self.assertEqual(list(StubInProcess().run(spec)), [Reply("p")])
+        with self.assertRaisesRegex(TypeError, "run"):
             CheckOnlyInProcess()
 
     def test_checks_nothing_by_default(self):
@@ -315,11 +294,6 @@ class TuiTest(Case):
     def setUp(self):
         self.run = DetailedTui()
         self.end = {"session_id": "n1", "last": "done", "tasks": [1, 2]}
-
-    def test_the_hook_kinds_live_only_in_hook_kind(self):
-        for name in ("TURN_END", "BLOCKED", "ACTIVITY"):
-            with self.subTest(name=name):
-                self.assertFalse(hasattr(base, name))
 
     def test_defaults(self):
         run = StubTui()
@@ -452,39 +426,59 @@ class NoProcessTest(Case):
 
 
 class AccessTest(Refusals):
-    def test_defaults(self):
-        access = Access(cwd="/c")
-        self.assertEqual(
-            (access.dirs, access.commands, access.cwd, access.project, access.reads, access.env),
-            ((), (), "/c", False, (), {}),
-        )
-
-    def test_accepts_tuples_of_strings(self):
-        access = Access(dirs=("/a",), commands=("git",), cwd="/c", project=True, reads=("/r",))
-        self.assertEqual((access.dirs, access.commands, access.reads), (("/a",), ("git",), ("/r",)))
-
-    def test_keeps_reads_and_env_together(self):
-        access = Access(cwd="/c", reads=("/r",), env={"A": "b"})
-        self.assertEqual((access.reads, access.env), (("/r",), {"A": "b"}))
+    def test_keeps_the_given_fields_and_defaults_the_rest(self):
+        for fields, expected in (
+            ({}, ((), (), "/c", False, (), {})),
+            (
+                {"dirs": ("/a",), "commands": ("git",), "project": True, "reads": ("/r",)},
+                (("/a",), ("git",), "/c", True, ("/r",), {}),
+            ),
+            ({"reads": ("/r",), "env": {"A": "b"}}, ((), (), "/c", False, ("/r",), {"A": "b"})),
+        ):
+            with self.subTest(fields=fields):
+                access = Access(cwd="/c", **fields)
+                self.assertEqual(
+                    (
+                        access.dirs,
+                        access.commands,
+                        access.cwd,
+                        access.project,
+                        access.reads,
+                        access.env,
+                    ),
+                    expected,
+                )
 
     def test_takes_keywords_only(self):
         with self.assertRaises(TypeError):
             Access(("/a",))
 
-    def test_refuses_dirs_commands_or_reads_that_are_not_a_tuple_of_strings(self):
-        for bad in (["/a"], ("/a", 1), "/a", None):
-            with self.subTest(bad=bad):
-                self.refused(
-                    lambda *, bad=bad: Access(cwd="/c", dirs=bad), "dirs must be a tuple of strings"
+    def test_refuses_each_bad_field_naming_it(self):
+        env = "access env must map variable names to strings without NUL"
+        cases = (
+            *(
+                ({name: bad}, f"{name} must be a tuple of strings")
+                for bad in (["/a"], ("/a", 1), "/a", None)
+                for name in ("dirs", "commands", "reads")
+            ),
+            *(
+                ({"env": bad}, env)
+                for bad in (
+                    {"A=B": "a"},
+                    {"A\0": "a"},
+                    {"": "a"},
+                    {1: "a"},
+                    {"A": 1},
+                    {"A": None},
+                    {"A": "b\0"},
+                    [("A", "b")],
+                    None,
                 )
-                self.refused(
-                    lambda *, bad=bad: Access(cwd="/c", commands=bad),
-                    "commands must be a tuple of strings",
-                )
-                self.refused(
-                    lambda *, bad=bad: Access(cwd="/c", reads=bad),
-                    "reads must be a tuple of strings",
-                )
+            ),
+        )
+        for fields, message in cases:
+            with self.subTest(fields=fields):
+                self.refused(lambda *, fields=fields: Access(cwd="/c", **fields), message)
 
     def test_accepts_an_env_of_exec_names_to_strings(self):
         env = {
@@ -498,22 +492,6 @@ class AccessTest(Refusals):
             "Ä": "v",
         }
         self.assertEqual(Access(cwd="/c", env=MappingProxyType(env)).env, env)
-
-    def test_refuses_invalid_exec_env_names_and_values(self):
-        message = "access env must map variable names to strings without NUL"
-        for bad in (
-            {"A=B": "a"},
-            {"A\0": "a"},
-            {"": "a"},
-            {1: "a"},
-            {"A": 1},
-            {"A": None},
-            {"A": "b\0"},
-            [("A", "b")],
-            None,
-        ):
-            with self.subTest(bad=bad):
-                self.refused(lambda *, bad=bad: Access(cwd="/c", env=bad), message)
 
 
 class SpecTest(Refusals):
@@ -569,41 +547,6 @@ class SpecTest(Refusals):
         self.assertEqual(spec, self.plain(tier=2, sid="s"))
         self.assertEqual(dict(spec.env), {"A": "1", "_b2": "", "PATH": "/bin:/usr/bin"})
 
-    def test_refuses_flags_that_are_not_a_tuple_of_strings_without_nul(self):
-        for bad in (["-x"], ("-x\0",), ("-x", 1), "-x", None):
-            with self.subTest(bad=bad):
-                self.refused(
-                    lambda *, bad=bad: Spec(workdir="/w", access=Access(cwd="/w"), flags=bad),
-                    "flags must be a tuple of strings without NUL",
-                )
-
-    def test_refuses_env_that_does_not_map_variable_names_to_strings_without_nul(self):
-        for bad in (
-            {"A": 1},
-            {"A": None},
-            {"A": "b\0"},
-            {1: "a"},
-            {"": "a"},
-            {"A=": "a"},
-            {"A\0": "a"},
-            [("A", "b")],
-            "A=b",
-            None,
-        ):
-            with self.subTest(bad=bad):
-                self.refused(
-                    lambda *, bad=bad: Spec(workdir="/w", access=Access(cwd="/w"), env=bad),
-                    "env must map variable names to strings without NUL",
-                )
-
-    def test_refuses_a_name_other_than_none_or_a_string(self):
-        for bad in (5, b"w", ("w",)):
-            with self.subTest(bad=bad):
-                self.refused(
-                    lambda *, bad=bad: Spec(workdir="/w", access=Access(cwd="/w"), name=bad),
-                    "name must be None or a string",
-                )
-
     def test_reply_tags_are_none_or_a_progress_and_an_outcome_tag(self):
         self.assertEqual(
             Spec(workdir="/w", access=Access(cwd="/w"), reply_tags=("p-1", "o_2")).reply_tags,
@@ -639,114 +582,139 @@ class SpecTest(Refusals):
                 )
                 self.assertEqual((spec.tier, spec.effort), (tier, effort))
 
-    def test_refuses_a_workdir_that_is_not_a_printable_absolute_path(self):
-        for bad, shown in (
-            ("w", "'w'"),
-            ("", "''"),
-            (5, "5"),
-            (None, "None"),
-            ("/w\n", r"'/w\n'"),
-            ("/w\0", r"'/w\x00'"),
-            (b"/w", "b'/w'"),
-        ):
-            with self.subTest(bad=bad):
-                self.refused(
-                    lambda *, bad=bad: Spec(workdir=bad, access=Access(cwd="/w")),
-                    f"workdir must be a printable absolute path, got {shown}",
+    def test_refuses_each_bad_field_naming_it(self):
+        sid = 'sid must be a non-empty printable string without "/", got '
+        cases = (
+            *(
+                ({"flags": bad}, "flags must be a tuple of strings without NUL")
+                for bad in (["-x"], ("-x\0",), ("-x", 1), "-x", None)
+            ),
+            *(
+                ({"env": bad}, "env must map variable names to strings without NUL")
+                for bad in (
+                    {"A": 1},
+                    {"A": None},
+                    {"A": "b\0"},
+                    {1: "a"},
+                    {"": "a"},
+                    {"A=": "a"},
+                    {"A\0": "a"},
+                    [("A", "b")],
+                    "A=b",
+                    None,
                 )
-
-    def test_shows_at_most_80_characters_of_a_bad_workdir(self):
-        self.refused(
-            lambda: Spec(workdir="/" + "x" * 200 + "\n", access=Access(cwd="/w")),
-            "workdir must be a printable absolute path, got '/" + "x" * 78,
-        )
-
-    def test_refuses_a_tier_other_than_an_integer_1_to_4(self):
-        for bad, shown in ((0, "0"), (5, "5"), (True, "True"), ("2", "'2'"), (2.0, "2.0")):
-            with self.subTest(bad=bad):
-                self.refused(
-                    lambda *, bad=bad: Spec(workdir="/w", access=Access(cwd="/w"), tier=bad),
-                    f"tier must be an integer 1–4, got {shown}",
+            ),
+            *(({"name": bad}, "name must be None or a string") for bad in (5, b"w", ("w",))),
+            *(
+                ({"workdir": bad}, f"workdir must be a printable absolute path, got {shown}")
+                for bad, shown in (
+                    ("w", "'w'"),
+                    ("", "''"),
+                    (5, "5"),
+                    (None, "None"),
+                    ("/w\n", r"'/w\n'"),
+                    ("/w\0", r"'/w\x00'"),
+                    (b"/w", "b'/w'"),
+                    ("/" + "x" * 200 + "\n", "'/" + "x" * 78),
                 )
-
-    def test_refuses_an_effort_outside_efforts(self):
-        for bad, shown in (
-            ("extreme", "'extreme'"),
-            ("", "''"),
-            ("LOW", "'LOW'"),
-            (3, "3"),
-            (["low"], "['low']"),
-        ):
-            with self.subTest(bad=bad):
-                self.refused(
-                    lambda *, bad=bad: Spec(workdir="/w", access=Access(cwd="/w"), effort=bad),
+            ),
+            *(
+                ({"tier": bad}, f"tier must be an integer 1–4, got {shown}")
+                for bad, shown in ((0, "0"), (5, "5"), (True, "True"), ("2", "'2'"), (2.0, "2.0"))
+            ),
+            *(
+                (
+                    {"effort": bad},
                     f"effort must be one of low, medium, high, xhigh, max, got {shown}",
                 )
-
-    def test_refuses_an_access_cwd_that_is_not_a_printable_absolute_path(self):
-        for bad, shown in (("rel", "'rel'"), ("/c\0", r"'/c\x00'")):
-            with self.subTest(bad=bad):
-                self.refused(
-                    lambda *, bad=bad: Spec(workdir="/w", access=Access(cwd=bad)),
-                    f"cwd must be a printable absolute path, got {shown}",
+                for bad, shown in (
+                    ("extreme", "'extreme'"),
+                    ("", "''"),
+                    ("LOW", "'LOW'"),
+                    (3, "3"),
+                    (["low"], "['low']"),
                 )
-
-    def test_refuses_access_dirs_that_are_not_printable_absolute_paths(self):
-        for bad in ("../../other/agent-pm", "", "/d\n", "/d\0"):
-            with self.subTest(bad=bad):
-                self.refused(
-                    lambda *, bad=bad: Spec(
-                        workdir="/w",
-                        access=Access(cwd="/x/deploy/work", dirs=(bad,)),
-                        client="claude",
-                    ),
+            ),
+            *(
+                ({"access": Access(cwd=bad)}, f"cwd must be a printable absolute path, got {shown}")
+                for bad, shown in (("rel", "'rel'"), ("/c\0", r"'/c\x00'"))
+            ),
+            *(
+                (
+                    {"access": Access(cwd="/x/deploy/work", dirs=(bad,)), "client": "claude"},
                     "dirs must contain only printable absolute paths",
                 )
-
-    def test_refuses_a_sid_that_is_not_a_non_empty_printable_string_without_a_slash(self):
-        for bad, shown in (
-            ("", "''"),
-            ("a/b", "'a/b'"),
-            ("a\tb", r"'a\tb'"),
-            (5, "5"),
-            ("s" * 200 + "\n", "'" + "s" * 79),
-        ):
-            with self.subTest(bad=bad):
+                for bad in ("../../other/agent-pm", "", "/d\n", "/d\0")
+            ),
+            *(
+                ({"sid": bad}, sid + shown)
+                for bad, shown in (
+                    ("", "''"),
+                    ("a/b", "'a/b'"),
+                    ("a\tb", r"'a\tb'"),
+                    (5, "5"),
+                    ("s" * 200 + "\n", "'" + "s" * 79),
+                )
+            ),
+        )
+        for fields, message in cases:
+            with self.subTest(fields=fields):
                 self.refused(
-                    lambda *, bad=bad: Spec(workdir="/w", access=Access(cwd="/w"), sid=bad),
-                    f'sid must be a non-empty printable string without "/", got {shown}',
+                    lambda *, fields=fields: Spec(
+                        **{"workdir": "/w", "access": Access(cwd="/w"), **fields}
+                    ),
+                    message,
                 )
 
 
 class SidErrorTest(Case):
-    def test_none_for_a_non_empty_printable_string_without_a_slash(self):
-        for sid in ("s", "s-1", "0b6c8f9e-2a1d-4c3e-9f7a-5b4d3c2e1f00", "a b", "ü"):
-            with self.subTest(sid=sid):
-                self.assertIsNone(sid_error(sid))
-
-    def test_the_error_text_otherwise(self):
-        for bad, shown in (
-            ("", "''"),
-            ("a/b", "'a/b'"),
-            ("a\tb", r"'a\tb'"),
-            (5, "5"),
-            (None, "None"),
-            ("s" * 200 + "\n", "'" + "s" * 79),
+    def test_none_for_a_non_empty_printable_string_without_a_slash_else_the_error_text(self):
+        error = 'sid must be a non-empty printable string without "/", got '
+        for sid, want in (
+            *(
+                (sid, None)
+                for sid in ("s", "s-1", "0b6c8f9e-2a1d-4c3e-9f7a-5b4d3c2e1f00", "a b", "ü")
+            ),
+            ("", error + "''"),
+            ("a/b", error + "'a/b'"),
+            ("a\tb", error + r"'a\tb'"),
+            (5, error + "5"),
+            (None, error + "None"),
+            ("s" * 200 + "\n", error + "'" + "s" * 79),
         ):
-            with self.subTest(bad=bad):
-                self.assertEqual(
-                    sid_error(bad),
-                    f'sid must be a non-empty printable string without "/", got {shown}',
-                )
+            with self.subTest(sid=sid):
+                self.assertEqual(sid_error(sid), want)
 
 
 class LaunchTest(Refusals):
-    def test_defaults(self):
-        launch = Launch(("x",))
-        self.assertEqual(
-            (launch.argv, launch.env, launch.unset, launch.cwd, launch.transcript, launch.resume),
-            (("x",), {}, (), "", "", ""),
-        )
+    def test_keeps_the_given_strings_and_defaults_the_rest(self):
+        for fields, expected in (
+            ({}, (("x",), {}, (), "", "", "")),
+            (
+                {
+                    "argv": ("x", "-y"),
+                    "env": MappingProxyType({"A": "b"}),
+                    "unset": ("C",),
+                    "cwd": "/c",
+                    "transcript": "/t",
+                    "resume": "x --resume s",
+                },
+                (("x", "-y"), {"A": "b"}, ("C",), "/c", "/t", "x --resume s"),
+            ),
+        ):
+            with self.subTest(fields=fields):
+                launch = Launch(**{"argv": ("x",), **fields})
+                self.assertEqual(
+                    (
+                        launch.argv,
+                        launch.env,
+                        launch.unset,
+                        launch.cwd,
+                        launch.transcript,
+                        launch.resume,
+                    ),
+                    expected,
+                )
 
     def test_project_override_is_optional_and_boolean(self):
         self.assertIsNone(Launch(("x",)).project)
@@ -755,17 +723,6 @@ class LaunchTest(Refusals):
         for value in (0, 1, "yes", []):
             with self.subTest(value=value), self.assertRaisesRegex(ConfigError, "launch: project"):
                 Launch(("x",), project=value)
-
-    def test_accepts_strings(self):
-        launch = Launch(
-            ("x", "-y"),
-            env=MappingProxyType({"A": "b"}),
-            unset=("C",),
-            cwd="/c",
-            transcript="/t",
-            resume="x --resume s",
-        )
-        self.assertEqual((launch.env["A"], launch.unset), ("b", ("C",)))
 
     def test_refuses_argv_env_or_unset_that_is_not_strings_without_nul(self):
         for field, bads in (

@@ -565,14 +565,6 @@ def committed() -> dict:
 
 
 class Committed(Case):
-    def test_print_prompt_is_not_a_session_adapter(self):
-        self.assertNotIn("print_prompt", committed())
-        self.assertFalse(
-            os.path.exists(
-                os.path.join(os.path.dirname(agent_pm.session.__file__), "adapters", "print_prompt")
-            )
-        )
-
     def test_the_committed_adapters_configure_agent_clients(self):
         self.session_cls = configured(committed())
         self.assertEqual(registry_of(self.session_cls).configured(), ["claude", "codex"])

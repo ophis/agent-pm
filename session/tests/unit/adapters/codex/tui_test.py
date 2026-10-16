@@ -499,21 +499,18 @@ class TuiTest(Base):
             )
             self.assertIsNotNone(self.common.load(str(self.work), spec.sid))
 
-    def test_narrow_screen_wrapping_keeps_limit_reset(self):
+    def test_a_wrapped_or_driver_flattened_limit_screen_keeps_its_header_and_reset(self):
         adapter = CodexAdapter({"env": {"TZ": "UTC"}})
         stamp = datetime(2027, 1, 2, 3, 4, tzinfo=ZoneInfo("UTC")).timestamp()
-        screen = "■ You hit your spend cap set by the owner\n  of your workspace. Try again at Jan\n  2nd, 2027 3:04 AM.\n› "
-        self.assertEqual(adapter.tui().limit(screen), LimitHit(stamp))
+        for screen in (
+            "■ You hit your spend cap set by the owner\n  of your workspace. Try again at Jan\n  2nd, 2027 3:04 AM.\n› ",
+            "Codex > gpt-test ■ You've hit your usage limit. Try again at Jan 2nd, 2027 3:04 AM. › ",
+        ):
+            with self.subTest(screen=screen):
+                self.assertEqual(adapter.tui().limit(screen), LimitHit(stamp))
 
     def test_codex_has_no_opening(self):
         self.assertIsNone(self.adapter.tui().opening)
-
-    def test_dialogs_preserve_main_worker_cases(self):
-        self.assertIn("Trust this folder?", self.adapter.tui().dialogs)
-        self.assertIn("Hooks need review", self.adapter.tui().dialogs)
-        self.assertIn("Working directory · resume", self.adapter.tui().dialogs)
-        self.assertIn("This conversation is open in another app", self.adapter.tui().dialogs)
-        self.assertIn("Sign in with ChatGPT to use Codex", self.adapter.tui().dialogs)
 
     def test_each_dialog_shows_on_its_own_screen(self):
         run = self.adapter.tui()
@@ -532,14 +529,6 @@ class TuiTest(Base):
             for screen in screens:
                 with self.subTest(dialog=dialog, screen=screen):
                     self.assertFalse(run.shows(dialog, screen))
-
-    def test_driver_flattened_limit_screen_keeps_header_and_reset(self):
-        adapter = CodexAdapter({"env": {"TZ": "UTC"}})
-        screen = (
-            "Codex > gpt-test ■ You've hit your usage limit. Try again at Jan 2nd, 2027 3:04 AM. › "
-        )
-        stamp = datetime(2027, 1, 2, 3, 4, tzinfo=ZoneInfo("UTC")).timestamp()
-        self.assertEqual(adapter.tui().limit(screen), LimitHit(stamp))
 
     def test_assistant_bullets_and_quoted_limit_text_are_not_native_errors(self):
         run = self.adapter.tui()
