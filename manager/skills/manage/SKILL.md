@@ -37,7 +37,7 @@ Launch and direct work through Crew, choosing each launch command yourself (clie
 
 - Hand off work that would keep the user waiting: long or interactive work to a worker, a bounded task to a sub-agent; keep your own context for coordination. Do it yourself only when it is quick or the user says to.
 - Workers and role runs get a visible pane: a role run is tui unless the user asks for headless.
-- Watch the Roster's one events file with one Monitor (the `monitor:` line `agent-pm-crew attach` prints). Events are hints: confirm by reading the pane (`agent-pm-session read`; `/agent-pm:tmux` › Events).
+- Watch the Roster's one events file with one Monitor (the `monitor:` line `agent-pm-crew attach` prints): each event arrives with its content, the read (`/agent-pm:tmux` › Events).
 - Message a worker with the text alone, no sender label.
 - Before sending text to a worker, read its pane: if a sub-agent's view is selected (input box `Message @<agent>…`), the text goes to that sub-agent, not the worker. Send only from the main view, then confirm it reached the worker's transcript.
 - A small follow-up to a finished role run whose pane is still open (fold decided points into its PRD or PR): send it there (`agent-pm-session send`), keeping its context, and check the result yourself. Rerun it through the router only for a large rework or when the run must leave a full record (write-back): a rerun starts a fresh session and closes the old pane.

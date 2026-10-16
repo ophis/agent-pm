@@ -7,13 +7,16 @@ import uuid
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 from unittest import mock
 
 from agent_pm.manager import Spec
 from agent_pm.manager.cli import main
-from agent_pm.utils import Status
+from agent_pm.manager.engine.pr import VIEW_FIELDS
+from agent_pm.utils import Record, Status
 
 from manager.tests.cli_case import CliCase
+from utils.tests.fakes import ctl
 
 
 class CliTest(CliCase):
@@ -207,6 +210,246 @@ class NextEventContent(CliCase):
                 self.assertEqual(head, f"1 {event}")
                 self.assertTrue(content.startswith("content unavailable: "), content)
                 self.assertTrue(content.endswith("\n") and content.count("\n") == 1, content)
+
+    def test_follow_prints_each_event_block_and_keeps_going(self):
+        self.launched("w1")
+        self.answers = {("agent-pm-session", "reply", "w1"): (0, "the answer\nline 2\n", "")}
+        Path(self.roster.events).write_text("12:00:00 w1 done\nnoise\n12:00:01 w1 blocked\n")
+        stdout = io.StringIO()
+        writes = []
+        stdout.write = lambda text: writes.append(text) or len(text)
+
+        def run(argv, **_):
+            code, out, err = self.answers.get(tuple(argv), (1, "", "no such session"))
+            return SimpleNamespace(returncode=code, stdout=out, stderr=err)
+
+        argv = ("next-event", "--manager", "mgr", "--after", "0", "--gen", "0")
+        with (
+            mock.patch("subprocess.run", side_effect=run),
+            mock.patch("time.sleep", side_effect=KeyboardInterrupt),
+            contextlib.redirect_stdout(stdout),
+            self.assertRaises(KeyboardInterrupt),
+        ):
+            main([*argv, "--content", "--follow"])
+        self.assertEqual(
+            [text for text in writes if text],
+            [
+                "1 12:00:00 w1 done\nthe answer\nline 2\n",
+                "3 12:00:01 w1 blocked\ncontent unavailable: agent-pm-session read w1: "
+                "no such session\n",
+            ],
+        )
+        self.assertEqual(self.roster.backlog()[0], 3)
+
+    def test_follow_exits_1_on_stale(self):
+        self.launched("w1")
+        Path(self.roster.events).write_text("12:00:00 w1 done\n")
+        result, stdout, stderr = self.invoke(
+            "next-event", "--manager", "mgr", "--after", "0", "--gen", "5", "--follow"
+        )
+        self.assertEqual((result, stdout), (1, ""))
+        self.assertIn("crew: stale line numbers", stderr)
+
+
+URL = "https://github.com/o/r/pull/7"
+HEADER = "name\tkind\tstate\tnote\treply\tpr\tchecks\tmergeable\treview\n"
+VIEW = (
+    '{"number":7,"mergeable":"MERGEABLE","reviewDecision":"APPROVED",'
+    '"statusCheckRollup":[{"status":"COMPLETED","conclusion":"SUCCESS"}]}'
+)
+
+
+class Report(CliCase):
+    def setUp(self):
+        super().setUp()
+        self.calls = []
+        self.statuses = {}
+        self.answers: dict[tuple[str, ...], Any] = {}
+
+    def launched(self, name, *, note=None, record=None, alive=True, outcome=None):
+        sid = str(uuid.uuid4())
+        record = replace(record or self.fake_record(name), sid=sid)
+        self.roster.begin(Spec(name, ("start",), note), sid=sid)
+        self.roster.commit(name, record)
+        self.statuses[record.name] = Status(
+            record.name,
+            alive=alive,
+            state="working" if alive else "exited",
+            outcome=outcome,
+            attach=None,
+        )
+        self.answers[(*record.ctl, "status")] = self.status_answer
+        return record
+
+    def status_answer(self, text):
+        lines = (Record.parse(line).name for line in text.splitlines())
+        return 0, "".join(self.statuses[name].to_line() + "\n" for name in lines), ""
+
+    def report(self):
+        def run(argv, **kwargs):
+            self.calls.append(tuple(argv))
+            answer = self.answers.get(tuple(argv), (1, "", "no such session"))
+            code, out, err = answer if isinstance(answer, tuple) else answer(kwargs.get("input"))
+            return SimpleNamespace(returncode=code, stdout=out, stderr=err)
+
+        with mock.patch("subprocess.run", side_effect=run):
+            return self.invoke("report", "--manager", "mgr")
+
+    def gh_calls(self):
+        return [call for call in self.calls if call[0] == "gh"]
+
+    def delegate_record(self, name, workdir="/w"):
+        return Record(
+            1,
+            "role",
+            name,
+            (f"{name}-drive", name),
+            None,
+            workdir,
+            ("agent-pm-delegate",),
+            ("agent-pm-delegate", "resume", workdir),
+            None,
+            "engineer",
+        )
+
+    def test_one_row_per_entry_sorted_with_header(self):
+        self.launched("b", note="fix the parser")
+        self.launched("a", alive=False, outcome="done")
+        self.roster.begin(Spec("c", ("start",)), sid=str(uuid.uuid4()))
+        self.answers[("agent-pm-session", "reply", "b")] = (0, "\n  first line  \nsecond\n", "")
+        result, stdout, stderr = self.report()
+        self.assertEqual((result, stderr), (0, ""))
+        self.assertEqual(
+            stdout,
+            HEADER
+            + "a\tfake\tdone\t-\t-\t-\t-\t-\t-\n"
+            + "b\tfake\tworking\tfix the parser\tfirst line\t-\t-\t-\t-\n"
+            + "c\t-\tstarting\t-\t-\t-\t-\t-\t-\n",
+        )
+
+    def test_reply_is_first_nonblank_line_cut_and_dash_when_unavailable(self):
+        self.launched("w1")
+        self.launched("w2")
+        self.launched("w3")
+        self.answers[("agent-pm-session", "reply", "w1")] = (0, "x" * 100 + "\n", "")
+        self.answers[("agent-pm-session", "reply", "w2")] = (0, " \n\n", "")
+        result, stdout, stderr = self.report()
+        self.assertEqual((result, stderr), (0, ""))
+        replies = [line.split("\t")[4] for line in stdout.splitlines()[1:]]
+        self.assertEqual(replies, ["x" * 80, "-", "-"])
+
+    def test_pr_from_note_url_fills_pr_columns(self):
+        self.launched("w1", note=f"TASK-1 {URL}")
+        self.answers[("gh", "pr", "view", URL, "--json", VIEW_FIELDS)] = (0, VIEW, "")
+        result, stdout, stderr = self.report()
+        self.assertEqual((result, stderr), (0, ""))
+        self.assertTrue(stdout.endswith("\t#7\tpass\tmergeable\tapproved\n"), stdout)
+
+    def test_pr_from_role_outcome_url_when_note_has_none(self):
+        record = self.launched(
+            "r1", record=self.delegate_record("engineer-ab12"), alive=False, outcome="done"
+        )
+        self.launched("r2", record=self.delegate_record("engineer-cd34", "/v"))
+        self.launched("p1", alive=False, outcome="done")
+        outcome = ("agent-pm-delegate", "outcome")
+        inputs = []
+
+        def answer(text):
+            inputs.append(text)
+            return 0, f'{{"status":"done","url":"{URL}"}}\n', ""
+
+        self.answers[outcome] = answer
+        self.answers[("gh", "pr", "view", URL, "--json", VIEW_FIELDS)] = (0, VIEW, "")
+        result, stdout, stderr = self.report()
+        self.assertEqual((result, stderr), (0, ""))
+        rows = {line.split("\t")[0]: line.split("\t")[5:] for line in stdout.splitlines()[1:]}
+        self.assertEqual(rows["r1"], ["#7", "pass", "mergeable", "approved"])
+        self.assertEqual(rows["r2"], ["-"] * 4)
+        self.assertEqual(rows["p1"], ["-"] * 4)
+        self.assertEqual(inputs, [record.to_line() + "\n"])
+        self.assertEqual(self.calls.count(outcome), 1)
+
+    def test_no_pr_url_makes_no_gh_call(self):
+        for note, env, called in (
+            (None, {}, False),
+            ("https://evil.example/o/r/pull/1", {}, False),
+            ("http://github.com/o/r/pull/1", {}, False),
+            ("https://x@github.com/o/r/pull/1", {}, False),
+            ("https://[x/o/r/pull/1", {}, False),
+            ("https://ghe.corp/o/r/pull/1", {"GH_HOST": "ghe.corp"}, True),
+        ):
+            with self.subTest(note=note), mock.patch.dict(os.environ, env):
+                self.launched("w1", note=note)
+                self.calls = []
+                result, stdout, _ = self.report()
+                self.assertEqual(result, 0)
+                self.assertEqual(bool(self.gh_calls()), called, stdout)
+                if not called:
+                    self.assertTrue(stdout.endswith("\t-\t-\t-\t-\n"), stdout)
+                self.roster.remove("w1")
+
+    def test_status_gh_and_outcome_failures_go_to_stderr_and_exit_0(self):
+        self.launched("bad-gh", note=URL)
+        self.launched("bad-json", note=URL.replace("7", "8"))
+        self.launched("bad-outcome", record=self.delegate_record("engineer-ab12"), outcome="done")
+        self.answers[("gh", "pr", "view", URL, "--json", VIEW_FIELDS)] = (1, "", "HTTP 404")
+        self.answers[("gh", "pr", "view", URL.replace("7", "8"), "--json", VIEW_FIELDS)] = (
+            0,
+            "not json",
+            "",
+        )
+        self.answers[("agent-pm-delegate", "outcome")] = (0, "[]", "")
+        result, stdout, stderr = self.report()
+        self.assertEqual(result, 0)
+        rows = {line.split("\t")[0]: line.split("\t")[5:] for line in stdout.splitlines()[1:]}
+        self.assertEqual(rows["bad-gh"], ["#7", "?", "?", "?"])
+        self.assertEqual(rows["bad-json"], ["#8", "?", "?", "?"])
+        self.assertEqual(rows["bad-outcome"], ["-"] * 4)
+        self.assertIn("crew: bad-gh: ", stderr)
+        self.assertIn("HTTP 404", stderr)
+        self.assertIn("crew: bad-json: ", stderr)
+        self.assertNotIn("bad-outcome", stderr)
+        self.answers[("agent-pm-delegate", "outcome")] = (1, "", "no run")
+        self.answers[("agent-pm-delegate", "status")] = self.status_answer
+        self.answers[(ctl.COMMAND, "status")] = (2, "", "ctl broke")
+        result, stdout, stderr = self.report()
+        self.assertEqual(result, 0)
+        states = {line.split("\t")[0]: line.split("\t")[2] for line in stdout.splitlines()[1:]}
+        self.assertEqual(
+            states, {"bad-gh": "unknown", "bad-json": "unknown", "bad-outcome": "working"}
+        )
+        self.assertIn("crew: bad-gh: ", stderr)
+        self.assertIn("ctl broke", stderr)
+        self.assertIn("crew: bad-outcome: ", stderr)
+        self.assertIn("no run", stderr)
+        self.answers[("agent-pm-delegate", "outcome")] = (0, "not json", "")
+        result, _, stderr = self.report()
+        self.assertEqual(result, 0)
+        self.assertIn("crew: bad-outcome: Expecting value", stderr)
+
+    def test_empty_roster_prints_header_only(self):
+        self.assertEqual(self.report(), (0, HEADER, ""))
+
+    def test_tabs_and_control_characters_are_flattened(self):
+        self.launched("w1")
+        self.answers[("agent-pm-session", "reply", "w1")] = (0, "a\tb\x1b[31mc\n", "")
+        _, stdout, _ = self.report()
+        self.assertEqual(stdout.splitlines()[1].split("\t")[4], "a b[31mc")
+
+    def test_report_leaves_roster_unchanged(self):
+        self.launched("w1", alive=False)
+        self.launched(
+            "r1", record=self.delegate_record("engineer-ab12"), alive=False, outcome="needs_input"
+        )
+        self.answers[("agent-pm-delegate", "outcome")] = (0, "null\n", "")
+        with self.roster.hold("another commander"):
+            before = Path(self.roster.path).read_bytes()
+            result, stdout, stderr = self.report()
+            after = Path(self.roster.path).read_bytes()
+        self.assertEqual((result, stderr), (0, ""))
+        self.assertIn("\tgone\t", stdout)
+        self.assertIn("\twaiting\t", stdout)
+        self.assertEqual(after, before)
 
 
 class InsideAnAgentSession(CliCase):

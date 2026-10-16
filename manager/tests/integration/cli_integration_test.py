@@ -61,7 +61,18 @@ class PathsAndArguments(Case):
         self.assertEqual(
             commands,
             {
-                "monitor": ["tail", "-n", "+1", "-F", str(events)],
+                "monitor": [
+                    "agent-pm-crew",
+                    "next-event",
+                    "--manager",
+                    "mgr",
+                    "--after",
+                    "0",
+                    "--gen",
+                    "0",
+                    "--content",
+                    "--follow",
+                ],
                 "monitor expired": [
                     "agent-pm-crew",
                     "attach",
@@ -114,7 +125,21 @@ class PathsAndArguments(Case):
         )
         events = home / ".agent-pm" / "managers" / "mgr" / "events"
         self.assertTrue(events.is_absolute())
-        self.assertEqual(shlex.split(monitor), ["tail", "-n", "+1", "-F", str(events)])
+        self.assertEqual(
+            shlex.split(monitor),
+            [
+                "agent-pm-crew",
+                "next-event",
+                "--manager",
+                "mgr",
+                "--after",
+                "0",
+                "--gen",
+                "0",
+                "--content",
+                "--follow",
+            ],
+        )
         self.assertTrue(events.is_file())
         self.assertTrue(events.with_name("roster.json").is_file())
         self.assertFalse(Path(self.agent_pm, "managers").exists())

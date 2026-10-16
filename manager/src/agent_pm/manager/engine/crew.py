@@ -1,6 +1,8 @@
 """Execute opaque starter, control and resume commands while Roster owns their bookkeeping."""
 
+import contextlib
 import datetime
+import json
 import os
 import re
 import shlex
@@ -11,6 +13,7 @@ import uuid
 from collections.abc import Iterable
 from dataclasses import replace
 
+from agent_pm.manager.engine.pr import NO_PR, VIEW_FIELDS, cells, pr_url, unknown
 from agent_pm.manager.engine.roster import LOCK_TIMEOUT, Roster
 from agent_pm.manager.engine.types import Entry, Lease, RosterError, Spec, State, StatusError
 from agent_pm.utils import LEASE_ENV, Record, Status, one_line, printable
@@ -23,6 +26,8 @@ EVENT = re.compile(r"[0-9]{2}:[0-9]{2}:[0-9]{2} \S+ \S.*")
 HERE = ("agent-pm-session", "ls", "--here", "--records")
 DESCENDANTS = (*HERE, "--descendants")
 HEADER = "name\tkind\tsid\tstate\tnote\tcwd\tattach"
+REPORT_HEADER = "name\tkind\tstate\tnote\treply\tpr\tchecks\tmergeable\treview"
+REPLY_WIDTH = 80
 HARNESS_SUFFIX = "-drive"
 
 
@@ -35,6 +40,26 @@ def _owner(session: str, entries: dict[str, Entry]) -> str | None:
         ),
         None,
     )
+
+
+def _row(fields: Iterable[str]) -> str:
+    return "\t".join(printable(field).replace("\t", " ") for field in fields)
+
+
+def _first_line(text: str) -> str:
+    return next((line.strip() for line in text.splitlines() if line.strip()), "-")[:REPLY_WIDTH]
+
+
+def _reconciled(entry: Entry, status: Status) -> State:
+    if entry.state not in (State.LIVE, State.GONE):
+        return entry.state
+    if status.alive:
+        return State.LIVE
+    if status.outcome in ("done", "failed"):
+        return State.DONE
+    if status.outcome == "needs_input":
+        return State.WAITING
+    return State.GONE
 
 
 class Crew:
@@ -247,24 +272,15 @@ class Crew:
             if name not in answers:
                 continue
             status = answers[name]
-            state = entry.state
-            if state in (State.LIVE, State.GONE):
-                if status.alive:
-                    state = State.LIVE
-                elif status.outcome in ("done", "failed"):
-                    state = State.DONE
-                elif status.outcome == "needs_input":
-                    state = State.WAITING
+            state = _reconciled(entry, status)
+            if state != entry.state and not self.roster.mark_if(name, entry, state):
+                current = self.roster.entries().get(name)
+                if current is None:
+                    entries.pop(name)
                 else:
-                    state = State.GONE
-                if state != entry.state and not self.roster.mark_if(name, entry, state):
-                    current = self.roster.entries().get(name)
-                    if current is None:
-                        entries.pop(name)
-                    else:
-                        entries[name] = current
-                    answers.pop(name)
-                    continue
+                    entries[name] = current
+                answers.pop(name)
+                continue
             entries[name] = replace(entry, state=state)
             if state == State.LIVE and status.attach is not None and entry.record is not None:
                 shown.append(entry.record)
@@ -289,7 +305,7 @@ class Crew:
                 "-" if status is None else status.cwd or "-",
                 "-" if status is None else status.attach or "-",
             )
-            output.append("\t".join(printable(field).replace("\t", " ") for field in fields))
+            output.append(_row(fields))
         output.extend(
             f"{cursor + i} {printable(line)}"
             for i, line in enumerate(backlog, 1)
@@ -297,6 +313,65 @@ class Crew:
         )
         output.append(f"N={cursor} GEN={generation}")
         return "\n".join(output) + "\n"
+
+    def report(self, session_command: tuple[str, ...], delegate_command: tuple[str, ...]) -> str:
+        """One row per entry: its shown state, note, latest reply's first line by session_command,
+        and its PR's state, from its note or a delegate_command Record's outcome. Reads only: marks,
+        adopts and shows nothing, and needs no lease.
+        """
+        entries = self.roster.entries()
+        answers, failures = self._statuses(entries)
+        for name, failure in failures.items():
+            print(f"crew: {name}: {failure}", file=sys.stderr)
+        output = [REPORT_HEADER]
+        for name, entry in sorted(entries.items()):
+            record = entry.record
+            status = answers.get(name)
+            state = "unknown" if status is None else _reconciled(entry, status)
+            if status is not None and state == State.LIVE:
+                state = status.state
+            reply = "-"
+            if record is not None and record.sessions:
+                with contextlib.suppress(RuntimeError):
+                    reply = _first_line(
+                        self._execute((*session_command, "reply", record.sessions[-1]))
+                    )
+            pr = NO_PR
+            if url := pr_url(entry.note) or pr_url(
+                self._outcome_url(name, record, status, delegate_command)
+            ):
+                try:
+                    pr = cells(
+                        json.loads(self._execute(("gh", "pr", "view", url, "--json", VIEW_FIELDS)))
+                    )
+                except (RuntimeError, ValueError) as error:
+                    print(f"crew: {name}: {error}", file=sys.stderr)
+                    pr = unknown(url)
+            kind = "-" if record is None else record.kind
+            output.append(_row((name, kind, state, entry.note or "-", reply, *pr)))
+        return "\n".join(output) + "\n"
+
+    def _outcome_url(
+        self,
+        name: str,
+        record: Record | None,
+        status: Status | None,
+        delegate_command: tuple[str, ...],
+    ) -> str | None:
+        if (
+            record is None
+            or record.ctl != delegate_command
+            or status is None
+            or status.outcome is None
+        ):
+            return None
+        try:
+            outcome = json.loads(self._execute((*record.ctl, "outcome"), record.to_line() + "\n"))
+        except (RuntimeError, ValueError) as error:
+            print(f"crew: {name}: {error}", file=sys.stderr)
+            return None
+        url = outcome.get("url") if isinstance(outcome, dict) else None
+        return url if isinstance(url, str) else None
 
     def resume(self, name: str) -> Record | None:
         self._listed = None
