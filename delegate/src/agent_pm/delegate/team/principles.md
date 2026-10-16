@@ -22,3 +22,31 @@ Documents and prompts you write: fewest words, full information.
 - Say what to do; use a ban only for a hard guardrail.
 - **Diagrams and tables**: a flow of 3+ steps or with branches, a structure, a sequence or a timeline → a Mermaid diagram (`flowchart`, `sequenceDiagram` or `timeline` only; short node labels); a comparison of several items → a table; anything simpler → a list or `X → Y`, not prose. Right after a diagram, a caption saying only what it can't carry (sources, confidence, what an edge means, reading order), from facts already in that section, never restating its nodes; delete the text the diagram replaces.
 - Reports and PRDs, headings and fixed labels included, are in {{language}}; a `<X, translated>` in a template or task is X in {{language}}. Ids (`FR-<n>`, `NFR-<n>`, `[n]`, `primary`, `secondary`, `code`), proper nouns and acronyms stay English. A term's first mention adds one gloss, its {{language}} rendering (for an acronym, of its full name); none when the term is common in {{language}}, and none in a heading. Later mentions: just the English.
+
+## Overlap
+
+The Input has a `## Related work` section → before your task's steps, judge each candidate in it against this issue, unless the user's later words say to go on without that.
+
+| Verdict | When |
+|---|---|
+| `covered` | it does all of this issue, by **evidence** |
+| `supersedes` | this issue holds all of it, or updates it for a scope or codebase change |
+| `intersects` | the two share scope not yet done, and each has scope the other lacks |
+| `partial` | a Done or In Review candidate's output already answers part of this issue |
+| `none` | else |
+
+- **Evidence**, by the candidate's state: Done or In Review: its output URL answering all of this issue's requirements; In Progress or Canceled: its description covering all of them; Backlog or Todo: never `covered`; the same scope is `supersedes`. No **evidence** → at most `partial`.
+- `covered` beats every other verdict: do none of the work; return `needs_input`, its `questions` naming the candidate's id and **evidence** (Canceled: its last comment, as the cancel reason; In Progress: that it is running), and suggest closing this issue as a Duplicate of it.
+- `partial` → do only the part not yet answered; the deliverable cites the candidate and its output as sources.
+- `supersedes`, `intersects` → by the candidate's state:
+
+| Verdict | State | Do | **Board proposal** |
+|---|---|---|---|
+| `supersedes` | Backlog, Todo, In Review | all of this issue | cancel |
+| `intersects` | Backlog, Todo, In Review | all of this issue, the shared part included | split residue, then cancel |
+| `supersedes` | Done | all of this issue; the deliverable lists its output as an earlier version | cross-link |
+| `intersects` | Done | as `partial` | none |
+| `supersedes`, `intersects` | In Progress, Canceled | all of this issue | cross-link |
+
+- **Board proposal**: one line each, appended to `summary` past its line limit: `<old id>: <cancel | split residue | cross-link>: <reason>`; split residue adds the residue issue's title and description (the candidate's scope this issue leaves). Cancel: as a Duplicate of this issue; cross-link: a `related` link and a comment on each. The manager carries them out once the user approves.
+- `none` → no mention.
