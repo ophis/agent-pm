@@ -38,7 +38,6 @@ STAMPS = [
     ),
 ]
 LIMIT = 'limit: want null or {"resets_at": a number or null}'
-OUTCOME = "outcome: want the fields deliverable, files, questions, status, summary, title, url"
 
 
 def line(**data) -> str:
@@ -81,8 +80,12 @@ class EventLine(Case):
             for key, value in (
                 ("status", "x"),
                 ("title", 1),
+                ("title", "T" * 201),
+                ("title", "two\nlines"),
                 ("summary", None),
+                ("summary", "S" * 4001),
                 ("questions", [1]),
+                ("questions", ["Q"] * 5),
                 ("url", False),
                 ("files", "a"),
                 ("deliverable", []),
@@ -180,9 +183,18 @@ class EventLine(Case):
             ({"kind": "finished", "returncode": True}, "returncode: want an int"),
             ({"kind": "finished", "returncode": 0.0}, "returncode: want an int"),
             ({"kind": "finished", "returncode": 0, "error": None}, "error: want a str"),
-            ({"kind": "finished", "returncode": 0, "outcome": {"title": "T"}}, OUTCOME),
-            ({"kind": "finished", "returncode": 0, "outcome": {"status": 1}}, OUTCOME),
-            ({"kind": "finished", "returncode": 0, "outcome": ["done"]}, OUTCOME),
+            (
+                {"kind": "finished", "returncode": 0, "outcome": {"title": "T"}},
+                "outcome lacks 'status'",
+            ),
+            (
+                {"kind": "finished", "returncode": 0, "outcome": {"status": 1}},
+                "outcome lacks 'title'",
+            ),
+            (
+                {"kind": "finished", "returncode": 0, "outcome": ["done"]},
+                "outcome must be an object",
+            ),
             ({"kind": "finished", "returncode": 0, "limit": {"resets_at": 1, "at": 2}}, LIMIT),
             ({"kind": "finished", "returncode": 0, "limit": {}}, LIMIT),
             ({"kind": "finished", "returncode": 0, "limit": {"resets_at": True}}, LIMIT),

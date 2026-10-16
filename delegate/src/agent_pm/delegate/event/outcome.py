@@ -8,6 +8,7 @@ import os
 import posixpath
 import re
 from collections.abc import Mapping
+from dataclasses import fields
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
@@ -28,6 +29,15 @@ SAVES_DELIVERABLE = (
 DEFAULT_HOST = "github.com"
 PULL = re.compile(r"/[^/]+/[^/]+/pull/\d+")
 PR_PATH = re.compile(rf"{PULL.pattern}|/[^/]+/[^/]+/(compare|tree)/\S+")
+
+
+def parse(data: dict) -> Outcome:
+    names = tuple(field.name for field in fields(Outcome))
+    schema = _schema()
+    schema["required"] = names
+    schema["properties"] = {name: schema["properties"][name] for name in names}
+    _conform(data, schema, "outcome")
+    return Outcome(**{**data, "status": OutcomeStatus(data["status"])})
 
 
 def read(
