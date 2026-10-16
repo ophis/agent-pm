@@ -8,10 +8,10 @@ branch.
 worktree prints {"repo", "host", "default", "branch", "commit", "worktree", "permalink_base",
 "push"}; no push permission is no error. status, after worktree with the same SLUG, prints {"pr",
 "base", "plan_docs", "since", "user", "others"}. `pr` is B's PR {"number", "url", "state",
-"baseRefName"} or null; `base` is the PR's baseRefName, else BASE, else the default branch. `user`
-and `others` are PR comments and reviews by the user (core config's `users`, else the gh login) and
-by anyone else since B's latest own commit (no merge; not on origin/<base>, as it was before a
-merged PR's merge), all when none. `plan_docs` are B's autopilot plan docs in <worktree>/.autopilot/
+"baseRefName", "isDraft"} or null; `base` is the PR's baseRefName, else BASE, else the default
+branch. `user` and `others` are PR comments and reviews by the user (core config's `users`, else the
+gh login) and by anyone else since B's latest own commit (no merge; not on origin/<base>, as it was
+before a merged PR's merge), all when none. `plan_docs` are B's autopilot plan docs in <worktree>/.autopilot/
 {"path", "phase"}, phase `S<n>` or `done`, newest (last modified) last.
 
 SLUG: 1-100 of [A-Za-z0-9._-], default B with / → -. REPO is `owner/name`, `host/owner/name`,
@@ -325,7 +325,7 @@ def status(
             "--state",
             "all",
             "--json",
-            "number,url,state,baseRefName,isCrossRepository,author,mergeCommit",
+            "number,url,state,baseRefName,isDraft,isCrossRepository,author,mergeCommit",
             "--limit",
             "100",
         ],
@@ -336,7 +336,11 @@ def status(
         r for r in rows if r.get("isCrossRepository") is False and _author(r, "author") == login
     ]
     by_user = {u.lower() for u in users} if users else {login.lower()}
-    pr = {k: mine[0].get(k) for k in ("number", "url", "state", "baseRefName")} if mine else None
+    pr = (
+        {k: mine[0].get(k) for k in ("number", "url", "state", "baseRefName", "isDraft")}
+        if mine
+        else None
+    )
     onto = (
         pr["baseRefName"]
         if pr
