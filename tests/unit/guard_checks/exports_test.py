@@ -376,7 +376,7 @@ class ObjectExports(Sample):
     SESSION = f"session/{PKG}/session/"
     INIT = SESSION + "__init__.py"
     EXTENSION = SESSION + "extension.py"
-    ENTRY_FUNCTIONS = ("read_config",)
+    ENTRY_EXPORTS = ("read_config", "SESSION_NAME", "SESSION_NAME_RULE")
     BAD = ("OS", "Shut", "runtimes", "f", "g", "LAMBDA", "Ghost")
     BAD_SOURCE = (
         "import os as OS\n"
@@ -388,9 +388,12 @@ class ObjectExports(Sample):
     )
 
     def init(self, source="", names=()):
-        """A session __init__ exporting the allowlisted entry function read_config, then `names`."""
-        imported = "from agent_pm.session.engine.config import read_config\n"
-        return f"{imported}{source}__all__ = {[*self.ENTRY_FUNCTIONS, *names]!r}\n"
+        """A session __init__ exporting its allowlisted entries, then `names`."""
+        imported = (
+            "from agent_pm.session.engine.config import read_config\n"
+            "import re\nSESSION_NAME = re.compile('x')\nSESSION_NAME_RULE = str('x')\n"
+        )
+        return f"{imported}{source}__all__ = {[*self.ENTRY_EXPORTS, *names]!r}\n"
 
     def found(self, files=None):
         tree = {
@@ -410,11 +413,11 @@ class ObjectExports(Sample):
     def test_the_real_tree_is_clean(self):
         self.assertEqual(exports.object_exports(REPO), [])
 
-    def test_the_allowlisted_entry_functions_pass_each_with_a_one_line_reason(self):
+    def test_the_allowlisted_entries_pass_each_with_a_one_line_reason(self):
         self.assertEqual(self.found(), [])
         self.assertEqual(
             {key for key in OBJECT_EXPORTS_ALLOWED if key[0] == "agent_pm.session"},
-            {("agent_pm.session", n) for n in self.ENTRY_FUNCTIONS},
+            {("agent_pm.session", n) for n in self.ENTRY_EXPORTS},
         )
         for key, reason in OBJECT_EXPORTS_ALLOWED.items():
             with self.subTest(key=key):
@@ -482,7 +485,7 @@ class ObjectExports(Sample):
             ),
             (
                 {self.INIT: 'class read_config: pass\n__all__ = ["read_config"]\n'},
-                sorted(f"agent_pm.session: {name}: {stale}" for name in self.ENTRY_FUNCTIONS),
+                sorted(f"agent_pm.session: {name}: {stale}" for name in self.ENTRY_EXPORTS),
             ),
         ):
             with self.subTest(files=files):

@@ -29,23 +29,6 @@ class DelegatePackageNames(Sample):
         self.assertEqual(ownership.delegate_package_names(root), [])
 
 
-class DelegateSessionName(Sample):
-    def test_delegate_clis_name_rule_copy_must_equal_the_sessions(self):
-        rel = DELEGATE_SRC + "cli.py"
-        name = 'SESSION_NAME = re.compile(r"(?!none\\Z)[A-Za-z0-9_-]+")\n'
-        rule = 'SESSION_NAME_RULE = "[A-Za-z0-9_-]+ but not none"\n'
-        self.assertEqual(ownership.delegate_session_name(REPO), [])
-        self.assertEqual(ownership.delegate_session_name(self.tree({rel: name + rule})), [])
-        for source, wrong in (
-            (name.replace("_-", "-") + rule, "SESSION_NAME"),
-            (name + rule.replace("not none", "not off"), "SESSION_NAME_RULE"),
-            (name, "SESSION_NAME_RULE"),
-        ):
-            with self.subTest(source=source):
-                (found,) = ownership.delegate_session_name(self.tree({rel: source}))
-                self.assertTrue(found.startswith(f"{rel}: {wrong} "), found)
-
-
 class SessionNames(Sample):
     def test_session_names_no_config_reader_protocol_tag_or_team_text(self):
         probe = SESSION_SRC + "engine/probe.py"
