@@ -328,7 +328,7 @@ class Placement:
 
     def watch(self, session: str) -> None:
         """@window, the window of the tmux pane show opened (@pane), and session's hooks: that
-        pane's client detaching runs `hide --if-closed`; any client attaching forgets that pane once
+        pane's client detaching runs `hide --if-closed`; any client arriving forgets that pane once
         gone (a detach runs no hook, and frees its tty); a failure is only printed.
         """
         command, problem = hook_command()
@@ -345,8 +345,9 @@ class Placement:
                 raise TuiError(f"not a window id and tty: {found!r:.80}")
             kept = f"#{{||:#{{!=:#{{@pane}},{pane}}},#{{m:* {pane} *,{LISTED}}}}}"
             stale = f"if-shell -F -t {target} '{kept}' '' \"{_unset(target)}\""
-            args = ["set-option", "-t", target, "@window", window, ";"]
-            args += ["set-hook", "-t", target, "client-attached", stale]
+            args = ["set-option", "-t", target, "@window", window]
+            for arrived in ("client-attached", "client-session-changed"):
+                args += [";", "set-hook", "-t", target, arrived, stale]
             if not problem:
                 run = f"run-shell -b '{command} hide --if-closed {session} >/dev/null 2>&1 || true'"
                 # a client's name is its tty: the viewer's is its pane's

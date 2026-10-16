@@ -382,12 +382,10 @@ class WatchTest(Case):
         "'#{||:#{!=:#{@pane},%10},#{m:* %10 *,#{S:#{W:#{P: #{pane_id} }}}}}' "
         f"'' \"{UNSET}\""
     )
-    SET = ["tmux", "set-option", "-t", "=s:", "@window", "@3", ";"] + [
-        "set-hook",
-        "-t",
-        "=s:",
-        "client-attached",
-        STALE,
+    SET = [
+        *("tmux", "set-option", "-t", "=s:", "@window", "@3"),
+        *(";", "set-hook", "-t", "=s:", "client-attached", STALE),
+        *(";", "set-hook", "-t", "=s:", "client-session-changed", STALE),
     ]
 
     def watch(self, pane="%10\n", found="@3 /dev/pts/4\n", **which_kw):
