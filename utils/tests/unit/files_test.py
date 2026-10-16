@@ -282,6 +282,71 @@ class DropStale(Base):
         self.assertIsInstance(error, FileNotFoundError)
 
 
+class InodeLock(Base):
+    def held(self) -> bool:
+        with files.inode_lock(self.path, wait=False) as got:
+            return not got
+
+    def test_a_lock_unlinked_while_waited_on_is_retaken_on_the_new_file(self):
+        real_flock, calls = files.fcntl.flock, []
+
+        def flock(fd, operation):
+            if not calls:
+                os.unlink(self.path)
+                Path(self.path).touch()
+            calls.append(fd)
+            return real_flock(fd, operation)
+
+        with mock.patch("fcntl.flock", side_effect=flock), files.inode_lock(self.path) as got:
+            self.assertTrue(got)
+            self.assertEqual(len(calls), 2)
+            self.assertTrue(os.path.samestat(os.fstat(calls[1]), os.stat(self.path)))
+        with files.inode_lock(self.path) as got:
+            self.assertTrue(got)
+            self.assertTrue(self.promptly(self.held))
+        self.assertFalse(self.held())
+
+    def test_a_holder_may_unlink_and_a_missing_path_is_retried(self):
+        with files.inode_lock(self.path):
+            os.unlink(self.path)
+        real_flock, calls = files.fcntl.flock, []
+
+        def flock(fd, operation):
+            if not calls:
+                os.unlink(self.path)
+            calls.append(fd)
+            return real_flock(fd, operation)
+
+        with mock.patch("fcntl.flock", side_effect=flock), files.inode_lock(self.path):
+            self.assertEqual(len(calls), 2)
+            self.assertTrue(os.path.samestat(os.fstat(calls[1]), os.stat(self.path)))
+
+    def test_without_waiting_a_held_lock_yields_false(self):
+        with files.inode_lock(self.path, wait=False) as first:
+            self.assertTrue(first)
+            self.assertTrue(self.promptly(self.held))
+        self.assertFalse(self.held())
+
+    def test_a_non_regular_lock_path_is_refused(self):
+        os.mkfifo(self.path)
+        with self.assertRaises(OSError) as raised, files.inode_lock(self.path):
+            self.fail("accepted FIFO lock")
+        self.assertEqual(raised.exception.errno, errno.EINVAL)
+
+
+class Idle(Base):
+    def test_every_existing_path_older_than_the_age_and_missing_ones_ignored(self):
+        old, new = os.path.join(self.dir, "old"), os.path.join(self.dir, "new")
+        for path in (old, new):
+            Path(path).touch()
+        os.utime(old, (0, 0))
+        os.symlink(old, self.path)
+        os.utime(self.path, (0, 0), follow_symlinks=False)
+        self.assertTrue(files.idle([old, self.path, os.path.join(self.dir, "gone")], 60))
+        self.assertFalse(files.idle([old, new], 60))
+        self.assertTrue(files.idle([], 60))
+
+
 class Save(Base):
     def setUp(self):
         super().setUp()

@@ -6,7 +6,7 @@ import stat
 import sys
 import tempfile
 import time
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 from enum import StrEnum
 from pathlib import Path
 
@@ -67,6 +67,44 @@ def file_lock(path: str | Path, *, wait: bool = True) -> Iterator[None]:
         yield
     finally:
         os.close(fd)
+
+
+@contextlib.contextmanager
+def inode_lock(path: str | Path, *, wait: bool = True) -> Iterator[bool]:
+    """Exclusive flock on `path` itself, held once `path` still names the locked file, so a holder
+    may unlink it; False without waiting when another holds it.
+    """
+    while True:
+        fd = os.open(path, os.O_RDWR | os.O_CREAT | os.O_NONBLOCK, 0o600)
+        try:
+            if not stat.S_ISREG(os.fstat(fd).st_mode):
+                raise OSError(errno.EINVAL, "not a regular lock file", str(path))
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | (0 if wait else fcntl.LOCK_NB))
+            except BlockingIOError:
+                yield False
+                return
+            try:
+                same = os.path.samestat(os.fstat(fd), os.stat(path))
+            except FileNotFoundError:
+                same = False
+            if same:
+                yield True
+                return
+        finally:
+            os.close(fd)
+
+
+def idle(paths: Iterable[str | Path], seconds: float) -> bool:
+    """Every existing path (not followed) last modified over `seconds` ago."""
+    cutoff = time.time() - seconds
+    for path in paths:
+        try:
+            if os.lstat(path).st_mtime >= cutoff:
+                return False
+        except FileNotFoundError:
+            continue
+    return True
 
 
 def drop_stale(directory: str) -> list[OSError]:
