@@ -122,26 +122,34 @@ class HelpTest(SessionCliCase):
 class UsageTest(SessionCliCase):
     ATTACH = False
 
-    def test_a_bad_command_line_exits_2_on_stderr_alone_and_starts_nothing(self):
-        for argv, message in (
+    def test_a_bad_command_line_or_no_client_d1_exits_2_on_stderr_alone_and_starts_nothing(self):
+        for argv, scene, message in (
             (
                 ("bogus", "w1"),
+                {},
                 f"{PROG}: error: argument COMMAND: invalid choice: 'bogus' (choose from "
                 + ", ".join(f"'{cmd}'" for cmd in SUBCOMMANDS)
                 + ")",
             ),
             (
                 ("start",),
+                {},
                 f"{PROG} start: error: the following arguments are required: name, --client",
             ),
-            (("read",), f"{PROG} read: error: the following arguments are required: name"),
+            (("read",), {}, f"{PROG} read: error: the following arguments are required: name"),
             (
                 ("ls", "--display", "x", "--here"),
+                {},
                 f"{PROG} ls: error: argument --here: not allowed with argument --display",
+            ),
+            (
+                ("start", "w1", "--cwd", self.cwd),
+                self.scene("w1"),
+                f"{PROG} start: error: the following arguments are required: --client",
             ),
         ):
             with self.subTest(argv=argv):
-                self.assert_usage_error(self.session(*argv), message)
+                self.assert_usage_error(self.session(*argv, **scene), message)
 
     def test_descendants_without_here_and_records_exits_2(self):
         for argv in (
@@ -152,12 +160,6 @@ class UsageTest(SessionCliCase):
             with self.subTest(argv=argv):
                 result = self.session("ls", *argv)
                 self.assert_refused(result, f"{PROG}: ls: --descendants needs --here --records\n")
-
-    def test_start_has_no_default_client_d1(self):
-        result = self.session("start", "w1", "--cwd", self.cwd, **self.scene("w1"))
-        self.assert_usage_error(
-            result, f"{PROG} start: error: the following arguments are required: --client"
-        )
 
 
 class ClientEnvTest(SessionCliCase):
@@ -202,8 +204,8 @@ class ConfigTest(SessionCliCase):
         self.record(self.start("w1"))
         self.assertEqual(self.server.option("w1", "status"), "on")
 
-    def test_a_bad_config_exits_2_with_its_reason_before_anything_starts(self):
-        local = "~/.agent-pm/config.local.toml"
+    def test_a_bad_config_or_host_or_adapter_override_exits_2_with_its_reason_first(self):
+        local = "config: ~/.agent-pm/config.local.toml"
         for text, reason in (
             (
                 "status_line = true\n",
@@ -211,14 +213,10 @@ class ConfigTest(SessionCliCase):
                 "layer has it; move it under its owning layer's section",
             ),
             ("[session]\nbogus = 1\n", f"{local}: unknown key 'bogus' in [session]"),
-            ('[session.hosts]\ndefault = "nope"\n', "[hosts] default: want one of pty, tmux"),
-        ):
-            with self.subTest(config=text):
-                self.local_config(text)
-                self.assert_refused(self.start_w1(), f"{PROG}: config: {reason}\n")
-
-    def test_a_bad_host_or_adapter_override_exits_2_naming_its_key_before_anything_starts(self):
-        for text, reason in (
+            (
+                '[session.hosts]\ndefault = "nope"\n',
+                "config: [hosts] default: want one of pty, tmux",
+            ),
             ('[session.hosts.tmux]\nstatus_line = "yes"\n', "status_line: want true or false"),
             (
                 '[session.hosts.tmux]\ngrid_retile = "never"\n',

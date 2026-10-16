@@ -42,12 +42,15 @@ class AttachListTest(AttachmentBase):
                 handle.close()
                 self.tmux.kill.assert_called_once_with("%7")
 
-    def test_a_terminal_without_a_controller_is_refused(self):
-        self.kind, self.controlled = "terminal", False
-        with self.assertRaisesRegex(SessionError, "tmux session tui: missing @control"):
-            self.host.attach("tui")
-        self.tmux.kill.assert_not_called()
-        self.socket.assert_not_called()
+    def test_a_session_of_either_kind_without_a_controller_is_refused_immediately(self):
+        self.controlled = False
+        for kind, name in (("terminal", "tui"), ("detach", "d1")):
+            with self.subTest(kind=kind):
+                self.kind = kind
+                with self.assertRaisesRegex(SessionError, f"tmux session {name}: missing @control"):
+                    self.host.attach(name)
+                self.tmux.kill.assert_not_called()
+                self.socket.assert_not_called()
 
     def test_attach_during_controller_teardown_returns_an_ended_handle(self):
         self.control.remove()
@@ -55,13 +58,6 @@ class AttachListTest(AttachmentBase):
         self.assertFalse(handle.alive())
         self.assertTrue(handle.wait_exit(0))
         self.connection.connect.assert_not_called()
-
-    def test_a_detached_kind_session_without_control_is_refused_immediately(self):
-        self.controlled = False
-        with self.assertRaisesRegex(SessionError, "tmux session d1: missing @control"):
-            self.host.attach("d1")
-        self.socket.assert_not_called()
-        self.tmux.kill.assert_not_called()
 
     def test_a_regular_file_in_place_of_the_controller_socket_is_refused(self):
         self.controlled = True

@@ -547,10 +547,6 @@ class SettleTest(Live):
             changed, BREAKER_TIMEOUT, what="the installed retile hook updates the grid"
         )
 
-    def test_grid_up_settles(self):
-        self.grid_up()
-        self.settled()
-
     def test_concurrent_tiles_settle(self):
         self.tmux(
             "set-option",

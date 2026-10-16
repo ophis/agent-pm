@@ -209,19 +209,18 @@ class SidTest(Base):
 
 
 class ClientNoteTest(Base):
-    def test_with_commands_the_note_follows_the_prompt(self):
-        _, argv = self.run_once(spec=self.spec(access=Access(cwd=self.workdir, commands=("git",))))
-        self.assertEqual(argv[-1], "hello\n\nFAKE NOTE")
-
-    def test_without_commands_the_prompt_is_unchanged(self):
-        _, argv = self.run_once()
-        self.assertEqual(argv[-1], "hello")
-
-    def test_an_empty_note_leaves_the_prompt_unchanged(self):
-        _, argv = self.run_once(
-            client="quiet", spec=self.spec(access=Access(cwd=self.workdir, commands=("git",)))
-        )
-        self.assertEqual(argv[-1], "hello")
+    def test_the_note_follows_the_prompt_only_with_commands_and_a_nonempty_note(self):
+        git = Access(cwd=self.workdir, commands=("git",))
+        for case, kwargs, prompt in (
+            ("with commands", {"spec": self.spec(access=git)}, "hello\n\nFAKE NOTE"),
+            ("without commands", {}, "hello"),
+            ("an empty note", {"client": "quiet", "spec": self.spec(access=git)}, "hello"),
+        ):
+            with self.subTest(case=case):
+                if os.path.exists(self.log):
+                    os.remove(self.log)
+                _, argv = self.run_once(**kwargs)
+                self.assertEqual(argv[-1], prompt)
 
 
 if __name__ == "__main__":
