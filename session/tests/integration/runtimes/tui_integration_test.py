@@ -45,7 +45,7 @@ class CloseTest(Case):
         def remove_after_hook(path, *args, **kwargs):
             hooks.append(
                 subprocess.run(
-                    [*tui._Store(NAME, host=host).hook_argv(), "stop"],
+                    [*tui.TuiStore(NAME, host=host).hook_argv(), "stop"],
                     input=b"{}",
                     capture_output=True,
                     check=True,
@@ -71,10 +71,10 @@ class RawSessionCloseTest(Live):
         folder = Path(self.agent_pm, "tui", name)
         folder.mkdir(parents=True)
         (folder / "session.json").write_text("{}")
-        self.session_cls.retire(name)
+        tui.TuiStore(name, host=self.session_cls.host()).close()
         self.assertNotEqual(self.server.tmux("has-session", "-t", f"={name}").returncode, 0)
         self.assertFalse(folder.exists())
-        self.session_cls.retire(name)
+        tui.TuiStore(name, host=self.session_cls.host()).close()
 
 
 class PollCostTest(Live):

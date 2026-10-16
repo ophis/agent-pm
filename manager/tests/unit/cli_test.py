@@ -85,7 +85,7 @@ class CliTest(CliCase):
 
     def test_missing_entry_is_usage_error_without_controller_or_writes(self):
         with mock.patch("subprocess.run", side_effect=FileNotFoundError("missing ctl")) as run:
-            for argv in (("stop",), ("status",), ("forget",), ("resume",), ("forget", "--force")):
+            for argv in (("close",), ("status",), ("forget",), ("resume",), ("forget", "--force")):
                 with self.subTest(argv=argv):
                     command, *extra = argv
                     result, stdout, stderr = self.invoke(
@@ -97,11 +97,11 @@ class CliTest(CliCase):
                     self.assertFalse(os.path.exists(self.directory))
         run.assert_not_called()
 
-    def test_empty_stop_all_reports_nothing_without_creating_a_manager(self):
+    def test_empty_close_all_reports_nothing_without_creating_a_manager(self):
         with self.listed():
-            result, stdout, stderr = self.invoke("stop-all", "--manager", "mgr")
+            result, stdout, stderr = self.invoke("close-all", "--manager", "mgr")
         self.assertEqual(result, 0, stderr)
-        self.assertEqual(stdout, "nothing to stop\n")
+        self.assertEqual(stdout, "nothing to close\n")
         self.assertFalse(os.path.exists(self.directory))
 
 

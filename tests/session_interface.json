@@ -103,7 +103,6 @@
  "agent_pm.session.Session.press": "def(self:POSITIONAL_OR_KEYWORD, keys:POSITIONAL_OR_KEYWORD)",
  "agent_pm.session.Session.record": "def(self:POSITIONAL_OR_KEYWORD)",
  "agent_pm.session.Session.reply": "property",
- "agent_pm.session.Session.retire": "classmethod(cls:POSITIONAL_OR_KEYWORD, name:POSITIONAL_OR_KEYWORD, host:KEYWORD_ONLY=None)",
  "agent_pm.session.Session.screen": "def(self:POSITIONAL_OR_KEYWORD, lines:POSITIONAL_OR_KEYWORD=None)",
  "agent_pm.session.Session.send": "def(self:POSITIONAL_OR_KEYWORD, text:POSITIONAL_OR_KEYWORD)",
  "agent_pm.session.Session.session_status": "def(self:POSITIONAL_OR_KEYWORD)",

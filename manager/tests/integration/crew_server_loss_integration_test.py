@@ -1,5 +1,5 @@
 """A lost tmux server on the real commands (manager/tests/live_pipeline.py): main's
-test_a_lost_tmux_server_comes_back_by_attach_resume_but_a_stopped_worker, for a worker, a role run
+test_a_lost_tmux_server_comes_back_by_attach_resume_but_a_closed_worker, for a worker, a role run
 and a Linear pipeline, each back on its sid by its own crew resume (FR-22, FR-39).
 """
 
@@ -13,13 +13,13 @@ START = mark("start", "echoing")
 
 
 class ServerLossTest(LivePipeline):
-    def test_a_lost_tmux_server_comes_back_by_crew_resume_but_a_stopped_worker(self):
+    def test_a_lost_tmux_server_comes_back_by_crew_resume_but_a_closed_worker(self):
         records = {name: self.record(self.worker(name)) for name in ("w1", "w2")}
         records["r"] = self.record(self.role("r", steps=[START]))
         records["p"] = self.pipeline("p", [START])
         for name in ("w1", "w2", records["r"].sessions[1], records["p"].sessions[1]):
             self.wait_event(name, "done")  # its transcript, which --resume needs
-        self.ok(self.crew("stop", "w2"))
+        self.ok(self.crew("close", "w2"))
         self.server.kill()
         self.server.start(MANAGER)
         self.server.attach(MANAGER)

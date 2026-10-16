@@ -109,7 +109,7 @@ class Runs(RunCase):
         self.assertTrue(view.delegate.alive())
         self.assertEqual(view.delegate_kind, "fake")
         self.assertEqual(view.status(), replace(owner.delegate.status(), name="TASK-1"))
-        self.assertEqual(view.delegate.session_info(), owner.delegate.session_info())
+        self.assertEqual(view.delegate.session_status(), owner.delegate.session_status())
         self.assertEqual(Record.parse(view.resume().to_line()), record)
         self.assertEqual(view.delegate.outcome(), None)
         self.assertEqual(view.delegate.attach_command(), None)

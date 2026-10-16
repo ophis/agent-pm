@@ -302,7 +302,7 @@ class Board:
     def status(self, ident, sid):
         if sid not in self.statuses:
             try:
-                st = LinearRun.attach(ident, cfg=self.cfg, sid=sid).delegate.session_info()
+                st = LinearRun.attach(ident, cfg=self.cfg, sid=sid).delegate.session_status()
                 self.statuses[sid] = None if st.resumable == "unknown" else st
             except ConfigError as error:
                 self.status_errors[sid] = one_line(error)
@@ -570,7 +570,7 @@ def _outer(a, cfg, *, gql, run, keychain, now, attended):
         return fail(a.issue, "config-error", f"no Keychain item for role key {key}", 2)
     if a.mode == "resume":
         try:
-            st = LinearRun.attach(a.issue, cfg=cfg, sid=a.sid).delegate.session_info()
+            st = LinearRun.attach(a.issue, cfg=cfg, sid=a.sid).delegate.session_status()
             why = None if st.resumable == "yes" else st.resumable
         except (ConfigError, delegate.ConfigError, delegate.SessionError) as e:
             why = one_line(e)

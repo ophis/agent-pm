@@ -332,7 +332,7 @@ class Crew:
             raise
         return resumed
 
-    def stop(self, name: str) -> None:
+    def close(self, name: str) -> None:
         self._listed = None
         self.roster.check_lease()
         entries = self.roster.entries()
@@ -346,7 +346,7 @@ class Crew:
                 raise RuntimeError("\n".join(failures.values()))
         self.roster.remove(key)
 
-    def stop_all(self, *, dry_run: bool = False) -> list[str]:
+    def close_all(self, *, dry_run: bool = False) -> list[str]:
         self._listed = None
         self.roster.check_lease()
         entries = self.roster.entries()
@@ -362,7 +362,7 @@ class Crew:
             if failures:
                 raise RuntimeError("\n".join(failures.values()))
         if here is None:
-            raise RuntimeError("stop-all partial: unlisted work may still be running")
+            raise RuntimeError("close-all partial: unlisted work may still be running")
         return names
 
     def forget(self, name: str, *, force: bool = False) -> None:
@@ -371,7 +371,7 @@ class Crew:
         if name not in self.roster.entries():
             raise ValueError(f"{name}: not in roster")
         if not force and self.status((name,))[0].alive:
-            raise RuntimeError(f"{name}: still alive; stop it before forgetting")
+            raise RuntimeError(f"{name}: still alive; close it before forgetting")
         self.roster.remove(name)
 
     def note(self, name: str, text: str) -> None:

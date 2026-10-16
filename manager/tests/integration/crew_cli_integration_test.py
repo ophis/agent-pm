@@ -64,8 +64,8 @@ class Commands(Case):
             "attach",
             "status",
             "resume",
-            "stop",
-            "stop-all",
+            "close",
+            "close-all",
             "forget",
             "note",
             "next-event",
@@ -152,7 +152,7 @@ class Commands(Case):
                             json.loads(record.to_line()),
                         )
 
-    def test_run_status_resume_and_stop_with_executable_fake(self):
+    def test_run_status_resume_and_close_with_executable_fake(self):
         self.succeeded("attach", "--manager", "mgr")
         raw = self.succeeded(
             "run",
@@ -183,7 +183,7 @@ class Commands(Case):
         status = Status.parse(self.succeeded("status", "r", "--manager", "mgr"))
         self.assertEqual(status.name, "r")
         self.assertTrue(status.alive)
-        self.succeeded("stop", "r", "--manager", "mgr")
+        self.succeeded("close", "r", "--manager", "mgr")
         self.assertEqual(roster.entries(), {})
 
     def test_resume_continues_after_client_failure_and_exits_one(self):
@@ -221,13 +221,13 @@ class Commands(Case):
         self.assertEqual(len([call for call in calls if call["argv"] == ["status"]]), 2)
         self.assertEqual([call for call in calls if call["argv"] == ["show"]], [])
 
-    def test_stop_all_closes_roster_and_listed_orphans(self):
+    def test_close_all_closes_roster_and_listed_orphans(self):
         crew = Crew(Roster(self.directory))
         crew.run(Spec("a", (self.command, "start", "a")))
         orphan = self.fake_record("orphan")
         ctl.set_session(self.ctl_dir, "orphan", alive=True)
         fake_session.set_records(self.sessions, [orphan])
-        self.succeeded("stop-all", "--manager", "mgr")
+        self.succeeded("close-all", "--manager", "mgr")
         closed = [call["names"] for call in ctl.calls(self.ctl_dir) if call["argv"] == ["close"]]
         self.assertEqual(closed, [["a", "orphan"]])
         self.assertEqual(crew.roster.entries(), {})

@@ -1,4 +1,4 @@
-"""HostedSession: its configured classes and Setup, its class methods (start, attach, retire, list,
+"""HostedSession: its configured classes and Setup, its class methods (start, attach, list,
 usage, layout, writable_dirs, display, host, class_roots, inspect) and a session's own methods, each
 test on a configured class (self.session) with caller-owned dependencies.
 """
@@ -1358,7 +1358,7 @@ class TuiStartTest(HostedTuiBase):
         )
         (call,) = self.host.calls.terminal.call_args_list
         self.assertEqual(call.args[0], "w1")
-        hook = tui._Store("w1", host=self.host).hook_argv()
+        hook = tui.TuiStore("w1", host=self.host).hook_argv()
         launch = call.args[1]
         self.assertEqual(launch.argv[-(1 + len(hook)) :], ("hello", *hook))
         self.assertEqual(launch.cwd, self.workdir)
@@ -1465,8 +1465,8 @@ class TuiStartTest(HostedTuiBase):
         self.assertEqual(self.host.calls.mock_calls, [mock.call.list(None), mock.call.attach("w1")])
         self.assertFalse(os.path.lexists(os.path.join(self.root, "w1")))
 
-    def test_retire_refuses_a_bad_name_before_tmux_or_a_path(self):
-        self.name_refused(self.session.retire)
+    def test_a_tui_store_refuses_a_bad_name_before_tmux_or_a_path(self):
+        self.name_refused(lambda name: tui.TuiStore(name, host=self.session.host()).close())
 
     def test_a_session_keeps_its_adapter_and_tmux_when_its_class_is_configured_again(self):
         self.configure("probe", tui=True)

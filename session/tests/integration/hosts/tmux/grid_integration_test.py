@@ -15,6 +15,7 @@ from agent_pm.session.engine.types import Launch, SessionError
 from agent_pm.session.hosts.tmux import TmuxHost, layout
 from agent_pm.session.hosts.tmux import grid as tmux_model
 from agent_pm.session.hosts.tmux.host import Tmux
+from agent_pm.session.runtimes import tui
 
 from session.tests import live_tmux
 from session.tests.case import PLUGIN_BIN, Case
@@ -163,7 +164,7 @@ class GridTest(Live):
         self.grid([["w1", "w2"]], width)
         self.started("w3")
         self.grid([["w1", "w2"], ["w3"]], width)
-        self.session_cls.retire("w2")
+        tui.TuiStore("w2", host=self.session_cls.host()).close()
         self.grid([["w1", "w3"]], width)
 
     def test_name_order(self):
@@ -188,12 +189,12 @@ class GridTest(Live):
         self.grid([["m1", ("m2", ["z1"]), "m3"]])
         self.started("z2", inside="m2")
         self.grid([["m1", ("m2", ["z1", "z2"]), "m3"]])
-        self.session_cls.retire("z1")
-        self.session_cls.retire("z2")
+        tui.TuiStore("z1", host=self.session_cls.host()).close()
+        tui.TuiStore("z2", host=self.session_cls.host()).close()
         self.grid([["m1", "m2", "m3"]])
         self.started("z3", inside="m2")
         self.grid([["m1", ("m2", ["z3"]), "m3"]])
-        self.session_cls.retire("m2")
+        tui.TuiStore("m2", host=self.session_cls.host()).close()
         self.grid([["m1", ["z3"], "m3"]])
 
     def test_an_unshown_session_reopens_in_the_grid(self):
@@ -333,10 +334,10 @@ class RetileTest(Live):
         # the most recently active client shows w1's session, not mgr's: tmux 3.4 then skips the
         # window's pane-exited hook, so window-layout-changed (a new pane set) re-tiles
         self.server.attach("w1")
-        self.session_cls.retire("w2")
+        tui.TuiStore("w2", host=self.session_cls.host()).close()
         self.grid([["w1", "w3"]], width)
         self.open_close_hooks(MANAGER)
-        self.session_cls.retire("w3")
+        tui.TuiStore("w3", host=self.session_cls.host()).close()
         self.grid([["w1"]], width)
         live_tmux.wait(
             lambda: (

@@ -43,7 +43,7 @@ from agent_pm.session.engine.worker import Worker
 from agent_pm.session.hosts.base import Displayable, Host
 from agent_pm.session.runtimes import tui_hook
 from agent_pm.session.runtimes.base import EVENTS, START_SID
-from agent_pm.session.runtimes.tui import TuiRuntime
+from agent_pm.session.runtimes.tui import TuiRuntime, TuiStore
 from agent_pm.utils import Record, Status, StatusState, module_roots, nested_start
 
 PROG = COMMAND
@@ -149,7 +149,7 @@ def _parser(hosts: Hosts | None) -> argparse.ArgumentParser:
     p.add_argument(
         "--descendants",
         action="store_true",
-        help="with --here --records: also those they opened, transitively (stop-all)",
+        help="with --here --records: also those they opened, transitively (close-all)",
     )
     p = sub.add_parser(
         "send",
@@ -310,7 +310,7 @@ def _attach_command(name: str, record: Record | None, hosts: Hosts) -> str:
 
 def _close(name: str, record: Record | None, hosts: Hosts) -> None:
     for session in _carried(name, record, hosts):
-        Session.retire(session, host=_host_of(session, hosts))
+        TuiStore(session, host=Session.host(_host_of(session, hosts))).close()
 
 
 BATCH = {

@@ -1,6 +1,6 @@
 """The commands /agent-pm:tmux and /agent-pm:manage write, filled in as a commander would, run on
 the real commands (manager/tests/live_crew.py): a worker's launch, reply, note, status,
-gone-then-resume and stop; a role run's dry-run check; a role run that ends waiting, answered in
+gone-then-resume and close; a role run's dry-run check; a role run that ends waiting, answered in
 its own session; manage's Codex issue worker launch.
 """
 
@@ -25,7 +25,7 @@ class SkillFlows(LiveCrew):
         crew = self.crew_env() if argv[0] == "agent-pm-crew" else {}
         return self.call(*argv, **crew, **(env or {}))
 
-    def test_a_worker_launched_followed_up_resumed_and_stopped_as_written(self):
+    def test_a_worker_launched_followed_up_resumed_and_closed_as_written(self):
         record = self.record(
             self.written(
                 "tmux",
@@ -57,7 +57,7 @@ class SkillFlows(LiveCrew):
         self.assertEqual(resumed.sid, record.sid)
         self.assertTrue(self.live("w1"))
 
-        self.ok(self.written("tmux", "agent-pm-crew stop <name>", name="w1"))
+        self.ok(self.written("tmux", "agent-pm-crew close <name>", name="w1"))
         self.assertNotIn("w1", self.roster())
         self.assertTrue(self.gone("w1"))
 

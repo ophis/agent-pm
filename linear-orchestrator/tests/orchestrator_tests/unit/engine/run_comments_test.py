@@ -1,6 +1,6 @@
 """Run comments: one comment written by its session id,
 numbered `#<seq>`, repaired at the end after a late write; the resume command is the run view's
-session_info."""
+session_status."""
 
 import threading
 import time

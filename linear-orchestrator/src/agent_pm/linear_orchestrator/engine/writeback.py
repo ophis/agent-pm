@@ -442,7 +442,7 @@ def _session(ctx, cfg, client, attempt, *, gql, now, end=None) -> bool:
         workdir=ctx.workdir,
         client=client,
         started_at=record["started_at"],
-        info=lambda: LinearRun.attach(ctx.ident, cfg=cfg, sid=ctx.sid).delegate.session_info(),
+        info=lambda: LinearRun.attach(ctx.ident, cfg=cfg, sid=ctx.sid).delegate.session_status(),
         seq=record["seq"],
     )
     harness = functools.partial(gql, service=cfg.harness_key, timeout=run_comments.LIMIT)

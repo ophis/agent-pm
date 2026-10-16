@@ -1517,7 +1517,7 @@ class Events(RunCase):
         self.claim()
         self.linear = Linear(self.cfg.states["in_progress"])
         info = mock.patch.object(
-            ReadyDelegate, "session_info", return_value=SessionStatus("yes", None, RESUME_COMMAND)
+            ReadyDelegate, "session_status", return_value=SessionStatus("yes", None, RESUME_COMMAND)
         )
         info.start()
         self.addCleanup(info.stop)

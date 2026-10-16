@@ -48,7 +48,7 @@ class Manage(Case):
 
     def test_a_roster_entry_closes_through_crew(self):
         close = rule("AppleScript")
-        self.assertIn("`agent-pm-crew stop <name>`", close)
+        self.assertIn("`agent-pm-crew close <name>`", close)
         self.assertRegex(close, r"tmux only for sessions outside the Roster")
 
     def test_a_codex_issue_worker_starts_by_name_with_its_prompt_and_closes_on_merge(self):

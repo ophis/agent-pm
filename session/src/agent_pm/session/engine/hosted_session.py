@@ -327,10 +327,6 @@ class HostedSession(Session):
         return session
 
     @classmethod
-    def retire(cls, name: str, *, host: str | None = None) -> None:
-        tui.TuiRuntime.close(tui.checked_name(name), host=cls.host(host))
-
-    @classmethod
     def list(
         cls, match: str | None = None, *, display: Display = None
     ) -> builtins.list[SessionRow]:
@@ -576,12 +572,7 @@ class HostedSession(Session):
         return self._reply
 
     def close(self) -> None:
-        """Close its owned client and retire its state."""
-        running = self._running
-        if isinstance(running, tui.TuiRuntime):
-            tui.TuiRuntime.close(running.name, host=running.host)
-        else:
-            self.stop()
+        self._running.close()
 
     def session_status(self) -> SessionStatus:
         return _resumable(lambda: self._adapter, self.info(), self._running.prepared.spec)

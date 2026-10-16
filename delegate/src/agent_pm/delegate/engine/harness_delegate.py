@@ -668,7 +668,7 @@ class HarnessDelegate(Delegate):
             except SessionError as error:
                 raise SessionError(f"close {state.harness_name}: {error}") from error
 
-    def session_info(self) -> SessionStatus:
+    def session_status(self) -> SessionStatus:
         """Its own live agent session's status, else the plan's: an attached one lacks its env;
         never recorded (its launch failed): not resumable.
         """

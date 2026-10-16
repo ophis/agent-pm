@@ -137,6 +137,10 @@ class Runtime(ABC):
     @abstractmethod
     def stop(self) -> None: ...
 
+    def close(self) -> None:
+        """Ends the run for good; a tui one also drops its state."""
+        self.stop()
+
     @classmethod
     def _unsupported(cls, spec: Spec) -> ConfigError:
         return ConfigError(f"client {spec.client!r} does not support {cls.kind.value} mode")

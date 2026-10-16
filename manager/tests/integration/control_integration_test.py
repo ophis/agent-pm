@@ -43,12 +43,12 @@ class Control(Case):
             [call for call in ctl.calls(self.ctl_dir) if call["argv"][0] == "close"], []
         )
 
-    def test_a_non_holders_stop_and_stop_all_close_nothing(self):
+    def test_a_non_holders_close_and_close_all_close_nothing(self):
         with self.roster.hold("owner"):
             entries = self.roster.entries()
             ledger = Path(self.roster.path).read_bytes()
             other = Crew(Roster(self.directory))
-            for method, args in (("stop", ("first",)), ("stop_all", ())):
+            for method, args in (("close", ("first",)), ("close_all", ())):
                 with self.subTest(method=method):
                     with self.assertRaises(Held):
                         getattr(other, method)(*args)
