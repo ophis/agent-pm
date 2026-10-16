@@ -3,16 +3,19 @@ the team's issues assigned to role accounts, then only triggers it: outer prepar
 its runs.jsonl row and detaches its LinearRun, whose Delegate's harness calls `agent-pm-linear
 writeback` on each event; the router exits while the run goes on.
 
-agent-pm-linear router [--now] [--dry-run] [--issue ID] [--tui [--display D] [--events FILE]] | --brake ROLE
+agent-pm-linear router [--now] [--dry-run] [--issue ID] [--tui [--display D] [--events FILE]]
+    | --brake ROLE
 
-(no mode)     One scheduled tick: the hours check, then at most one agent run. Exits 1 a config error or Linear
-              unavailable (config-error, linear-error: once a day), else 0.
+(no mode)     One scheduled tick: the hours check, then at most one agent run. Exits 1 a config
+              error or Linear unavailable (config-error, linear-error: once a day), else 0.
   --now       Skip the 01:00-06:59 hours check.
---issue ID    Start or resume only this issue, without the hours, max_runs and usage gates. Exits 1 a config error,
-              Linear unavailable, agent runs unknown, a live agent run of the issue or nothing started, 0 its ended
-              run's outcome written back instead, else the outer's code: 0 detached or bounced, 1 the launch
-              failed, 2 a config error of the issue, 3 transient.
---dry-run     With either: print the plan (a tick's with its usage checks); change nothing, start nothing; exit 0.
+--issue ID    Start or resume only this issue, without the hours, max_runs and usage gates. Exits 1
+              a config error, Linear unavailable, agent runs unknown, a live agent run of the issue
+              or nothing started, 0 its ended run's outcome written back instead, else the outer's
+              code: 0 detached or bounced, 1 the launch failed, 2 a config error of the issue,
+              3 transient.
+--dry-run     With either: print the plan (a tick's with its usage checks); change nothing, start
+              nothing; exit 0.
 --tui         With either: each run it starts or resumes is attended (tui mode), shown at D (opaque,
               its format: agent-pm-session --help; no D: the caller's place; none: started hidden,
               passed on as given), its events written to FILE, else $AGENT_PM_EVENTS. Exits 2 before
@@ -20,16 +23,16 @@ agent-pm-linear router [--now] [--dry-run] [--issue ID] [--tui [--display D] [--
               show the TUI, a D its Host cannot use, FILE not writable). A run it starts or resumes
               prints its Record line on stdout, its attach commands on stderr. launchd never passes
               it: a tick resumes a run headless.
---brake ROLE  Print ROLE's client usage; exit 0 if a deep-research round may start, 1 if not or unknown, 2 no such
-              role.
+--brake ROLE  Print ROLE's client usage; exit 0 if a deep-research round may start, 1 if not or
+              unknown, 2 no such role.
 --help        Print this; exit 0. Bad arguments exit 2.
 
 $AGENT_PM_SID (agent-pm-crew run's), read once and removed, is a new run's session id; a resume of
 another session exits 2, starting nothing (a dry run: 0). Under $AGENT_PM_AGENT_SESSION, a tick and
 --issue (not --dry-run, --brake) exit 2, starting nothing.
 
-Events go to orchestrator.jsonl (event_log.log, src router); an idle tick writes none, a usage-blocked
-one only its usage-skip lines."""
+Events go to orchestrator.jsonl (event_log.log, src router); an idle tick writes none, a
+usage-blocked one only its usage-skip lines."""
 
 import contextlib
 import fcntl
