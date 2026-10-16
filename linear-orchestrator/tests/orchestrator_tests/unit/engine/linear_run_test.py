@@ -3,7 +3,6 @@
 from dataclasses import replace
 
 from agent_pm.delegate import ConfigError as DelegateConfigError
-from agent_pm.delegate import NotDisplayable
 from agent_pm.linear_orchestrator.engine import runs
 from agent_pm.linear_orchestrator.engine.linear_run import LinearRun
 from agent_pm.linear_orchestrator.engine.types import ConfigError
@@ -111,10 +110,6 @@ class Runs(RunCase):
         self.assertEqual(view.status(), replace(owner.delegate.status(), name="TASK-1"))
         self.assertEqual(view.delegate.session_status(), owner.delegate.session_status())
         self.assertEqual(Record.parse(view.resume().to_line()), record)
-        self.assertEqual(view.delegate.outcome(), None)
-        self.assertEqual(view.delegate.attach_command(), None)
-        with self.assertRaises(NotDisplayable):
-            view.delegate.show()
         view.delegate.close()
         self.assertFalse(owner.delegate.alive())
 

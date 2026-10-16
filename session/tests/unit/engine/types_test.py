@@ -23,7 +23,6 @@ from agent_pm.session import (
 )
 from agent_pm.session.engine import types as engine_types
 from agent_pm.session.engine.types import (
-    MARKS,
     ClientBound,
     HookError,
     HookKind,
@@ -259,11 +258,6 @@ class OptionSets(Case):
                 self.assertEqual([m.value for m in enum], values)
                 self.assertEqual(list(enum), values)
                 self.assertNotIn(enum.__name__, session.__all__)
-
-    def test_a_hook_marks_a_status_state(self):
-        self.assertEqual(MARKS, (StatusState.DONE, StatusState.BLOCKED, StatusState.WORKING))
-        self.assertIn("MARKS", engine_types.__all__)
-        self.assertIn("StatusState", session.__all__)
 
 
 class CarriedEnums(Case):

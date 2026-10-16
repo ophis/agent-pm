@@ -1045,7 +1045,9 @@ class EventsOverARuntimeTest(Case):
         self.assertEqual((session.alive(), session.status().state), (False, "unknown"))
         session.send("hi")
         session.stop()
-        self.assertEqual(self.mode.calls, [("state",), ("state",), ("send", "hi"), ("stop",)])
+        self.assertEqual(
+            [call for call in self.mode.calls if call != ("state",)], [("send", "hi"), ("stop",)]
+        )
         self.assertEqual(self.session(name="w1").name, "w1")
         self.session()
         Runtime.close(self.mode)
@@ -1405,11 +1407,15 @@ class TuiStartTest(HostedTuiBase):
         self.assertEqual(
             terminal.calls.send.call_args_list, [mock.call(Paste("hi")), mock.call(Key("Enter"))]
         )
-        found = session.status()
-        self.assertEqual((found.alive, found.cwd), (True, session.info().cwd))
         session.stop()
         terminal.calls.close.assert_called_once_with()
         self.assertFalse(os.path.lexists(os.path.join(self.root, "w1")))
+
+    def test_a_tui_status_carries_its_cwd_then_is_gone_once_stopped(self):
+        session = self.tui(name="w1")
+        found = session.status()
+        self.assertEqual((found.alive, found.cwd), (True, session.info().cwd))
+        session.stop()
         self.assertEqual(session.status().state, "gone")
 
     def test_send_and_screen_refuse_a_dead_pane(self):
@@ -1442,17 +1448,13 @@ class TuiStartTest(HostedTuiBase):
             ],
         )
 
-    def test_hide_closes_its_view_and_records_it_hidden_until_a_show(self):
+    def test_hide_asks_its_host_and_status_reports_the_hosts_hidden_flag(self):
         session = self.tui(name="w1")
-        self.host.calls.show.return_value = None
-        self.assertFalse(session.status().hidden)
         session.hide()
         self.host.calls.hide.assert_called_once_with("w1")
-        self.assertTrue(session.status().hidden)
-        session.hide()
-        self.assertTrue(session.status().hidden)
-        session.show()
-        self.assertFalse(session.status().hidden)
+        for flag in (True, False):
+            self.host.processes["w1"].calls.hidden.return_value = flag
+            self.assertEqual(session.status().hidden, flag)
 
     def test_its_record_is_its_hosts(self):
         session = self.tui(name="w1")

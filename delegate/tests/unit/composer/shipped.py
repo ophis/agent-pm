@@ -2,9 +2,9 @@ import glob
 import os
 import re
 
-from agent_pm.delegate.composer import teams
+from agent_pm.delegate.composer import Composer
 from agent_pm.delegate.composer.base import TEAM
-from agent_pm.delegate.config import CONFIG
+from agent_pm.delegate.config import CONFIG, read_config
 
 from delegate.tests.case import REPO, Case
 from delegate.tests.unit.composer.prompts import (
@@ -87,12 +87,9 @@ COMMANDS_RULE = (
 )
 
 
-def catalog(team=None, config=CONFIG, local=os.devnull) -> dict[str, dict[str, str]]:
-    """Each role's task index; by default the built-in team's with the shipped config alone."""
-    team = teams.team_or_default(team)
-    teams.role_tables(config, local)
-    found = teams.roles(team, teams.config_of(config, local))
-    return {role: teams.index(role, team, config, local) for role in found}
+def catalog() -> dict[str, dict[str, str]]:
+    """The built-in team's index with the shipped config alone."""
+    return Composer(config=read_config(path=CONFIG, local=os.devnull)).index()
 
 
 def roles() -> list[str]:

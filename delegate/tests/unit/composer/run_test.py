@@ -141,7 +141,6 @@ class BadRead(Fake):
         calls = {
             "resolve": lambda: resolve("writer", team=found, config=c, local=lf),
             "index": lambda: index("nobody", found, c, lf),
-            "catalog": lambda: catalog(found, c, lf),
             "role_tables": lambda: role_tables(c, lf),
             "trusted_dirs": lambda: trusted_dirs(c, lf),
         }
