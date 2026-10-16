@@ -11,6 +11,76 @@ def key(text):
 
 
 class InlinePython(Sample):
+    def test_public_package_imports_cannot_resolve_to_internal_modules(self):
+        for module, member in (
+            ("session", "engine"),
+            ("delegate", "engine"),
+            ("manager", "cli"),
+            ("linear_orchestrator", "engine"),
+            ("utils", "record"),
+        ):
+            with self.subTest(module=module):
+                self.assertTrue(_violations(f"from agent_pm.{module} import {member} as hidden"))
+        self.assertEqual(
+            _violations("from agent_pm.session import Session\nfrom agent_pm.utils import Record"),
+            [],
+        )
+
+    def test_module_inventory_comes_from_the_scanned_source(self):
+        root = self.tree(
+            {
+                PATH: "argv = ['python3', '-c', 'from agent_pm.session import hidden']",
+                "session/src/agent_pm/session/__init__.py": "",
+                "session/src/agent_pm/session/hidden.py": "",
+            }
+        )
+        self.assertEqual(len(inline_python(root, allowed={})), 1)
+
+    def test_nested_nonlocal_rebinding_cannot_keep_a_literal_exception(self):
+        source = (
+            "def outer():\n    CODE = 'pass'\n"
+            "    def mutate(value):\n        nonlocal CODE\n        CODE = value\n"
+            "    return ['python3', '-c', f'{CODE}']\n"
+        )
+        found = self.checked(source, {key("f\"{'pass'}\""): "Previously literal."})
+        self.assertTrue(any("run-time value" in line for line in found), found)
+        self.assertTrue(any("stale" in line for line in found), found)
+
+    def test_nonlocal_reads_and_rebinding_another_owner_preserve_outer_literals(self):
+        for body in (
+            "    def read():\n        nonlocal CODE\n        return CODE\n",
+            "    def middle():\n        CODE = 'other'\n        def mutate(value):\n            nonlocal CODE\n            CODE = value\n",
+        ):
+            source = (
+                "def outer():\n    CODE = 'pass'\n" + body + "    return ['python3', '-c', CODE]\n"
+            )
+            self.assertEqual(self.checked(source), [])
+
+    def test_mutations_and_definitions_invalidate_literal_programs(self):
+        for change in (
+            "CODE.value = value",
+            "CODE[0] = value",
+            "del CODE.value",
+            "del CODE[0]",
+            "del CODE",
+            "def CODE(): pass",
+            "async def CODE(): pass",
+            "class CODE: pass",
+        ):
+            with self.subTest(change=change):
+                source = f"CODE = 'pass'\n{change}\nargv = ['python3', '-c', f'{{CODE}}']"
+                found = self.checked(source, {key("f\"{'pass'}\""): "Previously literal."})
+                self.assertTrue(any("run-time value" in line for line in found), found)
+                self.assertTrue(any("stale" in line for line in found), found)
+
+    def test_nested_attribute_and_subscript_writes_invalidate_the_owner(self):
+        for change in ("CODE.value = value", "CODE[0] = value"):
+            source = (
+                f"CODE = 'pass'\ndef mutate(value):\n    {change}\nargv = ['python3', '-c', CODE]"
+            )
+            (found,) = self.checked(source)
+            self.assertIn("run-time value", found)
+
     def test_exceptions_match_exact_code_and_stale_entries_fail(self):
         code = "from agent_pm.session.runtimes import tui"
         path = "session/tests/example.py"
