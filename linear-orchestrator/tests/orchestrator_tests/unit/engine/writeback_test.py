@@ -11,15 +11,7 @@ from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from unittest import mock
 
-from agent_pm.delegate import (
-    Begun,
-    DelegateEvent,
-    Finished,
-    Outcome,
-    OutcomeStatus,
-    Progress,
-    Result,
-)
+from agent_pm.delegate import Begun, DelegateEvent, Finished, Outcome, Progress, Result
 from agent_pm.linear_orchestrator.engine import (
     config,
     issues,
@@ -39,6 +31,7 @@ from agent_pm.linear_orchestrator.engine.types import (
     Stopped,
 )
 from agent_pm.session import SessionStatus
+from agent_pm.utils import OutcomeStatus
 from orchestrator_tests.case import Case
 from orchestrator_tests.linear_run_case import SID as RUN_SID
 from orchestrator_tests.linear_run_case import ReadyDelegate, RunCase

@@ -17,9 +17,8 @@ from agent_pm.delegate.event.types import (
     AutopilotStatus,
     InvalidOutcome,
     Outcome,
-    OutcomeStatus,
 )
-from agent_pm.utils import ConfinedFileError, ConfinedReason, read_confined
+from agent_pm.utils import ConfinedFileError, ConfinedReason, OutcomeStatus, read_confined
 
 SCHEMA = os.path.join(os.path.dirname(os.path.abspath(__file__)), "outcome.schema.json")
 SAVES_DELIVERABLE = (

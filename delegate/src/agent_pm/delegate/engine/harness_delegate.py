@@ -58,7 +58,9 @@ from agent_pm.session import (
     Spec as SessionSpec,
 )
 from agent_pm.utils import (
+    EVENTS_ENV,
     LEASE_ENV,
+    SID_ENV,
     Display,
     Record,
     Status,
@@ -131,8 +133,6 @@ class _State:
 
 TUI_START_TIMEOUT = 30  # seconds: a detached tui run's agent session to go live
 TUI_POLL = 0.1  # seconds
-# A launcher's start token (the run's sid) and events file: no harness inherits them.
-SID_ENV, EVENTS_ENV = "AGENT_PM_SID", "AGENT_PM_EVENTS"
 
 
 class HarnessDelegate(Delegate):

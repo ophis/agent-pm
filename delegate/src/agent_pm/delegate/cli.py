@@ -19,12 +19,12 @@ from collections.abc import Sequence
 from dataclasses import asdict
 
 from agent_pm.delegate.composer import Composer, RunParams
-from agent_pm.delegate.engine.harness_delegate import EVENTS_ENV, SID_ENV, HarnessDelegate
+from agent_pm.delegate.engine.harness_delegate import HarnessDelegate
 from agent_pm.delegate.engine.runner import report, say
 from agent_pm.delegate.engine.types import Begun, ConfigError, Layout, Preview, Spec
 from agent_pm.session import ConfigError as SessionConfigError
 from agent_pm.session import Mode, NotShowable, SessionError
-from agent_pm.utils import Once, answer_keys, nested_start
+from agent_pm.utils import EVENTS_ENV, SID_ENV, Once, answer_keys, nested_start
 
 LIST_PARAMS = RunParams(input="", out="/agent-pm-list/work/out.md", workdir="/agent-pm-list/work")
 
@@ -90,12 +90,12 @@ def _run_options(ap: argparse.ArgumentParser) -> None:
         help="list each role, its destination type and tasks, with their sources",
     )
     ap.add_argument("--client", action=Once, help="default: the role's client in the core config")
-    ap.add_argument("--sid", help="default $AGENT_PM_SID; the two must agree")
+    ap.add_argument("--sid", help=f"default ${SID_ENV}; the two must agree")
     ap.add_argument("--resume", action="store_true")
     ap.add_argument("--mode", choices=[m.value for m in Mode], default=Mode.HEADLESS.value)
     ap.add_argument("--detach", action="store_true", help="run in a harness session of its own")
     ap.add_argument(
-        "--events", metavar="FILE", help="--detach: the run's events file; default $AGENT_PM_EVENTS"
+        "--events", metavar="FILE", help=f"--detach: the run's events file; default ${EVENTS_ENV}"
     )
     ap.add_argument(
         "--on-event",

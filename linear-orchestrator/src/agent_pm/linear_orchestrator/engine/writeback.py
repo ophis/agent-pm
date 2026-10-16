@@ -17,7 +17,7 @@ from dataclasses import dataclass, fields, replace
 from datetime import datetime
 from traceback import format_exception
 
-from agent_pm.delegate import DelegateEvent, Outcome, OutcomeStatus, Progress
+from agent_pm.delegate import DelegateEvent, Outcome, Progress
 from agent_pm.linear_orchestrator.engine import run_comments, runs
 from agent_pm.linear_orchestrator.engine.config import LOCAL, TASKS
 from agent_pm.linear_orchestrator.engine.linear_run import LinearRun
@@ -44,6 +44,7 @@ from agent_pm.linear_orchestrator.engine.types import (
 from agent_pm.utils import (
     ConfinedFileError,
     ConfinedReason,
+    OutcomeStatus,
     one_line,
     read_confined,
     save,

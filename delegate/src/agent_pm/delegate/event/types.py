@@ -3,12 +3,7 @@
 from dataclasses import dataclass, field
 from enum import StrEnum
 
-
-class OutcomeStatus(StrEnum):
-    DONE = "done"
-    NEEDS_INPUT = "needs_input"
-    FAILED = "failed"
-
+from agent_pm.utils import OutcomeStatus
 
 STATUSES = tuple(OutcomeStatus)
 

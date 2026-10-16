@@ -11,7 +11,14 @@ from agent_pm.utils.config_file import (
     unset,
 )
 from agent_pm.utils.config_file import load as load_config
-from agent_pm.utils.environment import AGENT_SESSION_ENV, LEASE_ENV, environment_ok, nested_start
+from agent_pm.utils.environment import (
+    AGENT_SESSION_ENV,
+    EVENTS_ENV,
+    LEASE_ENV,
+    SID_ENV,
+    environment_ok,
+    nested_start,
+)
 from agent_pm.utils.files import (
     STALE_AGE,
     ConfinedFileError,
@@ -58,6 +65,7 @@ from agent_pm.utils.paths import (
 from agent_pm.utils.process_control import ProcessControl
 from agent_pm.utils.record import (
     Display,
+    OutcomeStatus,
     Record,
     Status,
     StatusState,
@@ -92,6 +100,7 @@ __all__ = [
     "ConfinedFileError",
     "ConfinedReason",
     "Display",
+    "EVENTS_ENV",
     "GUARD",
     "GitError",
     "Invalid",
@@ -102,11 +111,13 @@ __all__ = [
     "NAME",
     "OWNER",
     "Once",
+    "OutcomeStatus",
     "ProcessControl",
     "Record",
     "Repo",
     "Runner",
     "SHORT",
+    "SID_ENV",
     "STALE_AGE",
     "STATE",
     "STOP_WAIT",

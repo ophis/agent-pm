@@ -19,7 +19,6 @@ from agent_pm.delegate import (
     Finished,
     Limit,
     Outcome,
-    OutcomeStatus,
     Progress,
     Result,
 )
@@ -31,7 +30,7 @@ from agent_pm.delegate.engine.callback import (
 )
 from agent_pm.delegate.engine.state import RunState
 from agent_pm.delegate.engine.types import Layout
-from agent_pm.utils import Stopped
+from agent_pm.utils import OutcomeStatus, Stopped
 
 from delegate.tests.case import Case
 from delegate.tests.harness import SID

@@ -84,7 +84,7 @@ from agent_pm.linear_orchestrator.engine.types import (
     Transient,
     Unavailable,
 )
-from agent_pm.utils import nested_start, one_line, parse_time
+from agent_pm.utils import EVENTS_ENV, SID_ENV, nested_start, one_line, parse_time
 
 STALE = timedelta(hours=2)
 LIVE = timedelta(minutes=30)
@@ -99,7 +99,6 @@ USAGE = (
 )
 FLAGS = {"--dry-run": "dry", "--now": "now", "--tui": "tui"}
 VALUED = {"--issue": "issue", "--display": "display", "--events": "events"}
-EVENTS_ENV, SID_ENV = "AGENT_PM_EVENTS", "AGENT_PM_SID"
 DONE = {"completed", "canceled", "duplicate"}
 UNREADABLE = "(unreadable)"
 RELATIONS = "inverseRelations(first: 50) { nodes { type issue { identifier state { type } } } }"

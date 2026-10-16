@@ -15,7 +15,7 @@ from datetime import UTC, datetime, timedelta
 from unittest import mock
 
 from agent_pm.delegate import ConfigError as DelegateConfigError
-from agent_pm.delegate import Outcome, OutcomeStatus
+from agent_pm.delegate import Outcome
 from agent_pm.linear_orchestrator.engine import (
     client,
     config,
@@ -30,7 +30,7 @@ from agent_pm.linear_orchestrator.engine import gate as quota
 from agent_pm.linear_orchestrator.engine.types import LinearError, Spec, Unavailable
 from agent_pm.session import ConfigError, SessionError, SessionStatus, Window
 from agent_pm.session import Usage as SessionUsage
-from agent_pm.utils import SHORT, Record
+from agent_pm.utils import EVENTS_ENV, SHORT, SID_ENV, OutcomeStatus, Record
 from orchestrator_tests.process_fixtures import TimeoutExpired
 from orchestrator_tests.router_fixtures import (
     AGENT,
@@ -1040,8 +1040,8 @@ class AttendedEntry(OuterBase):
 
     def test_events_are_its_option_else_agent_pm_events_made_absolute(self):
         for argv, env, want in (
-            (("--events", "given"), {router.EVENTS_ENV: "/from/env"}, "given"),
-            ((), {router.EVENTS_ENV: "from-env"}, "from-env"),
+            (("--events", "given"), {EVENTS_ENV: "/from/env"}, "given"),
+            ((), {EVENTS_ENV: "from-env"}, "from-env"),
         ):
             with self.subTest(argv=argv):
                 self.lines, self.todo["state"], self.api.tui_checks = [], "Todo", []
@@ -1057,7 +1057,7 @@ class AttendedEntry(OuterBase):
             with self.subTest(argv=argv):
                 self.assertEqual(self.entry(*argv), 2)
                 self.assertEqual(
-                    self.err, f"router.py: --tui needs --events FILE or ${router.EVENTS_ENV}\n"
+                    self.err, f"router.py: --tui needs --events FILE or ${EVENTS_ENV}\n"
                 )
                 self.assertEqual((self.fake.queries, self.api.tui_checks), ([], []))
         self.assertEqual((self.api.constructed, self.out, self.state), ([], "", self.before()))
@@ -1142,7 +1142,7 @@ class AttendedEntry(OuterBase):
         self.assertEqual(self.record().display, "none")
 
     def test_without_tui_a_run_is_headless_without_display_events_or_record(self):
-        for argv, env in ((("--issue", ID), None), (("--now",), {router.EVENTS_ENV: self.events})):
+        for argv, env in ((("--issue", ID), None), (("--now",), {EVENTS_ENV: self.events})):
             with self.subTest(argv=argv):
                 self.lines, self.todo["state"] = [], "Todo"
                 self.assertEqual(self.entry(*argv, env=env), 0, self.err)
@@ -1162,7 +1162,7 @@ class AttendedEntry(OuterBase):
         for argv in (("--issue", ID), ("--now",)):
             with self.subTest(argv=argv):
                 self.lines, self.todo["state"] = [], "Todo"
-                env = {router.SID_ENV: launch}
+                env = {SID_ENV: launch}
                 rc = self.entry(*argv, "--tui", "--events", self.events, env=env)
                 self.assertEqual(rc, 0, self.err)
                 self.assertEqual(self.last_run()[:3], ("start", ID, launch))
@@ -1174,12 +1174,12 @@ class AttendedEntry(OuterBase):
         self.resumable(ID, SID, 60, role="engineer")
         for argv in (("--issue", ID), ("--now",)):
             with self.subTest(argv=argv):
-                env = {router.SID_ENV: launch}
+                env = {SID_ENV: launch}
                 rc = self.entry(*argv, "--tui", "--events", self.events, env=env)
                 self.assertEqual(rc, 2)
                 self.assertEqual(
                     self.err,
-                    f"router.py: ${router.SID_ENV} {launch} differs from {ID}'s run {SID}\n",
+                    f"router.py: ${SID_ENV} {launch} differs from {ID}'s run {SID}\n",
                 )
                 self.assertEqual((self.api.detached, self.out), ([], ""))
                 self.assertEqual(self.state, self.before())
@@ -1187,7 +1187,7 @@ class AttendedEntry(OuterBase):
     def test_a_dry_run_resuming_another_session_than_the_launchers_exits_0(self):
         self.todo["state"] = "In Progress"
         self.resumable(ID, SID, 60, role="engineer")
-        env = {router.SID_ENV: "5b1f9a0e-2c3d-4e5f-8a7b-9c0d1e2f3a4b"}
+        env = {SID_ENV: "5b1f9a0e-2c3d-4e5f-8a7b-9c0d1e2f3a4b"}
         for argv in (("--dry-run", "--issue", ID), ("--dry-run", "--now")):
             with self.subTest(argv=argv):
                 rc = self.entry(*argv, "--tui", "--events", self.events, env=env)
@@ -1197,8 +1197,8 @@ class AttendedEntry(OuterBase):
         self.assertEqual((self.api.detached, self.out), ([], ""))
 
     def test_a_bad_launcher_session_id_exits_2_before_any_linear_call(self):
-        rc = self.entry("--issue", ID, "--tui", "--events", self.events, env={router.SID_ENV: "x"})
-        self.assertEqual((rc, self.err), (2, f"router.py: bad ${router.SID_ENV}: x\n"))
+        rc = self.entry("--issue", ID, "--tui", "--events", self.events, env={SID_ENV: "x"})
+        self.assertEqual((rc, self.err), (2, f"router.py: bad ${SID_ENV}: x\n"))
         self.assertEqual((self.fake.queries, self.api.tui_checks, self.out), ([], [], ""))
 
     def test_a_live_run_is_refused_with_its_attach_command(self):

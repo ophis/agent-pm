@@ -34,6 +34,12 @@ class StatusState(StrEnum):
     UNKNOWN = "unknown"  # its host could not tell
 
 
+class OutcomeStatus(StrEnum):
+    DONE = "done"
+    NEEDS_INPUT = "needs_input"
+    FAILED = "failed"
+
+
 class RecordError(ValueError):
     pass
 
@@ -126,7 +132,7 @@ class Status(_Line):
     name: str
     alive: bool
     state: StatusState
-    outcome: str | None
+    outcome: OutcomeStatus | None
     attach: str | None
     hidden: bool
     cwd: str | None = None
@@ -140,11 +146,16 @@ class Status(_Line):
         )
         object.__setattr__(self, "state", StatusState(self.state))
         _check(ok=isinstance(self.hidden, bool), message="hidden: want true or false")
-        for field in ("outcome", "attach"):
-            value = getattr(self, field)
-            _check(
-                ok=value is None or isinstance(value, str), message=f"{field}: want null or a str"
-            )
+        _check(
+            ok=self.outcome is None or self.outcome in tuple(OutcomeStatus),
+            message=f"outcome: want null or one of {', '.join(OutcomeStatus)}",
+        )
+        if self.outcome is not None:
+            object.__setattr__(self, "outcome", OutcomeStatus(self.outcome))
+        _check(
+            ok=self.attach is None or isinstance(self.attach, str),
+            message="attach: want null or a str",
+        )
         _check(
             ok=self.cwd is None or _text(self.cwd),
             message="cwd: want null or a non-empty printable str",

@@ -3,7 +3,8 @@ OutcomeStatus.
 """
 
 from agent_pm import delegate
-from agent_pm.delegate.event.types import STATUSES, OutcomeStatus
+from agent_pm.delegate.event.types import STATUSES
+from agent_pm.utils import OutcomeStatus
 
 from delegate.tests.case import Case
 
