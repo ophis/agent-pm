@@ -10,7 +10,7 @@ from dataclasses import replace
 from unittest import mock
 
 from agent_pm.manager.engine.crew import HEADER, Crew
-from agent_pm.manager.engine.types import Spec, State
+from agent_pm.manager.engine.types import RosterError, Spec, State
 from agent_pm.utils import Record, Status
 
 from manager.tests.roster_case import RosterCase
@@ -59,6 +59,100 @@ class Run(RosterCase):
                 error, _, _ = self.start(mock.Mock(side_effect=[effect]), name)
                 self.assertEqual(str(error), f"fake-ctl start x: {message}")
                 self.assertIs(self.roster.entries()[name].state, State.LOST)
+
+
+class ResumeInput(RosterCase):
+    def setUp(self):
+        super().setUp()
+        self.live()
+        self.roster.mark("x", State.WAITING)
+
+    def resume(self, *, code=0, output=None, input="answer", during=None):
+        def run(argv, **options):
+            self.assertEqual(argv, (*self.record.resume, "--input", input))
+            self.assertEqual(options["env"]["AGENT_PM_SID"], self.record.sid)
+            self.assertEqual(options["env"]["AGENT_PM_EVENTS"], self.roster.events)
+            self.assertIs(self.roster.entries()["x"].state, State.RESUMING)
+            if during is not None:
+                during()
+            text = self.record.to_line() + "\n" if output is None else output
+            os.write(options["stdout"].fileno(), text.encode())
+            return mock.Mock(returncode=code, stderr="refused" if code else "")
+
+        with mock.patch("subprocess.run", side_effect=run):
+            return Crew(self.roster).resume("x", input=input)
+
+    def test_input_and_empty_input_resume_the_same_identity(self):
+        for text in ("answer", ""):
+            with self.subTest(text=text):
+                self.assertEqual(self.resume(input=text), self.record)
+                self.assertIs(self.roster.entries()["x"].state, State.LIVE)
+                self.roster.mark("x", State.WAITING)
+
+    def test_only_an_empty_exit_two_restores_waiting(self):
+        with self.assertRaisesRegex(ValueError, "refused"):
+            self.resume(code=2, output="")
+        self.assertIs(self.roster.entries()["x"].state, State.WAITING)
+        for code, output in ((1, ""), (2, "nonempty"), (0, "not a Record")):
+            with self.subTest(code=code, output=output):
+                with self.assertRaises((RosterError, RuntimeError)):
+                    self.resume(code=code, output=output)
+                self.assertIs(self.roster.entries()["x"].state, State.GONE)
+                self.roster.mark("x", State.WAITING)
+
+    def test_cached_adoption_cannot_promote_the_current_input_attempt(self):
+        def adopt():
+            def query(argv, **options):
+                if tuple(argv) == ("agent-pm-session", "ls", "--here", "--records"):
+                    stdout = self.record.to_line() + "\n"
+                else:
+                    self.assertEqual(tuple(argv), (*self.record.ctl, "status"))
+                    self.assertEqual(options["input"], self.record.to_line() + "\n")
+                    stdout = (
+                        Status(
+                            name=self.record.name,
+                            alive=False,
+                            state="gone",
+                            outcome="needs_input",
+                            attach=None,
+                            hidden=False,
+                        ).to_line()
+                        + "\n"
+                    )
+                return mock.Mock(returncode=0, stdout=stdout, stderr="")
+
+            with mock.patch("subprocess.run", side_effect=query):
+                Crew(self.roster).attach()
+            self.assertIs(self.roster.entries()["x"].state, State.RESUMING)
+
+        with self.assertRaises(ValueError):
+            self.resume(code=2, output="", during=adopt)
+        self.assertIs(self.roster.entries()["x"].state, State.WAITING)
+
+    def test_stale_claims_can_still_be_adopted(self):
+        self.roster.claim_resume("x", state=State.WAITING)
+        self.roster.adopt(self.record, resuming_before="9999-01-01T00:00:00+00:00")
+        self.assertIs(self.roster.entries()["x"].state, State.LIVE)
+
+    def test_waiting_without_input_is_rejected_without_a_controller_call(self):
+        with mock.patch("subprocess.run") as run, self.assertRaisesRegex(RuntimeError, "waiting"):
+            Crew(self.roster).resume("x")
+        run.assert_not_called()
+
+    def test_input_rejects_other_states_without_queries_or_changes(self):
+        for state in (State.LIVE, State.GONE, State.DONE, State.RESUMING):
+            with self.subTest(state=state):
+                self.roster.remove("x")
+                self.live()
+                if state != State.LIVE:
+                    self.roster.mark("x", State.GONE if state == State.RESUMING else state)
+                    if state == State.RESUMING:
+                        self.roster.claim_resume("x")
+                before = self.roster.entries()
+                with mock.patch("subprocess.run") as run, self.assertRaises(ValueError):
+                    Crew(self.roster).resume("x", input="answer")
+                run.assert_not_called()
+                self.assertEqual(self.roster.entries(), before)
 
 
 class RecordlessStatus(RosterCase):

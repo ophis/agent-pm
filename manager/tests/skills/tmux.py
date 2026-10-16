@@ -55,7 +55,21 @@ def spans(source: str) -> list[list[list[str]]]:
         commands = []
         for start, end in zip(starts, [*starts[1:], len(words)], strict=True):
             command = words[start:end]
-            commands.append(command[: command.index("--")] if "--" in command else command)
+            command = command[: command.index("--")] if "--" in command else command
+            verb = command[1] if len(command) > 1 else ""
+            key = {"worker": "<name>", "issue": "<ID>", "role": "<role>"}.get(verb)
+            if command[0] == "agent-pm-crew" and key in command:
+                at = command.index(key)
+                tail = command[at + 1 :]
+                commands.append(command[: at + 1])
+                prefix = {
+                    "worker": ["agent-pm-session", "start", key],
+                    "issue": ["agent-pm-linear", "router", "--issue", key, "--tui"],
+                    "role": ["agent-pm-delegate", "run", "--role", key, "--detach"],
+                }[verb]
+                commands.append([*prefix, *tail])
+            else:
+                commands.append(command)
         found.append(commands)
     return found
 
