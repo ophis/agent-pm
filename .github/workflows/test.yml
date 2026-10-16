@@ -42,7 +42,7 @@ jobs:
             style) python3 -m pip install ruff==0.16.9 vulture==2.16 ;;
             types) python3 -m pip install pyright==1.1.414 ;;
             design) python3 -m pip install import-linter=="$IMPORT_LINTER_VERSION" pylint==4.1.3 ;;
-            repository) python3 -m pip install coverage=="$COVERAGE_VERSION" import-linter=="$IMPORT_LINTER_VERSION" ;;
+            repository) python3 -m pip install coverage=="$COVERAGE_VERSION" import-linter=="$IMPORT_LINTER_VERSION" ruff==0.16.9 ;;
           esac
       - name: Comment budget
         if: ${{ !cancelled() && matrix.group == 'style' }}
