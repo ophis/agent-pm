@@ -1860,6 +1860,50 @@ class ScheduledUsageGates(TickBase):
     recorded client.
     """
 
+    def test_label_client_configuration_rejection_is_visible_even_after_cached_default_error(self):
+        self.write_config(
+            AGENT_TOP + CONFIG.replace(OVERLAY, '[core]\nclient = "b"\n') + AGENT_LABELS
+        )
+        self.api.usages = {"b": DelegateConfigError("b: not installed\nhidden details")}
+        fake = self.fake(
+            issue("TASK-1", "Todo", "researcher", priority=1),
+            issue(
+                "TASK-2",
+                "Todo",
+                "researcher",
+                priority=2,
+                labels=[label("Selected", AGENT_B, AGENT_GROUP)],
+            ),
+        )
+        self.assertEqual(self.tick(fake), 0)
+        self.assertEqual(self.api.usage_calls, ["b"])
+        self.assertEqual(fake.issues["TASK-1"]["state"], "Todo")
+        self.assertEqual(fake.issues["TASK-2"]["state"], "In Review")
+        comments = fake.issues["TASK-2"]["comments"]
+        self.assertEqual(len(comments), 1)
+        self.assertIn("b: not installed", comments[0])
+        self.assertNotIn("hidden details", comments[0])
+        self.assertNotIn(router.INTERRUPTED, comments[0])
+        self.assertTrue(
+            any(line.startswith("launch-error TASK-2 client=b") for line in self.said())
+        )
+        self.assertEqual((self.start.launches, runs.parse_log(self.runs)), ([], []))
+        self.assertEqual(self.tick(fake, now=NOW + timedelta(hours=3)), 0)
+        self.assertEqual(len(comments), 1)
+
+    def test_dry_run_previews_client_configuration_rejection_without_writes(self):
+        self.write_config(AGENT_TOP + CONFIG + AGENT_LABELS)
+        self.api.usages = {"b": DelegateConfigError("b: not installed")}
+        fake = self.fake(
+            issue("TASK-1", "Todo", "researcher", labels=[label("Selected", AGENT_B, AGENT_GROUP)])
+        )
+        before = self.before()
+        self.assertEqual(self.tick(fake, "--dry-run"), 0)
+        self.assertIn("would comment TASK-1", "\n".join(self.said()))
+        self.assertIn("b: not installed", "\n".join(self.said()))
+        self.assertEqual(fake.issues["TASK-1"]["state"], "Todo")
+        self.assertEqual((fake.mutations, self.start.launches, self.state), ([], [], before))
+
     def test_dry_run_reads_all_candidate_labels_and_only_previews_errors(self):
         self.write_config(AGENT_TOP + CONFIG + TASK_LABELS + AGENT_LABELS)
         for explicit in (False, True):

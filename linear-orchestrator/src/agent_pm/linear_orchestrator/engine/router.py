@@ -451,9 +451,9 @@ class Board:
         else:
             self.say("plan", mode="new", queue=run[1], live=live)
 
-    def gated(self, role, ident, client):
+    def gated(self, role, ident, client, source):
         return self.gate is not None and self.gate.blocked(
-            role, ident, key=(self.cfg.delegate_kind, client)
+            role, ident, key=(self.cfg.delegate_kind, client), reject_config=source == "label"
         )
 
     def preview_resume(self, issue, sid):
@@ -544,7 +544,15 @@ class Board:
                 self.say("would comment", ident, body="\n\n".join(comments), to="in_review")
             self.comment_and_move(issue, "\n\n".join(comments), "in_review", "todo", "claim")
             return None
-        if self.gated(role, ident, client):
+        try:
+            if self.gated(role, ident, client, source):
+                return None
+        except delegate.ConfigError as error:
+            self.say("launch-error", ident, client=client, error=one_line(error))
+            body = _label_client_message(client, error)
+            if self.dry:
+                self.say("would comment", ident, body=body, to="in_review")
+            self.comment_and_move(issue, body, "in_review", "todo", "claim")
             return None
         taken = {**issue, "assignee": current["assignee"], "project": current["project"]}
         if self.dry:
@@ -739,18 +747,21 @@ def _outer(a, cfg, *, gql, run, keychain, now, attended):
     return 0
 
 
-def _label_client_error(spec, cfg, gql, error):
-    log("router", "launch-error", spec.issue, client=spec.client, error=one_line(error))
+def _label_client_message(client, error):
     first = str(error).split("\n", 1)[0]
-    body = (
-        f'Agent label selected client "{spec.client}", but the run could not be built: {first}\n\n'
+    return (
+        f'Agent label selected client "{client}", but the run could not be built: {first}\n\n'
         "Fix [agent_labels] or the client configuration, then move this issue back to Todo."
     )
+
+
+def _label_client_error(spec, cfg, gql, error):
+    log("router", "launch-error", spec.issue, client=spec.client, error=one_line(error))
     try:
         ops.comment_and_move(
             gql,
             spec.uuid,
-            body,
+            _label_client_message(spec.client, error),
             to=cfg.states["in_review"],
             frm=cfg.states["in_progress"],
             emails=cfg.human_members,

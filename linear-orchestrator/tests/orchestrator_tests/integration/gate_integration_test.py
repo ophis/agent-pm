@@ -70,9 +70,11 @@ class RecordedQuotaKeys(Case):
         self.assertFalse(gate.blocked("engineer", "TASK-2"))
         self.assertEqual(provider.queried, ["engineer"])
 
-    def test_expired_saved_limit_releases_drift_without_caching_usage(self):
+    def test_expired_saved_limit_probes_and_caches_the_recorded_client(self):
         provider = quota_provider("current-client", 95)
+        saved = quota_provider("saved-client", 95)
         cfg = quota_config(provider, "current-kind")
+        cfg.delegates["saved-kind"] = saved
         path = os.path.join(self.home, "runs.jsonl")
         runs.note_limit(
             path,
@@ -84,5 +86,7 @@ class RecordedQuotaKeys(Case):
             attempt=1,
         )
         gate = Gate(path, NOW, cfg=cfg, dry=False)
-        self.assertFalse(gate.blocked("engineer", "TASK-1", key=("saved-kind", "saved-client")))
-        self.assertEqual((provider.queried, gate.seen), ([], {}))
+        self.assertTrue(gate.blocked("engineer", "TASK-1", key=("saved-kind", "saved-client")))
+        self.assertTrue(gate.blocked("engineer", "TASK-2", key=("saved-kind", "saved-client")))
+        self.assertEqual((provider.queried, saved.queried), ([], ["engineer"]))
+        self.assertIn("saved-client", gate.seen)

@@ -36,24 +36,6 @@ class ReplyTags(Base):
         got, _ = self.planned()
         self.assertEqual(got.session.reply_tags, (PROGRESS, OUTCOME))
 
-    def test_effective_client_overrides_policy_environment_for_new_and_resumed_runs(self):
-        for resume, selected, default in (
-            (False, "fake", "other"),
-            (True, "fake", "other"),
-            (False, None, "fake"),
-        ):
-            with self.subTest(resume=resume, selected=selected):
-                with mock.patch.object(
-                    self.driver,
-                    "policy",
-                    return_value=((), {"AGENT_PM_RUN_CLIENT": "stale", "OTHER": "kept"}),
-                ):
-                    got, _ = self.planned(
-                        client=selected, keys={"client": default}, resume=resume, sid=SID
-                    )
-                self.assertEqual(got.session.client, "fake")
-                self.assertEqual(got.session.env, {"AGENT_PM_RUN_CLIENT": "fake", "OTHER": "kept"})
-
 
 class Cwd(Base):
     """place: the run's cwd and whether its project settings load."""
@@ -511,7 +493,7 @@ class Policy(Base):
                 "auto",
                 "--strict-mcp-config",
             ),
-            {"AGENT_PM_RUN_CLIENT": "claude"},
+            {},
         ),
         "codex": (
             (
@@ -522,9 +504,9 @@ class Policy(Base):
                 "-c",
                 'approvals_reviewer="auto_review"',
             ),
-            {"AGENT_PM_RUN_CLIENT": "codex"},
+            {},
         ),
-        "fake": ((), {"AGENT_PM_RUN_CLIENT": "fake"}),
+        "fake": ((), {}),
     }
 
     def test_the_default_config_gives_each_client_its_shipped_policy(self):
@@ -537,8 +519,7 @@ class Policy(Base):
         self.local('[policy.codex]\nflags = ["-s", "workspace-write"]\nenv = { K = "v" }\n')
         got, _ = self.planned(client="codex")
         self.assertEqual(
-            (got.session.flags, dict(got.session.env)),
-            (("-s", "workspace-write"), {"K": "v", "AGENT_PM_RUN_CLIENT": "codex"}),
+            (got.session.flags, dict(got.session.env)), (("-s", "workspace-write"), {"K": "v"})
         )
 
     def test_an_invalid_policy_is_a_config_error_before_any_launch(self):
@@ -603,12 +584,8 @@ class InstructionPlans(InstructionCase):
                     plan(run, spec, driver=agent, composition=Composer()),
                     plan(run, spec, driver=self.driver, composition=Composer()),
                 )
+                self.assertEqual((got.session.flags, dict(got.session.env)), (tuple(flags), env))
                 self.assertEqual(
-                    (got.session.flags, dict(got.session.env)),
-                    (tuple(flags), {**env, "AGENT_PM_RUN_CLIENT": client}),
-                )
-                self.assertEqual(
-                    (instruction.session.flags, dict(instruction.session.env)),
-                    ((), {"AGENT_PM_RUN_CLIENT": client}),
+                    (instruction.session.flags, dict(instruction.session.env)), ((), {})
                 )
                 self.assertEqual(got.prompt, instruction.prompt)
