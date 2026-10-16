@@ -13,12 +13,13 @@ agent-pm-linear router [--now] [--dry-run] [--issue ID] [--tui [--display D] [--
               run's outcome written back instead, else the outer's code: 0 detached or bounced, 1 the launch
               failed, 2 a config error of the issue, 3 transient.
 --dry-run     With either: print the plan (a tick's with its usage checks); change nothing, start nothing; exit 0.
---tui         With either: each run it starts or resumes is attended (tui mode), shown at D (opaque, its format:
-              agent-pm-session --help; no D: the caller's place; none: started hidden, passed on as
-              given), its events written to FILE, else $AGENT_PM_EVENTS. Exits 2 before any Linear call without either, or when the Delegate refuses D or
-              FILE (no place to show the TUI, a D its Host cannot use, FILE not writable). A run it starts or
-              resumes prints its Record line on stdout, its attach commands on stderr. launchd
-              never passes it: a tick resumes a run headless.
+--tui         With either: each run it starts or resumes is attended (tui mode), shown at D (opaque,
+              its format: agent-pm-session --help; no D: the caller's place; none: started hidden,
+              passed on as given), its events written to FILE, else $AGENT_PM_EVENTS. Exits 2 before
+              any Linear call without either, or when the Delegate refuses D or FILE (no place to
+              show the TUI, a D its Host cannot use, FILE not writable). A run it starts or resumes
+              prints its Record line on stdout, its attach commands on stderr. launchd never passes
+              it: a tick resumes a run headless.
 --brake ROLE  Print ROLE's client usage; exit 0 if a deep-research round may start, 1 if not or unknown, 2 no such
               role.
 --help        Print this; exit 0. Bad arguments exit 2.

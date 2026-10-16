@@ -1116,6 +1116,7 @@ class AttendedEntry(OuterBase):
         self.assertEqual(rc, 0, self.err)
         self.assertEqual(self.api.tui_checks, [("none", self.events)])
         self.assertEqual(self.launched()[1]["display"], "none")
+        self.assertEqual(self.record().display, "none")
 
     def test_without_tui_a_run_is_headless_without_display_events_or_record(self):
         for argv, env in ((("--issue", ID), None), (("--now",), {router.EVENTS_ENV: self.events})):
