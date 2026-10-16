@@ -161,6 +161,7 @@ class Queries(RunCase):
                 os.environ.pop(SID_ENV, None)
                 if supplied is not None:
                     os.environ[SID_ENV] = supplied
+                FakeDelegate.end(record.workdir)
                 before = FakeDelegate.starts(record.workdir)
                 result, output, errors = _call(["resume", "TASK-1"])
                 self.assertNotIn(SID_ENV, os.environ)
@@ -169,7 +170,43 @@ class Queries(RunCase):
                     self.assertIn(SID_ENV, errors)
                 else:
                     self.assertEqual((result, Record.parse(output)), (0, record), errors)
+                self.assertEqual(
+                    FakeDelegate.starts(record.workdir),
+                    before + (supplied in (None, record.sid)),
+                )
+                self.assertEqual(
+                    FakeDelegate.attach(record.workdir).alive(), supplied in (None, record.sid)
+                )
+
+    def test_resume_requires_one_key_before_attaching_or_starting(self):
+        _, record = self.start()
+        FakeDelegate.end(record.workdir)
+        before = FakeDelegate.starts(record.workdir)
+        for arguments, stdin in (
+            (["resume"], ""),
+            (["resume", "TASK-1", "TASK-2"], ""),
+            (["resume", "TASK-1", "TASK-1"], ""),
+            (["resume", "TASK-8", "TASK-1"], ""),
+            (["resume"], record.to_line() + "\n" + record.to_line()),
+            (["resume"], record.to_line() + "\ninvalid"),
+        ):
+            with self.subTest(arguments=arguments, stdin=stdin):
+                with mock.patch.object(
+                    ReadyDelegate, "attach", wraps=ReadyDelegate.attach
+                ) as attach:
+                    result, output, errors = _call(arguments, stdin=stdin)
+                self.assertEqual((result, output), (2, ""))
+                self.assertTrue(errors)
+                attach.assert_not_called()
                 self.assertEqual(FakeDelegate.starts(record.workdir), before)
+                self.assertFalse(FakeDelegate.attach(record.workdir).alive())
+
+    def test_resume_uses_the_record_sid_from_stdin(self):
+        _, record = self.start()
+        FakeDelegate.end(record.workdir)
+        result, output, errors = _call(["resume"], stdin=record.to_line())
+        self.assertEqual((result, Record.parse(output), errors), (0, record, ""))
+        self.assertEqual(FakeDelegate.starts(record.workdir), 2)
 
     def test_content_from_key_or_record_prints_the_owned_runs_content(self):
         owner, record = self.start()
@@ -247,18 +284,6 @@ class Queries(RunCase):
             )
         self.assertEqual(ReadyDelegate.usage_calls, ["researcher"])
 
-    def test_interrupted_batch_probes_a_shared_recorded_key_once(self):
-        self.start("TASK-1")
-        self.start("TASK-2")
-        FakeDelegate.end(self.cfg.issue_workdir("TASK-1"))
-        FakeDelegate.end(self.cfg.issue_workdir("TASK-2"))
-        result, output, errors = _call(["resume", "TASK-1", "TASK-2"])
-        self.assertEqual((result, errors), (0, ""))
-        self.assertEqual(
-            [Record.parse(line).name for line in output.splitlines()], ["TASK-1", "TASK-2"]
-        )
-        self.assertEqual(ReadyDelegate.usage_calls, ["researcher"])
-
     def test_config_drift_never_probes_and_recorded_limits_still_block(self):
         self.start()
         FakeDelegate.end(self.cfg.issue_workdir("TASK-1"))
@@ -320,15 +345,6 @@ class Queries(RunCase):
                 self.assertTrue(owner.delegate.alive())
         self.assertEqual(_call(["close"], stdin=""), (0, "", ""))
         self.assertTrue(owner.delegate.alive())
-
-    def test_resume_partial_success_is_not_a_no_start_refusal(self):
-        _, record = self.start()
-        FakeDelegate.end(record.workdir)
-        result, output, errors = _call(["resume", "TASK-8", "TASK-1"])
-        self.assertEqual(result, 1)
-        self.assertEqual(Record.parse(output), record)
-        self.assertIn("no recorded run", errors)
-        self.assertTrue(FakeDelegate.attach(record.workdir).alive())
 
     def test_batch_configuration_error_preserves_valid_key_output(self):
         self.start()

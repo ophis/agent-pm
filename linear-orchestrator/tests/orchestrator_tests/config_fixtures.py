@@ -10,7 +10,7 @@ from orchestrator_tests.unit.board_ids import HEADER, role
 
 from utils.tests.case import local_section
 
-HARNESS_DELEGATE = load_class("agent_pm.delegate.engine.harness_delegate:HarnessDelegate", Delegate)
+HARNESS_DELEGATE = load_class("agent_pm.delegate:HarnessDelegate", Delegate)
 
 
 PIPELINE = (

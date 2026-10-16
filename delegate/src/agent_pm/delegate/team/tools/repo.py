@@ -34,7 +34,8 @@ import subprocess
 import sys
 from datetime import datetime
 
-from agent_pm.delegate.config import CONFIG, read_config, trusted_dirs
+from agent_pm.delegate.config import CONFIG, trusted_dirs
+from agent_pm.delegate.engine.config import read_config
 from agent_pm.utils import (
     LOCAL,
     LONG,

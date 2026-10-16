@@ -23,7 +23,8 @@ from agent_pm.delegate.composer.prompt import (
 )
 from agent_pm.delegate.composer.run import resolve
 from agent_pm.delegate.composer.teams import index, team
-from agent_pm.delegate.config import CONFIG, read_config
+from agent_pm.delegate.config import CONFIG
+from agent_pm.delegate.engine.config import read_config
 
 from delegate.tests.case import ROOTS, Case
 from delegate.tests.unit.composer.prompts import (

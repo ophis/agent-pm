@@ -530,6 +530,15 @@ class ConfigurationLoading(ConfigFile, Case):
 
 
 class CommittedConfiguration(Case):
+    def test_harness_uses_the_public_delegate_export(self):
+        with files("agent_pm.linear_orchestrator").joinpath("config.toml").open("rb") as source:
+            committed = tomllib.load(source)
+        self.assertEqual(
+            committed["delegates"]["harness"]["implementation"],
+            "agent_pm.delegate:HarnessDelegate",
+        )
+        self.assertIs(HARNESS_DELEGATE, delegate.HarnessDelegate)
+
     def setUp(self):
         write(os.path.join(self.agent_pm, "config.local.toml"), CORE_LOCAL)
         self.local = os.path.join(self.agent_pm, "config.local.toml")

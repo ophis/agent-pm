@@ -16,9 +16,9 @@ from agent_pm.delegate.config import (
     CONFIG,
     harness_host,
     policy,
-    read_config,
     trusted_dirs,
 )
+from agent_pm.delegate.engine.config import read_config
 from agent_pm.session import Host
 from agent_pm.session import read_config as read_session_config
 

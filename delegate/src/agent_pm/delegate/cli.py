@@ -173,7 +173,7 @@ def _run(
             return 0
         if a.detach:
             return _detach(delegate_cls, a.role, spec, placement)
-        result = delegate_cls(a.role, spec, display=a.display).run(_begun)
+        result = delegate_cls.create(a.role, spec, display=a.display).run(_begun)
     except ConfigError as e:
         say(f"delegate: {e}")
         return 2
@@ -183,7 +183,7 @@ def _run(
 def _detach(delegate_cls: type[HarnessDelegate], role: str, spec: Spec, placement: dict) -> int:
     """Prints the run's Record line once its listed sessions are live."""
     try:
-        record = delegate_cls(role, spec, **placement).detach()
+        record = delegate_cls.create(role, spec, **placement).detach()
     except (SessionError, OSError) as e:
         say(f"delegate: {e}")
         return 1
@@ -257,7 +257,6 @@ def _shown(preview: Preview, a: argparse.Namespace) -> dict:
         "mode": s.mode,
         "sid": s.sid,
         "workdir": s.workdir,
-        "resume": s.resume,
         "cwd": access.cwd,
         "project": access.project,
         "dirs": access.dirs,

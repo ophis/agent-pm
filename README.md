@@ -120,7 +120,7 @@ Every session agent-pm starts, agent runs and workers, loads your user settings 
 | Command | Does |
 |---|---|
 | `/agent-pm:tmux` | Launch and direct workers, role runs and pipeline runs. |
-| `ctmux <name>` | Open the commander's tmux session. `ctmux --install` puts ctmux and the four commands `agent-pm-crew`, `agent-pm-session`, `agent-pm-delegate` and `agent-pm-linear` in `~/.agent-pm/bin/`: run them by that path, or add it to `PATH`. Each runs that command from the plugin installed when it runs, Claude Code's install first, then Codex's newest, so an upgrade needs no reinstall; rerun `--install` to refresh them. |
+| `ctmux <name>` | Open the commander's tmux session: native windows in iTerm2, a plain tmux attach in other terminals, a switch from inside tmux. `ctmux --install` puts ctmux and the four commands `agent-pm-crew`, `agent-pm-session`, `agent-pm-delegate` and `agent-pm-linear` in `~/.agent-pm/bin/`: run them by that path, or add it to `PATH`. Each runs that command from the plugin installed when it runs, Claude Code's install first, then Codex's newest, so an upgrade needs no reinstall; rerun `--install` to refresh them. |
 | `/agent-pm:manage` | The commander's guidelines. |
 | `/agent-pm:act-as <role>[:<task>] <input>` | Run a core role in this conversation. |
 | `agent-pm-delegate run --list` | List every role and task. |
@@ -358,7 +358,7 @@ Run it right after switching to `main`, in order, from the checkout root inside 
 | 6 | Brake | `bin/agent-pm-linear router --brake researcher` | exit 0 or 1, not 2 |
 | 7 | Headless run | `bin/agent-pm-linear router --issue <H>` | `<H>` goes In Progress with its start and `Run <sid>` comments and an `engineer-<H>-<sid8>-drive` session; it ends with a PR on the scratch repo linked in a comment, `<H>` In Review, the session gone |
 | 8 | Attended run | `bin/agent-pm-linear router --issue <T> --tui --events "$(mktemp)"` | as step 7, with a `researcher-<T>-<sid8>` TUI; the report is published, linked, and `<T>` is In Review |
-| 9 | Router lock | the block below, with `<H>` In Review | `router.py: another router is running; try again`, exit 1 |
+| 9 | Router lock | the block below, with `<H>` In Review | `router.py: another router is running; try again`, exit 2 |
 
 ```bash
 # step 2: before each command, put `smoke_bad_key = 1` under only that section of the copy

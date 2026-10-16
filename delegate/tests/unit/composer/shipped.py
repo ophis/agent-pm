@@ -4,7 +4,8 @@ import re
 
 from agent_pm.delegate.composer import Composer
 from agent_pm.delegate.composer.base import TEAM
-from agent_pm.delegate.config import CONFIG, read_config
+from agent_pm.delegate.config import CONFIG
+from agent_pm.delegate.engine.config import read_config
 
 from delegate.tests.case import REPO, Case
 from delegate.tests.unit.composer.prompts import (
