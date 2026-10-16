@@ -132,9 +132,18 @@ class Session(ABC):
 
     @classmethod
     def attach(
-        cls, name: str, *, host: str | None = None, idle_timeout: float | None = None
+        cls,
+        name: str,
+        *,
+        sid: str | None = None,
+        host: str | None = None,
+        idle_timeout: float | None = None,
     ) -> Session:
-        return cls._hosted("attach")(name, host=host, idle_timeout=idle_timeout)
+        return cls._hosted("attach")(name, sid=sid, host=host, idle_timeout=idle_timeout)
+
+    @classmethod
+    def retire(cls, name: str, *, sid: str | None = None, host: str | None = None) -> None:
+        cls._hosted("retire")(name, sid=sid, host=host)
 
     @classmethod
     def inspect(cls, spec: Spec) -> SessionStatus:

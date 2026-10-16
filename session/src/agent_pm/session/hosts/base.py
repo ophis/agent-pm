@@ -74,7 +74,7 @@ class Process(ABC):
         raise SessionError(f"session {self.name}: its host cannot store a Record after launch")
 
     def session_identity(self) -> tuple[str | None, str | None]:
-        """Private terminal sid and generation, independent of its published Record."""
+        """Private sid and generation, independent of Record; None never matches a supplied sid."""
         return None, None
 
     def state(self) -> Liveness:
@@ -147,6 +147,13 @@ class Interactive(ABC):
 
 
 class InteractiveProcess(Process, Interactive): ...
+
+
+def check_sid(name: str, process: Process | None, sid: str | None) -> None:
+    if sid is not None:
+        actual = None if process is None else process.session_identity()[0]
+        if actual != sid:
+            raise SessionError(f"session {name}: expected sid {sid!r}, found {actual!r}")
 
 
 class Host(ABC):

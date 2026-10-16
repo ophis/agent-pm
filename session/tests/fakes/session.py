@@ -143,10 +143,17 @@ class FakeSession(Session):
         return cls.live[name]
 
     @classmethod
-    def attach(cls, name, *, host=None, idle_timeout=None) -> FakeSession:
+    def attach(cls, name, *, sid=None, host=None, idle_timeout=None) -> FakeSession:
         if name not in cls.live:
             raise SessionError(f"no session {name}")
-        return cls.live[name]
+        session = cls.live[name]
+        if sid is not None and sid != session.sid:
+            raise SessionError(f"session {name}: expected sid {sid!r}, found {session.sid!r}")
+        return session
+
+    @classmethod
+    def retire(cls, name, *, sid=None, host=None) -> None:
+        cls.attach(name, sid=sid, host=host).close()
 
     @classmethod
     def list(cls, match=None, *, display=None) -> list[SessionRow]:

@@ -8,6 +8,7 @@ import os
 import re
 import signal
 import time
+from dataclasses import replace
 from pathlib import Path
 from unittest import mock
 
@@ -284,14 +285,16 @@ class DetachTest(Base):
 
     def test_forwards_the_launch_the_opener_part_and_the_record_line(self):
         events = os.path.join(self.dir, "events")
-        process = self.detach(display="mgr/below", events=events, record=LINE)
+        line = replace(LINE, sid=SID)
+        process = self.detach(display="mgr/below", events=events, record=line)
         self.tmux.detach.assert_called_once_with(
             "d1",
             Launch(tuple(self.control.command()), cwd=self.dir, env={"PATH": "/bin"}),
             opener="mgr",
             display="mgr/below",
             events=events,
-            record=LINE.to_line(),
+            record=line.to_line(),
+            sid=SID,
             control=self.control.path,
         )
         self.assertEqual((process.name, process.alive()), ("d1", True))
