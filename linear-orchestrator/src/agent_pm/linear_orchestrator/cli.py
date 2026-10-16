@@ -30,7 +30,7 @@ def main(argv=None):
     commands = parser.add_subparsers(dest="command", required=True)
     for command, (_, text) in entries.items():
         commands.add_parser(command, help=text)
-    for command in ("status", "show", "close", "attach-command", "resume"):
+    for command in ("status", "show", "hide", "close", "attach-command", "resume"):
         query = commands.add_parser(command)
         query.add_argument("keys", nargs="*", metavar="ISSUE", help="omit: Records on stdin")
     back = commands.add_parser("writeback", help="write back one DelegateEvent line from stdin")
@@ -87,6 +87,7 @@ def main(argv=None):
         "resume": resume,
         "close": lambda view: view.close(),
         "show": lambda view: view.show(),
+        "hide": lambda view: view.hide(),
         "attach-command": attach_command,
     }[args.command]
     return answer_keys(

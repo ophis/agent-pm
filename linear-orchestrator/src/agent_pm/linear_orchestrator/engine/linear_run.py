@@ -131,6 +131,9 @@ class LinearRun:
     def show(self) -> str | None:
         return self.delegate.show()
 
+    def hide(self) -> None:
+        self.delegate.hide()
+
     def close(self) -> None:
         self.delegate.close()
 

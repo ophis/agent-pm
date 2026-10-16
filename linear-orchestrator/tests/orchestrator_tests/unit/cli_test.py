@@ -26,7 +26,7 @@ class Commands(Case):
             cli.main(["--help"])
         self.assertEqual(raised.exception.code, 0)
         self.assertIn(
-            "{router,promote,prune,status,show,close,attach-command,resume,writeback}",
+            "{router,promote,prune,status,show,hide,close,attach-command,resume,writeback}",
             output.getvalue(),
         )
 
@@ -232,7 +232,7 @@ class Queries(RunCase):
         self.assertEqual((result, output, errors), (0, "", ""))
         self.assertFalse(one.alive())
         self.assertTrue(two.alive())
-        for command in ("show", "attach-command"):
+        for command in ("show", "hide", "attach-command"):
             result, output, errors = _call([command, "TASK-2"])
             self.assertEqual((result, output), (1, ""))
             self.assertEqual(len(errors.splitlines()), 1)

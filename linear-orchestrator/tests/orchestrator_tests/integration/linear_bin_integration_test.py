@@ -17,6 +17,7 @@ COMMANDS = [
     "prune",
     "status",
     "show",
+    "hide",
     "close",
     "attach-command",
     "resume",
