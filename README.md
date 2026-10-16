@@ -24,7 +24,7 @@ Manager on the left, each engineer worker in its own pane on the right.
 
 ## Install
 
-Each client installs the plugin itself, with your git credentials (the repo is private). Before upgrading, see [Upgrading](docs/upgrading.md).
+Each client installs the plugin itself. Before upgrading, see [Upgrading](docs/upgrading.md).
 
 | Client | Install |
 |---|---|
