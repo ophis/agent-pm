@@ -15,6 +15,7 @@ from agent_pm.manager.engine.types import Lease, StatusError
 from agent_pm.utils import STATE, nested_start
 
 SESSION_COMMAND = ("agent-pm-session",)
+DELEGATE_COMMAND = ("agent-pm-delegate",)
 
 
 def _number(value: str) -> int:
@@ -107,6 +108,11 @@ def _report_error(error: Exception) -> None:
             print(f"crew: {note}", file=sys.stderr)
 
 
+def _report(args) -> int:
+    print(_crew(args).report(SESSION_COMMAND, DELEGATE_COMMAND), end="")
+    return 0
+
+
 def _resume(args) -> int:
     crew = _crew(args)
     failed = 0
@@ -176,6 +182,10 @@ def _parser() -> argparse.ArgumentParser:
     status = subs.add_parser("status", parents=[common])
     status.add_argument("names", nargs="*")
     status.set_defaults(func=_status)
+    report = subs.add_parser(
+        "report", parents=[common], help="one row per entry: state, note, latest reply, PR"
+    )
+    report.set_defaults(func=_report)
     resume = subs.add_parser("resume", parents=[common])
     resume.add_argument("names", nargs="+")
     resume.set_defaults(func=_resume)
