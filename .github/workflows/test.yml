@@ -104,7 +104,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        job: ["1", "2", "3", "4", "5", "6", "7", "8"]
+        job: ["1", "2"]
     outputs:
       shards: ${{ steps.unit.outputs.shards }}
     steps:
@@ -124,19 +124,17 @@ jobs:
       - name: Unit tests
         id: unit
         env:
-          RUN_TESTS_COVERAGE: ${{ github.event_name == 'pull_request' && format('{0}/coverage-data.{1}', runner.temp, matrix.job) || '' }}
-          RUN_TESTS_DURATIONS: ${{ runner.temp }}/unit-${{ matrix.job }}.jsonl
+          RUN_TESTS_COVERAGE: ${{ github.event_name == 'pull_request' && 'collect' || '' }}
+          RUN_TESTS_REPORT_DIR: ${{ runner.temp }}/unit
         run: |
-          echo 'shards=${{ strategy.job-total }}' >> "$GITHUB_OUTPUT"
-          python3 -X faulthandler .github/run_tests.py 'Unit ${{ matrix.job }}' --unit --shard '${{ matrix.job }}/${{ strategy.job-total }}'
+          echo "shards=$(( ${{ strategy.job-total }} * 4 ))" >> "$GITHUB_OUTPUT"
+          python3 -X faulthandler .github/run_tests.py 'Unit ${{ matrix.job }}' --unit --parallel 4 --shard '${{ matrix.job }}/${{ strategy.job-total }}'
       - name: Preserve unit coverage
         if: ${{ always() && github.event_name == 'pull_request' }}
         uses: actions/upload-artifact@v7.0.2
         with:
           name: unit-coverage-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.job }}
-          path: |
-            ${{ runner.temp }}/coverage-data.${{ matrix.job }}
-            ${{ runner.temp }}/unit-${{ matrix.job }}.jsonl
+          path: ${{ runner.temp }}/unit/
           if-no-files-found: error
           retention-days: 30
       - name: Require unchanged checkout
@@ -176,7 +174,7 @@ jobs:
         env:
           EXPECTED_SHARDS: ${{ needs.unit.outputs.shards }}
         run: |
-          files=("$RUNNER_TEMP"/unit-coverage/coverage-data.*)
+          files=("$RUNNER_TEMP"/unit-coverage/shard-*/coverage-data.*)
           test "${#files[@]}" = "$EXPECTED_SHARDS"
           python3 -m coverage combine --rcfile=/dev/null --keep --data-file="$RUNNER_TEMP/coverage-data" "${files[@]}"
       - name: Diff coverage of changed src lines
@@ -196,10 +194,12 @@ jobs:
     name: Integration ${{ matrix.job }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
+    env:
+      INTEGRATION_WORKERS: "4"
     strategy:
       fail-fast: false
       matrix:
-        job: ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26", "27", "28", "29", "30", "31", "32"]
+        job: ["1", "2", "3", "4", "5", "6", "7", "8"]
     steps:
       - name: Check out
         uses: actions/checkout@v7.0.1

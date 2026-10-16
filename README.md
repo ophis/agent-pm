@@ -445,6 +445,7 @@ typos --config pyproject.toml
 | one project's unit tests | `python3 .github/run_tests.py "Session unit" session/tests/unit` |
 | all unit tests | `python3 .github/run_tests.py Unit --unit` |
 | one unit shard | `python3 .github/run_tests.py Unit --unit --shard 1/8` |
+| one four-process unit job | `python3 .github/run_tests.py Unit --unit --parallel 4 --shard 1/2` |
 | one complete test ID | `python3 .github/run_tests.py Integration manager.tests.integration.crew_close_all_integration_test.CloseAllTest.test_close_all_closes_what_mgr_opened_and_only_that` |
 | one test file | `python3 .github/run_tests.py Integration manager/tests/integration/crew_close_all_integration_test.py` |
 | integration shard (labels in `.github/workflows/test.yml`) | `python3 .github/integration_jobs.py <N>` |
@@ -459,10 +460,14 @@ running a broader suite.
 Subtest annotations use the method ID and keep parameters in the error text; selecting
 that method runs all its subtests.
 
-Integration jobs upload `integration-<run-id>-<attempt>-<shard>` artifacts containing
+Integration jobs upload `integration-<run-id>-<attempt>-<job>` artifacts containing
 the discovered IDs, assigned IDs, expected load, Python/tmux versions, runner type, supervised
 exit status and per-test seconds. A failed attempt remains available for diagnosis;
 only complete successful Ubuntu attempts can regenerate the timing table.
+Each matrix job runs `INTEGRATION_WORKERS` independently supervised workers. Their
+numbered shard directories retain separate logs and timing manifests; the coordinator
+waits for every worker and fails if any worker fails to launch, run or clean up.
+`integration_jobs.py --check` validates all worker shards against the actual matrix.
 
 To recollect, open a PR and let the entire `CI` workflow finish. Run
 `gh run rerun <run-id> --repo ophis/agent-pm` after each completed attempt for more samples.
@@ -491,12 +496,20 @@ RUN_TESTS_COVERAGE=/tmp/coverage-data python3 .github/run_tests.py Unit --unit
 python3 .github/coverage_gate.py /tmp/coverage-data origin/main
 ```
 
-CI splits Lint by check group and Unit by sorted test ID, with every unit ID assigned
-exactly once. Pull requests collect branch coverage during those unit shards; `Coverage`
-requires every shard's data, combines it with `coverage combine`, then runs the same gate.
-`CI` remains the required aggregate of every lint, unit, coverage and integration result.
-The whole-workflow target is 120 seconds, including scheduling, setup and cleanup;
-measure from workflow start until every job completes.
+```mermaid
+flowchart LR
+    L[Lint groups] --> CI[Required CI aggregate]
+    U[Unit: 2 jobs x 4 processes] --> C[Combine every coverage shard]
+    C --> G[85% diff coverage gate]
+    G --> CI
+    U --> CI
+    I[Integration: 8 jobs x 4 processes] --> CI
+```
+Unit shards use sorted test IDs; integration shards use recorded durations. Every ID
+occurs exactly once. Coverage applies to pull requests; `CI` requires every applicable result.
+
+Measure the whole workflow from its start until every job completes, including
+scheduling, setup and cleanup. Report observed times and flakes; no hard timing gate.
 
 `# pragma: no cover` is allowed only in the header (`def` through its colon) of a function that only integration tests run, registered with a reason in `NO_COVER_ALLOWED` of its layer's `tests/guard_data/<package>.py` (check: `tests/guard_checks/suppressions.py` `coverage_pragmas`).
 

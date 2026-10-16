@@ -59,6 +59,8 @@ def aggregate(samples, expected):
             )
             if any(manifest[field] != first[field] for field in fields):
                 raise ValueError(f"{key}: inconsistent shard metadata")
+            if any(manifest.get(field) != first.get(field) for field in ("matrix_jobs", "cpus")):
+                raise ValueError(f"{key}: inconsistent matrix metadata")
             if manifest["runner"] != "ubuntu-24.04" or manifest["exit_code"] != 0:
                 raise ValueError(f"{key}: requires successful ubuntu-24.04 samples")
             if Counter(manifest["discovered"]) != Counter(expected):
@@ -80,6 +82,7 @@ def aggregate(samples, expected):
                 if field
                 not in {
                     "shard",
+                    "matrix_job",
                     "tests",
                     "discovered",
                     "expected_seconds",

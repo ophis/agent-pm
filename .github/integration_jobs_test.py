@@ -1,8 +1,13 @@
 """Duration scheduling and complete integration-shard coverage."""
 
+import contextlib
+import io
+import os
 import tempfile
+import types
 import unittest
 from pathlib import Path
+from unittest import mock
 
 import integration_jobs as gate
 
@@ -67,6 +72,13 @@ class Assignment(unittest.TestCase):
 
 
 class Workflow(unittest.TestCase):
+    def test_worker_shards_follow_the_actual_matrix_and_worker_count(self):
+        text = 'jobs:\n  integration:\n    env:\n      INTEGRATION_WORKERS: "3"\n    strategy:\n      matrix:\n        job: ["1", "2"]\n'
+        self.assertEqual(gate.workflow_shards(text), [str(i) for i in range(1, 7)])
+        for value in ('"0"', '"many"', '"-1"'):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                gate.workflow_shards(text.replace('"3"', value))
+
     def test_matrix_must_have_unique_string_labels(self):
         for matrix in ('["1", "2", "1"]', '["1", 2]', "[1, 2]", "[]", '["1", "3"]', '["2"]'):
             text = f"jobs:\n  integration:\n    strategy:\n      matrix:\n        job: {matrix}\n"
@@ -74,3 +86,48 @@ class Workflow(unittest.TestCase):
                 gate.workflow_jobs(text)
         text = 'jobs:\n  integration:\n    strategy:\n      matrix:\n        job: ["1", "2"]\n'
         self.assertEqual(gate.workflow_jobs(text), ["1", "2"])
+
+
+class Workers(unittest.TestCase):
+    def test_every_worker_is_awaited_and_keeps_private_logs_and_timings(self):
+        root = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        calls = []
+
+        def run(argv, *, env, stdout, **_kwargs):
+            calls.append((argv[-1], env))
+            stdout.write(f"failure context {argv[-1]}\n")
+            return types.SimpleNamespace(returncode=int(argv[-1] == "1"))
+
+        out = io.StringIO()
+        with (
+            mock.patch.dict(os.environ, {"INTEGRATION_TIMING_DIR": str(root)}),
+            mock.patch.object(gate.run_tests.subprocess, "run", side_effect=run),
+            contextlib.redirect_stdout(out),
+        ):
+            self.assertEqual(gate.parallel("1", ["1", "2"]), 1)
+        self.assertEqual(sorted(label for label, _ in calls), ["1", "2"])
+        paths = [env["RUN_TESTS_DURATIONS"] for _, env in calls]
+        self.assertEqual(len(set(paths)), 2)
+        for label in ("1", "2"):
+            self.assertIn(f"failure context {label}", out.getvalue())
+            self.assertTrue((root / f"shard-{label}/worker.log").is_file())
+
+    def test_a_launch_error_fails_without_abandoning_other_workers(self):
+        root = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        calls = []
+
+        def run(argv, **_kwargs):
+            calls.append(argv[-1])
+            if argv[-1] == "1":
+                raise OSError("cannot launch")
+            return types.SimpleNamespace(returncode=0)
+
+        out = io.StringIO()
+        with (
+            mock.patch.dict(os.environ, {"INTEGRATION_TIMING_DIR": str(root)}),
+            mock.patch.object(gate.run_tests.subprocess, "run", side_effect=run),
+            contextlib.redirect_stdout(out),
+        ):
+            self.assertEqual(gate.parallel("1", ["1", "2"]), 1)
+        self.assertEqual(sorted(calls), ["1", "2"])
+        self.assertIn("before any test started", out.getvalue())

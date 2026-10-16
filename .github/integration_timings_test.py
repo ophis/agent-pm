@@ -59,6 +59,8 @@ class Samples(unittest.TestCase):
             ("discovered", ["a"]),
             ("tests", ["b"]),
             ("sha", "other"),
+            ("matrix_jobs", ["different"]),
+            ("cpus", 8),
         ):
             rows = copy.deepcopy(self.samples)
             rows[0][0][key] = value

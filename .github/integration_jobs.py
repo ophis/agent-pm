@@ -54,6 +54,27 @@ def workflow_jobs(text):
     return labels
 
 
+def workflow_shards(text):
+    labels = workflow_jobs(text)
+    job = re.search(r"(?ms)^  integration:\n(.*?)(?=^  [A-Za-z0-9_-]+:\n|\Z)", text)[1]
+    counts = re.findall(r"^      INTEGRATION_WORKERS: (.*)$", job, re.M)
+    if not counts:
+        return labels
+    if len(counts) != 1 or not re.fullmatch(r'"[1-9][0-9]*"', counts[0]):
+        raise ValueError("workflow: INTEGRATION_WORKERS must be one quoted positive integer")
+    return [str(number) for number in range(1, len(labels) * int(counts[0][1:-1]) + 1)]
+
+
+def parallel(job, labels):
+    commands = {
+        label: [sys.executable, "-P", "-X", "faulthandler", __file__, "--worker", label]
+        for label in labels
+    }
+    return run_tests.parallel(
+        f"Integration {job}", commands, os.environ.get("INTEGRATION_TIMING_DIR")
+    )
+
+
 def weights(found, durations):
     if any(
         not isinstance(value, int | float)
@@ -91,7 +112,7 @@ def validate(found, suites, labels):
 
 
 def check(root, labels, durations, workflow):
-    matrix = workflow_jobs(workflow)
+    matrix = workflow_shards(workflow)
     if set(matrix) != set(labels):
         raise ValueError("workflow matrix.job differs from the duration shards")
     found = list(tests(run_tests.discover(root, directories(root))))
@@ -102,10 +123,20 @@ def check(root, labels, durations, workflow):
 
 def main(argv):
     workflow = WORKFLOW.read_text()
-    labels = workflow_jobs(workflow)
-    if argv != ["--check"] and (len(argv) != 1 or argv[0] not in labels):
-        raise ValueError("give --check or a shard number: " + ", ".join(labels))
-    title = f"Integration {argv[0]}"
+    matrix, labels = workflow_jobs(workflow), workflow_shards(workflow)
+    workers = len(labels) // len(matrix)
+    if len(argv) == 1 and argv[0] in matrix and workers > 1:
+        offset = (int(argv[0]) - 1) * workers
+        return parallel(argv[0], labels[offset : offset + workers])
+    if len(argv) == 2 and argv[0] == "--worker" and argv[1] in labels:
+        argv = [argv[1]]
+    elif argv != ["--check"] and (len(argv) != 1 or argv[0] not in matrix):
+        raise ValueError("give --check or a matrix job number: " + ", ".join(matrix))
+    title = (
+        f"Integration {(int(argv[0]) - 1) // workers + 1} / shard {argv[0]}"
+        if argv != ["--check"]
+        else "Integration check"
+    )
     started = time.monotonic()
     code = None if argv == ["--check"] else run_tests.supervise(title)
     if code is not None:
@@ -136,10 +167,13 @@ def main(argv):
             "head_sha": os.environ["INTEGRATION_HEAD_SHA"],
             "runner": os.environ["INTEGRATION_RUNNER"],
             "architecture": platform.machine(),
+            "cpus": os.cpu_count(),
             "python": platform.python_version(),
             "tmux": os.environ["INTEGRATION_TMUX_VERSION"],
             "shards": labels,
             "shard": argv[0],
+            "matrix_job": str((int(argv[0]) - 1) // workers + 1),
+            "matrix_jobs": matrix,
             "discovered": sorted(test.id() for test in found),
             "tests": [test.id() for test in split[argv[0]]],
             "expected_seconds": sum(estimates[test.id()] for test in split[argv[0]]),

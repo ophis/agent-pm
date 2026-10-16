@@ -12,6 +12,7 @@ import sysconfig
 import tempfile
 import time
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import isolation
@@ -157,6 +158,71 @@ def start_coverage(sandbox, repo):
 
 def supervised_child():
     return STATE in os.environ and os.environ.get("RUN_TESTS_PARENT") == str(os.getppid())
+
+
+def parallel(title, commands, directory=None):
+    with tempfile.TemporaryDirectory(prefix="test-workers-") as temporary:
+        directory = Path(directory or temporary)
+
+        def worker(label):
+            target = directory / f"shard-{label}"
+            env = {
+                **os.environ,
+                "INTEGRATION_TIMING_DIR": str(target),
+                "RUN_TESTS_DURATIONS": str(target / "durations.jsonl"),
+            }
+            if os.environ.get(COVERAGE):
+                env[COVERAGE] = str(target / f"coverage-data.{label}")
+            try:
+                target.mkdir(parents=True, exist_ok=True)
+                with (target / "worker.log").open("w") as log:
+                    result = subprocess.run(
+                        commands[label], env=env, stdout=log, stderr=subprocess.STDOUT
+                    )
+            except OSError as error:
+                annotate(
+                    f"{title} / shard {label}",
+                    f"worker launch failed before any test started: {error}",
+                )
+                return 1
+            else:
+                return result.returncode
+
+        with ThreadPoolExecutor(max_workers=len(commands)) as executor:
+            results = list(executor.map(worker, commands))
+        for label, code in zip(commands, results, strict=True):
+            print(f"::group::{title} / shard {label} (exit {code})", flush=True)
+            path = directory / f"shard-{label}/worker.log"
+            if path.is_file():
+                print(path.read_text(errors="replace"), end="", flush=True)
+            print("::endgroup::", flush=True)
+            if code:
+                annotate(f"{title} / shard {label}", f"worker exited {code}")
+        return int(any(results))
+
+
+def unit_parallel(title, value, workers):
+    match = re.fullmatch(r"([1-9][0-9]*)/([1-9][0-9]*)", value)
+    if not match or workers < 1:
+        raise ValueError("unit job must be N/TOTAL with a positive worker count")
+    number, total = map(int, match.groups())
+    if number > total:
+        raise ValueError("unit job must be numbered 1 through TOTAL")
+    commands = {
+        str(label): [
+            sys.executable,
+            "-P",
+            "-X",
+            "faulthandler",
+            __file__,
+            f"{title} / shard {label}",
+            "--unit",
+            "--shard",
+            f"{label}/{total * workers}",
+        ]
+        for label in range((number - 1) * workers + 1, number * workers + 1)
+    }
+    return parallel(title, commands, os.environ.get("RUN_TESTS_REPORT_DIR"))
 
 
 def supervise(title):
@@ -349,6 +415,12 @@ def main(argv):
     if len(argv) < 2:
         sys.exit("usage: run_tests.py <title> <directory>... | <title> <test id|test file|--unit>")
     title, *directories = argv
+    if (
+        len(directories) == 5
+        and directories[:2] == ["--unit", "--parallel"]
+        and directories[3] == "--shard"
+    ):
+        return unit_parallel(title, directories[4], int(directories[2]))
     code = supervise(title)
     if code is not None:
         return code

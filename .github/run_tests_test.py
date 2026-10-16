@@ -86,6 +86,24 @@ class Run(unittest.TestCase):
 
 
 class Discovery(unittest.TestCase):
+    def test_parallel_unit_jobs_cover_the_same_shards_without_supervising_the_coordinator(self):
+        commands = []
+
+        def parallel(_title, selected, _directory):
+            commands.extend(selected.values())
+            return 0
+
+        with mock.patch.object(runner, "parallel", side_effect=parallel):
+            for number in (1, 2):
+                self.assertEqual(
+                    runner.main(["Unit", "--unit", "--parallel", "4", "--shard", f"{number}/2"]),
+                    0,
+                )
+        self.assertEqual([argv[-1] for argv in commands], [f"{i}/8" for i in range(1, 9)])
+        for value, workers in (("0/1", 4), ("2/1", 4), ("1/0", 4), ("1/1", 0)):
+            with self.subTest(value=value, workers=workers), self.assertRaises(ValueError):
+                runner.unit_parallel("Unit", value, workers)
+
     def test_unit_shards_are_deterministic_complete_and_disjoint(self):
         cases = [unittest.FunctionTestCase(lambda: None, description=str(i)) for i in range(7)]
         for i, case in enumerate(cases):
