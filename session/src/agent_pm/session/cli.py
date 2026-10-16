@@ -29,6 +29,7 @@ from agent_pm.session.engine.base import Session
 from agent_pm.session.engine.config import read_config
 from agent_pm.session.engine.types import (
     COMMAND,
+    NO_DISPLAY,
     SESSION_NAME,
     SESSION_NAME_RULE,
     ConfigError,
@@ -119,7 +120,11 @@ def _parser(hosts: Hosts | None) -> argparse.ArgumentParser:
         metavar="NAME=VALUE",
         help="set in its environment; repeatable, the last of a NAME wins",
     )
-    p.add_argument("--display", metavar="D", help="where its Host shows it (see below)")
+    p.add_argument(
+        "--display",
+        metavar="D",
+        help=f"where its Host shows it; {NO_DISPLAY}: shown nowhere until show (see below)",
+    )
     for cmd, text in (
         ("restart", "restart a worker's session in place; print its Record"),
         ("resume", "print a live worker's Record, else resume it; print its Record"),

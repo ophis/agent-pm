@@ -254,7 +254,8 @@ class ControlTest(ControlCase):
         res = self.session("show", stdin=lines(bad, w2))
         self.assertEqual((res.returncode, res.stdout), (1, ""), res.stderr)
         self.assertEqual(
-            res.stderr, f"{PROG}: w1: display 'a/b/c/d': not <opener>[/<split>[/<split_from>]]\n"
+            res.stderr,
+            f"{PROG}: w1: display 'a/b/c/d': not <opener>[/<split>[/<split_from>[/hidden]]]\n",
         )
         self.shows("w2", f"={MANAGER}:")
 

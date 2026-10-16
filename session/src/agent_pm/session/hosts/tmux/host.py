@@ -16,6 +16,7 @@ from dataclasses import replace
 
 from agent_pm.session.engine.types import (
     MARKS,
+    NO_DISPLAY,
     ConfigError,
     HookCallback,
     Key,
@@ -52,12 +53,13 @@ from agent_pm.session.hosts.tmux.transport import (
 from agent_pm.session.hosts.tmux.types import PaneStatus, Retile, Split, TuiError
 from agent_pm.utils import CONFIG_NAME, Display, ProcessControl, Record, Status, sid_error
 
-FORMAT = "<opener>[/<split>[/<split_from>]]"
+FORMAT = "<opener>[/<split>[/<split_from>[/hidden]]]"
+HIDDEN = "hidden"  # started hidden; only NO_DISPLAY sets it
 NO_PANE_HINT = ": run from tmux or iTerm2, or pass split_from"
 KILL_WAIT = 5
 LOG = logging.getLogger("session")
 
-Parts = tuple[str | None, str | None, str | None]
+Parts = tuple[str | None, str | None, str | None, bool]
 TMUX_KEYS = {NamedKey.PAGE_UP: "PPage", NamedKey.PAGE_DOWN: "NPage", " ": "Space", ";": "\\;"}
 # tmux 3.4 (CI) and 3.5+ both send these as the same C0 or DEL byte; other punctuation and digits
 # lose Ctrl, send nothing or differ between them
@@ -346,7 +348,7 @@ class TmuxHost(Host, Showable):
         self.placement = Placement(tmux=self.tmux, grid=self.grid, iterm=Iterm(self.tmux.runner))
 
     @classmethod
-    def fold(cls, opener, split, split_from) -> Display:
+    def fold(cls, opener, split, split_from, *, hidden=False) -> Display:
         """FORMAT's one encoder; None when every part is. ConfigError for a bad part."""
         if opener is not None and not (isinstance(opener, str) and OPENER.fullmatch(opener)):
             raise ConfigError(
@@ -358,26 +360,29 @@ class TmuxHost(Host, Showable):
             isinstance(split_from, str) and NAME.fullmatch(split_from)
         ):
             raise ConfigError(f"split_from must match [A-Za-z0-9_-]+, got {split_from!r:.80}")
-        return "/".join((opener or "", split or "", split_from or "")).rstrip("/") or None
+        parts = (opener or "", split or "", split_from or "", HIDDEN if hidden else "")
+        return "/".join(parts).rstrip("/") or None
 
     @classmethod
     def unfold(cls, display) -> Parts | None:
-        """FORMAT's one decoder, re-validating a display read back: (opener, split, split_from), an
-        empty part None; None when display is not in FORMAT.
+        """FORMAT's one decoder, re-validating a display read back: (opener, split, split_from,
+        hidden), an empty part None; NO_DISPLAY no opener, hidden; None when display is not in FORMAT.
         """
         if display is None:
-            return None, None, None
+            return None, None, None, False
+        if display == NO_DISPLAY:
+            return None, None, None, True
         if display_error(display):
             return None
         given = display.split("/")
-        if len(given) > 3:
+        if given[3:] not in ([], [HIDDEN]):
             return None
         opener, split, split_from = (part or None for part in (*given, "", "")[:3])
         try:
             cls.fold(opener, split, split_from)
         except ConfigError:
             return None
-        return opener, split, split_from
+        return opener, split, split_from, given[3:] == [HIDDEN]
 
     def detach(
         self,
@@ -473,6 +478,16 @@ class TmuxHost(Host, Showable):
             )
             prefix = "" if terminal else f"detach {name}: "
             raise SessionError(f"{prefix}{failure}{detail}") from error
+        sid = record.sid if record is not None and record.sid else (metadata or {}).get("sid")
+        if terminal and parts is not None and parts[3] and sid:
+            try:
+                hidden_store.start(name, sid)
+            except OSError as error:
+                cleanup = self._cancel_launch(control, process)
+                detail = f"; {cleanup}" if cleanup else ""
+                raise SessionError(
+                    f"tui session {name}: hidden state: {error.strerror or error}{detail}"
+                ) from error
         return TmuxProcess(name, process, tmux=self.tmux, control=control)
 
     def validate(self, name: str, launch: Launch, *, display: Display = None) -> None:
@@ -640,19 +655,33 @@ class TmuxHost(Host, Showable):
     def display(self, value: Display) -> Display:
         _checked(value)
         parts = self.unfold(value)
-        if parts is None or parts[0] is not None:
+        if parts is None:
+            return value
+        opener, split, split_from, hidden = self._given(value, parts)
+        if opener is not None:
             return value
         try:
             opener = self.placement.opener()
         except TuiError:
-            return value
-        return self.fold(opener, parts[1], parts[2])
+            return self.fold(None, split, split_from, hidden=True) if hidden else value
+        return self.fold(opener, split, split_from, hidden=hidden)
+
+    @staticmethod
+    def _given(value: Display, parts: Parts) -> Parts:
+        """parts, unless a caller gave the hidden part itself: only NO_DISPLAY sets it."""
+        if parts[3] and value != NO_DISPLAY:
+            raise ConfigError(
+                f"display {value!r:.80}: its hidden part comes only from {NO_DISPLAY}"
+            )
+        return parts
 
     def display_help(self) -> str:
         return (
             f"{FORMAT}: opener a tmux session name or $ITERM_SESSION_ID's value (empty: the "
             f"caller's), split {' or '.join(Split)}, split_from the tmux session whose "
-            "pane it goes beside; any other printable value not ending in ; is kept as given"
+            f"pane it goes beside; {NO_DISPLAY}: start without a pane, the caller still its opener "
+            f"(recorded as the part {HIDDEN}, which only {NO_DISPLAY} sets); any other printable "
+            "value not ending in ; is kept as given"
         )
 
     def show(self, name: str, *, display: Display = None, command: str | None = None) -> str | None:
@@ -660,7 +689,7 @@ class TmuxHost(Host, Showable):
             raise SessionError(f"no tmux session {name}")
         try:
             if command is None:
-                opener, split, split_from = self._parts(display)
+                opener, split, split_from, _ = self._parts(display)
                 why = self.placement.open_pane(
                     name,
                     opener=opener,
@@ -732,9 +761,14 @@ class TmuxHost(Host, Showable):
 
     def layout(self, *, display: Display = None) -> str | None:
         """display, its opener part the caller's once the pane it goes beside (split_from's, else
-        the caller's) is found; that part stays empty only beside split_from.
+        the caller's) is found; that part stays empty only beside split_from. NO_DISPLAY needs no
+        pane: the caller's opener when it has one, started hidden.
         """
-        opener, split, split_from = self._parts(display)
+        opener, split, split_from, hidden = self._given(display, self._parts(display))
+        if hidden:
+            with contextlib.suppress(TuiError):
+                opener = self.placement.opener()
+            return self.fold(opener, None, None, hidden=True)
         if split_from is not None and self.tmux.status(split_from) is None:
             raise ConfigError(f"no tmux session {split_from}")
         try:

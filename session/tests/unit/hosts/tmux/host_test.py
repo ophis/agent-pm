@@ -38,15 +38,29 @@ TuiError = types.TuiError
 NO_PANE = "no anchor pane: not in tmux, no iTerm2 pane ($ITERM_SESSION_ID)"
 OTHER = "1f8fad5b-d9cb-469f-a165-70867728950e"
 FOLDS = (
-    (("mgr", None, None), "mgr"),
-    (("mgr", "right", None), "mgr/right"),
-    (("w0t0p0:ABC-1", "below", "m1"), "w0t0p0:ABC-1/below/m1"),
-    ((None, "below", None), "/below"),
-    ((None, None, "m1"), "//m1"),
-    ((None, "right", "m1"), "/right/m1"),
-    ((None, None, None), None),
+    (("mgr", None, None, False), "mgr"),
+    (("mgr", "right", None, False), "mgr/right"),
+    (("w0t0p0:ABC-1", "below", "m1", False), "w0t0p0:ABC-1/below/m1"),
+    ((None, "below", None, False), "/below"),
+    ((None, None, "m1", False), "//m1"),
+    ((None, "right", "m1", False), "/right/m1"),
+    ((None, None, None, False), None),
+    (("mgr", None, None, True), "mgr///hidden"),
+    ((None, "below", "m1", True), "/below/m1/hidden"),
+    ((None, None, None, True), "///hidden"),
 )
-FOREIGN = ("elsewhere:1.2", "mgr/left", "a b", "mgr/right/a b", "a/b/c/d", "x:y:z")
+FOREIGN = (
+    "elsewhere:1.2",
+    "mgr/left",
+    "a b",
+    "mgr/right/a b",
+    "a/b/c/d",
+    "x:y:z",
+    "a/b/c/",
+    "mgr///hidden/x",
+    "mgr///shown",
+)
+MARKED = "display {!r}: its hidden part comes only from none"
 
 
 class ClassTest(Case):
@@ -67,11 +81,17 @@ class FoldTest(Case):
     def test_fold_and_unfold_round_trip(self):
         for parts, display in FOLDS:
             with self.subTest(parts=parts):
-                self.assertEqual(TmuxHost.fold(*parts), display)
+                self.assertEqual(TmuxHost.fold(*parts[:3], hidden=parts[3]), display)
                 self.assertEqual(TmuxHost.unfold(display), parts)
 
+    def test_unfold_of_none_is_no_opener_started_hidden(self):
+        self.assertEqual(TmuxHost.unfold("none"), (None, None, None, True))
+
     def test_unfold_takes_empty_parts_as_absent(self):
-        for display, parts in (("", (None, None, None)), ("mgr/", ("mgr", None, None))):
+        for display, parts in (
+            ("", (None, None, None, False)),
+            ("mgr/", ("mgr", None, None, False)),
+        ):
             with self.subTest(display=display):
                 self.assertEqual(TmuxHost.unfold(display), parts)
 
@@ -102,8 +122,34 @@ class FoldTest(Case):
 class DisplayTest(Base):
     def test_display_help_names_the_format(self):
         help_text = self.host.display_help()
-        self.assertIn("<opener>[/<split>[/<split_from>]]", help_text)
+        self.assertIn("<opener>[/<split>[/<split_from>[/hidden]]]", help_text)
         self.assertIn("right or below", help_text)
+        self.assertIn("none: start without a pane, the caller still its opener", help_text)
+
+    def test_display_none_is_the_callers_opener_started_hidden(self):
+        self.runner.pane = "mgr"
+        self.enterContext(environ(**INSIDE))
+        self.assertEqual(self.host.display("none"), "mgr///hidden")
+        self.enterContext(environ())
+        self.assertEqual(self.host.display("none"), "///hidden")
+
+    def test_a_given_hidden_part_is_refused(self):
+        self.enterContext(environ(**INSIDE))
+        for value in ("mgr///hidden", "///hidden", "/below/m1/hidden"):
+            with self.subTest(value=value):
+                for call in (self.host.display, lambda v: self.host.layout(display=v)):
+                    with self.assertRaises(ConfigError) as caught:
+                        call(value)
+                    self.assertEqual(str(caught.exception), MARKED.format(value))
+        self.assertEqual(self.runner.calls, [])
+
+    def test_layout_of_none_needs_no_anchor(self):
+        self.runner.pane = "mgr"
+        self.enterContext(environ(**INSIDE))
+        self.assertEqual(self.host.layout(display="none"), "mgr///hidden")
+        self.assertNotIn("list-clients", [call[1] for call in self.runner.calls])
+        self.enterContext(environ())
+        self.assertEqual(self.host.layout(display="none"), "///hidden")
 
     def test_the_callers_opener_fills_an_empty_or_absent_opener_part(self):
         self.runner.pane = "mgr"
@@ -555,6 +601,57 @@ class ShowableTest(Base):
         self.assertIs(
             TmuxProcess("w1", PROCESS, tmux=self.tmux, control=self.control).tmux, self.tmux
         )
+
+
+class MarkerTest(Base):
+    def terminal(self, display, metadata=None):
+        launch = Launch((self.tool,), cwd=self.dir, env={"PATH": "/bin"})
+        metadata = (
+            {"sid": SID, "client": "claude", "generation": "g1"} if metadata is None else metadata
+        )
+        return self.host.terminal("t1", launch, display=display, metadata=metadata)
+
+    def test_a_marked_terminal_launch_marks_a_new_sid_hidden_only(self):
+        self.terminal("mgr///hidden")
+        self.assertTrue(hidden.read("t1", SID))
+        hidden.write("t1", SID, hidden=False)
+        self.terminal("mgr///hidden")
+        self.assertFalse(hidden.read("t1", SID))
+        self.assertEqual(self.tmux.start.call_args.kwargs["tags"]["@opener"], "mgr")
+
+    def test_an_unmarked_or_sidless_launch_writes_no_hidden_entry(self):
+        store = os.path.join(self.agent_pm, "hidden")
+        self.terminal("mgr")
+        self.terminal("mgr///hidden", metadata={})
+        self.host.detach(
+            "d1", Launch((self.tool,), cwd=self.dir, env={"PATH": "/bin"}), display="mgr///hidden"
+        )
+        self.assertFalse(os.path.exists(store))
+
+    def test_a_failed_hidden_write_undoes_the_launch(self):
+        store = os.path.join(self.agent_pm, "hidden")
+        os.mkdir(store, 0o500)
+        self.addCleanup(os.chmod, store, 0o700)
+        self.tmux.process.return_value = PROCESS
+        with self.assertRaisesRegex(
+            SessionError, "^tui session t1: hidden state: Permission denied"
+        ):
+            self.terminal("mgr///hidden")
+        self.tmux.kill.assert_called_once_with("%7")
+
+    def test_show_ignores_the_hidden_marker(self):
+        self.enterContext(environ())
+        self.runner.results.update(
+            {
+                "list-clients": (0, f"5 /dev/ttys004 %9 0 {SOCK}\n"),
+                "pgrep": (1,),
+                "split-window": (0, "%10\n"),
+            }
+        )
+        self.assertIsNone(self.host.show("w1", display="mgr/below/m1/hidden"))
+        split = next(c for c in self.runner.calls if c[1] == "split-window")
+        self.assertEqual(split[3], "-v")
+        self.assertEqual(split[split.index("-t") + 1], "%9")
 
 
 class HideTest(Base):
