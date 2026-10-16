@@ -10,7 +10,10 @@ configured one) reports agent files in (Delegate.checkouts not None):
   so code an agent run planted, such as filters or hooks, never runs outside auto mode's review);
 - archives every finished issue of the team assigned to the pm or engineer role account.
 
-An issue without agent files is neither attached, queried nor logged. Run inventory unknown: an
+For each issue Done or Canceled at least 7 days ago whose workdir is a real dir without agent files
+(and of a configured kind), it deletes the whole workdir (run records, write-back ledger) once its
+Delegate's clean finds no live run (its refusal skips it). An issue without agent files is not
+attached; one of a kind no longer configured is neither queried nor logged. Run inventory unknown: an
 error, and no issue is pruned. Each step is logged (event_log.log, src prune); a failure is logged
 and the rest goes on (run returns 3), but Unavailable is raised. Promote prunes after each of its
 ticks; `agent-pm-linear prune` (main, HELP) runs one alone.
@@ -19,6 +22,7 @@ ticks; `agent-pm-linear prune` (main, HELP) runs one alone.
 import functools
 import os
 import re
+import shutil
 import subprocess
 import sys
 from datetime import UTC, datetime, timedelta
@@ -41,6 +45,7 @@ from agent_pm.utils import GUARD, SHORT, GitError, common_dir, one_line, under
 from agent_pm.utils import run_git as git
 
 QUARANTINE = timedelta(hours=24)
+RETENTION = timedelta(days=7)
 IDENT_RE = re.compile(ISSUE_ID)
 ARCHIVE_ROLES = ("pm", "engineer")
 Q_ISSUE = "query($i: String!) { issue(id: $i) { state { id } " + HISTORY + " } }"
@@ -55,7 +60,8 @@ Q_FINISHED = (
 M_ARCHIVE = "mutation($i: String!) { issueArchive(id: $i) { success } }"
 HELP = """usage: agent-pm-linear prune [--dry-run]
 
-One prune tick: close finished issues' recorded runs, delete their agent files, archive them.
+One prune tick: close finished issues' recorded runs, delete their agent files, archive them;
+delete the whole workdir of an issue finished 7 days ago.
 --dry-run   Change nothing; print what would happen.
 --help      Print this; exit 0.
 Events go to orchestrator.jsonl (src prune). A config error or Linear unavailable exits 1, logged once
@@ -236,7 +242,7 @@ class Pruner:
                 idents = [
                     n
                     for n in sorted(os.listdir(self.work))
-                    if IDENT_RE.fullmatch(n) and self.has_agent(n)
+                    if IDENT_RE.fullmatch(n) and (self.has_agent(n) or self.bare(n))
                 ]
             except OSError:
                 idents = []
@@ -258,8 +264,11 @@ class Pruner:
         since = last_move(issue["history"]["nodes"], finished)
         if since is None:
             self.say("prune-skip", ident, once=True, reason="finish time unknown")
-        elif self.now - since >= QUARANTINE and self.close_sessions(ident):
-            self.remove_agent(ident)
+        elif self.has_agent(ident, quiet=True):
+            if self.now - since >= QUARANTINE and self.close_sessions(ident):
+                self.remove_agent(ident)
+        elif self.now - since >= RETENTION:
+            self.remove_workdir(ident)
 
     def log(self):
         """runs.jsonl's entries by issue, read once per tick."""
@@ -295,6 +304,32 @@ class Pruner:
                 self.say("prune-skip", ident, once=True, reason=one_line(found))
             return False
         return found.checkouts(workdir) is not None
+
+    def bare(self, ident):
+        """A real workdir without agent files, of a configured kind."""
+        workdir = os.path.join(self.work, ident)
+        return (
+            not isinstance(self.delegate(ident), Exception)
+            and os.path.isdir(workdir)
+            and not os.path.islink(workdir)
+        )
+
+    def remove_workdir(self, ident):
+        workdir = os.path.join(self.work, ident)
+        try:
+            self.delegate(ident).clean(workdir, dry=self.dry)
+            if not self.dry:
+                shutil.rmtree(workdir)
+        except (config.ConfigError, DelegateConfigError) as error:
+            self.say("prune-skip", ident, once=True, reason=one_line(error))
+            return
+        except (SessionError, OSError) as error:
+            self.error(ident, error=f"remove: {one_line(error)}")
+            return
+        if self.dry:
+            self.say("prune-plan", ident, what="delete the workdir")
+        else:
+            self.say("prune-removed", ident, what="workdir")
 
     def remove_agent(self, ident):
         found, workdir = self.delegate(ident), os.path.join(self.work, ident)
