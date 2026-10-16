@@ -807,7 +807,10 @@ class RouterEntry(OuterBase):
             self.lines = f.read().splitlines()
         self.api.records[sid] = {"cwd": self.rd}
         self.api.statuses[sid] = SessionStatus("yes", (NOW - timedelta(minutes=40)).timestamp(), "")
-        self.write_config(OUTER.replace(OVERLAY, '[core]\nclient = "b"\n'))
+        self.write_config(
+            AGENT_TOP + OUTER.replace(OVERLAY, '[core]\nclient = "b"\n') + AGENT_LABELS
+        )
+        self.todo["labels"] = [label("Changed client", AGENT_B, AGENT_GROUP)]
         self.assertEqual(self.entry(), 0)
         self.assertEqual(self.last_run(), ("resume", ID, sid, "engineer", "a"))
         self.assertEqual(self.detached(), self.expected(sid=sid, resume=True))
@@ -877,6 +880,77 @@ class RouterEntry(OuterBase):
                 )
                 self.assertIn("claim TASK-7 role=engineer client=a client_source=default", said)
                 self.assertEqual(said[-1], "launch TASK-7 exit=0")
+
+    def test_label_client_config_error_goes_to_review_without_recover_retry(self):
+        self.write_config(AGENT_TOP + OUTER + AGENT_LABELS)
+        self.fake.ids[UUID] = ID
+        for label_id, selected in ((AGENT_A, "a"), (AGENT_B, "b")):
+            with self.subTest(selected=selected):
+                self.lines, self.todo["state"], self.todo["comments"] = [], "Todo", []
+                self.api.constructed = []
+                self.todo["labels"] = [label("selected", label_id, AGENT_GROUP)]
+                self.api.construct_error = DelegateConfigError(
+                    f"{selected}: not installed\nhidden details"
+                )
+                self.assertEqual(self.entry("--issue", ID), 1)
+                self.assertEqual(self.todo["state"], "In Review")
+                self.assertEqual(len(self.todo["comments"]), 1)
+                text = self.todo["comments"][0]
+                self.assertIn(selected, text)
+                self.assertIn(f"{selected}: not installed", text)
+                self.assertNotIn("hidden details", text)
+                self.assertIn("Todo", text)
+                self.assertEqual(runs.parse_log(self.runs), [])
+                self.assertEqual(len(runs.failures(self.runs)), 1)
+                self.assertTrue(
+                    any(
+                        line.startswith(f"launch-error {ID} client={selected} ")
+                        for line in self.said()
+                    )
+                )
+                self.lines = self.raw_runs().splitlines()
+                self.assertEqual(self.entry(now=NOW + timedelta(hours=3)), 0)
+                self.assertEqual(len(self.api.constructed), 1)
+                self.assertEqual(len(self.todo["comments"]), 1)
+                self.assertNotIn(router.INTERRUPTED, text)
+
+    def test_label_client_other_launch_errors_keep_recovery_behavior(self):
+        self.write_config(AGENT_TOP + OUTER + AGENT_LABELS)
+        self.todo["labels"] = [label("selected", AGENT_B, AGENT_GROUP)]
+        for attr, error, resume in (
+            ("construct_error", SessionError("construction transport"), False),
+            ("detach_error", DelegateConfigError("detach refused"), False),
+            ("construct_error", DelegateConfigError("resume configuration refused"), True),
+        ):
+            with self.subTest(attr=attr):
+                self.lines, self.todo["state"] = [], "Todo"
+                if resume:
+                    self.todo["state"] = "In Progress"
+                    self.resumable(ID, "old", 60, role="engineer")
+                self.api.construct_error = self.api.detach_error = None
+                setattr(self.api, attr, error)
+                self.assertEqual(self.entry("--issue", ID), 1)
+                self.assertEqual(self.todo["state"], "In Progress")
+                self.assertNotIn("comments", self.todo)
+
+    def test_label_client_bounce_write_failure_is_transient(self):
+        class RejectReview(ClaimLinear):
+            def _mutate(self, query, v):
+                if query == ops.M_STATE and v.get("s") == IDS_BY_KEY["in_review"]:
+                    raise LinearError("review unavailable")
+                return super()._mutate(query, v)
+
+        self.fake = RejectReview(self.todo, self.fake.node)
+        self.fake.ids[UUID] = ID
+        self.write_config(AGENT_TOP + OUTER + AGENT_LABELS)
+        self.todo["labels"] = [label("selected", AGENT_B, AGENT_GROUP)]
+        self.api.construct_error = DelegateConfigError("b: not installed")
+        self.assertEqual(self.entry("--issue", ID), 3)
+        self.assertIn(
+            "transient TASK-7 reason=client error write-back: LinearError: review unavailable",
+            self.said(),
+        )
+        self.assertEqual(self.todo["state"], "In Progress")
 
     def test_a_missing_role_key_skips_the_claim_and_leaves_the_issue_todo(self):
         self.missing.add(KEY)
@@ -1259,7 +1333,8 @@ class AgentLabels(Base):
                 self.assertTrue(self.claim(fake))
                 self.assertEqual(self.taken[2:], (role, expected_client, source))
                 self.assertIn(
-                    f"claim TASK-1 role={role} client={expected_client} client_source={source}", self.said()
+                    f"claim TASK-1 role={role} client={expected_client} client_source={source}",
+                    self.said(),
                 )
                 self.assertEqual(fake.issues["TASK-1"]["state"], "In Progress")
 

@@ -76,6 +76,7 @@ from agent_pm.linear_orchestrator.engine.runs import (
 from agent_pm.linear_orchestrator.engine.types import (
     ISSUE_ID,
     UUID_RE,
+    ClientSource,
     ConfigError,
     InputError,
     Invalid,
@@ -199,7 +200,7 @@ def task_for(labels, group, role, role_tasks, label_tasks):
     return task, None
 
 
-def client_for(labels, group, label_clients, default):
+def client_for(labels, group, label_clients, default) -> tuple[str | None, ClientSource, str | None]:
     found = [n for n in labels if group and n["parent"] and n["parent"]["id"] == group]
     if not found:
         return default, "default", None
@@ -683,23 +684,28 @@ def _outer(a, cfg, *, gql, run, keychain, now, attended):
     # a lone surrogate cannot be encoded
     text = text.encode("utf-8", "replace").decode()
     try:
-        linear_run = LinearRun(
-            a.issue,
-            text,
-            workdir,
-            cfg=cfg,
-            role=role,
-            sid=a.sid,
-            task=a.task,
-            client=a.client,
-            resume=a.mode == "resume",
-            delegate_kind=kind,
-            **(
-                {"mode": "tui", "display": attended.display, "events": attended.events}
-                if attended
-                else {}
-            ),
-        )
+        try:
+            linear_run = LinearRun(
+                a.issue,
+                text,
+                workdir,
+                cfg=cfg,
+                role=role,
+                sid=a.sid,
+                task=a.task,
+                client=a.client,
+                resume=a.mode == "resume",
+                delegate_kind=kind,
+                **(
+                    {"mode": "tui", "display": attended.display, "events": attended.events}
+                    if attended
+                    else {}
+                ),
+            )
+        except delegate.ConfigError as error:
+            if a.mode == "new" and a.client_source == "label":
+                return _label_client_error(a, cfg, ctx.gql, error)
+            raise
         if a.mode == "new":
             record(cfg, a, role=role, target=slug, now=now)
         detached = linear_run.detach()
@@ -709,6 +715,27 @@ def _outer(a, cfg, *, gql, run, keychain, now, attended):
     if attended:
         announce(a.issue, linear_run, detached)
     return 0
+
+
+def _label_client_error(spec, cfg, gql, error):
+    log("router", "launch-error", spec.issue, client=spec.client, error=one_line(error))
+    first = str(error).split("\n", 1)[0]
+    body = (
+        f'Agent label selected client "{spec.client}", but the run could not be built: {first}\n\n'
+        "Fix [agent_labels] or the client configuration, then move this issue back to Todo."
+    )
+    try:
+        ops.comment_and_move(
+            gql,
+            spec.uuid,
+            body,
+            to=cfg.states["in_review"],
+            frm=cfg.states["in_progress"],
+            emails=cfg.human_members,
+        )
+    except (LinearError, Unavailable, OSError, subprocess.SubprocessError) as write_error:
+        return fail(spec.issue, "transient", f"client error write-back: {one_line(write_error)}", 3)
+    return 1
 
 
 def announce(ident, linear_run, detached):

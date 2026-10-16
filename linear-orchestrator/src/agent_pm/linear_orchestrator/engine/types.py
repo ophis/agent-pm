@@ -10,6 +10,8 @@ from typing import Literal
 from agent_pm import delegate
 from agent_pm.utils import Stopped as Stopped
 
+ClientSource = Literal["label", "default"]
+
 
 @dataclass(frozen=True)
 class Role:
@@ -254,10 +256,12 @@ class Spec:
     task: str | None = None
     mode: str
     client: str
-    client_source: Literal["label", "default"] = "default"
+    client_source: ClientSource = "default"
 
     @classmethod
-    def from_issue(cls, issue, *, mode, sid, task, client, client_source="default"):
+    def from_issue(
+        cls, issue, *, mode, sid, task, client, client_source: ClientSource = "default"
+    ):
         return cls(
             uuid=issue["id"],
             issue=issue["identifier"],
