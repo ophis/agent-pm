@@ -17,8 +17,8 @@ from agent_pm.utils.record import LayerCommand
 _ = TeamKind.ROLES, TeamKind.TEMPLATES
 # outcome.py parses OutcomeStatus(status).
 _ = OutcomeStatus.NEEDS_INPUT, OutcomeStatus.FAILED
-# outcome.py parses AutopilotStatus(status); TASK-473's ready gate reads CONVERGED.
-_ = AutopilotStatus.CONVERGED, AutopilotStatus.CAPPED, AutopilotStatus.STOPPED
+# outcome.py parses AutopilotStatus(status).
+_ = AutopilotStatus.CAPPED, AutopilotStatus.STOPPED
 # engine/config.py and ops.py iterate State for the [states] keys.
 _ = State.TODO, State.IN_PROGRESS, State.IN_REVIEW, State.CANCELED
 # Record checks ctl[0] against LayerCommand's values.

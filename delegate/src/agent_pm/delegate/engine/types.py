@@ -4,6 +4,7 @@ import contextlib
 import os
 from collections.abc import Sequence
 from dataclasses import dataclass
+from enum import StrEnum
 from typing import TypedDict
 
 from agent_pm.delegate.composer import ConfigError, RunConfig, RunParams, Team
@@ -24,6 +25,8 @@ __all__ = [
     "Progress",
     "Finished",
     "Event",
+    "GateStatus",
+    "Gated",
 ]
 
 
@@ -207,3 +210,20 @@ class Finished:
 
 
 Event = Begun | Progress | Finished
+
+
+class GateStatus(StrEnum):
+    """The ready gate's act; drafted: a failed or needs_input run's PR put back in draft."""
+
+    SKIPPED = "skipped"
+    PASSED = "passed"
+    FAILED = "failed"
+    DRAFTED = "drafted"
+    KEPT = "kept"
+
+
+@dataclass(frozen=True)
+class Gated:
+    outcome: Outcome
+    status: GateStatus
+    reason: str

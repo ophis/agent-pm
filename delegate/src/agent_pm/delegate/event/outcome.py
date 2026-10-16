@@ -93,6 +93,10 @@ def validate(data: dict, output: Mapping, workdir: str) -> Outcome:
     return outcome
 
 
+def summary_max() -> int:
+    return _schema()["properties"]["summary"]["maxLength"]
+
+
 def _schema() -> dict:
     with open(SCHEMA) as f:
         return json.load(f)
