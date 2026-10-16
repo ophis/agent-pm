@@ -198,7 +198,8 @@ class Shipped(Case):
         continue_ = item(section(composed("engineer")[0], "Repo"), "Continue")
         self.assertIn(
             (
-                " a plan doc: [Engineer › Repo › Merge](#repo), then your task's slash command "
+                " a plan doc: [Engineer › Repo › Merge](#repo), then [Engineer › Repo › Draft](#repo), then "
+                "your task's slash command "
                 "([Engineer › Tasks](#tasks)) with the plan doc's verbatim input as its requirement; "
                 "autopilot's resolver `mode` not `resume` → `needs_input` naming the plan doc; stop. Once it "
                 "resumes, give it the rest as mid-run input, each logged in its progress log: the user's "
@@ -228,20 +229,52 @@ class Shipped(Case):
             )
             self.assertNotIn("mid-run", text, task)
 
-    def test_engineer_fixes_or_drops_each_non_blocking_item_and_adopts_the_draft_pr(self):
+    def test_engineer_lists_non_blocking_items_commits_nothing_after_and_reports_autopilot(self):
         with open(os.path.join(TEAM, "roles", "engineer.md")) as f:
             charter = f.read()
         self.assertIn(
             (
-                "- **Done**, once the build converges: judge each of its non-blocking review items: a real problem "
-                "→ fix it in this PR, with a test, commit and `git -C <worktree> push -u origin <branch>`; else "
-                "drop it. Then [Engineer › Repo › Merge](#repo), then [Engineer › Repo](#repo) step 2 again (its "
-                "`pr` now the draft PR the build may have opened), then `status: done`; `deliverable` what "
-                "changed, the input's `Links:`, how to verify; `title`"
+                "- **Done**, once the build converges, committing nothing more: [Engineer › Repo](#repo) step 2 "
+                "again (its `pr` now the draft PR the build may have opened), then `status: done`; "
+                "`deliverable` what changed, the input's `Links:`, how to verify, and each of this run's builds' "
+                "deferred non-blocking review items verbatim, for the manager or the user to decide on (never "
+                "fix them or start a build for them); `autopilot` the `status` and `head` of this run's last "
+                "`autopilot-result`; `title`"
             ),
             charter,
         )
         self.assertNotIn("leftover", charter)
+        self.assertNotIn("Merge](#repo)", section(composed("engineer")[0], "Finish"))
+        self.assertIn(
+            '- `autopilot`: `{"status", "head"}`, when your task asks for it.\n',
+            composed("engineer")[0],
+        )
+
+    def test_engineer_prs_are_drafts_until_the_delegate_readies_them(self):
+        prompt = composed("engineer")[0]
+        destination = section(prompt, "Destination")
+        self.assertIn(
+            "null → `gh pr create --draft --repo <host>/<owner>/<name> --head", destination
+        )
+        self.assertNotIn("gh pr ready", destination)
+        repo_ = section(prompt, "Repo")
+        self.assertIn(
+            (
+                ": before each autopilot start, by the latest `repo.py status`: `pr.state` `OPEN` and "
+                "`pr.isDraft` false → `gh pr ready --undo <pr.number> --repo <host>/<owner>/<name>`. Only the "
+                "Delegate marks a PR ready."
+            ),
+            item(repo_, "Draft"),
+        )
+        for where, text in (
+            ("Autopilot", section(prompt, "Autopilot")),
+            ("Repo › Continue", item(repo_, "Continue")),
+        ):
+            self.assertIn(
+                "[Engineer › Repo › Merge](#repo), then [Engineer › Repo › Draft](#repo), then",
+                text,
+                where,
+            )
 
     def test_research_tasks_prepare_before_their_start_mark(self):
         for task in ("research", "light-research"):
@@ -485,8 +518,9 @@ class Real(RealConfig):
             for literal in (
                 "`gh pr checks <branch> --repo <host>/<owner>/<name> --watch --fail-fast`",
                 "`gh run view <run-id> --repo <host>/<owner>/<name> --log-failed`",
-                "`git -C <worktree> push -u origin <branch>`",
-                "3 fixes",
+                "a new build of your task's slash command ([Engineer › Autopilot](#autopilot))",
+                "[Output › Destination](#destination) updates the PR, then step 1",
+                "3 fix builds",
                 "20 minutes",
                 "[Engineer › Finish › Failure](#finish)",
             ):
@@ -509,7 +543,6 @@ class Real(RealConfig):
             self.assertIn(literal, merge)
         for where, text in (
             ("Autopilot", section(prompt, "Autopilot")),
-            ("Finish", section(prompt, "Finish")),
             ("Repo › Resume", item(repo_, "Resume")),
         ):
             self.assertIn("[Engineer › Repo › Merge](#repo)", text, where)
@@ -522,17 +555,18 @@ class Real(RealConfig):
         for task in ("build", "light-build"):
             self.assertIn("[Engineer › Repo › Resume](#repo).", task_text(task), task)
 
-    def test_merges_failing_checks_say_what_happens_in_finish_before_the_build_and_on_resume(self):
-        merge = item(section(composed("engineer")[0], "Repo"), "Merge")
+    def test_merges_failing_checks_go_into_the_next_build_and_resume_merges_only_before_one(self):
+        repo_ = section(composed("engineer")[0], "Repo")
         self.assertIn(
             (
-                "One failing: during [Engineer › Finish › Done](#finish) → "
-                "[Engineer › Finish › Failure](#finish); before the build, or on [Engineer › Repo › Resume](#repo) "
-                "with a build left → the failing checks go into that build's requirements (mid-run for a "
-                "continued plan doc: [Engineer › Repo › Continue](#repo)); on "
-                "[Engineer › Repo › Resume](#repo) with none left → [Engineer › Finish › Failure](#finish)."
+                "One failing → the failing checks go into the next build's requirements (mid-run for a "
+                "continued plan doc: [Engineer › Repo › Continue](#repo))."
             ),
-            merge,
+            item(repo_, "Merge"),
+        )
+        self.assertIn(
+            "steps 1–2 again, then, with a build left, [Engineer › Repo › Merge](#repo), then",
+            item(repo_, "Resume"),
         )
 
     def test_the_pull_request_destination_reads_pr_from_repo_status(self):
