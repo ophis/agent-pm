@@ -394,6 +394,10 @@ def _agent_labels(cfg):
     tasks = {v: k for k, v in cfg["task_labels"].items()}
     seen = {}
     for k, v in labels.items():
+        if not k:
+            raise ConfigError(
+                "linear-orchestrator/config.toml: [agent_labels] client names must not be empty"
+            )
         if not _uuid(v):
             raise ConfigError(
                 f"linear-orchestrator/config.toml: agent_labels.{k} must be a Linear label id (UUID): {v!r}"

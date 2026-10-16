@@ -486,6 +486,10 @@ class ConfigurationLoading(ConfigFile, Case):
         paired = "agent_label_group and [agent_labels] must both be set or both be empty"
         cases = [
             (top + PIPELINE, paired),
+            (
+                top + PIPELINE + f'[agent_labels]\n"" = "{LABEL1}"\n',
+                "[agent_labels] client names must not be empty",
+            ),
             (PIPELINE + table, paired),
             (top + PIPELINE + "[agent_labels]\n", paired),
             ('agent_label_group = ""\n' + PIPELINE + table, paired),
