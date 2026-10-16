@@ -1,4 +1,4 @@
-"""iTerm2 split script and transport."""
+"""iTerm2 splits: the AppleScript and the call running it."""
 
 from __future__ import annotations
 

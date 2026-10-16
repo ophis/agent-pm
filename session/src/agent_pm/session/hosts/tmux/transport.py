@@ -398,7 +398,7 @@ def _decorations(session: str, events: str | None, *, status_line: bool) -> list
 class Tmux:
     PAUSE = PAUSE
 
-    def __init__(self, proc=subprocess.run, sleep=time.sleep) -> None:
+    def __init__(self, proc=subprocess.run, *, sleep=time.sleep) -> None:
         self.proc, self.sleep = proc, sleep
 
     def checked(self, args: list[str], stdin: str | None = None) -> subprocess.CompletedProcess:

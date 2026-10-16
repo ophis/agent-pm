@@ -517,7 +517,7 @@ class StartFixture(Case):
     def start(self, fake, session="s", argv=("tool", "-x", "a b"), env=None, **kw):
         env = {"PATH": self.bin, "HOME": "/h"} if env is None else env
         with redirect_stderr(self.stderr):
-            return Tmux(fake, self.sleep).start(
+            return Tmux(fake, sleep=self.sleep).start(
                 session, Launch(tuple(argv), env, cwd=self.cwd), **kw
             )
 
