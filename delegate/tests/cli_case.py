@@ -28,7 +28,6 @@ KEYS = {
     "mode",
     "sid",
     "workdir",
-    "resume",
     "cwd",
     "project",
     "dirs",

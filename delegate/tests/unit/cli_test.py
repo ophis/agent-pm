@@ -11,7 +11,7 @@ from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest import mock
 
-from agent_pm.delegate import ConfigError, Outcome, Spec, cli
+from agent_pm.delegate import ConfigError, Outcome, cli
 from agent_pm.delegate.composer import Composer, RunParams
 from agent_pm.delegate.composer.base import TEAM
 from agent_pm.delegate.engine.harness_delegate import HarnessDelegate
@@ -50,6 +50,10 @@ class Detaching:
     made: list = []
     environments: list = []
     failure: Exception | None = None
+
+    @classmethod
+    def create(cls, role, spec, **placement):
+        return cls(role, spec, **placement)
 
     def __init__(self, role, spec, **placement):
         Detaching.made.append((role, spec, placement))
@@ -91,6 +95,11 @@ class Detach(Base):
 
     def detaches(self, *extra, events=None, **kw):
         return self.runs("--sid", SID, "--detach", "--events", events or self.events, *extra, **kw)
+
+    def test_detach_uses_create(self):
+        with mock.patch.object(Detaching, "create", wraps=Detaching.create) as create:
+            self.assertEqual(self.detaches()[0], 0)
+        create.assert_called_once()
 
     def test_inside_an_agent_session_a_run_detached_or_not_exits_2_and_constructs_nothing(self):
         with mock.patch.dict(os.environ, {"AGENT_PM_AGENT_SESSION": "1"}):
@@ -472,7 +481,6 @@ class DryRun(Base):
                 "mode": "headless",
                 "sid": SID,
                 "workdir": self.work,
-                "resume": False,
                 "cwd": Layout(self.work).agent,
                 "project": False,
                 "tier": 3,
@@ -496,7 +504,7 @@ class DryRun(Base):
     def test_a_new_run_gets_a_sid(self):
         code, out, _ = self.runs("--dry-run", task=None)
         shown = json.loads(out)
-        self.assertEqual((code, uuid.UUID(shown["sid"]).version, shown["resume"]), (0, 4, False))
+        self.assertEqual((code, uuid.UUID(shown["sid"]).version), (0, 4))
         self.assertIn("**Your task**: pick it from", shown["prompt"])
         self.assertFalse(os.path.exists(self.work))
 
@@ -608,7 +616,13 @@ class InProcess(Base):
         self.assertIn(f"delegate: deliverable {Layout(self.work).out}\n", err)
 
     def test_a_run_reports_its_deliverable_and_leaves_its_delegate_json(self):
-        code, out, err = self.runs("--mode", "in_process", "--sid", SID)
+        delegate_cls = self.delegate_cls()
+        with (
+            mock.patch.object(self, "delegate_cls", return_value=delegate_cls),
+            mock.patch.object(delegate_cls, "create", wraps=delegate_cls.create) as create,
+        ):
+            code, out, err = self.runs("--mode", "in_process", "--sid", SID)
+        create.assert_called_once()
         self.assertEqual((code, out), (0, ""), err)
         self.assertIn(f"delegate: deliverable {self.out}\n", err)
         with open(RunState(Layout(self.work)).record) as f:
@@ -623,27 +637,6 @@ class InProcess(Base):
                 ["delegate.json", "delegate.lock", "delegate.run.lock", "run.jsonl"],
             ),
         )
-
-    def test_reconstructing_a_live_run_for_resume_starts_nothing(self):
-        spec = Spec("Hello.", self.work, task="echo", mode="in_process", client="fake", sid=SID)
-        self.delegate_cls()("dummy-tester", spec)
-        with (
-            RunState(Layout(self.work)).run_lock(),
-            self.assertRaisesRegex(ConfigError, "delegate is still alive"),
-        ):
-            self.delegate_cls()(
-                "dummy-tester",
-                Spec(
-                    "answer",
-                    self.work,
-                    task="echo",
-                    mode="in_process",
-                    client="fake",
-                    sid=SID,
-                    resume=True,
-                ),
-            )
-        self.assertEqual(self.launches(), [])
 
     def test_headless_and_tui_exit_2_and_nothing_runs(self):
         for mode, want in (

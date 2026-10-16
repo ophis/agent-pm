@@ -50,7 +50,7 @@ ORPHAN = 4242
 
 
 class CreateTest(HarnessCase):
-    def test_create_returns_a_persisted_run_with_its_placement_and_overlays(self):
+    def test_create_persists_placement_with_overlays(self):
         class Bound(HarnessDelegate):
             def __init__(self, role, spec, **placement):
                 super().__init__(role, spec, session_cls=HarnessSession, **placement)
@@ -65,7 +65,9 @@ class CreateTest(HarnessCase):
         )
         self.assertIsInstance(view, Bound)
         self.assertEqual(self.metadata()["overlays"], [overlay])
-        self.assertEqual((view._state.display, view._state.callback), ("none", ("callback",)))
+        self.assertEqual(
+            (self.metadata()["display"], self.metadata()["callback"]), ("none", ["callback"])
+        )
         attached = Bound.attach(self.work, sid=SID, session_cls=HarnessSession)
         self.assertEqual(attached.workdir, self.work)
 
