@@ -37,6 +37,18 @@ def _owner(session: str, entries: dict[str, Entry]) -> str | None:
     )
 
 
+def _reconciled(entry: Entry, status: Status) -> State:
+    if entry.state not in (State.LIVE, State.GONE):
+        return entry.state
+    if status.alive:
+        return State.LIVE
+    if status.outcome in ("done", "failed"):
+        return State.DONE
+    if status.outcome == "needs_input":
+        return State.WAITING
+    return State.GONE
+
+
 class Crew:
     def __init__(self, roster: Roster, *, lease: Lease | None = None):
         self.roster = roster
@@ -247,24 +259,15 @@ class Crew:
             if name not in answers:
                 continue
             status = answers[name]
-            state = entry.state
-            if state in (State.LIVE, State.GONE):
-                if status.alive:
-                    state = State.LIVE
-                elif status.outcome in ("done", "failed"):
-                    state = State.DONE
-                elif status.outcome == "needs_input":
-                    state = State.WAITING
+            state = _reconciled(entry, status)
+            if state != entry.state and not self.roster.mark_if(name, entry, state):
+                current = self.roster.entries().get(name)
+                if current is None:
+                    entries.pop(name)
                 else:
-                    state = State.GONE
-                if state != entry.state and not self.roster.mark_if(name, entry, state):
-                    current = self.roster.entries().get(name)
-                    if current is None:
-                        entries.pop(name)
-                    else:
-                        entries[name] = current
-                    answers.pop(name)
-                    continue
+                    entries[name] = current
+                answers.pop(name)
+                continue
             entries[name] = replace(entry, state=state)
             if state == State.LIVE and status.attach is not None and entry.record is not None:
                 shown.append(entry.record)
