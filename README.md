@@ -321,7 +321,7 @@ v1 is the `v1-runtime` checkout: `core/`, `orchestrator/`, and overrides in `~/.
 7. **Run the [Smoke checklist](#smoke-checklist).**
 8. **Install launchd** by [Setup](#setup) step 6 once the smoke checklist passes. Its first runs clear v1's leftovers: promote's prune deletes the checkouts and temp files `prune --dry-run` listed, and the router's Recover moves an issue left In Progress by v1 back to Todo (`recover`, `"reason": "no session"`).
 
-`show` changed meaning: v1's `""` opened nothing. Now `""` opens a pane and `"none"` opens nothing.
+`show` changed meaning: v1's `""` opened nothing. Now `""` opens a pane and `"none"` opens nothing until `show`.
 
 | v1 | `config.local.toml` |
 |---|---|

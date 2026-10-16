@@ -8,6 +8,7 @@ from unittest import mock
 
 from agent_pm.delegate import Result
 from agent_pm.session import Exited, TurnEnd
+from agent_pm.utils import Status, StatusState
 
 from session.tests.case import SPAWNS
 
@@ -49,12 +50,13 @@ STOP = turn("Working.")
 class FakeHandle:
     """agent_pm.session.Session as the Delegate uses it: events() goes on through `events` across
     calls, up to an Exited (none left: AssertionError); send (raising `fail`) and stop (raising
-    `stop_fail`) recorded in `calls`; show's commands (raising `show_fail`) in `shown`. start: the
-    Delegate Driver's stand-in.
+    `stop_fail`) recorded in `calls`; show's commands (raising `show_fail`) in `shown`; status: live,
+    `hidden` as set. start: the Delegate Driver's stand-in.
     """
 
     showable = True
     show_fail: Exception | None = None
+    hidden = False
 
     def __init__(self, events, fail=None, stop_fail=None):
         self.left, self.fail, self.stop_fail, self.calls = iter(events), fail, stop_fail, []
@@ -70,6 +72,16 @@ class FakeHandle:
 
     def attach_command(self):
         return f"tmux attach -t '={self.name}'"
+
+    def status(self):
+        return Status(
+            name=self.name,
+            alive=True,
+            state=StatusState.WORKING,
+            outcome=None,
+            attach=self.attach_command(),
+            hidden=self.hidden,
+        )
 
     def show(self, *, display=None, command=None):
         self.shown.append(command)

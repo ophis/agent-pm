@@ -496,6 +496,28 @@ class ResumeModeTest(HarnessCase):
     def modes(self, state):
         return (state["spec"]["mode"], state["plan"]["session"]["mode"], state["attempt"])
 
+    def test_a_role_showing_none_runs_at_the_none_display(self):
+        for show, mode, want in (
+            ("none", "tui", "none"),
+            ("open {{session}}", "tui", "mgr"),
+            ("", "headless", "mgr"),
+        ):
+            with self.subTest(show=show, mode=mode):
+                spec = Spec("input", self.work, mode=mode, client="fake", sid=SID)
+                made = self.make(spec=spec, overlays=({"show": show},), display="mgr")
+                self.assertEqual((made.driver.display, self.metadata()["display"]), (want, want))
+        spec = Spec("input", self.work, mode="headless", client="fake", sid=SID)
+        record = self.make(spec=spec, overlays=({"show": "none"},), display="mgr").detach()
+        self.assertEqual((record.display, harness_launches()[-1]["display"]), ("none", "none"))
+        view = HarnessDelegate.attach(self.work, session_cls=HarnessSession)
+        view.close()
+        HarnessSession.script = (Reply("No outcome block."), Exited(0))
+        self.assertIsNone(view.run().outcome)
+        record, state = self.resumed(mode="tui")
+        self.assertEqual((record.sid, record.display, state["display"]), (SID, "none", "none"))
+        started = [each for each in RecordingHost.launches if each["name"] == state["agent_name"]]
+        self.assertEqual(started[-1]["display"], "none")
+
     def test_a_tui_run_that_gave_up_resumes_headless_with_its_sid_and_records_the_mode(self):
         self.gave_up("tui")
         agent = HarnessSession.live[self.metadata()["agent_name"]]

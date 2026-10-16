@@ -189,6 +189,7 @@ class HarnessDelegate(Delegate):
             self.composer = composer or Composer(
                 config=DelegateConfig(config.read_config()), team=spec.team
             )
+            run = self.composer.resolve(role, spec.task, overlays=overlays)
             self._settings = thaw(self.composer.config.values)
             self.session_cls = session_cls
             self._configure()
@@ -202,7 +203,9 @@ class HarnessDelegate(Delegate):
                     harness_host or config.harness_host(self._settings, hosts) or agent_host.name
                 )
             )
-            display = session_cls.display(display, host=agent_host.name)
+            display = session_cls.display(
+                "none" if run.show == "none" else display, host=agent_host.name
+            )
             events = harness.events_path(spec.events)
         except (OSError, ValueError, SessionConfigError, SessionError) as error:
             raise ConfigError(str(error)) from None
@@ -214,7 +217,6 @@ class HarnessDelegate(Delegate):
             session_cls, settings=self._settings, display=display, host=agent_host.name
         )
         tui = spec.mode == Mode.TUI
-        run = self.composer.resolve(role, spec.task, overlays=overlays)
         accepted = plan(
             run,
             replace(

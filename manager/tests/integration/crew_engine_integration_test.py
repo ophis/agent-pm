@@ -280,6 +280,17 @@ class CrewTest(Case):
         self.assertIn(f"role0\tfake\t{records[0].sid}\tworking", table)
         self.assertIn(f"role19\tfake\t{records[19].sid}\tworking", table)
 
+    def test_a_hidden_entry_stays_closed_after_crew_resume(self):
+        self.gone("worker")
+        ctl.set_session(self.ctl_dir, "worker", showable=True, hidden=True)
+        resumed = self.crew.resume("worker")
+        self.assertEqual(self.calls("show"), [])
+        self.assertTrue(self.crew.status(("worker",))[0].hidden)
+        with self.listed([resumed]):
+            table = self.crew.attach()
+        self.assertEqual(self.calls("show"), [])
+        self.assertIn(f"worker\tfake\t{resumed.sid}\tworking\thidden\t", table)
+
     def test_attach_renders_its_status_snapshot_during_a_concurrent_launch(self):
         self.start("old")
         with self.listed():
@@ -576,9 +587,9 @@ class CrewTest(Case):
         with mock.patch("subprocess.run", side_effect=run), self.listed():
             table = self.crew.attach().splitlines()
         rows = {row.split("\t")[0]: row.split("\t") for row in table[1:] if "\t" in row}
-        self.assertEqual(table[0].split("\t")[5], "cwd")
-        self.assertEqual((rows["one"][5], rows["two"][5]), ("/w/repo one", "-"))
-        self.assertNotEqual(rows["one"][5], record.workdir)
+        self.assertEqual(table[0].split("\t")[6], "cwd")
+        self.assertEqual((rows["one"][6], rows["two"][6]), ("/w/repo one", "-"))
+        self.assertNotEqual(rows["one"][6], record.workdir)
 
     def test_a_key_its_ctl_fails_is_the_only_status_lost(self):
         self.start("one")
