@@ -526,7 +526,9 @@ class PaneFixture(Case):
     def show(self, fake, env, **kw):
         self.stderr = io.StringIO()
         with environ(**env), which(kw.pop("tmux", TMUX)), redirect_stderr(self.stderr):
-            return placement.show("s", kw.pop("template", None), **kw, proc=fake, command=COMMAND)
+            return placement.Placement(fake).show(
+                "s", kw.pop("template", None), **kw, command=COMMAND
+            )
 
     def clients(self, *rows):
         """A list-clients result: rows of (activity, tty, pane[, control mode, default "0"])."""
@@ -690,8 +692,8 @@ class TileFixture(Case):
     ):
         """tile @3 given what tmux prints (fake's arguments). Returns the fake."""
         fake = self.fake(layout, panes, rows, **kw)
-        grids.tile(
-            "@3", per_column=per_column, wait=wait, if_panes_changed=if_panes_changed, proc=fake
+        grids.Grid(fake).tile(
+            "@3", per_column=per_column, wait=wait, if_panes_changed=if_panes_changed
         )
         return fake
 

@@ -2,6 +2,7 @@
 
 import contextlib
 import errno
+import functools
 import io
 import os
 import re
@@ -97,8 +98,12 @@ class GridOpenTest(Case):
         self.stderr = io.StringIO()
         command = kw.pop("command", COMMAND)
         with environ(**env), which(), redirect_stderr(self.stderr):
-            return placement.show(
-                "s", retile=retile, **kw, proc=fake, tile_window=self.tile, command=command
+            return placement.Placement(fake).show(
+                "s",
+                retile=retile,
+                **kw,
+                tile_window=functools.partial(self.tile, proc=fake),
+                command=command,
             )
 
     def split(self, flag, pane, window="@1"):
@@ -423,8 +428,8 @@ class GridOpenTest(Case):
                 fake = self.fake({"%3": self.NEW})
                 for call in (
                     lambda *, bad=bad, fake=fake: self.show(fake, retile=bad),
-                    lambda *, bad=bad, fake=fake: placement.open_pane(
-                        "s", retile=bad, proc=fake, command=COMMAND
+                    lambda *, bad=bad, fake=fake: placement.Placement(fake).open_pane(
+                        "s", retile=bad, command=COMMAND
                     ),
                 ):
                     with self.assertRaisesRegex(
@@ -456,8 +461,8 @@ class GridOpenTest(Case):
                 fake = self.fake({"%3": self.NEW})
                 for call in (
                     lambda *, bad=bad, fake=fake: self.show(fake, per_column=bad),
-                    lambda *, bad=bad, fake=fake: placement.open_pane(
-                        "s", per_column=bad, proc=fake, command=COMMAND
+                    lambda *, bad=bad, fake=fake: placement.Placement(fake).open_pane(
+                        "s", per_column=bad, command=COMMAND
                     ),
                 ):
                     with self.assertRaisesRegex(
@@ -930,7 +935,7 @@ class TileCoordinationTest(TileFixture):
                 release()
 
         slept = clock(self, poll)
-        grids.tile("@3", proc=fake)
+        grids.Grid(fake).tile("@3")
         self.assertEqual(slept, [grids.TILE_POLL] * 3)
         self.assertEqual(seen, [[self.SOCKET]] * 3)
         self.assertEqual(
@@ -950,7 +955,7 @@ class TileCoordinationTest(TileFixture):
         slept = clock(self)
         fake = self.fake(*self.WIDE)
         with self.assertRaisesRegex(types.TuiError, "^grid @3: busy$"):
-            grids.tile("@3", proc=fake)
+            grids.Grid(fake).tile("@3")
         self.assertEqual(fake.calls, [self.SOCKET])
         self.assertEqual(set(slept), {grids.TILE_POLL})
         self.assertTrue(5 <= sum(slept) < 5.1)  # float steps: one poll more
@@ -960,11 +965,11 @@ class TileCoordinationTest(TileFixture):
         want = f"^grid lock {re.escape(self.lock)}: {os.strerror(errno.EISDIR)}$"
         fake = self.fake(*self.WIDE)
         with self.assertRaisesRegex(types.TuiError, want):
-            grids.tile("@3", proc=fake)
+            grids.Grid(fake).tile("@3")
         self.assertEqual(fake.calls, [self.SOCKET])
         fake = self.fake(*self.WIDE)
         self.assertRegex(
-            grids.configure("@3", "%0", per_column=3, retile="all", proc=fake, command=COMMAND),
+            grids.Grid(fake).configure("@3", "%0", per_column=3, retile="all", command=COMMAND),
             want,
         )
         self.assertEqual(fake.calls, [grid_set("@3", "%0"), self.SOCKET])
@@ -982,7 +987,7 @@ class TileCoordinationTest(TileFixture):
                     types.TuiError,
                     f"^grid @3: socket path {re.escape(repr(sock))}: want an absolute path$",
                 ):
-                    grids.tile("@3", proc=fake)
+                    grids.Grid(fake).tile("@3")
                 self.assertEqual(fake.calls, [self.SOCKET])
                 self.assertEqual(os.listdir(cwd.name), [])
 
@@ -1056,12 +1061,11 @@ class TileCoordinationTest(TileFixture):
         del fake.calls[:]
         with contextlib.nullcontext(unittest.mock.Mock()) as tile:
             self.assertIsNone(
-                grids.configure(
+                grids.Grid(fake).configure(
                     "@3",
                     "%0",
                     per_column=3,
                     retile="off",
-                    proc=fake,
                     command=COMMAND,
                     tile_window=tile,
                 )
@@ -1080,7 +1084,7 @@ class TileCoordinationTest(TileFixture):
             with self.subTest(window=window, **kw):
                 fake = FakeTmux()
                 with self.assertRaisesRegex(types.TuiError, "^" + re.escape(error)):
-                    grids.tile(window, proc=fake, **kw)
+                    grids.Grid(fake).tile(window, **kw)
                 self.assertEqual(fake.calls, [])
 
     def test_a_tmux_failure_raises(self):
@@ -1089,10 +1093,10 @@ class TileCoordinationTest(TileFixture):
         fail = {"set-option": lambda argv: (1, "", "boom\n" if "@grid-tiles" in argv else "gone\n")}
         fake = self.fake(*self.WIDE, **fail)
         with self.assertRaisesRegex(types.TuiError, "^tmux: boom$"):
-            grids.tile("@3", proc=fake)
+            grids.Grid(fake).tile("@3")
         self.assertEqual(fake.calls[4:], self.applied(self.WIDE_SENT))
         self.assertEqual(self.tile(*self.WIDE, wait=False).calls[:2], [self.SOCKET, self.READ])
         with self.assertRaisesRegex(types.TuiError, "^tmux: boom$"):
             self.tile(dump("160x48,0,0,0"), ["%0"], fail=("set-hook",))
         with self.assertRaisesRegex(types.TuiError, "^tmux: boom$"):
-            grids.tile("@3", proc=FakeTmux(fail=("display-message",)))
+            grids.Grid(FakeTmux(fail=("display-message",))).tile("@3")

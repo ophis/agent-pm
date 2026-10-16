@@ -55,8 +55,8 @@ class ShowTest(Case):
             mock.patch.dict(os.environ, self.environment, clear=True),
             redirect_stderr(self.stderr),
         ):
-            return placement.show(
-                "worker", split="below", split_from="mgr", opener="mgr", proc=self.transport
+            return placement.Placement(self.transport).show(
+                "worker", split="below", split_from="mgr", opener="mgr"
             )
 
     def assert_visible_private_attach(self):

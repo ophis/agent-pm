@@ -38,8 +38,10 @@ from agent_pm.session.engine.types import (
     TuiSettings,
 )
 from agent_pm.session.hosts.base import Displayable, Host, HostProcess, Terminal
-from agent_pm.session.hosts.tmux import grid, hook, placement, transport
-from agent_pm.session.hosts.tmux.listing import listing
+from agent_pm.session.hosts.tmux import hook, transport
+from agent_pm.session.hosts.tmux.hook import Hook
+from agent_pm.session.hosts.tmux.listing import Listing
+from agent_pm.session.hosts.tmux.placement import Placement
 from agent_pm.session.hosts.tmux.transport import (
     ITERM_OPENER,
     NAME,
@@ -51,12 +53,9 @@ from agent_pm.session.hosts.tmux.transport import (
     attach_command,
     display_error,
     error,
-    kill,
-    run,
     session_name,
-    status,
 )
-from agent_pm.session.hosts.tmux.types import Anchor, PaneStatus, Retile, Split, TuiError
+from agent_pm.session.hosts.tmux.types import PaneStatus, Retile, Split, TuiError
 from agent_pm.utils import CONFIG_NAME, Display, ProcessControl, Record, Status, sid_error
 
 FORMAT = "<opener>[/<split>[/<split_from>]]"
@@ -299,16 +298,17 @@ def _decorations(session: str, events: str | None, *, status_line: bool) -> list
     ]
 
 
-class Tmux:
+class Tmux(Placement, Listing, Hook):
     """Every tmux call a TmuxHost makes, through proc (subprocess.run's signature) and sleep:
     production uses one Tmux(), tests inject a fake. start and detach hand a launch over to a new
-    session's pane; the rest bind the tmux package's commands to proc.
+    session's pane; the rest come from the tmux package's parts.
     """
 
     PAUSE = transport.PAUSE
 
     def __init__(self, proc=subprocess.run, sleep=time.sleep) -> None:
-        self.proc, self.sleep = proc, sleep
+        super().__init__(proc)
+        self.sleep = sleep
 
     def start(
         self,
@@ -338,7 +338,7 @@ class Tmux:
         try:
             tmp = tempfile.mkdtemp()
             path, wrapper = _wrapper(tmp)
-            state = status(session, proc=self.proc)
+            state = self.status(session)
             if state == PaneStatus.RUNNING:
                 raise TuiError(f"session {session} is running; {attach_command(session)}")
             if isinstance(state, int):
@@ -352,7 +352,7 @@ class Tmux:
             ]
             # new-session may have run even when the tmux call fails
             may_run = True
-            res = run(
+            res = self.run(
                 [
                     "new-session",
                     "-d",
@@ -377,7 +377,6 @@ class Tmux:
                     *decorations,
                     *_recorded(session),
                 ],
-                self.proc,
             )
             if res.returncode:
                 if error(res).startswith(
@@ -402,7 +401,7 @@ class Tmux:
                 os.close(pipe)
             if may_run:
                 with contextlib.suppress(TuiError):
-                    kill(session, proc=self.proc)
+                    self.kill(session)
 
     def detach(
         self,
@@ -464,7 +463,7 @@ class Tmux:
             path, wrapper = _wrapper(tmp)
             pipe = _handover(path, argv, cwd, env)
             may_run = True
-            res = run(
+            res = self.run(
                 [
                     "new-session",
                     "-d",
@@ -479,7 +478,6 @@ class Tmux:
                     *tag_options,
                     *_recorded(session),
                 ],
-                self.proc,
             )
             if res.returncode:
                 if error(res).startswith("duplicate session:"):
@@ -503,73 +501,7 @@ class Tmux:
                 os.close(pipe)
             if may_run:
                 with contextlib.suppress(TuiError):
-                    kill(session, proc=self.proc)
-
-    def status(self, target: str):
-        return transport.status(target, proc=self.proc)
-
-    def process(self, target: str) -> str | None:
-        return transport.process(target, proc=self.proc)
-
-    def process_status(self, target: str):
-        return transport.process_status(target, proc=self.proc)
-
-    def option(self, target: str, name: str) -> str | None:
-        return transport.option(target, name, proc=self.proc)
-
-    def kill(self, target: str) -> None:
-        transport.kill(target, proc=self.proc)
-
-    def paste(self, target: str, text: str) -> None:
-        transport.paste(target, text, proc=self.proc)
-
-    def keys(self, target: str, *names: str) -> None:
-        transport.keys(target, *names, proc=self.proc)
-
-    def press(self, target: str, *names: str) -> None:
-        transport.press(target, *names, proc=self.proc)
-
-    def set_option(self, target: str, name: str, value: str) -> None:
-        transport.set_option(target, name, value, proc=self.proc)
-
-    def read(self, target: str, lines: int | None = None) -> str:
-        return transport.read(target, lines, proc=self.proc)
-
-    def listing(self) -> list[dict] | None:
-        return listing(proc=self.proc)
-
-    def own_session(self) -> str | None:
-        return placement.own_session(proc=self.proc)
-
-    def opener(self) -> str:
-        return placement.opener(proc=self.proc)
-
-    def anchor(self, split_from: str | None = None) -> Anchor:
-        return placement.anchor(split_from, proc=self.proc)
-
-    def open_pane(
-        self, session: str, parts: Parts, *, per_column: int | None, retile: str | None
-    ) -> str | None:
-        """A pane for session, placed by a display's parts (opener, split, split_from)."""
-        opener, split, split_from = parts
-        return placement.open_pane(
-            session,
-            opener=opener,
-            split=split,
-            split_from=split_from,
-            per_column=per_column,
-            retile=retile,
-            proc=self.proc,
-        )
-
-    def run_command(self, session: str, template: str) -> str | None:
-        return placement.run_command(session, template, proc=self.proc)
-
-    def tile(self, window: str, *, wait: bool = True, if_panes_changed: bool = False) -> None:
-        grid.tile(window, wait=wait, if_panes_changed=if_panes_changed, proc=self.proc)
-
-    def mark(self, word: str, events: str | None, *, pane: str) -> None:
-        hook.mark(word, events, pane=pane, proc=self.proc)
+                    self.kill(session)
 
 
 def _session(name) -> str:
@@ -1216,16 +1148,18 @@ class TmuxHost(Host, Displayable):
         if self.tmux.status(_session(name)) is None:
             raise SessionError(f"no tmux session {name}")
         try:
-            why = (
-                self.tmux.open_pane(
+            if command is None:
+                opener, split, split_from = self._parts(display)
+                why = self.tmux.open_pane(
                     name,
-                    self._parts(display),
+                    opener=opener,
+                    split=split,
+                    split_from=split_from,
                     per_column=self.settings.get("workers_per_column"),
                     retile=self.settings.get("grid_retile"),
                 )
-                if command is None
-                else self.tmux.run_command(name, command)
-            )
+            else:
+                why = self.tmux.run_command(name, command)
         except TuiError as e:
             raise ConfigError(str(e)) from None
         self.attach(name).mark_hidden(hidden=False)
