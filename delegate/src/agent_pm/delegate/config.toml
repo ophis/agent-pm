@@ -24,9 +24,11 @@
 #                   its recorded one (<workdir>/run/run.jsonl)
 #   idle_timeout    positive finite seconds without a session event. In tui mode the run gives up, leaving the
 #                   session open; other modes record the idle event and continue
-#   show            how a started tui session is shown, when its Host can display: "" → a pane (the tmux Host: in
-#                   the display's grid or split); "none" → nothing, the attach command printed; else a one-line shell
-#                   command run instead, {{session}} the session name
+#   show            how a started tui session is shown, when its Host can show: "" → a pane (the tmux Host: in
+#                   the display's grid or split); "none" → started hidden, as with --display none (the display the run
+#                   passes down, whatever --display says), until agent-pm-delegate show opens a pane; else a one-line
+#                   shell command run instead, {{session}} the session name. A hidden session is not shown at its
+#                   start or on resume
 #   users           local, global only: GitHub logins whose PR comments are the user's; [] → the gh login
 #   trusted_dirs    local, global only: dirs you trust (absolute or ~ path, matched by real path); [] → none. A cwd
 #                   that is one or under one loads its project settings; any other, user settings only, with a stderr
