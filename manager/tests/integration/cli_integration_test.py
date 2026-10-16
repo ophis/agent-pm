@@ -119,36 +119,26 @@ class PathsAndArguments(Case):
         self.assertTrue(events.with_name("roster.json").is_file())
         self.assertFalse(Path(self.agent_pm, "managers").exists())
 
-    def test_attach_after_and_gen_require_paired_nonnegative_numbers_without_writes(self):
+    def test_attach_and_next_event_cursors_require_paired_nonnegative_numbers_without_writes(self):
         before = {str(path.relative_to(self.home)) for path in Path(self.home).rglob("*")}
         cases = (
-            (("--after", "3"), "--after and --gen go together"),
-            (("--gen", "0"), "--after and --gen go together"),
-            (("--after", "end", "--gen", "0"), "want a non-negative integer"),
-            (("--after", "-1", "--gen", "0"), "want a non-negative integer"),
-            (("--after", "1", "--gen", "-1"), "want a non-negative integer"),
-            (("--after", "1", "--gen", "x"), "want a non-negative integer"),
+            ("attach", ("--after", "3"), "--after and --gen go together"),
+            ("attach", ("--gen", "0"), "--after and --gen go together"),
+            ("attach", ("--after", "end", "--gen", "0"), "want a non-negative integer"),
+            ("attach", ("--after", "-1", "--gen", "0"), "want a non-negative integer"),
+            ("attach", ("--after", "1", "--gen", "-1"), "want a non-negative integer"),
+            ("attach", ("--after", "1", "--gen", "x"), "want a non-negative integer"),
+            ("next-event", ("--after", "-1", "--gen", "0"), "want a non-negative integer"),
+            ("next-event", ("--after", "0", "--gen", "-1"), "want a non-negative integer"),
+            ("next-event", ("--after", "x", "--gen", "0"), "want a non-negative integer"),
+            ("next-event", ("--after", "0", "--gen", "x"), "want a non-negative integer"),
         )
-        for arguments, error in cases:
-            with self.subTest(arguments=arguments):
-                result = self.invoke("attach", "--manager", "mgr", *arguments)
+        for command, arguments, error in cases:
+            with self.subTest(command=command, arguments=arguments):
+                result = self.invoke(command, "--manager", "mgr", *arguments)
                 self.assertEqual(result.returncode, 2, result.stderr)
                 self.assertEqual(result.stdout, "")
                 self.assertIn(error, result.stderr)
                 after = {str(path.relative_to(self.home)) for path in Path(self.home).rglob("*")}
                 self.assertEqual(after, before)
-                self.assertFalse(Path(self.agent_pm, "managers").exists())
-
-    def test_next_event_cursor_requires_nonnegative_numbers_without_writes(self):
-        before = {str(path.relative_to(self.home)) for path in Path(self.home).rglob("*")}
-        for after, generation in (("-1", "0"), ("0", "-1"), ("x", "0"), ("0", "x")):
-            with self.subTest(after=after, generation=generation):
-                result = self.invoke(
-                    "next-event", "--manager", "mgr", "--after", after, "--gen", generation
-                )
-                self.assertEqual(result.returncode, 2, result.stderr)
-                self.assertEqual(result.stdout, "")
-                self.assertIn("want a non-negative integer", result.stderr)
-                actual = {str(path.relative_to(self.home)) for path in Path(self.home).rglob("*")}
-                self.assertEqual(actual, before)
                 self.assertFalse(Path(self.agent_pm, "managers").exists())
