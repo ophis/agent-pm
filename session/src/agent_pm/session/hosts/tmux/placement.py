@@ -55,6 +55,7 @@ PLACEHOLDERS = {"session"}
 
 SLOT = re.compile(r"\{\{([^{}]*)\}\}")
 TTY = re.compile(r"/dev/[A-Za-z0-9/]+")
+LISTED = "#{S:#{W:#{P: #{pane_id} }}}"
 
 
 NO_PANE = "no anchor pane: {}, no iTerm2 pane ($ITERM_SESSION_ID)"
@@ -326,9 +327,9 @@ class Placement:
                 return
 
     def watch(self, session: str) -> None:
-        """@window, the window of the tmux pane show opened (@pane), and session's client-detached
-        hook running `hide --if-closed` for that pane's client only, so closing that pane by hand
-        marks it hidden and another client's detach does not; a failure is only printed.
+        """@window, the window of the tmux pane show opened (@pane), and session's hooks: that
+        pane's client detaching runs `hide --if-closed`; any client attaching forgets that pane once
+        gone (a detach runs no hook, and frees its tty); a failure is only printed.
         """
         command, problem = hook_command()
         target = f"={session}:"
@@ -342,7 +343,10 @@ class Placement:
             window, _, tty = found.partition(" ")
             if not (WINDOW.fullmatch(window) and TTY.fullmatch(tty)):
                 raise TuiError(f"not a window id and tty: {found!r:.80}")
-            args = ["set-option", "-t", target, "@window", window]
+            kept = f"#{{||:#{{!=:#{{@pane}},{pane}}},#{{m:* {pane} *,{LISTED}}}}}"
+            stale = f"if-shell -F -t {target} '{kept}' '' \"{_unset(target)}\""
+            args = ["set-option", "-t", target, "@window", window, ";"]
+            args += ["set-hook", "-t", target, "client-attached", stale]
             if not problem:
                 run = f"run-shell -b '{command} hide --if-closed {session} >/dev/null 2>&1 || true'"
                 # a client's name is its tty: the viewer's is its pane's
@@ -375,8 +379,9 @@ class Placement:
         if not PANE.fullmatch(pane or ""):
             return False
         target = f"={session}:"
-        unset = f"set-option -u -t {target} @pane ; set-option -u -t {target} @window"
-        self.tmux.checked(["if-shell", "-F", "-t", target, f"#{{==:#{{@pane}},{pane}}}", unset])
+        self.tmux.checked(
+            ["if-shell", "-F", "-t", target, f"#{{==:#{{@pane}},{pane}}}", _unset(target)]
+        )
         return self.tmux.option(session, "@pane") is None
 
     def run_command(self, session: str, template: str) -> str | None:
@@ -488,3 +493,7 @@ class Placement:
             key=lambda c: int(c[0]),
             reverse=True,
         )
+
+
+def _unset(target: str) -> str:
+    return f"set-option -u -t {target} @pane ; set-option -u -t {target} @window"

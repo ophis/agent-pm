@@ -376,6 +376,20 @@ class WatchTest(Case):
         f"\"run-shell -b '{COMMAND} hide --if-closed s >/dev/null 2>&1 || true'\""
     )
 
+    UNSET = "set-option -u -t =s: @pane ; set-option -u -t =s: @window"
+    STALE = (
+        "if-shell -F -t =s: "
+        "'#{||:#{!=:#{@pane},%10},#{m:* %10 *,#{S:#{W:#{P: #{pane_id} }}}}}' "
+        f"'' \"{UNSET}\""
+    )
+    SET = ["tmux", "set-option", "-t", "=s:", "@window", "@3", ";"] + [
+        "set-hook",
+        "-t",
+        "=s:",
+        "client-attached",
+        STALE,
+    ]
+
     def watch(self, pane="%10\n", found="@3 /dev/pts/4\n", **which_kw):
         fake = FakeTmux(results={"show-options": (0, pane), "display-message": (0, found)})
         self.stderr = io.StringIO()
@@ -388,8 +402,7 @@ class WatchTest(Case):
             self.watch(),
             [
                 ["tmux", "display-message", "-p", "-t", "%10", "#{window_id} #{pane_tty}"],
-                ["tmux", "set-option", "-t", "=s:", "@window", "@3", ";"]
-                + ["set-hook", "-t", "=s:", "client-detached", self.HOOK],
+                [*self.SET, ";", "set-hook", "-t", "=s:", "client-detached", self.HOOK],
             ],
         )
         self.assertEqual(self.stderr.getvalue(), "")
@@ -401,7 +414,7 @@ class WatchTest(Case):
         ):
             with self.subTest(why=why):
                 calls = self.watch(session=session)
-                self.assertEqual(calls[-1], ["tmux", "set-option", "-t", "=s:", "@window", "@3"])
+                self.assertEqual(calls[-1], self.SET)
                 self.assertEqual(self.stderr.getvalue(), f"tui: show: client-detached: {why}\n")
 
     def test_nothing_for_an_iterm2_or_unset_pane(self):
