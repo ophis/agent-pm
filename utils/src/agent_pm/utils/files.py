@@ -65,6 +65,32 @@ def file_lock(path: str | Path) -> Iterator[None]:
         os.close(fd)
 
 
+@contextlib.contextmanager
+def inode_lock(path: str | Path, *, wait: bool = True) -> Iterator[bool]:
+    """Exclusive flock on `path` itself, held once `path` still names the locked file, so a holder
+    may unlink it; False without waiting when another holds it.
+    """
+    while True:
+        fd = os.open(path, os.O_RDWR | os.O_CREAT | os.O_NONBLOCK, 0o600)
+        try:
+            if not stat.S_ISREG(os.fstat(fd).st_mode):
+                raise OSError(errno.EINVAL, "not a regular lock file", str(path))
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | (0 if wait else fcntl.LOCK_NB))
+            except BlockingIOError:
+                yield False
+                return
+            try:
+                same = os.path.samestat(os.fstat(fd), os.stat(path))
+            except FileNotFoundError:
+                same = False
+            if same:
+                yield True
+                return
+        finally:
+            os.close(fd)
+
+
 def sync_directory(path: str | Path) -> None:
     """Persist directory entries after rename or unlink; filesystem errors propagate."""
     fd = os.open(path, os.O_RDONLY)
