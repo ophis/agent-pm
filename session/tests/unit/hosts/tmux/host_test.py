@@ -562,18 +562,23 @@ class HideTest(Base):
         self.tmux.option.return_value = None
         self.tmux.option.side_effect = lambda pane, key: found.get(key[1:], recorded(pane, key))
 
-    def test_hide_kills_the_shown_pane_and_marks_it_hidden_until_a_show(self):
+    def test_hide_kills_the_shown_pane_and_marks_it_hidden(self):
         self.options(pane="%9", sid=SID)
         self.assertIsNone(self.host.hide("w1"))
         self.tmux.kill.assert_called_once_with("%9")
         self.tmux.set_option.assert_called_once_with("%7", "@hidden", "1")
-        self.options(hidden="1")
-        self.assertTrue(self.host.attach("w1").status().hidden)
+
+    def test_hidden_and_status_report_the_hidden_mark(self):
+        for mark, hidden in (("1", True), ("0", False), (None, False)):
+            with self.subTest(mark=mark):
+                self.options(hidden=mark)
+                process = self.host.attach("w1")
+                self.assertEqual((process.hidden(), process.status().hidden), (hidden, hidden))
+
+    def test_show_clears_hidden(self):
         self.options(sid=SID)
-        self.host.show("w1", command="true")
-        self.tmux.set_option.assert_called_with("%7", "@hidden", "0")
-        self.options(hidden="0")
-        self.assertFalse(self.host.attach("w1").hidden())
+        self.assertIsNone(self.host.show("w1", command="true"))
+        self.tmux.set_option.assert_called_once_with("%7", "@hidden", "0")
 
     def test_hide_leaves_an_iterm2_or_closed_pane_and_still_marks_it_hidden(self):
         for pane, process in (("w0t0p0:ABC", PROCESS), ("%9", None), (None, PROCESS)):
@@ -621,9 +626,11 @@ class HideTest(Base):
         self.options(pane="%9", sid=SID)
         self.assertIsNotNone(self.host.show("w1"))
         self.tmux.set_option.assert_called_once_with("%7", "@hidden", "0")
-        self.tmux.set_option.reset_mock()
+
+    def test_a_failed_show_with_no_pane_of_its_keeps_hidden(self):
+        self.enterContext(environ())
         self.options(pane=None, sid=SID)
-        self.host.show("w1")
+        self.assertIsNotNone(self.host.show("w1"))
         self.tmux.set_option.assert_not_called()
 
 
