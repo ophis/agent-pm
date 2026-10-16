@@ -9,7 +9,6 @@ import fcntl
 import json
 import os
 import signal
-from dataclasses import asdict
 from unittest import mock
 
 from agent_pm.delegate import (
@@ -57,7 +56,7 @@ class Codec(Case):
                     "finished",
                     **RUN,
                     returncode=7,
-                    outcome=asdict(outcome),
+                    outcome=outcome,
                     error="exit diagnostic",
                 ),
             ),

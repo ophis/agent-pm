@@ -1489,7 +1489,9 @@ class Linear:
 
 
 def delegate_event(kind, attempt=1, sid=RUN_SID, **fields):
-    return DelegateEvent(kind, sid=sid, attempt=attempt, **fields)
+    return DelegateEvent.parse(
+        json.dumps({"v": 1, "kind": kind, "sid": sid, "attempt": attempt, **fields})
+    )
 
 
 class Events(RunCase):

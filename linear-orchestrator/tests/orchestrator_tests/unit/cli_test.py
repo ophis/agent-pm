@@ -294,6 +294,21 @@ class WritebackUsage(RunCase):
             ("two events", begun + "\n" + begun + "\n", workdir, "want one DelegateEvent line"),
             ("not JSON", "{\n", workdir, "not JSON"),
             (
+                "incomplete outcome",
+                json.dumps(
+                    {
+                        "v": 1,
+                        "kind": "finished",
+                        "sid": SID,
+                        "attempt": 1,
+                        "returncode": 0,
+                        "outcome": {"status": "done"},
+                    }
+                ),
+                workdir,
+                "outcome: want the fields",
+            ),
+            (
                 "another version",
                 begun.replace('"v":1', '"v":2').replace('"v": 1', '"v": 2'),
                 workdir,

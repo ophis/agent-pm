@@ -6,6 +6,8 @@ import unittest
 from agent_pm import delegate
 from agent_pm.delegate import event as event_package
 from agent_pm.delegate.event import DelegateEvent, DelegateEventError, DelegateEventKind
+from agent_pm.delegate.event.types import Outcome
+from agent_pm.utils import OutcomeStatus
 
 from delegate.tests.case import Case
 
@@ -19,7 +21,7 @@ FINISHED = DelegateEvent(
     sid=SID,
     attempt=1,
     returncode=0,
-    outcome={"status": "done", "title": "T", "summary": "S", "questions": [], "files": ["a"]},
+    outcome=Outcome(OutcomeStatus.DONE, "T", "S", files=["a"]),
     limit={"resets_at": 1760000000.5},
 )
 FAILED = DelegateEvent(
@@ -36,7 +38,7 @@ STAMPS = [
     ),
 ]
 LIMIT = 'limit: want null or {"resets_at": a number or null}'
-OUTCOME = "outcome: want null or an object with a str status"
+OUTCOME = "outcome: want the fields deliverable, files, questions, status, summary, title, url"
 
 
 def line(**data) -> str:
@@ -44,6 +46,53 @@ def line(**data) -> str:
 
 
 class EventLine(Case):
+    def test_parse_produces_a_complete_typed_outcome(self):
+        outcome = {
+            "status": "needs_input",
+            "title": "T",
+            "summary": "S",
+            "questions": ["Q"],
+            "url": "",
+            "files": [],
+            "deliverable": "",
+        }
+        parsed = DelegateEvent.parse(
+            line(v=1, kind="finished", returncode=0, outcome=outcome, **RUN)
+        )
+        self.assertIsInstance(parsed.outcome, Outcome)
+        self.assertIs(parsed.outcome.status, OutcomeStatus.NEEDS_INPUT)
+        self.assertEqual(json.loads(parsed.to_line())["outcome"], outcome)
+
+    def test_parse_rejects_incomplete_or_mistyped_outcomes(self):
+        outcome = {
+            "status": "done",
+            "title": "T",
+            "summary": "S",
+            "questions": [],
+            "url": "",
+            "files": [],
+            "deliverable": "",
+        }
+        invalid = [
+            {key: value for key, value in outcome.items() if key != missing} for missing in outcome
+        ]
+        invalid += [
+            {**outcome, key: value}
+            for key, value in (
+                ("status", "x"),
+                ("title", 1),
+                ("summary", None),
+                ("questions", [1]),
+                ("url", False),
+                ("files", "a"),
+                ("deliverable", []),
+                ("extra", "x"),
+            )
+        ]
+        for data in invalid:
+            with self.subTest(data=data), self.assertRaises(DelegateEventError):
+                DelegateEvent.parse(line(v=1, kind="finished", returncode=0, outcome=data, **RUN))
+
     def refused(self, text, message):
         with self.assertRaises(DelegateEventError) as caught:
             DelegateEvent.parse(text)
