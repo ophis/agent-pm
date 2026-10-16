@@ -42,7 +42,7 @@ SID = "0b6f2c1e-6d0a-4c1b-9a51-3f1f6b0e2a7d"
 
 PR = "https://github.com/acme/widgets/pull/1"
 
-VIEWER = "query { viewer { id } }"
+UNKNOWN = "query { organization { id } }"
 
 LINEAR_TIME = r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$"
 
@@ -76,6 +76,11 @@ class ServerCase(Case):
 
 
 class GraphQLProjection(ServerCase):
+    def test_viewer_follows_the_callers_key(self):
+        for gql, uid in ((self.gql, self.harness), (self.eng, self.engineer)):
+            with self.subTest(uid=uid):
+                self.assertEqual(gql(routing.Q_VIEWER), {"viewer": {"id": uid}})
+
     def test_projection_keeps_only_the_selection(self):
         want = {"issue": {"state": {"id": STATES["in_progress"]}}}
         self.assertEqual(self.gql(ops.Q_ISSUE_STATE, i="TASK-7"), want)
@@ -263,7 +268,7 @@ class GraphQLProjection(ServerCase):
 
     def test_an_unknown_query_and_a_bad_key_are_errors_and_logged(self):
         with self.assertRaises(LinearError) as cm:
-            self.gql(VIEWER)
+            self.gql(UNKNOWN)
         self.assertIn("fake: unknown query", str(cm.exception))
         stranger = fake_linear.FakeLinear()
         stranger.user("stranger@x.com", "Stranger", "stranger")
@@ -278,7 +283,7 @@ class GraphQLProjection(ServerCase):
         self.assertEqual(
             self.fake.requests,
             [
-                fake_linear.Request(VIEWER, HARNESS_EMAIL, {}, "unknown"),
+                fake_linear.Request(UNKNOWN, HARNESS_EMAIL, {}, "unknown"),
                 fake_linear.Request("linear.Q_USER", None, {"e": "me@x.com"}, "unauthorized"),
             ],
         )

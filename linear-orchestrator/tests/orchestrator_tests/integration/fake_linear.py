@@ -582,6 +582,9 @@ class FakeLinear:
             }
         }
 
+    def _viewer(self, caller, _v):
+        return {"viewer": self._person(caller["id"], caller)}
+
     def _teams(self, caller, v):
         return {"teams": {"nodes": [self._team()] if v.get("t") == TEAM else []}}
 
@@ -736,6 +739,7 @@ OPS = {
     "router.Q_RELATIONS": FakeLinear._issue,
     "router.Q_RECHECK": FakeLinear._issue,
     "router.Q_HISTORY": FakeLinear._issue,
+    "router.Q_VIEWER": FakeLinear._viewer,
     "router.issues": FakeLinear._board,
     "router.issues+relations": FakeLinear._board,
     "issues.Q_ISSUE": FakeLinear._issue,
