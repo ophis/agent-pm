@@ -24,8 +24,8 @@ Without the board, you can run agent-pm by talking to one agent, the manager. Op
 
 ![A manager session (left) coordinating engineer workers in a tmux grid](docs/images/demo.jpg)
 
-- **Left:** the manager. Here it lists which issues are running, waiting or not started, and reports what each worker just did.
-- **Right:** one pane per engineer worker, each building one issue in its own worktree. Panes fill a grid as workers start and close when their work is done.
+- **Left:** the manager, here Claude Code. It lists which issues are running, waiting or not started, and reports what each worker just did.
+- **Right:** one pane per engineer worker, each building one issue in its own worktree. Workers mix clients: most panes are Claude Code (`auto mode on` at the bottom), and the middle-left one is Codex (`GPT-6.1-Sol xhigh`, `Ask Codex to do anything`). Panes fill a grid as workers start and close when their work is done.
 
 Commands: [Quick start](#quick-start).
 
