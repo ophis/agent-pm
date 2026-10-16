@@ -191,7 +191,9 @@ class Queries(RunCase):
             (["resume"], record.to_line() + "\ninvalid"),
         ):
             with self.subTest(arguments=arguments, stdin=stdin):
-                with mock.patch.object(cli.LinearRun, "attach") as attach:
+                with mock.patch.object(
+                    ReadyDelegate, "attach", wraps=ReadyDelegate.attach
+                ) as attach:
                     result, output, errors = _call(arguments, stdin=stdin)
                 self.assertEqual((result, output), (2, ""))
                 self.assertTrue(errors)
