@@ -519,7 +519,8 @@ class Real(RealConfig):
                 "`gh pr checks <branch> --repo <host>/<owner>/<name> --watch --fail-fast`",
                 "`gh run view <run-id> --repo <host>/<owner>/<name> --log-failed`",
                 "a new build of your task's slash command ([Engineer › Autopilot](#autopilot))",
-                "[Output › Destination](#destination) updates the PR, then step 1",
+                "redo Done's `deliverable` and `autopilot`, then [Output › Destination](#destination) updates "
+                "the PR, then step 1",
                 "3 fix builds",
                 "20 minutes",
                 "[Engineer › Finish › Failure](#finish)",

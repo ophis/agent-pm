@@ -3,7 +3,6 @@
 """
 
 import json
-import subprocess
 import unittest
 
 from agent_pm.delegate.engine.ready_gate import gate
@@ -12,6 +11,7 @@ from agent_pm.delegate.event.types import Autopilot, AutopilotStatus, Outcome, O
 from agent_pm.utils import SHORT
 
 from delegate.tests.case import Case
+from delegate.tests.repo import PROCESS_ERRORS, fail, ok
 
 URL = "https://github.com/o/n/pull/7"
 HEAD = "a" * 40
@@ -32,14 +32,10 @@ def context(name, state):
 
 def view(checks=(), *, draft=True, state="OPEN", head=HEAD):
     data = {"state": state, "isDraft": draft, "headRefOid": head, "statusCheckRollup": list(checks)}
-    return subprocess.CompletedProcess([], 0, json.dumps(data), "")
+    return ok(json.dumps(data))
 
 
-def failed(stderr):
-    return subprocess.CompletedProcess([], 1, "", stderr)
-
-
-OK = subprocess.CompletedProcess([], 0, "", "")
+failed, OK = fail, ok()
 
 
 class Gh:
@@ -94,7 +90,7 @@ class Done(Base):
             ("ancestor head", Autopilot(AutopilotStatus.CONVERGED, OLDER), view(), "G2: autopilot head bbbbbbbbbbbb is not PR head aaaaaaaaaaaa"),
             ("pending", CONVERGED, view([run_("lint"), run_("unit", None, "IN_PROGRESS")]), "G3: check unit IN_PROGRESS"),
             ("failure", CONVERGED, view([run_("lint"), run_("unit", "FAILURE")]), "G3: check unit FAILURE"),
-            ("all skipped", CONVERGED, view([run_("a", "SKIPPED"), run_("b", "SKIPPED")]), "G3: CI 未运行 (all 2 checks skipped)"),
+            ("all skipped", CONVERGED, view([run_("a", "SKIPPED"), run_("b", "SKIPPED")]), "G3: CI did not run (CI 未运行): all 2 checks skipped"),
         )  # fmt: skip
         for why, autopilot, answer, reason in cases:
             with self.subTest(why):
@@ -192,13 +188,13 @@ class Errors(Base):
     def test_a_failed_view_fails_without_touching_the_pr(self):
         for answer, reason in (
             (failed("HTTP 401: Bad credentials\n(https://api.github.com)"), "gh pr view: HTTP 401: Bad credentials (https://api.github.com)"),
-            (subprocess.TimeoutExpired(VIEW, SHORT), "gh pr view: TimeoutExpired"),
-            (FileNotFoundError(2, "No such file or directory", "gh"), "gh pr view: FileNotFoundError"),
-            (subprocess.CompletedProcess([], 0, "not json", ""), "gh pr view: "),
-            (subprocess.CompletedProcess([], 0, "[]", ""), "gh pr view: "),
-            (subprocess.CompletedProcess([], 0, json.dumps({"state": "OPEN", "isDraft": "no", "headRefOid": HEAD, "statusCheckRollup": []}), ""), "gh pr view: "),
-            (subprocess.CompletedProcess([], 0, json.dumps({"state": "OPEN", "isDraft": True, "headRefOid": HEAD, "statusCheckRollup": {}}), ""), "gh pr view: "),
-            (subprocess.CompletedProcess([], 0, json.dumps({"state": "OPEN", "isDraft": True, "statusCheckRollup": []}), ""), "gh pr view: "),
+            (PROCESS_ERRORS[1], "gh pr view: TimeoutExpired"),
+            (PROCESS_ERRORS[0], "gh pr view: OSError: gh unavailable"),
+            (ok("not json"), "gh pr view: "),
+            (ok("[]"), "gh pr view: "),
+            (ok(json.dumps({"state": "OPEN", "isDraft": "no", "headRefOid": HEAD, "statusCheckRollup": []})), "gh pr view: "),
+            (ok(json.dumps({"state": "OPEN", "isDraft": True, "headRefOid": HEAD, "statusCheckRollup": {}})), "gh pr view: "),
+            (ok(json.dumps({"state": "OPEN", "isDraft": True, "statusCheckRollup": []})), "gh pr view: "),
         ):  # fmt: skip
             with self.subTest(reason=reason, answer=type(answer).__name__):
                 self.assert_failed(self.go(Gh(answer)), reason)
@@ -209,7 +205,7 @@ class Errors(Base):
         self.assert_failed_after_ready(gated, "gh pr ready: GraphQL: forbidden")
 
     def test_a_timed_out_ready_fails(self):
-        gated = self.go(Gh(view(), ready=subprocess.TimeoutExpired(READY, SHORT)))
+        gated = self.go(Gh(view(), ready=PROCESS_ERRORS[1]))
         self.assert_failed_after_ready(gated, "gh pr ready: TimeoutExpired")
 
     def assert_failed_after_ready(self, gated, reason):

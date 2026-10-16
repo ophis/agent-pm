@@ -147,7 +147,7 @@ def _judge(autopilot: Autopilot | None, view: _View) -> str | None:
         if kind in (_Check.PENDING, _Check.FAILURE):
             return f"G3: check {name} {said}"
     if checks and all(kind == _Check.SKIPPED for _, kind, _ in checks):
-        return f"G3: CI 未运行 (all {len(checks)} checks skipped)"
+        return f"G3: CI did not run (CI 未运行): all {len(checks)} checks skipped"
     return None
 
 

@@ -46,6 +46,7 @@ PULL = {
     "url": PR,
     "state": "OPEN",
     "baseRefName": "main",
+    "isDraft": True,
     "headRefName": BRANCH,
     "isCrossRepository": False,
     "author": {"login": LOGIN},
@@ -154,7 +155,7 @@ class Rework(BinFlow):
         self.assertTrue(os.path.isdir(worktree["worktree"]), worktree)
         status = self.ran("status.json")
         self.assertEqual(
-            status["pr"], {k: PULL[k] for k in ("number", "url", "state", "baseRefName")}
+            status["pr"], {k: PULL[k] for k in ("number", "url", "state", "baseRefName", "isDraft")}
         )
         self.assertEqual(
             status["user"],

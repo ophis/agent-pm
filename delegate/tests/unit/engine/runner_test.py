@@ -4,7 +4,6 @@ import io
 import json
 import os
 import signal
-import subprocess
 from contextlib import redirect_stderr
 from datetime import datetime
 from unittest import mock
@@ -31,6 +30,7 @@ from agent_pm.utils import Stopped
 
 from delegate.tests.case import Case
 from delegate.tests.replies import bare, block
+from delegate.tests.repo import ok
 from delegate.tests.runner import (
     INVALID,
     INVALID_ERROR,
@@ -102,7 +102,7 @@ class InProcess(Base):
                 def gh(argv, calls=calls, **kw):
                     calls.append((argv, kw["timeout"]))
                     out = json.dumps(view) if argv[2] == "view" else ""
-                    return subprocess.CompletedProcess(argv, 0, out, "")
+                    return ok(out)
 
                 with mock.patch("subprocess.run", side_effect=gh):
                     r = self.go(said(START, block(data)), output=PR)

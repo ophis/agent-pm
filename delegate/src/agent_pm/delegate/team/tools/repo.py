@@ -11,8 +11,8 @@ worktree prints {"repo", "host", "default", "branch", "commit", "worktree", "per
 "baseRefName", "isDraft"} or null; `base` is the PR's baseRefName, else BASE, else the default
 branch. `user` and `others` are PR comments and reviews by the user (core config's `users`, else the
 gh login) and by anyone else since B's latest own commit (no merge; not on origin/<base>, as it was
-before a merged PR's merge), all when none. `plan_docs` are B's autopilot plan docs in <worktree>/.autopilot/
-{"path", "phase"}, phase `S<n>` or `done`, newest (last modified) last.
+before a merged PR's merge), all when none. `plan_docs` are B's autopilot plan docs in
+<worktree>/.autopilot/ {"path", "phase"}, phase `S<n>` or `done`, newest (last modified) last.
 
 SLUG: 1-100 of [A-Za-z0-9._-], default B with / → -. REPO is `owner/name`, `host/owner/name`,
 `https://host/owner/name` or a local clone's path (/ or ~), named by its origin and outside the temp
