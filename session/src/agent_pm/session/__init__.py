@@ -8,6 +8,8 @@ from agent_pm.session.engine.config import CONFIG_RESOURCES, read_config
 from agent_pm.session.engine.records import RunLog
 from agent_pm.session.engine.status_log import SessionStatusLog
 from agent_pm.session.engine.types import (
+    SESSION_NAME,
+    SESSION_NAME_RULE,
     Access,
     Activity,
     Blocked,
@@ -49,6 +51,8 @@ from agent_pm.session.hosts.base import (
 
 __all__ = [
     "CONFIG_RESOURCES",
+    "SESSION_NAME",
+    "SESSION_NAME_RULE",
     "read_config",
     "SIGNALS",
     "Session",

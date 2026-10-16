@@ -112,6 +112,8 @@
  "agent_pm.session.RunLog.read": "def(self:POSITIONAL_OR_KEYWORD)",
  "agent_pm.session.RunLog.session": "def(self:POSITIONAL_OR_KEYWORD, sid:POSITIONAL_OR_KEYWORD)",
  "agent_pm.session.RunLog.stamp": "staticmethod()",
+ "agent_pm.session.SESSION_NAME": "value Pattern",
+ "agent_pm.session.SESSION_NAME_RULE": "value '[A-Za-z0-9_-]+ but not none'",
  "agent_pm.session.SIGNALS": "value tuple(1, 15, 2)",
  "agent_pm.session.Session": "class(abc.ABC)()",
  "agent_pm.session.Session.alive": "def(self:POSITIONAL_OR_KEYWORD)",

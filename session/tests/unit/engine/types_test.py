@@ -217,11 +217,13 @@ class WhatToStart(Case):
 
 class ReservedName(Case):
     def test_none_alone_is_no_session_name_but_a_tag(self):
-        self.assertIsNone(engine_types.SESSION_NAME.fullmatch("none"))
+        self.assertIn("SESSION_NAME", session.__all__)
+        self.assertIn("SESSION_NAME_RULE", session.__all__)
+        self.assertIsNone(session.SESSION_NAME.fullmatch("none"))
         for name in ("none-1", "None", "nonex", "a_none"):
             with self.subTest(name=name):
-                self.assertIsNotNone(engine_types.SESSION_NAME.fullmatch(name))
-        self.assertEqual(engine_types.SESSION_NAME_RULE, "[A-Za-z0-9_-]+ but not none")
+                self.assertIsNotNone(session.SESSION_NAME.fullmatch(name))
+        self.assertEqual(session.SESSION_NAME_RULE, "[A-Za-z0-9_-]+ but not none")
         self.assertIsNotNone(engine_types.TAG.fullmatch("none"))
         spec = Spec(workdir="/w", access=Access(cwd="/w"), reply_tags=("none", "x"))
         self.assertEqual(spec.reply_tags, ("none", "x"))

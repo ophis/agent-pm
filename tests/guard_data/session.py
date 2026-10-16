@@ -50,6 +50,8 @@ OBJECT_EXPORT_MODULES = (
 
 OBJECT_EXPORTS_ALLOWED = {
     (f"{PKG}.{SESSION}", "read_config"): "TASK-389 layer-owned configuration entry point",
+    (f"{PKG}.{SESSION}", "SESSION_NAME"): "TASK-526 shared session-name validation pattern",
+    (f"{PKG}.{SESSION}", "SESSION_NAME_RULE"): "TASK-526 shared session-name validation message",
 }
 
 
