@@ -143,7 +143,7 @@ class RepositoryCleanup(PruneScenario):
         self.assertEqual(again.calls.count(prune.Q_ISSUE), 4)
         self.assertEqual(self.closed(), [A])
 
-    def test_no_agent_files_no_candidate(self):
+    def test_young_workdirs_without_agent_files_are_queried_and_kept(self):
         old = os.path.join(self.work, "TASK-49", "src", "o", "repo")
         os.makedirs(os.path.join(old, ".git"))
         self.record("TASK-48", OTHER_SID, [B], agent=False)
