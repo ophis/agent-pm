@@ -9,6 +9,7 @@ import unittest
 from datetime import UTC, datetime, timedelta
 
 from agent_pm import delegate
+from agent_pm.delegate.engine.config import read_config
 from agent_pm.linear_orchestrator.engine import ops, runs
 from agent_pm.session import Session
 from orchestrator_tests.config_fixtures import HARNESS_DELEGATE
@@ -183,7 +184,7 @@ class PruneSessionDelegate(FakeDelegate):
         return HARNESS_DELEGATE.resolve(role, task, overlays=overlays)
 
     def close(self):
-        Session.configure_from(delegate.read_config())
+        Session.configure_from(read_config())
         Session.host().attach(self.status().name).close()
         super().close()
 

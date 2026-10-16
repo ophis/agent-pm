@@ -103,6 +103,10 @@ NO_COVER_ALLOWED = {
 
 PYTHON_CODE_ALLOWED = {
     (
+        "session/tests/integration/engine/base_integration_test.py",
+        "496cc309241d2277a901f9c83282e8e69274d487a82905a947bcd0e871f75c3e",
+    ): "Session class-method dispatch before and after configuration requires a fresh interpreter; Hosts is imported from its defining module after its public export was removed.",
+    (
         "session/tests/integration/extension_client_integration_test.py",
         "1813480e07c687e6f048d7f9359d0ed876f19c706a3ef5146952d8bbff26777b",
     ): "Loads the unexported session config reader in a fresh installed-layout interpreter to configure and launch the extension Client.",

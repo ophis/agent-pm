@@ -77,6 +77,6 @@ PYTHON_CODE_ALLOWED = {
     ): "Two-process detach race needs PersistentSession's disk-backed fake, injectable only as a session_cls class object.",
     (
         "delegate/tests/integration/harness_owner_integration_test.py",
-        "6a18b2ce1783563b900b1bd7c36498b5c3fa5e109f2efcc7ff728f5f3d0329ef",
+        "844f553ea872f665a624970b7315cc589051acd75796dd8f2a437a0c47327385",
     ): "Foreground owner process needs the scripted process-free HarnessSession (delegate.tests), injectable only as a session_cls class object.",
 }
