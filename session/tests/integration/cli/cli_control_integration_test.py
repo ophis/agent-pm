@@ -181,8 +181,10 @@ class ControlTest(ControlCase):
     def test_close_show_and_hide_refuse_a_record_whose_sid_its_session_does_not_carry(self):
         w1 = self.done("w1")
         pid = self.calls("w1")[0]["pid"]
+        self.tmux("kill-pane", "-t", self.server.pane_of("w1"))
+        # its client-detached hook marks it hidden and drops its @pane
+        live_tmux.wait(lambda: self.status("w1")[0].hidden, what="w1 hidden")
         pane = self.server.pane_of("w1")
-        self.tmux("kill-pane", "-t", pane)
         reused = dataclasses.replace(w1, sid=str(uuid.uuid4()))
         for verb in ("show", "hide", "close"):
             with self.subTest(verb=verb):
@@ -234,13 +236,11 @@ class ControlTest(ControlCase):
             self.assert_printed(self.session("hide", *names, stdin=stdin), "")
             self.assertNotIn(pane, self.server.panes(f"={MANAGER}:"))
             self.assertEqual(self.sessions(), [MANAGER, "w1"])
-            self.assertEqual(self.server.option("w1", "@hidden"), "1")
             self.assertEqual(
                 self.status(stdin=lines(w1)), [live("w1", "done", cwd=self.cwd, hidden=True)]
             )
         self.assert_printed(self.session("show", stdin=lines(w1)), "")
         self.shows("w1", f"={MANAGER}:")
-        self.assertEqual(self.server.option("w1", "@hidden"), "0")
         self.assertEqual(self.status("w1"), [live("w1", "done", cwd=self.cwd)])
         self.assertEqual(len(self.calls("w1")), 1)
 
@@ -256,7 +256,8 @@ class ControlTest(ControlCase):
         res = self.session("show", stdin=lines(bad, w2))
         self.assertEqual((res.returncode, res.stdout), (1, ""), res.stderr)
         self.assertEqual(
-            res.stderr, f"{PROG}: w1: display 'a/b/c/d': not <opener>[/<split>[/<split_from>]]\n"
+            res.stderr,
+            f"{PROG}: w1: display 'a/b/c/d': not <opener>[/<split>[/<split_from>[/hidden]]]\n",
         )
         self.shows("w2", f"={MANAGER}:")
 

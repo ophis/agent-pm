@@ -266,9 +266,9 @@ class Host(ABC):
 
 
 class Showable(ABC):
-    """show: None once shown, else an attach command; command: a shell command the Host runs to
-    show it instead, `{{session}}` the session name; hide: undoes show, marking it hidden until a
-    show; layout: display completed once its display destination is found.
+    """show: None once shown, else an attach command; command: a shell command the Host runs
+    instead, `{{session}}` the session name; hide: undoes show, hidden until a show (if_closed:
+    only once closed by hand); layout: display completed once its destination is found.
     """
 
     @abstractmethod
@@ -277,7 +277,7 @@ class Showable(ABC):
     ) -> str | None: ...
 
     @abstractmethod
-    def hide(self, name: str) -> None: ...
+    def hide(self, name: str, *, if_closed: bool = False) -> None: ...
 
     @abstractmethod
     def attach_command(self, name: str) -> str: ...

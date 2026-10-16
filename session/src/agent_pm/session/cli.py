@@ -16,6 +16,7 @@ its keys in order; a failed key gets one stderr line and no stdout line, and the
 from __future__ import annotations
 
 import argparse
+import functools
 import os
 import re
 import sys
@@ -29,6 +30,7 @@ from agent_pm.session.engine.base import Session
 from agent_pm.session.engine.config import read_config
 from agent_pm.session.engine.types import (
     COMMAND,
+    NO_DISPLAY,
     SESSION_NAME,
     SESSION_NAME_RULE,
     ConfigError,
@@ -119,7 +121,11 @@ def _parser(hosts: Hosts | None) -> argparse.ArgumentParser:
         metavar="NAME=VALUE",
         help="set in its environment; repeatable, the last of a NAME wins",
     )
-    p.add_argument("--display", metavar="D", help="where its Host shows it (see below)")
+    p.add_argument(
+        "--display",
+        metavar="D",
+        help=f"where its Host shows it; {NO_DISPLAY}: shown nowhere until show (see below)",
+    )
     for cmd, text in (
         ("restart", "restart a worker's session in place; print its Record"),
         ("resume", "print a live worker's Record, else resume it; print its Record"),
@@ -135,6 +141,12 @@ def _parser(hosts: Hosts | None) -> argparse.ArgumentParser:
     ):
         p = sub.add_parser(cmd, help=text, description=f"{text}: names, else Records on stdin.")
         p.add_argument("names", nargs="*", type=_name, metavar="NAME")
+        if cmd == "hide":
+            p.add_argument(
+                "--if-closed",
+                action="store_true",
+                help="only once what show opened was closed by hand (hooks)",
+            )
     p = sub.add_parser(
         "ls",
         help="list sessions",
@@ -298,9 +310,9 @@ def _show(name: str, record: Record | None, hosts: Hosts) -> None:
             _say(f"session {session}: not shown; attach with {command}")
 
 
-def _hide(name: str, record: Record | None, hosts: Hosts) -> None:
+def _hide(name: str, record: Record | None, hosts: Hosts, *, if_closed: bool = False) -> None:
     for session in _carried(name, record, hosts):
-        _shown(session, hosts).hide(session)
+        _shown(session, hosts).hide(session, if_closed=if_closed)
 
 
 def _attach_command(name: str, record: Record | None, hosts: Hosts) -> str:
@@ -324,9 +336,12 @@ BATCH = {
 
 def _batch(args, hosts: Hosts) -> int:
     failed = 0
+    act = BATCH[args.cmd]
+    if args.cmd == "hide":
+        act = functools.partial(_hide, if_closed=args.if_closed)
     for name, record in _keys(args):
         try:
-            line = BATCH[args.cmd](name, record, hosts)
+            line = act(name, record, hosts)
             if line is not None:
                 print(line, flush=True)
         except NotShowable as error:
@@ -402,7 +417,11 @@ def _start(args, flags: list[str], hosts: Hosts, start_sid: str | None) -> int:
     )
     worker.check(prompt=args.prompt, resume=args.resume is not None)
     with worker.locked():
-        record = worker.start(prompt=args.prompt, resume=args.resume is not None)
+        record = worker.start(
+            prompt=args.prompt,
+            resume=args.resume is not None,
+            hidden=args.display == NO_DISPLAY,
+        )
     print(record.to_line())
     return 0
 

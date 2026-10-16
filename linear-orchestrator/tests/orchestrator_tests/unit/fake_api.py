@@ -46,7 +46,7 @@ class FakeApi:
         self.order.append(("show", name, display, command))
         return _answer(self.shown)
 
-    def hide(self, name):
+    def hide(self, name, *, if_closed=False):
         self.order.append(("hide", name))
 
     def inspect(self, spec):

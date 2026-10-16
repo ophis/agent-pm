@@ -545,6 +545,11 @@ class Tmux:
             raise TuiError(f"tmux: {error(res)}")
         return _process_id(res.stdout.strip())
 
+    def sessions(self) -> list[str] | None:
+        """The sessions' names: [] when no server runs, None when tmux fails."""
+        found = self._table(["list-sessions", "-F", "#{session_name}"], 1)
+        return None if found is None else [name for (name,) in found if name]
+
     def listing(self, match=None) -> list[dict] | None:
         """Sessions named NAME that match (compiled; None: all) fullmatches, by name: tags, pane
         state, `shown` (no client: None; else the newest client's host session, "" if none or not
