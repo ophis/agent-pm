@@ -1,6 +1,6 @@
 """manager/skills/manage/SKILL.md (/agent-pm:manage): it leaves commands to /agent-pm:tmux, every
 section it cites there exists, it writes no retired command, and its rules for closing sessions,
-Codex issues, decision markers and the one commit exception agree.
+Codex issues, decision markers, board proposals and the one commit exception agree.
 """
 
 import os
@@ -15,6 +15,7 @@ from manager.tests.skills.tmux import (
     paths,
     readme_sections,
     references,
+    section,
     sections,
 )
 
@@ -70,6 +71,28 @@ class Manage(Case):
         self.assertNotIn("<the user's name>", body("manage"))
         self.assertRegex(rule("Clear small"), r"commit only, no push")
         self.assertIn(".gitignore", rule("Commit or push only when asked"))
+
+    def test_approved_board_proposals_run_after_a_state_reread(self):
+        board = section("manage", "The task board")
+        proposals = rule("**Board proposals**")
+        self.assertIn(proposals, board)
+        for literal in (
+            "once the user approves",
+            "without asking again",
+            "Before a cancel or split residue, re-read the old issue's state",
+            "no longer Backlog, Todo or In Review → cross-link instead and tell the user",
+            "**Split residue** first",
+            "in the old issue's state (In Review → Todo)",
+            "its project, assignee and labels",
+            "`related` to both the proposing issue and the old one",
+            "re-point each issue it blocks in the old issue's team to be blocked by the proposing issue "
+            "(and the residue issue, if any)",
+            "comment on each blocked issue in another team",
+            "Canceled as a Duplicate of the proposing issue",
+            "comment the reason and the proposing issue's link",
+            "**Cross-link**: a `related` link and a comment with the reason on each",
+        ):
+            self.assertIn(literal, proposals, literal)
 
     def test_the_files_and_readme_sections_it_names_exist(self):
         self.assertTrue(paths("manage"))

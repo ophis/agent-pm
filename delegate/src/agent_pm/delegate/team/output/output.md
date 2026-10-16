@@ -15,7 +15,7 @@ Your result is an **outcome**, returned per [Output › Return](#return), plus a
 Statuses:
 
 - **done** → deliver the deliverable per [Output › Destination](#destination), nowhere else.
-- **needs_input** (**too vague**): the input lacks a clear question, scope or deliverable, or anything else your task requires. The deliverable may be empty.
+- **needs_input** (**too vague**): the input lacks a clear question, scope or deliverable, or anything else your task requires; or `covered` related work ([Principles › Overlap](#overlap)). The deliverable may be empty.
 - **failed**: nothing usable; `summary` says what failed.
 
 The input gives an earlier version → revise it, keeping what still holds.

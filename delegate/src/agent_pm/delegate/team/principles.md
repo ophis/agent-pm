@@ -22,3 +22,32 @@ Documents and prompts you write: fewest words, full information.
 - Say what to do; use a ban only for a hard guardrail.
 - **Diagrams and tables**: a flow of 3+ steps or with branches, a structure, a sequence or a timeline → a Mermaid diagram (`flowchart`, `sequenceDiagram` or `timeline` only; short node labels); a comparison of several items → a table; anything simpler → a list or `X → Y`, not prose. Right after a diagram, a caption saying only what it can't carry (sources, confidence, what an edge means, reading order), from facts already in that section, never restating its nodes; delete the text the diagram replaces.
 - Reports and PRDs, headings and fixed labels included, are in {{language}}; a `<X, translated>` in a template or task is X in {{language}}. Ids (`FR-<n>`, `NFR-<n>`, `[n]`, `primary`, `secondary`, `code`), proper nouns and acronyms stay English. A term's first mention adds one gloss, its {{language}} rendering (for an acronym, of its full name); none when the term is common in {{language}}, and none in a heading. Later mentions: just the English.
+
+## Overlap
+
+The Input has a `## Related work` section → before your task's steps, judge each **candidate** in it against the input's request (the first row that fits wins), unless the user's later words say to go on without that. A candidate's **state**: finished, awaiting review, in progress, not started or canceled.
+
+| Verdict | When |
+|---|---|
+| `covered` | it does all of the request, by **evidence** |
+| `supersedes` | the request holds all of it, or updates it for a scope or codebase change |
+| `intersects` | the two share scope not yet done, and the candidate has scope the request lacks |
+| `partial` | a finished or awaiting-review candidate's output already answers part of the request |
+| `none` | else |
+
+- **Evidence**, by **state**: finished or awaiting review: its output URL answering all of the request's requirements; in progress or canceled: its description covering all of them; not started: never `covered`; the same scope is `supersedes`. `covered` without **evidence** → at most `partial`.
+- `covered` beats every other verdict: do none of the work; return `needs_input`, its `questions` naming the candidate's id and **evidence** (canceled: its last comment, as the cancel reason; in progress: that it is running), and suggest closing `<id>` as a duplicate of it.
+- `partial` → do only the part not yet answered; the deliverable cites the candidate and its output as sources.
+- Across candidates, skip any part a partial candidate already answers, whatever another candidate's verdict.
+- `supersedes`, `intersects` → by **state**:
+
+| Verdict | State | Do | **Board proposal** |
+|---|---|---|---|
+| `supersedes` | not started, awaiting review | all of the request | cancel |
+| `intersects` | not started, awaiting review | all of the request, the shared part included | split residue, then cancel |
+| `supersedes` | finished | all of the request; the deliverable lists its output as an earlier version | cross-link |
+| `intersects` | finished | as `partial` | none |
+| `supersedes`, `intersects` | in progress, canceled | all of the request | cross-link |
+
+- **Board proposal**: appended to `summary` past its line limit, one line per action: `<candidate id>: <cancel | split residue | cross-link>: <reason>`; a split residue's line is followed by indented `Title:` and `Description:` lines for the residue (the candidate's scope the request leaves). Cancel: as a duplicate of `<id>`; cross-link: a `related` link and a comment on each. The manager carries them out once the user approves.
+- `none` → no mention.

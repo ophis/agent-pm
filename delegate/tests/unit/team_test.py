@@ -325,6 +325,50 @@ class Real(RealConfig):
             for cap in ("3000 words", "5 sentences"):
                 self.assertNotIn(cap, prompt, (role, task, cap))
 
+    def test_every_run_judges_related_work_first_and_only_proposes_board_changes(self):
+        for role, task in runs():
+            prompt = composed(role, task)[0]
+            overlap = section(prompt, "Overlap")
+            for literal in (
+                "Input has a `## Related work` section",
+                "before your task's steps",
+                "(the first row that fits wins)",
+                "the candidate has scope the request lacks",
+                "one line per action",
+                "the user's later words say to go on",
+                "finished, awaiting review, in progress, not started or canceled",
+                *(f"| `{v}` |" for v in ("covered", "supersedes", "intersects", "partial", "none")),
+                "not started: never `covered`; the same scope is `supersedes`",
+                "`covered` without **evidence** → at most `partial`.",
+                "Across candidates, skip any part a partial candidate already answers, whatever "
+                "another candidate's verdict.",
+                "`covered` beats every other verdict",
+                "return `needs_input`, its `questions` naming the candidate's id and **evidence**",
+                "canceled: its last comment, as the cancel reason",
+                "suggest closing `<id>` as a duplicate of it",
+                "| `supersedes` | not started, awaiting review | all of the request | cancel |",
+                "| `intersects` | not started, awaiting review | all of the request, the shared part "
+                "included | split residue, then cancel |",
+                "| `supersedes` | finished |",
+                "lists its output as an earlier version",
+                "| `intersects` | finished | as `partial` |",
+                "| `supersedes`, `intersects` | in progress, canceled |",
+                "only the part not yet answered; the deliverable cites the candidate and its output as sources",
+                "`<candidate id>: <cancel | split residue | cross-link>: <reason>`",
+                "indented `Title:` and `Description:` lines for the residue",
+                "Cancel: as a duplicate of `<id>`",
+                "`none` → no mention.",
+            ):
+                self.assertIn(literal, overlap, (role, task, literal))
+            rows = [
+                overlap.index(f"| `{v}` |")
+                for v in ("covered", "supersedes", "intersects", "partial", "none")
+            ]
+            self.assertEqual(rows, sorted(rows), (role, task))
+            self.assertIn(
+                "or `covered` related work ([Principles › Overlap](#overlap))", prompt, (role, task)
+            )
+
     def test_templates_put_the_summary_first_one_fact_per_item_and_point_to_the_diagram_rule(self):
         pm, light = composed("pm", "product-design")[0], composed("researcher", "research")[0]
         point = "[Principles › Writing › Diagrams and tables](#writing)"
