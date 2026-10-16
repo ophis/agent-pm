@@ -1,10 +1,10 @@
 # AGENTS.md
 
-Test boundaries and commands: README.md › Tests.
+Test boundaries and commands: `docs/tests.md`.
 
 ## Gotchas
 
-- This file never loads in an agent run outside a trusted cwd (README › Install). An agent run reaches only its cwd, `<work_dir>/work/<ID>/agent/` and the config's `read`/`write` dirs: give a task a new path there, or it stalls on a permission nobody can grant.
+- This file never loads in an agent run outside a trusted cwd (`docs/sessions.md` › Session settings). An agent run reaches only its cwd, `<work_dir>/work/<ID>/agent/` and the config's `read`/`write` dirs: give a task a new path there, or it stalls on a permission nobody can grant.
 - Input rendering and write-back changes: `linear-orchestrator/tests/orchestrator_tests/unit/engine/inputs_test.py` and `linear-orchestrator/tests/orchestrator_tests/unit/engine/writeback_test.py` pin input text and Linear calls.
 - Every task has exactly one `[agent-pm-progress:start]` line and no `budget` one, which start replaced (`delegate/tests/unit/team_test.py` checks): without the start report the Delegate logs `missing progress mark: start`, write-back posts no start comment, and a build's `issues.build_cutoff` loses its `Build started` cutoff.
 - Never name Linear in the team text (`delegate/src/agent_pm/delegate/team/`) or skills.
@@ -15,7 +15,7 @@ Test boundaries and commands: README.md › Tests.
 - Tmux implementation: `session/src/agent_pm/session/hosts/tmux/` (`TmuxHost`: `host.py`; the `Tmux`, `Grid`, `Iterm` and `Placement` it holds: `transport.py`, `grid.py`, `iterm.py`, `placement.py`). `/agent-pm:manage` (`manager/skills/manage/SKILL.md`) reaches it only through `agent-pm-session`.
 - Pty implementation: `session/src/agent_pm/session/hosts/pty/` (`PtyHost`: `host.py`; the supervisor holding each session's pty: `supervisor.py`).
 - The session's and delegate's public interfaces are frozen: `tests/guard_checks/exports.py` `session_interface_snapshot` and `delegate_interface_snapshot` (who may change `tests/session_interface.json` and `tests/delegate_interface.json`: their docstrings).
-- Keep `<work_dir>/logs/runs.jsonl` (README › Operating).
+- Keep `<work_dir>/logs/runs.jsonl` (`docs/board.md` › Operating).
 - A `[local_clones]` clone must not move: that breaks its worktrees. Run `git -C <new path> worktree repair`, then update the entry.
 
 ## Import rules
@@ -32,4 +32,4 @@ Vulture scans only the five `src` trees, so code only tests use is dead: delete 
 
 ## Domain docs
 
-Single-context: root `CONTEXT.md`. `docs/` (ADRs, agent notes) is gitignored: local only.
+Single-context: root `CONTEXT.md`. User docs: `docs/*.md`, indexed in `README.md` › Docs. `docs/adr/`, `docs/agents/`, `docs/handoffs/` and `docs/grill-engineering-comparison.md` are gitignored: local only.

@@ -16,7 +16,7 @@ SKILL_DIR = "${CLAUDE_SKILL_DIR}"
 PATH = re.compile(
     r"`((?:\$\{CLAUDE_SKILL_DIR\}/)?[\w.-]+(?:/[\w.-]+)*\.(?:md|toml|py)|\$\{CLAUDE_SKILL_DIR\}/[\w./-]+)`"
 )
-README = re.compile(r"`README\.md`((?: › [A-Z][\w ]*[a-z])+)")
+DOC_SECTION = re.compile(r"`([\w./-]+\.md)`((?: › [A-Z][\w ]*[a-z])+)")
 
 
 def text(skill: str) -> str:
@@ -98,9 +98,9 @@ def paths(skill: str) -> list[str]:
     ]
 
 
-def readme_sections(skill: str) -> list[list[str]]:
-    """Each `README.md` › A › B the skill cites, as [A, B]."""
-    return [chain.split(" › ")[1:] for chain in README.findall(body(skill))]
+def doc_sections(skill: str) -> list[tuple[str, list[str]]]:
+    """Each `<path>.md` › A › B the skill cites, as (path, [A, B])."""
+    return [(path, chain.split(" › ")[1:]) for path, chain in DOC_SECTION.findall(body(skill))]
 
 
 def example(skill: str, prefix: str, *having: str) -> str:
