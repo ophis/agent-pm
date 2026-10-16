@@ -4,7 +4,7 @@ import os
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from enum import StrEnum
+from enum import IntEnum, StrEnum
 from typing import Literal
 
 from agent_pm import delegate
@@ -144,16 +144,25 @@ class Issue:
     handoff: Handoff | None = field(kw_only=True)
 
 
+class Group(IntEnum):
+    """A Related work issue's rank: its state's place in the section's order."""
+
+    DONE = 0
+    IN_REVIEW = 1
+    IN_PROGRESS = 2
+    TODO = 3
+    BACKLOG = 4
+    CANCELED = 5
+
+
 @dataclass(frozen=True)
 class Found:
-    """A first-claim search's issue candidate: group is its state's rank (0 Done … 5 Canceled);
-    last_comment only for a Canceled one.
-    """
+    """A first-claim search's issue candidate; last_comment only for a Canceled one."""
 
     identifier: str
     title: str
     state: str
-    group: int
+    group: Group
     urls: tuple[str, ...]
     description: str
     last_comment: str

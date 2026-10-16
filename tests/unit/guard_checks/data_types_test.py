@@ -171,6 +171,7 @@ class TypesOnly(Sample):
                 [],
             ),
             ("from enum import StrEnum\nclass Choice(StrEnum):\n    ONE = 'one'\n", "types.py", []),
+            ("from enum import IntEnum\nclass Rank(IntEnum):\n    ONE = 1\n", "types.py", []),
             ("import enum as e\nclass Choice(e.StrEnum):\n    ONE = 'one'\n", "types.py", []),
             (
                 "def one(): pass\nasync def two(): pass\n",

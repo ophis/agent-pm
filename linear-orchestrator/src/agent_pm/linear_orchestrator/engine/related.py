@@ -10,6 +10,7 @@ from agent_pm.linear_orchestrator.engine.config import TASKS
 from agent_pm.linear_orchestrator.engine.types import (
     ISSUE_ID,
     Found,
+    Group,
     InputError,
     LinearError,
     Ref,
@@ -71,15 +72,19 @@ Q_SEARCH = f"query($t: String!, $f: IssueFilter) {{ {_FOUND} }}"
 Q_SEARCH_IDS = f"query($t: String!, $f: IssueFilter, $n: IssueFilter) {{ {_FOUND} {_NAMED} }}"
 Q_IDS = f"query($n: IssueFilter) {{ {_NAMED} }}"
 Q_UPSTREAM = "query($i: String!) { issue(id: $i) { identifier description } }"
-DONE, IN_REVIEW, IN_PROGRESS, TODO, BACKLOG, CANCELED = range(6)
 GROUP_BY_STATE = {
-    State.DONE: DONE,
-    State.IN_REVIEW: IN_REVIEW,
-    State.IN_PROGRESS: IN_PROGRESS,
-    State.TODO: TODO,
-    State.CANCELED: CANCELED,
+    State.DONE: Group.DONE,
+    State.IN_REVIEW: Group.IN_REVIEW,
+    State.IN_PROGRESS: Group.IN_PROGRESS,
+    State.TODO: Group.TODO,
+    State.CANCELED: Group.CANCELED,
 }
-GROUP_BY_TYPE = {"completed": DONE, "started": IN_PROGRESS, "unstarted": TODO, "canceled": CANCELED}
+GROUP_BY_TYPE = {
+    "completed": Group.DONE,
+    "started": Group.IN_PROGRESS,
+    "unstarted": Group.TODO,
+    "canceled": Group.CANCELED,
+}
 PREFIX = re.compile(rf"^(?:{'|'.join(sorted(t.prefix for t in TASKS.values() if t.prefix))}): ")
 
 
@@ -134,7 +139,7 @@ def _chain(gql, issue):
 def _found(n, states):
     st, comments = n["state"], n["comments"]["nodes"]
     by_id = {states[k]: g for k, g in GROUP_BY_STATE.items()}
-    group = by_id.get(st["id"], GROUP_BY_TYPE.get(st["type"], BACKLOG))
+    group = by_id.get(st["id"], GROUP_BY_TYPE.get(st["type"], Group.BACKLOG))
     return Found(
         n["identifier"],
         n["title"],
@@ -142,7 +147,7 @@ def _found(n, states):
         group,
         tuple(u for a in n["attachments"]["nodes"] if not inputs.CONTROL.search(u := a["url"])),
         n["description"] or "",
-        comments[0]["body"] if group == CANCELED and comments else "",
+        comments[0]["body"] if group == Group.CANCELED and comments else "",
     )
 
 
