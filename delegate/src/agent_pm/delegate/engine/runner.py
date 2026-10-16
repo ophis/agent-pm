@@ -12,7 +12,7 @@ from datetime import datetime
 from pathlib import Path
 
 from agent_pm.delegate.engine.drivers import Driver
-from agent_pm.delegate.engine.ready_gate import gate
+from agent_pm.delegate.engine.ready_gate import gate, hosts
 from agent_pm.delegate.engine.types import (
     Begun,
     ConfigError,
@@ -26,7 +26,7 @@ from agent_pm.delegate.engine.types import (
     Result,
     Stopped,
 )
-from agent_pm.delegate.event.outcome import DEFAULT_HOST, SAVES_DELIVERABLE
+from agent_pm.delegate.event.outcome import SAVES_DELIVERABLE
 from agent_pm.delegate.event.outcome import read as read_outcome
 from agent_pm.delegate.event.reply import OUTCOME, marks, outcome_block
 from agent_pm.delegate.event.types import Autopilot, InvalidOutcome, Outcome
@@ -282,7 +282,9 @@ class _Attempts:
             if (block := outcome_block(last or "")) is None:
                 return Result(rc, None, diagnostic or "the agent run returned no outcome")
             try:
-                outcome, autopilot = read_outcome(block, p.run.output, p.params.workdir)
+                outcome, autopilot = read_outcome(
+                    block, p.run.output, p.params.workdir, hosts(p.run.output)
+                )
             except InvalidOutcome as e:
                 if rc or fixed:
                     return Result(rc, None, diagnostic or f"invalid outcome: {e}")
@@ -394,7 +396,7 @@ class _Attempts:
             if kind == "local":
                 outcome = replace(outcome, url=s.out)
         if kind == "pull-request":
-            gated = gate(outcome, autopilot, output.get("host", DEFAULT_HOST))
+            gated = gate(outcome, autopilot)
             outcome = gated.outcome
             if gated.status != GateStatus.SKIPPED:
                 self.note("ready_gate", status=gated.status, reason=gated.reason)

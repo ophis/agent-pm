@@ -1,20 +1,25 @@
 """Readies a done pull-request run's PR only when G1 its autopilot converged, G2 at the PR head, G3
 the head's checks pass; else the run fails and the PR stays draft. Gotcha: owner/name are the
-agent's, so it may name another PR on an allowed host.
+agent's, so it may name another PR on an allowed host (`hosts`); an agent that can run `gh auth
+login` can add a host.
 """
 
 import json
+import os
+import re
 import subprocess
+from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from enum import StrEnum
 from urllib.parse import urlsplit
 
 from agent_pm.delegate.engine.types import Gated, GateStatus
-from agent_pm.delegate.event.outcome import PULL, summary_max
+from agent_pm.delegate.event.outcome import DEFAULT_HOST, PULL, summary_max
 from agent_pm.delegate.event.types import Autopilot, AutopilotStatus, Outcome, OutcomeStatus
 from agent_pm.utils import SHORT, Runner, err_text, one_line, printable, sh
 
 REASON_MAX = 300
+HOST_KEY = re.compile(r"""["']?([A-Za-z0-9.-]+)["']?:\s*""")
 
 
 class _Check(StrEnum):
@@ -35,14 +40,29 @@ class _View:
     checks: list[object]
 
 
-def gate(outcome: Outcome, autopilot: Autopilot | None, host: str, *, run: Runner = sh) -> Gated:
-    """`host`: the run's output host."""
+def hosts(output: Mapping, env: Mapping[str, str] = os.environ) -> frozenset[str]:
+    """The hosts a pull-request url may name: the output's `host` alone when set, else github.com,
+    GH_HOST and the hosts in gh's hosts.yml.
+    """
+    if output.get("host"):
+        return frozenset({output["host"].lower()})
+    found = {DEFAULT_HOST, env.get("GH_HOST", "").lower()} - {""}
+    config = env.get("GH_CONFIG_DIR") or os.path.join(
+        env.get("XDG_CONFIG_HOME") or os.path.join(os.path.expanduser("~"), ".config"), "gh"
+    )
+    try:
+        with open(os.path.join(config, "hosts.yml"), encoding="utf-8") as f:
+            lines = f.read().splitlines()
+    except (OSError, UnicodeDecodeError):
+        lines = []
+    return frozenset(found | {m[1].lower() for line in lines if (m := HOST_KEY.fullmatch(line))})
+
+
+def gate(outcome: Outcome, autopilot: Autopilot | None, *, run: Runner = sh) -> Gated:
+    """`outcome`: read with `hosts`, so its url names one."""
     url, done = outcome.url, outcome.status == OutcomeStatus.DONE
-    parts = urlsplit(url)
-    if not PULL.fullmatch(parts.path):
+    if not PULL.fullmatch(urlsplit(url).path):
         return Gated(outcome, GateStatus.SKIPPED, "")
-    if parts.netloc != host:
-        return _refuse(outcome, f"url host {parts.netloc} is not {host}", done=done)
     try:
         view = _view(url, run)
     except _GhError as e:

@@ -31,9 +31,11 @@ PULL = re.compile(r"/[^/]+/[^/]+/pull/\d+")
 PR_PATH = re.compile(rf"{PULL.pattern}|/[^/]+/[^/]+/(compare|tree)/\S+")
 
 
-def read(body: str, output: Mapping, workdir: str) -> tuple[Outcome, Autopilot | None]:
-    """`output`: the run's [output] table; the Autopilot is the outcome's `autopilot`, None when it
-    has none. Raises InvalidOutcome.
+def read(
+    body: str, output: Mapping, workdir: str, hosts: frozenset[str]
+) -> tuple[Outcome, Autopilot | None]:
+    """`output`: the run's [output] table; `hosts`: those a pull-request url may name; the Autopilot
+    is the outcome's `autopilot`, None when it has none. Raises InvalidOutcome.
     """
     try:
         data = json.loads(body)
@@ -47,7 +49,7 @@ def read(body: str, output: Mapping, workdir: str) -> tuple[Outcome, Autopilot |
         data = {k: v for k, v in data.items() if k != "deliverable_file"} | {
             "deliverable": _read_file(_file(data["deliverable_file"], workdir), workdir)
         }
-    return validate(data, output, workdir), _autopilot(data.get("autopilot"))
+    return validate(data, output, workdir, hosts), _autopilot(data.get("autopilot"))
 
 
 def _autopilot(found) -> Autopilot | None:
@@ -55,7 +57,7 @@ def _autopilot(found) -> Autopilot | None:
     return None if found is None else Autopilot(AutopilotStatus(found["status"]), found["head"])
 
 
-def validate(data: dict, output: Mapping, workdir: str) -> Outcome:
+def validate(data: dict, output: Mapping, workdir: str, hosts: frozenset[str]) -> Outcome:
     """Raises InvalidOutcome."""
     if not isinstance(data, dict):
         raise InvalidOutcome("not an object")
@@ -82,7 +84,7 @@ def validate(data: dict, output: Mapping, workdir: str) -> Outcome:
         title.strip(),
         summary,
         [str(q) for q in questions] if status == "needs_input" else [],
-        _url(data.get("url") or "", output),
+        _url(data.get("url") or "", output, hosts),
         [_file(p, workdir) for p in files],
         deliverable,
     )
@@ -137,7 +139,7 @@ def _conform(value, schema: Mapping, where: str) -> None:
         )
 
 
-def _url(url: str, out: Mapping) -> str:
+def _url(url: str, out: Mapping, hosts: frozenset[str]) -> str:
     if not url or out["type"] in SAVES_DELIVERABLE:
         return ""
     parts = urlsplit(url) if isinstance(url, str) else None
@@ -154,8 +156,12 @@ def _url(url: str, out: Mapping) -> str:
         host, prefix = out.get("host", DEFAULT_HOST), f"/{out['repo']}/blob/{out['branch']}/"
         if parts.netloc != host or not parts.path.startswith(prefix):
             raise InvalidOutcome(f"url must start with https://{host}{prefix}")
-    elif out["type"] == "pull-request" and not PR_PATH.fullmatch(parts.path):
-        raise InvalidOutcome("url must be a pull request, compare or tree link")
+    elif out["type"] == "pull-request":
+        if not PR_PATH.fullmatch(parts.path):
+            raise InvalidOutcome("url must be a pull request, compare or tree link")
+        if parts.netloc != parts.hostname or parts.hostname not in hosts:
+            allowed = ", ".join(sorted(hosts)) or "(none)"
+            raise InvalidOutcome(f"url host {parts.netloc} is not one of {allowed}")
     return url
 
 

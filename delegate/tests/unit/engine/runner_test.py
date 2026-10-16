@@ -125,6 +125,41 @@ class InProcess(Base):
         self.assertEqual((r.outcome.status, r.outcome.url), ("done", url))
         self.assertNotIn("ready_gate", self.kinds())
 
+    def gh_config(self, text=""):
+        path = os.path.join(self.home, "gh-config")
+        self.write(os.path.join(path, "hosts.yml"), text)
+        return mock.patch.dict(os.environ, {"GH_CONFIG_DIR": path, "GH_HOST": ""})
+
+    def test_a_ghe_pull_request_run_is_gated_on_its_own_host(self):
+        url, head = "https://ghe.example.com/o/n/pull/3", "a" * 40
+        view = {"state": "OPEN", "isDraft": True, "headRefOid": head, "statusCheckRollup": []}
+        done = {**DONE, "url": url, "autopilot": {"status": "converged", "head": head}}
+        calls = []
+
+        def gh(argv, **_):
+            calls.append(argv)
+            return ok(json.dumps(view) if argv[2] == "view" else "")
+
+        with self.gh_config("ghe.example.com:\n"), mock.patch("subprocess.run", side_effect=gh):
+            r = self.go(said(START, block(done)), output=PR)
+        self.assertEqual(
+            (r.outcome.status, bare(self.last("ready_gate"))["status"]), ("done", "passed")
+        )
+        self.assertEqual(
+            [argv[:4] for argv in calls], [["gh", "pr", "view", url], ["gh", "pr", "ready", url]]
+        )
+
+    def test_a_pull_request_url_on_another_host_is_fixed_by_one_resume(self):
+        bad = {**DONE, "url": "https://attacker.example/o/n/pull/1"}
+        fixed = {**DONE, "url": "https://github.com/o/n/compare/main...b?expand=1"}
+        with self.gh_config(), mock.patch("subprocess.run") as run:
+            r = self.go(said(START, block(bad)), fixes=[said(block(fixed))], output=PR)
+        self.assertEqual((r.outcome.status, r.outcome.url), ("done", fixed["url"]))
+        self.assertIn(
+            "url host attacker.example is not one of github.com", self.last("invalid")["error"]
+        )
+        run.assert_not_called()
+
     def test_a_relative_outcome_file_resolves_in_the_agent_dir(self):
         self.write(os.path.join(Layout(self.work).agent, "notes", "doc.md"), "# From a file\n")
         self.write(os.path.join(self.work, "notes", "doc.md"), "# Outside\n")

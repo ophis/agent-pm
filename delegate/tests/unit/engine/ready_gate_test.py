@@ -3,9 +3,12 @@
 """
 
 import json
+import os
+import tempfile
 import unittest
+import unittest.mock
 
-from agent_pm.delegate.engine.ready_gate import gate
+from agent_pm.delegate.engine.ready_gate import gate, hosts
 from agent_pm.delegate.engine.types import GateStatus
 from agent_pm.delegate.event.types import Autopilot, AutopilotStatus, Outcome, OutcomeStatus
 from agent_pm.utils import SHORT
@@ -62,9 +65,9 @@ def outcome(status=OutcomeStatus.DONE, url=URL, summary="Built X.\nVerify: run Y
 
 
 class Base(Case):
-    def go(self, gh, autopilot=CONVERGED, out=None, host="github.com"):
+    def go(self, gh, autopilot=CONVERGED, out=None):
         self.gh = gh
-        return gate(out or outcome(), autopilot, host, run=gh)
+        return gate(out or outcome(), autopilot, run=gh)
 
     def assert_failed(self, gated, reason):
         self.assertEqual(gated.status, GateStatus.FAILED)
@@ -274,26 +277,61 @@ class Skipped(Base):
                     )
                     self.assertEqual(self.gh.calls, [])
 
-    def test_a_foreign_host_never_reaches_gh(self):
-        for url in ("https://attacker.example/o/n/pull/1", "https://10.0.0.5/o/n/pull/1"):
-            with self.subTest(url=url):
-                gated = self.go(Gh(view()), out=outcome(url=url))
-                self.assertEqual(
-                    (gated.status, gated.outcome.status), (GateStatus.FAILED, "failed")
-                )
-                self.assertIn("is not github.com", gated.outcome.summary.splitlines()[-1])
-                self.assertEqual(gated.outcome.url, url)
-                given = outcome(OutcomeStatus.FAILED, url=url)
-                kept = self.go(Gh(view(draft=False)), out=given)
-                self.assertEqual((kept.outcome, kept.status), (given, GateStatus.KEPT))
-                self.assertEqual(self.gh.calls, [])
-
-    def test_the_output_host_is_the_bound(self):
-        url = "https://ghe.example/o/n/pull/3"
-        gh = Gh(view())
-        gated = gate(outcome(url=url), CONVERGED, "ghe.example", run=gh)
+    def test_a_ghe_pr_is_gated_on_its_own_host(self):
+        url = "https://ghe.example.com/o/n/pull/3"
+        gated = self.go(Gh(view()), out=outcome(url=url))
         self.assertEqual(gated.status, GateStatus.PASSED)
-        self.assertEqual(gh.calls[0][:4], ["gh", "pr", "view", url])
+        self.assertEqual(
+            self.gh.calls,
+            [
+                ["gh", "pr", "view", url, "--json", "state,isDraft,headRefOid,statusCheckRollup"],
+                ["gh", "pr", "ready", url],
+            ],
+        )
+
+
+class Hosts(Case):
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.dir = tmp.name
+
+    def found(self, text=None, output=None, **env):
+        if text is not None:
+            with open(os.path.join(self.dir, "hosts.yml"), "wb") as f:
+                f.write(text if isinstance(text, bytes) else text.encode())
+        return hosts(output or {"type": "pull-request"}, {"GH_CONFIG_DIR": self.dir, **env})
+
+    def test_github_com_and_a_logged_in_ghe_host_are_gh_hosts(self):
+        text = (
+            'github.com:\n    user: me\n"GHE.Example.com":\n    git_protocol: https\nghe.x:8443:\n'
+        )
+        self.assertEqual(self.found(text), {"github.com", "ghe.example.com"})
+
+    def test_gh_host_env_is_a_gh_host(self):
+        self.assertEqual(self.found(GH_HOST="GHE.corp"), {"github.com", "ghe.corp"})
+        self.assertEqual(self.found(GH_HOST=""), {"github.com"})
+
+    def test_the_pin_is_the_only_host(self):
+        pinned = {"type": "pull-request", "host": "GHE.example.com"}
+        self.assertEqual(self.found("other.example:\n", pinned, GH_HOST="x.y"), {"ghe.example.com"})
+
+    def test_a_bad_or_missing_hosts_yml_adds_nothing(self):
+        self.assertEqual(self.found(GH_HOST="ghe.corp"), {"github.com", "ghe.corp"})
+        self.assertEqual(self.found(b"\xff\xfe:\n"), {"github.com"})
+        os.remove(os.path.join(self.dir, "hosts.yml"))
+        os.makedirs(os.path.join(self.dir, "hosts.yml"))
+        self.assertEqual(self.found(), {"github.com"})
+
+    def test_the_config_dir_falls_back_to_xdg_then_home(self):
+        for sub, host in (("gh", "ghe.xdg"), (os.path.join(".config", "gh"), "ghe.home")):
+            os.makedirs(os.path.join(self.dir, sub))
+            with open(os.path.join(self.dir, sub, "hosts.yml"), "w") as f:
+                f.write(f"{host}:\n")
+        pr = {"type": "pull-request"}
+        self.assertEqual(hosts(pr, {"XDG_CONFIG_HOME": self.dir}), {"github.com", "ghe.xdg"})
+        with unittest.mock.patch("os.path.expanduser", return_value=self.dir):
+            self.assertEqual(hosts(pr, {}), {"github.com", "ghe.home"})
 
 
 if __name__ == "__main__":

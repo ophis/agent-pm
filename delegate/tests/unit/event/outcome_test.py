@@ -36,6 +36,7 @@ FILE = {"status": "done", "title": "T", "summary": "S", "deliverable_file": "out
 
 
 LOCAL = {"type": "local"}
+GH = frozenset({"github.com"})
 
 
 def schema():
@@ -50,12 +51,12 @@ class Base(Case):
         self.tmp = tmp.name
         self.work = os.path.join(self.tmp, "work")
 
-    def check(self, data, output=None):
-        return validate(data, output or LOCAL, self.work)
+    def check(self, data, output=None, hosts=GH):
+        return validate(data, output or LOCAL, self.work, hosts)
 
-    def fails(self, data, msg, output=None):
+    def fails(self, data, msg, output=None, hosts=GH):
         with self.assertRaises(InvalidOutcome) as cm:
-            self.check(data, output)
+            self.check(data, output, hosts)
         self.assertIn(msg, str(cm.exception))
 
     def touch(self, *parts, text="x"):
@@ -167,11 +168,32 @@ class Validate(Base):
             "https://ghe.io/o/n/compare/main...b?expand=1",
             "https://github.com/o/n/tree/b",
         ):
-            self.assertEqual(self.check({**DONE, "url": good}, pr).url, good)
+            self.assertEqual(self.check({**DONE, "url": good}, pr, GH | {"ghe.io"}).url, good)
         self.fails(
             {**DONE, "url": "https://github.com/o/n/issues/1"}, "pull request, compare or tree", pr
         )
         self.assertEqual(self.check({**DONE, "url": "https://x"}).url, "")
+
+    def test_pull_request_urls_must_name_a_gh_host(self):
+        pr, ghe = {"type": "pull-request"}, frozenset({"ghe.example.com"})
+        for status in ("done", "failed"):
+            for url, hosts, shown in (
+                ("https://attacker.example/o/n/pull/1", GH, "attacker.example"),
+                ("https://attacker.example/o/n/tree/b", GH, "attacker.example"),
+                ("https://github.com/o/n/pull/7", ghe, "github.com"),
+                ("https://user@github.com/o/n/pull/7", GH, "user@github.com"),
+                ("https://github.com:8443/o/n/pull/7", GH, "github.com:8443"),
+                ("https://github.com/o/n/pull/7", frozenset(), "github.com"),
+            ):
+                with self.subTest(status=status, url=url, hosts=hosts):
+                    self.fails(
+                        {**DONE, "status": status, "url": url},
+                        f"url host {shown} is not one of {', '.join(sorted(hosts)) or '(none)'}",
+                        pr,
+                        hosts,
+                    )
+        url = "https://ghe.example.com/o/n/pull/3"
+        self.assertEqual(self.check({**DONE, "url": url}, pr, ghe).url, url)
 
     def test_files_are_md_files_under_the_workdir(self):
         plan = self.touch("docs", "plan.md")
@@ -208,7 +230,7 @@ class Read(Base):
 
     def pair(self, data, output=None):
         body = data if isinstance(data, str) else json.dumps(data)
-        return read(body, output or LOCAL, self.work)
+        return read(body, output or LOCAL, self.work, GH)
 
     def refused(self, data, msg):
         with self.assertRaises(InvalidOutcome) as cm:
@@ -319,7 +341,7 @@ class ReadRace(Base):
             unittest.mock.patch("os.open", side_effect=open_),
             self.assertRaises(InvalidOutcome) as cm,
         ):
-            read(json.dumps({**FILE, "deliverable_file": "d/out.md"}), LOCAL, self.work)
+            read(json.dumps({**FILE, "deliverable_file": "d/out.md"}), LOCAL, self.work, GH)
         self.assertEqual(len(done), 1)
         self.assertIn("deliverable_file ", str(cm.exception))
         self.assertIn(reason, str(cm.exception))
