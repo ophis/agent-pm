@@ -4,7 +4,6 @@ Return, the resume prefix, and reference_errors and the method files on the real
 References and Methods tests).
 """
 
-import inspect
 import os
 import re
 import shlex
@@ -490,7 +489,8 @@ class Prompt(Fake):
         self.assertNotIn("Push to", prompt)
 
     def test_params_are_required(self):
-        self.assertEqual(list(inspect.signature(render).parameters), ["run", "params", "team"])
+        prompt = render(run=self.run_of(), params=PARAMS, team=self.found())
+        self.assertEqual(prompt, self.compose()[0])
         with self.assertRaises(TypeError):
             render(self.run_of(), team=self.found())
 

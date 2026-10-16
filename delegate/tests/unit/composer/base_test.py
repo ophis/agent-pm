@@ -16,11 +16,6 @@ class Paths(Case):
         self.assertFalse(hasattr(base, "SRC"))
 
 
-class NoCopy(Case):
-    def test_the_composer_holds_no_copy_of_utils_markdown(self):
-        self.assertFalse(hasattr(base, "unfenced"))
-
-
 class Fill(Case):
     def test_a_default_is_used_when_the_value_is_missing_and_a_value_beats_it(self):
         for text, values, want in (

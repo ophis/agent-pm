@@ -3,7 +3,6 @@ Validate tests, less the client layer and the prompt), the opaque client key, ru
 trusted_dirs, bind and the access intent (the old driver's access tests, less the report command).
 """
 
-import inspect
 import os
 import shlex
 import tempfile
@@ -483,7 +482,7 @@ class Overlays(Fake):
             with self.subTest(overlay=overlay), self.assertRaisesRegex(ConfigError, message):
                 self.resolved(overlays=(overlay,))
 
-    def test_malformed_overlay_tables_fail_clearly(self):
+    def test_malformed_overlay_tables_or_keys_fail_clearly(self):
         for overlay in (
             None,
             [],
@@ -491,16 +490,10 @@ class Overlays(Fake):
             {"roles": {"writer": 2}},
             {"output": []},
             {"roles": {"writer": {"output": []}}},
+            {1: "bad", "typo": "bad"},
         ):
             with self.subTest(overlay=overlay), self.assertRaises(ConfigError):
                 self.resolved(overlays=(overlay,))
-
-    def test_an_unknown_role(self):
-        self.assertEqual(self.refused("stranger"), "unknown role 'stranger'")
-
-    def test_non_string_overlay_key_is_a_config_error(self):
-        with self.assertRaises(ConfigError):
-            self.resolved(overlays=({1: "bad", "typo": "bad"},))
 
     def test_overlay_errors_name_the_label_source_and_table(self):
         bad = (
@@ -612,6 +605,7 @@ class Validate(Fake):
     def test_unknown_role_or_task_or_another_roles(self):
         for role, task, msg in (
             ("nobody", None, "unknown role 'nobody'"),
+            ("stranger", None, "unknown role 'stranger'"),
             (
                 "writer",
                 "essay",
@@ -749,11 +743,10 @@ class Client(Fake):
         self.local('client = "l"\n')
         self.assertEqual(self.resolved().client, "l")
 
-    def test_resolve_takes_no_client_or_trust(self):
-        self.assertEqual(
-            list(inspect.signature(resolve).parameters),
-            ["role", "task", "overlays", "label", "team", "config", "local", "cfg"],
-        )
+    def test_resolve_refuses_a_client_or_trust_argument(self):
+        for name in ("client", "trusted", "trusted_dirs"):
+            with self.subTest(name=name), self.assertRaisesRegex(TypeError, name):
+                self.resolved(**{name: "x"})
 
     def test_a_read_config_given_is_used_reading_no_file(self):
         cfg = read_config()

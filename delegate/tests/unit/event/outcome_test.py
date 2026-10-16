@@ -220,7 +220,7 @@ class Validate(Base):
             self.fails({**DONE, "files": [bad]}, "is not a .md file under the workdir")
 
 
-class Read(Base):
+class Reading(Base):
     def setUp(self):
         super().setUp()
         os.makedirs(self.work)
@@ -238,15 +238,18 @@ class Read(Base):
         self.assertIn(msg, str(cm.exception))
         return str(cm.exception)
 
-    def test_not_json(self):
-        for body in ("", "{", "{'status': 'done'}", "[" * 10**6 + "]" * 10**6):
-            with self.subTest(body=body[:20]):
-                self.refused(body, "not JSON: ")
 
-    def test_not_an_object(self):
-        for body in ("[1]", '"x"', "3", "null"):
-            with self.subTest(body=body):
-                self.refused(body, "not an object")
+class Read(Reading):
+    def test_not_json_or_not_an_object_is_refused(self):
+        for body, msg in (
+            *(
+                (body, "not JSON: ")
+                for body in ("", "{", "{'status': 'done'}", "[" * 10**6 + "]" * 10**6)
+            ),
+            *((body, "not an object") for body in ("[1]", '"x"', "3", "null")),
+        ):
+            with self.subTest(body=body[:20]):
+                self.refused(body, msg)
 
     def test_without_deliverable_file_it_is_validate(self):
         self.assertEqual(self.read(DONE), self.check(DONE))
@@ -261,10 +264,6 @@ class Read(Base):
                     self.read({**FILE, "deliverable_file": name}),
                     Outcome("done", "T", "S", deliverable=text),
                 )
-
-    def test_the_read_deliverable_is_validated(self):
-        self.touch("out.md", text=" \n")
-        self.refused(FILE, "must carry the deliverable")
 
     def test_deliverable_file_must_be_an_md_file_under_the_workdir(self):
         self.touch("notes.txt")
@@ -297,16 +296,17 @@ class Read(Base):
         self.assertFalse(worker.is_alive(), "read blocked on a FIFO")
         self.assertEqual(len(failed), 1)
 
-    def test_a_file_over_the_cap_is_too_large(self):
+    def test_a_blank_too_large_or_not_utf8_deliverable_file_is_refused(self):
         cap = 4 * schema()["properties"]["deliverable"]["maxLength"]
-        with open(os.path.join(self.work, "out.md"), "wb") as f:
-            f.truncate(cap + 1)
-        self.refused(FILE, "too large")
-
-    def test_a_file_not_utf8_is_refused(self):
-        with open(os.path.join(self.work, "out.md"), "wb") as f:
-            f.write(b"# Doc \xff\n")
-        self.refused(FILE, "not UTF-8 text")
+        for data, msg in (
+            (b" \n", "must carry the deliverable"),
+            (b"\0" * (cap + 1), "too large"),
+            (b"# Doc \xff\n", "not UTF-8 text"),
+        ):
+            with self.subTest(msg=msg):
+                with open(os.path.join(self.work, "out.md"), "wb") as f:
+                    f.write(data)
+                self.refused(FILE, msg)
 
     def test_a_name_with_control_characters_is_shown_as_its_repr(self):
         name = "a\x1b[2J\nb.md"
@@ -380,7 +380,7 @@ class ReadRace(Base):
 HEAD = "0123456789abcdef" * 2 + "01234567"
 
 
-class AutopilotField(Read):
+class AutopilotField(Reading):
     def test_read_returns_the_autopilot_result_or_none(self):
         self.assertEqual(self.pair(DONE), (self.check(DONE), None))
         for status in AutopilotStatus:
