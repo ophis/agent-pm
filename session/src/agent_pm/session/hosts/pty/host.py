@@ -35,11 +35,12 @@ from agent_pm.session.engine.types import (
     SessionRow,
     Word,
 )
-from agent_pm.session.hosts.base import IDLE_AFTER, Host, HostProcess, Terminal, tui_lock
+from agent_pm.session.hosts.base import Host, HostProcess, Terminal, tui_lock
 from agent_pm.session.hosts.pty import hook, state
 from agent_pm.session.hosts.pty.keys import encode
 from agent_pm.utils import (
     CONFIG_NAME,
+    STALE_AGE,
     Display,
     ProcessControl,
     Record,
@@ -452,7 +453,7 @@ class PtyHost(Host):
 
 
 def _sweep(current: str) -> None:
-    """Every other name idle IDLE_AFTER with no process loses its dir and lock; errors logged."""
+    """Every other name idle STALE_AGE with no process loses its dir and lock; errors logged."""
     try:
         names = {entry.name.removesuffix(".lock") for entry in os.scandir(state.root())}
     except OSError as error:
@@ -471,13 +472,13 @@ def _expire(name: str) -> None:
     folder = os.path.join(state.root(), name)
     lock = f"{folder}.lock"
     files = (folder, os.path.join(folder, state.OUTPUT), os.path.join(folder, state.ACTIVITY))
-    if os.path.islink(folder) or not idle((*files, lock), IDLE_AFTER):
+    if os.path.islink(folder) or not idle((*files, lock), STALE_AGE):
         return
     with contextlib.ExitStack() as stack:
         tui = tui_lock(name)
         if os.path.lexists(tui) and not stack.enter_context(inode_lock(tui, wait=False)):
             return
-        if not stack.enter_context(inode_lock(lock, wait=False)) or not idle(files, IDLE_AFTER):
+        if not stack.enter_context(inode_lock(lock, wait=False)) or not idle(files, STALE_AGE):
             return
         if os.path.lexists(folder):
             process = PtyProcess(name, folder)

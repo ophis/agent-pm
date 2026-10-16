@@ -42,7 +42,6 @@ from agent_pm.session.engine.types import (
     Word,
 )
 from agent_pm.session.hosts.base import (
-    IDLE_AFTER,
     TUI_DIR,
     Displayable,
     Host,
@@ -53,7 +52,15 @@ from agent_pm.session.hosts.base import (
 from agent_pm.session.runtimes import tui_hook
 from agent_pm.session.runtimes.base import Runtime, identity_drop
 from agent_pm.utils import CONFIG_NAME as NAME
-from agent_pm.utils import Display, command_path, idle, inode_lock, json_records, read_regular
+from agent_pm.utils import (
+    STALE_AGE,
+    Display,
+    command_path,
+    idle,
+    inode_lock,
+    json_records,
+    read_regular,
+)
 
 WORDS = {
     HookKind.TURN_END: Word.DONE,
@@ -203,7 +210,7 @@ class _Store:
         """Its dir and lock go once idle with no session of its name on its host; never waits."""
         lock = tui_lock(self.name)
         with inode_lock(lock, wait=False) as held:
-            if not held or not idle(self.tracked(), IDLE_AFTER) or self.name in listed:
+            if not held or not idle(self.tracked(), STALE_AGE) or self.name in listed:
                 return
             try:
                 state = json.loads(read_regular(self.state_file) or b"{}")
@@ -297,7 +304,7 @@ class _Store:
 
 
 def _sweep(store: _Store) -> None:
-    """Other names idle IDLE_AFTER: expired, errors logged; one host listing, once one is idle."""
+    """Other names idle STALE_AGE: expired, errors logged; one host listing, once one is idle."""
     try:
         found = {entry.name.removesuffix(".lock") for entry in os.scandir(store.root)}
     except OSError as error:
@@ -309,9 +316,7 @@ def _sweep(store: _Store) -> None:
             continue
         other = _Store(name, host=store.host)
         try:
-            if os.path.islink(other.dir) or not idle(
-                (*other.tracked(), tui_lock(name)), IDLE_AFTER
-            ):
+            if os.path.islink(other.dir) or not idle((*other.tracked(), tui_lock(name)), STALE_AGE):
                 continue
             if listed is None:
                 try:
