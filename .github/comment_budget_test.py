@@ -13,18 +13,19 @@ spec.loader.exec_module(budget)
 
 
 class Measure(unittest.TestCase):
-    def test_comments_count_with_their_hash_but_a_shebang_does_not(self):
-        self.assertEqual(
-            budget.measure("x = 1  # a note\n"), (chars("# a note"), 0, chars("x = 1"))
+    def test_comments_count_with_their_hash_but_a_shebang_and_ordinary_strings_do_not(self):
+        strings = (
+            'x = "an error message"\nprint("help text", x)\ny = f"{x} more"\n'
+            'DOC = """assigned, not bare"""\ndef f():\n    return "a value"\n'
         )
-        self.assertEqual(
-            budget.measure("#!/usr/bin/env python3\nx = 1\n"),
-            (0, 0, chars("#!/usr/bin/env python3 x = 1")),
-        )
-        self.assertEqual(
-            budget.measure("x = 1\n#! not a shebang\n"),
-            (chars("#! not a shebang"), 0, chars("x = 1")),
-        )
+        for text, expected in (
+            ("x = 1  # a note\n", (chars("# a note"), 0, chars("x = 1"))),
+            ("#!/usr/bin/env python3\nx = 1\n", (0, 0, chars("#!/usr/bin/env python3 x = 1"))),
+            ("x = 1\n#! not a shebang\n", (chars("#! not a shebang"), 0, chars("x = 1"))),
+            (strings, (0, 0, chars(strings))),
+        ):
+            with self.subTest(text=text):
+                self.assertEqual(budget.measure(text), expected)
 
     def test_docstrings_and_other_bare_strings_count(self):
         strings = [
@@ -40,13 +41,6 @@ class Measure(unittest.TestCase):
         comment, docstring, code = budget.measure(text)
         self.assertEqual((comment, docstring), (0, sum(map(chars, strings))))
         self.assertEqual(code, chars(text) - docstring)
-
-    def test_ordinary_strings_are_code(self):
-        text = (
-            'x = "an error message"\nprint("help text", x)\ny = f"{x} more"\n'
-            'DOC = """assigned, not bare"""\ndef f():\n    return "a value"\n'
-        )
-        self.assertEqual(budget.measure(text), (0, 0, chars(text)))
 
     def test_code_is_every_other_character(self):
         text = '"""Doc."""\nx = "s"  # note\n'

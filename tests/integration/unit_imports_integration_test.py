@@ -112,54 +112,40 @@ class UnitImports(Case):
         self.assertEqual(proc.returncode, 1, proc.stderr)
         self.assertEqual([item["code"] for item in json.loads(proc.stdout)], ["TID251"])
 
-    def test_the_rule_rejects_both_process_and_socket_imports(self):
-        sample = Path(self.home, "sample.py")
-        sample.write_text("import subprocess\nfrom socket import socket\n")
-        proc = subprocess.run(
-            [
-                "ruff",
-                "check",
-                "--isolated",
-                "--select",
-                "TID251",
-                "--config",
-                CONFIG,
-                "--output-format",
-                "json",
-                str(sample),
-            ],
-            capture_output=True,
-            text=True,
-            timeout=60,
-        )
-        self.assertEqual(proc.returncode, 1, proc.stderr)
-        self.assertEqual([item["code"] for item in json.loads(proc.stdout)], ["TID251", "TID251"])
-
-    def test_the_rule_rejects_multiprocessing_and_process_pool_imports_and_calls(self):
-        sample = Path(self.home, "pools.py")
-        sample.write_text(
-            "import multiprocessing\nfrom concurrent.futures import ProcessPoolExecutor\n"
-            "import concurrent.futures\nconcurrent.futures.ProcessPoolExecutor()\n"
-        )
-        proc = subprocess.run(
-            [
-                "ruff",
-                "check",
-                "--isolated",
-                "--select",
-                "TID251",
-                "--config",
-                CONFIG,
-                "--output-format",
-                "json",
-                str(sample),
-            ],
-            capture_output=True,
-            text=True,
-            timeout=60,
-        )
-        self.assertEqual(proc.returncode, 1, proc.stderr)
-        self.assertEqual([item["code"] for item in json.loads(proc.stdout)], ["TID251"] * 3)
+    def test_the_rule_rejects_process_socket_multiprocessing_and_pool_imports_and_calls(self):
+        for name, text, count in (
+            ("sample.py", "import subprocess\nfrom socket import socket\n", 2),
+            (
+                "pools.py",
+                "import multiprocessing\nfrom concurrent.futures import ProcessPoolExecutor\n"
+                "import concurrent.futures\nconcurrent.futures.ProcessPoolExecutor()\n",
+                3,
+            ),
+        ):
+            with self.subTest(name=name):
+                sample = Path(self.home, name)
+                sample.write_text(text)
+                proc = subprocess.run(
+                    [
+                        "ruff",
+                        "check",
+                        "--isolated",
+                        "--select",
+                        "TID251",
+                        "--config",
+                        CONFIG,
+                        "--output-format",
+                        "json",
+                        str(sample),
+                    ],
+                    capture_output=True,
+                    text=True,
+                    timeout=60,
+                )
+                self.assertEqual(proc.returncode, 1, proc.stderr)
+                self.assertEqual(
+                    [item["code"] for item in json.loads(proc.stdout)], ["TID251"] * count
+                )
 
 
 if __name__ == "__main__":

@@ -26,28 +26,27 @@ class OrchestratorSessionImports(Sample):
             "agent_pm.session; go through agent_pm.delegate"
         )
 
-    def test_delegate_import_passes(self):
-        self.assertEqual(self.check("engine/run.py", "from agent_pm import delegate\n"), [])
-
-    def test_formerly_allowed_module_fails(self):
-        self.assertEqual(
-            self.check("engine/run_comments.py", "from agent_pm.session import SessionError\n"),
-            [self.message("engine/run_comments.py", "SessionError")],
-        )
-
-    def test_a_new_module_fails_however_it_imports(self):
-        for sample in (
-            "from agent_pm.session import RunLog\n",
-            "import agent_pm.session as s\ns.RunLog()\n",
-            "from agent_pm import session\nsession.RunLog()\n",
-            "import agent_pm.session\nagent_pm.session.RunLog.note()\n",
-            "def f():\n    from agent_pm.session import RunLog\n",
-        ):
-            with self.subTest(sample=sample):
-                self.assertEqual(
-                    self.check("engine/promote.py", sample),
-                    [self.message("engine/promote.py", "RunLog")],
+    def test_only_delegate_imports_pass_however_a_module_imports_the_session(self):
+        for module, sample, expected in (
+            ("engine/run.py", "from agent_pm import delegate\n", []),
+            (
+                "engine/run_comments.py",
+                "from agent_pm.session import SessionError\n",
+                [self.message("engine/run_comments.py", "SessionError")],
+            ),
+            *(
+                ("engine/promote.py", sample, [self.message("engine/promote.py", "RunLog")])
+                for sample in (
+                    "from agent_pm.session import RunLog\n",
+                    "import agent_pm.session as s\ns.RunLog()\n",
+                    "from agent_pm import session\nsession.RunLog()\n",
+                    "import agent_pm.session\nagent_pm.session.RunLog.note()\n",
+                    "def f():\n    from agent_pm.session import RunLog\n",
                 )
+            ),
+        ):
+            with self.subTest(module=module, sample=sample):
+                self.assertEqual(self.check(module, sample), expected)
 
     def test_pyproject_ignores_no_imports(self):
         config = Path(REPO, "pyproject.toml").read_text()
@@ -75,87 +74,75 @@ class OrchestratorImports(Sample):
         root = self.tree({f"delegate/{PKG}/delegate/__init__.py": self.DELEGATE_INIT, **files})
         return imports.orchestrator_imports(root)
 
-    def orchestrator(self, sample, module="engine/prune.py"):
-        return self.check({f"linear-orchestrator/{ORCH_SRC}{module}": sample})
-
     def test_the_real_tree_is_clean(self):
         self.assertEqual(imports.orchestrator_imports(REPO), [])
 
-    def test_exported_delegate_names_utils_itself_and_the_standard_library_pass(self):
-        for sample in (
-            "from agent_pm.delegate import Delegate, ConfigError as DelegateConfigError\n",
-            "import agent_pm.delegate as d\nd.Delegate.usage('x')\n",
-            "from agent_pm import delegate\ndelegate.ConfigError\n",
-            "from agent_pm.utils import Record\nimport agent_pm.utils\n",
-            "import os.path\nfrom collections.abc import Mapping\nimport __future__\n",
-            "from agent_pm.linear_orchestrator.engine import runs\nfrom . import log\n",
-        ):
-            with self.subTest(sample=sample):
-                self.assertEqual(self.orchestrator(sample), [])
-
-    def test_names_outside_delegates_all_and_other_packages_fail(self):
+    def test_only_delegates_exports_utils_itself_and_the_standard_library_cross_the_layer(self):
         rel = f"linear-orchestrator/{ORCH_SRC}engine/prune.py"
-        for sample, name in (
-            (
-                "from agent_pm.delegate import HarnessDelegate\n",
-                "agent_pm.delegate.HarnessDelegate",
+        for files, expected in (
+            *(
+                ({rel: sample}, [])
+                for sample in (
+                    "from agent_pm.delegate import Delegate, ConfigError as DelegateConfigError\n",
+                    "import agent_pm.delegate as d\nd.Delegate.usage('x')\n",
+                    "from agent_pm import delegate\ndelegate.ConfigError\n",
+                    "from agent_pm.utils import Record\nimport agent_pm.utils\n",
+                    "import os.path\nfrom collections.abc import Mapping\nimport __future__\n",
+                    "from agent_pm.linear_orchestrator.engine import runs\nfrom . import log\n",
+                )
             ),
-            ("from agent_pm.delegate import composer\n", "agent_pm.delegate.composer"),
-            (
-                "from agent_pm.delegate.composer import Composer\n",
-                "agent_pm.delegate.composer",
+            *(
+                ({rel: sample}, [f"{rel}: imports {name} (FR-3)"])
+                for sample, name in (
+                    (
+                        "from agent_pm.delegate import HarnessDelegate\n",
+                        "agent_pm.delegate.HarnessDelegate",
+                    ),
+                    ("from agent_pm.delegate import composer\n", "agent_pm.delegate.composer"),
+                    (
+                        "from agent_pm.delegate.composer import Composer\n",
+                        "agent_pm.delegate.composer",
+                    ),
+                    (
+                        "import agent_pm.delegate as d\nd.composer.Composer()\n",
+                        "agent_pm.delegate.composer",
+                    ),
+                    ("import agent_pm.delegate.engine.base\n", "agent_pm.delegate.engine"),
+                    ("from agent_pm.session import Session\n", "agent_pm.session"),
+                    ("from agent_pm import manager\n", "agent_pm.manager"),
+                    ("from agent_pm.utils.files import save\n", "agent_pm.utils.files"),
+                    ("import requests\n", "requests"),
+                    (
+                        "def f():\n    from agent_pm.delegate.engine import harness\n",
+                        "agent_pm.delegate.engine",
+                    ),
+                )
+            ),
+            *(
+                ({other: sample}, [f"{other}: imports agent_pm.linear_orchestrator (FR-3)"])
+                for other in (
+                    f"{project}/{PKG}/{project}/engine/sample.py"
+                    for project in ("manager", "delegate", "session", "utils")
+                )
+                for sample in (
+                    "from agent_pm.linear_orchestrator import LinearRun\n",
+                    "import agent_pm.linear_orchestrator.engine.runs\n",
+                    "from agent_pm import linear_orchestrator\n",
+                    "import agent_pm\nagent_pm.linear_orchestrator.LinearRun\n",
+                )
             ),
             (
-                "import agent_pm.delegate as d\nd.composer.Composer()\n",
-                "agent_pm.delegate.composer",
-            ),
-            (
-                "import agent_pm.delegate.engine.base\n",
-                "agent_pm.delegate.engine",
-            ),
-            ("from agent_pm.session import Session\n", "agent_pm.session"),
-            ("from agent_pm import manager\n", "agent_pm.manager"),
-            ("from agent_pm.utils.files import save\n", "agent_pm.utils.files"),
-            ("import requests\n", "requests"),
-            (
-                "def f():\n    from agent_pm.delegate.engine import harness\n",
-                "agent_pm.delegate.engine",
-            ),
-        ):
-            with self.subTest(sample=sample):
-                self.assertEqual(self.orchestrator(sample), [f"{rel}: imports {name} (FR-3)"])
-
-    def test_no_other_package_imports_linear_orchestrator(self):
-        for project, package in (
-            ("manager", "manager"),
-            ("delegate", "delegate"),
-            ("session", "session"),
-            ("utils", "utils"),
-        ):
-            for sample in (
-                "from agent_pm.linear_orchestrator import LinearRun\n",
-                "import agent_pm.linear_orchestrator.engine.runs\n",
-                "from agent_pm import linear_orchestrator\n",
-                "import agent_pm\nagent_pm.linear_orchestrator.LinearRun\n",
-            ):
-                rel = f"{project}/{PKG}/{package}/engine/sample.py"
-                with self.subTest(rel=rel, sample=sample):
-                    self.assertEqual(
-                        self.check({rel: sample}),
-                        [f"{rel}: imports agent_pm.linear_orchestrator (FR-3)"],
-                    )
-
-    def test_tests_trees_are_out_of_scope(self):
-        sample = "from agent_pm.delegate.composer import Composer\n"
-        self.assertEqual(
-            self.check(
                 {
-                    "linear-orchestrator/tests/orchestrator_tests/sample.py": sample,
+                    "linear-orchestrator/tests/orchestrator_tests/sample.py": (
+                        "from agent_pm.delegate.composer import Composer\n"
+                    ),
                     "manager/tests/sample.py": "from agent_pm import linear_orchestrator\n",
-                }
+                },
+                [],
             ),
-            [],
-        )
+        ):
+            with self.subTest(files=files):
+                self.assertEqual(self.check(files), expected)
 
 
 class LiteralImports(Sample):
@@ -188,209 +175,162 @@ class LiteralImports(Sample):
             with self.subTest(sample=sample):
                 self.assertEqual(len(self.check(sample)), 1)
 
-    def test_lower_public_packages_and_variable_adapter_names_are_allowed(self):
-        self.assertEqual(
-            self.check(
-                "import importlib\nimportlib.import_module('agent_pm.utils')\nimportlib.import_module(implementation)"
+    def test_lower_public_packages_and_variable_names_pass_but_internals_do_not(self):
+        for sample, project, module, expected in (
+            (
+                "import importlib\nimportlib.import_module('agent_pm.utils')\nimportlib.import_module(implementation)",
+                "session",
+                "adapters/probe.py",
+                [],
             ),
-            [],
-        )
-        self.assertEqual(
-            self.check(
-                "importlib.import_module('agent_pm.session')", "delegate", "engine/probe.py"
-            ),
-            [],
-        )
-
-    def test_lower_internals_and_pure_config_imports_are_rejected(self):
-        self.assertEqual(
-            self.check(
+            ("importlib.import_module('agent_pm.session')", "delegate", "engine/probe.py", []),
+            (
                 "__import__('agent_pm.session.engine.hosted_session')",
                 "delegate",
                 "engine/probe.py",
+                [
+                    "delegate/src/agent_pm/delegate/engine/probe.py:1: imports agent_pm.session.engine.hosted_session"
+                ],
             ),
-            [
-                "delegate/src/agent_pm/delegate/engine/probe.py:1: imports agent_pm.session.engine.hosted_session"
-            ],
-        )
-        self.assertEqual(
-            self.check(
-                "__import__('agent_pm.delegate.engine.future')", "delegate", "engine/config.py"
+            (
+                "__import__('agent_pm.delegate.engine.future')",
+                "delegate",
+                "engine/config.py",
+                [
+                    "delegate/src/agent_pm/delegate/engine/config.py:1: imports agent_pm.delegate.engine.future"
+                ],
             ),
-            [
-                "delegate/src/agent_pm/delegate/engine/config.py:1: imports agent_pm.delegate.engine.future"
-            ],
-        )
+        ):
+            with self.subTest(sample=sample):
+                self.assertEqual(self.check(sample, project, module), expected)
 
 
 class PrivateImports(Sample):
-    def test_documented_os_exit_is_public_despite_its_underscore(self):
-        root = self.tree(
-            {
-                "a.py": "import os as system\nfrom os import _exit\nsystem._exit(0)\n_exit(0)\nsystem._secret()\n"
-            }
-        )
-        self.assertEqual(imports.private_imports(root), ["a.py:5: private system._secret"])
-
-    def test_an_underscore_name_from_another_module(self):
-        root = self.tree(
-            {
-                f"{PKG}/a.py": "from b import _x\nfrom . import _y\n",
-                f"{PKG}/c.py": (
-                    "import b.d\nfrom e import f as g\n\ndef h():\n    return b.d._z, g._w\n"
-                ),
-            }
-        )
-        self.assertEqual(
-            imports.private_imports(root),
-            [
-                f"{PKG}/a.py:1: private b._x",
-                f"{PKG}/a.py:2: private ._y",
-                f"{PKG}/c.py:5: private b.d._z",
-                f"{PKG}/c.py:5: private g._w",
-            ],
-        )
-
-    def test_an_alias_dunders_and_other_objects_are_clean(self):
-        root = self.tree(
-            {
-                f"{PKG}/a.py": "import b as _b\nfrom c import d as _d\n_b.e, _d.f, _b.__file__\n\nclass G:\n    def h(self, i):\n        return self._j, i._k\n"
-            }
-        )
-        self.assertEqual(imports.private_imports(root), [])
+    def test_underscore_names_from_other_modules_but_os_exit_aliases_and_dunders(self):
+        for files, expected in (
+            (
+                {
+                    "a.py": "import os as system\nfrom os import _exit\nsystem._exit(0)\n_exit(0)\nsystem._secret()\n"
+                },
+                ["a.py:5: private system._secret"],
+            ),
+            (
+                {
+                    f"{PKG}/a.py": "from b import _x\nfrom . import _y\n",
+                    f"{PKG}/c.py": (
+                        "import b.d\nfrom e import f as g\n\ndef h():\n    return b.d._z, g._w\n"
+                    ),
+                },
+                [
+                    f"{PKG}/a.py:1: private b._x",
+                    f"{PKG}/a.py:2: private ._y",
+                    f"{PKG}/c.py:5: private b.d._z",
+                    f"{PKG}/c.py:5: private g._w",
+                ],
+            ),
+            (
+                {
+                    f"{PKG}/a.py": "import b as _b\nfrom c import d as _d\n_b.e, _d.f, _b.__file__\n\nclass G:\n    def h(self, i):\n        return self._j, i._k\n"
+                },
+                [],
+            ),
+        ):
+            with self.subTest(files=sorted(files)):
+                self.assertEqual(imports.private_imports(self.tree(files)), expected)
 
 
 class ImportHygiene(Sample):
-    def test_no_startup_bootstrap_may_change_search_paths(self):
+    def test_any_sys_path_mutation_and_module_level_environment_write(self):
         assignment = "sys.path[:] = [*roots, *(path for path in sys.path if path not in roots)]"
         script = f"import sys\ndef _bootstrap(roots):\n    {assignment}\ndef main(roots):\n    {assignment}\n"
-        for path in (f"{SESSION_SRC}runtimes/tui_hook.py", "tests/other.py"):
-            with self.subTest(path=path):
-                self.assertEqual(
-                    imports.import_hygiene(self.tree({path: script})),
-                    [f"{path}:3: sys.path mutation", f"{path}:5: sys.path mutation"],
-                )
-
-    def test_any_sys_path_mutation(self):
-        root = self.tree(
-            {
-                "tests/a.py": (
-                    "import sys\nsys.path.insert(0, 'x')\ndef f():\n    sys.path.append('x')\n"
-                ),
-                "tests/b.py": "import sys\nsys.path = []\nsys.path[0] = 'x'\nsys.path += ['x']\ndel sys.path[0]\n",
-                "tests/c.py": (
-                    "import sys as s\nfrom sys import path as p\nfrom unittest import mock\ns.path.extend([])\np.remove('x')\np[:0] = ['x']\np += ['x']\nmock.patch('sys.path', [])\n@mock.patch.object(s, 'path', [])\ndef g(): pass\n"
-                ),
-                "tests/d.py": "import sys\nfrom sys import path\nfrom unittest import mock\nx = [sys.path[0], sys.path.index('x'), list(sys.path), sys.path.copy()]\npath = []\nmock.patch('os.path.join')\nmock.patch.object(sys, 'argv', [])\n",
-            }
-        )
-        self.assertEqual(
-            imports.import_hygiene(root),
-            [f"{at}: sys.path mutation" for at in ("tests/a.py:2", "tests/a.py:4")]
-            + [f"tests/b.py:{n}: sys.path mutation" for n in range(2, 6)]
-            + [f"tests/c.py:{n}: sys.path mutation" for n in range(4, 10)],
-        )
-
-    def test_a_module_level_environment_write(self):
-        root = self.tree(
-            {
-                "tests/a.py": "import os\nos.environ['A'] = '1'\nos.environ.update(A='1')\ndel os.environ['A']\nos.environ |= {}\nos.putenv('A', '1')\n",
-                "tests/b.py": (
-                    "import os as o\nfrom os import environ, putenv\nfrom unittest import mock\nclass C:\n    environ.setdefault('A', '1')\nif True:\n    putenv('A', '1')\nmock.patch.dict(environ, {'A': '1'}).start()\no.environ.pop('A')\n"
-                ),
-                "tests/c.py": (
-                    "import os\nfrom unittest import mock\nA = os.environ.get('A', os.environ['B'])\ndef f():\n    os.environ['A'] = '1'\n    os.putenv('A', '1')\ng = lambda: os.environ.clear()\n@mock.patch.dict(os.environ, {'A': '1'})\nclass D:\n    @mock.patch.dict(os.environ, {'A': '1'})\n    def h(self): pass\n"
-                ),
-            }
-        )
-        self.assertEqual(
-            imports.import_hygiene(root),
-            [f"tests/a.py:{n}: module-level environment write" for n in range(2, 7)]
-            + [f"tests/b.py:{n}: module-level environment write" for n in (5, 7, 8, 9)],
-        )
+        for files, expected in (
+            *(
+                ({path: script}, [f"{path}:3: sys.path mutation", f"{path}:5: sys.path mutation"])
+                for path in (f"{SESSION_SRC}runtimes/tui_hook.py", "tests/other.py")
+            ),
+            (
+                {
+                    "tests/a.py": (
+                        "import sys\nsys.path.insert(0, 'x')\ndef f():\n    sys.path.append('x')\n"
+                    ),
+                    "tests/b.py": "import sys\nsys.path = []\nsys.path[0] = 'x'\nsys.path += ['x']\ndel sys.path[0]\n",
+                    "tests/c.py": (
+                        "import sys as s\nfrom sys import path as p\nfrom unittest import mock\ns.path.extend([])\np.remove('x')\np[:0] = ['x']\np += ['x']\nmock.patch('sys.path', [])\n@mock.patch.object(s, 'path', [])\ndef g(): pass\n"
+                    ),
+                    "tests/d.py": "import sys\nfrom sys import path\nfrom unittest import mock\nx = [sys.path[0], sys.path.index('x'), list(sys.path), sys.path.copy()]\npath = []\nmock.patch('os.path.join')\nmock.patch.object(sys, 'argv', [])\n",
+                },
+                [f"{at}: sys.path mutation" for at in ("tests/a.py:2", "tests/a.py:4")]
+                + [f"tests/b.py:{n}: sys.path mutation" for n in range(2, 6)]
+                + [f"tests/c.py:{n}: sys.path mutation" for n in range(4, 10)],
+            ),
+            (
+                {
+                    "tests/a.py": "import os\nos.environ['A'] = '1'\nos.environ.update(A='1')\ndel os.environ['A']\nos.environ |= {}\nos.putenv('A', '1')\n",
+                    "tests/b.py": (
+                        "import os as o\nfrom os import environ, putenv\nfrom unittest import mock\nclass C:\n    environ.setdefault('A', '1')\nif True:\n    putenv('A', '1')\nmock.patch.dict(environ, {'A': '1'}).start()\no.environ.pop('A')\n"
+                    ),
+                    "tests/c.py": (
+                        "import os\nfrom unittest import mock\nA = os.environ.get('A', os.environ['B'])\ndef f():\n    os.environ['A'] = '1'\n    os.putenv('A', '1')\ng = lambda: os.environ.clear()\n@mock.patch.dict(os.environ, {'A': '1'})\nclass D:\n    @mock.patch.dict(os.environ, {'A': '1'})\n    def h(self): pass\n"
+                    ),
+                },
+                [f"tests/a.py:{n}: module-level environment write" for n in range(2, 7)]
+                + [f"tests/b.py:{n}: module-level environment write" for n in (5, 7, 8, 9)],
+            ),
+        ):
+            with self.subTest(files=sorted(files)):
+                self.assertEqual(imports.import_hygiene(self.tree(files)), expected)
 
 
 class StandaloneImports(Sample):
-    def test_tui_hook_uses_package_imports(self):
-        path = f"{SESSION_SRC}runtimes/tui_hook.py"
-        self.assertNotIn(path, STANDALONE)
-
-    def test_tmux_host_uses_package_imports(self):
-        self.assertNotIn(TMUX_HOST, STANDALONE)
+    def test_the_tui_hook_and_tmux_host_use_package_imports(self):
+        for path in (f"{SESSION_SRC}runtimes/tui_hook.py", TMUX_HOST):
+            with self.subTest(path=path):
+                self.assertNotIn(path, STANDALONE)
 
     def found(self, source):
         files = dict.fromkeys(STANDALONE, source)
         return imports.standalone_imports(self.tree(files))
 
-    def test_stdlib_imports_aliases_and_nested_imports_are_clean(self):
-        self.assertEqual(
-            self.found(
-                "from __future__ import annotations\nimport os.path as path, sys\nfrom collections.abc import Mapping\nimport builtins\ndef load():\n    import json as j\n    from pathlib import Path\n"
-            ),
-            [],
-        )
-
-    def test_third_party_own_package_and_relative_imports_are_reported(self):
-        source = "import requests as r, agent_pm.utils\nfrom agent_pm.session import Driver\nfrom . import sibling\ndef load():\n    from unknown.child import thing\n"
-        self.assertEqual(
-            self.found(source),
-            sorted(
+    def test_only_stdlib_imports_in_every_branch_of_a_standalone_script(self):
+        def reported(*items):
+            return sorted(
                 f"{path}:{line}: non-stdlib import {name}"
                 for path in STANDALONE
-                for line, name in (
+                for line, name in items
+            )
+
+        for source, expected in (
+            (
+                "from __future__ import annotations\nimport os.path as path, sys\nfrom collections.abc import Mapping\nimport builtins\ndef load():\n    import json as j\n    from pathlib import Path\n",
+                [],
+            ),
+            (
+                "import requests as r, agent_pm.utils\nfrom agent_pm.session import Driver\nfrom . import sibling\ndef load():\n    from unknown.child import thing\n",
+                reported(
                     (1, "requests"),
                     (1, "agent_pm.utils"),
                     (2, "agent_pm.session"),
                     (3, "."),
                     (5, "unknown.child"),
-                )
+                ),
             ),
-        )
+            (
+                "if __package__:\n    from agent_pm.session.adapters import flags\nelse:\n    import runpy\n    import requests\nimport agent_pm.utils\n",
+                reported((2, "agent_pm.session.adapters"), (5, "requests"), (6, "agent_pm.utils")),
+            ),
+            (
+                "def load():\n    if __package__:\n        import agent_pm.utils\nif __package__ is not None:\n    import requests\nif not __package__:\n    import other\n",
+                reported((3, "agent_pm.utils"), (5, "requests"), (7, "other")),
+            ),
+        ):
+            with self.subTest(source=source):
+                self.assertEqual(self.found(source), expected)
 
     def test_missing_inventory_file_is_reported(self):
         missing = min(STANDALONE)
         root = self.tree({path: "" for path in STANDALONE if path != missing})
         self.assertEqual(
             imports.standalone_imports(root), [f"{missing}: missing standalone script"]
-        )
-
-    def test_every_branch_is_checked_unconditionally(self):
-        source = """if __package__:
-    from agent_pm.session.adapters import flags
-else:
-    import runpy
-    import requests
-import agent_pm.utils
-"""
-        self.assertEqual(
-            self.found(source),
-            sorted(
-                f"{path}:{line}: non-stdlib import {name}"
-                for path in STANDALONE
-                for line, name in (
-                    (2, "agent_pm.session.adapters"),
-                    (5, "requests"),
-                    (6, "agent_pm.utils"),
-                )
-            ),
-        )
-
-    def test_nested_or_other_conditions_do_not_hide_standalone_imports(self):
-        source = """def load():
-    if __package__:
-        import agent_pm.utils
-if __package__ is not None:
-    import requests
-if not __package__:
-    import other
-"""
-        self.assertEqual(
-            self.found(source),
-            sorted(
-                f"{path}:{line}: non-stdlib import {name}"
-                for path in STANDALONE
-                for line, name in ((3, "agent_pm.utils"), (5, "requests"), (7, "other"))
-            ),
         )
 
     def test_unlisted_module_is_not_a_standalone_script(self):

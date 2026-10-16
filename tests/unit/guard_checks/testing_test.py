@@ -51,55 +51,117 @@ class EveryTest(Sample):
 
 
 class UnitTestModules(Sample):
-    def test_empty_name_does_not_match_the_containing_source_directory(self):
-        test = "session/tests/unit/_test.py"
-        root = self.tree({test: "", "session/src/agent_pm/session/__init__.py": ""})
-        self.assertEqual(
-            testing.unit_test_modules(root),
-            [f"{test}: missing source module session/src/agent_pm/session/.py"],
-        )
+    def test_each_unit_test_module_needs_its_source_module(self):
+        def missing(test, source):
+            return [f"{test}: missing source module {source}"]
 
-    def test_matching_modules_in_every_project_are_accepted(self):
-        files = {}
-        for project, layer in guards.PROJECTS.items():
-            files[f"{project}/tests/unit/engine/config_test.py"] = ""
-            files[f"{project}/src/agent_pm/{layer}/engine/config.py"] = ""
-        self.assertEqual(testing.unit_test_modules(self.tree(files)), [])
-
-    def test_missing_nested_module_reports_both_repository_paths(self):
-        test = "session/tests/unit/adapters/codex/removed_test.py"
-        source = "session/src/agent_pm/session/adapters/codex/removed.py"
-        self.assertEqual(
-            testing.unit_test_modules(self.tree({test: ""})),
-            [f"{test}: missing source module {source}"],
-        )
-
-    def test_wrapped_test_namespace_has_the_same_relative_mapping(self):
-        root = self.tree(
-            {
-                "linear-orchestrator/tests/orchestrator_tests/unit/engine/router_test.py": "",
-                "linear-orchestrator/src/agent_pm/linear_orchestrator/engine/router.py": "",
-            }
-        )
-        self.assertEqual(testing.unit_test_modules(root), [])
-
-    def test_package_test_is_named_after_its_source_package(self):
-        root = self.tree(
-            {
-                "delegate/tests/unit/composer_test.py": "",
-                "delegate/src/agent_pm/delegate/composer/__init__.py": "",
-            }
-        )
-        self.assertEqual(testing.unit_test_modules(root), [])
-
-    def test_markdown_directory_matches_a_unit_test(self):
-        root = self.tree(
-            {
-                "delegate/tests/unit/team/roles_test.py": "",
-                "delegate/src/agent_pm/delegate/team/roles/engineer.md": "charter",
-            }
-        )
-        self.assertEqual(testing.unit_test_modules(root), [])
+        for files, expected in (
+            (
+                {"session/tests/unit/_test.py": "", "session/src/agent_pm/session/__init__.py": ""},
+                missing("session/tests/unit/_test.py", "session/src/agent_pm/session/.py"),
+            ),
+            (
+                {
+                    path: ""
+                    for project, layer in guards.PROJECTS.items()
+                    for path in (
+                        f"{project}/tests/unit/engine/config_test.py",
+                        f"{project}/src/agent_pm/{layer}/engine/config.py",
+                    )
+                },
+                [],
+            ),
+            (
+                {"session/tests/unit/adapters/codex/removed_test.py": ""},
+                missing(
+                    "session/tests/unit/adapters/codex/removed_test.py",
+                    "session/src/agent_pm/session/adapters/codex/removed.py",
+                ),
+            ),
+            (
+                {
+                    "linear-orchestrator/tests/orchestrator_tests/unit/engine/router_test.py": "",
+                    "linear-orchestrator/src/agent_pm/linear_orchestrator/engine/router.py": "",
+                },
+                [],
+            ),
+            (
+                {
+                    "delegate/tests/unit/composer_test.py": "",
+                    "delegate/src/agent_pm/delegate/composer/__init__.py": "",
+                },
+                [],
+            ),
+            (
+                {
+                    "delegate/tests/unit/team/roles_test.py": "",
+                    "delegate/src/agent_pm/delegate/team/roles/engineer.md": "charter",
+                },
+                [],
+            ),
+            (
+                {"session/tests/unit/fakes/host_test.py": "", "session/tests/fakes/host.py": ""},
+                [],
+            ),
+            (
+                {
+                    "delegate/tests/unit/composer/support_test.py": "",
+                    "delegate/tests/unit/composer/support.py": "",
+                },
+                missing(
+                    "delegate/tests/unit/composer/support_test.py",
+                    "delegate/src/agent_pm/delegate/composer/support.py",
+                ),
+            ),
+            (
+                {
+                    "session/tests/unit/session_test.py": "",
+                    "session/src/agent_pm/session/__init__.py": "",
+                },
+                [],
+            ),
+            (
+                {
+                    "delegate/tests/unit/composer/roles_test.py": "",
+                    "delegate/src/agent_pm/delegate/team/roles/engineer.md": "charter",
+                },
+                missing(
+                    "delegate/tests/unit/composer/roles_test.py",
+                    "delegate/src/agent_pm/delegate/composer/roles.py",
+                ),
+            ),
+            (
+                {"session/tests/unit/host_test.py": "", "session/tests/fakes/host.py": ""},
+                missing("session/tests/unit/host_test.py", "session/src/agent_pm/session/host.py"),
+            ),
+            (
+                {
+                    "utils/tests/unit/case.py": "",
+                    "utils/tests/unit/fakes/record.py": "",
+                    "utils/tests/unit/live_tmux.py": "",
+                    "utils/tests/unit/files_test.py.backup": "",
+                    "utils/tests/unit/files_test.txt": "",
+                },
+                [],
+            ),
+            (
+                {
+                    "session/tests/integration/unit/unmatched_test.py": "",
+                    "session/tests/session_tests/integration/unmatched_test.py": "",
+                    "tests/unit/unmatched_test.py": "",
+                    ".github/unit/unmatched_test.py": "",
+                },
+                [],
+            ),
+            (
+                {"manager/tests/unit/config_test.py": "", "utils/src/agent_pm/utils/config.py": ""},
+                missing(
+                    "manager/tests/unit/config_test.py", "manager/src/agent_pm/manager/config.py"
+                ),
+            ),
+        ):
+            with self.subTest(files=sorted(files)):
+                self.assertEqual(testing.unit_test_modules(self.tree(files)), expected)
 
     def test_empty_directory_does_not_match_a_unit_test(self):
         test = "delegate/tests/unit/team_test.py"
@@ -110,91 +172,10 @@ class UnitTestModules(Sample):
             testing.unit_test_modules(root), [f"{test}: missing source module {source}"]
         )
 
-    def test_fake_suite_matches_a_helper_under_the_project_tests_root(self):
-        root = self.tree(
-            {
-                "session/tests/unit/fakes/host_test.py": "",
-                "session/tests/fakes/host.py": "",
-            }
-        )
-        self.assertEqual(testing.unit_test_modules(root), [])
-
-    def test_sibling_helper_does_not_replace_the_project_test_helper_path(self):
-        root = self.tree(
-            {
-                "delegate/tests/unit/composer/support_test.py": "",
-                "delegate/tests/unit/composer/support.py": "",
-            }
-        )
-        self.assertEqual(
-            testing.unit_test_modules(root),
-            [
-                "delegate/tests/unit/composer/support_test.py: missing source module delegate/src/agent_pm/delegate/composer/support.py"
-            ],
-        )
-
-    def test_layer_package_suite_matches_its_public_init(self):
-        root = self.tree(
-            {
-                "session/tests/unit/session_test.py": "",
-                "session/src/agent_pm/session/__init__.py": "",
-            }
-        )
-        self.assertEqual(testing.unit_test_modules(root), [])
-
-    def test_source_directory_at_another_relative_path_does_not_match(self):
-        test = "delegate/tests/unit/composer/roles_test.py"
-        source = "delegate/src/agent_pm/delegate/composer/roles.py"
-        root = self.tree(
-            {test: "", "delegate/src/agent_pm/delegate/team/roles/engineer.md": "charter"}
-        )
-        self.assertEqual(
-            testing.unit_test_modules(root), [f"{test}: missing source module {source}"]
-        )
-
-    def test_helper_at_another_relative_path_does_not_match(self):
-        test = "session/tests/unit/host_test.py"
-        source = "session/src/agent_pm/session/host.py"
-        root = self.tree({test: "", "session/tests/fakes/host.py": ""})
-        self.assertEqual(
-            testing.unit_test_modules(root), [f"{test}: missing source module {source}"]
-        )
-
     def test_source_package_init_suite_uses_the_package_name(self):
         test = "delegate/tests/unit/composer/__init___test.py"
         root = self.tree({test: "", "delegate/src/agent_pm/delegate/composer/__init__.py": ""})
         self.assertEqual(len(testing.unit_test_modules(root)), 1)
-
-    def test_helpers_and_other_filename_extensions_are_not_checked(self):
-        root = self.tree(
-            {
-                "utils/tests/unit/case.py": "",
-                "utils/tests/unit/fakes/record.py": "",
-                "utils/tests/unit/live_tmux.py": "",
-                "utils/tests/unit/files_test.py.backup": "",
-                "utils/tests/unit/files_test.txt": "",
-            }
-        )
-        self.assertEqual(testing.unit_test_modules(root), [])
-
-    def test_integration_and_repository_checks_are_not_checked(self):
-        root = self.tree(
-            {
-                "session/tests/integration/unit/unmatched_test.py": "",
-                "session/tests/session_tests/integration/unmatched_test.py": "",
-                "tests/unit/unmatched_test.py": "",
-                ".github/unit/unmatched_test.py": "",
-            }
-        )
-        self.assertEqual(testing.unit_test_modules(root), [])
-
-    def test_a_module_in_another_project_does_not_match(self):
-        test = "manager/tests/unit/config_test.py"
-        source = "manager/src/agent_pm/manager/config.py"
-        root = self.tree({test: "", "utils/src/agent_pm/utils/config.py": ""})
-        self.assertEqual(
-            testing.unit_test_modules(root), [f"{test}: missing source module {source}"]
-        )
 
     def test_missing_modules_are_reported_in_path_order(self):
         root = self.tree(
@@ -221,98 +202,99 @@ class TestBoundaries(Sample):
             )
         )
 
-    def test_aliases_cannot_hide_own_module_mutation(self):
-        prefixes = (
-            "import agent_pm.session.engine.hosted_session as module\n",
-            "from agent_pm.session.engine import hosted_session as module\n",
-            "import agent_pm.session.engine.hosted_session as first\nmodule = first\n",
-        )
-        calls = (
-            "patch.object(module, 'start')",
-            "module.start = object()",
-            "del module.start",
-            "setattr(module, 'start', object())",
-        )
-        for prefix in prefixes:
-            for call in calls:
-                with self.subTest(prefix=prefix, call=call):
-                    sample = "from unittest.mock import patch\n" + prefix + call
-                    self.assertTrue(self.violations(sample, "session"))
-
-    def test_patch_aliases_and_concatenated_targets_are_rejected(self):
-        for call in (
-            "p('agent_pm.session.start')",
-            "p('agent_' + 'pm.session.start')",
-            "p.dict(modules, {})",
+    def test_own_module_mutation_patch_aliases_test_imports_and_test_switches_are_rejected(self):
+        for sample, own, shipped in (
+            *(
+                ("from unittest.mock import patch\n" + prefix + call, "session", False)
+                for prefix in (
+                    "import agent_pm.session.engine.hosted_session as module\n",
+                    "from agent_pm.session.engine import hosted_session as module\n",
+                    "import agent_pm.session.engine.hosted_session as first\nmodule = first\n",
+                )
+                for call in (
+                    "patch.object(module, 'start')",
+                    "module.start = object()",
+                    "del module.start",
+                    "setattr(module, 'start', object())",
+                )
+            ),
+            *(
+                (
+                    "from unittest.mock import patch as p\nfrom sys import modules\n" + call,
+                    "session",
+                    False,
+                )
+                for call in (
+                    "p('agent_pm.session.start')",
+                    "p('agent_' + 'pm.session.start')",
+                    "p.dict(modules, {})",
+                )
+            ),
+            *(
+                (statement, "session", False)
+                for statement in (
+                    "import session.tests.unit.api_test as helper",
+                    "from session.tests.unit import api_test",
+                    "from .api_test import Helper",
+                    "importlib.import_module('session.tests.unit.api_test')",
+                )
+            ),
+            *(
+                (f"import os\nos.getenv({variable!r})", "session", True)
+                for variable in ("ADAPTER_TEST", "FORCE_FAILED")
+            ),
         ):
-            sample = "from unittest.mock import patch as p\nfrom sys import modules\n" + call
-            with self.subTest(call=call):
-                self.assertTrue(self.violations(sample, "session"))
+            with self.subTest(sample=sample, shipped=shipped):
+                self.assertTrue(self.violations(sample, own, shipped=shipped))
 
-    def test_module_table_mutations_have_exact_diagnostics(self):
-        statements = (
-            "modules['fake'] = object()",
-            "del modules['fake']",
-            "modules.pop('fake', None)",
-            "modules.update({'fake': object()})",
-            "cleanup(modules.pop, 'fake', None)",
-        )
-        for statement in statements:
-            with self.subTest(statement=statement):
-                self.assertEqual(
-                    self.violations("from sys import modules\n" + statement, "session"),
+    def test_module_table_shipped_patches_and_allowed_fakes_have_exact_diagnostics(self):
+        hosted = "from unittest.mock import patch\nimport agent_pm.session.engine.hosted_session as hosted\n"
+        lower = "from unittest.mock import patch\nfrom agent_pm import session\n"
+        for sample, own, shipped, expected in (
+            *(
+                (
+                    "from sys import modules\n" + statement,
+                    "session",
+                    False,
                     ["session/tests/probe.py:2: sys.modules mutation"],
                 )
-
-    def test_multiple_and_own_dictionary_patches_have_exact_diagnostics(self):
-        prefix = "from unittest.mock import patch\nimport agent_pm.session.engine.hosted_session as hosted\n"
-        for statement, reason in (
-            (
-                "patch.multiple('agent_pm.session.engine.hosted_session', start=object())",
-                "shipped code patch",
+                for statement in (
+                    "modules['fake'] = object()",
+                    "del modules['fake']",
+                    "modules.pop('fake', None)",
+                    "modules.update({'fake': object()})",
+                    "cleanup(modules.pop, 'fake', None)",
+                )
             ),
-            ("patch.dict(hosted.MODES, {})", "shipped dictionary patch"),
-        ):
-            with self.subTest(statement=statement):
-                self.assertEqual(
-                    self.violations(prefix + statement, "session"),
-                    [f"session/tests/probe.py:3: {reason}"],
+            *(
+                (hosted + statement, "session", False, [f"session/tests/probe.py:3: {reason}"])
+                for statement, reason in (
+                    (
+                        "patch.multiple('agent_pm.session.engine.hosted_session', start=object())",
+                        "shipped code patch",
+                    ),
+                    ("patch.dict(hosted.MODES, {})", "shipped dictionary patch"),
                 )
-
-    def test_standard_library_and_lower_layer_fakes_are_allowed(self):
-        sample = "from unittest.mock import patch\nimport os\nfrom session.tests import fake_adapter\npatch.object(os, 'getcwd')\npatch.object(fake_adapter, 'start')\nfake_adapter.start = object()\npatch.dict(os.environ, {})\n"
-        self.assertEqual(self.violations(sample, "delegate"), [])
-
-    def test_lower_layer_patches_have_exact_diagnostics(self):
-        prefix = "from unittest.mock import patch\nfrom agent_pm import session\n"
-        for statement, reason in (
-            ("patch.object(session, 'sessions')", "shipped object patch"),
-            ("patch('agent_pm.session.sessions')", "shipped code patch"),
-            ("patch.multiple(session, sessions=object())", "shipped code patch"),
-            ("patch.dict(session.MODES, {})", "shipped dictionary patch"),
-        ):
-            with self.subTest(statement=statement):
-                self.assertEqual(
-                    self.violations(prefix + statement, "manager"),
-                    [f"manager/tests/probe.py:3: {reason}"],
+            ),
+            (
+                "from unittest.mock import patch\nimport os\nfrom session.tests import fake_adapter\npatch.object(os, 'getcwd')\npatch.object(fake_adapter, 'start')\nfake_adapter.start = object()\npatch.dict(os.environ, {})\n",
+                "delegate",
+                False,
+                [],
+            ),
+            *(
+                (lower + statement, "manager", False, [f"manager/tests/probe.py:3: {reason}"])
+                for statement, reason in (
+                    ("patch.object(session, 'sessions')", "shipped object patch"),
+                    ("patch('agent_pm.session.sessions')", "shipped code patch"),
+                    ("patch.multiple(session, sessions=object())", "shipped code patch"),
+                    ("patch.dict(session.MODES, {})", "shipped dictionary patch"),
                 )
-
-    def test_test_imports_are_rejected_including_dynamic_imports(self):
-        for statement in (
-            "import session.tests.unit.api_test as helper",
-            "from session.tests.unit import api_test",
-            "from .api_test import Helper",
-            "importlib.import_module('session.tests.unit.api_test')",
+            ),
+            ("label = 'TEST_RESULT'", "session", True, []),
         ):
-            with self.subTest(statement=statement):
-                self.assertTrue(self.violations(statement, "session"))
-
-    def test_shipped_test_switches_are_rejected(self):
-        for variable in ("ADAPTER_TEST", "FORCE_FAILED"):
-            sample = f"import os\nos.getenv({variable!r})"
-            with self.subTest(variable=variable):
-                self.assertTrue(self.violations(sample, "session", shipped=True))
-        self.assertEqual(self.violations("label = 'TEST_RESULT'", "session", shipped=True), [])
+            with self.subTest(sample=sample, shipped=shipped):
+                self.assertEqual(self.violations(sample, own, shipped=shipped), expected)
 
     def test_nested_standard_library_boundaries_and_keyword_patch_targets(self):
         root = self.tree(

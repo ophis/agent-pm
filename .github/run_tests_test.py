@@ -75,11 +75,8 @@ class Run(unittest.TestCase):
         self.assertEqual(self.state.read_text(), f"start {__name__}.T.test_pass\npassed\n")
 
     def test_durations_are_recorded_outside_the_checkout(self):
-        timings = self.tmp / "durations.jsonl"
-        with mock.patch.dict(os.environ, {"RUN_TESTS_DURATIONS": str(timings)}):
-            self.run_tests("test_pass")
-
-        row = json.loads(timings.read_text())
+        self.run_tests("test_pass")
+        row = json.loads((self.tmp / "durations.jsonl").read_text())
         self.assertEqual(row["test"], f"{__name__}.T.test_pass")
         self.assertGreaterEqual(row["seconds"], 0)
 
