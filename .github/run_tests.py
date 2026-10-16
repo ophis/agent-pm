@@ -252,15 +252,68 @@ def discover(root, directories):
     suite = unittest.TestSuite()
     for directory in directories:
         start = root / directory
+        pattern = start.name if start.is_file() else "*_test.py"
+        start = start.parent if start.is_file() else start
         loader = unittest.TestLoader()
         suite.addTests(
             loader.discover(
-                str(start), pattern="*_test.py", top_level_dir=str(discovery_top(root, start))
+                str(start), pattern=pattern, top_level_dir=str(discovery_top(root, start))
             )
         )
         if loader.errors:
             raise ValueError("\n".join(loader.errors))
     return suite
+
+
+def tests(suite):
+    for test in suite:
+        if isinstance(test, unittest.TestSuite):
+            yield from tests(test)
+        else:
+            yield test
+
+
+def select(root, selectors):
+    root = root.resolve()
+    paths = [(root / value).resolve() for value in selectors]
+    test_id = None
+    if len(selectors) == 1 and not paths[0].exists() and "/" not in selectors[0]:
+        test_id = selectors[0]
+        paths = []
+        for pattern in (".github/*_test.py", "tests/**/*_test.py", "*/tests/**/*_test.py"):
+            for path in sorted(root.glob(pattern)):
+                top = discovery_top(root, path.parent)
+                module = ".".join(path.relative_to(top).with_suffix("").parts)
+                if test_id.startswith(module + "."):
+                    paths.append(path.resolve())
+        if len(paths) > 1:
+            raise ValueError(f"ambiguous test id: {test_id!r}")
+    if not paths or any(
+        not path.is_relative_to(root)
+        or not path.exists()
+        or (not path.is_dir() and not path.name.endswith("_test.py"))
+        for path in paths
+    ):
+        raise ValueError(f"invalid test selection: {selectors!r}")
+    if GATE:
+        units = [
+            "unit" in path.relative_to(root).parts
+            or path.parent == root / ".github"
+            or path == root / ".github"
+            for path in paths
+        ]
+        GATE.unit_only, GATE.unit = all(units), any(units)
+    suite = discover(root, paths)
+    if test_id:
+        matches = [test for test in tests(suite) if test.id() == test_id]
+        if len(matches) != 1:
+            raise ValueError(
+                f"test id must match exactly one test: {test_id!r} ({len(matches)} matches)"
+            )
+        suite = unittest.TestSuite(matches)
+    if not suite.countTestCases():
+        raise ValueError(f"no tests match: {selectors!r}")
+    return suite, paths
 
 
 def unit_directories(root):
@@ -279,7 +332,7 @@ def unit_directories(root):
 def main(argv):
     global GATE
     if len(argv) < 2:
-        sys.exit("usage: run_tests.py <title> <start dir>... | <title> --unit")
+        sys.exit("usage: run_tests.py <title> <directory>... | <title> <test id|test file|--unit>")
     title, *directories = argv
     code = supervise(title)
     if code is not None:
@@ -291,15 +344,8 @@ def main(argv):
         else None
     )
     GATE = isolation.install(root)
-    GATE.unit_only = directories == ["--unit"] or all(
-        "unit" in Path(path).parts or path == ".github" for path in directories
-    )
-    GATE.unit = directories == ["--unit"] or any(
-        "unit" in Path(path).parts or path == ".github" for path in directories
-    )
-    code = run(
-        discover(root, unit_directories(root) if directories == ["--unit"] else directories), title
-    )
+    suite, _ = select(root, unit_directories(root) if directories == ["--unit"] else directories)
+    code = run(suite, title)
     if cov:
         cov.stop()
         cov.save()
@@ -307,4 +353,7 @@ def main(argv):
 
 
 if __name__ == "__main__":
-    sys.exit(main(sys.argv[1:]))
+    try:
+        sys.exit(main(sys.argv[1:]))
+    except ValueError as error:
+        sys.exit(str(error))

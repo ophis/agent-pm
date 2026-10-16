@@ -7,6 +7,7 @@ import importlib.util
 import io
 import json
 import os
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -86,6 +87,73 @@ class Run(unittest.TestCase):
 
 
 class Discovery(unittest.TestCase):
+    def selection_fixture(self, *, normalized=False):
+        root = Path(self.enterContext(tempfile.TemporaryDirectory())).resolve()
+        directory = root / ("project/tests/example_tests/integration" if normalized else ".github")
+        directory.mkdir(parents=True)
+        if normalized:
+            for parent in (directory, directory.parent):
+                (parent / "__init__.py").touch()
+        name = "selection_" + root.name + "_test"
+        path = directory / (name + ".py")
+        path.write_text(
+            "import unittest\nclass Choice(unittest.TestCase):\n"
+            "    def test_one(self): pass\n    def test_two(self): pass\n"
+        )
+        module = ("example_tests.integration." if normalized else "") + name
+        self.addCleanup(
+            lambda: [
+                sys.modules.pop(key, None)
+                for key in list(sys.modules)
+                if key == module or key.startswith("example_tests")
+            ]
+        )
+        return root, path, module
+
+    def test_exact_id_and_file_select_only_the_requested_tests(self):
+        for normalized in (False, True):
+            with self.subTest(normalized=normalized):
+                root, path, module = self.selection_fixture(normalized=normalized)
+                test_id = module + ".Choice.test_one"
+                suite, paths = runner.select(root, [test_id])
+                self.assertEqual([test.id() for test in runner.tests(suite)], [test_id])
+                self.assertEqual(paths, [path])
+                suite, _ = runner.select(root, [str(path.relative_to(root))])
+                self.assertEqual(suite.countTestCases(), 2)
+                suite, _ = runner.select(root, [str(path.parent)])
+                self.assertEqual(suite.countTestCases(), 2)
+
+    def test_invalid_or_nonunique_inputs_never_fall_back(self):
+        root, path, module = self.selection_fixture()
+        (root / "ordinary.py").touch()
+        for selector in (
+            module + ".Choice.test_missing",
+            module + ".Choice",
+            "missing.py",
+            "ordinary.py",
+            "../outside_test.py",
+            str(path) + ".missing",
+        ):
+            with self.subTest(selector=selector), self.assertRaises(ValueError):
+                runner.select(root, [selector])
+        original = list(runner.tests(runner.discover(root, [path])))[0]
+        duplicate = unittest.TestSuite([original, original])
+        with (
+            mock.patch.object(runner, "discover", return_value=duplicate),
+            self.assertRaises(ValueError),
+        ):
+            runner.select(root, [original.id()])
+
+    def test_ambiguous_module_names_are_rejected_before_import(self):
+        root, path, module = self.selection_fixture(normalized=True)
+        other = root / "other/tests/example_tests/integration" / path.name
+        other.parent.mkdir(parents=True)
+        for parent in (other.parent, other.parent.parent):
+            (parent / "__init__.py").touch()
+        other.write_text(path.read_text())
+        with self.assertRaisesRegex(ValueError, "ambiguous"):
+            runner.select(root, [module + ".Choice.test_one"])
+
     def test_inherited_state_is_not_a_supervised_child(self):
         with mock.patch.dict(os.environ, {runner.STATE: "inherited"}, clear=True):
             self.assertFalse(runner.supervised_child())

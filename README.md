@@ -444,9 +444,17 @@ typos --config pyproject.toml
 |---|---|
 | one project's unit tests | `python3 .github/run_tests.py "Session unit" session/tests/unit` |
 | all unit tests | `python3 .github/run_tests.py Unit --unit` |
+| one complete test ID | `python3 .github/run_tests.py Integration manager.tests.integration.crew_close_all_integration_test.CloseAllTest.test_close_all_closes_what_mgr_opened_and_only_that` |
+| one test file | `python3 .github/run_tests.py Integration manager/tests/integration/crew_close_all_integration_test.py` |
 | integration shard (labels in `.github/workflows/test.yml`) | `python3 .github/integration_jobs.py <N>` |
 
 Run tests only through these entries; they sandbox each run.
+
+Single-test and file selection need the same repository-root `PYTHONPATH` above and the
+selected test's dependencies (tmux for live tmux tests). Copy the complete ID from the
+failure annotation or summary; no shard number is needed. Files must be repository test
+files named `*_test.py`; invalid, missing, empty or ambiguous selections fail without
+running a broader suite. All modes retain supervised isolation, diagnostics and cleanup.
 
 Integration jobs always upload `integration-<run-id>-<attempt>-<shard>` artifacts containing
 the discovered IDs, assigned IDs, expected load, Python/tmux/runner versions, supervised
