@@ -459,7 +459,6 @@ class HostedSession(Session):
         last = self._clock()
         try:
             while not self._ended:
-                self._check_sid()
                 if self._queue:
                     event = self._queue.popleft()
                     self._record(event)

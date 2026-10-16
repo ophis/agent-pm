@@ -21,6 +21,7 @@ COMMANDS = [
     "close",
     "attach-command",
     "resume",
+    "content",
     "writeback",
 ]
 

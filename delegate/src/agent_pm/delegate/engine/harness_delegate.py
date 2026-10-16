@@ -762,6 +762,9 @@ class HarnessDelegate(Delegate):
                         callback(Finished(ended))
                 raise
 
+    def ctl(self) -> tuple[str, ...]:
+        return self._record(self._read()).ctl
+
     def _complete(self, result: Result) -> None:
         with self.store.mutex():
             state = self._current()

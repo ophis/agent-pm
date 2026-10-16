@@ -353,7 +353,7 @@ class Headless(Detach):
         events = [DelegateEvent.parse(entry["line"]) for entry in entries]
         self.assertEqual([event.kind for event in events], ["begun", "progress", "finished"])
         self.assertEqual({(event.sid, event.attempt) for event in events}, {(SID, 1)})
-        self.assertEqual(events[-1].outcome["status"], "done")
+        self.assertEqual(events[-1].outcome.status, "done")
         run_dir = os.path.realpath(Layout(self.work).run)
         self.assertEqual({entry["cwd"] for entry in entries}, {run_dir})
         self.assertEqual(self.kinds().count("callback_error"), 0)

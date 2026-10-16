@@ -1,7 +1,9 @@
 """The linear ctl contract on the real router and query entry, with private tmux and fake APIs."""
 
 import os
+import shlex
 import subprocess
+import sys
 from pathlib import Path
 
 from agent_pm.utils import SID_ENV, Record
@@ -9,6 +11,7 @@ from orchestrator_tests.case import PY
 from orchestrator_tests.integration.flow_fixtures import ACCOUNTS, ENTRY, PROJECT, TmuxFlow
 
 from session.tests import live_tmux
+from session.tests.integration.clients.claude import fake_claude
 from utils.tests.contracts.ctl import CtlContract
 
 
@@ -19,6 +22,18 @@ class LinearCtlContract(CtlContract, TmuxFlow):
         super().setUp()
         self.started_records = {}
         self.scene([{"kind": "sleep", "seconds": 120}])
+        probe = Path(self.root, "probe.json")
+        probe.write_text('{"steps": []}', encoding="utf-8")
+        Path(self.bin, "claude").write_text(
+            "#!/bin/sh\n"
+            "is_run=false\n"
+            'for arg; do case "$arg" in --session-id|--resume) is_run=true;; esac; done\n'
+            'if [ "$is_run" = false ]; then\n'
+            f"  export FAKE_CLAUDE_SCENARIO={shlex.quote(str(probe))}\n"
+            "fi\n"
+            f'exec {shlex.quote(sys.executable)} -I {shlex.quote(fake_claude.__file__)} "$@"\n',
+            encoding="utf-8",
+        )
 
     def call(self, *argv, stdin="", sid=None):
         env = {**self.env(), **self.in_manager()}

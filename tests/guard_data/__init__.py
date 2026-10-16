@@ -6,7 +6,10 @@ import importlib
 
 from tests.guards import PROJECTS
 
-MODULES = tuple(importlib.import_module(f"{__name__}.{package}") for package in PROJECTS.values())
+MODULES = tuple(
+    importlib.import_module(f"{__name__}.{package}")
+    for package in (*PROJECTS.values(), "repository")
+)
 
 
 def merged(name, modules=MODULES):
@@ -51,3 +54,6 @@ COMMAND_FILES = merged("COMMAND_FILES")
 
 
 COMMAND_DOCS = merged("COMMAND_DOCS")
+
+
+PYTHON_CODE_ALLOWED = merged("PYTHON_CODE_ALLOWED")

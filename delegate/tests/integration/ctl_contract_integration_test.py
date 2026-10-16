@@ -1,85 +1,73 @@
-"""The delegate ctl contract through fresh CLI processes and the persistent process-free Host."""
+"""The delegate ctl contract through public commands and a gated fake client."""
 
 import json
 import os
-import subprocess
+import sys
 from pathlib import Path
 
-from agent_pm.delegate import Outcome
-from agent_pm.delegate.engine.harness_delegate import HarnessDelegate
-from agent_pm.delegate.engine.types import Result
-from agent_pm.utils import SID_ENV, Record
+from agent_pm.utils import Record
 
-from delegate.tests.case import PY, REPO, child_env
-from delegate.tests.fakes.harness_session import DiskHost
-from delegate.tests.harness import HarnessCase
+from delegate.tests.integration import await_file
+from delegate.tests.integration.cli import ASKING, Integration
+from delegate.tests.replies import block, mark
+from session.tests import live_tmux
 from utils.tests.contracts.ctl import AnswerCtlContract
 
 
-class DelegateCtlContract(AnswerCtlContract, HarnessCase):
+class DelegateCtlContract(AnswerCtlContract, Integration):
     command = "agent-pm-delegate"
 
     def setUp(self):
         super().setUp()
-        with open(self.local, encoding="utf-8") as file:
-            settings = file.read()
-        scenario = os.path.join(self.home, "scenario.json")
-        Path(scenario).write_text("[]", encoding="utf-8")
-        settings = settings.replace(
-            'implementation = "session.tests.fake_client:FakeClient"',
-            'implementation = "session.tests.fake_client:FakeClient"\n'
-            + f"scenario = {json.dumps(scenario)}\n"
-            + f"log = {json.dumps(os.path.join(self.home, 'client.jsonl'))}",
-        )
-        with open(self.local, "w", encoding="utf-8") as file:
-            file.write(settings.replace(":RecordingHost", ":DiskHost"))
         self.started_records = {}
 
     def call(self, *argv, stdin="", sid=None):
-        env = child_env(None, REPO)
-        env.pop(SID_ENV, None)
-        if sid is not None:
-            env[SID_ENV] = sid
-        return subprocess.run(
-            (*PY, "-m", "agent_pm.delegate.cli", *argv),
-            cwd=self.home,
-            env=env,
-            input=stdin,
-            capture_output=True,
-            text=True,
-            timeout=60,
-        )
+        return self.control(*argv, stdin=stdin, sid=sid)
 
     def start(self, name, sid=None):
-        workdir = os.path.join(self.home, name)
+        self.work = os.path.join(self.root, name)
+        gate = os.path.join(self.work, "release")
+        self.scene(
+            [
+                mark("start", "waiting"),
+                {
+                    "kind": "run",
+                    "argv": [sys.executable, await_file.__file__, gate],
+                    "path": os.path.join(self.work, "gate-result.json"),
+                },
+                block(ASKING),
+            ]
+        )
         done = self.call(
             "run",
             "--role",
-            "dummy-tester",
-            "--client",
-            "fake",
+            self.ROLE,
             "--input",
             "initial",
             "--workdir",
-            workdir,
+            self.work,
             "--detach",
             "--mode",
             "headless",
             "--events",
-            os.path.join(self.home, "events"),
+            os.path.join(self.root, "events"),
             sid=sid,
         )
         self.assertEqual(done.returncode, 0, done.stderr)
-        self.assertEqual(len(done.stdout.splitlines()), 1, done.stdout)
         record = Record.parse(done.stdout)
         self.started_records[name] = record
+        live_tmux.wait(
+            lambda: any(
+                path.stat().st_size
+                for path in Path(self.config, "projects").glob(f"*/{record.sid}.jsonl")
+            ),
+            what="the contract client transcript",
+        )
         return record
 
     def inventory(self):
-        root = DiskHost("agent").root()
-        if not os.path.isdir(root):
-            return {}
-        return {name: Path(root, name).read_text(encoding="utf-8") for name in os.listdir(root)}
+        self.control("status", self.work)
+        return self.resume_server.tmux("list-sessions", "-F", "#{session_name}").stdout
 
     def refuse(self):
         return self.call(
@@ -92,20 +80,25 @@ class DelegateCtlContract(AnswerCtlContract, HarnessCase):
             "--mode",
             "headless",
             "--events",
-            os.path.join(self.home, "events"),
+            os.path.join(self.root, "events"),
         )
 
     def end(self, name):
-        for session in self.started_records[name].sessions:
-            DiskHost("agent").attach(session).close()
+        result = self.call("close", stdin=self.started_records[name].to_line())
+        self.assertEqual(result.returncode, 0, result.stderr)
 
     def waiting(self, record):
-        view = HarnessDelegate.attach(record.workdir)
-        view._complete(
-            Result(0, Outcome("needs_input", "Question", "Waiting", questions=["Answer?"]))
-        )
-        view.close()
+        Path(record.workdir, "release").touch()
+        self.completed()
+        result = self.call("outcome", record.workdir)
+        self.assertEqual(json.loads(result.stdout)["status"], "needs_input")
+        self.scene([], hang=True)
 
     def input_of(self, record):
-        view = HarnessDelegate.attach(record.workdir)
-        return view._read().plan.spec.input
+        def inputs():
+            with open(os.path.join(record.workdir, "run", "run.jsonl"), encoding="utf-8") as stream:
+                records = [json.loads(line) for line in stream]
+            return [entry["text"] for entry in records if entry["kind"] == "input"]
+
+        live_tmux.wait(lambda: len(inputs()) == 2, what="the answer input record")
+        return inputs()[-1]

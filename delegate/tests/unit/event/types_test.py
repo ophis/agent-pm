@@ -1,8 +1,5 @@
-"""delegate/event/types.py: OutcomeStatus and STATUSES, its members in order; the Delegate exports
-OutcomeStatus.
-"""
+"""delegate/event/types.py: STATUSES uses the utils outcome vocabulary."""
 
-from agent_pm import delegate
 from agent_pm.delegate.event.types import STATUSES
 from agent_pm.utils import OutcomeStatus
 
@@ -14,7 +11,3 @@ class Statuses(Case):
         self.assertEqual(list(OutcomeStatus), ["done", "needs_input", "failed"])
         self.assertEqual(STATUSES, tuple(OutcomeStatus))
         self.assertEqual(STATUSES, ("done", "needs_input", "failed"))
-
-    def test_delegate_exports_outcome_status(self):
-        self.assertIn("OutcomeStatus", delegate.__all__)
-        self.assertIs(delegate.OutcomeStatus, OutcomeStatus)

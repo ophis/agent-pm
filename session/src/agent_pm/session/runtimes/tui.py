@@ -180,9 +180,10 @@ class TuiStore:
                 found.append((label, payload))
         return found, offset + end
 
-    def process(self) -> Process | None:
+    def process(self, *, missing_ok: bool = False) -> Process | None:
         if self.name not in self.host.list():
-            check_sid(self.name, None, self._sid)
+            if not missing_ok:
+                check_sid(self.name, None, self._sid)
             return None
         process = self.host.attach(self.name)
         check_sid(self.name, process, self._sid)
@@ -638,7 +639,7 @@ class TuiRuntime(Runtime):
     def _replaced(self, state: Liveness) -> bool:
         """Ended once another terminal holds its name or session.json is another generation's."""
         if state == Liveness.ABSENT:
-            replacement = self._store.process()
+            replacement = self._store.process(missing_ok=True)
             if replacement is not None and replacement.identity != self._terminal.identity:
                 self._end()
                 return True

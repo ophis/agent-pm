@@ -592,6 +592,7 @@ class ResumeInputTest(HarnessCase):
             "resume": ("agent-pm-linear", "resume", "TASK-1"),
         }
         view, record = self.waiting(outer=outer)
+        self.assertEqual(view.ctl(), ("agent-pm-linear",))
         before, launches = self.metadata(), len(harness_launches())
 
         class Bound(HarnessDelegate):

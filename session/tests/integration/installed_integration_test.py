@@ -24,7 +24,7 @@ SKIP = shutil.ignore_patterns("__pycache__")
 MODULE = "installed_client"
 # The child: argv[1] the site, argv[2] the workdir; prints the config read, the fake client's
 # events and where agent_pm.session and agent_pm.utils were imported from.
-CHILD = """import json, sys
+CHILD = """import importlib.util, json, sys
 sys.path.insert(0, sys.argv[1])
 import agent_pm.session, agent_pm.utils
 from agent_pm.session import Access, Session, Spec, read_config
@@ -33,7 +33,8 @@ Session.configure_from(config)
 handle = Session.start(Spec(workdir=sys.argv[2], access=Access(cwd=sys.argv[2]), client="fake",
                             mode="headless", prompt="hello"))
 print(json.dumps({"config": config, "events": [type(e).__name__ for e in handle.events()],
-                  "files": [agent_pm.session.__file__, agent_pm.utils.__file__]}))
+                  "files": [importlib.util.find_spec("agent_pm.session").origin,
+                            importlib.util.find_spec("agent_pm.utils").origin]}))
 """
 
 

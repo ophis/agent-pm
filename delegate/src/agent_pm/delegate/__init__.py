@@ -24,7 +24,6 @@ from agent_pm.delegate.engine.types import (
 from agent_pm.delegate.event import DelegateEvent
 from agent_pm.delegate.event.types import InvalidOutcome, Outcome
 from agent_pm.session import NotShowable, Resumable, SessionError, SessionStatus, Usage, Window
-from agent_pm.utils import OutcomeStatus
 
 __all__ = [
     "ConfigError",
@@ -48,7 +47,6 @@ __all__ = [
     "Progress",
     "Finished",
     "Event",
-    "OutcomeStatus",
     "Delegate",
     "RunConfig",
     "DelegateEvent",

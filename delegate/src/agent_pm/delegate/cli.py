@@ -17,12 +17,12 @@ import re
 import shlex
 import sys
 import time
-import uuid
 from collections.abc import Sequence
 from dataclasses import asdict
 
 from agent_pm.delegate.composer import Composer, RunParams
 from agent_pm.delegate.engine.harness_delegate import HarnessDelegate
+from agent_pm.delegate.engine.plan import run_sid
 from agent_pm.delegate.engine.runner import report, say
 from agent_pm.delegate.engine.types import Begun, ConfigError, Layout, Preview, Spec
 from agent_pm.session import ConfigError as SessionConfigError
@@ -182,7 +182,7 @@ def _run(
     except ConfigError as e:
         say(f"delegate: {e}")
         return 2
-    return report(result, a.out or Layout(a.workdir).out)[0]
+    return report(result, spec.out or Layout(spec.workdir).out)[0]
 
 
 def _detach(delegate_cls: type[HarnessDelegate], role: str, spec: Spec, placement: dict) -> int:
@@ -199,13 +199,19 @@ def _detach(delegate_cls: type[HarnessDelegate], role: str, spec: Spec, placemen
 
 def spec_of(a, text: str) -> Spec:
     """The Spec `run`'s options name, its input `text`."""
+    sid, workdir = a.sid, a.workdir
+    if workdir is None:
+        sid = run_sid(sid)
+        task = f"-{a.task}" if a.task else ""
+        name = f"{time.strftime('%Y-%m-%d')}-{a.role}{task}-{sid[:8]}"
+        workdir = os.path.join(os.path.expanduser(STATE), "adhoc", name)
     return Spec(
         text,
-        a.workdir,
+        workdir,
         task=a.task,
         mode=a.mode,
         client=a.client,
-        sid=a.sid,
+        sid=sid,
         name=a.name,
         events=a.events,
         out=a.out,
@@ -226,11 +232,6 @@ def _check(a: argparse.Namespace) -> None:
         raise ConfigError("--detach needs --events")
     if a.detach and a.mode == Mode.IN_PROCESS:
         raise ConfigError("--detach needs --mode headless or tui")
-    if a.workdir is None:
-        a.sid = str(uuid.uuid4()) if a.sid is None else a.sid
-        task = f"-{a.task}" if a.task else ""
-        name = f"{time.strftime('%Y-%m-%d')}-{a.role}{task}-{a.sid[:8]}"
-        a.workdir = os.path.join(os.path.expanduser(STATE), "adhoc", name)
 
 
 def _name(value: str) -> str:
@@ -344,7 +345,7 @@ def _query(a: argparse.Namespace, delegate_cls: type[HarnessDelegate], sid: str 
 
 
 def _resume(view, input: str | None) -> str:
-    if input is not None and view._record(view._read()).ctl != ("agent-pm-delegate",):
+    if input is not None and view.ctl() != ("agent-pm-delegate",):
         raise ConfigError("pipeline answers belong on the issue board")
     record = view.resume(input=input)
     if input is not None:

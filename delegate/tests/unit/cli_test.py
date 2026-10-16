@@ -506,6 +506,31 @@ class InProcess(Base):
     The in_process-only fake, and RefusingClient (client `refusing`); no child process starts.
     """
 
+    def test_an_adhoc_run_uses_its_derived_workdir_when_reporting_the_result(self):
+        with (
+            mock.patch("time.strftime", return_value="2026-10-16"),
+            mock.patch("uuid.uuid4", return_value=uuid.UUID(SID)),
+            no_child(),
+        ):
+            code, out, err = self.cli(
+                "run",
+                "--role",
+                "dummy-tester",
+                "--task",
+                "echo",
+                "--input",
+                "Hello.",
+                "--client",
+                "fake",
+                "--mode",
+                "in_process",
+            )
+        self.assertEqual((code, out), (0, ""), err)
+        workdir = os.path.join(self.agent_pm, "adhoc", "2026-10-16-dummy-tester-echo-" + SID[:8])
+        self.assertIn(Layout(workdir).out, err)
+        with open(os.path.join(Layout(workdir).run, "delegate.json"), encoding="utf-8") as stream:
+            self.assertEqual(json.load(stream)["spec"]["sid"], SID)
+
     def setUp(self):
         super().setUp()
         refusing = types.ModuleType("agent_pm.session.clients.refusing")
@@ -1107,11 +1132,8 @@ class Queries(Case):
 
     def test_resume_input_is_forwarded_from_key_or_record(self):
         class InputView(View):
-            def _read(self):
-                return self
-
-            def _record(self, state):
-                return record(self.name)
+            def ctl(self):
+                return ("agent-pm-delegate",)
 
             def resume(self, *, input=None, mode=None):
                 self.input = input

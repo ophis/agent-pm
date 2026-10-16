@@ -197,6 +197,9 @@ class FakeDelegate(Delegate):
     def content(self):
         return self.status().to_line()
 
+    def ctl(self):
+        return self._record(_load(self.workdir)).ctl
+
     def status(self):
         state = _load(self.workdir)
         outcome = state["outcome"] and state["outcome"]["status"]

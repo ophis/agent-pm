@@ -22,8 +22,7 @@ class RosterTest(RosterCase):
             for name in ("first", "second")
         ]
         script = """import sys
-from agent_pm.manager.engine.roster import Roster
-from agent_pm.manager.engine.types import Spec
+from agent_pm.manager import Roster, Spec
 from agent_pm.utils import Record
 roster = Roster(sys.argv[1])
 record = Record.parse(sys.argv[2])

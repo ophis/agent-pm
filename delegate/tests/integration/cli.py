@@ -1,4 +1,4 @@
-"""CLI runs and synchronous API resumes as subprocesses: Integration over
+"""Public CLI runs and answers as subprocesses: Integration over
 session/tests/integration/clients/claude/fake_claude.py, CodexIntegration over
 session/tests/integration/clients/codex/fake_codex.py, their outcomes.
 """
@@ -14,39 +14,15 @@ import sys
 import tempfile
 import time
 
-from agent_pm.delegate.engine.types import Layout
+from agent_pm.utils import SID_ENV, Record, Status
 
 from delegate.tests.case import PY, REPO, Case, child_env
+from session.tests import live_tmux
 from session.tests.integration.clients.claude import fake_claude
 from session.tests.integration.clients.codex import fake_codex
 from utils.tests.sandbox import reap
 
 RUN = (*PY, "-m", "agent_pm.delegate.cli", "run")
-API_RESUME = (
-    *PY,
-    "-c",
-    """import argparse
-import sys
-from dataclasses import replace
-from agent_pm.delegate import cli
-from agent_pm.delegate.engine.harness_delegate import HarnessDelegate
-from agent_pm.delegate.engine.runner import report, say
-from agent_pm.delegate.engine.types import ConfigError, Layout
-
-parser = argparse.ArgumentParser(allow_abbrev=False)
-cli._run_options(parser)
-args = parser.parse_args()
-args.mode = args.mode or "headless"
-try:
-    cli._check(args)
-    spec = replace(cli.spec_of(args, args.input), resume=True)
-    result = HarnessDelegate(args.role, spec, display=args.display).run(cli._begun)
-except ConfigError as error:
-    say(f"delegate: {error}")
-    sys.exit(2)
-sys.exit(report(result, args.out or Layout(args.workdir).out)[0])
-""",
-)
 SID = "0f8fad5b-d9cb-469f-a165-70867728950e"
 WAIT = 30  # seconds
 RESETS = 1760000000
@@ -65,7 +41,7 @@ class Runs(Case):
     """A CLI run's records in `work` and the fake client's calls in `log`."""
 
     def records(self) -> list[dict]:
-        with open(os.path.join(Layout(self.work).run, "run.jsonl")) as f:
+        with open(os.path.join(self.work, "run", "run.jsonl")) as f:
             return [json.loads(line) for line in f]
 
     def kinds(self) -> list[str]:
@@ -83,6 +59,45 @@ class Runs(Case):
     def read(self, path: str) -> str:
         with open(path) as f:
             return f.read()
+
+    def control(self, *arguments, stdin="", sid=None):
+        if not hasattr(self, "resume_server"):
+            self.resume_server = live_tmux.Server(self, self.home)
+            self.resume_server.start("resume-manager")
+        environment = {
+            **self.env,
+            "PATH": self.env["PATH"] + os.pathsep + self.resume_server.path,
+            "TMUX_TMPDIR": self.resume_server.root,
+        }
+        environment.pop(SID_ENV, None)
+        if sid is not None:
+            environment[SID_ENV] = sid
+        return subprocess.run(
+            (*PY, "-m", "agent_pm.delegate.cli", *arguments),
+            cwd=self.proj,
+            env=environment,
+            input=stdin,
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+
+    def completed(self):
+        def ended():
+            result = self.control("status", self.work)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            return not Status.parse(result.stdout).alive
+
+        live_tmux.wait(ended, timeout=WAIT, what="the resumed run to complete")
+
+    def answer(self, steps, *, input="Hello.", wait=True, **scenario):
+        self.scene(steps, **scenario)
+        result = self.control("resume", self.work, "--input", input)
+        if result.returncode == 0:
+            self.assertEqual(Record.parse(result.stdout).sid, SID)
+            if wait:
+                self.completed()
+        return result
 
 
 class Integration(Runs):
@@ -102,7 +117,7 @@ class Integration(Runs):
         for d in (self.proj, self.work, bin_dir):
             os.mkdir(d)
         self.out = os.path.join(self.work, "out.md")
-        self.agent = Layout(self.work).agent
+        self.agent = os.path.join(self.work, "agent")
         self.scenario, self.log = (
             os.path.join(self.root, "scenario.json"),
             os.path.join(self.root, "log.jsonl"),
@@ -121,9 +136,9 @@ class Integration(Runs):
             self.config, "projects", re.sub(r"[^A-Za-z0-9]", "-", self.agent), f"{SID}.jsonl"
         )
 
-    def argv(self, *extra, resume=False) -> list[str]:
+    def argv(self, *extra) -> list[str]:
         return [
-            *(API_RESUME if resume else RUN),
+            *RUN,
             "--role",
             self.ROLE,
             "--input",
@@ -142,13 +157,13 @@ class Integration(Runs):
             json.dump({"steps": steps, **scenario, "log": self.log}, f)
 
     def drive(
-        self, steps, *extra, cwd=None, argv=None, resume=False, fixes=None, **scenario
+        self, steps, *extra, cwd=None, argv=None, fixes=None, **scenario
     ) -> subprocess.CompletedProcess:
         if fixes is not None:
             scenario["resume"] = fixes
         self.scene(steps, **scenario)
         return subprocess.run(
-            argv or self.argv(*extra, resume=resume),
+            argv or self.argv(*extra),
             cwd=cwd or self.proj,
             env=self.env,
             stdin=subprocess.DEVNULL,
@@ -163,11 +178,11 @@ class Integration(Runs):
                 line["message"]["content"] for line in map(json.loads, f) if line["type"] == "user"
             ]
 
-    def popen(self, *extra, resume=False) -> subprocess.Popen:
+    def popen(self, *extra) -> subprocess.Popen:
         # A suite started in the background inherits SIGINT ignored; the CLI installs no handler of
         # its own.
         proc = subprocess.Popen(
-            self.argv(*extra, resume=resume),
+            self.argv(*extra),
             cwd=self.proj,
             env=self.env,
             stdin=subprocess.DEVNULL,
@@ -216,7 +231,9 @@ class CodexIntegration(Runs):
         for d in (home, tmp):
             self.addCleanup(d.cleanup)
         self.home, root = os.path.realpath(home.name), os.path.realpath(tmp.name)
+        self.root = root
         self.work, bin_dir = os.path.join(root, "work"), os.path.join(root, "bin")
+        self.proj = self.work
         for d in (self.work, bin_dir):
             os.mkdir(d)
         codex = os.path.join(bin_dir, "codex")
@@ -240,15 +257,16 @@ class CodexIntegration(Runs):
             "FAKE_SCENARIO": self.scenario,
         }
 
-    def drive(
-        self, steps, *extra, resume=False, fixes=None, **scenario
-    ) -> subprocess.CompletedProcess:
+    def scene(self, steps, **scenario):
+        with open(self.scenario, "w", encoding="utf-8") as stream:
+            json.dump({"steps": steps, **scenario}, stream)
+
+    def drive(self, steps, *extra, fixes=None, **scenario) -> subprocess.CompletedProcess:
         if fixes is not None:
             scenario["resume"] = fixes
-        with open(self.scenario, "w") as f:
-            json.dump({"steps": steps, **scenario}, f)
+        self.scene(steps, **scenario)
         argv = [
-            *(API_RESUME if resume else RUN),
+            *RUN,
             "--client",
             "codex",
             "--role",

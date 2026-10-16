@@ -30,6 +30,7 @@ from delegate.tests.integration.cli import (
     Integration,
 )
 from delegate.tests.replies import bare, block, mark, option, prompt, running
+from session.tests import live_tmux
 
 ANSWER = "Say hello."
 DRAFT = "Draft.\n"
@@ -222,13 +223,12 @@ class Outcomes(Integration):
 
 class Stderr(Integration):
     def test_the_clients_stderr_lines_land_in_the_record(self):
-        res = self.drive([mark("start", "first")])
-        self.assertEqual(res.returncode, 1, res.stderr)
+        res = self.drive([mark("start", "first"), block(ASKING)])
+        self.assertEqual(res.returncode, 0, res.stderr)
         os.unlink(self.transcript)
-        res = self.drive([block(DONE)], resume=True)
-        self.assertEqual(res.returncode, 1, res.stderr)
+        res = self.answer([block(DONE)])
+        self.assertEqual(res.returncode, 0, res.stderr)
         said = f"No conversation found with session ID: {SID}"
-        self.assertIn(said, res.stderr)
         self.assertEqual([e["text"] for e in self.records() if e["kind"] == "stderr"], [said])
         self.assertEqual(self.kinds()[-3:], ["stderr", "result", "end"])
         self.assertEqual(
@@ -238,15 +238,9 @@ class Stderr(Integration):
 
 class Resume(Integration):
     def test_resume_reuses_the_recorded_cwd_and_session(self):
-        res = self.drive([mark("start", "first")])
-        self.assertEqual(res.returncode, 1, res.stderr)
-        res = self.drive(
-            [mark("round", "second"), block(DONE)],
-            "--input",
-            "Use B.",
-            cwd=self.root,
-            resume=True,
-        )
+        res = self.drive([mark("start", "first"), block(ASKING)])
+        self.assertEqual(res.returncode, 0, res.stderr)
+        res = self.answer([mark("round", "second"), block(DONE)], input="Use B.")
         self.assertEqual(res.returncode, 0, res.stderr)
         first, second = self.calls()
         self.assertEqual(second["cwd"], self.agent)
@@ -271,7 +265,7 @@ class NeedsInput(Integration):
         self.assertEqual(res.returncode, 0, res.stderr)
         self.assertIn("delegate: status needs_input", res.stderr)
         self.assertFalse(os.path.exists(self.out), "a deliverable before the answer")
-        res = self.drive([block(DONE)], "--input", ANSWER, resume=True)
+        res = self.answer([block(DONE)], input=ANSWER)
         self.assertEqual(res.returncode, 0, res.stderr)
         with open(os.path.join(Layout(self.work).run, "delegate.json")) as f:
             self.assertEqual(json.load(f)["attempt"], 2)
@@ -347,14 +341,14 @@ class RolePicks(Integration):
             "name": "start",
             "text": "research: a quick, good-enough answer will do",
         }
-        res = self.drive([self.PICK])
-        self.assertEqual(res.returncode, 1, res.stderr)
+        res = self.drive([self.PICK, block(ASKING)])
+        self.assertEqual(res.returncode, 0, res.stderr)
         self.assertIn(f"Progress (start): {picked['text']}", res.stderr)
         self.assertIn(
             "**Your task**: pick it from your charter's Tasks section", prompt(self.calls()[0])
         )
         self.assertEqual([bare(e) for e in self.records() if e["kind"] == "progress"], [picked])
-        res = self.drive([block(self.REPORT)], resume=True)
+        res = self.answer([block(self.REPORT)])
         self.assertEqual(res.returncode, 0, res.stderr)
         self.assertNotIn("missing progress mark", res.stderr)
         self.assertNotIn("missing", self.kinds())
@@ -465,27 +459,23 @@ class Draft(Integration):
         except ValueError:  # a line half appended
             return 0
 
-    def test_a_resume_keeps_the_draft_until_the_deliverable_replaces_it(self):
-        self.scene(
-            [mark("start", "echoing"), {"kind": "write", "path": self.out, "text": DRAFT}],
-            hang=True,
+    def test_an_answer_keeps_the_draft_until_the_deliverable_replaces_it(self):
+        result = self.drive(
+            [
+                mark("start", "echoing"),
+                {"kind": "write", "path": self.out, "text": DRAFT},
+                block(ASKING),
+            ]
         )
-        proc = self.popen()
-        self.until(proc, lambda: self.holds(DRAFT), "saw the draft at --out")
-        (call,) = self.calls()
-        os.kill(call["pid"], signal.SIGKILL)
-        out, err = proc.communicate(timeout=WAIT)
-        self.assertEqual(proc.returncode, 1, out + err)
-        self.assertEqual(self.last("result")["error"], "the client exited -9")
-        self.assertTrue(self.holds(DRAFT), "the draft after the kill")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(self.holds(DRAFT), "the draft while waiting for an answer")
         gate = os.path.join(self.root, "gate")
-        self.scene([block(DONE)], gate=gate)
-        proc = self.popen(resume=True)
-        self.until(proc, lambda: self.inputs() == 2, "recorded the resume's input")
+        result = self.answer([block(DONE)], wait=False, gate=gate)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        live_tmux.wait(lambda: self.inputs() == 2, timeout=WAIT, what="the answer input")
         self.assertTrue(self.holds(DRAFT), "the draft as the resumed client starts")
         open(gate, "w").close()
-        out, err = proc.communicate(timeout=WAIT)
-        self.assertEqual(proc.returncode, 0, out + err)
+        self.completed()
         self.assertEqual(option(self.calls()[1], "--resume"), SID)
         self.assertEqual(self.last("result")["outcome"]["status"], "done")
         self.assertEqual(self.read(self.out), DONE["deliverable"])

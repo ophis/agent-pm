@@ -44,25 +44,21 @@ ATTACH = """import importlib.util, json, sys
 fake, clients, name, text = sys.argv[1:]
 spec = importlib.util.spec_from_file_location("agent_pm.session.clients.fake", fake)
 module = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = module
 spec.loader.exec_module(module)
-from agent_pm.session import Host, IdleTimeout
-from agent_pm.session.engine.hosted_session import HostedSession
-from agent_pm.utils import load_class
-def client_class(path, base):
-    return module.FakeClient if path == "agent_pm.session.clients.fake:FakeClient" else load_class(path, base)
+from agent_pm.session import Host, IdleTimeout, Session
 hosts = Host.parse_hosts({"default": "tmux", "tmux": {"implementation": "agent_pm.session.hosts.tmux:TmuxHost"}})
-session_cls = HostedSession.configured(clients=json.loads(clients), hosts=hosts, class_loader=client_class)
-handle = session_cls.attach(name)
+Session.configure(clients=json.loads(clients), hosts=hosts)
+handle = Session.attach(name)
 before = [handle.sid, handle.alive(), handle.reply]
 handle.send(text)
 event = next(e for e in handle.events() if not isinstance(e, IdleTimeout))
 print(json.dumps([*before, repr(event), handle.reply]))
 """
-CLOSE = "import sys; from agent_pm.session import Host, Session; from agent_pm.session.runtimes.tui import TuiStore; Session.configure(clients={}, hosts=Host.parse_hosts({'default': 'tmux', 'tmux': {'implementation': 'agent_pm.session.hosts.tmux:TmuxHost'}})); TuiStore.attach(sys.argv[1], host=Session.host()).close()"
+CLOSE = "import sys; from agent_pm.session import Host, Session; Session.configure(clients={}, hosts=Host.parse_hosts({'default': 'tmux', 'tmux': {'implementation': 'agent_pm.session.hosts.tmux:TmuxHost'}})); Session.retire(sys.argv[1])"
 SLOW_CLOSE = """import sys, time, shutil
 from unittest import mock
 from agent_pm.session import Host, Session
-from agent_pm.session.runtimes.tui import TuiStore
 remove = shutil.rmtree
 def slow(*args, **kwargs):
     open(sys.argv[2], "w").close()
@@ -75,7 +71,7 @@ with mock.patch("shutil.rmtree", slow):
             {"default": "tmux", "tmux": {"implementation": "agent_pm.session.hosts.tmux:TmuxHost"}}
         ),
     )
-    TuiStore.attach(sys.argv[1], host=Session.host()).close()
+    Session.retire(sys.argv[1])
 """
 
 

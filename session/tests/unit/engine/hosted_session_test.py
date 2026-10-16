@@ -12,6 +12,7 @@ import json
 import logging
 import os
 import shlex
+import signal
 import stat
 import tempfile
 import threading
@@ -2051,6 +2052,17 @@ class ChecksTest(Base):
 
 
 class SessionIdentityTest(HostedTuiBase):
+    def test_sid_attached_events_yield_a_normal_exit_after_the_terminal_disappears(self):
+        self.tui(name="w1", sid=SID)
+        session = self.session.attach("w1", sid=SID)
+
+        def disappeared(_):
+            self.host.processes.pop("w1", None)
+
+        with mock.patch("time.sleep", side_effect=disappeared):
+            events = list(session.events())
+        self.assertEqual(events[-1], Exited(-signal.SIGHUP))
+
     def test_attach_rejects_mismatched_or_unknown_private_sid(self):
         self.tui(name="w1", sid=SID)
         terminal = self.host.processes["w1"]

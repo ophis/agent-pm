@@ -94,3 +94,15 @@ COMMAND_SRC = (f"{ORCH_PROJECT}/{ORCH_SRC}",)
 
 
 COMMAND_FILES = (f"{ORCH_PROJECT}/{ORCH_SRC}config.toml",)
+
+
+PYTHON_CODE_ALLOWED = {
+    (
+        "linear-orchestrator/tests/orchestrator_tests/integration/config_isolation_integration_test.py",
+        "b8828a858303adbef399ec5acdae273d90445023cd4e3b6dbf0a2731d54e87db",
+    ): "Checks configuration loader isolation through the imported literal test program.",
+    (
+        "linear-orchestrator/tests/orchestrator_tests/integration/config_isolation_integration_test.py",
+        "e99c994bf4dee81441883d39c8423f0b93873110dda62a742cc1cc4670152ded",
+    ): "Checks the internal configuration loader error payload in a clean interpreter.",
+}

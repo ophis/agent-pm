@@ -112,7 +112,7 @@ class Probe(Case):
         self.assertIs(spy.call_args.kwargs["stderr"], subprocess.DEVNULL)
 
     def test_a_spawn_error_is_none(self):
-        for argv in ((os.path.join(self.dir, "missing"),), (sys.executable, "-c", "pass\0")):
+        for argv in ((os.path.join(self.dir, "missing"),), (sys.executable, "-c", "pass", "\0")):
             with self.subTest(argv=argv):
                 self.assertIsNone(self.probe(argv)[0])
 

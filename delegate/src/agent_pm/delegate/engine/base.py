@@ -82,6 +82,9 @@ class Delegate(ABC):
     def detach(self, *, outer: Outer | None = None) -> Record: ...
 
     @abstractmethod
+    def ctl(self) -> tuple[str, ...]: ...
+
+    @abstractmethod
     def run(self, on_event: Callable[[Event], None] | None = None) -> Result: ...
 
     @abstractmethod
