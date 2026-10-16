@@ -143,6 +143,33 @@ assert directory.stat().st_mode & 0o777 == 0o700
 print(json.dumps({"directory": str(directory), "system": tempfile.gettempdir()}))
 """
 
+REPORTS = ("RUN_TESTS_STATE", "GITHUB_STEP_SUMMARY", "RUN_TESTS_DURATIONS", "RUN_TESTS_COVERAGE")
+
+
+def run_suite(root, title, *directories, roots=(), timeout=10, **variables):
+    env = clean_env(None, REPO, str(Path(REPO, ".github")), *roots)
+    for name in REPORTS:
+        env.pop(name, None)
+    env.update(variables)
+    return subprocess.run(
+        [sys.executable, "-P", "-S", str(Path(REPO, ".github/run_tests.py")), title, *directories],
+        cwd=root,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+    )
+
+
+def errors(stdout):
+    """(title, first message line) of each ::error annotation run_tests.py printed."""
+    found = []
+    for line in stdout.splitlines():
+        if line.startswith("::error title="):
+            title, message = line.removeprefix("::error title=").split("::", 1)
+            found.append((title, message.split("%0A")[0]))
+    return found
+
 
 class SandboxGates(Case):
     def test_clean_env_children_cannot_reach_the_parents_private_default_tmux_server(self):
@@ -380,26 +407,10 @@ print(json.dumps(directory))
             f"        Path({str(marker)!r}).write_text(json.dumps([str(sandbox), *fixtures]))\n"
             "        os.kill(os.getpid(), signal.SIGKILL)\n"
         )
-        env = clean_env(None, REPO, str(Path(REPO, ".github")))
-        env.pop("RUN_TESTS_STATE", None)
-        proc = subprocess.run(
-            [
-                sys.executable,
-                "-P",
-                "-S",
-                str(Path(REPO, ".github/run_tests.py")),
-                "Killed fixture",
-                "integration",
-            ],
-            cwd=root,
-            env=env,
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
+        proc = run_suite(root, "Killed fixture", "integration")
         self.assertEqual(proc.returncode, 137, proc.stderr)
         sandbox, *fixtures = map(Path, json.loads(marker.read_text()))
-        self.assertEqual(sandbox.parent, Path(env["AGENT_PM_TEST_SANDBOX"]))
+        self.assertEqual(sandbox.parent, Path(os.environ["AGENT_PM_TEST_SANDBOX"]))
         self.assertEqual(len(fixtures), 2)
         for fixture in fixtures:
             self.assertEqual(fixture.parent, sandbox)
@@ -407,46 +418,47 @@ print(json.dumps(directory))
         self.assertFalse(sandbox.exists())
 
     def test_violations_after_the_last_stop_test_fail_the_run_with_their_origin(self):
-        script = """import json, os, sys, threading, unittest
-from pathlib import Path
-import isolation, run_tests
+        fixture = """import sys, threading, unittest
 
-root, scope = Path(sys.argv[1]), sys.argv[2]
-__file__ = str(root / "fixture.py")
-sandbox = root / "sandbox"
-sandbox.mkdir()
-state = root / "state"
-os.environ["RUN_TESTS_STATE"] = str(state)
-os.environ["AGENT_PM_TEST_SANDBOX"] = str(sandbox)
-run_tests.GATE = isolation.install(root)
-run_tests.GATE.unit_only = True
+
 def swallowed_violation():
     try:
         sys.audit("socket.bind")
     except RuntimeError:
         pass
+
+
 class Tail(unittest.TestCase):
     def test_pass(self):
         pass
+
     @classmethod
     def tearDownClass(cls):
-        if scope == "class":
+        if SCOPE == "class":
             swallowed_violation()
+
+
 def tearDownModule():
-    if scope == "module":
+    if SCOPE == "module":
         swallowed_violation()
+
+
 def late_thread():
     swallowed_violation()
+
+
 class LateSuite(unittest.TestSuite):
     def run(self, result, debug=False):
         result = super().run(result, debug)
-        if scope == "thread":
+        if SCOPE == "thread":
             thread = threading.Thread(target=late_thread)
             thread.start()
             thread.join()
         return result
-code = run_tests.run(LateSuite([Tail("test_pass")]), "Tail fixture")
-print(json.dumps({"code": code, "state": state.read_text()}))
+
+
+def load_tests(loader, tests, pattern):
+    return LateSuite(tests)
 """
         for scope, origin in (
             ("class", "tearDownClass"),
@@ -455,19 +467,16 @@ print(json.dumps({"code": code, "state": state.read_text()}))
         ):
             with self.subTest(scope=scope):
                 root = Path(self.home, scope)
-                root.mkdir()
-                proc = subprocess.run(
-                    [sys.executable, "-P", "-S", "-c", script, str(root), scope],
-                    env=clean_env(None, REPO, str(Path(REPO, ".github"))),
-                    capture_output=True,
-                    text=True,
-                    timeout=10,
+                package = root / "unit"
+                package.mkdir(parents=True)
+                (package / "__init__.py").touch()
+                (package / "tail_test.py").write_text(f"SCOPE = {scope!r}\n{fixture}")
+                proc = run_suite(root, "Tail fixture", "unit")
+                self.assertEqual(proc.returncode, 1, proc.stderr)
+                self.assertEqual(
+                    errors(proc.stdout),
+                    [("Tail fixture", "test isolation: test discovery: forbidden socket.bind")],
                 )
-                self.assertEqual(proc.returncode, 0, proc.stderr)
-                found = json.loads(proc.stdout.splitlines()[-1])
-                self.assertEqual(found["code"], 1)
-                self.assertTrue(found["state"].endswith("failed\n"), found)
-                self.assertIn("forbidden socket.bind", proc.stdout)
                 self.assertIn(origin, proc.stdout)
 
     @unittest.skipUnless(shutil.which("tmux"), "tmux is unavailable")
@@ -492,24 +501,12 @@ print(json.dumps({"code": code, "state": state.read_text()}))
             "        pids['clean_env'] = subprocess.check_output(['tmux', 'display-message', '-p', '#{pid}'], env=env, text=True).strip()\n"
             f"        Path({str(marker)!r}).write_text(json.dumps(pids))\n"
         )
-        env = clean_env(None, REPO, str(Path(REPO, ".github")))
-        env["TMPDIR"] = os.environ["AGENT_PM_TEST_SANDBOX"]
-        env.pop("RUN_TESTS_STATE", None)
-        env.pop("GITHUB_STEP_SUMMARY", None)
-        proc = subprocess.run(
-            [
-                sys.executable,
-                "-P",
-                "-S",
-                str(Path(REPO, ".github/run_tests.py")),
-                "Private tmux",
-                "integration",
-            ],
-            cwd=root,
-            env=env,
-            capture_output=True,
-            text=True,
+        proc = run_suite(
+            root,
+            "Private tmux",
+            "integration",
             timeout=15,
+            TMPDIR=os.environ["AGENT_PM_TEST_SANDBOX"],
         )
         self.assertEqual(proc.returncode, 1, proc.stderr)
         leaks = [line for line in proc.stdout.splitlines() if "leaked after the run: " in line]
@@ -530,46 +527,54 @@ print(json.dumps({"code": code, "state": state.read_text()}))
                 time.sleep(0.01)
 
     def test_caught_and_background_violations_still_fail_at_stop_test(self):
-        script = """import json, os, sys, threading, unittest
-from pathlib import Path
-import isolation, run_tests
+        package = Path(self.home, "unit")
+        package.mkdir()
+        (package / "__init__.py").touch()
+        (package / "swallowed_test.py").write_text(
+            """import sys, threading, unittest
 
-root = Path(sys.argv[1])
-__file__ = str(root / "fixture.py")
-sandbox = root / "sandbox"
-sandbox.mkdir()
-os.environ["AGENT_PM_TEST_SANDBOX"] = str(sandbox)
-run_tests.GATE = isolation.install(root)
-run_tests.GATE.unit_only = True
+
 def swallow(event):
     try:
         sys.audit(event)
     except Exception:
         pass
-class Swallowed(unittest.TestCase):
+
+
+swallow("socket.getaddrinfo")
+
+
+class Discovery(unittest.TestCase):
     def test_discovery(self):
         pass
+
+
+class Swallowed(unittest.TestCase):
     def test_caught(self):
         swallow("os.kill")
+
     def test_background(self):
         thread = threading.Thread(target=swallow, args=("socket.bind",))
         thread.start()
         thread.join()
-codes = []
-swallow("socket.getaddrinfo")
-for method in ("test_discovery", "test_caught", "test_background"):
-    codes.append(run_tests.run(unittest.TestSuite([Swallowed(method)]), method))
-print(json.dumps(codes))
 """
-        proc = subprocess.run(
-            [sys.executable, "-P", "-S", "-c", script, self.home],
-            env=clean_env(None, REPO, str(Path(REPO, ".github"))),
-            capture_output=True,
-            text=True,
-            timeout=10,
         )
-        self.assertEqual(proc.returncode, 0, proc.stderr)
-        self.assertEqual(json.loads(proc.stdout.splitlines()[-1]), [1, 1, 1])
+        proc = run_suite(self.home, "Swallowed fixture", "unit")
+        self.assertEqual(proc.returncode, 1, proc.stderr)
+        discovery = "unit.swallowed_test.Discovery.test_discovery"
+        background = "unit.swallowed_test.Swallowed.test_background"
+        caught = "unit.swallowed_test.Swallowed.test_caught"
+        self.assertEqual(
+            errors(proc.stdout),
+            [
+                (
+                    discovery,
+                    "RuntimeError: test isolation: test discovery: forbidden socket.getaddrinfo",
+                ),
+                (background, f"RuntimeError: test isolation: {background}: forbidden socket.bind"),
+                (caught, f"RuntimeError: test isolation: {caught}: forbidden os.kill"),
+            ],
+        )
         self.assertIn("test discovery: forbidden socket.getaddrinfo", proc.stderr)
         self.assertIn("Swallowed.test_caught: forbidden os.kill", proc.stderr)
         self.assertIn("Swallowed.test_background: forbidden socket.bind", proc.stderr)
@@ -596,104 +601,114 @@ print(json.dumps(codes))
             "spec.loader.exec_module(helper)\n"
             "External = helper.External\n"
         )
-        env = clean_env(None, REPO, str(Path(REPO, ".github")))
-        env.pop("RUN_TESTS_STATE", None)
-        proc = subprocess.run(
-            [sys.executable, "-P", "-S", str(Path(REPO, ".github/run_tests.py")), "Unit", "--unit"],
-            cwd=root,
-            env=env,
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
+        proc = run_suite(root, "Unit", "--unit")
         self.assertEqual(proc.returncode, 1, proc.stderr)
         self.assertIn("helper.External.test_write", proc.stderr)
         self.assertIn("write outside temporary directory", proc.stderr)
         self.assertFalse(marker.exists())
 
     def test_every_filesystem_mutation_is_confined_to_owned_roots(self):
-        script = """import os, shutil, sqlite3, sys
+        root = Path(self.home)
+        outside = root / "outside"
+        outside.mkdir()
+        source = outside / "source"
+        source.write_text("original")
+        (outside / "directory").mkdir()
+        package = root / "integration/unit"
+        package.mkdir(parents=True)
+        (package.parent / "__init__.py").touch()
+        (package / "__init__.py").touch()
+        # The fds open at import: discovering a non-unit dir is ungated, while the test under
+        # integration/unit runs unit-gated, as the old child opened them before its Gate.
+        (package / "fs_test.py").write_text(f"""import os, shutil, sqlite3, tempfile, unittest
 from pathlib import Path
-import isolation
 
-root = Path(sys.argv[1])
-sandbox = root / "sandbox"
-sandbox.mkdir()
-outside = root / "outside"
-outside.mkdir()
+outside = Path({str(outside)!r})
 source = outside / "source"
-source.write_text("original")
 directory = outside / "directory"
-directory.mkdir()
-owned = sandbox / "owned"
-owned.write_text("owned")
 fd = os.open(source, os.O_RDWR)
 dir_fd = os.open(outside, os.O_RDONLY)
-gate = isolation.Gate(root, sandbox)
-gate.current = "sentinel.filesystem"
-sys.addaudithook(gate.audit)
-operations = [
-    ("mkdir", lambda: os.mkdir(outside / "new")),
-    ("rename source", lambda: os.rename(source, sandbox / "renamed")),
-    ("rename destination", lambda: os.rename(owned, outside / "renamed")),
-    ("replace", lambda: os.replace(owned, source)),
-    ("move", lambda: shutil.move(owned, outside / "moved")),
-    ("remove", lambda: os.remove(source)),
-    ("rmdir", lambda: os.rmdir(directory)),
-    ("rmtree", lambda: shutil.rmtree(directory)),
-    ("chmod", lambda: os.chmod(source, 0o777)),
-    ("chown", lambda: os.chown(source, os.getuid(), os.getgid())),
-    ("symlink destination", lambda: os.symlink(owned, outside / "link")),
-    ("symlink source", lambda: os.symlink(source, sandbox / "link")),
-    ("link source", lambda: os.link(source, sandbox / "hardlink")),
-    ("link destination", lambda: os.link(owned, outside / "hardlink")),
-    ("truncate", lambda: os.truncate(source, 0)),
-    ("ftruncate", lambda: os.ftruncate(fd, 0)),
-    ("utime", lambda: os.utime(source, (0, 0))),
-    ("sqlite", lambda: sqlite3.connect(str(outside / "db"))),
-    ("sqlite URI", lambda: sqlite3.connect((outside / "db").as_uri(), uri=True)),
-    ("mkdir dir_fd", lambda: os.mkdir("new", dir_fd=dir_fd)),
-    ("remove dir_fd", lambda: os.remove("source", dir_fd=dir_fd)),
-    ("chmod fd", lambda: os.fchmod(fd, 0o777)),
-]
-for name, operation in operations:
-    try:
-        operation()
-    except RuntimeError as error:
-        assert "sentinel.filesystem" in str(error), (name, error)
-        assert "write outside temporary directory" in str(error), (name, error)
-    else:
-        raise AssertionError("escaped " + name)
-assert source.read_text() == "original"
-assert owned.read_text() == "owned"
-assert sorted(p.name for p in outside.iterdir()) == ["directory", "source"]
-allowed = sandbox / "allowed"
-allowed.mkdir()
-file = allowed / "file"
-file.write_text("ok")
-os.chmod(file, 0o600)
-os.chown(file, os.getuid(), os.getgid())
-os.utime(file, (1, 1))
-os.truncate(file, 1)
-os.symlink(file, allowed / "link")
-os.link(file, allowed / "hardlink")
-os.rename(file, allowed / "renamed")
-os.replace(allowed / "renamed", file)
-os.remove(allowed / "link")
-sqlite3.connect(str(allowed / "db")).close()
-sqlite3.connect(":memory:").close()
-shutil.rmtree(allowed)
-os.close(fd)
-os.close(dir_fd)
-"""
-        proc = subprocess.run(
-            [sys.executable, "-P", "-S", "-c", script, self.home],
-            env=clean_env(None, str(Path(REPO, ".github"))),
-            capture_output=True,
-            text=True,
-            timeout=10,
+
+
+class Filesystem(unittest.TestCase):
+    def test_confined(self):
+        sandbox = Path(tempfile.mkdtemp())
+        owned = sandbox / "owned"
+        owned.write_text("owned")
+        operations = [
+            ("mkdir", lambda: os.mkdir(outside / "new")),
+            ("rename source", lambda: os.rename(source, sandbox / "renamed")),
+            ("rename destination", lambda: os.rename(owned, outside / "renamed")),
+            ("replace", lambda: os.replace(owned, source)),
+            ("move", lambda: shutil.move(owned, outside / "moved")),
+            ("remove", lambda: os.remove(source)),
+            ("rmdir", lambda: os.rmdir(directory)),
+            ("rmtree", lambda: shutil.rmtree(directory)),
+            ("chmod", lambda: os.chmod(source, 0o777)),
+            ("chown", lambda: os.chown(source, os.getuid(), os.getgid())),
+            ("symlink destination", lambda: os.symlink(owned, outside / "link")),
+            ("symlink source", lambda: os.symlink(source, sandbox / "link")),
+            ("link source", lambda: os.link(source, sandbox / "hardlink")),
+            ("link destination", lambda: os.link(owned, outside / "hardlink")),
+            ("truncate", lambda: os.truncate(source, 0)),
+            ("ftruncate", lambda: os.ftruncate(fd, 0)),
+            ("utime", lambda: os.utime(source, (0, 0))),
+            ("sqlite", lambda: sqlite3.connect(str(outside / "db"))),
+            ("sqlite URI", lambda: sqlite3.connect((outside / "db").as_uri(), uri=True)),
+            ("mkdir dir_fd", lambda: os.mkdir("new", dir_fd=dir_fd)),
+            ("remove dir_fd", lambda: os.remove("source", dir_fd=dir_fd)),
+            ("chmod fd", lambda: os.fchmod(fd, 0o777)),
+        ]
+        for name, operation in operations:
+            try:
+                operation()
+            except RuntimeError as error:
+                assert self.id() in str(error), (name, error)
+                assert "write outside temporary directory" in str(error), (name, error)
+            else:
+                raise AssertionError("escaped " + name)
+        assert source.read_text() == "original"
+        assert owned.read_text() == "owned"
+        assert sorted(p.name for p in outside.iterdir()) == ["directory", "source"]
+        allowed = sandbox / "allowed"
+        allowed.mkdir()
+        file = allowed / "file"
+        file.write_text("ok")
+        os.chmod(file, 0o600)
+        os.chown(file, os.getuid(), os.getgid())
+        os.utime(file, (1, 1))
+        os.truncate(file, 1)
+        os.symlink(file, allowed / "link")
+        os.link(file, allowed / "hardlink")
+        os.rename(file, allowed / "renamed")
+        os.replace(allowed / "renamed", file)
+        os.remove(allowed / "link")
+        sqlite3.connect(str(allowed / "db")).close()
+        sqlite3.connect(":memory:").close()
+        shutil.rmtree(allowed)
+        os.close(fd)
+        os.close(dir_fd)
+""")
+        proc = run_suite(root, "Filesystem fixture", "integration")
+        self.assertEqual(proc.returncode, 1, proc.stderr)
+        test = "integration.unit.fs_test.Filesystem.test_confined"
+        real = outside.resolve()
+        paths = [
+            *(outside / "new", source, outside / "renamed", source, outside / "moved", source),
+            *(outside / "directory", outside / "directory", source, source, outside / "link"),
+            *(source, source, outside / "hardlink", source, real / "source", source),
+            *(outside / "db", outside / "db", real / "new", real / "source", real / "source"),
+        ]
+        self.assertEqual(
+            errors(proc.stdout),
+            [
+                (
+                    test,
+                    f"RuntimeError: test isolation: {test}: write outside temporary directory: {path}",
+                )
+                for path in paths
+            ],
         )
-        self.assertEqual(proc.returncode, 0, proc.stderr)
 
     def test_hooks_reject_unit_effects_and_unisolated_integration_tools(self):
         sandbox = Path(self.home, "sandbox")
@@ -755,30 +770,17 @@ os.close(dir_fd)
             "        self.assertNotEqual(os.environ['HOME'], os.environ['TMPDIR'])\n"
             "        self.assertEqual(os.environ['AGENT_PM_CONTROL_ROOT'], os.environ['AGENT_PM_TEST_SANDBOX'])\n"
         )
-        env = clean_env(None, REPO, str(Path(REPO, ".github")), str(ambient))
-        env.pop("RUN_TESTS_STATE", None)
-        env.update(
+        proc = run_suite(
+            root,
+            "Unit fixture",
+            "unit",
+            roots=(str(ambient),),
             TMUX=str(marker) + ",1,0",
             GIT_DIR=str(marker),
             GIT_CONFIG_COUNT="1",
             TUI_ATTACH_PREFIX="ambient",
             RUN_TESTS_DURATIONS=str(root / "durations"),
             GITHUB_STEP_SUMMARY=str(root / "step-summary"),
-        )
-        proc = subprocess.run(
-            [
-                sys.executable,
-                "-P",
-                "-S",
-                str(Path(REPO, ".github/run_tests.py")),
-                "Unit fixture",
-                "unit",
-            ],
-            cwd=root,
-            env=env,
-            capture_output=True,
-            text=True,
-            timeout=10,
         )
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertFalse(marker.exists())
