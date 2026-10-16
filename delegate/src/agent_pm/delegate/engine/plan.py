@@ -16,7 +16,7 @@ from agent_pm.delegate.event.reply import OUTCOME, PROGRESS
 from agent_pm.session import Access, Mode, RunLog
 from agent_pm.session import ConfigError as SessionConfigError
 from agent_pm.session import Spec as SessionSpec
-from agent_pm.utils import under
+from agent_pm.utils import RUN_CLIENT_ENV, under
 
 
 def _own(f):
@@ -141,7 +141,7 @@ def plan(run: RunConfig, spec: Spec, *, driver: Driver, composition: Composer) -
         tier=run.tier,
         effort=run.effort,
         flags=flags,
-        env=env,
+        env={**env, RUN_CLIENT_ENV: client},
         reply_tags=(PROGRESS, OUTCOME),
     )
     _check_team_dirs(

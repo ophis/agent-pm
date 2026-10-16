@@ -1819,6 +1819,14 @@ class RunBrake(Base):
         self.assertEqual(self.brake("pm"), (0, "five_hour=50% weekly=10%\n"))
         self.assertEqual(self.api.usage_calls, ["b"])
 
+    def test_the_run_client_overrides_the_role_default(self):
+        for usage, rc in ((reading(70), 0), (reading(80), 1), (None, 1)):
+            with self.subTest(usage=usage):
+                self.api.usages, self.api.usage_calls = {"a": reading(95), "b": usage}, []
+                with mock.patch.dict(os.environ, {"AGENT_PM_RUN_CLIENT": "b"}):
+                    self.assertEqual(self.brake("researcher"), (rc, quota.summary(usage) + "\n"))
+                self.assertEqual(self.api.usage_calls, ["b"])
+
     def test_no_such_role(self):
         self.assertEqual(self.brake("ghost"), (2, ""))
         self.assertEqual((self.err, self.api.usage_calls), ("router.py: no role ghost\n", []))
