@@ -325,7 +325,7 @@
   "session.tests.integration.engine.hosted_integration_test.SidTest.test_neither_picks_a_uuid4": 0.051065,
   "session.tests.integration.engine.hosted_integration_test.SidTest.test_resume_continues_that_session": 0.051114,
   "session.tests.integration.engine.hosted_integration_test.SidTest.test_sid_names_a_new_session_and_reaches_launch": 0.051497,
-  "session.tests.integration.engine.hosted_integration_test.TuiStartTest.test_a_start_builds_only_its_clients_client_once": 0.075268,
+  "session.tests.integration.engine.hosted_integration_test.TuiStartTest.test_a_start_builds_only_its_client_once": 0.075268,
   "session.tests.integration.extension_client_integration_test.ExtensionClientIntegration.test_a_copied_client_package_and_its_table_run_a_headless_session": 0.251884,
   "session.tests.integration.hosted_integration_test.CloseTest.test_attach_then_close_and_close_by_name_leave_the_same_state_fr_4": 0.515292,
   "session.tests.integration.hosted_integration_test.DisplayTest.test_a_display_given_to_start_is_stored_read_back_and_listed_fr_48": 0.681393,

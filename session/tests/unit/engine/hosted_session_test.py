@@ -436,7 +436,7 @@ class ClassRootsTest(Case):
         tables = {**HOSTS, **FAKE_HOSTS} if tables is None else tables
         return HostedSession.configured(clients=self.CLIENTS, hosts=parsed(tables, "tmux"), **setup)
 
-    def test_the_clients_client_root_then_each_configured_hosts_deduplicated(self):
+    def test_the_client_root_then_each_configured_hosts_deduplicated(self):
         configured = self.configured()
         self.assertNotIn(REPO, SRC.values())
         self.assertEqual(configured.class_roots("claude"), (SRC["session"], REPO))

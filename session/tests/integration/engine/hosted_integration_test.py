@@ -132,7 +132,7 @@ class SessionTest(Base):
 
 
 class TuiStartTest(TuiBase):
-    def test_a_start_builds_only_its_clients_client_once(self):
+    def test_a_start_builds_only_its_client_once(self):
         built, load = [], self.session_dependencies["class_loader"]
 
         def counted(path, base):
