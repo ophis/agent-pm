@@ -4,6 +4,7 @@ import collections
 import contextlib
 import json
 import os
+import shutil
 import subprocess
 import sys
 import sysconfig
@@ -17,6 +18,7 @@ import isolation
 from utils.tests.sandbox import clean_env, kill_processes, leaked_processes, stop_tmux_servers
 
 STATE = "RUN_TESTS_STATE"
+COVERAGE = "RUN_TESTS_COVERAGE"
 TAIL = 40
 GATE = None
 
@@ -132,6 +134,24 @@ def stack(lines):
     return block[:end]
 
 
+def src_trees(repo):
+    return sorted(repo.glob("*/src"))
+
+
+def start_coverage(sandbox, repo):
+    import coverage
+
+    cov = coverage.Coverage(
+        data_file=os.path.join(sandbox, "coverage-data"),
+        branch=True,
+        source=[str(tree) for tree in src_trees(repo)],
+        config_file=False,
+    )
+    cov.set_option("report:include_namespace_packages", value=True)
+    cov.start()
+    return cov
+
+
 def supervise(title):
     """None in the child; in the parent, the child's exit code (128 + signal for a signal), or 1 when
     it passed but left processes or tmux servers behind.
@@ -152,7 +172,7 @@ def supervise(title):
             repo,
             repo / ".github",
             repo / "linear-orchestrator/tests",
-            *sorted(repo.glob("*/src")),
+            *src_trees(repo),
             sysconfig.get_path("purelib"),
             sysconfig.get_path("platlib"),
         ]
@@ -187,6 +207,9 @@ def supervise(title):
         kill_processes(processes)
         with open(state, encoding="utf-8") as file:
             lines = file.read().splitlines()
+        data = os.path.join(tmp, "coverage-data")
+        if os.environ.get(COVERAGE) and os.path.exists(data):
+            shutil.copyfile(data, os.environ[COVERAGE])
     code = 128 - child.returncode if child.returncode < 0 else child.returncode
     if code and not (code == 1 and lines[-1:] == ["failed"]):
         message = crash(code, lines)
@@ -254,6 +277,11 @@ def main(argv):
     if code is not None:
         return code
     root = Path.cwd()
+    cov = (
+        start_coverage(os.environ["AGENT_PM_TEST_SANDBOX"], Path(__file__).resolve().parents[1])
+        if os.environ.get(COVERAGE)
+        else None
+    )
     GATE = isolation.install(root)
     GATE.unit_only = directories == ["--unit"] or all(
         "unit" in Path(path).parts or path == ".github" for path in directories
@@ -261,9 +289,13 @@ def main(argv):
     GATE.unit = directories == ["--unit"] or any(
         "unit" in Path(path).parts or path == ".github" for path in directories
     )
-    return run(
+    code = run(
         discover(root, unit_directories(root) if directories == ["--unit"] else directories), title
     )
+    if cov:
+        cov.stop()
+        cov.save()
+    return code
 
 
 if __name__ == "__main__":
