@@ -43,13 +43,13 @@ class PreflightClient(Client):
 
 class PreflightHeadless(JsonHeadless):
     def __init__(self, client):
-        self.client = client
+        self.owner = client
 
     def launch(self, spec):
-        return self.client.launch(spec)
+        return self.owner.launch(spec)
 
     def commit(self):
-        self.client.committed.append("headless")
+        self.owner.committed.append("headless")
 
     def parse(self, record):
         return ()
@@ -57,13 +57,13 @@ class PreflightHeadless(JsonHeadless):
 
 class PreflightTui(Tui):
     def __init__(self, client):
-        self.client = client
+        self.owner = client
 
     def launch(self, spec, hook):
-        return self.client.launch(spec)
+        return self.owner.launch(spec)
 
     def commit(self):
-        self.client.committed.append("tui")
+        self.owner.committed.append("tui")
 
     def reply(self, payload):
         return ""
@@ -71,13 +71,13 @@ class PreflightTui(Tui):
 
 class PreflightInProcess(InProcess):
     def __init__(self, client):
-        self.client = client
+        self.owner = client
 
     def check(self, spec):
-        self.client.prepared.append(spec)
+        self.owner.prepared.append(spec)
         if spec.tier == 4:
             raise ConfigError("tier 4 is unmapped")
 
     def run(self, spec):
-        self.client.ran.append(spec)
+        self.owner.ran.append(spec)
         raise AssertionError("preflight executed an in_process client")

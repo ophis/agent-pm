@@ -209,7 +209,7 @@ class Live(Case):
     def record(self):
         return next(Path(SessionStore().root).glob("*.json"))
 
-    def clients(self):
+    def client_ids(self):
         log = RunLog(str(self.work)).read()
         return [line["client_id"] for line in log if line["kind"] == "client_session"]
 
@@ -1035,7 +1035,7 @@ class TuiRecoveryIntegrationTest(Live):
         self.assertEqual(Stream(self, handle).until(TurnEnd)[-1], TurnEnd("first"))
         handle.stop()
         self.headless(resume=True)
-        self.assertEqual(self.clients(), [fake_codex.NATIVE] * 3)
+        self.assertEqual(self.client_ids(), [fake_codex.NATIVE] * 3)
         self.assertEqual(self.bound().native_id, fake_codex.NATIVE)
         self.assertEqual(self.calls()[0]["argv"][:2], ["resume", fake_codex.NATIVE])
         self.assertEqual(len(list(self.record().parent.glob("*.json"))), 1)
@@ -1046,7 +1046,7 @@ class TuiRecoveryIntegrationTest(Live):
         native = self.bound().native_id
         handle.stop()
         self.headless(resume=True)
-        self.assertEqual(self.clients(), [native, native])
+        self.assertEqual(self.client_ids(), [native, native])
         self.assertEqual(self.bound().native_id, native)
         self.assertEqual(len(list(self.record().parent.glob("*.json"))), 1)
 

@@ -152,7 +152,7 @@ class InteractiveProcess(Process, Interactive): ...
 class Host(ABC):
     """settings: [hosts.<name>] minus implementation. Launch.env is passed verbatim;
     on exit, events gets `exited <rc>` / `dead`.
-    attach: a InteractiveProcess, unknown → SessionError. list: sorted display
+    attach: a Process, unknown → SessionError. list: sorted display
     matches ("" none). display: completed in the caller's process.
     """
 

@@ -226,7 +226,7 @@ class ControlTest(ControlCase):
         self.shows("w1", f"={MANAGER}:")
         self.assertEqual(len(self.calls("w1")), 1)
 
-    def test_hide_closes_the_view_keeps_the_session_and_show_reopens_it(self):
+    def test_hide_closes_the_shown_pane_keeps_the_session_and_show_reopens_it(self):
         w1 = self.done("w1")
         self.shows("w1", f"={MANAGER}:")
         pane = self.server.pane_of("w1")
