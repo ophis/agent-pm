@@ -1,30 +1,18 @@
 #!/usr/bin/env python3
-"""Checks a generated HTML report before it is committed: it may load nothing external but Google
-Fonts and hold no script URL or report text in an event handler.
+"""Checks a generated HTML report: it may load nothing but Google Fonts.
 
     html_check.py HTML
 
-Prints `ok` and exits 0, else one line per failure and exits 1:
-- `external load: <url>`: a URL whose host (urllib's, so userinfo and port are dropped) is neither
-  fonts.googleapis.com nor fonts.gstatic.com. Matched case-insensitively as `http:` or `https:`
-  followed by any mix of `/`, `\\` and whitespace, or none, anywhere in an attribute value (entities
-  decoded) or a <script> or <style> body; or as a scheme-relative `//host` (either slash may be `\\`)
-  at a value's start or after whitespace, a comma or `(`, or in a body after a quote or `(`. Not
-  checked: `href` and `xlink:href` on <a> (links, not loads), `xmlns` and `xmlns:*` (namespace names),
-  visible text and comments.
-- `unsafe markup: <attr>=<value>`: a value holding `javascript:` once whitespace and control
-  characters are dropped, or an `on*` value holding a quote or backtick (report text can enter a
-  handler only as a string literal).
-Exits 2, printing `check failed: <error>`, when HTML can't be read.
-
-shortcut: CSS escapes (`\\68ttps:`) and JS-built URLs are not decoded; the generator is told to load
-nothing external, so this is a backstop.
+`ok`, exit 0; else exit 1, one line per failure: `external load: <url>` (an http(s) or `//` URL
+outside <a href>, xmlns, namespace names and text) or `unsafe markup: <attr>=<value>`
+(`javascript:`, or a quote in an `on*` value). Unreadable: `check failed: <error>`, exit 2.
+shortcut: CSS escapes and JS-built URLs are not decoded; the prompt forbids external loads.
 """
 
 import re
 import sys
 from html.parser import HTMLParser
-from urllib.parse import urlsplit
+from urllib.parse import unquote, urlsplit
 
 FONTS = {"fonts.googleapis.com", "fonts.gstatic.com"}
 _HOST = r"(?P<host>[^\s/\\\"'`()<>?#]+)[^\s\"'`()<>]*"
@@ -32,6 +20,7 @@ _SCHEME = r"https?:[\s/\\]*"
 ATTR_URL = re.compile(rf"(?i)(?P<url>(?:{_SCHEME}|(?:^|(?<=[\s,(]))[/\\]{{2}}){_HOST})")
 BODY_URL = re.compile(rf"(?i)(?P<url>(?:{_SCHEME}|(?<=[\"'`(])\s*[/\\]{{2}}){_HOST})")
 LINKS = {"href", "xlink:href"}
+NAMESPACES = {f"http://www.w3.org/{n}" for n in ("2000/svg", "1999/xlink", "1999/xhtml")}
 
 
 class _Check(HTMLParser):
@@ -42,6 +31,8 @@ class _Check(HTMLParser):
 
     def _urls(self, pattern, text):
         for m in pattern.finditer(text):
+            if re.split(r"[\"'<>\s]", unquote(m["url"]))[0] in NAMESPACES:
+                continue
             if urlsplit("//" + m["host"]).hostname not in FONTS:
                 self.failures.append(f"external load: {m['url'].strip()}")
 
@@ -55,6 +46,13 @@ class _Check(HTMLParser):
                 self._urls(ATTR_URL, value)
             if "javascript:" in bare or (name.startswith("on") and re.search("[\"'`]", value)):
                 self.failures.append(f"unsafe markup: {name}={value}")
+
+    def handle_startendtag(self, tag, attrs):
+        self.handle_starttag(tag, attrs)
+        if self.body:
+            self.set_cdata_mode(tag)
+        else:
+            self.handle_endtag(tag)
 
     def handle_endtag(self, tag):
         self.body = False

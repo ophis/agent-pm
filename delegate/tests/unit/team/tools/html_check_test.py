@@ -20,6 +20,7 @@ FONTS = "https://fonts.googleapis.com/css2?family=Inter&display=swap"
 
 PAGE = f"""<!DOCTYPE html>
 <html><head>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3C/svg%3E">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="{FONTS}" rel="stylesheet">
 <style>@import url('{FONTS}'); body {{ font: 16px Inter; }}</style>
@@ -32,7 +33,8 @@ PAGE = f"""<!DOCTYPE html>
 <a xlink:href="https://example.com/x"><text>x</text></a></svg>
 <button onclick="toggle(this)">Theme</button>
 <script>// draw arrows
-const s = 'https:'; document.body.dataset.x = s;</script>
+const s = 'https:'; document.body.dataset.x = s;
+document.createElementNS("http://www.w3.org/2000/svg", "circle");</script>
 </body></html>
 """
 
@@ -73,6 +75,15 @@ class HtmlCheck(Case):
             (
                 '<link rel="stylesheet" href="https://fonts.googleapis.com@evil.com/">',
                 "external load: https://fonts.googleapis.com@evil.com/",
+            ),
+            ('<script/>import("https://x.com/m.js")</script>', "external load: https://x.com/m.js"),
+            (
+                "<style/>@import url(https://x.com/a.css);</style>",
+                "external load: https://x.com/a.css",
+            ),
+            (
+                '<img src="http://www.w3.org/2000/svg.png">',
+                "external load: http://www.w3.org/2000/svg.png",
             ),
             ('<img src="HTTPS://x.com/p">', "external load: HTTPS://x.com/p"),
             ('<img src="https:x.com/p">', "external load: https:x.com/p"),

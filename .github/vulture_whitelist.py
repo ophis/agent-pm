@@ -15,7 +15,8 @@ from agent_pm.session.hosts.tmux.types import Split
 from agent_pm.utils.record import LayerCommand
 
 # team/tools/html_check.py's checker overrides these HTMLParser callbacks.
-_ = HTMLParser.handle_starttag, HTMLParser.handle_endtag, HTMLParser.handle_data
+_ = HTMLParser.handle_starttag, HTMLParser.handle_startendtag
+_ = HTMLParser.handle_endtag, HTMLParser.handle_data
 
 # Enum members reached only by iteration or by value:
 # teams.py reads each TeamKind dir.
