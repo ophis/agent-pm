@@ -60,13 +60,13 @@ class Run(unittest.TestCase):
             [
                 f"::error title={__name__}.T.test_fail::AssertionError: 1 != 2 : one",
                 f"::error title={__name__}.T.test_error::KeyError: 'k'",
-                f"::error title={__name__}.T.test_sub (n=1)::AssertionError: a:b, c%25 |",
+                f"::error title={__name__}.T.test_sub::(n=1): AssertionError: a:b, c%25 |",
             ],
         )
         summary = self.summary.read_text()
         self.assertTrue(summary.startswith("### Unit x: 3 failed\n\n| Test | Error |\n"))
         self.assertIn(f"| `{__name__}.T.test_error` | KeyError: 'k' |", summary)
-        self.assertIn(f"| `{__name__}.T.test_sub (n=1)` | AssertionError: a:b, c% \\| |", summary)
+        self.assertIn(f"| `{__name__}.T.test_sub` | (n=1): AssertionError: a:b, c% \\| |", summary)
         self.assertEqual(self.state.read_text().splitlines()[-1], "failed")
 
     def test_success_prints_and_summarizes_nothing(self):
@@ -86,6 +86,116 @@ class Run(unittest.TestCase):
 
 
 class Discovery(unittest.TestCase):
+    def test_parallel_unit_jobs_cover_the_same_shards_without_supervising_the_coordinator(self):
+        commands = []
+
+        def parallel(_title, selected, _directory):
+            commands.extend(selected.values())
+            return 0
+
+        with mock.patch.object(runner, "parallel", side_effect=parallel):
+            for number in (1, 2):
+                self.assertEqual(
+                    runner.main(["Unit", "--unit", "--parallel", "4", "--shard", f"{number}/2"]),
+                    0,
+                )
+        self.assertEqual([argv[-1] for argv in commands], [f"{i}/8" for i in range(1, 9)])
+        for value, workers in (("0/1", 4), ("2/1", 4), ("1/0", 4), ("1/1", 0)):
+            with self.subTest(value=value, workers=workers), self.assertRaises(ValueError):
+                runner.unit_parallel("Unit", value, workers)
+
+    def test_unit_shards_are_deterministic_complete_and_disjoint(self):
+        cases = [unittest.FunctionTestCase(lambda: None, description=str(i)) for i in range(7)]
+        for i, case in enumerate(cases):
+            case.id = lambda i=i: f"example.Case.test_{i}"
+        suites = [
+            list(runner.tests(runner.shard(unittest.TestSuite(reversed(cases)), f"{i}/3")))
+            for i in range(1, 4)
+        ]
+        ids = [test.id() for suite in suites for test in suite]
+        self.assertEqual(sorted(ids), sorted(test.id() for test in cases))
+        self.assertEqual([len(suite) for suite in suites], [3, 2, 2])
+        self.assertEqual([test.id() for test in suites[0]], [cases[i].id() for i in (0, 3, 6)])
+
+    def test_invalid_or_duplicate_unit_shards_fail(self):
+        case = unittest.FunctionTestCase(lambda: None)
+        for value in ("0/1", "2/1", "1/0", "1/2", "1", "1/1/1", "a/1"):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                runner.shard(unittest.TestSuite([case]), value)
+        with self.assertRaises(ValueError):
+            runner.shard(unittest.TestSuite([case, case]), "1/1")
+
+    def selection_fixture(self, *, normalized=False):
+        root = Path(self.enterContext(tempfile.TemporaryDirectory())).resolve()
+        package = "example_" + root.name + "_tests"
+        directory = root / (f"project/tests/{package}/integration" if normalized else ".github")
+        directory.mkdir(parents=True)
+        if normalized:
+            for parent in (directory, directory.parent):
+                (parent / "__init__.py").touch()
+        name = "selection_" + root.name + "_test"
+        path = directory / (name + ".py")
+        path.write_text(
+            "import unittest\nclass Choice(unittest.TestCase):\n"
+            "    def test_one(self): pass\n    def test_two(self): pass\n"
+        )
+        module = (package + ".integration." if normalized else "") + name
+        return root, path, module
+
+    def test_exact_id_and_file_select_only_the_requested_tests(self):
+        for normalized in (False, True):
+            with self.subTest(normalized=normalized):
+                root, path, module = self.selection_fixture(normalized=normalized)
+                test_id = module + ".Choice.test_one"
+                suite, paths = runner.select(root, [test_id])
+                self.assertEqual([test.id() for test in runner.tests(suite)], [test_id])
+                self.assertEqual(paths, [path])
+                suite, _ = runner.select(root, [str(path.relative_to(root))])
+                self.assertEqual(suite.countTestCases(), 2)
+                suite, _ = runner.select(root, [str(path.parent)])
+                self.assertEqual(suite.countTestCases(), 2)
+
+    def test_invalid_or_nonunique_inputs_never_fall_back(self):
+        root, path, module = self.selection_fixture()
+        (root / "ordinary.py").touch()
+        for selector in (
+            module + ".Choice.test_missing",
+            module + ".Choice",
+            "missing.py",
+            "ordinary.py",
+            "../outside_test.py",
+            str(path) + ".missing",
+        ):
+            with self.subTest(selector=selector), self.assertRaises(ValueError):
+                runner.select(root, [selector])
+        original = list(runner.tests(runner.discover(root, [path])))[0]
+        duplicate = unittest.TestSuite([original, original])
+        with (
+            mock.patch.object(runner, "discover", return_value=duplicate),
+            self.assertRaises(ValueError),
+        ):
+            runner.select(root, [original.id()])
+
+    def test_ambiguous_module_names_are_rejected_before_import(self):
+        root, path, module = self.selection_fixture(normalized=True)
+        other = root / "other/tests" / path.relative_to(root / "project/tests")
+        other.parent.mkdir(parents=True)
+        for parent in (other.parent, other.parent.parent):
+            (parent / "__init__.py").touch()
+        other.write_text(path.read_text())
+        with self.assertRaisesRegex(ValueError, "ambiguous"):
+            runner.select(root, [module + ".Choice.test_one"])
+
+    def test_inherited_state_is_not_a_supervised_child(self):
+        with mock.patch.dict(os.environ, {runner.STATE: "inherited"}, clear=True):
+            self.assertFalse(runner.supervised_child())
+        with mock.patch.dict(
+            os.environ,
+            {runner.STATE: "state", "RUN_TESTS_PARENT": str(os.getppid())},
+            clear=True,
+        ):
+            self.assertTrue(runner.supervised_child())
+
     def test_top_level_preserves_project_packages_and_normalized_tests(self):
         root = Path(self.enterContext(tempfile.TemporaryDirectory()))
         regular = root / "session/tests/unit"

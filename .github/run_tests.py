@@ -4,6 +4,7 @@ import collections
 import contextlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -11,8 +12,10 @@ import sysconfig
 import tempfile
 import time
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
+import ci_scope
 import isolation
 
 from utils.tests.sandbox import clean_env, kill_processes, leaked_processes, stop_tmux_servers
@@ -80,15 +83,16 @@ class AnnotatingResult(unittest.TextTestResult):
     def addSubTest(self, test, subtest, err):
         super().addSubTest(test, subtest, err)
         if err is not None:
-            self.annotate(subtest, err)
+            self.annotate(test, err, detail=subtest.id().removeprefix(test.id()).strip())
 
     def addUnexpectedSuccess(self, test):
         super().addUnexpectedSuccess(test)
         self.report(test.id(), "unexpected success")
 
-    def annotate(self, test, err):
+    def annotate(self, test, err, *, detail=""):
         kind, value = err[0].__name__, str(err[1]).strip()
-        self.report(test.id(), f"{kind}: {value.splitlines()[0]}" if value else kind)
+        line = f"{kind}: {value.splitlines()[0]}" if value else kind
+        self.report(test.id(), f"{detail}: {line}" if detail else line)
 
     def report(self, test_id, line):
         self.failed.append((test_id, line))
@@ -153,11 +157,81 @@ def start_coverage(sandbox, repo):
     return cov
 
 
+def supervised_child():
+    return STATE in os.environ and os.environ.get("RUN_TESTS_PARENT") == str(os.getppid())
+
+
+def parallel(title, commands, directory=None):
+    with tempfile.TemporaryDirectory(prefix="test-workers-") as temporary:
+        directory = Path(directory or temporary)
+
+        def worker(label):
+            target = directory / f"shard-{label}"
+            env = {
+                **os.environ,
+                "RUN_TESTS_DURATIONS": str(target / "durations.jsonl"),
+            }
+            if os.environ.get("INTEGRATION_TIMING_DIR"):
+                env["INTEGRATION_TIMING_DIR"] = str(target)
+            if os.environ.get(COVERAGE):
+                env[COVERAGE] = str(target / f"coverage-data.{label}")
+            try:
+                target.mkdir(parents=True, exist_ok=True)
+                with (target / "worker.log").open("w") as log:
+                    result = subprocess.run(
+                        commands[label], env=env, stdout=log, stderr=subprocess.STDOUT
+                    )
+            except OSError as error:
+                annotate(
+                    f"{title} / shard {label}",
+                    f"worker launch failed before any test started: {error}",
+                )
+                return 1
+            else:
+                return result.returncode
+
+        with ThreadPoolExecutor(max_workers=len(commands)) as executor:
+            results = list(executor.map(worker, commands))
+        for label, code in zip(commands, results, strict=True):
+            print(f"::group::{title} / shard {label} (exit {code})", flush=True)
+            path = directory / f"shard-{label}/worker.log"
+            if path.is_file():
+                print(path.read_text(errors="replace"), end="", flush=True)
+            print("::endgroup::", flush=True)
+            if code:
+                annotate(f"{title} / shard {label}", f"worker exited {code}")
+        return int(any(results))
+
+
+def unit_parallel(title, value, workers):
+    match = re.fullmatch(r"([1-9][0-9]*)/([1-9][0-9]*)", value)
+    if not match or workers < 1:
+        raise ValueError("unit job must be N/TOTAL with a positive worker count")
+    number, total = map(int, match.groups())
+    if number > total:
+        raise ValueError("unit job must be numbered 1 through TOTAL")
+    commands = {
+        str(label): [
+            sys.executable,
+            "-P",
+            "-X",
+            "faulthandler",
+            __file__,
+            f"{title} / shard {label}",
+            "--unit",
+            "--shard",
+            f"{label}/{total * workers}",
+        ]
+        for label in range((number - 1) * workers + 1, number * workers + 1)
+    }
+    return parallel(title, commands, os.environ.get("RUN_TESTS_REPORT_DIR"))
+
+
 def supervise(title):
     """None in the child; in the parent, the child's exit code (128 + signal for a signal), or 1 when
     it passed but left processes or tmux servers behind.
     """
-    if STATE in os.environ:
+    if supervised_child():
         return None
     tail = collections.deque(maxlen=5 * TAIL)
     repo = Path(__file__).resolve().parents[1]
@@ -197,7 +271,7 @@ def supervise(title):
         try:
             with subprocess.Popen(
                 [sys.executable, "-P", "-S", "-X", "faulthandler", *sys.orig_argv[1:]],
-                env={**env, STATE: state},
+                env={**env, STATE: state, "RUN_TESTS_PARENT": str(os.getpid())},
                 stderr=subprocess.PIPE,
                 text=True,
                 errors="replace",
@@ -248,15 +322,68 @@ def discover(root, directories):
     suite = unittest.TestSuite()
     for directory in directories:
         start = root / directory
+        pattern = start.name if start.is_file() else "*_test.py"
+        start = start.parent if start.is_file() else start
         loader = unittest.TestLoader()
         suite.addTests(
             loader.discover(
-                str(start), pattern="*_test.py", top_level_dir=str(discovery_top(root, start))
+                str(start), pattern=pattern, top_level_dir=str(discovery_top(root, start))
             )
         )
         if loader.errors:
             raise ValueError("\n".join(loader.errors))
     return suite
+
+
+def tests(suite):
+    for test in suite:
+        if isinstance(test, unittest.TestSuite):
+            yield from tests(test)
+        else:
+            yield test
+
+
+def select(root, selectors):
+    root = root.resolve()
+    paths = [(root / value).resolve() for value in selectors]
+    test_id = None
+    if len(selectors) == 1 and not paths[0].exists() and "/" not in selectors[0]:
+        test_id = selectors[0]
+        paths = []
+        for pattern in (".github/*_test.py", "tests/**/*_test.py", "*/tests/**/*_test.py"):
+            for path in sorted(root.glob(pattern)):
+                top = discovery_top(root, path.parent)
+                module = ".".join(path.relative_to(top).with_suffix("").parts)
+                if test_id.startswith(module + "."):
+                    paths.append(path.resolve())
+        if len(paths) > 1:
+            raise ValueError(f"ambiguous test id: {test_id!r}")
+    if not paths or any(
+        not path.is_relative_to(root)
+        or not path.exists()
+        or (not path.is_dir() and not path.name.endswith("_test.py"))
+        for path in paths
+    ):
+        raise ValueError(f"invalid test selection: {selectors!r}")
+    if GATE:
+        units = [
+            "unit" in path.relative_to(root).parts
+            or path.parent == root / ".github"
+            or path == root / ".github"
+            for path in paths
+        ]
+        GATE.unit_only, GATE.unit = all(units), any(units)
+    suite = discover(root, paths)
+    if test_id:
+        matches = [test for test in tests(suite) if test.id() == test_id]
+        if len(matches) != 1:
+            raise ValueError(
+                f"test id must match exactly one test: {test_id!r} ({len(matches)} matches)"
+            )
+        suite = unittest.TestSuite(matches)
+    if not suite.countTestCases():
+        raise ValueError(f"no tests match: {selectors!r}")
+    return suite, paths
 
 
 def unit_directories(root):
@@ -272,11 +399,30 @@ def unit_directories(root):
     ]
 
 
+def shard(suite, value):
+    match = re.fullmatch(r"([1-9][0-9]*)/([1-9][0-9]*)", value)
+    found = sorted(tests(suite), key=lambda test: test.id())
+    if not match:
+        raise ValueError("unit shard must be N/TOTAL, numbered 1 through TOTAL")
+    number, total = map(int, match.groups())
+    if not 1 <= number <= total <= len(found):
+        raise ValueError("unit shards must be nonempty, numbered 1 through TOTAL")
+    if len({test.id() for test in found}) != len(found):
+        raise ValueError("unit discovery contains duplicate test IDs")
+    return unittest.TestSuite(found[number - 1 :: total])
+
+
 def main(argv):
     global GATE
     if len(argv) < 2:
-        sys.exit("usage: run_tests.py <title> <start dir>... | <title> --unit")
+        sys.exit("usage: run_tests.py <title> <directory>... | <title> <test id|test file|--unit>")
     title, *directories = argv
+    if (
+        len(directories) == 5
+        and directories[:2] == ["--unit", "--parallel"]
+        and directories[3] == "--shard"
+    ):
+        return unit_parallel(title, directories[4], int(directories[2]))
     code = supervise(title)
     if code is not None:
         return code
@@ -287,15 +433,19 @@ def main(argv):
         else None
     )
     GATE = isolation.install(root)
-    GATE.unit_only = directories == ["--unit"] or all(
-        "unit" in Path(path).parts or path == ".github" for path in directories
+    part = None
+    if len(directories) == 3 and directories[:2] == ["--unit", "--shard"]:
+        part = directories[2]
+        directories = ["--unit"]
+    suite, _ = select(
+        root,
+        ci_scope.selected(root, unit_directories(root))
+        if directories == ["--unit"]
+        else directories,
     )
-    GATE.unit = directories == ["--unit"] or any(
-        "unit" in Path(path).parts or path == ".github" for path in directories
-    )
-    code = run(
-        discover(root, unit_directories(root) if directories == ["--unit"] else directories), title
-    )
+    if part is not None:
+        suite = shard(suite, part)
+    code = run(suite, title)
     if cov:
         cov.stop()
         cov.save()
@@ -303,4 +453,7 @@ def main(argv):
 
 
 if __name__ == "__main__":
-    sys.exit(main(sys.argv[1:]))
+    try:
+        sys.exit(main(sys.argv[1:]))
+    except ValueError as error:
+        sys.exit(str(error))
