@@ -212,6 +212,9 @@ class FakeDelegate(Delegate):
     def show(self):
         raise NotDisplayable("host fake cannot display")
 
+    def hide(self):
+        raise NotDisplayable("host fake cannot display")
+
     def attach_command(self):
         return None
 

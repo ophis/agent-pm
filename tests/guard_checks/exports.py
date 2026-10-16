@@ -328,7 +328,7 @@ def session_interface_snapshot(repo: str) -> list[str]:
 
 def delegate_interface_snapshot(repo: str) -> list[str]:
     """The delegate's public interface equals DELEGATE_INTERFACE. Only TASK-332, TASK-375, TASK-405,
-    TASK-429 and TASK-435 change it on purpose, rewriting the file from _interface().
+    TASK-429, TASK-435 and TASK-471 change it on purpose, rewriting the file from _interface().
     """
     return _snapshot_drift(repo, DELEGATE_INTERFACE, DELEGATE_INTERFACE_MODULES)
 

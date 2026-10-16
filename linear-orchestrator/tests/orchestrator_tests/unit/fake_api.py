@@ -46,6 +46,9 @@ class FakeApi:
         self.order.append(("show", name, display, command))
         return _answer(self.shown)
 
+    def hide(self, name):
+        self.order.append(("hide", name))
+
     def inspect(self, spec):
         entry = self.records.get(spec.sid)
         self.info.append((spec.client, spec.sid, entry["cwd"] if entry else spec.workdir))

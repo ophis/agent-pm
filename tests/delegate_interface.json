@@ -11,6 +11,7 @@
  "agent_pm.delegate.Delegate.clean": "classmethod(cls:POSITIONAL_OR_KEYWORD, workdir:POSITIONAL_OR_KEYWORD, dry:KEYWORD_ONLY=False)",
  "agent_pm.delegate.Delegate.close": "def(self:POSITIONAL_OR_KEYWORD)",
  "agent_pm.delegate.Delegate.detach": "def(self:POSITIONAL_OR_KEYWORD, outer:KEYWORD_ONLY=None)",
+ "agent_pm.delegate.Delegate.hide": "def(self:POSITIONAL_OR_KEYWORD)",
  "agent_pm.delegate.Delegate.outcome": "def(self:POSITIONAL_OR_KEYWORD)",
  "agent_pm.delegate.Delegate.resolve": "classmethod(cls:POSITIONAL_OR_KEYWORD, role:POSITIONAL_OR_KEYWORD, task:POSITIONAL_OR_KEYWORD=None, overlays:KEYWORD_ONLY=tuple())",
  "agent_pm.delegate.Delegate.resume": "def(self:POSITIONAL_OR_KEYWORD, mode:KEYWORD_ONLY=None)",

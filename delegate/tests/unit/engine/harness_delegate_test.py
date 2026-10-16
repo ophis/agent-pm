@@ -20,7 +20,7 @@ from agent_pm.delegate.engine import harness_delegate
 from agent_pm.delegate.engine.harness_delegate import HarnessDelegate
 from agent_pm.delegate.engine.state import RunState
 from agent_pm.delegate.engine.types import Layout
-from agent_pm.session import Access, Exited, Liveness, Mode, Reply, SessionError
+from agent_pm.session import Access, Exited, Liveness, Mode, NotDisplayable, Reply, SessionError
 from agent_pm.session import ConfigError as SessionConfigError
 from agent_pm.session import Spec as SessionSpec
 
@@ -530,6 +530,27 @@ class StatusTest(HarnessCase):
         self.assertEqual((view.status().state, view.status().hidden), ("working", False))
         self.stop(record)
         self.assertEqual((view.status().alive, view.status().state), (False, "gone"))
+
+
+class ViewTest(HarnessCase):
+    def setUp(self):
+        super().setUp()
+        HarnessSession.reset(displayable=True)
+        self.settings(harness_host="harness")
+
+    def test_hide_closes_the_agents_and_the_harness_views_show_opened(self):
+        spec = Spec("input", self.work, mode="tui", client="fake", sid=SID)
+        self.make(spec=spec).detach()
+        view = HarnessDelegate.attach(self.work, session_cls=HarnessSession)
+        names = [self.metadata()[key] for key in ("agent_name", "harness_name")]
+        view.show()
+        self.assertEqual([name for name, _, _ in ShowingHost.shown], names)
+        self.assertIsNone(view.hide())
+        self.assertEqual(ShowingHost.hidden, names)
+        view.close()
+        with self.assertRaisesRegex(NotDisplayable, "delegate has no live displayable session"):
+            view.hide()
+        self.assertEqual(ShowingHost.hidden, names)
 
 
 class CrashTest(HarnessCase):

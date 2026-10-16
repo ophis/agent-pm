@@ -11,7 +11,17 @@ from delegate.tests.case import REPO, Case
 
 BIN = os.path.join(REPO, "bin", "agent-pm-delegate")
 MINIMAL = "/usr/bin:/bin"
-COMMANDS = ["run", "status", "outcome", "resume", "show", "close", "attach-command", "prompt"]
+COMMANDS = [
+    "run",
+    "status",
+    "outcome",
+    "resume",
+    "show",
+    "hide",
+    "close",
+    "attach-command",
+    "prompt",
+]
 
 
 def system_python_ok() -> bool:

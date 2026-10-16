@@ -621,23 +621,38 @@ class HarnessDelegate(Delegate):
             return self._harness_host.attach_command(state.harness_name)
         return None
 
+    def _views(self, state: _State) -> tuple[Session | None, Displayable | None]:
+        """The live displayable agent session and harness host, at least one."""
+        agent = self._agent(state)
+        if agent is not None and not (agent.state() == Liveness.LIVE and agent.displayable):
+            agent = None
+        process = self._harness(state)
+        host = self._harness_host
+        harness = (
+            host
+            if process is not None and process.alive() and isinstance(host, Displayable)
+            else None
+        )
+        if agent is None and harness is None:
+            raise NotDisplayable("delegate has no live displayable session")
+        return agent, harness
+
     def show(self) -> str | None:
         state = self._read()
-        commands = []
-        capable = False
-        agent = self._agent(state)
-        if agent is not None and agent.state() == Liveness.LIVE and agent.displayable:
-            capable = True
-            if command := agent.show(display=state.display):
-                commands.append(command)
-        process = self._harness(state)
-        if process is not None and process.alive() and isinstance(self._harness_host, Displayable):
-            capable = True
-            if command := self._harness_host.show(state.harness_name, display=state.display):
-                commands.append(command)
-        if not capable:
-            raise NotDisplayable("delegate has no live displayable session")
-        return "\n".join(commands) or None
+        agent, harness = self._views(state)
+        commands = [
+            agent and agent.show(display=state.display),
+            harness and harness.show(state.harness_name, display=state.display),
+        ]
+        return "\n".join(command for command in commands if command) or None
+
+    def hide(self) -> None:
+        state = self._read()
+        agent, harness = self._views(state)
+        if agent is not None:
+            agent.hide()
+        if harness is not None:
+            harness.hide(state.harness_name)
 
     def close(self) -> None:
         state = self._read()

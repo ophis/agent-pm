@@ -105,6 +105,9 @@ def provider(api, cfg):
         def show(self):
             return api.show(harness_name(self.role, self.issue))
 
+        def hide(self):
+            api.hide(harness_name(self.role, self.issue))
+
         def close(self):
             return api.close(harness_name(self.role, self.issue))
 
