@@ -97,8 +97,4 @@ NO_COVER_ALLOWED = {
         f"{SESSION_SRC}hosts/pty/host.py",
         "PtyTerminal._input",
     ): "Connects to the live supervisor's input socket.",
-    (
-        f"{SESSION_SRC}hosts/pty/host.py",
-        "PtyHost._supervise",
-    ): "Spawns the pty supervisor process.",
 }

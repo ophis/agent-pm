@@ -411,7 +411,7 @@ class PtyHost(Host):
             raise
         return folder, meta
 
-    def _supervise(self, folder: str, events: str | None) -> subprocess.Popen:  # pragma: no cover
+    def _supervise(self, folder: str, events: str | None) -> subprocess.Popen:
         roots = module_roots(sys.modules[__name__], agent_pm.utils)
         with open(os.path.join(folder, state.OUTPUT), "ab") as output:
             supervisor = subprocess.Popen(
