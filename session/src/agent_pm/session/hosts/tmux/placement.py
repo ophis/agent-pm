@@ -88,8 +88,6 @@ class Placement:
         opener: str | None = None,
         per_column: int | None = None,
         retile: str | None = None,
-        command: str | None = None,
-        tile_window=None,
     ) -> str | None:
         """Opens a pane on the session, recording @opener and @pane; none while a pane that opener
         opened still shows it (_open; checked when the sessions are listed: not for an iTerm2 opener
@@ -152,8 +150,6 @@ class Placement:
         return self.grid.configure(
             window,
             manager,
-            command=command,
-            tile_window=tile_window,
             per_column=PER_COLUMN if per_column is None else per_column,
             retile=RETILE if retile is None else Retile(retile),
         )

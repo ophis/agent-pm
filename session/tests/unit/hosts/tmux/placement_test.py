@@ -10,7 +10,6 @@ from agent_pm.session.hosts.tmux import types
 
 from session.tests.case import Case
 from session.tests.tmux_fixtures import (
-    COMMAND,
     HOSTS,
     INSIDE,
     ITERM,
@@ -54,7 +53,7 @@ class PaneAnchorTest(PaneFixture):
                 self.assertEqual(self.stderr.getvalue(), "")
         fake, err = FakeTmux(results={"osascript": (0, "ok NEW")}), io.StringIO()
         with environ(**ITERM), which(), redirect_stderr(err):
-            self.assertIsNone(placed(fake).open_pane("s", split="below", command=COMMAND))
+            self.assertIsNone(placed(fake).open_pane("s", split="below"))
         self.assertEqual(
             (fake.calls[:2], err.getvalue()), ([PGREP, osa("below", "id", "s", "ABC")], "")
         )
@@ -328,7 +327,7 @@ class SplitTest(Case):
         for split in (None, *types.Split, "below"):
             with self.subTest(split=split), environ(), which():
                 self.assertEqual(
-                    placed(FakeTmux()).open_pane("s", split=split, command=COMMAND),
+                    placed(FakeTmux()).open_pane("s", split=split),
                     "no anchor pane: not in tmux, no iTerm2 pane ($ITERM_SESSION_ID)" + WATCH,
                 )
         for bad in ("up", "", "RIGHT", 1, ["right"]):
@@ -340,7 +339,7 @@ class SplitTest(Case):
                     f"^split must be one of right, below, not {re.escape(repr(bad))}$",
                 ),
             ):
-                placed(fake).open_pane("s", split=bad, command=COMMAND)
+                placed(fake).open_pane("s", split=bad)
             self.assertEqual(fake.calls, [])
 
 
@@ -411,7 +410,7 @@ class ContainerTest(Case):
     def open(self, fake, env=ENV):
         self.stderr = io.StringIO()
         with environ(**env), which(), redirect_stderr(self.stderr):
-            return placed(fake).open_pane("s", command=COMMAND)
+            return placed(fake).open_pane("s")
 
     def test_first_pane_a_tmux_split_right_of_the_callers(self):
         fake = self.fake(self.PGREPS[0])
@@ -767,7 +766,7 @@ class StackTest(Case):
     def open(self, fake, env=INSIDE, **kw):
         self.stderr = io.StringIO()
         with environ(**env), which(), redirect_stderr(self.stderr):
-            return placed(fake).open_pane("s", **kw, command=COMMAND)
+            return placed(fake).open_pane("s", **kw)
 
     def expected_row(self, number, name, pane, opener="cmd"):
         return f"${number}", name, opener, pane, SOCK

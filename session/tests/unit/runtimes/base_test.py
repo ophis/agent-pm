@@ -115,6 +115,11 @@ class RuntimeTest(Case):
                 self.assertEqual(params(getattr(mode, name)), params(getattr(Runtime, name)))
         self.assertEqual({mode: mode.kind for mode in KINDS}, KINDS)
 
+    def test_close_stops_the_run_unless_a_mode_overrides_it(self):
+        run = mock.Mock()
+        Runtime.close(run)
+        self.assertEqual(run.mock_calls, [mock.call.stop()])
+
     def test_only_a_tui_runtime_may_have_a_launch_input_pending(self):
         for cls in (headless.HeadlessRuntime, in_process.InProcessRuntime):
             with self.subTest(cls=cls.__name__):

@@ -514,14 +514,11 @@ class SettleTest(Live):
         return self.tmux("display-message", "-p", "-t", self.window, "#{window_layout}")
 
     def grid_up(self) -> None:
-        with self.inside(MANAGER):
+        path = {"PATH": os.pathsep.join((PLUGIN_BIN, os.environ.get("PATH", "")))}
+        with self.inside(MANAGER), mock.patch.dict(os.environ, path):
             self.assertIsNone(
                 tmux_model.Grid(Tmux()).configure(
-                    self.window,
-                    self.manager,
-                    per_column=1,
-                    retile=tmux_model.Retile("all"),
-                    command=COMMAND,
+                    self.window, self.manager, per_column=1, retile=tmux_model.Retile("all")
                 )
             )
 
