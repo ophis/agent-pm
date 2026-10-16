@@ -620,6 +620,9 @@ class HarnessDelegate(Delegate):
             state.role,
         )
 
+    def content(self) -> str:
+        return self.status().to_line()
+
     def status(self) -> Status:
         state = self._read()
         agent = self._agent(state)

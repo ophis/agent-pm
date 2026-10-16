@@ -930,7 +930,7 @@ class Prompt(Case):
 
 
 class Commands(Base):
-    def test_help_lists_exactly_the_nine_subcommands(self):
+    def test_help_lists_exactly_the_ten_subcommands(self):
         code, out, err = self.cli("--help")
         self.assertEqual((code, err), (0, ""))
         self.assertEqual(
@@ -938,6 +938,7 @@ class Commands(Base):
             [
                 "run",
                 "status",
+                "content",
                 "outcome",
                 "resume",
                 "show",
@@ -978,6 +979,9 @@ class View:
             attach=self.command,
             hidden=False,
         )
+
+    def content(self):
+        return "content of " + self.name
 
     def show(self):
         if self.show_error is not None:
@@ -1046,6 +1050,28 @@ class Queries(Case):
             except SystemExit as e:
                 code = e.code
         return code, out.getvalue(), err.getvalue()
+
+    def test_content_prints_the_views_text_from_key_or_record(self):
+        for arguments, stdin in ((("content", "a"), ""), (("content",), record("a").to_line())):
+            with self.subTest(arguments=arguments):
+                self.assertEqual(
+                    self.query(*arguments, stdin=stdin, a=View("a")), (0, "content of a\n", "")
+                )
+
+    def test_content_bad_input_answers_nothing_before_attach(self):
+        for arguments, stdin in (
+            (("content", "a", "b"), ""),
+            (("content",), "bad record"),
+            (("content",), record("a").to_line() + "\nbad record"),
+        ):
+            with (
+                self.subTest(arguments=arguments, stdin=stdin),
+                mock.patch.object(Views, "attach") as attach,
+            ):
+                code, out, err = self.query(*arguments, stdin=stdin)
+                self.assertEqual((code, out), (2, ""))
+                self.assertTrue(err)
+                attach.assert_not_called()
 
     def test_status_prints_one_line_per_key_in_order_from_arguments_or_stdin(self):
         a, b = View("a"), View("b", command="tmux attach -t =b")
@@ -1138,7 +1164,7 @@ class Queries(Case):
         )
 
     def test_one_key_commands_refuse_any_other_count(self):
-        for command in ("outcome", "attach-command", "resume"):
+        for command in ("outcome", "attach-command", "resume", "content"):
             with self.subTest(command=command):
                 self.assertEqual(
                     self.query(command), (2, "", "delegate: takes exactly one key, got 0\n")

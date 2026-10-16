@@ -40,6 +40,7 @@ def main(
     _run_options(run)
     for name, many, what in (
         ("status", True, "one Status line per run"),
+        ("content", False, "the run's content"),
         ("outcome", False, "the run's outcome as JSON, null without one"),
         ("resume", False, "resume a stopped run; print its Record"),
         ("show", True, "show each run's agent session"),
@@ -276,7 +277,7 @@ def _prompt(
 
 
 def _query(a: argparse.Namespace, delegate_cls: type[HarnessDelegate], sid: str | None) -> int:
-    single = a.command in ("outcome", "resume", "attach-command")
+    single = a.command in ("outcome", "resume", "attach-command", "content")
     keys = ([] if a.keys is None else [a.keys]) if single else a.keys
 
     def viewed(key):
@@ -292,6 +293,7 @@ def _query(a: argparse.Namespace, delegate_cls: type[HarnessDelegate], sid: str 
         "hide": lambda pair: pair[0].hide(),
         "close": lambda pair: pair[0].close(),
         "outcome": _outcome,
+        "content": lambda view: view.content(),
         "resume": lambda view: view.resume().to_line(),
         "attach-command": _attach_command,
     }[a.command]

@@ -584,6 +584,11 @@ class ResumeModeTest(HarnessCase):
 
 
 class StatusTest(HarnessCase):
+    def test_content_is_the_current_status_line(self):
+        self.make().detach()
+        view = HarnessDelegate.attach(self.work, session_cls=HarnessSession)
+        self.assertEqual(view.content(), view.status().to_line())
+
     def test_its_state_is_working_while_the_run_lives_else_gone(self):
         record = self.make().detach()
         view = HarnessDelegate.attach(self.work, session_cls=HarnessSession)

@@ -1386,6 +1386,12 @@ class TuiStartTest(HostedTuiBase):
             },
         )
 
+    def test_content_prints_the_current_screen(self):
+        session = self.tui(name="w1")
+        self.host.calls.screen.return_value = "current pane\ntext"
+        self.assertEqual(session.content(), "current pane\ntext")
+        self.host.calls.screen.assert_called_once_with(self.host.processes["w1"], None)
+
     def test_alive_send_stop_and_screen_are_the_tui_modes_attach_command_its_hosts(self):
         session = self.tui(name="w1")
         terminal = self.host.processes["w1"]

@@ -91,6 +91,9 @@ class Delegate(ABC):
     def status(self) -> Status: ...
 
     @abstractmethod
+    def content(self) -> str: ...
+
+    @abstractmethod
     def outcome(self) -> Outcome | None: ...
 
     @abstractmethod

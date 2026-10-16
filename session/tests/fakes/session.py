@@ -120,6 +120,9 @@ class FakeSession(Session):
     def attach_command(self):
         raise NotShowable("host none cannot show")
 
+    def content(self):
+        return self.screen()
+
     def screen(self, lines=None):
         raise NotShowable("host none cannot show")
 

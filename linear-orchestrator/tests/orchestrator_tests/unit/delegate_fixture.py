@@ -92,6 +92,9 @@ def provider(api, cfg):
                 raise SessionError("agent runs unknown")
             return harness_name(self.role, self.issue) in api.live
 
+        def content(self):
+            return self.status().to_line()
+
         def status(self):
             live = self.alive()
             return Status(

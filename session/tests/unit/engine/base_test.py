@@ -22,6 +22,7 @@ ABSTRACT = {
         "send",
         "alive",
         "status",
+        "content",
         "stop",
         "info",
         "reply",

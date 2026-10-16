@@ -194,6 +194,9 @@ class FakeDelegate(Delegate):
     def alive(self):
         return _load(self.workdir)["alive"]
 
+    def content(self):
+        return self.status().to_line()
+
     def status(self):
         state = _load(self.workdir)
         outcome = state["outcome"] and state["outcome"]["status"]

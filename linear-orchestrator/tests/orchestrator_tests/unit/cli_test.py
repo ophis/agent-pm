@@ -27,7 +27,7 @@ class Commands(Case):
             cli.main(["--help"])
         self.assertEqual(raised.exception.code, 0)
         self.assertIn(
-            "{router,promote,prune,status,show,hide,close,attach-command,resume,writeback}",
+            "{router,promote,prune,status,show,hide,close,attach-command,resume,content,writeback}",
             output.getvalue(),
         )
 
@@ -149,6 +149,34 @@ def _call(arguments, *, stdin="", tty=False):
 
 
 class Queries(RunCase):
+    def test_content_from_key_or_record_prints_the_owned_runs_content(self):
+        _, record = self.start()
+        for arguments, stdin in ((["content", "TASK-1"], ""), (["content"], record.to_line())):
+            with (
+                self.subTest(arguments=arguments),
+                mock.patch.object(cli.LinearRun, "content", return_value="run content") as content,
+            ):
+                self.assertEqual(_call(arguments, stdin=stdin), (0, "run content\n", ""))
+                content.assert_called_once_with()
+
+    def test_content_requires_one_valid_key_before_attaching(self):
+        _, record = self.start()
+        for arguments, stdin in (
+            (["content"], ""),
+            (["content", "TASK-1", "TASK-2"], ""),
+            (["content"], record.to_line() + "\n" + record.to_line()),
+            (["content"], "bad Record"),
+            (["content"], record.to_line() + "\nbad Record"),
+        ):
+            with (
+                self.subTest(arguments=arguments, stdin=stdin),
+                mock.patch.object(cli.LinearRun, "attach") as attach,
+            ):
+                result, output, errors = _call(arguments, stdin=stdin)
+                self.assertEqual((result, output), (2, ""))
+                self.assertTrue(errors)
+                attach.assert_not_called()
+
     def test_status_for_two_issue_keys_or_stdin_records_has_two_ordered_lines(self):
         _, first = self.start("TASK-1")
         _, second = self.start("TASK-2")

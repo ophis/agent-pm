@@ -35,6 +35,10 @@ class CheckedDelegate(FakeDelegate):
 
 
 class Runs(RunCase):
+    def test_content_is_the_pipeline_status_line(self):
+        owner, _ = self.start()
+        self.assertEqual(owner.content(), owner.status().to_line())
+
     def test_constructed_delegate_receives_exact_spec_and_display(self):
         owner, record = self.start(delegate_cls=CapturedDelegate, display="opaque:\nvalue")
         role, spec, options = owner.delegate.accepted

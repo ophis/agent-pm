@@ -141,6 +141,7 @@ def _parser(hosts: Hosts | None) -> argparse.ArgumentParser:
         sub.add_parser(cmd, help=text, description=text).add_argument("name", type=_name)
     for cmd, text in (
         ("status", "one Status JSON line per session"),
+        ("content", "print one session's content"),
         ("show", "show each session where its display says"),
         ("hide", "close what show opened for each session; it runs on"),
         ("close", "close each session; absent is fine"),
@@ -332,8 +333,15 @@ def _close(name: str, record: Record | None, hosts: Hosts) -> None:
         TuiStore.attach(session, host=Session.host(_host_of(session, hosts))).close()
 
 
+def _content(name: str, record: Record | None, hosts: Hosts) -> str:
+    return Session.attach(
+        name, sid=None if record is None else record.sid, host=_host_of(name, hosts)
+    ).content()
+
+
 BATCH = {
     "status": _status,
+    "content": _content,
     "show": _show,
     "hide": _hide,
     "close": _close,
@@ -346,7 +354,10 @@ def _batch(args, hosts: Hosts) -> int:
     act = BATCH[args.cmd]
     if args.cmd == "hide":
         act = functools.partial(_hide, if_closed=args.if_closed)
-    for name, record in _keys(args):
+    keys = _keys(args)
+    if args.cmd == "content" and len(keys) != 1:
+        raise UsageError(f"content: takes exactly one key, got {len(keys)}")
+    for name, record in keys:
         try:
             line = act(name, record, hosts)
             if line is not None:

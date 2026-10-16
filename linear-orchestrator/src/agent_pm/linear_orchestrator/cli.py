@@ -30,7 +30,7 @@ def main(argv=None):
     commands = parser.add_subparsers(dest="command", required=True)
     for command, (_, text) in entries.items():
         commands.add_parser(command, help=text)
-    for command in ("status", "show", "hide", "close", "attach-command", "resume"):
+    for command in ("status", "show", "hide", "close", "attach-command", "resume", "content"):
         query = commands.add_parser(command)
         query.add_argument("keys", nargs="*", metavar="ISSUE", help="omit: Records on stdin")
     back = commands.add_parser("writeback", help="write back one DelegateEvent line from stdin")
@@ -84,6 +84,7 @@ def main(argv=None):
 
     reply = {
         "status": lambda view: view.status().to_line(),
+        "content": lambda view: view.content(),
         "resume": resume,
         "close": lambda view: view.delegate.close(),
         "show": lambda view: view.delegate.show(),
@@ -95,6 +96,7 @@ def main(argv=None):
         sys.stdin,
         viewed,
         reply,
+        single=args.command == "content",
         usage=(ConfigError, DelegateConfigError, ValueError),
         failures=(SessionError, RuntimeError, OSError),
         prog="agent-pm-linear",

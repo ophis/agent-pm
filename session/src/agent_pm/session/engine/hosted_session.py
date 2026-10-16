@@ -629,6 +629,9 @@ class HostedSession(Session):
         host, name = self._shown("attach_command")
         return host.attach_command(name)
 
+    def content(self) -> str:
+        return self.screen()
+
     def screen(self, lines: int | None = None) -> str:
         """Its mode's read, which refuses a terminal no longer running."""
         self._shown("screen")
