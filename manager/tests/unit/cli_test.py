@@ -449,8 +449,7 @@ class Report(CliCase):
                 if argv[-1] == "content"
                 else tuple(argv)
             )
-            default = (0, "null\n", "") if argv[-1] == "outcome" else (1, "", "no such session")
-            answer = self.answers.get(key, default)
+            answer = self.answers.get(key, (1, "", "no such session"))
             code, out, err = answer if isinstance(answer, tuple) else answer(kwargs.get("input"))
             return SimpleNamespace(returncode=code, stdout=out, stderr=err)
 
@@ -549,6 +548,19 @@ class Report(CliCase):
                 if not called:
                     self.assertTrue(stdout.endswith("\t-\t-\t-\t-\n"), stdout)
                 self.roster.remove("w1")
+
+    def test_pipeline_outcome_status_does_not_query_an_unsupported_outcome_command(self):
+        pipeline = replace(
+            self.delegate_record("TASK-12"),
+            kind="pipeline",
+            ctl=("agent-pm-linear",),
+            resume=("agent-pm-linear", "resume", "TASK-12"),
+        )
+        self.launched("TASK-12", record=pipeline, alive=False, outcome="done")
+        result, stdout, stderr = self.report()
+        self.assertEqual((result, stderr), (0, ""))
+        self.assertIn("\tpipeline\tdone\t", stdout)
+        self.assertNotIn(("agent-pm-linear", "outcome"), self.calls)
 
     def test_status_gh_and_outcome_failures_go_to_stderr_and_exit_0(self):
         self.launched("bad-gh", note=URL)

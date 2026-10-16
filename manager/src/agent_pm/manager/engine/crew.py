@@ -459,7 +459,7 @@ class Crew:
         record: Record | None,
         status: Status | None,
     ) -> str | None:
-        if record is None or status is None or status.outcome is None:
+        if record is None or record.kind != "role" or status is None or status.outcome is None:
             return None
         try:
             outcome = json.loads(self._execute((*record.ctl, "outcome"), record.to_line() + "\n"))
