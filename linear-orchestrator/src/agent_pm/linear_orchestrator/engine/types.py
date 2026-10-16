@@ -37,6 +37,7 @@ class Config:
     harness_key: str
     task_label_group: str
     task_labels: Mapping[str, str]
+    option_labels: Mapping[str, str]
     roles: Mapping[str, Role]
     project_repos: Mapping[str, str]
     local_clones: Mapping[str, str]
@@ -142,6 +143,7 @@ class Issue:
     linked: tuple[Linked, ...]
 
     handoff: Handoff | None = field(kw_only=True)
+    labels: tuple[str, ...] = field(default=(), kw_only=True)
 
 
 class Group(IntEnum):

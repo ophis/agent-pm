@@ -105,6 +105,11 @@ FULL = ["agent-pm-researcher-TASK-5", "agent-pm-pm-TASK-6", "agent-pm-engineer-T
 SESSIONS = []
 
 
+VISUAL = "00000000-0000-4000-8000-000000000025"
+
+VISUAL_OPTION = f'[option_labels]\nvisual = "{VISUAL}"\n'
+
+
 TASK_LABELS = f'[task_labels]\nlight-research = "{LIGHT}"\ndeep-research = "{DEEP}"\nproduct-design = "{ORPHAN_LABEL}"\n'
 
 
@@ -1866,6 +1871,22 @@ class TaskSelection(TaskLabelsScenario):
         self.assertEqual(fake.mutations[1][1]["s"], STATES["In Review"])
         self.assertIn("claim-skip TASK-1 to=in_review reason=bad task label", self.said())
 
+    def test_visual_label_beside_a_task_label(self):
+        self.write_config(HUMANS + CONFIG + TASK_LABELS + VISUAL_OPTION)
+        fake = FakeLinear(
+            [
+                issue(
+                    "TASK-1",
+                    "Todo",
+                    "researcher",
+                    labels=[label("Light Research", LIGHT), label("Visual", VISUAL, None)],
+                )
+            ]
+        )
+        self.assertEqual(self.claim(fake), "TASK-1 https://linear.app/x/TASK-1 Deep Research")
+        self.assertIn("claim TASK-1 role=researcher task=light-research client=a", self.said())
+        self.assertIsNone(fake.issues["TASK-1"].get("comments"))
+
     def test_capped_and_bad_label_todo_skipped_for_the_next(self):
         fake = FakeLinear(
             [
@@ -2252,6 +2273,22 @@ class RunLaunching(OuterBase):
                 searches = [*DOCS_SEARCH, pr_search(*related.keywords(title))]
                 self.assertEqual(
                     self.run_.calls, [(listing, SHORT), *(searches if role == "researcher" else [])]
+                )
+
+    def test_visual_label_adds_visual_yes_to_a_research_input(self):
+        self.write_config(OUTER + VISUAL_OPTION)
+        for labels, visual_line in (([VISUAL, LIGHT], "Visual: yes\n"), ([LIGHT], "")):
+            with self.subTest(labels=labels):
+                self.gql.issue = {
+                    **node(title="Compare queues", description="Which?"),
+                    "labels": {"nodes": [{"id": i} for i in labels]},
+                }
+                self.run_.table = SEARCHED
+                self.assertEqual(self.outer(assignee=RESEARCHER), 0)
+                self.assertEqual(
+                    self.input(role="researcher"),
+                    f"Reference: TASK-7\nRepo: ophis/agent-pm\nCheckout: TASK-7\n{visual_line}\n"
+                    f"{inputs.PRECEDENCE['research']}\n\n## Question\n\nCompare queues\n\nWhich?",
                 )
 
     def test_a_resume_reads_its_session_at_its_client_and_rebuilds_the_input(self):

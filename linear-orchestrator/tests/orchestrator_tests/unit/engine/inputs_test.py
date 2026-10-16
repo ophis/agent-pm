@@ -884,6 +884,51 @@ class ResearchInputs(Case):
                     ),
                 )
 
+    def test_research_visual_line(self):
+        t = target.Target("ophis", "agent-pm", clone="/x/agent-pm")
+        for visual, visual_line in ((True, ("Visual: yes",)), (False, ())):
+            with self.subTest(visual=visual):
+                got = inputs.render(
+                    issue("Which?"),
+                    "researcher",
+                    inputs.Sources((), None),
+                    humans=HUMANS,
+                    target=t,
+                    docs=DOCS,
+                    visual=visual,
+                )
+                self.assertEqual(
+                    got,
+                    lines(
+                        "Reference: RES-4",
+                        "Repo: /x/agent-pm",
+                        "Checkout: RES-4",
+                        *visual_line,
+                        "",
+                        RESEARCH_PRECEDENCE,
+                        "",
+                        "## Question",
+                        "",
+                        "Compare queues",
+                        "",
+                        "Which?",
+                    ),
+                )
+
+    def test_visual_only_in_research(self):
+        for role in ("pm", "engineer"):
+            with self.subTest(role):
+                got = inputs.render(
+                    issue("Do X.", ident="PM-9"),
+                    role,
+                    inputs.Sources((), None),
+                    humans=HUMANS,
+                    target=target.Target("ophis", "agent-pm"),
+                    docs=DOCS,
+                    visual=True,
+                )
+                self.assertNotIn("Visual:", got)
+
     def test_user_notes_are_matched_case_insensitively_and_use_email_without_name(self):
         ns = (
             Note("Hi", "2026-09-02T00:00:00.000Z", "ANN@example.com", None),

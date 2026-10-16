@@ -20,6 +20,7 @@ Q_ISSUE = """query($i: String!) { issue(id: $i) { id identifier url title descri
   project { id }
   comments(first: 250) { nodes { body createdAt user { email name isMe } } }
   attachments(first: 50) { nodes { url } }
+  labels(first: 50) { nodes { id } }
   relations(first: 50) { nodes { relatedIssue { identifier title state { name } } } }
   inverseRelations(first: 50) { nodes { issue { identifier title state { name } } } } } }"""
 BUILD_STARTED = re.compile(r"Build started\b")
@@ -116,6 +117,7 @@ def read_issue(gql, ident) -> Issue:
         notes=tuple(notes),
         links=tuple(Link(a["url"]) for a in node["attachments"]["nodes"]),
         linked=tuple(linked.values()),
+        labels=tuple(n["id"] for n in node["labels"]["nodes"]),
     )
 
 

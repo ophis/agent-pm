@@ -127,11 +127,13 @@ class Flows(Case):
         launch = section("tmux", "Launch")
         for inner in (
             r"agent-pm-session start <name> --client <client>",
-            r"agent-pm-delegate run --role <role> .*--mode tui --detach",
+            r"agent-pm-delegate run --role <role> .*--mode tui --detach --name <name> ",
             r"agent-pm-linear router --issue <ID> --tui",
         ):
             self.assertRegex(launch, rf"`agent-pm-crew run <[A-Za-z]+> (\[[^]]+\] )?-- {inner}")
         self.assertIn("--mode headless", launch)
+        self.assertIn("the tui `<name>` and its harness `<name>-drive`", launch)
+        self.assertRegex(launch, r"agent-pm-delegate run --role <role> .*--name <name> .*--dry-run")
         self.assertIn("--display D", launch)
         self.assertIn("`--display none`", launch)
         self.assertIn("agent-pm-session --help", launch)
@@ -167,7 +169,7 @@ class Flows(Case):
             "`agent-pm-crew hide <name>…`",
             "`agent-pm-crew show <name>…`",
             "`--all`",
-            "`agent-pm-session show <role>-<sid8>-drive`",
+            "`agent-pm-session show <name>-drive`",
             "`agent-pm-crew note <name> '<text>'`",
             "`''` clears",
             "`agent-pm-crew status [<name>…]`",
@@ -224,7 +226,9 @@ class Flows(Case):
     def test_recovery_is_per_entry_and_a_waiting_role_is_answered_by_its_sid(self):
         recover = section("tmux", "Recover")
         self.assertIn("agent-pm-crew resume <name>", recover)
-        self.assertRegex(recover, r"agent-pm-delegate run .*--resume --sid <sid> --input")
+        self.assertRegex(
+            recover, r"agent-pm-delegate run .*--name <name> .*--resume --sid <sid> --input"
+        )
         self.assertRegex(recover, r"no resume-all")
 
     def test_grid_names_its_keys_and_the_public_retile(self):

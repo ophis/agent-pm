@@ -2,6 +2,8 @@
 its caller names the ticket that calls it; that ticket deletes the entry.
 """
 
+from html.parser import HTMLParser
+
 from agent_pm.delegate.composer.teams import TeamKind
 from agent_pm.delegate.event.types import AutopilotStatus, OutcomeStatus
 from agent_pm.linear_orchestrator.engine.types import State
@@ -11,6 +13,10 @@ from agent_pm.session.engine.base import Session
 from agent_pm.session.engine.types import Effort, NamedKey, SessionRow, Tier
 from agent_pm.session.hosts.tmux.types import Split
 from agent_pm.utils.record import LayerCommand
+
+# team/tools/html_check.py's checker overrides these HTMLParser callbacks.
+_ = HTMLParser.handle_starttag, HTMLParser.handle_startendtag
+_ = HTMLParser.handle_endtag, HTMLParser.handle_data
 
 # Enum members reached only by iteration or by value:
 # teams.py reads each TeamKind dir.

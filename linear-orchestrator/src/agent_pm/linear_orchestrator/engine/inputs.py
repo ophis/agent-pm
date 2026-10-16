@@ -3,6 +3,7 @@ kind (render).
 """
 
 import fnmatch
+import functools
 import json
 import re
 from dataclasses import dataclass
@@ -196,12 +197,12 @@ def _reference(issue, target):
     )
 
 
-def _research(issue, sources, humans, target, docs):
+def _research(issue, sources, humans, target, docs, *, visual):
     user, other = _split(issue, humans)
     e = sources.earlier
     return _join(
         [
-            _reference(issue, target),
+            _reference(issue, target) + ("\nVisual: yes" if visual else ""),
             PRECEDENCE["research"],
             _section("Question", issue.title, issues.brief(issue).strip()),
             _section("The user's comments", *(_user(n) for n in user)),
@@ -313,6 +314,17 @@ def _related(related):
     return ""
 
 
-def render(issue, role, sources, *, humans, target, docs, related: Related | None = None) -> str:
-    layout = {"research": _research, "design": _design, "build": _build}[TASKS[role].kind]
+def render(
+    issue,
+    role,
+    sources,
+    *,
+    humans,
+    target,
+    docs,
+    related: Related | None = None,
+    visual: bool = False,
+) -> str:
+    research = functools.partial(_research, visual=visual)
+    layout = {"research": research, "design": _design, "build": _build}[TASKS[role].kind]
     return _join([layout(issue, sources, humans, target, docs), _related(related or Related())])
