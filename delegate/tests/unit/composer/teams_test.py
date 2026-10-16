@@ -11,7 +11,6 @@ from agent_pm.delegate.composer import ConfigError
 from agent_pm.delegate.composer.base import TEAM
 from agent_pm.delegate.composer.teams import (
     TeamKind,
-    catalog,
     charter,
     check_all,
     check_overlap,
@@ -31,6 +30,7 @@ from agent_pm.delegate.composer.teams import (
 from agent_pm.delegate.config import read_config
 
 from delegate.tests.case import Case
+from delegate.tests.unit.composer.shipped import catalog
 from delegate.tests.unit.composer.teams import FILES, INTRO, POET, STEPS, VERSE, WRITER
 from utils.tests.case import local_section
 

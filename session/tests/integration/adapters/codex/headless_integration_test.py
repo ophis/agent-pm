@@ -692,7 +692,7 @@ class HeadlessRecoveryIntegrationTest(HeadlessSessions):
         self.assertEqual(found[:-1], [Reply(before)])
         self.assertIsInstance(found[-1], Exited)
         self.assertLess(found[-1].returncode, 0)
-        self.assertEqual(handle.state(), "absent")
+        self.assertFalse(handle.alive())
         handle.stop()
         self.assertEqual(list(handle.events()), [])
         self.assertEqual(self.common.load(str(self.work), self.sid).native_id, NATIVE)
@@ -723,7 +723,7 @@ class HeadlessRecoveryIntegrationTest(HeadlessSessions):
         handle = self.start("again", dataclasses.replace(self.spec, sid=self.sid), resume=True)
         with self.assertRaisesRegex(ConfigError, "already bound to a different native ID"):
             self.drain(handle)
-        self.assertEqual(handle.state(), "absent")
+        self.assertFalse(handle.alive())
         self.assertEqual(self.common.load(str(self.work), self.sid).native_id, NATIVE)
         self.assertEqual(
             [entry["client_id"] for entry in self.written() if entry["kind"] == "client_session"],

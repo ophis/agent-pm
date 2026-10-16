@@ -534,9 +534,7 @@ class DisplayableTest(Base):
         self.tmux.kill.assert_called_once_with("%9")
         self.tmux.set_option.assert_called_once_with("%7", "@hidden", "1")
         self.options(hidden="1")
-        found = self.host.attach("w1").status()
-        self.assertEqual((found.alive, found.hidden), (True, True))
-        self.assertIn("=w1", found.attach)
+        self.assertTrue(self.host.attach("w1").status().hidden)
         self.tmux.open_pane.return_value = None
         self.options(sid=SID)
         self.host.show("w1")

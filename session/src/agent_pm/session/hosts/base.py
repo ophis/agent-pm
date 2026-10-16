@@ -92,15 +92,19 @@ class HostProcess(ABC):
     def status(self) -> Status:
         liveness = self.state()
         if liveness == Liveness.UNKNOWN:
-            state = StatusState.UNKNOWN
-        elif liveness == Liveness.LIVE:
-            state = self.activity() or StatusState.WORKING
-        else:
-            state = StatusState.DEAD
+            return Status(
+                name=self.name,
+                alive=False,
+                state=StatusState.UNKNOWN,
+                outcome=None,
+                attach=None,
+                hidden=False,
+            )
+        alive = liveness == Liveness.LIVE and self.alive()
         return Status(
             name=self.name,
-            alive=liveness == Liveness.LIVE,
-            state=state,
+            alive=alive,
+            state=(self.activity() or StatusState.WORKING) if alive else StatusState.DEAD,
             outcome=None,
             attach=None,
             hidden=self.hidden(),

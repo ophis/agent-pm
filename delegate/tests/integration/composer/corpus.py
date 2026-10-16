@@ -8,8 +8,9 @@ from unittest import mock
 
 from agent_pm.delegate.composer import RunParams, Team
 from agent_pm.delegate.composer.base import TEAM
-from agent_pm.delegate.composer.teams import catalog
 from agent_pm.delegate.config import CONFIG, read_config
+
+from delegate.tests.unit.composer.shipped import catalog
 
 ROOT = "/corpus/team"
 CUSTOM = "/corpus/custom"

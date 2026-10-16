@@ -153,7 +153,7 @@ class Roster:
                             self._events.recover(self._read()["gen"])
                         raise
                     else:
-                        self._events.finish(data["gen"])
+                        self._events.recover(data["gen"])
                         if maintain:
                             self._cleanup_receipts(data)
             finally:

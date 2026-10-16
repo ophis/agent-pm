@@ -326,7 +326,7 @@ def listing(composer: Composer) -> str:
     composer.check_team_dirs(writes=[])
     composer.check_all()
     lines = []
-    for role, tasks in composer.catalog().items():
+    for role, tasks in composer.index().items():
         config = composer.resolve(role)
         composer.render(config, LIST_PARAMS)
         source = composer.team.source(composer.path_for("roles", role))

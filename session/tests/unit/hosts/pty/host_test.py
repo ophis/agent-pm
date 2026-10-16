@@ -12,7 +12,7 @@ import time
 import unittest
 from unittest import mock
 
-from agent_pm.session import ConfigError, Displayable, Launch, SessionError
+from agent_pm.session import ConfigError, Displayable, Launch, SessionError, StatusState
 from agent_pm.session.hosts.base import tui_lock
 from agent_pm.session.hosts.pty import PtyHost, state
 from agent_pm.session.hosts.pty.host import SUPERVISOR
@@ -177,6 +177,14 @@ class Start(Starting):
             file.write("{}")
         process, _, _ = self.start()
         self.assertNotEqual(process.identity, "old")
+
+    def test_a_listed_session_whose_client_exited_is_dead(self):
+        folder = os.path.join(state.root(), "x")
+        os.makedirs(folder)
+        state.put(folder, state.META, json.dumps({"id": "g1", "kind": "detach"}))
+        state.put(folder, state.RC, "0")
+        found = PtyHost("pty").attach("x").status()
+        self.assertEqual((found.alive, found.state), (False, StatusState.DEAD))
 
 
 class Sweep(Starting):
