@@ -111,6 +111,11 @@ VISUAL_OPTION = f'[option_labels]\nvisual = "{VISUAL}"\n'
 
 
 TASK_LABELS = f'[task_labels]\nlight-research = "{LIGHT}"\ndeep-research = "{DEEP}"\nproduct-design = "{ORPHAN_LABEL}"\n'
+AGENT_GROUP = "00000000-0000-4000-8000-000000000081"
+AGENT_A = "00000000-0000-4000-8000-000000000082"
+AGENT_B = "00000000-0000-4000-8000-000000000083"
+AGENT_TOP = f'agent_label_group = "{AGENT_GROUP}"\n'
+AGENT_LABELS = f'[agent_labels]\na = "{AGENT_A}"\nb = "{AGENT_B}"\n'
 
 
 def reading(five=10.0, weekly=10.0):
@@ -360,7 +365,7 @@ class IssueClaims(Base):
             (fake.issues["TASK-1"]["state"], fake.issues["TASK-1"]["assignee"]),
             ("In Progress", who("pm")),
         )
-        self.assertEqual(self.taken[1:], (None, "pm", "b"))
+        self.assertEqual(self.taken[1:], (None, "pm", "b", "default"))
 
     def test_full_roles_not_picked(self):
         fake = FakeLinear(
@@ -376,7 +381,8 @@ class IssueClaims(Base):
             "TASK-2 https://linear.app/x/TASK-2 Deep Research",
         )
         self.assertEqual(
-            self.said(), ["pick TASK-2 queue=1", "claim TASK-2 role=researcher client=a"]
+            self.said(),
+            ["pick TASK-2 queue=1", "claim TASK-2 role=researcher client=a client_source=default"],
         )
         self.assertEqual(
             (fake.issues["TASK-1"]["state"], "comments" in fake.issues["TASK-1"]), ("Todo", False)
@@ -435,7 +441,7 @@ class IssueClaims(Base):
                 "pick TASK-1 queue=2",
                 "claim-skip TASK-1 reason=no longer Todo",
                 "pick TASK-2 queue=2",
-                "claim TASK-2 role=researcher client=a",
+                "claim TASK-2 role=researcher client=a client_source=default",
             ],
         )
         self.assertEqual([v["i"] for _, v in fake.mutations], ["TASK-2"])
@@ -493,7 +499,7 @@ class IssueBlockers(Base):
             [
                 'blocked TASK-1 by=["TASK-7", "TASK-9"]',
                 "pick TASK-2 queue=2",
-                "claim TASK-2 role=researcher client=a",
+                "claim TASK-2 role=researcher client=a client_source=default",
             ],
         )
         self.assertEqual(fake.issues["TASK-1"]["state"], "Todo")
@@ -565,7 +571,7 @@ class IssueBlockers(Base):
             [
                 'blocked TASK-2 by=["TASK-1"]',
                 "pick TASK-1 queue=1",
-                "claim TASK-1 role=researcher client=a",
+                "claim TASK-1 role=researcher client=a client_source=default",
             ],
         )
         self.assertFalse(any(re.search(r"\brelations\b", q) for q, _ in fake.queries))
@@ -616,7 +622,7 @@ class IssueBlockers(Base):
                 'blocked TASK-1 by=["(unreadable)"]',
                 'blocked TASK-2 by=["TASK-7"]',
                 "pick TASK-3 queue=1",
-                "claim TASK-3 role=researcher client=a",
+                "claim TASK-3 role=researcher client=a client_source=default",
             ],
         )
         self.assertEqual(fake.reads(), [router.q_issues(router.RELATIONS), router.q_issues()])
@@ -709,7 +715,11 @@ class RouterEntry(OuterBase):
                 )
                 self.assertEqual(
                     self.said()[-2 - len(said) :],
-                    ["pick TASK-7 queue=1", "claim TASK-7 role=engineer client=a", *said],
+                    [
+                        "pick TASK-7 queue=1",
+                        "claim TASK-7 role=engineer client=a client_source=default",
+                        *said,
+                    ],
                 )
                 self.assertEqual(
                     self.fake.mutations,
@@ -785,7 +795,10 @@ class RouterEntry(OuterBase):
         self.assertEqual(self.entry("--issue", ID), 0)
         sid = self.last_run()[2]
         self.assertEqual(self.detached(), self.expected(task="light-build", sid=sid))
-        self.assertIn("claim TASK-7 role=engineer task=light-build client=a", self.said())
+        self.assertIn(
+            "claim TASK-7 role=engineer task=light-build client=a client_source=default",
+            self.said(),
+        )
 
     def test_a_resume_keeps_the_client_of_its_claim(self):
         self.assertEqual(self.entry(now=NOW - timedelta(minutes=60)), 0)
@@ -799,6 +812,19 @@ class RouterEntry(OuterBase):
         self.assertEqual(self.last_run(), ("resume", ID, sid, "engineer", "a"))
         self.assertEqual(self.detached(), self.expected(sid=sid, resume=True))
         self.assertEqual((self.api.info, self.api.usage_calls), ([("a", sid, self.rd)] * 2, []))
+
+    def test_agent_label_client_reaches_the_delegate_and_start_row(self):
+        self.write_config(AGENT_TOP + OUTER + AGENT_LABELS)
+        for argv in (("--issue", ID), ("--now",)):
+            with self.subTest(argv=argv):
+                self.lines, self.todo["state"] = [], "Todo"
+                self.todo["labels"] = [label("Renamed client", AGENT_B, AGENT_GROUP)]
+                self.assertEqual(self.entry(*argv), 0)
+                self.assertEqual(self.last_run()[4], "b")
+                self.assertEqual(self.detached(), self.expected(sid=self.last_run()[2], client="b"))
+                self.assertIn(
+                    "claim TASK-7 role=engineer client=b client_source=label", self.said()
+                )
 
     def test_the_outers_lines_follow_the_ticks_plan(self):
         self.todo["state"], self.fake.node = "In Progress", None
@@ -849,7 +875,7 @@ class RouterEntry(OuterBase):
                 self.assertTrue(
                     [line for line in said if line.startswith("recover TASK-7 to=todo")]
                 )
-                self.assertIn("claim TASK-7 role=engineer client=a", said)
+                self.assertIn("claim TASK-7 role=engineer client=a client_source=default", said)
                 self.assertEqual(said[-1], "launch TASK-7 exit=0")
 
     def test_a_missing_role_key_skips_the_claim_and_leaves_the_issue_todo(self):
@@ -1215,6 +1241,63 @@ class AttendedEntry(OuterBase):
         self.assertEqual((self.api.detached, self.out, self.fake.queries), ([], "", []))
 
 
+class AgentLabels(Base):
+    def test_claim_selection(self):
+        for enabled, role, labels, expected_client, source in (
+            (True, "researcher", [], "a", "default"),
+            (True, "researcher", [label("renamed", AGENT_B, AGENT_GROUP)], "b", "label"),
+            (True, "pm", [label("renamed", AGENT_A, AGENT_GROUP)], "a", "label"),
+            (True, "engineer", [label("same as default", AGENT_A, AGENT_GROUP)], "a", "label"),
+            (True, "researcher", [label("outside group", AGENT_B, None)], "a", "default"),
+            (True, "researcher", [label("other group", AGENT_B, STRAY)], "a", "default"),
+            (False, "researcher", [label("ignored", AGENT_B, AGENT_GROUP)], "a", "default"),
+            (False, "researcher", [label("unmapped", STRAY, AGENT_GROUP)], "a", "default"),
+        ):
+            with self.subTest(enabled=enabled, role=role, labels=labels):
+                self.write_config(AGENT_TOP + CONFIG + AGENT_LABELS if enabled else CONFIG)
+                fake = self.fake(issue("TASK-1", "Todo", role, labels=labels))
+                self.assertTrue(self.claim(fake))
+                self.assertEqual(self.taken[2:], (role, expected_client, source))
+                self.assertIn(
+                    f"claim TASK-1 role={role} client={expected_client} client_source={source}", self.said()
+                )
+                self.assertEqual(fake.issues["TASK-1"]["state"], "In Progress")
+
+    def test_invalid_agent_and_task_labels_share_one_comment_before_gate(self):
+        self.write_config(AGENT_TOP + CONFIG + TASK_LABELS + AGENT_LABELS)
+        for labels, fragments in (
+            (
+                [label("One", AGENT_A, AGENT_GROUP), label("Two", AGENT_B, AGENT_GROUP)],
+                ("One", "Two"),
+            ),
+            ([label("Unmapped", STRAY, AGENT_GROUP)], ("Unmapped", "[agent_labels]")),
+            (
+                [label("Unmapped", STRAY, AGENT_GROUP), label("Bad task", STRAY)],
+                ("Unmapped", "Bad task", "[agent_labels]", "[task_labels]"),
+            ),
+        ):
+            with self.subTest(labels=labels):
+                fake = self.fake(issue("TASK-1", "Todo", "researcher", labels=labels))
+                self.assertEqual(self.claim(fake, gate=True), "")
+                found = fake.issues["TASK-1"]
+                self.assertEqual(found["state"], "In Review")
+                self.assertEqual(len(found["comments"]), 1)
+                for fragment in (*fragments, "Todo"):
+                    self.assertIn(fragment, found["comments"][0])
+                self.assertEqual(self.api.usage_calls, [])
+                self.assertEqual((runs.parse_log(self.runs), runs.failures(self.runs)), ([], []))
+                self.assertNotIn(IDS_BY_KEY["in_progress"], [v.get("s") for _, v in fake.mutations])
+
+    def test_claim_reads_current_agent_labels(self):
+        self.write_config(AGENT_TOP + CONFIG + AGENT_LABELS)
+        fake = Changed(
+            [issue("TASK-1", "Todo", "researcher", labels=[label("old", AGENT_A, AGENT_GROUP)])],
+            after={"TASK-1": {"labels": [label("new", AGENT_B, AGENT_GROUP)]}},
+        )
+        self.assertTrue(self.claim(fake))
+        self.assertEqual(self.taken[3:], ("b", "label"))
+
+
 class RouterArguments(Base):
     def main(self, argv):
         err = io.StringIO()
@@ -1380,7 +1463,7 @@ class RouterOutages(TickBase):
                     plan
                     + [
                         "pick TASK-1 queue=1",
-                        "claim TASK-1 role=researcher client=a",
+                        "claim TASK-1 role=researcher client=a client_source=default",
                         "linear-error op=issueUpdate reason=TimeoutError: timed out",
                     ],
                 )
@@ -1402,7 +1485,7 @@ class RouterOutages(TickBase):
                         f"recover TASK-1 to=todo reason=no session updated={ago(minutes=0)}",
                         "plan mode=new queue=1",
                         "pick TASK-1 queue=1",
-                        "claim TASK-1 role=researcher client=a",
+                        "claim TASK-1 role=researcher client=a client_source=default",
                         "launch TASK-1 exit=0",
                     ],
                 )
@@ -1498,7 +1581,7 @@ class ClaimUsageGates(Base):
                         "pick TASK-1 queue=2",
                         f"usage-skip TASK-1 client=a {why}",
                         "pick TASK-2 queue=2",
-                        "claim TASK-2 role=pm client=b",
+                        "claim TASK-2 role=pm client=b client_source=default",
                     ],
                 )
                 self.assertEqual([v["i"] for _, v in fake.mutations], ["TASK-2"])
@@ -1533,7 +1616,7 @@ class ClaimUsageGates(Base):
                 "pick TASK-3 queue=3",
                 f"usage-skip TASK-3 {why}",
                 "pick TASK-2 queue=3",
-                "claim TASK-2 role=pm client=b",
+                "claim TASK-2 role=pm client=b client_source=default",
             ],
         )
         self.assertEqual(self.api.usage_calls, ["a", "b"])
@@ -1590,7 +1673,7 @@ class ClaimUsageGates(Base):
                 "usage client=b usage=five_hour=10% weekly=10% allowed=true",
             ],
         )
-        self.assertEqual(self.taken[1:], (None, "pm", "b"))
+        self.assertEqual(self.taken[1:], (None, "pm", "b", "default"))
         self.assertEqual((fake.mutations, self.api.usage_calls), ([], ["b"]))
         self.assertNotIn(RECHECK, [q for q, _ in fake.queries])
 
@@ -1699,7 +1782,7 @@ class ScheduledUsageGates(TickBase):
                 "usage-skip TASK-1 client=a reason=usage usage=five_hour=95% weekly=10%",
                 "plan mode=new queue=1",
                 "pick TASK-2 queue=1",
-                "claim TASK-2 role=pm client=b",
+                "claim TASK-2 role=pm client=b client_source=default",
                 "launch TASK-2 exit=0",
             ],
         )
@@ -1740,7 +1823,7 @@ class ScheduledUsageGates(TickBase):
                 "pick TASK-1 queue=2",
                 f"usage-skip TASK-1 client=a reason=limit until={at}",
                 "pick TASK-2 queue=2",
-                "claim TASK-2 role=pm client=b",
+                "claim TASK-2 role=pm client=b client_source=default",
                 "launch TASK-2 exit=0",
             ],
         )
@@ -1884,7 +1967,10 @@ class TaskSelection(TaskLabelsScenario):
             ]
         )
         self.assertEqual(self.claim(fake), "TASK-1 https://linear.app/x/TASK-1 Deep Research")
-        self.assertIn("claim TASK-1 role=researcher task=light-research client=a", self.said())
+        self.assertIn(
+            "claim TASK-1 role=researcher task=light-research client=a client_source=default",
+            self.said(),
+        )
         self.assertIsNone(fake.issues["TASK-1"].get("comments"))
 
     def test_capped_and_bad_label_todo_skipped_for_the_next(self):
@@ -1912,7 +1998,7 @@ class TaskSelection(TaskLabelsScenario):
                 "pick TASK-2 queue=4",
                 "claim-skip TASK-2 to=in_review reason=bad task label",
                 "pick TASK-3 queue=4",
-                "claim TASK-3 role=pm client=b",
+                "claim TASK-3 role=pm client=b client_source=default",
             ],
         )
         self.assertEqual(
@@ -1966,8 +2052,11 @@ class TaskSelection(TaskLabelsScenario):
 
         fake = Relabel([issue("TASK-1", "Todo", "researcher")])
         self.claim(fake)
-        self.assertIn("claim TASK-1 role=researcher task=light-research client=a", self.said())
-        self.assertEqual(self.taken[1:], ("light-research", "researcher", "a"))
+        self.assertIn(
+            "claim TASK-1 role=researcher task=light-research client=a client_source=default",
+            self.said(),
+        )
+        self.assertEqual(self.taken[1:], ("light-research", "researcher", "a", "default"))
         self.assertNotIn("labels", fake.reads()[0])
 
     def test_fr8_dry_run_resolves_nothing(self):
@@ -1991,7 +2080,7 @@ class TaskSelection(TaskLabelsScenario):
             self.assertEqual(
                 ([q for q, _ in fake.queries if q == RECHECK], fake.mutations), ([], []), argv
             )
-            self.assertEqual(self.taken[1:], (None, "researcher", "a"))
+            self.assertEqual(self.taken[1:], (None, "researcher", "a", "default"))
 
     def test_nfr1_claim_reads_one_query_per_issue(self):
         fake = FakeLinear(
@@ -2171,7 +2260,10 @@ class ScheduledTaskSelection(TickBase):
         self.add(kind="start", ident="TASK-1", sid="a", minutes_ago=60)
         self.tick(fake)
         self.assertEqual(fake.issues["TASK-1"]["comments"], [router.INTERRUPTED])
-        self.assertIn("claim TASK-1 role=researcher task=light-research client=a", self.said())
+        self.assertIn(
+            "claim TASK-1 role=researcher task=light-research client=a client_source=default",
+            self.said(),
+        )
         (launch,) = self.start.launches
         self.assertEqual((launch.task, launch.mode), ("light-research", "new"))
         self.assertEqual(self.launched_run(), ("start", "TASK-1", launch.sid, "researcher", "a"))
@@ -2693,7 +2785,8 @@ class ExplicitIssueRuns(TickBase):
         self.resumable("TASK-2", "b", 60)
         self.assertEqual(self.tick(fake, "--issue", "TASK-4", hour=12, live=FULL), 0)
         self.assertEqual(
-            self.said(), ["pick TASK-4 queue=1", "claim TASK-4 role=engineer client=a"]
+            self.said(),
+            ["pick TASK-4 queue=1", "claim TASK-4 role=engineer client=a client_source=default"],
         )
         (launch,) = self.start.launches
         self.assertEqual(
@@ -2966,7 +3059,7 @@ class TickRecords(TickScenario):
                 "pick TASK-1 queue=2",
                 "usage-skip TASK-1 client=a reason=usage usage=five_hour=95% weekly=10%",
                 "pick TASK-2 queue=2",
-                "claim TASK-2 role=pm client=b",
+                "claim TASK-2 role=pm client=b client_source=default",
                 "launch TASK-2 exit=0",
             ],
         )
@@ -3656,7 +3749,7 @@ class ClaimRechecks(Base):
                         "pick TASK-1 queue=2",
                         "claim-skip TASK-1 reason=not assigned to a role",
                         "pick TASK-2 queue=2",
-                        "claim TASK-2 role=researcher client=a",
+                        "claim TASK-2 role=researcher client=a client_source=default",
                     ],
                 )
                 self.assertEqual([v["i"] for _, v in fake.mutations], ["TASK-2"])
@@ -3667,9 +3760,14 @@ class ClaimRechecks(Base):
             self.claim(fake, gate=True),
             "TASK-1 https://linear.app/x/TASK-1 Deep Research",
         )
-        taken, task, role, client = self.taken
-        self.assertEqual((taken["assignee"], task, role, client), (who("pm"), None, "pm", "b"))
-        self.assertEqual(self.said(), ["pick TASK-1 queue=1", "claim TASK-1 role=pm client=b"])
+        taken, task, role, client, source = self.taken
+        self.assertEqual(
+            (taken["assignee"], task, role, client, source), (who("pm"), None, "pm", "b", "default")
+        )
+        self.assertEqual(
+            self.said(),
+            ["pick TASK-1 queue=1", "claim TASK-1 role=pm client=b client_source=default"],
+        )
         self.assertEqual(self.api.usage_calls, ["b"])
         a = router.begin(
             self.cfg(),
@@ -3753,7 +3851,7 @@ class LiveLimits(Base):
                 "pick TASK-1 queue=2",
                 f"usage-skip TASK-1 client=a reason=limit until={at}",
                 "pick TASK-2 queue=2",
-                "claim TASK-2 role=pm client=b",
+                "claim TASK-2 role=pm client=b client_source=default",
             ],
         )
         self.assertEqual(self.api.usage_calls, ["b"])
@@ -3969,7 +4067,7 @@ class ScheduledRuns(TickScenario):
             [
                 'plan mode=new queue=2 live={"engineer": "1/2"}',
                 "pick TASK-2 queue=2",
-                "claim TASK-2 role=engineer client=a",
+                "claim TASK-2 role=engineer client=a client_source=default",
                 "launch TASK-2 exit=0",
             ],
         )
@@ -3997,7 +4095,7 @@ class ScheduledRuns(TickScenario):
             [
                 'plan mode=new queue=1 live={"engineer": "1/2"}',
                 "pick TASK-2 queue=1",
-                "claim TASK-2 role=engineer client=a",
+                "claim TASK-2 role=engineer client=a client_source=default",
                 "launch TASK-2 exit=0",
             ],
         )
@@ -4034,7 +4132,7 @@ class ScheduledRuns(TickScenario):
                 f"recover TASK-2 to=todo reason=no session updated={ago(hours=3)}",
                 'plan mode=new queue=1 live={"engineer": "1/1"}',
                 "pick TASK-5 queue=1",
-                "claim TASK-5 role=pm client=b",
+                "claim TASK-5 role=pm client=b client_source=default",
                 "launch TASK-5 exit=0",
             ],
         )
@@ -4136,7 +4234,7 @@ class ScheduledRuns(TickScenario):
             [
                 "plan mode=new queue=3",
                 "pick TASK-1 queue=3",
-                "claim TASK-1 role=researcher client=a",
+                "claim TASK-1 role=researcher client=a client_source=default",
                 "launch TASK-1 exit=0",
             ],
         )

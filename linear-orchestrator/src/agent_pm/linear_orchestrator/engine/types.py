@@ -254,9 +254,10 @@ class Spec:
     task: str | None = None
     mode: str
     client: str
+    client_source: Literal["label", "default"] = "default"
 
     @classmethod
-    def from_issue(cls, issue, *, mode, sid, task, client):
+    def from_issue(cls, issue, *, mode, sid, task, client, client_source="default"):
         return cls(
             uuid=issue["id"],
             issue=issue["identifier"],
@@ -266,6 +267,7 @@ class Spec:
             task=task,
             mode=mode,
             client=client,
+            client_source=client_source,
         )
 
     def identity_error(self) -> str | None:

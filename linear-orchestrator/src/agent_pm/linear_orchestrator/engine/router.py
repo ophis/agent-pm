@@ -199,6 +199,30 @@ def task_for(labels, group, role, role_tasks, label_tasks):
     return task, None
 
 
+def client_for(labels, group, label_clients, default):
+    found = [n for n in labels if group and n["parent"] and n["parent"]["id"] == group]
+    if not found:
+        return default, "default", None
+    if len(found) > 1:
+        return (
+            None,
+            "label",
+            (
+                f"Several Agent labels ({', '.join(n['name'] for n in found)}); keep one, then move the issue back to Todo."
+            ),
+        )
+    if (client := label_clients.get(found[0]["id"])) is None:
+        return (
+            None,
+            "label",
+            (
+                f'Agent label "{found[0]["name"]}" is not in {config.LOCAL}\'s [agent_labels]. '
+                "Fix the label, then move the issue back to Todo."
+            ),
+        )
+    return client, "label", None
+
+
 def q_issues(fields=""):
     return (
         (
@@ -219,6 +243,7 @@ class Board:
         self.status_errors, self.replays = {}, {}
         self.failures = failures(cfg.runs_log)
         self.label_tasks = {i: task for task, i in cfg.task_labels.items()}
+        self.label_clients = {i: client for client, i in cfg.agent_labels.items()}
         t = team(gql, cfg)
         task_group(gql, cfg)
         self.team, self.states = t.id, t.states
@@ -441,7 +466,7 @@ class Board:
                 role = self.role(issue)
                 client = self.cfg.roles[role].run.client
                 if not self.gated(role, ident):
-                    return issue, None, role, client
+                    return issue, None, role, client, "default"
             elif taken := self.claim(issue, full):
                 return taken
         if queue:
@@ -474,24 +499,36 @@ class Board:
         if skip:
             self.say("claim-skip", ident, reason=skip)
             return None
-        task, comment = task_for(
-            current["labels"]["nodes"],
+        labels = current["labels"]["nodes"]
+        task, task_error = task_for(
+            labels,
             self.cfg.task_label_group,
             role,
             self.cfg.roles[role].tasks,
             self.label_tasks,
         )
-        if comment:
-            self.say("claim-skip", ident, to="in_review", reason="bad task label")
-            self.comment_and_move(issue, comment, "in_review", "todo", "claim")
+        client, source, client_error = client_for(
+            labels, self.cfg.agent_label_group, self.label_clients, self.cfg.roles[role].run.client
+        )
+        if comments := [error for error in (task_error, client_error) if error]:
+            self.say(
+                "claim-skip",
+                ident,
+                to="in_review",
+                reason="bad task label"
+                if client_error is None
+                else "bad Agent label"
+                if task_error is None
+                else "bad task and Agent labels",
+            )
+            self.comment_and_move(issue, "\n\n".join(comments), "in_review", "todo", "claim")
             return None
-        client = self.cfg.roles[role].run.client
         if self.gated(role, ident):
             return None
-        self.say("claim", ident, role=role, task=task, client=client)
+        self.say("claim", ident, role=role, task=task, client=client, client_source=source)
         ops.call(self.gql, ops.M_STATE, "issueUpdate", i=issue["id"], s=self.states["in_progress"])
         taken = {**issue, "assignee": current["assignee"], "project": current["project"]}
-        return taken, task, role, client
+        return taken, task, role, client, source
 
 
 def begin(cfg, spec: Spec) -> Spec:
@@ -767,8 +804,10 @@ def choose(board, gate, live_ids, full, counts, *, new_sid):
     if not (taken := board.take(full=full)):
         board.say("skip", reason="nothing claimed")
         return None
-    issue, task, _, client = taken
-    return Spec.from_issue(issue, mode="new", sid=new_sid, task=task, client=client)
+    issue, task, _, client, source = taken
+    return Spec.from_issue(
+        issue, mode="new", sid=new_sid, task=task, client=client, client_source=source
+    )
 
 
 def tick(opts, cfg, gql, *, start, keychain, clock=datetime.now, hour=None, launch_sid=None):
@@ -860,9 +899,14 @@ def run_issue(opts, cfg, gql, start, *, keychain, clock=datetime.now, launch_sid
         elif board.is_blocked(ident) or not (taken := board.take(ident)):
             return stop
         else:
-            issue, task, _, client = taken
+            issue, task, _, client, source = taken
             spec = Spec.from_issue(
-                issue, mode="new", sid=launch_sid or str(uuid.uuid4()), task=task, client=client
+                issue,
+                mode="new",
+                sid=launch_sid or str(uuid.uuid4()),
+                task=task,
+                client=client,
+                client_source=source,
             )
         if dry:
             return 0
