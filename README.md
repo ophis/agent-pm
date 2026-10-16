@@ -6,10 +6,14 @@
 
 Runs coding agents (Claude Code, Codex, more to come) unattended from a Linear board. Each Linear project is a product, and an issue's assignee (a role account) is its stage. Each role works up to `max_runs` issues at once and hands its output back for your review. Once you approve, the next role takes it.
 
-| Part | What it does | Start at |
+| Layer | What it does | Start at |
 |---|---|---|
-| Core | Runs a role, which picks its task unless given one. A Claude Code and Codex plugin you can use alone. | [Install](#install) |
-| Linear orchestrator | Runs the core from the board. | [Linear board](docs/board.md) |
+| Session | Starts, watches and resumes a coding agent (Claude Code, Codex) in tmux or a pty, the same way for every client. | [Sessions](docs/sessions.md) |
+| Delegate (core) | Runs a role on one task through a session and returns a checked outcome. A Claude Code and Codex plugin you can use alone. | [Install](#install) |
+| Linear orchestrator | Runs the roles from a Linear board: my own workflow. | [Linear board](docs/board.md) |
+| Manager | A driver for the layers below: an agent you talk to that launches workers, role runs and board runs, watches them and reports back. | [Demo](#demo-one-manager-many-workers) |
+
+The bottom two layers, Session and Delegate, are general building blocks: take them and build your own flow on top. The Linear orchestrator is my philosophy of how agents should work (research, then a PRD, then a build, with a human review between each stage). Use it as is, skip it, or change it; the roles and tasks themselves are yours to edit too ([Customizing roles and tasks](docs/customizing-roles-and-tasks.md)).
 
 Developers: `AGENTS.md`.
 
@@ -50,9 +54,10 @@ Nothing checks these. A missing one fails the agent run.
 
 | Requirement | For |
 |---|---|
-| `claude` CLI, Python 3.11+, the `autopilot` plugin | every agent run |
+| `claude` CLI, Python 3.11+ | every agent run |
+| the [`autopilot`](https://github.com/ophis/claude-autopilot) plugin, in each client: Claude Code `/plugin marketplace add ophis/claude-autopilot`, then `/plugin install autopilot@claude-autopilot`; Codex `codex plugin marketplace add ophis/claude-autopilot`, then `codex plugin add autopilot@claude-autopilot` | coding: the engineer's build tasks (`/autopilot:build`, `/autopilot:light-build`). Not needed otherwise. |
 | tmux 3.3+ | tui runs on the `tmux` Host |
-| `git`, `gh` logged in | checkouts, GitHub and pull-request destinations |
+| `git`, `gh` logged in | coding (checkouts, pull requests) and GitHub destinations. Not needed otherwise. |
 | iTerm2 running | the default iTerm2 split |
 
 How the sessions agent-pm starts load your settings, and why some commands refuse inside them: [Session settings](docs/sessions.md#session-settings).
