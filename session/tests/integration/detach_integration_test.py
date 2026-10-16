@@ -16,7 +16,7 @@ from unittest import mock
 
 from agent_pm.session import SIGNALS, HostProcess
 from agent_pm.session.engine.types import Launch, SessionError
-from agent_pm.session.hosts.tmux.host import Tmux
+from agent_pm.session.hosts.tmux.transport import Tmux
 from agent_pm.session.hosts.tmux.types import TuiError
 
 from session.tests import live_tmux

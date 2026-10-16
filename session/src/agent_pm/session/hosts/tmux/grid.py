@@ -26,7 +26,7 @@ from agent_pm.session.hosts.tmux.transport import (
     PANE,
     SESSION_ID,
     SESSIONS,
-    Transport,
+    Tmux,
 )
 from agent_pm.session.hosts.tmux.types import (
     Cell,
@@ -150,7 +150,10 @@ def validate_retile(retile: str | None) -> None:
         raise TuiError(f"retile must be one of {', '.join(Retile)}, not {retile!r}")
 
 
-class Grid(Transport):
+class Grid:
+    def __init__(self, tmux: Tmux) -> None:
+        self.tmux = tmux
+
     def configure(
         self,
         window: str,
@@ -211,7 +214,7 @@ class Grid(Transport):
             elif not problem:
                 args += [";", "set-hook", "-w", "-t", window, name, hook]
         try:
-            self.checked(args)
+            self.tmux.checked(args)
             if mode:
                 (self.tile if tile_window is None else tile_window)(window, per_column=per_column)
         except TuiError as e:
@@ -232,7 +235,7 @@ class Grid(Transport):
             for name in names
             for a in (";", command, "-u", "-w", "-t", window, name)
         ]
-        self.checked(args[1:])
+        self.tmux.checked(args[1:])
 
     def tile(
         self,
@@ -250,7 +253,7 @@ class Grid(Transport):
         if not WINDOW.fullmatch(window):
             raise TuiError(f"invalid window id {window!r}: want {WINDOW.pattern}")
         validate_per_column(per_column)
-        socket = self.checked(
+        socket = self.tmux.checked(
             ["display-message", "-p", "-t", window, "#{socket_path}"]
         ).stdout.rstrip("\n")
         with _grid_lock(socket, window, wait=wait) as held:
@@ -262,7 +265,7 @@ class Grid(Transport):
                     return
                 swaps, layout, tiles, panes = found
                 if layout is None:
-                    self.checked(["set-option", "-w", "-t", window, GRID_PANES_SET, panes])
+                    self.tmux.checked(["set-option", "-w", "-t", window, GRID_PANES_SET, panes])
                     return
                 now = int(time.monotonic() * 1000)
                 times = [
@@ -277,10 +280,10 @@ class Grid(Transport):
                         "worker that opens rebuilds it"
                     )
                     with contextlib.suppress(TuiError):
-                        self.run(["display-message", "-d", "10000", "-t", window, line])
+                        self.tmux.run(["display-message", "-d", "10000", "-t", window, line])
                     print(line, file=sys.stderr)
                     return
-                self.checked(
+                self.tmux.checked(
                     [
                         "set-option",
                         "-w",
@@ -316,7 +319,7 @@ class Grid(Transport):
                 )
             finally:
                 with contextlib.suppress(TuiError):
-                    self.run(["set-option", "-u", "-w", "-t", window, GRID_BUSY])
+                    self.tmux.run(["set-option", "-u", "-w", "-t", window, GRID_BUSY])
 
     def _grid_pass(
         self, window: str, per_column: int | None, *, if_panes_changed: bool
@@ -326,7 +329,7 @@ class Grid(Transport):
         the hooks are muted.
         """
         fields = (
-            self.checked(["display-message", "-p", "-t", window, GRID_WINDOW])
+            self.tmux.checked(["display-message", "-p", "-t", window, GRID_WINDOW])
             .stdout.rstrip("\n")
             .split("\t", 7)
         )
@@ -335,7 +338,7 @@ class Grid(Transport):
         if len(fields) != 8 or fields[2] != "0" or not fields[4]:
             return None
         width, height, _, layout, manager, n, recorded, tiles = fields
-        panes = self.checked(["list-panes", "-t", window, "-F", "#{pane_id}"]).stdout.split()
+        panes = self.tmux.checked(["list-panes", "-t", window, "-F", "#{pane_id}"]).stdout.split()
         current = parse_layout(layout)
         leaves = [] if current is None else leaf_cells(current)
         if current is None or sorted(pane_ids(current)) != sorted(panes):
@@ -350,7 +353,7 @@ class Grid(Transport):
         sessions = []
         for f in (
             line.split("\t")
-            for line in self.checked(["list-sessions", "-F", SESSIONS]).stdout.split("\n")
+            for line in self.tmux.checked(["list-sessions", "-F", SESSIONS]).stdout.split("\n")
         ):
             if len(f) == 5 and SESSION_ID.fullmatch(f[0]) and NAME.fullmatch(f[1]):
                 sessions.append(

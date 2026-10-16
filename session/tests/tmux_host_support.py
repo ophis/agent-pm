@@ -7,7 +7,9 @@ from pathlib import Path
 from unittest import mock
 
 from agent_pm.session.hosts.tmux import TmuxHost, types
-from agent_pm.session.hosts.tmux.host import Tmux
+from agent_pm.session.hosts.tmux.grid import Grid
+from agent_pm.session.hosts.tmux.placement import Placement
+from agent_pm.session.hosts.tmux.transport import Tmux
 from agent_pm.utils import ProcessControl, Record
 
 from session.tests.case import Case
@@ -32,10 +34,10 @@ def fake_tmux() -> mock.Mock:
     """Recorded transport with real validation and command formatting."""
     tmux = mock.create_autospec(Tmux, instance=True)
     tmux.PAUSE = Tmux.PAUSE
+    tmux.proc = mock.Mock(side_effect=AssertionError("a direct proc call"))
     tmux.status.return_value = types.PaneStatus.RUNNING
     tmux.process_status.side_effect = lambda target: (tmux.process(target), tmux.status(target))
     tmux.listing.return_value = []
-    tmux.opener.return_value = "mgr"
     tmux.option.return_value = None
     tmux.detach.return_value = tmux.process.return_value = PROCESS
     return tmux
@@ -51,6 +53,9 @@ class Base(Case):
         self.enterContext(which(self.tool))
         self.tmux = fake_tmux()
         self.host = TmuxHost("tmux", {"workers_per_column": 2}, tmux=self.tmux)
+        self.placement = self.host.placement = mock.create_autospec(Placement, instance=True)
+        self.placement.opener.return_value = "mgr"
+        self.grid = self.host.grid = mock.create_autospec(Grid, instance=True)
         self.killpg = self.enterContext(
             mock.patch("os.killpg", side_effect=AssertionError("unsafe signal"))
         )
@@ -88,6 +93,13 @@ class Base(Case):
             return allocate(prefix=kw["prefix"], dir=self.dir)
 
         self.enterContext(mock.patch("tempfile.mkdtemp", side_effect=private))
+
+    def ordered(self) -> mock.Mock:
+        """The host's Tmux and Placement calls, in order."""
+        order = mock.Mock()
+        order.attach_mock(self.tmux, "tmux")
+        order.attach_mock(self.placement, "placement")
+        return order
 
     def controller(self):
         path = os.path.join(self.dir, "controller")

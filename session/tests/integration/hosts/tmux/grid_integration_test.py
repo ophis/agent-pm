@@ -14,7 +14,7 @@ from agent_pm.session import Displayable
 from agent_pm.session.engine.types import Launch, SessionError
 from agent_pm.session.hosts.tmux import TmuxHost, layout
 from agent_pm.session.hosts.tmux import grid as tmux_model
-from agent_pm.session.hosts.tmux.host import Tmux
+from agent_pm.session.hosts.tmux.transport import Tmux
 from agent_pm.session.runtimes import tui
 
 from session.tests import live_tmux
@@ -516,7 +516,7 @@ class SettleTest(Live):
     def grid_up(self) -> None:
         with self.inside(MANAGER):
             self.assertIsNone(
-                Tmux().configure(
+                tmux_model.Grid(Tmux()).configure(
                     self.window,
                     self.manager,
                     per_column=1,

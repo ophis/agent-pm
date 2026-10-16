@@ -31,7 +31,7 @@ from agent_pm.session.engine.types import (
     Spec,
     TurnEnd,
 )
-from agent_pm.session.hosts.tmux.host import Tmux
+from agent_pm.session.hosts.tmux.transport import Tmux
 from agent_pm.session.runtimes import tui
 
 from session.tests import fake_adapter, live_tmux

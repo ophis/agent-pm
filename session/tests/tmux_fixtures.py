@@ -18,7 +18,7 @@ from agent_pm.session.engine.types import Launch
 from agent_pm.session.hosts.tmux import grid as grids
 from agent_pm.session.hosts.tmux import iterm, placement, types
 from agent_pm.session.hosts.tmux import layout as layouts
-from agent_pm.session.hosts.tmux.host import EXEC, Tmux
+from agent_pm.session.hosts.tmux.transport import EXEC, Tmux
 
 from session.tests.case import Case
 from utils.tests.process_fixtures import DEVNULL
@@ -522,13 +522,17 @@ class StartFixture(Case):
             )
 
 
+def placed(fake) -> placement.Placement:
+    """A Placement whose Tmux, Grid and Iterm run fake."""
+    tmux = Tmux(fake)
+    return placement.Placement(tmux=tmux, grid=grids.Grid(tmux), iterm=iterm.Iterm(fake))
+
+
 class PaneFixture(Case):
-    def show(self, fake, env, **kw):
+    def open(self, fake, env, **kw):
         self.stderr = io.StringIO()
         with environ(**env), which(kw.pop("tmux", TMUX)), redirect_stderr(self.stderr):
-            return placement.Placement(fake).show(
-                "s", kw.pop("template", None), **kw, command=COMMAND
-            )
+            return placed(fake).open_pane("s", **kw, command=COMMAND)
 
     def clients(self, *rows):
         """A list-clients result: rows of (activity, tty, pane[, control mode, default "0"])."""
@@ -692,7 +696,7 @@ class TileFixture(Case):
     ):
         """tile @3 given what tmux prints (fake's arguments). Returns the fake."""
         fake = self.fake(layout, panes, rows, **kw)
-        grids.Grid(fake).tile(
+        grids.Grid(Tmux(fake)).tile(
             "@3", per_column=per_column, wait=wait, if_panes_changed=if_panes_changed
         )
         return fake

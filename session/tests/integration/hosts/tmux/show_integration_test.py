@@ -8,10 +8,11 @@ from contextlib import redirect_stderr
 from unittest import mock
 
 from agent_pm.session.engine.types import Launch
-from agent_pm.session.hosts.tmux import TmuxHost, placement
+from agent_pm.session.hosts.tmux import TmuxHost
 
 from session.tests import live_tmux
 from session.tests.case import Case
+from session.tests.tmux_fixtures import placed
 
 
 class ShowTest(Case):
@@ -49,13 +50,13 @@ class ShowTest(Case):
             self.new_pane = response.stdout.strip()
         return response
 
-    def show(self):
+    def open(self):
         self.stderr = io.StringIO()
         with (
             mock.patch.dict(os.environ, self.environment, clear=True),
             redirect_stderr(self.stderr),
         ):
-            return placement.Placement(self.transport).show(
+            return placed(self.transport).open_pane(
                 "worker", split="below", split_from="mgr", opener="mgr"
             )
 
@@ -82,7 +83,7 @@ class ShowTest(Case):
 
     def test_nested_display_uses_the_private_socket_with_restricted_path(self):
         self.environment["PATH"] = self.server.bin
-        self.assertIsNone(self.show())
+        self.assertIsNone(self.open())
         self.assert_visible_private_attach()
         self.assertEqual(self.server.option("worker", "@opener"), "mgr")
         self.assertRegex(self.server.option("worker", "@pane"), r"^%[0-9]+$")
@@ -90,7 +91,7 @@ class ShowTest(Case):
     def test_metadata_failure_leaves_the_successful_split_and_unrelated_parent_alive(self):
         self.fail_metadata = True
         before = set(self.server.panes("=mgr:"))
-        self.assertIsNone(self.show())
+        self.assertIsNone(self.open())
         self.assert_visible_private_attach()
         after = set(self.server.panes("=mgr:"))
         self.assertLess(before, after)

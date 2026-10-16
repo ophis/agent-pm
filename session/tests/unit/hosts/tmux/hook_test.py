@@ -10,7 +10,7 @@ from contextlib import ExitStack
 from unittest import mock
 
 from agent_pm.session.engine.types import HookCall
-from agent_pm.session.hosts.tmux import hook, types
+from agent_pm.session.hosts.tmux import hook, transport, types
 
 from session.tests.case import Case
 from session.tests.tmux_fixtures import (
@@ -114,7 +114,7 @@ class MarkTest(Case):
         for word, events in (("working", self.events), ("done", None), ("blocked", None)):
             with self.subTest(word=word, events=events):
                 fake = FakeTmux(pane="w1")
-                hook.Hook(fake).mark(word, events)
+                transport.Tmux(fake).mark(word, events)
                 self.assertEqual(fake.calls, [["tmux", "set-option", "-t", "%1", "@state", word]])
                 self.assertEqual(fake.kwargs, [MARK_KW])
         self.assertEqual(self.text(), "old\n")
@@ -123,7 +123,7 @@ class MarkTest(Case):
         for word in ("done", "blocked"):
             with self.subTest(word):
                 fake = FakeTmux(pane="w1")
-                hook.Hook(fake).mark(word, self.events, pane="%2", tmux=TMUX)
+                transport.Tmux(fake).mark(word, self.events, pane="%2", tmux=TMUX)
                 self.assertEqual(
                     fake.calls,
                     [
@@ -136,12 +136,12 @@ class MarkTest(Case):
 
     def test_its_pane_is_tmux_pane_else_nothing_is_marked(self):
         fake = FakeTmux(pane="w1")
-        hook.Hook(fake).mark("done", self.events)
+        transport.Tmux(fake).mark("done", self.events)
         self.assertEqual([c[c.index("-t") + 1] for c in fake.calls], ["%1", "%1"])
         for env in ({}, {"TMUX_PANE": ""}):
             with self.subTest(env=env), environ(**env):
                 fake = FakeTmux(pane="w1")
-                hook.Hook(fake).mark("done", self.events)
+                transport.Tmux(fake).mark("done", self.events)
                 self.assertEqual(fake.calls, [])
         self.assertEqual(len(self.text().splitlines()), 2)
 
@@ -161,7 +161,7 @@ class MarkTest(Case):
             ):
                 if patches:
                     stack.enter_context(unittest.mock.patch(patches[0], return_value=patches[1]))
-                hook.Hook(FakeTmux(pane="w1")).mark("done", path)
+                transport.Tmux(FakeTmux(pane="w1")).mark("done", path)
         self.assertEqual(self.text(), "old\n")
         self.assertFalse(os.path.exists(os.path.join(self.root, "missing")))
 
@@ -181,5 +181,5 @@ class MarkTest(Case):
         )
         for fake, kw, error in cases:
             with self.subTest(error=error), self.assertRaisesRegex(types.TuiError, error):
-                hook.Hook(fake).mark("done", self.events, **kw)
+                transport.Tmux(fake).mark("done", self.events, **kw)
         self.assertEqual(self.text(), "old\n")

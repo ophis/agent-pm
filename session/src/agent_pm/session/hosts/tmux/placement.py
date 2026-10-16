@@ -34,6 +34,7 @@ from agent_pm.session.hosts.tmux.transport import (
     PANES,
     SESSION_ID,
     SESSIONS,
+    Tmux,
     attach_command,
     error,
     session_name,
@@ -74,40 +75,9 @@ def _iterm_pane(why: str) -> Anchor:
     return ItermAnchor(("id", [unique]))
 
 
-class Placement(Grid, Iterm):
-    def show(
-        self,
-        session: str,
-        template: str | None = None,
-        *,
-        split: str | None = None,
-        split_from: str | None = None,
-        opener: str | None = None,
-        per_column: int | None = None,
-        retile: str | None = None,
-        command: str | None = None,
-        tile_window=None,
-    ) -> str | None:
-        """Prints how to attach, then runs template, else open_pane; "" runs nothing. A failure is
-        returned, never raised, but open_pane's TuiError for a bad argument.
-        """
-        print(f"tui: session {session}: {attach_command(session)}", file=sys.stderr)
-        if template is None:
-            why = self.open_pane(
-                session,
-                split=split,
-                split_from=split_from,
-                opener=opener,
-                per_column=per_column,
-                retile=retile,
-                command=command,
-                tile_window=tile_window,
-            )
-        else:
-            why = self.run_command(session, template) if template else None
-        if why:
-            print(f"tui: show: {why}", file=sys.stderr)
-        return why
+class Placement:
+    def __init__(self, *, tmux: Tmux, grid: Grid, iterm: Iterm) -> None:
+        self.tmux, self.grid, self.iterm = tmux, grid, iterm
 
     def open_pane(
         self,
@@ -153,13 +123,13 @@ class Placement(Grid, Iterm):
                 if split is not None or split_from is not None:
                     print("tui: show: grid: --split/--split-from ignored", file=sys.stderr)
                 # muted: an old mode's hook tile could land after a later drag; _grid_up unmutes
-                self.run(["set-option", "-w", "-t", window, GRID_BUSY, window])
+                self.tmux.run(["set-option", "-w", "-t", window, GRID_BUSY, window])
                 try:
                     new, why = self._split(session, side, at, tmux)
                 finally:
                     if new is None:
                         with contextlib.suppress(TuiError):
-                            self.run(["set-option", "-u", "-w", "-t", window, GRID_BUSY])
+                            self.tmux.run(["set-option", "-u", "-w", "-t", window, GRID_BUSY])
             elif split_from is not None:
                 new, why = self._split(session, split or "right", self.anchor(split_from), tmux)
             elif split is not None:
@@ -179,7 +149,7 @@ class Placement(Grid, Iterm):
         self._record(session, opener, new)
         if grid is None:
             return None
-        return self.configure(
+        return self.grid.configure(
             window,
             manager,
             command=command,
@@ -189,7 +159,7 @@ class Placement(Grid, Iterm):
         )
 
     def _sessions(self) -> list[list[str]]:
-        res = self.run(["list-sessions", "-F", SESSIONS])
+        res = self.tmux.run(["list-sessions", "-F", SESSIONS])
         lines = res.stdout.split("\n") if res.returncode == 0 else []
         return [
             f
@@ -206,7 +176,7 @@ class Placement(Grid, Iterm):
             return False
         try:
             if PANE.fullmatch(row[3]):
-                panes = self.checked(["list-panes", "-a", "-F", "#{pane_id}"]).stdout.split()
+                panes = self.tmux.checked(["list-panes", "-a", "-F", "#{pane_id}"]).stdout.split()
                 return row[3] in panes
             return bool(self._clients(session))
         except TuiError:
@@ -251,7 +221,7 @@ class Placement(Grid, Iterm):
         self, pane: str, manager: str | None
     ) -> tuple[str, str, dict[str, int], str] | None:
         """pane's window id, manager, pane areas and socket; None when tmux fails."""
-        res = self.run(["list-panes", "-t", pane, "-F", GRID_PANES])
+        res = self.tmux.run(["list-panes", "-t", pane, "-F", GRID_PANES])
         rows = []
         if res.returncode:
             return None
@@ -290,7 +260,7 @@ class Placement(Grid, Iterm):
                     )
                 continue
             if live is None:
-                res = self.run(["list-panes", "-a", "-F", "#{pane_id}"])
+                res = self.tmux.run(["list-panes", "-a", "-F", "#{pane_id}"])
                 live = set(res.stdout.split("\n")) if res.returncode == 0 else set()
             for _, pane, socket in group:
                 if pane in live:
@@ -305,7 +275,7 @@ class Placement(Grid, Iterm):
         """
         if isinstance(a, ItermAnchor):
             try:
-                return self.split_pane(session, side, tmux, a.iterm), None
+                return self.iterm.split_pane(session, side, tmux, a.iterm), None
             except TuiError:
                 if a.tmux is None:
                     raise
@@ -325,7 +295,7 @@ class Placement(Grid, Iterm):
             if "#" in arg or arg.endswith(";"):
                 raise TuiError(f"tmux would misread {arg!r}")
         try:
-            res = self.run(
+            res = self.tmux.run(
                 [
                     "split-window",
                     "-d",
@@ -351,7 +321,7 @@ class Placement(Grid, Iterm):
             if value is None:
                 continue
             try:
-                self.checked(["set-option", "-t", f"={session}:", key, value])
+                self.tmux.checked(["set-option", "-t", f"={session}:", key, value])
             except TuiError as e:
                 print(f"tui: show: {key}: {e}", file=sys.stderr)
                 return
@@ -364,7 +334,7 @@ class Placement(Grid, Iterm):
         if unknown:
             return f"unknown placeholder {unknown[0]}"
         try:
-            res = self.proc(
+            res = self.tmux.proc(
                 ["/bin/sh", "-c", SLOT.sub(lambda _match: shlex.quote(session), template)],
                 stdin=subprocess.DEVNULL,
                 timeout=SHOW_TIMEOUT,
@@ -382,7 +352,9 @@ class Placement(Grid, Iterm):
         pane = os.environ.get("TMUX_PANE", "")
         if not PANE.fullmatch(pane):
             raise TuiError(f"bad $TMUX_PANE {pane!r}")
-        name = self.checked(["display-message", "-p", "-t", pane, "#{session_name}"]).stdout.strip()
+        name = self.tmux.checked(
+            ["display-message", "-p", "-t", pane, "#{session_name}"]
+        ).stdout.strip()
         if not NAME.fullmatch(name):
             raise TuiError(f"own tmux session {name!r}: want [A-Za-z0-9_-]+")
         return name
@@ -437,7 +409,7 @@ class Placement(Grid, Iterm):
             f[1]: f[2]
             for f in (
                 line.split(" ", 2)
-                for line in self.checked(["list-panes", "-a", "-F", PANES]).stdout.splitlines()
+                for line in self.tmux.checked(["list-panes", "-a", "-F", PANES]).stdout.splitlines()
             )
             if len(f) == 3 and f[0] != "1"
         }
@@ -448,7 +420,7 @@ class Placement(Grid, Iterm):
         )
 
     def _clients(self, session: str) -> list[list[str]]:
-        out = self.checked(["list-clients", "-t", f"={session}", "-F", CLIENTS]).stdout
+        out = self.tmux.checked(["list-clients", "-t", f"={session}", "-F", CLIENTS]).stdout
         return sorted(
             (
                 c

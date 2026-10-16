@@ -6,7 +6,6 @@ import subprocess
 
 from agent_pm.session.hosts.tmux.transport import (
     ITERM_ID,
-    Transport,
     error,
 )
 from agent_pm.session.hosts.tmux.types import (
@@ -48,7 +47,10 @@ APPLESCRIPT = """on run argv
 end run"""
 
 
-class Iterm(Transport):
+class Iterm:
+    def __init__(self, proc) -> None:
+        self.proc = proc
+
     def split_pane(self, session: str, split: str, tmux: str, iterm: tuple[str, list[str]]) -> str:
         try:
             running = (

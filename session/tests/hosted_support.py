@@ -15,7 +15,7 @@ from agent_pm.session.engine import types as engine_types
 from agent_pm.session.engine.hosted_session import HostedSession
 from agent_pm.session.engine.records import RunLog
 from agent_pm.session.engine.types import Access, ConfigError, Exited, Launch, Spec
-from agent_pm.session.hosts.tmux.host import Tmux
+from agent_pm.session.hosts.tmux.transport import Tmux
 from agent_pm.session.runtimes.in_process import RUN_THREAD
 
 from session.tests import fake_adapter
@@ -290,10 +290,10 @@ def fake_tmux(case=None) -> mock.Mock:
     """Recorded tmux responses; defaults: status None, listing [], PAUSE 0."""
     host = mock.create_autospec(Tmux, instance=True)
     host.PAUSE = 0
+    host.proc = mock.Mock(side_effect=AssertionError("a direct proc call"))
     host.status.return_value = None
     host.process_status.side_effect = lambda target: (host.process(target), host.status(target))
     host.listing.return_value = []
-    host.own_session.return_value = None
     tags = {}
     host.option.side_effect = lambda _target, key: tags.get(key)
     host.detach.return_value = host.process.return_value = "1 $1 %1 4242"

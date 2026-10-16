@@ -35,9 +35,8 @@ from agent_pm.session.engine.types import (
     Spec,
     TurnEnd,
 )
-from agent_pm.session.hosts.tmux import host as tmux_model
-from agent_pm.session.hosts.tmux.host import Tmux
-from agent_pm.session.hosts.tmux.transport import attach_command
+from agent_pm.session.hosts.tmux import transport as tmux_model
+from agent_pm.session.hosts.tmux.transport import Tmux, attach_command
 from agent_pm.session.runtimes import tui
 
 from session.tests import detach_support as detach_live

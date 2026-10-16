@@ -22,15 +22,14 @@ from agent_pm.session import ConfigError, Displayable, Host, Launch, SessionErro
 from agent_pm.session.engine.types import Key, KeyPress, Paste, SessionRow
 from agent_pm.session.hosts.base import SIGNALS
 from agent_pm.session.hosts.tmux import TmuxHost, transport, types
-from agent_pm.session.hosts.tmux.host import (
+from agent_pm.session.hosts.tmux.host import TmuxProcess, TmuxTerminal
+from agent_pm.session.hosts.tmux.transport import (
     EXEC,
     EXITED_EVENT,
     HANDOVER_TIMEOUT,
     POLL,
     TERMINAL_KEYS,
     Tmux,
-    TmuxProcess,
-    TmuxTerminal,
     events_file,
     validate_events,
 )
@@ -138,10 +137,10 @@ class DisplayTest(Base):
         for value in ("w1", "w1/below/m1", *FOREIGN):
             with self.subTest(value=value):
                 self.assertEqual(self.host.display(value), value)
-        self.tmux.opener.assert_not_called()
+        self.placement.opener.assert_not_called()
 
     def test_no_opener_available_returns_the_value_unchanged(self):
-        self.tmux.opener.side_effect = TuiError(NO_PANE)
+        self.placement.opener.side_effect = TuiError(NO_PANE)
         for value in (None, "", "/right"):
             with self.subTest(value=value):
                 self.assertEqual(self.host.display(value), value)
@@ -151,7 +150,7 @@ class DisplayTest(Base):
             with self.subTest(value=value), self.assertRaises(ConfigError) as caught:
                 self.host.display(value)
             self.assertEqual(str(caught.exception), transport.display_error(value))
-        self.tmux.opener.assert_not_called()
+        self.placement.opener.assert_not_called()
 
     def test_display_help_names_the_format(self):
         help_text = self.host.display_help()
@@ -480,35 +479,35 @@ class AttachTest(Base):
 
 class DisplayableTest(Base):
     def test_show_opens_a_pane_per_the_unfolded_display_and_the_grid_settings(self):
-        self.tmux.open_pane.return_value = None
+        self.placement.open_pane.return_value = None
         self.host.settings["grid_retile"] = "all"
         self.assertIsNone(self.host.show("w1", display="mgr/below/m1"))
-        self.tmux.open_pane.assert_called_once_with(
+        self.placement.open_pane.assert_called_once_with(
             "w1", opener="mgr", split="below", split_from="m1", per_column=2, retile="all"
         )
 
     def test_show_without_a_pane_logs_why_and_returns_the_attach_command(self):
-        self.tmux.open_pane.return_value = NO_PANE
+        self.placement.open_pane.return_value = NO_PANE
         with self.assertLogs("session", logging.WARNING) as logs:
             self.assertEqual(self.host.show("w1"), "tmux attach -t '=w1'")
         self.assertEqual(logs.output, [f"WARNING:session:show w1: {NO_PANE}"])
-        self.tmux.open_pane.assert_called_once_with(
+        self.placement.open_pane.assert_called_once_with(
             "w1", opener=None, split=None, split_from=None, per_column=2, retile=None
         )
 
     def test_show_with_a_command_runs_it_instead_of_opening_a_pane(self):
-        self.tmux.run_command.return_value = None
+        self.placement.run_command.return_value = None
         self.assertIsNone(self.host.show("w1", command="open -a T {{session}}"))
-        self.tmux.run_command.assert_called_once_with("w1", "open -a T {{session}}")
-        self.tmux.open_pane.assert_not_called()
-        self.tmux.run_command.return_value = "exit status 3"
+        self.placement.run_command.assert_called_once_with("w1", "open -a T {{session}}")
+        self.placement.open_pane.assert_not_called()
+        self.placement.run_command.return_value = "exit status 3"
         with self.assertLogs("session", logging.WARNING) as logs:
             self.assertEqual(self.host.show("w1", command="false"), "tmux attach -t '=w1'")
         self.assertEqual(logs.output, ["WARNING:session:show w1: exit status 3"])
-        self.tmux.run_command.return_value = None
+        self.placement.run_command.return_value = None
         self.assertIsNone(self.host.show("w1", display="elsewhere:1.2", command="true"))
-        self.tmux.run_command.assert_called_with("w1", "true")
-        self.tmux.open_pane.assert_not_called()
+        self.placement.run_command.assert_called_with("w1", "true")
+        self.placement.open_pane.assert_not_called()
 
     def test_show_refuses_an_absent_session_a_foreign_display_or_a_bad_setting(self):
         self.tmux.status.return_value = None
@@ -517,7 +516,7 @@ class DisplayableTest(Base):
         self.tmux.status.return_value = types.PaneStatus.RUNNING
         with self.assertRaisesRegex(ConfigError, r"^display 'elsewhere:1\.2': not <opener>"):
             self.host.show("w1", display="elsewhere:1.2")
-        self.tmux.open_pane.side_effect = TuiError(
+        self.placement.open_pane.side_effect = TuiError(
             "per_column must be an int from 1 to 9999, not 0"
         )
         with self.assertRaisesRegex(ConfigError, "^per_column must be"):
@@ -535,7 +534,7 @@ class DisplayableTest(Base):
         self.tmux.set_option.assert_called_once_with("%7", "@hidden", "1")
         self.options(hidden="1")
         self.assertTrue(self.host.attach("w1").status().hidden)
-        self.tmux.open_pane.return_value = None
+        self.placement.open_pane.return_value = None
         self.options(sid=SID)
         self.host.show("w1")
         self.tmux.set_option.assert_called_with("%7", "@hidden", "0")
@@ -544,7 +543,7 @@ class DisplayableTest(Base):
 
     def test_a_show_whose_tiling_failed_after_placing_its_pane_clears_hidden(self):
         self.options(pane="%9", sid=SID)
-        self.tmux.open_pane.return_value = "tile failed"
+        self.placement.open_pane.return_value = "tile failed"
         self.assertIsNotNone(self.host.show("w1"))
         self.tmux.set_option.assert_called_once_with("%7", "@hidden", "0")
         self.tmux.set_option.reset_mock()
@@ -588,28 +587,34 @@ class DisplayableTest(Base):
             self.host.hide("w1")
 
     def test_layout_completes_the_display_once_the_pane_is_found(self):
+        order = self.ordered()
+        found = [mock.call.placement.anchor(None), mock.call.placement.opener()]
         for display, calls, want in (
-            (None, [mock.call.anchor(None), mock.call.opener()], "mgr"),
-            ("/right", [mock.call.anchor(None), mock.call.opener()], "mgr/right"),
+            (None, found, "mgr"),
+            ("/right", found, "mgr/right"),
             ("w1/below", [], "w1/below"),
             (
                 "/below/m1",
-                [mock.call.status("m1"), mock.call.anchor("m1"), mock.call.opener()],
+                [
+                    mock.call.tmux.status("m1"),
+                    mock.call.placement.anchor("m1"),
+                    mock.call.placement.opener(),
+                ],
                 "mgr/below/m1",
             ),
         ):
             with self.subTest(display=display):
-                self.tmux.reset_mock()
+                order.reset_mock()
                 self.assertEqual(self.host.layout(display=display), want)
-                self.assertEqual(self.tmux.mock_calls, calls)
+                self.assertEqual(order.mock_calls, calls)
 
     def test_layout_beside_split_from_without_an_opener_keeps_the_part_empty(self):
-        self.tmux.opener.side_effect = TuiError(NO_PANE)
+        self.placement.opener.side_effect = TuiError(NO_PANE)
         self.assertEqual(self.host.layout(display="//m1"), "//m1")
 
     def test_layout_without_a_pane_or_split_from_is_refused(self):
         hint = ": run from tmux or iTerm2, or pass split_from"
-        self.tmux.anchor.side_effect = TuiError(NO_PANE)
+        self.placement.anchor.side_effect = TuiError(NO_PANE)
         with self.assertRaises(SessionError) as caught:
             self.host.layout()
         self.assertEqual(str(caught.exception), f"no pane to show the TUI beside ({NO_PANE}){hint}")
@@ -638,7 +643,7 @@ class DisplayableTest(Base):
         self.host.tile("@1")
         self.host.tile("@2", wait=False, if_panes_changed=True)
         self.assertEqual(
-            self.tmux.tile.call_args_list,
+            self.grid.tile.call_args_list,
             [
                 unittest.mock.call("@1", wait=True, if_panes_changed=False),
                 unittest.mock.call("@2", wait=False, if_panes_changed=True),
@@ -704,6 +709,7 @@ class DescendantsTest(Base):
 
 class RowsTest(Base):
     def test_a_row_per_listed_session_in_its_order(self):
+        order = self.ordered()
         self.tmux.listing.return_value = [
             listed("mgr"),
             listed("w1", sid=SID, client="fake", state="done", display="mgr/below", shown="m"),
@@ -712,7 +718,7 @@ class RowsTest(Base):
             listed("w4", client="fake", state="done", dead=True, last_lines="bye"),
             listed("w5", client="fake9_", state="other", dead=None),
         ]
-        self.tmux.own_session.return_value = "mgr"
+        self.placement.own_session.return_value = "mgr"
         rows = self.host.rows()
         self.assertEqual([type(r.state) for r in rows], [StatusState] * 6)
         row = SessionRow
@@ -782,8 +788,12 @@ class RowsTest(Base):
             ],
         )
         self.assertEqual(
-            self.tmux.mock_calls,
-            [mock.call.listing(), mock.call.listing(), mock.call.own_session()],
+            order.mock_calls,
+            [
+                mock.call.tmux.listing(),
+                mock.call.tmux.listing(),
+                mock.call.placement.own_session(),
+            ],
         )
 
 
@@ -1847,15 +1857,15 @@ class StartTest(StartFixture):
                 fake = FakeTmux()
                 for call in (
                     lambda *, fake=fake, name=name: self.start(fake, session=name),
-                    lambda *, fake=fake, name=name: transport.Transport(fake).status(name),
+                    lambda *, fake=fake, name=name: transport.Tmux(fake).status(name),
                     lambda *, fake=fake, name=name: Tmux(fake, self.sleep).detach(
                         name, Launch(("tool",), {"PATH": self.bin}, cwd=self.cwd)
                     ),
-                    lambda *, fake=fake, name=name: transport.Transport(fake).kill(name),
-                    lambda *, fake=fake, name=name: transport.Transport(fake).paste(name, "x"),
-                    lambda *, fake=fake, name=name: transport.Transport(fake).keys(name, "Enter"),
-                    lambda *, fake=fake, name=name: transport.Transport(fake).read(name),
-                    lambda *, fake=fake, name=name: transport.Transport(fake).option(name, "@sid"),
+                    lambda *, fake=fake, name=name: transport.Tmux(fake).kill(name),
+                    lambda *, fake=fake, name=name: transport.Tmux(fake).paste(name, "x"),
+                    lambda *, fake=fake, name=name: transport.Tmux(fake).keys(name, "Enter"),
+                    lambda *, fake=fake, name=name: transport.Tmux(fake).read(name),
+                    lambda *, fake=fake, name=name: transport.Tmux(fake).option(name, "@sid"),
                 ):
                     with self.assertRaises(types.TuiError):
                         call()

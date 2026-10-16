@@ -12,7 +12,7 @@ Test boundaries and commands: README.md › Tests.
 - A layer's packaged `config.toml` (`<project>/src/agent_pm/<package>/config.toml`) holds only its keys, each a real line (a local-only one its empty default, its comment saying what empty means); a `# local:` line only shows a value for `~/.agent-pm/config.local.toml` (`tests/guard_checks/configuration.py` `explicit_keys`). Layer sections and merge rules: `utils/src/agent_pm/utils/config_file.py`'s docstring.
 - Identify Linear entities by id, never name; a role's `account` (an email) is the exception.
 - Linear's lists can lag a just-made state change: re-read an issue's state before acting on it (`linear-orchestrator/src/agent_pm/linear_orchestrator/engine/ops.py:move` does).
-- Tmux implementation: `session/src/agent_pm/session/hosts/tmux/` (`TmuxHost` and the `Tmux` it holds: `host.py`). `/agent-pm:tmux` (`manager/skills/tmux/SKILL.md`) reaches it only through `agent-pm-session`.
+- Tmux implementation: `session/src/agent_pm/session/hosts/tmux/` (`TmuxHost`: `host.py`; the `Tmux` it holds, with its `Grid` and `Placement`: `transport.py`, `grid.py`, `placement.py`). `/agent-pm:tmux` (`manager/skills/tmux/SKILL.md`) reaches it only through `agent-pm-session`.
 - Pty implementation: `session/src/agent_pm/session/hosts/pty/` (`PtyHost`: `host.py`; the supervisor holding each session's pty: `supervisor.py`).
 - The session's and delegate's public interfaces are frozen: `tests/guard_checks/exports.py` `session_interface_snapshot` and `delegate_interface_snapshot` (who may change `tests/session_interface.json` and `tests/delegate_interface.json`: their docstrings).
 - Keep `<work_dir>/logs/runs.jsonl` (README › Operating).
