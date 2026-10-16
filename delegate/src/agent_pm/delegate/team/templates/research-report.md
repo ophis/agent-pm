@@ -67,7 +67,7 @@ Numbered in first-citation order, numbers matching in-text `[n]`: `1. [<Short ti
 
 ## Filled example
 
-# Report: TASK-524 Cursor CLI or Grok Build for agent-pm
+# Report: Cursor CLI or Grok Build for agent-pm
 
 Light Research: light-research · mixed · ophis/agent-pm@f597b17033e7
 

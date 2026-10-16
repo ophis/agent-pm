@@ -98,6 +98,13 @@ class ReportCheck(Case):
         code, out = self.check("| a | b |\n|---|---|\n| " + "x" * 31 + " | short |")
         self.assertEqual(code, 1)
         self.assertIn("line 3: cell 31>30:", out)
+        for row in (
+            "| " + "x" * 31 + " |",
+            "| " + "x" * 15 + "\\|" + "y" * 15 + " | short |",
+            "| `" + "x" * 15 + "|" + "y" * 15 + "` | short |",
+        ):
+            with self.subTest(row=row):
+                self.assertIn("line 3: cell 31>30:", self.check("| a | b |\n|---|---|\n" + row)[1])
         self.assertIn("paragraph 83>80:", self.check("x|" + "a" * 81)[1])
 
     def test_fences_headings_types_and_html(self):

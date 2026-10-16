@@ -92,6 +92,7 @@ def check(text):
     lines = text.splitlines()
     fence = ""
     table = False
+    columns = 0
     after_title = False
     for number, raw in enumerate(lines, 1):
         line = _unquote(raw)
@@ -136,11 +137,13 @@ def check(text):
         next_line = _unquote(lines[number]) if number < len(lines) else ""
         if "|" in line and (table or _separator(next_line)):
             flush()
+            cells = _cells(line)
+            if not table:
+                columns = len(cells)
             table = True
             if not _separator(line):
-                cells = _cells(line)
-                for column, cell in enumerate(cells):
-                    limit = LINE_LIMIT if column == len(cells) - 1 else CELL_LIMIT
+                for column, cell in enumerate(cells[:columns]):
+                    limit = LINE_LIMIT if column == columns - 1 else CELL_LIMIT
                     measure(number, "cell", cell, limit)
             continue
         table = False
