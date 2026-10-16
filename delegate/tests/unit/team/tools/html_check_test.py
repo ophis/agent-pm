@@ -108,6 +108,28 @@ class HtmlCheck(Case):
             ),
         )
 
+    def test_foreign_content_and_percent_encoding(self):
+        cases = (
+            (
+                '<svg><script/></svg><img src="&#x68;ttps://x.com/a">'
+                "<button onclick=\"go('x')\">b</button>",
+                "external load: https://x.com/a\nunsafe markup: onclick=go('x')\n",
+            ),
+            (
+                '<svg><script>import("&#x68;ttps://x.com/m.js")</script></svg>',
+                "external load: https://x.com/m.js\n",
+            ),
+            (
+                '<iframe src="data:text/html,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%3E'
+                '%3Cimage%20href=%22https://x.com/i.png%22/%3E%3C/svg%3E"></iframe>',
+                "external load: https://x.com/i.png\n",
+            ),
+            ('<img src="https%3A//x.com/p">', "external load: https://x.com/p\n"),
+        )
+        for markup, lines in cases:
+            with self.subTest(markup):
+                self.assertEqual(self.check(markup), (1, lines))
+
     def test_an_unreadable_file_exits_two(self):
         out = io.StringIO()
         self.assertEqual(html_check.main(["/nonexistent/r.html"], out=out), 2)
