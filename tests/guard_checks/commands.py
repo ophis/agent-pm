@@ -47,6 +47,13 @@ def manager_commands(repo: str) -> list[str]:
             values = [v.value if isinstance(v, ast.Constant) else None for v in node.elts]
             if values == [SESSION_COMMAND, "ls", "--here", "--records"]:
                 allowed.add(id(node.elts[0]))
+            if (
+                values[:3] == [SESSION_COMMAND, "start", None]
+                or values[:5] == ["agent-pm-linear", "router", "--issue", None, "--tui"]
+                or values[:7]
+                == ["agent-pm-delegate", "run", "--role", None, "--detach", "--name", None]
+            ):
+                allowed.add(id(node.elts[0]))
     for node in ast.walk(tree):
         if (
             isinstance(node, ast.Constant)

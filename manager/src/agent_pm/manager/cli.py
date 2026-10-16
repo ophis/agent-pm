@@ -63,6 +63,14 @@ def _run(args) -> int:
     return 0
 
 
+def _launch(args) -> int:
+    record = _crew(args).launch(
+        args.kind, args.key, tuple(args.arguments), note=args.note, name=args.entry_name
+    )
+    print(record.to_line())
+    return 0
+
+
 def _attach(args) -> int:
     crew = _crew(args)
     lines = crew.attach(after=args.after, gen=args.gen).splitlines()
@@ -187,6 +195,14 @@ def _parser() -> argparse.ArgumentParser:
     run.add_argument("name")
     run.add_argument("--note")
     run.set_defaults(func=_run)
+    for kind in ("worker", "issue", "role"):
+        launch = subs.add_parser(kind, parents=[common])
+        launch.add_argument("--note")
+        if kind == "role":
+            launch.add_argument("--name", dest="entry_name")
+        launch.add_argument("key")
+        launch.add_argument("arguments", nargs=argparse.REMAINDER)
+        launch.set_defaults(func=_launch, kind=kind, entry_name=None)
     attach = subs.add_parser("attach", parents=[common])
     attach.add_argument("--after", type=_number)
     attach.add_argument("--gen", type=_number)
@@ -246,7 +262,7 @@ def _parser() -> argparse.ArgumentParser:
 def main(argv: Sequence[str] | None = None) -> int:
     arguments = list(sys.argv[1:] if argv is None else argv)
     command = ()
-    if "--" in arguments:
+    if arguments and arguments[0] in {"run", "hold"} and "--" in arguments:
         delimiter = arguments.index("--")
         command = tuple(arguments[delimiter + 1 :])
         arguments = arguments[:delimiter]
@@ -262,7 +278,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         parser.error(f"{args.verb} takes entry names or --all")
     if args.func is _attach and (args.after is None) != (args.gen is None):
         parser.error("--after and --gen go together")
-    if args.func in {_run, _hold, _resume} and (refused := nested_start()):
+    if args.func in {_run, _hold, _resume, _launch} and (refused := nested_start()):
         print(f"crew: {refused}", file=sys.stderr)
         return 2
     try:

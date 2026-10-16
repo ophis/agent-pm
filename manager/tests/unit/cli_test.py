@@ -118,6 +118,112 @@ class CliTest(CliCase):
         self.assertFalse(os.path.exists(self.directory))
 
 
+class Launch(CliCase):
+    def start(self, *arguments, code=0, output=None):
+        self.calls = []
+
+        def run(argv, **options):
+            self.calls.append((tuple(argv), options["env"]))
+            record = self.fake_record(
+                "returned-" + options["env"]["AGENT_PM_SID"][:8],
+                sid=options["env"]["AGENT_PM_SID"],
+            )
+            text = record.to_line() + "\n" if output is None else output
+            os.write(options["stdout"].fileno(), text.encode())
+            return SimpleNamespace(returncode=code, stderr="layer message\n")
+
+        with mock.patch("subprocess.run", side_effect=run):
+            return self.invoke(*arguments)
+
+    def test_worker_and_issue_forward_every_word_after_the_key(self):
+        for verb, key, prefix, tail in (
+            (
+                "worker",
+                "w1",
+                ("agent-pm-session", "start", "w1"),
+                ("--client", "claude", "--prompt", "hi", "--", "--permission-mode", "auto"),
+            ),
+            (
+                "issue",
+                "TASK-12",
+                ("agent-pm-linear", "router", "--issue", "TASK-12", "--tui"),
+                ("--display", "D", "--note", "belongs to layer", "--manager", "also layer"),
+            ),
+        ):
+            with self.subTest(verb=verb):
+                result, stdout, stderr = self.start(
+                    verb, "--manager", "mgr", "--note", "Crew note", key, *tail
+                )
+                self.assertEqual((result, stderr), (0, "layer message\n"))
+                self.assertEqual(self.calls[0][0], (*prefix, *tail))
+                entry = self.roster.entries()[key]
+                self.assertEqual(entry.note, "Crew note")
+                self.assertEqual(entry.record, Record.parse(stdout))
+
+    def test_role_names_share_the_generated_launch_sid(self):
+        for explicit in ((), ("--name", "chosen")):
+            with self.subTest(explicit=explicit):
+                result, stdout, _ = self.start(
+                    "role",
+                    "--manager",
+                    "mgr",
+                    *explicit,
+                    "pm",
+                    "--task",
+                    "product-design",
+                    "--input",
+                    "x",
+                )
+                self.assertEqual(result, 0)
+                sid = Record.parse(stdout).sid
+                name = "chosen" if explicit else f"pm-{sid[:8]}"
+                self.assertEqual(self.roster.entries()[name].sid, sid)
+                self.assertEqual(
+                    self.calls[0][0],
+                    (
+                        "agent-pm-delegate",
+                        "run",
+                        "--role",
+                        "pm",
+                        "--detach",
+                        "--name",
+                        name,
+                        "--task",
+                        "product-design",
+                        "--input",
+                        "x",
+                    ),
+                )
+
+    def test_refusals_remove_only_the_shorthand_intent_and_allow_name_reuse(self):
+        for code, output in ((2, ""), (0, "dry run\n"), (0, "")):
+            with self.subTest(code=code, output=output):
+                result, stdout, stderr = self.start(
+                    "worker",
+                    "--manager",
+                    "mgr",
+                    "w1",
+                    "--note",
+                    "layer option",
+                    code=code,
+                    output=output,
+                )
+                self.assertEqual((result, stdout), (2, ""))
+                self.assertIn("layer message", stderr)
+                self.assertEqual(self.roster.entries(), {})
+
+    def test_other_failures_keep_lost_and_generic_run_keeps_exit_two(self):
+        for arguments, code, output in (
+            (("worker", "--manager", "mgr", "a"), 1, ""),
+            (("worker", "--manager", "mgr", "b"), 2, "not empty\n"),
+            (("run", "--manager", "mgr", "c", "--", "fake"), 2, ""),
+        ):
+            with self.subTest(arguments=arguments):
+                result, stdout, _ = self.start(*arguments, code=code, output=output)
+                self.assertEqual((result, stdout), (1, ""))
+        self.assertEqual({e.state.value for e in self.roster.entries().values()}, {"lost"})
+
+
 class NextEventContent(CliCase):
     def setUp(self):
         super().setUp()
@@ -501,6 +607,9 @@ class InsideAnAgentSession(CliCase):
             ("run", "--manager", "mgr", "w1", "--", "true"),
             ("hold", "--manager", "mgr", "--", "true"),
             ("resume", "--manager", "mgr", "w1"),
+            ("worker", "--manager", "mgr", "w1", "--client", "claude"),
+            ("issue", "--manager", "mgr", "TASK-12"),
+            ("role", "--manager", "mgr", "pm", "--input", "x"),
         ):
             with (
                 self.subTest(argv=argv),

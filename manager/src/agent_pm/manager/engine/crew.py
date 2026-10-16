@@ -15,7 +15,15 @@ from dataclasses import replace
 
 from agent_pm.manager.engine.pr import NO_PR, VIEW_FIELDS, cells, pr_url, unknown
 from agent_pm.manager.engine.roster import LOCK_TIMEOUT, Roster
-from agent_pm.manager.engine.types import Entry, Lease, RosterError, Spec, State, StatusError
+from agent_pm.manager.engine.types import (
+    Entry,
+    Lease,
+    RosterError,
+    Spec,
+    StartRefused,
+    State,
+    StatusError,
+)
 from agent_pm.utils import (
     EVENTS_ENV,
     LEASE_ENV,
@@ -125,7 +133,9 @@ class Crew:
             self._listed = self._listing(HERE)
         return self._listed
 
-    def _start(self, argv: tuple[str, ...], name: str, sid: str) -> Record:
+    def _start(
+        self, argv: tuple[str, ...], name: str, sid: str, *, refusal=False, reject_missing=False
+    ) -> Record:
         env = {**self._env(events=True), SID_ENV: sid}
         try:
             with self.roster.open_receipt(name) as receipt:
@@ -140,8 +150,19 @@ class Crew:
                 )
                 if result.returncode:
                     reason = result.stderr.strip() or f"exit {result.returncode}"
+                    if refusal and result.returncode == 2 and not self.roster.receipt_output(name):
+                        raise StartRefused(f"{shlex.join(argv)}: {reason}")
                     raise RuntimeError(f"{shlex.join(argv)}: {reason}")
                 sys.stderr.write(result.stderr)
+                if reject_missing:
+                    raw = self.roster.receipt_output(name)
+                    lines = raw.splitlines()
+                    try:
+                        Record.parse(lines[-1].decode("utf-8") if lines else "")
+                    except (ValueError, UnicodeError) as error:
+                        raise StartRefused(
+                            f"{shlex.join(argv)}: no final Record: {error}"
+                        ) from error
                 return self.roster.receipt_record(name)
         except OSError as error:
             raise RuntimeError(f"{shlex.join(argv)}: {error}") from error
@@ -151,12 +172,42 @@ class Crew:
             ) from error
 
     def run(self, spec: Spec) -> Record:
-        self._listed = None
+        return self._run(spec, str(uuid.uuid4()), shorthand=False)
+
+    def launch(
+        self,
+        kind: str,
+        key: str,
+        argv: tuple[str, ...],
+        *,
+        note: str | None = None,
+        name: str | None = None,
+    ) -> Record:
         sid = str(uuid.uuid4())
+        if kind == "worker":
+            name = key
+            command = ("agent-pm-session", "start", key, *argv)
+        elif kind == "issue":
+            name = key
+            command = ("agent-pm-linear", "router", "--issue", key, "--tui", *argv)
+        elif kind == "role":
+            name = name if name is not None else f"{key}-{sid[:8]}"
+            command = ("agent-pm-delegate", "run", "--role", key, "--detach", "--name", name, *argv)
+        else:
+            raise ValueError(f"unknown launch kind: {kind}")
+        return self._run(Spec(name, command, note), sid, shorthand=True)
+
+    def _run(self, spec: Spec, sid: str, *, shorthand: bool) -> Record:
+        self._listed = None
         intent = self.roster.begin(spec, sid=sid)
         try:
-            record = self._start(spec.argv, spec.name, sid)
+            record = self._start(
+                spec.argv, spec.name, sid, refusal=shorthand, reject_missing=shorthand
+            )
             self.roster.commit(spec.name, record)
+        except StartRefused:
+            self.roster.remove_if(spec.name, intent)
+            raise
         except (RosterError, RuntimeError, ValueError) as error:
             try:
                 self.roster.mark_if(spec.name, intent, State.LOST)

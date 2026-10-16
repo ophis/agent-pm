@@ -44,6 +44,10 @@ class RosterError(Exception):
     pass
 
 
+class StartRefused(ValueError):
+    pass
+
+
 class Stale(RosterError):
     pass
 

@@ -459,6 +459,17 @@ class StatusLogFormat(Sample):
 
 
 class ManagerBoundaries(Sample):
+    def test_short_launch_prefixes_are_allowed(self):
+        base = "manager/src/agent_pm/manager/engine/crew.py"
+        root = self.tree(
+            {
+                base: 'a = ("agent-pm-session", "start", key, *argv)\n'
+                'b = ("agent-pm-linear", "router", "--issue", key, "--tui", *argv)\n'
+                'c = ("agent-pm-delegate", "run", "--role", key, "--detach", "--name", name, *argv)\n'
+            }
+        )
+        self.assertEqual(commands.manager_commands(root), [])
+
     def test_only_orphan_listing_is_hardcoded(self):
         base = "manager/src/agent_pm/manager/engine/crew.py"
         root = self.tree(
