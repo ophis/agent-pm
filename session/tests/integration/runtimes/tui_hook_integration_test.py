@@ -257,19 +257,28 @@ def on_hook(word, call):
         self.assertEqual(self.calls(), [])
 
     def test_two_synchronized_writers_keep_every_complete_journal_record(self):
-        script = """import io, json, sys
-folder, encoded, writer = sys.argv[1:]
-from agent_pm.session.runtimes import tui_hook
+        script = """import json, subprocess, sys
+folder, writer = sys.argv[1:]
 print("ready", flush=True)
 sys.stdin.buffer.read(1)
-for number in range(20):
-    payload = json.dumps({"writer": writer, "number": number}).encode()
-    tui_hook.main([folder, "other"], io.BytesIO(payload), roots=json.loads(encoded))
+hooks = [
+    subprocess.Popen(
+        [sys.executable, "-P", "-m", "agent_pm.session.cli", "hook", folder, "other"],
+        stdin=subprocess.PIPE,
+    )
+    for _ in range(20)
+]
+for number, hook in enumerate(hooks):
+    hook.stdin.write(json.dumps({"writer": writer, "number": number}).encode())
+    hook.stdin.close()
+codes = [hook.wait() for hook in hooks]
+if any(codes):
+    sys.exit(f"hook exit codes {codes}")
 """
         processes = []
         for writer in ("first", "second"):
             process = subprocess.Popen(
-                [sys.executable, "-P", "-s", "-c", script, self.dir, json.dumps(ROOTS), writer],
+                [sys.executable, "-P", "-s", "-c", script, self.dir, writer],
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
@@ -283,7 +292,7 @@ for number in range(20):
             process.stdin.write(b"x")
             process.stdin.flush()
         for process in processes:
-            stdout, stderr = process.communicate(timeout=10)
+            stdout, stderr = process.communicate(timeout=60)
             self.assertEqual((process.returncode, stdout, stderr), (0, b"", b""))
         records = self.records()
         self.assertEqual(len(records), 40)
