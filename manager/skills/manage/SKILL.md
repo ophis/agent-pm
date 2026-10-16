@@ -32,6 +32,7 @@ Launch and direct work through Crew, choosing each launch command yourself (clie
 - Tag each implementation issue with the agent that builds it (the `Agent` label group: Claude, Codex).
 - Before reverting a state someone else changed, read the issue's comments: the user may have ordered the move.
 - Before a PR merges, move its "left for later" items into the issues that will do them.
+- **Board proposals** (lines in a run's summary to cancel, split residue from or cross-link an old issue; format: `delegate/src/agent_pm/delegate/team/principles.md` › Overlap): once the user approves, carry out all of them without asking again. For each, first re-read the old issue's state: no longer Backlog, Todo or In Review → cross-link instead and tell the user. **Split residue** first: create the residue issue from the proposal's title and description, in the old issue's state (In Review → Todo), with its project, assignee and labels, `related` to both the proposing issue and the old one. **Cancel**: first re-point each issue it blocks in this team to be blocked by the proposing issue (and the residue issue, if any), and comment on one in another team; then mark it Canceled as a Duplicate of the proposing issue and comment the reason and the proposing issue's link. **Cross-link**: a `related` link and a comment with the reason on each.
 
 ## Workers and role runs
 
