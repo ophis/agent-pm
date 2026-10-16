@@ -53,6 +53,7 @@ from agent_pm.linear_orchestrator.engine import (
     inputs,
     issues,
     ops,
+    related,
     target,
     writeback,
 )
@@ -626,6 +627,12 @@ def _outer(a, cfg, *, gql, run, keychain, now, attended):
         sources = inputs.gather(issue, role, cfg.docs, run=run)
     except (InputError, OSError, subprocess.TimeoutExpired) as e:
         return fail(a.issue, "transient", f"docs: {one_line(e)}", 3)
+    found = None
+    if a.mode == "new" and latest(parse_log(cfg.runs_log)).get(a.issue) is None:
+        try:
+            found = related.search(gql, issue, cfg, target=repo, run=run)
+        except (LinearError, Unavailable, InputError, OSError, subprocess.SubprocessError) as e:
+            log("router", "related-skip", a.issue, reason=one_line(e))
     text = inputs.render(
         issue,
         role,
@@ -633,6 +640,7 @@ def _outer(a, cfg, *, gql, run, keychain, now, attended):
         humans=ctx.humans,
         target=repo,
         docs=cfg.docs,
+        related=found,
     ).replace("\x00", "")
     # a lone surrogate cannot be encoded
     text = text.encode("utf-8", "replace").decode()

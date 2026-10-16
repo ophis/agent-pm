@@ -80,10 +80,10 @@ class Gql:
             d = self.upstream[v["i"]]
             return {"issue": None if d is None else {"identifier": v["i"], "description": d}}
         out = {}
-        if "found:" in query:
-            out["found"] = {"nodes": list(self.found)}
-        if "named:" in query:
-            out["named"] = {"nodes": list(self.named)}
+        if "searchIssues(" in query:
+            out["searchIssues"] = {"nodes": list(self.found)}
+        if "issues(filter" in query:
+            out["issues"] = {"nodes": list(self.named)}
         return out
 
 
@@ -104,6 +104,9 @@ class Keywords(Case):
 
     def test_repeats_digits_and_single_letters_drop(self):
         self.assertEqual(related.keywords("Queue queue 59 x 查重搜索"), ["queue", "查重搜索"])
+
+    def test_a_role_prefix_drops(self):
+        self.assertEqual(related.keywords("PRD: Queue survey"), ["queue", "survey"])
 
     def test_only_stopwords_is_empty(self):
         self.assertEqual(related.keywords("The and of a"), [])
@@ -204,7 +207,7 @@ class Search(Case):
         def broken(query, **_v):
             if query == related.Q_UPSTREAM:
                 raise LinearError("linear api error: boom")
-            return {"found": {"nodes": []}}
+            return {"searchIssues": {"nodes": []}}
 
         with self.assertRaises(LinearError):
             search(issue(description=handoff("TASK-20")), broken, run())

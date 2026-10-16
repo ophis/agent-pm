@@ -63,10 +63,8 @@ _NODES = (
     "nodes { identifier title description state { id name type } "
     "attachments(first: 20) { nodes { url } } comments(first: 1, orderBy: createdAt) { nodes { body } } }"
 )
-_FOUND = (
-    f"found: searchIssues(term: $t, filter: $f, first: 10, includeArchived: true) {{ {_NODES} }}"
-)
-_NAMED = f"named: issues(filter: $n, first: 50, includeArchived: true) {{ {_NODES} }}"
+_FOUND = f"searchIssues(term: $t, filter: $f, first: 10, includeArchived: true) {{ {_NODES} }}"
+_NAMED = f"issues(filter: $n, first: 50, includeArchived: true) {{ {_NODES} }}"
 Q_SEARCH = f"query($t: String!, $f: IssueFilter) {{ {_FOUND} }}"
 Q_SEARCH_IDS = f"query($t: String!, $f: IssueFilter, $n: IssueFilter) {{ {_FOUND} {_NAMED} }}"
 Q_IDS = f"query($n: IssueFilter) {{ {_NAMED} }}"
@@ -77,8 +75,10 @@ CANCELED = 5
 
 
 def keywords(title) -> list[str]:
+    # a role's title prefix (`ENG: `, `PRD: `) is on every issue of its kind
+    text = re.sub(ISSUE_ID, " ", re.sub(r"^[A-Z][A-Z0-9]*: ", "", title))
     words = []
-    for w in re.findall(r"\w+", re.sub(ISSUE_ID, " ", title).lower()):
+    for w in re.findall(r"\w+", text.lower()):
         if len(w) > 1 and not w.isdigit() and w not in STOPWORDS and w not in words:
             words.append(w)
     return words[:MAX_WORDS]
@@ -99,7 +99,10 @@ def _nodes(gql, team, words, ids):
         data = gql(Q_SEARCH, t=" ".join(words), f=f)
     else:
         data = gql(Q_IDS, n=n)
-    return [*data.get("found", {"nodes": []})["nodes"], *data.get("named", {"nodes": []})["nodes"]]
+    return [
+        *data.get("searchIssues", {"nodes": []})["nodes"],
+        *data.get("issues", {"nodes": []})["nodes"],
+    ]
 
 
 def _chain(gql, issue):

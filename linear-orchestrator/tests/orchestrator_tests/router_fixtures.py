@@ -17,6 +17,7 @@ from agent_pm.linear_orchestrator.engine import (
     config,
     inputs,
     ops,
+    related,
     router,
     runs,
 )
@@ -164,16 +165,24 @@ LS_REMOTE = (
 )
 
 
-ENG_RUN = [
-    (("gh", "api", "repos/ophis/agent-pm"), repo_info("Ophis/Agent-PM")),
-    (LS_REMOTE[:3], ok()),
-]
-
-
 LISTING = ("gh", "api", "repos/ophis/private_docs/contents/Research?ref=main")
 
 
 DESIGN_LISTING = ("gh", "api", "repos/ophis/private_docs/contents/Product%20Design?ref=main")
+
+
+PRS = ("gh", "search", "prs")
+
+
+# a first claim's related search: no docs, no PRs
+SEARCHED = [(LISTING, ok("[]")), (DESIGN_LISTING, ok("[]")), (PRS, ok("[]"))]
+
+
+ENG_RUN = [
+    (("gh", "api", "repos/ophis/agent-pm"), repo_info("Ophis/Agent-PM")),
+    (LS_REMOTE[:3], ok()),
+    *SEARCHED,
+]
 
 
 OUTER = (
@@ -239,6 +248,8 @@ class FakeLinear:
         raise AssertionError(query)
 
     def _identity(self, query, v):
+        if query in (related.Q_SEARCH, related.Q_SEARCH_IDS, related.Q_IDS):
+            return {"searchIssues": {"nodes": []}, "issues": {"nodes": []}}
         if query == ops.Q_TEAM:
             return {"teams": {"nodes": [team_node()]}}
         if query == ops.Q_TASK_GROUP:
