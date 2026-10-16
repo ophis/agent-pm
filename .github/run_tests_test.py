@@ -86,6 +86,27 @@ class Run(unittest.TestCase):
 
 
 class Discovery(unittest.TestCase):
+    def test_unit_shards_are_deterministic_complete_and_disjoint(self):
+        cases = [unittest.FunctionTestCase(lambda: None, description=str(i)) for i in range(7)]
+        for i, case in enumerate(cases):
+            case.id = lambda i=i: f"example.Case.test_{i}"
+        suites = [
+            list(runner.tests(runner.shard(unittest.TestSuite(reversed(cases)), f"{i}/3")))
+            for i in range(1, 4)
+        ]
+        ids = [test.id() for suite in suites for test in suite]
+        self.assertEqual(sorted(ids), sorted(test.id() for test in cases))
+        self.assertEqual([len(suite) for suite in suites], [3, 2, 2])
+        self.assertEqual([test.id() for test in suites[0]], [cases[i].id() for i in (0, 3, 6)])
+
+    def test_invalid_or_duplicate_unit_shards_fail(self):
+        case = unittest.FunctionTestCase(lambda: None)
+        for value in ("0/1", "2/1", "1/0", "1/2", "1", "1/1/1", "a/1"):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                runner.shard(unittest.TestSuite([case]), value)
+        with self.assertRaises(ValueError):
+            runner.shard(unittest.TestSuite([case, case]), "1/1")
+
     def selection_fixture(self, *, normalized=False):
         root = Path(self.enterContext(tempfile.TemporaryDirectory())).resolve()
         package = "example_" + root.name + "_tests"
