@@ -464,6 +464,7 @@ Integration jobs upload `integration-<run-id>-<attempt>-<job>` artifacts contain
 the discovered IDs, assigned IDs, expected load, Python/tmux versions, runner type, supervised
 exit status and per-test seconds. A failed attempt remains available for diagnosis;
 only complete successful Ubuntu attempts can regenerate the timing table.
+Regeneration requires full scope; upper-only artifacts remain diagnostic samples.
 Each matrix job runs `INTEGRATION_WORKERS` independently supervised workers. Their
 numbered shard directories retain separate logs and timing manifests; the coordinator
 waits for every worker and fails if any worker fails to launch, run or clean up.
@@ -498,15 +499,37 @@ python3 .github/coverage_gate.py /tmp/coverage-data origin/main
 
 ```mermaid
 flowchart LR
+    S[Contract-based path scope] --> U
+    S --> I
+    S --> R[Repository tests when full]
     L[Lint groups] --> CI[Required CI aggregate]
     U[Unit: 2 jobs x 4 processes] --> C[Combine every coverage shard]
     C --> G[85% diff coverage gate]
     G --> CI
     U --> CI
     I[Integration: 8 jobs x 4 processes] --> CI
+    R --> CI
 ```
 Unit shards use sorted test IDs; integration shards use recorded durations. Every ID
 occurs exactly once. Coverage applies to pull requests; `CI` requires every applicable result.
+
+| Change/event | Unit and integration tests | Repository tests |
+|---|---|---|
+| PR touching only `manager/` and/or `linear-orchestrator/`, including their docs/skills | both upper layers | intentionally skipped |
+| PR touching a lower layer, `tests/`, `.github/`, shared config, an unknown path, or an empty diff | all layers, plus shared unit tests | run |
+| push to `main` | all layers, plus shared unit tests | run |
+
+`.github/ci_scope.py` derives project roots from the import-linter `layers` contract and
+their `src` packages. Layers before `agent_pm.delegate` form the upper group; every
+other path selects the full suite. Renames consider both endpoints. `TEST_PROJECTS`
+passes the selected group to discovery. Static lint remains required; `CI` accepts a
+skipped repository job only for the upper-only decision, and rejects failures,
+cancellation or unexpected skips.
+
+```bash
+python3 .github/ci_scope.py --event pull_request --paths manager/skills/manage/SKILL.md
+python3 .github/ci_scope.py --event pull_request --paths session/src/agent_pm/session/cli.py
+```
 
 Measure the whole workflow from its start until every job completes, including
 scheduling, setup and cleanup. Report observed times and flakes; no hard timing gate.

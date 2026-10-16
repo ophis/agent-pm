@@ -19,14 +19,42 @@ env:
   PYTHONDONTWRITEBYTECODE: "1"
 
 jobs:
+  changes:
+    name: Test scope
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      full: ${{ steps.scope.outputs.full }}
+      projects: ${{ steps.scope.outputs.projects }}
+    steps:
+      - name: Check out
+        uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v7.0.0
+        with:
+          python-version: "3.11"
+      - name: Classify changed paths
+        id: scope
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: python3 .github/ci_scope.py --event "$EVENT" --base "$BASE_SHA" --head "$HEAD_SHA" --github-output "$GITHUB_OUTPUT"
+
   lint:
     name: Lint ${{ matrix.group }}
     runs-on: ubuntu-24.04
+    needs: [changes]
+    env:
+      TEST_PROJECTS: ${{ needs.changes.outputs.full == 'false' && needs.changes.outputs.projects || '' }}
     timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
-        group: [style, types, design, repository]
+        group: [style, types, design]
     steps:
       - name: Check out
         uses: actions/checkout@v7.0.1
@@ -42,7 +70,6 @@ jobs:
             style) python3 -m pip install ruff==0.16.9 vulture==2.16 ;;
             types) python3 -m pip install pyright==1.1.414 ;;
             design) python3 -m pip install import-linter=="$IMPORT_LINTER_VERSION" pylint==4.1.3 ;;
-            repository) python3 -m pip install coverage=="$COVERAGE_VERSION" import-linter=="$IMPORT_LINTER_VERSION" ruff==0.16.9 ;;
           esac
       - name: Comment budget
         if: ${{ !cancelled() && matrix.group == 'style' }}
@@ -70,9 +97,6 @@ jobs:
       - name: Protect shipped source
         if: ${{ !cancelled() }}
         run: chmod -R a-w manager/src linear-orchestrator/src delegate/src session/src utils/src
-      - name: Repository integration tests
-        if: ${{ !cancelled() && matrix.group == 'repository' }}
-        run: python3 -X faulthandler .github/run_tests.py 'Repository integration' tests/integration
       - name: Require unchanged checkout
         if: ${{ always() }}
         run: |
@@ -82,14 +106,14 @@ jobs:
             exit 1
           fi
       - name: Integration duration assignment
-        if: ${{ !cancelled() && matrix.group == 'repository' }}
+        if: ${{ !cancelled() && matrix.group == 'style' }}
         run: python3 .github/integration_jobs.py --check
       - name: Install actionlint 1.7.12
-        if: ${{ !cancelled() && matrix.group == 'repository' }}
+        if: ${{ !cancelled() && matrix.group == 'style' }}
         run: |
           curl --fail --location --silent --show-error https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz | tar -xz -C "$RUNNER_TEMP" actionlint
       - name: Actionlint
-        if: ${{ !cancelled() && matrix.group == 'repository' }}
+        if: ${{ !cancelled() && matrix.group == 'style' }}
         run: '"$RUNNER_TEMP/actionlint" -shellcheck= -pyflakes='
       - name: Typos
         if: ${{ !cancelled() && matrix.group == 'style' }}
@@ -97,9 +121,42 @@ jobs:
         with:
           config: pyproject.toml
 
+  repository:
+    name: Repository tests
+    needs: [changes]
+    if: ${{ needs.changes.outputs.full == 'true' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Check out
+        uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v7.0.0
+        with:
+          python-version: "3.11"
+      - name: Install pinned test dependencies
+        run: python3 -m pip install coverage=="$COVERAGE_VERSION" import-linter=="$IMPORT_LINTER_VERSION" ruff==0.16.9
+      - name: Protect shipped source
+        run: chmod -R a-w manager/src linear-orchestrator/src delegate/src session/src utils/src
+      - name: Repository integration tests
+        run: python3 -X faulthandler .github/run_tests.py 'Repository integration' tests/integration
+      - name: Require unchanged checkout
+        if: ${{ always() }}
+        run: |
+          status=$(git -c core.fsmonitor=false -c core.hooksPath=/dev/null status --porcelain)
+          if [[ -n "$status" ]]; then
+            printf '%s\n' "$status"
+            exit 1
+          fi
+
   unit:
     name: Unit ${{ matrix.job }}
     runs-on: ubuntu-24.04
+    needs: [changes]
+    env:
+      TEST_PROJECTS: ${{ needs.changes.outputs.full == 'false' && needs.changes.outputs.projects || '' }}
     timeout-minutes: 15
     strategy:
       fail-fast: false
@@ -148,7 +205,7 @@ jobs:
 
   coverage:
     name: Coverage
-    needs: [unit]
+    needs: [changes, unit]
     if: ${{ github.event_name == 'pull_request' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -193,9 +250,11 @@ jobs:
   integration:
     name: Integration ${{ matrix.job }}
     runs-on: ubuntu-24.04
+    needs: [changes]
     timeout-minutes: 15
     env:
       INTEGRATION_WORKERS: "4"
+      TEST_PROJECTS: ${{ needs.changes.outputs.full == 'false' && needs.changes.outputs.projects || '' }}
     strategy:
       fail-fast: false
       matrix:
@@ -246,18 +305,20 @@ jobs:
 
   ci:
     name: CI
-    needs: [lint, unit, coverage, integration]
+    needs: [changes, lint, repository, unit, coverage, integration]
     if: ${{ always() }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
+      - name: Check out
+        uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v7.0.0
+        with:
+          python-version: "3.11"
       - name: Require every check and test job
-        run: |
-          test '${{ needs.lint.result }}' = success
-          test '${{ needs.unit.result }}' = success
-          if [[ '${{ github.event_name }}' = pull_request ]]; then
-            test '${{ needs.coverage.result }}' = success
-          else
-            test '${{ needs.coverage.result }}' = skipped
-          fi
-          test '${{ needs.integration.result }}' = success
+        env:
+          CI_NEEDS: ${{ toJSON(needs) }}
+        run: python3 .github/ci_scope.py --gate

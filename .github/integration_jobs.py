@@ -12,6 +12,7 @@ import unittest
 from collections import Counter
 from pathlib import Path
 
+import ci_scope
 import run_tests
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -115,7 +116,7 @@ def check(root, labels, durations, workflow):
     matrix = workflow_shards(workflow)
     if set(matrix) != set(labels):
         raise ValueError("workflow matrix.job differs from the duration shards")
-    found = list(tests(run_tests.discover(root, directories(root))))
+    found = list(tests(run_tests.discover(root, ci_scope.selected(root, directories(root)))))
     split = assign(found, labels, durations)
     validate(found, split, matrix)
     return split

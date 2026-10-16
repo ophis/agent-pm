@@ -15,6 +15,7 @@ import unittest
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
+import ci_scope
 import isolation
 
 from utils.tests.sandbox import clean_env, kill_processes, leaked_processes, stop_tmux_servers
@@ -435,7 +436,12 @@ def main(argv):
     if len(directories) == 3 and directories[:2] == ["--unit", "--shard"]:
         part = directories[2]
         directories = ["--unit"]
-    suite, _ = select(root, unit_directories(root) if directories == ["--unit"] else directories)
+    suite, _ = select(
+        root,
+        ci_scope.selected(root, unit_directories(root))
+        if directories == ["--unit"]
+        else directories,
+    )
     if part is not None:
         suite = shard(suite, part)
     code = run(suite, title)
