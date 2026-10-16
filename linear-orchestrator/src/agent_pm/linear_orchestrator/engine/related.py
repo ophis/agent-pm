@@ -6,6 +6,7 @@ import json
 import re
 
 from agent_pm.linear_orchestrator.engine import inputs, issues, ops
+from agent_pm.linear_orchestrator.engine.config import TASKS
 from agent_pm.linear_orchestrator.engine.types import (
     ISSUE_ID,
     Found,
@@ -13,6 +14,7 @@ from agent_pm.linear_orchestrator.engine.types import (
     LinearError,
     Ref,
     Related,
+    State,
 )
 from agent_pm.utils import SHORT, err_text
 
@@ -69,14 +71,21 @@ Q_SEARCH = f"query($t: String!, $f: IssueFilter) {{ {_FOUND} }}"
 Q_SEARCH_IDS = f"query($t: String!, $f: IssueFilter, $n: IssueFilter) {{ {_FOUND} {_NAMED} }}"
 Q_IDS = f"query($n: IssueFilter) {{ {_NAMED} }}"
 Q_UPSTREAM = "query($i: String!) { issue(id: $i) { identifier description } }"
-GROUP_BY_STATE = {"done": 0, "in_review": 1, "in_progress": 2, "todo": 3, "canceled": 5}
-GROUP_BY_TYPE = {"completed": 0, "started": 2, "unstarted": 3, "canceled": 5}
-CANCELED = 5
+DONE, IN_REVIEW, IN_PROGRESS, TODO, BACKLOG, CANCELED = range(6)
+GROUP_BY_STATE = {
+    State.DONE: DONE,
+    State.IN_REVIEW: IN_REVIEW,
+    State.IN_PROGRESS: IN_PROGRESS,
+    State.TODO: TODO,
+    State.CANCELED: CANCELED,
+}
+GROUP_BY_TYPE = {"completed": DONE, "started": IN_PROGRESS, "unstarted": TODO, "canceled": CANCELED}
+PREFIX = re.compile(rf"^(?:{'|'.join(sorted(t.prefix for t in TASKS.values() if t.prefix))}): ")
 
 
 def keywords(title) -> list[str]:
-    # a role's title prefix (`ENG: `, `PRD: `) is on every issue of its kind
-    text = re.sub(ISSUE_ID, " ", re.sub(r"^[A-Z][A-Z0-9]*: ", "", title))
+    # a task's title prefix (`ENG: `, `PRD: `) is on every issue of its kind
+    text = re.sub(ISSUE_ID, " ", PREFIX.sub("", title))
     words = []
     for w in re.findall(r"\w+", text.lower()):
         if len(w) > 1 and not w.isdigit() and w not in STOPWORDS and w not in words:
@@ -125,7 +134,7 @@ def _chain(gql, issue):
 def _found(n, states):
     st, comments = n["state"], n["comments"]["nodes"]
     by_id = {states[k]: g for k, g in GROUP_BY_STATE.items()}
-    group = by_id.get(st["id"], GROUP_BY_TYPE.get(st["type"], 4))
+    group = by_id.get(st["id"], GROUP_BY_TYPE.get(st["type"], BACKLOG))
     return Found(
         n["identifier"],
         n["title"],
@@ -150,7 +159,8 @@ def _doc_refs(run, docs, words, names, excluded):
     for d in dict.fromkeys(x.rstrip("/") for x in docs.dirs.values()):
         for name in inputs.listing(run, docs, d) or []:
             owner = _owner(name, names, excluded)
-            if owner is not None and (owner or any(w in name.lower() for w in words)):
+            tokens = re.findall(r"\w+", name.lower())
+            if owner is not None and (owner or any(t.startswith(tuple(words)) for t in tokens)):
                 path = f"{d}/{name}"
                 refs.append(Ref(path, inputs.doc_url(docs, path), owner or None))
     return refs
@@ -160,7 +170,8 @@ def _pr_refs(run, target, words, names, excluded):
     res = run(
         [
             *("gh", "search", "prs", "--merged", "--repo", f"{target.owner}/{target.name}"),
-            *("--limit", "5", "--json", "number,title,url", "--", " OR ".join(words)),
+            *("--limit", "5", "--json", "number,title,url", "--"),
+            *[t for w in words for t in ("OR", w)][1:],
         ],
         SHORT,
     )

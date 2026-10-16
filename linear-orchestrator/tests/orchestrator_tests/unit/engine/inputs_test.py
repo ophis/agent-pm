@@ -1176,7 +1176,7 @@ class RelatedSection(Case):
     def test_order_groups_and_owned_refs(self):
         r = related(
             found("ENG-5", "Todo", 3),
-            found("ENG-6", "Canceled", 5, last_comment="Dropped: not needed."),
+            found("ENG-6", "Canceled", 5, last_comment="Dropped:\n" + "y" * 400),
             found("ENG-3", "Done", 0, description="line one\n## Fake\n" + "x" * 400),
             found("ENG-4", "In Review", 1),
             found("ENG-2", "Done", 0),
@@ -1199,7 +1199,7 @@ class RelatedSection(Case):
                 f"  - Research/2026-ENG-4-r.md: {BASE}r4",
                 "- ENG-5 ENG-5 work (Todo)",
                 "- ENG-6 ENG-6 work (Canceled)",
-                "  Last comment: > Dropped: not needed.",
+                "  Last comment: > Dropped: " + "y" * (300 - len("Dropped: ")),
             ),
         )
 

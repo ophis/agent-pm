@@ -37,6 +37,7 @@ from orchestrator_tests.router_fixtures import (
     CONFIG,
     DEEP,
     DESIGN_LISTING,
+    DOCS_SEARCH,
     DR,
     EAST,
     ENG_RUN,
@@ -65,6 +66,7 @@ from orchestrator_tests.router_fixtures import (
     ago,
     issue,
     op,
+    pr_search,
     who,
 )
 from orchestrator_tests.unit.board_ids import HEADER, TASK_GROUP, TEAM
@@ -203,14 +205,6 @@ class ClaimLinear(FakeLinear):
 
 def searched(*words):
     return ("search", HARNESS, {"t": " ".join(words), "f": {"team": {"id": {"eq": TEAM}}}})
-
-
-def pr_search(*words, repo="ophis/agent-pm"):
-    argv = ("gh", "search", "prs", "--merged", "--repo", repo, "--limit", "5")
-    return ((*argv, "--json", "number,title,url", "--", " OR ".join(words)), SHORT)
-
-
-DOCS_SEARCH = [(LISTING, SHORT), (DESIGN_LISTING, SHORT)]
 
 
 def two():
@@ -2540,13 +2534,17 @@ class RelatedWork(OuterBase):
         self.assertEqual([c[0] for c in self.gql.calls], ["issue", "search"])
 
     def test_a_failed_gh_search_logs_related_skip_and_runs(self):
-        self.run_.table = [(("gh", "search", "prs"), ok(code=1, stderr="gh: boom")), *ENG_RUN]
-        self.assertEqual(self.outer(), 0)
-        self.assertEqual(self.input(), INPUT)
-        self.assertEqual(
-            self.said(), ["related-skip TASK-7 reason=InputError: gh search prs: gh: boom"]
-        )
-        self.assertEqual(len(self.api.detached), 1)
+        for res, reason in (
+            (ok(code=1, stderr="gh: boom"), "InputError: gh search prs: gh: boom"),
+            (OSError("gh missing"), "OSError: gh missing"),
+        ):
+            with self.subTest(reason=reason):
+                if os.path.exists(self.runs):  # each case a first claim
+                    os.unlink(self.runs)
+                self.run_.table = [(("gh", "search", "prs"), res), *ENG_RUN]
+                self.assertEqual(self.outer(), 0)
+                self.assertEqual(self.input(), INPUT)
+                self.assertEqual(self.said(), [f"related-skip TASK-7 reason={reason}"])
 
 
 class RunStartRecords(Base):

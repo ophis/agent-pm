@@ -105,8 +105,9 @@ class Keywords(Case):
     def test_repeats_digits_and_single_letters_drop(self):
         self.assertEqual(related.keywords("Queue queue 59 x 查重搜索"), ["queue", "查重搜索"])
 
-    def test_a_role_prefix_drops(self):
+    def test_a_task_prefix_drops_another_word_and_colon_stays(self):
         self.assertEqual(related.keywords("PRD: Queue survey"), ["queue", "survey"])
+        self.assertEqual(related.keywords("API: rate limits"), ["api", "rate", "limits"])
 
     def test_only_stopwords_is_empty(self):
         self.assertEqual(related.keywords("The and of a"), [])
@@ -248,6 +249,18 @@ class Search(Case):
         )
         self.assertEqual(gh.calls, [(RESEARCH, SHORT), (DESIGN, SHORT)])
 
+    def test_docs_match_whole_name_tokens_by_prefix(self):
+        gh = run(
+            research=listing(
+                "2026-09-01-decision-log.md", "2026-09-02-ci-cache.md", "2026-09-03-CIs.md"
+            )
+        )
+        got = search(issue(title="Fix CI"), Gql(), gh)
+        self.assertEqual(
+            [r.label for r in got.refs],
+            ["Research/2026-09-02-ci-cache.md", "Research/2026-09-03-CIs.md"],
+        )
+
     def test_each_docs_directory_is_listed_once(self):
         cfg = SimpleNamespace(
             team=TEAM,
@@ -300,7 +313,9 @@ class Search(Case):
                     "--json",
                     "number,title,url",
                     "--",
-                    "queue OR backends",
+                    "queue",
+                    "OR",
+                    "backends",
                 ),
                 SHORT,
             ),

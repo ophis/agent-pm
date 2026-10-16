@@ -276,7 +276,7 @@ def _build(issue, sources, humans, target, docs):
     )
 
 
-def _found(f):
+def _found_entry(f):
     return "\n".join(
         [
             f"- {f.identifier} {one_line(f.title)} ({one_line(f.state)})",
@@ -293,14 +293,17 @@ def _ref(ref, indent=""):
 
 def _related(related):
     """Issues by group, each followed by its refs; unowned refs after the Done group."""
-    found = sorted(related.issues if related else (), key=lambda f: f.group)
+    found = sorted(related.issues, key=lambda f: f.group)
     owners = {f.identifier for f in found}
-    loose = [_ref(r) for r in (related.refs if related else ()) if r.owner not in owners]
+    loose = [_ref(r) for r in related.refs if r.owner not in owners]
     entries = []
     for f in found:
-        if f.group > 0:
+        if f.group > 0:  # past the Done group
             entries, loose = entries + loose, []
-        entries += [_found(f), *(_ref(r, "  ") for r in related.refs if r.owner == f.identifier)]
+        entries += [
+            _found_entry(f),
+            *(_ref(r, "  ") for r in related.refs if r.owner == f.identifier),
+        ]
     entries += loose
     while entries:
         text = _section("Related work", RELATED_LEAD, "\n".join(entries))
@@ -312,4 +315,4 @@ def _related(related):
 
 def render(issue, role, sources, *, humans, target, docs, related: Related | None = None) -> str:
     layout = {"research": _research, "design": _design, "build": _build}[TASKS[role].kind]
-    return _join([layout(issue, sources, humans, target, docs), _related(related)])
+    return _join([layout(issue, sources, humans, target, docs), _related(related or Related())])

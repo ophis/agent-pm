@@ -106,11 +106,11 @@ class Run(TmuxFlow):
         self.wait_end(SID, ID, self.ends, self.role)
 
     def wrote(self, since=0):
-        """The write-back's requests since: all but the launch's issue read."""
+        """The write-back's requests since: all but the launch's issue read and related search."""
         return [
             (r.op, r.account, r.variables, r.result)
             for r in self.requests()[since:]
-            if r.op != "issues.Q_ISSUE"
+            if r.op != "issues.Q_ISSUE" and not str(r.op).startswith("related.")
         ]
 
     def session(self, *lines, since=0):

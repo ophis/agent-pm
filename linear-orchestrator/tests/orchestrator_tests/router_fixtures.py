@@ -26,6 +26,7 @@ from agent_pm.linear_orchestrator.engine import (
 )
 from agent_pm.linear_orchestrator.engine.types import LinearError, Spec
 from agent_pm.session import SessionStatus
+from agent_pm.utils import SHORT
 from orchestrator_tests.unit import run_fixtures
 from orchestrator_tests.unit.board_ids import ACCOUNTS, HEADER, TEAM, team_node
 from orchestrator_tests.unit.board_ids import STATES as IDS_BY_KEY
@@ -176,6 +177,14 @@ PRS = ("gh", "search", "prs")
 
 # a first claim's related search: no docs, no PRs
 SEARCHED = [(LISTING, ok("[]")), (DESIGN_LISTING, ok("[]")), (PRS, ok("[]"))]
+
+
+DOCS_SEARCH = [(LISTING, SHORT), (DESIGN_LISTING, SHORT)]
+
+
+def pr_search(*words, repo="ophis/agent-pm"):
+    argv = (*PRS, "--merged", "--repo", repo, "--limit", "5", "--json", "number,title,url", "--")
+    return ((*argv, *[t for w in words for t in ("OR", w)][1:]), SHORT)
 
 
 ENG_RUN = [

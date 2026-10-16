@@ -17,6 +17,7 @@ from agent_pm.linear_orchestrator.engine import (
     ops,
     promote,
     prune,
+    related,
     run_comments,
     types,
     writeback,
@@ -467,6 +468,7 @@ class FixtureOperations(Case):
                 ("writeback", writeback),
                 ("promote", promote),
                 ("prune", prune),
+                ("related", related),
             )
             for key, value in vars(module).items()
             if key[:2] in ("Q_", "M_") and isinstance(value, str)

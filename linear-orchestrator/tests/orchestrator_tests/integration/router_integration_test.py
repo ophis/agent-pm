@@ -59,6 +59,7 @@ HARNESS_OPS = {
     "router.Q_RECHECK",
     "linear.M_STATE",
     "issues.Q_ISSUE",
+    "related.Q_SEARCH",
     "sessions.M_UPDATE",
     "linear.M_COMMENT_ID",
     "linear.Q_COMMENT",

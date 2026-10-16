@@ -5,14 +5,15 @@ import os
 
 from agent_pm.utils import GUARD, SHORT
 from orchestrator_tests.router_fixtures import (
-    DESIGN_LISTING,
+    DOCS_SEARCH,
     ENG_RUN,
     INPUT,
-    LISTING,
     LS_REMOTE,
     OUTER,
     ROLE,
+    SEARCHED,
     OuterBase,
+    pr_search,
 )
 from orchestrator_tests.unit.run_fixtures import (
     ID,
@@ -40,18 +41,21 @@ class RunLaunching(OuterBase):
         self.assertEqual(self.outer(), 0)
         self.assertEqual(self.input(), INPUT.replace("Repo: Ophis/Agent-PM", f"Repo: {clone}"))
         self.assertEqual(
-            self.run_.calls, [(("gh", "api", "repos/ophis/agent-pm"), SHORT), (LS_REMOTE, SHORT)]
+            self.run_.calls,
+            [
+                (("gh", "api", "repos/ophis/agent-pm"), SHORT),
+                (LS_REMOTE, SHORT),
+                *DOCS_SEARCH,
+                pr_search("session", "registry", repo="Ophis/Agent-PM"),
+            ],
         )
         self.assertEqual(self.err, "")
 
     def test_research_and_design_name_the_local_clone(self):
         clone = self.local_clone()
-        for who_, role, listing in (
-            (RESEARCHER, "researcher", LISTING),
-            (ROLE["pm"], "pm", DESIGN_LISTING),
-        ):
+        for who_, role in ((RESEARCHER, "researcher"), (ROLE["pm"], "pm")):
             with self.subTest(who=who_):
-                self.run_.table = [(listing, ok("[]"))]
+                self.run_.table = SEARCHED
                 self.assertEqual(self.outer(assignee=who_), 0)
                 self.assertEqual(self.detached(role).input.splitlines()[1], f"Repo: {clone}")
                 self.assertIsNone(json.loads(self.raw_runs().splitlines()[-1])["target"])
