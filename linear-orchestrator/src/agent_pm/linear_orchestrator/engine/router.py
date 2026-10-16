@@ -14,8 +14,8 @@ agent-pm-linear router [--now] [--dry-run] [--issue ID] [--tui [--display D] [--
               failed, 2 a config error of the issue, 3 transient.
 --dry-run     With either: print the plan (a tick's with its usage checks); change nothing, start nothing; exit 0.
 --tui         With either: each run it starts or resumes is attended (tui mode), shown at D (opaque, its format:
-              agent-pm-session --help; none: the caller's place), its events written to FILE, else
-              $AGENT_PM_EVENTS. Exits 2 before any Linear call without either, or when the Delegate refuses D or
+              agent-pm-session --help; no D: the caller's place; none: started hidden, passed on as
+              given), its events written to FILE, else $AGENT_PM_EVENTS. Exits 2 before any Linear call without either, or when the Delegate refuses D or
               FILE (no place to show the TUI, a D its Host cannot use, FILE not writable). A run it starts or
               resumes prints its Record line on stdout, its attach commands on stderr. launchd
               never passes it: a tick resumes a run headless.
