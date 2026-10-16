@@ -1,5 +1,5 @@
-"""Tmux, tmux inside our program: every tmux call through proc (subprocess.run's signature) and
-sleep, production one Tmux(), tests a fake proc. start and detach hand a launch over to a new
+"""Tmux, tmux inside our program: every tmux call through runner (subprocess.run's signature) and
+sleep, production one Tmux(), tests a fake runner. start and detach hand a launch over to a new
 session's pane (EXEC).
 """
 
@@ -398,8 +398,8 @@ def _decorations(session: str, events: str | None, *, status_line: bool) -> list
 class Tmux:
     PAUSE = PAUSE
 
-    def __init__(self, proc=subprocess.run, *, sleep=time.sleep) -> None:
-        self.proc, self.sleep = proc, sleep
+    def __init__(self, runner=subprocess.run, *, sleep=time.sleep) -> None:
+        self.runner, self.sleep = runner, sleep
 
     def checked(self, args: list[str], stdin: str | None = None) -> subprocess.CompletedProcess:
         res = self.run(args, stdin)
@@ -410,8 +410,8 @@ class Tmux:
     def run(self, args: list[str], stdin: str | None = None) -> subprocess.CompletedProcess:
         try:
             if stdin is not None:
-                return self.proc(["tmux", *args], capture_output=True, text=True, input=stdin)
-            return self.proc(
+                return self.runner(["tmux", *args], capture_output=True, text=True, input=stdin)
+            return self.runner(
                 ["tmux", *args], capture_output=True, text=True, stdin=subprocess.DEVNULL
             )
         except OSError as e:
@@ -649,7 +649,7 @@ class Tmux:
 
     def _mark_tmux(self, argv: list[str]) -> str:
         try:
-            res = self.proc(
+            res = self.runner(
                 argv,
                 capture_output=True,
                 text=True,

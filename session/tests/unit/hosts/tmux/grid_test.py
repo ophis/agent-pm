@@ -66,7 +66,7 @@ class GridOpenTest(Case):
 
     def setUp(self):
         self.tile = unittest.mock.Mock(
-            side_effect=lambda window, *, per_column, proc: proc.calls.append(
+            side_effect=lambda window, *, per_column, runner: runner.calls.append(
                 ["tile", window, per_column]
             )
         )
@@ -103,7 +103,7 @@ class GridOpenTest(Case):
                 "s",
                 retile=retile,
                 **kw,
-                tile_window=functools.partial(self.tile, proc=fake),
+                tile_window=functools.partial(self.tile, runner=fake),
                 command=command,
             )
 

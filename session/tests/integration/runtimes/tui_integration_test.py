@@ -85,7 +85,7 @@ class PollCostTest(Live):
             commands.append(argv[1])
             return subprocess.run(argv, **kwargs)
 
-        host = TmuxHost("tmux", tmux=Tmux(proc=counted))
+        host = TmuxHost("tmux", tmux=Tmux(runner=counted))
         scenario = self.adapters["fake"]["scenario"]
         os.makedirs(self.workdir)
         with open(scenario, "w") as f:

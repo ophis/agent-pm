@@ -385,7 +385,7 @@ class TmuxHost(Host, Displayable):
             raise ConfigError(f"unknown key {extra[0]!r} in [hosts.{name}]")
         self.tmux = Tmux() if tmux is None else tmux
         self.grid = Grid(self.tmux)
-        self.placement = Placement(tmux=self.tmux, grid=self.grid, iterm=Iterm(self.tmux.proc))
+        self.placement = Placement(tmux=self.tmux, grid=self.grid, iterm=Iterm(self.tmux.runner))
 
     @classmethod
     def fold(cls, opener, split, split_from) -> Display:

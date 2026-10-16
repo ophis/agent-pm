@@ -85,7 +85,7 @@ class ClassTest(Case):
         self.assertEqual((host.name, host.settings), ("tmux", {"status_line": True}))
         self.assertIsInstance(host.tmux, Tmux)
         self.assertEqual(
-            (f"{host.tmux.proc.__module__}.{host.tmux.proc.__name__}", host.tmux.sleep),
+            (f"{host.tmux.runner.__module__}.{host.tmux.runner.__name__}", host.tmux.sleep),
             ("subprocess.run", time.sleep),
         )
 
