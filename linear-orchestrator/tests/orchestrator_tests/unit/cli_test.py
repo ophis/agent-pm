@@ -11,7 +11,7 @@ from pathlib import Path
 from unittest import mock
 
 from agent_pm.linear_orchestrator import cli
-from agent_pm.linear_orchestrator.engine import runs
+from agent_pm.linear_orchestrator.engine import router, runs
 from agent_pm.utils import SID_ENV, Record, Status
 from orchestrator_tests.case import REPO, Case
 from orchestrator_tests.linear_run_case import SID, ReadyDelegate, RunCase
@@ -21,6 +21,129 @@ from delegate.tests.fakes.delegate import FakeDelegate
 
 
 class Commands(Case):
+    def test_every_help_surface_is_safe_and_explains_an_invocation(self):
+        commands = (
+            "",
+            "router",
+            "promote",
+            "prune",
+            "status",
+            "show",
+            "hide",
+            "close",
+            "attach-command",
+            "resume",
+            "content",
+            "writeback",
+        )
+        for command in commands:
+            for flag in ("--help", "-h"):
+                with self.subTest(command=command, flag=flag):
+                    output, errors = io.StringIO(), io.StringIO()
+                    with (
+                        redirect_stdout(output),
+                        redirect_stderr(errors),
+                        mock.patch.dict(os.environ, {"AGENT_PM_AGENT_SESSION": "1"}),
+                        mock.patch("sys.stdin.read", side_effect=AssertionError("read stdin")),
+                        mock.patch("builtins.open", side_effect=AssertionError("opened a file")),
+                    ):
+                        try:
+                            result = cli.main([*([command] if command else []), flag])
+                        except SystemExit as error:
+                            result = error.code
+                    self.assertEqual((result, errors.getvalue()), (0, ""))
+                    text = output.getvalue()
+                    self.assertIn("agent-pm-linear", text)
+                    self.assertIn("Example", text)
+                    self.assertIn("agent-pm-linear --help", text)
+
+    def test_run_control_help_explains_selection_effects_and_recovery(self):
+        expected = {
+            "status": ("Status", "read-only"),
+            "show": ("saved display", "attach-command"),
+            "hide": ("continues", "show"),
+            "close": ("Terminate", "resume"),
+            "attach-command": ("one command per", "printed command"),
+            "resume": ("exactly one", "--input", "issue board", "usage gate"),
+            "content": ("exactly one", "stdout"),
+        }
+        for command, phrases in expected.items():
+            with self.subTest(command=command):
+                output = io.StringIO()
+                with redirect_stdout(output), self.assertRaises(SystemExit):
+                    cli.main([command, "--help"])
+                text = output.getvalue()
+                for phrase in (*phrases, "Record", "ISSUE", "configured", "Exit", "duplicate"):
+                    self.assertIn(phrase, text)
+
+    def test_maintenance_and_automation_help_retains_operational_contracts(self):
+        expected = {
+            "router": (
+                "--display",
+                "--events",
+                "--issue and --now",
+                "at most once",
+                "repeat",
+                "Keychain",
+                "read",
+                "claim",
+                "AGENT_PM_EVENTS",
+                "TUI (text user interface)",
+            ),
+            "promote": ("10-minute", "Todo", "Done", "prune", "read", "repeat", "Keychain"),
+            "prune": ("24 hours", "7 days", "uncommitted", "read", "repeat", "Keychain"),
+            "writeback": ("Automation", "one DelegateEvent", "--issue", "--workdir", "Exit"),
+        }
+        for command, phrases in expected.items():
+            with self.subTest(command=command):
+                output = io.StringIO()
+                with redirect_stdout(output):
+                    try:
+                        cli.main([command, "--help"])
+                    except SystemExit as error:
+                        self.assertEqual(error.code, 0)
+                text = output.getvalue()
+                for phrase in phrases:
+                    self.assertIn(phrase, text)
+
+    def test_router_examples_and_repetition_match_real_options(self):
+        fixtures = (
+            (["--issue", "TASK-1", "--dry-run"], {"issue": "TASK-1", "dry": True}),
+            (
+                [
+                    "--issue",
+                    "TASK-1",
+                    "--tui",
+                    "--display",
+                    "none",
+                    "--events",
+                    "/tmp/demo-events.jsonl",
+                ],
+                {
+                    "issue": "TASK-1",
+                    "tui": True,
+                    "display": "none",
+                    "events": "/tmp/demo-events.jsonl",
+                },
+            ),
+            (["--brake", "engineer"], {"brake": "engineer"}),
+            (["--now", "--now", "--dry-run", "--dry-run"], {"now": True, "dry": True}),
+        )
+        for arguments, expected in fixtures:
+            with self.subTest(arguments=arguments):
+                actual = router.options(arguments)
+                self.assertIsNotNone(actual)
+                for key, value in expected.items():
+                    self.assertEqual(actual[key], value)
+        for arguments in (
+            ["--issue", "TASK-1", "--now"],
+            ["--events", "/tmp/demo-events.jsonl"],
+            ["--issue", "TASK-1", "--issue", "TASK-2"],
+            ["--brake", "engineer", "--dry-run"],
+        ):
+            with self.subTest(arguments=arguments):
+                self.assertIsNone(router.options(arguments))
+
     def test_resume_input_is_refused_before_loading_config(self):
         result, output, errors = _call(["resume", "TASK-1", "--input", "answer"])
         self.assertEqual((result, output), (2, ""))
@@ -154,6 +277,28 @@ def _call(arguments, *, stdin="", tty=False):
 
 
 class Queries(RunCase):
+    def test_attach_command_example_supports_ordered_batch_records(self):
+        _, first = self.start("TASK-1")
+        _, second = self.start("TASK-2")
+        with mock.patch.object(
+            ReadyDelegate,
+            "attach_command",
+            lambda view: f"attach {view.workdir}",
+        ):
+            for arguments, stdin, selected in (
+                (["attach-command", "TASK-1"], "", (first,)),
+                (["attach-command", "TASK-2", "TASK-1"], "", (second, first)),
+                (["attach-command"], second.to_line() + "\n" + first.to_line(), (second, first)),
+            ):
+                with self.subTest(arguments=arguments, stdin=stdin):
+                    result, output, errors = _call(arguments, stdin=stdin)
+                    self.assertEqual((result, errors), (0, ""))
+                    self.assertEqual(
+                        output.splitlines(), [f"attach {record.workdir}" for record in selected]
+                    )
+        self.assertTrue(FakeDelegate.attach(first.workdir).alive())
+        self.assertTrue(FakeDelegate.attach(second.workdir).alive())
+
     def test_resume_checks_and_removes_the_environment_sid_before_starting(self):
         _, record = self.start()
         for supplied in (None, record.sid, "00000000-0000-4000-8000-000000000000"):

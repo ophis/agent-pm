@@ -1,39 +1,73 @@
-"""Router: the Linear orchestrator's scheduler. Decides which agent run starts or resumes among
-the team's issues assigned to role accounts, then only triggers it: outer prepares its input, writes
-its runs.jsonl row and detaches its LinearRun, whose Delegate's harness calls `agent-pm-linear
-writeback` on each event; the router exits while the run goes on.
+"""Claim or resume issue work with one scheduler tick or an explicit issue.
 
-agent-pm-linear router [--now] [--dry-run] [--issue ID] [--tui [--display D] [--events FILE]]
-    | --brake ROLE
+Usage: agent-pm-linear router [--now] [--dry-run] [--issue ID]
+                             [--tui [--display D] [--events FILE]]
+       agent-pm-linear router --brake ROLE
 
-(no mode)     One scheduled tick: the hours check, then at most one agent run. Exits 1 a config
-              error or Linear unavailable (config-error, linear-error: once a day), else 0.
-  --now       Skip the 01:00-06:59 hours check.
---issue ID    Start or resume only this issue, without the hours, max_runs and usage gates. Exits 1
-              a config error, Linear unavailable or agent runs unknown; 2 the router is busy,
-              the issue has a live agent run or cannot be claimed; 0 its ended run's outcome
-              written back instead, else the outer's
-              code: 0 detached or bounced, 1 the launch failed, 2 a config error of the issue,
-              3 transient.
---dry-run     With either: print the plan (a tick's with its usage checks); change nothing, start
-              nothing; exit 0.
---tui         With either: each run it starts or resumes is attended (tui mode), shown at D (opaque,
-              its format: agent-pm-session --help; no D: the caller's place; none: started hidden,
-              passed on as given), its events written to FILE, else $AGENT_PM_EVENTS. Exits 2 before
-              any Linear call without either, or when the Delegate refuses D or FILE (no place to
-              show the TUI, a D its Host cannot use, FILE not writable). A run it starts or resumes
-              prints its Record line on stdout, its attach commands on stderr. launchd never passes
-              it: a tick resumes a run headless.
---brake ROLE  Print ROLE's client usage; exit 0 if a deep-research round may start, 1 if not or
-              unknown, 2 no such role.
---help        Print this; exit 0. Bad arguments exit 2.
+Arguments and options:
+  (no mode)     One scheduled tick: local 01:00-06:59 hours, role max_runs and
+                usage gates; starts at most one run assigned to a role account.
+  --now         Skip the tick's hours check.
+  --issue ID    Only this issue identifier, e.g. TASK-1; bypass hours, max_runs
+                and usage gates. --issue and --now cannot be combined.
+  --dry-run     Print the plan without claiming issues or launching work;
+                a tick still performs usage checks. Not an offline preview:
+                read configuration, run inventory, credentials and Linear data.
+  --tui         Start/resume attended in a TUI (text user interface). Default:
+                headless; launchd never supplies this flag.
+  --display D   Requires --tui. Passed unchanged to the configured Delegate.
+                Default: caller's place; none: start hidden. Host syntax:
+                agent-pm-session --help
+  --events FILE Requires --tui; destination for run events. Default:
+                AGENT_PM_EVENTS; one of the two is required for --tui.
+                Relative paths become absolute from the caller's directory.
+  --brake ROLE  Exclusive mode: print configured ROLE's client usage and check
+                whether a deep-research round may start. Role discovery:
+                agent-pm-delegate run --list
+  -h, --help    Print this help alone; exit 0. Bad arguments exit 2.
+  Valued options occur at most once; boolean flags may repeat with no change.
 
-$AGENT_PM_SID (agent-pm-crew run's), read once and removed, is a new run's session id; a resume of
-another session exits 2, starting nothing (a dry run: 0). Under $AGENT_PM_AGENT_SESSION, a tick and
---issue (not --dry-run, --brake) exit 2, starting nothing.
+Prerequisites and effects:
+  Requires configured team/states/roles, harness/role Keychain credentials,
+  Linear access and the selected Delegate/client executable. See
+  agent-pm-linear --help for configuration, executable lookup and Record schema.
+  Execution can claim/move issues, post comments or write back ended outcomes.
+  A launch prepares input, records a runs.jsonl row and detaches a LinearRun;
+  the router exits while the Delegate harness writes events back to the board.
+  Attended launches print a Record line on stdout and attachment commands on
+  stderr. Other events go to orchestrator.jsonl (src router); an idle tick
+  writes none, a usage-blocked tick only its usage-skip lines. Preview plans
+  print to stdout. Output files belong to the selected Delegate configuration.
 
-Events go to orchestrator.jsonl (event_log.log, src router); an idle tick writes none, a
-usage-blocked one only its usage-skip lines."""
+Exit conditions:
+  Tick: 1 on configuration/Linear failure (logged once a day), otherwise 0.
+  --issue: 1 on config/Linear failure or unknown run inventory; 2 when busy,
+  already live or unclaimable; 0 if an ended outcome was written back. Otherwise
+  launch result: 0 detached/bounced, 1 launch failure, 2 issue config error,
+  3 transient error. --dry-run: 0 for the plan; setup failures still apply.
+  --brake: 0 may start, 1 blocked/unknown usage, 2 unknown role.
+  AGENT_PM_SID is read once and removed: new run identity, or must match a
+  resumed run (mismatch: 2; dry-run: 0). AGENT_PM_AGENT_SESSION blocks tick and
+  --issue execution with 2; --dry-run and --brake remain available.
+  --tui exits 2 before Linear calls if events are absent or its Delegate refuses
+  display/events (no usable placement, invalid Host value or unwritable file).
+
+Examples (configured Linear access, client and a claimable TASK-1):
+  agent-pm-linear router --issue TASK-1 --dry-run
+  Prints the issue plan; no claim or launch.
+  agent-pm-linear router --issue TASK-1 --tui --display none --events /tmp/demo-events.jsonl
+  Starts attended but hidden; writes events and prints the Record.
+  agent-pm-linear router --brake engineer
+  Requires a configured engineer role; prints usage without starting work.
+
+Recovery and next help:
+  Busy: retry later. Live run: agent-pm-linear status TASK-1
+  View recovery: agent-pm-linear attach-command TASK-1
+  Interrupted run: agent-pm-linear resume --help
+  Termination: agent-pm-linear close --help
+  Fix reported configuration/Keychain errors before retrying.
+  Command discovery: agent-pm-linear --help
+"""
 
 import contextlib
 import fcntl

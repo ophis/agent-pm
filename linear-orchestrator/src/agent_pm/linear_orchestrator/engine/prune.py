@@ -58,14 +58,50 @@ Q_FINISHED = (
   pageInfo { hasNextPage endCursor } } }"""
 )
 M_ARCHIVE = "mutation($i: String!) { issueArchive(id: $i) { success } }"
-HELP = """usage: agent-pm-linear prune [--dry-run]
+HELP = """Clean finished issues' recorded runs and files, then archive eligible issues.
 
-One prune tick: close finished issues' recorded runs, delete their agent files, archive them;
-delete the whole workdir of an issue finished 7 days ago.
---dry-run   Change nothing; print what would happen.
---help      Print this; exit 0.
-Events go to orchestrator.jsonl (src prune). A config error or Linear unavailable exits 1, logged once
-a day; a failed step exits 1 after the rest; else 0. Bad arguments exit 2."""
+Usage: agent-pm-linear prune [--dry-run]
+
+Arguments and options:
+  --dry-run   Print the cleanup plan without closing, deleting or archiving.
+              Still read Linear, configuration, local runs/checkouts and Delegate
+              status; this is not an offline or credentials-free preview.
+  -h, --help  Print this help alone; exit 0.
+  --dry-run may repeat with no further effect; other arguments exit 2.
+
+Prerequisites and effects:
+  Requires configured Linear/Delegate settings, Linear access, harness_key
+  Keychain credentials and access to the configured work_dir/local clones.
+  Configuration and executable lookup: agent-pm-linear --help
+  For issues Done/Canceled at least 24 hours (latest transition; unknown age is
+  skipped), close recorded runs and delete agent files, including uncommitted
+  work, through their Delegate. Close/cleanup refusal preserves later steps
+  for a future tick. Unknown run inventory prevents run/file pruning;
+  archival still proceeds.
+  Prune worktree records in each checkout's local clone and remove pushed
+  ISSUE-* branches already contained in origin/branch or origin/default;
+  preserve the default branch and unpushed branches. No fetch is performed.
+  Clones under work_dir/work or temporary directories are skipped.
+  Archive team issues finished at least 24 hours ago and assigned to
+  pm/engineer role accounts; unknown finish times are skipped.
+  After 7 days, remove whole workdirs without agent files, including run records
+  and delivery ledgers, only when their configured Delegate confirms no live
+  run. Unconfigured run kinds are skipped.
+  Events go to orchestrator.jsonl (src prune); preview plans print to stdout.
+  Exit 0: completed; 1: config/Linear failure (logged once a day), unknown
+  inventory or failed step after remaining steps; 2: bad arguments.
+  Promote also runs this cleanup after each tick.
+
+Example (configured Linear access and finished issues):
+  agent-pm-linear prune --dry-run
+  Inspect the plan before running agent-pm-linear prune to delete/archive.
+
+Recovery and next help:
+  Resolve logged close/cleanup refusals or unavailable inventory, then retry
+  the preview. Back up agent work before allowing cleanup.
+  Promotion and its cleanup: agent-pm-linear promote --help
+  Command discovery: agent-pm-linear --help
+"""
 
 
 class Pruner:
