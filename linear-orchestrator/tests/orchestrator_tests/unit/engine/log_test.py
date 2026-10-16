@@ -1,5 +1,6 @@
 """Log boundary behavior."""
 
+import fcntl
 import json
 import os
 import re
@@ -211,6 +212,73 @@ class Log(Logs):
                 before = len(self.text(path).splitlines())
                 self.log("router", "blocked", "TASK-1", once=True, by=["TASK-7"])
                 self.assertEqual(len(self.text(path).splitlines()) - before, written, logs)
+
+
+MIB10 = 10 << 20
+
+
+class Rotation(Logs):
+    def setUp(self):
+        super().setUp()
+        os.makedirs(self.logs)
+        self.line = self.json("router", "claim", "TASK-1")
+
+    def big(self, size=MIB10):
+        with open(self.path, "wb") as f:
+            f.write(b"first\n")
+            f.truncate(size)
+        return self.raw(self.path)
+
+    def raw(self, path):
+        with open(path, "rb") as f:
+            return f.read()
+
+    def log(self, **kw):
+        self.stderr(lambda: log.log("router", "claim", "TASK-1", now=self.now, **kw))
+
+    def test_rotates_at_10_mib(self):
+        with open(self.path + ".1", "w") as f:
+            f.write("older\n")
+        original = self.big()
+        self.log()
+        self.assertEqual(self.raw(self.path + ".1"), original)
+        self.assertEqual(self.text(), self.line)
+
+    def test_below_10_mib_appends(self):
+        original = self.big(MIB10 - 1)
+        self.log()
+        self.assertFalse(os.path.exists(self.path + ".1"))
+        self.assertEqual(self.raw(self.path), original + self.line.encode())
+
+    def test_a_rotation_by_another_process_is_not_repeated(self):
+        original, real = self.big(), fcntl.flock
+
+        def raced(fd, operation):
+            os.replace(self.path, self.path + ".1")
+            with open(self.path, "w") as f:
+                f.write("other\n")
+            real(fd, operation)
+
+        with mock.patch.object(fcntl, "flock", side_effect=raced) as flock:
+            self.log()
+        self.assertEqual(flock.call_count, 1)
+        self.assertEqual(self.raw(self.path + ".1"), original)
+        self.assertEqual(self.text(), "other\n" + self.line)
+
+    def test_a_failed_rotation_still_logs(self):
+        original = self.big()
+        os.mkdir(self.path + ".lock")
+        self.log()
+        self.assertEqual(self.raw(self.path), original + self.line.encode())
+        self.assertFalse(os.path.exists(self.path + ".1"))
+
+    def test_dry_or_no_logs_never_rotates(self):
+        original = self.big()
+        self.log(dry=True)
+        with logs_at(None):
+            self.log()
+        self.assertEqual(self.raw(self.path), original)
+        self.assertEqual(sorted(os.listdir(self.logs)), ["orchestrator.jsonl"])
 
 
 class ApiErrors(Logs):
