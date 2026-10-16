@@ -243,6 +243,7 @@ class Record(Case):
         stamp = body.split(" → ", 1)[1].split(" · ", 1)[0]
         self.assertEqual(body, text(f"no outcome · #1 · {T1} → {stamp} · exit 0"))
         self.assertIsNotNone(datetime.fromisoformat(stamp).utcoffset(), stamp)
+        self.assertNotEqual(stamp, T1)
 
     def test_failed_start_leaves_end_to_create_the_comment(self):
         fake, rec = FakeLinear(fail={"commentCreate": RuntimeError("down")}), self.record()
