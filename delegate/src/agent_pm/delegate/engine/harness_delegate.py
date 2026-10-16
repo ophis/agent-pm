@@ -633,29 +633,31 @@ class HarnessDelegate(Delegate):
         views = self._views(self._read())
         return views[0].attach_command() if views else None
 
+    def _shown_agent(self, state: _State) -> Session | None:
+        agent = self._agent(state)
+        return agent if agent is not None and agent.alive() and agent.showable else None
+
     def _views(self, state: _State) -> list[Session | _HarnessView]:
         """Its live showable views, agent first."""
-        views: list[Session | _HarnessView] = []
-        agent = self._agent(state)
-        if agent is not None and agent.alive() and agent.showable:
-            views.append(agent)
+        agent = self._shown_agent(state)
+        views: list[Session | _HarnessView] = [] if agent is None else [agent]
         process = self._harness(state)
         if process is not None and process.alive() and isinstance(self._harness_host, Showable):
             views.append(_HarnessView(self._harness_host, state.harness_name))
         return views
 
-    def _shown_views(self, state: _State) -> list[Session | _HarnessView]:
-        if views := self._views(state):
-            return views
-        raise NotShowable("delegate has no live showable session")
-
     def show(self) -> str | None:
         state = self._read()
-        commands = [view.show(display=state.display) for view in self._shown_views(state)]
-        return "\n".join(command for command in commands if command) or None
+        agent = self._shown_agent(state)
+        if agent is None:
+            raise NotShowable("delegate has no live showable agent session")
+        return agent.show(display=state.display)
 
     def hide(self) -> None:
-        for view in self._shown_views(self._read()):
+        views = self._views(self._read())
+        if not views:
+            raise NotShowable("delegate has no live showable session")
+        for view in views:
             view.hide()
 
     def close(self) -> None:

@@ -577,17 +577,28 @@ class ViewTest(HarnessCase):
         HarnessSession.reset(showable=True)
         self.settings(harness_host="harness")
 
-    def test_hide_closes_the_agents_and_the_harness_views_show_opened(self):
+    def test_show_opens_only_the_agent_and_hide_closes_the_agent_and_the_harness(self):
         spec = Spec("input", self.work, mode="tui", client="fake", sid=SID)
         self.make(spec=spec).detach()
         view = HarnessDelegate.attach(self.work, session_cls=HarnessSession)
         names = [self.metadata()[key] for key in ("agent_name", "harness_name")]
         view.show()
-        self.assertEqual([name for name, _, _ in ShowingHost.shown], names)
+        self.assertEqual([name for name, _, _ in ShowingHost.shown], names[:1])
         self.assertFalse(view.status().hidden)
         self.assertIsNone(view.hide())
         self.assertEqual(ShowingHost.hidden, names)
         self.assertTrue(view.status().hidden)
+        view.show()
+        self.assertEqual([name for name, _, _ in ShowingHost.shown], names[:1] * 2)
+
+    def test_show_without_a_live_agent_is_not_showable_and_opens_no_harness(self):
+        spec = Spec("input", self.work, mode="tui", client="fake", sid=SID)
+        self.make(spec=spec).detach()
+        view = HarnessDelegate.attach(self.work, session_cls=HarnessSession)
+        HarnessSession.live[self.metadata()["agent_name"]].stop()
+        with self.assertRaisesRegex(NotShowable, "delegate has no live showable agent session"):
+            view.show()
+        self.assertEqual(ShowingHost.shown, [])
 
     def test_hide_after_close_is_not_showable(self):
         spec = Spec("input", self.work, mode="tui", client="fake", sid=SID)
