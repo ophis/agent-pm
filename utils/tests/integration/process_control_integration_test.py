@@ -117,41 +117,34 @@ class ProcessControlTest(Case):
         self.assertFalse(control.live())
         self.assertFalse(os.path.exists(control.path))
 
-    def test_program_environment_has_no_controller_interpreter_additions(self):
-        env = {"ONE": "a b", "TWO": ""}
-        control = ProcessControl.prepare(["/usr/bin/env"], os.getcwd(), env=env)
-        process = subprocess.Popen(
-            control.command(), stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=clean_env()
-        )
-        self.addCleanup(control.remove)
-        self.addCleanup(process.communicate, timeout=10)
-        control.wait_started()
-        out, err = process.communicate(timeout=10)
-        self.assertEqual(dict(line.split("=", 1) for line in out.decode().splitlines()), env)
-        self.assertEqual((process.returncode, err), (0, b""))
-
-    def test_only_requested_controller_environment_replaces_explicit_values(self):
-        control = ProcessControl.prepare(
-            ["/usr/bin/env"],
-            os.getcwd(),
-            env={"ONE": "kept", "INHERITED": "caller", "ABSENT": "caller"},
-            inherit_env=("INHERITED", "ABSENT"),
-        )
-        process = subprocess.Popen(
-            control.command(),
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            env=clean_env({"INHERITED": "controller", "UNRELATED": "excluded"}),
-        )
-        self.addCleanup(control.remove)
-        self.addCleanup(process.communicate, timeout=10)
-        control.wait_started()
-        out, err = process.communicate(timeout=10)
-        self.assertEqual(
-            dict(line.split("=", 1) for line in out.decode().splitlines()),
-            {"ONE": "kept", "INHERITED": "controller"},
-        )
-        self.assertEqual((process.returncode, err), (0, b""))
+    def test_program_environment_is_explicit_with_only_requested_controller_values(self):
+        for env, inherit_env, controller_env, expected in (
+            ({"ONE": "a b", "TWO": ""}, (), None, {"ONE": "a b", "TWO": ""}),
+            (
+                {"ONE": "kept", "INHERITED": "caller", "ABSENT": "caller"},
+                ("INHERITED", "ABSENT"),
+                {"INHERITED": "controller", "UNRELATED": "excluded"},
+                {"ONE": "kept", "INHERITED": "controller"},
+            ),
+        ):
+            with self.subTest(inherit_env=inherit_env):
+                control = ProcessControl.prepare(
+                    ["/usr/bin/env"], os.getcwd(), env=env, inherit_env=inherit_env
+                )
+                process = subprocess.Popen(
+                    control.command(),
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    env=clean_env(controller_env),
+                )
+                self.addCleanup(control.remove)
+                self.addCleanup(process.communicate, timeout=10)
+                control.wait_started()
+                out, err = process.communicate(timeout=10)
+                self.assertEqual(
+                    dict(line.split("=", 1) for line in out.decode().splitlines()), expected
+                )
+                self.assertEqual((process.returncode, err), (0, b""))
 
     def test_exec_failure_is_reported_without_a_startup_timeout(self):
         control = ProcessControl.prepare(["/no-such-task366-program"], os.getcwd())

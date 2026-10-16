@@ -387,8 +387,7 @@
   "utils.tests.integration.process_control_integration_test.ProcessControlTest.test_cancel_before_controller_start_prevents_a_late_program_launch": 0.051821,
   "utils.tests.integration.process_control_integration_test.ProcessControlTest.test_exec_failure_is_reported_without_a_startup_timeout": 0.129563,
   "utils.tests.integration.process_control_integration_test.ProcessControlTest.test_natural_exit_retires_the_generation_without_an_earlier_poll": 0.154544,
-  "utils.tests.integration.process_control_integration_test.ProcessControlTest.test_only_requested_controller_environment_replaces_explicit_values": 0.13436,
-  "utils.tests.integration.process_control_integration_test.ProcessControlTest.test_program_environment_has_no_controller_interpreter_additions": 0.142176,
+  "utils.tests.integration.process_control_integration_test.ProcessControlTest.test_program_environment_is_explicit_with_only_requested_controller_values": 0.276536,
   "utils.tests.integration.process_control_integration_test.ProcessControlTest.test_stop_allows_cleanup_longer_than_five_seconds": 6.165494,
   "utils.tests.integration.process_control_integration_test.ProcessControlTest.test_the_controller_keeps_ownership_after_the_program_leaves_a_descendant": 0.520013
 }
