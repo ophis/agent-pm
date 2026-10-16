@@ -3,7 +3,6 @@ then the hook records appended to its session directory, and from its terminal.
 """
 
 import contextlib
-import fcntl
 import json
 import os
 import signal
@@ -41,13 +40,19 @@ from agent_pm.session.engine.types import (
     TurnFailed,
     Word,
 )
-from agent_pm.session.hosts.base import Displayable, Host, HostProcess, Terminal
+from agent_pm.session.hosts.base import (
+    TUI_DIR,
+    Displayable,
+    Host,
+    HostProcess,
+    Terminal,
+    tui_lock,
+)
 from agent_pm.session.runtimes import tui_hook
 from agent_pm.session.runtimes.base import Runtime, identity_drop
 from agent_pm.utils import CONFIG_NAME as NAME
-from agent_pm.utils import STATE, Display, command_path, json_records, read_regular
+from agent_pm.utils import Display, command_path, inode_lock, json_records, read_regular
 
-TUI_DIR = f"{STATE}/tui"
 WORDS = {
     HookKind.TURN_END: Word.DONE,
     HookKind.TURN_FAILED: Word.DONE,
@@ -199,16 +204,13 @@ class _Store:
     @contextlib.contextmanager
     def _locked(self) -> Iterator[None]:
         self._root()
-        path = os.path.join(self.root, f"{self.name}.lock")
-        try:
-            fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_NONBLOCK, 0o600)
-        except OSError as e:
-            raise SessionError(f"{path}: {e.strerror or e}") from None
-        try:
-            fcntl.flock(fd, fcntl.LOCK_EX)
+        path = tui_lock(self.name)
+        with contextlib.ExitStack() as stack:
+            try:
+                stack.enter_context(inode_lock(path))
+            except OSError as e:
+                raise SessionError(f"{path}: {e.strerror or e}") from None
             yield
-        finally:
-            os.close(fd)
 
     def _root(self) -> None:
         try:

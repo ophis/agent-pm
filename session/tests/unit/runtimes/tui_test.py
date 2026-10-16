@@ -771,6 +771,30 @@ class StartTest(Base):
         self.assertEqual(self.host.processes, {})
         self.assertNoSessionDir()
 
+    def test_the_names_lock_is_the_file_its_path_names_when_held(self):
+        store, path = tui._Store(NAME, host=self.host), os.path.join(self.root, f"{NAME}.lock")
+        real_flock, calls = fcntl.flock, []
+
+        def flock(fd, operation):
+            if not calls:
+                os.unlink(path)
+                open(path, "w").close()
+            calls.append(fd)
+            return real_flock(fd, operation)
+
+        with mock.patch("fcntl.flock", side_effect=flock), store._locked():
+            self.assertTrue(self.locked())
+        self.assertFalse(self.locked())
+
+    def test_the_names_lock_reports_its_own_failure_and_passes_its_bodys(self):
+        store, path = tui._Store(NAME, host=self.host), os.path.join(self.root, f"{NAME}.lock")
+        with self.assertRaises(ValueError), store._locked():
+            raise ValueError("body")
+        os.unlink(path)
+        os.mkdir(path)
+        with self.assertRaisesRegex(SessionError, f"^{re.escape(path)}: "), store._locked():
+            self.fail("locked a directory")
+
     def test_start_returns_its_session_live_at_once_with_its_prepared(self):
         mode = self.start(events=None)
         self.assertIsInstance(mode, tui.TuiRuntime)
