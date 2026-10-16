@@ -24,7 +24,7 @@ def inline_python(repo: str, *, allowed=None) -> list[str]:
             errors = [error] if error else _violations(code)
             if not errors:
                 continue
-            key = code is not None and (path, hashlib.sha256(code.encode()).hexdigest())
+            key = None if code is None else (path, hashlib.sha256(code.encode()).hexdigest())
             if key in allowed:
                 used.add(key)
             else:
@@ -50,7 +50,8 @@ def _scope(nodes):
 def _programs(tree, inherited=None):
     """(line, text, error) per -c program: each literal value, else the expression with its
     same-file values substituted, so editing one makes its exception stale; a program reading a
-    parameter, import or loop target gets text None: no exception can cover all its values.
+    name without exactly one same-file assignment (parameter, import, loop target, global) gets
+    text None: no exception can cover all its values.
     """
     body = tree.body if isinstance(tree.body, list) else [tree.body]
     nodes = list(_scope(body))
@@ -61,6 +62,10 @@ def _programs(tree, inherited=None):
                 assigned[target] = node.value
     function = isinstance(tree, ast.FunctionDef | ast.AsyncFunctionDef | ast.Lambda)
     local = {}
+    if inherited is None:
+        for node in ast.walk(tree):
+            for name in node.names if isinstance(node, ast.Global | ast.Nonlocal) else ():
+                local.setdefault(name, []).append(RUNTIME)
     for node in [*(ast.walk(tree.args) if function else ()), *nodes]:
         if isinstance(node, ast.arg):
             local.setdefault(node.arg, []).append(RUNTIME)
@@ -119,13 +124,13 @@ def _substitute(node, bindings):
         def visit_Name(self, name):
             nonlocal runtime
             values = bindings.get(name.id, ())
-            runtime = runtime or RUNTIME in values
-            if name.id in self.seen:
+            if len(values) != 1 or values[0] is RUNTIME or name.id in self.seen:
+                runtime = True
                 return name
             self.seen.add(name.id)
-            found = [self.visit(copy.deepcopy(value)) for value in values if value is not RUNTIME]
+            value = self.visit(copy.deepcopy(values[0]))
             self.seen.discard(name.id)
-            return found[0] if len(values) == 1 and found else name
+            return value
 
     return ast.unparse(Substitute().visit(copy.deepcopy(node))), runtime
 

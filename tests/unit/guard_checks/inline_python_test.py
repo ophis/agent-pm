@@ -108,6 +108,23 @@ class InlinePython(Sample):
                 "import sys, textwrap\nCODE = 'pass'\nargv = [sys.executable, '-c', textwrap.dedent(CODE)]",
                 "textwrap.dedent('pass')",
             ),
+            (
+                "import sys\ntry:\n    pass\nexcept Exception as c:\n    argv = [sys.executable, '-c', str(c)]",
+                "str(c)",
+            ),
+            (
+                "import sys\nmatch sys.argv:\n    case [c]:\n        argv = [sys.executable, '-c', c]",
+                "c",
+            ),
+            ("import sys\nfrom m import *\nargv = [sys.executable, '-c', CODE]", "CODE"),
+            (
+                "import sys\nCODE = f'{1}'\nif sys.argv:\n    CODE = f'{2}'\nargv = [sys.executable, '-c', CODE]",
+                "CODE",
+            ),
+            (
+                "import sys\nCODE = 'x'\ndef f(p):\n    global CODE\n    CODE = p\ndef g():\n    return [sys.executable, '-c', f'{CODE}']",
+                "f\"{'x'}\"",
+            ),
         ):
             with self.subTest(source=source):
                 found = self.checked(source, {key(text): "A helper."})
