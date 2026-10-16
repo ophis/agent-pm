@@ -79,15 +79,15 @@ class Manage(Case):
         for literal in (
             "once the user approves",
             "without asking again",
-            "re-read the old issue's state",
+            "Before a cancel or split residue, re-read the old issue's state",
             "no longer Backlog, Todo or In Review → cross-link instead and tell the user",
             "**Split residue** first",
             "in the old issue's state (In Review → Todo)",
             "its project, assignee and labels",
             "`related` to both the proposing issue and the old one",
-            "re-point each issue it blocks in this team to be blocked by the proposing issue "
+            "re-point each issue it blocks in the old issue's team to be blocked by the proposing issue "
             "(and the residue issue, if any)",
-            "comment on one in another team",
+            "comment on each blocked issue in another team",
             "Canceled as a Duplicate of the proposing issue",
             "comment the reason and the proposing issue's link",
             "**Cross-link**: a `related` link and a comment with the reason on each",

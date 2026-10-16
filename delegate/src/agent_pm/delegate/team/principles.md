@@ -25,28 +25,28 @@ Documents and prompts you write: fewest words, full information.
 
 ## Overlap
 
-The Input has a `## Related work` section → before your task's steps, judge each candidate in it against this issue, unless the user's later words say to go on without that.
+The Input has a `## Related work` section → before your task's steps, judge each **candidate** in it against the input's request, unless the user's later words say to go on without that. A candidate's **state**: finished, awaiting review, in progress, not started or canceled.
 
 | Verdict | When |
 |---|---|
-| `covered` | it does all of this issue, by **evidence** |
-| `supersedes` | this issue holds all of it, or updates it for a scope or codebase change |
+| `covered` | it does all of the request, by **evidence** |
+| `supersedes` | the request holds all of it, or updates it for a scope or codebase change |
 | `intersects` | the two share scope not yet done, and each has scope the other lacks |
-| `partial` | a Done or In Review candidate's output already answers part of this issue |
+| `partial` | a finished or awaiting-review candidate's output already answers part of the request |
 | `none` | else |
 
-- **Evidence**, by the candidate's state: Done or In Review: its output URL answering all of this issue's requirements; In Progress or Canceled: its description covering all of them; Backlog or Todo: never `covered`; the same scope is `supersedes`. No **evidence** → at most `partial`.
-- `covered` beats every other verdict: do none of the work; return `needs_input`, its `questions` naming the candidate's id and **evidence** (Canceled: its last comment, as the cancel reason; In Progress: that it is running), and suggest closing this issue as a Duplicate of it.
+- **Evidence**, by **state**: finished or awaiting review: its output URL answering all of the request's requirements; in progress or canceled: its description covering all of them; not started: never `covered`; the same scope is `supersedes`. No **evidence** → not `covered`; judge it by the other rows.
+- `covered` beats every other verdict: do none of the work; return `needs_input`, its `questions` naming the candidate's id and **evidence** (canceled: its last comment, as the cancel reason; in progress: that it is running), and suggest closing `<id>` as a duplicate of it.
 - `partial` → do only the part not yet answered; the deliverable cites the candidate and its output as sources.
-- `supersedes`, `intersects` → by the candidate's state:
+- `supersedes`, `intersects` → by **state**:
 
 | Verdict | State | Do | **Board proposal** |
 |---|---|---|---|
-| `supersedes` | Backlog, Todo, In Review | all of this issue | cancel |
-| `intersects` | Backlog, Todo, In Review | all of this issue, the shared part included | split residue, then cancel |
-| `supersedes` | Done | all of this issue; the deliverable lists its output as an earlier version | cross-link |
-| `intersects` | Done | as `partial` | none |
-| `supersedes`, `intersects` | In Progress, Canceled | all of this issue | cross-link |
+| `supersedes` | not started, awaiting review | all of the request | cancel |
+| `intersects` | not started, awaiting review | all of the request, the shared part included | split residue, then cancel |
+| `supersedes` | finished | all of the request; the deliverable lists its output as an earlier version | cross-link |
+| `intersects` | finished | as `partial` | none |
+| `supersedes`, `intersects` | in progress, canceled | all of the request | cross-link |
 
-- **Board proposal**: one line each, appended to `summary` past its line limit: `<old id>: <cancel | split residue | cross-link>: <reason>`; split residue adds the residue issue's title and description (the candidate's scope this issue leaves). Cancel: as a Duplicate of this issue; cross-link: a `related` link and a comment on each. The manager carries them out once the user approves.
+- **Board proposal**: appended to `summary` past its line limit, each a line `<candidate id>: <cancel | split residue | cross-link>: <reason>`; a split residue's line is followed by indented `Title:` and `Description:` lines for the residue (the candidate's scope the request leaves). Cancel: as a duplicate of `<id>`; cross-link: a `related` link and a comment on each. The manager carries them out once the user approves.
 - `none` → no mention.
