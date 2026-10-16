@@ -259,9 +259,7 @@ class Spec:
     client_source: ClientSource = "default"
 
     @classmethod
-    def from_issue(
-        cls, issue, *, mode, sid, task, client, client_source: ClientSource = "default"
-    ):
+    def from_issue(cls, issue, *, mode, sid, task, client, client_source: ClientSource = "default"):
         return cls(
             uuid=issue["id"],
             issue=issue["identifier"],

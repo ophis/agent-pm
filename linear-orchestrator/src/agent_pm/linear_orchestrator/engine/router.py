@@ -200,7 +200,9 @@ def task_for(labels, group, role, role_tasks, label_tasks):
     return task, None
 
 
-def client_for(labels, group, label_clients, default) -> tuple[str | None, ClientSource, str | None]:
+def client_for(
+    labels, group, label_clients, default
+) -> tuple[str | None, ClientSource, str | None]:
     found = [n for n in labels if group and n["parent"] and n["parent"]["id"] == group]
     if not found:
         return default, "default", None
