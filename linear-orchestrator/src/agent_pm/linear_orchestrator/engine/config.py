@@ -33,6 +33,8 @@ TOP_KEYS = {
     "harness_key",
     "task_label_group",
     "task_labels",
+    "agent_label_group",
+    "agent_labels",
     "option_labels",
     "roles",
     "project_repos",
@@ -177,7 +179,14 @@ def _load(cfg, work):
     docs = _docs(roles, LOCAL)
     frozen = {
         k: MappingProxyType(dict(cfg[k]))
-        for k in ("states", "task_labels", "option_labels", "project_repos", "local_clones")
+        for k in (
+            "states",
+            "task_labels",
+            "agent_labels",
+            "option_labels",
+            "project_repos",
+            "local_clones",
+        )
     }
     return Config(
         team=cfg["team"],
@@ -190,6 +199,8 @@ def _load(cfg, work):
         stages=MappingProxyType(_stage_order(cfg["roles"])),
         states=frozen["states"],
         task_labels=frozen["task_labels"],
+        agent_label_group=cfg["agent_label_group"],
+        agent_labels=frozen["agent_labels"],
         option_labels=frozen["option_labels"],
         project_repos=frozen["project_repos"],
         local_clones=frozen["local_clones"],
@@ -269,6 +280,7 @@ def _load_config(cfg, local):
     _local_clones(cfg)
     _work_dir(cfg, cfg["local_clones"])
     _task_labels(cfg)
+    _agent_labels(cfg)
     _option_labels(cfg)
 
 
@@ -356,6 +368,47 @@ def _task_labels(cfg):
         if v in seen:
             raise ConfigError(
                 f"linear-orchestrator/config.toml: task_labels.{seen[v]} and task_labels.{k} have the same label id {v}"
+            )
+        seen[v] = k
+
+
+def _agent_labels(cfg):
+    group = cfg.setdefault("agent_label_group", "")
+    labels = cfg.setdefault("agent_labels", {})
+    if group != "" and not _uuid(group):
+        raise ConfigError(
+            f"linear-orchestrator/config.toml: agent_label_group must be a Linear label group id (UUID) or empty: {group!r}"
+        )
+    if not isinstance(labels, dict):
+        raise ConfigError(
+            'linear-orchestrator/config.toml: agent_labels must be a table of <client> = "<Linear label id>"'
+        )
+    if bool(group) != bool(labels):
+        raise ConfigError(
+            "linear-orchestrator/config.toml: agent_label_group and [agent_labels] must both be set or both be empty"
+        )
+    if group == cfg["task_label_group"]:
+        raise ConfigError(
+            "linear-orchestrator/config.toml: agent_label_group and task_label_group must be different"
+        )
+    tasks = {v: k for k, v in cfg["task_labels"].items()}
+    seen = {}
+    for k, v in labels.items():
+        if not k:
+            raise ConfigError(
+                "linear-orchestrator/config.toml: [agent_labels] client names must not be empty"
+            )
+        if not _uuid(v):
+            raise ConfigError(
+                f"linear-orchestrator/config.toml: agent_labels.{k} must be a Linear label id (UUID): {v!r}"
+            )
+        if v in seen:
+            raise ConfigError(
+                f"linear-orchestrator/config.toml: agent_labels.{seen[v]} and agent_labels.{k} have the same label id {v}"
+            )
+        if v in tasks:
+            raise ConfigError(
+                f"linear-orchestrator/config.toml: agent_labels.{k} and task_labels.{tasks[v]} have the same label id {v}"
             )
         seen[v] = k
 

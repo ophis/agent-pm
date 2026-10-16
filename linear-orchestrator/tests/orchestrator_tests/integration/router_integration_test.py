@@ -330,7 +330,7 @@ class Router(TmuxFlow):
             [
                 "router plan mode=new queue=1",
                 f"router pick {ID} queue=1",
-                f"router claim {ID} role=engineer client=claude",
+                f"router claim {ID} role=engineer client=claude client_source=default",
                 f"router launch {ID} exit=0",
             ],
         )
