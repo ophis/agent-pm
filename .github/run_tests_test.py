@@ -60,13 +60,13 @@ class Run(unittest.TestCase):
             [
                 f"::error title={__name__}.T.test_fail::AssertionError: 1 != 2 : one",
                 f"::error title={__name__}.T.test_error::KeyError: 'k'",
-                f"::error title={__name__}.T.test_sub (n=1)::AssertionError: a:b, c%25 |",
+                f"::error title={__name__}.T.test_sub::(n=1): AssertionError: a:b, c%25 |",
             ],
         )
         summary = self.summary.read_text()
         self.assertTrue(summary.startswith("### Unit x: 3 failed\n\n| Test | Error |\n"))
         self.assertIn(f"| `{__name__}.T.test_error` | KeyError: 'k' |", summary)
-        self.assertIn(f"| `{__name__}.T.test_sub (n=1)` | AssertionError: a:b, c% \\| |", summary)
+        self.assertIn(f"| `{__name__}.T.test_sub` | (n=1): AssertionError: a:b, c% \\| |", summary)
         self.assertEqual(self.state.read_text().splitlines()[-1], "failed")
 
     def test_success_prints_and_summarizes_nothing(self):

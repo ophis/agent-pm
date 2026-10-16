@@ -80,15 +80,16 @@ class AnnotatingResult(unittest.TextTestResult):
     def addSubTest(self, test, subtest, err):
         super().addSubTest(test, subtest, err)
         if err is not None:
-            self.annotate(subtest, err)
+            self.annotate(test, err, detail=subtest.id().removeprefix(test.id()).strip())
 
     def addUnexpectedSuccess(self, test):
         super().addUnexpectedSuccess(test)
         self.report(test.id(), "unexpected success")
 
-    def annotate(self, test, err):
+    def annotate(self, test, err, *, detail=""):
         kind, value = err[0].__name__, str(err[1]).strip()
-        self.report(test.id(), f"{kind}: {value.splitlines()[0]}" if value else kind)
+        line = f"{kind}: {value.splitlines()[0]}" if value else kind
+        self.report(test.id(), f"{detail}: {line}" if detail else line)
 
     def report(self, test_id, line):
         self.failed.append((test_id, line))
