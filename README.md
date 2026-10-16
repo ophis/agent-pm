@@ -233,6 +233,31 @@ Run `bin/agent-pm-linear` by its absolute path; `--help` lists each command's op
 
 Each session's `Run <sid>` comment holds its resume command. Move the issue out of In Progress before opening it, or the router may resume it after 30 idle minutes.
 
+### Agent label
+
+Copy `agent_label_group` and `[agent_labels]` from the `# local:` examples in [linear-orchestrator/config.toml](linear-orchestrator/src/agent_pm/linear_orchestrator/config.toml) into this machine's `~/.agent-pm/config.local.toml`, replacing the example ids with the Agent group's and its child labels' ids. Both settings empty disables selection. Mapping keys name clients configured in Delegate; unknown clients are accepted at load time and checked when constructing a run.
+
+| Agent-group labels at claim recheck | New run |
+|---|---|
+| None | Resolved role default client |
+| One mapped label | Its client, for any role; renaming the label preserves the mapping |
+| Several, or an unmapped child | One comment listing label errors, including task-label errors; In Review, no attempt consumed |
+
+Selection: [router.py:513](linear-orchestrator/src/agent_pm/linear_orchestrator/engine/router.py#L513). The `claim` log records `client` and `client_source=label|default`. A label-selected client's construction `ConfigError` produces a comment with the client and error's first line, then In Review instead of an interruption retry ([router.py:722](linear-orchestrator/src/agent_pm/linear_orchestrator/engine/router.py#L722)); fix it → move back to Todo.
+
+To switch a subsequent new run, with no agent run live: change the Agent label → move the issue to Todo. A new session id selects again; resuming the same session keeps its recorded client ([router.py:820](linear-orchestrator/src/agent_pm/linear_orchestrator/engine/router.py#L820)). Automatic-retry pinning and label-change reminders follow in 294-b. Scheduled new-run quota checks and `--brake` still use the role default; `--dry-run` does not inspect Agent labels. Actual-client quota checks, brake and previews follow in 294-c ([router.py:457](linear-orchestrator/src/agent_pm/linear_orchestrator/engine/router.py#L457), [gate.py:44](linear-orchestrator/src/agent_pm/linear_orchestrator/engine/gate.py#L44)).
+
+Rollout:
+
+```mermaid
+flowchart LR
+    A[Configure group and mappings] --> B["router --issue ID on a labeled Todo issue"]
+    B --> C["Check claim client/source and runs.jsonl start client"]
+    C --> D[Enable scheduled ticks]
+```
+
+Use the installed `agent-pm-linear` absolute path. `--issue` skips the usage gate; it starts a real run. A dry run currently validates configuration without previewing label selection.
+
 ## State root
 
 agent-pm keeps its state in its state root, `~/.agent-pm/`. `work/` and `logs/` are in `<work_dir>` instead, `~/.agent-pm` by default.
