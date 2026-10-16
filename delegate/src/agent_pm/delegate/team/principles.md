@@ -25,14 +25,14 @@ Documents and prompts you write: fewest words, full information.
 
 ## Overlap
 
-The Input has a `## Related work` section → before your task's steps, judge each **candidate** in it against the input's request, unless the user's later words say to go on without that. A candidate's **state**: finished, awaiting review, in progress, not started or canceled.
+The Input has a `## Related work` section → before your task's steps, judge each **candidate** in it against the input's request (the first row that fits wins), unless the user's later words say to go on without that. A candidate's **state**: finished, awaiting review, in progress, not started or canceled.
 
 | Verdict | When |
 |---|---|
 | `covered` | it does all of the request, by **evidence** |
-| `supersedes` | the request holds all of it, or updates it for a scope or codebase change |
-| `intersects` | the two share scope not yet done, and each has scope the other lacks |
 | `partial` | a finished or awaiting-review candidate's output already answers part of the request |
+| `supersedes` | the request holds all of it, or updates it for a scope or codebase change |
+| `intersects` | the two share scope not yet done, and the candidate has scope the request lacks |
 | `none` | else |
 
 - **Evidence**, by **state**: finished or awaiting review: its output URL answering all of the request's requirements; in progress or canceled: its description covering all of them; not started: never `covered`; the same scope is `supersedes`. No **evidence** → not `covered`; judge it by the other rows.
@@ -48,5 +48,5 @@ The Input has a `## Related work` section → before your task's steps, judge ea
 | `intersects` | finished | as `partial` | none |
 | `supersedes`, `intersects` | in progress, canceled | all of the request | cross-link |
 
-- **Board proposal**: appended to `summary` past its line limit, each a line `<candidate id>: <cancel | split residue | cross-link>: <reason>`; a split residue's line is followed by indented `Title:` and `Description:` lines for the residue (the candidate's scope the request leaves). Cancel: as a duplicate of `<id>`; cross-link: a `related` link and a comment on each. The manager carries them out once the user approves.
+- **Board proposal**: appended to `summary` past its line limit, one line per action: `<candidate id>: <cancel | split residue | cross-link>: <reason>`; a split residue's line is followed by indented `Title:` and `Description:` lines for the residue (the candidate's scope the request leaves). Cancel: as a duplicate of `<id>`; cross-link: a `related` link and a comment on each. The manager carries them out once the user approves.
 - `none` → no mention.

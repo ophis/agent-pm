@@ -332,6 +332,9 @@ class Real(RealConfig):
             for literal in (
                 "Input has a `## Related work` section",
                 "before your task's steps",
+                "(the first row that fits wins)",
+                "the candidate has scope the request lacks",
+                "one line per action",
                 "the user's later words say to go on",
                 "finished, awaiting review, in progress, not started or canceled",
                 *(f"| `{v}` |" for v in ("covered", "supersedes", "intersects", "partial", "none")),
