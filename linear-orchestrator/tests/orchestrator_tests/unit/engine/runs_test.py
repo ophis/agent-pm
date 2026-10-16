@@ -342,7 +342,8 @@ class Trim(Case):
                 "lf",
                 row("start", "TASK-1", "old", days=8),
                 retained,
-                retained.replace(b"\n\n", b"\n"),
+                (row("start", "TASK-1", "old", days=8) + "\n").encode()
+                + retained.replace(b"\n\n", b"\n"),
             ),
             ("crlf", row("start", "TASK-1", "old", days=9), crlf, crlf),
         ):
@@ -365,6 +366,15 @@ class Trim(Case):
     def test_missing_log_is_noop(self):
         runs.trim(self.log, NOW)
         self.assertFalse(os.path.exists(self.log))
+
+    def test_latest_start_survives_a_newer_other_session_resume(self):
+        old = row("start", "TASK-1", "old", days=10)
+        start = row("start", "TASK-1", "latest", days=9, client="b")
+        resume = row("resume", "TASK-1", "old", days=8)
+        self.write([old, start, resume])
+        runs.trim(self.log, NOW)
+        runs.trim(self.log, NOW + timedelta(days=1))
+        self.assertEqual(self.read(), old + "\n" + start + "\n" + resume + "\n")
 
 
 class ClientOf(case.Case):

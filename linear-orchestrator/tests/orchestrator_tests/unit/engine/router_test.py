@@ -878,7 +878,8 @@ class RouterEntry(OuterBase):
                 self.assertTrue(
                     [line for line in said if line.startswith("recover TASK-7 to=todo")]
                 )
-                self.assertIn("claim TASK-7 role=engineer client=a client_source=default", said)
+                source = "pinned" if attr == "detach_error" else "default"
+                self.assertIn(f"claim TASK-7 role=engineer client=a client_source={source}", said)
                 self.assertEqual(said[-1], "launch TASK-7 exit=0")
 
     def test_label_client_config_error_goes_to_review_without_recover_retry(self):
@@ -1371,6 +1372,103 @@ class AgentLabels(Base):
         )
         self.assertTrue(self.claim(fake))
         self.assertEqual(self.taken[3:], ("b", "label"))
+
+
+class PinnedClients(Base):
+    def setUp(self):
+        super().setUp()
+        self.write_config(AGENT_TOP + CONFIG + TASK_LABELS + AGENT_LABELS)
+
+    def test_latest_start_wins_over_resume_and_failed_rows(self):
+        self.add(kind="start", ident="TASK-1", sid="latest", minutes_ago=60, client="b")
+        self.add(kind="start", ident="TASK-1", sid="old", minutes_ago=120, client="a")
+        self.add(kind="resume", ident="TASK-1", sid="old", minutes_ago=30, client="a")
+        self.add(kind="failed", ident="TASK-1", sid="failed", minutes_ago=10, client="a")
+        fake = self.fake(
+            issue("TASK-1", "Todo", "researcher", labels=[label("new", AGENT_A, AGENT_GROUP)])
+        )
+        self.taken = self.board(fake, lambda board: board.claim(board.queue()[0], ()))
+        taken, task, role, chosen, source = self.taken
+        self.assertEqual((chosen, source), ("b", "pinned"))
+        spec = Spec.from_issue(taken, mode="new", sid=self.sid("retry"), task=task, client=chosen)
+        router.record(self.cfg(), spec, role=role, now=lambda: NOW)
+        newest = runs.parse_log(self.runs)[-1]
+        self.assertEqual((newest.kind, newest.sid, newest.client), ("start", spec.sid, "b"))
+        self.assertNotEqual(newest.sid, self.sid("latest"))
+
+    def test_only_a_later_identified_external_todo_move_releases_pin(self):
+        for actor, minutes, state, expected in (
+            ("harness-viewer", 30, STATES["Todo"], ("b", "pinned")),
+            *((f"u-{r}", 30, STATES["Todo"], ("b", "pinned")) for r in ROLE),
+            (None, 30, STATES["Todo"], ("b", "pinned")),
+            ("outsider", 61, STATES["Todo"], ("b", "pinned")),
+            ("outsider", 60, STATES["Todo"], ("b", "pinned")),
+            ("outsider", 59, STATES["Todo"], ("a", "label")),
+            ("outsider", 30, STATES["In Review"], ("b", "pinned")),
+        ):
+            with self.subTest(actor=actor, minutes=minutes, state=state):
+                self.lines, self.hist = [], {}
+                self.add(kind="start", ident="TASK-1", sid="old", minutes_ago=60, client="b")
+                self.moved("TASK-1", minutes, state=state, actor=actor)
+                self.moved("TASK-1", 10, state=STATES["Todo"], actor="harness-viewer")
+                fake = self.fake(
+                    issue(
+                        "TASK-1", "Todo", "researcher", labels=[label("new", AGENT_A, AGENT_GROUP)]
+                    )
+                )
+                self.assertTrue(self.claim(fake))
+                self.assertEqual(self.taken[3:], expected)
+
+    def test_no_start_including_failed_only_does_not_pin(self):
+        for kind in (None, "failed", "resume"):
+            with self.subTest(kind=kind):
+                self.lines = []
+                if kind:
+                    self.add(kind=kind, ident="TASK-1", sid="old", minutes_ago=30, client="b")
+                fake = self.fake(
+                    issue(
+                        "TASK-1", "Todo", "researcher", labels=[label("new", AGENT_A, AGENT_GROUP)]
+                    )
+                )
+                self.assertTrue(self.claim(fake))
+                self.assertEqual(self.taken[3:], ("a", "label"))
+                self.assertFalse(any("viewer" in q or "history" in q for q, _ in fake.queries))
+
+    def test_pin_bypasses_agent_errors_but_not_task_errors(self):
+        self.add(kind="start", ident="TASK-1", sid="old", minutes_ago=60, client="b")
+        for agent_labels, bad_task in (
+            ([], False),
+            ([label("unmapped", STRAY, AGENT_GROUP)], False),
+            ([label("one", AGENT_A, AGENT_GROUP), label("two", AGENT_B, AGENT_GROUP)], False),
+            ([label("unmapped", STRAY, AGENT_GROUP)], True),
+        ):
+            with self.subTest(agent_labels=agent_labels, bad_task=bad_task):
+                labels = agent_labels + ([label("bad task", STRAY)] if bad_task else [])
+                fake = self.fake(issue("TASK-1", "Todo", "researcher", labels=labels))
+                self.assertEqual(bool(self.claim(fake)), not bad_task)
+                if bad_task:
+                    found = fake.issues["TASK-1"]
+                    self.assertEqual(found["state"], "In Review")
+                    self.assertEqual(len(found["comments"]), 1)
+                    self.assertIn("bad task", found["comments"][0])
+                    self.assertNotIn("unmapped", found["comments"][0])
+                else:
+                    self.assertEqual(self.taken[3:], ("b", "pinned"))
+
+    def test_pin_and_attempt_cap_share_history_and_viewer_is_cached(self):
+        for i in (1, 2):
+            self.add(kind="start", ident=f"TASK-{i}", sid=f"s{i}", minutes_ago=60, client="b")
+        fake = self.fake(issue("TASK-1", "Todo", "researcher"), issue("TASK-2", "Todo", "pm"))
+
+        def use(board):
+            for found in fake.issues.values():
+                board.last_move(found, "todo", by_user=True)
+                self.assertEqual(board.pinned_client(found), "b")
+                self.assertEqual(board.pinned_client(found), "b")
+
+        self.board(fake, use)
+        self.assertEqual(sum("viewer" in q for q, _ in fake.queries), 1)
+        self.assertEqual(sum("history" in q for q, _ in fake.queries), 2)
 
 
 class RouterArguments(Base):
@@ -2336,7 +2434,7 @@ class ScheduledTaskSelection(TickBase):
         self.tick(fake)
         self.assertEqual(fake.issues["TASK-1"]["comments"], [router.INTERRUPTED])
         self.assertIn(
-            "claim TASK-1 role=researcher task=light-research client=a client_source=default",
+            "claim TASK-1 role=researcher task=light-research client=a client_source=pinned",
             self.said(),
         )
         (launch,) = self.start.launches
