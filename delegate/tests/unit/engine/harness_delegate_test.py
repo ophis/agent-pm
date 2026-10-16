@@ -227,6 +227,23 @@ class CleanTest(HarnessCase):
             self.refused(f"{self.work}: delegate is still alive")
         self.assertTrue(os.path.isdir(self.agent()))
 
+    def test_clean_without_agent_files_refuses_a_live_run(self):
+        self.make()
+        shutil.rmtree(self.agent())
+        with RunState(Layout(self.work)).run_lock():
+            files = tree(self.work)
+            self.refused(f"{self.work}: delegate is still alive")
+            self.assertEqual(tree(self.work), files)
+
+    def test_clean_without_agent_files_keeps_an_ended_run(self):
+        self.make()
+        shutil.rmtree(self.agent())
+        files = tree(self.work)
+        for dry in (False, True):
+            with self.subTest(dry=dry):
+                self.assertIsNone(HarnessDelegate.clean(self.work, dry=dry))
+                self.assertEqual(tree(self.work), files)
+
     def test_clean_refuses_a_live_detached_run(self):
         spec = Spec("input", self.work, mode="tui", client="fake", sid=SID)
         self.make(spec=spec, host="agent", harness_host="harness").detach()

@@ -6,6 +6,7 @@ Each case uses only the Delegate ABC and these hooks.
 """
 
 import os
+import shutil
 import uuid
 
 from agent_pm.delegate import Begun, ConfigError, Delegate, Finished
@@ -152,6 +153,18 @@ class DelegateContract:
             with self.subTest(dry=dry), self.assertRaises(ConfigError):
                 self.delegate_cls.clean(workdir, dry=dry)
         self.assertEqual(self.delegate_cls.checkouts(workdir), ())
+
+    def test_clean_without_agent_files_checks_the_run(self):
+        record, workdir = self.detached()
+        shutil.rmtree(self.delegate_cls.attach(workdir).status().cwd)
+        for dry in (False, True):
+            with self.subTest(dry=dry), self.assertRaises(ConfigError):
+                self.delegate_cls.clean(workdir, dry=dry)
+        self.end(record)
+        files = _files(workdir, but="\0")
+        self.delegate_cls.clean(workdir)
+        self.assertIsNone(self.delegate_cls.checkouts(workdir))
+        self.assertEqual(_files(workdir, but="\0"), files)
 
     def test_resume_after_its_sessions_ended_starts_them_once_with_the_same_sid(self):
         record, _ = self.detached()
