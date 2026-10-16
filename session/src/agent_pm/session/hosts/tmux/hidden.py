@@ -1,13 +1,15 @@
 """Whether a tmux session is hidden, kept per session name as {sid, hidden} in DIR so it outlives
-the tmux session a restart or resume rebuilds; an entry of another sid is another run's.
+the tmux session a restart or resume rebuilds; an entry of another sid is another run's. Each write
+drops the entries unwritten for STALE_AGE.
 """
 
 from __future__ import annotations
 
 import json
 import os
+import sys
 
-from agent_pm.utils import STATE, read_regular, save
+from agent_pm.utils import STATE, drop_stale, read_regular, save
 
 DIR = f"{STATE}/hidden"
 LIMIT = 4096
@@ -37,6 +39,8 @@ def read(name: str, sid: str) -> bool:
 
 def write(name: str, sid: str, *, hidden: bool) -> None:
     save(_path(name), json.dumps({"sid": sid, "hidden": hidden}) + "\n")
+    for error in drop_stale(os.path.expanduser(DIR)):
+        print(f"hidden: {error}", file=sys.stderr)
 
 
 def start(name: str, sid: str) -> None:

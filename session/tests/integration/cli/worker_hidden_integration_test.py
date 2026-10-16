@@ -2,8 +2,9 @@
 --display none` opens no pane, the caller still its opener, and is hidden; show opens it and clears
 hidden; restart and resume keep hidden or shown; a new start of the same sid takes its own view;
 its events still reach the events file; a given hidden part is refused; a Codex worker the same.
-Its viewer killed by hand marks it hidden (its client-detached hook); losing the manager's window or
-detaching the viewer does not, each checked after a control worker's killed viewer marks it hidden.
+Its viewer killed by hand marks it hidden (its client-detached hook); losing the manager's window,
+or detaching the viewer and then another client, does not, each checked after a control worker's
+killed viewer marks it hidden.
 """
 
 import os
@@ -161,10 +162,20 @@ class HookTest(HiddenCase):
         self.assertFalse(self.hidden(inside=OTHER))
         self.assertTrue(self.hidden("w2", inside=OTHER))
 
-    def test_detaching_the_viewer_marks_nothing(self):
+    def clients(self, name: str = "w1") -> list[str]:
+        found = self.server.tmux("list-clients", "-t", f"={name}", "-F", "#{client_tty}")
+        return found.stdout.split()
+
+    def test_detaching_the_viewer_or_then_another_client_marks_nothing(self):
         self.record(self.start("w1"))
         tty = self.server.tmux("display-message", "-p", "-t", self.shows(), "#{pane_tty}")
-        self.ok(self.server.tmux("detach-client", "-t", tty.stdout.strip()))
+        tty = tty.stdout.strip()
+        self.ok(self.server.tmux("detach-client", "-t", tty))
+        live_tmux.wait(lambda: tty not in self.clients(), what="w1's viewer detached")
+        # its @pane now names a gone pane: only its viewer's own detach may judge it closed
+        self.server.attach("w1")
+        self.ok(self.server.tmux("detach-client", "-s", "=w1"))
+        live_tmux.wait(lambda: not self.clients(), what="w1's other client detached")
         self.record(self.start("c1"))
         self.control()
         self.assertFalse(self.hidden())

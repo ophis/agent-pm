@@ -1,9 +1,13 @@
 """The hidden store: one {sid, hidden} file per session name under the test's HOME."""
 
+import io
 import json
 import os
+import time
+from contextlib import redirect_stderr
 
 from agent_pm.session.hosts.tmux import hidden
+from agent_pm.utils import STALE_AGE
 
 from session.tests.case import Case
 
@@ -67,3 +71,17 @@ class HiddenTest(Case):
         self.addCleanup(os.chmod, os.path.join(self.agent_pm, "hidden"), 0o700)
         with self.assertRaises(OSError):
             hidden.write("w1", SID, hidden=True)
+
+    def test_a_write_drops_entries_unwritten_for_stale_age(self):
+        hidden.write("old", SID, hidden=True)
+        hidden.write("recent", SID, hidden=True)
+        then = time.time() - STALE_AGE
+        os.utime(self.path("old"), (then - 60, then - 60))
+        os.utime(self.path("recent"), (then + 60, then + 60))
+        err = io.StringIO()
+        with redirect_stderr(err):
+            hidden.start("w1", SID)
+        self.assertEqual(
+            sorted(os.listdir(os.path.dirname(self.path()))), ["recent.json", "w1.json"]
+        )
+        self.assertEqual(err.getvalue(), "")
