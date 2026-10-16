@@ -1,6 +1,4 @@
-# agent-pm
-
-<img src="docs/images/icon.jpg" alt="agent-pm icon" width="104" align="right">
+# <img src="docs/images/icon.jpg" alt="" width="40" align="absmiddle"> agent-pm
 
 [![CI](https://github.com/ophis/agent-pm/actions/workflows/test.yml/badge.svg?branch=main)](https://github.com/ophis/agent-pm/actions/workflows/test.yml?query=branch%3Amain) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
