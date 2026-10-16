@@ -150,6 +150,14 @@ def validate_retile(retile: str | None) -> None:
         raise TuiError(f"retile must be one of {', '.join(Retile)}, not {retile!r}")
 
 
+def hook_command() -> tuple[str, str | None]:
+    """COMMAND where PATH finds it, and why a tmux hook cannot run it (None: it can)."""
+    command = command_path(COMMAND)
+    if command is None:
+        return COMMAND, f"{COMMAND} is not on PATH"
+    return command, None if HOOK_PATH.fullmatch(command) else f"{command}: tmux would misread it"
+
+
 class Grid:
     def __init__(self, tmux: Tmux) -> None:
         self.tmux = tmux
@@ -189,16 +197,8 @@ class Grid:
             GRID_BUSY,
         ]
         mode = RETILE_HOOKS[retile]
-        command = command_path(COMMAND)
-        problem = (
-            None
-            if not mode
-            else f"{COMMAND} is not on PATH"
-            if command is None
-            else None
-            if HOOK_PATH.fullmatch(command)
-            else f"{command}: tmux would misread it"
-        )
+        command, problem = hook_command()
+        problem = problem if mode else None
         if problem:
             print(f"tui: show: grid: hooks: {problem}", file=sys.stderr)
         flags = "--no-wait --if-panes-changed" if retile == Retile.OPEN_CLOSE else "--no-wait"

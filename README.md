@@ -261,6 +261,7 @@ agent-pm keeps its state in its state root, `~/.agent-pm/`. `work/` and `logs/` 
 ├── pty/<name>/                   a pty-host session's files
 ├── pty/<name>.lock               that name's start lock
 ├── workers/<sid>/                a worker's state; by-name/<name>: its latest sid
+├── hidden/<name>.json            whether that name's tmux session is hidden, for its sid
 ├── managers/<name>/              a manager's Roster and events file
 ├── adhoc/<date>-<role>-<name>/   workdirs of /agent-pm:act-as and /agent-pm:tmux role runs
 ├── probe/                        the empty cwd of the client usage check
@@ -281,6 +282,7 @@ agent-pm keeps its state in its state root, `~/.agent-pm/`. `work/` and `logs/` 
 | `tui/<name>.lock` | the tui sweep | while no session of that name starts or closes |
 | `pty/<name>/`, `pty/<name>.lock` | closing the session or a detached session's exit (the dir); the pty sweep | no: closing the session removes it; a `<name>.lock` while no session of that name starts |
 | `workers/<sid>/` | each `agent-pm-session` start, restart or resume that launches a worker's client: a sid whose `worker.json` is over 30 days old, that no `by-name/` entry names and no worker lock holds | once you won't restart or resume the worker |
+| `hidden/<name>.json` | each write of one (a `--display none` start, `show`, `hide`): an entry unwritten for 30 days whose tmux session is gone | any time: that session then reads not hidden |
 | `managers/<name>/` | `agent-pm-crew forget` drops an entry; `events` rotates to `events.1` past 1 MiB | while no manager holds it; its Roster is lost |
 | `adhoc/` | nobody: your working directory | a folder whose run is not running (`agent-pm-delegate status <dir>`) |
 | `probe/`, `bin/` | nobody | any time; `ctmux --install` restores `bin/` |
@@ -292,6 +294,8 @@ Each tui start runs the tui sweep and each pty start the pty sweep, over the oth
 `bin/agent-pm-session --help` lists its subcommands. `ls` prints a header, then one tab-separated row per session: `name`, `state` (`working`, `done`, `blocked`, `dead`), `client`, `sid`, `display`, with `-` for an empty value.
 
 Sessions run on `[session.hosts] default`: `tmux`, or `pty` (each on a pty its own supervisor holds, state in `~/.agent-pm/pty/<name>/`). A `pty` session cannot be shown: `show`, `hide`, `attach-command`, `read` and `tile` exit 1, and its `status` `attach` is null. `[delegate.delegates] harness_host = "pty"` puts only detached runs' harnesses there.
+
+`start --display none` starts a worker without a pane, still opened by the caller, and hidden. Hidden (from that, `hide`, or closing its pane by hand; not from losing the manager's window or detaching its viewer) lasts through `restart` and `resume` until `show`.
 
 ## Client policy
 

@@ -14,12 +14,12 @@ from unittest import mock
 from agent_pm.session import ConfigError, Host, InteractiveProcess, Launch, SessionError, Showable
 from agent_pm.session.engine.types import Key, KeyPress, Paste, SessionRow
 from agent_pm.session.hosts.base import SIGNALS
-from agent_pm.session.hosts.tmux import TmuxHost, transport, types
+from agent_pm.session.hosts.tmux import TmuxHost, hidden, transport, types
 from agent_pm.session.hosts.tmux.host import TmuxProcess, TmuxTerminal
 from agent_pm.session.hosts.tmux.transport import (
     Tmux,
 )
-from agent_pm.utils import ProcessControl, StatusState, load_class
+from agent_pm.utils import STALE_AGE, ProcessControl, StatusState, load_class
 
 from session.tests.case import Case
 from session.tests.hosted_support import SID, listed
@@ -36,16 +36,31 @@ from session.tests.tmux_host_support import LINE, PROCESS, Base
 
 TuiError = types.TuiError
 NO_PANE = "no anchor pane: not in tmux, no iTerm2 pane ($ITERM_SESSION_ID)"
+OTHER = "1f8fad5b-d9cb-469f-a165-70867728950e"
 FOLDS = (
-    (("mgr", None, None), "mgr"),
-    (("mgr", "right", None), "mgr/right"),
-    (("w0t0p0:ABC-1", "below", "m1"), "w0t0p0:ABC-1/below/m1"),
-    ((None, "below", None), "/below"),
-    ((None, None, "m1"), "//m1"),
-    ((None, "right", "m1"), "/right/m1"),
-    ((None, None, None), None),
+    (("mgr", None, None, False), "mgr"),
+    (("mgr", "right", None, False), "mgr/right"),
+    (("w0t0p0:ABC-1", "below", "m1", False), "w0t0p0:ABC-1/below/m1"),
+    ((None, "below", None, False), "/below"),
+    ((None, None, "m1", False), "//m1"),
+    ((None, "right", "m1", False), "/right/m1"),
+    ((None, None, None, False), None),
+    (("mgr", None, None, True), "mgr///hidden"),
+    ((None, "below", "m1", True), "/below/m1/hidden"),
+    ((None, None, None, True), "///hidden"),
 )
-FOREIGN = ("elsewhere:1.2", "mgr/left", "a b", "mgr/right/a b", "a/b/c/d", "x:y:z")
+FOREIGN = (
+    "elsewhere:1.2",
+    "mgr/left",
+    "a b",
+    "mgr/right/a b",
+    "a/b/c/d",
+    "x:y:z",
+    "a/b/c/",
+    "mgr///hidden/x",
+    "mgr///shown",
+)
+MARKED = "display {!r}: its hidden part comes only from none"
 
 
 class ClassTest(Case):
@@ -66,11 +81,17 @@ class FoldTest(Case):
     def test_fold_and_unfold_round_trip(self):
         for parts, display in FOLDS:
             with self.subTest(parts=parts):
-                self.assertEqual(TmuxHost.fold(*parts), display)
+                self.assertEqual(TmuxHost.fold(*parts[:3], hidden=parts[3]), display)
                 self.assertEqual(TmuxHost.unfold(display), parts)
 
+    def test_unfold_of_none_is_no_opener_started_hidden(self):
+        self.assertEqual(TmuxHost.unfold("none"), (None, None, None, True))
+
     def test_unfold_takes_empty_parts_as_absent(self):
-        for display, parts in (("", (None, None, None)), ("mgr/", ("mgr", None, None))):
+        for display, parts in (
+            ("", (None, None, None, False)),
+            ("mgr/", ("mgr", None, None, False)),
+        ):
             with self.subTest(display=display):
                 self.assertEqual(TmuxHost.unfold(display), parts)
 
@@ -101,8 +122,34 @@ class FoldTest(Case):
 class DisplayTest(Base):
     def test_display_help_names_the_format(self):
         help_text = self.host.display_help()
-        self.assertIn("<opener>[/<split>[/<split_from>]]", help_text)
+        self.assertIn("<opener>[/<split>[/<split_from>[/hidden]]]", help_text)
         self.assertIn("right or below", help_text)
+        self.assertIn("none: start without a pane, the caller still its opener", help_text)
+
+    def test_display_none_is_the_callers_opener_started_hidden(self):
+        self.runner.pane = "mgr"
+        self.enterContext(environ(**INSIDE))
+        self.assertEqual(self.host.display("none"), "mgr///hidden")
+        self.enterContext(environ())
+        self.assertEqual(self.host.display("none"), "///hidden")
+
+    def test_a_given_hidden_part_is_refused(self):
+        self.enterContext(environ(**INSIDE))
+        for value in ("mgr///hidden", "///hidden", "/below/m1/hidden"):
+            with self.subTest(value=value):
+                for call in (self.host.display, lambda v: self.host.layout(display=v)):
+                    with self.assertRaises(ConfigError) as caught:
+                        call(value)
+                    self.assertEqual(str(caught.exception), MARKED.format(value))
+        self.assertEqual(self.runner.calls, [])
+
+    def test_layout_of_none_needs_no_anchor(self):
+        self.runner.pane = "mgr"
+        self.enterContext(environ(**INSIDE))
+        self.assertEqual(self.host.layout(display="none"), "mgr///hidden")
+        self.assertNotIn("list-clients", [call[1] for call in self.runner.calls])
+        self.enterContext(environ())
+        self.assertEqual(self.host.layout(display="none"), "///hidden")
 
     def test_the_callers_opener_fills_an_empty_or_absent_opener_part(self):
         self.runner.pane = "mgr"
@@ -556,6 +603,57 @@ class ShowableTest(Base):
         )
 
 
+class MarkerTest(Base):
+    def terminal(self, display, metadata=None):
+        launch = Launch((self.tool,), cwd=self.dir, env={"PATH": "/bin"})
+        metadata = (
+            {"sid": SID, "client": "claude", "generation": "g1"} if metadata is None else metadata
+        )
+        return self.host.terminal("t1", launch, display=display, metadata=metadata)
+
+    def test_a_marked_terminal_launch_marks_a_new_sid_hidden_only(self):
+        self.terminal("mgr///hidden")
+        self.assertTrue(hidden.read("t1", SID))
+        hidden.write("t1", SID, hidden=False, live=None)
+        self.terminal("mgr///hidden")
+        self.assertFalse(hidden.read("t1", SID))
+        self.assertEqual(self.tmux.start.call_args.kwargs["tags"]["@opener"], "mgr")
+
+    def test_an_unmarked_or_sidless_launch_writes_no_hidden_entry(self):
+        store = os.path.join(self.agent_pm, "hidden")
+        self.terminal("mgr")
+        self.terminal("mgr///hidden", metadata={})
+        self.host.detach(
+            "d1", Launch((self.tool,), cwd=self.dir, env={"PATH": "/bin"}), display="mgr///hidden"
+        )
+        self.assertFalse(os.path.exists(store))
+
+    def test_a_failed_hidden_write_undoes_the_launch(self):
+        store = os.path.join(self.agent_pm, "hidden")
+        os.mkdir(store, 0o500)
+        self.addCleanup(os.chmod, store, 0o700)
+        self.tmux.process.return_value = PROCESS
+        with self.assertRaisesRegex(
+            SessionError, "^tui session t1: hidden state: Permission denied"
+        ):
+            self.terminal("mgr///hidden")
+        self.tmux.kill.assert_called_once_with("%7")
+
+    def test_show_ignores_the_hidden_marker(self):
+        self.enterContext(environ())
+        self.runner.results.update(
+            {
+                "list-clients": (0, f"5 /dev/ttys004 %9 0 {SOCK}\n"),
+                "pgrep": (1,),
+                "split-window": (0, "%10\n"),
+            }
+        )
+        self.assertIsNone(self.host.show("w1", display="mgr/below/m1/hidden"))
+        split = next(c for c in self.runner.calls if c[1] == "split-window")
+        self.assertEqual(split[3], "-v")
+        self.assertEqual(split[split.index("-t") + 1], "%9")
+
+
 class HideTest(Base):
     def options(self, **found):
         recorded = self.tmux.option.side_effect
@@ -566,31 +664,42 @@ class HideTest(Base):
         self.options(pane="%9", sid=SID)
         self.assertIsNone(self.host.hide("w1"))
         self.tmux.kill.assert_called_once_with("%9")
-        self.tmux.set_option.assert_called_once_with("%7", "@hidden", "1")
+        self.assertTrue(hidden.read("w1", SID))
 
-    def test_hidden_and_status_report_the_hidden_mark(self):
-        for mark, hidden in (("1", True), ("0", False), (None, False)):
-            with self.subTest(mark=mark):
-                self.options(hidden=mark)
+    def test_hidden_and_status_read_the_store_entry_of_its_sid(self):
+        for entry, want in (((SID, True), True), ((SID, False), False), ((OTHER, True), False)):
+            with self.subTest(entry=entry):
+                hidden.write("w1", entry[0], hidden=entry[1], live=None)
+                self.options(sid=SID)
                 process = self.host.attach("w1")
-                self.assertEqual((process.hidden(), process.status().hidden), (hidden, hidden))
+                self.assertEqual((process.hidden(), process.status().hidden), (want, want))
+
+    def test_a_sidless_or_unentered_session_is_not_hidden(self):
+        hidden.write("w1", SID, hidden=True, live=None)
+        process = self.host.attach("w1")
+        self.assertFalse(process.hidden())
+        self.options(sid=OTHER)
+        self.assertFalse(self.host.attach("w1").hidden())
 
     def test_show_clears_hidden(self):
+        hidden.write("w1", SID, hidden=True, live=None)
         self.options(sid=SID)
         self.assertIsNone(self.host.show("w1", command="true"))
-        self.tmux.set_option.assert_called_once_with("%7", "@hidden", "0")
+        self.assertFalse(hidden.read("w1", SID))
+        self.tmux.set_option.assert_not_called()
 
     def test_hide_leaves_an_iterm2_or_closed_pane_and_still_marks_it_hidden(self):
         for pane, process in (("w0t0p0:ABC", PROCESS), ("%9", None), (None, PROCESS)):
             with self.subTest(pane=pane, process=process):
                 self.tmux.reset_mock()
+                hidden.write("w1", SID, hidden=False, live=None)
                 self.options(pane=pane, sid=SID)
                 self.tmux.process.side_effect = lambda target, found=process: (
                     found if target == "%9" else PROCESS
                 )
                 self.host.hide("w1")
                 self.tmux.kill.assert_not_called()
-                self.tmux.set_option.assert_called_once_with("%7", "@hidden", "1")
+                self.assertTrue(hidden.read("w1", SID))
 
     def test_hide_kills_the_pane_of_a_sidless_session_and_marks_nothing(self):
         self.options(pane="%9")
@@ -598,40 +707,166 @@ class HideTest(Base):
         self.tmux.process.side_effect = None
         self.host.hide("w1")
         self.tmux.kill.assert_called_once_with("%9")
-        self.tmux.set_option.assert_not_called()
+        self.assertFalse(os.path.exists(os.path.join(self.agent_pm, "hidden")))
+
+    def viewer(self, **found):
+        """@pane and @window as tmux keeps them: an if-shell on @pane's value unsets both."""
+        self.options()
+        recorded = self.tmux.option.side_effect
+        self.tmux.option.side_effect = lambda target, key: (
+            found[key[1:]] if key[1:] in found else recorded(target, key)
+        )
+
+        def if_shell(argv):
+            if argv[5] == f"#{{==:#{{@pane}},{found.get('pane')}}}":
+                found.update(pane=None, window=None)
+            return (0,)
+
+        self.runner.results.update(
+            {
+                "list-panes": (0, "%1\n%9\n"),
+                "list-windows": (0, "@1\n@2\n"),
+                "if-shell": if_shell,
+            }
+        )
+        return found
+
+    def test_hide_if_closed_marks_only_a_gone_pane_in_a_present_window(self):
+        for pane, window, want in (
+            ("%8", "@2", True),
+            ("%9", "@2", False),
+            ("%8", "@3", False),
+            (None, "@2", False),
+            ("%8", None, False),
+            ("w0t0p0:ABC", "@2", False),
+        ):
+            with self.subTest(pane=pane, window=window):
+                hidden.write("w1", SID, hidden=False, live=None)
+                found = self.viewer(pane=pane, window=window, sid=SID)
+                self.assertIsNone(self.host.hide("w1", if_closed=True))
+                self.assertEqual(hidden.read("w1", SID), want)
+                self.assertEqual(found["pane"], None if want else pane)
+        self.tmux.kill.assert_not_called()
+        self.assertNotIn(mock.call("%8"), self.tmux.process.call_args_list)
+
+    def test_hide_if_closed_spares_a_pane_show_records_meanwhile(self):
+        hidden.write("w1", SID, hidden=False, live=None)
+        found = self.viewer(pane="%8", window="@2", sid=SID)
+
+        def shown_meanwhile(_argv):
+            found["pane"] = "%10"
+            return (0, "@1\n@2\n")
+
+        self.runner.results["list-windows"] = shown_meanwhile
+        self.host.hide("w1", if_closed=True)
+        self.assertEqual((found["pane"], found["window"]), ("%10", "@2"))
+        self.assertFalse(hidden.read("w1", SID))
+        self.tmux.kill.assert_not_called()
+
+    def test_hide_if_closed_unmarks_a_pane_show_recorded_before_the_mark(self):
+        found = self.viewer(pane="%8", window="@2", sid=SID)
+        forget, recorded = self.runner.results["if-shell"], self.tmux.option.side_effect
+        reads = iter([None, "%10"])  # forget's check of @pane, then hide's
+
+        def show_meanwhile(argv):
+            hidden.write("w1", SID, hidden=False, live=None)
+            self.tmux.option.side_effect = lambda target, key: (
+                next(reads) if key == "@pane" else recorded(target, key)
+            )
+            return forget(argv)
+
+        self.runner.results["if-shell"] = show_meanwhile
+        self.host.hide("w1", if_closed=True)
+        self.assertEqual(found["window"], None)
+        self.assertFalse(hidden.read("w1", SID))
+
+    def test_hide_if_closed_names_a_failed_check_after_its_mark_and_stays_hidden(self):
+        self.viewer(pane="%8", window="@2", sid=SID)
+        forget, recorded = self.runner.results["if-shell"], self.tmux.option.side_effect
+        reads = iter([None, TuiError("tmux: boom")])  # forget's check of @pane, then hide's
+
+        def read(target, key):
+            if key != "@pane":
+                return recorded(target, key)
+            found = next(reads)
+            if isinstance(found, TuiError):
+                raise found
+            return found
+
+        def failing_after(argv):
+            self.tmux.option.side_effect = read
+            return forget(argv)
+
+        self.runner.results["if-shell"] = failing_after
+        with self.assertRaisesRegex(SessionError, "^tmux session w1: tmux: boom$"):
+            self.host.hide("w1", if_closed=True)
+        self.assertTrue(hidden.read("w1", SID))
+
+    def test_a_hidden_mark_keeps_live_sessions_entries(self):
+        then = time.time() - STALE_AGE - 60
+        for name in ("w2", "w3"):
+            hidden.write(name, SID, hidden=True, live=None)
+            os.utime(os.path.join(self.agent_pm, "hidden", f"{name}.json"), (then, then))
+        self.options(pane="%9", sid=SID)
+        self.runner.results["list-sessions"] = (0, "w1\nw2\n")
+        self.host.hide("w1")
+        self.assertEqual(
+            sorted(os.listdir(os.path.join(self.agent_pm, "hidden"))), ["w1.json", "w2.json"]
+        )
+
+    def test_hide_forgets_the_tmux_pane_and_window_it_recorded(self):
+        for pane, forgotten in (("%9", True), ("w0t0p0:ABC", False)):
+            with self.subTest(pane=pane):
+                self.runner.calls.clear()
+                found = self.viewer(pane=pane, window="@2", sid=SID)
+                self.host.hide("w1")
+                self.assertEqual(found["pane"], None if forgotten else pane)
+                self.assertEqual("if-shell" in [c[1] for c in self.runner.calls], forgotten)
+                self.assertTrue(hidden.read("w1", SID))
+
+    def test_hide_if_closed_refuses_an_absent_session(self):
+        self.tmux.status.return_value = None
+        with self.assertRaisesRegex(SessionError, "^no tmux session w1$"):
+            self.host.hide("w1", if_closed=True)
 
     def test_hide_refuses_an_absent_session(self):
         self.tmux.status.return_value = None
         with self.assertRaisesRegex(SessionError, "^no tmux session w1$"):
             self.host.hide("w1")
         self.tmux.kill.assert_not_called()
-        self.tmux.set_option.assert_not_called()
+        self.assertFalse(os.path.exists(os.path.join(self.agent_pm, "hidden")))
 
     def test_hide_names_a_failed_pane_kill_and_marks_nothing(self):
         self.options(pane="%9", sid=SID)
         self.tmux.kill.side_effect = TuiError("tmux: boom")
         with self.assertRaisesRegex(SessionError, "^tmux session w1: tmux: boom$"):
             self.host.hide("w1")
-        self.tmux.set_option.assert_not_called()
+        self.assertFalse(hidden.read("w1", SID))
 
     def test_hide_names_a_failed_hidden_mark(self):
         self.options(pane="%9", sid=SID)
-        self.tmux.set_option.side_effect = TuiError("tmux: lost server")
-        with self.assertRaisesRegex(SessionError, "^tmux session w1: tmux: lost server$"):
+        store = os.path.join(self.agent_pm, "hidden")
+        os.mkdir(store, 0o500)
+        self.addCleanup(os.chmod, store, 0o700)
+        with self.assertRaisesRegex(
+            SessionError, "^tmux session w1: hidden state: Permission denied$"
+        ):
             self.host.hide("w1")
         self.tmux.kill.assert_called_once_with("%9")
 
     def test_a_failed_show_clears_hidden_while_a_pane_it_opened_still_shows_it(self):
-        self.enterContext(environ())
+        self.enterContext(environ(HOME=self.home))
+        hidden.write("w1", SID, hidden=True, live=None)
         self.options(pane="%9", sid=SID)
         self.assertIsNotNone(self.host.show("w1"))
-        self.tmux.set_option.assert_called_once_with("%7", "@hidden", "0")
+        self.assertFalse(hidden.read("w1", SID))
 
     def test_a_failed_show_with_no_pane_of_its_keeps_hidden(self):
-        self.enterContext(environ())
+        self.enterContext(environ(HOME=self.home))
+        hidden.write("w1", SID, hidden=True, live=None)
         self.options(pane=None, sid=SID)
         self.assertIsNotNone(self.host.show("w1"))
-        self.tmux.set_option.assert_not_called()
+        self.assertTrue(hidden.read("w1", SID))
 
 
 class ScreenTest(Base):

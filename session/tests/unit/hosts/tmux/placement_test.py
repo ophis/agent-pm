@@ -10,6 +10,7 @@ from agent_pm.session.hosts.tmux import types
 
 from session.tests.case import Case
 from session.tests.tmux_fixtures import (
+    COMMAND,
     HOSTS,
     INSIDE,
     ITERM,
@@ -367,6 +368,132 @@ class RunCommandTest(Case):
                 fake = FakeTmux(results={"/bin/sh": result} if result else {})
                 self.assertEqual(placed(fake).run_command("s", template), why)
                 self.assertEqual(len(fake.calls), 1 if result else 0)
+
+
+class WatchTest(Case):
+    HOOK = (
+        "if-shell -F '#{==:#{hook_client},/dev/pts/4}' "
+        f"\"run-shell -b '{COMMAND} hide --if-closed s >/dev/null 2>&1 || true'\""
+    )
+
+    UNSET = "set-option -u -t =s: @pane ; set-option -u -t =s: @window"
+    STALE = (
+        "if-shell -F -t =s: "
+        "'#{||:#{!=:#{@pane},%10},#{m:* %10 *,#{S:#{W:#{P: #{pane_id} }}}}}' "
+        f"'' \"{UNSET}\""
+    )
+    SET = [
+        *("tmux", "set-option", "-t", "=s:", "@window", "@3"),
+        *(";", "set-hook", "-t", "=s:", "client-attached", STALE),
+        *(";", "set-hook", "-t", "=s:", "client-session-changed", STALE),
+    ]
+
+    def watch(self, pane="%10\n", found="@3 /dev/pts/4\n", **which_kw):
+        fake = FakeTmux(results={"show-options": (0, pane), "display-message": (0, found)})
+        self.stderr = io.StringIO()
+        with environ(), which(**which_kw), redirect_stderr(self.stderr):
+            placed(fake).watch("s")
+        return fake.calls[1:]
+
+    def test_records_the_panes_window_and_a_hook_for_its_client_only(self):
+        self.assertEqual(
+            self.watch(),
+            [
+                ["tmux", "display-message", "-p", "-t", "%10", "#{window_id} #{pane_tty}"],
+                [*self.SET, ";", "set-hook", "-t", "=s:", "client-detached", self.HOOK],
+            ],
+        )
+        self.assertEqual(self.stderr.getvalue(), "")
+
+    def test_no_hook_without_a_command_tmux_takes_verbatim(self):
+        for session, why in (
+            (None, "agent-pm-session is not on PATH"),
+            ("/a b", "/a b: tmux would misread it"),
+        ):
+            with self.subTest(why=why):
+                calls = self.watch(session=session)
+                self.assertEqual(calls[-1], self.SET)
+                self.assertEqual(self.stderr.getvalue(), f"tui: show: client-detached: {why}\n")
+
+    def test_nothing_for_an_iterm2_or_unset_pane(self):
+        for pane in ("w0t0p0:ABC\n", ""):
+            with self.subTest(pane=pane):
+                self.assertEqual(self.watch(pane=pane), [])
+                self.assertEqual(self.stderr.getvalue(), "")
+
+    def test_a_bad_window_id_or_tty_is_printed_and_sets_nothing(self):
+        for found in ("own\n", "@3\n", "@3 /dev/pts/4;x\n", "@3 pts/4\n"):
+            with self.subTest(found=found):
+                self.assertEqual(len(self.watch(found=found)), 1)
+                self.assertEqual(
+                    self.stderr.getvalue(),
+                    f"tui: show: @window: not a window id and tty: {found.strip()!r}\n",
+                )
+
+
+class ViewerTest(Case):
+    """closed and forget over a tmux that keeps @pane and @window, its if-shell -F an equality."""
+
+    def fake(self, pane="%8", window="@2", panes="%1\n%9\n", windows="@1\n@2\n"):
+        self.kept = {"@pane": pane, "@window": window}
+
+        def show(argv):
+            value = self.kept.get(argv[-1])
+            return (0, value + "\n") if value else (1, "", f"invalid option: {argv[-1]}\n")
+
+        def if_shell(argv):
+            if argv[5] == f"#{{==:#{{@pane}},{self.kept['@pane']}}}":
+                self.kept.update({"@pane": None, "@window": None})
+            return (0,)
+
+        return FakeTmux(
+            results={
+                "show-options": show,
+                "list-panes": (0, panes),
+                "list-windows": (0, windows),
+                "if-shell": if_shell,
+            }
+        )
+
+    def test_closed_is_a_gone_pane_in_a_present_window(self):
+        for pane, window, want in (
+            ("%8", "@2", "%8"),
+            ("%9", "@2", None),
+            ("%8", "@3", None),
+            (None, "@2", None),
+            ("%8", None, None),
+            ("w0t0p0:ABC", "@2", None),
+            ("%8", "2", None),
+        ):
+            with self.subTest(pane=pane, window=window):
+                self.assertEqual(placed(self.fake(pane, window)).closed("s"), want)
+
+    def test_forget_unsets_only_while_the_pane_is_still_recorded(self):
+        unset = "set-option -u -t =s: @pane ; set-option -u -t =s: @window"
+        for recorded, given, want in (("%8", "%8", True), ("%10", "%8", False), ("%8", None, True)):
+            with self.subTest(recorded=recorded, given=given):
+                fake = self.fake(pane=recorded)
+                self.assertEqual(placed(fake).forget("s", given), want)
+                self.assertIn(
+                    [
+                        "tmux",
+                        "if-shell",
+                        "-F",
+                        "-t",
+                        "=s:",
+                        f"#{{==:#{{@pane}},{given or recorded}}}",
+                        unset,
+                    ],
+                    fake.calls,
+                )
+                self.assertEqual(self.kept["@pane"], None if want else recorded)
+
+    def test_forget_leaves_an_iterm2_or_unset_pane(self):
+        for pane in ("w0t0p0:ABC", None):
+            with self.subTest(pane=pane):
+                fake = self.fake(pane=pane)
+                self.assertFalse(placed(fake).forget("s"))
+                self.assertNotIn("if-shell", fake.commands())
 
 
 class ContainerTest(Case):

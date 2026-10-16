@@ -256,11 +256,12 @@ class Worker:
             host=self.state.host,
         )
 
-    def start(self, *, prompt: str, resume: bool) -> Record:
-        """Drop stale sids, claim its sid, save its state, start its client, save its token, show
-        it, watch it (EARLY s, up to COLOR_CAP s while its opening is pending); then publish its
-        Record and return it. A failed save or start puts its files back. Its client exiting in the
-        watch: SessionError with its last lines, its terminal kept, no Record.
+    def start(self, *, prompt: str, resume: bool, hidden: bool | None = None) -> Record:
+        """Drop stale sids, claim its sid, save its state, start its client, save its token, show or
+        hide it (hidden: True hides it, False shows it, None keeps its Host's hidden), watch it
+        (EARLY s, up to COLOR_CAP s while its opening is pending); then publish its Record and
+        return it. A failed save or start puts its files back. Its client exiting in the watch:
+        SessionError with its last lines, its terminal kept, no Record.
         """
         name = self.state.name
         self._drop_stale()
@@ -296,7 +297,7 @@ class Worker:
             self._put_back(before)
             raise SessionError(f"{name}: {_detail(error)}; start undone") from None
         if session.showable:
-            self._show(session)
+            self._show(session, hidden=hidden)
         self._watch(session)
         record = self.state.record()
         (host.attach(name) if handle is None else handle).publish(record)
@@ -451,13 +452,16 @@ class Worker:
                 else:
                     save(path, data)
 
-    def _show(self, session: Session) -> None:
+    def _show(self, session: Session, *, hidden: bool | None) -> None:
         name = self.state.name
         try:
             self.say(f"session {name}: {session.attach_command()}")
-            session.show(display=self.state.display)
+            if hidden:
+                session.hide()
+            elif hidden is False or not session.status().hidden:
+                session.show(display=self.state.display)
         except (SessionError, ConfigError) as error:
-            self.say(f"session {name}: not shown: {error}")
+            self.say(f"session {name}: not {'hidden' if hidden else 'shown'}: {error}")
 
     def _watch(self, session: Session) -> None:
         began = self.clock()

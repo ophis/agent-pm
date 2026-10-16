@@ -17,7 +17,9 @@ from agent_pm.session.hosts.tmux.grid import (
     GRID_ROW,
     PER_COLUMN,
     RETILE,
+    WINDOW,
     Grid,
+    hook_command,
     validate_per_column,
     validate_retile,
 )
@@ -52,6 +54,8 @@ PLACEHOLDERS = {"session"}
 
 
 SLOT = re.compile(r"\{\{([^{}]*)\}\}")
+TTY = re.compile(r"/dev/[A-Za-z0-9/]+")
+LISTED = "#{S:#{W:#{P: #{pane_id} }}}"
 
 
 NO_PANE = "no anchor pane: {}, no iTerm2 pane ($ITERM_SESSION_ID)"
@@ -322,6 +326,71 @@ class Placement:
                 print(f"tui: show: {key}: {e}", file=sys.stderr)
                 return
 
+    def watch(self, session: str) -> None:
+        """@window, the window of the tmux pane show opened (@pane), and session's hooks: that
+        pane's client detaching runs `hide --if-closed`; any client arriving forgets that pane once
+        gone (a detach runs no hook, and frees its tty); a failure is only printed.
+        """
+        command, problem = hook_command()
+        target = f"={session}:"
+        try:
+            pane = self.tmux.option(session, "@pane") or ""
+            if not PANE.fullmatch(pane):
+                return
+            found = self.tmux.checked(
+                ["display-message", "-p", "-t", pane, "#{window_id} #{pane_tty}"]
+            ).stdout.strip()
+            window, _, tty = found.partition(" ")
+            if not (WINDOW.fullmatch(window) and TTY.fullmatch(tty)):
+                raise TuiError(f"not a window id and tty: {found!r:.80}")
+            kept = f"#{{||:#{{!=:#{{@pane}},{pane}}},#{{m:* {pane} *,{LISTED}}}}}"
+            stale = f"if-shell -F -t {target} '{kept}' '' \"{_unset(target)}\""
+            args = ["set-option", "-t", target, "@window", window]
+            for arrived in ("client-attached", "client-session-changed"):
+                args += [";", "set-hook", "-t", target, arrived, stale]
+            if not problem:
+                run = f"run-shell -b '{command} hide --if-closed {session} >/dev/null 2>&1 || true'"
+                # a client's name is its tty: the viewer's is its pane's
+                hook = f"if-shell -F '#{{==:#{{hook_client}},{tty}}}' \"{run}\""
+                args += [";", "set-hook", "-t", target, "client-detached", hook]
+            self.tmux.checked(args)
+        except TuiError as e:
+            print(f"tui: show: @window: {e}", file=sys.stderr)
+            return
+        if problem:
+            print(f"tui: show: client-detached: {problem}", file=sys.stderr)
+
+    def shown(self, session: str) -> str | None:
+        """The live tmux pane that show opened (@pane), if any."""
+        pane = self.tmux.option(session, "@pane")
+        live = pane is not None and PANE.fullmatch(pane) and self.tmux.process(pane) is not None
+        return pane if live else None
+
+    def closed(self, session: str) -> str | None:
+        """The tmux pane show opened (@pane), once it is gone and the window it was in (@window)
+        remains; else None.
+        """
+        pane, window = self.tmux.option(session, "@pane"), self.tmux.option(session, "@window")
+        if not (PANE.fullmatch(pane or "") and WINDOW.fullmatch(window or "")):
+            return None
+        panes = self.tmux.checked(["list-panes", "-a", "-F", "#{pane_id}"]).stdout.split()
+        windows = self.tmux.checked(["list-windows", "-a", "-F", "#{window_id}"]).stdout.split()
+        return pane if pane not in panes and window in windows else None
+
+    def forget(self, session: str, pane: str | None = None) -> bool:
+        """Unsets @pane and @window while @pane is still the tmux pane `pane` (default: the one
+        recorded), in one tmux command, so a late hook finds nothing to judge closed; whether @pane
+        is now unset.
+        """
+        pane = self.tmux.option(session, "@pane") if pane is None else pane
+        if not PANE.fullmatch(pane or ""):
+            return False
+        target = f"={session}:"
+        self.tmux.checked(
+            ["if-shell", "-F", "-t", target, f"#{{==:#{{@pane}},{pane}}}", _unset(target)]
+        )
+        return self.tmux.option(session, "@pane") is None
+
     def run_command(self, session: str, template: str) -> str | None:
         """Runs template with /bin/sh, each {{session}} the quoted session name; why it failed, else
         None.
@@ -431,3 +500,7 @@ class Placement:
             key=lambda c: int(c[0]),
             reverse=True,
         )
+
+
+def _unset(target: str) -> str:
+    return f"set-option -u -t {target} @pane ; set-option -u -t {target} @window"

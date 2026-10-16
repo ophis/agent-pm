@@ -487,6 +487,21 @@ class PaneTargetTest(Case):
                 self.assertEqual(fake.calls, [])
 
 
+class SessionsTest(Case):
+    def test_names_none_without_a_server_and_none_on_failure(self):
+        for result, want in (
+            ((0, "w1\nmgr\n"), ["w1", "mgr"]),
+            ((1, "", "no server running on /tmp/tmux-501/default\n"), []),
+            ((1, "", "boom\n"), None),
+        ):
+            with self.subTest(result=result):
+                fake = FakeTmux(results={"list-sessions": result})
+                self.assertEqual(transport.Tmux(fake).sessions(), want)
+                self.assertEqual(
+                    fake.calls, [["tmux", "-u", "list-sessions", "-F", "#{session_name}"]]
+                )
+
+
 class ListingTest(Case):
     def listing(self, sessions, clients=(0, ""), panes=(0, ""), capture=(0, ""), match=None):
         fake = FakeTmux(
