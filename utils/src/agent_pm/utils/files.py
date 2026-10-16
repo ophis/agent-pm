@@ -5,7 +5,8 @@ import os
 import stat
 import sys
 import tempfile
-from collections.abc import Iterator
+import time
+from collections.abc import Iterable, Iterator
 from enum import StrEnum
 from pathlib import Path
 
@@ -89,6 +90,18 @@ def inode_lock(path: str | Path, *, wait: bool = True) -> Iterator[bool]:
                 return
         finally:
             os.close(fd)
+
+
+def idle(paths: Iterable[str | Path], seconds: float) -> bool:
+    """Every existing path (not followed) last modified over `seconds` ago."""
+    cutoff = time.time() - seconds
+    for path in paths:
+        try:
+            if os.lstat(path).st_mtime >= cutoff:
+                return False
+        except FileNotFoundError:
+            continue
+    return True
 
 
 def sync_directory(path: str | Path) -> None:

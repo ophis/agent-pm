@@ -272,6 +272,19 @@ class InodeLock(Base):
         self.assertEqual(raised.exception.errno, errno.EINVAL)
 
 
+class Idle(Base):
+    def test_every_existing_path_older_than_the_age_and_missing_ones_ignored(self):
+        old, new = os.path.join(self.dir, "old"), os.path.join(self.dir, "new")
+        for path in (old, new):
+            Path(path).touch()
+        os.utime(old, (0, 0))
+        os.symlink(old, self.path)
+        os.utime(self.path, (0, 0), follow_symlinks=False)
+        self.assertTrue(files.idle([old, self.path, os.path.join(self.dir, "gone")], 60))
+        self.assertFalse(files.idle([old, new], 60))
+        self.assertTrue(files.idle([], 60))
+
+
 class Save(Base):
     def setUp(self):
         super().setUp()

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import contextlib
 import json
+import logging
 import os
 import re
 import shutil
@@ -34,7 +35,7 @@ from agent_pm.session.engine.types import (
     SessionRow,
     Word,
 )
-from agent_pm.session.hosts.base import Host, HostProcess, Terminal
+from agent_pm.session.hosts.base import IDLE_AFTER, Host, HostProcess, Terminal, tui_lock
 from agent_pm.session.hosts.pty import hook, state
 from agent_pm.session.hosts.pty.keys import encode
 from agent_pm.utils import (
@@ -42,6 +43,7 @@ from agent_pm.utils import (
     Display,
     ProcessControl,
     Record,
+    idle,
     inode_lock,
     module_roots,
     sid_error,
@@ -52,6 +54,7 @@ NAME = re.compile(r"[A-Za-z0-9_-]+")
 TERM = "xterm-256color"
 SUPERVISOR = "agent_pm.session.hosts.pty.supervisor"
 START_TIMEOUT = 10
+LOG = logging.getLogger("session")
 KILL_WAIT = 5
 PAUSE = 0.5  # before a key that follows a paste, as the program may still be taking the paste
 POLL = 0.05
@@ -363,7 +366,9 @@ class PtyHost(Host):
                 stack.enter_context(inode_lock(os.path.join(state.root(), f"{name}.lock")))
             except OSError as error:
                 raise SessionError(f"{kind} {name}: {error}") from error
-            return self._create(kind, name, launch, **options)
+            started = self._create(kind, name, launch, **options)
+        _sweep(name)
+        return started
 
     def _create(
         self, kind, name, launch: Launch, *, display, events, record, metadata, env
@@ -444,3 +449,43 @@ class PtyHost(Host):
             )
         threading.Thread(target=supervisor.wait, daemon=True).start()
         return supervisor
+
+
+def _sweep(current: str) -> None:
+    """Every other name idle IDLE_AFTER with no process loses its dir and lock; errors logged."""
+    try:
+        names = {entry.name.removesuffix(".lock") for entry in os.scandir(state.root())}
+    except OSError as error:
+        LOG.warning("pty sweep: %s", error)
+        return
+    for name in sorted(names - {current}):
+        if NAME.fullmatch(name):
+            try:
+                _expire(name)
+            except (OSError, SessionError) as error:
+                LOG.warning("pty sweep %s: %s", name, error)
+
+
+def _expire(name: str) -> None:
+    """Under tui's lock (if any), then its own, both untaken by others; a missing pid then means no
+    supervisor, as a start holds the lock until it is written.
+    """
+    folder = os.path.join(state.root(), name)
+    lock = f"{folder}.lock"
+    files = (folder, os.path.join(folder, state.OUTPUT), os.path.join(folder, state.ACTIVITY))
+    if os.path.islink(folder) or not idle((*files, lock), IDLE_AFTER):
+        return
+    with contextlib.ExitStack() as stack:
+        tui = tui_lock(name)
+        if os.path.lexists(tui) and not stack.enter_context(inode_lock(tui, wait=False)):
+            return
+        if not stack.enter_context(inode_lock(lock, wait=False)) or not idle(files, IDLE_AFTER):
+            return
+        if os.path.lexists(folder):
+            process = PtyProcess(name, folder)
+            supervised = state.read(folder, state.PID) is not None and process._supervised()
+            if process.alive() or process._group_live() or supervised:
+                return
+            process.close()
+            shutil.rmtree(folder, ignore_errors=True)
+        os.unlink(lock)

@@ -37,6 +37,7 @@ from agent_pm.utils import (
 
 SIGNALS = (signal.SIGHUP, signal.SIGTERM, signal.SIGINT)
 TUI_DIR = f"{STATE}/tui"
+IDLE_AFTER = 30 * 24 * 3600
 
 
 def tui_lock(name: str) -> str:
