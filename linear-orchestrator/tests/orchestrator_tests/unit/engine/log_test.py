@@ -1,6 +1,6 @@
 """Log boundary behavior."""
 
-import contextlib
+import fcntl
 import json
 import os
 import re
@@ -251,18 +251,17 @@ class Rotation(Logs):
         self.assertEqual(self.raw(self.path), original + self.line.encode())
 
     def test_a_rotation_by_another_process_is_not_repeated(self):
-        original, real = self.big(), log.file_lock
+        original, real = self.big(), fcntl.flock
 
-        @contextlib.contextmanager
-        def raced(path):
+        def raced(fd, operation):
             os.replace(self.path, self.path + ".1")
             with open(self.path, "w") as f:
                 f.write("other\n")
-            with real(path):
-                yield
+            real(fd, operation)
 
-        with mock.patch.object(log, "file_lock", raced):
+        with mock.patch.object(fcntl, "flock", side_effect=raced) as flock:
             self.log()
+        self.assertEqual(flock.call_count, 1)
         self.assertEqual(self.raw(self.path + ".1"), original)
         self.assertEqual(self.text(), "other\n" + self.line)
 
