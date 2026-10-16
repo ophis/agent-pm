@@ -7,7 +7,6 @@ import importlib.util
 import io
 import json
 import os
-import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -89,7 +88,8 @@ class Run(unittest.TestCase):
 class Discovery(unittest.TestCase):
     def selection_fixture(self, *, normalized=False):
         root = Path(self.enterContext(tempfile.TemporaryDirectory())).resolve()
-        directory = root / ("project/tests/example_tests/integration" if normalized else ".github")
+        package = "example_" + root.name + "_tests"
+        directory = root / (f"project/tests/{package}/integration" if normalized else ".github")
         directory.mkdir(parents=True)
         if normalized:
             for parent in (directory, directory.parent):
@@ -100,14 +100,7 @@ class Discovery(unittest.TestCase):
             "import unittest\nclass Choice(unittest.TestCase):\n"
             "    def test_one(self): pass\n    def test_two(self): pass\n"
         )
-        module = ("example_tests.integration." if normalized else "") + name
-        self.addCleanup(
-            lambda: [
-                sys.modules.pop(key, None)
-                for key in list(sys.modules)
-                if key == module or key.startswith("example_tests")
-            ]
-        )
+        module = (package + ".integration." if normalized else "") + name
         return root, path, module
 
     def test_exact_id_and_file_select_only_the_requested_tests(self):
@@ -146,7 +139,7 @@ class Discovery(unittest.TestCase):
 
     def test_ambiguous_module_names_are_rejected_before_import(self):
         root, path, module = self.selection_fixture(normalized=True)
-        other = root / "other/tests/example_tests/integration" / path.name
+        other = root / "other/tests" / path.relative_to(root / "project/tests")
         other.parent.mkdir(parents=True)
         for parent in (other.parent, other.parent.parent):
             (parent / "__init__.py").touch()
