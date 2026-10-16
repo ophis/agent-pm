@@ -102,7 +102,7 @@ class Scripted(Case):
             with self.subTest(name=name), self.assertRaises(SessionError):
                 cls.attach(name)
 
-    def test_it_cannot_display(self):
+    def test_it_cannot_show(self):
         session = self.start(FakeSession.scripted())
         self.assertFalse(session.showable)
         for method in (session.show, session.attach_command, session.screen):

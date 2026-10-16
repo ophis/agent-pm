@@ -1,3 +1,5 @@
+import contextlib
+import itertools
 import os
 import tempfile
 from unittest import mock
@@ -43,3 +45,36 @@ class GroupTest(Case):
         self.group.close()
         self.control.terminate.assert_called_once_with()
         self.control.kill.assert_not_called()
+
+    def test_wait_exit_is_false_while_the_group_outlives_the_timeout(self):
+        self.control.live.return_value = True
+        self.assertFalse(self.group.wait_exit(0))
+
+    def test_close_kills_a_group_that_outlives_its_terminate(self):
+        self.control.live.side_effect = lambda: not self.control.kill.called
+        with self.clock():
+            self.group.close()
+        self.control.terminate.assert_called_once_with()
+        self.control.kill.assert_called_once_with()
+
+    def test_kill_of_a_group_that_does_not_exit_is_a_session_error(self):
+        self.control.live.return_value = True
+        with (
+            self.clock(),
+            self.assertRaisesRegex(SessionError, "^process group apm-group-1: did not exit$"),
+        ):
+            self.group.kill()
+
+    def test_a_controller_error_on_kill_or_close_is_a_session_error(self):
+        for verb, call in (("kill", self.group.kill), ("terminate", self.group.close)):
+            with self.subTest(verb=verb):
+                getattr(self.control, verb).side_effect = OSError("refused")
+                with self.assertRaisesRegex(SessionError, "^process group apm-group-1: refused$"):
+                    call()
+
+    def clock(self):
+        """Each wait's deadline passes at once."""
+        stack = contextlib.ExitStack()
+        stack.enter_context(mock.patch("time.monotonic", side_effect=itertools.count(0, 10)))
+        stack.enter_context(mock.patch("time.sleep"))
+        return stack

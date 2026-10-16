@@ -31,7 +31,7 @@ class Settings(Case):
             with self.subTest(settings=settings), self.assertRaises(ConfigError):
                 PtyHost("pty", settings)
 
-    def test_it_cannot_display_and_keeps_a_display_as_given(self):
+    def test_it_cannot_show_and_keeps_a_display_as_given(self):
         host = PtyHost("pty")
         self.assertNotIsInstance(host, Showable)
         self.assertEqual((host.display("x:1.2"), host.display_help()), ("x:1.2", ""))

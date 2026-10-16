@@ -271,7 +271,7 @@ class NotShowableTest(ControlCase):
         )
         self.addCleanup(process.close)
 
-    def test_show_attach_command_read_and_tile_exit_1_saying_the_host_cannot_display(self):
+    def test_show_attach_command_read_and_tile_exit_1_saying_the_host_cannot_show(self):
         refused = "session f1: host fake cannot show\n"
         for argv, stdin, stderr in (
             (("show", "f1"), None, refused),
@@ -288,7 +288,7 @@ class NotShowableTest(ControlCase):
                 self.assertEqual((result.returncode, result.stdout, result.stderr), (1, "", stderr))
         self.assertEqual(self.status("f1", module=True), [live("f1", "working", showable=False)])
 
-    def test_status_on_a_host_that_cannot_display_gives_no_attach_command(self):
+    def test_status_on_a_host_that_cannot_show_gives_no_attach_command(self):
         self.assertEqual(
             self.status("f1", "nope", module=True),
             [live("f1", "working", showable=False), gone("nope")],

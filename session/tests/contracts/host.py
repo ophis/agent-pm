@@ -384,14 +384,14 @@ class HostContract:
         terminal.send(Key("Enter"))
         self.poll(lambda: (read(out) or "").rstrip("\r\n") == "from afar", f"line in {out}")
 
-    def test_a_host_that_cannot_display_returns_each_display_as_given(self):
+    def test_a_host_that_cannot_show_returns_each_display_as_given(self):
         if isinstance(self.host, Showable):
             self.skipTest("applies only to a Host that cannot show")
         for value in (None, "", OTHER_DISPLAY):
             with self.subTest(value=value):
                 self.assertEqual(self.host.display(value), value)
 
-    def test_a_session_on_a_host_that_cannot_display_refuses_show_attach_command_and_screen(self):
+    def test_a_session_on_a_host_that_cannot_show_refuses_show_attach_command_and_screen(self):
         if isinstance(self.host, Showable):
             self.skipTest("applies only to a Host that cannot show")
         scenario, kind = self.file("scenario"), type(self.host)

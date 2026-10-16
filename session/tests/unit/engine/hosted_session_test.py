@@ -570,7 +570,7 @@ class DisplayTest(HostedTuiBase):
 
 
 class SessionTest(Base):
-    def test_on_a_host_that_cannot_display_it_raises_not_showable(self):
+    def test_on_a_host_that_cannot_show_it_raises_not_showable(self):
         table = {"scenario": self.scenario, "log": self.log}
         configured = HostedSession.configured(
             clients={

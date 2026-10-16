@@ -141,7 +141,7 @@ class FakeCtl(Installed):
         with self.assertRaises(TypeError):
             ctl.set_session(self.state, "w1", alvie=True)
 
-    def test_show_exits_1_for_a_session_that_cannot_display(self):
+    def test_show_exits_1_for_a_session_that_cannot_show(self):
         for name in ("w1", "w2"):
             self.start(name)
         ctl.set_session(self.state, "w2", showable=True)

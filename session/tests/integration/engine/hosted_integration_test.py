@@ -115,7 +115,7 @@ class SessionTest(Base):
         for start in starts:
             start.assert_not_called()
 
-    def test_a_headless_session_cannot_display_and_has_no_record(self):
+    def test_a_headless_session_cannot_show_and_has_no_record(self):
         session = self.start()
         self.assertFalse(session.showable)
         self.assertIsNone(session.record())
