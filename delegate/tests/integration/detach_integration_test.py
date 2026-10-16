@@ -70,6 +70,7 @@ class Detach(Case):
         *extra: str,
         steps,
         turns=(),
+        mode="headless",
         inside=None,
         events=None,
         launcher=False,
@@ -84,7 +85,7 @@ class Detach(Case):
         self.events_used = events or self.events
         given = {"AGENT_PM_EVENTS": self.events_used, "AGENT_PM_SID": SID}
         argv = [*RUN, "--role", ROLE, "--input", text, "--out", self.out, "--workdir"]
-        argv += [self.work, "--detach", *extra]
+        argv += [self.work, "--mode", mode, "--detach", *extra]
         argv += [] if launcher else ["--sid", SID, "--events", self.events_used]
         return self.cli(argv, inside=inside, given=given if launcher else {})
 
@@ -203,7 +204,7 @@ def shape(lines: list[str]) -> list[str]:
 
 class Tui(Detach):
     def test_from_the_manager_shown_in_its_grid_turn_ends_then_one_outcome_done(self):
-        res = self.detach("--mode", "tui", steps=[START], turns=[[block(DONE)]], inside=MANAGER)
+        res = self.detach(mode="tui", steps=[START], turns=[[block(DONE)]], inside=MANAGER)
         early = shape(live_tmux.events(self.events))
         record = self.said(res, tui=True)
         self.assertNotIn("outcome done", early)
@@ -220,7 +221,7 @@ class Tui(Detach):
         self.assertTrue(record.display.startswith(MANAGER), record.display)
 
     def test_outside_any_client_runs_shown_in_no_pane(self):
-        res = self.detach("--mode", "tui", steps=[START], turns=[[block(DONE)]])
+        res = self.detach(mode="tui", steps=[START], turns=[[block(DONE)]])
         self.said(res, tui=True)
         shaped = self.ended(turn_ends=2)
         self.assertEqual(self.harness_lines(shaped), ["outcome done", "exited 0"])
@@ -245,7 +246,7 @@ class Tui(Detach):
                 f'#!/bin/sh\n{python} -I -c "{dump}" {shlex.quote(launched)} "$@"\n'
                 f'exec {python} -I {fake} "$@"\n'
             )
-        res = self.detach("--mode", "tui", steps=[START], turns=[[block(DONE)]])
+        res = self.detach(mode="tui", steps=[START], turns=[[block(DONE)]])
         self.said(res, tui=True)
         self.until(lambda: self.kinds().count("session") > 0, "a session row")
 
@@ -294,7 +295,7 @@ class Tui(Detach):
         self.assertNotIn(SECRET, "\0".join(resumed["argv"]))
 
     def test_kill_session_of_the_harness_stops_the_tui_one_outcome_error(self):
-        res = self.detach("--mode", "tui", steps=[START])
+        res = self.detach(mode="tui", steps=[START])
         self.said(res, tui=True)
         self.until(lambda: "nudge" in self.kinds(), "the nudge")
         shown = self.server.tmux("display-message", "-p", "-t", f"={HARNESS}:", "#{pane_pid}")
@@ -312,7 +313,7 @@ class Tui(Detach):
         )
 
     def test_the_launchers_events_file_gets_the_turn_ends_and_one_outcome(self):
-        res = self.detach("--mode", "tui", steps=[START], turns=[[block(DONE)]], launcher=True)
+        res = self.detach(mode="tui", steps=[START], turns=[[block(DONE)]], launcher=True)
         self.said(res, tui=True)
         shaped = self.ended(turn_ends=2)
         self.assertEqual(shaped.count("turn end"), 2)
@@ -320,7 +321,7 @@ class Tui(Detach):
 
     def test_an_events_path_tmux_would_misread_exits_2_starting_nothing(self):
         events = os.path.join(self.dir, "ev#1")
-        res = self.detach("--mode", "tui", steps=[START], events=events)
+        res = self.detach(mode="tui", steps=[START], events=events)
         self.assertEqual((res.returncode, res.stdout), (2, ""), res.stderr)
         self.assertIn(f"delegate: events file {events}: tmux would misread it\n", res.stderr)
         self.assertFalse(self.live(HARNESS) or self.live(TUI))
@@ -447,7 +448,7 @@ class Answer(Detach):
         self.answered(self.said(res, tui=False), turn_ends=0)
 
     def test_tui_needs_input_answered_by_a_detached_resume_closing_its_open_tui(self):
-        res = self.detach("--mode", "tui", steps=[START], turns=[[block(ASKING)]])
+        res = self.detach(mode="tui", steps=[START], turns=[[block(ASKING)]])
         self.said(res, tui=True)
         shaped = self.ended(turn_ends=2)
         self.assertEqual(self.harness_lines(shaped), ["outcome needs_input", "exited 0"])

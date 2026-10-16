@@ -36,6 +36,7 @@ from agent_pm.delegate.engine.types import ConfigError, Layout
 parser = argparse.ArgumentParser(allow_abbrev=False)
 cli._run_options(parser)
 args = parser.parse_args()
+args.mode = args.mode or "headless"
 try:
     cli._check(args)
     spec = replace(cli.spec_of(args, args.input), resume=True)

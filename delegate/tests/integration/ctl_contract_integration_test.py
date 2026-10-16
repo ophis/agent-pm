@@ -63,6 +63,8 @@ class DelegateCtlContract(AnswerCtlContract, HarnessCase):
             "--workdir",
             workdir,
             "--detach",
+            "--mode",
+            "headless",
             "--events",
             os.path.join(self.home, "events"),
             sid=sid,
@@ -87,6 +89,8 @@ class DelegateCtlContract(AnswerCtlContract, HarnessCase):
             "--input",
             "initial",
             "--detach",
+            "--mode",
+            "headless",
             "--events",
             os.path.join(self.home, "events"),
         )

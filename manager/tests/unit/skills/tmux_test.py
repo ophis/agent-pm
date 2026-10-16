@@ -137,11 +137,12 @@ class Flows(Case):
         launch = section("tmux", "Launch")
         for inner in (
             r"agent-pm-session start <name> --client <client>",
-            r"agent-pm-delegate run --role <role> .*--mode tui --detach",
+            r"agent-pm-delegate run --role <role> .*--mode tui --detach --name <name> ",
             r"agent-pm-linear router --issue <ID> --tui",
         ):
             self.assertRegex(launch, rf"`agent-pm-crew run <[A-Za-z]+> (\[[^]]+\] )?-- {inner}")
         self.assertIn("--mode headless", launch)
+        self.assertIn("the tui `<name>` and its harness `<name>-drive`", launch)
         self.assertIn("--display D", launch)
         self.assertIn("`--display none`", launch)
         self.assertIn("agent-pm-session --help", launch)
@@ -174,11 +175,10 @@ class Flows(Case):
             "`agent-pm-session read <name> [--lines <n>]`",
             "`agent-pm-session reply <name>`",
             "`agent-pm-session restart <name>`",
-            "`agent-pm-session hide <name>…`",
-            "`agent-pm-session show <name>…`",
-            "`agent-pm-session show <role>-<sid8>-drive`",
-            "`agent-pm-delegate hide <workdir>…`",
-            "`agent-pm-linear hide <ID>…`",
+            "`agent-pm-crew hide <name>…`",
+            "`agent-pm-crew show <name>…`",
+            "`--all`",
+            "`agent-pm-session show <name>-drive`",
             "`agent-pm-crew note <name> '<text>'`",
             "`''` clears",
             "`agent-pm-crew status [<name>…]`",
@@ -191,6 +191,8 @@ class Flows(Case):
             "`agent-pm-crew release`",
         ):
             self.assertIn(phrase, direct)
+        for phrase in ("agent-pm-delegate hide", "agent-pm-linear hide", "agent-pm-session hide"):
+            self.assertNotIn(phrase, direct)
 
     def test_color_is_left_to_the_session_but_a_start_dialog(self):
         (worker,) = [

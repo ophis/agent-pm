@@ -13,6 +13,7 @@ Exits 0 on success, 2 on usage or config errors, 1 on other failures.
 import argparse
 import json
 import os
+import re
 import shlex
 import sys
 import time
@@ -29,6 +30,10 @@ from agent_pm.session import Mode, NotShowable, SessionError
 from agent_pm.utils import EVENTS_ENV, SID_ENV, STATE, Once, answer_keys, nested_start
 
 LIST_PARAMS = RunParams(input="", out="/agent-pm-list/work/out.md", workdir="/agent-pm-list/work")
+# shortcut: a copy of the session's unexported SESSION_NAME and its rule (tests.checks pins them);
+# import them once agent_pm.session exports them
+SESSION_NAME = re.compile(r"(?!none\Z)[A-Za-z0-9_-]+")
+SESSION_NAME_RULE = "[A-Za-z0-9_-]+ but not none"
 
 
 def main(
@@ -36,9 +41,9 @@ def main(
 ) -> int:
     argv = sys.argv[1:] if argv is None else list(argv)
     sid, events = (os.environ.pop(key, "") or None for key in (SID_ENV, EVENTS_ENV))
-    parser = argparse.ArgumentParser(prog="agent-pm-delegate")
+    parser = argparse.ArgumentParser(prog="agent-pm-delegate", allow_abbrev=False)
     commands = parser.add_subparsers(dest="command", required=True)
-    run = commands.add_parser("run", help="run a role in an agent session")
+    run = commands.add_parser("run", help="run a role in an agent session", allow_abbrev=False)
     _run_options(run)
     for name, many, what in (
         ("status", True, "one Status line per run"),
@@ -50,7 +55,7 @@ def main(
         ("close", True, "close each run's sessions"),
         ("attach-command", False, "the command attaching to the run"),
     ):
-        query = commands.add_parser(name, help=what)
+        query = commands.add_parser(name, help=what, allow_abbrev=False)
         if name == "resume":
             query.add_argument("--input", metavar="TEXT", help="answer a needs_input run")
         query.add_argument(
@@ -59,7 +64,9 @@ def main(
             metavar="WORKDIR",
             help="none: one Record per stdin line",
         )
-    prompt = commands.add_parser("prompt", help="write a role's prompt as an instruction file")
+    prompt = commands.add_parser(
+        "prompt", help="write a role's prompt as an instruction file", allow_abbrev=False
+    )
     _common_options(prompt, out="where the prompt is written")
     a = parser.parse_args(argv)
     starts = a.command == "resume" or (a.command == "run" and not (a.list or a.dry_run))
@@ -74,7 +81,7 @@ def main(
 
 
 def _common_options(ap: argparse.ArgumentParser, *, out: str) -> None:
-    ap.add_argument("--role")
+    ap.add_argument("--role", action=Once)
     ap.add_argument("--task")
     ap.add_argument(
         "--input", metavar="TEXT|-", help="the input text, even when it names a file; -: stdin's"
@@ -96,7 +103,19 @@ def _run_options(ap: argparse.ArgumentParser) -> None:
     )
     ap.add_argument("--client", action=Once, help="default: the role's client in the core config")
     ap.add_argument("--sid", help=f"default ${SID_ENV}; the two must agree")
-    ap.add_argument("--mode", choices=[m.value for m in Mode], default=Mode.HEADLESS.value)
+    ap.add_argument(
+        "--mode",
+        action=Once,
+        choices=[m.value for m in Mode],
+        help="default: tui with --detach, else headless",
+    )
+    ap.add_argument(
+        "--name",
+        action=Once,
+        type=_name,
+        metavar="N",
+        help="its tui session's and Record's name, <N>-drive its harness's; default <role>-<sid8>",
+    )
     ap.add_argument("--detach", action="store_true", help="run in a harness session of its own")
     ap.add_argument(
         "--events", metavar="FILE", help=f"--detach: the run's events file; default ${EVENTS_ENV}"
@@ -126,9 +145,7 @@ def _run(
     events: str | None,
 ) -> int:
     if a.list:
-        if extra := next(
-            (arg for arg in argv if not "--list".startswith(arg) or len(arg) < 3), None
-        ):
+        if extra := next((arg for arg in argv if arg != "--list"), None):
             ap.error(f"--list takes no other option, not {extra}")
         try:
             print(listing(Composer()), end="")
@@ -138,6 +155,8 @@ def _run(
         return 0
     if a.role is None:
         ap.error("the following arguments are required: --role")
+    if a.mode is None:
+        a.mode = (Mode.TUI if a.detach else Mode.HEADLESS).value
     if a.detach and a.events is None:
         a.events = events
     try:
@@ -187,6 +206,7 @@ def spec_of(a, text: str) -> Spec:
         mode=a.mode,
         client=a.client,
         sid=a.sid,
+        name=a.name,
         events=a.events,
         out=a.out,
         repo=a.repo,
@@ -211,6 +231,12 @@ def _check(a: argparse.Namespace) -> None:
         task = f"-{a.task}" if a.task else ""
         name = f"{time.strftime('%Y-%m-%d')}-{a.role}{task}-{a.sid[:8]}"
         a.workdir = os.path.join(os.path.expanduser(STATE), "adhoc", name)
+
+
+def _name(value: str) -> str:
+    if not SESSION_NAME.fullmatch(value):
+        raise argparse.ArgumentTypeError(f"want {SESSION_NAME_RULE}, not {value!r:.80}")
+    return value
 
 
 def _command(text: str) -> tuple[str, ...]:
