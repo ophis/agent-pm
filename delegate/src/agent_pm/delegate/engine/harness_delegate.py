@@ -116,7 +116,7 @@ def _encode(value: object) -> object:
 class _State:
     role: str
     plan: Plan
-    session_cls: str
+    session_cls: str | None
     host: str
     harness_host: str
     display: Display
@@ -253,7 +253,9 @@ class HarnessDelegate(Delegate):
         self._state = _State(
             role,
             accepted,
-            f"{session_cls.__module__}:{session_cls.__qualname__}",
+            None
+            if session_cls is Session
+            else f"{session_cls.__module__}:{session_cls.__qualname__}",
             agent_host.name,
             harness.name,
             display,
@@ -458,7 +460,7 @@ class HarnessDelegate(Delegate):
             view._settings = thaw(view.composer.config.values)
             view.session_cls = session_cls or (
                 Session
-                if view._state.session_cls == f"{Session.__module__}:{Session.__qualname__}"
+                if view._state.session_cls in (None, f"{Session.__module__}:{Session.__qualname__}")
                 else load_class(view._state.session_cls, Session)
             )
             view._configure()

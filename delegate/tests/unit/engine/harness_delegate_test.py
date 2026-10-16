@@ -30,6 +30,7 @@ from agent_pm.session import (
     Mode,
     NotShowable,
     Reply,
+    Session,
     SessionError,
 )
 from agent_pm.session import ConfigError as SessionConfigError
@@ -146,6 +147,29 @@ class RunDirTest(HarnessCase):
     def stored(self):
         with open(self.record(), encoding="utf-8") as file:
             return json.load(file)
+
+    def test_the_default_session_class_is_null(self):
+        with mock.patch.object(Session, "preflight"):
+            self.make(session_cls=Session)
+        self.assertIsNone(self.stored()["session_cls"])
+        self.assertIs(HarnessDelegate.attach(self.work).session_cls, Session)
+
+    def test_a_historical_default_class_path_still_loads(self):
+        with mock.patch.object(Session, "preflight"):
+            self.make(session_cls=Session)
+        data = self.stored()
+        data["session_cls"] = f"{Session.__module__}:{Session.__qualname__}"
+        with open(self.record(), "w", encoding="utf-8") as file:
+            json.dump(data, file)
+        self.assertIs(HarnessDelegate.attach(self.work).session_cls, Session)
+
+    def test_an_injected_session_class_is_loaded_from_its_saved_path(self):
+        self.make()
+        self.assertEqual(
+            self.stored()["session_cls"],
+            "delegate.tests.fakes.harness_session:HarnessSession",
+        )
+        self.assertIs(HarnessDelegate.attach(self.work).session_cls, HarnessSession)
 
     def corrupt(self, text):
         self.make()

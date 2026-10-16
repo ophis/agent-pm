@@ -107,7 +107,9 @@ def _start_agent(record, display):
     layout = Layout(record.workdir)
     with open(os.path.join(layout.run, "delegate.json"), encoding="utf-8") as file:
         state = json.load(file)
-    session_cls = load_class(state["session_cls"], Session)
+    session_cls = (
+        Session if state["session_cls"] is None else load_class(state["session_cls"], Session)
+    )
     spec = SessionSpec(
         workdir=layout.run,
         access=Access(cwd=layout.agent),
