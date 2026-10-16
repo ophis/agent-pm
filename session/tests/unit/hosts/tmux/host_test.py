@@ -634,15 +634,20 @@ class HideTest(ServedBase):
             self.host.hide("w1")
         self.assertEqual(self.sent(), [])
 
-    def test_hide_names_a_tmux_failure(self):
+    def hide_failing(self, verb):
         self.options.update({"@pane": "%9", "@sid": SID})
         self.panes["%9"] = "4242 $3 %9 5555"
-        for verb, err in (("kill-pane", "boom"), ("set-option", "lost server")):
-            with self.subTest(verb=verb):
-                self.runner.results[verb] = (1, "", err + "\n")
-                with self.assertRaisesRegex(SessionError, f"^tmux session w1: tmux: {err}$"):
-                    self.host.hide("w1")
-                self.runner.results["kill-pane"] = (0,)
+        self.runner.results[verb] = (1, "", "boom\n")
+        with self.assertRaisesRegex(SessionError, "^tmux session w1: tmux: boom$"):
+            self.host.hide("w1")
+
+    def test_hide_names_a_failed_pane_kill_and_marks_nothing(self):
+        self.hide_failing("kill-pane")
+        self.assertNotIn("@hidden", self.options)
+
+    def test_hide_names_a_failed_hidden_mark(self):
+        self.hide_failing("set-option")
+        self.assertNotIn("%9", self.panes)
 
     def test_a_failed_show_clears_hidden_while_a_pane_it_opened_still_shows_it(self):
         self.enterContext(environ())
@@ -672,22 +677,29 @@ class ScreenTest(ServedBase):
         self.assertEqual(self.host.screen("w1"), "text")
         self.assertEqual(self.capture(), [["capture-pane", "-p", "-J", "-t", "=w1:"]])
 
-    def test_screen_names_a_tmux_failure_or_a_bad_launch_before_reading(self):
+    def test_screen_names_a_failed_read(self):
         self.runner.results["capture-pane"] = (1, "", "boom\n")
         with self.assertRaisesRegex(SessionError, "^tmux session w1: tmux: boom$"):
             self.host.screen("w1")
-        self.runner.calls.clear()
+
+    def test_screen_refuses_a_bad_launch_record_before_reading(self):
         self.options["@process"] = "4242 $3 %x 4343"
         with self.assertRaisesRegex(
             SessionError, "^tmux session w1: bad @process '4242 \\$3 %x 4343'$"
         ):
             self.host.screen("w1")
+        self.assertEqual(self.capture(), [])
+
+    def test_screen_names_a_failed_launch_record_read_before_reading(self):
         self.runner.results["show-options"] = (1, "", "lost server\n")
         with self.assertRaisesRegex(SessionError, "^tmux session w1: tmux: lost server$"):
             self.host.screen("w1")
+        self.assertEqual(self.capture(), [])
+
+    def test_screen_refuses_a_bad_name_before_tmux(self):
         with self.assertRaisesRegex(SessionError, "^no tmux session 'a b'$"):
             self.host.screen("a b")
-        self.assertEqual(self.capture(), [])
+        self.assertEqual(self.runner.calls, [])
 
 
 class AttachCommandTest(Base):
