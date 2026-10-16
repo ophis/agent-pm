@@ -788,6 +788,35 @@ class StatusTest(HarnessCase):
         view = HarnessDelegate.attach(self.work, session_cls=HarnessSession)
         self.assertEqual(view.content(), view.status().to_line())
 
+    def test_tui_content_uses_the_current_result(self):
+        spec = Spec("input", self.work, mode="tui", client="fake", sid=SID)
+        record = self.make(spec=spec).detach()
+        view = HarnessDelegate.attach(record)
+        agent = HarnessSession.live[record.sessions[1]]
+        for result, expected in (
+            (None, "agent content"),
+            (Result(0, None), "agent content"),
+            (Result(0, Outcome("done", "T", "S")), None),
+            (Result(1, None, error="boom"), None),
+        ):
+            with self.subTest(result=result):
+                if result is not None:
+                    view._complete(result)
+                with mock.patch.object(agent, "content", return_value="agent content") as content:
+                    self.assertEqual(
+                        view.content(),
+                        expected if expected is not None else view.status().to_line(),
+                    )
+                    self.assertEqual(content.call_count, int(expected is not None))
+                self.assertTrue(RecordingHost.processes["agent", record.sessions[0]].alive())
+
+    def test_tui_content_without_its_agent_falls_back_to_status(self):
+        spec = Spec("input", self.work, mode="tui", client="fake", sid=SID)
+        record = self.make(spec=spec).detach()
+        HarnessSession.live[record.sessions[1]].stop()
+        view = HarnessDelegate.attach(record)
+        self.assertEqual(view.content(), view.status().to_line())
+
     def test_its_state_is_working_while_the_run_lives_else_gone(self):
         record = self.make().detach()
         view = HarnessDelegate.attach(self.work, session_cls=HarnessSession)

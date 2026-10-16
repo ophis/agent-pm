@@ -629,6 +629,14 @@ class HarnessDelegate(Delegate):
         )
 
     def content(self) -> str:
+        state = self._read()
+        result = state.result
+        if (
+            state.plan.spec.mode == Mode.TUI
+            and (result is None or result.outcome is None and not result.error)
+            and (agent := self._agent(state)) is not None
+        ):
+            return agent.content()
         return self.status().to_line()
 
     def status(self) -> Status:
