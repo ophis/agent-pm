@@ -556,150 +556,113 @@ class ShowableTest(Base):
         )
 
 
-class ServedBase(Base):
-    """A real Tmux; the runner plays the server."""
+class HideTest(Base):
+    def options(self, **found):
+        recorded = self.tmux.option.side_effect
+        self.tmux.option.return_value = None
+        self.tmux.option.side_effect = lambda pane, key: found.get(key[1:], recorded(pane, key))
 
-    def setUp(self):
-        super().setUp()
-        self.tmux = Tmux(self.runner)
-        self.host = TmuxHost("tmux", {"workers_per_column": 2}, tmux=self.tmux)
-        self.panes = {"=w1:": PROCESS, "%7": PROCESS}
-        self.options = {"@kind": "detach", "@process": PROCESS, "@control": self.control.path}
-        self.runner.results.update(
-            {
-                "display-message": self.display,
-                "show-options": self.shown,
-                "set-option": self.set_option,
-                "kill-pane": self.kill_pane,
-            }
-        )
-
-    def display(self, argv):
-        target = argv[argv.index("-t") + 1]
-        if target not in self.panes:
-            return 1, "", f"can't find pane: {target}\n"
-        process, running = self.panes[target], "0  "
-        printed = {
-            transport.DEAD: running,
-            f"{transport.PROCESS}\t{transport.DEAD}": f"{process}\t{running}",
-        }
-        return 0, printed.get(argv[-1], process) + "\n"
-
-    def shown(self, argv):
-        value = self.options.get(argv[-1])
-        return (1, "", f"invalid option: {argv[-1]}\n") if value is None else (0, value + "\n")
-
-    def set_option(self, argv):
-        self.options[argv[-2]] = argv[-1]
-        return (0,)
-
-    def kill_pane(self, argv):
-        del self.panes[argv[-1]]
-        return (0,)
-
-    def sent(self):
-        return [c[1:] for c in self.runner.calls if c[1] in ("set-option", "kill-pane")]
-
-
-class HideTest(ServedBase):
     def test_hide_kills_the_shown_pane_and_marks_it_hidden_until_a_show(self):
-        self.options.update({"@pane": "%9", "@sid": SID})
-        self.panes["%9"] = "4242 $3 %9 5555"
+        self.options(pane="%9", sid=SID)
         self.assertIsNone(self.host.hide("w1"))
-        self.assertEqual(
-            self.sent(), [["kill-pane", "-t", "%9"], ["set-option", "-t", "%7", "@hidden", "1"]]
-        )
+        self.tmux.kill.assert_called_once_with("%9")
+        self.tmux.set_option.assert_called_once_with("%7", "@hidden", "1")
+        self.options(hidden="1")
         self.assertTrue(self.host.attach("w1").status().hidden)
-        self.assertIsNone(self.host.show("w1", command="true"))
+        self.options(sid=SID)
+        self.host.show("w1", command="true")
+        self.tmux.set_option.assert_called_with("%7", "@hidden", "0")
+        self.options(hidden="0")
         self.assertFalse(self.host.attach("w1").hidden())
 
     def test_hide_leaves_an_iterm2_or_closed_pane_and_still_marks_it_hidden(self):
-        for pane in ("w0t0p0:ABC", "%9", None):
-            with self.subTest(pane=pane):
-                self.runner.calls.clear()
-                self.options.update({"@pane": pane, "@sid": SID, "@hidden": "0"})
+        for pane, process in (("w0t0p0:ABC", PROCESS), ("%9", None), (None, PROCESS)):
+            with self.subTest(pane=pane, process=process):
+                self.tmux.reset_mock()
+                self.options(pane=pane, sid=SID)
+                self.tmux.process.side_effect = lambda target, found=process: (
+                    found if target == "%9" else PROCESS
+                )
                 self.host.hide("w1")
-                self.assertEqual(self.sent(), [["set-option", "-t", "%7", "@hidden", "1"]])
+                self.tmux.kill.assert_not_called()
+                self.tmux.set_option.assert_called_once_with("%7", "@hidden", "1")
 
     def test_hide_kills_the_pane_of_a_sidless_session_and_marks_nothing(self):
-        self.options["@pane"] = "%9"
-        self.panes["%9"] = "4242 $3 %9 5555"
+        self.options(pane="%9")
+        self.tmux.process.return_value = PROCESS
+        self.tmux.process.side_effect = None
         self.host.hide("w1")
-        self.assertEqual(self.sent(), [["kill-pane", "-t", "%9"]])
-        self.assertNotIn("@hidden", self.options)
+        self.tmux.kill.assert_called_once_with("%9")
+        self.tmux.set_option.assert_not_called()
 
     def test_hide_refuses_an_absent_session(self):
-        self.panes.clear()
+        self.tmux.status.return_value = None
         with self.assertRaisesRegex(SessionError, "^no tmux session w1$"):
             self.host.hide("w1")
-        self.assertEqual(self.sent(), [])
-
-    def hide_failing(self, verb):
-        self.options.update({"@pane": "%9", "@sid": SID})
-        self.panes["%9"] = "4242 $3 %9 5555"
-        self.runner.results[verb] = (1, "", "boom\n")
-        with self.assertRaisesRegex(SessionError, "^tmux session w1: tmux: boom$"):
-            self.host.hide("w1")
+        self.tmux.kill.assert_not_called()
+        self.tmux.set_option.assert_not_called()
 
     def test_hide_names_a_failed_pane_kill_and_marks_nothing(self):
-        self.hide_failing("kill-pane")
-        self.assertNotIn("@hidden", self.options)
+        self.options(pane="%9", sid=SID)
+        self.tmux.kill.side_effect = TuiError("tmux: boom")
+        with self.assertRaisesRegex(SessionError, "^tmux session w1: tmux: boom$"):
+            self.host.hide("w1")
+        self.tmux.set_option.assert_not_called()
 
     def test_hide_names_a_failed_hidden_mark(self):
-        self.hide_failing("set-option")
-        self.assertNotIn("%9", self.panes)
+        self.options(pane="%9", sid=SID)
+        self.tmux.set_option.side_effect = TuiError("tmux: lost server")
+        with self.assertRaisesRegex(SessionError, "^tmux session w1: tmux: lost server$"):
+            self.host.hide("w1")
+        self.tmux.kill.assert_called_once_with("%9")
 
     def test_a_failed_show_clears_hidden_while_a_pane_it_opened_still_shows_it(self):
         self.enterContext(environ())
-        self.options.update({"@pane": "%9", "@sid": SID, "@hidden": "1"})
-        self.panes["%9"] = "4242 $3 %9 5555"
+        self.options(pane="%9", sid=SID)
         self.assertIsNotNone(self.host.show("w1"))
-        self.assertEqual(self.sent(), [["set-option", "-t", "%7", "@hidden", "0"]])
-        self.runner.calls.clear()
-        self.options.update({"@pane": None, "@hidden": "1"})
-        self.assertIsNotNone(self.host.show("w1"))
-        self.assertEqual(self.sent(), [])
-        self.assertTrue(self.host.attach("w1").hidden())
+        self.tmux.set_option.assert_called_once_with("%7", "@hidden", "0")
+        self.tmux.set_option.reset_mock()
+        self.options(pane=None, sid=SID)
+        self.host.show("w1")
+        self.tmux.set_option.assert_not_called()
 
 
-class ScreenTest(ServedBase):
-    def capture(self):
-        return [c[1:] for c in self.runner.calls if c[1] == "capture-pane"]
-
+class ScreenTest(Base):
     def test_screen_reads_the_launched_panes_last_lines(self):
-        self.runner.results["capture-pane"] = (0, "a\ntext\n\n")
-        self.assertEqual(self.host.screen("w1", 1), "text")
-        self.assertEqual(self.capture(), [["capture-pane", "-p", "-J", "-t", "%7", "-S", "-1"]])
+        self.tmux.read.return_value = "text"
+        self.assertEqual(self.host.screen("w1", 5), "text")
+        self.tmux.read.assert_called_once_with("%7", 5)
 
     def test_screen_of_a_name_without_a_launch_reads_its_active_pane(self):
-        self.runner.results["capture-pane"] = (0, "text\n")
-        del self.options["@process"]
+        self.tmux.read.return_value = "text"
+        self.recorded = None
         self.assertEqual(self.host.screen("w1"), "text")
-        self.assertEqual(self.capture(), [["capture-pane", "-p", "-J", "-t", "=w1:"]])
+        self.tmux.read.assert_called_once_with("w1", None)
 
     def test_screen_names_a_failed_read(self):
-        self.runner.results["capture-pane"] = (1, "", "boom\n")
+        self.tmux.read.side_effect = TuiError("tmux: boom")
         with self.assertRaisesRegex(SessionError, "^tmux session w1: tmux: boom$"):
             self.host.screen("w1")
 
     def test_screen_refuses_a_bad_launch_record_before_reading(self):
-        self.options["@process"] = "4242 $3 %x 4343"
+        self.recorded = "4242 $3 %x 4343"
         with self.assertRaisesRegex(
             SessionError, "^tmux session w1: bad @process '4242 \\$3 %x 4343'$"
         ):
             self.host.screen("w1")
-        self.assertEqual(self.capture(), [])
+        self.tmux.read.assert_not_called()
 
     def test_screen_names_a_failed_launch_record_read_before_reading(self):
-        self.runner.results["show-options"] = (1, "", "lost server\n")
+        self.tmux.option.side_effect = TuiError("tmux: lost server")
         with self.assertRaisesRegex(SessionError, "^tmux session w1: tmux: lost server$"):
             self.host.screen("w1")
-        self.assertEqual(self.capture(), [])
+        self.tmux.read.assert_not_called()
 
     def test_screen_refuses_a_bad_name_before_tmux(self):
         with self.assertRaisesRegex(SessionError, "^no tmux session 'a b'$"):
             self.host.screen("a b")
-        self.assertEqual(self.runner.calls, [])
+        self.tmux.option.assert_not_called()
+        self.tmux.read.assert_not_called()
 
 
 class AttachCommandTest(Base):
