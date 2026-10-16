@@ -1,10 +1,14 @@
+<div align="center">
+
 # <img src="../images/icon.jpg" alt="" width="40" align="absmiddle"> agent-pm
 
 [English](../../README.md) · [中文](README.zh-CN.md) · **日本語** · [한국어](README.ko.md) · [Español](README.es.md) · [Français](README.fr.md) · [Português](README.pt.md)
 
-*これは翻訳です。正式な内容は英語版 README を参照してください。*
-
 [![CI](https://github.com/ophis/agent-pm/actions/workflows/test.yml/badge.svg?branch=main)](https://github.com/ophis/agent-pm/actions/workflows/test.yml?query=branch%3Amain) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](../../LICENSE)
+
+</div>
+
+*これは翻訳です。正式な内容は英語版 README を参照してください。*
 
 Linear ボードからコーディングエージェント（Claude Code、Codex、今後さらに追加予定）を無人で動かします。各 Linear project が 1 つのプロダクトで、issue の assignee（role アカウント）がそのステージです。各 role は同時に最大 `max_runs` 件の issue を処理し、成果物をレビューのために戻します。承認すると次の role が引き継ぎます。
 

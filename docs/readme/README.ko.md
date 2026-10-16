@@ -1,10 +1,14 @@
+<div align="center">
+
 # <img src="../images/icon.jpg" alt="" width="40" align="absmiddle"> agent-pm
 
 [English](../../README.md) · [中文](README.zh-CN.md) · [日本語](README.ja.md) · **한국어** · [Español](README.es.md) · [Français](README.fr.md) · [Português](README.pt.md)
 
-*이 문서는 번역본입니다. 공식 버전은 영어 README입니다.*
-
 [![CI](https://github.com/ophis/agent-pm/actions/workflows/test.yml/badge.svg?branch=main)](https://github.com/ophis/agent-pm/actions/workflows/test.yml?query=branch%3Amain) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](../../LICENSE)
+
+</div>
+
+*이 문서는 번역본입니다. 공식 버전은 영어 README입니다.*
 
 Linear 보드에서 코딩 에이전트(Claude Code, Codex, 앞으로 더 추가 예정)를 무인으로 실행합니다. 각 Linear project는 하나의 제품이고, issue의 assignee(role 계정)가 그 단계입니다. 각 role은 한 번에 최대 `max_runs`개의 issue를 처리하고 결과물을 검토하도록 돌려줍니다. 승인하면 다음 role이 이어받습니다.
 

@@ -1,10 +1,14 @@
+<div align="center">
+
 # <img src="../images/icon.jpg" alt="" width="40" align="absmiddle"> agent-pm
 
 [English](../../README.md) · [中文](README.zh-CN.md) · [日本語](README.ja.md) · [한국어](README.ko.md) · [Español](README.es.md) · [Français](README.fr.md) · **Português**
 
-*Esta é uma tradução; a versão de referência é o README em inglês.*
-
 [![CI](https://github.com/ophis/agent-pm/actions/workflows/test.yml/badge.svg?branch=main)](https://github.com/ophis/agent-pm/actions/workflows/test.yml?query=branch%3Amain) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](../../LICENSE)
+
+</div>
+
+*Esta é uma tradução; a versão de referência é o README em inglês.*
 
 Executa agentes de programação (Claude Code, Codex e outros no futuro) sem supervisão a partir de um quadro do Linear. Cada project do Linear é um produto, e o assignee de uma issue (uma conta de role) é a sua etapa. Cada role trabalha em até `max_runs` issues ao mesmo tempo e devolve o resultado para você revisar. Depois que você aprova, o próximo role assume.
 

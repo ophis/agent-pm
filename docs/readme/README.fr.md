@@ -1,10 +1,14 @@
+<div align="center">
+
 # <img src="../images/icon.jpg" alt="" width="40" align="absmiddle"> agent-pm
 
 [English](../../README.md) · [中文](README.zh-CN.md) · [日本語](README.ja.md) · [한국어](README.ko.md) · [Español](README.es.md) · **Français** · [Português](README.pt.md)
 
-*Ceci est une traduction ; la version de référence est le README en anglais.*
-
 [![CI](https://github.com/ophis/agent-pm/actions/workflows/test.yml/badge.svg?branch=main)](https://github.com/ophis/agent-pm/actions/workflows/test.yml?query=branch%3Amain) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](../../LICENSE)
+
+</div>
+
+*Ceci est une traduction ; la version de référence est le README en anglais.*
 
 Fait tourner des agents de code (Claude Code, Codex, d'autres à venir) sans surveillance depuis un tableau Linear. Chaque project Linear est un produit, et l'assignee d'une issue (un compte de role) est son étape. Chaque role traite jusqu'à `max_runs` issues à la fois et vous rend son résultat pour relecture. Une fois que vous approuvez, le role suivant prend le relais.
 
