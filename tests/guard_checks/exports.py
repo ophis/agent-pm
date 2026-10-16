@@ -9,6 +9,7 @@ import json
 import os
 import sys
 import sysconfig
+import textwrap
 import types
 
 from tests.guard_checks.common import _at_import, _bindings, _dotted, _files, _resolve_boundary
@@ -320,7 +321,7 @@ def _typing(node, *, operand=False):
 
 def session_interface_snapshot(repo: str) -> list[str]:
     """The session's public interface equals SESSION_INTERFACE. Only TASK-369, TASK-375, TASK-387,
-    TASK-414, TASK-420, TASK-427, TASK-433, TASK-435, TASK-467, TASK-471, TASK-485 and TASK-486
+    TASK-414, TASK-420, TASK-427, TASK-433, TASK-435, TASK-467, TASK-471, TASK-485, TASK-486 and TASK-504
     change it on purpose, rewriting the file from _interface().
     """
     return _snapshot_drift(repo, SESSION_INTERFACE, SESSION_INTERFACE_MODULES)
@@ -328,7 +329,7 @@ def session_interface_snapshot(repo: str) -> list[str]:
 
 def delegate_interface_snapshot(repo: str) -> list[str]:
     """The delegate's public interface equals DELEGATE_INTERFACE. Only TASK-332, TASK-375, TASK-405,
-    TASK-429, TASK-435, TASK-471 and TASK-485 change it on purpose, rewriting the file from
+    TASK-429, TASK-435, TASK-471, TASK-485 and TASK-504 change it on purpose, rewriting the file from
     _interface().
     """
     return _snapshot_drift(repo, DELEGATE_INTERFACE, DELEGATE_INTERFACE_MODULES)
@@ -381,6 +382,8 @@ def _interface_members(cls) -> dict[str, str]:
     for klass in reversed(cls.__mro__):
         if not klass.__module__.startswith("agent_pm."):
             continue
+        names = set(inspect.get_annotations(klass)) | _initialized_attributes(klass)
+        found.update({name: "attribute" for name in names if not name.startswith("_")})
         for name, member in vars(klass).items():
             if name.startswith("_"):
                 continue
@@ -392,6 +395,38 @@ def _interface_members(cls) -> dict[str, str]:
                 found[name] = f"def{_parameters(member)}"
             else:
                 found[name] = "attribute"
+    return found
+
+
+def _initialized_attributes(cls) -> set[str]:
+    constructor = vars(cls).get("__init__")
+    if constructor is None:
+        return set()
+    try:
+        tree = ast.parse(textwrap.dedent(inspect.getsource(constructor)))
+    except (OSError, TypeError):
+        return set()
+    function = tree.body[0]
+    if not isinstance(function, ast.FunctionDef | ast.AsyncFunctionDef):
+        return set()
+    positional = function.args.posonlyargs + function.args.args
+    if not positional:
+        return set()
+    instance = positional[0].arg
+    found = set()
+    pending = list(function.body)
+    while pending:
+        node = pending.pop()
+        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef | ast.Lambda):
+            continue
+        if (
+            isinstance(node, ast.Attribute)
+            and isinstance(node.ctx, ast.Store)
+            and isinstance(node.value, ast.Name)
+            and node.value.id == instance
+        ):
+            found.add(node.attr)
+        pending.extend(ast.iter_child_nodes(node))
     return found
 
 
