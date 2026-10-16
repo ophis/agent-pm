@@ -15,7 +15,7 @@ The main flow from start to finish: what the user sees and does at each step; a 
 ### Assumptions
 Inferences the PRD rests on; one resting on research cites the finding and its confidence.
 ### Open questions
-What the user must decide, each with a suggested answer; until the user answers, the suggested answer holds.
+What the user must decide, each with a suggested answer; until the user answers, the suggested answer holds. Its name, in both headings and every mention: Open questions; in Chinese 开放问题, no other rendering.
 ### Risks
 Unknowns, and the low-confidence or single-source findings the PRD relies on.
 
