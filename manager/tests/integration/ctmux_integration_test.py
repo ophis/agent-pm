@@ -1,6 +1,7 @@
-"""ctmux (manager/skills/tmux/scripts/ctmux): its tmux calls through a fake tmux, its new session on
-a private tmux server with the shell under its plugin's agent-pm-crew hold, and the launchers
---install puts in ~/.agent-pm/bin, run from a plain PATH before and after a plugin upgrade.
+"""ctmux (manager/skills/tmux/scripts/ctmux): its tmux calls through a fake tmux, its attach per
+terminal, its new session on a private tmux server with the shell under its plugin's agent-pm-crew
+hold, and the launchers --install puts in ~/.agent-pm/bin, run from a plain PATH before and after a
+plugin upgrade.
 """
 
 import json
@@ -25,7 +26,8 @@ FAKE = """#!{python} -I
 import json, os, sys
 with open(os.environ["CTMUX_LOG"], "a") as f:
     f.write(json.dumps([os.getcwd(), os.getpid(), *sys.argv[1:]]) + "\\n")
-code = {{"has": "HAS_RC", "start-server": "START_RC", "-CC": "ATTACH_RC"}}.get(sys.argv[1], "")
+rc = {{"has": "HAS_RC", "start-server": "START_RC"}}
+code = rc.get(sys.argv[1], "ATTACH_RC" if sys.argv[1] in ("-CC", "attach", "switch-client") else "")
 sys.exit(int(os.environ.get(code, "0")))
 """
 PROXY = """#!{python} -I
@@ -123,6 +125,7 @@ class FakeTmux(Case):
             "PATH": f"{self.bin}:/usr/bin:/bin",
             "HOME": self.home,
             "SHELL": "/bin/zsh",
+            "TERM_PROGRAM": "iTerm.app",
             "TMUX_TMPDIR": os.path.join(self.home, "tmux"),
             "CTMUX_LOG": self.log,
         }
@@ -159,6 +162,28 @@ class FakeTmux(Case):
         self.assertEqual(
             [call[2:] for call in calls], [["has", "-t", "=s1"], ["-CC", "attach", "-t", "=s1"]]
         )
+
+    def test_the_attach_fits_the_terminal(self):
+        del self.env["TERM_PROGRAM"]
+        for env, attach in (
+            ({"TMUX": "/tmp/t,1,0", "TERM_PROGRAM": "iTerm.app"}, ["switch-client"]),
+            ({"TERM_PROGRAM": "iTerm.app"}, ["-CC", "attach"]),
+            ({"LC_TERMINAL": "iTerm2"}, ["-CC", "attach"]),
+            ({"TERM_PROGRAM": "Apple_Terminal"}, ["attach"]),
+            ({}, ["attach"]),
+        ):
+            with self.subTest(env=env):
+                base = dict(self.env)
+                self.env.update(env)
+                try:
+                    process, _, _, calls = self.ctmux("s1", has_rc=0, ATTACH_RC=5)
+                finally:
+                    self.env = base
+                self.assertEqual(process.returncode, 5)
+                self.assertEqual(calls[-1][1], process.pid)
+                self.assertEqual(
+                    [call[2:] for call in calls], [["has", "-t", "=s1"], [*attach, "-t", "=s1"]]
+                )
 
     def test_an_absent_session_starts_from_home_in_the_callers_directory_with_its_shell_held(self):
         process, _, err, calls = self.ctmux("s1")
@@ -331,6 +356,7 @@ class PrivateServer(Case):
             "PATH": os.pathsep.join((tools, python, "/usr/bin", "/bin")),
             "HOME": self.home,
             "SHELL": self.shell,
+            "TERM_PROGRAM": "iTerm.app",
             "TMUX_TMPDIR": self.server.root,
         }
 
