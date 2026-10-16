@@ -114,12 +114,25 @@ class Verdict(unittest.TestCase):
             (0, ["diff coverage: 100.0% (1/1) on 1 changed src lines; threshold 85%"]),
         )
 
+    def test_a_changed_continuation_line_counts_its_statement(self):
+        report = {"utils/src/a.py": {**entry(executed=(1,), missing=(2,)), "multiline": {3: 2}}}
+        self.assertEqual(
+            gate.verdict(report, {"utils/src/a.py": {3}}),
+            (
+                1,
+                [
+                    "diff coverage: 0.0% (0/1) on 1 changed src lines; threshold 85%",
+                    "utils/src/a.py: lines 2",
+                ],
+            ),
+        )
+
 
 class Report(unittest.TestCase):
     """The report the gate reads: only registered `no cover` pragmas exclude code."""
 
     def setUp(self):
-        self.root = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        self.root = Path(self.enterContext(tempfile.TemporaryDirectory())).resolve()
         source = self.root / "utils/src/m.py"
         source.parent.mkdir(parents=True)
         source.write_text(
@@ -127,6 +140,7 @@ class Report(unittest.TestCase):
             "def g():  # pragma: " + "no cover\n    return 3\n"
         )
         (self.root / "utils/src/never.py").write_text("A = 1\nB = 2\n")
+        (self.root / "utils/src/call.py").write_text("x = max(\n    1,\n    2,\n)\n")
 
     def report(self, arcs):
         try:
@@ -137,7 +151,9 @@ class Report(unittest.TestCase):
         data.add_arcs({str(self.root / path): set(pairs) for path, pairs in arcs.items()})
         data.write()
         return gate.load_report(
-            str(self.root / "data"), ["utils/src/m.py", "utils/src/never.py"], self.root
+            str(self.root / "data"),
+            ["utils/src/m.py", "utils/src/never.py", "utils/src/call.py"],
+            self.root,
         )
 
     def test_no_branch_still_counts_the_missing_arc_and_no_cover_excludes(self):
@@ -158,3 +174,8 @@ class Report(unittest.TestCase):
         report = self.report({"utils/src/m.py": [(-1, 1)]})
         self.assertEqual(report["utils/src/never.py"]["executed_lines"], [])
         self.assertEqual(report["utils/src/never.py"]["missing_lines"], [1, 2])
+
+    def test_continuation_lines_map_to_their_statements_first_line(self):
+        report = self.report({"utils/src/m.py": [(-1, 1)]})
+        self.assertEqual(report["utils/src/call.py"]["multiline"], {2: 1, 3: 1, 4: 1})
+        self.assertEqual(report["utils/src/m.py"]["multiline"], {})

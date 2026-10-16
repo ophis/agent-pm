@@ -19,6 +19,7 @@ from utils.tests.sandbox import clean_env, kill_processes, leaked_processes, sto
 
 STATE = "RUN_TESTS_STATE"
 COVERAGE = "RUN_TESTS_COVERAGE"
+COVERAGE_DATA = "coverage-data"
 TAIL = 40
 GATE = None
 
@@ -142,7 +143,7 @@ def start_coverage(sandbox, repo):
     import coverage
 
     cov = coverage.Coverage(
-        data_file=os.path.join(sandbox, "coverage-data"),
+        data_file=os.path.join(sandbox, COVERAGE_DATA),
         branch=True,
         source=[str(tree) for tree in src_trees(repo)],
         config_file=False,
@@ -190,6 +191,9 @@ def supervise(title):
             AGENT_PM_TEST_WORKSPACE=workspace,
         )
         isolation.blockers(Path(tmp) / "blocked-bin")
+        if os.environ.get(COVERAGE):
+            with contextlib.suppress(FileNotFoundError):
+                os.unlink(os.environ[COVERAGE])
         try:
             with subprocess.Popen(
                 [sys.executable, "-P", "-S", "-X", "faulthandler", *sys.orig_argv[1:]],
@@ -207,7 +211,7 @@ def supervise(title):
         kill_processes(processes)
         with open(state, encoding="utf-8") as file:
             lines = file.read().splitlines()
-        data = os.path.join(tmp, "coverage-data")
+        data = os.path.join(tmp, COVERAGE_DATA)
         if os.environ.get(COVERAGE) and os.path.exists(data):
             shutil.copyfile(data, os.environ[COVERAGE])
     code = 128 - child.returncode if child.returncode < 0 else child.returncode

@@ -119,7 +119,7 @@ class Supervise(Case):
         self.assertEqual(proc.returncode, 1)
         self.assertEqual(proc.stdout, "::error title=pkg.x_test.X.test_x::AssertionError: no\n")
 
-    def test_run_tests_coverage_saves_the_childs_src_arcs_outside_the_checkout(self):
+    def test_run_tests_coverage_saves_the_child_process_src_arcs_outside_the_checkout(self):
         import coverage
 
         source = (

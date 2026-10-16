@@ -47,7 +47,8 @@ def verdict(report, changed):
     covered = total = 0
     misses = []
     for path in sorted(changed):
-        lines, file = changed[path], report[path]
+        file = report[path]
+        lines = {file.get("multiline", {}).get(line, line) for line in changed[path]}
         statements = lines & {*file["executed_lines"], *file["missing_lines"]}
         statements -= set(file["excluded_lines"])
         missing = sorted(lines & set(file["missing_lines"]))
@@ -82,10 +83,12 @@ def _ranges(numbers):
 
 
 def load_report(data_file, paths, root):
-    """The JSON report of `paths` (relative to `root`), keyed by those paths; only `no cover`
+    """The JSON report of `paths` (relative to `root`), keyed by those paths, each file's
+    `multiline` mapping a multi-line statement's other lines to its first; only `no cover`
     pragmas, `...` stubs and `if TYPE_CHECKING:` exclude code.
     """
     import coverage
+    from coverage.parser import PythonParser
 
     cov = coverage.Coverage(data_file=data_file, config_file=False)
     cov.clear_exclude("exclude")
@@ -98,7 +101,16 @@ def load_report(data_file, paths, root):
         cov.json_report(morfs=[str(Path(root, path)) for path in paths], outfile=out)
         with open(out, encoding="utf-8") as file:
             files = json.load(file)["files"]
-    return {os.path.relpath(os.path.abspath(name), root): file for name, file in files.items()}
+    report = {os.path.relpath(os.path.abspath(name), root): file for name, file in files.items()}
+    for path, file in report.items():
+        parser = PythonParser(filename=str(Path(root, path)))
+        parser.parse_source()
+        file["multiline"] = {
+            line: first
+            for line in range(1, parser.text.count("\n") + 2)
+            if (first := parser.first_line(line)) != line
+        }
+    return report
 
 
 def main(argv):

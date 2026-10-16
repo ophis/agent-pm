@@ -352,7 +352,7 @@ class PtyHost(Host):
         if not isinstance(name, str) or not NAME.fullmatch(name):
             raise ConfigError(f"name must match [A-Za-z0-9_-]+, got {name!r:.80}")
 
-    def _start(  # pragma: no cover
+    def _start(
         self, kind, name, launch: Launch, *, display, events, record, metadata, env
     ) -> tuple[str, dict]:
         self.validate(name, launch, display=display)

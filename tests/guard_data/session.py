@@ -99,10 +99,6 @@ NO_COVER_ALLOWED = {
     ): "Connects to the live supervisor's input socket.",
     (
         f"{SESSION_SRC}hosts/pty/host.py",
-        "PtyHost._start",
-    ): "Waits for the spawned supervisor to write its pid and the runner to start.",
-    (
-        f"{SESSION_SRC}hosts/pty/host.py",
         "PtyHost._supervise",
     ): "Spawns the pty supervisor process.",
 }
