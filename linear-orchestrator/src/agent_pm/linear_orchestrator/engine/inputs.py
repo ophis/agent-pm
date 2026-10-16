@@ -77,7 +77,7 @@ def _links(issue, docs):
     return found
 
 
-def _url(docs, path):
+def doc_url(docs, path):
     return f"https://github.com/{docs.repo}/blob/{docs.branch}/{quote(path)}"
 
 
@@ -102,8 +102,7 @@ def _names(text):
     return names if all(isinstance(n, str) for n in names) else None
 
 
-def _listed(run, docs, ident, dir_):
-    # names are date-prefixed: the last is the newest
+def listing(run, docs, dir_) -> list[str] | None:
     d = dir_.rstrip("/")
     res = run(["gh", "api", _contents(docs, d)], SHORT)
     if res.returncode != 0:
@@ -113,8 +112,14 @@ def _listed(run, docs, ident, dir_):
     names = _names(res.stdout)
     if names is None:
         raise InputError(f"gh api contents {d}: unusable response")
+    return names
+
+
+def _listed(run, docs, ident, dir_):
+    # names are date-prefixed: the last is the newest
+    names = listing(run, docs, dir_) or []
     hits = sorted(n for n in names if fnmatch.fnmatchcase(n, f"*-{ident}-*.md"))
-    return f"{d}/{hits[-1]}" if hits else None
+    return f"{dir_.rstrip('/')}/{hits[-1]}" if hits else None
 
 
 def gather(issue, role, docs, *, run=None) -> Sources:
@@ -128,7 +133,7 @@ def gather(issue, role, docs, *, run=None) -> Sources:
         if path is None and kind == "design":
             path = next((p for p in links if p.startswith(_design_dirs(docs))), None)
     earlier = (
-        Doc(links.get(path) or _url(docs, path), path, _read(run, docs, path)) if path else None
+        Doc(links.get(path) or doc_url(docs, path), path, _read(run, docs, path)) if path else None
     )
     rest = tuple(Doc(u, p, _read(run, docs, p)) for p, u in links.items() if p != path)
     return Sources(rest, earlier)
