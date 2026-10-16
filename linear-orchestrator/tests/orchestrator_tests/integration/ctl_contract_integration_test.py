@@ -18,7 +18,7 @@ class LinearCtlContract(CtlContract, TmuxFlow):
     def setUp(self):
         super().setUp()
         self.started_records = {}
-        self.scene([], hang=True)
+        self.scene([{"kind": "sleep", "seconds": 120}])
 
     def call(self, *argv, stdin="", sid=None):
         env = {**self.env(), **self.in_manager()}
