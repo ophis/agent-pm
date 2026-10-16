@@ -181,8 +181,10 @@ class ControlTest(ControlCase):
     def test_close_show_and_hide_refuse_a_record_whose_sid_its_session_does_not_carry(self):
         w1 = self.done("w1")
         pid = self.calls("w1")[0]["pid"]
+        self.tmux("kill-pane", "-t", self.server.pane_of("w1"))
+        # its client-detached hook marks it hidden and drops its @pane
+        live_tmux.wait(lambda: self.status("w1")[0].hidden, what="w1 hidden")
         pane = self.server.pane_of("w1")
-        self.tmux("kill-pane", "-t", pane)
         reused = dataclasses.replace(w1, sid=str(uuid.uuid4()))
         for verb in ("show", "hide", "close"):
             with self.subTest(verb=verb):

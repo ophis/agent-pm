@@ -33,10 +33,10 @@ class HiddenCase(CliCase):
         """Its @pane, "" when show opened none for this tmux session."""
         return self.server.option(name, "@pane")
 
-    def shows(self, name: str = "w1") -> str:
-        """Its @pane, once that pane in the manager's window runs a client of it."""
+    def shows(self, name: str = "w1", window: str = WINDOW) -> str:
+        """Its @pane, once that pane in window runs a client of it."""
         pane = self.viewer(name)
-        self.assertIn(pane, self.server.panes(WINDOW))
+        self.assertIn(pane, self.server.panes(window))
         tty = self.server.tmux("display-message", "-p", "-t", pane, "#{pane_tty}").stdout.strip()
 
         def attached():
@@ -126,12 +126,12 @@ class HiddenStartTest(HiddenCase):
 
 
 class HookTest(HiddenCase):
-    def kill_viewer(self, name: str) -> None:
-        self.ok(self.server.tmux("kill-pane", "-t", self.shows(name)))
+    def kill_viewer(self, name: str, window: str = WINDOW) -> None:
+        self.ok(self.server.tmux("kill-pane", "-t", self.shows(name, window)))
 
-    def control(self, name: str = "c1", **kw) -> None:
+    def control(self, name: str = "c1", window: str = WINDOW, **kw) -> None:
         """name's viewer killed by hand marks it hidden: hooks run, so an earlier one has run."""
-        self.kill_viewer(name)
+        self.kill_viewer(name, window)
         live_tmux.wait(lambda: self.hidden(name, **kw), what=f"{name} hidden")
 
     def test_killing_the_viewer_pane_marks_it_hidden(self):
@@ -157,7 +157,7 @@ class HookTest(HiddenCase):
         self.ok(self.session("hide", "w2"))
         self.record(self.start("c1", inside=OTHER))
         self.ok(self.server.tmux("kill-window", "-t", WINDOW))
-        self.control(inside=OTHER)
+        self.control(window=f"={OTHER}:", inside=OTHER)
         self.assertFalse(self.hidden(inside=OTHER))
         self.assertTrue(self.hidden("w2", inside=OTHER))
 
@@ -185,6 +185,8 @@ class CodexHiddenTest(HiddenCase):
             os.mkdir(path)
         shutil.copy2(self.server.program, bin_dir)
         fake_tui.install(bin_dir)
+        # hooks run with the server's environment: one HOME, as outside tests
+        self.ok(self.server.tmux("set-environment", "-g", "HOME", home))
         scenario = os.path.join(root, "w1.codex.json")
         with open(scenario, "w", encoding="utf-8") as f:
             f.write('{"tui_turns": [["Hi from w1."]]}')
