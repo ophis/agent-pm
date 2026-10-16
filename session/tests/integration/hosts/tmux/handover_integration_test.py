@@ -13,7 +13,7 @@ import time
 import unittest
 from contextlib import suppress
 
-from agent_pm.session.hosts.tmux.host import EXEC
+from agent_pm.session.hosts.tmux.transport import EXEC
 
 from session.tests.case import Case
 

@@ -393,17 +393,17 @@ class Views(HarnessCase):
             HarnessSession, "inspect", side_effect=NoRecordedSession("no recorded session")
         ):
             self.assertEqual(
-                HarnessDelegate.attach(self.work).session_info(), SessionStatus("no", None, "")
+                HarnessDelegate.attach(self.work).session_status(), SessionStatus("no", None, "")
             )
         self.assertFalse(delegate.alive())
 
-    def test_completed_session_info_uses_public_history_without_starting(self):
+    def test_completed_session_status_uses_public_history_without_starting(self):
         delegate = self.make()
         delegate.run()
         delegate.close()
         count = len(HarnessSession.started)
         view = HarnessDelegate.attach(self.work)
-        self.assertEqual(view.session_info(), HarnessSession.history)
+        self.assertEqual(view.session_status(), HarnessSession.history)
         self.assertEqual(len(HarnessSession.started), count)
         self.assertEqual(HarnessSession.inspected[-1].sid, SID)
 
@@ -531,7 +531,7 @@ class Completion(HarnessCase):
             seen.append(event)
             if isinstance(event, (Begun, Progress)):
                 self.assertTrue(delegate.alive())
-                self.assertEqual(delegate.session_info(), HarnessSession.history)
+                self.assertEqual(delegate.session_status(), HarnessSession.history)
                 self.assertEqual(HarnessSession.inspected, [])
                 self.assertIsNone(delegate.outcome())
             else:

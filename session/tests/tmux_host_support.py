@@ -7,11 +7,11 @@ from pathlib import Path
 from unittest import mock
 
 from agent_pm.session.hosts.tmux import TmuxHost, types
-from agent_pm.session.hosts.tmux.host import Tmux
+from agent_pm.session.hosts.tmux.transport import Tmux
 from agent_pm.utils import ProcessControl, Record
 
 from session.tests.case import Case
-from session.tests.tmux_fixtures import which
+from session.tests.tmux_fixtures import FakeTmux, which
 
 LINE = Record(
     1,
@@ -28,14 +28,16 @@ LINE = Record(
 PROCESS = "4242 $3 %7 4343"
 
 
-def fake_tmux() -> mock.Mock:
-    """Recorded transport with real validation and command formatting."""
+def fake_tmux(runner: FakeTmux) -> mock.Mock:
+    """Recorded session verbs; run, checked and proc (Grid's, Placement's, Iterm's) play runner."""
     tmux = mock.create_autospec(Tmux, instance=True)
     tmux.PAUSE = Tmux.PAUSE
+    tmux.proc = runner
+    tmux.run.side_effect = Tmux(runner).run
+    tmux.checked.side_effect = Tmux(runner).checked
     tmux.status.return_value = types.PaneStatus.RUNNING
     tmux.process_status.side_effect = lambda target: (tmux.process(target), tmux.status(target))
     tmux.listing.return_value = []
-    tmux.opener.return_value = "mgr"
     tmux.option.return_value = None
     tmux.detach.return_value = tmux.process.return_value = PROCESS
     return tmux
@@ -49,7 +51,8 @@ class Base(Case):
         self.tool = os.path.join(self.dir, "tool")
         Path(self.tool).touch(mode=0o700)
         self.enterContext(which(self.tool))
-        self.tmux = fake_tmux()
+        self.runner = FakeTmux()
+        self.tmux = fake_tmux(self.runner)
         self.host = TmuxHost("tmux", {"workers_per_column": 2}, tmux=self.tmux)
         self.killpg = self.enterContext(
             mock.patch("os.killpg", side_effect=AssertionError("unsafe signal"))

@@ -29,7 +29,7 @@ ABSTRACT = {
     "hide",
     "attach_command",
     "close",
-    "session_info",
+    "session_status",
     "resume",
 }
 CLASS_METHODS = {

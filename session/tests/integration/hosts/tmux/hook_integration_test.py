@@ -6,6 +6,7 @@ import sys
 from pathlib import Path
 
 from agent_pm.session import Activity, Blocked, Exited, Launch, SessionStatusLog, TurnEnd
+from agent_pm.session.runtimes import tui
 
 from session.tests import live_tmux
 from session.tests.tui_support import Live, Stream
@@ -87,7 +88,7 @@ class HookLifecycleTest(Live):
         self.poke()
         self.poke()
         self.assert_events(self.events, name, "dead")
-        self.session_cls.retire(name)
+        tui.TuiStore.attach(name, host=self.session_cls.host()).close()
         self.assertEqual(self.session_cls.list(name), [])
         self.assert_events(self.events, name, "dead")
 

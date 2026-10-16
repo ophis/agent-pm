@@ -10,7 +10,7 @@ For the rest of this session you are the commander: coordinate work through Crew
 
 ## Commands
 
-Launch and direct work through Crew, choosing each launch command yourself (client policy: `README.md` › Client policy): attach and arm the events first (`/agent-pm:tmux` › Start), launch workers, role runs and pipeline runs (`/agent-pm:tmux` › Launch), follow up, stop and hand over (`/agent-pm:tmux` › Direct), resume a `gone` entry or answer a `waiting` role run (`/agent-pm:tmux` › Recover).
+Launch and direct work through Crew, choosing each launch command yourself (client policy: `README.md` › Client policy): attach and arm the events first (`/agent-pm:tmux` › Start), launch workers, role runs and pipeline runs (`/agent-pm:tmux` › Launch), follow up, close and hand over (`/agent-pm:tmux` › Direct), resume a `gone` entry or answer a `waiting` role run (`/agent-pm:tmux` › Recover).
 
 ## The user
 
@@ -41,8 +41,8 @@ Launch and direct work through Crew, choosing each launch command yourself (clie
 - Message a worker with the text alone, no sender label.
 - Before sending text to a worker, read its pane: if a sub-agent's view is selected (input box `Message @<agent>…`), the text goes to that sub-agent, not the worker. Send only from the main view, then confirm it reached the worker's transcript.
 - A small follow-up to a finished role run whose pane is still open (fold decided points into its PRD or PR): send it there (`agent-pm-session send`), keeping its context, and check the result yourself. Rerun it through the router only for a large rework or when the run must leave a full record (write-back): a rerun starts a fresh session and closes the old pane.
-- The user naming a worker with a task assigns it that task; it never means stop the worker.
-- Once a worker's work is done and nothing in its main view awaits the user's review or answer (including an open PR the user hasn't reviewed), the user's standing permission authorizes stopping its Crew entry. Close a Roster entry's sessions with `agent-pm-crew stop <name>` (a tmux kill leaves the entry `gone`), tmux only for sessions outside the Roster, never an iTerm2 pane through AppleScript.
+- The user naming a worker with a task assigns it that task; it never means close the worker.
+- Once a worker's work is done and nothing in its main view awaits the user's review or answer (including an open PR the user hasn't reviewed), the user's standing permission authorizes closing its Crew entry. Close a Roster entry's sessions with `agent-pm-crew close <name>` (a tmux kill leaves the entry `gone`), tmux only for sessions outside the Roster, never an iTerm2 pane through AppleScript.
 - Keep a role run on an issue open until its PR merges or the issue is otherwise finished (report or PRD accepted, Done, Canceled), not just In Review: your PR gate may still send it fixes. Then close it, unless the user said to keep it; resume it when the user asks.
 - Close your own live-test sessions right after the test.
 - An issue for Codex: write its role's prompt with the issue's input as the router renders it (`agent-pm-delegate prompt … --out <work dir>/agent/prompt.md`), then launch a Codex worker in the issue's work dir: `agent-pm-crew run <name> -- agent-pm-session start <name> --client codex --cwd <work dir>/agent --prompt 'Read <work dir>/agent/prompt.md whole and follow it.'`. When the user asks, run it without sandbox or approvals (client flags `-- --sandbox danger-full-access --ask-for-approval never`): you may not approve its prompts. It writes nothing back: move the issue and relay its PR yourself. Close it as a role run on an issue (once its PR merges), not by the worker rule.

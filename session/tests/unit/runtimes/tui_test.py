@@ -40,7 +40,7 @@ from agent_pm.session.engine.types import (
     Spec,
     TurnEnd,
 )
-from agent_pm.session.hosts.base import HostProcess
+from agent_pm.session.hosts.base import HostProcess, Terminal
 from agent_pm.session.hosts.pty import PtyHost
 from agent_pm.session.hosts.pty import state as pty_state
 from agent_pm.session.hosts.tmux.types import TuiError
@@ -571,7 +571,7 @@ class StartTest(Base):
             (
                 NAME,
                 Launch(
-                    ("/bin/run", *tui._Store(NAME, host=self.host).hook_argv()),
+                    ("/bin/run", *tui.TuiStore.attach(NAME, host=self.host).hook_argv()),
                     cwd=self.tmp,
                     env=self.prepared.env,
                 ),
@@ -692,6 +692,17 @@ class StartTest(Base):
         self.assertEqual(self.host.calls.mock_calls, [])
         self.nothing_hosted()
 
+    def test_a_tui_store_refuses_a_bad_name_before_the_host_or_a_path(self):
+        for name in (*BAD_NAMES, None):
+            with self.subTest(name=name), self.assertRaises(ConfigError) as caught:
+                tui.TuiStore.attach(name, host=self.host).close()
+            self.assertEqual(
+                str(caught.exception),
+                f"name must match [A-Za-z0-9_-]+ but not none, got {name!r:.80}",
+            )
+        self.assertEqual(self.host.calls.mock_calls, [])
+        self.nothing_hosted()
+
     def test_a_bad_events_file_is_refused(self):
         self.host.calls.validate.side_effect = ConfigError("events destination refused")
         with self.assertRaisesRegex(ConfigError, "events destination refused"):
@@ -784,7 +795,10 @@ class StartTest(Base):
         self.assertNoSessionDir()
 
     def test_the_names_lock_is_the_file_its_path_names_when_held(self):
-        store, path = tui._Store(NAME, host=self.host), os.path.join(self.root, f"{NAME}.lock")
+        store, path = (
+            tui.TuiStore.attach(NAME, host=self.host),
+            os.path.join(self.root, f"{NAME}.lock"),
+        )
         real_flock, calls = fcntl.flock, []
 
         def flock(fd, operation):
@@ -799,7 +813,10 @@ class StartTest(Base):
         self.assertFalse(self.locked())
 
     def test_the_names_lock_reports_its_own_failure_and_passes_its_bodys(self):
-        store, path = tui._Store(NAME, host=self.host), os.path.join(self.root, f"{NAME}.lock")
+        store, path = (
+            tui.TuiStore.attach(NAME, host=self.host),
+            os.path.join(self.root, f"{NAME}.lock"),
+        )
         with self.assertRaises(ValueError), store._locked():
             raise ValueError("body")
         os.unlink(path)
@@ -1350,14 +1367,14 @@ class CloseStopTest(Base):
         self.write_state(self.state())
         process = mock.create_autospec(HostProcess, instance=True)
         self.host.processes[NAME] = process
-        tui.TuiRuntime.close(NAME, host=self.host)
+        tui.TuiStore.attach(NAME, host=self.host).close()
         process.close.assert_called_once_with()
         self.assertNoSessionDir()
 
     def test_close_kills_the_session_and_removes_its_dir(self):
         mode = self.started()
         self.append(record("tool"))
-        tui.TuiRuntime.close(NAME, host=self.host)
+        mode.close()
         mode._terminal.calls.close.assert_called_once_with()
         self.assertEqual(self.host.processes, {})
         self.assertNoSessionDir()
@@ -1372,17 +1389,24 @@ class CloseStopTest(Base):
             "rmtree",
             lambda path, **kwargs: (held.append(self.locked()), remove(path, **kwargs)),
         ):
-            tui.TuiRuntime.close(NAME, host=self.host)
+            tui.TuiStore.attach(NAME, host=self.host).close()
         self.assertEqual((held, self.locked()), ([True, True], False))
+        self.assertNoSessionDir()
+
+    def test_close_of_a_host_terminal_without_its_dir_closes_it(self):
+        terminal = mock.create_autospec(Terminal, instance=True)
+        self.host.processes[NAME] = terminal
+        tui.TuiStore.attach(NAME, host=self.host).close()
+        terminal.close.assert_called_once_with()
         self.assertNoSessionDir()
 
     def test_close_of_an_absent_session_removes_its_dir(self):
         mode = self.started()
         self.host.processes.clear()
-        tui.TuiRuntime.close(NAME, host=self.host)
+        tui.TuiStore.attach(NAME, host=self.host).close()
         mode._terminal.calls.close.assert_not_called()
         self.assertNoSessionDir()
-        tui.TuiRuntime.close(NAME, host=self.host)
+        tui.TuiStore.attach(NAME, host=self.host).close()
 
     def test_a_kill_that_fails_on_a_live_or_unknown_session_is_a_driver_error(self):
         mode = self.started()
@@ -1393,7 +1417,7 @@ class CloseStopTest(Base):
                 with self.assertRaisesRegex(
                     SessionError, r"\Acannot close tui session w1: host close failed\Z"
                 ):
-                    tui.TuiRuntime.close(NAME, host=self.host)
+                    tui.TuiStore.attach(NAME, host=self.host).close()
                 self.assertTrue(os.path.isdir(self.dir))
 
     def test_close_never_follows_a_symlink(self):
@@ -1403,7 +1427,7 @@ class CloseStopTest(Base):
         open(os.path.join(target, "keep"), "w").close()
         for make in (lambda: os.symlink(target, self.dir), lambda: open(self.dir, "w").close()):
             make()
-            tui.TuiRuntime.close(NAME, host=self.host)
+            tui.TuiStore.attach(NAME, host=self.host).close()
             self.assertTrue(os.path.lexists(self.dir))
             os.unlink(self.dir)
         self.assertEqual(os.listdir(target), ["keep"])
@@ -2028,9 +2052,9 @@ class PrepareTest(Base):
 class LockTest(Base):
     def test_a_0600_lock_file_per_name_in_tui_dir_held_till_the_block_ends(self):
         os.rmdir(self.agent_pm)
-        with tui._Store(NAME, host=self.host)._locked():
+        with tui.TuiStore.attach(NAME, host=self.host)._locked():
             self.assertTrue(self.locked())
-            with tui._Store("w2", host=self.host)._locked():
+            with tui.TuiStore.attach("w2", host=self.host)._locked():
                 self.assertTrue(self.locked("w2"))
             self.assertFalse(self.locked("w2"))
         self.assertFalse(self.locked())
@@ -2042,10 +2066,10 @@ class LockTest(Base):
         entered = threading.Event()
 
         def second():
-            with tui._Store(NAME, host=self.host)._locked():
+            with tui.TuiStore.attach(NAME, host=self.host)._locked():
                 entered.set()
 
-        with tui._Store(NAME, host=self.host)._locked():
+        with tui.TuiStore.attach(NAME, host=self.host)._locked():
             thread = threading.Thread(target=second)
             thread.start()
             self.assertFalse(entered.wait(0.2))
@@ -2063,7 +2087,7 @@ class LockTest(Base):
                 make()
                 with (
                     self.assertRaisesRegex(SessionError, rf"\A{re.escape(path)}: "),
-                    tui._Store(NAME, host=self.host)._locked(),
+                    tui.TuiStore.attach(NAME, host=self.host)._locked(),
                 ):
                     pass
                 (os.rmdir if case == "directory" else os.unlink)(path)
@@ -2071,7 +2095,7 @@ class LockTest(Base):
 
 class StoreTest(Base):
     def test_records_are_whole_lines_from_an_offset_and_the_offset_past_them(self):
-        store = tui._Store(NAME, host=self.host)
+        store = tui.TuiStore.attach(NAME, host=self.host)
         self.assertEqual(store.records(0), ([], 0))
         os.makedirs(self.dir)
         first = (json.dumps(record("tool", tool="t")) + "\n").encode()
@@ -2082,7 +2106,7 @@ class StoreTest(Base):
         self.assertEqual(store.records(end), ([], end))
 
 
-class TransportErrorTest(TmuxBase):
+class TmuxErrorTest(TmuxBase):
     def test_real_host_launch_keeps_the_modes_exact_error_prefix(self):
         self.tmux.start.side_effect = TuiError("tmux: boom")
         workdir = os.path.join(self.dir, "work")
@@ -2111,5 +2135,5 @@ class TransportErrorTest(TmuxBase):
         self.tmux.listing.return_value = [{"name": NAME, "display": None}]
         self.tmux.kill.side_effect = TuiError("tmux: boom")
         with self.assertRaises(SessionError) as caught:
-            tui.TuiRuntime.close(NAME, host=self.host)
+            tui.TuiStore.attach(NAME, host=self.host).close()
         self.assertEqual(str(caught.exception), "cannot close tui session w1: tmux: boom")

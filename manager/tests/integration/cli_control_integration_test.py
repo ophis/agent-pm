@@ -102,7 +102,7 @@ class CliTest(CliCase):
             self.assertIn("stale holder generation", stderr)
             self.assertIs(self.roster.entries()["worker"].state, State.RESUMING)
 
-    def test_partial_stop_all_exits_one_and_only_without_dry_run_closes_known_work(self):
+    def test_partial_close_all_exits_one_and_only_without_dry_run_closes_known_work(self):
         command = self.setup_ctl()
         Crew(self.roster).run(Spec("owned", (command, "start", "owned")))
         ctl.set_session(self.ctl_dir, "unknown", alive=True)
@@ -119,12 +119,12 @@ class CliTest(CliCase):
             with self.subTest(dry_run=dry_run):
                 with mock.patch("subprocess.run", side_effect=run):
                     result, stdout, stderr = self.invoke(
-                        "stop-all", "--manager", "mgr", *(("--dry-run",) if dry_run else ())
+                        "close-all", "--manager", "mgr", *(("--dry-run",) if dry_run else ())
                     )
                 self.assertEqual(result, 1, stderr)
                 self.assertEqual(stdout, "")
                 self.assertIn("listing unavailable", stderr)
-                self.assertIn("stop-all partial", stderr)
+                self.assertIn("close-all partial", stderr)
                 with Path(self.ctl_dir, ctl.SESSIONS).open(encoding="utf-8") as stream:
                     sessions = json.load(stream)
                 self.assertTrue(sessions["unknown"]["alive"])

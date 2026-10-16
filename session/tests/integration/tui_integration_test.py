@@ -1,9 +1,9 @@
 """HostedSession's tui mode end to end on a private tmux server (session/tests/live_tmux.py),
 os.environ that server's env: the fake adapter's Tui (session/tests/fake_adapter/) started with no
 pane, its hook steps as events and events-file lines, send, the idle timer and its Blocked pause,
-attach from another process, stop, a client's own exit, retire, list while tmux's state is
+attach from another process, stop, a client's own exit, close by name, list while tmux's state is
 unknown, an old session once its name is another session's, two starts of one name at once, and a
-start while another process retires the name.
+start while another process closes the name.
 """
 
 import contextlib
@@ -31,7 +31,7 @@ from agent_pm.session.engine.types import (
     Spec,
     TurnEnd,
 )
-from agent_pm.session.hosts.tmux.host import Tmux
+from agent_pm.session.hosts.tmux.transport import Tmux
 from agent_pm.session.runtimes import tui
 
 from session.tests import fake_adapter, live_tmux
@@ -58,10 +58,11 @@ handle.send(text)
 event = next(e for e in handle.events() if not isinstance(e, IdleTimeout))
 print(json.dumps([*before, repr(event), handle.reply]))
 """
-CLOSE = "import sys; from agent_pm.session import Host, Session; Session.configure(adapters={}, hosts=Host.parse_hosts({'default': 'tmux', 'tmux': {'implementation': 'agent_pm.session.hosts.tmux:TmuxHost'}})); Session.retire(sys.argv[1])"
+CLOSE = "import sys; from agent_pm.session import Host, Session; from agent_pm.session.runtimes.tui import TuiStore; Session.configure(adapters={}, hosts=Host.parse_hosts({'default': 'tmux', 'tmux': {'implementation': 'agent_pm.session.hosts.tmux:TmuxHost'}})); TuiStore.attach(sys.argv[1], host=Session.host()).close()"
 SLOW_CLOSE = """import sys, time, shutil
 from unittest import mock
 from agent_pm.session import Host, Session
+from agent_pm.session.runtimes.tui import TuiStore
 remove = shutil.rmtree
 def slow(*args, **kwargs):
     open(sys.argv[2], "w").close()
@@ -74,7 +75,7 @@ with mock.patch("shutil.rmtree", slow):
             {"default": "tmux", "tmux": {"implementation": "agent_pm.session.hosts.tmux:TmuxHost"}}
         ),
     )
-    Session.retire(sys.argv[1])
+    TuiStore.attach(sys.argv[1], host=Session.host()).close()
 """
 
 
@@ -132,7 +133,9 @@ class TuiTest(Live):
         handle.stop()
         self.assertEqual(stream.until_exited(), [Exited(-signal.SIGHUP)])
         self.assertEqual(self.session_cls.list("w1"), [])
-        self.assertFalse(os.path.lexists(tui._Store("w1", host=self.session_cls.host()).dir))
+        self.assertFalse(
+            os.path.lexists(tui.TuiStore.attach("w1", host=self.session_cls.host()).dir)
+        )
 
     def test_inspect_an_ended_tui_session_after_its_pane_and_store_are_removed(self):
         self.adapters["fake"]["implementation"] = "agent_pm.session.adapters.fake:InspectAdapter"
@@ -144,7 +147,7 @@ class TuiTest(Live):
         session.close()
         self.assertEqual(self.session_cls.list("historical"), [])
         self.assertFalse(
-            os.path.lexists(tui._Store("historical", host=self.session_cls.host()).dir)
+            os.path.lexists(tui.TuiStore.attach("historical", host=self.session_cls.host()).dir)
         )
         with contextlib.ExitStack() as stack:
             starts = [
@@ -169,9 +172,11 @@ class TuiTest(Live):
         self.assertEqual(
             (handle.alive(), [r.state for r in self.session_cls.list("w2")]), (True, ["dead"])
         )
-        self.session_cls.retire("w2")
+        tui.TuiStore.attach("w2", host=self.session_cls.host()).close()
         self.assertEqual((handle.alive(), self.session_cls.list("w2")), (False, []))
-        self.assertFalse(os.path.lexists(tui._Store("w2", host=self.session_cls.host()).dir))
+        self.assertFalse(
+            os.path.lexists(tui.TuiStore.attach("w2", host=self.session_cls.host()).dir)
+        )
 
     def test_an_unreachable_server_is_unknown_and_no_end(self):
         if os.getuid() == 0:
@@ -223,7 +228,7 @@ class SplitTest(Live):
         panes = self.server.tmux("list-panes", "-s", "-t", "=w5:", "-F", "#{pane_id}")
         self.assertEqual(panes.returncode, 0, panes.stderr)
         self.assertEqual(panes.stdout.split(), [other])
-        self.assertFalse(os.path.lexists(tui._Store("w5", host=host).dir))
+        self.assertFalse(os.path.lexists(tui.TuiStore.attach("w5", host=host).dir))
 
     def active(self, session: str) -> str:
         found = self.server.tmux("display-message", "-p", "-t", f"={session}:", "#{pane_id}")
@@ -328,7 +333,10 @@ class SameNameTest(Live):
         self.assertEqual(tui.TuiRuntime.snapshot("w6")["sid"], handle.sid)
         self.assertEqual(str(error), "tui session w6 is running; tmux attach -t '=w6'")
         self.assertEqual(
-            (handle.alive(), os.listdir(tui._Store("w6", host=self.session_cls.host()).dir)),
+            (
+                handle.alive(),
+                os.listdir(tui.TuiStore.attach("w6", host=self.session_cls.host()).dir),
+            ),
             (True, ["session.json"]),
         )
 

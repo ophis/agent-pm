@@ -127,14 +127,14 @@ def _resume(args) -> int:
     return failed
 
 
-def _stop(args) -> int:
-    _crew(args).stop(args.name)
+def _close(args) -> int:
+    _crew(args).close(args.name)
     return 0
 
 
-def _stop_all(args) -> int:
-    names = _crew(args).stop_all(dry_run=args.dry_run)
-    print("\n".join(names) if names else "nothing to stop")
+def _close_all(args) -> int:
+    names = _crew(args).close_all(dry_run=args.dry_run)
+    print("\n".join(names) if names else "nothing to close")
     return 0
 
 
@@ -194,7 +194,7 @@ def _parser() -> argparse.ArgumentParser:
     resume = subs.add_parser("resume", parents=[common])
     resume.add_argument("names", nargs="+")
     resume.set_defaults(func=_resume)
-    for name, handler in (("stop", _stop), ("forget", _forget)):
+    for name, handler in (("close", _close), ("forget", _forget)):
         command = subs.add_parser(name, parents=[common])
         command.add_argument("name")
         if name == "forget":
@@ -204,9 +204,9 @@ def _parser() -> argparse.ArgumentParser:
                 help="drop bookkeeping without ctl; work may remain alive",
             )
         command.set_defaults(func=handler)
-    stop_all = subs.add_parser("stop-all", parents=[common])
-    stop_all.add_argument("--dry-run", action="store_true")
-    stop_all.set_defaults(func=_stop_all)
+    close_all = subs.add_parser("close-all", parents=[common])
+    close_all.add_argument("--dry-run", action="store_true")
+    close_all.set_defaults(func=_close_all)
     note = subs.add_parser("note", parents=[common])
     note.add_argument("name")
     note.add_argument("text", help="empty text clears the note")

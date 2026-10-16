@@ -76,12 +76,13 @@ class Base(Case):
         self.session.displayable = False
         self.session.opening_pending = None
         self.session.events.return_value = iter([IdleTimeout(worker.EARLY)])
-        self.order.attach_mock(self.session_cls.retire, "retire")
         self.order.attach_mock(self.session_cls.start, "start")
         self.order.attach_mock(self.session_cls.preflight, "preflight")
         for call in ("close", "wait_exit", "kill", "publish"):
             self.order.attach_mock(getattr(self.handle, call), call)
         self.said = []
+        self.tui = os.path.join(self.home, ".agent-pm", "tui", "w1")
+        os.makedirs(self.tui)
 
     def worker(self, **fields) -> Worker:
         return Worker(state(**fields), session_cls=self.session_cls, say=self.said.append)
@@ -528,12 +529,13 @@ class ResumeTest(Base):
         self.assertEqual(found, state().record())
         self.assertEqual(self.calls(), ["publish"])
 
-    def test_a_dead_one_is_retired_its_group_awaited_then_resumed_with_no_prompt(self):
+    def test_a_dead_one_is_closed_by_name_its_group_awaited_then_resumed_with_no_prompt(self):
         self.handle.wait_exit.return_value = True
         self.worker().resume()
         self.assertEqual(
-            self.calls(), ["preflight", "retire", "close", "wait_exit", "start", "publish"]
+            self.calls(), ["preflight", "close", "close", "wait_exit", "start", "publish"]
         )
+        self.assertFalse(os.path.lexists(self.tui))
         self.handle.wait_exit.assert_called_once_with(worker.WAIT)
         spec = self.session_cls.start.call_args.args[0]
         self.assertEqual((spec.prompt, spec.resume, spec.sid), ("", True, SID))
@@ -543,7 +545,7 @@ class ResumeTest(Base):
         self.worker().resume()
         self.assertEqual(
             self.calls(),
-            ["preflight", "retire", "close", "wait_exit", "kill", "wait_exit", "start", "publish"],
+            ["preflight", "close", "close", "wait_exit", "kill", "wait_exit", "start", "publish"],
         )
 
     def test_a_group_that_outlives_its_kill_starts_nothing(self):
@@ -559,12 +561,13 @@ class ResumeTest(Base):
         self.handle.wait_exit.return_value = True
         self.worker(token="/tmp/apm-group-1").resume()
         self.host.reclaim.assert_called_once_with("/tmp/apm-group-1")
-        self.assertEqual(self.calls()[:4], ["preflight", "retire", "close", "wait_exit"])
+        self.assertEqual(self.calls()[:3], ["preflight", "close", "wait_exit"])
 
-    def test_a_gone_session_without_a_group_starts_after_retiring(self):
+    def test_a_gone_session_without_a_group_drops_its_tui_dir_then_starts(self):
         self.host.list.return_value = []
         self.worker(token=None).resume()
-        self.assertEqual(self.calls()[:3], ["preflight", "retire", "start"])
+        self.assertEqual(self.calls()[:2], ["preflight", "start"])
+        self.assertFalse(os.path.lexists(self.tui))
         self.host.reclaim.assert_not_called()
 
     def test_a_start_it_cannot_make_is_refused_before_the_old_one_is_touched(self):
@@ -589,7 +592,7 @@ class RestartTest(Base):
         self.handle.alive.return_value = True
         self.handle.wait_exit.return_value = True
         self.worker().restart()
-        self.assertEqual(self.calls(), ["retire", "close", "wait_exit", "start", "publish"])
+        self.assertEqual(self.calls(), ["close", "close", "wait_exit", "start", "publish"])
 
     def test_a_start_refused_once_the_old_session_is_gone_is_no_longer_a_config_error(self):
         self.handle.alive.return_value = True

@@ -1,6 +1,6 @@
 """HostedSession on a private tmux server (session/tests/live_tmux.py), os.environ that server's env,
-the fake adapter's Tui: Session.attach(name).close() and Session.retire(name) leave the same state
-(FR-4); list and retire refused until a class is configured (FR-2: the session reads no config
+the fake adapter's Tui: Session.attach(name).close() and TuiStore.attach(name, host=...).close() leave the
+same state (FR-4); list and a by-name close refused until a class is configured (FR-2: the session reads no config
 itself); a display given to start stored, read back and listed (FR-48).
 """
 
@@ -22,9 +22,12 @@ DISPLAYS = {"w4": f"{MANAGER}/right", "w5": "elsewhere:1.2"}
 UNCONFIGURED_CALLS = """import json
 from agent_pm.session import ConfigError, Session
 from agent_pm.session.engine.hosted_session import HostedSession
+from agent_pm.session.runtimes.tui import TuiStore
 found = []
 for call in (
-    lambda: HostedSession.list("w.*"), lambda: Session.list("w.*"), lambda: Session.retire("w3")
+    lambda: HostedSession.list("w.*"),
+    lambda: Session.list("w.*"),
+    lambda: TuiStore.attach("w3", host=Session.host()).close(),
 ):
     try:
         call()
@@ -44,24 +47,24 @@ class CloseTest(Live):
             class_loader=adapter_loader({"agent_pm.session.adapters.fake": fake_adapter}),
         )
 
-    def test_attach_then_close_and_retire_leave_the_same_state_fr_4(self):
+    def test_attach_then_close_and_close_by_name_leave_the_same_state_fr_4(self):
         self.configure_hosted()
         found = {}
         for name, close_it in (
             ("w1", lambda: self.session_cls.attach("w1").close()),
-            ("w2", lambda: Session.retire("w2")),
+            ("w2", lambda: tui.TuiStore.attach("w2", host=Session.host()).close()),
         ):
             handle = self.start(name, {"read": True})
             close_it()
             found[name] = (
                 handle.alive(),
                 self.session_cls.list(name),
-                os.path.lexists(tui._Store(name, host=self.session_cls.host()).dir),
+                os.path.lexists(tui.TuiStore.attach(name, host=self.session_cls.host()).dir),
             )
         self.assertEqual(found, {"w1": (False, [], False), "w2": (False, [], False)})
         self.assertEqual([row.name for row in self.session_cls.list()], [MANAGER])
 
-    def test_list_and_retire_need_a_configured_class(self):
+    def test_list_and_close_by_name_need_a_configured_class(self):
         """Unconfigured in a child process: another test may have configured HostedSession here."""
         self.start("w3", {"read": True})
         res = subprocess.run(
@@ -78,9 +81,11 @@ class CloseTest(Live):
         self.configure_hosted()
         self.assertEqual([row.name for row in HostedSession.list("w.*")], ["w3"])
         self.assertEqual(Session.list("w.*"), HostedSession.list("w.*"))
-        Session.retire("w3")
+        tui.TuiStore.attach("w3", host=Session.host()).close()
         self.assertEqual(HostedSession.list("w.*"), [])
-        self.assertFalse(os.path.lexists(tui._Store("w3", host=self.session_cls.host()).dir))
+        self.assertFalse(
+            os.path.lexists(tui.TuiStore.attach("w3", host=self.session_cls.host()).dir)
+        )
 
 
 class DisplayTest(Live):

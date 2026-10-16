@@ -220,7 +220,7 @@ class FakeDelegate(Delegate):
     def close(self):
         _update(self.workdir, alive=False)
 
-    def session_info(self):
+    def session_status(self):
         return SessionStatus("yes", None, "")
 
     def resume(self, *, mode=None):

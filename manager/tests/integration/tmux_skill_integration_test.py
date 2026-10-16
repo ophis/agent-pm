@@ -44,8 +44,8 @@ class Examples(Case):
         self.assertEqual(self.refused(body("tmux") + body("manage")), [])
 
     def test_a_misspelt_subcommand_or_flag_is_refused(self):
-        source = "`agent-pm-crew stop-all --dryrun` and `agent-pm-session sendkeys w`"
+        source = "`agent-pm-crew close-all --dryrun` and `agent-pm-session sendkeys w`"
         self.assertEqual(
             self.refused(source),
-            [("agent-pm-crew", "stop-all", "--dryrun"), ("agent-pm-session", "sendkeys")],
+            [("agent-pm-crew", "close-all", "--dryrun"), ("agent-pm-session", "sendkeys")],
         )

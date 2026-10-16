@@ -137,11 +137,6 @@ class Session(ABC):
         return cls._hosted("attach")(name, host=host, idle_timeout=idle_timeout)
 
     @classmethod
-    def retire(cls, name: str, *, host: str | None = None) -> None:
-        """Close session `name` on `host` whatever its state (absent fine); drop its tui state."""
-        cls._hosted("retire")(name, host=host)
-
-    @classmethod
     def inspect(cls, spec: Spec) -> SessionStatus:
         """Historical status using spec.workdir, client and sid, without starting or attaching.
         A missing record raises SessionError.

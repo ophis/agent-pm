@@ -1,6 +1,6 @@
 """Worker, a plain tui session started by name (FR-20): WorkerState in
 ~/.agent-pm/workers/<sid>/worker.json (by-name/<name>: its latest sid); its Record on its Host once
-its early watch passes. restart and resume retire the old session and wait for its group (FR-36).
+its early watch passes. restart and resume close the old session and wait for its group (FR-36).
 Callers hold locked() around start, resume and restart.
 """
 
@@ -32,6 +32,7 @@ from agent_pm.session.engine.types import (
     Spec,
 )
 from agent_pm.session.hosts.base import Displayable, HostProcess
+from agent_pm.session.runtimes.tui import TuiStore
 from agent_pm.utils import (
     CONFIG_NAME,
     STALE_AGE,
@@ -330,9 +331,9 @@ class Worker:
             ) from None
 
     def replace(self, handle: HostProcess | None) -> None:
-        """Retire its session, close `handle`, wait WAIT s, else kill and wait again."""
+        """Close its session by name, close `handle`, wait WAIT s, else kill and wait again."""
         name = self.state.name
-        self.session_cls.retire(name, host=self.state.host)
+        TuiStore.attach(name, host=self.session_cls.host(self.state.host)).close()
         if handle is None:
             return
         handle.close()

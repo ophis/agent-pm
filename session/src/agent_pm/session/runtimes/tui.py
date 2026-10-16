@@ -136,14 +136,22 @@ def _read_state(name: str, path: str) -> dict:
     return state
 
 
-class _Store:
-    """Tui session `name`'s dir and lock under TUI_DIR; what changes them takes the lock."""
+class TuiStore:
+    """Tui session `name`'s dir and lock under TUI_DIR; what changes them takes the lock.
+    attach(name, host=...) takes by name whatever is there: a tui session, a half-gone one (its dir
+    or its host session alone), a non-tui host session or nothing. close: under its lock, closes the
+    host's session of that name and removes the dir; absent is fine.
+    """
 
     def __init__(self, name: str, *, host: Host) -> None:
-        self.name, self.host = checked_name(name), host
+        self.name, self.host = name, host
         self.root = os.path.expanduser(TUI_DIR)
         self.dir = os.path.join(self.root, name)
         self.state_file = os.path.join(self.dir, tui_hook.STATE)
+
+    @classmethod
+    def attach(cls, name: str, *, host: Host) -> Self:
+        return cls(checked_name(name), host=host)
 
     def hook_argv(self) -> tuple[str, ...]:
         """The client's hook command: the running plugin's agent-pm-session (where PATH finds it)
@@ -304,7 +312,7 @@ class _Store:
             self._remove(made)
 
 
-def _sweep(store: _Store) -> None:
+def _sweep(store: TuiStore) -> None:
     """Other names idle STALE_AGE: expired, errors logged; one host listing, once one is idle."""
     try:
         found = {entry.name.removesuffix(".lock") for entry in os.scandir(store.root)}
@@ -315,7 +323,7 @@ def _sweep(store: _Store) -> None:
     for name in sorted(found - {store.name}):
         if not SESSION_NAME.fullmatch(name):
             continue
-        other = _Store(name, host=store.host)
+        other = TuiStore.attach(name, host=store.host)
         try:
             if os.path.islink(other.dir) or not idle((*other.tracked(), tui_lock(name)), STALE_AGE):
                 continue
@@ -330,7 +338,7 @@ def _sweep(store: _Store) -> None:
             LOG.warning("tui sweep %s: %s", name, error)
 
 
-def _stale(store: _Store) -> HostProcess | None:
+def _stale(store: TuiStore) -> HostProcess | None:
     """Tui session `store.name`'s dead process, else None; SessionError while it runs."""
     process = store.process()
     if process is not None and process.alive():
@@ -344,7 +352,7 @@ def _stale(store: _Store) -> HostProcess | None:
 class _Start:
     prepared: Prepared
     run: Tui
-    store: _Store
+    store: TuiStore
     state: dict
     metadata: Mapping[str, str]
 
@@ -372,7 +380,7 @@ class TuiRuntime(Runtime):
         prepared: Prepared,
         run: Tui,
         terminal: Terminal,
-        store: _Store,
+        store: TuiStore,
         generation: str,
         *,
         offset: int = 0,
@@ -424,7 +432,7 @@ class TuiRuntime(Runtime):
         events = host.events_path(spec.events)
         cls._selected(spec, adapter)
         drop = identity_drop(registry)
-        store = _Store(name, host=host)
+        store = TuiStore.attach(name, host=host)
         spec = replace(spec, name=name, events=events)
         spec = cls._noted(spec, adapter)
         hook = store.hook_argv()
@@ -493,7 +501,7 @@ class TuiRuntime(Runtime):
         """Tui session `name` from its snapshot() if its terminal is tagged with its sid; a fresh Tui
         restored replays its client's record, then its hook log; events from the next record.
         """
-        store = _Store(name, host=host)
+        store = TuiStore.attach(name, host=host)
         info = SessionInfo.from_fields(state)
         if info is None:
             raise SessionError(f"no tui session {name}: {store.state_file}: bad {_bad(state)}")
@@ -532,11 +540,6 @@ class TuiRuntime(Runtime):
             offset=offset,
             replayed=(*replayed,),
         )
-
-    @classmethod
-    def close(cls, name: str, *, host: Host) -> None:
-        """Kills tui session `name` (absent is fine), removes its dir; under its lock."""
-        _Store(name, host=host).close()
 
     @property
     def replayed(self) -> tuple[SessionEvent | Stderr | ClientBound, ...]:
@@ -702,6 +705,9 @@ class TuiRuntime(Runtime):
     def _running(self) -> None:
         if not self._terminal.alive():
             raise SessionError(f"tui session {self.name} is not running")
+
+    def close(self) -> None:
+        self._store.close()
 
     def stop(self) -> None:
         """Once; then ends (returncode: the code seen, else -SIGHUP)."""

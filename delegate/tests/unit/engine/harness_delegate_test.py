@@ -667,7 +667,7 @@ class CrashTest(HarnessCase):
 
     def test_the_status_of_an_agent_session_another_process_started_comes_from_its_plan(self):
         view, _name = self.crashed()
-        self.assertEqual(view.session_info(), HarnessSession.history)
+        self.assertEqual(view.session_status(), HarnessSession.history)
         (inspected,) = HarnessSession.inspected
         self.assertEqual((inspected.sid, inspected.mode, inspected.client), (SID, "tui", "fake"))
 

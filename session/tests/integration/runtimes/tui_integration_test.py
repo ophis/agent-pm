@@ -10,7 +10,7 @@ from unittest import mock
 
 from agent_pm.session.engine.types import Access, Spec
 from agent_pm.session.hosts.tmux import TmuxHost
-from agent_pm.session.hosts.tmux.host import Tmux
+from agent_pm.session.hosts.tmux.transport import Tmux
 from agent_pm.session.runtimes import tui
 
 from session.tests import fake_adapter
@@ -45,7 +45,7 @@ class CloseTest(Case):
         def remove_after_hook(path, *args, **kwargs):
             hooks.append(
                 subprocess.run(
-                    [*tui._Store(NAME, host=host).hook_argv(), "stop"],
+                    [*tui.TuiStore.attach(NAME, host=host).hook_argv(), "stop"],
                     input=b"{}",
                     capture_output=True,
                     check=True,
@@ -55,7 +55,7 @@ class CloseTest(Case):
             return remove(path, *args, **kwargs)
 
         with mock.patch.object(os, "rmdir", remove_after_hook):
-            tui.TuiRuntime.close(NAME, host=host)
+            tui.TuiStore.attach(NAME, host=host).close()
         self.assertEqual(len(hooks), 1)
         self.assertIn(b"session.json", hooks[0].stderr)
         self.assertFalse(os.path.lexists(os.path.join(root, NAME)))
@@ -71,10 +71,10 @@ class RawSessionCloseTest(Live):
         folder = Path(self.agent_pm, "tui", name)
         folder.mkdir(parents=True)
         (folder / "session.json").write_text("{}")
-        self.session_cls.retire(name)
+        tui.TuiStore.attach(name, host=self.session_cls.host()).close()
         self.assertNotEqual(self.server.tmux("has-session", "-t", f"={name}").returncode, 0)
         self.assertFalse(folder.exists())
-        self.session_cls.retire(name)
+        tui.TuiStore.attach(name, host=self.session_cls.host()).close()
 
 
 class PollCostTest(Live):
@@ -105,7 +105,7 @@ class PollCostTest(Live):
             record=lambda _info: None,
             host=host,
         )
-        self.addCleanup(tui.TuiRuntime.close, NAME, host=host)
+        self.addCleanup(tui.TuiStore.attach(NAME, host=host).close)
         while mode.poll(0)[0]:
             pass
         commands.clear()

@@ -186,7 +186,7 @@ class CrewTest(Case):
             ctl.set_session(self.ctl_dir, "worker", alive=False)
             self.crew.attach()
             self.assertEqual(self.crew.resume("worker"), record)
-            self.crew.stop("worker")
+            self.crew.close("worker")
         self.assertEqual(
             {verb for verb, _env in calls}, {"start", "resume", "ls", "status", "show", "close"}
         )
@@ -349,7 +349,7 @@ class CrewTest(Case):
         self.assertEqual(self.roster.entries()["resume"].state, State.RESUMING)
         self.assertIn("resume\t", table)
 
-    def test_attach_tolerates_concurrent_stop_after_status_snapshot(self):
+    def test_attach_tolerates_concurrent_close_after_status_snapshot(self):
         self.gone("stop")
         ctl.set_session(self.ctl_dir, "stop", alive=True)
         real_run = subprocess.run
@@ -640,19 +640,19 @@ class CrewTest(Case):
             ):
                 self.crew.status()
 
-    def test_stop_by_session_closes_then_forgets_and_forget_does_not_close(self):
+    def test_close_by_session_closes_then_forgets_and_forget_does_not_close(self):
         record = self.start("one")
         self.start("two")
-        self.crew.stop(record.sessions[0])
+        self.crew.close(record.sessions[0])
         ctl.set_session(self.ctl_dir, "two", alive=False)
         self.crew.forget("two")
         self.assertEqual(self.roster.entries(), {})
         self.assertEqual(self.calls("close"), [{"argv": ["close"], "names": ["one"]}])
 
-    def test_stop_prefers_exact_roster_alias_over_another_entries_session_name(self):
+    def test_close_prefers_exact_roster_alias_over_another_entries_session_name(self):
         first = self.crew.run(Spec("first", (self.command, "start", "actual")))
         self.crew.run(Spec("actual", (self.command, "start", "other")))
-        self.crew.stop("actual")
+        self.crew.close("actual")
         self.assertEqual(set(self.roster.entries()), {"first"})
         self.assertEqual(self.roster.entries()["first"].record, first)
         self.assertTrue(self.crew.status(("first",))[0].alive)
@@ -667,7 +667,7 @@ class CrewTest(Case):
             ),
             self.assertRaisesRegex(RuntimeError, "close failed"),
         ):
-            self.crew.stop("worker")
+            self.crew.close("worker")
         self.assertIn("worker", self.roster.entries())
 
     def test_attach_keeps_failed_ctl_unknown_and_processes_healthy_group(self):
@@ -745,25 +745,25 @@ class CrewTest(Case):
         self.assertIn("healthy\t", table)
         self.assertIn("healthy", self.calls("status")[-1]["names"])
 
-    def test_stop_all_includes_here_orphans_deduplicates_and_excludes_unlisted_records(self):
+    def test_close_all_includes_here_orphans_deduplicates_and_excludes_unlisted_records(self):
         owned = self.start("owned")
         orphan = self.fake_record("orphan")
         ctl.set_session(self.ctl_dir, "orphan", alive=True)
         ctl.set_session(self.ctl_dir, "outside", alive=True)
         with self.listed((owned, orphan)):
-            self.assertEqual(self.crew.stop_all(dry_run=True), ["orphan", "owned"])
+            self.assertEqual(self.crew.close_all(dry_run=True), ["orphan", "owned"])
         self.assertEqual(self.calls("close"), [])
         with self.listed((owned, orphan)):
-            self.assertEqual(self.crew.stop_all(), ["orphan", "owned"])
+            self.assertEqual(self.crew.close_all(), ["orphan", "owned"])
         self.assertEqual(self.roster.entries(), {})
         self.assertEqual(self.calls("close"), [{"argv": ["close"], "names": ["owned", "orphan"]}])
 
-    def test_stop_all_closes_healthy_groups_and_retains_failed_groups(self):
+    def test_close_all_closes_healthy_groups_and_retains_failed_groups(self):
         bad = with_ctl(self.fake_record("broken"), MISSING)
         self.own(bad)
         self.start("healthy")
         with self.listed(), self.assertRaisesRegex(RuntimeError, MISSING):
-            self.crew.stop_all()
+            self.crew.close_all()
         self.assertEqual(set(self.roster.entries()), {"broken"})
         self.assertEqual(self.calls("close"), [{"argv": ["close"], "names": ["healthy"]}])
 
@@ -1070,7 +1070,7 @@ class CrewTest(Case):
                 self.assertNotIn(key, env)
 
 
-class StopAllTest(Case):
+class CloseAllTest(Case):
     def setUp(self):
         self.command = self.setup_ctl()
         self.roster = Roster(os.path.join(self.agent_pm, "managers", "mgr"))
@@ -1095,9 +1095,9 @@ class StopAllTest(Case):
         with (
             self.unavailable_listing(),
             contextlib.redirect_stderr(stderr),
-            self.assertRaisesRegex(RuntimeError, "stop-all partial"),
+            self.assertRaisesRegex(RuntimeError, "close-all partial"),
         ):
-            self.crew.stop_all()
+            self.crew.close_all()
         self.assertIn("listing unavailable", stderr.getvalue())
         self.assertEqual(self.roster.entries(), {})
         with Path(self.ctl_dir, ctl.SESSIONS).open(encoding="utf-8") as stream:
@@ -1116,9 +1116,9 @@ class StopAllTest(Case):
         with (
             self.unavailable_listing(),
             contextlib.redirect_stderr(stderr),
-            self.assertRaisesRegex(RuntimeError, "stop-all partial"),
+            self.assertRaisesRegex(RuntimeError, "close-all partial"),
         ):
-            self.crew.stop_all(dry_run=True)
+            self.crew.close_all(dry_run=True)
         self.assertIn("listing unavailable", stderr.getvalue())
         self.assertEqual(Path(self.roster.path).read_bytes(), before)
         self.assertEqual(
@@ -1130,10 +1130,10 @@ class StopAllTest(Case):
     def test_failed_listing_empty_roster_reports_failure_without_creating_state(self):
         stderr = io.StringIO()
         with self.unavailable_listing(), contextlib.redirect_stderr(stderr):
-            with self.assertRaisesRegex(RuntimeError, "stop-all partial"):
-                self.crew.stop_all()
-            with self.assertRaisesRegex(RuntimeError, "stop-all partial"):
-                self.crew.stop_all(dry_run=True)
+            with self.assertRaisesRegex(RuntimeError, "close-all partial"):
+                self.crew.close_all()
+            with self.assertRaisesRegex(RuntimeError, "close-all partial"):
+                self.crew.close_all(dry_run=True)
         self.assertEqual(stderr.getvalue().count("listing unavailable"), 2)
         self.assertFalse(Path(self.roster.directory).exists())
         self.assertEqual(ctl.calls(self.ctl_dir), [])

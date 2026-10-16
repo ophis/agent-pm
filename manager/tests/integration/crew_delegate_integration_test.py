@@ -1,6 +1,6 @@
 """Role runs through `agent-pm-crew run -- agent-pm-delegate run … --detach` (FR-18, FR-22, FR-35)
 on the real commands (manager/tests/live_crew.py). Ports main's test_detach_events_default,
-test_killed_role_run_gone_then_recovered, test_stop_a_role_run_by_its_tui_session and
+test_killed_role_run_gone_then_recovered, test_close_a_role_run_by_its_tui_session and
 test_a_role_run_ended_on_needs_input_is_waiting_and_left_alone_by_attach_resume.
 """
 
@@ -84,7 +84,7 @@ class RoleTest(RoleCase):
         entry = self.roster()["r"]
         self.assertEqual((entry.state, entry.record), (State.LIVE, record))
 
-    def test_stop_a_role_run_by_its_tui_session(self):
+    def test_close_a_role_run_by_its_tui_session(self):
         self.record(self.worker("w1"))
         record = self.started("r", steps=[START])
         harness, tui = record.sessions
@@ -97,7 +97,7 @@ class RoleTest(RoleCase):
                 self.assertEqual(
                     [c for c in f.read().splitlines() if c.startswith("status")], ["status"]
                 )
-        self.assertEqual(self.ok(self.crew("stop", tui)).stdout, "")
+        self.assertEqual(self.ok(self.crew("close", tui)).stdout, "")
         self.until(lambda: self.gone(harness, tui), f"{harness} and {tui} gone")
         self.assertEqual(list(self.roster()), ["w1"])
         self.assertTrue(self.live("w1"))

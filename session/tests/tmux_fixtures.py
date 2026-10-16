@@ -18,7 +18,7 @@ from agent_pm.session.engine.types import Launch
 from agent_pm.session.hosts.tmux import grid as grids
 from agent_pm.session.hosts.tmux import iterm, placement, types
 from agent_pm.session.hosts.tmux import layout as layouts
-from agent_pm.session.hosts.tmux.host import EXEC, Tmux
+from agent_pm.session.hosts.tmux.transport import EXEC, Tmux
 
 from session.tests.case import Case
 from utils.tests.process_fixtures import DEVNULL
@@ -269,12 +269,16 @@ def deadline(seconds=5):
         signal.signal(signal.SIGALRM, old)
 
 
-def which(tmux=TMUX):
+def which(tmux=TMUX, session=COMMAND):
+    """session None: the real lookup."""
     real = shutil.which
-    return unittest.mock.patch(
-        "shutil.which",
-        side_effect=lambda cmd, *a, **kw: tmux if cmd == "tmux" else real(cmd, *a, **kw),
-    )
+
+    def found(cmd, *args, **kw):
+        if cmd == "tmux":
+            return tmux
+        return session if cmd == "agent-pm-session" and session else real(cmd, *args, **kw)
+
+    return unittest.mock.patch("shutil.which", side_effect=found)
 
 
 def osa(split, kind, session, *anchors):
@@ -481,11 +485,19 @@ def grid(cells, per_column=3, width=160, height=48, manager_width=79):
     )
 
 
+def tiled(window):
+    return [
+        ["tmux", "display-message", "-p", "-t", window, "#{socket_path}"],
+        ["tmux", "display-message", "-p", "-t", window, grids.GRID_WINDOW],
+        unmute(window),
+    ]
+
+
 def opening_commands(*, window="@1", manager="%3", opener="mgr", n=3, retile="all", hooks=True):
     return [
         *record(opener, "%20"),
         grid_set(window, manager, n, hooks=hooks, retile=retile),
-        *([] if retile == "off" else [["tile", window, n]]),
+        *([] if retile == "off" else tiled(window)),
     ]
 
 
@@ -517,16 +529,22 @@ class StartFixture(Case):
     def start(self, fake, session="s", argv=("tool", "-x", "a b"), env=None, **kw):
         env = {"PATH": self.bin, "HOME": "/h"} if env is None else env
         with redirect_stderr(self.stderr):
-            return Tmux(fake, self.sleep).start(
+            return Tmux(fake, sleep=self.sleep).start(
                 session, Launch(tuple(argv), env, cwd=self.cwd), **kw
             )
 
 
+def placed(fake) -> placement.Placement:
+    """A Placement whose Tmux, Grid and Iterm run fake."""
+    tmux = Tmux(fake)
+    return placement.Placement(tmux=tmux, grid=grids.Grid(tmux), iterm=iterm.Iterm(fake))
+
+
 class PaneFixture(Case):
-    def show(self, fake, env, **kw):
+    def open(self, fake, env, **kw):
         self.stderr = io.StringIO()
         with environ(**env), which(kw.pop("tmux", TMUX)), redirect_stderr(self.stderr):
-            return placement.show("s", kw.pop("template", None), **kw, proc=fake, command=COMMAND)
+            return placed(fake).open_pane("s", **kw)
 
     def clients(self, *rows):
         """A list-clients result: rows of (activity, tty, pane[, control mode, default "0"])."""
@@ -690,8 +708,8 @@ class TileFixture(Case):
     ):
         """tile @3 given what tmux prints (fake's arguments). Returns the fake."""
         fake = self.fake(layout, panes, rows, **kw)
-        grids.tile(
-            "@3", per_column=per_column, wait=wait, if_panes_changed=if_panes_changed, proc=fake
+        grids.Grid(Tmux(fake)).tile(
+            "@3", per_column=per_column, wait=wait, if_panes_changed=if_panes_changed
         )
         return fake
 

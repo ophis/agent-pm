@@ -17,7 +17,7 @@
  "agent_pm.delegate.Delegate.resume": "def(self:POSITIONAL_OR_KEYWORD, mode:KEYWORD_ONLY=None)",
  "agent_pm.delegate.Delegate.roles": "classmethod(cls:POSITIONAL_OR_KEYWORD)",
  "agent_pm.delegate.Delegate.run": "def(self:POSITIONAL_OR_KEYWORD, on_event:POSITIONAL_OR_KEYWORD=None)",
- "agent_pm.delegate.Delegate.session_info": "def(self:POSITIONAL_OR_KEYWORD)",
+ "agent_pm.delegate.Delegate.session_status": "def(self:POSITIONAL_OR_KEYWORD)",
  "agent_pm.delegate.Delegate.show": "def(self:POSITIONAL_OR_KEYWORD)",
  "agent_pm.delegate.Delegate.status": "def(self:POSITIONAL_OR_KEYWORD)",
  "agent_pm.delegate.Delegate.trusted_dirs": "classmethod(cls:POSITIONAL_OR_KEYWORD)",

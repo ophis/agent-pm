@@ -114,7 +114,7 @@ def provider(api, cfg):
         def attach_command(self):
             return api.attach_command(harness_name(self.role, self.issue))
 
-        def session_info(self):
+        def session_status(self):
             client = runs.client_of(runs.parse_log(cfg.runs_log), self.entry.sid)
             try:
                 return api.inspect(

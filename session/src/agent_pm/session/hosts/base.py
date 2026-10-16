@@ -90,24 +90,26 @@ class HostProcess(ABC):
         return False
 
     def status(self) -> Status:
-        liveness = self.state()
-        if liveness == Liveness.UNKNOWN:
-            return Status(
-                name=self.name,
-                alive=False,
-                state=StatusState.UNKNOWN,
-                outcome=None,
-                attach=None,
-                hidden=False,
-            )
-        alive = liveness == Liveness.LIVE and self.alive()
-        return Status(
+        """unknown, too, when its host fails after telling its liveness."""
+        unknown = Status(
             name=self.name,
-            alive=alive,
-            state=(self.activity() or StatusState.WORKING) if alive else StatusState.DEAD,
+            alive=False,
+            state=StatusState.UNKNOWN,
             outcome=None,
             attach=None,
-            hidden=self.hidden(),
+            hidden=False,
+        )
+        liveness = self.state()
+        if liveness == Liveness.UNKNOWN:
+            return unknown
+        try:
+            alive = liveness == Liveness.LIVE and self.alive()
+            state = (self.activity() or StatusState.WORKING) if alive else StatusState.DEAD
+            hidden = self.hidden()
+        except SessionError:
+            return unknown
+        return Status(
+            name=self.name, alive=alive, state=state, outcome=None, attach=None, hidden=hidden
         )
 
     def mark(self, word: StatusState, events: str | None) -> None:
