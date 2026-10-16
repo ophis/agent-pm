@@ -1,7 +1,6 @@
 """Readies a done pull-request run's PR only when G1 its autopilot converged, G2 at the PR head, G3
-the head's checks pass; else the run fails and the PR stays draft. Gotcha: owner/name are the
-agent's, so it may name another PR on an allowed host (`hosts`); an agent that can run `gh auth
-login` can add a host.
+the head's checks pass; else the run fails, PR draft. Gotcha: owner/name are the agent's, so it may
+name another PR on an allowed host; an agent that can run `gh auth login` can add a host.
 """
 
 import json
@@ -59,7 +58,7 @@ def hosts(output: Mapping, env: Mapping[str, str] = os.environ) -> frozenset[str
 
 
 def gate(outcome: Outcome, autopilot: Autopilot | None, *, run: Runner = sh) -> Gated:
-    """`outcome`: read with `hosts`, so its url names one."""
+    """`outcome`: its url host was checked against hosts()."""
     url, done = outcome.url, outcome.status == OutcomeStatus.DONE
     if not PULL.fullmatch(urlsplit(url).path):
         return Gated(outcome, GateStatus.SKIPPED, "")
@@ -74,8 +73,8 @@ def gate(outcome: Outcome, autopilot: Autopilot | None, *, run: Runner = sh) -> 
     if reason is not None:
         _, error = _undo(url, view, run)
         return _failed(outcome, f"{reason}; {error}" if error else reason)
-    if view.draft and (reason := _ready(url, run)):
-        return _failed(outcome, reason)
+    if view.draft and (error := _ready(url, run)):
+        return _failed(outcome, error)
     return Gated(outcome, GateStatus.PASSED, "")
 
 
@@ -94,10 +93,8 @@ def _ready(url: str, run: Runner) -> str | None:
             return None
     except _GhError as e:
         errors.append(str(e))
-    try:
-        _gh(run, "gh pr ready --undo", ["pr", "ready", url, "--undo"])
-    except _GhError as e:
-        errors.append(str(e))
+    if error := _draft(url, run):
+        errors.append(error)
     return "; ".join(errors)
 
 
@@ -159,11 +156,17 @@ def _undo(url: str, view: _View, run: Runner) -> tuple[GateStatus, str]:
     """Drafts an open ready PR: (KEPT, "") nothing to do, (DRAFTED, "") drafted, (KEPT, error)."""
     if view.state != "OPEN" or view.draft:
         return GateStatus.KEPT, ""
+    error = _draft(url, run)
+    return (GateStatus.KEPT, error) if error else (GateStatus.DRAFTED, "")
+
+
+def _draft(url: str, run: Runner) -> str:
+    """`gh pr ready --undo`: "" or its error."""
     try:
         _gh(run, "gh pr ready --undo", ["pr", "ready", url, "--undo"])
     except _GhError as e:
-        return GateStatus.KEPT, str(e)
-    return GateStatus.DRAFTED, ""
+        return str(e)
+    return ""
 
 
 def _judge(autopilot: Autopilot | None, view: _View) -> str | None:
