@@ -10,6 +10,7 @@ read and tile exit 1 saying so, status giving no attach command.
 import dataclasses
 import os
 import subprocess
+import sys
 import uuid
 
 from agent_pm.session.engine.types import Launch
@@ -17,7 +18,6 @@ from agent_pm.utils import Record, Status
 
 from session.tests import live_tmux
 from session.tests.cli_support import COMMAND, MANAGER, CliCase
-from session.tests.contracts.host import program
 from session.tests.fakes.host import FakeHost
 
 PROG = "agent-pm-session"
@@ -292,7 +292,10 @@ class NotShowableTest(ControlCase):
         host = FakeHost("fake", {"root": self.fake_host(default="fake")})
         self.f1 = dataclasses.replace(absent("f1"), display=MANAGER)
         process = host.terminal(
-            "f1", Launch(tuple(program(SLEEP)), cwd=self.cwd), display=MANAGER, record=self.f1
+            "f1",
+            Launch((sys.executable, "-I", "-c", SLEEP), cwd=self.cwd),
+            display=MANAGER,
+            record=self.f1,
         )
         self.addCleanup(process.close)
 
