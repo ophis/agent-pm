@@ -18,6 +18,29 @@ SPEC.loader.exec_module(report_check)
 
 
 class ReportCheck(Case):
+    def test_template_limits_and_complete_example(self):
+        template = Path(TEAM, "templates", "research-report.md").read_text(encoding="utf-8")
+        self.assertIn(f"lists/paragraphs {report_check.LINE_LIMIT}", template)
+        self.assertIn(f"other cells {report_check.CELL_LIMIT}", template)
+        sample = template.split("## Filled example\n", 1)[1].strip()
+        self.assertEqual(self.check(sample), (0, "ok\n"))
+        visible = []
+        hidden = False
+        for line in sample.splitlines():
+            if line.startswith("<details>"):
+                hidden = True
+            if not hidden or line.startswith("<summary>"):
+                visible.append(line)
+            if line.startswith("</details>"):
+                hidden = False
+        self.assertLessEqual(sum(not c.isspace() for c in "".join(visible)), 1500)
+        self.assertEqual(sample.count("<details>"), 2)
+        self.assertIn("```mermaid", sample)
+        self.assertRegex(
+            sample,
+            r"^# .+\n\nLight Research: light-research · mixed · ophis/agent-pm@[a-f0-9]{12}\n",
+        )
+
     def check(self, text):
         path = Path(self.home, "report.md")
         path.write_text(text, encoding="utf-8")

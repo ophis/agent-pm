@@ -115,7 +115,7 @@ host = ""
 [roles.researcher]
 templates = ["research-report"]
 read = ["{{team}}"]
-commands = ["python3 -P {{team}}/tools/repo.py worktree --dir {{workdir}}/src *", "python3 -P {{team}}/tools/html_check.py *"]
+commands = ["python3 -P {{team}}/tools/repo.py worktree --dir {{workdir}}/src *", "python3 -P {{team}}/tools/html_check.py *", "python3 -P {{team}}/tools/report_check.py *"]
 # local: [delegate.roles.researcher]
 # local: cwd = "~/src/<name>"
 # local: [delegate.roles.researcher.output]
