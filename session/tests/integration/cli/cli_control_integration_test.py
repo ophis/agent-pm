@@ -50,15 +50,24 @@ def lines(*records: Record) -> str:
 
 
 def gone(name: str) -> Status:
-    return Status(name=name, alive=False, state="gone", outcome=None, attach=None)
+    return Status(name=name, alive=False, state="gone", outcome=None, attach=None, hidden=False)
 
 
-def live(name: str, state: str, *, displayable: bool = True, cwd: str | None = None) -> Status:
+def live(
+    name: str,
+    state: str,
+    *,
+    displayable: bool = True,
+    cwd: str | None = None,
+    hidden: bool = False,
+) -> Status:
     """A live session's Status: its tmux attach command, none when its Host cannot display; a
     worker's cwd.
     """
     command = attach(name) if displayable else None
-    return Status(name=name, alive=True, state=state, outcome=None, attach=command, cwd=cwd)
+    return Status(
+        name=name, alive=True, state=state, outcome=None, attach=command, cwd=cwd, hidden=hidden
+    )
 
 
 def pid_alive(pid: int) -> bool:
@@ -231,12 +240,16 @@ class ControlTest(ControlCase):
             self.assertNotIn(pane, self.server.panes(f"={MANAGER}:"))
             self.assertEqual(self.sessions(), [MANAGER, "w1"])
             self.assertEqual(self.hidden("w1"), {"sid": w1.sid, "hidden": True})
+            self.assertEqual(
+                self.status(stdin=lines(w1)), [live("w1", "done", cwd=self.cwd, hidden=True)]
+            )
         res = self.session("hide", "nope")
         self.assertEqual((res.returncode, res.stdout), (1, ""), res.stderr)
         self.assertEqual(res.stderr, f"{PROG}: nope: no tmux session nope\n")
         self.assert_printed(self.session("show", stdin=lines(w1)), "")
         self.shows("w1", f"={MANAGER}:")
         self.assertEqual(self.hidden("w1"), {"sid": w1.sid, "hidden": False})
+        self.assertEqual(self.status("w1"), [live("w1", "done", cwd=self.cwd)])
         self.assertEqual(len(self.calls("w1")), 1)
 
     def test_a_key_its_host_refuses_fails_alone_and_the_batch_goes_on(self):

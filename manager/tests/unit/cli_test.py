@@ -173,7 +173,12 @@ class NextEventContent(CliCase):
             with self.subTest(sessions=sessions):
                 record = self.launched("r1", *sessions, record_name=record_name)
                 status = Status(
-                    record.name, alive=False, state="exited", outcome="done", attach=None
+                    record.name,
+                    alive=False,
+                    state="dead",
+                    outcome="done",
+                    attach=None,
+                    hidden=False,
                 )
                 self.answers = {(*record.ctl, "status"): (0, status.to_line() + "\n", "")}
                 self.assertEqual(

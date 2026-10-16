@@ -3,11 +3,13 @@
 import contextlib
 import io
 import os
+import uuid
 from dataclasses import replace
 from unittest import mock
 
 from agent_pm.manager.engine.crew import Crew
 from agent_pm.manager.engine.types import Spec, State
+from agent_pm.utils import Status
 
 from manager.tests.roster_case import RosterCase
 from utils.tests.process_fixtures import DEVNULL, TimeoutExpired
@@ -55,3 +57,18 @@ class Run(RosterCase):
                 error, _, _ = self.start(mock.Mock(side_effect=[effect]), name)
                 self.assertEqual(str(error), f"fake-ctl start x: {message}")
                 self.assertIs(self.roster.entries()[name].state, State.LOST)
+
+
+class RecordlessStatus(RosterCase):
+    def test_a_launch_without_a_record_is_starting_then_gone_once_lost(self):
+        starting = self.roster.begin(Spec("s", ARGV), sid=str(uuid.uuid4()))
+        lost = self.roster.begin(Spec("l", ARGV), sid=str(uuid.uuid4()))
+        self.assertTrue(self.roster.mark_if("l", lost, State.LOST))
+        self.assertIsNone(starting.record)
+        self.assertEqual(
+            Crew(self.roster).status(),
+            [
+                Status("l", alive=False, state="gone", outcome=None, attach=None, hidden=False),
+                Status("s", alive=False, state="starting", outcome=None, attach=None, hidden=False),
+            ],
+        )

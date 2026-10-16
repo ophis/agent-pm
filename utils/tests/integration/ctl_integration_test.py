@@ -75,7 +75,11 @@ class FakeCtl(Installed):
         self.assertEqual(str(uuid.UUID(started.sid)), started.sid)
         self.assertEqual(
             self.status(record("w1")),
-            [Status(name="w1", alive=True, state="working", outcome=None, attach=None)],
+            [
+                Status(
+                    name="w1", alive=True, state="working", outcome=None, attach=None, hidden=False
+                )
+            ],
         )
 
     def test_start_honors_environment_sid_and_resume_keeps_it(self):
@@ -104,14 +108,27 @@ class FakeCtl(Installed):
         self.assertEqual(
             self.status(record("w1"), record("w2")),
             [
-                Status(name="w1", alive=True, state="working", outcome=None, attach=None),
-                Status(name="w2", alive=False, state="gone", outcome=None, attach=None),
+                Status(
+                    name="w1", alive=True, state="working", outcome=None, attach=None, hidden=False
+                ),
+                Status(
+                    name="w2", alive=False, state="gone", outcome=None, attach=None, hidden=False
+                ),
             ],
         )
-        ctl.set_session(self.state, "w1", alive=False, state="exited", outcome="needs_input")
+        ctl.set_session(self.state, "w1", alive=False, state="dead", outcome="needs_input")
         self.assertEqual(
             self.status(record("w1")),
-            [Status(name="w1", alive=False, state="exited", outcome="needs_input", attach=None)],
+            [
+                Status(
+                    name="w1",
+                    alive=False,
+                    state="dead",
+                    outcome="needs_input",
+                    attach=None,
+                    hidden=False,
+                )
+            ],
         )
 
     def test_attach_is_a_command_only_while_alive_and_displayable(self):
@@ -144,7 +161,9 @@ class FakeCtl(Installed):
         self.assertEqual(
             self.status(record("w1"), record("w2")),
             [
-                Status(name=name, alive=False, state="gone", outcome=None, attach=None)
+                Status(
+                    name=name, alive=False, state="gone", outcome=None, attach=None, hidden=False
+                )
                 for name in ("w1", "w2")
             ],
         )
@@ -156,7 +175,11 @@ class FakeCtl(Installed):
         self.assertEqual((again.returncode, again.stdout), (0, started.to_line() + "\n"))
         self.assertEqual(
             self.status(started),
-            [Status(name="w1", alive=True, state="blocked", outcome=None, attach=None)],
+            [
+                Status(
+                    name="w1", alive=True, state="blocked", outcome=None, attach=None, hidden=False
+                )
+            ],
         )
 
     def test_resume_of_an_ended_session_starts_it_with_its_display(self):
@@ -166,7 +189,11 @@ class FakeCtl(Installed):
         self.assertEqual((again.returncode, Record.parse(again.stdout)), (0, started))
         self.assertEqual(
             self.status(started),
-            [Status(name="w1", alive=True, state="working", outcome=None, attach=None)],
+            [
+                Status(
+                    name="w1", alive=True, state="working", outcome=None, attach=None, hidden=False
+                )
+            ],
         )
 
     def test_bad_stdin_a_bad_name_or_an_unknown_subcommand_exits_2_and_changes_nothing(self):
@@ -186,7 +213,11 @@ class FakeCtl(Installed):
                 self.assertTrue(done.stderr)
         self.assertEqual(
             self.status(record("w1")),
-            [Status(name="w1", alive=True, state="working", outcome=None, attach=None)],
+            [
+                Status(
+                    name="w1", alive=True, state="working", outcome=None, attach=None, hidden=False
+                )
+            ],
         )
 
     def test_stdin_too_deep_to_decode_exits_2(self):

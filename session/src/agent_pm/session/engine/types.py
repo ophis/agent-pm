@@ -12,6 +12,7 @@ from types import MappingProxyType
 from typing import Self
 
 from agent_pm.utils import (
+    StatusState,
     environment_ok,
     freeze,
     printable_abs,
@@ -124,10 +125,10 @@ class Word(StrEnum):
 class ActivityState(StrEnum):
     """A listed session's activity: its terminal's Word, dead once it exited."""
 
-    WORKING = Word.WORKING.value
-    DONE = Word.DONE.value
-    BLOCKED = Word.BLOCKED.value
-    DEAD = "dead"
+    WORKING = StatusState.WORKING.value
+    DONE = StatusState.DONE.value
+    BLOCKED = StatusState.BLOCKED.value
+    DEAD = StatusState.DEAD.value
 
 
 class HookError(Exception):

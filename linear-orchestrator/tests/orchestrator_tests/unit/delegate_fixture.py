@@ -91,7 +91,12 @@ def provider(api, cfg):
         def status(self):
             live = self.alive()
             return Status(
-                self.issue, live, "working" if live else "gone", None, self.attach_command()
+                self.issue,
+                live,
+                "working" if live else "gone",
+                None,
+                self.attach_command(),
+                hidden=False,
             )
 
         def outcome(self):

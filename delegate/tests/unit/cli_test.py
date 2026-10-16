@@ -960,7 +960,9 @@ class View:
     def status(self):
         if self.error is not None:
             raise self.error
-        return Status(self.name, alive=False, state="absent", outcome=None, attach=self.command)
+        return Status(
+            self.name, alive=False, state="gone", outcome=None, attach=self.command, hidden=False
+        )
 
     def show(self):
         if self.show_error is not None:
@@ -1028,9 +1030,16 @@ class Queries(Case):
     def test_status_prints_one_line_per_key_in_order_from_arguments_or_stdin(self):
         a, b = View("a"), View("b", command="tmux attach -t =b")
         lines = [
-            Status("a", alive=False, state="absent", outcome=None, attach=None).to_line(),
             Status(
-                "b", alive=False, state="absent", outcome=None, attach="tmux attach -t =b"
+                "a", alive=False, state="gone", outcome=None, attach=None, hidden=False
+            ).to_line(),
+            Status(
+                "b",
+                alive=False,
+                state="gone",
+                outcome=None,
+                attach="tmux attach -t =b",
+                hidden=False,
             ).to_line(),
         ]
         self.assertEqual(
@@ -1053,7 +1062,7 @@ class Queries(Case):
                     (
                         code,
                         Status(
-                            "a", alive=False, state="absent", outcome=None, attach=None
+                            "a", alive=False, state="gone", outcome=None, attach=None, hidden=False
                         ).to_line()
                         + "\n",
                         f"delegate: gone: {error}\n",

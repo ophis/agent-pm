@@ -560,7 +560,13 @@ class CrewTest(Case):
             if tuple(argv) == (self.command, "status"):
                 lines = (
                     Status(
-                        name, alive=True, state="working", outcome=None, attach=None, cwd=cwd
+                        name,
+                        alive=True,
+                        state="working",
+                        outcome=None,
+                        attach=None,
+                        cwd=cwd,
+                        hidden=False,
                     ).to_line()
                     for name, cwd in (("one", "/w/repo one"), ("two", None))
                 )
@@ -578,7 +584,7 @@ class CrewTest(Case):
         self.start("one")
         self.start("two")
         ctl.set_session(self.ctl_dir, "one", alive=True)
-        one = Status("one", alive=True, state="working", outcome=None, attach=None)
+        one = Status("one", alive=True, state="working", outcome=None, attach=None, hidden=False)
         real_run = subprocess.run
 
         def run(argv, **options):
@@ -606,11 +612,15 @@ class CrewTest(Case):
         responses = (
             "",
             (
-                Status("worker", alive=True, state="working", outcome=None, attach=None).to_line()
+                Status(
+                    "worker", alive=True, state="working", outcome=None, attach=None, hidden=False
+                ).to_line()
                 + "\n"
             )
             * 2,
-            Status("extra", alive=True, state="working", outcome=None, attach=None).to_line()
+            Status(
+                "extra", alive=True, state="working", outcome=None, attach=None, hidden=False
+            ).to_line()
             + "\n",
         )
         for raw in responses:

@@ -1,6 +1,6 @@
-"""Whether a session is hidden: hide closed its view and no show reopened it since. One file per
-session name, {sid, hidden}, keyed by the session's private terminal sid, so a later run under the
-name (another sid) is not hidden; a session without one (a harness) is never recorded.
+"""Whether hide closed a session's view since its last show. One {sid, hidden} file per session
+name; another sid (a later run under the name) is not hidden, a session without one (a harness)
+never recorded.
 """
 
 import json

@@ -46,10 +46,9 @@ from agent_pm.session.hosts.base import Displayable, Host
 from agent_pm.session.runtimes import tui_hook
 from agent_pm.session.runtimes.base import EVENTS, START_SID
 from agent_pm.session.runtimes.tui import TuiRuntime
-from agent_pm.utils import Record, Status, module_roots, nested_start
+from agent_pm.utils import Record, Status, StatusState, module_roots, nested_start
 
 PROG = COMMAND
-GONE = "gone"
 HEADER = "name\tstate\tclient\tsid\tdisplay"
 
 
@@ -243,15 +242,16 @@ def _sessions(name: str, record: Record | None) -> tuple[str, ...]:
     return (name,) if record is None else record.sessions
 
 
-def _state(name: str, hosts: Hosts) -> tuple[bool, str, str | None]:
+def _state(name: str, hosts: Hosts) -> tuple[bool, str, str | None, bool]:
     host = Session.host(_host_of(name, hosts))
     if name not in host.list():
-        return False, GONE, None
+        return False, StatusState.GONE, None, False
     handle = host.attach(name)
+    is_hidden = hidden.hidden(handle)
     if not handle.alive():
-        return False, ActivityState.DEAD, None
+        return False, ActivityState.DEAD, None, is_hidden
     attach = host.attach_command(name) if isinstance(host, Displayable) else None
-    return True, handle.activity() or ActivityState.WORKING, attach
+    return True, handle.activity() or ActivityState.WORKING, attach, is_hidden
 
 
 def _cwd(name: str) -> str | None:
@@ -266,8 +266,11 @@ def _cwd(name: str) -> str | None:
 def _status(name: str, record: Record | None, hosts: Hosts) -> str:
     sessions = _sessions(name, record)
     found = [(session, *_state(session, hosts)) for session in sessions]
-    session, alive, state, attach = next((each for each in found if each[1]), found[0])
-    return Status(name, alive, str(state), None, attach, _cwd(session) if alive else None).to_line()
+    session, alive, state, attach, _ = next((each for each in found if each[1]), found[0])
+    is_hidden = any(each[4] for each in found)
+    return Status(
+        name, alive, str(state), None, attach, is_hidden, _cwd(session) if alive else None
+    ).to_line()
 
 
 def _carried(name: str, record: Record | None, hosts: Hosts) -> tuple[str, ...]:

@@ -1,7 +1,7 @@
 """Record v1, one JSON line naming a started thing by its outermost starter (ctl queries it, resume
 resumes it; only a LayerCommand, in the exact form that command prints, so a forged line runs
-nothing else), and Status, the line `<ctl> status` prints per Record (cwd, optional: where the
-run works). Display is opaque: only the session layer interprets it. answer_keys is the one batch
+nothing else), and Status, the line `<ctl> status` prints per Record (state: a StatusState word,
+every layer's one vocabulary; hidden: its view closed by hide; cwd, optional: where the run works). Display is opaque: only the session layer interprets it. answer_keys is the one batch
 rule of every ctl's queries. json_records yields JSON objects from text or byte lines.
 """
 
@@ -22,6 +22,16 @@ class LayerCommand(StrEnum):
     DELEGATE = "agent-pm-delegate"
     LINEAR = "agent-pm-linear"
     SESSION = "agent-pm-session"
+
+
+class StatusState(StrEnum):
+    STARTING = "starting"  # launched, no Record yet
+    WORKING = "working"  # alive, not known to be done or blocked
+    DONE = "done"
+    BLOCKED = "blocked"
+    DEAD = "dead"  # its session is listed, its client exited
+    GONE = "gone"  # no session runs
+    UNKNOWN = "unknown"  # its host could not tell
 
 
 class RecordError(ValueError):
@@ -118,12 +128,17 @@ class Status(_Line):
     state: str
     outcome: str | None
     attach: str | None
+    hidden: bool
     cwd: str | None = None
 
     def __post_init__(self):
         _check(ok=_text(self.name), message="name: want a non-empty printable str")
         _check(ok=isinstance(self.alive, bool), message="alive: want true or false")
-        _check(ok=_text(self.state), message="state: want a non-empty printable str")
+        _check(
+            ok=self.state in tuple(StatusState),
+            message=f"state: want one of {', '.join(StatusState)}",
+        )
+        _check(ok=isinstance(self.hidden, bool), message="hidden: want true or false")
         for field in ("outcome", "attach"):
             value = getattr(self, field)
             _check(

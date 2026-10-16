@@ -185,6 +185,7 @@ class AdoptionTest(RecordCase):
                 outcome=None,
                 attach="tmux attach -t '=w1'",
                 cwd=self.cwd,
+                hidden=False,
             )
         ]
         self.assertEqual(self.status("w1", inside=None), status)

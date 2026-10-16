@@ -523,6 +523,15 @@ class ResumeModeTest(HarnessCase):
         self.assertEqual(HarnessSession.live[before["agent_name"]].state(), Liveness.LIVE)
 
 
+class StatusTest(HarnessCase):
+    def test_its_state_is_working_while_the_run_lives_else_gone(self):
+        record = self.make().detach()
+        view = HarnessDelegate.attach(self.work, session_cls=HarnessSession)
+        self.assertEqual((view.status().state, view.status().hidden), ("working", False))
+        self.stop(record)
+        self.assertEqual((view.status().alive, view.status().state), (False, "gone"))
+
+
 class CrashTest(HarnessCase):
     def crashed(self, cwd=None):
         """A tui run whose process died mid-run: no outcome stored, no run lock held, its agent
@@ -547,6 +556,15 @@ class CrashTest(HarnessCase):
         self.assertEqual(HarnessSession.live[name].state(), Liveness.LIVE)
         self.assertFalse(view.alive())
         self.assertFalse(view.status().alive)
+
+    def test_its_status_takes_unknown_and_hidden_from_its_agent_session(self):
+        view, name = self.crashed()
+        agent = HarnessSession.live[name]
+        self.assertEqual((view.status().state, view.status().hidden), ("gone", False))
+        agent.hidden = lambda: True
+        self.assertTrue(view.status().hidden)
+        agent._state = Liveness.UNKNOWN
+        self.assertEqual(view.status().state, "unknown")
 
     def test_resume_closes_the_left_agent_session_and_launches_the_next_attempt(self):
         view, name = self.crashed()

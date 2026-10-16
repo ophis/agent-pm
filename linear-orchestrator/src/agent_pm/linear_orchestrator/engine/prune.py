@@ -37,7 +37,7 @@ from agent_pm.linear_orchestrator.engine.types import (
     LinearError,
     Unavailable,
 )
-from agent_pm.utils import GUARD, SHORT, GitError, common_dir, one_line, under
+from agent_pm.utils import GUARD, SHORT, GitError, StatusState, common_dir, one_line, under
 from agent_pm.utils import run_git as git
 
 QUARANTINE = timedelta(hours=24)
@@ -150,7 +150,7 @@ class Pruner:
                 continue
             try:
                 view = LinearRun.attach(ident, cfg=self.cfg, sid=entry.sid)
-                if view.status().state == "unknown":
+                if view.status().state == StatusState.UNKNOWN:
                     return None
             except (config.ConfigError, DelegateConfigError, OSError, ValueError) as error:
                 self.say("prune-skip", ident, once=True, sid=entry.sid, reason=one_line(error))

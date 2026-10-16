@@ -63,6 +63,7 @@ from agent_pm.utils import (
     Display,
     Record,
     Status,
+    StatusState,
     load_class,
     source_path,
     thaw,
@@ -593,19 +594,20 @@ class HarnessDelegate(Delegate):
     def status(self) -> Status:
         state = self._read()
         agent = self._agent(state)
-        word = (
-            str(agent.state())
-            if agent is not None
-            else ("live" if self._alive(state) else "absent")
-        )
+        alive = self._alive(state)
+        if agent is not None and agent.state() == Liveness.UNKNOWN:
+            word = StatusState.UNKNOWN
+        else:
+            word = StatusState.WORKING if alive else StatusState.GONE
         return Status(
             state.agent_name,
-            self._alive(state),
+            alive,
             word,
             None
             if state.result is None or state.result.outcome is None
             else state.result.outcome.status,
             self.attach_command(),
+            agent is not None and agent.hidden(),
             state.plan.session.access.cwd,
         )
 
