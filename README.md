@@ -251,6 +251,9 @@ agent-pm keeps its state in its state root, `~/.agent-pm/`. `work/` and `logs/` 
 │   └── router.lock               one router at a time
 ├── sessions/claude/  codex/      what a client session's resume command replays
 ├── tui/<name>/                   a running tui session's state and hook log
+├── tui/<name>.lock               that name's start and close lock
+├── pty/<name>/                   a pty-host session's files
+├── pty/<name>.lock               that name's start lock
 ├── workers/<sid>/                a worker's state; by-name/<name>: its latest sid
 ├── managers/<name>/              a manager's Roster and events file
 ├── adhoc/<date>-<role>-<name>/   workdirs of /agent-pm:act-as and /agent-pm:tmux role runs
@@ -268,11 +271,15 @@ agent-pm keeps its state in its state root, `~/.agent-pm/`. `work/` and `logs/` 
 | `logs/orchestrator.jsonl` | nobody | any time; keep `logs/` ([Setup](#setup) step 6) |
 | `logs/router.lock` | nobody | while no router runs |
 | `sessions/` | nobody | an entry once its session ended and you won't resume it |
-| `tui/<name>/` | closing or stopping the session | no: closing the session removes it; a `<name>.lock` while no session of that name starts or closes |
+| `tui/<name>/` | closing or stopping the session; the tui sweep | no: closing the session removes it |
+| `tui/<name>.lock` | the tui sweep | while no session of that name starts or closes |
+| `pty/<name>/`, `pty/<name>.lock` | closing the session or a detached session's exit (the dir); the pty sweep | no: closing the session removes it; a `<name>.lock` while no session of that name starts |
 | `workers/<sid>/` | nobody | once you won't restart or resume the worker |
 | `managers/<name>/` | `agent-pm-crew forget` drops an entry; `events` rotates to `events.1` past 1 MiB | while no manager holds it; its Roster is lost |
 | `adhoc/` | nobody | a finished run's folder |
 | `probe/`, `bin/` | nobody | any time; `ctmux --install` restores `bin/` |
+
+Each tui start runs the tui sweep and each pty start the pty sweep, over the other names of their dir whose files all went unchanged for 30 days: the tui sweep drops a name its host has no session of, the pty sweep one with no process left; a name whose lock is held stays.
 
 ## agent-pm-session
 
