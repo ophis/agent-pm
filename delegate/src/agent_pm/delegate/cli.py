@@ -42,8 +42,8 @@ def main(
         ("status", True, "one Status line per run"),
         ("outcome", False, "the run's outcome as JSON, null without one"),
         ("resume", False, "resume a stopped run; print its Record"),
-        ("show", True, "show each run's showable sessions"),
-        ("hide", True, "close what show opened; the runs go on"),
+        ("show", True, "show each run's agent session"),
+        ("hide", True, "close each run's agent and harness panes; the runs go on"),
         ("close", True, "close each run's sessions"),
         ("attach-command", False, "the command attaching to the run"),
     ):
