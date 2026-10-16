@@ -11,7 +11,7 @@ import unittest.mock
 from agent_pm.delegate.engine.ready_gate import gate, hosts
 from agent_pm.delegate.engine.types import GateStatus
 from agent_pm.delegate.event.types import Autopilot, AutopilotStatus, Outcome, OutcomeStatus
-from agent_pm.utils import SHORT
+from agent_pm.utils import SHORT, one_line
 
 from delegate.tests.case import Case
 from delegate.tests.repo import PROCESS_ERRORS, fail, ok
@@ -39,11 +39,12 @@ def view(checks=(), *, draft=True, state="OPEN", head=HEAD):
 
 
 failed, OK = fail, ok()
+TIMED_OUT = f"gh pr ready: {one_line(PROCESS_ERRORS[1])}"
 
 
 class Gh:
     """A fake `run`: answers each argv from `answers` by its first four words (view/ready/undo),
-    records calls and timeouts; an exception answer is raised.
+    records calls and timeouts; an exception answer is raised; a list answers views in turn.
     """
 
     def __init__(self, view_answer=None, ready=OK, undo=OK):
@@ -55,6 +56,8 @@ class Gh:
         self.timeouts.append(timeout)
         key = "view" if argv[2] == "view" else "undo" if "--undo" in argv else "ready"
         answer = self.answers[key]
+        if isinstance(answer, list):
+            answer = answer.pop(0)
         if isinstance(answer, BaseException):
             raise answer
         return answer
@@ -203,18 +206,37 @@ class Errors(Base):
                 self.assert_failed(self.go(Gh(answer)), reason)
                 self.assertEqual(self.gh.calls, [VIEW])
 
-    def test_a_failed_ready_fails(self):
-        gated = self.go(Gh(view(), ready=failed("GraphQL: forbidden")))
-        self.assert_failed_after_ready(gated, "gh pr ready: GraphQL: forbidden")
+    def test_a_failed_ready_on_a_now_ready_pr_passes(self):
+        for ready in (failed("GraphQL: forbidden"), PROCESS_ERRORS[1]):
+            with self.subTest(ready=type(ready).__name__):
+                gated = self.go(Gh([view(), view(draft=False)], ready=ready))
+                self.assertEqual((gated.status, gated.outcome), (GateStatus.PASSED, outcome()))
+                self.assertEqual(self.gh.calls, [VIEW, READY, VIEW])
 
-    def test_a_timed_out_ready_fails(self):
-        gated = self.go(Gh(view(), ready=PROCESS_ERRORS[1]))
-        self.assert_failed_after_ready(gated, "gh pr ready: TimeoutExpired")
+    def test_a_failed_ready_on_a_draft_pr_undoes_and_fails(self):
+        for ready, reason in (
+            (failed("GraphQL: forbidden"), "gh pr ready: GraphQL: forbidden"),
+            (PROCESS_ERRORS[1], TIMED_OUT),
+        ):
+            with self.subTest(reason=reason):
+                gated = self.go(Gh([view(), view()], ready=ready))
+                self.assert_failed_after_ready(gated, reason)
+        gated = self.go(Gh([view(), view()], ready=PROCESS_ERRORS[1], undo=failed("nope")))
+        self.assert_failed_after_ready(gated, f"{TIMED_OUT}; gh pr ready --undo: nope")
+
+    def test_a_failed_ready_and_view_undoes_and_fails(self):
+        gh = Gh([view(), failed("HTTP 502")], ready=PROCESS_ERRORS[1], undo=failed("nope"))
+        self.assert_failed_after_ready(
+            self.go(gh), f"{TIMED_OUT}; gh pr view: HTTP 502; gh pr ready --undo: nope"
+        )
 
     def assert_failed_after_ready(self, gated, reason):
         self.assertEqual((gated.status, gated.outcome.status), (GateStatus.FAILED, "failed"))
-        self.assertIn(reason, gated.outcome.summary.splitlines()[-1])
-        self.assertEqual(self.gh.calls, [VIEW, READY])
+        self.assertTrue(
+            gated.outcome.summary.endswith(f"\nready gate: {reason}"), gated.outcome.summary
+        )
+        self.assertEqual(self.gh.calls, [VIEW, READY, VIEW, UNDO])
+        self.assert_safe_calls()
 
     def test_a_failed_undo_is_added_to_the_reason(self):
         gated = self.go(Gh(view([run_("u", "FAILURE")], draft=False), undo=failed("nope")))

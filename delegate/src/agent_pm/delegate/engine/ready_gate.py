@@ -74,12 +74,31 @@ def gate(outcome: Outcome, autopilot: Autopilot | None, *, run: Runner = sh) -> 
     if reason is not None:
         _, error = _undo(url, view, run)
         return _failed(outcome, f"{reason}; {error}" if error else reason)
-    if view.draft:
-        try:
-            _gh(run, "gh pr ready", ["pr", "ready", url])
-        except _GhError as e:
-            return _failed(outcome, str(e))
+    if view.draft and (reason := _ready(url, run)):
+        return _failed(outcome, reason)
     return Gated(outcome, GateStatus.PASSED, "")
+
+
+def _ready(url: str, run: Runner) -> str | None:
+    """Readies the PR: None once it is ready (a failed call may still have landed), else the errors
+    after a best-effort undo.
+    """
+    try:
+        _gh(run, "gh pr ready", ["pr", "ready", url])
+    except _GhError as e:
+        errors = [str(e)]
+    else:
+        return None
+    try:
+        if not _view(url, run).draft:
+            return None
+    except _GhError as e:
+        errors.append(str(e))
+    try:
+        _gh(run, "gh pr ready --undo", ["pr", "ready", url, "--undo"])
+    except _GhError as e:
+        errors.append(str(e))
+    return "; ".join(errors)
 
 
 def _refuse(outcome: Outcome, reason: str, *, done: bool) -> Gated:
