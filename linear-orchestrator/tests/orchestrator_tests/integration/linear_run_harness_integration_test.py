@@ -31,6 +31,7 @@ class HarnessRun(HarnessCase):
             harness_key="",
             task_label_group="",
             task_labels={},
+            option_labels={},
             roles={},
             project_repos={},
             local_clones={},

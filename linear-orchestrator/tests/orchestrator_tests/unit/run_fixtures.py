@@ -107,6 +107,7 @@ def node(title="ENG: Session registry", description="Add a session registry.", c
         "attachments": {"nodes": []},
         "relations": {"nodes": []},
         "inverseRelations": {"nodes": []},
+        "labels": {"nodes": []},
     }
 
 

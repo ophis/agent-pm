@@ -59,6 +59,16 @@ canceled = ""
 # local: build = "00000000-0000-0000-0000-000000000000"
 # local: light-build = "00000000-0000-0000-0000-000000000000"
 
+# Option labels; optional: Linear labels outside the Tasks group that switch on a run option, by id.
+#   visual  local: the Visual label's id; a research issue carrying it gets `Visual: yes` in its input (the researcher
+#           then adds an HTML version of its report: delegate/src/agent_pm/delegate/team/roles/researcher.md › Visual);
+#           "" → none
+[option_labels]
+visual = ""
+
+# local: [linear_orchestrator.option_labels]
+# local: visual = "00000000-0000-0000-0000-000000000000"
+
 # A role to orchestrate. Its tasks are its charter's index (delegate/src/agent_pm/delegate/team/roles/<role>.md › Tasks).
 # A role added in config.local.toml with any of these keys is orchestrated too.
 #   account               local, required for each role: the role's Linear account (email)
