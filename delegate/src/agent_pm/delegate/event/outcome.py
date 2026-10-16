@@ -11,7 +11,14 @@ from collections.abc import Mapping
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
-from agent_pm.delegate.event.types import STATUSES, InvalidOutcome, Outcome, OutcomeStatus
+from agent_pm.delegate.event.types import (
+    STATUSES,
+    Autopilot,
+    AutopilotStatus,
+    InvalidOutcome,
+    Outcome,
+    OutcomeStatus,
+)
 from agent_pm.utils import ConfinedFileError, ConfinedReason, read_confined
 
 SCHEMA = os.path.join(os.path.dirname(os.path.abspath(__file__)), "outcome.schema.json")
@@ -19,11 +26,16 @@ SAVES_DELIVERABLE = (
     "local",
     "orchestrator",
 )  # destinations whose deliverable comes back in the outcome
-PR_PATH = re.compile(r"/[^/]+/[^/]+/(pull/\d+|compare/\S+|tree/\S+)")
+DEFAULT_HOST = "github.com"
+PULL = re.compile(r"/[^/]+/[^/]+/pull/\d+")
+PR_PATH = re.compile(rf"{PULL.pattern}|/[^/]+/[^/]+/(compare|tree)/\S+")
+SHA = re.compile(r"[0-9a-f]{40}")
 
 
-def read(body: str, output: Mapping, workdir: str) -> Outcome:
-    """`output`: the run's [output] table. Raises InvalidOutcome."""
+def read(body: str, output: Mapping, workdir: str) -> tuple[Outcome, Autopilot | None]:
+    """`output`: the run's [output] table; the Autopilot is the outcome's `autopilot`, None when it
+    has none. Raises InvalidOutcome.
+    """
     try:
         data = json.loads(body)
     except (ValueError, RecursionError) as e:
@@ -36,7 +48,12 @@ def read(body: str, output: Mapping, workdir: str) -> Outcome:
         data = {k: v for k, v in data.items() if k != "deliverable_file"} | {
             "deliverable": _read_file(_file(data["deliverable_file"], workdir), workdir)
         }
-    return validate(data, output, workdir)
+    return validate(data, output, workdir), _autopilot(data.get("autopilot"))
+
+
+def _autopilot(found) -> Autopilot | None:
+    """`found`: a validated outcome's `autopilot`."""
+    return None if found is None else Autopilot(AutopilotStatus(found["status"]), found["head"])
 
 
 def validate(data: dict, output: Mapping, workdir: str) -> Outcome:
@@ -71,6 +88,8 @@ def validate(data: dict, output: Mapping, workdir: str) -> Outcome:
         deliverable,
     )
     _conform(data, _schema(), "outcome")
+    if "autopilot" in data and not SHA.fullmatch(data["autopilot"]["head"]):
+        raise InvalidOutcome("autopilot head must be a 40-character lowercase hex SHA")
     return outcome
 
 
@@ -131,7 +150,7 @@ def _url(url: str, out: Mapping) -> str:
     ):
         raise InvalidOutcome("url must be a plain https link")
     if out["type"] == "github":
-        host, prefix = out.get("host", "github.com"), f"/{out['repo']}/blob/{out['branch']}/"
+        host, prefix = out.get("host", DEFAULT_HOST), f"/{out['repo']}/blob/{out['branch']}/"
         if parts.netloc != host or not parts.path.startswith(prefix):
             raise InvalidOutcome(f"url must start with https://{host}{prefix}")
     elif out["type"] == "pull-request" and not PR_PATH.fullmatch(parts.path):

@@ -13,6 +13,20 @@ class OutcomeStatus(StrEnum):
 STATUSES = tuple(OutcomeStatus)
 
 
+class AutopilotStatus(StrEnum):
+    CONVERGED = "converged"
+    CAPPED = "capped-without-pass"
+    STOPPED = "stopped"
+
+
+@dataclass(frozen=True)
+class Autopilot:
+    """An outcome's `autopilot`: the status and head of the run's last autopilot result."""
+
+    status: AutopilotStatus
+    head: str
+
+
 class InvalidOutcome(Exception):
     pass
 

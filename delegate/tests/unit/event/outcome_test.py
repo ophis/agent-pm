@@ -14,6 +14,8 @@ import unittest.mock
 
 from agent_pm.delegate.event import outcome
 from agent_pm.delegate.event.outcome import (
+    PR_PATH,
+    PULL,
     SCHEMA,
     STATUSES,
     InvalidOutcome,
@@ -22,6 +24,7 @@ from agent_pm.delegate.event.outcome import (
     read,
     validate,
 )
+from agent_pm.delegate.event.types import Autopilot, AutopilotStatus
 
 from delegate.tests.case import Case
 from delegate.tests.unit.composer.shipped import (
@@ -73,7 +76,14 @@ class Schema(Case):
     def test_schema_and_validate_agree(self):
         s = schema()
         self.assertEqual(tuple(s["properties"]["status"]["enum"]), STATUSES)
-        self.assertEqual(set(s["properties"]), {f.name for f in dataclasses.fields(Outcome)})
+        self.assertEqual(
+            set(s["properties"]), {f.name for f in dataclasses.fields(Outcome)} | {"autopilot"}
+        )
+        autopilot = s["properties"]["autopilot"]
+        self.assertEqual(tuple(autopilot["properties"]["status"]["enum"]), tuple(AutopilotStatus))
+        self.assertEqual(
+            set(autopilot["properties"]), {f.name for f in dataclasses.fields(Autopilot)}
+        )
         self.assertEqual(s["properties"]["questions"]["maxItems"], 4)
 
 
@@ -194,6 +204,9 @@ class Read(Base):
         os.makedirs(self.work)
 
     def read(self, data, output=None):
+        return self.pair(data, output)[0]
+
+    def pair(self, data, output=None):
         body = data if isinstance(data, str) else json.dumps(data)
         return read(body, output or LOCAL, self.work)
 
@@ -340,6 +353,51 @@ class ReadRace(Base):
             os.symlink(out, os.path.dirname(self.target))
 
         self.swapped(swap, "no longer under the workdir")
+
+
+HEAD = "0123456789abcdef" * 2 + "01234567"
+
+
+class AutopilotField(Read):
+    def test_read_returns_the_autopilot_result_or_none(self):
+        self.assertEqual(self.pair(DONE), (self.check(DONE), None))
+        for status in AutopilotStatus:
+            with self.subTest(status=status):
+                data = {**DONE, "autopilot": {"status": str(status), "head": HEAD}}
+                self.assertEqual(self.pair(data), (self.check(DONE), Autopilot(status, HEAD)))
+
+    def test_an_invalid_autopilot_is_refused(self):
+        good = {"status": "converged", "head": HEAD}
+        for bad, msg in (
+            ("converged", "autopilot must be an object"),
+            ({"status": "converged"}, "lacks 'head'"),
+            ({"head": HEAD}, "lacks 'status'"),
+            ({**good, "pr": ""}, "unknown field 'pr'"),
+            ({**good, "status": "done"}, "is not one of converged"),
+            ({**good, "head": HEAD[:-1]}, "head must match"),
+            ({**good, "head": HEAD + "0"}, "head must match"),
+            ({**good, "head": HEAD.upper()}, "head must match"),
+            ({**good, "head": 7}, "head must be text"),
+            ({**good, "head": HEAD + "\n"}, "40-character lowercase hex SHA"),
+        ):
+            with self.subTest(bad=bad):
+                self.refused({**DONE, "autopilot": bad}, msg)
+
+
+class Paths(Case):
+    def test_pull_is_the_pull_request_part_of_pr_path(self):
+        for path, pull, pr in (
+            ("/o/n/pull/7", True, True),
+            ("/o/n/pull/7/files", False, False),
+            ("/o/n/pull/x", False, False),
+            ("/o/n/compare/main...b", False, True),
+            ("/o/n/tree/b", False, True),
+            ("/o/pull/7", False, False),
+        ):
+            with self.subTest(path=path):
+                self.assertEqual(
+                    (bool(PULL.fullmatch(path)), bool(PR_PATH.fullmatch(path))), (pull, pr)
+                )
 
 
 class SchemaFile(Case):

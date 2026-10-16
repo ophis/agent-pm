@@ -280,7 +280,7 @@ class _Attempts:
             if (block := outcome_block(last or "")) is None:
                 return Result(rc, None, diagnostic or "the agent run returned no outcome")
             try:
-                outcome = read_outcome(block, p.run.output, p.params.workdir)
+                outcome, _autopilot = read_outcome(block, p.run.output, p.params.workdir)
             except InvalidOutcome as e:
                 if rc or fixed:
                     return Result(rc, None, diagnostic or f"invalid outcome: {e}")

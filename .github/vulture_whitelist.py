@@ -3,7 +3,7 @@ its caller names the ticket that calls it; that ticket deletes the entry.
 """
 
 from agent_pm.delegate.composer.teams import TeamKind
-from agent_pm.delegate.event.types import OutcomeStatus
+from agent_pm.delegate.event.types import AutopilotStatus, OutcomeStatus
 from agent_pm.linear_orchestrator.engine.types import State
 from agent_pm.session.adapters.claude import ClaudeAdapter
 from agent_pm.session.adapters.codex import CodexAdapter
@@ -17,6 +17,8 @@ from agent_pm.utils.record import LayerCommand
 _ = TeamKind.ROLES, TeamKind.TEMPLATES
 # outcome.py parses OutcomeStatus(status).
 _ = OutcomeStatus.NEEDS_INPUT, OutcomeStatus.FAILED
+# outcome.py parses AutopilotStatus(status); TASK-473's ready gate reads CONVERGED.
+_ = AutopilotStatus.CONVERGED, AutopilotStatus.CAPPED, AutopilotStatus.STOPPED
 # engine/config.py and ops.py iterate State for the [states] keys.
 _ = State.TODO, State.IN_PROGRESS, State.IN_REVIEW, State.CANCELED
 # Record checks ctl[0] against LayerCommand's values.
