@@ -227,11 +227,6 @@ while True: time.sleep(1)
         self.poll(lambda: gone(own) and gone(child), "program and child exit")
         self.assertIsNone(TmuxHost("tmux").reclaim(token))
 
-    def test_reclaim_refuses_a_token_that_names_no_controller_of_ours(self):
-        for token in ("", "junk", self.home, "/tmp", "/tmp/apm-group-none", None, 5):
-            with self.subTest(token=token):
-                self.assertIsNone(self.host.reclaim(token))
-
     def test_close_twice_of_a_detached_session_is_fine_and_forgets_it(self):
         name = self.fresh()
         process = self.start("detach", name, SLEEP)

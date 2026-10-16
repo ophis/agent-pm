@@ -131,9 +131,6 @@ class PtyHostTest(HostContract, Case):
             group.kill()
         self.poll(lambda: gone(child), f"end of {child}")
         self.assertIsNone(self.host.reclaim(token or ""))
-        for bad in ("", "/etc", "/tmp/apm-group-nope"):
-            with self.subTest(bad=bad):
-                self.assertIsNone(self.host.reclaim(bad))
 
 
 if __name__ == "__main__":

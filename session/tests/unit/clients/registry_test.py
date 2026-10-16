@@ -175,7 +175,7 @@ class ConfigureTest(Base):
         self.assertEqual(second.config, {"log": {"a": [1]}})
         self.assertEqual(found.clients["fake"]["log"]["a"], (1,))
 
-    def test_an_client_gets_lists_and_tuples_as_given_also_through_settings_read_back(self):
+    def test_a_client_gets_lists_and_tuples_as_given_also_through_settings_read_back(self):
         self.register(fake=fake_client)
         loader = client_loader(self.modules)
         log = {"l": [1, [2]], "t": (3, [4])}
@@ -334,7 +334,7 @@ class TuiTest(Base):
                 self.configure(FAKE, tmux)
                 self.assertEqual(tui(self.session_cls), TuiSettings(*want))
 
-    def test_an_clients_key_is_no_setting(self):
+    def test_a_clients_key_is_no_setting(self):
         self.configure("[clients.fake]\nstatus_line = true\nworkers_per_column = 2\n")
         self.assertEqual(tui(self.session_cls), TuiSettings())
 
@@ -540,7 +540,7 @@ class ClientTest(Base):
                     lambda: registry_of(self.session_cls).client_class("odd"),
                 )
 
-    def test_an_client_offering_one_mode_is_concrete(self):
+    def test_a_client_offering_one_mode_is_concrete(self):
         self.register(one=package("one", OneClient=HeadlessOnlyClient))
         self.configure('[clients.one]\nimplementation = "agent_pm.session.clients.one:OneClient"\n')
         self.assertIs(registry_of(self.session_cls).client_class("one"), HeadlessOnlyClient)

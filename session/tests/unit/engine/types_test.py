@@ -160,7 +160,7 @@ class WhatToStart(Case):
         with self.assertRaises(TypeError):
             Spec("/w")
 
-    def test_the_start_fields_default_so_an_clients_partial_spec_stays_valid(self):
+    def test_the_start_fields_default_so_a_clients_partial_spec_stays_valid(self):
         spec = Spec(workdir="/w", access=Access(cwd="/w"))
         self.assertEqual(
             (spec.client, spec.mode, spec.prompt, spec.resume, spec.events),
@@ -394,7 +394,7 @@ class Identity(Case):
 
 
 class Binding(Case):
-    def test_a_client_binding_is_an_client_notice_never_a_session_event(self):
+    def test_a_client_binding_is_a_client_notice_never_a_session_event(self):
         self.assertEqual(ClientBound("n1").client_id, "n1")
         with self.assertRaises(dataclasses.FrozenInstanceError):
             ClientBound("n1").client_id = "n2"

@@ -227,7 +227,7 @@ class InspectTest(Base):
         )
         return Spec(workdir=self.workdir, access=Access(cwd=self.workdir), client=client, sid="s1")
 
-    def test_an_clients_driver_error_propagates_as_raised(self):
+    def test_a_clients_driver_error_propagates_as_raised(self):
         error = SessionError("inspection refused")
         spec = self.recorded()
         with (

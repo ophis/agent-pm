@@ -308,7 +308,7 @@ class IdentityDropTest(ChildEnvTest):
             identity_drop(registry(inner=Unbuilt, other=OtherClient)), {*IDENTITIES, "PAGER"}
         )
 
-    def test_an_client_failing_to_load_is_a_config_error(self):
+    def test_a_client_failing_to_load_is_a_config_error(self):
         with self.assertRaises(ConfigError) as caught:
             identity_drop(registry(inner=InnerClient, broken=None))
         self.assertEqual(

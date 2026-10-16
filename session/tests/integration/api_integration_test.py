@@ -331,7 +331,7 @@ class IdleTest(Base):
 
 
 class ExitTest(Base):
-    def test_exited_is_the_process_exit_an_clients_own_dropped(self):
+    def test_exited_is_the_process_exit_a_clients_own_dropped(self):
         for case, steps, want in (
             ("client's exited dropped", (out("exit"), {"exit": 0}), [Exited(0)]),
             (
