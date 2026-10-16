@@ -208,6 +208,8 @@ flowchart LR
 
 A label from the `Tasks` group picks the role's task, mapped by `[task_labels]`. No label: the agent picks (unsure: the researcher runs Research, which has no label; the engineer Build) and says why in its start comment. A bad label (unmapped, another role's, or several): the issue goes to In Review with a comment. To upgrade a report (Light Research → Research → Deep Research), set the next task's label (to Research: remove the label), comment the claims to verify, and move it back to Todo.
 
+A label from `[option_labels]`, outside `Tasks`, adds its option to the input; `visual` (`Visual: yes`): the researcher also adds an HTML version of its report beside the Markdown (`delegate/src/agent_pm/delegate/team/roles/researcher.md` › Visual).
+
 ## Operating
 
 ```mermaid

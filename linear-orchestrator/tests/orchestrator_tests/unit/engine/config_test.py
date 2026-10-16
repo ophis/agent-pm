@@ -140,6 +140,7 @@ DEPLOYMENT = {
     "harness_key",
     "task_label_group",
     "task_labels",
+    "option_labels",
     "project_repos",
     "local_clones",
     "work_dir",
@@ -293,6 +294,33 @@ class ConfigurationLoading(ConfigFile, Case):
                     f"task_labels.light-research and task_labels.deep-research have the same label id {LABEL1}"
                 ),
             ),
+            *[
+                (
+                    HEADER + f"option_labels = {value}\n" + body,
+                    'option_labels must be a table of <option> = "<Linear label id>"',
+                )
+                for value in ('"x"', "[1]", "5")
+            ],
+            (
+                BASE + f'[option_labels]\nvisual = ""\nslides = "{LABEL2}"\nfast = ""\n',
+                "[option_labels] has unknown keys: fast, slides",
+            ),
+            *[
+                (
+                    BASE + f"[option_labels]\nvisual = {value}\n",
+                    f'option_labels.visual must be a Linear label id (UUID) or "": {shown}',
+                )
+                for shown, value in {
+                    "'Visual'": '"Visual"',
+                    repr(upper): f'"{upper}"',
+                    "5": "5",
+                    "True": "true",
+                }.items()
+            ],
+            (
+                label + f'[option_labels]\nvisual = "{LABEL1}"\n',
+                f"option_labels.visual and task_labels.light-research have the same label id {LABEL1}",
+            ),
             ('logs_dir = "/x"\n' + BASE, "unknown keys: logs_dir"),
             (
                 HEADER + 'project_repos = "x"\n' + body,
@@ -419,12 +447,24 @@ class ConfigurationLoading(ConfigFile, Case):
             PIPELINE + f'[task_labels]\nlight-research = "{LABEL1}"\ndeep-research = "{LABEL2}"\n'
         )
         self.assertEqual(cfg.task_labels, {"light-research": LABEL1, "deep-research": LABEL2})
+        self.assertEqual(cfg.option_labels, {})
         cfg = self.load(PIPELINE + f'[project_repos]\n"{P1}" = "ophis/x"\n"{P2}" = "ophis/x"\n')
         self.assertEqual(cfg.project_repos, {P1: "ophis/x", P2: "ophis/x"})
 
+    def test_option_labels(self):
+        for text, want in (
+            (PIPELINE + f'[option_labels]\nvisual = "{LABEL2}"\n', {"visual": LABEL2}),
+            (PIPELINE + '[option_labels]\nvisual = ""\n', {}),
+            (PIPELINE, {}),
+        ):
+            with self.subTest(text[len(PIPELINE) :]):
+                self.assertEqual(self.load(text).option_labels, want)
+
     def test_frozen(self):
         cfg = self.load(
-            'human_members = ["a@x.com"]\n' + PIPELINE + f'[task_labels]\nbuild = "{LABEL1}"\n'
+            'human_members = ["a@x.com"]\n'
+            + PIPELINE
+            + f'[task_labels]\nbuild = "{LABEL1}"\n[option_labels]\nvisual = "{LABEL2}"\n'
         )
         for obj, attr in (
             (cfg, "team"),
@@ -439,6 +479,7 @@ class ConfigurationLoading(ConfigFile, Case):
             "states",
             "roles",
             "task_labels",
+            "option_labels",
             "project_repos",
             "local_clones",
             "stages",
@@ -508,6 +549,7 @@ class CommittedConfiguration(Case):
                 "states": dict.fromkeys(State, ""),
                 "human_members": [],
                 **dict.fromkeys(("task_labels", "project_repos", "local_clones"), {}),
+                "option_labels": {"visual": ""},
                 "work_dir": "~/.agent-pm",
             },
         )

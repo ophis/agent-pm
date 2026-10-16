@@ -33,6 +33,7 @@ TOP_KEYS = {
     "harness_key",
     "task_label_group",
     "task_labels",
+    "option_labels",
     "roles",
     "project_repos",
     "local_clones",
@@ -40,6 +41,7 @@ TOP_KEYS = {
     "work_dir",
     "delegates",
 }
+OPTIONS = {"visual"}
 ROLE_KEYS = {"account", "key", "next", "require_instructions", "max_runs"}
 REQUIRED = (
     "team",
@@ -175,7 +177,7 @@ def _load(cfg, work):
     docs = _docs(roles, LOCAL)
     frozen = {
         k: MappingProxyType(dict(cfg[k]))
-        for k in ("states", "task_labels", "project_repos", "local_clones")
+        for k in ("states", "task_labels", "option_labels", "project_repos", "local_clones")
     }
     return Config(
         team=cfg["team"],
@@ -188,6 +190,7 @@ def _load(cfg, work):
         stages=MappingProxyType(_stage_order(cfg["roles"])),
         states=frozen["states"],
         task_labels=frozen["task_labels"],
+        option_labels=frozen["option_labels"],
         project_repos=frozen["project_repos"],
         local_clones=frozen["local_clones"],
         delegate_kind=kind,
@@ -266,6 +269,7 @@ def _load_config(cfg, local):
     _local_clones(cfg)
     _work_dir(cfg, cfg["local_clones"])
     _task_labels(cfg)
+    _option_labels(cfg)
 
 
 def _role_fields(cfg):
@@ -354,6 +358,29 @@ def _task_labels(cfg):
                 f"linear-orchestrator/config.toml: task_labels.{seen[v]} and task_labels.{k} have the same label id {v}"
             )
         seen[v] = k
+
+
+def _option_labels(cfg):
+    labels = cfg.setdefault("option_labels", {})
+    if not isinstance(labels, dict):
+        raise ConfigError(
+            'linear-orchestrator/config.toml: option_labels must be a table of <option> = "<Linear label id>"'
+        )
+    if extra := sorted(set(labels) - OPTIONS):
+        raise ConfigError(
+            f"linear-orchestrator/config.toml: [option_labels] has unknown keys: {', '.join(extra)}"
+        )
+    tasks = {v: k for k, v in cfg["task_labels"].items()}
+    for k, v in labels.items():
+        if v != "" and not _uuid(v):
+            raise ConfigError(
+                f'linear-orchestrator/config.toml: option_labels.{k} must be a Linear label id (UUID) or "": {v!r}'
+            )
+        if v in tasks:
+            raise ConfigError(
+                f"linear-orchestrator/config.toml: option_labels.{k} and task_labels.{tasks[v]} have the same label id {v}"
+            )
+    cfg["option_labels"] = {k: v for k, v in labels.items() if v}
 
 
 def _runnable(cfg, work, delegate_cls):

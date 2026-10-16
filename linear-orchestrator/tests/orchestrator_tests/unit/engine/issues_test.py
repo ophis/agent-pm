@@ -34,6 +34,7 @@ def payload(**over):
         "attachments": {"nodes": []},
         "relations": {"nodes": []},
         "inverseRelations": {"nodes": []},
+        "labels": {"nodes": []},
     }
     issue.update(over)
     return {"issue": issue}
@@ -127,6 +128,12 @@ class ReadIssue(Case):
                 handoff=issues.parse_handoff("Do the thing."),
             ),
         )
+
+    def test_read_issue_labels(self):
+        self.assertEqual(read().labels, ())
+        got = read(labels={"nodes": [{"id": "l-2"}, {"id": "l-1"}]})
+        self.assertEqual(got.labels, ("l-2", "l-1"))
+        self.assertIn("labels(first: 50) { nodes { id } }", issues.Q_ISSUE)
 
     def test_null_description_and_project(self):
         got = read(description=None, project=None)

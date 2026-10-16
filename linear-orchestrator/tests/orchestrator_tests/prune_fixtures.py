@@ -158,6 +158,7 @@ class PruneScenario(Case):
             harness_key="harness",
             task_label_group="",
             task_labels={},
+            option_labels={},
             roles={},
             project_repos={},
             local_clones={},

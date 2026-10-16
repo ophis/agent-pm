@@ -641,6 +641,7 @@ def _outer(a, cfg, *, gql, run, keychain, now, attended):
         target=repo,
         docs=cfg.docs,
         related=found,
+        visual=cfg.option_labels.get("visual") in issue.labels,
     ).replace("\x00", "")
     # a lone surrogate cannot be encoded
     text = text.encode("utf-8", "replace").decode()
