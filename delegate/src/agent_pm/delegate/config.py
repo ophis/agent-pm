@@ -4,6 +4,7 @@ import os
 from collections.abc import Collection, Mapping
 
 from agent_pm import utils
+from agent_pm.session import CONFIG_RESOURCES
 from agent_pm.utils import read_resources, real_dirs
 
 CONFIG: str = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.toml")
@@ -15,7 +16,7 @@ def read_config(*, local: str = utils.LOCAL, path: str | None = None) -> dict:
             validate_team_dirs(table, source, local=local)
 
     return read_resources(
-        (("agent_pm.session", "config.toml"), ("agent_pm.delegate", "config.toml")),
+        (*CONFIG_RESOURCES, ("agent_pm.delegate", "config.toml")),
         local=local,
         paths=None if path is None else {"agent_pm.delegate": path},
         validate=validate,
