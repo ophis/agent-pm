@@ -243,6 +243,8 @@ def main(argv: list[str]) -> None:
         return pr_ready(argv[2:])
     if argv[:2] == ["repo", "clone"]:
         return repo_clone(argv[2:])
+    if argv[:3] == ["search", "prs", "--merged"]:
+        return print("[]")
     if argv[:3] == ["api", "--hostname", HOST]:
         rest = argv[3:]
         if rest == ["user"]:

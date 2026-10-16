@@ -55,7 +55,7 @@ def _data_type(node, bound):
         for decorator in node.decorator_list
     ) or any(
         _dotted(base, bound)
-        in {"typing.NamedTuple", "enum.Enum", "enum.StrEnum", "typing.TypedDict"}
+        in {"typing.NamedTuple", "enum.Enum", "enum.IntEnum", "enum.StrEnum", "typing.TypedDict"}
         for base in node.bases
     )
 
@@ -124,6 +124,7 @@ def _type_kinds(tree, bound):
         "typing.NamedTuple": "data",
         "typing.TypedDict": "data",
         "enum.Enum": "data",
+        "enum.IntEnum": "data",
         "enum.StrEnum": "data",
         "typing.Protocol": "protocol",
         "abc.ABC": "abstract",

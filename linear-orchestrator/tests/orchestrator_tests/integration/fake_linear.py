@@ -24,6 +24,7 @@ from agent_pm.linear_orchestrator.engine import (
     ops,
     promote,
     prune,
+    related,
     run_comments,
     types,
     writeback,
@@ -89,6 +90,7 @@ MODULES = {
     "promote": promote,
     "prune": prune,
     "router": routing,
+    "related": related,
 }
 
 BUILT = {
@@ -589,6 +591,9 @@ class FakeLinear:
         children = [self._label(i) for i, label in self.labels.items() if label["parent"] == v["i"]]
         return {"issueLabel": {**self._label(v["i"]), "children": {"nodes": children}}}
 
+    def _related(self, caller, v):
+        return {"searchIssues": {"nodes": []}, "issues": {"nodes": []}}
+
     def _board(self, caller, v):
         return self._list(caller, v.get("f") or {}, 100)
 
@@ -748,6 +753,10 @@ OPS = {
     "prune.Q_ISSUE": FakeLinear._issue,
     "prune.Q_FINISHED": FakeLinear._finished,
     "prune.M_ARCHIVE": FakeLinear._archive,
+    "related.Q_SEARCH": FakeLinear._related,
+    "related.Q_SEARCH_IDS": FakeLinear._related,
+    "related.Q_IDS": FakeLinear._related,
+    "related.Q_UPSTREAM": FakeLinear._issue,
 }
 
 TABLE = index(texts())

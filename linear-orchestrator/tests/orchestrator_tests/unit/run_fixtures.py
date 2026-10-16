@@ -13,6 +13,7 @@ from agent_pm.linear_orchestrator.engine import (
     issues,
     log,
     ops,
+    related,
     run_comments,
     writeback,
 )
@@ -121,6 +122,10 @@ NAMES = {
     ops.M_SUBSCRIBE: "subscribe",
     writeback.M_ATTACH: "attach",
     writeback.M_TITLE: "title",
+    related.Q_SEARCH: "search",
+    related.Q_SEARCH_IDS: "search",
+    related.Q_IDS: "search",
+    related.Q_UPSTREAM: "upstream",
 }
 
 FIELDS = {
@@ -141,6 +146,7 @@ class Gql:
 
     def __init__(self, fail=lambda _name, _v: None, issue=None):
         self.fail, self.issue, self.calls, self.timeouts, self.comments = fail, issue, [], [], {}
+        self.found = []
 
     def __call__(self, query, *, service, timeout=30, **v):
         name = NAMES[query]
@@ -150,6 +156,10 @@ class Gql:
             raise e
         if name == "issue":
             return {"issue": self.issue}
+        if name == "search":
+            return {"searchIssues": {"nodes": list(self.found)}, "issues": {"nodes": []}}
+        if name == "upstream":
+            return {"issue": None}
         if name == "find":
             if v["c"] not in self.comments:
                 raise NOT_FOUND
