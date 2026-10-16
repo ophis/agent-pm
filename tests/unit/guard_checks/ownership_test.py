@@ -30,102 +30,87 @@ class DelegatePackageNames(Sample):
 
 
 class SessionNames(Sample):
-    def test_layer_owned_config_entry_can_forward_to_utils(self):
-        root = self.tree(
-            {SESSION_SRC + "engine/config.py": "from agent_pm.utils import read_resources\n"}
-        )
-        self.assertEqual(ownership.session_names(root), [])
-
-    def test_layer_owned_config_entry_cannot_read_repository_configuration(self):
-        root = self.tree(
-            {SESSION_SRC + "engine/config.py": "from agent_pm.utils import read_project\n"}
-        )
-        self.assertEqual(
-            ownership.session_names(root),
-            [SESSION_SRC + "engine/config.py: names read_project"],
-        )
-
-    def test_config_readers_protocol_and_team_names_are_rejected(self):
-        root = self.tree(
-            {
-                SESSION_SRC
-                + "engine/probe.py": "import tomllib\nfrom agent_pm.utils import read_project\nTAG = 'agent-pm-progress'\nTEAM = 'team/'\n"
-            }
-        )
-        self.assertEqual(
-            ownership.session_names(root),
-            [
-                SESSION_SRC + "engine/probe.py: names agent-pm-progress",
-                SESSION_SRC + "engine/probe.py: names read_project",
-                SESSION_SRC + "engine/probe.py: names team/",
-                SESSION_SRC + "engine/probe.py: names tomllib",
-            ],
-        )
-
-    def test_runtime_state_json_and_other_layers_are_clean(self):
-        root = self.tree(
-            {
-                SESSION_SRC + "engine/probe.py": "import json\n",
-                "delegate/src/agent_pm/delegate/probe.py": "import tomllib\n",
-            }
-        )
-        self.assertEqual(ownership.session_names(root), [])
+    def test_session_names_no_config_reader_protocol_tag_or_team_text(self):
+        probe = SESSION_SRC + "engine/probe.py"
+        for files, expected in (
+            ({SESSION_SRC + "engine/config.py": "from agent_pm.utils import read_resources\n"}, []),
+            (
+                {SESSION_SRC + "engine/config.py": "from agent_pm.utils import read_project\n"},
+                [SESSION_SRC + "engine/config.py: names read_project"],
+            ),
+            (
+                {
+                    probe: "import tomllib\nfrom agent_pm.utils import read_project\nTAG = 'agent-pm-progress'\nTEAM = 'team/'\n"
+                },
+                [
+                    probe + ": names agent-pm-progress",
+                    probe + ": names read_project",
+                    probe + ": names team/",
+                    probe + ": names tomllib",
+                ],
+            ),
+            (
+                {
+                    probe: "import json\n",
+                    "delegate/src/agent_pm/delegate/probe.py": "import tomllib\n",
+                },
+                [],
+            ),
+        ):
+            with self.subTest(files=files):
+                self.assertEqual(ownership.session_names(self.tree(files)), expected)
 
 
 class OrchestratorText(Sample):
-    def test_client_names_and_tool_strings_name_the_file_and_line(self):
-        root = self.tree(
-            {
-                f"{OPKG}/router.py": 'X = "codex"\n',
-                f"{OPKG}/a.py": (
-                    'import subprocess\nsubprocess.run(["tmux", "ls"])\nK = "adapters"\n# Claude\n'
-                ),
-                "config.toml": '# claude\nx = "tmux"\ny = \'adapters\'\nz = "tmux ls"  # "tmux"\n',
-            }
-        )
-        self.assertEqual(
-            ownership.orchestrator_text(self.wrap_orchestrator(root)),
-            [
-                "config.toml:1: client name claude",
-                'config.toml:2: str constant "tmux"',
-                'config.toml:3: str constant "adapters"',
-                f'{OPKG}/a.py:2: str constant "tmux"',
-                f'{OPKG}/a.py:3: str constant "adapters"',
-                f"{OPKG}/a.py:4: client name Claude",
-                f"{OPKG}/router.py:1: client name codex",
-            ],
-        )
-
-    def test_agents_md_and_longer_strings_are_clean(self):
-        root = self.tree(
-            {
-                f"{OPKG}/a.py": '"""Reads AGENTS.md."""\nP = "AGENTS.md"\nH = "tmux attach"\n',
-                "config.toml": '# see AGENTS.md\nx = "tmux attach"\n',
-            }
-        )
-        self.assertEqual(ownership.orchestrator_text(self.wrap_orchestrator(root)), [])
-
-    def test_handoff_literals_only_in_issues(self):
-        root = self.tree(
-            {
-                f"{OPKG}/engine/issues.py": 'H = "Handoff from"\nS = ("## Source", "## Instructions", "## Comments")\n',
-                f"{OPKG}/promote.py": 'x = f"Handoff from {i}: {u}"\n# ## Comments are quoted\n',
-                f"{OPKG}/target.py": 'M = "or its ## Instructions"\nS = "## Source"\n',
-                "src/issues.py": 'H = "Handoff from"\n',
-                "config.toml": 'x = "## Comments"\n',
-                "tests/a_test.py": 'X = "Handoff from ## Source"\n',
-            }
-        )
-        self.assertEqual(
-            ownership.orchestrator_text(self.wrap_orchestrator(root)),
-            [
-                f"{OPKG}/promote.py:1: Handoff literal Handoff from",
-                f"{OPKG}/promote.py:2: Handoff literal ## Comments",
-                f"{OPKG}/target.py:1: Handoff literal ## Instructions",
-                f"{OPKG}/target.py:2: Handoff literal ## Source",
-                "src/issues.py:1: Handoff literal Handoff from",
-            ],
-        )
+    def test_client_names_tool_strings_and_handoff_literals_name_the_file_and_line(self):
+        for files, expected in (
+            (
+                {
+                    f"{OPKG}/router.py": 'X = "codex"\n',
+                    f"{OPKG}/a.py": (
+                        'import subprocess\nsubprocess.run(["tmux", "ls"])\nK = "adapters"\n# Claude\n'
+                    ),
+                    "config.toml": '# claude\nx = "tmux"\ny = \'adapters\'\nz = "tmux ls"  # "tmux"\n',
+                },
+                [
+                    "config.toml:1: client name claude",
+                    'config.toml:2: str constant "tmux"',
+                    'config.toml:3: str constant "adapters"',
+                    f'{OPKG}/a.py:2: str constant "tmux"',
+                    f'{OPKG}/a.py:3: str constant "adapters"',
+                    f"{OPKG}/a.py:4: client name Claude",
+                    f"{OPKG}/router.py:1: client name codex",
+                ],
+            ),
+            (
+                {
+                    f"{OPKG}/a.py": '"""Reads AGENTS.md."""\nP = "AGENTS.md"\nH = "tmux attach"\n',
+                    "config.toml": '# see AGENTS.md\nx = "tmux attach"\n',
+                },
+                [],
+            ),
+            (
+                {
+                    f"{OPKG}/engine/issues.py": 'H = "Handoff from"\nS = ("## Source", "## Instructions", "## Comments")\n',
+                    f"{OPKG}/promote.py": 'x = f"Handoff from {i}: {u}"\n# ## Comments are quoted\n',
+                    f"{OPKG}/target.py": 'M = "or its ## Instructions"\nS = "## Source"\n',
+                    "src/issues.py": 'H = "Handoff from"\n',
+                    "config.toml": 'x = "## Comments"\n',
+                    "tests/a_test.py": 'X = "Handoff from ## Source"\n',
+                },
+                [
+                    f"{OPKG}/promote.py:1: Handoff literal Handoff from",
+                    f"{OPKG}/promote.py:2: Handoff literal ## Comments",
+                    f"{OPKG}/target.py:1: Handoff literal ## Instructions",
+                    f"{OPKG}/target.py:2: Handoff literal ## Source",
+                    "src/issues.py:1: Handoff literal Handoff from",
+                ],
+            ),
+        ):
+            with self.subTest(files=sorted(files)):
+                self.assertEqual(
+                    ownership.orchestrator_text(self.wrap_orchestrator(self.tree(files))), expected
+                )
 
 
 class Standalone(Sample):
@@ -163,73 +148,43 @@ class Standalone(Sample):
 
 
 class ClientNames(Sample):
-    def test_a_name_anywhere_in_a_module_outside_adapters(self):
-        root = self.tree({f"session/{PKG}/session/engine/api.py": 'NAME = "Claude"\n# codex\n'})
-        self.assertEqual(
-            ownership.client_names(root),
-            [
-                f"session/{PKG}/session/engine/api.py:1: client name Claude",
-                f"session/{PKG}/session/engine/api.py:2: client name codex",
-            ],
-        )
-
-    def test_policy_client_tables_are_exempt(self):
-        root = self.tree(
-            {
-                "delegate/src/agent_pm/delegate/config.toml": "[policy.claude]\nflags = []\n[policy.codex]\nflags = []\n"
-            }
-        )
-        self.assertEqual(ownership.client_names(root), [])
-
-    def test_adapters_subpackage_is_exempt(self):
-        root = self.tree({f"session/{PKG}/session/adapters/claude/x.py": 'NAME = "claude"\n'})
-        self.assertEqual(ownership.client_names(root), [])
-
-    def test_toml_table_header_implementation_line_and_comments_are_exempt(self):
-        root = self.tree(
-            {
-                "delegate/src/agent_pm/delegate/config.toml": '# codex in a comment\n[adapters.codex]\nimplementation = "agent_pm.session.adapters.codex:CodexAdapter"  # codex\nkey = "x # codex"\n'
-            }
-        )
-        self.assertEqual(
-            ownership.client_names(root),
-            ["delegate/src/agent_pm/delegate/config.toml:4: client name codex"],
-        )
-
-    def test_toml_implementation_line_is_exempt_only_as_module_path_class(self):
-        root = self.tree(
-            {
-                "delegate/src/agent_pm/delegate/config.toml": 'implementation = "codex"\nimplementation = "my.codex:Codex"\n'
-            }
-        )
-        self.assertEqual(
-            ownership.client_names(root),
-            ["delegate/src/agent_pm/delegate/config.toml:1: client name codex"],
-        )
-
-    def test_toml_client_line_is_exempt_under_any_table(self):
-        root = self.tree(
-            {
-                "delegate/src/agent_pm/delegate/config.toml": 'client = "codex"\n[roles.x]\nclient = "codex"\n[roles.y]\nclient = "codex"  # note\n'
-            }
-        )
-        self.assertEqual(ownership.client_names(root), [])
-
-    def test_toml_name_in_a_key_value_elsewhere(self):
-        root = self.tree(
-            {
-                "delegate/src/agent_pm/delegate/config.toml": (
-                    '[adapters.codex]\nimplementation = "agent_pm.session.adapters.codex:CodexAdapter"\n[roles.pm]\nmodel = "codex"\nclient = ["codex"]\nclient = "codex\nclient = "codex" x\n'
-                )
-            }
-        )
-        self.assertEqual(
-            ownership.client_names(root),
-            [
-                f"delegate/src/agent_pm/delegate/config.toml:{n}: client name codex"
-                for n in (4, 5, 6, 7)
-            ],
-        )
+    def test_a_client_name_outside_adapters_policy_tables_and_client_lines(self):
+        config = "delegate/src/agent_pm/delegate/config.toml"
+        api = f"session/{PKG}/session/engine/api.py"
+        for files, expected in (
+            (
+                {api: 'NAME = "Claude"\n# codex\n'},
+                [f"{api}:1: client name Claude", f"{api}:2: client name codex"],
+            ),
+            ({config: "[policy.claude]\nflags = []\n[policy.codex]\nflags = []\n"}, []),
+            ({f"session/{PKG}/session/adapters/claude/x.py": 'NAME = "claude"\n'}, []),
+            (
+                {
+                    config: '# codex in a comment\n[adapters.codex]\nimplementation = "agent_pm.session.adapters.codex:CodexAdapter"  # codex\nkey = "x # codex"\n'
+                },
+                [f"{config}:4: client name codex"],
+            ),
+            (
+                {config: 'implementation = "codex"\nimplementation = "my.codex:Codex"\n'},
+                [f"{config}:1: client name codex"],
+            ),
+            (
+                {
+                    config: 'client = "codex"\n[roles.x]\nclient = "codex"\n[roles.y]\nclient = "codex"  # note\n'
+                },
+                [],
+            ),
+            (
+                {
+                    config: (
+                        '[adapters.codex]\nimplementation = "agent_pm.session.adapters.codex:CodexAdapter"\n[roles.pm]\nmodel = "codex"\nclient = ["codex"]\nclient = "codex\nclient = "codex" x\n'
+                    )
+                },
+                [f"{config}:{n}: client name codex" for n in (4, 5, 6, 7)],
+            ),
+        ):
+            with self.subTest(files=files):
+                self.assertEqual(ownership.client_names(self.tree(files)), expected)
 
 
 class AdaptersKey(Sample):
@@ -254,70 +209,58 @@ class AdaptersKey(Sample):
 
 
 class TmuxCalls(Sample):
-    def test_the_tmux_constant_only_in_the_host_package(self):
+    def test_tmux_only_in_the_host_package_configuration_and_test_fixtures(self):
         sample = 'import subprocess\nsubprocess.run(["tmux", "kill-server"])\n'
-        root = self.tree(
-            {
-                f"session/{PKG}/session/hosts/tmux/tmux_host.py": sample,
-                f"session/{PKG}/session/hosts/tmux/commands.py": sample,
-                f"session/{PKG}/session/hosts/tmux/model/validation.py": sample,
-                f"session/{PKG}/session/hosts/tmux_external/x.py": sample,
-                f"session/{PKG}/session/runtimes/x.py": sample,
-                f"delegate/{PKG}/delegate/composer/y.py": 'TOOL = "tmux"\n',
-                "session/src/hosts/tmux/tmux_host.py": sample,
-                "session/tests/z.py": sample,
-            }
-        )
-        self.assertEqual(
-            ownership.tmux_calls(root),
-            sorted(
-                [
-                    f'delegate/{PKG}/delegate/composer/y.py:1: str constant "tmux"',
-                    'session/src/hosts/tmux/tmux_host.py:2: str constant "tmux"',
-                    f"session/{PKG}/session/runtimes/x.py:2: tmux outside session/hosts/tmux/",
-                    f"session/{PKG}/session/hosts/tmux_external/x.py:2: tmux outside session/hosts/tmux/",
-                ]
+        runtime = f"session/{PKG}/session/runtimes/x.py"
+        cli = f"session/{PKG}/session/cli.py"
+        outside = "tmux outside session/hosts/tmux/"
+        for files, expected in (
+            (
+                {
+                    f"session/{PKG}/session/hosts/tmux/tmux_host.py": sample,
+                    f"session/{PKG}/session/hosts/tmux/commands.py": sample,
+                    f"session/{PKG}/session/hosts/tmux/model/validation.py": sample,
+                    f"session/{PKG}/session/hosts/tmux_external/x.py": sample,
+                    runtime: sample,
+                    f"delegate/{PKG}/delegate/composer/y.py": 'TOOL = "tmux"\n',
+                    "session/src/hosts/tmux/tmux_host.py": sample,
+                    "session/tests/z.py": sample,
+                },
+                sorted(
+                    [
+                        f'delegate/{PKG}/delegate/composer/y.py:1: str constant "tmux"',
+                        'session/src/hosts/tmux/tmux_host.py:2: str constant "tmux"',
+                        f"{runtime}:2: {outside}",
+                        f"session/{PKG}/session/hosts/tmux_external/x.py:2: {outside}",
+                    ]
+                ),
             ),
-        )
-
-    def test_tmux_inside_a_longer_string_is_rejected(self):
-        root = self.tree(
-            {
-                f"session/{PKG}/session/runtimes/x.py": (
-                    'HINT = "tmux attach -t =s"\nPATH = "/usr/bin/tmux"\n'
-                )
-            }
-        )
-        self.assertEqual(
-            ownership.tmux_calls(root),
-            [
-                f"session/{PKG}/session/runtimes/x.py:{line}: tmux outside session/hosts/tmux/"
-                for line in (1, 2)
-            ],
-        )
-
-    def test_identifiers_imports_and_f_strings_cannot_hide_tmux(self):
-        source = (
-            "from agent_pm.session.hosts.tmux import TmuxHost\n"
-            "import agent_pm.session.hosts.tmux as transport\n"
-            "def _tmux(tmux_path):\n"
-            "    return f'{transport.TmuxHost}'\n"
-            "class TmuxProcess: pass\n"
-        )
-        base = f"session/{PKG}/session/cli.py"
-        self.assertEqual(
-            ownership.tmux_calls(self.tree({base: source})),
-            [f"{base}:{line}: tmux outside session/hosts/tmux/" for line in range(1, 6)],
-        )
-
-    def test_packaged_configuration_and_test_fixtures_can_name_the_host(self):
-        root = self.tree(
-            {
-                f"session/{PKG}/session/config.toml": '[hosts]\ndefault = "tmux"\n',
-                "session/tests/unit/sample_test.py": 'HOST = "tmux"\n',
-            }
-        )
-        self.assertEqual(ownership.tmux_calls(root), [])
+            (
+                {runtime: 'HINT = "tmux attach -t =s"\nPATH = "/usr/bin/tmux"\n'},
+                [f"{runtime}:{line}: {outside}" for line in (1, 2)],
+            ),
+            (
+                {
+                    cli: (
+                        "from agent_pm.session.hosts.tmux import TmuxHost\n"
+                        "import agent_pm.session.hosts.tmux as transport\n"
+                        "def _tmux(tmux_path):\n"
+                        "    return f'{transport.TmuxHost}'\n"
+                        "class TmuxProcess: pass\n"
+                    )
+                },
+                [f"{cli}:{line}: {outside}" for line in range(1, 6)],
+            ),
+            (
+                {
+                    f"session/{PKG}/session/config.toml": '[hosts]\ndefault = "tmux"\n',
+                    "session/tests/unit/sample_test.py": 'HOST = "tmux"\n',
+                },
+                [],
+            ),
+        ):
+            with self.subTest(files=sorted(files)):
+                self.assertEqual(ownership.tmux_calls(self.tree(files)), expected)
 
 
 class SessionDisplay(Sample):
@@ -347,122 +290,124 @@ class SessionDisplay(Sample):
                 with self.subTest(base=base, source=source):
                     self.assertTrue(ownership.session_display(self.tree({base: source})))
 
-    def test_host_implementation_and_other_packages_are_out_of_scope(self):
+    def test_the_host_implementation_other_packages_and_unrelated_words_are_clean(self):
         source = 'def f(pane, opener, split_from): return "@record"\n'
-        root = self.tree(
+        for files in (
             {
                 f"session/{PKG}/session/hosts/tmux/transport.py": source,
                 f"delegate/{PKG}/delegate/engine/other.py": source,
                 f"linear-orchestrator/{OPKG}/engine/sample.py": source,
                 "session/tests/unit/sample_test.py": source,
-            }
-        )
-        self.assertEqual(ownership.session_display(root), [])
-
-    def test_string_split_decorators_and_unrelated_words_are_clean(self):
-        source = (
-            '@record\ndef f(display): return display.split("/")\n'
-            'screenplay = "panel"\nreopener = "reopener"\n'
-        )
-        root = self.tree({f"session/{PKG}/session/engine/sample.py": source})
-        self.assertEqual(ownership.session_display(root), [])
+            },
+            {
+                f"session/{PKG}/session/engine/sample.py": (
+                    '@record\ndef f(display): return display.split("/")\n'
+                    'screenplay = "panel"\nreopener = "reopener"\n'
+                )
+            },
+        ):
+            with self.subTest(files=sorted(files)):
+                self.assertEqual(ownership.session_display(self.tree(files)), [])
 
 
 class DelegateDisplay(Sample):
-    def test_display_names_are_rejected_anywhere_in_delegate_source(self):
-        for base in (DELEGATE_SRC + "cli.py", DELEGATE_SRC + "engine/sample.py"):
-            for source, name in (
-                ("def f(pane): return pane\n", "pane"),
-                ("def f(pane_id): return pane_id\n", "pane_id"),
-                ("def opener(): pass\n", "opener"),
-                ("class split_from: pass\n", "split_from"),
-                ("x = value.opener\n", "opener"),
-                ('x = "--split"\n', "--split"),
-                ('x = "--split-from"\n', "--split-from"),
-                ('x = "@opener"\n', "@opener"),
-                ('x = "@record"\n', "@record"),
-                ('x = "@pane"\n', "@pane"),
-            ):
-                with self.subTest(base=base, source=source):
-                    self.assertEqual(
-                        ownership.delegate_display(self.tree({base: source})),
-                        [f"{base}:1: interprets display {name!r}"],
-                    )
-
-    def test_string_split_decorators_unrelated_words_and_other_trees_are_clean(self):
-        clean = '@record\ndef f(display): return display.split("/")\nscreenplay = "reopener"\n'
+    def test_display_names_are_rejected_anywhere_in_delegate_source_only(self):
         named = 'def f(pane): return "@opener"\n'
-        root = self.tree(
-            {
-                DELEGATE_SRC + "engine/sample.py": clean,
-                "delegate/tests/unit/sample_test.py": named,
-                f"session/{PKG}/session/hosts/tmux/sample.py": named,
-            }
-        )
-        self.assertEqual(ownership.delegate_display(root), [])
+        for files, expected in (
+            *(
+                ({base: source}, [f"{base}:1: interprets display {name!r}"])
+                for base in (DELEGATE_SRC + "cli.py", DELEGATE_SRC + "engine/sample.py")
+                for source, name in (
+                    ("def f(pane): return pane\n", "pane"),
+                    ("def f(pane_id): return pane_id\n", "pane_id"),
+                    ("def opener(): pass\n", "opener"),
+                    ("class split_from: pass\n", "split_from"),
+                    ("x = value.opener\n", "opener"),
+                    ('x = "--split"\n', "--split"),
+                    ('x = "--split-from"\n', "--split-from"),
+                    ('x = "@opener"\n', "@opener"),
+                    ('x = "@record"\n', "@record"),
+                    ('x = "@pane"\n', "@pane"),
+                )
+            ),
+            (
+                {
+                    DELEGATE_SRC + "engine/sample.py": (
+                        '@record\ndef f(display): return display.split("/")\nscreenplay = "reopener"\n'
+                    ),
+                    "delegate/tests/unit/sample_test.py": named,
+                    f"session/{PKG}/session/hosts/tmux/sample.py": named,
+                },
+                [],
+            ),
+        ):
+            with self.subTest(files=files):
+                self.assertEqual(ownership.delegate_display(self.tree(files)), expected)
 
 
 class OrchestratorDisplay(Sample):
-    def test_display_names_are_rejected_anywhere_in_linear_orchestrator_source(self):
-        for base in (ORCH_FILES + "cli.py", ORCH_FILES + "engine/sample.py"):
-            for source, name in (
-                ("def f(pane): return pane\n", "pane"),
-                ("def opener(): pass\n", "opener"),
-                ("class split_from: pass\n", "split_from"),
-                ("x = value.opener\n", "opener"),
-                ('x = "--split"\n', "--split"),
-                ('x = "@opener"\n', "@opener"),
-                ('x = "@record"\n', "@record"),
-                ('x = "@pane"\n', "@pane"),
-            ):
-                with self.subTest(base=base, source=source):
-                    self.assertEqual(
-                        ownership.orchestrator_display(self.tree({base: source})),
-                        [f"{base}:1: interprets display {name!r}"],
-                    )
-
-    def test_string_split_decorators_comments_and_other_trees_are_clean(self):
-        clean = '@record\ndef f(display): return display.split("/")  # a pane\n'
+    def test_display_names_are_rejected_anywhere_in_linear_orchestrator_source_only(self):
         named = 'def f(pane): return "@opener"\n'
-        root = self.tree(
-            {
-                ORCH_FILES + "engine/sample.py": clean,
-                "linear-orchestrator/tests/orchestrator_tests/sample_test.py": named,
-                f"session/{PKG}/session/hosts/tmux/sample.py": named,
-            }
-        )
-        self.assertEqual(ownership.orchestrator_display(root), [])
+        for files, expected in (
+            *(
+                ({base: source}, [f"{base}:1: interprets display {name!r}"])
+                for base in (ORCH_FILES + "cli.py", ORCH_FILES + "engine/sample.py")
+                for source, name in (
+                    ("def f(pane): return pane\n", "pane"),
+                    ("def opener(): pass\n", "opener"),
+                    ("class split_from: pass\n", "split_from"),
+                    ("x = value.opener\n", "opener"),
+                    ('x = "--split"\n', "--split"),
+                    ('x = "@opener"\n', "@opener"),
+                    ('x = "@record"\n', "@record"),
+                    ('x = "@pane"\n', "@pane"),
+                )
+            ),
+            (
+                {
+                    ORCH_FILES + "engine/sample.py": (
+                        '@record\ndef f(display): return display.split("/")  # a pane\n'
+                    ),
+                    "linear-orchestrator/tests/orchestrator_tests/sample_test.py": named,
+                    f"session/{PKG}/session/hosts/tmux/sample.py": named,
+                },
+                [],
+            ),
+        ):
+            with self.subTest(files=files):
+                self.assertEqual(ownership.orchestrator_display(self.tree(files)), expected)
 
     def test_the_real_tree_is_clean(self):
         self.assertEqual(ownership.orchestrator_display(REPO), [])
 
 
 class DelegateTmux(Sample):
-    def test_tmux_in_any_case_in_code_strings_comments_or_docstrings_is_rejected(self):
+    def test_tmux_in_any_case_anywhere_in_delegate_python_source_is_rejected(self):
         base = DELEGATE_SRC + "engine/sample.py"
-        for source in (
-            "from agent_pm.session import TmuxHost\n",
-            "def _tmux(): pass\n",
-            'HOST = "tmux"\n',
-            'LINE = f"run {name} in TMUX"\n',
-            "x = 1  # a Tmux pane\n",
-            '"""Runs under tmux."""\n',
-        ):
-            with self.subTest(source=source):
-                self.assertEqual(
-                    ownership.delegate_tmux(self.tree({base: source})), [f"{base}:1: names tmux"]
+        for files, expected in (
+            *(
+                ({base: source}, [f"{base}:1: names tmux"])
+                for source in (
+                    "from agent_pm.session import TmuxHost\n",
+                    "def _tmux(): pass\n",
+                    'HOST = "tmux"\n',
+                    'LINE = f"run {name} in TMUX"\n',
+                    "x = 1  # a Tmux pane\n",
+                    '"""Runs under tmux."""\n',
                 )
-
-    def test_other_words_trees_and_files_are_clean(self):
-        root = self.tree(
-            {
-                DELEGATE_SRC + "engine/sample.py": "MULTIPLEXER = 'tm-ux'\n",
-                DELEGATE_SRC + "team/guide.md": "tmux\n",
-                "delegate/tests/unit/sample_test.py": 'HOST = "tmux"\n',
-                f"session/{PKG}/session/cli.py": "# tmux\n",
-            }
-        )
-        self.assertEqual(ownership.delegate_tmux(root), [])
+            ),
+            (
+                {
+                    base: "MULTIPLEXER = 'tm-ux'\n",
+                    DELEGATE_SRC + "team/guide.md": "tmux\n",
+                    "delegate/tests/unit/sample_test.py": 'HOST = "tmux"\n',
+                    f"session/{PKG}/session/cli.py": "# tmux\n",
+                },
+                [],
+            ),
+        ):
+            with self.subTest(files=files):
+                self.assertEqual(ownership.delegate_tmux(self.tree(files)), expected)
 
 
 class StatusLogFormat(Sample):
@@ -471,56 +416,46 @@ class StatusLogFormat(Sample):
     def test_the_real_tree_is_clean(self):
         self.assertEqual(ownership.status_log_format(REPO), [])
 
-    def test_the_clock_in_another_projects_module_or_an_f_string(self):
-        root = self.tree(
-            {
-                f"delegate/{PKG}/delegate/x.py": self.CLOCK,
-                f"manager/{PKG}/manager/y.py": 'import time\n\nline = f"{time.strftime(\'%H:%M:%S\')} {name}"\nhook = f"$(date +%H:%M:%S) {name} dead"\n',
-                f"linear-orchestrator/{OPKG}/z.py": 'import time\nat = time.strftime("%H:%M:%S")\n',
-            }
-        )
-        outside = "status log line format outside session/engine/status_log.py"
-        self.assertEqual(
-            ownership.status_log_format(root),
-            sorted(
-                [
-                    f"delegate/{PKG}/delegate/x.py:1: {outside}",
-                    f"manager/{PKG}/manager/y.py:3: {outside}",
-                    f"manager/{PKG}/manager/y.py:4: {outside}",
-                    f"linear-orchestrator/{OPKG}/z.py:2: {outside}",
-                ]
-            ),
-        )
-
     def test_only_status_log_owns_the_clock(self):
-        root = self.tree(
-            {
-                f"session/{PKG}/session/engine/status_log.py": self.CLOCK,
-                f"session/{PKG}/session/hosts/tmux/tmux_host.py": self.CLOCK,
-                f"session/{PKG}/session/hosts/tmux/lifecycle.py": self.CLOCK,
-                f"session/{PKG}/session/hosts/tmux/model/clock.py": self.CLOCK,
-                "session/tests/x_test.py": self.CLOCK,
-                "tests/y_test.py": self.CLOCK,
-            }
-        )
         outside = "status log line format outside session/engine/status_log.py"
-        self.assertEqual(
-            ownership.status_log_format(root),
-            [
-                f"session/{PKG}/session/hosts/tmux/lifecycle.py:1: {outside}",
-                f"session/{PKG}/session/hosts/tmux/model/clock.py:1: {outside}",
-                f"session/{PKG}/session/hosts/tmux/tmux_host.py:1: {outside}",
-            ],
-        )
-
-    def test_a_similarly_named_subsystem_cannot_own_the_clock(self):
-        root = self.tree({f"session/{PKG}/session/hosts/tmux_external/x.py": self.CLOCK})
-        self.assertEqual(
-            ownership.status_log_format(root),
-            [
-                f"session/{PKG}/session/hosts/tmux_external/x.py:1: status log line format outside session/engine/status_log.py"
-            ],
-        )
+        for files, expected in (
+            (
+                {
+                    f"delegate/{PKG}/delegate/x.py": self.CLOCK,
+                    f"manager/{PKG}/manager/y.py": 'import time\n\nline = f"{time.strftime(\'%H:%M:%S\')} {name}"\nhook = f"$(date +%H:%M:%S) {name} dead"\n',
+                    f"linear-orchestrator/{OPKG}/z.py": 'import time\nat = time.strftime("%H:%M:%S")\n',
+                },
+                sorted(
+                    [
+                        f"delegate/{PKG}/delegate/x.py:1: {outside}",
+                        f"manager/{PKG}/manager/y.py:3: {outside}",
+                        f"manager/{PKG}/manager/y.py:4: {outside}",
+                        f"linear-orchestrator/{OPKG}/z.py:2: {outside}",
+                    ]
+                ),
+            ),
+            (
+                {
+                    f"session/{PKG}/session/engine/status_log.py": self.CLOCK,
+                    f"session/{PKG}/session/hosts/tmux/tmux_host.py": self.CLOCK,
+                    f"session/{PKG}/session/hosts/tmux/lifecycle.py": self.CLOCK,
+                    f"session/{PKG}/session/hosts/tmux/model/clock.py": self.CLOCK,
+                    "session/tests/x_test.py": self.CLOCK,
+                    "tests/y_test.py": self.CLOCK,
+                },
+                [
+                    f"session/{PKG}/session/hosts/tmux/lifecycle.py:1: {outside}",
+                    f"session/{PKG}/session/hosts/tmux/model/clock.py:1: {outside}",
+                    f"session/{PKG}/session/hosts/tmux/tmux_host.py:1: {outside}",
+                ],
+            ),
+            (
+                {f"session/{PKG}/session/hosts/tmux_external/x.py": self.CLOCK},
+                [f"session/{PKG}/session/hosts/tmux_external/x.py:1: {outside}"],
+            ),
+        ):
+            with self.subTest(files=sorted(files)):
+                self.assertEqual(ownership.status_log_format(self.tree(files)), expected)
 
 
 class ManagerBoundaries(Sample):
@@ -542,56 +477,44 @@ class ManagerBoundaries(Sample):
         clean = self.tree({base: 'def f(display): return display.split(":")\n'})
         self.assertEqual(ownership.manager_display(clean), [])
 
-    def test_exports_require_all_and_reject_reexported_functions(self):
+    def test_exports_require_a_literal_all_of_names_and_reject_functions_and_modules(self):
         base = "manager/src/agent_pm/manager/"
-        root = self.tree(
-            {
-                base
-                + "__init__.py": 'from agent_pm.manager.engine.crew import f\n__all__ = ["f"]\n',
-                base + "engine/crew.py": "def f(): pass\n",
-            }
-        )
-        self.assertEqual(
-            exports.manager_exports(root), [f"{base}__init__.py:2: exports function f"]
-        )
-        missing = self.tree({base + "__init__.py": ""})
-        self.assertEqual(exports.manager_exports(missing), [f"{base}__init__.py: missing __all__"])
-        clean = self.tree(
-            {
-                base + "__init__.py": 'class Crew: pass\n__all__ = ["Crew"]\n',
-                "utils/src/agent_pm/utils/__init__.py": 'def f(): pass\n__all__ = ["f"]\n',
-            }
-        )
-        self.assertEqual(exports.manager_exports(clean), [])
-
-    def test_function_aliases_lambdas_stdlib_and_modules_are_not_exports(self):
-        base = "manager/src/agent_pm/manager/__init__.py"
-        root = self.tree(
-            {
-                base: 'from os import getcwd as CWD\nimport os as OS\ndef f(): pass\ng = f\nLAMBDA = lambda: 0\n__all__ = ["CWD", "OS", "g", "LAMBDA"]\n'
-            }
-        )
-        self.assertEqual(
-            exports.manager_exports(root),
-            [
-                f"{base}:6: exports function CWD",
-                f"{base}:6: exports function LAMBDA",
-                f"{base}:6: exports function g",
-                f"{base}:6: exports nonconstant OS",
-            ],
-        )
-        clean = self.tree(
-            {base: 'from pathlib import Path\nVALUE = "one"\n__all__ = ["Path", "VALUE"]\n'}
-        )
-        self.assertEqual(exports.manager_exports(clean), [])
-
-    def test_exports_require_a_literal_sequence_of_names(self):
-        base = "manager/src/agent_pm/manager/__init__.py"
-        for source in ("__all__ = discover()\n", "__all__ = [1]\n"):
-            self.assertEqual(
-                exports.manager_exports(self.tree({base: source})),
-                [f"{base}:1: __all__ must be a literal sequence of names"],
-            )
+        init = base + "__init__.py"
+        for files, expected in (
+            (
+                {
+                    init: 'from agent_pm.manager.engine.crew import f\n__all__ = ["f"]\n',
+                    base + "engine/crew.py": "def f(): pass\n",
+                },
+                [f"{init}:2: exports function f"],
+            ),
+            ({init: ""}, [f"{init}: missing __all__"]),
+            (
+                {
+                    init: 'class Crew: pass\n__all__ = ["Crew"]\n',
+                    "utils/src/agent_pm/utils/__init__.py": 'def f(): pass\n__all__ = ["f"]\n',
+                },
+                [],
+            ),
+            (
+                {
+                    init: 'from os import getcwd as CWD\nimport os as OS\ndef f(): pass\ng = f\nLAMBDA = lambda: 0\n__all__ = ["CWD", "OS", "g", "LAMBDA"]\n'
+                },
+                [
+                    f"{init}:6: exports function CWD",
+                    f"{init}:6: exports function LAMBDA",
+                    f"{init}:6: exports function g",
+                    f"{init}:6: exports nonconstant OS",
+                ],
+            ),
+            ({init: 'from pathlib import Path\nVALUE = "one"\n__all__ = ["Path", "VALUE"]\n'}, []),
+            *(
+                ({init: source}, [f"{init}:1: __all__ must be a literal sequence of names"])
+                for source in ("__all__ = discover()\n", "__all__ = [1]\n")
+            ),
+        ):
+            with self.subTest(files=files):
+                self.assertEqual(exports.manager_exports(self.tree(files)), expected)
 
     def test_crew_never_reads_an_inherited_sid(self):
         base = "manager/src/agent_pm/manager/engine/crew.py"

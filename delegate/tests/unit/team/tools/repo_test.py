@@ -413,10 +413,28 @@ class Status(Base):
                 expected = author.get("login") if isinstance(author, dict) else None
                 self.assertEqual(result["others"][0]["author"], expected)
 
-    def test_author_logins_keep_main_values_without_normalization(self):
-        for login in (None, "", 7, [], {"malformed": "login"}):
+    def test_feedback_author_logins_keep_their_values_without_normalization(self):
+        def feedback(login):
+            comment = {
+                "created_at": "2026-10-03T00:00:00Z",
+                "user": {"login": login},
+                "body": "feedback",
+            }
+            return self.status(
+                pr_list([pr()]),
+                (lambda a: a[-1].endswith("/issues/7/comments"), ok(json.dumps([[comment]]))),
+                NO_FEEDBACK,
+            )
+
+        for login in (None, "", []):
             with self.subTest(login=login):
-                self.assertIs(repo._author({"author": {"login": login}}, "author"), login)
+                code, result, _ = feedback(login)
+                self.assertEqual(code, 0, result)
+                self.assertEqual(result["others"][0]["author"], login)
+                self.assertIs(type(result["others"][0]["author"]), type(login))
+        for login in ({"malformed": "login"},):
+            with self.subTest(login=login), self.assertRaises(AttributeError):
+                feedback(login)
 
     def test_a_non_string_feedback_login_keeps_main_failure(self):
         comment = {"created_at": "2026-10-03T00:00:00Z", "user": {"login": 7}, "body": "feedback"}

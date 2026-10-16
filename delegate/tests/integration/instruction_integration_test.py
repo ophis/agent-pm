@@ -86,21 +86,17 @@ class Instruction(Case):
             self.assertEqual(f.read(), want)
         self.assertEqual(set(os.listdir(self.work(role))), {"prompt.md"})
 
-    def test_each_role_receives_the_composers_original_prompt(self):
-        for role in ROLES:
-            with self.subTest(role=role):
-                self.delivered(role)
-
-    def test_destination_stays_in_the_delivered_instruction(self):
+    def test_each_role_receives_the_composers_prompt_with_its_destination(self):
         for role in ROLES:
             for destination in (
+                None,
                 {"type": "local"},
                 {"type": "github", "repo": "o/docs", "branch": "main", "dir": "reports"},
                 {"type": "pull-request"},
                 {"type": "orchestrator"},
             ):
                 with self.subTest(role=role, destination=destination):
-                    self.config(role, destination)
+                    self.config(None if destination is None else role, destination)
                     self.delivered(role)
 
     def test_the_engineer_prompts_tool_commands_run_behind_step_4s_prefix_only(self):

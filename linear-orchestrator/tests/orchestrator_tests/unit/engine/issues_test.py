@@ -1,6 +1,6 @@
 """Issue reading and handoff grammar boundary behavior."""
 
-import unittest
+import dataclasses
 
 from agent_pm.linear_orchestrator.engine import issues
 from agent_pm.linear_orchestrator.engine.types import Handoff, Issue, Link, Linked, Note
@@ -214,7 +214,7 @@ class ReadIssue(Case):
         self.assertIsNone(read().handoff)
 
     def test_frozen(self):
-        with self.assertRaises(AttributeError):
+        with self.assertRaises(dataclasses.FrozenInstanceError):
             read().title = "x"
 
 
@@ -475,7 +475,3 @@ class BuildCutoff(Case):
                 self.assertEqual(
                     issues.build_cutoff(issue(created_at=created, notes=notes), HUMANS), want
                 )
-
-
-if __name__ == "__main__":
-    unittest.main()

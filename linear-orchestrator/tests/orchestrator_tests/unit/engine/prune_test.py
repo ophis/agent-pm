@@ -133,6 +133,7 @@ class RepositoryCleanup(PruneScenario):
             self.prune(gql),
             (0, f"prune-closed TASK-7 session={SID}\nprune-removed TASK-7 what=agent dir"),
         )
+        PruneDelegate.attach(self.cfg.issue_workdir("TASK-7"))
         self.record("TASK-8", OTHER_SID, [B], agent=False)
         again = gql_for(dict.fromkeys(("TASK-7", "TASK-8"), ("Done", [(30, "Done")])))
         with mock.patch.object(PruneDelegate, "attach", side_effect=AssertionError("attached")):
@@ -421,15 +422,6 @@ class RetentionCleanup(PruneScenario):
         self.assertEqual((seen, self.closed()), ([True], [A]))
         self.assertEqual(gql.calls.count(prune.Q_ISSUE), 1)
         self.assertFalse(os.path.lexists(clone))
-
-    def test_a_closed_finished_run_keeps_its_record(self):
-        self.record("TASK-7", SID, [A])
-        code, out = self.prune(gql_for({"TASK-7": ("Done", [(30, "Done")])}))
-        self.assertEqual(
-            (code, out),
-            (0, f"prune-closed TASK-7 session={SID}\nprune-removed TASK-7 what=agent dir"),
-        )
-        PruneDelegate.attach(self.cfg.issue_workdir("TASK-7"))
 
     def test_a_failed_close_or_an_unfinished_issue_keeps_the_runs_state(self):
         self.record("TASK-7", SID, [A])

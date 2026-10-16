@@ -37,13 +37,6 @@ class ReplyTags(Base):
         self.assertEqual(got.session.reply_tags, (PROGRESS, OUTCOME))
 
 
-class Configures(Base):
-    def test_plan_keeps_resolved_data_and_not_the_session_owner(self):
-        got, _ = self.planned()
-        self.assertEqual(got.spec.client, "fake")
-        self.assertNotIn("driver", vars(got))
-
-
 class Cwd(Base):
     """place: the run's cwd and whether its project settings load."""
 

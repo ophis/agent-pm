@@ -145,25 +145,37 @@ class Contents(Case):
         self.assertEqual((res.returncode, res.stderr), (0, ""))
         return json.loads(res.stdout)
 
-    def test_a_dir_is_a_sorted_list_of_its_direct_entries(self):
-        want = [
-            {
-                "name": "2026-10-08-TASK-6-y.md",
-                "path": "Research/2026-10-08-TASK-6-y.md",
-                "type": "file",
-            },
-            {
-                "name": "2026-10-09-TASK-7-x.md",
-                "path": "Research/2026-10-09-TASK-7-x.md",
-                "type": "file",
-            },
-            {"name": "notes", "path": "Research/notes", "type": "dir"},
-        ]
-        self.assertEqual(self.listing("repos/acme/docs/contents/Research?ref=main"), want)
-        self.assertEqual(
-            self.listing("repos/acme/docs/contents/Research/notes?ref=main"),
-            [{"name": "deep.md", "path": "Research/notes/deep.md", "type": "file"}],
-        )
+    def test_a_dir_is_a_sorted_list_of_its_direct_entries_and_a_file_its_entry(self):
+        docs = "repos/acme/docs/contents/"
+        for path, want in (
+            (
+                "Research",
+                [
+                    {
+                        "name": "2026-10-08-TASK-6-y.md",
+                        "path": "Research/2026-10-08-TASK-6-y.md",
+                        "type": "file",
+                    },
+                    {
+                        "name": "2026-10-09-TASK-7-x.md",
+                        "path": "Research/2026-10-09-TASK-7-x.md",
+                        "type": "file",
+                    },
+                    {"name": "notes", "path": "Research/notes", "type": "dir"},
+                ],
+            ),
+            (
+                "Research/notes",
+                [{"name": "deep.md", "path": "Research/notes/deep.md", "type": "file"}],
+            ),
+            (
+                "Product%20Design/2026-10-09-prd.md",
+                {"name": "2026-10-09-prd.md", "path": PRD, "type": "file"},
+            ),
+            ("README.md", {"name": "README.md", "path": "README.md", "type": "file"}),
+        ):
+            with self.subTest(path=path):
+                self.assertEqual(self.listing(f"{docs}{path}?ref=main"), want)
 
     def test_a_dir_with_raw_is_the_same_list(self):
         url = "repos/acme/docs/contents/Research?ref=main"
@@ -176,16 +188,6 @@ class Contents(Case):
         )
         text = CONTENTS["acme/docs"]["main"][PRD]
         self.assertEqual((res.returncode, res.stderr, res.stdout), (0, b"", text.encode()))
-
-    def test_a_file_without_the_header_is_its_entry(self):
-        self.assertEqual(
-            self.listing("repos/acme/docs/contents/Product%20Design/2026-10-09-prd.md?ref=main"),
-            {"name": "2026-10-09-prd.md", "path": PRD, "type": "file"},
-        )
-        self.assertEqual(
-            self.listing("repos/acme/docs/contents/README.md?ref=main"),
-            {"name": "README.md", "path": "README.md", "type": "file"},
-        )
 
     def test_a_quoted_path_and_ref_are_decoded(self):
         self.assertEqual(
@@ -314,14 +316,10 @@ class Pulls(Case):
         self.assertEqual((res.returncode, res.stderr), (0, ""))
         return json.loads(res.stdout)
 
-    def test_user_is_the_scenarios_login(self):
-        self.assertEqual(self.ok("api", "--hostname", "github.com", "user"), {"login": "me"})
-
-    def test_no_login_is_an_error(self):
-        self.write({"repos": {"acme/widgets": REPO}})
-        res = self.gh("api", "--hostname", "github.com", "user")
-        self.assertEqual((res.returncode, res.stdout), (1, ""))
-        self.assertIn("fake_gh.py:", res.stderr)
+    def test_user_is_the_scenarios_login_and_hostname_keeps_the_repo_api(self):
+        for path, want in (("user", {"login": "me"}), ("repos/acme/widgets", REPO)):
+            with self.subTest(path):
+                self.assertEqual(self.ok("api", "--hostname", "github.com", path), want)
 
     def test_pr_list_gives_the_branch_prs_with_the_asked_fields(self):
         for repo in ("acme/widgets", "github.com/acme/widgets"):
@@ -342,9 +340,6 @@ class Pulls(Case):
         self.assertEqual(
             (res.returncode, res.stdout, res.stderr), (1, "", "gh: Not Found (HTTP 404)\n")
         )
-
-    def test_hostname_keeps_the_repo_api(self):
-        self.assertEqual(self.ok("api", "--hostname", "github.com", "repos/acme/widgets"), REPO)
 
     def test_any_other_argv_is_a_usage_error(self):
         api = ("api", "--hostname", "github.com")
@@ -385,20 +380,26 @@ class Pulls(Case):
                 self.assertEqual((res.returncode, res.stdout), (1, ""))
                 self.assertIn("no pull requests found", res.stderr)
 
-    def test_bad_login_pulls_or_threads_are_errors(self):
-        for name, scenario in {
-            "a login not a string": {"login": 1},
-            "pulls a list": {"pulls": []},
-            "a pull not an object": {"pulls": {"acme/widgets": [1]}},
-            "a pull without headRefName": {"pulls": {"acme/widgets": [{"number": 1}]}},
-            "threads of a list": {"threads": {"acme/widgets": []}},
-            "a comment not an object": {"threads": {"acme/widgets": {"issues/1/comments": [1]}}},
-            "views a list": {"views": []},
-            "a view not an object": {"views": {"u": 1}},
-        }.items():
+    def test_no_login_and_bad_login_pulls_or_threads_are_errors(self):
+        repo_api, user_api = ("repos/acme/widgets",), ("--hostname", "github.com", "user")
+        for name, scenario, argv in (
+            ("no login", {}, user_api),
+            ("a login not a string", {"login": 1}, repo_api),
+            ("pulls a list", {"pulls": []}, repo_api),
+            ("a pull not an object", {"pulls": {"acme/widgets": [1]}}, repo_api),
+            ("a pull without headRefName", {"pulls": {"acme/widgets": [{"number": 1}]}}, repo_api),
+            ("threads of a list", {"threads": {"acme/widgets": []}}, repo_api),
+            (
+                "a comment not an object",
+                {"threads": {"acme/widgets": {"issues/1/comments": [1]}}},
+                repo_api,
+            ),
+            ("views a list", {"views": []}, repo_api),
+            ("a view not an object", {"views": {"u": 1}}, repo_api),
+        ):
             with self.subTest(name):
                 self.write({"repos": {"acme/widgets": REPO}, **scenario})
-                res = self.gh("api", "repos/acme/widgets")
+                res = self.gh("api", *argv)
                 self.assertEqual((res.returncode, res.stdout), (1, ""))
                 self.assertIn("fake_gh.py:", res.stderr)
 

@@ -14,6 +14,7 @@ permissions:
 
 env:
   IMPORT_LINTER_VERSION: "2.15"
+  COVERAGE_VERSION: "7.10.7"
   PYTHONPATH: ${{ github.workspace }}:${{ github.workspace }}/.github:${{ github.workspace }}/manager/src:${{ github.workspace }}/linear-orchestrator/src:${{ github.workspace }}/delegate/src:${{ github.workspace }}/session/src:${{ github.workspace }}/utils/src:${{ github.workspace }}/linear-orchestrator/tests
   PYTHONDONTWRITEBYTECODE: "1"
 
@@ -32,7 +33,7 @@ jobs:
         with:
           python-version: "3.11"
       - name: Install pinned tools
-        run: python3 -m pip install ruff==0.16.9 pyright==1.1.414 import-linter=="$IMPORT_LINTER_VERSION" pylint==4.1.3 vulture==2.16
+        run: python3 -m pip install ruff==0.16.9 pyright==1.1.414 import-linter=="$IMPORT_LINTER_VERSION" pylint==4.1.3 vulture==2.16 coverage=="$COVERAGE_VERSION"
       - name: Comment budget
         run: python3 .github/comment_budget.py
       - name: Ruff
@@ -111,6 +112,40 @@ jobs:
             exit 1
           fi
 
+  coverage:
+    name: Coverage
+    if: ${{ github.event_name == 'pull_request' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Check out
+        uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v7.0.0
+        with:
+          python-version: "3.11"
+      - name: Install pinned coverage
+        run: python3 -m pip install coverage=="$COVERAGE_VERSION"
+      - name: Protect shipped source
+        run: chmod -R a-w manager/src linear-orchestrator/src delegate/src session/src utils/src
+      - name: Unit tests under coverage
+        run: RUN_TESTS_COVERAGE="$RUNNER_TEMP/coverage-data" python3 -X faulthandler .github/run_tests.py Unit --unit
+      - name: Diff coverage of changed src lines
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: python3 .github/coverage_gate.py "$RUNNER_TEMP/coverage-data" "origin/$BASE_REF"
+      - name: Require unchanged checkout
+        if: ${{ always() }}
+        run: |
+          status=$(git -c core.fsmonitor=false -c core.hooksPath=/dev/null status --porcelain)
+          if [[ -n "$status" ]]; then
+            printf '%s\n' "$status"
+            exit 1
+          fi
+
   integration:
     name: Integration ${{ matrix.job }}
     runs-on: ubuntu-24.04
@@ -147,7 +182,7 @@ jobs:
 
   ci:
     name: CI
-    needs: [lint, unit, integration]
+    needs: [lint, unit, coverage, integration]
     if: ${{ always() }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
@@ -156,4 +191,9 @@ jobs:
         run: |
           test '${{ needs.lint.result }}' = success
           test '${{ needs.unit.result }}' = success
+          if [[ '${{ github.event_name }}' = pull_request ]]; then
+            test '${{ needs.coverage.result }}' = success
+          else
+            test '${{ needs.coverage.result }}' = skipped
+          fi
           test '${{ needs.integration.result }}' = success

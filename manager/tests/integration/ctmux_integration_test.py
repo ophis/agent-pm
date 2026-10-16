@@ -178,28 +178,18 @@ class FakeTmux(Case):
         _, _, _, calls = self.ctmux("s1")
         self.assertEqual(calls[1][2:], created("s1", self.cwd, "/bin/sh"))
 
-    def test_names_with_spaces_quotes_and_dollars_stay_single_words(self):
-        name = "m a'n$x"
-        _, _, _, calls = self.ctmux(name)
-        self.assertEqual(
-            [call[2:] for call in calls],
-            [
-                ["has", "-t", f"={name}"],
-                created(name, self.cwd, "/bin/zsh"),
-                ["-CC", "attach", "-t", f"={name}"],
-            ],
-        )
-
-    def test_only_the_first_argument_names_the_session(self):
-        _, _, _, calls = self.ctmux("s1", "extra", "--install")
-        self.assertEqual(
-            [call[2:] for call in calls],
-            [
-                ["has", "-t", "=s1"],
-                created("s1", self.cwd, "/bin/zsh"),
-                ["-CC", "attach", "-t", "=s1"],
-            ],
-        )
+    def test_only_the_first_argument_names_the_session_as_one_word(self):
+        for args, name in ((("m a'n$x",), "m a'n$x"), (("s1", "extra", "--install"), "s1")):
+            with self.subTest(args=args):
+                _, _, _, calls = self.ctmux(*args)
+                self.assertEqual(
+                    [call[2:] for call in calls],
+                    [
+                        ["has", "-t", f"={name}"],
+                        created(name, self.cwd, "/bin/zsh"),
+                        ["-CC", "attach", "-t", f"={name}"],
+                    ],
+                )
 
     def test_a_failed_create_still_attaches_and_the_attach_status_wins(self):
         process, _, _, calls = self.ctmux("s1", START_RC=1, ATTACH_RC=7)

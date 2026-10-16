@@ -160,37 +160,43 @@ class FixtureGuard(Live):
             timeout=30,
         )
 
-    def test_nested_python_inherits_the_fixture_server(self):
+    def test_nested_python_inherits_the_fixture_server_or_uses_an_explicit_socket(self):
         self.server.start("mgr")
-        result = self.child(
-            "import subprocess, sys; raise SystemExit(subprocess.call([sys.argv[1], 'ls', '-F', '#{session_name}']))"
-        )
-        self.assertEqual((result.returncode, result.stdout), (0, "mgr\n"), result.stderr)
+        for case, code, args in (
+            (
+                "inherited",
+                "import subprocess, sys; raise SystemExit(subprocess.call([sys.argv[1], 'ls', '-F', '#{session_name}']))",
+                (),
+            ),
+            (
+                "explicit socket, no inherited environment",
+                "import subprocess, sys; raise SystemExit(subprocess.call([sys.argv[1], '-S', sys.argv[2], 'ls', '-F', '#{session_name}'], env={}))",
+                (self.server.socket,),
+            ),
+        ):
+            with self.subTest(case=case):
+                result = self.child(code, *args)
+                self.assertEqual((result.returncode, result.stdout), (0, "mgr\n"), result.stderr)
 
-    def test_nested_python_uses_an_explicit_socket_without_inherited_environment(self):
-        self.server.start("mgr")
-        result = self.child(
-            "import subprocess, sys; raise SystemExit(subprocess.call([sys.argv[1], '-S', sys.argv[2], 'ls', '-F', '#{session_name}'], env={}))",
-            self.server.socket,
-        )
-        self.assertEqual((result.returncode, result.stdout), (0, "mgr\n"), result.stderr)
-
-    def test_nested_python_cannot_drop_the_private_selector(self):
-        result = self.child(
-            "import os, subprocess, sys; env = dict(os.environ); env.pop('TMUX_TMPDIR'); "
-            "raise SystemExit(subprocess.call([sys.argv[1], 'ls'], env=env))"
-        )
-        self.assertEqual(result.returncode, 2, result.stderr)
-        self.assertIn("live_tmux", result.stderr)
-
-    def test_nested_python_cannot_replace_the_private_selector(self):
-        result = self.child(
-            "import os, subprocess, sys; env = dict(os.environ, TMUX_TMPDIR=sys.argv[2]); "
-            "raise SystemExit(subprocess.call([sys.argv[1], 'ls'], env=env))",
-            self.home,
-        )
-        self.assertEqual(result.returncode, 2, result.stderr)
-        self.assertIn("live_tmux", result.stderr)
+    def test_nested_python_cannot_drop_or_replace_the_private_selector(self):
+        for case, code, args in (
+            (
+                "dropped",
+                "import os, subprocess, sys; env = dict(os.environ); env.pop('TMUX_TMPDIR'); "
+                "raise SystemExit(subprocess.call([sys.argv[1], 'ls'], env=env))",
+                (),
+            ),
+            (
+                "replaced",
+                "import os, subprocess, sys; env = dict(os.environ, TMUX_TMPDIR=sys.argv[2]); "
+                "raise SystemExit(subprocess.call([sys.argv[1], 'ls'], env=env))",
+                (self.home,),
+            ),
+        ):
+            with self.subTest(case=case):
+                result = self.child(code, *args)
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertIn("live_tmux", result.stderr)
 
 
 class Client(Live):

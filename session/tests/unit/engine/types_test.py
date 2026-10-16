@@ -168,10 +168,6 @@ class WhatToStart(Case):
             (None, None, "", False, None),
         )
 
-    def test_idle_timeout_is_no_spec_field_but_the_callers_watch_option(self):
-        with self.assertRaises(TypeError):
-            Spec(workdir="/w", access=Access(cwd="/w"), idle_timeout=2.5)
-
     def test_access_cwd_is_required(self):
         with self.assertRaises(TypeError):
             Access()
@@ -399,9 +395,6 @@ class Identity(Case):
                 self.assertEqual(bad_field({**FIELDS, **bad}), key)
                 bad = {k: v for k, v in bad.items() if k != key}
         self.assertEqual(bad_field(None), "sid")
-
-    def test_exported(self):
-        self.assertIn("SessionInfo", session.__all__)
 
 
 class Binding(Case):

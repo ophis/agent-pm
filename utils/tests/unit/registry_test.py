@@ -104,14 +104,16 @@ class Load(Case):
         )
         self.assertIsInstance(caught.exception.__cause__, SyntaxError)
 
-    def test_a_missing_class(self):
-        self.refused("regpkg.impl:Nope", "regpkg.impl:Nope: regpkg.impl has no Nope")
-
-    def test_not_a_concrete_subclass(self):
-        for name in ("function", "VALUE", "Other", "Sized", "Half"):
-            with self.subTest(name=name):
-                path = f"regpkg.impl:{name}"
-                self.refused(path, f"{path} must be a concrete Sized subclass")
+    def test_a_missing_class_or_not_a_concrete_subclass(self):
+        for path, message in (
+            ("regpkg.impl:Nope", "regpkg.impl:Nope: regpkg.impl has no Nope"),
+            *(
+                (f"regpkg.impl:{name}", f"regpkg.impl:{name} must be a concrete Sized subclass")
+                for name in ("function", "VALUE", "Other", "Sized", "Half")
+            ),
+        ):
+            with self.subTest(path=path):
+                self.refused(path, message)
 
 
 if __name__ == "__main__":

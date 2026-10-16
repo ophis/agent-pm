@@ -137,10 +137,6 @@ class ParseHosts(Case):
             ),
         )
 
-    def test_a_non_string_key(self):
-        found = {**table(), 1: {"implementation": "pkg.c:CHost"}}
-        self.refused(found, "[hosts] 1: want a string key")
-
     def test_the_tables_are_read_only_deep_copies(self):
         found = {**table(), "c": {"implementation": "pkg.c:CHost", "sizes": [1]}}
         hosts = Host.parse_hosts(found)
@@ -153,40 +149,37 @@ class ParseHosts(Case):
             with self.subTest(key=key), self.assertRaises(TypeError):
                 operator.setitem(mapping, key, 3)
 
-    def test_no_hosts_table(self):
-        for found in (None, 1, "a", []):
-            with self.subTest(found=found):
-                self.refused(found, "[hosts]: missing")
-
-    def test_a_key_that_is_neither_default_nor_a_table(self):
-        self.refused(
-            table(TWO.replace('default = "a"', 'default = "a"\nnoise = 1')),
-            "[hosts] noise: want default or a [hosts.<name>] table",
-        )
-
-    def test_a_table_name_that_is_not_a_host_name(self):
-        for key, name in (("A", "A"), ("1a", "1a"), ("a-b", "a-b"), ('"a b"', "a b"), ('""', "")):
-            with self.subTest(name=name):
-                self.refused(
+    def test_a_malformed_hosts_table_is_refused_naming_the_part(self):
+        names = (("A", "A"), ("1a", "1a"), ("a-b", "a-b"), ('"a b"', "a b"), ('""', ""))
+        cases = (
+            ({**table(), 1: {"implementation": "pkg.c:CHost"}}, "[hosts] 1: want a string key"),
+            *((found, "[hosts]: missing") for found in (None, 1, "a", [])),
+            (
+                table(TWO.replace('default = "a"', 'default = "a"\nnoise = 1')),
+                "[hosts] noise: want default or a [hosts.<name>] table",
+            ),
+            *(
+                (
                     table(text=f'[hosts.{key}]\nimplementation = "pkg.c:CHost"\n'),
                     f"[hosts.{name}]: want a name matching [a-z][a-z0-9_]*",
                 )
-
-    def test_a_table_without_a_class_path(self):
-        for line in ("", 'implementation = "pkg.mod.AHost"\n', "implementation = 1\n"):
-            with self.subTest(line=line):
-                self.refused(
+                for key, name in names
+            ),
+            *(
+                (
                     table(TWO.replace('implementation = "pkg.mod:AHost"\n', line)),
                     "[hosts.a].implementation: want module.path:Class",
                 )
-
-    def test_the_default_must_name_a_table(self):
-        for line in ("", 'default = "c"', "default = 1", 'default = ""', "default = []"):
-            with self.subTest(line=line):
-                self.refused(
-                    table(TWO.replace('default = "a"', line)),
-                    f"[hosts] default: want one of {NAMES}",
-                )
+                for line in ("", 'implementation = "pkg.mod.AHost"\n', "implementation = 1\n")
+            ),
+            *(
+                (table(TWO.replace('default = "a"', line)), f"[hosts] default: want one of {NAMES}")
+                for line in ("", 'default = "c"', "default = 1", 'default = ""', "default = []")
+            ),
+        )
+        for found, message in cases:
+            with self.subTest(found=found, message=message):
+                self.refused(found, message)
 
     def test_the_class_is_never_loaded(self):
         found = table(TWO.replace("pkg.mod:AHost", "agent_pm.session.hosts.tmux:TmuxHost"))

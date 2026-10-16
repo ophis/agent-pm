@@ -221,28 +221,24 @@ class PluginPathTest(ChildEnvTest):
             f.write("#!/bin/sh\n")
         os.chmod(command, 0o755)
 
-    def test_the_plugin_bin_goes_first_over_the_inherited_and_the_launch_path(self):
-        self.environ(PATH=os.pathsep.join(("/usr/bin", self.plugin, "/bin")))
-        self.assertEqual(
-            child_env(Launch(("x",)), "/cwd")["PATH"],
-            os.pathsep.join((self.plugin, "/usr/bin", self.plugin, "/bin")),
-        )
-        snapshot = Launch(("x",), env={"PATH": "/opt/old/bin:/usr/bin"})
-        self.assertEqual(
-            child_env(snapshot, "/cwd")["PATH"],
-            os.pathsep.join((self.plugin, "/opt/old/bin", "/usr/bin")),
-        )
-
-    def test_a_path_already_led_by_the_plugin_bin_is_kept(self):
-        path = os.pathsep.join((self.plugin, "/usr/bin"))
-        self.environ(PATH=path)
-        self.assertEqual(child_env(Launch(("x",)), "/cwd")["PATH"], path)
-
-    def test_without_agent_pm_session_on_path_the_path_is_unchanged(self):
-        self.environ(PATH="/usr/bin:/bin")
-        self.assertEqual(child_env(Launch(("x",)), "/cwd")["PATH"], "/usr/bin:/bin")
-        launch = Launch(("x",), env={"PATH": "/opt/bin"})
-        self.assertEqual(child_env(launch, "/cwd")["PATH"], "/opt/bin")
+    def test_the_plugin_bin_goes_first_only_when_it_finds_agent_pm_session_and_leads_once(self):
+        inherited = os.pathsep.join(("/usr/bin", self.plugin, "/bin"))
+        led = os.pathsep.join((self.plugin, "/usr/bin"))
+        for path, given, expected in (
+            (inherited, None, os.pathsep.join((self.plugin, "/usr/bin", self.plugin, "/bin"))),
+            (
+                inherited,
+                "/opt/old/bin:/usr/bin",
+                os.pathsep.join((self.plugin, "/opt/old/bin", "/usr/bin")),
+            ),
+            (led, None, led),
+            ("/usr/bin:/bin", None, "/usr/bin:/bin"),
+            ("/usr/bin:/bin", "/opt/bin", "/opt/bin"),
+        ):
+            with self.subTest(path=path, given=given):
+                self.environ(PATH=path)
+                launch = Launch(("x",)) if given is None else Launch(("x",), env={"PATH": given})
+                self.assertEqual(child_env(launch, "/cwd")["PATH"], expected)
 
 
 class IdentityDropTest(ChildEnvTest):
@@ -255,20 +251,16 @@ class IdentityDropTest(ChildEnvTest):
             identity_drop(registry()), frozenset({"AGENT_PM_SID", "AGENT_PM_EVENTS", *LEASE})
         )
 
-    def test_a_callers_start_token_never_reaches_a_client(self):
-        self.environ(AGENT_PM_SID="0f8fad5b-d9cb-469f-a165-70867728950e", KEEP="k")
-        env = child_env(Launch(("x",)), "/cwd", identity_drop(registry()))
-        self.assertEqual((env.get("AGENT_PM_SID"), env["KEEP"]), (None, "k"))
-
-    def test_a_managers_roster_lease_never_reaches_a_client(self):
-        self.environ(**dict.fromkeys(LEASE, "1"), KEEP="k")
-        env = child_env(Launch(("x",)), "/cwd", identity_drop(registry()))
-        self.assertEqual((LEASE & env.keys(), env["KEEP"]), (set(), "k"))
-
-    def test_a_callers_events_file_never_reaches_a_client(self):
-        self.environ(AGENT_PM_EVENTS="/harness/events", KEEP="k")
-        env = child_env(Launch(("x",)), "/cwd", identity_drop(registry()))
-        self.assertEqual((env.get("AGENT_PM_EVENTS"), env["KEEP"]), (None, "k"))
+    def test_a_callers_start_token_roster_lease_and_events_file_never_reach_a_client(self):
+        for environ in (
+            {"AGENT_PM_SID": "0f8fad5b-d9cb-469f-a165-70867728950e"},
+            dict.fromkeys(LEASE, "1"),
+            {"AGENT_PM_EVENTS": "/harness/events"},
+        ):
+            with self.subTest(environ=environ):
+                self.environ(**environ, KEEP="k")
+                env = child_env(Launch(("x",)), "/cwd", identity_drop(registry()))
+                self.assertEqual((environ.keys() & env.keys(), env["KEEP"]), (set(), "k"))
         given = Launch(("x",), env={"AGENT_PM_EVENTS": "/given/events"})
         env = child_env(given, "/cwd", identity_drop(registry()))
         self.assertEqual(env["AGENT_PM_EVENTS"], "/given/events")

@@ -164,9 +164,6 @@ class Delivery(Case):
             return []
         return [row for row in rows if row["kind"] == "callback_error"]
 
-    def test_the_timeout_is_a_300_second_module_constant(self):
-        self.assertEqual(CALLBACK_TIMEOUT, 300)
-
     def lock_text(self) -> str:
         with open(self.store.callback_lock, encoding="utf-8") as file:
             return file.read()
@@ -183,7 +180,7 @@ class Delivery(Case):
         )
         self.assertNotIn("shell", kwargs)
         _, given, timeout = communicate
-        self.assertEqual(timeout, CALLBACK_TIMEOUT)
+        self.assertEqual(timeout, 300)
         self.assertEqual(given, self.callback.encode(event).to_line() + "\n")
         self.assertEqual(given.count("\n"), 1)
         self.assertEqual(DelegateEvent.parse(given).text, "one\n二")

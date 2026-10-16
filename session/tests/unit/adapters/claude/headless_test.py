@@ -360,7 +360,9 @@ class LimitTest(Case):
             with self.subTest(message=message):
                 self.assertEqual(self.limit(message), [LimitHit(resets)])
 
-    def test_the_limit_messages_and_their_reset(self):
+    def test_each_limit_notice_and_its_reset_or_none(self):
+        week = "You've hit your weekly limit · resets {} (America/Los_Angeles)"
+        session = "You've hit your session limit · resets 3pm (America/Los_Angeles)"
         self.check(
             (
                 (
@@ -405,17 +407,40 @@ class LimitTest(Case):
                     ),
                     epoch("2026-10-11 15:00"),
                 ),
-            )
-        )
-
-    def test_a_weekday_is_the_next_such_day(self):
-        week = "You've hit your weekly limit · resets {} (America/Los_Angeles)"
-        self.check(
-            (
                 (week.format("Monday 9am"), epoch("2026-10-12 09:00")),
                 (week.format("Sun 11am"), epoch("2026-10-11 11:00")),
                 (week.format("Sunday, 9am"), epoch("2026-10-18 09:00")),
                 (week.format("sat 9am"), epoch("2026-10-17 09:00")),
+                (
+                    (
+                        f"{session} … You've hit your weekly limit · resets Oct 15, 9am (America/Los_Angeles)"
+                    ),
+                    epoch("2026-10-15 09:00"),
+                ),
+                (f"{session} You've hit your fast limit · resets in 5m", epoch("2026-10-11 15:00")),
+                ("You've hit your session limit", None),
+                ("Usage limit reached · continuing automatically in 2h · esc to cancel", None),
+                ("You've hit your session limit · resets soon", None),
+                ("You've hit your session limit · resets 13pm (UTC)", None),
+                ("You've hit your session limit · resets 0am (UTC)", None),
+                ("You've hit your session limit · resets 3:75pm (UTC)", None),
+                ("You've hit your weekly limit · resets Feb 30, 3pm (UTC)", None),
+                ("You've hit your weekly limit · resets Monday 15, 3pm (UTC)", None),
+                ("You've hit your weekly limit · resets Smarch 3, 3pm (UTC)", None),
+                ("You've hit your weekly limit · resets Funday 3pm (UTC)", None),
+                ("You've hit your weekly limit · resets Oct 3pm (UTC)", None),
+                *(
+                    (message, None)
+                    for message in (
+                        "",
+                        "Welcome back",
+                        "You've hit your fast limit · resets in 5m",
+                        "You've used 90% of your session limit · resets 3pm (America/Los_Angeles)",
+                        "Approaching weekly limit",
+                        "Your usage limit has reset",
+                        "usage limit reached",
+                    )
+                ),
             )
         )
 
@@ -454,50 +479,6 @@ class LimitTest(Case):
                 ),
             )
         )
-
-    def test_the_last_message_counts(self):
-        session = "You've hit your session limit · resets 3pm (America/Los_Angeles)"
-        self.check(
-            (
-                (
-                    (
-                        f"{session} … You've hit your weekly limit · resets Oct 15, 9am (America/Los_Angeles)"
-                    ),
-                    epoch("2026-10-15 09:00"),
-                ),
-                (f"{session} You've hit your fast limit · resets in 5m", epoch("2026-10-11 15:00")),
-            )
-        )
-
-    def test_an_unparsable_reset_is_none(self):
-        self.check(
-            (
-                ("You've hit your session limit", None),
-                ("Usage limit reached · continuing automatically in 2h · esc to cancel", None),
-                ("You've hit your session limit · resets soon", None),
-                ("You've hit your session limit · resets 13pm (UTC)", None),
-                ("You've hit your session limit · resets 0am (UTC)", None),
-                ("You've hit your session limit · resets 3:75pm (UTC)", None),
-                ("You've hit your weekly limit · resets Feb 30, 3pm (UTC)", None),
-                ("You've hit your weekly limit · resets Monday 15, 3pm (UTC)", None),
-                ("You've hit your weekly limit · resets Smarch 3, 3pm (UTC)", None),
-                ("You've hit your weekly limit · resets Funday 3pm (UTC)", None),
-                ("You've hit your weekly limit · resets Oct 3pm (UTC)", None),
-            )
-        )
-
-    def test_no_limit_notice_has_no_reset(self):
-        for message in (
-            "",
-            "Welcome back",
-            "You've hit your fast limit · resets in 5m",
-            "You've used 90% of your session limit · resets 3pm (America/Los_Angeles)",
-            "Approaching weekly limit",
-            "Your usage limit has reset",
-            "usage limit reached",
-        ):
-            with self.subTest(message=message):
-                self.assertEqual(self.limit(message), [LimitHit(None)])
 
     def test_no_screen_is_a_limit(self):
         for screen in (

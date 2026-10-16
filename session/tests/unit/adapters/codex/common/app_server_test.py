@@ -1,5 +1,9 @@
-"""The Codex app-server client's answer matching, line bounds and process cleanup."""
+"""The Codex app-server client's answer matching, line bounds and process cleanup; the rate-limit
+probe.
+"""
 
+import contextlib
+import io
 from unittest import mock
 
 from agent_pm.session.adapters.codex.common import app_server
@@ -197,3 +201,61 @@ class ClientTest(Case):
             app_server.AppServer.call("fake", [], "hooks/list", env={}, wait=1, limit=1024)
         kill.assert_called_once_with(123, app_server.signal.SIGKILL)
         proc.wait.assert_called()
+
+
+class ProbeTest(Case):
+    ANSWER = (b'{"id":1,"result":{}}', b'{"id":2,"result":{"primary":1}}')
+
+    @contextlib.contextmanager
+    def server(self, *replies, error=None):
+        proc = mock.Mock()
+        proc.stdout.fileno.return_value = 42
+        with (
+            mock.patch("subprocess.Popen", side_effect=error, return_value=proc) as popen,
+            mock.patch("select.select", return_value=([42], [], [])),
+            mock.patch("os.read", side_effect=[b"".join(r + b"\n" for r in replies), b""]),
+            mock.patch("os.killpg"),
+        ):
+            yield popen
+
+    def test_rate_limits_come_back_as_the_answer(self):
+        with self.server(*self.ANSWER) as popen:
+            self.assertEqual(app_server.probe({"HOME": "/h"}), {"primary": 1})
+        self.assertEqual(popen.call_args.args[0][0], "codex")
+        self.assertEqual(popen.call_args.kwargs["env"], {"HOME": "/h"})
+
+    def test_anything_but_an_answer_object_is_none(self):
+        for name, replies, error in (
+            ("list", (b'{"id":1,"result":{}}', b'{"id":2,"result":[]}'), None),
+            ("error", (b'{"id":1,"result":{}}', b'{"id":2,"error":{"message":"no"}}'), None),
+            ("exited", (), None),
+            ("missing", (), FileNotFoundError(2, "No such file")),
+        ):
+            with self.subTest(name=name), self.server(*replies, error=error):
+                self.assertIsNone(app_server.probe({}))
+
+    def test_a_timeout_outside_zero_to_ten_seconds_runs_nothing(self):
+        for timeout in (0, -1, 10.5, True, "5"):
+            with self.subTest(timeout=timeout), self.server(*self.ANSWER) as popen:
+                self.assertIsNone(app_server.probe({}, timeout))
+                popen.assert_not_called()
+
+    def test_main_prints_the_answer_or_null(self):
+        nan = (b'{"id":1,"result":{}}', b'{"id":2,"result":{"primary":NaN}}')
+        for argv, replies, printed in (
+            ([], self.ANSWER, '{"primary": 1}'),
+            (["--timeout", "2"], self.ANSWER, '{"primary": 1}'),
+            (["--timeout", "x"], self.ANSWER, "null"),
+            (["--timeout", "20"], self.ANSWER, "null"),
+            (["5"], self.ANSWER, "null"),
+            ([], nan, "null"),
+        ):
+            out = io.StringIO()
+            with (
+                self.subTest(argv=argv, replies=replies),
+                self.server(*replies),
+                mock.patch("sys.argv", ["app_server", *argv]),
+                contextlib.redirect_stdout(out),
+            ):
+                app_server.main()
+            self.assertEqual(out.getvalue(), printed + "\n")

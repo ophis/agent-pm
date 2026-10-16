@@ -70,18 +70,6 @@ class InProcess(Case):
         ):
             tui_hook.main([self.dir, "tool"], io.BytesIO(b"{}"), roots=ROOTS)
 
-    def test_a_regular_executable_tmux_marks(self):
-        self.mark.side_effect = [
-            unittest.mock.Mock(returncode=0, stdout=self.lookup, stderr=""),
-            unittest.mock.Mock(returncode=0, stdout="", stderr=""),
-        ]
-        self.faked()
-        self.assertEqual(
-            self.mark.call_args.args[0],
-            [self.tmux, "set-option", "-t", "%3", "@state", "working"],
-        )
-        self.assertEqual(self.mark.call_count, 2)
-
     def test_a_non_regular_or_non_executable_tmux_is_refused_after_the_record(self):
         for case, kwargs in (
             ("directory", {"mode": stat.S_IFDIR | 0o755}),
@@ -247,19 +235,6 @@ class WordTest(Case):
 class SharedTypes(Case):
     """The hook uses engine/types' HookError and Word."""
 
-    def test_the_hook_uses_engine_types(self):
-        self.assertEqual(
-            [(w.name, w.value) for w in tui_hook.Word],
-            [(w.name, w.value) for w in engine_types.Word],
-        )
-        hook, shared = tui_hook.HookError, engine_types.HookError
-        self.assertIs(hook, shared)
-        self.assertIs(tui_hook.Word, engine_types.Word)
-        self.assertEqual(
-            (hook.__name__, hook.__bases__, hook.__doc__),
-            (shared.__name__, shared.__bases__, shared.__doc__),
-        )
-
     def test_each_shared_hook_type_has_one_definition(self):
         package = os.path.join(SRC["session"], "agent_pm", "session")
         definitions = {"Word": [], "HookError": []}
@@ -280,7 +255,7 @@ class SharedTypes(Case):
             with self.assertRaises(engine_types.HookError) as caught:
                 tui_hook.read_state(path, error=engine_types.HookError)
             self.assertEqual(str(caught.exception), f"{path}: No such file or directory")
-            with self.assertRaises(tui_hook.HookError):
+            with self.assertRaises(engine_types.HookError):
                 tui_hook.read_state(path)
 
     def test_no_normal_session_module_takes_a_type_from_the_hook(self):

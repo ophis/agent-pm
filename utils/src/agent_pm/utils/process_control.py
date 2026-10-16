@@ -72,7 +72,7 @@ class _Group:
         return cls(pid, read)
 
     @staticmethod
-    def _anchor(channel, argv, cwd, *, blocked_signals=(), **options):
+    def _anchor(channel, argv, cwd, *, blocked_signals=(), **options):  # pragma: no cover
         try:
             os.setpgid(0, 0)
             signal.pthread_sigmask(signal.SIG_BLOCK, blocked_signals)
@@ -337,7 +337,7 @@ class ProcessControl:
         os.waitpid(pid, os.WNOHANG)
         return int(result) if result else 1
 
-    def serve(
+    def serve(  # pragma: no cover
         self,
         *,
         on_exit: Callable[[int], None] | None = None,

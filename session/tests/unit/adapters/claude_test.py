@@ -38,13 +38,10 @@ class ConfigTest(Base):
         self.assertEqual(ClaudeAdapter({}).config, {})
         self.assertEqual(ClaudeAdapter(CONFIG).config, CONFIG)
 
-    def test_an_unknown_key_is_refused(self):
-        self.refused(
-            lambda: ClaudeAdapter({"model": "m"}),
-            "unknown key 'model' in ClaudeAdapter's config",
+    def test_a_refused_config_names_the_key_never_the_value(self):
+        sources = (
+            "--setting-sources is set by the Claude adapter: remove it from [adapters.claude].flags"
         )
-
-    def test_a_wrong_type_names_the_key_never_the_value(self):
         rows = (
             ("flags", "SECRET"),
             ("flags", ["--x", 1]),
@@ -69,12 +66,24 @@ class ConfigTest(Base):
             ("env", {1: "SECRET"}),
             ("env", ["SECRET"]),
         )
-        for key, value in rows:
-            with self.subTest(key=key, value=value):
-                self.refused(
-                    lambda *, key=key, value=value: ClaudeAdapter({key: value}),
-                    f"[adapters.claude].{key} must be {WHAT[key]}",
+        cases = (
+            ({"model": "m"}, "unknown key 'model' in ClaudeAdapter's config"),
+            *(
+                ({key: value}, f"[adapters.claude].{key} must be {WHAT[key]}")
+                for key, value in rows
+            ),
+            *(
+                ({"flags": flags}, sources)
+                for flags in (
+                    ["--setting-sources"],
+                    ["--setting-sources=user"],
+                    ["--verbose", "--setting-sources", "user"],
                 )
+            ),
+        )
+        for config, message in cases:
+            with self.subTest(config=config):
+                self.refused(lambda *, config=config: ClaudeAdapter(config), message)
 
     def test_invalid_environment_names_and_values_fail_before_launch(self):
         for key, value in (
@@ -94,18 +103,6 @@ class ConfigTest(Base):
     def test_accepts_exec_environment_names(self):
         env = {"A-B": "", "1A": "v", "X;Y": "v", "A B": "v", "Ä": "v"}
         self.assertEqual(ClaudeAdapter({"env": env}).config["env"], env)
-
-    def test_setting_sources_in_flags_is_refused(self):
-        for flags in (
-            ["--setting-sources"],
-            ["--setting-sources=user"],
-            ["--verbose", "--setting-sources", "user"],
-        ):
-            with self.subTest(flags=flags):
-                self.refused(
-                    lambda *, flags=flags: ClaudeAdapter({"flags": flags}),
-                    "--setting-sources is set by the Claude adapter: remove it from [adapters.claude].flags",
-                )
 
     def test_the_env_attributes(self):
         adapter = ClaudeAdapter({})
@@ -200,22 +197,22 @@ class WritableDirsTest(Base):
         )
         return ClaudeAdapter(CONFIG).writable_dirs(spec)
 
-    def test_the_cwd_then_the_added_dirs(self):
-        self.assertEqual(self.dirs(), (self.work,))
-        self.assertEqual(self.dirs(dirs=(self.added, self.cwd)), (self.work, self.added, self.cwd))
-
-    def test_the_cwd_first_when_set(self):
-        self.assertEqual(self.dirs(cwd=self.cwd), (self.cwd,))
-        self.assertEqual(self.dirs(cwd=self.cwd, dirs=(self.added,)), (self.cwd, self.added))
-
-    def test_real_paths_each_once_in_order(self):
+    def test_the_cwd_first_then_the_added_dirs_real_paths_each_once_in_order(self):
         work_link = os.path.join(self.tmp, "work-link")
         os.symlink(self.work, work_link)
-        self.assertEqual(self.dirs(workdir=work_link), (self.work,))
-        self.assertEqual(
-            self.dirs(cwd=self.link, dirs=(self.added, self.work, work_link, self.cwd + "/")),
-            (self.added, self.work, self.cwd),
-        )
+        for access, dirs in (
+            ({}, (self.work,)),
+            ({"dirs": (self.added, self.cwd)}, (self.work, self.added, self.cwd)),
+            ({"cwd": self.cwd}, (self.cwd,)),
+            ({"cwd": self.cwd, "dirs": (self.added,)}, (self.cwd, self.added)),
+            ({"workdir": work_link}, (self.work,)),
+            (
+                {"cwd": self.link, "dirs": (self.added, self.work, work_link, self.cwd + "/")},
+                (self.added, self.work, self.cwd),
+            ),
+        ):
+            with self.subTest(access=access):
+                self.assertEqual(self.dirs(**access), dirs)
 
     def test_a_resume_the_same(self):
         for access, dirs in (

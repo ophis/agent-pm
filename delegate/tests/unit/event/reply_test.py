@@ -2,42 +2,51 @@
 
 import unittest
 
-from agent_pm.delegate.event import PROGRESS
-from agent_pm.delegate.event.reply import MARK, marks, outcome_block
+from agent_pm.delegate.event.reply import marks, outcome_block
 
 from delegate.tests.case import Case
 
 
 class Marks(Case):
-    def test_a_mark_line_amid_body_text_is_one_mark(self):
-        text = "Reading the task.\n[agent-pm-progress:start] first build of the PRD\nNow the spec."
-        self.assertEqual(marks(text), [("start", "first build of the PRD")])
+    def test_mark_lines_give_their_name_and_text_in_order(self):
+        for text, want in (
+            (
+                "Reading the task.\n[agent-pm-progress:start] first build of the PRD\nNow the spec.",
+                [("start", "first build of the PRD")],
+            ),
+            (
+                "- [agent-pm-progress:a] one\n* [agent-pm-progress:b] two\n   [agent-pm-progress:c] three",
+                [("a", "one"), ("b", "two"), ("c", "three")],
+            ),
+            (
+                "[agent-pm-progress:start]   first build \t of  the PRD  \r",
+                [("start", "first build of the PRD")],
+            ),
+            ("[agent-pm-progress:start] first build\n  of the PRD", [("start", "first build")]),
+            (
+                "[agent-pm-progress:start] a\nx\n[agent-pm-progress:step] b\n[agent-pm-progress:start] c",
+                [("start", "a"), ("step", "b"), ("start", "c")],
+            ),
+        ):
+            with self.subTest(text=text):
+                self.assertEqual(marks(text), want)
 
     def test_a_mark_and_an_outcome_block_are_one_mark_and_the_block(self):
         text = '[agent-pm-progress:start] the build\nDone.\n```agent-pm-outcome\n{"status": "done"}\n```\n'
         self.assertEqual(marks(text), [("start", "the build")])
         self.assertEqual(outcome_block(text), '{"status": "done"}')
 
-    def test_a_mark_inside_a_fence_is_none(self):
+    def test_a_mark_in_a_fence_or_not_at_the_line_start_or_no_text_is_none(self):
         for text in (
             "```\n[agent-pm-progress:start] x\n```",
             "~~~md\n[agent-pm-progress:start] x\n~~~",
             "```agent-pm-outcome\n[agent-pm-progress:start] x\n```",
             "````\n```\n[agent-pm-progress:a] x",
-        ):
-            with self.subTest(text=text):
-                self.assertEqual(marks(text), [])
-
-    def test_a_bullet_or_leading_whitespace_is_accepted(self):
-        text = "- [agent-pm-progress:a] one\n* [agent-pm-progress:b] two\n   [agent-pm-progress:c] three"
-        self.assertEqual(marks(text), [("a", "one"), ("b", "two"), ("c", "three")])
-
-    def test_a_mark_not_at_the_line_start_is_none(self):
-        for text in (
             "see [agent-pm-progress:start] x",
             "+ [agent-pm-progress:start] x",
             "-[agent-pm-progress:start] x",
             "`[agent-pm-progress:start] x`",
+            "",
         ):
             with self.subTest(text=text):
                 self.assertEqual(marks(text), [])
@@ -54,47 +63,31 @@ class Marks(Case):
                 self.assertEqual(marks(text), [])
         self.assertEqual(marks("[agent-pm-progress:plan-ready_2] ok"), [("plan-ready_2", "ok")])
 
-    def test_whitespace_runs_in_a_line_become_one_space(self):
-        self.assertEqual(
-            marks("[agent-pm-progress:start]   first build \t of  the PRD  \r"),
-            [("start", "first build of the PRD")],
-        )
-        self.assertEqual(
-            marks("[agent-pm-progress:start] first build\n  of the PRD"), [("start", "first build")]
-        )
-
-    def test_several_marks_in_order(self):
-        text = "[agent-pm-progress:start] a\nx\n[agent-pm-progress:step] b\n[agent-pm-progress:start] c"
-        self.assertEqual(marks(text), [("start", "a"), ("step", "b"), ("start", "c")])
-
-    def test_no_text_is_no_mark(self):
-        self.assertEqual(marks(""), [])
-
-    def test_the_mark_name_is_composers(self):
-        self.assertTrue(MARK.match(f"[{PROGRESS}:start] x"))
-
 
 class OutcomeBlock(Case):
-    def test_the_last_of_several_blocks(self):
-        text = '```agent-pm-outcome\n{"a": 1}\n```\nthen\n~~~agent-pm-outcome\n{"b": 2}\n~~~\n'
-        self.assertEqual(outcome_block(text), '{"b": 2}')
+    def test_the_last_blocks_text(self):
+        for text, want in (
+            (
+                '```agent-pm-outcome\n{"a": 1}\n```\nthen\n~~~agent-pm-outcome\n{"b": 2}\n~~~\n',
+                '{"b": 2}',
+            ),
+            ('x\n```agent-pm-outcome\n{"a": 1}\n', '{"a": 1}\n'),
+            ("```agent-pm-outcome\n```", ""),
+            ("```  agent-pm-outcome \t\n{}\n```", "{}"),
+        ):
+            with self.subTest(text=text):
+                self.assertEqual(outcome_block(text), want)
 
-    def test_none(self):
-        for text in ("", "no block", "```\n{}\n```", "agent-pm-outcome {}"):
+    def test_no_block_or_one_nested_in_a_longer_fence_is_none(self):
+        for text in (
+            "",
+            "no block",
+            "```\n{}\n```",
+            "agent-pm-outcome {}",
+            "````md\n```agent-pm-outcome\n{}\n```\n````\n",
+        ):
             with self.subTest(text=text):
                 self.assertIsNone(outcome_block(text))
-
-    def test_an_unclosed_block_runs_to_the_end(self):
-        self.assertEqual(outcome_block('x\n```agent-pm-outcome\n{"a": 1}\n'), '{"a": 1}\n')
-
-    def test_an_empty_block_is_empty_text(self):
-        self.assertEqual(outcome_block("```agent-pm-outcome\n```"), "")
-
-    def test_the_info_string_is_stripped(self):
-        self.assertEqual(outcome_block("```  agent-pm-outcome \t\n{}\n```"), "{}")
-
-    def test_a_block_nested_in_a_longer_fence_is_none(self):
-        self.assertIsNone(outcome_block("````md\n```agent-pm-outcome\n{}\n```\n````\n"))
 
     def test_a_block_with_another_info_string_is_ignored(self):
         text = (

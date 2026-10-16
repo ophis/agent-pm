@@ -83,20 +83,22 @@ class ModuleRunTest(Case):
         self.assertTrue(values[13].startswith(ROOTS[0] + os.sep))
         self.assertTrue(values[14].startswith(ROOTS[1] + os.sep))
 
-    def test_launch_data_reaches_launch_validation_from_the_module(self):
-        result = self.run_module(json.dumps(self.data()))
-        self.assertEqual(
-            (result.returncode, result.stdout, result.stderr),
-            (1, "", "codex tui: Codex tui launch: missing recovery state\n"),
-        )
-
-    def test_launch_data_with_the_retired_import_roots_field_is_refused(self):
-        data = {**self.data(), "import_roots": list(ROOTS)}
-        result = self.run_module(json.dumps(data))
-        self.assertEqual(
-            (result.returncode, result.stdout, result.stderr),
-            (1, "", "codex tui: Codex tui launch: invalid launch fields\n"),
-        )
+    def test_launch_data_errors_are_one_stderr_line_and_status_1_from_the_module(self):
+        for name, data, error in (
+            ("reaches launch validation", json.dumps(self.data()), "missing recovery state"),
+            (
+                "the retired import_roots field",
+                json.dumps({**self.data(), "import_roots": list(ROOTS)}),
+                "invalid launch fields",
+            ),
+            ("bad launch data", "not-json", "malformed launch data"),
+        ):
+            with self.subTest(name):
+                result = self.run_module(data)
+                self.assertEqual(
+                    (result.returncode, result.stdout, result.stderr),
+                    (1, "", f"codex tui: Codex tui launch: {error}\n"),
+                )
 
     def test_the_module_decodes_launch_data_once(self):
         code = """import json, runpy, sys
@@ -145,13 +147,6 @@ print(json.dumps([
             check=True,
         )
         self.assertEqual(json.loads(result.stdout), [True, True, True, True, []])
-
-    def test_bad_launch_data_is_one_stderr_line_without_a_traceback(self):
-        result = self.run_module("not-json")
-        self.assertEqual(
-            (result.returncode, result.stdout, result.stderr),
-            (1, "", "codex tui: Codex tui launch: malformed launch data\n"),
-        )
 
     def test_the_launch_argument_is_required_and_bounded_before_decoding(self):
         result = self.run_module()

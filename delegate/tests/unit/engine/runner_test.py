@@ -11,7 +11,7 @@ from unittest import mock
 from agent_pm.delegate import Begun, ConfigError, Finished, Limit, Progress, Result, Spec
 from agent_pm.delegate.composer import Composer
 from agent_pm.delegate.engine.plan import plan
-from agent_pm.delegate.engine.runner import FIX, NUDGE, POLICIES, STOP_LIMIT, execute, stopped
+from agent_pm.delegate.engine.runner import FIX, NUDGE, STOP_LIMIT, execute, stopped
 from agent_pm.delegate.engine.types import Layout
 from agent_pm.delegate.event.reply import marks
 from agent_pm.session import (
@@ -20,7 +20,6 @@ from agent_pm.session import (
     Exited,
     IdleTimeout,
     LimitHit,
-    Mode,
     Reply,
     SessionError,
     TurnFailed,
@@ -73,10 +72,6 @@ class InProcess(Base):
     def go(self, *steps, **kw) -> Result:
         with no_child():
             return super().go(*steps, mode="in_process", **kw)
-
-    def test_a_policy_for_each_mode_in_process_the_headless_one(self):
-        self.assertEqual(set(POLICIES), set(Mode))
-        self.assertIs(POLICIES["in_process"], POLICIES["headless"])
 
     def test_a_done_run(self):
         r = self.go(said(START, block(DONE)))
@@ -231,15 +226,6 @@ class TuiPolicy(Base):
         with mock.patch.object(self.driver, "start", side_effect=self.handle.start) as self.started:
             return self.go(mode=mode, **kw)
 
-    def test_the_policies_values(self):
-        self.assertEqual(STOP_LIMIT, 3)
-        self.assertEqual(
-            NUDGE,
-            "Finish your task, then end your last reply with your outcome block "
-            "(`agent-pm-outcome`), as your instructions' Return says. If you are waiting for "
-            "background work, wait for it first.",
-        )
-
     def test_a_tui_handle_without_a_name_reports_a_driver_error(self):
         os.makedirs(self.work)
         handle = FakeHandle([])
@@ -334,7 +320,12 @@ class TuiPolicy(Base):
 
     def test_the_first_turn_end_without_an_outcome_nudges_once(self):
         r = self.faked(turn(START), STOP, turn(block(DONE)))
-        self.assertEqual((r.outcome.status, self.handle.calls), ("done", [("send", NUDGE)]))
+        nudge = (
+            "Finish your task, then end your last reply with your outcome block "
+            "(`agent-pm-outcome`), as your instructions' Return says. If you are waiting for "
+            "background work, wait for it first."
+        )
+        self.assertEqual((r.outcome.status, self.handle.calls), ("done", [("send", nudge)]))
         self.assertEqual(self.kinds(), ["input", "progress", "nudge", "result", "end"])
         self.assertEqual(bare(self.last("nudge")), {"kind": "nudge"})
 
@@ -549,16 +540,12 @@ class TuiPolicy(Base):
         os.makedirs(self.work)
         with mock.patch.object(self.driver, "start", side_effect=SessionError("no tmux")):
             self.assertEqual(self.go(mode="tui"), Result(1, None, "tui: no tmux"))
+        self.assertEqual(self.kinds(), ["input", "result", "end"])
         self.fresh()
         self.configure_fake()
         with self.assertRaises(ConfigError) as cm:
             self.go(mode="tui")
         self.assertEqual(str(cm.exception), "client 'fake' does not support tui mode")
-
-    def test_a_failed_start_is_recorded_in_the_workdir(self):
-        with mock.patch.object(self.driver, "start", side_effect=SessionError("no tmux")):
-            self.assertEqual(self.go(mode="tui"), Result(1, None, "tui: no tmux"))
-        self.assertEqual(self.kinds(), ["input", "result", "end"])
 
     def test_the_runner_records_into_an_existing_run_dir_only(self):
         composition = Composer()

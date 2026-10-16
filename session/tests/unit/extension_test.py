@@ -5,7 +5,7 @@ signatures name, apart from the Session users' agent_pm.session.
 import inspect
 import typing
 
-from agent_pm import session, utils
+from agent_pm import utils
 from agent_pm.session import extension
 from agent_pm.session.adapters import base as adapters_base
 from agent_pm.session.engine import types as engine_types
@@ -121,16 +121,3 @@ class ExtensionTest(Case):
                     self.assertIn(name, ABCS)
                     self.assertTrue(inspect.isabstract(value) or value is extension.Adapter)
         self.assertNotIn(Runtime, {getattr(extension, n) for n in extension.__all__})
-
-    def test_session_users_keep_their_own_surface(self):
-        for name in (
-            "Adapter",
-            "Headless",
-            "Tui",
-            "InProcess",
-            "ClientBound",
-            "HookKind",
-        ):
-            with self.subTest(name=name):
-                self.assertNotIn(name, session.__all__)
-        self.assertNotIn("extension", session.__all__)

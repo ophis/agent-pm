@@ -47,8 +47,6 @@ PM_NEXT = CONFIG.replace(
     role_table("pm"), role_table("pm", 'next = "engineer"', "require_instructions = false")
 )
 
-CHILD = "b52be5d1-f8aa-436f-af99-3e185bd14ef5"
-
 
 def ago(minutes):
     return (NOW - timedelta(minutes=minutes)).isoformat().replace("+00:00", "Z")

@@ -74,7 +74,7 @@ class HeadlessTest(Base):
             [Activity("item.started")],
         )
 
-    def test_source_usage_errors_without_reset_emit_limit(self):
+    def test_source_usage_and_quota_errors_without_reset_emit_limit(self):
         messages = (
             "You’ve hit your usage limit. Try again later.",
             (
@@ -84,6 +84,7 @@ class HeadlessTest(Base):
             (
                 "You hit your spend cap set by the owner of your workspace. Ask an owner to increase your spend cap to continue."
             ),
+            "Quota exceeded. Check your plan and billing details.",
         )
         for kind in ("error", "turn.failed"):
             for message in messages:
@@ -139,22 +140,6 @@ class HeadlessTest(Base):
         argv = committed_headless(self.adapter, spec).argv
         start = argv.index("resume")
         self.assertEqual((argv[start + 1], argv[-2:]), (NATIVE, ("--", "again")))
-
-    def test_source_quota_error_emits_limit(self):
-        run = self.adapter.headless()
-        message = "Quota exceeded. Check your plan and billing details."
-        self.assertEqual(
-            list(run.parse({"type": "error", "message": message})),
-            [Stderr(message), LimitHit(None)],
-        )
-
-    def test_source_quota_failed_turn_emits_limit(self):
-        run = self.adapter.headless()
-        message = "Quota exceeded. Check your plan and billing details."
-        self.assertEqual(
-            list(run.parse({"type": "turn.failed", "error": {"message": message}})),
-            [Stderr(message), LimitHit(None)],
-        )
 
     def test_source_local_reset_formats_become_unix_seconds(self):
         self.adapter.common.config["env"] = {"TZ": "UTC"}

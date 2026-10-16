@@ -102,7 +102,7 @@ class CliTest(CliCase):
             self.assertIn("stale holder generation", stderr)
             self.assertIs(self.roster.entries()["worker"].state, State.RESUMING)
 
-    def _partial_stop_all(self, *, dry_run):
+    def test_partial_stop_all_exits_one_and_only_without_dry_run_closes_known_work(self):
         command = self.setup_ctl()
         Crew(self.roster).run(Spec("owned", (command, "start", "owned")))
         ctl.set_session(self.ctl_dir, "unknown", alive=True)
@@ -114,29 +114,26 @@ class CliTest(CliCase):
                 return subprocess.CompletedProcess(argv, 1, "", "listing unavailable")
             return native_run(argv, **options)
 
-        with mock.patch("subprocess.run", side_effect=run):
-            result, stdout, stderr = self.invoke(
-                "stop-all", "--manager", "mgr", *(("--dry-run",) if dry_run else ())
-            )
-        self.assertEqual(result, 1, stderr)
-        self.assertEqual(stdout, "")
-        self.assertIn("listing unavailable", stderr)
-        self.assertIn("stop-all partial", stderr)
-        with Path(self.ctl_dir, ctl.SESSIONS).open(encoding="utf-8") as stream:
-            sessions = json.load(stream)
-        self.assertTrue(sessions["unknown"]["alive"])
-        closes = [call for call in ctl.calls(self.ctl_dir) if call["argv"] == ["close"]]
-        if dry_run:
-            self.assertEqual(Path(self.roster.path).read_bytes(), before)
-            self.assertTrue(sessions["owned"]["alive"])
-            self.assertEqual(closes, [])
-        else:
-            self.assertEqual(self.roster.entries(), {})
-            self.assertFalse(sessions["owned"]["alive"])
-            self.assertEqual(closes, [{"argv": ["close"], "names": ["owned"]}])
-
-    def test_partial_stop_all_exits_one_after_closing_known_work(self):
-        self._partial_stop_all(dry_run=False)
-
-    def test_partial_stop_all_dry_run_exits_one_without_closing_work(self):
-        self._partial_stop_all(dry_run=True)
+        # The dry run goes first: it leaves the roster and sessions as the other case starts them.
+        for dry_run in (True, False):
+            with self.subTest(dry_run=dry_run):
+                with mock.patch("subprocess.run", side_effect=run):
+                    result, stdout, stderr = self.invoke(
+                        "stop-all", "--manager", "mgr", *(("--dry-run",) if dry_run else ())
+                    )
+                self.assertEqual(result, 1, stderr)
+                self.assertEqual(stdout, "")
+                self.assertIn("listing unavailable", stderr)
+                self.assertIn("stop-all partial", stderr)
+                with Path(self.ctl_dir, ctl.SESSIONS).open(encoding="utf-8") as stream:
+                    sessions = json.load(stream)
+                self.assertTrue(sessions["unknown"]["alive"])
+                closes = [call for call in ctl.calls(self.ctl_dir) if call["argv"] == ["close"]]
+                if dry_run:
+                    self.assertEqual(Path(self.roster.path).read_bytes(), before)
+                    self.assertTrue(sessions["owned"]["alive"])
+                    self.assertEqual(closes, [])
+                else:
+                    self.assertEqual(self.roster.entries(), {})
+                    self.assertFalse(sessions["owned"]["alive"])
+                    self.assertEqual(closes, [{"argv": ["close"], "names": ["owned"]}])

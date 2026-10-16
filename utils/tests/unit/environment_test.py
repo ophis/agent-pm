@@ -10,26 +10,24 @@ from utils.tests.case import Case
 
 
 class Environment(Case):
-    def test_accepts_exec_names_and_string_values(self):
+    def test_exec_names_and_string_values_only(self):
         env = {"A-B": "", "1A": "a=b", "X;Y": "a\nb", "A B": "v", "Ä": "v"}
-        self.assertTrue(environment_ok({}))
-        self.assertTrue(environment_ok(env))
-        self.assertTrue(environment_ok(MappingProxyType(env)))
-
-    def test_rejects_invalid_environment_shapes_names_and_values(self):
-        for env in (
-            None,
-            [("A", "v")],
-            {"": "v"},
-            {"A=B": "v"},
-            {"A\0B": "v"},
-            {1: "v"},
-            {"A": 1},
-            {"A": None},
-            {"A": "v\0"},
+        for value, ok in (
+            ({}, True),
+            (env, True),
+            (MappingProxyType(env), True),
+            (None, False),
+            ([("A", "v")], False),
+            ({"": "v"}, False),
+            ({"A=B": "v"}, False),
+            ({"A\0B": "v"}, False),
+            ({1: "v"}, False),
+            ({"A": 1}, False),
+            ({"A": None}, False),
+            ({"A": "v\0"}, False),
         ):
-            with self.subTest(env=env):
-                self.assertFalse(environment_ok(env))
+            with self.subTest(env=value):
+                self.assertIs(environment_ok(value), ok)
 
 
 class NestedStart(Case):

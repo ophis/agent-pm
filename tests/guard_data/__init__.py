@@ -23,6 +23,9 @@ def merged(name, modules=MODULES):
 NOQA_ALLOWED = merged("NOQA_ALLOWED")
 
 
+NO_COVER_ALLOWED = merged("NO_COVER_ALLOWED")
+
+
 OBJECT_EXPORT_MODULES = merged("OBJECT_EXPORT_MODULES")
 
 

@@ -291,7 +291,7 @@ class ParseUsageTest(Case):
                     ok,
                 )
 
-    def test_each_window(self):
+    def test_each_window_and_a_rejected_status_filling_its_window(self):
         rows = (
             (event(five=0.25), Usage(Window(25.0, 1.0), None)),
             (event(five=0.25, seven_day=0.5), Usage(Window(25.0, 1.0), Window(50.0, 2.0))),
@@ -318,6 +318,77 @@ class ParseUsageTest(Case):
                     one_day={"utilization": 0.9},
                 ),
                 Usage(Window(50.0, None), None),
+            ),
+            (event(status="rejected", five=0.25, resets=9), Usage(Window(100.0, 1.0), None)),
+            (event(status="rejected", five=1.5, resets=9), Usage(Window(150.0, 1.0), None)),
+            (
+                event(status="rejected", five=0.25, kind=None, resets=9),
+                Usage(Window(100.0, 1.0), None),
+            ),
+            (
+                event(status="rejected", five=0.25, kind=5, resets=9),
+                Usage(Window(100.0, 1.0), None),
+            ),
+            (
+                event(status="rejected", five=0.25, kind="five_hour_x", seven_day=0.5, resets=9),
+                Usage(Window(100.0, 1.0), Window(50.0, 2.0)),
+            ),
+            (
+                event(status="rejected", five=0.25, kind="seven_day", resets=9),
+                Usage(Window(25.0, 1.0), Window(100.0, 9.0)),
+            ),
+            (
+                event(status="rejected", five=0.25, kind="seven_day_opus", seven_day=0.5, resets=9),
+                Usage(Window(25.0, 1.0), Window(100.0, 2.0)),
+            ),
+            (
+                event(status="rejected", five=0.25, kind="seven_day", seven_day=1.5, resets=9),
+                Usage(Window(25.0, 1.0), Window(150.0, 2.0)),
+            ),
+            (event(status="rejected", five="x", resets=9), Usage(Window(100.0, 9.0), None)),
+            (event(status="rejected", five=0.25, resets=None), Usage(Window(100.0, 1.0), None)),
+            (event(status="rejected", five=None, resets=None), Usage(Window(100.0, None), None)),
+            (event(status="rejected", five=None, resets=True), Usage(Window(100.0, None), None)),
+            (
+                info_line({"status": "rejected", "rateLimitType": "five_hour", "resetsAt": 9}),
+                Usage(Window(100.0, 9.0), None),
+            ),
+            (
+                info_line(
+                    {
+                        "status": "rejected",
+                        "rateLimitType": "seven_day",
+                        "resetsAt": 9,
+                        "unifiedWindows": {
+                            "five_hour": {"utilization": 0.25},
+                            "seven_day": {"utilization": 0.5},
+                        },
+                    }
+                ),
+                Usage(Window(25.0, None), Window(100.0, 9.0)),
+            ),
+            (
+                info_line(
+                    {
+                        "status": "rejected",
+                        "resetsAt": 9,
+                        "unifiedWindows": {"five_hour": {"utilization": 0.25}},
+                    }
+                ),
+                Usage(Window(100.0, 9.0), None),
+            ),
+            (event(status="allowed_warning", five=0.25, resets=9), Usage(Window(25.0, 1.0), None)),
+            (event(status="Rejected", five=0.25, resets=9), Usage(Window(25.0, 1.0), None)),
+            *(
+                (line, Usage(None, None))
+                for line in (
+                    info_line({}),
+                    info_line({"status": "allowed", "resetsAt": 9}),
+                    info_line({"unifiedWindows": {}}),
+                    info_line({"unifiedWindows": [1]}),
+                    info_line({"unifiedWindows": None}),
+                    info_line({"unifiedWindows": {"five_hour": 0.5}}),
+                )
             ),
         )
         for row, (line, want) in enumerate(rows):
@@ -381,85 +452,6 @@ class ParseUsageTest(Case):
                     }
                 )
                 self.assertEqual(usage(line), Usage(want, Window(50.0, want.resets_at)))
-
-    def test_a_rejected_status_fills_its_window(self):
-        rows = (
-            (event(status="rejected", five=0.25, resets=9), Usage(Window(100.0, 1.0), None)),
-            (event(status="rejected", five=1.5, resets=9), Usage(Window(150.0, 1.0), None)),
-            (
-                event(status="rejected", five=0.25, kind=None, resets=9),
-                Usage(Window(100.0, 1.0), None),
-            ),
-            (
-                event(status="rejected", five=0.25, kind=5, resets=9),
-                Usage(Window(100.0, 1.0), None),
-            ),
-            (
-                event(status="rejected", five=0.25, kind="five_hour_x", seven_day=0.5, resets=9),
-                Usage(Window(100.0, 1.0), Window(50.0, 2.0)),
-            ),
-            (
-                event(status="rejected", five=0.25, kind="seven_day", resets=9),
-                Usage(Window(25.0, 1.0), Window(100.0, 9.0)),
-            ),
-            (
-                event(status="rejected", five=0.25, kind="seven_day_opus", seven_day=0.5, resets=9),
-                Usage(Window(25.0, 1.0), Window(100.0, 2.0)),
-            ),
-            (
-                event(status="rejected", five=0.25, kind="seven_day", seven_day=1.5, resets=9),
-                Usage(Window(25.0, 1.0), Window(150.0, 2.0)),
-            ),
-            (event(status="rejected", five="x", resets=9), Usage(Window(100.0, 9.0), None)),
-            (event(status="rejected", five=0.25, resets=None), Usage(Window(100.0, 1.0), None)),
-            (event(status="rejected", five=None, resets=None), Usage(Window(100.0, None), None)),
-            (event(status="rejected", five=None, resets=True), Usage(Window(100.0, None), None)),
-            (
-                info_line({"status": "rejected", "rateLimitType": "five_hour", "resetsAt": 9}),
-                Usage(Window(100.0, 9.0), None),
-            ),
-            (
-                info_line(
-                    {
-                        "status": "rejected",
-                        "rateLimitType": "seven_day",
-                        "resetsAt": 9,
-                        "unifiedWindows": {
-                            "five_hour": {"utilization": 0.25},
-                            "seven_day": {"utilization": 0.5},
-                        },
-                    }
-                ),
-                Usage(Window(25.0, None), Window(100.0, 9.0)),
-            ),
-            (
-                info_line(
-                    {
-                        "status": "rejected",
-                        "resetsAt": 9,
-                        "unifiedWindows": {"five_hour": {"utilization": 0.25}},
-                    }
-                ),
-                Usage(Window(100.0, 9.0), None),
-            ),
-            (event(status="allowed_warning", five=0.25, resets=9), Usage(Window(25.0, 1.0), None)),
-            (event(status="Rejected", five=0.25, resets=9), Usage(Window(25.0, 1.0), None)),
-        )
-        for row, (line, want) in enumerate(rows):
-            with self.subTest(row=row):
-                self.assertEqual(usage(line), want)
-
-    def test_an_event_without_windows_is_a_reading(self):
-        for line in (
-            info_line({}),
-            info_line({"status": "allowed", "resetsAt": 9}),
-            info_line({"unifiedWindows": {}}),
-            info_line({"unifiedWindows": [1]}),
-            info_line({"unifiedWindows": None}),
-            info_line({"unifiedWindows": {"five_hour": 0.5}}),
-        ):
-            with self.subTest(line=line):
-                self.assertEqual(usage(line), Usage(None, None))
 
     def test_a_successful_probe_without_an_event_has_no_telemetry(self):
         self.assertEqual(ClaudeCommon.parse_usage(API_KEY_PROBE), Usage(None, None))

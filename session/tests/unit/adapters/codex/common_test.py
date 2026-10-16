@@ -414,7 +414,7 @@ class CommonTest(Base):
         ):
             self.common.prepare(resumed)
 
-    def test_mapping_keys_and_values_name_the_table(self):
+    def test_bad_mapping_and_environment_keys_and_values_name_the_table(self):
         cases = (
             ("tiers", {"0": "SECRET"}),
             ("tiers", {"5": "SECRET"}),
@@ -431,6 +431,17 @@ class CommonTest(Base):
             ("efforts", {"low": ""}),
             ("efforts", {"low": "\0"}),
             ("efforts", {"low": None}),
+            *(
+                ("env", {name: value})
+                for name, value in (
+                    ("", "SECRET"),
+                    ("A=B", "SECRET"),
+                    ("A\0B", "SECRET"),
+                    (1, "SECRET"),
+                    ("A", "SECRET\0"),
+                    ("A", 1),
+                )
+            ),
         )
         for key, value in cases:
             with self.subTest(key=key, value=value):
@@ -439,31 +450,27 @@ class CommonTest(Base):
                 self.assertIn(f"[adapters.codex].{key}", str(caught.exception))
                 self.assertNotIn("SECRET", str(caught.exception))
 
-    def test_valid_partial_mapping_keys_preserve_values(self):
-        for key, values in (
-            ("tiers", {"1": "one", "2": "two", "3": "three", "4": "four"}),
-            ("efforts", {"low": "lo", "medium": "med", "high": "hi", "xhigh": "xh", "max": "mx"}),
+    def test_valid_partial_mapping_keys_reach_the_launch_as_their_values(self):
+        for key, values, field, option in (
+            ("tiers", {"1": "one", "2": "two", "3": "three", "4": "four"}, "tier", ("-m", "{}")),
+            (
+                "efforts",
+                {"low": "lo", "medium": "med", "high": "hi", "xhigh": "xh", "max": "mx"},
+                "effort",
+                ("-c", "model_reasoning_effort={}"),
+            ),
         ):
             for source, target in values.items():
                 with self.subTest(key=key, source=source):
                     adapter = CodexAdapter(self.adapter.config | {key: {source: target}})
-                    self.assertEqual(adapter.common._mapped(key, source), target)
+                    given = int(source) if field == "tier" else source
+                    spec = replace(self.spec, tier=None, effort=None, prompt="hi")
+                    argv = adapter.headless().launch(replace(spec, **{field: given})).argv
+                    self.assertIn(
+                        (option[0], option[1].format(target)),
+                        list(zip(argv, argv[1:], strict=False)),
+                    )
         CodexAdapter(self.adapter.config | {"tiers": {}, "efforts": {}})
-
-    def test_invalid_environment_names_and_values_fail_before_launch(self):
-        for key, value in (
-            ("", "SECRET"),
-            ("A=B", "SECRET"),
-            ("A\0B", "SECRET"),
-            (1, "SECRET"),
-            ("A", "SECRET\0"),
-            ("A", 1),
-        ):
-            with self.subTest(key=key, value=value):
-                with self.assertRaises(ConfigError) as caught:
-                    CodexAdapter(self.adapter.config | {"env": {key: value}})
-                self.assertIn("[adapters.codex].env", str(caught.exception))
-                self.assertNotIn("SECRET", str(caught.exception))
 
     def test_config_validation_and_environment_isolation(self):
         for cfg in (

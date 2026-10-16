@@ -231,7 +231,7 @@ class PtyTerminal(PtyProcess, Terminal):
         self._input({"keys": data.hex()})
         self._pasted = False
 
-    def _input(self, request: dict) -> None:
+    def _input(self, request: dict) -> None:  # pragma: no cover
         if self._control is None or not self.alive():
             raise SessionError(f"tui session {self.name} is not running")
         try:

@@ -115,12 +115,6 @@ class Shipped(Case):
             self.assertIn(f"`/autopilot:{t}`", task_text(t))
             self.assertNotRegex(task_text(t), r"(?<!/)autopilot:")
 
-    def test_echo_summary_overrides_outputs_length(self):
-        self.assertIn(
-            "`summary` the input's first line, not [Output](#output)'s 3–5 lines.",
-            task_text("echo"),
-        )
-
     def test_the_engineer_charter_has_six_sections_and_autopilot_adds_its_lines_verbatim(self):
         with open(os.path.join(TEAM, "roles", "engineer.md")) as f:
             charter = f.read()
@@ -143,15 +137,6 @@ class Shipped(Case):
         self.assertIn(
             "\nAdd verbatim, placeholders filled in:\n\n```\n" + "\n".join(lines) + "\n```\n",
             section(charter, "Autopilot"),
-        )
-
-    def test_a_builds_files_are_its_spec_and_plan_doc(self):
-        self.assertIn(
-            (
-                "adding `files`: this build's spec (the `-spec.md` beside its `-plan.md` plan doc) and plan doc "
-                "(on failure, those that exist);"
-            ),
-            task_text("build"),
         )
 
     def test_builds_report_each_s5_task_against_their_task_count(self):
@@ -372,14 +357,6 @@ class Real(RealConfig):
         for task, line in (("research", "Research"), ("light-research", "Light Research")):
             self.assertEqual(task_text(task).count(f"`<{line} type line, translated>`"), 1, task)
 
-    def test_pm_and_researcher_point_to_writing_for_concision(self):
-        for role, doc in (("pm", "the PRD"), ("researcher", "the report")):
-            self.assertIn(
-                f"- **Concise**: after writing {doc}, cut repetition and preamble "
-                "([Principles › Writing](#writing)); length follows content.",
-                composed(role)[0],
-            )
-
     def test_the_guide_names_a_given_task_else_the_run_picks_it(self):
         named = guide(composed("researcher", "research")[0])
         self.assertIn(
@@ -452,6 +429,31 @@ class Real(RealConfig):
         engineer, researcher = composed("engineer")[0], composed("researcher")[0]
         for why, text, literal in (
             ("builds fail without push permission", engineer, "`push` false → `failed`"),
+            (
+                "the pull request destination reads pr from repo status",
+                engineer,
+                "3. By `repo.py status`'s `pr`: null → `gh pr create",
+            ),
+            *(
+                (
+                    "pm and researcher point to writing for concision",
+                    composed(role)[0],
+                    f"- **Concise**: after writing {doc}, cut repetition and preamble "
+                    "([Principles › Writing](#writing)); length follows content.",
+                )
+                for role, doc in (("pm", "the PRD"), ("researcher", "the report"))
+            ),
+            (
+                "echo's summary overrides Output's length",
+                task_text("echo"),
+                "`summary` the input's first line, not [Output](#output)'s 3–5 lines.",
+            ),
+            (
+                "a build's files are its spec and plan doc",
+                task_text("build"),
+                "adding `files`: this build's spec (the `-spec.md` beside its `-plan.md` plan doc) and plan doc "
+                "(on failure, those that exist);",
+            ),
             (
                 "research hand-off phrases",
                 task_text("research"),
@@ -568,9 +570,4 @@ class Real(RealConfig):
         self.assertIn(
             "steps 1–2 again, then, with a build left, [Engineer › Repo › Merge](#repo), then",
             item(repo_, "Resume"),
-        )
-
-    def test_the_pull_request_destination_reads_pr_from_repo_status(self):
-        self.assertIn(
-            "3. By `repo.py status`'s `pr`: null → `gh pr create", composed("engineer")[0]
         )

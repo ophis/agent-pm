@@ -148,26 +148,24 @@ class ErrText(Case):
 
 
 class ResumeCommand(Case):
-    def test_plain_argv_without_environment(self):
-        self.assertEqual(
-            resume_command("/work", {}, ("codex", "resume", "id")), "cd /work && codex resume id"
-        )
-
-    def test_quotes_directory_environment_and_arguments(self):
-        self.assertEqual(
-            resume_command(
+    def test_builds_a_shell_safe_resume_command(self):
+        for workdir, env, argv, want in (
+            ("/work", {}, ("codex", "resume", "id"), "cd /work && codex resume id"),
+            (
                 "/work dir",
                 {"LABEL": "a b", "EMPTY": ""},
                 ("claude", "--resume", "a; echo bad", ""),
+                "cd '/work dir' && LABEL='a b' EMPTY='' claude --resume 'a; echo bad' ''",
             ),
-            "cd '/work dir' && LABEL='a b' EMPTY='' claude --resume 'a; echo bad' ''",
-        )
-
-    def test_non_shell_names_are_quoted_env_operands(self):
-        self.assertEqual(
-            resume_command("/w", {"A-B": "a b", "X;Y": "$(bad)", "-x": ""}, ("tool",)),
-            "cd /w && env -- 'A-B=a b' 'X;Y=$(bad)' -x= tool",
-        )
+            (
+                "/w",
+                {"A-B": "a b", "X;Y": "$(bad)", "-x": ""},
+                ("tool",),
+                "cd /w && env -- 'A-B=a b' 'X;Y=$(bad)' -x= tool",
+            ),
+        ):
+            with self.subTest(workdir=workdir):
+                self.assertEqual(resume_command(workdir, env, argv), want)
 
 
 if __name__ == "__main__":

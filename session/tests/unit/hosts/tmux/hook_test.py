@@ -54,43 +54,42 @@ class CallbackTest(Case):
             hook.on_hook("working", HookCall("tool", {}, "sid", self.home, None, self.state))
         return run
 
-    def test_callback_uses_the_saved_selector_for_lookup_and_mark(self):
-        run = self.run_callback("sid\tgeneration")
-        self.assertEqual(
-            [call.args[0] for call in run.call_args_list],
-            [
-                [
-                    self.executable,
-                    "display-message",
-                    "-p",
-                    "-t",
-                    "=w1:",
-                    "#{@process}\t#{@sid}\t#{@generation}",
-                ],
-                [self.executable, "set-option", "-t", "%3", "@state", "working"],
-            ],
-        )
-        for call in run.call_args_list:
-            self.assertEqual(call.kwargs["env"], {"TMUX_TMPDIR": self.home, "KEEP": "value"})
-
-    def test_callback_marks_the_pane_its_launch_recorded(self):
-        run = self.run_callback("sid\tgeneration", process="1 $1 %9 42")
-        self.assertEqual(
-            run.call_args_list[1].args[0],
-            [self.executable, "set-option", "-t", "%9", "@state", "working"],
-        )
-
-    def test_a_missing_or_malformed_process_marks_nothing(self):
-        for process in ("", "%9", "1 $1 %9", "1 $1 %9 42;"):
+    def test_callback_looks_up_with_the_saved_selector_and_marks_the_pane_its_launch_recorded(
+        self,
+    ):
+        for process, pane in (("4242 $3 %3 4343", "%3"), ("1 $1 %9 42", "%9")):
             with self.subTest(process=process):
+                run = self.run_callback("sid\tgeneration", process=process)
                 self.assertEqual(
-                    self.run_callback("sid\tgeneration", process=process).call_count, 1
+                    [call.args[0] for call in run.call_args_list],
+                    [
+                        [
+                            self.executable,
+                            "display-message",
+                            "-p",
+                            "-t",
+                            "=w1:",
+                            "#{@process}\t#{@sid}\t#{@generation}",
+                        ],
+                        [self.executable, "set-option", "-t", pane, "@state", "working"],
+                    ],
                 )
+                for call in run.call_args_list:
+                    self.assertEqual(
+                        call.kwargs["env"], {"TMUX_TMPDIR": self.home, "KEEP": "value"}
+                    )
 
-    def test_a_reused_name_even_with_the_same_sid_is_never_marked(self):
-        for identity in ("sid\tnext-generation", "other\tgeneration", "", None):
-            with self.subTest(identity=identity):
-                self.assertEqual(self.run_callback(identity).call_count, 1)
+    def test_a_malformed_process_or_a_reused_name_even_with_the_same_sid_marks_nothing(self):
+        cases = (
+            *(("sid\tgeneration", process) for process in ("", "%9", "1 $1 %9", "1 $1 %9 42;")),
+            *(
+                (identity, "4242 $3 %3 4343")
+                for identity in ("sid\tnext-generation", "other\tgeneration", "", None)
+            ),
+        )
+        for identity, process in cases:
+            with self.subTest(identity=identity, process=process):
+                self.assertEqual(self.run_callback(identity, process=process).call_count, 1)
 
 
 class MarkTest(Case):
@@ -111,11 +110,13 @@ class MarkTest(Case):
         with open(self.events) as f:
             return f.read()
 
-    def test_working_sets_the_state_only(self):
-        fake = FakeTmux(pane="w1")
-        hook.mark("working", self.events, proc=fake)
-        self.assertEqual(fake.calls, [["tmux", "set-option", "-t", "%1", "@state", "working"]])
-        self.assertEqual(fake.kwargs, [MARK_KW])
+    def test_working_or_no_events_file_sets_the_state_only(self):
+        for word, events in (("working", self.events), ("done", None), ("blocked", None)):
+            with self.subTest(word=word, events=events):
+                fake = FakeTmux(pane="w1")
+                hook.mark(word, events, proc=fake)
+                self.assertEqual(fake.calls, [["tmux", "set-option", "-t", "%1", "@state", word]])
+                self.assertEqual(fake.kwargs, [MARK_KW])
         self.assertEqual(self.text(), "old\n")
 
     def test_done_and_blocked_set_the_state_and_append_a_line_through_the_given_tmux(self):
@@ -132,14 +133,6 @@ class MarkTest(Case):
                 )
                 self.assertEqual(fake.kwargs, [MARK_KW] * 2)
         self.assertRegex(self.text(), r"^old\n\d\d:\d\d:\d\d w1 done\n\d\d:\d\d:\d\d w1 blocked\n$")
-
-    def test_no_events_file_sets_the_state_only(self):
-        for word in ("done", "blocked"):
-            with self.subTest(word):
-                fake = FakeTmux(pane="w1")
-                hook.mark(word, None, proc=fake)
-                self.assertEqual(fake.calls, [["tmux", "set-option", "-t", "%1", "@state", word]])
-        self.assertEqual(self.text(), "old\n")
 
     def test_its_pane_is_tmux_pane_else_nothing_is_marked(self):
         fake = FakeTmux(pane="w1")

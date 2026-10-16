@@ -43,23 +43,16 @@ class Control(Case):
             [call for call in ctl.calls(self.ctl_dir) if call["argv"][0] == "close"], []
         )
 
-    def test_non_holder_stop_closes_nothing(self):
+    def test_a_non_holders_stop_and_stop_all_close_nothing(self):
         with self.roster.hold("owner"):
             entries = self.roster.entries()
             ledger = Path(self.roster.path).read_bytes()
             other = Crew(Roster(self.directory))
-            with self.assertRaises(Held):
-                other.stop("first")
-            self.assert_unchanged_and_alive(entries, ledger)
-
-    def test_non_holder_stop_all_closes_nothing(self):
-        with self.roster.hold("owner"):
-            entries = self.roster.entries()
-            ledger = Path(self.roster.path).read_bytes()
-            other = Crew(Roster(self.directory))
-            with self.assertRaises(Held):
-                other.stop_all()
-            self.assert_unchanged_and_alive(entries, ledger)
+            for method, args in (("stop", ("first",)), ("stop_all", ())):
+                with self.subTest(method=method):
+                    with self.assertRaises(Held):
+                        getattr(other, method)(*args)
+                    self.assert_unchanged_and_alive(entries, ledger)
 
     def test_status_and_show_execute_outside_roster_lock(self):
         for record in self.records:

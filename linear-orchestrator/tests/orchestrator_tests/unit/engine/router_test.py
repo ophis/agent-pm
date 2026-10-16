@@ -7,7 +7,6 @@ import io
 import json
 import os
 import re
-import sys
 import urllib.error
 from contextlib import redirect_stderr, redirect_stdout
 from dataclasses import replace
@@ -62,7 +61,6 @@ from orchestrator_tests.unit.board_ids import role as role_table
 from orchestrator_tests.unit.delegate_fixture import provider
 from orchestrator_tests.unit.outage import FAILURES, FIELDS, failing
 from orchestrator_tests.unit.run_fixtures import (
-    ENGINEER,
     HARNESS,
     ID,
     KEY,
@@ -126,32 +124,6 @@ def other_router(path):
     with open(os.path.join(os.path.dirname(path), "router.lock"), "a") as f:
         fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
         yield
-
-
-def forwarded(assignee=ENGINEER, task=None, mode="new", sid=SID, client="a"):
-    return [
-        f"--issue={ID}",
-        f"--project={PROJECT}",
-        f"--assignee={assignee}",
-        f"--sid={sid}",
-        *([f"--task={task}"] if task else []),
-        f"--mode={mode}",
-        f"--client={client}",
-    ]
-
-
-def inner(*args, text=INPUT):
-    return [
-        sys.executable,
-        "-P",
-        "-m",
-        "agent_pm.linear_orchestrator.cli",
-        "run",
-        "--uuid",
-        UUID,
-        *args,
-        f"--input={text}",
-    ]
 
 
 SAY = functools.partial(router.log, "router")
@@ -2272,11 +2244,14 @@ class RunLaunching(OuterBase):
         self.assertIs(caught.exception, error)
         self.assertEqual((self.api.detached, self.gql.calls), ([], []))
 
-    def test_a_resume_not_resumable_starts_nothing(self):
-        for value, why in (
-            (NO, "no"),
-            (SessionStatus("unknown", None, ""), "unknown"),
-            (SessionError("boom"), "SessionError: boom"),
+    def test_a_resume_not_resumable_starts_nothing_and_counts_toward_the_cap(self):
+        for n, (value, why) in enumerate(
+            (
+                (NO, "no"),
+                (SessionStatus("unknown", None, ""), "unknown"),
+                (SessionError("boom"), "SessionError: boom"),
+            ),
+            1,
         ):
             with self.subTest(why=why):
                 self.api.statuses[SID] = value
@@ -2285,6 +2260,7 @@ class RunLaunching(OuterBase):
                     (self.said(), self.err),
                     ([f"transient TASK-7 reason=session {SID} not resumable ({why})"], ""),
                 )
+                self.assertEqual(self.kinds(), ["start", *["resume"] * n])
         self.assertEqual((self.api.detached, self.gql.calls, self.run_.calls), ([], [], []))
         self.assertEqual(self.api.info, [("a", SID, self.rd)] * 3)
 
@@ -2331,11 +2307,6 @@ class RunLaunching(OuterBase):
         if not os.path.exists(self.runs):
             return []
         return [json.loads(line)["kind"] for line in self.raw_runs().splitlines()]
-
-    def test_a_resume_that_fails_still_counts_toward_the_cap(self):
-        self.api.statuses[SID] = NO
-        self.assertEqual(self.outer(mode="resume"), 3)
-        self.assertEqual(self.kinds(), ["start", "resume"])
 
     def test_a_new_runs_row_comes_once_its_delegate_state_is_built_before_its_detach(self):
         for attr, error, kinds in (
@@ -3579,18 +3550,23 @@ class ClaimRechecks(Base):
             ),
         )
 
-    def test_a_full_new_role_is_skipped(self):
-        fake = Changed([issue("TASK-1", "Todo", "researcher")], {"TASK-1": {"assignee": who("pm")}})
-        self.assertEqual(self.claim(fake, full={"pm"}), "")
-        self.assertEqual(
-            self.said(),
-            [
-                "pick TASK-1 queue=1",
-                "claim-skip TASK-1 reason=pm is full",
-                "pick-none reason=nothing claimable",
-            ],
-        )
-        self.assertEqual((fake.mutations, fake.issues["TASK-1"]["state"]), ([], "Todo"))
+    def test_a_full_new_role_or_a_removed_project_is_skipped(self):
+        for change, full, reason in (
+            ({"assignee": who("pm")}, {"pm"}, "pm is full"),
+            ({"project": None}, (), "no project"),
+        ):
+            with self.subTest(reason=reason):
+                fake = Changed([issue("TASK-1", "Todo", "researcher")], {"TASK-1": change})
+                self.assertEqual(self.claim(fake, full=full), "")
+                self.assertEqual(
+                    self.said(),
+                    [
+                        "pick TASK-1 queue=1",
+                        f"claim-skip TASK-1 reason={reason}",
+                        "pick-none reason=nothing claimable",
+                    ],
+                )
+                self.assertEqual((fake.mutations, fake.issues["TASK-1"]["state"]), ([], "Todo"))
 
     def test_a_changed_project_is_the_runs(self):
         fake = Changed(
@@ -3603,19 +3579,6 @@ class ClaimRechecks(Base):
             Spec.from_issue(self.taken[0], mode="new", sid="s1", task=None, client="a"),
         )
         self.assertEqual(a.project, IDS[PD])
-
-    def test_a_removed_project_is_skipped(self):
-        fake = Changed([issue("TASK-1", "Todo", "researcher")], {"TASK-1": {"project": None}})
-        self.assertEqual(self.claim(fake), "")
-        self.assertEqual(
-            self.said(),
-            [
-                "pick TASK-1 queue=1",
-                "claim-skip TASK-1 reason=no project",
-                "pick-none reason=nothing claimable",
-            ],
-        )
-        self.assertEqual((fake.mutations, fake.issues["TASK-1"]["state"]), ([], "Todo"))
 
 
 class LiveLimits(Base):

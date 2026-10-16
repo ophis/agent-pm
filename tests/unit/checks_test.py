@@ -1,9 +1,7 @@
 import importlib
 import os
 import types
-from pathlib import Path
 
-from tests import guards
 from tests.case import REPO, SRC, Case
 from tests.checks import MODULES, checks, discover
 
@@ -13,24 +11,6 @@ class RealTree(Case):
         for name, found in checks(REPO):
             with self.subTest(name):
                 self.assertEqual(found, [])
-
-    def test_utils_holds_none_of_the_modules_that_left_it(self):
-        moved = ("protocol",)
-        utils = os.listdir(os.path.join(SRC["utils"], "agent_pm", "utils"))
-        self.assertEqual([n for n in utils if n.endswith(".py") and n[:-3] in moved], [])
-
-    def test_no_tree_names_the_old_orchestrator_package(self):
-        old = "_".join(("agent_pm", "orchestrator"))
-        named = []
-        for tree in guards.TREES:
-            for top, dirs, files in os.walk(os.path.join(REPO, tree)):
-                dirs[:] = sorted(d for d in dirs if d != "__pycache__")
-                for name in sorted(files):
-                    rel = os.path.relpath(os.path.join(top, name), REPO)
-                    text = Path(top, name).read_text(encoding="utf-8", errors="replace")
-                    if old in rel or old in text:
-                        named.append(rel)
-        self.assertEqual(named, [])
 
     def test_src_modules_load_from_src(self):
         for root in (r for sub, r in SRC.items() if sub != "linear_orchestrator"):

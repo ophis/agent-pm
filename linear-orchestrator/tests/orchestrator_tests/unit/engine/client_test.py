@@ -74,7 +74,6 @@ class LinearGql(Case):
             self.assertRaises(TypeError),
         ):
             client.linear_gql(VIEWER)
-        self.assertFalse(hasattr(client, "harness_service"))
 
     def test_a_bad_keychain_key_raises_naming_only_the_service(self):
         for out, key in (("\n", ""), ("lin api\n", "lin api"), ("lin\x1bapi\n", "lin\x1bapi")):
@@ -109,23 +108,58 @@ class Unavailable(Case):
             self.assertNotIn(SECRET, text)
         return e.op, e.status, e.reason, str(e)
 
-    def test_5xx_and_rate_limit_carry_the_status(self):
+    def test_unavailable_names_the_op_and_the_status_or_reason(self):
         cases = [
-            (ops.Q_TEAM, http_error(503), ("teams", 503, None, "teams: HTTP 503")),
+            (ops.Q_TEAM, {"opened": http_error(503)}, ("teams", 503, None, "teams: HTTP 503")),
             (
                 ops.M_STATE,
-                http_error(500, b"<html>"),
+                {"opened": http_error(500, b"<html>")},
                 ("issueUpdate", 500, None, "issueUpdate: HTTP 500"),
             ),
             (
                 ops.M_COMMENT,
-                http_error(400, errors("OTHER", "RATELIMITED")),
+                {"opened": http_error(400, errors("OTHER", "RATELIMITED"))},
                 ("commentCreate", 400, "RATELIMITED", "commentCreate: RATELIMITED"),
             ),
+            *(
+                (VIEWER, kw, ("viewer", None, reason, f"viewer: {reason}"))
+                for kw, reason in (
+                    ({"opened": TimeoutError("timed out")}, "TimeoutError: timed out"),
+                    (
+                        {
+                            "opened": urllib.error.URLError(
+                                ConnectionRefusedError(61, "Connection refused")
+                            )
+                        },
+                        "ConnectionRefusedError: [Errno 61] Connection refused",
+                    ),
+                    ({"opened": urllib.error.URLError("no\n host")}, "no host"),
+                    (
+                        {"opened": ConnectionResetError(54, "Connection reset by peer")},
+                        "ConnectionResetError: [Errno 54] Connection reset by peer",
+                    ),
+                    (
+                        {"read": http.client.IncompleteRead(b"{", 9)},
+                        "IncompleteRead: IncompleteRead(1 bytes read, 9 more expected)",
+                    ),
+                    (
+                        {"read": TimeoutError("The read operation timed out")},
+                        "TimeoutError: The read operation timed out",
+                    ),
+                )
+            ),
+            *(
+                (
+                    ops.Q_TEAM,
+                    {"body": body},
+                    ("teams", None, "response not JSON", "teams: response not JSON"),
+                )
+                for body in (b"<html>502 Bad Gateway</html>", b"", b"\xff\xfe{")
+            ),
         ]
-        for query, error, want in cases:
-            with self.subTest(want=want):
-                self.assertEqual(self.unavailable(query, opened=error), want)
+        for query, kw, want in cases:
+            with self.subTest(want=want, kw=kw):
+                self.assertEqual(self.unavailable(query, **kw), want)
 
     def linear_error(self, error):
         with error, self.assertRaises(LinearError) as cm:
@@ -133,54 +167,30 @@ class Unavailable(Case):
         self.assertNotIn(SECRET, str(cm.exception))
         return str(cm.exception)
 
-    def test_other_4xx_are_linear_errors_naming_op_and_status(self):
-        for error in (
-            http_error(400, errors("GRAPHQL_VALIDATION_FAILED")),
-            http_error(400, b"not json"),
-            http_error(400),
-            http_error(400, b'{"errors": 1}'),
-            http_error(401, errors("AUTHENTICATION_ERROR")),
-            http_error(401, errors("RATELIMITED")),
-            http_error(403),
+    def test_other_4xx_and_malformed_errors_are_linear_errors_naming_op_and_status(self):
+        for case, error in enumerate(
+            (
+                http_error(400, errors("GRAPHQL_VALIDATION_FAILED")),
+                http_error(400, b"not json"),
+                http_error(400),
+                http_error(400, b'{"errors": 1}'),
+                http_error(401, errors("AUTHENTICATION_ERROR")),
+                http_error(401, errors("RATELIMITED")),
+                http_error(403),
+                *(
+                    http_error(400, body)
+                    for body in (
+                        b"null",
+                        b"[]",
+                        b'{"errors": null}',
+                        b'{"errors": [null, 1, {"extensions": 1}]}',
+                    )
+                ),
+            )
         ):
-            with self.subTest(code=error.code):
+            with self.subTest(case=case, code=error.code):
                 self.assertEqual(
                     self.linear_error(error), f"linear api error: viewer: HTTP {error.code}"
-                )
-
-    def test_transport_errors_carry_the_reason(self):
-        cases = [
-            ({"opened": TimeoutError("timed out")}, "TimeoutError: timed out"),
-            (
-                {"opened": urllib.error.URLError(ConnectionRefusedError(61, "Connection refused"))},
-                "ConnectionRefusedError: [Errno 61] Connection refused",
-            ),
-            ({"opened": urllib.error.URLError("no\n host")}, "no host"),
-            (
-                {"opened": ConnectionResetError(54, "Connection reset by peer")},
-                "ConnectionResetError: [Errno 54] Connection reset by peer",
-            ),
-            (
-                {"read": http.client.IncompleteRead(b"{", 9)},
-                "IncompleteRead: IncompleteRead(1 bytes read, 9 more expected)",
-            ),
-            (
-                {"read": TimeoutError("The read operation timed out")},
-                "TimeoutError: The read operation timed out",
-            ),
-        ]
-        for kw, reason in cases:
-            with self.subTest(reason=reason):
-                self.assertEqual(
-                    self.unavailable(VIEWER, **kw), ("viewer", None, reason, f"viewer: {reason}")
-                )
-
-    def test_a_2xx_body_not_json(self):
-        for body in (b"<html>502 Bad Gateway</html>", b"", b"\xff\xfe{"):
-            with self.subTest(body=body):
-                self.assertEqual(
-                    self.unavailable(ops.Q_TEAM, body=body),
-                    ("teams", None, "response not JSON", "teams: response not JSON"),
                 )
 
     def test_graphql_errors_in_a_200_stay_systemexit(self):
@@ -195,18 +205,6 @@ class Unavailable(Case):
         for body in (b"null", b"[]", b"1", b"{}", b'{"data": null}', b'{"data": []}'):
             with self.subTest(body=body), self.assertRaises(types.Unavailable):
                 self.gql(VIEWER, body=body)
-
-    def test_malformed_rate_limit_errors_are_linear_errors(self):
-        for body in (
-            b"null",
-            b"[]",
-            b'{"errors": null}',
-            b'{"errors": [null, 1, {"extensions": 1}]}',
-        ):
-            with self.subTest(body=body):
-                self.assertEqual(
-                    self.linear_error(http_error(400, body)), "linear api error: viewer: HTTP 400"
-                )
 
     def test_operation_is_the_first_field_of_the_top_level_selection_set(self):
         cases = {

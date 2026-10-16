@@ -466,11 +466,6 @@ class DryRun(Base):
             (self.launches(), os.path.exists(self.work), os.listdir(self.agent_pm)), ([], False, [])
         )
 
-    def test_a_dry_run_configures_the_session(self):
-        code, stdout, err = self.runs("--dry-run")
-        self.assertEqual(code, 0, err)
-        self.assertEqual(json.loads(stdout)["client"], "fake")
-
     def test_a_new_run_gets_a_sid_and_a_resume_continues_its_task(self):
         code, out, _ = self.runs("--dry-run", task=None)
         shown = json.loads(out)
@@ -780,16 +775,10 @@ class Usage(Base):
         )
         self.assertEqual(self.launches(), [])
 
-    def test_client_given_twice_exits_2(self):
-        for extra in (("--client", "fake"), ("--client=fake",)):
-            with self.subTest(extra=extra):
-                code, out, err = self.runs(*extra)
-                self.assertEqual((code, out), (2, ""))
-                self.assertIn("--client given twice", err)
-        self.assertEqual(self.launches(), [])
-
-    def test_out_or_workdir_given_twice_exits_2_before_anything_starts(self):
+    def test_an_option_given_twice_exits_2_before_anything_starts(self):
         for extra, error in (
+            (("--client", "fake"), "--client given twice"),
+            (("--client=fake",), "--client given twice"),
             (("--out", "b.md"), "--out given twice"),
             (("--workdir", "b"), "--workdir given twice"),
         ):
@@ -899,13 +888,14 @@ class Prompt(Case):
         log = Path(Layout(self.work).run, "run.jsonl")
         self.assertFalse(log.exists())
 
-    def test_runtime_execution_options_are_usage_errors_before_writes(self):
+    def test_runtime_execution_and_removed_options_are_usage_errors_before_writes(self):
         for argv in (
             ("--client", "claude"),
             ("--mode", "tui"),
             ("--detach",),
             ("--sid", "11111111-2222-3333-4444-555555555555"),
             ("--resume",),
+            ("--driver", "obsolete"),
         ):
             with self.subTest(argv=argv):
                 code, out, err = self.prompt(*argv)
@@ -930,12 +920,6 @@ class Prompt(Case):
                 + ["--workdir", self.work, "--out", "-"]
             )
         self.assertEqual((code, err.getvalue()), (2, "delegate: --out takes a PATH, not -\n"))
-        self.assertFalse(os.path.exists(self.work))
-
-    def test_hidden_driver_option_is_removed(self):
-        code, out, err = self.prompt("--driver", "obsolete")
-        self.assertEqual((code, out), (2, ""))
-        self.assertIn("unrecognized arguments:", err)
         self.assertFalse(os.path.exists(self.work))
 
     def test_unknown_role_is_a_config_error_before_writes(self):

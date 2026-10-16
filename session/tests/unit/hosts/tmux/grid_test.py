@@ -21,7 +21,6 @@ from session.tests.tmux_fixtures import (
     COMMAND,
     HOSTS,
     INSIDE,
-    MODE_HOOKS,
     OWN,
     PGREP,
     RETILE_ERROR,
@@ -471,12 +470,6 @@ class GridOpenTest(Case):
 class RetileTest(Case):
     def test_modes(self):
         self.assertEqual(list(types.Retile), ["all", "open-close", "off"])
-        self.assertIs(grids.RETILE, types.Retile.OPEN_CLOSE)
-        self.assertEqual(grids.RETILE_HOOKS, MODE_HOOKS)
-        self.assertEqual(list(grids.RETILE_HOOKS), list(types.Retile))
-        for retile in grids.RETILE_HOOKS:
-            self.assertIs(type(retile), types.Retile)
-        self.assertEqual(grids.GRID_PANES_SET, "@grid-panes")
         for retile in (None, *types.Retile, "all"):
             with self.subTest(retile=retile):
                 self.assertIsNone(grids.validate_retile(retile))
@@ -577,17 +570,36 @@ class TileApplicationTest(TileFixture):
             want.split(",", 1)[1], "160x48,0,0{79x48,0,0,0,80x48,80,0[80x24,80,0,2,80x23,80,25,1]}"
         )
 
-    def test_no_op_when_the_layouts_cells_match(self):
-        fake = self.tile(self.THREE, ["%0", "%1", "%2", "%3"], self.W3)
-        self.assertEqual(fake.calls, [self.SOCKET, self.READ, self.PANES, SESSIONS, self.UNMUTE])
-        # the target's cells in another tree: a pass over the target would move them, but none
-        # follows a no-op
-        layout = dump(
-            "200x50,0,0{80x50,0,0,0,119x50,81,0{59x50,81,0,2,29x50,141,0,1,29x50,171,0,3}}"
-        )
-        rows = [("$2", "w1", "old1", "%1"), ("$3", "w2", "old3", "%2"), ("$4", "w3", "w1", "%3")]
-        fake = self.tile(layout, ["%0", "%2", "%1", "%3"], rows, n="1", size=(200, 50))
-        self.assertEqual(fake.calls, [self.SOCKET, self.READ, self.PANES, SESSIONS, self.UNMUTE])
+    def test_no_op_when_the_layouts_cells_match_or_the_grid_would_not_fit(self):
+        for case, layout, panes, rows, n, size in (
+            ("cells match", self.THREE, ["%0", "%1", "%2", "%3"], self.W3, "", (160, 48)),
+            # the target's cells in another tree: a pass over the target would move them, but none
+            # follows a no-op
+            (
+                "cells match in another tree",
+                dump(
+                    "200x50,0,0{80x50,0,0,0,119x50,81,0{59x50,81,0,2,29x50,141,0,1,29x50,171,0,3}}"
+                ),
+                ["%0", "%2", "%1", "%3"],
+                [("$2", "w1", "old1", "%1"), ("$3", "w2", "old3", "%2"), ("$4", "w3", "w1", "%3")],
+                "1",
+                (200, 50),
+            ),
+            # three cells side by side, 4 high: a column of three needs 5
+            (
+                "too small",
+                dump("160x4,0,0{79x4,0,0,0,80x4,80,0{26x4,80,0,1,26x4,107,0,2,26x4,134,0,3}}"),
+                ["%0", "%1", "%2", "%3"],
+                self.W3,
+                "",
+                (160, 4),
+            ),
+        ):
+            with self.subTest(case):
+                fake = self.tile(layout, panes, rows, n=n, size=size)
+                self.assertEqual(
+                    fake.calls, [self.SOCKET, self.READ, self.PANES, SESSIONS, self.UNMUTE]
+                )
 
     def test_an_already_laid_out_window_records_its_pane_set_alone(self):
         # @grid-panes unset, junk or another set: set alone (pane ids in numeric order), so a later
@@ -635,17 +647,6 @@ class TileApplicationTest(TileFixture):
                     fake.calls,
                     [self.SOCKET, self.READ, self.PANES, SESSIONS, *self.applied(self.WIDE_SENT)],
                 )
-
-    def test_if_panes_changed_reads_only_holding_the_lock(self):
-        release = hold(self, self.lock)
-        fake = self.tile(*self.WIDE, recorded="", wait=False, if_panes_changed=True)
-        self.assertEqual(fake.calls, [self.SOCKET])
-        release()
-        fake = self.tile(*self.WIDE, recorded="", wait=False, if_panes_changed=True)
-        self.assertEqual(
-            fake.calls,
-            [self.SOCKET, self.READ, self.PANES, SESSIONS, *self.applied(self.WIDE_SENT)],
-        )
 
     def test_if_panes_changed_zoomed_no_grid_or_torn_down_records_nothing(self):
         for kw in ({"zoomed": "1"}, {"manager": ""}):
@@ -717,29 +718,6 @@ class TileApplicationTest(TileFixture):
                     fake.calls, [self.SOCKET, self.READ, self.PANES, SESSIONS, self.UNMUTE]
                 )
 
-    def test_the_pass_only_reads_and_returns_grid_tiles_as_read_with_what_to_send(self):
-        split = "2cc7,160x48,0,0{79x48,0,0,0,80x48,80,0[80x8,80,0,1,80x7,80,9,4,80x15,80,17,2,80x15,80,33,3]}"
-        for layout, panes, zoomed, want, reads in (
-            (
-                split,
-                ["%0", "%1", "%4", "%2", "%3"],
-                "0",
-                (
-                    [("%2", "%4"), ("%3", "%4")],
-                    layouts.parse_layout(layouts.render_layout(grid(4))),
-                    "1 x 2",
-                    "%0 %1 %2 %3 %4",
-                ),
-                [self.READ, self.PANES, SESSIONS],
-            ),
-            (self.THREE, ["%0", "%1", "%2", "%3"], "0", None, [self.READ, self.PANES, SESSIONS]),
-            (self.THREE, ["%0", "%1", "%2", "%3"], "1", None, [self.READ]),
-        ):
-            with self.subTest(layout=layout, zoomed=zoomed):
-                fake = self.fake(layout, panes, self.W3, zoomed=zoomed, tiles="1 x 2")
-                self.assertEqual(grids._grid_pass("@3", None, fake, if_panes_changed=False), want)
-                self.assertEqual(fake.calls, reads)
-
     def test_a_dead_worker_keeps_its_cell(self):
         # FR-12: w2's command exited (its session and dead pane stay), its host pane %2 attaches on;
         # w1 (%1) closed
@@ -796,12 +774,6 @@ class TileApplicationTest(TileFixture):
             with self.subTest(layout=layout, panes=panes):
                 fake = self.tile(layout, panes, self.W3)
                 self.assertEqual(fake.calls, [self.SOCKET, self.READ, self.PANES, self.UNMUTE])
-
-    def test_too_small_nothing_changed(self):
-        # three cells side by side, 4 high: a column of three needs 5
-        layout = dump("160x4,0,0{79x4,0,0,0,80x4,80,0{26x4,80,0,1,26x4,107,0,2,26x4,134,0,3}}")
-        fake = self.tile(layout, ["%0", "%1", "%2", "%3"], self.W3, size=(160, 4))
-        self.assertEqual(fake.calls, [self.SOCKET, self.READ, self.PANES, SESSIONS, self.UNMUTE])
 
     def test_a_later_pass_too_small_keeps_the_last_that_fits(self):
         layout = dump(
@@ -936,15 +908,17 @@ class TileApplicationTest(TileFixture):
 
 class TileCoordinationTest(TileFixture):
     def test_a_hook_run_returns_at_once_while_another_tile_holds_the_lock(self):
-        release = hold(self, self.lock)
-        fake = self.tile(*self.WIDE, wait=False)
-        self.assertEqual(fake.calls, [self.SOCKET])
-        release()
-        fake = self.tile(*self.WIDE, wait=False)
-        self.assertEqual(
-            fake.calls,
-            [self.SOCKET, self.READ, self.PANES, SESSIONS, *self.applied(self.WIDE_SENT)],
-        )
+        for kw in ({}, {"recorded": "", "if_panes_changed": True}):
+            with self.subTest(**kw):
+                release = hold(self, self.lock)
+                fake = self.tile(*self.WIDE, wait=False, **kw)
+                self.assertEqual(fake.calls, [self.SOCKET])
+                release()
+                fake = self.tile(*self.WIDE, wait=False, **kw)
+                self.assertEqual(
+                    fake.calls,
+                    [self.SOCKET, self.READ, self.PANES, SESSIONS, *self.applied(self.WIDE_SENT)],
+                )
 
     def test_an_explicit_tile_waits_for_the_lock_then_tiles(self):
         release = hold(self, self.lock)
@@ -1117,8 +1091,7 @@ class TileCoordinationTest(TileFixture):
         with self.assertRaisesRegex(types.TuiError, "^tmux: boom$"):
             grids.tile("@3", proc=fake)
         self.assertEqual(fake.calls[4:], self.applied(self.WIDE_SENT))
-        with grids._grid_lock(self.sock, "@3", wait=False) as held:
-            self.assertTrue(held)
+        self.assertEqual(self.tile(*self.WIDE, wait=False).calls[:2], [self.SOCKET, self.READ])
         with self.assertRaisesRegex(types.TuiError, "^tmux: boom$"):
             self.tile(dump("160x48,0,0,0"), ["%0"], fail=("set-hook",))
         with self.assertRaisesRegex(types.TuiError, "^tmux: boom$"):

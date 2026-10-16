@@ -168,8 +168,9 @@ class DetachTest(Base):
             raise TuiError("session d1 exists")
 
         self.tmux.detach.side_effect = refuse
-        with self.assertRaisesRegex(SessionError, "session d1 exists"):
+        with self.assertRaises(SessionError) as caught:
             self.detach()
+        self.assertEqual(str(caught.exception), "detach d1: session d1 exists")
         self.assertEqual(len(paths), 1)
         self.assertFalse(os.path.exists(paths[0]))
         self.tmux.kill.assert_not_called()
@@ -314,12 +315,6 @@ class DetachTest(Base):
         self.tmux.detach.assert_not_called()
         self.socket.assert_not_called()
 
-    def test_a_tmux_failure_is_a_driver_error(self):
-        self.tmux.detach.side_effect = TuiError("session d1 exists")
-        with self.assertRaises(SessionError) as caught:
-            self.detach()
-        self.assertEqual(str(caught.exception), "detach d1: session d1 exists")
-
 
 class TerminalTest(Base):
     def test_a_terminal_that_never_starts_closes_only_its_captured_pane(self):
@@ -363,12 +358,34 @@ class TerminalTest(Base):
 
     def test_press_translates_every_key_then_sends_them_in_one_tmux_call(self):
         self.active()
-        terminal = TmuxTerminal("t1", PROCESS, tmux=self.tmux, control=self.control)
-        notation = ("Escape", "3", "PageUp", "PageDown", " ", ";", "C-M-S-Up", "-", "BTab", "C-c")
-        terminal.press(tuple(map(KeyPress.parse, notation)))
-        self.tmux.press.assert_called_once_with(
-            "%7", "Escape", "3", "PPage", "NPage", "Space", "\\;", "C-M-S-Up", "-", "BTab", "C-c"
-        )
+        for notation, names in (
+            (
+                ("Escape", "3", "PageUp", "PageDown", " ", ";", "C-M-S-Up", "-", "BTab", "C-c"),
+                ("Escape", "3", "PPage", "NPage", "Space", "\\;", "C-M-S-Up", "-", "BTab", "C-c"),
+            ),
+            # ctrl reaches letters, space and the C0 punctuation
+            (
+                ("C- ", "C-/", "C-@", "C-[", "C-\\", "C-]", "C-^", "C-_", "C-?", "C-M-[", "C-A"),
+                (
+                    "C-Space",
+                    "C-/",
+                    "C-@",
+                    "C-[",
+                    "C-\\",
+                    "C-]",
+                    "C-^",
+                    "C-_",
+                    "C-?",
+                    "C-M-[",
+                    "C-A",
+                ),
+            ),
+        ):
+            with self.subTest(notation=notation):
+                self.tmux.press.reset_mock()
+                terminal = TmuxTerminal("t1", PROCESS, tmux=self.tmux, control=self.control)
+                terminal.press(tuple(map(KeyPress.parse, notation)))
+                self.tmux.press.assert_called_once_with("%7", *names)
 
     def test_a_key_it_cannot_translate_sends_none_of_the_keys(self):
         self.active()
@@ -379,15 +396,6 @@ class TerminalTest(Base):
         self.tmux.press.assert_not_called()
         terminal.press((KeyPress.parse("C-c"), KeyPress.parse("S-Up"), KeyPress.parse("M-1")))
         self.tmux.press.assert_called_once_with("%7", "C-c", "S-Up", "M-1")
-
-    def test_ctrl_reaches_letters_space_and_the_c0_punctuation(self):
-        self.active()
-        terminal = TmuxTerminal("t1", PROCESS, tmux=self.tmux, control=self.control)
-        notation = ("C- ", "C-/", "C-@", "C-[", "C-\\", "C-]", "C-^", "C-_", "C-?", "C-M-[", "C-A")
-        terminal.press(tuple(map(KeyPress.parse, notation)))
-        self.tmux.press.assert_called_once_with(
-            "%7", "C-Space", "C-/", "C-@", "C-[", "C-\\", "C-]", "C-^", "C-_", "C-?", "C-M-[", "C-A"
-        )
 
     def test_a_press_following_a_paste_waits_for_paste_delivery(self):
         self.active()
@@ -882,6 +890,15 @@ class DetachHandoverTest(StartFixture):
         self.sleep.assert_not_called()
         self.assertEqual(os.listdir(self.temp), [])
 
+    def test_the_wrapper_code_tmux_runs_is_safe_for_tmux(self):
+        fake = FakeTmux()
+        self.detach(fake)
+        call = fake.calls[0]
+        code = call[call.index(sys.executable) + 3]
+        self.assertEqual(code, EXEC)
+        self.assertNotIn("#", code)
+        self.assertFalse(code.rstrip().endswith(";"))
+
     def test_handover_file_without_the_terminal_keys(self):
         env = {
             "PATH": self.bin,
@@ -1224,12 +1241,6 @@ class DetachHandoverTest(StartFixture):
         self.assertEqual([a for c in fake.calls for a in c if "#(x)" in a or "#{y}" in a], [])
 
 
-class ExecTest(Case):
-    def test_safe_for_tmux(self):
-        self.assertNotIn("#", EXEC)
-        self.assertFalse(EXEC.rstrip().endswith(";"))
-
-
 class EventsFileTest(Case):
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()
@@ -1411,9 +1422,8 @@ class StartTest(StartFixture):
                 self.assertEqual(os.listdir(self.temp), [])
 
     def test_terminal_keys(self):
-        self.assertEqual(
-            set(TERMINAL_KEYS),
-            {
+        terminal = dict.fromkeys(
+            (
                 "TMUX",
                 "TMUX_PANE",
                 "TERM",
@@ -1427,7 +1437,14 @@ class StartTest(StartFixture):
                 "LC_TERMINAL_VERSION",
                 "COLUMNS",
                 "LINES",
-            },
+            ),
+            "x",
+        )
+        fake = FakeTmux()
+        self.start(fake, env={"PATH": self.bin, "HOME": "/h", "SHELL": "/bin/zsh", **terminal})
+        self.assertEqual(
+            fake._handover["env"],
+            {"PATH": self.bin, "HOME": "/h", "SHELL": "/bin/zsh", "PWD": self.cwd},
         )
 
     def test_cwd_never_reaches_tmux(self):

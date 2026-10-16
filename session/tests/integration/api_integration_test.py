@@ -284,14 +284,6 @@ class IdleTest(Base):
         for before, after in zip(times, times[1:], strict=False):
             self.assertGreaterEqual(after - before, IDLE - 0.01)
 
-    def test_none_after_blocked(self):
-        self.steps(out("blocked", reason="approve"), {"sleep": SILENCE})
-        self.assertEqual(self.drain(self.start(idle_timeout=IDLE)), [Blocked("approve"), Exited(0)])
-
-    def test_none_without_an_idle_timeout(self):
-        self.steps(out("activity", name="Read"), {"sleep": SILENCE})
-        self.assertEqual(self.drain(self.start()), [Activity("Read"), Exited(0)])
-
     def test_a_stderr_line_after_blocked_starts_no_timer(self):
         self.steps(
             out("blocked", reason="approve"),
@@ -303,8 +295,8 @@ class IdleTest(Base):
         self.assertCountEqual(found[:-1], [Blocked("approve"), Stderr("still waiting")])
         self.assertEqual(found[-1], Exited(0))
 
-    def test_stderr_lines_restart_the_timer(self):
-        self.steps(
+    def test_no_idle_timeout_after_blocked_without_one_or_while_stderr_restarts_it(self):
+        restarting = (
             {"err": "1"},
             {"sleep": GAP},
             {"err": "2"},
@@ -313,20 +305,44 @@ class IdleTest(Base):
             {"sleep": GAP},
             {"err": "4"},
         )
-        self.assertEqual(
-            self.drain(self.start(idle_timeout=3 * GAP)),
-            [Stderr("1"), Stderr("2"), Stderr("3"), Stderr("4"), Exited(0)],
-        )
+        for case, steps, idle, want in (
+            (
+                "after blocked",
+                (out("blocked", reason="approve"), {"sleep": SILENCE}),
+                IDLE,
+                [Blocked("approve"), Exited(0)],
+            ),
+            (
+                "no idle timeout",
+                (out("activity", name="Read"), {"sleep": SILENCE}),
+                None,
+                [Activity("Read"), Exited(0)],
+            ),
+            (
+                "stderr restarts",
+                restarting,
+                3 * GAP,
+                [Stderr("1"), Stderr("2"), Stderr("3"), Stderr("4"), Exited(0)],
+            ),
+        ):
+            with self.subTest(case=case):
+                self.steps(*steps)
+                self.assertEqual(self.drain(self.start(idle_timeout=idle)), want)
 
 
 class ExitTest(Base):
-    def test_an_exited_from_the_adapter_is_dropped(self):
-        self.steps(out("exit"), {"exit": 0})
-        self.assertEqual(self.drain(self.start()), [Exited(0)])
-
-    def test_a_non_zero_exit(self):
-        self.steps(out("activity", name="Read"), {"exit": 3})
-        self.assertEqual(self.drain(self.start()), [Activity("Read"), Exited(3)])
+    def test_exited_is_the_process_exit_an_adapters_own_dropped(self):
+        for case, steps, want in (
+            ("adapter's exited dropped", (out("exit"), {"exit": 0}), [Exited(0)]),
+            (
+                "non-zero exit",
+                (out("activity", name="Read"), {"exit": 3}),
+                [Activity("Read"), Exited(3)],
+            ),
+        ):
+            with self.subTest(case=case):
+                self.steps(*steps)
+                self.assertEqual(self.drain(self.start()), want)
 
     def test_stop_mid_sleep_ends_with_a_negative_exited_and_is_idempotent(self):
         self.steps(out("activity", name="Read"), {"sleep": 60})

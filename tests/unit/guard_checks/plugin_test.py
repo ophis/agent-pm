@@ -27,62 +27,50 @@ class PluginManifests(Sample):
     def test_the_real_manifests_ship_every_skill(self):
         self.assertEqual(plugin.plugin_manifests(REPO), [])
 
-    def test_manifests_listing_every_project_skill_pass(self):
-        self.assertEqual(plugin.plugin_manifests(self.shipped()), [])
-
-    def test_a_single_skills_path_string_is_accepted(self):
-        root = self.shipped(
-            {
-                CLAUDE: self.manifest(skills="./skills/"),
-                CODEX: self.manifest(skills="./skills/"),
-                "skills/a/SKILL.md": "",
-                "delegate/skills/a/SKILL.md": None,
-                "manager/skills/m/SKILL.md": None,
-            }
-        )
-        self.assertEqual(plugin.plugin_manifests(root), [])
-
-    def test_a_missing_manifest(self):
-        root = self.shipped({CODEX: None})
-        self.assertEqual(plugin.plugin_manifests(root), [f"{CODEX}: missing"])
-
-    def test_a_manifest_missing_a_project_skill(self):
-        root = self.shipped({CODEX: self.manifest(skills=["./delegate/skills/"])})
-        self.assertEqual(
-            plugin.plugin_manifests(root),
-            [f"{CODEX}: skills miss manager/skills/m/SKILL.md"],
-        )
-
-    def test_a_skill_outside_the_projects(self):
-        root = self.shipped(
-            {CODEX: self.manifest(skills=[*self.SKILLS, "./extra/"]), "extra/x/SKILL.md": ""}
-        )
-        self.assertEqual(
-            plugin.plugin_manifests(root),
-            [f"{CODEX}: skills ship extra/x/SKILL.md, not a plugin skill"],
-        )
-
-    def test_a_skills_path_not_relative_to_the_plugin_root(self):
-        root = self.shipped(
-            {CODEX: self.manifest(skills=["delegate/skills/", "./manager/skills/"])}
-        )
-        self.assertEqual(
-            plugin.plugin_manifests(root),
-            [
-                f'{CODEX}: skills path "delegate/skills/" does not start with ./',
-                f"{CODEX}: skills miss delegate/skills/a/SKILL.md",
-            ],
-        )
-
-    def test_a_name_or_version_other_than_the_claude_code_manifest(self):
-        root = self.shipped({CODEX: self.manifest(name="other", version="0.9.0")})
-        self.assertEqual(
-            plugin.plugin_manifests(root),
-            [
-                f'{CODEX}: name "other", not {CLAUDE}\'s "agent-pm"',
-                f'{CODEX}: version "0.9.0", not {CLAUDE}\'s "1.0.0"',
-            ],
-        )
+    def test_both_manifests_must_ship_every_project_skill_under_one_name_and_version(self):
+        for name, files, expected in (
+            ("every project skill", {}, []),
+            (
+                "a single skills path string",
+                {
+                    CLAUDE: self.manifest(skills="./skills/"),
+                    CODEX: self.manifest(skills="./skills/"),
+                    "skills/a/SKILL.md": "",
+                    "delegate/skills/a/SKILL.md": None,
+                    "manager/skills/m/SKILL.md": None,
+                },
+                [],
+            ),
+            ("a missing manifest", {CODEX: None}, [f"{CODEX}: missing"]),
+            (
+                "a missing project skill",
+                {CODEX: self.manifest(skills=["./delegate/skills/"])},
+                [f"{CODEX}: skills miss manager/skills/m/SKILL.md"],
+            ),
+            (
+                "a skill outside the projects",
+                {CODEX: self.manifest(skills=[*self.SKILLS, "./extra/"]), "extra/x/SKILL.md": ""},
+                [f"{CODEX}: skills ship extra/x/SKILL.md, not a plugin skill"],
+            ),
+            (
+                "a path not relative to the plugin root",
+                {CODEX: self.manifest(skills=["delegate/skills/", "./manager/skills/"])},
+                [
+                    f'{CODEX}: skills path "delegate/skills/" does not start with ./',
+                    f"{CODEX}: skills miss delegate/skills/a/SKILL.md",
+                ],
+            ),
+            (
+                "another name or version",
+                {CODEX: self.manifest(name="other", version="0.9.0")},
+                [
+                    f'{CODEX}: name "other", not {CLAUDE}\'s "agent-pm"',
+                    f'{CODEX}: version "0.9.0", not {CLAUDE}\'s "1.0.0"',
+                ],
+            ),
+        ):
+            with self.subTest(name):
+                self.assertEqual(plugin.plugin_manifests(self.shipped(files)), expected)
 
 
 class PluginSkills(Sample):
