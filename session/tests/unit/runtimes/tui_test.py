@@ -668,10 +668,14 @@ class StartTest(Base):
             with self.subTest(name=name), self.assertRaises(ConfigError) as caught:
                 self.start(name=name)
             self.assertEqual(
-                str(caught.exception), f"name must match [A-Za-z0-9_-]+, got {name!r:.80}"
+                str(caught.exception),
+                f"name must match [A-Za-z0-9_-]+ but not none, got {name!r:.80}",
             )
         for fields, message in (
-            ({"name": None, "sid": "a b"}, "name must match [A-Za-z0-9_-]+, got 'fake-a b'"),
+            (
+                {"name": None, "sid": "a b"},
+                "name must match [A-Za-z0-9_-]+ but not none, got 'fake-a b'",
+            ),
             ({"name": 5}, "name must be None or a string"),
         ):
             with self.subTest(fields=fields), self.assertRaises(ConfigError) as caught:

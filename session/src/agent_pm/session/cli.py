@@ -29,6 +29,7 @@ from agent_pm.session.engine.config import read_config
 from agent_pm.session.engine.types import (
     COMMAND,
     TAG,
+    TAG_RULE,
     ActivityState,
     ConfigError,
     Hosts,
@@ -60,7 +61,7 @@ def _say(text: str) -> None:
 
 def _name(value: str) -> str:
     if not TAG.fullmatch(value):
-        raise argparse.ArgumentTypeError(f"want [A-Za-z0-9_-]+, not {value!r:.80}")
+        raise argparse.ArgumentTypeError(f"want {TAG_RULE}, not {value!r:.80}")
     return value
 
 
@@ -231,7 +232,7 @@ def _keys(args) -> list[tuple[str, Record | None]]:
             raise UsageError(f"{name}: names no session")
         for session in _sessions(name, record):
             if not TAG.fullmatch(session):
-                raise UsageError(f"{name}: session {session!r:.80}: want [A-Za-z0-9_-]+")
+                raise UsageError(f"{name}: session {session!r:.80}: want {TAG_RULE}")
     return found
 
 

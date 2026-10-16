@@ -185,7 +185,8 @@ def _member(enum, field: str, value):
         raise ConfigError(f"{field} must be one of {', '.join(enum)}, got {value!r}") from None
 
 
-TAG = re.compile(r"[A-Za-z0-9_-]+")
+TAG = re.compile(r"(?!none\Z)[A-Za-z0-9_-]+")
+TAG_RULE = "[A-Za-z0-9_-]+ but not none"
 
 
 COMMAND = "agent-pm-session"
@@ -278,7 +279,7 @@ class Spec(ProcessOptions):
             and all(isinstance(t, str) and TAG.fullmatch(t) for t in self.reply_tags)
         ):
             raise ConfigError(
-                "reply_tags must be None or (progress tag, outcome tag), each [A-Za-z0-9_-]+"
+                f"reply_tags must be None or (progress tag, outcome tag), each {TAG_RULE}"
             )
         if self.client is not None and not isinstance(self.client, str):
             raise ConfigError("client must be None or a string")

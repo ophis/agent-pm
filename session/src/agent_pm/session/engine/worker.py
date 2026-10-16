@@ -20,6 +20,7 @@ from typing import Protocol, runtime_checkable
 from agent_pm.session.engine.base import Session
 from agent_pm.session.engine.types import (
     TAG,
+    TAG_RULE,
     Access,
     Blocked,
     ConfigError,
@@ -207,7 +208,7 @@ class Worker:
     def load(cls, name: str, *, sid: str | None = None, **kw) -> Worker:
         """Worker `name`'s state: sid's (given, e.g. by AGENT_PM_SID), else its latest start's."""
         if not isinstance(name, str) or not TAG.fullmatch(name):
-            raise ConfigError(f"name must match [A-Za-z0-9_-]+, got {name!r:.80}")
+            raise ConfigError(f"name must match {TAG_RULE}, got {name!r:.80}")
         root = os.path.abspath(os.path.expanduser(WORKERS))
         given = sid is not None
         if given and (not isinstance(sid, str) or not SID.fullmatch(sid)):

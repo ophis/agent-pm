@@ -20,6 +20,7 @@ from agent_pm.session.adapters.registry import Registry
 from agent_pm.session.engine.types import (
     COMMAND,
     TAG,
+    TAG_RULE,
     Access,
     Activity,
     Blocked,
@@ -61,7 +62,7 @@ POLL_SCREEN = 0.5
 
 def checked_name(name) -> str:
     if not isinstance(name, str) or not TAG.fullmatch(name):
-        raise ConfigError(f"name must match [A-Za-z0-9_-]+, got {name!r:.80}")
+        raise ConfigError(f"name must match {TAG_RULE}, got {name!r:.80}")
     return name
 
 

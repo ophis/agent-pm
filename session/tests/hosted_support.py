@@ -351,7 +351,8 @@ class TuiBase(Base):
             with self.subTest(name=name), self.assertRaises(ConfigError) as caught:
                 call(name)
             self.assertEqual(
-                str(caught.exception), f"name must match [A-Za-z0-9_-]+, got {name!r:.80}"
+                str(caught.exception),
+                f"name must match [A-Za-z0-9_-]+ but not none, got {name!r:.80}",
             )
         self.nothing_hosted()
 

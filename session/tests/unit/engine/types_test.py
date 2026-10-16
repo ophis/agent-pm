@@ -216,6 +216,20 @@ class WhatToStart(Case):
             self.assertEqual(str(caught.exception), message)
 
 
+class ReservedName(Case):
+    def test_none_alone_is_no_session_name_or_reply_tag(self):
+        self.assertIsNone(engine_types.TAG.fullmatch("none"))
+        for name in ("none-1", "None", "nonex", "a_none"):
+            with self.subTest(name=name):
+                self.assertIsNotNone(engine_types.TAG.fullmatch(name))
+        with self.assertRaises(ConfigError) as caught:
+            Spec(workdir="/w", access=Access(cwd="/w"), reply_tags=("none", "x"))
+        self.assertEqual(
+            str(caught.exception),
+            f"reply_tags must be None or (progress tag, outcome tag), each {engine_types.TAG_RULE}",
+        )
+
+
 class DisplayError(Case):
     def test_not_displayable_is_a_driver_error(self):
         self.assertTrue(issubclass(NotDisplayable, SessionError))
