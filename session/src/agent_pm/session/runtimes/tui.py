@@ -180,14 +180,17 @@ class TuiStore:
                 found.append((label, payload))
         return found, offset + end
 
-    def process(self, *, missing_ok: bool = False) -> Process | None:
+    def process(self) -> Process | None:
         if self.name not in self.host.list():
-            if not missing_ok:
-                check_sid(self.name, None, self._sid)
+            check_sid(self.name, None, self._sid)
             return None
         process = self.host.attach(self.name)
         check_sid(self.name, process, self._sid)
         return process
+
+    def check(self) -> None:
+        if self._sid is not None:
+            self.process()
 
     def holder(self) -> str | None:
         process = self.process()
@@ -238,7 +241,10 @@ class TuiStore:
 
     def stop(self, identity: str) -> None:
         with self._locked():
-            holder = self.holder()
+            try:
+                holder = self.holder()
+            except SessionError:
+                return
             if holder is None:
                 self._drop()
             elif holder == identity:
@@ -510,6 +516,10 @@ class TuiRuntime(Runtime):
         restored replays its client's record, then its hook log; events from the next record.
         """
         store = TuiStore.attach(name, host=host, sid=sid)
+        if sid is not None and state.get("sid") != sid:
+            raise SessionError(
+                f"session {name}: expected sid {sid!r}, found {state.get('sid')!r} in session.json"
+            )
         info = SessionInfo.from_fields(state)
         if info is None:
             raise SessionError(f"no tui session {name}: {store.state_file}: bad {_bad(state)}")
@@ -639,7 +649,11 @@ class TuiRuntime(Runtime):
     def _replaced(self, state: Liveness) -> bool:
         """Ended once another terminal holds its name or session.json is another generation's."""
         if state == Liveness.ABSENT:
-            replacement = self._store.process(missing_ok=True)
+            try:
+                replacement = self._store.process()
+            except SessionError:
+                self._end()
+                return True
             if replacement is not None and replacement.identity != self._terminal.identity:
                 self._end()
                 return True
@@ -693,6 +707,7 @@ class TuiRuntime(Runtime):
         return self._code
 
     def state(self) -> Liveness:
+        self._store.check()
         return self._terminal.state()
 
     def send(self, text: str) -> None:
@@ -711,6 +726,7 @@ class TuiRuntime(Runtime):
         return self.host.screen(self._terminal, lines)
 
     def _running(self) -> None:
+        self._store.check()
         if not self._terminal.alive():
             raise SessionError(f"tui session {self.name} is not running")
 
