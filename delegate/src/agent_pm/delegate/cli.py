@@ -15,6 +15,8 @@ import json
 import os
 import shlex
 import sys
+import time
+import uuid
 from collections.abc import Sequence
 from dataclasses import asdict
 
@@ -24,7 +26,7 @@ from agent_pm.delegate.engine.runner import report, say
 from agent_pm.delegate.engine.types import Begun, ConfigError, Layout, Preview, Spec
 from agent_pm.session import ConfigError as SessionConfigError
 from agent_pm.session import Mode, NotShowable, SessionError
-from agent_pm.utils import EVENTS_ENV, SID_ENV, Once, answer_keys, nested_start
+from agent_pm.utils import EVENTS_ENV, SID_ENV, STATE, Once, answer_keys, nested_start
 
 LIST_PARAMS = RunParams(input="", out="/agent-pm-list/work/out.md", workdir="/agent-pm-list/work")
 
@@ -193,8 +195,8 @@ def spec_of(a, text: str) -> Spec:
 
 
 def _check(a: argparse.Namespace) -> None:
-    if None in (a.input, a.workdir):
-        raise ConfigError("--input and --workdir are required")
+    if a.input is None:
+        raise ConfigError("--input is required")
     _check_out(a)
     if a.resume and a.sid is None:
         raise ConfigError("--resume needs --sid")
@@ -206,6 +208,11 @@ def _check(a: argparse.Namespace) -> None:
         raise ConfigError("--detach needs --events")
     if a.detach and a.mode == Mode.IN_PROCESS:
         raise ConfigError("--detach needs --mode headless or tui")
+    if a.workdir is None:
+        a.sid = str(uuid.uuid4()) if a.sid is None else a.sid
+        task = f"-{a.task}" if a.task else ""
+        name = f"{time.strftime('%Y-%m-%d')}-{a.role}{task}-{a.sid[:8]}"
+        a.workdir = os.path.join(os.path.expanduser(STATE), "adhoc", name)
 
 
 def _command(text: str) -> tuple[str, ...]:
@@ -229,6 +236,7 @@ def _shown(preview: Preview, a: argparse.Namespace) -> dict:
         "client": s.client,
         "mode": s.mode,
         "sid": s.sid,
+        "workdir": s.workdir,
         "resume": s.resume,
         "cwd": access.cwd,
         "project": access.project,

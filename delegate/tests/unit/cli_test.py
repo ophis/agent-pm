@@ -445,6 +445,7 @@ class DryRun(Base):
                 "client": "fake",
                 "mode": "headless",
                 "sid": SID,
+                "workdir": self.work,
                 "resume": False,
                 "cwd": Layout(self.work).agent,
                 "project": False,
@@ -748,16 +749,15 @@ class Configures(Base):
 
 
 class Usage(Base):
-    def test_a_run_needs_input_and_workdir(self):
+    def test_a_run_needs_input(self):
         for argv in (
             ("--out", "o.md"),
             ("--workdir", self.work),
-            ("--input", "x", "--out", "o.md"),
         ):
             with self.subTest(argv=argv):
                 self.assertEqual(
                     self.cli("run", "--role", "dummy-tester", "--client", "fake", *argv),
-                    (2, "", "delegate: --input and --workdir are required\n"),
+                    (2, "", "delegate: --input is required\n"),
                 )
         self.assertEqual(self.launches(), [])
 
@@ -1200,3 +1200,39 @@ class Queries(Case):
         self.assertEqual(
             self.query("resume", "a", a=View("a")), (0, record("a").to_line() + "\n", "")
         )
+
+
+class AdhocWorkdir(Base):
+    def test_dry_run_derives_workdir_from_date_role_task_and_final_sid(self):
+        for task in (None, "echo"):
+            for supplied in (False, True):
+                with (
+                    self.subTest(task=task, supplied=supplied),
+                    mock.patch("time.strftime", return_value="2026-10-16"),
+                    mock.patch("uuid.uuid4", return_value=uuid.UUID(SID)),
+                ):
+                    code, out, err = self.cli(
+                        "run",
+                        "--role",
+                        "dummy-tester",
+                        "--input",
+                        "hello",
+                        "--client",
+                        "fake",
+                        *(("--task", task) if task else ()),
+                        *(("--sid", SID) if supplied else ()),
+                        "--dry-run",
+                    )
+                self.assertEqual(code, 0, err)
+                shown = json.loads(out)
+                suffix = "-echo" if task else ""
+                expected = os.path.join(
+                    self.agent_pm, "adhoc", f"2026-10-16-dummy-tester{suffix}-{SID[:8]}"
+                )
+                self.assertEqual((shown["sid"], shown["workdir"]), (SID, expected))
+                self.assertFalse(os.path.exists(expected))
+
+    def test_dry_run_reports_an_explicit_workdir(self):
+        code, out, err = self.runs("--sid", SID, "--dry-run")
+        self.assertEqual(code, 0, err)
+        self.assertEqual(json.loads(out)["workdir"], self.work)
