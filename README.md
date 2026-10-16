@@ -18,9 +18,16 @@ flowchart LR
     T[agent-pm-linear router] -.->|claims Todo issues| R & P & E
 ```
 
+## Demo: one manager, many workers
+
+Without the board, you can run agent-pm by talking to one agent, the manager. Open its session with `ctmux <name>`, start Claude Code or Codex in it and invoke `/agent-pm:manage`. You give it work in plain words; it launches a worker for each task, watches their events, checks their pull requests and reports back.
+
 ![A manager session (left) coordinating engineer workers in a tmux grid](docs/images/demo.jpg)
 
-Manager on the left, each engineer worker in its own pane on the right.
+- **Left:** the manager. Here it lists which issues are running, waiting or not started, and reports what each worker just did.
+- **Right:** one pane per engineer worker, each building one issue in its own worktree. Panes fill a grid as workers start and close when their work is done.
+
+Commands: [Quick start](#quick-start).
 
 ## Install
 
