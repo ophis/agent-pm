@@ -10,7 +10,7 @@ from types import SimpleNamespace
 from typing import Any
 from unittest import mock
 
-from agent_pm.manager import Spec
+from agent_pm.manager import Spec, State
 from agent_pm.manager.cli import main
 from agent_pm.manager.engine.pr import VIEW_FIELDS
 from agent_pm.utils import Record, Status, StatusState
@@ -118,11 +118,139 @@ class CliTest(CliCase):
         self.assertFalse(os.path.exists(self.directory))
 
 
+class Launch(CliCase):
+    def start(self, *arguments, code=0, output=None):
+        self.calls = []
+
+        def run(argv, **options):
+            self.calls.append((tuple(argv), options["env"]))
+            record = self.fake_record(
+                "returned-" + options["env"]["AGENT_PM_SID"][:8],
+                sid=options["env"]["AGENT_PM_SID"],
+            )
+            text = record.to_line() + "\n" if output is None else output
+            os.write(options["stdout"].fileno(), text.encode())
+            return SimpleNamespace(returncode=code, stderr="layer message\n")
+
+        with mock.patch("subprocess.run", side_effect=run):
+            return self.invoke(*arguments)
+
+    def test_worker_and_issue_forward_every_word_after_the_key(self):
+        for verb, key, prefix, tail in (
+            (
+                "worker",
+                "w1",
+                ("agent-pm-session", "start", "w1"),
+                ("--client", "claude", "--prompt", "hi", "--", "--permission-mode", "auto"),
+            ),
+            (
+                "issue",
+                "TASK-12",
+                ("agent-pm-linear", "router", "--issue", "TASK-12", "--tui"),
+                ("--display", "D", "--note", "belongs to layer", "--manager", "also layer"),
+            ),
+        ):
+            with self.subTest(verb=verb):
+                result, stdout, stderr = self.start(
+                    verb, "--manager", "mgr", "--note", "Crew note", key, *tail
+                )
+                self.assertEqual((result, stderr), (0, "layer message\n"))
+                self.assertEqual(self.calls[0][0], (*prefix, *tail))
+                entry = self.roster.entries()[key]
+                self.assertEqual(entry.note, "Crew note")
+                self.assertEqual(entry.record, Record.parse(stdout))
+
+    def test_role_names_share_the_generated_launch_sid(self):
+        for explicit in ((), ("--name", "chosen")):
+            with self.subTest(explicit=explicit):
+                result, stdout, _ = self.start(
+                    "role",
+                    "--manager",
+                    "mgr",
+                    *explicit,
+                    "pm",
+                    "--task",
+                    "product-design",
+                    "--input",
+                    "x",
+                )
+                self.assertEqual(result, 0)
+                sid = Record.parse(stdout).sid
+                name = "chosen" if explicit else f"pm-{sid[:8]}"
+                self.assertEqual(self.roster.entries()[name].sid, sid)
+                self.assertEqual(
+                    self.calls[0][0],
+                    (
+                        "agent-pm-delegate",
+                        "run",
+                        "--role",
+                        "pm",
+                        "--detach",
+                        "--name",
+                        name,
+                        "--task",
+                        "product-design",
+                        "--input",
+                        "x",
+                    ),
+                )
+
+    def test_refusals_remove_only_the_shorthand_intent_and_allow_name_reuse(self):
+        for code, output in ((2, ""), (0, "dry run\n"), (0, "")):
+            with self.subTest(code=code, output=output):
+                result, stdout, stderr = self.start(
+                    "worker",
+                    "--manager",
+                    "mgr",
+                    "w1",
+                    "--note",
+                    "layer option",
+                    code=code,
+                    output=output,
+                )
+                self.assertEqual((result, stdout), (2, ""))
+                self.assertIn("layer message", stderr)
+                self.assertEqual(self.roster.entries(), {})
+
+    def test_other_failures_keep_lost_and_generic_run_keeps_exit_two(self):
+        for arguments, code, output in (
+            (("worker", "--manager", "mgr", "a"), 1, ""),
+            (("worker", "--manager", "mgr", "b"), 2, "not empty\n"),
+            (("run", "--manager", "mgr", "c", "--", "fake"), 2, ""),
+        ):
+            with self.subTest(arguments=arguments):
+                result, stdout, _ = self.start(*arguments, code=code, output=output)
+                self.assertEqual((result, stdout), (1, ""))
+        self.assertEqual({e.state.value for e in self.roster.entries().values()}, {"lost"})
+
+
+class ResumeInput(CliCase):
+    def test_multiple_names_with_input_fail_before_any_roster_write(self):
+        with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as error:
+            main(["resume", "--manager", "mgr", "a", "b", "--input", "answer"])
+        self.assertEqual(error.exception.code, 2)
+        self.assertFalse(os.path.exists(self.directory))
+
+    def test_refusal_returns_two_and_preserves_waiting(self):
+        record = self.fake_record("r1")
+        self.roster.begin(Spec("r1", ("start",)), sid=record.sid)
+        self.roster.commit("r1", record)
+        self.roster.mark("r1", State.WAITING)
+        with mock.patch(
+            "subprocess.run", return_value=SimpleNamespace(returncode=2, stderr="refused")
+        ):
+            code, stdout, stderr = self.invoke("resume", "--manager", "mgr", "r1", "--input", "")
+        self.assertEqual((code, stdout), (2, ""))
+        self.assertIn("refused", stderr)
+        self.assertIs(self.roster.entries()["r1"].state, State.WAITING)
+
+
 class NextEventContent(CliCase):
     def setUp(self):
         super().setUp()
         self.calls = []
         self.answers = {}
+        self.inputs = []
 
     def launched(self, name, *sessions, record_name=None):
         sid = str(uuid.uuid4())
@@ -136,8 +264,9 @@ class NextEventContent(CliCase):
     def next_event(self, event, *extra):
         Path(self.roster.events).write_text(f"{event}\n")
 
-        def run(argv, **_):
+        def run(argv, **options):
             self.calls.append(tuple(argv))
+            self.inputs.append(options["input"])
             code, out, err = self.answers.get(tuple(argv), (1, "", "no such session"))
             return SimpleNamespace(returncode=code, stdout=out, stderr=err)
 
@@ -151,31 +280,31 @@ class NextEventContent(CliCase):
         self.assertEqual(self.next_event("12:00:00 w1 done"), (0, "1 12:00:00 w1 done\n", ""))
         self.assertEqual(self.calls, [])
 
-    def test_done_prints_the_sessions_reply_and_blocked_its_screen(self):
-        for sessions, ask, event, answer, expected in (
-            (("w1",), ("reply", "w1"), "w1 done", "the answer\n", "the answer\n"),
+    def test_each_event_uses_its_owners_ctl_content(self):
+        for sessions, event, answer, expected in (
+            (("w1",), "w1 done", "the answer\n", "the answer\n"),
             (
                 ("test-drive",),
-                ("reply", "test-drive"),
                 "test-drive done",
                 "the answer\n",
                 "the answer\n",
             ),
             (
                 ("w1",),
-                ("read", "w1"),
                 "w1 blocked",
                 "Allow this edit?\n 1. Yes",
                 "Allow this edit?\n 1. Yes\n",
             ),
         ):
             with self.subTest(sessions=sessions, event=event):
-                self.launched("w1", *sessions)
-                self.answers = {("agent-pm-session", *ask): (0, answer, "")}
+                record = self.launched("w1", *sessions)
+                self.answers = {(*record.ctl, "content"): (0, answer, "")}
                 self.assertEqual(
                     self.next_event(f"12:00:00 {event}", "--content"),
                     (0, f"1 12:00:00 {event}\n{expected}", ""),
                 )
+                self.assertEqual(self.calls[-1], (*record.ctl, "content"))
+                self.assertEqual(self.inputs[-1], record.to_line() + "\n")
                 self.roster.remove("w1")
 
     def test_a_harness_event_prints_its_entry_status(self):
@@ -193,18 +322,26 @@ class NextEventContent(CliCase):
                     attach=None,
                     hidden=False,
                 )
-                self.answers = {(*record.ctl, "status"): (0, status.to_line() + "\n", "")}
+                self.answers = {(*record.ctl, "content"): (0, status.to_line() + "\n", "")}
                 self.assertEqual(
                     self.next_event("12:00:00 engineer-ab12-drive outcome done", "--content"),
                     (
                         0,
-                        "1 12:00:00 engineer-ab12-drive outcome done\n"
-                        f"{replace(status, name='r1').to_line()}\n",
+                        f"1 12:00:00 engineer-ab12-drive outcome done\n{status.to_line()}\n",
                         "",
                     ),
                 )
                 self.assertNotIn(("agent-pm-session", "read", "engineer-ab12-drive"), self.calls)
                 self.roster.remove("r1")
+
+    def test_a_ctl_failure_is_reported_without_falling_back_to_session_commands(self):
+        record = self.launched("r1", "tui", "harness")
+        self.answers = {(*record.ctl, "content"): (1, "", "not available")}
+        code, stdout, _ = self.next_event("12:00:00 tui done", "--content")
+        self.assertEqual(code, 0)
+        self.assertIn("content unavailable:", stdout)
+        self.assertIn("not available", stdout)
+        self.assertEqual(self.calls, [(*record.ctl, "content")])
 
     def test_an_event_naming_only_control_characters_still_exits_0(self):
         self.launched("w1")
@@ -227,15 +364,18 @@ class NextEventContent(CliCase):
                 self.assertTrue(content.endswith("\n") and content.count("\n") == 1, content)
 
     def test_follow_prints_each_event_block_and_keeps_going(self):
-        self.launched("w1")
-        self.answers = {("agent-pm-session", "reply", "w1"): (0, "the answer\nline 2\n", "")}
+        record = self.launched("w1")
         Path(self.roster.events).write_text("12:00:00 w1 done\nnoise\n12:00:01 w1 blocked\n")
         stdout = io.StringIO()
         writes = []
         stdout.write = lambda text: writes.append(text) or len(text)
 
-        def run(argv, **_):
-            code, out, err = self.answers.get(tuple(argv), (1, "", "no such session"))
+        answers = iter(((0, "the answer\nline 2\n", ""), (1, "", "no such session")))
+
+        def run(argv, **options):
+            self.assertEqual(tuple(argv), (*record.ctl, "content"))
+            self.assertEqual(options["input"], record.to_line() + "\n")
+            code, out, err = next(answers)
             return SimpleNamespace(returncode=code, stdout=out, stderr=err)
 
         argv = ("next-event", "--manager", "mgr", "--after", "0", "--gen", "0")
@@ -250,7 +390,7 @@ class NextEventContent(CliCase):
             [text for text in writes if text],
             [
                 "1 12:00:00 w1 done\nthe answer\nline 2\n",
-                "3 12:00:01 w1 blocked\ncontent unavailable: agent-pm-session read w1: "
+                f"3 12:00:01 w1 blocked\ncontent unavailable: {ctl.COMMAND} content: "
                 "no such session\n",
             ],
         )
@@ -304,7 +444,12 @@ class Report(CliCase):
     def report(self):
         def run(argv, **kwargs):
             self.calls.append(tuple(argv))
-            answer = self.answers.get(tuple(argv), (1, "", "no such session"))
+            key = (
+                (*argv, Record.parse(kwargs["input"]).name)
+                if argv[-1] == "content"
+                else tuple(argv)
+            )
+            answer = self.answers.get(key, (1, "", "no such session"))
             code, out, err = answer if isinstance(answer, tuple) else answer(kwargs.get("input"))
             return SimpleNamespace(returncode=code, stdout=out, stderr=err)
 
@@ -332,7 +477,7 @@ class Report(CliCase):
         self.launched("b", note="fix the parser")
         self.launched("a", alive=False, outcome="done")
         self.roster.begin(Spec("c", ("start",)), sid=str(uuid.uuid4()))
-        self.answers[("agent-pm-session", "reply", "b")] = (0, "\n  first line  \nsecond\n", "")
+        self.answers[(ctl.COMMAND, "content", "b")] = (0, "\n  first line  \nsecond\n", "")
         result, stdout, stderr = self.report()
         self.assertEqual((result, stderr), (0, ""))
         self.assertEqual(
@@ -347,8 +492,8 @@ class Report(CliCase):
         self.launched("w1")
         self.launched("w2")
         self.launched("w3")
-        self.answers[("agent-pm-session", "reply", "w1")] = (0, "x" * 100 + "\n", "")
-        self.answers[("agent-pm-session", "reply", "w2")] = (0, " \n\n", "")
+        self.answers[(ctl.COMMAND, "content", "w1")] = (0, "x" * 100 + "\n", "")
+        self.answers[(ctl.COMMAND, "content", "w2")] = (0, " \n\n", "")
         result, stdout, stderr = self.report()
         self.assertEqual((result, stderr), (0, ""))
         replies = [line.split("\t")[4] for line in stdout.splitlines()[1:]]
@@ -404,6 +549,19 @@ class Report(CliCase):
                     self.assertTrue(stdout.endswith("\t-\t-\t-\t-\n"), stdout)
                 self.roster.remove("w1")
 
+    def test_pipeline_outcome_status_does_not_query_an_unsupported_outcome_command(self):
+        pipeline = replace(
+            self.delegate_record("TASK-12"),
+            kind="pipeline",
+            ctl=("agent-pm-linear",),
+            resume=("agent-pm-linear", "resume", "TASK-12"),
+        )
+        self.launched("TASK-12", record=pipeline, alive=False, outcome="done")
+        result, stdout, stderr = self.report()
+        self.assertEqual((result, stderr), (0, ""))
+        self.assertIn("\tpipeline\tdone\t", stdout)
+        self.assertNotIn(("agent-pm-linear", "outcome"), self.calls)
+
     def test_status_gh_and_outcome_failures_go_to_stderr_and_exit_0(self):
         self.launched("bad-gh", note=URL)
         self.launched("bad-json", note=URL.replace("7", "8"))
@@ -448,7 +606,7 @@ class Report(CliCase):
 
     def test_tabs_and_control_characters_are_flattened(self):
         self.launched("w1")
-        self.answers[("agent-pm-session", "reply", "w1")] = (0, "a\tb\x1b[31mc\n", "")
+        self.answers[(ctl.COMMAND, "content", "w1")] = (0, "a\tb\x1b[31mc\n", "")
         _, stdout, _ = self.report()
         self.assertEqual(stdout.splitlines()[1].split("\t")[4], "a b[31mc")
 
@@ -501,6 +659,9 @@ class InsideAnAgentSession(CliCase):
             ("run", "--manager", "mgr", "w1", "--", "true"),
             ("hold", "--manager", "mgr", "--", "true"),
             ("resume", "--manager", "mgr", "w1"),
+            ("worker", "--manager", "mgr", "w1", "--client", "claude"),
+            ("issue", "--manager", "mgr", "TASK-12"),
+            ("role", "--manager", "mgr", "pm", "--input", "x"),
         ):
             with (
                 self.subTest(argv=argv),

@@ -7,7 +7,14 @@ import os
 import re
 import sys
 
-from tests.guard_checks.common import _bindings, _dotted, _private, _tree_files
+from tests.guard_checks.common import (
+    _bindings,
+    _dotted,
+    _private,
+    _resolve_boundary,
+    _source_modules,
+    _tree_files,
+)
 from tests.guard_data import PYTHON_CODE_ALLOWED
 from tests.guards import PROJECTS
 
@@ -19,9 +26,10 @@ RUNTIME = object()
 def inline_python(repo: str, *, allowed=None) -> list[str]:
     allowed = PYTHON_CODE_ALLOWED if allowed is None else allowed
     found, used = [], set()
+    modules = _source_modules(repo, PROJECTS)
     for path, text in _tree_files(repo, ".py"):
         for line, code, error in _programs(ast.parse(text)):
-            errors = [error] if error else _violations(code)
+            errors = [error] if error else _violations(code, modules=modules)
             if not errors:
                 continue
             key = None if code is None else (path, hashlib.sha256(code.encode()).hexdigest())
@@ -47,12 +55,7 @@ def _scope(nodes):
             yield from _scope(ast.iter_child_nodes(node))
 
 
-def _programs(tree, inherited=None):
-    """(line, text, error) per -c program: each literal value, else the expression with its
-    same-file values substituted, so editing one makes its exception stale; a program reading a
-    name without exactly one same-file assignment (parameter, import, loop target, global) gets
-    text None: no exception can cover all its values.
-    """
+def _scope_values(tree):
     body = tree.body if isinstance(tree.body, list) else [tree.body]
     nodes = list(_scope(body))
     assigned = {}
@@ -62,19 +65,85 @@ def _programs(tree, inherited=None):
                 assigned[target] = node.value
     function = isinstance(tree, ast.FunctionDef | ast.AsyncFunctionDef | ast.Lambda)
     local = {}
-    if inherited is None:
-        for node in ast.walk(tree):
-            for name in node.names if isinstance(node, ast.Global | ast.Nonlocal) else ():
-                local.setdefault(name, []).append(RUNTIME)
     for node in [*(ast.walk(tree.args) if function else ()), *nodes]:
         if isinstance(node, ast.arg):
             local.setdefault(node.arg, []).append(RUNTIME)
-        elif isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store):
-            if (value := assigned.get(node, RUNTIME)) is not None:
-                local.setdefault(node.id, []).append(value)
+        elif isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store | ast.Del):
+            value = assigned.get(node)
+            local.setdefault(node.id, []).append(RUNTIME if value is None else value)
         elif isinstance(node, ast.Import | ast.ImportFrom):
             for alias in node.names:
                 local.setdefault(alias.asname or alias.name.split(".")[0], []).append(RUNTIME)
+        elif (
+            isinstance(
+                node,
+                ast.FunctionDef
+                | ast.AsyncFunctionDef
+                | ast.ClassDef
+                | ast.ExceptHandler
+                | ast.MatchAs
+                | ast.MatchStar,
+            )
+            and node.name
+        ):
+            local.setdefault(node.name, []).append(RUNTIME)
+        elif isinstance(node, ast.MatchMapping) and node.rest:
+            local.setdefault(node.rest, []).append(RUNTIME)
+    return nodes, local
+
+
+def _invalidated(tree):
+    invalid = {}
+
+    def visit(scope, parents):
+        nodes, bindings = _scope_values(scope)
+        globals_ = {name for node in nodes if isinstance(node, ast.Global) for name in node.names}
+        nonlocals = {
+            name for node in nodes if isinstance(node, ast.Nonlocal) for name in node.names
+        }
+        declared = globals_ | nonlocals
+        local = bindings.keys() - declared
+
+        def owner(name):
+            if name in globals_:
+                return tree
+            if name in local:
+                return scope
+            for outer, names in reversed(parents):
+                if not isinstance(outer, ast.ClassDef) and name in names:
+                    return outer
+            return tree
+
+        for name in bindings.keys() & declared:
+            invalid.setdefault(id(owner(name)), set()).add(name)
+        for node in nodes:
+            if isinstance(node, ast.Attribute | ast.Subscript) and isinstance(
+                node.ctx, ast.Store | ast.Del
+            ):
+                root = node.value
+                while isinstance(root, ast.Attribute | ast.Subscript):
+                    root = root.value
+                if isinstance(root, ast.Name):
+                    invalid.setdefault(id(owner(root.id)), set()).add(root.id)
+            elif isinstance(
+                node, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef | ast.Lambda
+            ):
+                visit(node, [*parents, (scope, local)])
+
+    visit(tree, [])
+    return invalid
+
+
+def _programs(tree, inherited=None, invalid=None):
+    """(line, text, error) per -c program; runtime bindings cannot have code exceptions."""
+    invalid = _invalidated(tree) if invalid is None else invalid
+    nodes, local = _scope_values(tree)
+    declarations = {
+        name for node in nodes if isinstance(node, ast.Global | ast.Nonlocal) for name in node.names
+    }
+    local = {name: values for name, values in local.items() if name not in declarations}
+    for name in invalid.get(id(tree), ()):
+        local.setdefault(name, []).append(RUNTIME)
     bindings = {**(inherited or {}), **local}
     for node in nodes:
         if isinstance(node, ast.List | ast.Tuple) and node.elts and _python(node.elts[0], bindings):
@@ -93,7 +162,9 @@ def _programs(tree, inherited=None):
                 )
         elif isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef | ast.Lambda):
             # Class bindings are not visible inside its methods.
-            yield from _programs(node, inherited if isinstance(tree, ast.ClassDef) else bindings)
+            yield from _programs(
+                node, inherited if isinstance(tree, ast.ClassDef) else bindings, invalid
+            )
 
 
 def _strings(node, bindings, seen=frozenset()):
@@ -202,22 +273,30 @@ def _stdlib_names(tree):
     return {name for name, stdlib in bound.items() if all(stdlib)}
 
 
-def _violations(code):
+def _violations(code, *, modules=None):
     try:
         tree = ast.parse(code)
     except (SyntaxError, ValueError) as error:
         return [f"invalid code: {error}"]
     bound = _bindings(tree)
+    if modules is None:
+        repo = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+        modules = _source_modules(repo, PROJECTS)
     found, agent = set(), False
     for node in ast.walk(tree):
-        modules = []
+        imports = []
         if isinstance(node, ast.Import):
-            modules = [alias.name for alias in node.names]
+            imports = [alias.name for alias in node.names]
         elif isinstance(node, ast.ImportFrom):
-            modules = ["." * node.level + (node.module or "")]
+            imports = ["." * node.level + (node.module or "")]
             if (node.module or "").startswith("agent_pm."):
                 found.update(
                     f"private import {alias.name}" for alias in node.names if _private(alias.name)
+                )
+                found.update(
+                    f"import {node.module}.{alias.name}"
+                    for alias in node.names
+                    if _resolve_boundary(f"{node.module}.{alias.name}", modules) in modules
                 )
         elif isinstance(node, ast.Call) and (call := _dotted(node.func, bound)) in {
             *IMPORTERS,
@@ -226,11 +305,11 @@ def _violations(code):
             names = _strings(node.args[0], {}) if node.args and call in IMPORTERS else set()
             if not names:
                 found.add(f"dynamic import: {ast.unparse(node)}")
-            modules = [
+            imports = [
                 name for name in names if not (call == "runpy.run_module" and _command(name))
             ]
             agent = agent or any(name.split(".")[0] == "agent_pm" for name in names)
-        for module in modules:
+        for module in imports:
             agent = agent or module.split(".")[0] == "agent_pm"
             if module.startswith(".") or not _public(module):
                 found.add(f"import {module}")

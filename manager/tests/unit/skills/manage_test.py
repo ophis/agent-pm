@@ -61,7 +61,7 @@ class Manage(Case):
         codex = rule("An issue for Codex")
         self.assertRegex(
             codex,
-            r"`agent-pm-crew run <name> -- agent-pm-session start <name> --client codex "
+            r"`agent-pm-crew worker <name> --client codex "
             r"--cwd <work dir>/agent --prompt 'Read <work dir>/agent/prompt\.md[^`]+'",
         )
         self.assertRegex(codex, r"[Cc]lose it .*PR merges")

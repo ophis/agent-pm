@@ -116,7 +116,7 @@ class RoleTest(RoleCase):
         starts = len(logged(self.log("r")))
         res = self.crew("resume", "r")
         self.assertEqual((res.returncode, res.stdout), (1, ""), res.stderr)
-        self.assertIn("only gone entries can resume (state waiting)", res.stderr)
+        self.assertIn("waiting: give --input to answer", res.stderr)
         self.assertEqual(len(logged(self.log("r"))), starts)
         self.assertTrue(self.gone(harness))
         self.assertEqual(self.roster()["r"].state, State.WAITING)

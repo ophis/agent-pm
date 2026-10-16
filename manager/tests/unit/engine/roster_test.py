@@ -296,15 +296,21 @@ class RosterTest(RosterCase):
                         self.roster.mark_if(name, expected, State.GONE)
 
     def test_resume_claim_is_atomic_across_instances(self):
+        for state in (State.GONE, State.WAITING):
+            with self.subTest(state=state):
+                self.atomic_claim(state)
+                self.roster.remove("x")
+
+    def atomic_claim(self, state):
         self.live()
-        self.roster.mark("x", State.GONE)
+        self.roster.mark("x", state)
         claims = []
         barrier = threading.Barrier(2)
 
         def claim():
             other = Roster(self.directory)
             barrier.wait()
-            claims.append(other.claim_resume("x"))
+            claims.append(other.claim_resume("x", state=state))
 
         threads = [threading.Thread(target=claim) for _ in range(2)]
         for thread in threads:

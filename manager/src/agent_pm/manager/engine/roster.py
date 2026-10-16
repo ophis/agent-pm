@@ -421,13 +421,22 @@ class Roster:
         with os.fdopen(fd, "wb") as stream:
             yield stream
 
-    def _receipt_record(self, entry: Entry) -> Record:
+    def _receipt_output(self, entry: Entry) -> bytes:
         if entry.receipt is None:
             raise RosterError("no launch receipt")
         path = os.path.join(self.directory, entry.receipt)
         raw = read_regular(path, limit=ROSTER_MAX, tail=True)
         if raw is None:
             raise RosterError(f"{path}: not a readable receipt")
+        return raw
+
+    def receipt_output(self, name: str) -> bytes:
+        with self._locked() as data:
+            self._lease(data)
+            return self._receipt_output(self._get(data, name))
+
+    def _receipt_record(self, entry: Entry) -> Record:
+        raw = self._receipt_output(entry)
         lines = [line for line in raw.splitlines() if line.decode(errors="replace").strip()]
         if not lines:
             raise RosterError("no Record received")
@@ -519,9 +528,9 @@ class Roster:
             State.STARTING: {State.LOST},
             State.LIVE: {State.DONE, State.WAITING, State.GONE},
             State.GONE: {State.LIVE, State.DONE, State.WAITING, State.RESUMING},
-            State.RESUMING: {State.GONE},
+            State.RESUMING: {State.GONE, State.WAITING},
             State.DONE: set(),
-            State.WAITING: set(),
+            State.WAITING: {State.RESUMING},
             State.LOST: set(),
         }
         if state != entry.state and state not in allowed[entry.state]:
@@ -554,13 +563,13 @@ class Roster:
             self._mark(data, name, state)
             return True
 
-    def claim_resume(self, name: str) -> Entry | None:
+    def claim_resume(self, name: str, *, state: State = State.GONE) -> Entry | None:
         with self._locked() as data:
             self._lease(data)
             entry = self._get(data, name)
             if entry.state in {State.RESUMING, State.LIVE}:
                 return None
-            if entry.state != State.GONE:
+            if entry.state != state:
                 raise RosterError(f"{name}: cannot resume {entry.state}")
             return self._mark(data, name, State.RESUMING)
 
@@ -570,13 +579,22 @@ class Roster:
             self._get(data, name)
             del data["entries"][name]
 
+    def remove_if(self, name: str, expected: Entry) -> bool:
+        with self._locked() as data:
+            self._lease(data)
+            value = data["entries"].get(name)
+            if value is None or _entry(value) != expected:
+                return False
+            del data["entries"][name]
+            return True
+
     def note(self, name: str, text: str | None) -> None:
         _note(text)
         with self._locked() as data:
             self._lease(data)
             data["entries"][name] = asdict(replace(self._get(data, name), note=text or None))
 
-    def adopt(self, record: Record) -> str | None:
+    def adopt(self, record: Record, *, resuming_before: str | None = None) -> str | None:
         """The entry this roster launched with record.sid takes record; None when none did, so a
         Record anyone else published is never adopted.
         """
@@ -595,6 +613,13 @@ class Roster:
             name = matches[0]
             self._control_available(data, record, name)
             current = self._get(data, name)
+            if (
+                current.state == State.RESUMING
+                and resuming_before is not None
+                and datetime.datetime.fromisoformat(current.started)
+                > datetime.datetime.fromisoformat(resuming_before)
+            ):
+                return name
             if current.state in {State.LOST, State.RESUMING}:
                 data["entries"][name] = asdict(
                     replace(current, record=record, state=State.LIVE, argv=())

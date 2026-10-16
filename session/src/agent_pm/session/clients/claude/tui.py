@@ -16,7 +16,8 @@ from types import MappingProxyType
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from agent_pm.session.clients.base import Tui
-from agent_pm.session.clients.claude.common import ClaudeCommon
+from agent_pm.session.clients.claude.common import TAIL, TUI_ENV, ClaudeCommon
+from agent_pm.session.clients.common import UUID
 from agent_pm.session.engine.types import (
     ClientBound,
     ConfigError,
@@ -32,7 +33,6 @@ from agent_pm.session.engine.types import (
 )
 from agent_pm.utils import number, read_regular
 
-TAIL = 4 << 20
 LIMIT = re.compile(r"You've hit your ((?:[\w']+ ){0,3})limit|Usage limit reached")
 WHEN = re.compile(
     (
@@ -85,6 +85,11 @@ class ClaudeTui(Tui):
         self.transcript, self.start, self.offset = "", 0, 0
         self.last = self.unseen = ""  # the turn's newest text; its turn end's text not yet read
         self.limited = False  # this turn's LimitHit given
+        self._origin = self._config_dir = self._native = ""
+        self._ids: set[str] = set()
+        self._visited: set[str] = set()
+        self._cutoff: str | None = None
+        self._pending: tuple[str, str | None, str | None] | None = None
 
     def launch(self, spec: Spec, hook):
         common = self.common
@@ -100,8 +105,8 @@ class ClaudeTui(Tui):
             for label in (*self.hooks, self.START)
         }
         tail = ("--", spec.prompt) if spec.prompt else ()
-        launch = common.launch(spec, hooks, tail=tail)
-        self.transcript = launch.transcript
+        launch = common.launch(spec, hooks, tail=tail, env=TUI_ENV)
+        self._tracking(launch.transcript)
         self.start = self.offset = _size(launch.transcript)
         return launch
 
@@ -110,7 +115,7 @@ class ClaudeTui(Tui):
             self.common.save(self.spec)
 
     def hook_callback(self):
-        return HookCallback(__name__, {"transcript": self.transcript, "start": self.start})
+        return HookCallback(__name__, {"transcript": self._origin, "start": self.start})
 
     def restore(self, spec, state):
         self.sid = spec.sid or ""
@@ -119,14 +124,76 @@ class ClaudeTui(Tui):
             isinstance(path, str) and os.path.isabs(path) and type(start) is int and start >= 0
         ):
             raise ConfigError("claude tui state: bad transcript cursor")
-        self.transcript, self.start, self.offset = path, start, start
+        self._tracking(path)
+        self.start = self.offset = start
+
+    def _tracking(self, path: str) -> None:
+        self.transcript = self._origin = path
+        self._config_dir = os.path.dirname(os.path.dirname(os.path.dirname(path)))
+        self._native = os.path.splitext(os.path.basename(path))[0]
+        if not UUID.fullmatch(self._native):
+            self._native = self.sid
+        chain = _chain(path, self.sid, self._config_dir)
+        self._ids = {hop[0] for hop in chain}
+        at = next((i for i, hop in enumerate(chain) if hop[0] == self._native), 0)
+        self._visited = {hop[0] for hop in chain[: at + 1]}
+        self._cutoff = None
+        self._pending = chain[at + 1] if at + 1 < len(chain) else None
 
     def observe(self):
-        self.offset = min(self.offset, _size(self.transcript))
-        data = read_regular(self.transcript, offset=self.offset) or b""
-        end = data.rfind(b"\n") + 1
-        self.offset += end
-        return [reply for line in data[:end].split(b"\n") for reply in self._record(line)]
+        found: list[Reply | LimitHit] = []
+        while True:
+            self.offset = min(self.offset, _size(self.transcript))
+            data = read_regular(self.transcript, offset=self.offset) or b""
+            end = data.rfind(b"\n") + 1
+            self.offset += end
+            for line in data[:end].split(b"\n"):
+                try:
+                    record = json.loads(line)
+                except (ValueError, RecursionError):
+                    continue
+                if not isinstance(record, dict):
+                    continue
+                continuation = self.common.continuation(record, self._native, self._config_dir)
+                if continuation:
+                    self._ids.add(continuation[0])
+                    self._pending = continuation
+                timestamp = record.get("timestamp")
+                if (
+                    record.get("type") in ("user", "assistant")
+                    and self._cutoff is not None
+                    and isinstance(timestamp, str)
+                    and timestamp <= self._cutoff
+                ):
+                    continue
+                found.extend(self._record(record))
+            if self._pending is None or self._pending[0] in self._visited:
+                return found
+            native, _, cutoff = self._pending
+            target = self.common.continuation(
+                {
+                    "type": "continued-in",
+                    "sessionId": self._native,
+                    "continuedInSessionId": native,
+                    "timestamp": cutoff,
+                },
+                self._native,
+                self._config_dir,
+            )
+            if target is None or target[1] is None:
+                return found
+            self._native, path, self._cutoff = target
+            assert path is not None
+            self.transcript = path
+            self._visited.add(native)
+            self._pending = None
+            self.offset = 0
+
+    def hook_events(self, label, payload):
+        native = payload.get("session_id")
+        if not isinstance(native, str) or native not in self._ids:
+            return []
+        return super().hook_events(label, payload)
 
     def replay(self, records):
         """Ends in the latest turn's state, not the oldest's: no LimitHit given live yet (the replay
@@ -136,6 +203,9 @@ class ClaudeTui(Tui):
         found: list[SessionEvent | ClientBound] = [*self.observe()]
         newest, ended = self.last, None
         for label, payload in records:
+            native = payload.get("session_id")
+            if not isinstance(native, str) or native not in self._ids:
+                continue
             events = self.hook_events(label, payload)
             found += events
             if label == "UserPromptSubmit":
@@ -146,12 +216,8 @@ class ClaudeTui(Tui):
         self.unseen = ended if ended and ended.strip() and ended != newest else ""
         return found
 
-    def _record(self, line: bytes) -> Sequence[Reply | LimitHit]:
-        try:
-            record = json.loads(line)
-        except (ValueError, RecursionError):
-            return []
-        if not isinstance(record, dict) or record.get("isSidechain") is True:
+    def _record(self, record: dict) -> Sequence[Reply | LimitHit]:
+        if record.get("isSidechain") is True:
             return []
         message = record.get("message")
         content = message.get("content") if isinstance(message, dict) else None
@@ -181,7 +247,7 @@ class ClaudeTui(Tui):
         return [Reply(text)]
 
     def session_id(self, payload):
-        """The sid it launched or restored: its native id."""
+        """Keep agent-pm identity stable across Claude native continuations."""
         return self.sid if super().session_id(payload) else ""
 
     def reply(self, payload):
@@ -226,9 +292,26 @@ class ClaudeTui(Tui):
         return [LimitHit(resets)]
 
 
-def on_hook(call: HookCall) -> dict:
-    """Journals the payload as is: the callback carries the transcript cursor's start."""
-    return call.payload
+def on_hook(call: HookCall) -> dict | None:
+    path = call.state.get("transcript")
+    if not isinstance(path, str) or not os.path.isabs(path):
+        return None
+    config_dir = os.path.dirname(os.path.dirname(os.path.dirname(path)))
+    ids = {hop[0] for hop in _chain(path, call.sid, config_dir)}
+    native = call.payload.get("session_id")
+    return call.payload if isinstance(native, str) and native in ids else None
+
+
+def _chain(path: str, sid: str, config_dir: str) -> list[tuple[str, str | None, str | None]]:
+    original = os.path.join(os.path.dirname(path), f"{sid}.jsonl")
+    if not os.path.isfile(original):
+        found = ClaudeCommon.continuation(
+            {"type": "continued-in", "sessionId": sid, "continuedInSessionId": sid},
+            sid,
+            config_dir,
+        )
+        original = found[1] if found and found[1] else original
+    return ClaudeCommon.walk(original, sid, config_dir)
 
 
 def _first(payload: dict, *keys: str) -> str:

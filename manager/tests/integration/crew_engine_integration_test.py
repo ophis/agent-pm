@@ -529,7 +529,7 @@ class CrewTest(Case):
                     other = Crew(Roster(self.directory))
                     other.attach()
                     entry = other.roster.entries()["worker"]
-                    self.assertEqual((entry.state, entry.record), (State.LIVE, original))
+                    self.assertEqual((entry.state, entry.record), (State.RESUMING, original))
                     self.assertIsNotNone(entry.receipt)
                     path = os.path.join(self.directory, entry.receipt)
                     self.assertTrue(os.path.exists(path))

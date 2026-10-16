@@ -353,7 +353,7 @@ class LimitTest(Case):
     def limit(self, message, now=NOW):
         payload = {"error": "rate_limit", "last_assistant_message": message}
         with mock.patch("time.time", return_value=now):
-            return ClaudeClient({}).tui().hook_events("StopFailure", payload)
+            return ClaudeClient({}).tui().failure(payload)
 
     def check(self, rows):
         for message, resets in rows:

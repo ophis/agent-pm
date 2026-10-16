@@ -1,5 +1,5 @@
 """manager/skills/tmux/SKILL.md (/agent-pm:tmux): every layer command it writes is one of the four
-bin/ commands; it launches all three kinds through agent-pm-crew run, handles every event word,
+bin/ commands; it launches all three kinds through Crew, handles every event word,
 answers dialogs with keys and recovers one entry at a time, through no retired path.
 """
 
@@ -55,14 +55,19 @@ class Commands(Case):
 
     def test_crew_launches_take_no_session_id(self):
         for commands in spans(body("tmux")):
-            outer = commands[0][:2] == ["agent-pm-crew", "run"]
+            outer = (
+                len(commands[0]) > 1
+                and commands[0][0] == "agent-pm-crew"
+                and commands[0][1] in {"worker", "issue", "role"}
+            )
             for command in commands[1:] if outer else commands:
                 if outer:
                     self.assertFalse({"--sid", "--resume"} & set(flags(command)), command)
 
-    def test_each_layers_content_query_is_preapproved(self):
+    def test_content_uses_crew_without_unused_layer_permissions(self):
         for command in ("agent-pm-session", "agent-pm-delegate", "agent-pm-linear"):
-            self.assertIn(f"{command} content *", rules("tmux"))
+            self.assertNotIn(f"{command} content *", rules("tmux"))
+        self.assertIn("entry's ctl", section("tmux", "Start"))
 
     def test_role_launch_has_no_separate_dry_run(self):
         [role] = [
@@ -133,14 +138,17 @@ class Names(Case):
 
 
 class Flows(Case):
-    def test_each_kind_launches_through_crew_run(self):
+    def test_each_kind_launches_through_its_crew_shorthand(self):
         launch = section("tmux", "Launch")
-        for inner in (
-            r"agent-pm-session start <name> --client <client>",
-            r"agent-pm-delegate run --role <role> .*--mode tui --detach --name <name> ",
-            r"agent-pm-linear router --issue <ID> --tui",
+        for command in (
+            "agent-pm-crew worker",
+            "agent-pm-crew role",
+            "agent-pm-crew issue",
         ):
-            self.assertRegex(launch, rf"`agent-pm-crew run <[A-Za-z]+> (\[[^]]+\] )?-- {inner}")
+            self.assertIn(command, launch)
+        self.assertNotIn("agent-pm-crew run", launch)
+        self.assertIn("before", launch)
+        self.assertIn("exit 2", launch)
         self.assertIn("--mode headless", launch)
         self.assertIn("the tui `<name>` and its harness `<name>-drive`", launch)
         self.assertIn("--display D", launch)
@@ -235,7 +243,8 @@ class Flows(Case):
     def test_recovery_is_per_entry_and_a_waiting_role_uses_recorded_run_settings(self):
         recover = section("tmux", "Recover")
         self.assertIn("agent-pm-crew resume <name>", recover)
-        self.assertIn("agent-pm-delegate resume <workdir> --input '<answers>'", recover)
+        self.assertIn("agent-pm-crew resume <name> --input '<answers>'", recover)
+        self.assertNotIn("agent-pm-delegate resume", recover)
         self.assertNotIn("--resume --sid", recover)
         self.assertRegex(recover, r"no resume-all")
 

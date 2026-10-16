@@ -15,11 +15,20 @@ from dataclasses import replace
 
 from agent_pm.manager.engine.pr import NO_PR, VIEW_FIELDS, cells, pr_url, unknown
 from agent_pm.manager.engine.roster import LOCK_TIMEOUT, Roster
-from agent_pm.manager.engine.types import Entry, Lease, RosterError, Spec, State, StatusError
+from agent_pm.manager.engine.types import (
+    Entry,
+    Lease,
+    RosterError,
+    Spec,
+    StartRefused,
+    State,
+    StatusError,
+)
 from agent_pm.utils import (
     EVENTS_ENV,
     LEASE_ENV,
     SID_ENV,
+    OutcomeStatus,
     Record,
     Status,
     StatusState,
@@ -37,7 +46,6 @@ DESCENDANTS = (*HERE, "--descendants")
 HEADER = "name\tkind\tsid\tstate\tview\tnote\tcwd\tattach"
 REPORT_HEADER = "name\tkind\tstate\tnote\treply\tpr\tchecks\tmergeable\treview"
 REPLY_WIDTH = 80
-HARNESS_SUFFIX = "-drive"
 
 
 def _owner(session: str, entries: dict[str, Entry]) -> str | None:
@@ -64,9 +72,9 @@ def _reconciled(entry: Entry, status: Status) -> State:
         return entry.state
     if status.alive:
         return State.LIVE
-    if status.outcome in ("done", "failed"):
+    if status.outcome in (OutcomeStatus.DONE, OutcomeStatus.FAILED):
         return State.DONE
-    if status.outcome == "needs_input":
+    if status.outcome == OutcomeStatus.NEEDS_INPUT:
         return State.WAITING
     return State.GONE
 
@@ -125,7 +133,9 @@ class Crew:
             self._listed = self._listing(HERE)
         return self._listed
 
-    def _start(self, argv: tuple[str, ...], name: str, sid: str) -> Record:
+    def _start(
+        self, argv: tuple[str, ...], name: str, sid: str, *, refusal=False, reject_missing=False
+    ) -> Record:
         env = {**self._env(events=True), SID_ENV: sid}
         try:
             with self.roster.open_receipt(name) as receipt:
@@ -140,8 +150,19 @@ class Crew:
                 )
                 if result.returncode:
                     reason = result.stderr.strip() or f"exit {result.returncode}"
+                    if refusal and result.returncode == 2 and not self.roster.receipt_output(name):
+                        raise StartRefused(f"{shlex.join(argv)}: {reason}")
                     raise RuntimeError(f"{shlex.join(argv)}: {reason}")
                 sys.stderr.write(result.stderr)
+                if reject_missing:
+                    raw = self.roster.receipt_output(name)
+                    lines = raw.splitlines()
+                    try:
+                        Record.parse(lines[-1].decode("utf-8") if lines else "")
+                    except (ValueError, UnicodeError) as error:
+                        raise StartRefused(
+                            f"{shlex.join(argv)}: no final Record: {error}"
+                        ) from error
                 return self.roster.receipt_record(name)
         except OSError as error:
             raise RuntimeError(f"{shlex.join(argv)}: {error}") from error
@@ -151,12 +172,42 @@ class Crew:
             ) from error
 
     def run(self, spec: Spec) -> Record:
-        self._listed = None
+        return self._run(spec, str(uuid.uuid4()), shorthand=False)
+
+    def launch(
+        self,
+        kind: str,
+        key: str,
+        argv: tuple[str, ...],
+        *,
+        note: str | None = None,
+        name: str | None = None,
+    ) -> Record:
         sid = str(uuid.uuid4())
+        if kind == "worker":
+            name = key
+            command = ("agent-pm-session", "start", key, *argv)
+        elif kind == "issue":
+            name = key
+            command = ("agent-pm-linear", "router", "--issue", key, "--tui", *argv)
+        elif kind == "role":
+            name = name if name is not None else f"{key}-{sid[:8]}"
+            command = ("agent-pm-delegate", "run", "--role", key, "--detach", "--name", name, *argv)
+        else:
+            raise ValueError(f"unknown launch kind: {kind}")
+        return self._run(Spec(name, command, note), sid, shorthand=True)
+
+    def _run(self, spec: Spec, sid: str, *, shorthand: bool) -> Record:
+        self._listed = None
         intent = self.roster.begin(spec, sid=sid)
         try:
-            record = self._start(spec.argv, spec.name, sid)
+            record = self._start(
+                spec.argv, spec.name, sid, refusal=shorthand, reject_missing=shorthand
+            )
             self.roster.commit(spec.name, record)
+        except StartRefused:
+            self.roster.remove_if(spec.name, intent)
+            raise
         except (RosterError, RuntimeError, ValueError) as error:
             try:
                 self.roster.mark_if(spec.name, intent, State.LOST)
@@ -305,7 +356,8 @@ class Crew:
                     self.roster.mark_if(name, entry, State.GONE)
         for record in here or ():
             try:
-                adopted = self.roster.adopt(record)
+                cutoff = (instant - datetime.timedelta(seconds=RECOVERY_AGE)).isoformat()
+                adopted = self.roster.adopt(record, resuming_before=cutoff)
                 if adopted is None:
                     print(f"crew: adopt {record.name}: no matching launch sid", file=sys.stderr)
             except RosterError as error:
@@ -367,10 +419,9 @@ class Crew:
         output.append(f"N={cursor} GEN={generation}")
         return "\n".join(output) + "\n"
 
-    def report(self, session_command: tuple[str, ...], delegate_command: tuple[str, ...]) -> str:
-        """One row per entry: its shown state, note, latest reply's first line by session_command,
-        and its PR's state, from its note or a delegate_command Record's outcome. Reads only: marks,
-        adopts and shows nothing, and needs no lease.
+    def report(self) -> str:
+        """One row per entry: state, note, ctl content's first line and PR from note or outcome.
+        Reads only: marks, adopts and shows nothing, and needs no lease.
         """
         entries = self.roster.entries()
         answers, failures = self._statuses(entries)
@@ -384,15 +435,13 @@ class Crew:
             if status is not None and state == State.LIVE:
                 state = status.state
             reply = "-"
-            if record is not None and record.sessions:
+            if record is not None:
                 with contextlib.suppress(RuntimeError):
                     reply = _first_line(
-                        self._execute((*session_command, "reply", record.sessions[-1]))
+                        self._execute((*record.ctl, "content"), record.to_line() + "\n")
                     )
             pr = NO_PR
-            if url := pr_url(entry.note) or pr_url(
-                self._outcome_url(name, record, status, delegate_command)
-            ):
+            if url := pr_url(entry.note) or pr_url(self._outcome_url(name, record, status)):
                 try:
                     pr = cells(
                         json.loads(self._execute(("gh", "pr", "view", url, "--json", VIEW_FIELDS)))
@@ -409,14 +458,8 @@ class Crew:
         name: str,
         record: Record | None,
         status: Status | None,
-        delegate_command: tuple[str, ...],
     ) -> str | None:
-        if (
-            record is None
-            or record.ctl != delegate_command
-            or status is None
-            or status.outcome is None
-        ):
+        if record is None or record.kind != "role" or status is None or status.outcome is None:
             return None
         try:
             outcome = json.loads(self._execute((*record.ctl, "outcome"), record.to_line() + "\n"))
@@ -426,31 +469,42 @@ class Crew:
         url = outcome.get("url") if isinstance(outcome, dict) else None
         return url if isinstance(url, str) else None
 
-    def resume(self, name: str) -> Record | None:
+    def resume(self, name: str, *, input: str | None = None) -> Record | None:
         self._listed = None
         self.roster.check_lease()
         entries = self.roster.entries()
         if name not in entries:
             raise ValueError(f"{name}: not in roster")
         entry = entries[name]
+        if input is not None and entry.state != State.WAITING:
+            raise ValueError(f"{name}: --input requires waiting (state {entry.state})")
+        if input is None and entry.state == State.WAITING:
+            raise RuntimeError(f"{name}: waiting: give --input to answer")
         if entry.state == State.RESUMING:
             return None
         if entry.record is None:
             raise RuntimeError(f"{name}: {entry.state}: no Record to resume")
-        status = self.status((name,))[0]
-        if status.alive:
-            return entry.record
-        if entry.state != State.GONE:
-            raise RuntimeError(f"{name}: only gone entries can resume (state {entry.state})")
-        claimed = self.roster.claim_resume(name)
+        if input is None:
+            status = self.status((name,))[0]
+            if status.alive:
+                return entry.record
+            if entry.state != State.GONE:
+                raise RuntimeError(f"{name}: only gone entries can resume (state {entry.state})")
+        claimed = self.roster.claim_resume(
+            name, state=State.WAITING if input is not None else State.GONE
+        )
         if claimed is None:
             return None
         record = claimed.record
         if record is None or claimed.sid is None:
             raise RuntimeError(f"{name}: no Record or sid to resume")
         try:
-            resumed = self._start(record.resume, name, claimed.sid)
+            argv = record.resume if input is None else (*record.resume, "--input", input)
+            resumed = self._start(argv, name, claimed.sid, refusal=input is not None)
             self.roster.commit(name, resumed)
+        except StartRefused:
+            self.roster.mark_if(name, claimed, State.WAITING)
+            raise
         except (RosterError, RuntimeError, ValueError) as error:
             try:
                 self.roster.mark_if(name, claimed, State.GONE)
@@ -523,27 +577,16 @@ class Crew:
             else:
                 time.sleep(0.5)
 
-    def event_content(self, event: str, session_command: tuple[str, ...]) -> str:
-        """What a next_event line is about, newline-terminated: a harness's (`<tui>-drive`, its
-        entry's Record naming the tui) entry Status, else by session_command a `done` session's
-        reply or the session's screen; else why it is unreadable.
-        """
+    def event_content(self, event: str) -> str:
+        """The owning entry's ctl content, newline-terminated, else why it is unavailable."""
         try:
-            _, session, word = event.split(maxsplit=3)[:3]
+            _, session, _ = event.split(maxsplit=3)[:3]
             entries = self.roster.entries()
             name = _owner(session, entries)
             record = None if name is None else entries[name].record
-            tui = session.removesuffix(HARNESS_SUFFIX)
-            if (
-                name is not None
-                and record is not None
-                and tui != session
-                and tui in (record.name, *record.sessions)
-            ):
-                content = "".join(status.to_line() + "\n" for status in self.status((name,)))
-            else:
-                verb = "reply" if word == "done" else "read"
-                content = self._execute((*session_command, verb, session))
+            if record is None:
+                raise ValueError(f"{session}: no owning entry Record")
+            content = self._execute((*record.ctl, "content"), record.to_line() + "\n")
         except (OSError, RosterError, RuntimeError, ValueError) as error:
             content = f"content unavailable: {printable(one_line(str(error)))}"
         return content if content.endswith("\n") else content + "\n"

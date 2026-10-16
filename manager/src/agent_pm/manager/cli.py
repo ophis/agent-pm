@@ -14,9 +14,6 @@ from agent_pm.manager.engine.holder import Holder
 from agent_pm.manager.engine.types import Lease, StatusError
 from agent_pm.utils import STATE, nested_start
 
-SESSION_COMMAND = ("agent-pm-session",)
-DELEGATE_COMMAND = ("agent-pm-delegate",)
-
 
 def _number(value: str) -> int:
     try:
@@ -60,6 +57,14 @@ def _hold(args) -> int:
 
 def _run(args) -> int:
     print(_crew(args).run(Spec(args.name, args.command, args.note)).to_line())
+    return 0
+
+
+def _launch(args) -> int:
+    record = _crew(args).launch(
+        args.kind, args.key, tuple(args.arguments), note=args.note, name=args.entry_name
+    )
+    print(record.to_line())
     return 0
 
 
@@ -109,7 +114,7 @@ def _report_error(error: Exception) -> None:
 
 
 def _report(args) -> int:
-    print(_crew(args).report(SESSION_COMMAND, DELEGATE_COMMAND), end="")
+    print(_crew(args).report(), end="")
     return 0
 
 
@@ -118,7 +123,7 @@ def _resume(args) -> int:
     failed = 0
     for name in args.names:
         try:
-            record = crew.resume(name)
+            record = crew.resume(name, input=args.input)
             if record is not None:
                 print(record.to_line())
         except (RosterError, RuntimeError, ValueError) as error:
@@ -167,7 +172,7 @@ def _next_event(args) -> int:
         after, event = crew.next_event(after=after, gen=args.gen)
         block = f"{after} {event}\n"
         if args.content:
-            block += crew.event_content(event, SESSION_COMMAND)
+            block += crew.event_content(event)
         # One write per event: Monitor groups lines written within 200 ms into one notification.
         print(block, end="", flush=True)
         if not args.follow:
@@ -187,6 +192,14 @@ def _parser() -> argparse.ArgumentParser:
     run.add_argument("name")
     run.add_argument("--note")
     run.set_defaults(func=_run)
+    for kind in ("worker", "issue", "role"):
+        launch = subs.add_parser(kind, parents=[common])
+        launch.add_argument("--note")
+        if kind == "role":
+            launch.add_argument("--name", dest="entry_name")
+        launch.add_argument("key")
+        launch.add_argument("arguments", nargs=argparse.REMAINDER)
+        launch.set_defaults(func=_launch, kind=kind, entry_name=None)
     attach = subs.add_parser("attach", parents=[common])
     attach.add_argument("--after", type=_number)
     attach.add_argument("--gen", type=_number)
@@ -200,6 +213,7 @@ def _parser() -> argparse.ArgumentParser:
     report.set_defaults(func=_report)
     resume = subs.add_parser("resume", parents=[common])
     resume.add_argument("names", nargs="+")
+    resume.add_argument("--input", help="answer one waiting entry")
     resume.set_defaults(func=_resume)
     for verb, text in (
         ("hide", "close each entry's panes; its work runs on"),
@@ -233,8 +247,7 @@ def _parser() -> argparse.ArgumentParser:
     next_event.add_argument(
         "--content",
         action="store_true",
-        help="then print its content: a done session's reply, a harness's entry status, "
-        "else the screen",
+        help="then print the owning entry's ctl content at the time of reading",
     )
     next_event.add_argument(
         "--follow", action="store_true", help="keep printing events until stopped or failing"
@@ -246,7 +259,7 @@ def _parser() -> argparse.ArgumentParser:
 def main(argv: Sequence[str] | None = None) -> int:
     arguments = list(sys.argv[1:] if argv is None else argv)
     command = ()
-    if "--" in arguments:
+    if arguments and arguments[0] in {"run", "hold"} and "--" in arguments:
         delimiter = arguments.index("--")
         command = tuple(arguments[delimiter + 1 :])
         arguments = arguments[:delimiter]
@@ -262,7 +275,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         parser.error(f"{args.verb} takes entry names or --all")
     if args.func is _attach and (args.after is None) != (args.gen is None):
         parser.error("--after and --gen go together")
-    if args.func in {_run, _hold, _resume} and (refused := nested_start()):
+    if args.func is _resume and args.input is not None and len(args.names) != 1:
+        parser.error("resume --input requires exactly one name")
+    if args.func in {_run, _hold, _resume, _launch} and (refused := nested_start()):
         print(f"crew: {refused}", file=sys.stderr)
         return 2
     try:

@@ -5,7 +5,6 @@ test on a configured class (self.session) with caller-owned dependencies.
 
 import contextlib
 import dataclasses
-import fcntl
 import io
 import itertools
 import json
@@ -56,7 +55,7 @@ from agent_pm.session.engine.types import (
 )
 from agent_pm.session.hosts.tmux import TmuxHost
 from agent_pm.session.runtimes import tui
-from agent_pm.utils import Record, StatusState, load_class
+from agent_pm.utils import Record, StatusState, inode_lock, load_class
 
 from session.tests import fake_client
 from session.tests.case import HOSTS, REPO, SPAWNS, SRC, Case
@@ -967,7 +966,7 @@ class EventsOverARuntimeTest(Case):
         self.assertEqual(self.events(session), [])
         self.assertEqual(session.reply, "done")
         self.assertEqual({call[1] for call in self.mode.calls if call[0] == "poll"}, {0.5})
-        self.assertEqual(self.mode.calls[-1], ("returncode", 0.5))
+        self.assertIn(("returncode", 0.5), self.mode.calls)
 
     def test_each_idle_span_yields_idle_timeout_but_none_while_blocked(self):
         for case, script, idle_timeout, expected in (
@@ -2095,7 +2094,6 @@ class SessionIdentityTest(HostedTuiBase):
             lambda: session.press((KeyPress("Enter"),)),
             session.alive,
             session.status,
-            session.stop,
             session.info,
             lambda: session.reply,
             session.close,
@@ -2106,7 +2104,6 @@ class SessionIdentityTest(HostedTuiBase):
             session.hide,
             session.attach_command,
             session.screen,
-            lambda: next(session.events()),
         )
         for action in actions:
             with self.subTest(action=action), self.assertRaises(SessionError) as caught:
@@ -2121,21 +2118,81 @@ class SessionIdentityTest(HostedTuiBase):
         self.assertTrue(current.alive())
         self.assertTrue(os.path.isdir(os.path.join(self.root, "w1")))
 
-    def test_close_rechecks_inside_the_store_lock(self):
+    def test_close_waits_for_the_name_lock_before_checking_identity(self):
+        self.tui(name="w1", sid=SID)
+        session = self.session.attach("w1", sid=SID)
+        started = threading.Event()
+        errors = []
+
+        def close():
+            started.set()
+            session.close()
+
+        thread = threading.Thread(target=close, daemon=True)
+        with capture_errors(thread, errors.append):
+            with inode_lock(tui.tui_lock("w1")):
+                thread.start()
+                self.assertTrue(started.wait(WAIT))
+                replacement = self.host.create("w1", sid="replacement")
+            thread.join(WAIT)
+        self.assertFalse(thread.is_alive())
+        self.assertEqual(len(errors), 1)
+        self.assertIsInstance(errors[0], SessionError)
+        replacement.calls.close.assert_not_called()
+        self.assertTrue(os.path.isdir(os.path.join(self.root, "w1")))
+
+    def test_attach_checks_snapshot_sid_before_constructing_a_runtime(self):
+        self.tui(name="w1", sid=SID)
+        path = Path(self.root) / "w1" / "session.json"
+        state = json.loads(path.read_text())
+        path.write_text(json.dumps({**state, "sid": "wrong-state"}))
+        with self.assertRaises(SessionError) as caught:
+            self.session.attach("w1", sid=SID)
+        self.assertIn(SID, str(caught.exception))
+        self.assertIn("wrong-state", str(caught.exception))
+        self.host.processes["w1"].calls.close.assert_not_called()
+
+    def test_poll_ends_a_sid_bound_handle_after_replacement(self):
         self.tui(name="w1", sid=SID)
         session = self.session.attach("w1", sid=SID)
         replacements = []
 
-        flock = fcntl.flock
+        def replace(_):
+            if not replacements:
+                replacements.append(self.host.create("w1", sid="replacement"))
 
-        def replaced(fd, operation):
-            flock(fd, operation)
-            replacements.append(self.host.create("w1", sid="replacement"))
-
-        with (
-            mock.patch("fcntl.flock", side_effect=replaced),
-            self.assertRaises(SessionError),
-        ):
-            session.close()
+        with mock.patch("time.sleep", side_effect=replace):
+            self.assertEqual(list(session.events())[-1], Exited(-signal.SIGHUP))
         replacements[0].calls.close.assert_not_called()
-        self.assertTrue(os.path.isdir(os.path.join(self.root, "w1")))
+
+    def test_stop_ends_a_sid_bound_handle_without_closing_replacement(self):
+        self.tui(name="w1", sid=SID)
+        session = self.session.attach("w1", sid=SID)
+        replacement = self.host.create("w1", sid="replacement")
+        session.stop()
+        replacement.calls.close.assert_not_called()
+        self.assertTrue(replacement.alive())
+
+    def test_content_uses_current_activity(self):
+        session = self.tui(name="w1", sid=SID)
+        self.host.calls.screen.return_value = "current screen"
+        terminal = self.host.processes["w1"]
+        path = Path(self.root) / "w1" / "hooks.jsonl"
+        path.write_text(
+            json.dumps({"label": "stop", "payload": {"last_message": "last reply"}}) + "\n"
+        )
+        session = self.session.attach("w1")
+        for activity, expected in (
+            (StatusState.DONE, "last reply"),
+            (StatusState.WORKING, "current screen"),
+            (StatusState.BLOCKED, "current screen"),
+        ):
+            with self.subTest(activity=activity):
+                terminal.calls.activity.return_value = activity
+                self.assertEqual(session.content(), expected)
+
+    def test_content_falls_back_to_screen_without_reply(self):
+        session = self.tui(name="w1", sid=SID)
+        self.host.processes["w1"].calls.activity.return_value = StatusState.DONE
+        self.host.calls.screen.return_value = "screen fallback"
+        self.assertEqual(session.content(), "screen fallback")
