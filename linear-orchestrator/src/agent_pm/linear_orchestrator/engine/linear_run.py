@@ -109,7 +109,7 @@ class LinearRun:
         )
 
     def content(self) -> str:
-        return self.status().to_line()
+        return self.delegate.content()
 
     def status(self) -> Status:
         return replace(self.delegate.status(), name=self.issue)

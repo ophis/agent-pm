@@ -7,7 +7,7 @@ from agent_pm.delegate import ConfigError as DelegateConfigError
 from agent_pm.linear_orchestrator.engine import runs
 from agent_pm.linear_orchestrator.engine.linear_run import LinearRun
 from agent_pm.linear_orchestrator.engine.types import ConfigError
-from agent_pm.utils import Record
+from agent_pm.utils import OutcomeStatus, Record, StatusState
 from orchestrator_tests.linear_run_case import SID, ReadyDelegate, RunCase
 
 from delegate.tests.fakes.delegate import FakeDelegate
@@ -74,9 +74,35 @@ class Runs(RunCase):
         self.assertEqual(owner.delegate.accepted[0], "researcher")
         self.assertEqual((record.sid, record.kind), (SID, "pipeline"))
 
-    def test_content_is_the_pipeline_status_line(self):
+    def test_content_preserves_the_delegates_status_line(self):
         owner, _ = self.start()
-        self.assertEqual(owner.content(), owner.status().to_line())
+        self.assertEqual(owner.content(), owner.delegate.status().to_line())
+
+    def test_content_preserves_each_current_delegate_response_without_inspecting_liveness(self):
+        owner, _ = self.start()
+        status = owner.delegate.status()
+        responses = [
+            "screen\nworking",
+            "",
+            replace(status, name="Status-shaped agent reply").to_line(),
+            replace(status, name="completed-live", outcome=OutcomeStatus.DONE).to_line(),
+            replace(status, name="recorded-error", state=StatusState.GONE).to_line(),
+            replace(status, name="headless").to_line(),
+            "a new turn's screen",
+        ]
+        with (
+            mock.patch.object(owner.delegate, "content", side_effect=responses) as content,
+            mock.patch.object(
+                owner.delegate, "status", side_effect=AssertionError("content owns it")
+            ),
+            mock.patch.object(
+                owner.delegate, "alive", side_effect=AssertionError("content owns it")
+            ),
+        ):
+            for expected in responses:
+                with self.subTest(expected=expected):
+                    self.assertEqual(owner.content(), expected)
+            self.assertEqual(content.call_count, len(responses))
 
     def test_constructed_delegate_receives_exact_spec_and_display(self):
         owner, record = self.start(delegate_cls=CapturedDelegate, display="opaque:\nvalue")
