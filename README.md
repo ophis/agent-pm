@@ -45,7 +45,7 @@ flowchart TB
     D["cli.py<br>agent-pm-delegate"]
     HD["engine/harness_delegate.py<br>HarnessDelegate · state.py RunState"]
     H["engine/harness.py<br>detached run"]
-    E["engine/: base · plan · drivers · runner · callback · types"]
+    E["engine/: base · plan · drivers · runner · callback · types · config · ready_gate"]
     C["composer/<br>prompt · run spec"]
     EV["event/<br>reply · outcome check · callback line"]
     CF["config.py<br>package settings"]
@@ -56,7 +56,7 @@ flowchart TB
   end
   subgraph SE[agent_pm.session]
     SC["cli.py<br>agent-pm-session"]
-    DR["engine/: base · hosted_session · worker · types · records<br>runtimes/: headless · tui · in_process<br>hosts/tmux/: host · transport · placement · grid<br>hosts/pty/: host · supervisor · keys"]
+    DR["engine/: base · hosted_session · worker · types · records<br>runtimes/: headless · tui · in_process<br>hosts/base: Host · Process · Interactive · InteractiveProcess · Showable<br>hosts/reclaimed: ReclaimedGroup<br>hosts/tmux/: host · transport · placement · grid · iterm<br>hosts/pty/: host · supervisor · keys"]
     subgraph AD[clients/]
       CL[claude]
       CX[codex]
@@ -75,6 +75,7 @@ flowchart TB
   SC --> DR
   LCLI --> R & PP & WB & LR
   R & PP & WB --> LR
+  R -->|"writeback.replay"| WB
   LR -->|"agent_pm.delegate: detach, views"| HD
   H -.->|"each event: agent-pm-linear writeback"| LCLI
   LC -->|"Delegate class methods"| HD
