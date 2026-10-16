@@ -1041,8 +1041,7 @@ class CrewTest(Case):
                     self.assertRaises((Stale, RosterError)),
                 ):
                     self.crew.next_event(after=1, gen=0)
-                with open(self.roster.path, encoding="utf-8") as stream:
-                    self.assertEqual(json.load(stream)["cursor"], 0)
+                self.assertFalse(Path(self.roster.path).exists())
 
     def test_next_event_refuses_an_event_file_that_becomes_unreadable_while_waiting(self):
         path = self.roster.events
@@ -1063,8 +1062,7 @@ class CrewTest(Case):
         ):
             self.crew.next_event(after=1, gen=0)
         self.assertEqual(waiting, [0.5])
-        with open(self.roster.path, encoding="utf-8") as stream:
-            self.assertEqual(json.load(stream)["cursor"], 0)
+        self.assertFalse(Path(self.roster.path).exists())
 
     def test_backlog_and_next_event_filter_diagnostics_keep_physical_line_numbers(self):
         with open(self.roster.events, "a", encoding="utf-8") as stream:
