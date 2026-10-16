@@ -27,6 +27,7 @@ from agent_pm.session.engine.types import (
     Key,
     LimitHit,
     Paste,
+    Reply,
     TurnEnd,
 )
 from agent_pm.utils import LOCAL_ENV_VARS
@@ -50,6 +51,23 @@ HOOK = (
     "context",
     json.dumps([SRC["session"], SRC["utils"]]),
 )
+
+TOOL = {"type": "response_item", "payload": {"type": "function_call", "name": "exec_command"}}
+
+
+def _said(role, *texts):
+    """A Codex session file message record."""
+    kind = "output_text" if role == "assistant" else "input_text"
+    content = [{"type": kind, "text": text} for text in texts]
+    return {
+        "type": "response_item",
+        "payload": {"type": "message", "role": role, "content": content},
+    }
+
+
+def _append(path, *records):
+    with path.open("a", encoding="utf-8") as stream:
+        stream.writelines(json.dumps(record) + "\n" for record in records)
 
 
 # Codex 0.162.1's own renders of its dialogs (openai/codex tui insta snapshots).
@@ -204,7 +222,9 @@ class TuiTest(Base):
         self.assertEqual(set(commands), set(run.hooks))
         for label, command in commands.items():
             self.assertEqual(shlex.split(command), [*HOOK, label])
-        self.assertEqual(run.hook_callback(), HookCallback(tui.__name__, {"store": data["store"]}))
+        self.assertEqual(
+            run.hook_callback(), HookCallback(tui.__name__, {"store": data["store"], "start": 0})
+        )
         self.assertIsNone(self.common.load(str(self.work), self.spec.sid).native_id)
 
     def test_resume_uses_shared_saved_policy_and_native_file(self):
@@ -418,9 +438,134 @@ class TuiTest(Base):
         self.assertEqual((fresh.state, fresh.native), (None, ""))
         not_a_directory = self.extra / "store"
         not_a_directory.write_text("")
-        for state in ({"store": "relative/store"}, {"store": str(not_a_directory)}):
+        for state in (
+            {"store": "relative/store"},
+            {"store": str(not_a_directory)},
+            {"start": -1},
+            {"start": "0"},
+            {"start": True},
+        ):
             with self.subTest(state=state), self.assertRaises(ConfigError):
                 self.client.tui().restore(self.spec, state)
+
+    def bound(self):
+        """A launched tui bound to NATIVE by its SessionStart, and its native session file."""
+        run, _, _ = self.launch()
+        self.assertEqual(run.observe(), [])
+        path = self.rollout()
+        run.hook_events("SessionStart", self.payload())
+        return run, path
+
+    def test_observe_reports_a_mid_turn_reply_once_and_not_the_stops_again(self):
+        run, path = self.bound()
+        _append(path, _said("user", "go"), _said("assistant", "[agent-pm-progress:start] x"), TOOL)
+        self.assertEqual(run.observe(), [Reply("[agent-pm-progress:start] x")])
+        self.assertEqual(
+            run.hook_events("Stop", self.payload(last_assistant_message="done")),
+            [TurnEnd("done")],
+        )
+        _append(path, _said("assistant", "done"))
+        self.assertEqual(run.observe(), [])
+        _append(path, _said("user", "again"), _said("assistant", "done"))
+        self.assertEqual(run.observe(), [Reply("done")])
+
+    def test_a_stop_repeating_the_observed_reply_leaves_nothing_to_report(self):
+        run, path = self.bound()
+        _append(path, _said("user", "go"), _said("assistant", "done"))
+        self.assertEqual(run.observe(), [Reply("done")])
+        self.assertEqual(
+            run.hook_events("Stop", self.payload(last_assistant_message="done")),
+            [TurnEnd("done")],
+        )
+        self.assertEqual(run.observe(), [])
+        _append(path, _said("assistant", "done"))
+        self.assertEqual(run.observe(), [Reply("done")])
+
+    def test_observe_skips_other_records_and_waits_for_a_whole_line(self):
+        run, path = self.bound()
+        with path.open("a", encoding="utf-8") as stream:
+            stream.write("not json\n[]\n")
+        _append(
+            path,
+            _said("developer", "rules"),
+            _said("assistant", " "),
+            {"type": "response_item", "payload": {"type": "message", "role": "assistant"}},
+            {"type": "event_msg", "payload": {"type": "agent_message", "message": "dup"}},
+            {"type": "response_item", "payload": None},
+        )
+        line = json.dumps(_said("assistant", "a", "b"))
+        with path.open("a", encoding="utf-8") as stream:
+            stream.write(line[:10])
+        self.assertEqual(run.observe(), [])
+        with path.open("a", encoding="utf-8") as stream:
+            stream.write(line[10:] + "\n")
+        self.assertEqual(run.observe(), [Reply("a\nb")])
+
+    def test_observe_finds_no_file_unbound_missing_or_ambiguous(self):
+        run, _, _ = self.launch()
+        run.hook_events("SessionStart", self.payload())
+        self.assertEqual(run.observe(), [])
+        path = self.rollout()
+        with mock.patch.object(run.common, "transcript", side_effect=ConfigError("duplicate")):
+            self.assertEqual(run.observe(), [])
+        _append(path, _said("assistant", "found"))
+        self.assertEqual(run.observe(), [Reply("found")])
+
+    def test_resume_starts_the_cursor_at_the_session_files_end(self):
+        self.prepare()
+        self.common.bind(str(self.work), self.spec.sid, NATIVE)
+        path = self.rollout()
+        _append(path, _said("assistant", "old"))
+        run, launch, _ = self.launch(resume=True)
+        self.assertEqual(launch.transcript, str(path))
+        self.assertEqual(run.hook_callback().state["start"], path.stat().st_size)
+        self.assertEqual(run.observe(), [])
+        _append(path, _said("assistant", "new"))
+        self.assertEqual(run.observe(), [Reply("new")])
+
+    def test_attach_replays_from_the_launch_cursor_and_reads_on_from_its_end(self):
+        run, path = self.bound()
+        self.common.bind(str(self.work), self.spec.sid, NATIVE)
+        _append(path, _said("user", "go"), _said("assistant", "a"))
+        self.assertEqual(run.observe(), [Reply("a")])
+        records = [
+            ("SessionStart", self.payload()),
+            ("UserPromptSubmit", self.payload()),
+            ("Stop", self.payload(last_assistant_message="a")),
+            ("UserPromptSubmit", self.payload()),
+            ("Stop", self.payload(last_assistant_message="final")),
+        ]
+        attached = self.client.tui()
+        attached.restore(self.spec, run.hook_callback().state)
+        self.assertEqual(
+            attached.replay(records),
+            [
+                Reply("a"),
+                ClientBound(NATIVE),
+                Activity(""),
+                Activity(""),
+                TurnEnd("a"),
+                Activity(""),
+                TurnEnd("final"),
+            ],
+        )
+        self.assertEqual(attached.observe(), [])
+        _append(path, _said("user", "next"), _said("assistant", "final"), _said("assistant", "b"))
+        self.assertEqual(attached.observe(), [Reply("final"), Reply("b")])
+
+    def test_attach_mid_turn_skips_the_pending_stop_text_once(self):
+        run, path = self.bound()
+        self.common.bind(str(self.work), self.spec.sid, NATIVE)
+        _append(path, _said("user", "go"), _said("assistant", "a"))
+        records = [
+            ("UserPromptSubmit", self.payload()),
+            ("Stop", self.payload(last_assistant_message="final")),
+        ]
+        attached = self.client.tui()
+        attached.restore(self.spec, run.hook_callback().state)
+        self.assertEqual(attached.replay(records)[0], Reply("a"))
+        _append(path, _said("assistant", "final"), _said("assistant", "final"))
+        self.assertEqual(attached.observe(), [Reply("final")])
 
     def test_identity_accepts_canonical_cwd_alias_and_keeps_native_binding(self):
         run, _, _ = self.launch()

@@ -1,4 +1,7 @@
-"""Codex interactive launch plans, hook callbacks and event interpretation."""
+"""Codex interactive launch plans, hook callbacks and event interpretation.
+Each new assistant message in the bound native session file since launch is one Reply, read from a
+cursor; a Stop's text that lands later is not repeated.
+"""
 
 import json
 import os
@@ -7,7 +10,7 @@ import shlex
 import shutil
 import sys
 from collections.abc import Mapping
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from types import MappingProxyType
 
 import agent_pm.utils
@@ -25,15 +28,18 @@ from agent_pm.session.clients.codex.common import (
 from agent_pm.session.clients.codex.common.types import Snapshot
 from agent_pm.session.clients.common import scan, split_flags
 from agent_pm.session.engine.types import (
+    ClientBound,
     ConfigError,
     HookCall,
     HookCallback,
     HookKind,
     Launch,
     LimitHit,
+    Reply,
+    SessionEvent,
     Spec,
 )
-from agent_pm.utils import module_roots, source_path
+from agent_pm.utils import json_records, module_roots, read_regular, source_path
 
 PASSED = ("-c", "--enable", "--disable")
 
@@ -123,6 +129,8 @@ class CodexTui(Tui):
         self.last_reply = ""
         self.native = ""
         self.store = ""
+        self.transcript, self.start, self.offset = "", 0, 0  # the native session file's cursor
+        self.last = self.unseen = ""  # the turn's newest text; its Stop text not yet read
 
     def launch(self, spec: Spec, hook):
         common = self.common
@@ -136,6 +144,8 @@ class CodexTui(Tui):
         if exe is None:
             raise ConfigError("codex not found on PATH")
         exe = os.path.abspath(exe)
+        self.transcript = common.transcript(self.state) if resume else ""
+        self.start = self.offset = os.path.getsize(self.transcript) if self.transcript else 0
         plan = LaunchPlan(
             exe,
             self.common.selector(self.native, resume=resume),
@@ -160,7 +170,7 @@ class CodexTui(Tui):
             unset=(*common.UNSET, CLIENT_PYTHONPATH),
             cwd=snapshot.cwd,
             project=snapshot.project,
-            transcript=common.transcript(self.state) if resume else "",
+            transcript=self.transcript,
             resume=common.resume_command(self.state) if resume else "",
         )
         return launch
@@ -169,11 +179,14 @@ class CodexTui(Tui):
         self.state = self.common.commit(self.state)
 
     def hook_callback(self) -> HookCallback:
-        return HookCallback(__name__, {"store": self.store})
+        return HookCallback(__name__, {"store": self.store, "start": self.start})
 
     def restore(self, spec, state):
         """The launching CodexTui's store, recovery state and native id, from the store it named."""
-        store = state.get("store")
+        store, start = state.get("store"), state.get("start", 0)
+        if type(start) is not int or start < 0:
+            raise ConfigError("codex tui state: bad transcript cursor")
+        self.start = self.offset = start
         try:
             sessions = SessionStore(store if isinstance(store, str) else None)
             self.store = sessions.root
@@ -181,6 +194,54 @@ class CodexTui(Tui):
         except (RecoveryError, OSError, ValueError) as exc:
             raise ConfigError(str(exc)) from exc
         self.native = "" if self.state is None else self.state.native_id or ""
+
+    def observe(self):
+        if not self.transcript and self.native and self.state is not None:
+            try:
+                self.transcript = self.common.transcript(replace(self.state, native_id=self.native))
+            except (ConfigError, OSError):
+                return []
+        lines = (read_regular(self.transcript, offset=self.offset) or b"").split(b"\n")[:-1]
+        self.offset += sum(len(line) + 1 for line in lines)  # a line still being written waits
+        return [reply for record in json_records(lines) for reply in self._record(record)]
+
+    def replay(self, records):
+        """Ends in the latest turn's state: a Stop since the hook log's last prompt leaves its text
+        unseen unless it is the session file's newest.
+        """
+        found: list[SessionEvent | ClientBound] = [*self.observe()]
+        newest, ended = self.last, None
+        for label, payload in records:
+            found += self.hook_events(label, payload)
+            if label in ("UserPromptSubmit", "Stop"):
+                ended = self.last_reply if label == "Stop" else None
+        self.last = newest if ended is None else ""
+        self.unseen = ended if ended and ended.strip() and ended != newest else ""
+        return found
+
+    def _record(self, record: dict) -> list[Reply]:
+        payload = record.get("payload")
+        if record.get("type") != "response_item" or not isinstance(payload, dict):
+            return []
+        if payload.get("type") != "message" or payload.get("role") not in ("user", "assistant"):
+            return []
+        if payload["role"] == "user":  # a prompt: a new turn
+            self.last = self.unseen = ""
+            return []
+        content = payload.get("content")
+        text = "\n".join(
+            block["text"]
+            for block in (content if isinstance(content, list) else [])
+            if isinstance(block, dict)
+            and block.get("type") == "output_text"
+            and isinstance(block.get("text"), str)
+        )
+        if text.strip() and text.strip() == self.unseen.strip():
+            self.unseen = ""
+        elif text.strip():
+            self.last = text
+            return [Reply(text)]
+        return []
 
     def session_id(self, payload):
         if self.native and payload.get("session_id") != self.native:
@@ -211,6 +272,8 @@ class CodexTui(Tui):
         if payload.get("hook_event_name") != "Interrupt":
             message = payload.get("last_assistant_message")
             self.last_reply = message if isinstance(message, str) else ""
+            self.unseen = self.last_reply if self.last_reply.strip() != self.last.strip() else ""
+            self.last = ""
         return self.last_reply
 
     def activity(self, payload):
