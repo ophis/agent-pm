@@ -6,6 +6,10 @@ allowed-tools:
   - Bash(agent-pm-crew attach)
   - Bash(agent-pm-crew attach *)
   - Bash(agent-pm-crew next-event *)
+  - Bash(agent-pm-crew pending *)
+  - Bash(agent-pm-crew ack *)
+  - Bash(agent-pm-crew monitor *)
+  - Bash(agent-pm-crew monitor)
   - Bash(agent-pm-crew status)
   - Bash(agent-pm-crew status *)
   - Bash(agent-pm-crew note *)
@@ -23,6 +27,8 @@ For the rest of this session you are the commander: coordinate work through Crew
 
 Commands: [Start](#start), [Events](#events), [Launch](#launch), [Grid](#grid), [Direct](#direct), [Recover](#recover).
 
+Before launch, status, event handling or recovery, read and follow `manager/skills/tmux/SKILL.md`: the authoritative monitoring contract.
+
 Only the commander, a client the user starts, loads this plugin: every session it starts (workers, role runs) runs with agent-pm off (`[clients.<client>] flags` in `session/src/agent_pm/session/config.toml`) and the commands that start sessions refuse inside them (`docs/sessions.md` › Session settings), so a worker or role run starts no sessions of its own. Starting sessions adds no authority: you have only what you were given. A sandboxed commander that can reach the tmux socket still starts sessions outside its sandbox: the tmux server runs them.
 
 Launch every worker, role run and pipeline run through Crew (Launch), which records it as an entry of your Roster (`~/.agent-pm/managers/<manager>/`), and reach them through this plugin's four `bin/` commands: `agent-pm-crew`, `agent-pm-session`, `agent-pm-delegate` and `agent-pm-linear`. `<command> --help` and `<command> <subcommand> --help` list their options. Write them out as below: the pre-approved rules match that text. A client without this plugin's `bin/` on its PATH (Codex) writes `${CLAUDE_SKILL_DIR}/../../../bin/<command>` instead, and every `${CLAUDE_SKILL_DIR}` in this file as this file's directory, an absolute path.
@@ -30,12 +36,11 @@ Launch every worker, role run and pipeline run through Crew (Launch), which reco
 ## Start
 
 1. The commander's session: `ctmux <name>` (`${CLAUDE_SKILL_DIR}/scripts/ctmux`) opens tmux session `<name>` (how it attaches: README's ctmux row); its shell runs under `agent-pm-crew hold --manager=<name>`, which holds manager `<name>`'s lease while the shell lives and gives every `agent-pm-crew` command there its manager. It starts no agent: the user starts the client (`claude`, `codex`) in it. Elsewhere, start the commander's client under `agent-pm-crew hold --manager <manager> -- <client argv>`, or give `--manager <manager>` to every `agent-pm-crew` command. `agent-pm-crew hold --help`: taking over a hung holder.
-2. Attach, to start and after a compaction, a resume or a takeover: TaskStop any Monitor or `next-event` task of yours still running, then `agent-pm-crew attach`. It checks the lease (another live holder → refused: tell the user which), marks a launch that never gave a Record `lost`, adopts the sessions you launched that the Roster missed, asks each entry's own command for its state, reopens beside you each live entry no terminal shows unless it is hidden, and prints:
+2. `agent-pm-crew attach` checks the lease (another live holder → refused: tell the user which), marks a launch that never gave a Record `lost`, adopts the sessions you launched that the Roster missed, asks each entry's own command for its state, reopens beside you each live entry no terminal shows unless it is hidden, and prints:
    - the entries, one row each: `name kind sid state view note cwd attach`. `state`: a live entry's own (`working`, `done`, `blocked`, `dead`), else `gone` (its sessions ended or its client died, without a close: Recover), `waiting` (a role run ended on `needs_input`: Recover), `done`, `lost` (its launch gave no Record: read why, then close or forget it; it never resumes), `starting`, `resuming`, or `unknown` (its host could not tell, or its command did not answer: the error is on stderr); `view`: `hidden` (hidden, Direct) or `-`;
    - the backlog, `<line> <event>` per event after the cursor N;
    - `resume: agent-pm-crew resume … <name>` per `gone` entry; `attach` itself starts nothing;
-   - `monitor:`, `monitor expired:` and `next-event:` commands, then `N=<N> GEN=<G>`.
-3. Arm before the first launch: one Monitor running the `monitor:` command (`agent-pm-crew next-event … --content --follow`), `timeout_ms` 1800000. Each notification is an event line, then its content (`--content`: the owning entry's ctl queried at read time, Events); it marks each printed event handled. Without a Monitor tool, run the `next-event:` command with `run_in_background`: it marks N handled, waits, prints one event and its content, and exits; handle it, then rerun it at once with `--after <line>`. Arming from N delivers the backlog again, so an event can come twice.
+   - `monitor:`, `monitor expired:`, `next-event:` and `manual:` commands, then `N=<N> GEN=<G>`.
 
 ## Events
 
@@ -48,7 +53,6 @@ Content is whatever the owning ctl returns at read time; the event word does not
 - **dead**: the client exited; its pane stays until closed. `agent-pm-session read <name>` shows why. A worker: continue it with `agent-pm-session restart <name>`, or close it (Direct) and tell the user. A role run's tui: its harness ends too (outcome `error`): Recover.
 - **exited `<rc>`**: a detached process ended, e.g. a role run's or pipeline's harness. That is not its result; check its content.
 - **outcome `<status>`**: a role run's harness ended with `done`, `needs_input`, `failed` or `error` (no valid outcome: a give-up, a dead or killed session, a client exit without a valid report). `agent-pm-delegate outcome <workdir>` prints the checked outcome as JSON (`null` without one); the run's record (`docs/state-root.md`) is its own claim. `done`: the deliverable is the outcome's `deliverable` for a `local` or `orchestrator` destination, else its `url`. `needs_input`: Recover. A client's exit code is never the result. The tui stays open, unwatched, until you close the entry (Direct).
-- **Monitor expired**: run the `monitor expired:` command with `LINE` the last event's line (none received: N), then re-arm with its new N and G (Start 3). A `next-event` task that stopped without printing: rerun it with the same `--after`; one that failed: Start 2.
 
 ## Launch
 
@@ -77,7 +81,7 @@ In tmux, with a tmux client showing your session, the panes you launch form a gr
 - Close all: `agent-pm-crew close-all` closes every entry's work and what it opened, transitively, and removes the entries; only when the user says to close everything. Nothing closes them when you exit or detach.
 - A session killed by hand keeps its entry, `gone`: close an entry's sessions with `agent-pm-crew close <name>`.
 - Forget: `agent-pm-crew forget <name>` drops an entry whose work is confirmed gone; `--force` drops it without asking its command (its work may live on).
-- Release, to hand over or once nothing is left: TaskStop your Monitor or `next-event` task, then `agent-pm-crew release`. The successor starts a new holder, then attaches (Start).
+- Release, to hand over or once nothing is left: follow monitoring recovery, then `agent-pm-crew release`. The successor starts a new holder, then attaches (Start).
 - Never `/clear` a worker or role run, nor `/new` a Codex one: the new session id breaks `reply`, `restart` and resume. For a fresh context, close it and launch another.
 
 ## Recover
@@ -144,4 +148,4 @@ In tmux, with a tmux client showing your session, the panes you launch form a gr
 - A large rework runs on one integration branch: every issue branches from it and merges back into it (no stacked branches). A draft PR from it to the default branch carries its issues as a task list, ticked as each merges; it merges once, at the cutover, on the user's word. Until then, fix nothing on the default branch in the code it replaces: fold new findings into its issues.
 - Before an experiment, read the docs, then the source.
 - Size reviews to the change: config-only gets none, small code a light check, a feature a full panel. A worker's PR built by autopilot (its own review rounds, CI, live run) gets only a quick gate: CI green, files within the issue's scope, its body showing its review and live-run results, no side effect (e.g. an issue moved by a stray PR). Have a sub-agent review it only when the gate raises a doubt, and act on its verdict.
-- To wait for a PR's CI, run `gh pr checks <n> --watch` once in the background (one notification when it ends) and act on its result; never re-run `gh pr checks` or `gh pr view` in a loop to see whether CI finished.
+- To wait for a PR's CI, run `gh pr checks <n> --watch` through the notification or explicit-read mechanism selected by `manager/skills/tmux/SKILL.md`, then act on its result.

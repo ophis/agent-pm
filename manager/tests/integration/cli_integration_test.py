@@ -72,16 +72,13 @@ class PathsAndArguments(Case):
                     "0",
                     "--content",
                     "--follow",
+                    "--notify",
                 ],
                 "monitor expired": [
                     "agent-pm-crew",
                     "attach",
                     "--manager",
                     "mgr",
-                    "--after",
-                    "LINE",
-                    "--gen",
-                    "0",
                 ],
                 "next-event": [
                     "agent-pm-crew",
@@ -94,6 +91,7 @@ class PathsAndArguments(Case):
                     "0",
                     "--content",
                 ],
+                "manual": ["agent-pm-crew", "pending", "--manager", "mgr", "--content"],
             },
         )
         self.assertTrue(events.is_file())
@@ -138,6 +136,7 @@ class PathsAndArguments(Case):
                 "0",
                 "--content",
                 "--follow",
+                "--notify",
             ],
         )
         self.assertTrue(events.is_file())

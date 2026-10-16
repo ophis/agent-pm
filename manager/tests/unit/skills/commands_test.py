@@ -74,7 +74,7 @@ class Commands(Case):
     def test_content_uses_crew_without_unused_layer_permissions(self):
         for command in ("agent-pm-session", "agent-pm-delegate", "agent-pm-linear"):
             self.assertNotIn(f"{command} content *", rules("manage"))
-        self.assertIn("entry's ctl", section("manage", "Start"))
+        self.assertIn("owning ctl", section("manage", "Events"))
 
     def test_fr33_has_no_retired_launch_or_resume_forms(self):
         for retired in (
@@ -85,7 +85,8 @@ class Commands(Case):
             self.assertNotIn(retired, body("manage"))
 
     def test_only_manage_owns_commands_permissions_and_scripts(self):
-        self.assertFalse(os.path.isfile(os.path.join(SKILLS, "tmux", "SKILL.md")))
+        self.assertTrue(os.path.isfile(os.path.join(SKILLS, "tmux", "SKILL.md")))
+        self.assertEqual(rules("tmux"), [])
         self.assertTrue(rules("manage"))
 
     def test_role_launch_has_no_separate_dry_run(self):
@@ -174,26 +175,23 @@ class Flows(Case):
         self.assertIn("`--display none`", launch)
         self.assertIn("agent-pm-session --help", launch)
 
-    def test_start_attaches_reads_its_output_and_arms_one_listener(self):
+    def test_start_attaches_and_points_to_the_monitoring_contract(self):
         start = section("manage", "Start")
         for phrase in (
             "`ctmux <name>`",
             "agent-pm-crew hold --manager",
-            "TaskStop",
             "`agent-pm-crew attach`",
             "lease",
             "`name kind sid state view note cwd attach`",
             "backlog",
             "`resume: agent-pm-crew resume … <name>`",
-            "`agent-pm-crew next-event … --content --follow`",
             "`next-event:`",
-            "`--content`",
-            "event line, then its content",
             "`monitor expired:`",
-            "run_in_background",
-            "--after <line>",
         ):
             self.assertIn(phrase, start)
+        self.assertIn("manager/skills/tmux/SKILL.md", body("manage"))
+        self.assertNotIn("run_in_background", start)
+        self.assertNotIn("marks each printed event handled", body("manage"))
 
     def test_direct_names_every_daily_operation(self):
         direct = section("manage", "Direct")
@@ -232,7 +230,7 @@ class Flows(Case):
 
     def test_events_handles_every_word(self):
         events = section("manage", "Events")
-        for word in ("done", "blocked", "dead", "exited", "outcome", "Monitor expired"):
+        for word in ("done", "blocked", "dead", "exited", "outcome"):
             self.assertRegex(events, rf"\*\*{word}\b[^*]*\*\*", word)
 
     def test_an_events_content_is_its_read_and_only_numbered_lines_are_events(self):

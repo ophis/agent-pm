@@ -47,9 +47,28 @@ class Manage(Case):
         self.assertNotIn("## Crew commands", body("manage"))
 
     def test_events_arrive_with_their_content_and_need_no_pane_read(self):
-        monitor = section("manage", "Start")
+        monitor = body("tmux")
         self.assertNotIn("confirm by reading the pane", monitor)
         self.assertIn("event line, then its content", monitor)
+
+    def test_monitoring_has_one_authoritative_contract(self):
+        monitor = body("tmux")
+        self.assertIn("manager/skills/tmux/SKILL.md", body("manage"))
+        for phrase in (
+            "every active turn",
+            "shell `&`",
+            "without explicitly reading",
+            "--receipt <token>",
+            "ready: true",
+            "Manual monitoring; no idle notifications",
+            "pending --content",
+            "ack --through <line> --gen <generation>",
+            "legacy explicit prefix-acknowledgment",
+            "reconcile its durable result",
+            "Rotation retains the unhandled suffix",
+        ):
+            self.assertIn(phrase, monitor)
+        self.assertNotIn("marks each printed event handled", body("manage"))
 
     def test_a_roster_entry_closes_through_crew(self):
         close = rule("AppleScript")

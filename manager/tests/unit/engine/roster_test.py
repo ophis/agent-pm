@@ -22,6 +22,128 @@ from manager.tests.roster_case import RosterCase
 
 
 class RosterTest(RosterCase):
+    def test_notification_needs_receipt_and_live_reader_not_stdout(self):
+        Path(self.roster.events).write_text("12:00:00 x done\n")
+        with self.roster.notification_reader(0) as probe:
+            status = self.roster.monitoring()
+            self.assertEqual((status["mode"], status["reader"]), ("manual", "running"))
+            self.assertFalse(status["ready"])
+            self.assertIsNone(status["latest_receipt"])
+            with self.assertRaises(Stale):
+                self.roster.monitoring(receipt=str(uuid4()))
+            status = self.roster.monitoring(receipt=probe)
+            self.assertEqual(status["mode"], "automatic")
+            self.assertTrue(status["ready"])
+            self.assertIsNotNone(status["latest_receipt"])
+            self.assertEqual((status["pending"], status["cursor"]), (1, 0))
+            self.assertEqual(self.roster.next_event(0, 0), (1, "12:00:00 x done"))
+            self.assertEqual(self.roster.backlog()[0], 0)
+        status = self.roster.monitoring()
+        self.assertEqual((status["mode"], status["reader"]), ("manual", "stopped"))
+        self.assertFalse(status["ready"])
+        self.assertIsNotNone(status["latest_receipt"])
+        with self.assertRaises(Stale):
+            self.roster.monitoring(receipt=probe)
+
+    def test_delayed_probe_and_manual_reset_cannot_confirm_delivery(self):
+        with self.roster.notification_reader(0) as probe:
+            now = datetime.datetime.now(datetime.UTC) + datetime.timedelta(seconds=31)
+            datetime_class = datetime.datetime
+            with mock.patch("datetime.datetime") as clock:
+                clock.now.return_value = now
+                clock.fromisoformat = datetime_class.fromisoformat
+                with self.assertRaises(Stale):
+                    self.roster.monitoring(receipt=probe)
+            self.roster.monitoring(mode="manual")
+            with self.assertRaises(Stale):
+                self.roster.monitoring(receipt=probe)
+        self.assertEqual(self.roster.monitoring(mode="unavailable")["mode"], "unavailable")
+        with self.assertRaises(ValueError):
+            self.roster.monitoring(mode="automatic")
+
+    def test_notification_probe_fenced_by_takeover_and_rotation(self):
+        with self.roster.hold("first"):
+            Path(self.roster.events).write_text("h" * (1 << 20) + "\npending\n")
+            with self.roster.notification_reader(0) as probe:
+                self.roster.monitoring(receipt=probe)
+                self.roster.advance(1, 0)
+                self.assertTrue(self.roster.rotate_events())
+                self.assertFalse(self.roster.monitoring()["ready"])
+                with self.assertRaises(Stale):
+                    self.roster.monitoring(receipt=probe)
+            with self.roster.notification_reader(1) as probe:
+                self.roster.monitoring(receipt=probe)
+                other = Roster(self.directory)
+                with other.hold("second", force=True):
+                    self.assertFalse(other.monitoring()["ready"])
+                    with self.assertRaises(Stale):
+                        self.roster.monitoring(receipt=probe)
+                    self.assertEqual(other.backlog(), (0, 1, ["pending"]))
+
+    def test_monitoring_migrates_v2_without_rewriting_cursor(self):
+        self.begin()
+        data = self.content()
+        data.pop("monitor", None)
+        data["version"] = 2
+        Path(self.roster.path).write_text(json.dumps(data))
+        before = Path(self.roster.path).read_bytes()
+        status = self.roster.monitoring()
+        self.assertEqual((status["mode"], status["reader"]), ("manual", "unknown"))
+        self.assertEqual(Path(self.roster.path).read_bytes(), before)
+        self.roster.monitoring(mode="manual")
+        self.assertEqual(self.content()["version"], 3)
+        self.assertEqual(self.content()["cursor"], 0)
+
+    def test_rearm_requires_new_receipt_and_release_invalidates_old_probe(self):
+        with self.roster.hold("owner"):
+            with self.roster.notification_reader(0) as old:
+                self.roster.monitoring(receipt=old)
+                with (
+                    self.assertRaisesRegex(RosterError, "already running"),
+                    self.roster.notification_reader(0),
+                ):
+                    self.fail("second reader started")
+            with self.roster.notification_reader(0) as new:
+                self.assertNotEqual(old, new)
+                self.assertFalse(self.roster.monitoring()["ready"])
+                with self.assertRaises(Stale):
+                    self.roster.monitoring(receipt=old)
+                self.assertTrue(self.roster.monitoring(receipt=new)["ready"])
+                self.roster.release()
+                self.assertFalse(Roster(self.directory).monitoring()["ready"])
+
+    def test_monitor_state_validation_and_unsafe_reader_lock(self):
+        with self.roster.notification_reader(0):
+            valid = self.content()
+        cases = [False, {}, {**valid["monitor"], "extra": True}]
+        for field, value in (
+            ("mode", "invalid"),
+            ("probe", "bad"),
+            ("confirmed", 1),
+            ("holder", "bad"),
+            ("started", "bad"),
+            ("receipt", "2026-01-01"),
+            ("gen", -1),
+            ("lease_gen", True),
+        ):
+            cases.append({**valid["monitor"], field: value})
+        for monitor in cases:
+            with self.subTest(monitor=monitor):
+                Path(self.roster.path).write_text(json.dumps({**valid, "monitor": monitor}))
+                with self.assertRaises(RosterError):
+                    self.roster.monitoring()
+        Path(self.roster.path).write_text(json.dumps(valid))
+        lock = Path(self.directory, "reader.lock")
+        lock.unlink()
+        os.mkfifo(lock)
+        with self.assertRaisesRegex(RosterError, "regular reader lock"):
+            self.roster.monitoring()
+        with (
+            self.assertRaisesRegex(RosterError, "regular reader lock"),
+            self.roster.notification_reader(0),
+        ):
+            self.fail("unsafe reader started")
+
     def test_missing_roster_reads_do_not_create_directories(self):
         self.assertEqual(self.roster.entries(), {})
         self.assertEqual(self.roster.backlog(), (0, 0, []))

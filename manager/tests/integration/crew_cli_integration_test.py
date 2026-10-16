@@ -75,6 +75,9 @@ class Commands(Case):
             "note",
             "report",
             "next-event",
+            "pending",
+            "ack",
+            "monitor",
             "release",
         }
         self.assertEqual(set(result.stdout.split("{")[1].split("}")[0].split(",")), expected)
@@ -317,14 +320,38 @@ class Commands(Case):
         self.assertIn("2 12:00:00 actual dead\n", output)
         self.assertNotIn("noise", output)
         self.assertIn(
-            "monitor: agent-pm-crew next-event --manager mgr --after 0 --gen 0 --content --follow\n",
+            "monitor: agent-pm-crew next-event --manager mgr --after 0 --gen 0 --content --follow --notify\n",
             output,
         )
-        self.assertIn(
-            "monitor expired: agent-pm-crew attach --manager mgr --after LINE --gen 0\n", output
-        )
+        self.assertIn("monitor expired: agent-pm-crew attach --manager mgr\n", output)
         self.assertIn(
             "next-event: agent-pm-crew next-event --manager mgr --after 0 --gen 0 --content\n",
             output,
         )
         self.assertTrue(output.endswith("N=0 GEN=0\n"))
+
+    def test_plain_shell_background_reader_retains_completion_for_manual_handling(self):
+        roster = Roster(self.directory)
+        Path(roster.events).write_text("12:00:00 worker done\n")
+        output = Path(self.home, "reader.stdout")
+        reader = shlex.join(
+            (self.crew_bin, "next-event", "--manager", "mgr", "--after", "0", "--gen", "0")
+        )
+        script = f"{reader} > {shlex.quote(str(output))} & wait $!"
+        result = subprocess.run(
+            ("/bin/sh", "-c", script),
+            cwd=self.home,
+            env=child_env(),
+            capture_output=True,
+            text=True,
+            timeout=20,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("worker done", output.read_text())
+        status = json.loads(self.succeeded("monitor", "--manager", "mgr"))
+        self.assertEqual((status["mode"], status["ready"], status["pending"]), ("manual", False, 1))
+        self.assertIn("worker done", self.succeeded("pending", "--manager", "mgr", "--content"))
+        for _ in range(2):
+            self.succeeded("ack", "--manager", "mgr", "--through", "1", "--gen", "0")
+        self.assertEqual(roster.backlog(), (1, 0, []))
