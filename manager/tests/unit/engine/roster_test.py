@@ -406,12 +406,16 @@ class RosterTest(RosterCase):
         for path in (self.roster.path, events, os.path.join(self.directory, "roster.lock")):
             self.assertEqual(stat.S_IMODE(os.stat(path).st_mode), 0o600)
 
-    def test_a_roster_fifo_is_refused(self):
-        self.live()
-        Path(self.roster.path).unlink()
-        os.mkfifo(self.roster.path)
-        with self.assertRaises(RosterError):
-            self.roster.entries()
+    def test_a_roster_or_lock_fifo_is_refused_without_waiting(self):
+        for name in ("roster.json", "roster.lock"):
+            with self.subTest(name=name):
+                self.live()
+                path = Path(self.directory, name)
+                path.unlink()
+                os.mkfifo(path)
+                with self.assertRaises(RosterError):
+                    self.roster.entries()
+                path.unlink()
 
     def test_restrictive_umask_preserves_private_usable_new_directories(self):
         previous = os.umask(0o077)
@@ -422,14 +426,6 @@ class RosterTest(RosterCase):
                 self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o700)
         finally:
             os.umask(previous)
-
-    def test_a_lock_fifo_is_refused_without_waiting(self):
-        self.live()
-        lock = Path(self.directory) / "roster.lock"
-        lock.unlink()
-        os.mkfifo(lock)
-        with self.assertRaises(RosterError):
-            self.roster.entries()
 
     def test_failed_save_leaves_previous_roster_and_no_temp(self):
         self.live()
@@ -886,31 +882,23 @@ class RosterTest(RosterCase):
                     self.assertIsNone(entry.receipt)
                     self.roster.remove("x")
 
-    def test_receipt_record_refuses_empty_and_all_blank_starting_and_resuming(self):
-        for state in (State.STARTING, State.RESUMING):
-            for contents in (b"", b"\n \t\r\n\v\f\n", "\n\u2003\n".encode()):
+    def test_receipt_record_refuses_no_record_or_a_malformed_final_line(self):
+        malformed = b"not a Record\n \t\n"
+        for contents, message in (
+            (b"", "no Record received"),
+            (b"\n \t\r\n\v\f\n", "no Record received"),
+            ("\n\u2003\n".encode(), "no Record received"),
+            (malformed, "invalid final Record"),
+            (self.record.to_line().encode() + b"\n" + malformed, "invalid final Record"),
+        ):
+            for state in (State.STARTING, State.RESUMING):
                 with self.subTest(state=state, contents=contents):
                     self._prepare_receipt(state)
                     with self.roster.open_receipt("x") as output:
                         output.write(contents)
                     before = Path(self.roster.path).read_bytes()
                     entry = self.roster.entries()["x"]
-                    with self.assertRaisesRegex(RosterError, "no Record received"):
-                        self.roster.receipt_record("x")
-                    self.assertEqual(Path(self.roster.path).read_bytes(), before)
-                    self.assertEqual(self.roster.entries()["x"], entry)
-                    self.roster.remove("x")
-
-    def test_receipt_record_refuses_a_malformed_last_nonblank_line(self):
-        for state in (State.STARTING, State.RESUMING):
-            for prefix in (b"", self.record.to_line().encode() + b"\n"):
-                with self.subTest(state=state, prefix=prefix):
-                    self._prepare_receipt(state)
-                    with self.roster.open_receipt("x") as output:
-                        output.write(prefix + b"not a Record\n \t\n")
-                    before = Path(self.roster.path).read_bytes()
-                    entry = self.roster.entries()["x"]
-                    with self.assertRaisesRegex(RosterError, "invalid final Record"):
+                    with self.assertRaisesRegex(RosterError, message):
                         self.roster.receipt_record("x")
                     self.assertEqual(Path(self.roster.path).read_bytes(), before)
                     self.assertEqual(self.roster.entries()["x"], entry)

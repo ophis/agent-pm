@@ -83,21 +83,13 @@ class CliTest(CliCase):
                 self.assertEqual(error.exception.code, 2)
         self.assertFalse(os.path.exists(self.directory))
 
-    def test_missing_entry_is_usage_error_for_every_named_control_command(self):
-        for command in ("stop", "status", "forget", "resume"):
-            with self.subTest(command=command):
-                result, stdout, stderr = self.invoke(command, "missing", "--manager", "mgr")
-                self.assertEqual(result, 2, stderr)
-                self.assertEqual(stdout, "")
-                self.assertIn("not in roster", stderr)
-                self.assertFalse(os.path.exists(self.directory))
-
-    def test_force_forget_missing_entry_is_usage_error_without_controller_or_writes(self):
+    def test_missing_entry_is_usage_error_without_controller_or_writes(self):
         with mock.patch("subprocess.run", side_effect=FileNotFoundError("missing ctl")) as run:
-            for extra in ((), ("--force",)):
-                with self.subTest(extra=extra):
+            for argv in (("stop",), ("status",), ("forget",), ("resume",), ("forget", "--force")):
+                with self.subTest(argv=argv):
+                    command, *extra = argv
                     result, stdout, stderr = self.invoke(
-                        "forget", "missing", "--manager", "mgr", *extra
+                        command, "missing", "--manager", "mgr", *extra
                     )
                     self.assertEqual(result, 2, stderr)
                     self.assertEqual(stdout, "")
@@ -146,57 +138,55 @@ class NextEventContent(CliCase):
         self.assertEqual(self.next_event("12:00:00 w1 done"), (0, "1 12:00:00 w1 done\n", ""))
         self.assertEqual(self.calls, [])
 
-    def test_done_prints_the_sessions_reply(self):
-        self.launched("w1")
-        self.answers[("agent-pm-session", "reply", "w1")] = (0, "the answer\n", "")
-        self.assertEqual(
-            self.next_event("12:00:00 w1 done", "--content"),
-            (0, "1 12:00:00 w1 done\nthe answer\n", ""),
-        )
-
-    def test_a_headless_harness_event_prints_its_entry_status(self):
-        record = self.launched("r1", "engineer-ab12-drive", record_name="engineer-ab12")
-        status = Status(record.name, alive=False, state="exited", outcome="done", attach=None)
-        self.answers[(*record.ctl, "status")] = (0, status.to_line() + "\n", "")
-        self.assertEqual(
-            self.next_event("12:00:00 engineer-ab12-drive outcome done", "--content"),
+    def test_done_prints_the_sessions_reply_and_blocked_its_screen(self):
+        for sessions, ask, event, answer, expected in (
+            (("w1",), ("reply", "w1"), "w1 done", "the answer\n", "the answer\n"),
             (
-                0,
-                f"1 12:00:00 engineer-ab12-drive outcome done\n{replace(status, name='r1').to_line()}\n",
-                "",
+                ("test-drive",),
+                ("reply", "test-drive"),
+                "test-drive done",
+                "the answer\n",
+                "the answer\n",
             ),
-        )
-        self.assertNotIn(("agent-pm-session", "read", "engineer-ab12-drive"), self.calls)
-
-    def test_a_worker_named_like_a_harness_prints_its_reply(self):
-        self.launched("w1", "test-drive")
-        self.answers[("agent-pm-session", "reply", "test-drive")] = (0, "the answer\n", "")
-        self.assertEqual(
-            self.next_event("12:00:00 test-drive done", "--content"),
-            (0, "1 12:00:00 test-drive done\nthe answer\n", ""),
-        )
-
-    def test_blocked_prints_the_sessions_screen(self):
-        self.launched("w1")
-        self.answers[("agent-pm-session", "read", "w1")] = (0, "Allow this edit?\n 1. Yes", "")
-        self.assertEqual(
-            self.next_event("12:00:00 w1 blocked", "--content"),
-            (0, "1 12:00:00 w1 blocked\nAllow this edit?\n 1. Yes\n", ""),
-        )
+            (
+                ("w1",),
+                ("read", "w1"),
+                "w1 blocked",
+                "Allow this edit?\n 1. Yes",
+                "Allow this edit?\n 1. Yes\n",
+            ),
+        ):
+            with self.subTest(sessions=sessions, event=event):
+                self.launched("w1", *sessions)
+                self.answers = {("agent-pm-session", *ask): (0, answer, "")}
+                self.assertEqual(
+                    self.next_event(f"12:00:00 {event}", "--content"),
+                    (0, f"1 12:00:00 {event}\n{expected}", ""),
+                )
+                self.roster.remove("w1")
 
     def test_a_harness_event_prints_its_entry_status(self):
-        record = self.launched("r1", "engineer-ab12", "engineer-ab12-drive")
-        status = Status(record.name, alive=False, state="exited", outcome="done", attach=None)
-        self.answers[(*record.ctl, "status")] = (0, status.to_line() + "\n", "")
-        self.assertEqual(
-            self.next_event("12:00:00 engineer-ab12-drive outcome done", "--content"),
-            (
-                0,
-                f"1 12:00:00 engineer-ab12-drive outcome done\n{status.to_line()}\n",
-                "",
-            ),
-        )
-        self.assertNotIn(("agent-pm-session", "read", "engineer-ab12-drive"), self.calls)
+        for sessions, record_name in (
+            (("engineer-ab12-drive",), "engineer-ab12"),
+            (("engineer-ab12", "engineer-ab12-drive"), None),
+        ):
+            with self.subTest(sessions=sessions):
+                record = self.launched("r1", *sessions, record_name=record_name)
+                status = Status(
+                    record.name, alive=False, state="exited", outcome="done", attach=None
+                )
+                self.answers = {(*record.ctl, "status"): (0, status.to_line() + "\n", "")}
+                self.assertEqual(
+                    self.next_event("12:00:00 engineer-ab12-drive outcome done", "--content"),
+                    (
+                        0,
+                        "1 12:00:00 engineer-ab12-drive outcome done\n"
+                        f"{replace(status, name='r1').to_line()}\n",
+                        "",
+                    ),
+                )
+                self.assertNotIn(("agent-pm-session", "read", "engineer-ab12-drive"), self.calls)
+                self.roster.remove("r1")
 
     def test_an_event_naming_only_control_characters_still_exits_0(self):
         self.launched("w1")
