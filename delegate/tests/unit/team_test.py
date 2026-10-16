@@ -334,11 +334,12 @@ class Real(RealConfig):
         self.assertIn("Opens with one sentence", section(pm, "Problem and goals"))
         self.assertIn(point, section(pm, "User flow"))
         self.assertIn(point, section(pm, "Approach and trade-offs"))
-        self.assertIn(
-            "`- FR-<n>: <the requirement>` on one line, then one indented sub-item "
-            "`  - <Check, translated>: ",
-            pm,
-        )
+        self.assertIn(point, section(pm, "System diagram"))
+        requirements = section(pm, "Requirements")
+        self.assertIn("Each subsection is one table", requirements)
+        self.assertIn("fills the Module cell of its first row only", requirements)
+        for row in ("`| FR-<n> | <module> | <the requirement> | ", "`| NFR-<n> | <module> | "):
+            self.assertIn(row, pm)
         self.assertIn("Opens with one sentence", section(light, "Conclusion and recommendation"))
         self.assertIn(point, section(light, "Comparison table"))
         findings = section(light, "Findings")
