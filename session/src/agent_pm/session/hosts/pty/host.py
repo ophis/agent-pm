@@ -54,11 +54,11 @@ NAME = re.compile(r"[A-Za-z0-9_-]+")
 TERM = "xterm-256color"
 SUPERVISOR = "agent_pm.session.hosts.pty.supervisor"
 START_TIMEOUT = 10
-LOG = logging.getLogger("session")
 KILL_WAIT = 5
 PAUSE = 0.5  # before a key that follows a paste, as the program may still be taking the paste
 POLL = 0.05
 TIMEOUT = 10
+LOG = logging.getLogger("session")
 
 
 class PtyProcess(HostProcess):
@@ -467,9 +467,7 @@ def _sweep(current: str) -> None:
 
 
 def _expire(name: str) -> None:
-    """Under tui's lock (if any), then its own, both untaken by others; a missing pid then means no
-    supervisor, as a start holds the lock until it is written.
-    """
+    """Under its locks no start runs, so a missing pid means no supervisor."""
     folder = os.path.join(state.root(), name)
     lock = f"{folder}.lock"
     files = (folder, os.path.join(folder, state.OUTPUT), os.path.join(folder, state.ACTIVITY))

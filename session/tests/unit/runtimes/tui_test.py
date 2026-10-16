@@ -943,22 +943,26 @@ class SweepTest(Base):
         self.assertEqual(self.names(), [NAME, f"{NAME}.lock"])
         self.assertEqual(os.listdir(self.dir), ["session.json"])
 
-    def test_a_failed_listing_is_logged_and_the_start_stands(self):
+    def test_a_failed_listing_is_logged_once_and_the_start_stands(self):
         self.leftover("a")
-        listings = iter(([], SessionError("tmux failed")))
+        self.leftover("b")
+        for failure in (SessionError("tmux failed"), PermissionError("denied")):
+            with self.subTest(failure=failure):
+                listings = iter(([], failure))
 
-        def listed(_display):
-            found = next(listings)
-            if isinstance(found, Exception):
-                raise found
-            return found
+                def listed(_display, listings=listings):
+                    found = next(listings)
+                    if isinstance(found, Exception):
+                        raise found
+                    return found
 
-        self.host.calls.list.side_effect = listed
-        with self.assertLogs("session") as logs:
-            mode = self.start()
-        self.assertIsInstance(mode, tui.TuiRuntime)
-        self.assertEqual(self.names(), ["a", "a.lock", NAME, f"{NAME}.lock"])
-        self.assertEqual(logs.output, ["WARNING:session:tui sweep: tmux failed"])
+                self.host.calls.list.side_effect = listed
+                with self.assertLogs("session") as logs:
+                    mode = self.start()
+                self.host.processes.clear()
+                self.assertIsInstance(mode, tui.TuiRuntime)
+                self.assertEqual(self.names(), ["a", "a.lock", "b", "b.lock", NAME, f"{NAME}.lock"])
+                self.assertEqual(logs.output, [f"WARNING:session:tui sweep: {failure}"])
 
     def test_one_start_on_a_pty_host_clears_all_four(self):
         self.leftover("a", host="pty")

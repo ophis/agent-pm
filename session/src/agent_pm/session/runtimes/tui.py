@@ -316,7 +316,7 @@ def _sweep(store: _Store) -> None:
             if listed is None:
                 try:
                     listed = set(store.host.list())
-                except SessionError as error:
+                except (OSError, SessionError) as error:
                     LOG.warning("tui sweep: %s", error)
                     return
             other.expire(listed)
