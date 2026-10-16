@@ -1,6 +1,6 @@
 # PRD: [Reference] [Product name]
 
-Title: no gloss; `[Product name]` never repeats `[Reference]`. One fact per list item or FR line; its reason goes under Assumptions or Approach and trade-offs, not on that line. Markers, leading the item or table cell: ✅ the chosen approach, ❌ a rejected one, ❓ an Open question, ⚠️ a Risk; no other emoji.
+Title: no gloss; `[Product name]` never repeats `[Reference]`. One fact per list item or requirement row; its reason goes under Assumptions or Approach and trade-offs, not in that item or row. Markers, leading the item or table cell: ✅ the chosen approach, ❌ a rejected one, ❓ an Open question, ⚠️ a Risk; no other emoji.
 
 ## Problem and goals
 Opens with one sentence: the problem, for whom, and the goal. Then list items: its evidence (a report finding, a source or the user's words), the goals, and what it explicitly won't do.
@@ -22,12 +22,15 @@ Unknowns, and the low-confidence or single-source findings the PRD relies on.
 ## Approach and trade-offs
 Optional; omit when nothing is compared. 2–3 viable approaches and their trade-offs as a table ([Principles › Writing › Diagrams and tables](#writing)), which one is chosen and why.
 
+## System diagram
+Optional; omit when the change has no structure worth drawing. The components the change touches and how they connect or flow, as a diagram ([Principles › Writing › Diagrams and tables](#writing)).
+
 ## Requirements
-Ids (`FR-<n>`, `NFR-<n>`) are never renumbered on revision.
+Ids (`FR-<n>`, `NFR-<n>`) are never renumbered on revision. Each subsection is one table: the header row shown, then one row per requirement, split finer when one spans modules. Rows of one functional module are adjacent; its name fills the Module cell of its first row only, left empty on the rest (no HTML).
 ### Functional requirements
-Each: `- FR-<n>: <the requirement>` on one line, then one indented sub-item `  - <Check, translated>: <an observable pass condition (an input → an output or state)>`.
+Header `| ID | <Module, translated> | <Requirement, translated> | <Check, translated> |`; a row `| FR-<n> | <module> | <the requirement> | <an observable pass condition (an input → an output or state)> |`.
 ### Non-functional requirements
-Optional; omit when none. One per line: `NFR-<n>`: a constraint this product actually has, with its threshold or check.
+Optional; omit when none. Header `| ID | <Module, translated> | <Constraint, translated> | <Threshold or check, translated> |`; a row `| NFR-<n> | <module> | <a constraint this product actually has> | <its threshold or check> |`.
 
 ## Done
 Optional; omit when the product has nothing built yet. Under `###` copies of the original headings, by id, naming where each is implemented (file or commit).
