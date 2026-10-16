@@ -1,4 +1,4 @@
-"""utils/files.py: read_regular, append_line, holds and save (main's save cases)."""
+"""utils/files.py: read_regular, append_line, holds, file_lock, save and drop_stale."""
 
 import errno
 import json
@@ -6,6 +6,7 @@ import os
 import stat
 import tempfile
 import threading
+import time
 import unittest
 import unittest.mock
 from pathlib import Path
@@ -218,6 +219,61 @@ class FileLock(Base):
         os.mkfifo(self.path + ".lock")
         with self.assertRaises(OSError), files.file_lock(self.path):
             self.fail("accepted FIFO lock")
+
+    def test_no_wait_raises_while_held_and_locks_once_free(self):
+        with (
+            files.file_lock(self.path),
+            self.assertRaises(BlockingIOError),
+            files.file_lock(self.path, wait=False),
+        ):
+            self.fail("locked a held lock")
+        with files.file_lock(self.path, wait=False):
+            pass
+
+
+class DropStale(Base):
+    def entry(self, name: str, age_days: float) -> str:
+        path = os.path.join(self.dir, name)
+        if not os.path.lexists(path):
+            Path(path).touch()
+        when = time.time() - age_days * 86400
+        os.utime(path, (when, when), follow_symlinks=False)
+        return path
+
+    def test_only_regular_files_past_the_age_go(self):
+        self.entry("old.json", 31)
+        self.entry("young.json", 29)
+        self.entry(".tmp-old", 31)
+        self.assertEqual(files.drop_stale(self.dir), [])
+        self.assertEqual(os.listdir(self.dir), ["young.json"])
+
+    def test_directories_and_symlinks_stay(self):
+        os.mkdir(os.path.join(self.dir, "x.json"))
+        self.entry("x.json", 31)
+        target = self.entry("target", 1)
+        os.symlink(target, os.path.join(self.dir, "link.json"))
+        self.entry("link.json", 31)
+        self.assertEqual(files.drop_stale(self.dir), [])
+        self.assertEqual(sorted(os.listdir(self.dir)), ["link.json", "target", "x.json"])
+
+    def test_an_unlink_error_is_returned_and_the_rest_still_go(self):
+        self.entry("a.json", 31)
+        self.entry("b.json", 31)
+        real = os.unlink
+        refused = OSError(errno.EPERM, "refused", os.path.join(self.dir, "a.json"))
+
+        def unlink(path, *args, **kwargs):
+            if os.path.basename(path) == "a.json":
+                raise refused
+            real(path, *args, **kwargs)
+
+        with mock.patch("os.unlink", side_effect=unlink):
+            self.assertEqual(files.drop_stale(self.dir), [refused])
+        self.assertEqual(os.listdir(self.dir), ["a.json"])
+
+    def test_a_directory_it_cannot_list_is_one_error(self):
+        (error,) = files.drop_stale(os.path.join(self.dir, "missing"))
+        self.assertIsInstance(error, FileNotFoundError)
 
 
 class Save(Base):
