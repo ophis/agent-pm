@@ -35,6 +35,7 @@ from session.tests.unit.clients.claude.support import (
     PROBE_RESULT,
     SID,
     SUBSCRIPTION_PROBE,
+    TUI_DEFAULTS,
     UNSET,
     Base,
     ClaudeCommon,
@@ -233,7 +234,24 @@ class EnvTest(Base):
         config = {"env": {"K": "v", "CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS": "1"}}
         self.assertEqual(dict(self.launch(config=config).env), config["env"])
         self.assertEqual(dict(self.launch(config={}).env), CEILING)
-        self.assertEqual(dict(tui_launch(self.work, config={}).env), {})
+        self.assertEqual(dict(tui_launch(self.work, config={}).env), TUI_DEFAULTS)
+
+    def test_agent_view_default_is_tui_only(self):
+        key = "CLAUDE_CODE_DISABLE_AGENT_VIEW"
+        for resume in (False, True):
+            with self.subTest(resume=resume):
+                self.assertEqual(tui_launch(self.work, config={}, resume=resume).env.get(key), "1")
+                self.assertNotIn(key, self.launch(config={}, resume=resume).env)
+
+    def test_agent_view_default_yields_to_explicit_environment(self):
+        key = "CLAUDE_CODE_DISABLE_AGENT_VIEW"
+        for kwargs in (
+            {"config": {"env": {key: "0"}}},
+            {"access": Access(cwd=self.work, env={key: "0"})},
+            {"env": {key: "0"}},
+        ):
+            with self.subTest(kwargs=kwargs):
+                self.assertEqual(tui_launch(self.work, **kwargs).env[key], "0")
 
     def test_the_launch_env_unset_and_cwd(self):
         launch = self.launch()
@@ -258,7 +276,7 @@ class EnvTest(Base):
                 ClaudeClient(config)
                 .tui()
                 .launch(Spec(workdir=self.work, sid=SID, access=access, prompt="hi"), HOOK),
-                {},
+                TUI_DEFAULTS,
             ),
         ):
             self.assertEqual(
@@ -627,6 +645,19 @@ class ResumeTest(Base):
     def test_the_command_names_only_the_state(self):
         self.assertEqual(ClaudeCommon({}).resume("/w d", SID), reference("/w d"))
 
+    def test_client_resume_defaults_agent_view_off(self):
+        self.client.common.save(self.spec)
+        code, _, _, execute = self.resumed([store(), self.cwd, SID])
+        self.assertEqual(code, 0)
+        self.assertEqual(execute[0].args[2]["CLAUDE_CODE_DISABLE_AGENT_VIEW"], "1")
+
+    def test_client_resume_keeps_saved_agent_view_override(self):
+        spec = dataclasses.replace(self.spec, env={"CLAUDE_CODE_DISABLE_AGENT_VIEW": "0"})
+        self.client.common.save(spec)
+        code, _, _, execute = self.resumed([store(), self.cwd, SID])
+        self.assertEqual(code, 0)
+        self.assertEqual(execute[0].args[2]["CLAUDE_CODE_DISABLE_AGENT_VIEW"], "0")
+
     def test_no_env_value_reaches_a_resume_command_or_status(self):
         texts = []
         for mode in ("headless", "tui"):
@@ -659,10 +690,25 @@ class ResumeTest(Base):
                         mock.call(
                             "claude",
                             ["claude", "--resume", SID, "--add-dir", "/o x", "--add-dir", "/p"],
-                            {**os.environ, **SECRETS, "K": "spec"},
+                            {**os.environ, **TUI_DEFAULTS, **SECRETS, "K": "spec"},
                         )
                     ],
                 )
+
+    def test_client_resume_uses_the_last_existing_continuation(self):
+        self.committed()
+        common = ClaudeCommon({})
+        path = common.transcript(self.cwd, SID)
+        target = os.path.join(self.config_dir, "projects", "other", f"{NEXT}.jsonl")
+        for each in (path, target):
+            os.makedirs(os.path.dirname(each), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as out:
+            json.dump({"type": "continued-in", "sessionId": SID, "continuedInSessionId": NEXT}, out)
+        with open(target, "w", encoding="utf-8"):
+            pass
+        code, err, _, execute = self.resumed([store(), self.cwd, SID])
+        self.assertEqual((code, err), (0, ""))
+        self.assertEqual(execute[0].args[1][:3], ["claude", "--resume", NEXT])
 
     def test_the_resume_replays_the_configs_flags_with_one_settings(self):
         with open(os.path.join(self.cwd, "s.json"), "w", encoding="utf-8") as f:
@@ -905,3 +951,81 @@ class SessionStatusTest(Base):
         for sid in ("abc", SID.upper(), "../" + SID):
             with self.subTest(sid=sid):
                 self.assertEqual(self.status(sid), SessionStatus("no", None, ""))
+
+
+NEXT = "1f8fad5b-d9cb-469f-a165-70867728950e"
+LAST = "2f8fad5b-d9cb-469f-a165-70867728950e"
+
+
+class ContinuationTest(Base):
+    def setUp(self):
+        super().setUp()
+        self.common = ClaudeCommon({})
+        self.path = self.common.transcript(self.work, SID)
+        self.target = os.path.join(self.config_dir, "projects", "elsewhere", f"{NEXT}.jsonl")
+
+    def write(self, path, *records):
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as out:
+            out.write("".join(json.dumps(r) + "\n" for r in records))
+
+    def marker(self, source=SID, target=NEXT, timestamp="2026-10-15T12:00:00Z"):
+        return {
+            "type": "continued-in",
+            "sessionId": source,
+            "continuedInSessionId": target,
+            "timestamp": timestamp,
+        }
+
+    def test_walk_keeps_a_missing_target(self):
+        self.write(self.path, self.marker())
+        self.assertEqual(
+            self.common.walk(self.path, SID, self.config_dir),
+            [(SID, self.path, None), (NEXT, None, "2026-10-15T12:00:00Z")],
+        )
+
+    def test_walk_crosses_projects_then_stops_at_a_cycle(self):
+        last = os.path.join(self.config_dir, "projects", "third", f"{LAST}.jsonl")
+        self.write(self.path, self.marker())
+        self.write(self.target, self.marker(NEXT, LAST))
+        self.write(last, self.marker(LAST, SID))
+        self.assertEqual(
+            [hop[:2] for hop in self.common.walk(self.path, SID, self.config_dir)],
+            [(SID, self.path), (NEXT, self.target), (LAST, last)],
+        )
+
+    def test_walk_uses_the_last_valid_matching_marker(self):
+        self.write(
+            self.path,
+            self.marker(target=LAST),
+            self.marker(),
+            self.marker(source=LAST, target=LAST),
+            self.marker(target="../bad"),
+            {"type": "assistant"},
+            [1],
+        )
+        self.write(self.target)
+        self.assertEqual(
+            self.common.walk(self.path, SID, self.config_dir)[-1][:2], (NEXT, self.target)
+        )
+
+    def test_resume_launch_uses_the_latest_file_in_both_modes(self):
+        self.write(self.path, self.marker())
+        self.write(self.target)
+        spec = Spec(workdir=self.work, access=Access(cwd=self.work), sid=SID, resume=True)
+        client = ClaudeClient({})
+        for launch in (client.headless().launch(spec), client.tui().launch(spec, HOOK)):
+            self.assertEqual(launch.argv[launch.argv.index("--resume") + 1], NEXT)
+            self.assertEqual(launch.transcript, self.target)
+            self.assertEqual(launch.resume, reference(self.work))
+
+    def test_session_status_uses_the_latest_file_only(self):
+        self.write(self.path, self.marker())
+        self.write(self.target)
+        os.utime(self.path, (9000, 9000))
+        os.utime(self.target, (1000, 1000))
+        for recorded in ("", self.target):
+            self.assertEqual(
+                self.common.session_status(SID, self.work, transcript=recorded),
+                SessionStatus("yes", 1000.0, reference(self.work)),
+            )
