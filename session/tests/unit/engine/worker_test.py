@@ -15,7 +15,7 @@ from agent_pm.session import ConfigError, Host, Mode, Process, Session, SessionE
 from agent_pm.session.engine import worker
 from agent_pm.session.engine.types import Blocked, Exited, IdleTimeout, Reply
 from agent_pm.session.engine.worker import Worker, WorkerState
-from agent_pm.utils import Record, file_lock
+from agent_pm.utils import Record, Status, StatusState, file_lock
 
 from session.tests.case import Case
 
@@ -253,6 +253,65 @@ class StartTest(Base):
 
 def sid(n: int) -> str:
     return f"{n:08x}-0000-4000-8000-000000000000"
+
+
+class ViewTest(Base):
+    def setUp(self):
+        super().setUp()
+        self.session.showable = True
+        self.session.attach_command.return_value = "tmux attach -t '=w1'"
+
+    def start(self, *, stored: bool, view: bool | None) -> None:
+        self.session.reset_mock()
+        self.session.events.return_value = iter([IdleTimeout(worker.EARLY)])
+        self.session.status.return_value = Status(
+            name="w1",
+            alive=True,
+            state=StatusState.WORKING,
+            outcome=None,
+            attach=None,
+            hidden=stored,
+        )
+        self.worker().start(prompt="", resume=False, hidden=view)
+
+    def test_start_hides_shows_or_keeps_per_its_view(self):
+        for view, stored, want in (
+            (True, False, "hide"),
+            (True, True, "hide"),
+            (False, True, "show"),
+            (False, False, "show"),
+            (None, False, "show"),
+            (None, True, None),
+        ):
+            with self.subTest(view=view, stored=stored):
+                self.start(stored=stored, view=view)
+                done = [call for call in ("show", "hide") if getattr(self.session, call).called]
+                self.assertEqual(done, [] if want is None else [want])
+                if want == "show":
+                    self.session.show.assert_called_once_with(display="mgr")
+                self.handle.publish.assert_called()
+        self.assertEqual(set(self.said), {"session w1: tmux attach -t '=w1'"})
+
+    def test_a_failed_hide_is_said_and_the_start_goes_on(self):
+        self.session.hide.side_effect = SessionError("boom")
+        self.start(stored=False, view=True)
+        self.assertEqual(self.said[-1], "session w1: not hidden: boom")
+        self.handle.publish.assert_called_once()
+
+    def test_restart_and_resume_keep_its_view(self):
+        self.handle.alive.return_value = True
+        self.session.events.return_value = iter([IdleTimeout(worker.EARLY)])
+        self.session.status.return_value = Status(
+            name="w1", alive=True, state=StatusState.WORKING, outcome=None, attach=None, hidden=True
+        )
+        started = self.worker()
+        started.start(prompt="", resume=False, hidden=True)
+        self.session.reset_mock()
+        self.session.events.return_value = iter([IdleTimeout(worker.EARLY)])
+        self.handle.wait_exit.return_value = True
+        Worker.load("w1", session_cls=self.session_cls, say=self.said.append).restart()
+        self.session.show.assert_not_called()
+        self.session.hide.assert_not_called()
 
 
 class StaleTest(Base):

@@ -407,7 +407,11 @@ def _start(args, flags: list[str], hosts: Hosts, start_sid: str | None) -> int:
     )
     worker.check(prompt=args.prompt, resume=args.resume is not None)
     with worker.locked():
-        record = worker.start(prompt=args.prompt, resume=args.resume is not None)
+        record = worker.start(
+            prompt=args.prompt,
+            resume=args.resume is not None,
+            hidden=args.display == NO_DISPLAY,
+        )
     print(record.to_line())
     return 0
 
