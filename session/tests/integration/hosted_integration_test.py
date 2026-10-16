@@ -57,11 +57,11 @@ class CloseTest(Live):
             handle = self.start(name, {"read": True})
             close_it()
             found[name] = (
-                handle.state(),
+                handle.alive(),
                 self.session_cls.list(name),
                 os.path.lexists(tui.TuiStore(name, host=self.session_cls.host()).dir),
             )
-        self.assertEqual(found, {"w1": ("absent", [], False), "w2": ("absent", [], False)})
+        self.assertEqual(found, {"w1": (False, [], False), "w2": (False, [], False)})
         self.assertEqual([row.name for row in self.session_cls.list()], [MANAGER])
 
     def test_list_and_close_by_name_need_a_configured_class(self):

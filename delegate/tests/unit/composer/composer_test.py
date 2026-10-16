@@ -89,7 +89,7 @@ class OwnedComposer(Case):
         with self.assertRaisesRegex(ConfigError, "unknown key 'trusted_dirs'"):
             self.composer.resolve("writer", overlays=({"trusted_dirs": ["/extra"]},))
 
-    def test_catalog_returns_exact_order_and_independent_maps(self):
+    def test_index_returns_exact_order_and_independent_maps(self):
         expected = {"writer": {"note": "a note; always; light."}}
         self.assertEqual(self.composer.index(), expected)
         result = self.composer.index()

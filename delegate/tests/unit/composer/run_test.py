@@ -19,7 +19,6 @@ from agent_pm.delegate.composer.run import (
     resolve,
     trusted_dirs,
 )
-from agent_pm.delegate.composer.teams import catalog as team_catalog
 from agent_pm.delegate.composer.teams import index, role_tables, team
 from agent_pm.delegate.composer.types import Intent
 from agent_pm.delegate.config import read_config
@@ -142,7 +141,7 @@ class BadRead(Fake):
         calls = {
             "resolve": lambda: resolve("writer", team=found, config=c, local=lf),
             "index": lambda: index("nobody", found, c, lf),
-            "catalog": lambda: team_catalog(found, c, lf),
+            "catalog": lambda: catalog(found, c, lf),
             "role_tables": lambda: role_tables(c, lf),
             "trusted_dirs": lambda: trusted_dirs(c, lf),
         }

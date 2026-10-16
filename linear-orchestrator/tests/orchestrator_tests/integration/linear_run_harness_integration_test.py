@@ -81,4 +81,4 @@ class HarnessRun(HarnessCase):
         self.assertEqual((resumed.sid, resumed.sessions), (record.sid, record.sessions))
         self.assertEqual(view.resume(), resumed)
         self.assertEqual(len(harness_launches()), 2)
-        self.addCleanup(view.close)
+        self.addCleanup(view.delegate.close)

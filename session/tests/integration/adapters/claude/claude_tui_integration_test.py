@@ -67,7 +67,7 @@ table, name, text = sys.argv[1:]
 from agent_pm.session import Host, Session, TurnEnd
 Session.configure(adapters={"claude": json.loads(table)}, hosts=Host.parse_hosts({"default": "tmux", "tmux": {"implementation": "agent_pm.session.hosts.tmux:TmuxHost"}}))
 handle = Session.attach(name)
-before = [handle.sid, handle.state(), handle.reply]
+before = [handle.sid, handle.alive(), handle.reply]
 handle.send(text)
 event = next(e for e in handle.events() if isinstance(e, TurnEnd))
 print(json.dumps([*before, repr(event), handle.reply]))
@@ -171,7 +171,7 @@ class Live(tui_live.Live):
         return len(self.server.panes(f"={MANAGER}:"))
 
     def closed(self, handle: Session) -> None:
-        self.assertEqual((handle.state(), self.session_cls.list(handle.name)), ("absent", []))
+        self.assertEqual((handle.alive(), self.session_cls.list(handle.name)), (False, []))
         self.assertFalse(
             os.path.lexists(tui.TuiStore(handle.name, host=self.session_cls.host()).dir)
         )
@@ -216,8 +216,8 @@ class TurnsTest(Live):
         border = self.server.tmux("show-options", "-wqv", "-t", "=w1:", "pane-border-format").stdout
         self.assertEqual(border, tmux_model.BORDER + "\n")
         self.assertEqual(
-            (handle.state(), [r.name for r in self.session_cls.list("w1")], self.panes()),
-            ("live", ["w1"], 1),
+            (handle.alive(), [r.name for r in self.session_cls.list("w1")], self.panes()),
+            (True, ["w1"], 1),
         )
 
 
@@ -317,7 +317,7 @@ class LimitTest(Live):
         self.assertCountEqual([stream.next() for _ in range(2)], [Activity(""), LimitHit(RESETS)])
         stream.quiet(1.0)
         self.lines("w1 done")
-        self.assertEqual((handle.state(), self.server.option("w1", "@state")), ("live", "done"))
+        self.assertEqual((handle.alive(), self.server.option("w1", "@state")), (True, "done"))
         self.colored()
         handle.send("go on")
         self.assertEqual([stream.next() for _ in range(2)], [Activity(""), TurnEnd("Back.", 0)])
@@ -350,7 +350,7 @@ class DeadTest(Live):
         self.lines("w1 done", "w1 dead")
         self.assertEqual(self.server.option("w1", "@state"), "dead")
         self.assertEqual(
-            (handle.state(), [r.state for r in self.session_cls.list("w1")]), ("live", ["dead"])
+            (handle.alive(), [r.state for r in self.session_cls.list("w1")]), (True, ["dead"])
         )
         for call in (lambda: handle.send("more"), handle.screen):
             with self.assertRaises(SessionError):
@@ -405,7 +405,7 @@ class AttachTest(Live):
         )
         self.assertEqual(res.returncode, 0, res.stderr)
         self.assertEqual(
-            json.loads(res.stdout), [SID, "live", "One.", repr(TurnEnd("Two.", 0)), "Two."]
+            json.loads(res.stdout), [SID, True, "One.", repr(TurnEnd("Two.", 0)), "Two."]
         )
         self.assertEqual([stream.next() for _ in range(2)], [Activity(""), TurnEnd("Two.", 0)])
         self.assertEqual(handle.reply, "Two.")

@@ -53,7 +53,7 @@ def adapter_class(path, base):
 hosts = Host.parse_hosts({"default": "tmux", "tmux": {"implementation": "agent_pm.session.hosts.tmux:TmuxHost"}})
 session_cls = HostedSession.configured(adapters=json.loads(adapters), hosts=hosts, class_loader=adapter_class)
 handle = session_cls.attach(name)
-before = [handle.sid, handle.state(), handle.reply]
+before = [handle.sid, handle.alive(), handle.reply]
 handle.send(text)
 event = next(e for e in handle.events() if not isinstance(e, IdleTimeout))
 print(json.dumps([*before, repr(event), handle.reply]))
@@ -125,7 +125,7 @@ class TuiTest(Live):
             timeout=WAIT,
         )
         self.assertEqual(res.returncode, 0, res.stderr)
-        self.assertEqual(json.loads(res.stdout), [SID, "live", "r1", repr(TurnEnd("r2", 1)), "r2"])
+        self.assertEqual(json.loads(res.stdout), [SID, True, "r1", repr(TurnEnd("r2", 1)), "r2"])
         self.assertEqual(stream.next(), TurnEnd("r2", 1))
         self.lines("w1 done", "w1 blocked", "w1 done")
         self.assertEqual(handle.reply, "r2")
@@ -168,10 +168,10 @@ class TuiTest(Live):
         self.assertEqual(stream.next(poke=self.poke), Exited(3))
         self.lines("w2 done", "w2 dead")
         self.assertEqual(
-            (handle.state(), [r.state for r in self.session_cls.list("w2")]), ("live", ["dead"])
+            (handle.alive(), [r.state for r in self.session_cls.list("w2")]), (True, ["dead"])
         )
         tui.TuiStore("w2", host=self.session_cls.host()).close()
-        self.assertEqual((handle.state(), self.session_cls.list("w2")), ("absent", []))
+        self.assertEqual((handle.alive(), self.session_cls.list("w2")), (False, []))
         self.assertFalse(os.path.lexists(tui.TuiStore("w2", host=self.session_cls.host()).dir))
 
     def test_an_unreachable_server_is_unknown_and_no_end(self):
@@ -184,7 +184,7 @@ class TuiTest(Live):
         self.addCleanup(os.chmod, self.server.socket, mode)
         with self.assertRaisesRegex(SessionError, "^tmux sessions unknown: "):
             self.session_cls.list("w.*")
-        self.assertEqual(handle.state(), "unknown")
+        self.assertEqual(handle.status().state, "unknown")
         stream.quiet(1.0)
         os.chmod(self.server.socket, mode)
         self.assertEqual([r.name for r in self.session_cls.list("w3")], ["w3"])
@@ -259,14 +259,14 @@ class SameNameTest(Live):
             lambda: DIALOG in new.screen(), what="the dialog on the new session's screen"
         )
         self.assertEqual(next(events), Exited(-signal.SIGHUP))
-        self.assertEqual((list(events), old.state()), ([], "absent"))
+        self.assertEqual((list(events), old.alive()), ([], False))
         old.stop()
         stream = Stream(self, new)
         self.addCleanup(new.stop)
         self.assertEqual(stream.next(), Blocked(DIALOG))
         self.lines(f"{name} blocked", events=mine)
         self.lines(f"{name} done")
-        self.assertEqual((new.state(), self.server.option(name, "@state")), ("live", "blocked"))
+        self.assertEqual((new.alive(), self.server.option(name, "@state")), (True, "blocked"))
 
     def test_a_restart_after_stop(self):
         old, events = self.old("w4")
@@ -329,8 +329,8 @@ class SameNameTest(Live):
         self.assertEqual(tui.TuiRuntime.snapshot("w6")["sid"], handle.sid)
         self.assertEqual(str(error), "tui session w6 is running; tmux attach -t '=w6'")
         self.assertEqual(
-            (handle.state(), os.listdir(tui.TuiStore("w6", host=self.session_cls.host()).dir)),
-            ("live", ["session.json"]),
+            (handle.alive(), os.listdir(tui.TuiStore("w6", host=self.session_cls.host()).dir)),
+            (True, ["session.json"]),
         )
 
     def test_a_restart_after_a_close_from_another_process(self):
@@ -359,7 +359,7 @@ class SameNameTest(Live):
         live_tmux.wait(lambda: os.path.exists(killed), what="the close's kill")
         new = self.start("w7", {"read": True})
         self.assertEqual((closer.communicate(timeout=WAIT)[1], closer.returncode), ("", 0))
-        self.assertEqual((new.state(), tui.TuiRuntime.snapshot("w7")["sid"]), ("live", new.sid))
+        self.assertEqual((new.alive(), tui.TuiRuntime.snapshot("w7")["sid"]), (True, new.sid))
 
 
 if __name__ == "__main__":

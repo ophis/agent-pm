@@ -212,9 +212,6 @@ class Events:
         sync_directory(os.path.dirname(self.path))
         self._cleanup()
 
-    def finish(self, gen: int) -> None:
-        self.recover(gen)
-
     def _keep(self, late: bytes) -> None:
         """Lines the replaced fresh file took while the rotation published: appended to the events
         file, else to its archive.

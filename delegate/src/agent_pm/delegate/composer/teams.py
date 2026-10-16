@@ -243,16 +243,6 @@ def index(
     return tasks
 
 
-def catalog(
-    team: Team | None = None, config: str = CONFIG, local: str = LOCAL
-) -> dict[str, dict[str, str]]:
-    team = team_or_default(team)
-    role_tables(config, local)
-    return {
-        role: index(role, team, config, local) for role in roles(team, config_of(config, local))
-    }
-
-
 def config_of(config: str, local: str, cfg: Mapping | None = None) -> Mapping:
     """`cfg`, the caller's already-read delegate config, else `config` with `local` read."""
     if cfg is not None:

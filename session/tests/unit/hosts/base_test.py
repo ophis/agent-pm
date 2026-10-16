@@ -90,23 +90,25 @@ class HostDefaults(Case):
     def test_a_process_status_is_its_liveness_activity_and_hidden(self):
         process = mock.create_autospec(HostProcess, instance=True)
         process.name, process.hidden.return_value = "p", True
-        for liveness, activity, state in (
-            (Liveness.LIVE, None, StatusState.WORKING),
-            (Liveness.LIVE, StatusState.BLOCKED, StatusState.BLOCKED),
-            (Liveness.ABSENT, None, StatusState.DEAD),
-            (Liveness.UNKNOWN, None, StatusState.UNKNOWN),
+        for liveness, alive, activity, state, hidden in (
+            (Liveness.LIVE, True, None, StatusState.WORKING, True),
+            (Liveness.LIVE, True, StatusState.BLOCKED, StatusState.BLOCKED, True),
+            (Liveness.LIVE, False, None, StatusState.DEAD, True),
+            (Liveness.ABSENT, False, None, StatusState.DEAD, True),
+            (Liveness.UNKNOWN, False, None, StatusState.UNKNOWN, False),
         ):
-            with self.subTest(liveness=liveness, activity=activity):
-                process.state.return_value, process.activity.return_value = liveness, activity
+            with self.subTest(liveness=liveness, alive=alive, activity=activity):
+                process.state.return_value, process.alive.return_value = liveness, alive
+                process.activity.return_value = activity
                 self.assertEqual(
                     HostProcess.status(process),
                     Status(
                         name="p",
-                        alive=liveness == Liveness.LIVE,
+                        alive=alive,
                         state=state,
                         outcome=None,
                         attach=None,
-                        hidden=True,
+                        hidden=hidden,
                     ),
                 )
 

@@ -87,9 +87,12 @@ COMMANDS_RULE = (
 )
 
 
-def catalog() -> dict[str, dict[str, str]]:
-    """The built-in team's catalog with the shipped config alone."""
-    return teams.catalog(config=CONFIG, local=os.devnull)
+def catalog(team=None, config=CONFIG, local=os.devnull) -> dict[str, dict[str, str]]:
+    """Each role's task index; by default the built-in team's with the shipped config alone."""
+    team = teams.team_or_default(team)
+    teams.role_tables(config, local)
+    found = teams.roles(team, teams.config_of(config, local))
+    return {role: teams.index(role, team, config, local) for role in found}
 
 
 def roles() -> list[str]:

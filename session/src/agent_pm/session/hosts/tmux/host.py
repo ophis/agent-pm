@@ -1162,8 +1162,8 @@ class TmuxHost(Host, Displayable):
                 why = self.tmux.run_command(name, command)
         except TuiError as e:
             raise ConfigError(str(e)) from None
-        self.attach(name).mark_hidden(hidden=False)
         if why is None:
+            self.attach(name).mark_hidden(hidden=False)
             return None
         LOG.warning("show %s: %s", name, why)
         return attach_command(name)
