@@ -24,7 +24,7 @@ agent-pm-linear router [--now] [--dry-run] [--issue ID] [--tui [--display D] [--
               show the TUI, a D its Host cannot use, FILE not writable). A run it starts or resumes
               prints its Record line on stdout, its attach commands on stderr. launchd never passes
               it: a tick resumes a run headless.
---brake ROLE  Print ROLE's client usage; exit 0 if a deep-research round may start, 1 if not or
+--brake ROLE  Print the run's client usage (else ROLE's); exit 0 if a deep-research round may start, 1 if not or
               unknown, 2 no such role.
 --help        Print this; exit 0. Bad arguments exit 2.
 
@@ -456,10 +456,23 @@ class Board:
             role, ident, key=(self.cfg.delegate_kind, client)
         )
 
+    def preview_resume(self, issue, sid):
+        if self.dry:
+            self.gql(Q_RECHECK, i=issue["id"])
+            self.say(
+                "preview",
+                issue["identifier"],
+                client=client_of(self.entries, sid),
+                client_source="pinned",
+                mode="resume",
+                sid=sid,
+            )
+
     def take(self, only=None, full=()):
         queue = self.queue(full)
         if only:
             queue = [i for i in queue if i["identifier"] == only]
+        selected = None
         for issue in queue:
             ident = issue["identifier"]
             if self.attempts(issue) >= CAP:
@@ -467,13 +480,12 @@ class Board:
                 self.comment_and_move(issue, CAP_COMMENT, "in_review", "todo", "pick")
                 continue
             self.say("pick", ident, queue=len(queue))
-            if self.dry:
-                role = self.role(issue)
-                client = self.cfg.roles[role].run.client
-                if not self.gated(role, ident, client):
-                    return issue, None, role, client, "default"
-            elif taken := self.claim(issue, full):
-                return taken
+            if taken := self.claim(issue, full):
+                if not self.dry:
+                    return taken
+                selected = selected or taken
+        if selected is not None:
+            return selected
         if queue:
             self.say("pick-none", reason="nothing claimable")
         else:
@@ -515,6 +527,8 @@ class Board:
         client, source, client_error = client_for(
             labels, self.cfg.agent_label_group, self.label_clients, self.cfg.roles[role].run.client
         )
+        if self.dry:
+            self.say("preview", ident, client=client or "invalid", client_source=source)
         if comments := [error for error in (task_error, client_error) if error]:
             self.say(
                 "claim-skip",
@@ -526,13 +540,17 @@ class Board:
                 if task_error is None
                 else "bad task and Agent labels",
             )
+            if self.dry:
+                self.say("would comment", ident, body="\n\n".join(comments), to="in_review")
             self.comment_and_move(issue, "\n\n".join(comments), "in_review", "todo", "claim")
             return None
         if self.gated(role, ident, client):
             return None
+        taken = {**issue, "assignee": current["assignee"], "project": current["project"]}
+        if self.dry:
+            return taken, task, role, client, source
         self.say("claim", ident, role=role, task=task, client=client, client_source=source)
         ops.call(self.gql, ops.M_STATE, "issueUpdate", i=issue["id"], s=self.states["in_progress"])
-        taken = {**issue, "assignee": current["assignee"], "project": current["project"]}
         return taken, task, role, client, source
 
 
@@ -820,23 +838,30 @@ def other_sid(spec, launch_sid):
 
 
 def choose(board, gate, live_ids, full, counts, *, new_sid):
+    selected = None
     for issue, sid in board.recover(live_ids):
         if not board.available(issue, full):
             continue
         client = client_of(board.entries, sid)
+        board.preview_resume(issue, sid)
         if not gate.blocked(
             board.role(issue), issue["identifier"], key=(delegate_of(board.entries, sid), client)
         ):
             board.plan(("resume", issue, sid), counts)
-            return Spec.from_issue(issue, mode="resume", sid=sid, task=None, client=client)
+            spec = Spec.from_issue(issue, mode="resume", sid=sid, task=None, client=client)
+            if not board.dry:
+                return spec
+            selected = selected or spec
     if not (queue := board.queue(full)):
-        return None
+        return selected
     board.plan(("new", len(queue)), counts)
     if not (taken := board.take(full=full)):
+        if selected is not None:
+            return selected
         board.say("skip", reason="nothing claimed")
         return None
     issue, task, _, client, source = taken
-    return Spec.from_issue(
+    return selected or Spec.from_issue(
         issue, mode="new", sid=new_sid, task=task, client=client, client_source=source
     )
 
@@ -922,6 +947,7 @@ def run_issue(opts, cfg, gql, start, *, keychain, clock=datetime.now, launch_sid
             if not board.settle(issue, sid, wait=False):
                 return 0 if board.replays.get(ident) else stop
             board.plan(("resume", issue, sid))
+            board.preview_resume(issue, sid)
             spec = Spec.from_issue(
                 issue, mode="resume", sid=sid, task=None, client=client_of(entries, sid)
             )
