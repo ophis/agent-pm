@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import contextlib
 import json
+import logging
 import os
 import re
 import shutil
@@ -34,14 +35,17 @@ from agent_pm.session.engine.types import (
     SessionRow,
     StatusState,
 )
-from agent_pm.session.hosts.base import Host, HostProcess, Terminal
+from agent_pm.session.hosts.base import Host, HostProcess, Terminal, tui_lock
 from agent_pm.session.hosts.pty import hook, state
 from agent_pm.session.hosts.pty.keys import encode
 from agent_pm.utils import (
     CONFIG_NAME,
+    STALE_AGE,
     Display,
     ProcessControl,
     Record,
+    idle,
+    inode_lock,
     module_roots,
     sid_error,
     source_path,
@@ -55,6 +59,7 @@ KILL_WAIT = 5
 PAUSE = 0.5  # before a key that follows a paste, as the program may still be taking the paste
 POLL = 0.05
 TIMEOUT = 10
+LOG = logging.getLogger("session")
 
 
 class PtyProcess(HostProcess):
@@ -352,11 +357,24 @@ class PtyHost(Host):
         if not isinstance(name, str) or not NAME.fullmatch(name):
             raise ConfigError(f"name must match [A-Za-z0-9_-]+, got {name!r:.80}")
 
-    def _start(
+    def _start(self, kind, name, launch: Launch, **options) -> tuple[str, dict]:
+        """options: display, events, record, metadata, env."""
+        self.validate(name, launch, display=options["display"])
+        options["events"] = self.prepare_events(self.events_path(options["events"]))
+        os.makedirs(state.root(), mode=0o700, exist_ok=True)
+        with contextlib.ExitStack() as stack:
+            try:
+                stack.enter_context(inode_lock(os.path.join(state.root(), f"{name}.lock")))
+            except OSError as error:
+                raise SessionError(f"{kind} {name}: {error}") from error
+            started = self._create(kind, name, launch, **options)
+        _sweep(name)
+        return started
+
+    def _create(
         self, kind, name, launch: Launch, *, display, events, record, metadata, env
     ) -> tuple[str, dict]:
-        self.validate(name, launch, display=display)
-        events = self.prepare_events(self.events_path(events))
+        """_start's work under the name's lock."""
         folder = os.path.join(state.root(), name)
         if os.path.isdir(folder):
             previous = PtyProcess(name, folder)
@@ -364,7 +382,6 @@ class PtyHost(Host):
                 raise SessionError(f"{self.name} session {name} is live")
             previous.close()
             shutil.rmtree(folder, ignore_errors=True)
-        os.makedirs(state.root(), mode=0o700, exist_ok=True)
         os.mkdir(folder, mode=0o700)
         control = ProcessControl.prepare(
             launch.argv, launch.cwd, env=env, blocked_signals=launch.blocked_signals
@@ -433,3 +450,41 @@ class PtyHost(Host):
             )
         threading.Thread(target=supervisor.wait, daemon=True).start()
         return supervisor
+
+
+def _sweep(current: str) -> None:
+    """Every other name idle STALE_AGE with no process loses its dir and lock; errors logged."""
+    try:
+        names = {entry.name.removesuffix(".lock") for entry in os.scandir(state.root())}
+    except OSError as error:
+        LOG.warning("pty sweep: %s", error)
+        return
+    for name in sorted(names - {current}):
+        if NAME.fullmatch(name):
+            try:
+                _expire(name)
+            except (OSError, SessionError) as error:
+                LOG.warning("pty sweep %s: %s", name, error)
+
+
+def _expire(name: str) -> None:
+    """Under its locks no start runs, so a missing pid means no supervisor."""
+    folder = os.path.join(state.root(), name)
+    lock = f"{folder}.lock"
+    files = (folder, os.path.join(folder, state.OUTPUT), os.path.join(folder, state.ACTIVITY))
+    if os.path.islink(folder) or not idle((*files, lock), STALE_AGE):
+        return
+    with contextlib.ExitStack() as stack:
+        tui = tui_lock(name)
+        if os.path.lexists(tui) and not stack.enter_context(inode_lock(tui, wait=False)):
+            return
+        if not stack.enter_context(inode_lock(lock, wait=False)) or not idle(files, STALE_AGE):
+            return
+        if os.path.lexists(folder):
+            process = PtyProcess(name, folder)
+            supervised = state.read(folder, state.PID) is not None and process._supervised()
+            if process.alive() or process._group_live() or supervised:
+                return
+            process.close()
+            shutil.rmtree(folder, ignore_errors=True)
+        os.unlink(lock)

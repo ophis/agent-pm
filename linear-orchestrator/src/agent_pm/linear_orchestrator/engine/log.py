@@ -1,4 +1,5 @@
-"""Orchestrator event logging and bounded outage reporting."""
+"""Orchestrator event logging, rotated to orchestrator.jsonl.1 at LOG_MAX, and bounded outage
+reporting."""
 
 import json
 import os
@@ -6,7 +7,7 @@ import sys
 from datetime import UTC, datetime, timedelta
 
 from agent_pm.linear_orchestrator.engine.types import ConfigError, LinearError
-from agent_pm.utils import append_line, one_line, printable, timestamp
+from agent_pm.utils import append_line, file_lock, one_line, printable, timestamp
 
 LOGS_DIR = None
 
@@ -18,6 +19,7 @@ def use_logs(path):
 
 ONCE = ("src", "kind", "issue", "entry", "reason")
 WINDOW = timedelta(hours=24)
+LOG_MAX = 10 << 20
 
 
 def log(src, kind, issue=None, *, once=False, dry=False, quiet=False, now=datetime.now, **fields):
@@ -53,6 +55,7 @@ def _log(line, logs, *, once, dry, quiet=False, now=datetime.now):
     try:
         if not dry and path and logs:
             os.makedirs(logs, exist_ok=True)
+            _rotate(path)
             append_line(path, text + "\n")
     except OSError:
         pass
@@ -61,6 +64,26 @@ def _log(line, logs, *, once, dry, quiet=False, now=datetime.now):
             print(printable(text), file=sys.stderr, flush=True)
     except OSError:  # a gone tmux pane's EIO
         pass
+
+
+def _rotate(path):
+    """path -> path.1 at LOG_MAX, rechecked under its lock so another process's rotation is not
+    repeated; appends stay unlocked (launchd writes the file too); a failure still lets them append.
+    """
+    try:
+        if _size(path) >= LOG_MAX:
+            with file_lock(path):
+                if _size(path) >= LOG_MAX:
+                    os.replace(path, path + ".1")
+    except OSError:
+        pass
+
+
+def _size(path):
+    try:
+        return os.stat(path).st_size
+    except FileNotFoundError:
+        return 0
 
 
 def config_error(src, e, *, dry=False, now=datetime.now):

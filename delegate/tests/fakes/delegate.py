@@ -129,13 +129,12 @@ class FakeDelegate(Delegate):
     @classmethod
     def clean(cls, workdir, *, dry=False):
         layout = Layout(workdir)
-        if not os.path.lexists(layout.agent):
-            return
-        if not layout.in_place():
+        agent = os.path.lexists(layout.agent)
+        if agent and not layout.in_place():
             raise ConfigError(f"not a real directory: {layout.agent}, refusing to touch")
         if os.path.exists(_path(workdir)) and _load(workdir)["alive"]:
             raise ConfigError(f"{layout.workdir}: delegate is still alive")
-        if not dry:
+        if agent and not dry:
             shutil.rmtree(layout.agent)
 
     @classmethod

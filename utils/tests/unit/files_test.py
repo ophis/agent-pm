@@ -1,4 +1,4 @@
-"""utils/files.py: read_regular, append_line, holds and save (main's save cases)."""
+"""utils/files.py: read_regular, append_line, holds, file_lock, save and drop_stale."""
 
 import errno
 import json
@@ -6,6 +6,7 @@ import os
 import stat
 import tempfile
 import threading
+import time
 import unittest
 import unittest.mock
 from pathlib import Path
@@ -218,6 +219,132 @@ class FileLock(Base):
         os.mkfifo(self.path + ".lock")
         with self.assertRaises(OSError), files.file_lock(self.path):
             self.fail("accepted FIFO lock")
+
+    def test_no_wait_raises_while_held_and_locks_once_free(self):
+        with (
+            files.file_lock(self.path),
+            self.assertRaises(BlockingIOError),
+            files.file_lock(self.path, wait=False),
+        ):
+            self.fail("locked a held lock")
+        with files.file_lock(self.path, wait=False):
+            pass
+
+
+class DropStale(Base):
+    def entry(self, name: str, age_days: float) -> str:
+        path = os.path.join(self.dir, name)
+        if not os.path.lexists(path):
+            Path(path).touch()
+        when = time.time() - age_days * 86400
+        os.utime(path, (when, when), follow_symlinks=False)
+        return path
+
+    def test_only_regular_files_past_the_age_go(self):
+        self.entry("old.json", 31)
+        self.entry("young.json", 29)
+        self.entry(".tmp-old", 31)
+        self.assertEqual(files.drop_stale(self.dir), [])
+        self.assertEqual(os.listdir(self.dir), ["young.json"])
+
+    def test_directories_and_symlinks_stay(self):
+        os.mkdir(os.path.join(self.dir, "x.json"))
+        self.entry("x.json", 31)
+        target = self.entry("target", 1)
+        os.symlink(target, os.path.join(self.dir, "link.json"))
+        self.entry("link.json", 31)
+        self.assertEqual(files.drop_stale(self.dir), [])
+        self.assertEqual(sorted(os.listdir(self.dir)), ["link.json", "target", "x.json"])
+
+    def test_an_unlink_error_is_returned_and_the_rest_still_go(self):
+        self.entry("a.json", 31)
+        self.entry("b.json", 31)
+        real = os.unlink
+        refused = OSError(errno.EPERM, "refused", os.path.join(self.dir, "a.json"))
+
+        def unlink(path, *args, **kwargs):
+            if os.path.basename(path) == "a.json":
+                raise refused
+            real(path, *args, **kwargs)
+
+        with mock.patch("os.unlink", side_effect=unlink):
+            self.assertEqual(files.drop_stale(self.dir), [refused])
+        self.assertEqual(os.listdir(self.dir), ["a.json"])
+
+    def test_an_entry_gone_before_its_unlink_is_no_error(self):
+        self.entry("a.json", 31)
+        gone = FileNotFoundError(errno.ENOENT, "gone", os.path.join(self.dir, "a.json"))
+        with mock.patch("os.unlink", side_effect=gone):
+            self.assertEqual(files.drop_stale(self.dir), [])
+
+    def test_a_directory_it_cannot_list_is_one_error(self):
+        (error,) = files.drop_stale(os.path.join(self.dir, "missing"))
+        self.assertIsInstance(error, FileNotFoundError)
+
+
+class InodeLock(Base):
+    def held(self) -> bool:
+        with files.inode_lock(self.path, wait=False) as got:
+            return not got
+
+    def test_a_lock_unlinked_while_waited_on_is_retaken_on_the_new_file(self):
+        real_flock, calls = files.fcntl.flock, []
+
+        def flock(fd, operation):
+            if not calls:
+                os.unlink(self.path)
+                Path(self.path).touch()
+            calls.append(fd)
+            return real_flock(fd, operation)
+
+        with mock.patch("fcntl.flock", side_effect=flock), files.inode_lock(self.path) as got:
+            self.assertTrue(got)
+            self.assertEqual(len(calls), 2)
+            self.assertTrue(os.path.samestat(os.fstat(calls[1]), os.stat(self.path)))
+        with files.inode_lock(self.path) as got:
+            self.assertTrue(got)
+            self.assertTrue(self.promptly(self.held))
+        self.assertFalse(self.held())
+
+    def test_a_holder_may_unlink_and_a_missing_path_is_retried(self):
+        with files.inode_lock(self.path):
+            os.unlink(self.path)
+        real_flock, calls = files.fcntl.flock, []
+
+        def flock(fd, operation):
+            if not calls:
+                os.unlink(self.path)
+            calls.append(fd)
+            return real_flock(fd, operation)
+
+        with mock.patch("fcntl.flock", side_effect=flock), files.inode_lock(self.path):
+            self.assertEqual(len(calls), 2)
+            self.assertTrue(os.path.samestat(os.fstat(calls[1]), os.stat(self.path)))
+
+    def test_without_waiting_a_held_lock_yields_false(self):
+        with files.inode_lock(self.path, wait=False) as first:
+            self.assertTrue(first)
+            self.assertTrue(self.promptly(self.held))
+        self.assertFalse(self.held())
+
+    def test_a_non_regular_lock_path_is_refused(self):
+        os.mkfifo(self.path)
+        with self.assertRaises(OSError) as raised, files.inode_lock(self.path):
+            self.fail("accepted FIFO lock")
+        self.assertEqual(raised.exception.errno, errno.EINVAL)
+
+
+class Idle(Base):
+    def test_every_existing_path_older_than_the_age_and_missing_ones_ignored(self):
+        old, new = os.path.join(self.dir, "old"), os.path.join(self.dir, "new")
+        for path in (old, new):
+            Path(path).touch()
+        os.utime(old, (0, 0))
+        os.symlink(old, self.path)
+        os.utime(self.path, (0, 0), follow_symlinks=False)
+        self.assertTrue(files.idle([old, self.path, os.path.join(self.dir, "gone")], 60))
+        self.assertFalse(files.idle([old, new], 60))
+        self.assertTrue(files.idle([], 60))
 
 
 class Save(Base):

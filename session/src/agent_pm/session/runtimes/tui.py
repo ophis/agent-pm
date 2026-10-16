@@ -3,8 +3,8 @@ then the hook records appended to its session directory, and from its terminal.
 """
 
 import contextlib
-import fcntl
 import json
+import logging
 import os
 import signal
 import stat
@@ -42,13 +42,27 @@ from agent_pm.session.engine.types import (
     TurnEnd,
     TurnFailed,
 )
-from agent_pm.session.hosts.base import Displayable, Host, HostProcess, Terminal
+from agent_pm.session.hosts.base import (
+    TUI_DIR,
+    Displayable,
+    Host,
+    HostProcess,
+    Terminal,
+    tui_lock,
+)
 from agent_pm.session.runtimes import tui_hook
 from agent_pm.session.runtimes.base import Runtime, identity_drop
 from agent_pm.utils import CONFIG_NAME as NAME
-from agent_pm.utils import STATE, Display, command_path, json_records, read_regular
+from agent_pm.utils import (
+    STALE_AGE,
+    Display,
+    command_path,
+    idle,
+    inode_lock,
+    json_records,
+    read_regular,
+)
 
-TUI_DIR = f"{STATE}/tui"
 WORDS = {
     HookKind.TURN_END: StatusState.DONE,
     HookKind.TURN_FAILED: StatusState.DONE,
@@ -58,6 +72,7 @@ WORDS = {
 SLICE = 0.1
 OPEN_AFTER = 1.0  # keys sent before a client's input box shows are lost
 POLL_SCREEN = 0.5
+LOG = logging.getLogger("session")
 
 
 def checked_name(name) -> str:
@@ -189,6 +204,24 @@ class _Store:
         with self._locked():
             self._close()
 
+    def tracked(self) -> tuple[str, str]:
+        return self.dir, os.path.join(self.dir, tui_hook.HOOKS)
+
+    def expire(self, listed: set[str]) -> None:
+        """Its dir and lock go once idle with no session of its name on its host; never waits."""
+        lock = tui_lock(self.name)
+        with inode_lock(lock, wait=False) as held:
+            if not held or not idle(self.tracked(), STALE_AGE) or self.name in listed:
+                return
+            try:
+                state = json.loads(read_regular(self.state_file) or b"{}")
+            except ValueError:
+                state = {}
+            if isinstance(state, dict) and state.get("host", self.host.name) != self.host.name:
+                return
+            self._drop()
+            os.unlink(lock)
+
     def stop(self, identity: str) -> None:
         with self._locked():
             holder = self.holder()
@@ -200,16 +233,13 @@ class _Store:
     @contextlib.contextmanager
     def _locked(self) -> Iterator[None]:
         self._root()
-        path = os.path.join(self.root, f"{self.name}.lock")
-        try:
-            fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_NONBLOCK, 0o600)
-        except OSError as e:
-            raise SessionError(f"{path}: {e.strerror or e}") from None
-        try:
-            fcntl.flock(fd, fcntl.LOCK_EX)
+        path = tui_lock(self.name)
+        with contextlib.ExitStack() as stack:
+            try:
+                stack.enter_context(inode_lock(path))
+            except OSError as e:
+                raise SessionError(f"{path}: {e.strerror or e}") from None
             yield
-        finally:
-            os.close(fd)
 
     def _root(self) -> None:
         try:
@@ -272,6 +302,32 @@ class _Store:
     def _unmake(self, made: os.stat_result) -> None:
         with contextlib.suppress(OSError):
             self._remove(made)
+
+
+def _sweep(store: _Store) -> None:
+    """Other names idle STALE_AGE: expired, errors logged; one host listing, once one is idle."""
+    try:
+        found = {entry.name.removesuffix(".lock") for entry in os.scandir(store.root)}
+    except OSError as error:
+        LOG.warning("tui sweep: %s", error)
+        return
+    listed = None
+    for name in sorted(found - {store.name}):
+        if not SESSION_NAME.fullmatch(name):
+            continue
+        other = _Store(name, host=store.host)
+        try:
+            if os.path.islink(other.dir) or not idle((*other.tracked(), tui_lock(name)), STALE_AGE):
+                continue
+            if listed is None:
+                try:
+                    listed = set(store.host.list())
+                except (OSError, SessionError) as error:
+                    LOG.warning("tui sweep: %s", error)
+                    return
+            other.expire(listed)
+        except (OSError, SessionError) as error:
+            LOG.warning("tui sweep %s: %s", name, error)
 
 
 def _stale(store: _Store) -> HostProcess | None:
@@ -421,6 +477,7 @@ class TuiRuntime(Runtime):
             record(prepared.info)
 
         terminal = store.start(pending.state, commit, launch, check_name=check_name)
+        _sweep(store)
         generation = pending.state["generation"]
         return cls(prepared, run, terminal, store, generation, opening=run.opening)
 

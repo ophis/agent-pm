@@ -10,6 +10,8 @@ import contextlib
 import json
 import os
 import re
+import shutil
+import stat
 import sys
 import time
 from collections.abc import Callable, Iterator, Mapping
@@ -32,6 +34,7 @@ from agent_pm.session.engine.types import (
 from agent_pm.session.hosts.base import Displayable, HostProcess
 from agent_pm.utils import (
     CONFIG_NAME,
+    STALE_AGE,
     STATE,
     Display,
     Record,
@@ -253,12 +256,13 @@ class Worker:
         )
 
     def start(self, *, prompt: str, resume: bool) -> Record:
-        """Claim its sid, save its state, start its client, save its token, show it, watch it
-        (EARLY s, up to COLOR_CAP s while its opening is pending); then publish its Record and
-        return it. A failed save or start puts its files back. Its client exiting in the watch:
-        SessionError with its last lines, its terminal kept, no Record.
+        """Drop stale sids, claim its sid, save its state, start its client, save its token, show
+        it, watch it (EARLY s, up to COLOR_CAP s while its opening is pending); then publish its
+        Record and return it. A failed save or start puts its files back. Its client exiting in the
+        watch: SessionError with its last lines, its terminal kept, no Record.
         """
         name = self.state.name
+        self._drop_stale()
         self._claim()
         before = self._saved()
         self.state = replace(self.state, token=None)
@@ -355,6 +359,57 @@ class Worker:
         if self.state.token is None:
             return None
         return self.session_cls.host(self.state.host).reclaim(self.state.token)
+
+    def _drop_stale(self) -> None:
+        """Removes each workers/<sid>/ no by-name/ entry names, whose worker.json is over STALE_AGE
+        old and whose lock nobody holds; an error is said, never raised.
+        """
+        root = os.path.dirname(self.state.workdir())
+        pointers = os.path.join(root, BY_NAME)
+        try:
+            names = os.listdir(pointers)
+        except FileNotFoundError:
+            names = []
+        except OSError as error:
+            self.say(f"worker cleanup skipped: {error}")
+            return
+        latest = set()
+        for name in names:
+            data = read_regular(os.path.join(pointers, name), limit=STATE_MAX)
+            if data is None:
+                self.say(f"worker cleanup skipped: {pointers}/{name}: unreadable")
+                return
+            latest.add(data.decode(errors="replace").strip())
+        try:
+            with os.scandir(root) as entries:
+                old = [
+                    entry.path
+                    for entry in entries
+                    if SID.fullmatch(entry.name)
+                    and entry.name not in latest
+                    and entry.is_dir(follow_symlinks=False)
+                ]
+        except FileNotFoundError:
+            return
+        except OSError as error:
+            self.say(f"worker cleanup: {root}: {error}")
+            return
+        cutoff = time.time() - STALE_AGE
+        for path in old:
+            try:
+                found = os.stat(os.path.join(path, STATE_FILE), follow_symlinks=False)
+                if (
+                    not stat.S_ISREG(found.st_mode)
+                    or found.st_mtime >= cutoff
+                    or os.path.islink(os.path.join(path, "worker.lock"))
+                ):
+                    continue
+                with file_lock(os.path.join(path, "worker"), wait=False):
+                    shutil.rmtree(path)
+            except (FileNotFoundError, BlockingIOError):
+                continue
+            except OSError as error:
+                self.say(f"worker cleanup: {path}: {error}")
 
     def _claim(self) -> None:
         data = read_regular(os.path.join(self.state.workdir(), STATE_FILE), limit=STATE_MAX)

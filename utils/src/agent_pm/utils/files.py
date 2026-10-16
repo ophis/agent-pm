@@ -5,9 +5,12 @@ import os
 import stat
 import sys
 import tempfile
-from collections.abc import Iterator
+import time
+from collections.abc import Iterable, Iterator
 from enum import StrEnum
 from pathlib import Path
+
+STALE_AGE = 30 * 24 * 60 * 60
 
 
 def read_regular(
@@ -48,10 +51,11 @@ def holds(path: str | Path, text: str) -> bool:
 
 
 @contextlib.contextmanager
-def file_lock(path: str | Path) -> Iterator[None]:
-    """Exclusive stable <path>.lock, non-inheritable. Event writers acquire it before opening
-    the event file and hold it through descriptor close, without acquiring a roster lock.
-    Rotators hold it through physical changes and durable ledger save; never replace this lock.
+def file_lock(path: str | Path, *, wait: bool = True) -> Iterator[None]:
+    """Exclusive stable <path>.lock, non-inheritable; held, `wait=False` raises BlockingIOError.
+    Event writers acquire it before opening the event file and hold it through descriptor close,
+    without acquiring a roster lock. Rotators hold it through physical changes and durable ledger
+    save; never replace this lock.
     """
     lock = str(path) + ".lock"
     fd = os.open(lock, os.O_RDWR | os.O_CREAT | os.O_NONBLOCK, 0o600)
@@ -59,10 +63,72 @@ def file_lock(path: str | Path) -> Iterator[None]:
         opened = os.fstat(fd)
         if not stat.S_ISREG(opened.st_mode):
             raise OSError(errno.EINVAL, "not a regular lock file", lock)
-        fcntl.flock(fd, fcntl.LOCK_EX)
+        fcntl.flock(fd, fcntl.LOCK_EX if wait else fcntl.LOCK_EX | fcntl.LOCK_NB)
         yield
     finally:
         os.close(fd)
+
+
+@contextlib.contextmanager
+def inode_lock(path: str | Path, *, wait: bool = True) -> Iterator[bool]:
+    """Exclusive flock on `path` itself, held once `path` still names the locked file, so a holder
+    may unlink it; False without waiting when another holds it.
+    """
+    while True:
+        fd = os.open(path, os.O_RDWR | os.O_CREAT | os.O_NONBLOCK, 0o600)
+        try:
+            if not stat.S_ISREG(os.fstat(fd).st_mode):
+                raise OSError(errno.EINVAL, "not a regular lock file", str(path))
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | (0 if wait else fcntl.LOCK_NB))
+            except BlockingIOError:
+                yield False
+                return
+            try:
+                same = os.path.samestat(os.fstat(fd), os.stat(path))
+            except FileNotFoundError:
+                same = False
+            if same:
+                yield True
+                return
+        finally:
+            os.close(fd)
+
+
+def idle(paths: Iterable[str | Path], seconds: float) -> bool:
+    """Every existing path (not followed) last modified over `seconds` ago."""
+    cutoff = time.time() - seconds
+    for path in paths:
+        try:
+            if os.lstat(path).st_mtime >= cutoff:
+                return False
+        except FileNotFoundError:
+            continue
+    return True
+
+
+def drop_stale(directory: str) -> list[OSError]:
+    """Unlinks the regular files directly in `directory` last modified over STALE_AGE ago, never
+    following symlinks; returns the errors, each skipping only its entry (a listing error: all).
+    """
+    errors: list[OSError] = []
+    cutoff = time.time() - STALE_AGE
+    try:
+        with os.scandir(directory) as entries:
+            for entry in entries:
+                try:
+                    if (
+                        entry.is_file(follow_symlinks=False)
+                        and entry.stat(follow_symlinks=False).st_mtime < cutoff
+                    ):
+                        os.unlink(entry.path)
+                except FileNotFoundError:
+                    continue
+                except OSError as error:
+                    errors.append(error)
+    except OSError as error:
+        errors.append(error)
+    return errors
 
 
 def sync_directory(path: str | Path) -> None:

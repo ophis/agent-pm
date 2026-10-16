@@ -26,6 +26,7 @@ from agent_pm.session.engine.types import (
 from agent_pm.utils import (
     CLASS_PATH,
     CONFIG_NAME,
+    STATE,
     Display,
     Record,
     Status,
@@ -35,6 +36,11 @@ from agent_pm.utils import (
 )
 
 SIGNALS = (signal.SIGHUP, signal.SIGTERM, signal.SIGINT)
+TUI_DIR = f"{STATE}/tui"
+
+
+def tui_lock(name: str) -> str:
+    return os.path.join(os.path.expanduser(TUI_DIR), f"{name}.lock")
 
 
 class HostProcess(ABC):

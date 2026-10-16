@@ -27,6 +27,7 @@ from agent_pm.session.engine.types import (
 from agent_pm.utils import (
     LOCAL_ENV_VARS,
     STATE,
+    drop_stale,
     environment_ok,
     json_records,
     number,
@@ -181,6 +182,10 @@ def _load(store: str, cwd: str, sid: str) -> dict:
         and environment_ok(state["env"])
     ):
         raise ConfigError(f"{path}: bad resume state")
+    try:
+        os.utime(path, follow_symlinks=False)
+    except OSError as error:
+        print(f"claude resume: cannot renew {path}: {error}", file=sys.stderr)
     return state
 
 
@@ -293,6 +298,8 @@ class ClaudeCommon:
             save(_state_path(self.store, cwd, sid), json.dumps(state), durable=True)
         except OSError as error:
             raise ConfigError(f"claude resume state: {error}") from None
+        for error in drop_stale(self.store):
+            print(f"claude resume: {error}", file=sys.stderr)
 
     def resume_main(self, argv) -> int:
         """resume()'s run (STORE CWD SID): execs claude resuming SID with the config's flags, the

@@ -489,9 +489,8 @@ class HarnessDelegate(Delegate):
     @classmethod
     def clean(cls, workdir: str, *, dry: bool = False) -> None:
         layout = Layout(workdir)
-        if not os.path.lexists(layout.agent):
-            return
-        if not layout.in_place():
+        agent = os.path.lexists(layout.agent)
+        if agent and not layout.in_place():
             raise ConfigError(f"not a real directory: {layout.agent}, refusing to touch")
         store = RunState(layout)
         with store.mutex() if os.path.isdir(layout.run) else contextlib.nullcontext():
@@ -502,7 +501,7 @@ class HarnessDelegate(Delegate):
                 view = cls._bare(layout)
             if view._live(payload):
                 raise ConfigError(f"{layout.workdir}: delegate is still alive")
-            if not dry:
+            if agent and not dry:
                 shutil.rmtree(layout.agent)
 
     @classmethod
