@@ -15,6 +15,7 @@ from agent_pm.session.engine.types import (
     Stderr,
     TurnEnd,
 )
+from agent_pm.session.runtimes.base import Runtime
 
 from session.tests.unit.clients.codex.support import (
     NATIVE,
@@ -243,6 +244,33 @@ class LaunchPolicy(Base):
 
 
 class PolicyReplay(Base):
+    def test_resumed_snapshot_gets_actual_client_context_without_replacing_saved_policy(self):
+        for old_client in (None, "stale"):
+            with self.subTest(old_client=old_client):
+                saved_env = {"K": "saved"}
+                if old_client is not None:
+                    saved_env["AGENT_PM_RUN_CLIENT"] = old_client
+                spec = dataclasses.replace(
+                    self.spec, client="codex", sid=f"context-{old_client}", env=saved_env
+                )
+                committed_headless(self.client, dataclasses.replace(spec, prompt="one"))
+                self.common.bind(str(self.work), spec.sid, NATIVE)
+                self.rollout()
+                resumed = dataclasses.replace(
+                    spec,
+                    prompt="two",
+                    resume=True,
+                    env={"K": "changed", "AGENT_PM_RUN_CLIENT": "wrong"},
+                )
+                prepared = Runtime._launched(
+                    resumed, lambda requested: committed_headless(self.client, requested), ()
+                )
+                self.assertEqual(prepared.env["AGENT_PM_RUN_CLIENT"], "codex")
+                self.assertEqual(prepared.env["K"], "saved")
+                self.assertEqual(
+                    dict(self.common.load(str(self.work), spec.sid).snapshot.env), saved_env
+                )
+
     def test_snapshot_replays_supplied_flags_and_environment(self):
         flags = (
             "-s",

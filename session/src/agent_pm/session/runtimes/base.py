@@ -32,6 +32,7 @@ from agent_pm.utils import (
     AGENT_SESSION_ENV,
     EVENTS_ENV,
     LEASE_ENV,
+    RUN_CLIENT_ENV,
     SID_ENV,
     Display,
     command_path,
@@ -171,4 +172,7 @@ class Runtime(ABC):
         cwd = command.cwd or spec.access.cwd
         project = spec.access.project if command.project is None else command.project
         info = SessionInfo(spec.sid, cwd, project, command.transcript, command.resume)
-        return Prepared(spec, info, command.argv, child_env(command, cwd, drop))
+        env = child_env(command, cwd, drop)
+        if spec.client is not None:
+            env[RUN_CLIENT_ENV] = spec.client
+        return Prepared(spec, info, command.argv, env)

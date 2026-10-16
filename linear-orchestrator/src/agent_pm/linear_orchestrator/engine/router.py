@@ -24,7 +24,7 @@ agent-pm-linear router [--now] [--dry-run] [--issue ID] [--tui [--display D] [--
               show the TUI, a D its Host cannot use, FILE not writable). A run it starts or resumes
               prints its Record line on stdout, its attach commands on stderr. launchd never passes
               it: a tick resumes a run headless.
---brake ROLE  Print ROLE's client usage; exit 0 if a deep-research round may start, 1 if not or
+--brake ROLE  Print the run's client usage (else ROLE's); exit 0 if a deep-research round may start, 1 if not or
               unknown, 2 no such role.
 --help        Print this; exit 0. Bad arguments exit 2.
 
@@ -86,7 +86,7 @@ from agent_pm.linear_orchestrator.engine.types import (
     Transient,
     Unavailable,
 )
-from agent_pm.utils import EVENTS_ENV, SID_ENV, nested_start, one_line, parse_time
+from agent_pm.utils import EVENTS_ENV, RUN_CLIENT_ENV, SID_ENV, nested_start, one_line, parse_time
 
 STALE = timedelta(hours=2)
 LIVE = timedelta(minutes=30)
@@ -517,13 +517,28 @@ class Board:
         else:
             self.say("plan", mode="new", queue=run[1], live=live)
 
-    def gated(self, role, ident):
-        return self.gate is not None and self.gate.blocked(role, ident)
+    def gated(self, role, ident, client, source):
+        return self.gate is not None and self.gate.blocked(
+            role, ident, key=(self.cfg.delegate_kind, client), reject_config=source == "label"
+        )
+
+    def preview_resume(self, issue, sid):
+        if self.dry:
+            self.gql(Q_RECHECK, i=issue["id"])
+            self.say(
+                "preview",
+                issue["identifier"],
+                client=client_of(self.entries, sid),
+                client_source="pinned",
+                mode="resume",
+                sid=sid,
+            )
 
     def take(self, only=None, full=()):
         queue = self.queue(full)
         if only:
             queue = [i for i in queue if i["identifier"] == only]
+        selected = None
         for issue in queue:
             ident = issue["identifier"]
             if self.attempts(issue) >= CAP:
@@ -531,13 +546,12 @@ class Board:
                 self.comment_and_move(issue, CAP_COMMENT, "in_review", "todo", "pick")
                 continue
             self.say("pick", ident, queue=len(queue))
-            if self.dry:
-                role = self.role(issue)
-                client = self.cfg.roles[role].run.client
-                if not self.gated(role, ident):
-                    return issue, None, role, client, "default"
-            elif taken := self.claim(issue, full):
-                return taken
+            if taken := self.claim(issue, full):
+                if not self.dry:
+                    return taken
+                selected = selected or taken
+        if selected is not None:
+            return selected
         if queue:
             self.say("pick-none", reason="nothing claimable")
         else:
@@ -585,6 +599,8 @@ class Board:
                 self.label_clients,
                 self.cfg.roles[role].run.client,
             )
+        if self.dry:
+            self.say("preview", ident, client=client or "invalid", client_source=source)
         if comments := [error for error in (task_error, client_error) if error]:
             self.say(
                 "claim-skip",
@@ -596,13 +612,25 @@ class Board:
                 if task_error is None
                 else "bad task and Agent labels",
             )
+            if self.dry:
+                self.say("would comment", ident, body="\n\n".join(comments), to="in_review")
             self.comment_and_move(issue, "\n\n".join(comments), "in_review", "todo", "claim")
             return None
-        if self.gated(role, ident):
+        try:
+            if self.gated(role, ident, client, source):
+                return None
+        except delegate.ConfigError as error:
+            self.say("launch-error", ident, client=client, error=one_line(error))
+            body = _label_client_message(client, error)
+            if self.dry:
+                self.say("would comment", ident, body=body, to="in_review")
+            self.comment_and_move(issue, body, "in_review", "todo", "claim")
             return None
+        taken = {**issue, "assignee": current["assignee"], "project": current["project"]}
+        if self.dry:
+            return taken, task, role, client, source
         self.say("claim", ident, role=role, task=task, client=client, client_source=source)
         ops.call(self.gql, ops.M_STATE, "issueUpdate", i=issue["id"], s=self.states["in_progress"])
-        taken = {**issue, "assignee": current["assignee"], "project": current["project"]}
         return taken, task, role, client, source
 
 
@@ -791,18 +819,21 @@ def _outer(a, cfg, *, gql, run, keychain, now, attended):
     return 0
 
 
-def _label_client_error(spec, cfg, gql, error):
-    log("router", "launch-error", spec.issue, client=spec.client, error=one_line(error))
+def _label_client_message(client, error):
     first = str(error).split("\n", 1)[0]
-    body = (
-        f'Agent label selected client "{spec.client}", but the run could not be built: {first}\n\n'
+    return (
+        f'Agent label selected client "{client}", but the run could not be built: {first}\n\n'
         "Fix [agent_labels] or the client configuration, then move this issue back to Todo."
     )
+
+
+def _label_client_error(spec, cfg, gql, error):
+    log("router", "launch-error", spec.issue, client=spec.client, error=one_line(error))
     try:
         ops.comment_and_move(
             gql,
             spec.uuid,
-            body,
+            _label_client_message(spec.client, error),
             to=cfg.states["in_review"],
             frm=cfg.states["in_progress"],
             emails=cfg.human_members,
@@ -890,23 +921,30 @@ def other_sid(spec, launch_sid):
 
 
 def choose(board, gate, live_ids, full, counts, *, new_sid):
+    selected = None
     for issue, sid in board.recover(live_ids):
         if not board.available(issue, full):
             continue
         client = client_of(board.entries, sid)
+        board.preview_resume(issue, sid)
         if not gate.blocked(
             board.role(issue), issue["identifier"], key=(delegate_of(board.entries, sid), client)
         ):
             board.plan(("resume", issue, sid), counts)
-            return Spec.from_issue(issue, mode="resume", sid=sid, task=None, client=client)
+            spec = Spec.from_issue(issue, mode="resume", sid=sid, task=None, client=client)
+            if not board.dry:
+                return spec
+            selected = selected or spec
     if not (queue := board.queue(full)):
-        return None
+        return selected
     board.plan(("new", len(queue)), counts)
     if not (taken := board.take(full=full)):
+        if selected is not None:
+            return selected
         board.say("skip", reason="nothing claimed")
         return None
     issue, task, _, client, source = taken
-    return Spec.from_issue(
+    return selected or Spec.from_issue(
         issue, mode="new", sid=new_sid, task=task, client=client, client_source=source
     )
 
@@ -993,6 +1031,7 @@ def run_issue(opts, cfg, gql, start, *, keychain, clock=datetime.now, launch_sid
             if not board.settle(issue, sid, wait=False):
                 return 0 if board.replays.get(ident) else stop
             board.plan(("resume", issue, sid))
+            board.preview_resume(issue, sid)
             spec = Spec.from_issue(
                 issue, mode="resume", sid=sid, task=None, client=client_of(entries, sid)
             )
@@ -1017,7 +1056,7 @@ def run_issue(opts, cfg, gql, start, *, keychain, clock=datetime.now, launch_sid
 
 
 def brake(role, cfg):
-    usage = read_usage(role, cfg)
+    usage = read_usage(role, cfg, client=os.environ.get(RUN_CLIENT_ENV) or None)
     print(summary(usage))
     return 1 if usage is None or exhausted(usage, BRAKE_5H) else 0
 
