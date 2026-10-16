@@ -48,7 +48,7 @@ A Record is a serialized control/identity line, not a workdir or session name.
 
 Prerequisites and effects:
   Configure the role and its client executable. Text user interface (TUI) runs
-  need the configured Host; tmux needs tmux, visible placement may need iTerm2.
+  need its Host tools and usable placement: agent-pm-session --help.
   Missing configuration: use run --list to identify the failing role/source.
   Query keys are run workdirs, never agent session names. Omitted keys read
   one Record per stdin line; explicit keys ignore stdin. Duplicate targets

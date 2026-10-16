@@ -54,8 +54,8 @@ Prerequisites and effects:
   ages, safeguards and retention: agent-pm-linear prune --help
   A prune failure is logged without breaking Handoff work.
   Events: orchestrator.jsonl (src promote); an idle run writes none. Dry-run
-  plans print to stdout. Exit 0: tick completed; 1: config/Linear error (logged
-  once a day); 2: bad arguments. Individual Handoff errors are logged and do
+  plans print JSON lines to stderr. Exit 0: tick completed; 1: config/Linear
+  error (logged once a day); 2: bad arguments. Individual Handoff errors do
   not prevent other promotions; prolonged failures can return an issue to
   In Review with a comment.
 

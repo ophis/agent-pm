@@ -87,7 +87,7 @@ Prerequisites and effects:
   After 7 days, remove whole workdirs without agent files, including run records
   and delivery ledgers, only when their configured Delegate confirms no live
   run. Unconfigured run kinds are skipped.
-  Events go to orchestrator.jsonl (src prune); preview plans print to stdout.
+  Events go to orchestrator.jsonl (src prune); preview JSON lines go to stderr.
   Exit 0: completed; 1: config/Linear failure (logged once a day), unknown
   inventory or failed step after remaining steps; 2: bad arguments.
   Promote also runs this cleanup after each tick.

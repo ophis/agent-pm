@@ -194,6 +194,13 @@ class ClientNames(Sample):
         other = "manager/src/agent_pm/manager/engine/crew.py"
         self.assertTrue(ownership.client_names(self.tree({other: text})))
 
+    def test_host_display_help_examples_do_not_exempt_runtime_client_names(self):
+        path = "session/src/agent_pm/session/hosts/tmux/host.py"
+        text = 'def display_help():\n    return "Codex placement example"\nCLIENT = "codex"\n'
+        self.assertEqual(
+            ownership.client_names(self.tree({path: text})), [f"{path}:3: client name codex"]
+        )
+
     def test_a_client_name_outside_clients_policy_tables_and_client_lines(self):
         config = "delegate/src/agent_pm/delegate/config.toml"
         api = f"session/{PKG}/session/engine/api.py"

@@ -11,16 +11,60 @@ from pathlib import Path
 from unittest import mock
 
 from agent_pm.linear_orchestrator import cli
-from agent_pm.linear_orchestrator.engine import router, runs
+from agent_pm.linear_orchestrator.engine import promote, prune, router, runs
 from agent_pm.utils import SID_ENV, Record, Status
 from orchestrator_tests.case import REPO, Case
 from orchestrator_tests.linear_run_case import SID, ReadyDelegate, RunCase
 from orchestrator_tests.unit.streams import Stderr
 
 from delegate.tests.fakes.delegate import FakeDelegate
+from utils.tests.cli_help import examples, parse_only
 
 
 class Commands(Case):
+    def test_published_examples_parse_before_operational_dispatch(self):
+        for name in (
+            "",
+            "router",
+            "promote",
+            "prune",
+            "status",
+            "show",
+            "hide",
+            "close",
+            "attach-command",
+            "resume",
+            "content",
+            "writeback",
+        ):
+            output = io.StringIO()
+            with redirect_stdout(output):
+                try:
+                    cli.main(([name] if name else []) + ["--help"])
+                except SystemExit as error:
+                    self.assertEqual(error.code, 0)
+            published = list(examples(output.getvalue()))
+            if name != "writeback":
+                self.assertTrue(published, name)
+            for command in published:
+                with self.subTest(name=name, command=command), redirect_stdout(io.StringIO()):
+                    if command[1] == "router" and command[2:] not in (["--help"], ["-h"]):
+                        self.assertIsNotNone(router.options(command[2:]))
+                    elif command[1] in {"promote", "prune"}:
+                        with (
+                            mock.patch.dict(os.environ),
+                            mock.patch(
+                                "builtins.open", side_effect=StopIteration("config boundary")
+                            ),
+                            mock.patch(
+                                "pathlib.Path.open", side_effect=StopIteration("config boundary")
+                            ),
+                            self.assertRaises(StopIteration),
+                        ):
+                            {"promote": promote.main, "prune": prune.main}[command[1]](command[2:])
+                    else:
+                        parse_only(cli.main, command[1:])
+
     def test_every_help_surface_is_safe_and_explains_an_invocation(self):
         commands = (
             "",

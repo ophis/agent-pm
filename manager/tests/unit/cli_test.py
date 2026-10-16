@@ -19,6 +19,7 @@ from agent_pm.utils import Record, Status, StatusState
 
 from manager.tests.case import Case
 from manager.tests.cli_case import CliCase
+from utils.tests.cli_help import examples, parse_only
 from utils.tests.fakes import ctl
 
 
@@ -708,6 +709,17 @@ HELP_COMMANDS = [
 
 
 class HelpContracts(Case):
+    def test_published_operation_examples_use_real_parser_before_dispatch(self):
+        for name in [None, *HELP_COMMANDS]:
+            published = list(examples(self.help(name)))
+            self.assertTrue(published, name)
+            for command in published:
+                with (
+                    self.subTest(name=name, command=command),
+                    contextlib.redirect_stdout(io.StringIO()),
+                ):
+                    parse_only(cli.main, command[1:])
+
     def help(self, command=None, flag="--help"):
         out = io.StringIO()
         argv = ([] if command is None else [command]) + [flag]

@@ -376,7 +376,7 @@ def _parser(hosts: Hosts | None) -> argparse.ArgumentParser:
         description="Specialist/automation: retile a window on the default Host.",
         epilog="Prerequisites and effects\n"
         "  Requires a showable default Host and an existing Host window. Changes\n"
-        "  pane layout, prints nothing; normally waits for another tile to finish.\n\n"
+        "  window layout, prints nothing; normally waits for another tile to finish.\n\n"
         "Examples: invocation form (substitute an existing Host window)\n"
         "  agent-pm-session tile WINDOW [--no-wait] [--if-panes-changed]\n\n"
         "Recovery and Next help\n"

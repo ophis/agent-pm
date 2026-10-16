@@ -37,7 +37,7 @@ Prerequisites and effects:
   Attended launches print a Record line on stdout and attachment commands on
   stderr. Other events go to orchestrator.jsonl (src router); an idle tick
   writes none, a usage-blocked tick only its usage-skip lines. Preview plans
-  print to stdout. Output files belong to the selected Delegate configuration.
+  print JSON lines to stderr. Output files follow Delegate configuration.
 
 Exit conditions:
   Tick: 1 on configuration/Linear failure (logged once a day), otherwise 0.

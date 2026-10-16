@@ -42,6 +42,7 @@ from delegate.tests.unit.runs import DONE, START, STOP, FakeHandle, no_child, tu
 from session.tests import fake_client
 from session.tests.modules import client_loader
 from utils.tests.case import local_section
+from utils.tests.cli_help import examples, parse_only
 
 
 class Detaching:
@@ -1341,6 +1342,19 @@ HELP_COMMANDS = [
 
 
 class HelpContracts(Case):
+    def test_published_operation_examples_use_real_parser_before_dispatch(self):
+        for name in [None, *HELP_COMMANDS]:
+            published = list(examples(self.help(name)))
+            self.assertTrue(published, name)
+            for command in published:
+                with (
+                    self.subTest(name=name, command=command),
+                    contextlib.redirect_stdout(io.StringIO()),
+                ):
+                    args = parse_only(cli.main, command[1:])
+                    if args is not None and args.command == "run" and not args.list:
+                        cli._check(args)
+
     def help(self, command=None, flag="--help"):
         out = io.StringIO()
         with contextlib.redirect_stdout(out), self.assertRaises(SystemExit) as raised:

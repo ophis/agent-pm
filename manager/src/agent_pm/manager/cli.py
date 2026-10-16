@@ -196,6 +196,8 @@ Prerequisites and effects:
   other identities; run mutating commands from its commander environment.
   AGENT_PM_AGENT_SESSION blocks hold/run/worker/issue/role/resume; use a
   user-started commander. Help still works. State: ~/.agent-pm/managers/NAME/.
+  run/worker/issue/role give starters empty stdin; supply literal input.
+  hold instead inherits the caller's input for its foreground command.
   Exit 0: success; 2: usage/invalid value; 1: operational/lease failure.
   hold instead propagates its child's status, signals as 128 + signal number.
   Scalar options use the last value; boolean flags may repeat.
@@ -232,6 +234,8 @@ Next help:
         "Keep a manager's holder lease while COMMAND runs in the foreground",
         """Prerequisites and effects:
   COMMAND [ARG ...] is required after --, executed without a shell.
+  Outer help: agent-pm-crew hold --help. After --, even --help belongs to
+  COMMAND; the holder lease is acquired before executing it.
   The child inherits manager/lease identity; the lease ends when it exits.
   --session labels the holder; it does not select a terminal to attach.
   By default a holder conflict is refused. --force deliberately takes over.

@@ -17,6 +17,7 @@ from agent_pm.utils import Record
 from session.tests.case import Case
 from session.tests.fakes.terminal import ScreenHost
 from session.tests.hosted_support import SID, HostedTuiBase
+from utils.tests.cli_help import examples, parse_only
 
 
 class CliHost(ScreenHost):
@@ -220,6 +221,18 @@ COMMANDS = (
 
 
 class HelpTest(Case):
+    def test_published_operation_examples_use_real_parser_before_dispatch(self):
+        for name in [None, *COMMANDS]:
+            published = list(examples(self.help(([name] if name else []) + ["--help"])))
+            if name not in {"tile", "hook", "client-resume"}:
+                self.assertTrue(published, name)
+            for command in published:
+                with (
+                    self.subTest(name=name, command=command),
+                    contextlib.redirect_stdout(io.StringIO()),
+                ):
+                    parse_only(cli.main, command[1:])
+
     def help(self, argv):
         out = io.StringIO()
         with contextlib.redirect_stdout(out), self.assertRaises(SystemExit) as caught:

@@ -219,9 +219,13 @@ def client_names(repo: str) -> list[str]:
                 if (
                     isinstance(node, ast.Constant)
                     and isinstance(node.value, str)
-                    and "Examples:\n" in node.value
+                    and re.search(r"Examples[: (]", node.value)
                 ):
-                    examples.update(range(node.lineno, node.end_lineno + 1))
+                    examples.update(range(node.lineno, (node.end_lineno or node.lineno) + 1))
+        elif rel.startswith(TMUX_HOME):
+            for node in ast.walk(ast.parse(text, rel)):
+                if isinstance(node, ast.FunctionDef) and node.name == "display_help":
+                    examples.update(range(node.lineno, (node.end_lineno or node.lineno) + 1))
         for number, line in enumerate(text.splitlines(), 1):
             if number in examples:
                 continue
