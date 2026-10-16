@@ -16,6 +16,7 @@ from orchestrator_tests.case import REPO as WORKTREE
 from orchestrator_tests.integration import fake_gh
 from orchestrator_tests.integration.flow_fixtures import (
     ACCOUNTS,
+    AUTOPILOT,
     HUMAN,
     PROJECT,
     REPO,
@@ -45,6 +46,7 @@ PULL = {
     "url": PR,
     "state": "OPEN",
     "baseRefName": "main",
+    "isDraft": True,
     "headRefName": BRANCH,
     "isCrossRepository": False,
     "author": {"login": LOGIN},
@@ -52,7 +54,15 @@ PULL = {
 
 
 def outcome(summary):
-    return block({"status": "done", "title": "Session registry", "summary": summary, "url": PR})
+    return block(
+        {
+            "status": "done",
+            "title": "Session registry",
+            "summary": summary,
+            "url": PR,
+            "autopilot": AUTOPILOT,
+        }
+    )
 
 
 class Rework(BinFlow):
@@ -145,7 +155,7 @@ class Rework(BinFlow):
         self.assertTrue(os.path.isdir(worktree["worktree"]), worktree)
         status = self.ran("status.json")
         self.assertEqual(
-            status["pr"], {k: PULL[k] for k in ("number", "url", "state", "baseRefName")}
+            status["pr"], {k: PULL[k] for k in ("number", "url", "state", "baseRefName", "isDraft")}
         )
         self.assertEqual(
             status["user"],

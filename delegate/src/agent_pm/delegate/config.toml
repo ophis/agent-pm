@@ -74,7 +74,8 @@ team_dirs = []
 #   repo    github: required; <owner>/<name>
 #   branch  github: required
 #   dir     github: required; the folder in the repo
-#   host    github: "" → github.com; set for GitHub Enterprise, e.g. "ghe.example.com"
+#   host    github: "" → github.com; set for GitHub Enterprise, e.g. "ghe.example.com". pull-request: the PR link's
+#           host; "" → github.com, GH_HOST or a host gh is logged in to (engine/ready_gate.py hosts); set → only it
 # A key "" is unset. The orchestrator needs researcher's and pm's [output] on one github.com repo and branch (local:
 # below).
 [output]

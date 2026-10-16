@@ -14,6 +14,7 @@ from datetime import UTC, datetime, timedelta
 from agent_pm.linear_orchestrator.engine import ops
 from orchestrator_tests.integration.flow_fixtures import (
     ACCOUNTS,
+    AUTOPILOT,
     ENTRY,
     HARNESS_EMAIL,
     HUMAN,
@@ -148,7 +149,7 @@ class Run(TmuxFlow):
 
 
 class Done(Run):
-    def done(self, role, start, outcome, calls, ledger):
+    def done(self, role, start, outcome, calls, ledger, *, kinds=KINDS):
         self.seed(role)
         self.launch([mark("start", PICK), block(outcome)])
         self.assertEqual(self.wrote(), self.framed(post("start", f"{start} {PICK}"), *calls))
@@ -156,7 +157,7 @@ class Done(Run):
         self.assertEqual(
             [line for line in self.said() if line.startswith("writeback ")], steps(*ledger)
         )
-        self.assertEqual([e["kind"] for e in self.records(ID)], KINDS)
+        self.assertEqual([e["kind"] for e in self.records(ID)], kinds)
         self.assertEqual(self.records(ID)[-2]["outcome"]["status"], "done")
         self.assertEqual([option(c, "--session-id") for c in self.calls()], [SID])
         account = ACCOUNTS[role]
@@ -244,6 +245,7 @@ class Done(Run):
                 "title": title,
                 "summary": "Adds the registry.\nVerify: python3 -m unittest",
                 "url": PR,
+                "autopilot": AUTOPILOT,
             },
             [
                 READ,
@@ -254,6 +256,7 @@ class Done(Run):
                 TO_REVIEW,
             ],
             ["start", "comment", f"attach:{PR}", "move:in_review", "outcome"],
+            kinds=[*KINDS[:-2], "ready_gate", *KINDS[-2:]],
         )
 
 

@@ -2,6 +2,7 @@
 
 import dataclasses
 import io
+import json
 import os
 import re
 import signal
@@ -34,6 +35,25 @@ from delegate.tests.runner import (
 )
 from delegate.tests.unit.runs import DONE, START, limit, said
 from session.tests.modules import adapter_loader
+
+AUTOPILOT = {"status": "converged", "head": "a" * 40}
+VIEW = {"state": "OPEN", "isDraft": True, "headRefOid": "a" * 40, "statusCheckRollup": []}
+
+
+def fake_gh():
+    """subprocess.run answers `gh` as an open draft PR at AUTOPILOT's head with no checks; anything
+    else runs.
+    """
+    run = subprocess.run
+
+    def answer(argv, *args, **kw):
+        if argv[0] != "gh":
+            return run(argv, *args, **kw)
+        return subprocess.CompletedProcess(
+            argv, 0, json.dumps(VIEW) if argv[2] == "view" else "", ""
+        )
+
+    return mock.patch("subprocess.run", side_effect=answer)
 
 
 class Configures(Base):
@@ -369,13 +389,15 @@ class Start(Base):
             ({"type": "local"}, DONE, self.out, "# Doc\n"),
             ({"type": "orchestrator"}, DONE, "", "# Doc\n"),
             (GH, {**DONE, "url": url}, url, "# Doc\n"),
-            (PR, {**DONE, "url": pr_url}, pr_url, "# Doc\n"),
+            (PR, {**DONE, "url": pr_url, "autopilot": AUTOPILOT}, pr_url, "# Doc\n"),
             ({"type": "local"}, NEEDS, "", None),
             (GH, NEEDS, "", None),
         ):
             with self.subTest(output=output, status=data["status"]):
                 self.fresh()
-                r = self.go(said(START, block(data)), output=output)
+                with fake_gh():
+                    r = self.go(said(START, block(data)), output=output)
+                self.assertEqual(r.outcome.status, data["status"])
                 self.assertEqual(r.outcome.url, want_url)
                 self.assertEqual(
                     self.read(self.out) if saved else os.path.lexists(self.out), saved or False
@@ -402,20 +424,22 @@ class Start(Base):
                     (self.last("result")["error"], os.path.lexists(self.out)),
                     (f"stopped: PermissionError: {denied}", False),
                 )
-        for output, url in (
-            (GH, "https://github.com/o/docs/blob/main/x.md"),
-            (PR, "https://github.com/o/n/pull/7"),
+        for output, url, gated in (
+            (GH, "https://github.com/o/docs/blob/main/x.md", []),
+            (PR, "https://github.com/o/n/pull/7", ["ready_gate"]),
         ):
             with self.subTest(output=output):
                 self.fresh()
-                with mock.patch("os.replace", side_effect=replace_out):
-                    r = self.go(said(START, block({**DONE, "url": url})), output=output)
+                data = {**DONE, "url": url, "autopilot": AUTOPILOT}
+                with mock.patch("os.replace", side_effect=replace_out), fake_gh():
+                    r = self.go(said(START, block(data)), output=output)
                 self.assertEqual(
                     (r.returncode, r.outcome.status, r.outcome.url, r.error), (0, "done", url, "")
                 )
                 self.assertEqual(self.events[-1], Finished(r))
                 self.assertEqual(
-                    self.kinds(), ["session", "input", "progress", "save_error", "result", "end"]
+                    self.kinds(),
+                    ["session", "input", "progress", "save_error", *gated, "result", "end"],
                 )
                 self.assertEqual(
                     bare(self.last("save_error")), {"kind": "save_error", "error": str(denied)}

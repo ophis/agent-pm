@@ -227,6 +227,8 @@ def _check_output(table: Mapping, where: str, shown: Callable[[str], str]) -> No
     if not isinstance(table["output"], Mapping):
         raise ConfigError(f"{shown(where)} must be a table")
     _check_keys(table["output"], OUTPUT_KEYS, shown(where))
+    if bad := next((k for k, v in table["output"].items() if not isinstance(v, str)), None):
+        raise ConfigError(f"{shown(f'{where}.{bad}')} must be text")
 
 
 def _check_keys(table: Mapping, allowed: frozenset, where: str) -> None:

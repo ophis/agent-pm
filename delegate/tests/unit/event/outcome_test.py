@@ -14,6 +14,8 @@ import unittest.mock
 
 from agent_pm.delegate.event import outcome
 from agent_pm.delegate.event.outcome import (
+    PR_PATH,
+    PULL,
     SCHEMA,
     STATUSES,
     InvalidOutcome,
@@ -22,6 +24,7 @@ from agent_pm.delegate.event.outcome import (
     read,
     validate,
 )
+from agent_pm.delegate.event.types import Autopilot, AutopilotStatus
 
 from delegate.tests.case import Case
 from delegate.tests.unit.composer.shipped import (
@@ -33,6 +36,7 @@ FILE = {"status": "done", "title": "T", "summary": "S", "deliverable_file": "out
 
 
 LOCAL = {"type": "local"}
+GH = frozenset({"github.com"})
 
 
 def schema():
@@ -47,12 +51,12 @@ class Base(Case):
         self.tmp = tmp.name
         self.work = os.path.join(self.tmp, "work")
 
-    def check(self, data, output=None):
-        return validate(data, output or LOCAL, self.work)
+    def check(self, data, output=None, hosts=GH):
+        return validate(data, output or LOCAL, self.work, hosts)
 
-    def fails(self, data, msg, output=None):
+    def fails(self, data, msg, output=None, hosts=GH):
         with self.assertRaises(InvalidOutcome) as cm:
-            self.check(data, output)
+            self.check(data, output, hosts)
         self.assertIn(msg, str(cm.exception))
 
     def touch(self, *parts, text="x"):
@@ -73,7 +77,14 @@ class Schema(Case):
     def test_schema_and_validate_agree(self):
         s = schema()
         self.assertEqual(tuple(s["properties"]["status"]["enum"]), STATUSES)
-        self.assertEqual(set(s["properties"]), {f.name for f in dataclasses.fields(Outcome)})
+        self.assertEqual(
+            set(s["properties"]), {f.name for f in dataclasses.fields(Outcome)} | {"autopilot"}
+        )
+        autopilot = s["properties"]["autopilot"]
+        self.assertEqual(tuple(autopilot["properties"]["status"]["enum"]), tuple(AutopilotStatus))
+        self.assertEqual(
+            set(autopilot["properties"]), {f.name for f in dataclasses.fields(Autopilot)}
+        )
         self.assertEqual(s["properties"]["questions"]["maxItems"], 4)
 
 
@@ -157,11 +168,32 @@ class Validate(Base):
             "https://ghe.io/o/n/compare/main...b?expand=1",
             "https://github.com/o/n/tree/b",
         ):
-            self.assertEqual(self.check({**DONE, "url": good}, pr).url, good)
+            self.assertEqual(self.check({**DONE, "url": good}, pr, GH | {"ghe.io"}).url, good)
         self.fails(
             {**DONE, "url": "https://github.com/o/n/issues/1"}, "pull request, compare or tree", pr
         )
         self.assertEqual(self.check({**DONE, "url": "https://x"}).url, "")
+
+    def test_pull_request_urls_must_name_a_gh_host(self):
+        pr, ghe = {"type": "pull-request"}, frozenset({"ghe.example.com"})
+        for status in ("done", "failed"):
+            for url, hosts, shown in (
+                ("https://attacker.example/o/n/pull/1", GH, "attacker.example"),
+                ("https://attacker.example/o/n/tree/b", GH, "attacker.example"),
+                ("https://github.com/o/n/pull/7", ghe, "github.com"),
+                ("https://user@github.com/o/n/pull/7", GH, "user@github.com"),
+                ("https://github.com:8443/o/n/pull/7", GH, "github.com:8443"),
+                ("https://github.com/o/n/pull/7", frozenset(), "github.com"),
+            ):
+                with self.subTest(status=status, url=url, hosts=hosts):
+                    self.fails(
+                        {**DONE, "status": status, "url": url},
+                        f"url host {shown} is not one of {', '.join(sorted(hosts)) or '(none)'}",
+                        pr,
+                        hosts,
+                    )
+        url = "https://ghe.example.com/o/n/pull/3"
+        self.assertEqual(self.check({**DONE, "url": url}, pr, ghe).url, url)
 
     def test_files_are_md_files_under_the_workdir(self):
         plan = self.touch("docs", "plan.md")
@@ -194,8 +226,11 @@ class Read(Base):
         os.makedirs(self.work)
 
     def read(self, data, output=None):
+        return self.pair(data, output)[0]
+
+    def pair(self, data, output=None):
         body = data if isinstance(data, str) else json.dumps(data)
-        return read(body, output or LOCAL, self.work)
+        return read(body, output or LOCAL, self.work, GH)
 
     def refused(self, data, msg):
         with self.assertRaises(InvalidOutcome) as cm:
@@ -306,7 +341,7 @@ class ReadRace(Base):
             unittest.mock.patch("os.open", side_effect=open_),
             self.assertRaises(InvalidOutcome) as cm,
         ):
-            read(json.dumps({**FILE, "deliverable_file": "d/out.md"}), LOCAL, self.work)
+            read(json.dumps({**FILE, "deliverable_file": "d/out.md"}), LOCAL, self.work, GH)
         self.assertEqual(len(done), 1)
         self.assertIn("deliverable_file ", str(cm.exception))
         self.assertIn(reason, str(cm.exception))
@@ -340,6 +375,51 @@ class ReadRace(Base):
             os.symlink(out, os.path.dirname(self.target))
 
         self.swapped(swap, "no longer under the workdir")
+
+
+HEAD = "0123456789abcdef" * 2 + "01234567"
+
+
+class AutopilotField(Read):
+    def test_read_returns_the_autopilot_result_or_none(self):
+        self.assertEqual(self.pair(DONE), (self.check(DONE), None))
+        for status in AutopilotStatus:
+            with self.subTest(status=status):
+                data = {**DONE, "autopilot": {"status": str(status), "head": HEAD}}
+                self.assertEqual(self.pair(data), (self.check(DONE), Autopilot(status, HEAD)))
+
+    def test_an_invalid_autopilot_is_refused(self):
+        good = {"status": "converged", "head": HEAD}
+        for bad, msg in (
+            ("converged", "autopilot must be an object"),
+            ({"status": "converged"}, "lacks 'head'"),
+            ({"head": HEAD}, "lacks 'status'"),
+            ({**good, "pr": ""}, "unknown field 'pr'"),
+            ({**good, "status": "done"}, "is not one of converged"),
+            ({**good, "head": HEAD[:-1]}, "head must match"),
+            ({**good, "head": HEAD + "0"}, "head must match"),
+            ({**good, "head": HEAD.upper()}, "head must match"),
+            ({**good, "head": 7}, "head must be text"),
+            ({**good, "head": HEAD + "\n"}, "head must match"),
+        ):
+            with self.subTest(bad=bad):
+                self.refused({**DONE, "autopilot": bad}, msg)
+
+
+class Paths(Case):
+    def test_pull_is_the_pull_request_part_of_pr_path(self):
+        for path, pull, pr in (
+            ("/o/n/pull/7", True, True),
+            ("/o/n/pull/7/files", False, False),
+            ("/o/n/pull/x", False, False),
+            ("/o/n/compare/main...b", False, True),
+            ("/o/n/tree/b", False, True),
+            ("/o/pull/7", False, False),
+        ):
+            with self.subTest(path=path):
+                self.assertEqual(
+                    (bool(PULL.fullmatch(path)), bool(PR_PATH.fullmatch(path))), (pull, pr)
+                )
 
 
 class SchemaFile(Case):

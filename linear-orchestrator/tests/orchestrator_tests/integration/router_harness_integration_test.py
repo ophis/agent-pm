@@ -9,6 +9,7 @@ import unittest
 
 from orchestrator_tests.integration.flow_fixtures import (
     ACCOUNTS,
+    AUTOPILOT,
     HARNESS_EMAIL,
     PROJECT,
     TIMEOUT,
@@ -22,7 +23,15 @@ from session.tests import live_tmux
 ID = "TASK-7"
 STARTED, READY = "Building the session registry.", "Added the session registry."
 PR = "https://github.com/ophis/agent-pm/pull/1"
-DONE = block({"status": "done", "title": "Session registry", "summary": READY, "url": PR})
+DONE = block(
+    {
+        "status": "done",
+        "title": "Session registry",
+        "summary": READY,
+        "url": PR,
+        "autopilot": AUTOPILOT,
+    }
+)
 
 
 class MinimalPath(BinFlow):

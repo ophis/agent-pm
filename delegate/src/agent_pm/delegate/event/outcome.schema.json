@@ -9,6 +9,15 @@
     "questions": {"type": "array", "items": {"type": "string", "maxLength": 1000}, "maxItems": 4},
     "url": {"type": "string", "maxLength": 2000},
     "files": {"type": "array", "items": {"type": "string", "maxLength": 1000}, "maxItems": 20},
-    "deliverable": {"type": "string", "maxLength": 2000000}
+    "deliverable": {"type": "string", "maxLength": 2000000},
+    "autopilot": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "head"],
+      "properties": {
+        "status": {"enum": ["converged", "capped-without-pass", "stopped"]},
+        "head": {"type": "string", "pattern": "^[0-9a-f]{40}$"}
+      }
+    }
   }
 }

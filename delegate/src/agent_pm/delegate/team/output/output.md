@@ -8,6 +8,7 @@ Your result is an **outcome**, returned per [Output › Return](#return), plus a
 - `questions`: `needs_input` only, 1–4.
 - `url`: the delivered link, when [Output › Destination](#destination) gives one.
 - `files`: absolute paths, when your task asks for them.
+- `autopilot`: `{"status", "head"}`, when your task asks for it.
 - `deliverable`: the document, when [Output › Destination](#destination) says so.
 - `deliverable_file`: a `.md` file in `<Workdir>` holding the deliverable, in place of `deliverable`, when [Output › Destination](#destination) says so or the deliverable is long.
 

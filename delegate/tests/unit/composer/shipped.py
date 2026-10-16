@@ -15,7 +15,7 @@ from utils.tests.case import local_section
 
 TASKS = os.path.join(TEAM, "tasks")
 
-SCHEMA_SHA256 = "748847763f62d05e4412f1627a029ad88e42f004162361561d7556ec3877c366"
+SCHEMA_SHA256 = "a2161568037361f05d9053daea9932ec099c2ae020109677030eba8bda6bd2a0"
 
 CLIENT = re.compile(r"claude|codex", re.I)
 
