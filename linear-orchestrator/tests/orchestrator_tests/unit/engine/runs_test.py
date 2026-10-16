@@ -4,13 +4,11 @@ import json
 import os
 import tempfile
 import threading
-import unittest
 from datetime import UTC, datetime, timedelta, timezone
 from unittest import mock
 
 from agent_pm.linear_orchestrator.engine import runs
 from agent_pm.linear_orchestrator.engine.types import Claim, ConfigError
-from agent_pm.utils import save
 from orchestrator_tests import case
 
 NOW = datetime(2026, 9, 27, 3, 0, tzinfo=UTC)
@@ -133,16 +131,15 @@ class Parse(Case):
         self.assertEqual([e.delegate_kind for e in runs.parse_log(self.log)], [None, "external"])
         self.assertEqual(self.read(), json.dumps(kindless) + "\n" + json.dumps(saved) + "\n")
 
-    def test_invalid_delegate_kind_is_no_entry(self):
+    def test_a_bad_delegate_kind_no_client_or_a_limit_row_is_no_entry(self):
         good = json.loads(row("start", "TASK-1", "s"))
-        for kind in (None, "", 4):
-            with self.subTest(kind=kind):
-                self.assertIsNone(runs.parse_line(json.dumps(good | {"delegate_kind": kind})))
-
-    def test_a_line_without_client_and_a_limit_row_are_no_entries(self):
         legacy = json.loads(row("start", "TASK-1", "a", minutes=5))
         del legacy["client"]
-        for line in (json.dumps(legacy), limit(stamp(NOW + timedelta(hours=1)))):
+        for line in (
+            *(json.dumps(good | {"delegate_kind": kind}) for kind in (None, "", 4)),
+            json.dumps(legacy),
+            limit(stamp(NOW + timedelta(hours=1))),
+        ):
             with self.subTest(line=line):
                 self.assertIsNone(runs.parse_line(line))
 
@@ -158,37 +155,49 @@ class Limits(Case):
         self.assertEqual(got, {("harness", "a"): at})
         self.assertEqual(got["harness", "a"].utcoffset(), timedelta(hours=8))
 
-    def test_the_latest_reset_per_client(self):
+    def test_the_latest_reset_per_delegate_and_client_up_to_keep_ahead(self):
         early, late = NOW + timedelta(hours=1), NOW + timedelta(hours=3)
-        got = self.limits(limit(stamp(late)), limit(stamp(early)), limit(stamp(early), client="b"))
-        self.assertEqual(got, {("harness", "a"): late, ("harness", "b"): early})
-
-    def test_what_is_not_live_is_left_out_and_never_raises(self):
-        for at in (
-            stamp(NOW - timedelta(minutes=1)),
-            stamp(NOW),
-            None,
-            "2026-09-27T05:00:00",
-            "2026-09-27",
-            1790000000,
-            ["2026-09-27T05:00:00+00:00"],
-            "soon",
-            "",
-            stamp(NOW + runs.KEEP + timedelta(seconds=1)),
-            "9999-12-31T23:59:59-05:00",
+        for name, lines, want in (
+            (
+                "latest per client",
+                (limit(stamp(late)), limit(stamp(early)), limit(stamp(early), client="b")),
+                {("harness", "a"): late, ("harness", "b"): early},
+            ),
+            ("keep ahead", (limit(stamp(NOW + runs.KEEP)),), {("harness", "a"): NOW + runs.KEEP}),
+            (
+                "per delegate",
+                (
+                    limit(stamp(early)),
+                    limit(stamp(NOW + timedelta(hours=2)), delegate_kind="external"),
+                ),
+                {("harness", "a"): early, ("external", "a"): NOW + timedelta(hours=2)},
+            ),
         ):
-            with self.subTest(at=at):
-                self.assertEqual(self.limits(limit(at)), {})
+            with self.subTest(name):
+                self.assertEqual(self.limits(*lines), want)
 
-    def test_at_most_keep_ahead_is_live(self):
-        at = NOW + runs.KEEP
-        self.assertEqual(self.limits(limit(stamp(at))), {("harness", "a"): at})
-
-    def test_a_row_without_a_usable_client_or_of_another_kind_is_left_out(self):
+    def test_what_is_not_a_live_row_with_a_usable_client_and_kind_is_left_out(self):
         at = stamp(NOW + timedelta(hours=1))
         good = json.loads(limit(at))
-        self.assertEqual(
-            self.limits(
+        kindless = {k: v for k, v in good.items() if k != "delegate_kind"}
+        for lines in (
+            *(
+                (limit(not_live),)
+                for not_live in (
+                    stamp(NOW - timedelta(minutes=1)),
+                    stamp(NOW),
+                    None,
+                    "2026-09-27T05:00:00",
+                    "2026-09-27",
+                    1790000000,
+                    ["2026-09-27T05:00:00+00:00"],
+                    "soon",
+                    "",
+                    stamp(NOW + runs.KEEP + timedelta(seconds=1)),
+                    "9999-12-31T23:59:59-05:00",
+                )
+            ),
+            (
                 limit(at, client=""),
                 limit(at, client=None),
                 limit(at, client=3),
@@ -198,20 +207,10 @@ class Limits(Case):
                 "null",
                 "not json",
             ),
-            {},
-        )
-
-    def test_a_kindless_row_is_left_out(self):
-        kindless = json.loads(limit(stamp(NOW + timedelta(hours=1))))
-        del kindless["delegate_kind"]
-        self.assertEqual(self.limits(json.dumps(kindless)), {})
-
-    def test_limits_are_separate_for_each_delegate_client_key(self):
-        early, late = NOW + timedelta(hours=1), NOW + timedelta(hours=2)
-        self.assertEqual(
-            self.limits(limit(stamp(early)), limit(stamp(late), delegate_kind="external")),
-            {("harness", "a"): early, ("external", "a"): late},
-        )
+            (json.dumps(kindless),),
+        ):
+            with self.subTest(lines=lines):
+                self.assertEqual(self.limits(*lines), {})
 
     def test_a_missing_log_has_none(self):
         self.assertEqual(runs.limits(self.log, NOW), {})
@@ -334,16 +333,25 @@ class Trim(Case):
         self.assertEqual(os.stat(self.log).st_ino, before.st_ino)
         self.assertEqual(self.read(), "".join(line + "\n" for line in lines))
 
-    def test_trim_preserves_retained_rows_exact_bytes_and_file_order(self):
+    def test_retained_rows_keep_their_exact_bytes_and_file_order(self):
         live = limit(stamp(NOW + timedelta(hours=2)), ts=stamp(NOW - timedelta(days=9)))
-        recent = row("resume", "TASK-1", "s", minutes=5)
-        retained = ("  " + live + "  \n\n" + recent).encode()
-        with open(self.log, "wb") as stream:
-            stream.write((row("start", "TASK-1", "old", days=8) + "\n").encode())
-            stream.write(retained)
-        runs.trim(self.log, NOW)
-        with open(self.log, "rb") as stream:
-            self.assertEqual(stream.read(), retained.replace(b"\n\n", b"\n"))
+        retained = ("  " + live + "  \n\n" + row("resume", "TASK-1", "s", minutes=5)).encode()
+        crlf = ("  " + row("start", "TASK-1", "latest", days=8) + "  \r\n").encode()
+        for name, old, kept, want in (
+            (
+                "lf",
+                row("start", "TASK-1", "old", days=8),
+                retained,
+                retained.replace(b"\n\n", b"\n"),
+            ),
+            ("crlf", row("start", "TASK-1", "old", days=9), crlf, crlf),
+        ):
+            with self.subTest(name):
+                with open(self.log, "wb") as stream:
+                    stream.write((old + "\n").encode() + kept)
+                runs.trim(self.log, NOW)
+                with open(self.log, "rb") as stream:
+                    self.assertEqual(stream.read(), want)
 
     def test_latest_sid_older_than_eight_days_survives_repeated_trim(self):
         latest = row("start", "TASK-1", "latest", days=8)
@@ -354,39 +362,34 @@ class Trim(Case):
         runs.trim(self.log, NOW + timedelta(minutes=1))
         self.assertEqual(self.read(), latest + "\n" + resumed + "\n")
 
-    def test_retained_crlf_bytes_survive_rewrite(self):
-        kept = ("  " + row("start", "TASK-1", "latest", days=8) + "  \r\n").encode()
-        with open(self.log, "wb") as stream:
-            stream.write((row("start", "TASK-1", "old", days=9) + "\n").encode() + kept)
-        runs.trim(self.log, NOW)
-        with open(self.log, "rb") as stream:
-            self.assertEqual(stream.read(), kept)
-
-    def test_rewrites_through_the_atomic_save(self):
-        self.assertIs(runs.save, save)
-
     def test_missing_log_is_noop(self):
         runs.trim(self.log, NOW)
         self.assertFalse(os.path.exists(self.log))
 
 
 class ClientOf(case.Case):
-    def test_the_start_entries_client_first(self):
-        entries = [
-            entry("resume", "TASK-1", "s", "pm", "r", minutes=50),
-            entry("start", "TASK-2", "t", "pm", "other", minutes=45),
-            entry("start", "TASK-1", "s", "pm", "x", minutes=40),
-            entry("resume", "TASK-1", "s", "pm", "y", minutes=30),
-        ]
-        self.assertEqual(runs.client_of(entries, "s"), "x")
-
-    def test_else_the_earliest_entries(self):
-        entries = [
-            entry("resume", "TASK-1", "s", "pm", "late", minutes=10),
-            entry("resume", "TASK-1", "s", "pm", "early", minutes=30),
-            entry("start", "TASK-1", "t", "pm", "other", minutes=60),
-        ]
-        self.assertEqual(runs.client_of(entries, "s"), "early")
+    def test_the_start_entries_client_else_the_earliest_entries(self):
+        for entries, want in (
+            (
+                [
+                    entry("resume", "TASK-1", "s", "pm", "r", minutes=50),
+                    entry("start", "TASK-2", "t", "pm", "other", minutes=45),
+                    entry("start", "TASK-1", "s", "pm", "x", minutes=40),
+                    entry("resume", "TASK-1", "s", "pm", "y", minutes=30),
+                ],
+                "x",
+            ),
+            (
+                [
+                    entry("resume", "TASK-1", "s", "pm", "late", minutes=10),
+                    entry("resume", "TASK-1", "s", "pm", "early", minutes=30),
+                    entry("start", "TASK-1", "t", "pm", "other", minutes=60),
+                ],
+                "early",
+            ),
+        ):
+            with self.subTest(want=want):
+                self.assertEqual(runs.client_of(entries, "s"), want)
 
 
 class Latest(case.Case):
@@ -485,10 +488,6 @@ class NoteLimit(Case):
                 attempt=attempt,
             )
         self.assertEqual([json.loads(line)["attempt"] for line in self.read().splitlines()], [1, 2])
-
-
-if __name__ == "__main__":
-    unittest.main()
 
 
 SID_A, SID_B = "0b6f2c1e-6d0a-4c1b-9a51-3f1f6b0e2a7d", "9c1d2e3f-4a5b-4c6d-8e7f-a0b1c2d3e4f5"

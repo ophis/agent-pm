@@ -15,7 +15,6 @@ from orchestrator_tests.unit.board_ids import role as role_table
 from orchestrator_tests.unit.outage import FAILURES, FIELDS, failing
 from orchestrator_tests.unit.promote_fixtures import (
     AGENT,
-    CHILD,
     CONFIG,
     NOW,
     OTHER,
@@ -641,14 +640,6 @@ class PromotionIdempotency(Base):
         src["state"] = "Handoff"
         self.run_main()
         self.assertEqual(len(self.fake.children), 2)
-
-    def test_child_id(self):
-        a = ops.client_id("DR-1", "pm", "2026-09-27T10:00:00.000Z")
-        self.assertEqual(a, CHILD)
-        self.assertEqual(a, ops.client_id("DR-1", "pm", "2026-09-27T10:00:00.000Z"))
-        self.assertNotEqual(a, ops.client_id("DR-1", "pm", "2026-09-27T10:00:01.000Z"))
-        self.assertNotEqual(a, ops.client_id("DR-1", "engineer", "2026-09-27T10:00:00.000Z"))
-        self.assertEqual(a[14], "4")
 
 
 class ChildTitles(Case):

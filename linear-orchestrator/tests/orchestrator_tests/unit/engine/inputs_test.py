@@ -439,23 +439,28 @@ class InputCheckout(Case):
 
 class DocumentPaths(Case):
     def test_accepted(self):
-        for url, want in (
-            (BASE + "Research/a.md", "Research/a.md"),
-            (BASE + "Product%20Design/2026-09-01-PM-9-x.md", "Product Design/2026-09-01-PM-9-x.md"),
-            (BASE + "a/b/c.md", "a/b/c.md"),
-            (BASE + "%E6%8A%A5%E5%91%8A.md", "报告.md"),
+        for url, docs, want in (
+            (BASE + "Research/a.md", DOCS, "Research/a.md"),
+            (
+                BASE + "Product%20Design/2026-09-01-PM-9-x.md",
+                DOCS,
+                "Product Design/2026-09-01-PM-9-x.md",
+            ),
+            (BASE + "a/b/c.md", DOCS, "a/b/c.md"),
+            (BASE + "%E6%8A%A5%E5%91%8A.md", DOCS, "报告.md"),
+            *(
+                (BASE + "Product%20Design/x.md" + suffix, DOCS, "Product Design/x.md")
+                for suffix in ("#L10", "#L10-L20", "#section", "?plain=1", "?plain=1#L3", "#a/b?c")
+            ),
+            (BASE + "x%23y%3Fz.md#L1", DOCS, "x#y?z.md"),
+            (
+                "https://github.com/ophis/private_docs/blob/docs/main/a.md",
+                config.Docs("ophis/private_docs", "docs/main", {}),
+                "a.md",
+            ),
         ):
             with self.subTest(url=url):
-                self.assertEqual(inputs.doc_path(url, DOCS), want)
-
-    def test_fragment_and_query_end_the_path(self):
-        for suffix in ("#L10", "#L10-L20", "#section", "?plain=1", "?plain=1#L3", "#a/b?c"):
-            with self.subTest(suffix=suffix):
-                self.assertEqual(
-                    inputs.doc_path(BASE + "Product%20Design/x.md" + suffix, DOCS),
-                    "Product Design/x.md",
-                )
-        self.assertEqual(inputs.doc_path(BASE + "x%23y%3Fz.md#L1", DOCS), "x#y?z.md")
+                self.assertEqual(inputs.doc_path(url, docs), want)
 
     def test_rejected(self):
         for url in (
@@ -479,13 +484,6 @@ class DocumentPaths(Case):
         ):
             with self.subTest(url=url):
                 self.assertIsNone(inputs.doc_path(url, DOCS))
-
-    def test_branch_with_slash(self):
-        docs = config.Docs("ophis/private_docs", "docs/main", {})
-        self.assertEqual(
-            inputs.doc_path("https://github.com/ophis/private_docs/blob/docs/main/a.md", docs),
-            "a.md",
-        )
 
 
 class DocumentGathering(Case):

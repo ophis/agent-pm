@@ -46,8 +46,14 @@ class Commands(Case):
                     for option in options:
                         self.assertIn(option, output.getvalue())
 
-    def test_missing_or_unknown_command_is_usage_error(self):
-        for arguments in ([], ["outcome"], ["unknown"]):
+    def test_missing_or_unknown_command_or_missing_options_are_usage_errors(self):
+        for arguments in (
+            [],
+            ["outcome"],
+            ["unknown"],
+            ["writeback"],
+            ["writeback", "--issue", "TASK-1"],
+        ):
             with self.subTest(arguments=arguments):
                 output = io.StringIO()
                 with redirect_stderr(output), self.assertRaises(SystemExit) as raised:
@@ -130,17 +136,18 @@ class LaunchdJobs(Case):
         self.assertNotIn("StartCalendarInterval", promote)
 
 
-class Queries(RunCase):
-    def call(self, arguments, *, stdin="", tty=False):
-        stdout, stderr = io.StringIO(), Stderr(tty=tty)
-        with (
-            redirect_stdout(stdout),
-            redirect_stderr(stderr),
-            mock.patch("sys.stdin", io.StringIO(stdin)),
-        ):
-            result = cli.main(arguments)
-        return result, stdout.getvalue(), stderr.getvalue()
+def _call(arguments, *, stdin="", tty=False):
+    stdout, stderr = io.StringIO(), Stderr(tty=tty)
+    with (
+        redirect_stdout(stdout),
+        redirect_stderr(stderr),
+        mock.patch("sys.stdin", io.StringIO(stdin)),
+    ):
+        result = cli.main(arguments)
+    return result, stdout.getvalue(), stderr.getvalue()
 
+
+class Queries(RunCase):
     def test_status_for_two_issue_keys_or_stdin_records_has_two_ordered_lines(self):
         _, first = self.start("TASK-1")
         _, second = self.start("TASK-2")
@@ -149,7 +156,7 @@ class Queries(RunCase):
             (["status"], second.to_line() + "\n" + first.to_line() + "\n"),
         ):
             with self.subTest(arguments=arguments):
-                result, output, errors = self.call(arguments, stdin=stdin)
+                result, output, errors = _call(arguments, stdin=stdin)
                 statuses = [Status.parse(line) for line in output.splitlines()]
                 self.assertEqual((result, errors), (0, ""))
                 self.assertEqual([status.name for status in statuses], ["TASK-2", "TASK-1"])
@@ -163,7 +170,7 @@ class Queries(RunCase):
                 FakeDelegate.finish(record.workdir)
             if state == "interrupted":
                 FakeDelegate.end(record.workdir)
-            result, output, errors = self.call(["resume", "TASK-1"])
+            result, output, errors = _call(["resume", "TASK-1"])
             self.assertEqual((result, errors), (0, ""))
             self.assertEqual(Record.parse(output), record)
             self.assertEqual(
@@ -177,7 +184,7 @@ class Queries(RunCase):
         self.start("TASK-2")
         FakeDelegate.end(self.cfg.issue_workdir("TASK-1"))
         FakeDelegate.end(self.cfg.issue_workdir("TASK-2"))
-        result, output, errors = self.call(["resume", "TASK-1", "TASK-2"])
+        result, output, errors = _call(["resume", "TASK-1", "TASK-2"])
         self.assertEqual((result, errors), (0, ""))
         self.assertEqual(
             [Record.parse(line).name for line in output.splitlines()], ["TASK-1", "TASK-2"]
@@ -198,7 +205,7 @@ class Queries(RunCase):
             attempt=1,
         )
         for tty in (False, True):
-            result, output, errors = self.call(["resume", "TASK-1"], tty=tty)
+            result, output, errors = _call(["resume", "TASK-1"], tty=tty)
             self.assertEqual((result, output), (1, ""))
             self.assertEqual(errors, "agent-pm-linear: TASK-1: resume blocked by usage gate\n")
         self.assertEqual(ReadyDelegate.usage_calls, [])
@@ -208,7 +215,7 @@ class Queries(RunCase):
         self.start()
         FakeDelegate.end(self.cfg.issue_workdir("TASK-1"))
         self.configure(default="other")
-        result, output, errors = self.call(["resume", "TASK-1"])
+        result, output, errors = _call(["resume", "TASK-1"])
         self.assertEqual((result, errors), (0, ""))
         self.assertEqual(Record.parse(output).name, "TASK-1")
         self.assertEqual(ReadyDelegate.usage_calls, [])
@@ -221,12 +228,12 @@ class Queries(RunCase):
     def test_close_controls_only_selected_issue_and_show_failure_names_it(self):
         one, _ = self.start("TASK-1")
         two, _ = self.start("TASK-2")
-        result, output, errors = self.call(["close", "TASK-1"])
+        result, output, errors = _call(["close", "TASK-1"])
         self.assertEqual((result, output, errors), (0, "", ""))
         self.assertFalse(one.alive())
         self.assertTrue(two.alive())
         for command in ("show", "attach-command"):
-            result, output, errors = self.call([command, "TASK-2"])
+            result, output, errors = _call([command, "TASK-2"])
             self.assertEqual((result, output), (1, ""))
             self.assertEqual(len(errors.splitlines()), 1)
             self.assertTrue(errors.startswith("agent-pm-linear: TASK-2: "))
@@ -239,39 +246,22 @@ class Queries(RunCase):
             (["close"], record.to_line() + "\ninvalid"),
         ):
             with self.subTest(arguments=arguments, stdin=stdin):
-                result, output, errors = self.call(arguments, stdin=stdin)
+                result, output, errors = _call(arguments, stdin=stdin)
                 self.assertEqual((result, output), (2, ""))
                 self.assertEqual(len(errors.splitlines()), 1)
                 self.assertTrue(owner.alive())
-        self.assertEqual(self.call(["close"], stdin=""), (0, "", ""))
+        self.assertEqual(_call(["close"], stdin=""), (0, "", ""))
         self.assertTrue(owner.alive())
 
     def test_batch_configuration_error_preserves_valid_key_output(self):
         self.start()
-        result, output, errors = self.call(["status", "TASK-8", "TASK-1"])
+        result, output, errors = _call(["status", "TASK-8", "TASK-1"])
         self.assertEqual(result, 2)
         self.assertEqual(Status.parse(output).name, "TASK-1")
         self.assertEqual(errors, "agent-pm-linear: TASK-8: TASK-8: no recorded run\n")
 
 
 class WritebackUsage(RunCase):
-    def call(self, arguments, stdin):
-        stdout, stderr = io.StringIO(), Stderr(tty=False)
-        with (
-            redirect_stdout(stdout),
-            redirect_stderr(stderr),
-            mock.patch("sys.stdin", io.StringIO(stdin)),
-        ):
-            result = cli.main(arguments)
-        return result, stdout.getvalue(), stderr.getvalue()
-
-    def test_missing_options_are_usage_errors(self):
-        for arguments in (["writeback"], ["writeback", "--issue", "TASK-1"]):
-            with self.subTest(arguments=arguments):
-                with redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as raised:
-                    cli.main(arguments)
-                self.assertEqual(raised.exception.code, 2)
-
     def test_what_is_not_one_writable_event_exits_2_without_output(self):
         begun = json.dumps({"v": 1, "kind": "begun", "sid": SID, "attempt": 1})
         other = "9c1d2e3f-4a5b-4c6d-8e7f-a0b1c2d3e4f5"
@@ -291,8 +281,8 @@ class WritebackUsage(RunCase):
             ("another workdir", begun + "\n", self.cfg.issue_workdir("TASK-2"), "--workdir"),
         ):
             with self.subTest(name):
-                result, output, errors = self.call(
-                    ["writeback", "--issue", "TASK-1", "--workdir", workdir_arg], stdin
+                result, output, errors = _call(
+                    ["writeback", "--issue", "TASK-1", "--workdir", workdir_arg], stdin=stdin
                 )
                 self.assertEqual((result, output), (2, ""))
                 self.assertIn("agent-pm-linear writeback: ", errors)

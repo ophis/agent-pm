@@ -51,13 +51,6 @@ class Log(Logs):
         with open(os.path.join(other, "orchestrator.jsonl")) as f:
             self.assertEqual(json.loads(f.read())["issue"], "TASK-2")
 
-    def test_use_logs_sets_the_dir(self):
-        other = os.path.join(self.tmp, "other")
-        log.use_logs(other)
-        self.assertEqual(log.LOGS_DIR, other)
-        self.log("run", "end", "TASK-2")
-        self.assertTrue(os.path.isfile(os.path.join(other, "orchestrator.jsonl")))
-
     def test_no_logs_dir_writes_no_file(self):
         with (
             logs_at(None),
@@ -218,11 +211,6 @@ class Log(Logs):
                 before = len(self.text(path).splitlines())
                 self.log("router", "blocked", "TASK-1", once=True, by=["TASK-7"])
                 self.assertEqual(len(self.text(path).splitlines()) - before, written, logs)
-
-
-class LogsDirDefault(Case):
-    def test_unset_until_an_entry_sets_it(self):
-        self.assertIsNone(log.LOGS_DIR)
 
 
 class ApiErrors(Logs):

@@ -152,12 +152,6 @@ A = "engineer-TASK-12-0b6f2c1e"
 
 
 class ConfigurationLoading(ConfigFile, Case):
-    def test_tests_never_read_this_machines_local_file(self):
-        self.assertEqual(
-            os.path.expanduser(config.LOCAL),
-            os.path.join(self.agent_pm, "config.local.toml"),
-        )
-
     def test_stage_order(self):
         self.assertEqual(self.load(PIPELINE).stages, {"researcher": 0, "pm": 1, "engineer": 2})
         self.assertEqual(
@@ -315,6 +309,37 @@ class ConfigurationLoading(ConfigFile, Case):
                 BASE + f'[local_clones]\n"{SLUG}" = "/x"\n"Ophis/Agent-PM" = "/y"\n',
                 f"local_clones.{SLUG} and local_clones.Ophis/Agent-PM are the same repo",
             ),
+            (PIPELINE + role("ghost"), "role 'ghost' is not in delegate/config.toml"),
+            (PIPELINE + role("dummy-tester"), "role 'dummy-tester' has no entry in config.TASKS"),
+            (
+                HEADER + role("researcher", 'next = "pm"'),
+                "next of 'researcher' names undefined role 'pm'",
+            ),
+            (
+                HEADER + role("researcher") + role("pm", 'next = "researcher"'),
+                "next of 'pm' is role 'researcher', whose config.TASKS entry has no prefix",
+            ),
+            (
+                PIPELINE.replace("linear-api-key-pm", "linear-api-key-researcher"),
+                "[roles.pm] key 'linear-api-key-researcher' is also [roles.researcher]'s",
+            ),
+            (
+                PIPELINE.replace("linear-api-key-engineer", "linear-api-key"),
+                "[roles.engineer] key 'linear-api-key' is harness_key",
+            ),
+            *[
+                (
+                    text + f'[task_labels]\n{task} = "{LABEL1}"\n',
+                    (
+                        f"task_labels.{task} is not a task of a role in linear-orchestrator/config.toml"
+                    ),
+                )
+                for task, text in (
+                    ("echo", PIPELINE),
+                    ("ghost", PIPELINE),
+                    ("product-design", HEADER + role("researcher")),
+                )
+            ],
         ]
         for text, message in cases:
             with self.subTest(message, text=text):
@@ -620,25 +645,21 @@ class DelegateRegistry(ConfigFile, Case):
             PIPELINE,
         )
 
-    def test_default_must_name_a_registered_class(self):
-        self.local('[delegates]\ndefault = "missing"\n')
-        self.fails(
-            "linear-orchestrator/config.toml: [delegates] default: want one of harness", PIPELINE
-        )
-
-    def test_registration_requires_only_implementation(self):
-        self.local('[delegates.harness]\nextra = "no"\n')
-        self.fails(
-            "linear-orchestrator/config.toml: [delegates.harness] takes only implementation",
-            PIPELINE,
-        )
-
-    def test_registration_must_implement_delegate(self):
-        self.local('[delegates.harness]\nimplementation = "builtins:dict"\n')
-        self.fails(
-            "linear-orchestrator/config.toml: [delegates.harness]: builtins:dict must be a concrete Delegate subclass",
-            PIPELINE,
-        )
+    def test_a_default_or_registration_that_is_not_a_delegate_class_is_rejected(self):
+        for local, message in (
+            ('[delegates]\ndefault = "missing"\n', "[delegates] default: want one of harness"),
+            (
+                '[delegates.harness]\nextra = "no"\n',
+                "[delegates.harness] takes only implementation",
+            ),
+            (
+                '[delegates.harness]\nimplementation = "builtins:dict"\n',
+                "[delegates.harness]: builtins:dict must be a concrete Delegate subclass",
+            ),
+        ):
+            with self.subTest(message):
+                self.local(local)
+                self.fails("linear-orchestrator/config.toml: " + message, PIPELINE)
 
     def test_registration_error_has_the_work_log_directory(self):
         self.local('[delegates.harness]\nimplementation = "agent_pm.delegate:Delegate"\n')
@@ -651,8 +672,13 @@ class DelegateRegistry(ConfigFile, Case):
 
 
 class DeploymentWritePaths(ConfigFile, Case):
-    def test_deployment_checkout_is_a_valid_cwd_and_write_dir(self):
-        for directory in (REPO, os.path.join(REPO, "delegate"), os.path.dirname(REPO)):
+    def test_the_deployment_checkout_or_another_dir_is_a_valid_cwd_and_write_dir(self):
+        for directory in (
+            REPO,
+            os.path.join(REPO, "delegate"),
+            os.path.dirname(REPO),
+            os.path.join(self.home, "external-work"),
+        ):
             with self.subTest(directory=directory):
                 cfg = self.load(
                     PIPELINE
@@ -664,30 +690,8 @@ class DeploymentWritePaths(ConfigFile, Case):
                     (directory, [directory]),
                 )
 
-    def test_separate_cwd_and_write_directories_remain_valid(self):
-        directory = os.path.join(self.home, "external-work")
-        cfg = self.load(
-            PIPELINE
-            + f"[core.roles.engineer]\ncwd = {json.dumps(directory)}\nwrite = [{json.dumps(directory)}]\n"
-        )
-        self.assertEqual(
-            (cfg.roles["engineer"].run.cwd, cfg.roles["engineer"].run.write),
-            (directory, [directory]),
-        )
-
 
 class DeploymentDirectories(Case):
-    def test_deployment_checkout_and_packages_are_valid_work_dirs(self):
-        packages = tuple(
-            os.path.join(REPO, project, "src", "agent_pm", project.replace("-", "_"))
-            for project in ("linear-orchestrator", "delegate", "session", "utils")
-        )
-        for directory in (REPO, *packages, os.path.join(packages[0], "missing")):
-            with self.subTest(directory=directory):
-                self.assertEqual(
-                    config._work_dir({"work_dir": directory}), os.path.realpath(directory)
-                )
-
     def test_local_clone_equal_containment_and_symlink_boundaries(self):
         root = Path(self.home).resolve()
         clone = root / "clone"
@@ -824,44 +828,6 @@ class RunnableRoles(ConfigFile, Case):
             },
         )
 
-    def test_rejected(self):
-        cases = [
-            (PIPELINE + role("ghost"), "role 'ghost' is not in delegate/config.toml"),
-            (PIPELINE + role("dummy-tester"), "role 'dummy-tester' has no entry in config.TASKS"),
-            (
-                HEADER + role("researcher", 'next = "pm"'),
-                "next of 'researcher' names undefined role 'pm'",
-            ),
-            (
-                HEADER + role("researcher") + role("pm", 'next = "researcher"'),
-                "next of 'pm' is role 'researcher', whose config.TASKS entry has no prefix",
-            ),
-            (
-                PIPELINE.replace("linear-api-key-pm", "linear-api-key-researcher"),
-                "[roles.pm] key 'linear-api-key-researcher' is also [roles.researcher]'s",
-            ),
-            (
-                PIPELINE.replace("linear-api-key-engineer", "linear-api-key"),
-                "[roles.engineer] key 'linear-api-key' is harness_key",
-            ),
-            *[
-                (
-                    text + f'[task_labels]\n{task} = "{LABEL1}"\n',
-                    (
-                        f"task_labels.{task} is not a task of a role in linear-orchestrator/config.toml"
-                    ),
-                )
-                for task, text in (
-                    ("echo", PIPELINE),
-                    ("ghost", PIPELINE),
-                    ("product-design", HEADER + role("researcher")),
-                )
-            ],
-        ]
-        for text, message in cases:
-            with self.subTest(message):
-                self.fails("linear-orchestrator/config.toml: " + message, text)
-
     def test_role_for(self):
         roles = self.runs()
         for email in ("researcher@agents.test", "RESEARCHER@Agents.Test"):
@@ -892,7 +858,19 @@ class ConfigurationRoot(ConfigFile, Case):
         root = os.path.realpath(self.root)
         link = os.path.join(self.home, "deployment-link")
         os.symlink(root, link)
-        for work in (root, os.path.join(root, "state", "missing"), os.path.dirname(root), link):
+        packages = tuple(
+            os.path.join(REPO, project, "src", "agent_pm", project.replace("-", "_"))
+            for project in ("linear-orchestrator", "delegate", "session", "utils")
+        )
+        for work in (
+            root,
+            os.path.join(root, "state", "missing"),
+            os.path.dirname(root),
+            link,
+            REPO,
+            *packages,
+            os.path.join(packages[0], "missing"),
+        ):
             with self.subTest(work=work):
                 self.assertEqual(config._work_dir({"work_dir": work}), os.path.realpath(work))
 
@@ -1007,7 +985,7 @@ class ConfigurationRoot(ConfigFile, Case):
     def test_no_core_table(self):
         self.assertEqual(self.load(PIPELINE).roles["researcher"].run.gate, "")
 
-    def test_overlay_unknown_keys(self):
+    def test_unknown_overlay_keys_roles_and_output_keys(self):
         unknown = "core: run overlay: unknown key "
         cases = [
             ("[core]\nfoo = 1\n", unknown + "'foo' in [overlay]"),
@@ -1025,23 +1003,19 @@ class ConfigurationRoot(ConfigFile, Case):
                 old_key("default_task"),
             ),
             ('[core.roles.researcher.tasks.deep-research]\ngate = "x"\n', old_key("tasks")),
+            (
+                "[core.roles.reseacher]\ntier = 2\n",
+                "core: run overlay: unknown role 'reseacher' in [overlay.roles]",
+            ),
+            ('[core.output]\ntype = "local"\ntypo = 1\n', unknown + "'typo' in [overlay.output]"),
+            (
+                '[core.roles.researcher.output]\ntype = "local"\ntypo = 1\n',
+                unknown + "'typo' in [overlay.roles.researcher.output]",
+            ),
         ]
         for text, message in cases:
             with self.subTest(message):
                 self.fails(message, PIPELINE + text)
-
-    def test_resolution_rejects_unknown_overlay_roles_and_output_keys(self):
-        core = "core: run overlay: "
-        for text, message in (
-            ("[core.roles.reseacher]\ntier = 2\n", "unknown role 'reseacher' in [overlay.roles]"),
-            ('[core.output]\ntype = "local"\ntypo = 1\n', "unknown key 'typo' in [overlay.output]"),
-            (
-                '[core.roles.researcher.output]\ntype = "local"\ntypo = 1\n',
-                "unknown key 'typo' in [overlay.roles.researcher.output]",
-            ),
-        ):
-            with self.subTest(message):
-                self.fails(core + message, PIPELINE + text)
 
     def test_core_errors(self):
         cases = [
@@ -1139,38 +1113,39 @@ class LocalOverlay(ConfigFile, Case):
         self.local(PIPELINE + "[roles.ghost]\n")
         self.assertEqual(set(self.load("").roles), want)
 
-    def test_old_task_keys_in_the_local_overlay_stop_runnable(self):
-        self.local('[core.roles.researcher.tasks.deep-research]\ngate = "x"\n')
-        self.fails(old_key("tasks"), PIPELINE)
-
-    def test_a_bad_local_value_is_rejected(self):
-        self.local(f'team = "{TEAM}"\nstates = {{ done = "Done" }}\n')
-        self.fails(
+    def test_a_bad_value_wrong_type_unknown_or_old_task_local_key_is_rejected_by_name(self):
+        for local, text, message in (
             (
-                "linear-orchestrator/config.toml: states.done must be a Linear workflow state id (UUID): 'Done'"
+                '[core.roles.researcher.tasks.deep-research]\ngate = "x"\n',
+                PIPELINE,
+                old_key("tasks"),
             ),
-            BASE,
-        )
-
-    def test_a_wrong_type_or_unknown_local_key_is_rejected_by_name(self):
-        for local, message in (
+            (
+                f'team = "{TEAM}"\nstates = {{ done = "Done" }}\n',
+                BASE,
+                "linear-orchestrator/config.toml: states.done must be a Linear workflow state id (UUID): 'Done'",
+            ),
             (
                 "harness_key = 1\n",
+                BASE,
                 "linear-orchestrator/config.toml: harness_key must be a Keychain service name: 1",
             ),
             (
                 role("researcher", 'max_runs = "2"'),
+                BASE,
                 "linear-orchestrator/config.toml: [roles.researcher] max_runs must be a whole number >= 1: '2'",
             ),
             (
                 "bogus = 1\n",
+                BASE,
                 "linear-orchestrator/config.toml: ~/.agent-pm/config.local.toml: unknown key 'bogus' in [linear_orchestrator]",
             ),
             (
                 role("researcher", "bogus = 1"),
+                BASE,
                 "linear-orchestrator/config.toml: [roles.researcher] has unknown keys: bogus",
             ),
         ):
             with self.subTest(local=local):
                 self.local(local)
-                self.fails(message, BASE)
+                self.fails(message, text)

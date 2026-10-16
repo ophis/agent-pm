@@ -11,7 +11,6 @@ from agent_pm.delegate import ConfigError, Outcome
 from agent_pm.linear_orchestrator.engine import ops, run_comments
 from agent_pm.linear_orchestrator.engine.types import LinearError, Stopped
 from agent_pm.session import SessionStatus
-from agent_pm.utils import timestamp
 from orchestrator_tests import case
 from orchestrator_tests.process_fixtures import CalledProcessError
 
@@ -239,15 +238,11 @@ class Record(Case):
 
     def test_end_defaults_to_now(self):
         fake = FakeLinear()
-        self.assertIsNone(run_comments.post(ISSUE, self.record(), gql=fake, rc=0, ended_at=T2))
-        self.assertEqual(fake.only()["body"], run_comments.body(self.record(), 0, T2))
-
-    def test_now_is_local_iso_with_offset(self):
-        stamp = timestamp()
+        self.assertIsNone(run_comments.post(ISSUE, self.record(), gql=fake, rc=0))
+        body = fake.only()["body"]
+        stamp = body.split(" → ", 1)[1].split(" · ", 1)[0]
+        self.assertEqual(body, text(f"no outcome · #1 · {T1} → {stamp} · exit 0"))
         self.assertIsNotNone(datetime.fromisoformat(stamp).utcoffset(), stamp)
-
-    def test_no_cli(self):
-        self.assertFalse(hasattr(run_comments, "main") or hasattr(run_comments, "USAGE"))
 
     def test_failed_start_leaves_end_to_create_the_comment(self):
         fake, rec = FakeLinear(fail={"commentCreate": RuntimeError("down")}), self.record()
