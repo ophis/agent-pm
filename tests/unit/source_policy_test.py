@@ -107,8 +107,8 @@ class DelegatePolicy(Case):
                 ["run autopilot:build", "then `agent-pm:manage`"],
             ),
             (
-                "the act-as skill\nthe tmux skill's workers\nthe skill",
-                ["the act-as skill", "the tmux skill's workers"],
+                "the act-as skill\nthe manage skill's workers\nthe skill",
+                ["the act-as skill", "the manage skill's workers"],
             ),
             ("/autopilot:build, `/agent-pm:manage`'s workers, /deep-research", []),
         ):

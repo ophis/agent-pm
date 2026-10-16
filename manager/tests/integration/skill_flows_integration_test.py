@@ -30,6 +30,7 @@ class SkillFlows(LiveCrew):
             self.written(
                 "manage",
                 "agent-pm-crew worker",
+                "--client <client>",
                 keep=("--prompt",),
                 env=self.scene("w1"),
                 name="w1",
@@ -110,6 +111,7 @@ class SkillFlows(LiveCrew):
             self.written(
                 "manage",
                 "agent-pm-crew worker",
+                "--client codex",
                 env={"FAKE_SCENARIO": scenario, "FAKE_LOG": log},
                 name="c1",
                 work_dir=self.cwd,

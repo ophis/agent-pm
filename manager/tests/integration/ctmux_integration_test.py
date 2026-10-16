@@ -6,6 +6,7 @@ plugin upgrade.
 
 import json
 import os
+import shlex
 import shutil
 import stat
 import subprocess
@@ -253,6 +254,25 @@ class FakeTmux(Case):
             self.assertEqual(stat.S_IMODE(os.stat(path).st_mode), 0o755, name)
             with open(path, "rb") as f:
                 self.assertEqual(f.read(), source, name)
+
+    def test_a_pre_move_launcher_target_runs_and_refreshes_the_installed_launcher(self):
+        root = plugin(os.path.join(self.home, "cache", "upgrade with spaces"))
+        record(self.home, root)
+        target = os.path.join(root, "manager", "skills", "tmux", "scripts", "ctmux")
+        os.makedirs(self.installed)
+        executable(self.dst, f'#!/bin/sh\nexec {shlex.quote(target)} "$@"\n')
+        process, _, err, calls = self.ctmux("s1", script=self.dst)
+        self.assertEqual((process.returncode, err), (0, ""))
+        self.assertEqual(calls[1][2:], created("s1", self.cwd, "/bin/zsh", root))
+        self.install(script=self.dst)
+        with open(self.dst, "rb") as installed, open(LAUNCHER, "rb") as source:
+            self.assertEqual(installed.read(), source.read())
+        process, _, err, calls = self.ctmux("s1", script=self.dst, has_rc=0)
+        self.assertEqual((process.returncode, err), (0, ""))
+        self.assertEqual(
+            [call[2:] for call in calls],
+            [["has", "-t", "=s1"], ["-CC", "attach", "-t", "=s1"]],
+        )
 
     def test_the_installed_ctmux_runs_the_recorded_plugins_and_follows_an_upgrade(self):
         self.install()

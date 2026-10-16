@@ -12,6 +12,7 @@ from manager.tests.skills.commands import (
     BIN,
     SKILLS,
     body,
+    example,
     examples,
     flags,
     paths,
@@ -35,6 +36,12 @@ REPAIRS = ("rename-session", "/rename", "@grid-busy", "@opener", "@pane", "send-
 
 
 class Commands(Case):
+    def test_worker_examples_select_generic_or_codex_launch(self):
+        generic = example("manage", "agent-pm-crew worker", "--client <client>")
+        codex = example("manage", "agent-pm-crew worker", "--client codex")
+        self.assertIn("[--prompt '<text>']", generic)
+        self.assertIn("--cwd <work dir>/agent", codex)
+
     def test_every_example_is_one_of_the_four_bin_commands(self):
         commands = examples(body("manage"))
         self.assertGreater(len(commands), 20)
@@ -78,7 +85,7 @@ class Commands(Case):
             self.assertNotIn(retired, body("manage"))
 
     def test_only_manage_owns_commands_permissions_and_scripts(self):
-        self.assertFalse(os.path.exists(os.path.join(SKILLS, "tmux")))
+        self.assertFalse(os.path.isfile(os.path.join(SKILLS, "tmux", "SKILL.md")))
         self.assertTrue(rules("manage"))
 
     def test_role_launch_has_no_separate_dry_run(self):
