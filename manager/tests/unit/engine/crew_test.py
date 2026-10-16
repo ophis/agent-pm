@@ -114,3 +114,100 @@ class Attach(RosterCase):
         self.assertEqual(table[0], HEADER)
         self.assertIn(f"h\tcustom\t{hidden.sid}\tworking\thidden\t-\t", table[1])
         self.assertIn(f"v\tcustom\t{shown.sid}\tworking\t-\t-\t", table[2])
+
+
+class View(RosterCase):
+    def setUp(self):
+        super().setUp()
+        self.records = {}
+        for name in ("a", "b", "c"):
+            self.records[name] = replace(
+                self.record, name=name, sessions=(name,), sid=str(uuid.uuid4())
+            )
+            self.live(name, record=self.records[name])
+        self.calls = []
+        self.alive = {"a": True, "b": True, "c": False}
+        self.attach = {"a": "attach a", "b": None, "c": "attach c"}
+        self.answers = {}
+
+    def answer(self, argv, **options):
+        records = [Record.parse(line) for line in options["input"].splitlines()]
+        if argv[-1] == "status":
+            stdout = "".join(
+                Status(
+                    name=r.name,
+                    alive=self.alive[r.name],
+                    state="working",
+                    outcome=None,
+                    attach=self.attach[r.name],
+                    hidden=False,
+                ).to_line()
+                + "\n"
+                for r in records
+            )
+            return mock.Mock(returncode=0, stdout=stdout, stderr="")
+        self.calls.append((argv, records))
+        return self.answers.get(records[0].name, mock.Mock(returncode=0, stdout="", stderr=""))
+
+    def view(self, verb, names=()):
+        stdout, stderr = io.StringIO(), io.StringIO()
+        with (
+            mock.patch("subprocess.run", side_effect=self.answer),
+            contextlib.redirect_stdout(stdout),
+            contextlib.redirect_stderr(stderr),
+        ):
+            failures = Crew(self.roster).view(verb, names)
+        return failures, stdout.getvalue(), stderr.getvalue()
+
+    def test_each_named_entry_goes_once_to_its_ctl_in_the_given_order(self):
+        failures, _, _ = self.view("hide", ("c", "a", "c"))
+        self.assertEqual(failures, {})
+        self.assertEqual(
+            self.calls,
+            [
+                (("agent-pm-session", "hide"), [self.records["c"]]),
+                (("agent-pm-session", "hide"), [self.records["a"]]),
+            ],
+        )
+
+    def test_all_takes_the_alive_showable_entries(self):
+        self.view("show")
+        self.assertEqual(self.calls, [(("agent-pm-session", "show"), [self.records["a"]])])
+
+    def test_the_layers_output_is_relayed(self):
+        self.answers["a"] = mock.Mock(returncode=0, stdout="tmux attach -t a\n", stderr="note\n")
+        _, stdout, stderr = self.view("show", ("a",))
+        self.assertEqual((stdout, stderr), ("tmux attach -t a\n", "note\n"))
+
+    def test_a_failure_leaves_the_rest_and_names_its_reason(self):
+        self.answers["a"] = mock.Mock(returncode=1, stdout="", stderr=" boom \n")
+        self.answers["b"] = mock.Mock(returncode=1, stdout="", stderr="")
+        failures, _, _ = self.view("hide", ("a", "b", "c"))
+        self.assertEqual(len(self.calls), 3)
+        self.assertEqual(
+            failures,
+            {"a": "agent-pm-session hide: boom", "b": "agent-pm-session hide: exit 1"},
+        )
+
+    def test_all_reports_an_entry_whose_status_failed(self):
+        def run(argv, **options):
+            if argv[-1] == "status":
+                return mock.Mock(returncode=2, stdout="", stderr="down")
+            return self.answer(argv, **options)
+
+        stdout = io.StringIO()
+        with mock.patch("subprocess.run", side_effect=run), contextlib.redirect_stdout(stdout):
+            failures = Crew(self.roster).view("hide")
+        self.assertEqual(failures, dict.fromkeys(("a", "b", "c"), "agent-pm-session status: down"))
+        self.assertEqual(self.calls, [])
+
+    def test_a_named_entry_without_a_record_fails(self):
+        self.roster.begin(Spec("s", ARGV), sid=str(uuid.uuid4()))
+        failures, _, _ = self.view("show", ("s",))
+        self.assertEqual(failures, {"s": "starting: no Record"})
+        self.assertEqual(self.calls, [])
+
+    def test_an_unknown_name_raises_before_any_call(self):
+        with self.assertRaisesRegex(ValueError, "not in roster: x, y"):
+            self.view("hide", ("a", "y", "x"))
+        self.assertEqual(self.calls, [])

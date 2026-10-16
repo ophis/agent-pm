@@ -79,6 +79,8 @@ class CliTest(CliCase):
             ("hold", "--manager", "mgr"),
             ("hold", "--manager", "mgr", "--"),
             ("attach", "--manager", "mgr", "--", "unused"),
+            ("hide", "--manager", "mgr"),
+            ("show", "--manager", "mgr", "a", "--all"),
         ):
             with self.subTest(argv=argv), contextlib.redirect_stderr(io.StringIO()):
                 with self.assertRaises(SystemExit) as error:
@@ -88,7 +90,15 @@ class CliTest(CliCase):
 
     def test_missing_entry_is_usage_error_without_controller_or_writes(self):
         with mock.patch("subprocess.run", side_effect=FileNotFoundError("missing ctl")) as run:
-            for argv in (("close",), ("status",), ("forget",), ("resume",), ("forget", "--force")):
+            for argv in (
+                ("close",),
+                ("status",),
+                ("forget",),
+                ("resume",),
+                ("forget", "--force"),
+                ("hide",),
+                ("show",),
+            ):
                 with self.subTest(argv=argv):
                     command, *extra = argv
                     result, stdout, stderr = self.invoke(
@@ -456,6 +466,33 @@ class Report(CliCase):
         self.assertIn("\tgone\t", stdout)
         self.assertIn("\twaiting\t", stdout)
         self.assertEqual(after, before)
+
+
+class View(CliCase):
+    def setUp(self):
+        super().setUp()
+        for name in ("a", "b"):
+            record = self.fake_record(name)
+            self.roster.begin(Spec(name, ("start",)), sid=record.sid)
+            self.roster.commit(name, record)
+
+    def view(self, *argv, answers):
+        def run(_argv, **kwargs):
+            name = Record.parse(kwargs["input"]).name
+            return SimpleNamespace(returncode=answers[name][0], stdout=answers[name][1], stderr="")
+
+        with mock.patch("subprocess.run", side_effect=run):
+            return self.invoke(*argv, "--manager", "mgr")
+
+    def test_show_prints_each_layers_attach_command_and_exits_0(self):
+        answers = {"a": (0, "attach a\n"), "b": (0, "")}
+        self.assertEqual(self.view("show", "a", "b", answers=answers), (0, "attach a\n", ""))
+
+    def test_a_failed_entry_is_named_on_stderr_and_exits_1(self):
+        answers = {"a": (1, ""), "b": (0, "")}
+        result, stdout, stderr = self.view("hide", "a", "b", answers=answers)
+        self.assertEqual((result, stdout), (1, ""))
+        self.assertEqual(stderr, f"crew: a: {ctl.COMMAND} hide: exit 1\n")
 
 
 class InsideAnAgentSession(CliCase):

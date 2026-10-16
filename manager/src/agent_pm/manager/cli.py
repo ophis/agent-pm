@@ -127,6 +127,13 @@ def _resume(args) -> int:
     return failed
 
 
+def _view(args) -> int:
+    failures = _crew(args).view(args.verb, args.names)
+    for name, failure in failures.items():
+        print(f"crew: {name}: {failure}", file=sys.stderr)
+    return 1 if failures else 0
+
+
 def _close(args) -> int:
     _crew(args).close(args.name)
     return 0
@@ -194,6 +201,14 @@ def _parser() -> argparse.ArgumentParser:
     resume = subs.add_parser("resume", parents=[common])
     resume.add_argument("names", nargs="+")
     resume.set_defaults(func=_resume)
+    for verb, text in (
+        ("hide", "close each entry's panes; its work runs on"),
+        ("show", "show each entry as at its launch; print attach commands its layer gives"),
+    ):
+        view = subs.add_parser(verb, parents=[common], help=text)
+        view.add_argument("names", nargs="*")
+        view.add_argument("--all", action="store_true", help="every live entry")
+        view.set_defaults(func=_view, verb=verb)
     for name, handler in (("close", _close), ("forget", _forget)):
         command = subs.add_parser(name, parents=[common])
         command.add_argument("name")
@@ -243,6 +258,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         args.command = command
     elif command:
         parser.error("only run and hold accept a command after --")
+    if args.func is _view and bool(args.names) == args.all:
+        parser.error(f"{args.verb} takes entry names or --all")
     if args.func is _attach and (args.after is None) != (args.gen is None):
         parser.error("--after and --gen go together")
     if args.func in {_run, _hold, _resume} and (refused := nested_start()):

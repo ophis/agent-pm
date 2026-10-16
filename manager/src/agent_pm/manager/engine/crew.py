@@ -240,6 +240,43 @@ class Crew:
                 failures[ctl] = str(error)
         return failures
 
+    def view(self, verb: str, names: Iterable[str] = ()) -> dict[str, str]:
+        """`<ctl> <verb>` (hide, show) on each named entry's Record, else on each alive showable
+        one's, relaying its output; why each entry failed.
+        """
+        entries = self.roster.entries()
+        selected = tuple(dict.fromkeys(names))
+        missing = set(selected) - entries.keys()
+        if missing:
+            raise ValueError(f"not in roster: {', '.join(sorted(missing))}")
+        failures: dict[str, str] = {}
+        if not selected:
+            answers, failures = self._statuses(entries)
+            selected = tuple(
+                name
+                for name, status in sorted(answers.items())
+                if status.alive and status.attach is not None
+            )
+        for name in selected:
+            entry = entries[name]
+            if entry.record is None:
+                failures[name] = f"{entry.state}: no Record"
+                continue
+            argv = (*entry.record.ctl, verb)
+            try:
+                result = self._call(argv, entry.record.to_line() + "\n")
+            except RuntimeError as error:
+                failures[name] = str(error)
+                continue
+            if result.returncode:
+                failures[name] = (
+                    f"{shlex.join(argv)}: {result.stderr.strip() or f'exit {result.returncode}'}"
+                )
+                continue
+            sys.stdout.write(result.stdout)
+            sys.stderr.write(result.stderr)
+        return failures
+
     def attach(self, *, after: int | None = None, gen: int | None = None) -> str:
         self._listed = None
         self.roster.check_lease()
