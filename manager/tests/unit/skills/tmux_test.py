@@ -133,6 +133,7 @@ class Flows(Case):
             self.assertRegex(launch, rf"`agent-pm-crew run <[A-Za-z]+> (\[[^]]+\] )?-- {inner}")
         self.assertIn("--mode headless", launch)
         self.assertIn("--display D", launch)
+        self.assertIn("`--display none`", launch)
         self.assertIn("agent-pm-session --help", launch)
 
     def test_start_attaches_reads_its_output_and_arms_one_listener(self):
@@ -163,6 +164,11 @@ class Flows(Case):
             "`agent-pm-session read <name> [--lines <n>]`",
             "`agent-pm-session reply <name>`",
             "`agent-pm-session restart <name>`",
+            "`agent-pm-session hide <name>…`",
+            "`agent-pm-session show <name>…`",
+            "`agent-pm-session hide <role>-<sid8> <role>-<sid8>-drive`",
+            "`agent-pm-delegate hide <workdir>…`",
+            "`agent-pm-linear hide <ID>…`",
             "`agent-pm-crew note <name> '<text>'`",
             "`''` clears",
             "`agent-pm-crew status [<name>…]`",
