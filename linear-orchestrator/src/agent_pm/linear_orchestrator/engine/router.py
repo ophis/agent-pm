@@ -10,8 +10,9 @@ agent-pm-linear router [--now] [--dry-run] [--issue ID] [--tui [--display D] [--
               error or Linear unavailable (config-error, linear-error: once a day), else 0.
   --now       Skip the 01:00-06:59 hours check.
 --issue ID    Start or resume only this issue, without the hours, max_runs and usage gates. Exits 1
-              a config error, Linear unavailable, agent runs unknown, a live agent run of the issue
-              or nothing started, 0 its ended run's outcome written back instead, else the outer's
+              a config error, Linear unavailable or agent runs unknown; 2 the router is busy,
+              the issue has a live agent run or cannot be claimed; 0 its ended run's outcome
+              written back instead, else the outer's
               code: 0 detached or bounced, 1 the launch failed, 2 a config error of the issue,
               3 transient.
 --dry-run     With either: print the plan (a tick's with its usage checks); change nothing, start

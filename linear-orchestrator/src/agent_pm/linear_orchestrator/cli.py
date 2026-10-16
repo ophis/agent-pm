@@ -57,7 +57,6 @@ def main(argv=None):
         return _writeback(cfg, args.issue, args.workdir)
 
     gate = None
-    receipts = []
 
     def viewed(key):
         issue = key.name if isinstance(key, Record) else key
@@ -85,9 +84,7 @@ def main(argv=None):
                 key=(view.delegate_kind, runs.client_of(entries, view.sid)),
             ):
                 raise RuntimeError("resume blocked by usage gate")
-        receipt = view.resume().to_line()
-        receipts.append(receipt)
-        return receipt
+        return view.resume().to_line()
 
     def attach_command(view):
         command = view.delegate.attach_command()
@@ -104,19 +101,18 @@ def main(argv=None):
         "hide": lambda view: view.delegate.hide(),
         "attach-command": attach_command,
     }[args.command]
-    result = answer_keys(
+    return answer_keys(
         args.keys,
         sys.stdin,
         viewed,
         reply,
-        single=args.command == "content",
+        single=args.command in {"resume", "content"},
         usage=(ConfigError, DelegateConfigError, ValueError),
         failures=(SessionError, RuntimeError, OSError),
         prog="agent-pm-linear",
         out=sys.stdout,
         err=sys.stderr,
     )
-    return 1 if args.command == "resume" and result == 2 and receipts else result
 
 
 def _writeback(cfg, issue, workdir):
