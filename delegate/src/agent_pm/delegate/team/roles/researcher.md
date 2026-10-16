@@ -53,7 +53,7 @@ With the input's `Visual: yes`, once a `done` outcome's `<file>` is **Published*
    - Light Research: only the conclusion, at most one table or one diagram, and the sources.
    - Any other report: each comparison table → an HTML table; each finding → an item with its confidence mark and superscript `[n]`; each Mermaid diagram → a hand-drawn SVG; each Gaps and Corrections entry → a callout.
    - Every `[n]` source with its URL, in a visible section at the end.
-   - Start the page with exactly `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src data:; script-src 'unsafe-inline'">` (`<html>` may take attributes; only whitespace between these tags).
+   - Start the page with exactly `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src data:; script-src 'unsafe-inline'">` (`<html>` may take attributes; only whitespace or comments between these tags; all within the first 1024 bytes).
    - Load nothing external but Google Fonts: no CDN script, stylesheet or image. Report text goes in escaped, never as markup, script or event handlers.
    - Never open the page or a browser, nor run `open`; write nothing under `~/.agent/diagrams/`.
 

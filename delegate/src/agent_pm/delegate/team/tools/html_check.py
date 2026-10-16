@@ -88,7 +88,7 @@ def main(argv: list[str], *, out=sys.stdout) -> int:
         print("check failed: usage: html_check.py HTML", file=out)
         return 2
     try:
-        with open(argv[0], encoding="utf-8", errors="replace") as f:
+        with open(argv[0], encoding="utf-8", errors="replace", newline="") as f:
             text = f.read()
     except OSError as e:
         print(f"check failed: {e}", file=out)

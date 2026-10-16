@@ -128,6 +128,7 @@ class HtmlCheck(Case):
                 "past the charset prescan",
                 PREFIX.replace("<head>", "<head><!--" + "x" * 1024 + "-->"),
             ),
+            ("CRLFs past the charset prescan", PREFIX.replace("<head>", "<head>" + "\r\n" * 600)),
         )
         for name, page in missing:
             with self.subTest(name):
